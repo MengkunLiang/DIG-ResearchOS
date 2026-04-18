@@ -1,0 +1,16 @@
+initial_state: T1
+
+states:
+  T1:
+    agent: hello
+    outputs:
+      hello_file: hello.txt
+    next_on_success: done
+    next_on_failure: failed
+
+  done:
+    terminal: true
+
+  failed:
+    terminal: true
+

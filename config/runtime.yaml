@@ -1,0 +1,14 @@
+workspace:
+  default_root: "./workspace"
+  runtime_dir: "_runtime"
+
+logging:
+  level: "INFO"
+  json: true
+
+human_interface:
+  backend: "cli"
+
+debug:
+  enable_trace: true
+

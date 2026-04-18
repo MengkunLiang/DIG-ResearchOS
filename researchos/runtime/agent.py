@@ -1,0 +1,173 @@
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Awaitable, Callable
+
+
+PreHook = Callable[["ExecutionContext"], Awaitable[None]]
+PostHook = Callable[["ExecutionContext", "AgentResult"], Awaitable[None]]
+
+
+@dataclass
+class AgentSpec:
+    name: str
+    model_tier: str
+    tool_names: list[str]
+    max_steps: int = 30
+    max_tokens_total: int = 200_000
+    max_wall_seconds: int = 1800
+    temperature: float = 0.7
+    model_override: str | None = None
+    llm_profile: str | None = None
+    allowed_read_prefixes: list[str] = field(
+        default_factory=lambda: ["", "user_seeds/", "papers/", "hypotheses/", "exp_plans/"]
+    )
+    allowed_write_prefixes: list[str] = field(default_factory=list)
+    max_validation_retries: int = 3
+    pre_hooks: list[PreHook] = field(default_factory=list)
+    post_hooks: list[PostHook] = field(default_factory=list)
+    prompt_template: str | None = None
+
+
+@dataclass
+class LLMConfigOverride:
+    profile: str | None = None
+    tier: str | None = None
+    model: str | None = None
+    temperature: float | None = None
+
+
+@dataclass
+class BudgetOverride:
+    max_steps: int | None = None
+    max_tokens: int | None = None
+    max_wall_seconds: int | None = None
+
+
+@dataclass
+class ToolPolicyOverride:
+    allowed_read_prefixes: list[str] | None = None
+    allowed_write_prefixes: list[str] | None = None
+    extra_tool_names: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ExecutionContext:
+    workspace_dir: Path
+    project_id: str
+    task_id: str
+    run_id: str
+    inputs: dict[str, Path] = field(default_factory=dict)
+    outputs_expected: dict[str, Path] = field(default_factory=dict)
+    llm_override: LLMConfigOverride = field(default_factory=LLMConfigOverride)
+    budget_override: BudgetOverride = field(default_factory=BudgetOverride)
+    tool_policy_override: ToolPolicyOverride = field(default_factory=ToolPolicyOverride)
+    mode: str | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
+
+    def input_path(self, key: str) -> Path:
+        value = self.inputs.get(key)
+        if value is None:
+            raise KeyError(f"Input {key} not declared")
+        return value
+
+    def output_path(self, key: str) -> Path:
+        value = self.outputs_expected.get(key)
+        if value is None:
+            raise KeyError(f"Output {key} not declared")
+        return value
+
+
+@dataclass
+class EffectiveConfig:
+    llm_profile: str | None
+    llm_tier: str
+    llm_model_override: str | None
+    llm_temperature: float
+    max_steps: int
+    max_tokens: int
+    max_wall_seconds: int
+    allowed_read_prefixes: list[str]
+    allowed_write_prefixes: list[str]
+    tool_names: list[str]
+
+
+def resolve_effective_config(spec: AgentSpec, ctx: ExecutionContext) -> EffectiveConfig:
+    lo = ctx.llm_override
+    bo = ctx.budget_override
+    to = ctx.tool_policy_override
+    return EffectiveConfig(
+        llm_profile=lo.profile if lo.profile is not None else spec.llm_profile,
+        llm_tier=lo.tier if lo.tier is not None else spec.model_tier,
+        llm_model_override=lo.model if lo.model is not None else spec.model_override,
+        llm_temperature=lo.temperature if lo.temperature is not None else spec.temperature,
+        max_steps=bo.max_steps if bo.max_steps is not None else spec.max_steps,
+        max_tokens=bo.max_tokens if bo.max_tokens is not None else spec.max_tokens_total,
+        max_wall_seconds=(
+            bo.max_wall_seconds if bo.max_wall_seconds is not None else spec.max_wall_seconds
+        ),
+        allowed_read_prefixes=(
+            to.allowed_read_prefixes
+            if to.allowed_read_prefixes is not None
+            else spec.allowed_read_prefixes
+        ),
+        allowed_write_prefixes=(
+            to.allowed_write_prefixes
+            if to.allowed_write_prefixes is not None
+            else spec.allowed_write_prefixes
+        ),
+        tool_names=list(spec.tool_names) + list(to.extra_tool_names),
+    )
+
+
+@dataclass
+class AgentResult:
+    ok: bool
+    message: str
+    outputs_produced: dict[str, Path]
+    steps_used: int
+    tokens_in: int
+    tokens_out: int
+    cost_usd: float
+    duration_seconds: float
+    stop_reason: str
+    error: str | None = None
+    trace_file: Path | None = None
+    llm_profile: str | None = None
+    llm_tier: str | None = None
+    llm_model_used: str | None = None
+    llm_endpoint_used: str | None = None
+
+    STOP_FINISHED = "finished"
+    STOP_MAX_STEPS = "max_steps"
+    STOP_BUDGET = "budget"
+    STOP_ERROR = "error"
+    STOP_INTERRUPTED = "interrupted"
+    STOP_HUMAN_REJECT = "human_reject"
+
+
+class Agent(ABC):
+    spec: AgentSpec
+
+    def __init__(self, spec: AgentSpec):
+        self.spec = spec
+
+    @abstractmethod
+    def system_prompt(self, ctx: ExecutionContext) -> str:
+        ...
+
+    @abstractmethod
+    def initial_user_message(self, ctx: ExecutionContext) -> str:
+        ...
+
+    def validate_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:
+        missing: list[str] = []
+        for name, path in ctx.outputs_expected.items():
+            if not path.exists():
+                missing.append(f"{name} -> {path.relative_to(ctx.workspace_dir)}")
+        if missing:
+            return False, f"缺少以下预期输出: {', '.join(missing)}"
+        return True, None
+

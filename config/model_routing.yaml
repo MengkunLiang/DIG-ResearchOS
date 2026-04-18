@@ -1,0 +1,31 @@
+default_profile: default
+
+endpoints:
+  mock:
+    provider: openai
+    api_key_env: OPENAI_API_KEY
+
+profiles:
+  default:
+    heavy:
+      primary:
+        model: "gpt-4o"
+        endpoint: mock
+        max_context: 128000
+    medium:
+      primary:
+        model: "gpt-4o-mini"
+        endpoint: mock
+        max_context: 128000
+    light:
+      primary:
+        model: "gpt-4o-mini"
+        endpoint: mock
+        max_context: 128000
+
+truncation:
+  trigger_ratio: 0.8
+  target_ratio: 0.6
+  keep_system: true
+  keep_recent_turns: 10
+
