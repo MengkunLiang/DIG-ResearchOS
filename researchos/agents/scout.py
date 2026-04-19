@@ -57,7 +57,7 @@ class ScoutAgent(Agent):
                     # "mcp_semantic_scholar_get_paper",
                 ],
                 max_steps=50,
-                max_tokens_total=120_000,
+                max_tokens_total=200_000,  # 增加到200K，避免token预算超限
                 max_wall_seconds=1800,
                 temperature=0.5,
                 allowed_read_prefixes=["", "user_seeds/"],

@@ -275,11 +275,48 @@ def _validate_json_file(path: Path, schema_name: str) -> tuple[bool, str | None]
         return False, f"Failed to read file: {e}"
 
 
+def _normalize_dates_for_validation(obj: Any) -> Any:
+    """递归转换date/datetime对象为ISO 8601字符串，用于JSON Schema验证。
+
+    YAML解析器会自动将"2024-06-01"转换为Python的date对象，
+    但JSON Schema期望的是字符串格式。
+
+    Args:
+        obj: 待转换的对象（可以是dict, list, 或基本类型）
+
+    Returns:
+        转换后的对象
+    """
+    from datetime import date, datetime
+
+    if isinstance(obj, datetime):
+        # datetime对象转换为ISO 8601格式（带时间）
+        return obj.isoformat()
+    elif isinstance(obj, date):
+        # date对象转换为ISO 8601格式（仅日期）
+        # 为了符合date-time格式，添加时间部分
+        return f"{obj.isoformat()}T00:00:00Z"
+    elif isinstance(obj, dict):
+        return {k: _normalize_dates_for_validation(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_normalize_dates_for_validation(item) for item in obj]
+    else:
+        return obj
+
+
 def _validate_yaml_file(path: Path, schema_name: str) -> tuple[bool, str | None]:
     """校验YAML文件。"""
     try:
         import yaml
+        from datetime import date, datetime
+
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
+
+        # 递归转换date/datetime对象为ISO 8601字符串
+        # 这是因为YAML解析器会自动将"2024-06-01"转换为date对象
+        # 但JSON Schema期望的是字符串
+        data = _normalize_dates_for_validation(data)
+
         return validate_record(data, schema_name)
     except yaml.YAMLError as e:
         return False, f"Invalid YAML: {e}"

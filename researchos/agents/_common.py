@@ -39,7 +39,19 @@ def load_jsonl(path: Path) -> list[dict]:
         try:
             # 清理无效控制字符（如\x00）
             cleaned_line = line.replace('\x00', '')
-            results.append(json.loads(cleaned_line))
+            obj = json.loads(cleaned_line)
+
+            # 处理错误格式：如果整行是一个空数组[]，跳过
+            # 这是因为有些LLM可能生成JSON数组而不是JSONL格式
+            if isinstance(obj, list) and len(obj) == 0:
+                continue
+
+            # 如果是字典，正常添加
+            if isinstance(obj, dict):
+                results.append(obj)
+            else:
+                print(f"Warning: Line {i} is not a dict, skipping: {type(obj)}")
+                continue
         except json.JSONDecodeError as e:
             # 记录错误但继续处理其他行
             print(f"Warning: Failed to parse line {i}: {e}")
