@@ -123,7 +123,12 @@ class PIAgent(Agent):
         if not ok:
             return False, f"project.yaml不符合schema: {err}"
 
-        # 2. 检查三个seed文件存在（可以为空，但必须存在）
+        # 2. Ethical screening (§8.1)
+        ok, err = self._check_ethical_concerns(project_data)
+        if not ok:
+            return False, err
+
+        # 3. 检查三个必需的seed文件存在（可以为空，但必须存在）
         seed_dir = ctx.workspace_dir / "user_seeds"
         required_seeds = ["seed_papers.jsonl", "seed_ideas.md", "seed_constraints.md"]
 
@@ -131,6 +136,13 @@ class PIAgent(Agent):
             seed_path = seed_dir / fname
             if not seed_path.exists():
                 return False, f"缺少seed文件: user_seeds/{fname}"
+
+        # 4. 检查可选的seed_external_resources.jsonl（如果存在，验证格式）
+        external_resources_path = seed_dir / "seed_external_resources.jsonl"
+        if external_resources_path.exists():
+            ok, err = self._validate_external_resources(external_resources_path)
+            if not ok:
+                return False, err
 
         return True, None
 
@@ -152,3 +164,79 @@ class PIAgent(Agent):
             return False, "evaluation_decision.md必须包含后续Options建议"
 
         return True, None
+
+    def _check_ethical_concerns(self, project_data: dict) -> tuple[bool, str | None]:
+        """检查研究方向是否涉及敏感领域（§8.1）。
+
+        检查project.yaml的research_direction和keywords是否包含敏感词。
+        如果检测到敏感词，返回警告信息。
+        """
+        # 敏感词列表（可扩展）
+        SENSITIVE_KEYWORDS = {
+            "weapons": ["weapon", "explosive", "bioweapon", "biological weapon", "chemical weapon"],
+            "surveillance": ["surveillance", "tracking people", "monitoring people", "facial recognition"],
+            "manipulation": ["manipulation", "deception", "fake news generation", "deepfake"],
+            "privacy": ["privacy invasion", "data breach", "unauthorized access"],
+            "discrimination": ["discrimination", "bias amplification", "unfair targeting"],
+        }
+
+        direction = project_data.get("research_direction", "").lower()
+        keywords = [k.lower() for k in project_data.get("keywords", [])]
+
+        concerns = []
+        for category, words in SENSITIVE_KEYWORDS.items():
+            for word in words:
+                if word in direction or any(word in kw for kw in keywords):
+                    concerns.append((category, word))
+
+        if concerns:
+            concern_str = ", ".join([f"{cat}:{word}" for cat, word in concerns])
+            return False, f"检测到敏感研究方向: {concern_str}。请确认研究目的符合伦理规范。"
+
+        return True, None
+
+    def _validate_external_resources(self, path: Path) -> tuple[bool, str | None]:
+        """验证seed_external_resources.jsonl格式（§10.1-10.2）。"""
+        import json
+
+        VALID_TYPES = {"dataset", "baseline_repo", "pretrained_model", "docker_image", "tool", "script", "other"}
+        VALID_SOURCE_PREFIXES = {"huggingface:", "github:", "docker:", "pip:", "url:", "local:"}
+
+        try:
+            content = path.read_text(encoding="utf-8").strip()
+            if not content:
+                return True, None  # 空文件也是合法的
+
+            lines = content.split("\n")
+            for i, line in enumerate(lines, 1):
+                if not line.strip():
+                    continue
+
+                try:
+                    resource = json.loads(line)
+                except json.JSONDecodeError as e:
+                    return False, f"seed_external_resources.jsonl第{i}行JSON解析失败: {e}"
+
+                # 检查必需字段
+                if "type" not in resource:
+                    return False, f"seed_external_resources.jsonl第{i}行缺少'type'字段"
+                if "name" not in resource:
+                    return False, f"seed_external_resources.jsonl第{i}行缺少'name'字段"
+                if "source" not in resource:
+                    return False, f"seed_external_resources.jsonl第{i}行缺少'source'字段"
+
+                # 检查type是否合法
+                if resource["type"] not in VALID_TYPES:
+                    return False, f"seed_external_resources.jsonl第{i}行type '{resource['type']}' 不合法，必须是: {VALID_TYPES}"
+
+                # 检查source格式
+                source = resource["source"]
+                if not any(source.startswith(prefix) for prefix in VALID_SOURCE_PREFIXES):
+                    return False, f"seed_external_resources.jsonl第{i}行source格式不合法，必须以以下前缀之一开头: {VALID_SOURCE_PREFIXES}"
+
+            return True, None
+
+        except Exception as e:
+            return False, f"seed_external_resources.jsonl验证失败: {e}"
+
+

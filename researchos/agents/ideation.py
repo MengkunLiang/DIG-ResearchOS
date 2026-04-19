@@ -30,7 +30,7 @@ class IdeationAgent(Agent):
             AgentSpec(
                 name="ideation",
                 model_tier="heavy",
-                llm_profile="deep_reasoning",
+                llm_profile=None,  # 使用默认profile，不使用不存在的deep_reasoning
                 tool_names=[
                     "read_file",
                     "write_file",

@@ -42,6 +42,23 @@
 
 如果用户不愿多答或说"没有"，可以简化，但要记录下来。
 
+### 第2.5轮对话：收集外部资源（§10.1-10.2）
+向用户提问以下内容：
+
+```
+为了避免重复工作，请告诉我你是否已有以下资源：
+
+1. **数据集**：是否已有可用的数据集？（如果有，请提供名称和来源）
+2. **Baseline代码**：是否已有baseline实现的代码仓库？（如果有，请提供GitHub链接或来源）
+3. **预训练模型**：是否已有可用的预训练模型？（如果有，请提供模型名称和来源）
+4. **实验环境**：是否已有配置好的Docker镜像或环境？
+5. **其他资源**：是否有其他可复用的资源（工具、库、脚本等）？
+
+如果没有或不确定，可以回答"没有"或"暂无"。
+```
+
+如果用户提供了外部资源，记录下来并在第3轮生成`user_seeds/seed_external_resources.jsonl`。
+
 ### 第3轮对话：确认与生成
 1. 根据前两轮对话，生成project.yaml草案
 2. 用ask_human展示草案，询问用户是否确认
@@ -50,6 +67,7 @@
    - `user_seeds/seed_papers.jsonl`：种子论文（每行一条JSON，如果用户没提供则为空文件）
    - `user_seeds/seed_ideas.md`：初步想法（如果用户没提供则写"暂无"）
    - `user_seeds/seed_constraints.md`：硬约束清单（如果用户没提供则写"暂无"）
+   - `user_seeds/seed_external_resources.jsonl`：外部资源清单（如果用户提供了外部资源）
 
 ## project.yaml格式要求
 
@@ -83,6 +101,36 @@ created_at: "2024-04-19T10:00:00Z"  # 必须用引号包裹，ISO 8601格式（Y
 role可以是：
 - `anchor`：核心参考论文，需要追踪引用
 - `reference`：一般参考论文
+
+## seed_external_resources.jsonl格式（§10.1-10.2）
+
+如果用户提供了外部资源，每行一条JSON，格式：
+```json
+{"type": "dataset", "name": "ImageNet-1k", "source": "huggingface:imagenet-1k", "access": "auto", "purpose": "main benchmark"}
+{"type": "baseline_repo", "name": "ResNet-50", "source": "github:pytorch/vision", "commit": "v0.17.0", "purpose": "baseline implementation"}
+{"type": "pretrained_model", "name": "BERT-base", "source": "huggingface:bert-base-uncased", "purpose": "encoder"}
+{"type": "docker_image", "name": "pytorch-env", "source": "docker:pytorch/pytorch:2.0.0", "purpose": "experiment environment"}
+{"type": "tool", "name": "wandb", "source": "pip:wandb", "purpose": "experiment tracking"}
+```
+
+支持的type：
+- `dataset`：数据集
+- `baseline_repo`：baseline代码仓库
+- `pretrained_model`：预训练模型
+- `docker_image`：Docker镜像
+- `tool`：工具或库
+- `script`：脚本或配置文件
+- `other`：其他资源
+
+source格式：
+- `huggingface:<dataset_id>` - HuggingFace数据集或模型
+- `github:<owner>/<repo>` - GitHub仓库
+- `docker:<image>:<tag>` - Docker镜像
+- `pip:<package>` - PyPI包
+- `url:<http://...>` - 直接URL
+- `local:<path>` - 本地路径
+
+如果用户没有提供外部资源，则不创建此文件（可选文件）。
 
 ## 重要规则
 

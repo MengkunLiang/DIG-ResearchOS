@@ -276,6 +276,10 @@ class StateMachine:
             gpu_hours_used=state.budget_cumulative.gpu_hours_used,
         )
 
+        # Budget drift warning (§7.1)
+        if workspace_dir:
+            self._check_budget_drift(state, workspace_dir)
+
         if result.stop_reason == AgentResult.STOP_INTERRUPTED:
             return self.mark_interrupted(state)
 
@@ -500,3 +504,51 @@ class StateMachine:
                 f"{task_id}: node.outputs does not match task_io_contract "
                 f"(declared={declared_outputs}, contract={contract_outputs})"
             )
+
+    def _check_budget_drift(self, state: StateYaml, workspace_dir: Path) -> None:
+        """检查预算漂移并发出警告（§7.1）。
+
+        如果累计花费超过预算的70%，记录警告；
+        如果超过90%，记录严重警告。
+        """
+        from ..runtime.logger import get_logger
+
+        logger = get_logger("state_machine.budget")
+
+        # 读取project.yaml获取预算上限
+        project_file = workspace_dir / "project.yaml"
+        if not project_file.exists():
+            return
+
+        try:
+            project_data = yaml.safe_load(project_file.read_text(encoding="utf-8"))
+            max_budget = project_data.get("constraints", {}).get("max_budget_usd")
+            if max_budget is None or max_budget <= 0:
+                return
+
+            spent = state.budget_cumulative.cost_usd_total
+            ratio = spent / max_budget
+
+            if ratio >= 0.9:
+                logger.warning(
+                    f"预算严重超支警告: 已花费 ${spent:.2f} / ${max_budget:.2f} ({ratio*100:.1f}%)"
+                )
+                # 写入预算警告文件
+                warning_file = workspace_dir / ".researchos" / "budget_warning.txt"
+                warning_file.parent.mkdir(parents=True, exist_ok=True)
+                warning_file.write_text(
+                    f"预算严重超支警告 (90%+)\n"
+                    f"已花费: ${spent:.2f}\n"
+                    f"预算上限: ${max_budget:.2f}\n"
+                    f"使用比例: {ratio*100:.1f}%\n"
+                    f"当前任务: {state.current_task}\n"
+                    f"时间: {_now_iso()}\n",
+                    encoding="utf-8"
+                )
+            elif ratio >= 0.7:
+                logger.warning(
+                    f"预算警告: 已花费 ${spent:.2f} / ${max_budget:.2f} ({ratio*100:.1f}%)"
+                )
+        except Exception as e:
+            logger.debug(f"预算检查失败: {e}")
+

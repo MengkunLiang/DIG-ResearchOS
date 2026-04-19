@@ -83,6 +83,18 @@ states:
       hypotheses: ideation/hypotheses.md
       exp_plan: ideation/exp_plan.yaml
       risks: ideation/risks.md
+    next_on_success: T4.5
+    next_on_failure: failed
+
+  T4.5:
+    agent: novelty_auditor
+    inputs:
+      project: project.yaml
+      hypotheses: ideation/hypotheses.md
+      synthesis: literature/synthesis.md
+      comparison_table: literature/comparison_table.csv
+    outputs:
+      novelty_audit: ideation/novelty_audit.md
     next_on_success: T6
     next_on_failure: failed
 

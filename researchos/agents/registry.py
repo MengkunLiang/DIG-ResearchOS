@@ -7,6 +7,7 @@ from .pi import PIAgent
 from .scout import ScoutAgent
 from .reader import ReaderAgent
 from .ideation import IdeationAgent
+from .novelty_auditor import NoveltyAuditorAgent
 from .experimenter import ExperimenterAgent
 
 
@@ -20,6 +21,7 @@ AGENT_REGISTRY = {
     "scout": ScoutAgent,
     "reader": ReaderAgent,  # T3/T3.5
     "ideation": IdeationAgent,  # T4
+    "novelty_auditor": NoveltyAuditorAgent,  # T4.5
     "experimenter": ExperimenterAgent,  # T6
 }
 
@@ -32,6 +34,7 @@ TASK_TO_AGENT_MAP = {
     "T3": ReaderAgent,  # 深度阅读
     "T3.5": ReaderAgent,  # 文献综合
     "T4": IdeationAgent,  # 假设生成
+    "T4.5": NoveltyAuditorAgent,  # 新颖性审计
     "T6": ExperimenterAgent,  # 实验执行
 }
 
