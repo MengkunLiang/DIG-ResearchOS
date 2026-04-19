@@ -12,3 +12,15 @@ AGENT_REGISTRY = {
     "hello": HelloAgent,
 }
 
+# task -> agent 的映射目前只覆盖当前仓库真实存在的调试 task。
+TASK_TO_AGENT_MAP = {
+    "HELLO": HelloAgent,
+}
+
+
+def get_agent_by_id(agent_id: str):
+    """按 registry id 构造一个 agent 实例。"""
+    agent_cls = AGENT_REGISTRY.get(agent_id)
+    if agent_cls is None:
+        raise KeyError(f"Unknown agent id: {agent_id}")
+    return agent_cls()

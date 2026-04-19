@@ -16,6 +16,7 @@ from typing import Any
 
 import yaml
 
+from ..pydantic_compat import model_dump
 from ..runtime.agent import (
     AgentResult,
     BudgetOverride,
@@ -221,7 +222,7 @@ class StateMachine:
             gate_spec = self._find_gate(gate_id)
             presentation = build_presentation(
                 gate_spec,
-                state.model_dump(mode="json"),
+                model_dump(state, mode="json"),
                 workspace_dir or Path("."),
             )
             state.pending_gate = GateState(

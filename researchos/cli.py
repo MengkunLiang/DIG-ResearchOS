@@ -1,21 +1,30 @@
 from __future__ import annotations
 
-"""ResearchOS 命令行入口。"""
+"""ResearchOS 命令行入口。
+
+这里统一封装 runtime 的几个主要使用场景：
+- `run` / `resume`：完整 pipeline 模式，走 StateMachine；
+- `run-task`：单 task 调试模式，只跑一个 T-stage；
+- `run-skill`：独立运行一个 skill；
+- `validate` / `status` / `trace` / `selftest`：辅助诊断命令。
+"""
 
 import argparse
 import asyncio
 from pathlib import Path
 import signal
+import subprocess
 import sys
 
 import yaml
 
 from .agents.registry import AGENT_REGISTRY
+from .cli_runners import CompletePipelineRunner, SingleTaskRunner
 from .orchestration.state_machine import StateMachine
-from .runtime.agent import AgentResult, ExecutionContext
+from .pydantic_compat import model_dump
+from .runtime.agent import AgentResult
 from .runtime.llm_client import LLMClient
 from .runtime.logger import configure_logging
-from .runtime.orchestrator import AgentRunner
 from .schemas.state import StateYaml
 from .schemas.validator import (
     build_declared_outputs_from_state_machine,
@@ -23,7 +32,6 @@ from .schemas.validator import (
     validate_declared_outputs,
     validate_task_artifacts,
 )
-from .skills.agent import SkillAgent
 from .skills.loader import register_skill_tools, resolve_skill
 from .skills.runner import run_skill
 from .tools.builtin import register_builtin_tools
@@ -33,12 +41,15 @@ from .tools.registry import ToolRegistry
 
 def ensure_workspace_layout(workspace_dir: Path) -> None:
     """创建 runtime 运行所需的固定目录。"""
+
+    workspace_dir.mkdir(parents=True, exist_ok=True)
     (workspace_dir / "_runtime" / "traces").mkdir(parents=True, exist_ok=True)
     (workspace_dir / "_runtime" / "logs").mkdir(parents=True, exist_ok=True)
 
 
 def install_signal_handlers() -> None:
     """把 Ctrl-C / SIGTERM 转成 asyncio task cancel，便于优雅暂停。"""
+
     loop = asyncio.get_running_loop()
 
     def cancel_all() -> None:
@@ -60,6 +71,7 @@ def _resolve_skill_roots(args: argparse.Namespace, workspace_dir: Path) -> list[
     - workspace 下的 `skills/`
     用户也可以通过 `--skills-root` 追加自定义路径。
     """
+
     raw_roots = list(args.skills_root or ["skills"])
     candidates: list[Path] = []
     seen: set[Path] = set()
@@ -81,6 +93,7 @@ def _resolve_skill_roots(args: argparse.Namespace, workspace_dir: Path) -> list[
 
 def _build_tool_registry(skill_roots: list[Path]) -> ToolRegistry:
     """构造本次 CLI 运行用到的完整 ToolRegistry。"""
+
     registry = ToolRegistry()
     register_builtin_tools(registry)
     register_skill_tools(registry, skill_roots)
@@ -89,6 +102,7 @@ def _build_tool_registry(skill_roots: list[Path]) -> ToolRegistry:
 
 def _validate_agent_tools(registry: ToolRegistry) -> None:
     """启动时检查所有正式 agent 的 `tool_names` 都已注册。"""
+
     available = set(registry.available_names())
     missing: list[str] = []
     for agent_name, agent_cls in AGENT_REGISTRY.items():
@@ -100,8 +114,37 @@ def _validate_agent_tools(registry: ToolRegistry) -> None:
         raise SystemExit("Agent tool validation failed:\n" + "\n".join(missing))
 
 
+def _any_registered_agent_uses_any_tool(tool_names: set[str]) -> bool:
+    """判断当前 registry 中的正式 agent 是否依赖某类高门槛工具。"""
+
+    for agent_cls in AGENT_REGISTRY.values():
+        if tool_names & set(agent_cls().spec.tool_names):
+            return True
+    return False
+
+
+def _maybe_check_docker_availability() -> None:
+    """按需检查 Docker 是否可用。
+
+    现阶段正式 agent 只有 Hello，不会触发这个检查；但把逻辑先固化在 CLI 里，
+    后续 T5/T7/T9 agent 落地后无需再改主入口。
+    """
+
+    if not _any_registered_agent_uses_any_tool({"docker_exec", "latex_compile"}):
+        return
+    result = subprocess.run(
+        ["docker", "version"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise SystemExit("Docker not available but some registered agents require it")
+
+
 async def _maybe_run_selftest(args: argparse.Namespace, llm_client: LLMClient) -> None:
     """按需执行 endpoint 自检。"""
+
     if not getattr(args, "startup_selftest", False):
         return
     results = await llm_client.selftest()
@@ -111,178 +154,74 @@ async def _maybe_run_selftest(args: argparse.Namespace, llm_client: LLMClient) -
         raise SystemExit("LLM startup selftest failed")
 
 
-def _declared_outputs_for_task(sm: StateMachine, task_id: str) -> dict[str, str]:
-    node = sm.nodes.get(task_id)
-    return dict(node.outputs or {}) if node else {}
+async def _prepare_runtime(args: argparse.Namespace, workspace_dir: Path) -> tuple[list[Path], ToolRegistry, LLMClient]:
+    """为 CLI 运行模式准备公共依赖。
 
+    两种运行模式共享同一套启动检查：
+    - 注册 builtin / skill tools；
+    - 校验正式 agent 的 tool 是否齐全；
+    - 必要时检查 Docker；
+    - 构造 LLMClient 并按需跑 endpoint selftest。
+    """
 
-def _apply_runtime_output_validation(
-    *,
-    result: AgentResult,
-    workspace_dir: Path,
-    task_id: str,
-    declared_outputs: dict[str, str],
-) -> AgentResult:
-    """在 agent 自己的 validate_outputs 之外，再做一层 runtime 级校验。"""
-    if not result.ok:
-        return result
-
-    ok, errors = validate_task_artifacts(
-        workspace_dir,
-        task_id,
-        declared_outputs=declared_outputs or None,
-    )
-    if ok:
-        return result
-
-    result.ok = False
-    result.stop_reason = AgentResult.STOP_ERROR
-    result.error = "Runtime artifact validation failed: " + "; ".join(errors)
-    result.message = result.error
-    return result
-
-
-def _build_runner_for_node(
-    *,
-    node,
-    ctx: ExecutionContext,
-    registry: ToolRegistry,
-    llm_client: LLMClient,
-    human: CLIHumanInterface,
-    skill_roots: list[Path],
-) -> AgentRunner:
-    """根据当前节点是普通 agent 还是 skill，创建 AgentRunner。"""
-    if node.agent is not None:
-        agent_cls = AGENT_REGISTRY.get(node.agent)
-        if agent_cls is None:
-            raise SystemExit(f"Unknown agent '{node.agent}' for task {node.task_id}")
-        agent = agent_cls()
-    elif node.skill is not None:
-        skill = resolve_skill(node.skill, skill_roots)
-        ctx.extra.setdefault("skill_dir", str(skill.skill_dir))
-        agent = SkillAgent(
-            skill=skill,
-            available_tools=set(registry.available_names()),
-            llm_profile=ctx.llm_override.profile,
-        )
-    else:
-        raise SystemExit(f"Task {node.task_id} has neither agent nor skill configured")
-
-    return AgentRunner(agent, registry, llm_client, human)
-
-
-async def run_command(args: argparse.Namespace) -> int:
-    """运行或恢复一个状态机 task。"""
-    workspace_dir = Path(args.workspace).resolve()
-    ensure_workspace_layout(workspace_dir)
-    install_signal_handlers()
     register_builtin_task_checkers()
-
     skill_roots = _resolve_skill_roots(args, workspace_dir)
     registry = _build_tool_registry(skill_roots)
     _validate_agent_tools(registry)
-
+    _maybe_check_docker_availability()
     llm_client = LLMClient(Path(args.model_routing).resolve())
     await _maybe_run_selftest(args, llm_client)
+    return skill_roots, registry, llm_client
 
-    sm = StateMachine(
+
+async def run_command(args: argparse.Namespace) -> int:
+    """完整 pipeline 模式入口。"""
+
+    workspace_dir = Path(args.workspace).resolve()
+    ensure_workspace_layout(workspace_dir)
+    install_signal_handlers()
+    skill_roots, registry, llm_client = await _prepare_runtime(args, workspace_dir)
+    state_machine = StateMachine(
         Path(args.state_machine).resolve(),
         Path(args.gates).resolve() if args.gates else None,
     )
-    state_path = workspace_dir / "state.yaml"
-    state = sm.create_initial_state(project_id=args.project_id) if not state_path.exists() else None
-    if state is None:
-        state = StateYaml.load_yaml(state_path)
-    if args.resume and state.status not in {"PAUSED", "WAITING_HUMAN"}:
-        print("当前状态不是 PAUSED/WAITING_HUMAN，无法 resume。")
-        return 1
-
-    human = CLIHumanInterface()
-    if state.pending_gate is not None:
-        gate_result = await human.present_gate(
-            gate_id=state.pending_gate.gate_id,
-            presentation=state.pending_gate.presentation,
-            options=state.pending_gate.options,
-        )
-        state = sm.resolve_pending_gate(state, gate_result)
-        state.dump_yaml(state_path)
-
-    current_node = sm.nodes[state.current_task]
-    if current_node.terminal:
-        state.status = "COMPLETED" if state.status != "FAILED" else state.status
-        state.dump_yaml(state_path)
-        print(yaml.safe_dump(state.model_dump(mode="json"), allow_unicode=True, sort_keys=False))
-        return 0 if state.status == "COMPLETED" else 1
-
-    ctx = sm.build_execution_context(workspace_dir, state)
-    state = sm.start_task(state, ctx.run_id)
-    state.dump_yaml(state_path)
-
-    runner = _build_runner_for_node(
-        node=current_node,
-        ctx=ctx,
-        registry=registry,
+    runner = CompletePipelineRunner(
+        workspace=workspace_dir,
+        state_machine=state_machine,
         llm_client=llm_client,
-        human=human,
+        tool_registry=registry,
         skill_roots=skill_roots,
     )
-    try:
-        result = await runner.run(ctx)
-    except (asyncio.CancelledError, KeyboardInterrupt):
-        state = sm.mark_interrupted(state)
-        state.dump_yaml(state_path)
-        print("任务已暂停，可用 `researchos resume` 恢复。")
-        return 130
+    return await runner.run(project_id=args.project_id, resume=getattr(args, "resume", False))
 
-    result = _apply_runtime_output_validation(
-        result=result,
-        workspace_dir=workspace_dir,
-        task_id=ctx.task_id,
-        declared_outputs=_declared_outputs_for_task(sm, ctx.task_id),
+
+async def run_task_command(args: argparse.Namespace) -> int:
+    """单 task 模式入口。"""
+
+    workspace_dir = Path(args.workspace).resolve()
+    ensure_workspace_layout(workspace_dir)
+    install_signal_handlers()
+    skill_roots, registry, llm_client = await _prepare_runtime(args, workspace_dir)
+    _ = skill_roots  # 单 task 当前仍只跑正式 agent，不直接消费 skill roots。
+    from_workspace = Path(args.from_workspace).resolve() if args.from_workspace else None
+    runner = SingleTaskRunner(
+        workspace=workspace_dir,
+        task_id=args.task_id.strip(),
+        llm_client=llm_client,
+        tool_registry=registry,
+        from_workspace=from_workspace,
+        override_profile=args.profile,
     )
-
-    state = sm.advance(state, result, workspace_dir=workspace_dir)
-    state.dump_yaml(state_path)
-    if state.pending_gate is not None:
-        gate_result = await human.present_gate(
-            gate_id=state.pending_gate.gate_id,
-            presentation=state.pending_gate.presentation,
-            options=state.pending_gate.options,
-        )
-        state = sm.resolve_pending_gate(state, gate_result)
-        state.dump_yaml(state_path)
-
-    print(
-        yaml.safe_dump(
-            {
-                "ok": result.ok,
-                "stop_reason": result.stop_reason,
-                "state_status": state.status,
-                "current_task": state.current_task,
-                "trace_file": str(result.trace_file) if result.trace_file else None,
-                "outputs": {k: str(v) for k, v in result.outputs_produced.items()},
-                "error": result.error,
-            },
-            allow_unicode=True,
-            sort_keys=False,
-        )
-    )
-    return 0 if result.ok else 1
+    return await runner.run()
 
 
 async def run_skill_command(args: argparse.Namespace) -> int:
     """独立运行一个 skill。"""
+
     workspace_dir = Path(args.workspace).resolve()
     ensure_workspace_layout(workspace_dir)
     install_signal_handlers()
-    register_builtin_task_checkers()
-
-    skill_roots = _resolve_skill_roots(args, workspace_dir)
-    registry = _build_tool_registry(skill_roots)
-    _validate_agent_tools(registry)
-
-    llm_client = LLMClient(Path(args.model_routing).resolve())
-    await _maybe_run_selftest(args, llm_client)
+    skill_roots, registry, llm_client = await _prepare_runtime(args, workspace_dir)
 
     skill = resolve_skill(args.skill_name, skill_roots)
     outputs_expected = {
@@ -325,6 +264,8 @@ async def run_skill_command(args: argparse.Namespace) -> int:
 
 
 async def selftest_command(args: argparse.Namespace) -> int:
+    """LLM endpoint 自检。"""
+
     client = LLMClient(Path(args.model_routing).resolve())
     results = await client.selftest(args.profile or None)
     print(yaml.safe_dump(results, allow_unicode=True, sort_keys=False))
@@ -333,6 +274,7 @@ async def selftest_command(args: argparse.Namespace) -> int:
 
 def validate_command(args: argparse.Namespace) -> int:
     """校验指定 task 的产物。"""
+
     register_builtin_task_checkers()
     workspace = Path(args.workspace).resolve()
     state_machine_path = Path(args.state_machine).resolve()
@@ -347,23 +289,35 @@ def validate_command(args: argparse.Namespace) -> int:
         task_id,
         declared_outputs=declared_outputs,
     )
-    print(yaml.safe_dump({"ok": ok, "task": task_id, "errors": errors}, allow_unicode=True, sort_keys=False))
+    print(
+        yaml.safe_dump(
+            {"ok": ok, "task": task_id, "errors": errors},
+            allow_unicode=True,
+            sort_keys=False,
+        )
+    )
     return 0 if ok else 1
 
 
 def status_command(args: argparse.Namespace) -> int:
+    """输出 workspace 当前的 state.yaml。"""
+
     state = StateYaml.load_yaml((Path(args.workspace) / "state.yaml").resolve())
-    print(yaml.safe_dump(state.model_dump(mode="json"), allow_unicode=True, sort_keys=False))
+    print(yaml.safe_dump(model_dump(state, mode="json"), allow_unicode=True, sort_keys=False))
     return 0
 
 
 def trace_command(args: argparse.Namespace) -> int:
+    """打印指定 run_id 对应的 trace 文件。"""
+
     trace_path = (Path(args.workspace) / "_runtime" / "traces" / f"{args.run_id}.jsonl").resolve()
     print(trace_path.read_text(encoding="utf-8"))
     return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """构造 CLI 参数解析器。"""
+
     parser = argparse.ArgumentParser(prog="researchos")
     parser.add_argument("--workspace", default="./workspace")
     parser.add_argument("--project-id", default="demo-project")
@@ -375,25 +329,39 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    run_parser = subparsers.add_parser("run")
-    run_parser.add_argument("--resume", action="store_true")
+    run_parser = subparsers.add_parser("run", help="运行完整 pipeline")
     run_parser.add_argument("--startup-selftest", action="store_true")
 
-    resume_parser = subparsers.add_parser("resume")
+    resume_parser = subparsers.add_parser("resume", help="恢复已暂停的 pipeline")
     resume_parser.add_argument("--startup-selftest", action="store_true")
 
-    subparsers.add_parser("status")
+    run_task_parser = subparsers.add_parser("run-task", help="只运行一个 task")
+    run_task_parser.add_argument("task_id")
+    run_task_parser.add_argument(
+        "--from",
+        dest="from_workspace",
+        default=None,
+        help="从另一个 workspace 复制当前 task 的前置 artifact",
+    )
+    run_task_parser.add_argument(
+        "--profile",
+        default=None,
+        help="覆盖 LLM profile，例如 cheap_fast / deep_reasoning / audit",
+    )
+    run_task_parser.add_argument("--startup-selftest", action="store_true")
 
-    selftest_parser = subparsers.add_parser("selftest")
+    subparsers.add_parser("status", help="查看当前状态")
+
+    selftest_parser = subparsers.add_parser("selftest", help="检查 LLM endpoint 连通性")
     selftest_parser.add_argument("--profile", action="append")
 
-    trace_parser = subparsers.add_parser("trace")
+    trace_parser = subparsers.add_parser("trace", help="查看某次 run 的 trace")
     trace_parser.add_argument("run_id")
 
-    validate_parser = subparsers.add_parser("validate")
+    validate_parser = subparsers.add_parser("validate", help="校验 task 产物")
     validate_parser.add_argument("--task")
 
-    run_skill_parser = subparsers.add_parser("run-skill")
+    run_skill_parser = subparsers.add_parser("run-skill", help="独立运行一个 skill")
     run_skill_parser.add_argument("skill_name")
     run_skill_parser.add_argument("request", nargs="*")
     run_skill_parser.add_argument("--profile")
@@ -403,14 +371,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """CLI 主入口。"""
+
     parser = build_parser()
     args = parser.parse_args(argv)
     configure_logging(level=args.log_level)
     if args.command == "run":
+        args.resume = False
         return asyncio.run(run_command(args))
     if args.command == "resume":
         args.resume = True
         return asyncio.run(run_command(args))
+    if args.command == "run-task":
+        return asyncio.run(run_task_command(args))
     if args.command == "run-skill":
         return asyncio.run(run_skill_command(args))
     if args.command == "status":

@@ -3,6 +3,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 from pathlib import Path
+import sys
+
+# 允许直接用 `python scripts/debug_hello_agent.py` 运行，而不要求用户先做
+# `pip install -e .`。这对 README 中的最小调试命令和集成测试都很重要。
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from researchos.agents.hello import HelloAgent
 from researchos.runtime.agent import ExecutionContext
@@ -96,4 +103,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

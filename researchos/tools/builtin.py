@@ -17,6 +17,7 @@ from .finish_task import FinishTaskTool
 from .glob_files import GlobFilesTool
 from .grep_search import GrepSearchTool
 from .latex_compile import LatexCompileTool
+from .paper_processing import ExtractSectionsTool
 from .registry import ToolRegistry
 from .search_papers import FetchPaperMetadataTool, SearchPapersTool
 from .web_fetch import WebFetchTool
@@ -34,6 +35,9 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
     registry.register("grep_search", lambda ctx: GrepSearchTool(ctx.policy))
     registry.register("glob_files", lambda ctx: GlobFilesTool(ctx.policy))
     registry.register("web_fetch", lambda ctx: WebFetchTool())
+    # Reader / Reviewer 等后续 agent 需要按 section 粒度读取 PDF；
+    # 这里直接放进 builtin，避免到 agent 落地时还要回头补 runtime 注册链。
+    registry.register("extract_paper_sections", lambda ctx: ExtractSectionsTool(ctx.policy))
     registry.register(
         "search_papers",
         lambda _ctx: SearchPapersTool(os.environ.get("S2_API_KEY")),

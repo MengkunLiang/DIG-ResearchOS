@@ -164,8 +164,14 @@ def test_builtin_registry_registers_extended_tools(tmp_workspace: Path):
     registry = ToolRegistry()
     register_builtin_tools(registry)
     built = registry.build(
-        ["bash_run", "grep_search", "glob_files", "web_fetch"],
+        ["bash_run", "grep_search", "glob_files", "web_fetch", "extract_paper_sections"],
         ToolBuildContext(policy=policy, human=MockHumanInterface()),
     )
 
-    assert sorted(built) == ["bash_run", "glob_files", "grep_search", "web_fetch"]
+    assert sorted(built) == [
+        "bash_run",
+        "extract_paper_sections",
+        "glob_files",
+        "grep_search",
+        "web_fetch",
+    ]

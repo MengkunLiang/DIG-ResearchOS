@@ -15,7 +15,10 @@ from typing import Any, Literal
 from urllib.parse import quote, quote_plus
 import xml.etree.ElementTree as ET
 
-import httpx
+try:
+    import httpx
+except ModuleNotFoundError:  # pragma: no cover - 依赖是否安装取决于环境
+    httpx = None
 from pydantic import BaseModel, Field
 
 from ..runtime.errors import ToolRuntimeError
@@ -61,8 +64,15 @@ class SearchPapersTool(Tool):
         if params.source in {"auto", "semantic_scholar"}:
             try:
                 papers = await self._s2_search(params)
-            except httpx.HTTPError as exc:
-                if params.source == "semantic_scholar":
+            except ModuleNotFoundError:
+                return ToolResult(
+                    ok=False,
+                    content="缺少 httpx 依赖，无法执行 search_papers 网络检索。",
+                    error="dependency_missing",
+                )
+            except Exception as exc:
+                is_http_error = httpx is not None and isinstance(exc, httpx.HTTPError)
+                if params.source == "semantic_scholar" or not is_http_error:
                     raise ToolRuntimeError(self.name, exc) from exc
             if papers:
                 source_used = "semantic_scholar"
@@ -70,6 +80,12 @@ class SearchPapersTool(Tool):
         if not papers and params.source in {"auto", "arxiv"}:
             try:
                 papers = await self._arxiv_search(params)
+            except ModuleNotFoundError:
+                return ToolResult(
+                    ok=False,
+                    content="缺少 httpx 依赖，无法执行 search_papers 网络检索。",
+                    error="dependency_missing",
+                )
             except Exception as exc:
                 raise ToolRuntimeError(self.name, exc) from exc
             source_used = "arxiv"
@@ -81,6 +97,7 @@ class SearchPapersTool(Tool):
         )
 
     async def _s2_search(self, params: SearchPapersParams) -> list[dict[str, Any]]:
+        httpx_mod = _require_httpx()
         headers = {"x-api-key": self.s2_api_key} if self.s2_api_key else {}
         query_params: dict[str, Any] = {
             "query": params.query,
@@ -92,7 +109,7 @@ class SearchPapersTool(Tool):
         if params.year_from or params.year_to:
             query_params["year"] = f"{params.year_from or ''}-{params.year_to or ''}".strip("-")
 
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        async with httpx_mod.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             response = await client.get(
                 "https://api.semanticscholar.org/graph/v1/paper/search",
                 params=query_params,
@@ -103,12 +120,13 @@ class SearchPapersTool(Tool):
         return [self._normalize_s2_paper(item) for item in items]
 
     async def _arxiv_search(self, params: SearchPapersParams) -> list[dict[str, Any]]:
+        httpx_mod = _require_httpx()
         url = (
             "http://export.arxiv.org/api/query?"
             f"search_query=all:{quote_plus(params.query)}&start=0&max_results={params.max_results}"
             "&sortBy=relevance&sortOrder=descending"
         )
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        async with httpx_mod.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             response = await client.get(url)
             response.raise_for_status()
         feed = ET.fromstring(response.text)
@@ -204,13 +222,19 @@ class FetchPaperMetadataTool(Tool):
                 paper = await self._fetch_arxiv(params.id)
             else:
                 paper = await self._fetch_s2(params.id)
-        except httpx.HTTPStatusError as exc:
+        except ModuleNotFoundError:
             return ToolResult(
                 ok=False,
-                content=f"Paper not found: {params.id} ({exc.response.status_code})",
-                error="not_found",
+                content="缺少 httpx 依赖，无法获取论文元数据。",
+                error="dependency_missing",
             )
         except Exception as exc:
+            if httpx is not None and isinstance(exc, httpx.HTTPStatusError):
+                return ToolResult(
+                    ok=False,
+                    content=f"Paper not found: {params.id} ({exc.response.status_code})",
+                    error="not_found",
+                )
             raise ToolRuntimeError(self.name, exc) from exc
 
         return ToolResult(
@@ -220,13 +244,14 @@ class FetchPaperMetadataTool(Tool):
         )
 
     async def _fetch_s2(self, identifier: str) -> dict[str, Any]:
+        httpx_mod = _require_httpx()
         headers = {"x-api-key": self.s2_api_key} if self.s2_api_key else {}
         fields = (
             "paperId,title,authors,year,abstract,venue,citationCount,externalIds,url,"
             "references.title,references.paperId,references.year,citations.title,citations.paperId,citations.year"
         )
         encoded_id = quote(identifier, safe="")
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        async with httpx_mod.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             response = await client.get(
                 f"https://api.semanticscholar.org/graph/v1/paper/{encoded_id}",
                 params={"fields": fields},
@@ -240,21 +265,22 @@ class FetchPaperMetadataTool(Tool):
         return paper
 
     async def _fetch_arxiv(self, identifier: str) -> dict[str, Any]:
+        httpx_mod = _require_httpx()
         url = (
             "http://export.arxiv.org/api/query?"
             f"id_list={identifier}"
         )
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        async with httpx_mod.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             response = await client.get(url)
             response.raise_for_status()
         feed = ET.fromstring(response.text)
         ns = {"atom": "http://www.w3.org/2005/Atom"}
         entry = feed.find("atom:entry", ns)
         if entry is None:
-            raise httpx.HTTPStatusError(
+            raise httpx_mod.HTTPStatusError(
                 "Not found",
                 request=response.request,
-                response=httpx.Response(404, request=response.request),
+                response=httpx_mod.Response(404, request=response.request),
             )
         paper = SearchPapersTool._normalize_arxiv_entry(entry, ns)
         paper["references"] = []
@@ -265,3 +291,11 @@ class FetchPaperMetadataTool(Tool):
 def _looks_like_arxiv_id(identifier: str) -> bool:
     normalized = identifier.replace("arXiv:", "")
     return "." in normalized and normalized.replace(".", "").replace("v", "").isdigit()
+
+
+def _require_httpx():
+    """按需返回 httpx 模块，缺失时显式抛错给上层转换。"""
+
+    if httpx is None:
+        raise ModuleNotFoundError("httpx")
+    return httpx

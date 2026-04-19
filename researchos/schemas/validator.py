@@ -86,6 +86,41 @@ def validate_declared_outputs(
     return not errors, errors
 
 
+def validate_prerequisites(workspace: Path, task_id: str) -> tuple[bool, str | None]:
+    """校验 single-task 模式运行前的前置 artifact 是否就绪。
+
+    设计说明：
+    - 这里不做“内容级” schema 校验，只检查 task 契约声明的必需输入是否存在；
+    - 这样可以把 single-task 的 fast-fail 放在真正启动 agent 之前，避免刚起 run 就因为
+      缺输入而走到一半才失败；
+    - `required_inputs` 与 `inputs` 的来源统一来自 `task_io_contract.py`，保持 CLI、文档和
+      调试模式使用同一份契约。
+    """
+
+    from ..orchestration.task_io_contract import get_task_io, required_input_names
+
+    try:
+        contract = get_task_io(task_id)
+    except KeyError as exc:
+        return False, str(exc)
+
+    inputs = contract.get("inputs", {})
+    required = required_input_names(task_id)
+    missing: list[str] = []
+    for input_name in required:
+        rel_path = inputs.get(input_name)
+        if rel_path is None:
+            missing.append(f"{input_name} (contract missing path)")
+            continue
+        candidate = workspace / str(rel_path)
+        if not candidate.exists():
+            missing.append(f"{input_name} -> {rel_path}")
+
+    if missing:
+        return False, "缺少前置输入: " + ", ".join(missing)
+    return True, None
+
+
 def validate_task_artifacts(
     workspace: Path,
     task_id: str,

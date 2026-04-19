@@ -7,6 +7,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from ..pydantic_compat import model_dump, model_validate
+
 
 class GateState(BaseModel):
     """当前挂起的 gate 信息。"""
@@ -66,7 +68,7 @@ class StateYaml(BaseModel):
 
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(
-            yaml.safe_dump(self.model_dump(mode="json"), allow_unicode=True, sort_keys=False),
+            yaml.safe_dump(model_dump(self, mode="json"), allow_unicode=True, sort_keys=False),
             encoding="utf-8",
         )
         tmp.replace(path)
@@ -75,7 +77,7 @@ class StateYaml(BaseModel):
     def load_yaml(cls, path: Path) -> "StateYaml":
         import yaml
 
-        return cls.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+        return model_validate(cls, yaml.safe_load(path.read_text(encoding="utf-8")))
 
 
 # 兼容旧导入名，避免已有调用点全部重写。

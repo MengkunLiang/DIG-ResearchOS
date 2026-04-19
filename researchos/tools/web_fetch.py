@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
+from urllib.request import HTTPRedirectHandler, Request, build_opener
+import urllib.error
 
-import httpx
+try:
+    import httpx
+except ModuleNotFoundError:  # pragma: no cover - 依赖是否安装取决于环境
+    httpx = None
 from pydantic import BaseModel, Field
 
 from .base import Tool, ToolResult
@@ -80,6 +86,15 @@ class WebFetchTool(Tool):
         if not self.allowlist.is_allowed(url):
             return ToolResult(ok=False, content=f"URL not allowed: {url}", error="access_denied")
 
+        # 优先使用 httpx，因为它更容易统一 async / timeout / stream 行为；
+        # 但如果环境里没有装 httpx，就自动降级到 urllib，保证 runtime 基本可用。
+        if httpx is None:
+            return await self._execute_with_urllib(
+                url=url,
+                timeout_seconds=timeout_seconds,
+                max_bytes=max_bytes,
+            )
+
         redirect_chain: list[str] = []
         current_url = url
         timeout = httpx.Timeout(timeout_seconds)
@@ -138,6 +153,102 @@ class WebFetchTool(Tool):
             data={"redirect_chain": redirect_chain},
         )
 
+    async def _execute_with_urllib(
+        self,
+        *,
+        url: str,
+        timeout_seconds: int,
+        max_bytes: int,
+    ) -> ToolResult:
+        """httpx 不可用时的标准库降级实现。"""
+
+        return await asyncio.to_thread(
+            self._execute_with_urllib_sync,
+            url,
+            timeout_seconds,
+            max_bytes,
+        )
+
+    def _execute_with_urllib_sync(
+        self,
+        url: str,
+        timeout_seconds: int,
+        max_bytes: int,
+    ) -> ToolResult:
+        redirect_chain: list[str] = []
+        current_url = url
+        opener = build_opener(_NoRedirectHandler())
+
+        try:
+            for _ in range(self.max_redirects + 1):
+                if not self.allowlist.is_allowed(current_url):
+                    return ToolResult(
+                        ok=False,
+                        content=f"Redirect target not allowed: {current_url}",
+                        error="access_denied",
+                        data={"redirect_chain": redirect_chain},
+                    )
+
+                request = Request(current_url, headers={"User-Agent": self.user_agent})
+                try:
+                    with opener.open(request, timeout=timeout_seconds) as response:
+                        body = response.read(max_bytes + 1)
+                        truncated = len(body) > max_bytes
+                        if truncated:
+                            body = body[:max_bytes]
+                        charset = response.headers.get_content_charset() or "utf-8"
+                        return ToolResult(
+                            ok=True,
+                            content=body.decode(charset, errors="replace"),
+                            data={
+                                "url": response.geturl(),
+                                "status_code": getattr(response, "status", response.getcode()),
+                                "content_type": response.headers.get("Content-Type", ""),
+                                "truncated": truncated,
+                                "redirect_chain": redirect_chain,
+                            },
+                        )
+                except urllib.error.HTTPError as exc:
+                    if exc.code in _REDIRECT_STATUS_CODES:
+                        location = exc.headers.get("Location")
+                        if not location:
+                            return ToolResult(
+                                ok=False,
+                                content="Redirect response missing Location header",
+                                error="redirect_error",
+                                data={"status_code": exc.code},
+                            )
+                        current_url = urljoin(current_url, location)
+                        redirect_chain.append(current_url)
+                        continue
+
+                    body = exc.read(max_bytes + 1)
+                    truncated = len(body) > max_bytes
+                    if truncated:
+                        body = body[:max_bytes]
+                    charset = exc.headers.get_content_charset() or "utf-8"
+                    return ToolResult(
+                        ok=False,
+                        content=body.decode(charset, errors="replace") or f"HTTP {exc.code}",
+                        error="http_error",
+                        data={
+                            "url": current_url,
+                            "status_code": exc.code,
+                            "content_type": exc.headers.get("Content-Type", ""),
+                            "truncated": truncated,
+                            "redirect_chain": redirect_chain,
+                        },
+                    )
+        except OSError as exc:
+            return ToolResult(ok=False, content=f"Request failed: {exc}", error="request_failed")
+
+        return ToolResult(
+            ok=False,
+            content=f"Too many redirects while fetching: {url}",
+            error="too_many_redirects",
+            data={"redirect_chain": redirect_chain},
+        )
+
     @staticmethod
     async def _read_body(
         response: httpx.Response, *, max_bytes: int
@@ -158,3 +269,10 @@ class WebFetchTool(Tool):
             chunks.append(chunk)
             total += len(chunk)
         return b"".join(chunks), truncated
+
+
+class _NoRedirectHandler(HTTPRedirectHandler):
+    """阻止 urllib 自动跟随重定向，便于 runtime 自己记录 redirect chain。"""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        return None

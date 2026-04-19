@@ -8,6 +8,7 @@ from pathlib import Path
 import time
 from typing import TYPE_CHECKING, Callable
 
+from ..pydantic_compat import model_dump
 from .agent import Agent, AgentResult, EffectiveConfig, ExecutionContext, resolve_effective_config
 from .budget import BudgetTracker
 from .errors import BudgetExceeded, LLMProviderError, ToolAccessDenied, ToolError
@@ -304,7 +305,7 @@ class AgentRunner:
         try:
             # 工具自身可有细粒度超时，但 runtime 仍统一包一层 wait_for。
             result: ToolResult = await asyncio.wait_for(
-                tool.execute(**parsed.model_dump()),
+                tool.execute(**model_dump(parsed)),
                 timeout=tool.timeout_seconds,
             )
         except asyncio.TimeoutError:

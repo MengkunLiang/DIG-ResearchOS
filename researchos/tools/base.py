@@ -8,6 +8,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from ..pydantic_compat import model_json_schema
+
 
 @dataclass
 class ToolResult:
@@ -41,6 +43,6 @@ class Tool(ABC):
             "function": {
                 "name": self.name,
                 "description": self.description,
-                "parameters": self.parameters_schema.model_json_schema(),
+                "parameters": model_json_schema(self.parameters_schema),
             },
         }
