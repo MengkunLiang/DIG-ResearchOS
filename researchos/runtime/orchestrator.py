@@ -25,10 +25,6 @@ if TYPE_CHECKING:
     from ..tools.workspace_policy import WorkspaceAccessPolicy
 
 
-MAX_EMPTY_REPLY = 2
-MAX_NUDGE_FINISH = 2
-
-
 class AgentRunner:
     """驱动单个 agent 完成一次完整 run。
 
@@ -120,7 +116,7 @@ class AgentRunner:
         nudge_count = 0
         validation_fails = 0
 
-        # P0-5 修复: pre_hooks 应该在 try 之前调用，失败时直接向上抛异常阻止运行
+        # Pre-hooks在try块之前执行，失败时直接抛异常阻止运行
         for hook in self.agent.spec.pre_hooks:
             await hook(ctx)
 
@@ -162,9 +158,9 @@ class AgentRunner:
                 # 空回复不是立刻判死刑，而是先给模型一次 nudged retry 的机会。
                 if is_empty_assistant(assistant_msg):
                     empty_count += 1
-                    if empty_count > MAX_EMPTY_REPLY:
+                    if empty_count > self.runtime_settings.agent_behavior.max_empty_reply:
                         stop_reason = AgentResult.STOP_ERROR
-                        error_msg = f"{MAX_EMPTY_REPLY} consecutive empty replies"
+                        error_msg = f"{self.runtime_settings.agent_behavior.max_empty_reply} consecutive empty replies"
                         break
                     nudge = Message.user(
                         "你刚才没有输出任何内容也没有调用工具。请继续推进任务，或在确认完成后调用 finish_task。",
@@ -182,7 +178,7 @@ class AgentRunner:
                 # 要么继续推进，要么明确 finish_task。
                 if not assistant_msg.tool_calls:
                     nudge_count += 1
-                    if nudge_count > MAX_NUDGE_FINISH:
+                    if nudge_count > self.runtime_settings.agent_behavior.max_nudge_finish:
                         stop_reason = AgentResult.STOP_ERROR
                         error_msg = "agent 多次只输出文本但未调用工具"
                         break

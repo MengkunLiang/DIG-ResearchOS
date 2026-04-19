@@ -104,11 +104,13 @@ def test_validate_t2_artifacts_with_builtin_checker(tmp_path: Path):
     validator.register_builtin_task_checkers()
     workspace = tmp_path / "workspace"
     (workspace / "literature").mkdir(parents=True)
-    paper = {
+
+    # papers_raw使用对象格式的authors（来自API）
+    paper_raw = {
         "id": "paper-1",
         "source": "semantic_scholar",
         "title": "A Runtime Paper",
-        "authors": [{"name": "Ada"}],
+        "authors": [{"name": "Ada"}, {"name": "Bob"}],
         "year": 2025,
         "abstract": "demo",
         "venue": "Conf",
@@ -116,11 +118,28 @@ def test_validate_t2_artifacts_with_builtin_checker(tmp_path: Path):
         "externalIds": {},
         "url": "https://example.com/paper-1",
     }
-    for file_name in ("papers_raw.jsonl", "papers_dedup.jsonl"):
-        (workspace / "literature" / file_name).write_text(
-            json.dumps(paper, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
+    (workspace / "literature" / "papers_raw.jsonl").write_text(
+        json.dumps(paper_raw, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    # papers_dedup使用字符串数组格式的authors（处理后）
+    paper_dedup = {
+        "id": "paper-1",
+        "source": "semantic_scholar",
+        "title": "A Runtime Paper",
+        "authors": ["Ada", "Bob"],
+        "year": 2025,
+        "abstract": "demo",
+        "venue": "Conf",
+        "citation_count": 1,
+        "url": "https://example.com/paper-1",
+    }
+    (workspace / "literature" / "papers_dedup.jsonl").write_text(
+        json.dumps(paper_dedup, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
     (workspace / "literature" / "search_log.md").write_text("# Search Log\n", encoding="utf-8")
     (workspace / "literature" / "missing_areas.md").write_text("- none\n", encoding="utf-8")
 

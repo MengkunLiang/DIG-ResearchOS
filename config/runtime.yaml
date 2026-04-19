@@ -9,6 +9,11 @@ logging:
 human_interface:
   backend: "cli"
 
+agent_behavior:
+  max_empty_reply: 2
+  max_nudge_finish: 2
+  max_validation_retries: 3
+
 debug:
   enable_trace: true
 

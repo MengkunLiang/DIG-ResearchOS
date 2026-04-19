@@ -52,12 +52,22 @@ class HumanInterfaceSettings:
 
 
 @dataclass(frozen=True)
+class AgentBehaviorSettings:
+    """Agent运行时行为配置。"""
+
+    max_empty_reply: int = 2
+    max_nudge_finish: int = 2
+    max_validation_retries: int = 3
+
+
+@dataclass(frozen=True)
 class RuntimeSettings:
     """Runtime 共享配置的内存表示。"""
 
     workspace: WorkspaceSettings = field(default_factory=WorkspaceSettings)
     logging: LoggingSettings = field(default_factory=LoggingSettings)
     human_interface: HumanInterfaceSettings = field(default_factory=HumanInterfaceSettings)
+    agent_behavior: AgentBehaviorSettings = field(default_factory=AgentBehaviorSettings)
 
     def runtime_root(self, workspace_dir: Path) -> Path:
         """返回某个 workspace 下 runtime 私有目录的根路径。"""
@@ -95,6 +105,7 @@ def load_runtime_settings(config_path: Path | None = None) -> RuntimeSettings:
     workspace_block = _as_mapping(raw.get("workspace"))
     logging_block = _as_mapping(raw.get("logging"))
     human_block = _as_mapping(raw.get("human_interface"))
+    agent_behavior_block = _as_mapping(raw.get("agent_behavior"))
 
     return RuntimeSettings(
         workspace=WorkspaceSettings(
@@ -108,7 +119,60 @@ def load_runtime_settings(config_path: Path | None = None) -> RuntimeSettings:
         human_interface=HumanInterfaceSettings(
             backend=str(human_block.get("backend", "cli")),
         ),
+        agent_behavior=AgentBehaviorSettings(
+            max_empty_reply=int(agent_behavior_block.get("max_empty_reply", 2)),
+            max_nudge_finish=int(agent_behavior_block.get("max_nudge_finish", 2)),
+            max_validation_retries=int(agent_behavior_block.get("max_validation_retries", 3)),
+        ),
     )
+
+
+def validate_runtime_config(settings: RuntimeSettings, config_dir: Path) -> list[str]:
+    """验证runtime配置，返回错误列表。
+
+    检查：
+    - 必需的配置文件存在
+    - 配置值在有效范围内
+    - 引用的路径可访问
+    """
+    errors = []
+
+    # 检查model_routing.yaml存在
+    model_routing = config_dir / "model_routing.yaml"
+    if not model_routing.exists():
+        errors.append(f"缺少必需配置: {model_routing}")
+    else:
+        # 验证model_routing结构
+        try:
+            routing = yaml.safe_load(model_routing.read_text(encoding="utf-8"))
+            if not routing:
+                errors.append("model_routing.yaml: 文件为空")
+            elif not isinstance(routing, dict):
+                errors.append("model_routing.yaml: 根节点必须是字典")
+            else:
+                if not routing.get("endpoints"):
+                    errors.append("model_routing.yaml: 缺少'endpoints'部分")
+                if not routing.get("profiles"):
+                    errors.append("model_routing.yaml: 缺少'profiles'部分")
+                if not routing.get("truncation"):
+                    errors.append("model_routing.yaml: 缺少'truncation'部分（上下文截断所需）")
+        except Exception as e:
+            errors.append(f"model_routing.yaml: 解析错误: {e}")
+
+    # 检查runtime.yaml值
+    if settings.agent_behavior.max_empty_reply < 1:
+        errors.append("agent_behavior.max_empty_reply必须>=1")
+    if settings.agent_behavior.max_nudge_finish < 1:
+        errors.append("agent_behavior.max_nudge_finish必须>=1")
+    if settings.agent_behavior.max_validation_retries < 0:
+        errors.append("agent_behavior.max_validation_retries必须>=0")
+
+    # 检查logging level有效
+    valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+    if settings.logging.level.upper() not in valid_levels:
+        errors.append(f"logging.level必须是{valid_levels}之一")
+
+    return errors
 
 
 def _as_mapping(value: Any) -> dict[str, Any]:

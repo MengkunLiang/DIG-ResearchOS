@@ -130,8 +130,24 @@ def validate_task_artifacts(
             errors.append(f"Missing output: {output_name} ({output_path})")
             continue
 
-        # 目前简化处理：只检查文件存在，不做schema校验
-        # TODO: 如果需要schema校验，需要在TASK_IO_CONTRACTS中添加schema字段
+        # 检查schema（如果定义）
+        schemas = task_io.get("schemas", {})
+        schema_name = schemas.get(output_name)
+
+        if schema_name and HAS_JSONSCHEMA:
+            # 根据文件类型验证
+            if file_path.suffix == ".jsonl":
+                ok, err = _validate_jsonl_file(file_path, schema_name)
+            elif file_path.suffix == ".json":
+                ok, err = _validate_json_file(file_path, schema_name)
+            elif file_path.suffix in [".yaml", ".yml"]:
+                ok, err = _validate_yaml_file(file_path, schema_name)
+            else:
+                # 未知格式，跳过schema验证
+                continue
+
+            if not ok:
+                errors.append(f"Schema验证失败 {output_name}: {err}")
 
     if errors:
         return False, "; ".join(errors)

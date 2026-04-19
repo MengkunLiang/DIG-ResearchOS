@@ -18,6 +18,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "inputs": {},
         "outputs": {"hello_file": "hello.txt"},
         "required_inputs": [],
+        "schemas": {},
     },
     "T1": {
         "inputs": {},
@@ -29,6 +30,9 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "seed_constraints": "user_seeds/seed_constraints.md",
         },
         "required_inputs": [],
+        "schemas": {
+            "project": "project",
+        },
     },
     "T2": {
         "inputs": {
@@ -44,6 +48,10 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "missing_areas": "literature/missing_areas.md",
         },
         "required_inputs": ["project"],
+        "schemas": {
+            "papers_raw": "papers_raw",
+            "papers_dedup": "papers_dedup",
+        },
     },
     "T3": {
         "inputs": {
@@ -57,6 +65,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "related_work_bib": "literature/related_work.bib",
         },
         "required_inputs": ["project", "papers_dedup"],
+        "schemas": {},
     },
     "T3.5": {
         "inputs": {
@@ -69,6 +78,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "synthesis": "literature/synthesis.md",
         },
         "required_inputs": ["project", "paper_notes_dir", "comparison_table"],
+        "schemas": {},
     },
     "T4": {
         "inputs": {
@@ -85,6 +95,9 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "risks": "ideation/risks.md",
         },
         "required_inputs": ["project", "synthesis"],
+        "schemas": {
+            "exp_plan": "exp_plan",
+        },
     },
     "T5": {
         "inputs": {
@@ -100,6 +113,10 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "motivation_validation": "pilot/motivation_validation.md",
         },
         "required_inputs": ["project", "hypotheses", "exp_plan"],
+        "schemas": {
+            "pilot_plan": "pilot_plan",
+            "pilot_results": "pilot_results",
+        },
     },
     "T6": {
         "inputs": {
@@ -115,6 +132,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "must_add_baselines": "novelty/must_add_baselines.md",
         },
         "required_inputs": ["hypotheses", "exp_plan", "pilot_results"],
+        "schemas": {},
     },
     "T7": {
         "inputs": {
@@ -132,6 +150,9 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "ablations": "experiments/ablations.csv",
         },
         "required_inputs": ["project", "exp_plan"],
+        "schemas": {
+            "results_summary": "results_summary",
+        },
     },
     "T7.5": {
         "inputs": {
@@ -143,6 +164,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "evaluation_decision": "evaluation/evaluation_decision.md",
         },
         "required_inputs": ["results_summary"],
+        "schemas": {},
     },
     "T8": {
         "inputs": {
@@ -166,6 +188,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "hypotheses",
             "results_summary",
         ],
+        "schemas": {},
     },
     "T9": {
         "inputs": {

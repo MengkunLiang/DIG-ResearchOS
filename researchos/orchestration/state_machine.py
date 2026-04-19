@@ -154,11 +154,10 @@ class StateMachine:
 
         # P0-9 修复: 设置 skill_dir（如果是 skill 节点）
         if node.skill:
-            # skill_dir 通常是 workspace_dir/skills/{skill_name}
-            # 但这里我们只设置一个标记，实际路径由 SkillRunner 决定
             extra["skill_name"] = node.skill
-            # 如果需要具体路径，可以在这里设置
-            # extra["skill_dir"] = workspace_dir / "skills" / node.skill
+            # 设置实际skill_dir路径供bash_run等工具使用
+            skill_dir = workspace_dir / "skills" / node.skill
+            extra["skill_dir"] = str(skill_dir)
 
         iteration = state.iteration_count.get(state.current_task, 0)
         if iteration:
@@ -166,16 +165,44 @@ class StateMachine:
 
         # P0-2 修复: 检测 resume 场景并设置 extra 字段
         resumed_from = None
+        resume_reason = None
+
         for history in reversed(state.history):
             if history.task != state.current_task:
                 continue
+
+            # 场景1: INTERRUPTED（用户Ctrl+C）
             if history.status == "INTERRUPTED":
                 resumed_from = history.run_id
+                resume_reason = "interrupted"
+                break
+
+            # 场景2: FAILED重试（验证失败，将重试）
+            if history.status == "FAILED":
+                # 检查是否为重试场景（非终止失败）
+                # 注意：STOP_HUMAN_REJECT表示用户拒绝，不应重试
+                if hasattr(history, 'stop_reason') and history.stop_reason == "human_reject":
+                    break
+                # 检查是否配置了失败后重试
+                if node.next_on_failure and node.next_on_failure == state.current_task:
+                    resumed_from = history.run_id
+                    resume_reason = "retry_after_failure"
+                    break
+
+            # 场景3: 迭代（通过gate返回同一任务）
+            if history.status == "DONE" and iteration > 0:
+                resumed_from = history.run_id
+                resume_reason = "iteration"
+                break
+
+            # 只检查该任务的最近一次运行
             break
+
         if resumed_from:
             # 设计文档 §13.5 要求的字段
             extra["resumed_from_run_id"] = resumed_from
             extra["resume_mode"] = True
+            extra["resume_reason"] = resume_reason
             # 保留旧字段以兼容现有代码
             extra["is_resume"] = True
             extra["resumed_from"] = resumed_from

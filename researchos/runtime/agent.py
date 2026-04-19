@@ -41,6 +41,7 @@ class AgentSpec:
     pre_hooks: list[PreHook] = field(default_factory=list)
     post_hooks: list[PostHook] = field(default_factory=list)
     prompt_template: str | None = None
+    output_schemas: dict[str, str] | None = None  # 输出名称到schema名称的映射
 
 
 @dataclass
