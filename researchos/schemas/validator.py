@@ -113,46 +113,25 @@ def validate_task_artifacts(
     except KeyError:
         return False, f"Unknown task: {task_id}"
 
-    if not task_io.outputs:
+    # task_io是dict，不是对象
+    outputs = task_io.get("outputs", {})
+    if not outputs:
         # 没有定义outputs，跳过校验
         return True, None
 
     errors = []
 
-    for output_name, output_spec in task_io.outputs.items():
-        file_path = workspace_dir / output_spec.path
+    for output_name, output_path in outputs.items():
+        # output_path是字符串，如"hello.txt"或"literature/papers_dedup.jsonl"
+        file_path = workspace_dir / output_path
 
         # 检查文件存在
         if not file_path.exists():
-            if output_spec.required:
-                errors.append(f"Missing required output: {output_name} ({output_spec.path})")
+            errors.append(f"Missing output: {output_name} ({output_path})")
             continue
 
-        # 如果定义了schema，进行校验
-        if output_spec.schema:
-            # 根据文件类型决定如何校验
-            if output_spec.path.endswith(".jsonl"):
-                # JSONL文件：逐行校验
-                ok, err = _validate_jsonl_file(file_path, output_spec.schema)
-                if not ok:
-                    errors.append(f"{output_name}: {err}")
-            elif output_spec.path.endswith(".json"):
-                # JSON文件：整体校验
-                ok, err = _validate_json_file(file_path, output_spec.schema)
-                if not ok:
-                    errors.append(f"{output_name}: {err}")
-            elif output_spec.path.endswith(".yaml") or output_spec.path.endswith(".yml"):
-                # YAML文件：整体校验
-                ok, err = _validate_yaml_file(file_path, output_spec.schema)
-                if not ok:
-                    errors.append(f"{output_name}: {err}")
-            # 其他文件类型（.md, .txt等）不做schema校验
-
-    if errors:
-        return False, "; ".join(errors)
-
-    return True, None
-            # 其他文件类型（.md, .txt等）不做schema校验
+        # 目前简化处理：只检查文件存在，不做schema校验
+        # TODO: 如果需要schema校验，需要在TASK_IO_CONTRACTS中添加schema字段
 
     if errors:
         return False, "; ".join(errors)
@@ -179,41 +158,24 @@ def validate_prerequisites(workspace_dir: Path, task_id: str) -> tuple[bool, str
     except KeyError:
         return False, f"Unknown task: {task_id}"
 
-    if not task_io.inputs:
+    # task_io是dict，不是对象
+    inputs = task_io.get("inputs", {})
+    required_inputs = task_io.get("required_inputs", [])
+
+    if not inputs:
         # 没有定义inputs，跳过校验
         return True, None
 
     errors = []
 
-    for input_name, input_spec in task_io.inputs.items():
-        file_path = workspace_dir / input_spec.path
+    for input_name, input_path in inputs.items():
+        file_path = workspace_dir / input_path
 
         # 检查文件存在
         if not file_path.exists():
-            if input_spec.required:
-                errors.append(f"Missing required input: {input_name} ({input_spec.path})")
+            if input_name in required_inputs:
+                errors.append(f"Missing required input: {input_name} ({input_path})")
             continue
-
-        # 如果定义了schema，进行校验
-        if input_spec.schema:
-            # 根据文件类型决定如何校验
-            if input_spec.path.endswith(".jsonl"):
-                ok, err = _validate_jsonl_file(file_path, input_spec.schema)
-                if not ok:
-                    errors.append(f"{input_name}: {err}")
-            elif input_spec.path.endswith(".json"):
-                ok, err = _validate_json_file(file_path, input_spec.schema)
-                if not ok:
-                    errors.append(f"{input_name}: {err}")
-            elif input_spec.path.endswith(".yaml") or input_spec.path.endswith(".yml"):
-                ok, err = _validate_yaml_file(file_path, input_spec.schema)
-                if not ok:
-                    errors.append(f"{input_name}: {err}")
-
-    if errors:
-        return False, "; ".join(errors)
-
-    return True, None
 
     if errors:
         return False, "; ".join(errors)
@@ -350,67 +312,3 @@ def register_builtin_task_checkers():
 # 启动时自动注册
 register_builtin_task_checkers()
 
-
-def validate_prerequisites(task_id: str, workspace_dir: Path) -> tuple[bool, str | None]:
-    """校验task的前置条件（inputs）是否满足。
-
-    根据task_io_contract定义的inputs，检查每个前置artifact是否存在。
-
-    Args:
-        task_id: Task ID（如"T1", "T2"）
-        workspace_dir: Workspace根目录
-
-    Returns:
-        (ok, error_message)
-    """
-    from ..orchestration.task_io_contract import get_task_io
-
-    try:
-        task_io = get_task_io(task_id)
-    except KeyError:
-        return False, f"Unknown task: {task_id}"
-
-    if not task_io.inputs:
-        # 没有定义inputs，跳过校验
-        return True, None
-
-    errors = []
-
-    for input_name, input_spec in task_io.inputs.items():
-        file_path = workspace_dir / input_spec.path
-
-        # 检查文件存在
-        if not file_path.exists():
-            if input_spec.required:
-                errors.append(f"Missing required input: {input_name} ({input_spec.path})")
-
-    if errors:
-        return False, "; ".join(errors)
-
-    return True, None
-
-
-def build_declared_outputs_from_state_machine(task_id: str, workspace_dir: Path, state_machine_config: dict) -> dict[str, Path]:
-    """从state_machine配置构建task的outputs_expected字典。
-
-    Args:
-        task_id: Task ID
-        workspace_dir: Workspace根目录
-        state_machine_config: state_machine.yaml的配置字典
-
-    Returns:
-        outputs_expected字典，格式为 {output_name: Path}
-    """
-    states = state_machine_config.get("states", {})
-    task_node = states.get(task_id)
-
-    if not task_node:
-        return {}
-
-    outputs = task_node.get("outputs", {})
-    result = {}
-
-    for name, rel_path in outputs.items():
-        result[name] = workspace_dir / rel_path
-
-    return result
