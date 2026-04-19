@@ -1,26 +1,27 @@
 default_profile: default
 
 endpoints:
-  mock:
+  relay:
     provider: openai
-    api_key_env: OPENAI_API_KEY
+    api_key_env: UIUIAPI_API_KEY
+    api_base_env: UIUIAPI_BASE_URL
 
 profiles:
   default:
     heavy:
       primary:
-        model: "gpt-4o"
-        endpoint: mock
+        model: "gpt-3.5-turbo"
+        endpoint: relay
         max_context: 128000
     medium:
       primary:
-        model: "gpt-4o-mini"
-        endpoint: mock
+        model: "gpt-3.5-turbo"
+        endpoint: relay
         max_context: 128000
     light:
       primary:
-        model: "gpt-4o-mini"
-        endpoint: mock
+        model: "gpt-3.5-turbo"
+        endpoint: relay
         max_context: 128000
 
 truncation:
@@ -28,4 +29,3 @@ truncation:
   target_ratio: 0.6
   keep_system: true
   keep_recent_turns: 10
-

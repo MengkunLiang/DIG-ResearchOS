@@ -120,10 +120,11 @@ class AgentRunner:
         nudge_count = 0
         validation_fails = 0
 
-        try:
-            for hook in self.agent.spec.pre_hooks:
-                await hook(ctx)
+        # P0-5 修复: pre_hooks 应该在 try 之前调用，失败时直接向上抛异常阻止运行
+        for hook in self.agent.spec.pre_hooks:
+            await hook(ctx)
 
+        try:
             while True:
                 # 每进入一轮 while，就代表一次“agent step”。
                 budget.tick_step()

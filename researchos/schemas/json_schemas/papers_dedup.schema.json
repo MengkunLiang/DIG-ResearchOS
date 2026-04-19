@@ -1,0 +1,67 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://researchos.dev/schemas/papers_dedup.schema.json",
+  "title": "Deduplicated Papers",
+  "description": "Schema for deduplicated paper records (T2 Scout output)",
+  "type": "object",
+  "required": ["id", "title", "year"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Paper ID (arXiv ID, DOI, or S2 corpus ID)",
+      "minLength": 1
+    },
+    "title": {
+      "type": "string",
+      "description": "Paper title",
+      "minLength": 1
+    },
+    "authors": {
+      "type": "array",
+      "description": "List of author names",
+      "items": {
+        "type": "string"
+      }
+    },
+    "year": {
+      "type": "integer",
+      "description": "Publication year",
+      "minimum": 1900,
+      "maximum": 2100
+    },
+    "venue": {
+      "type": "string",
+      "description": "Publication venue (conference/journal)"
+    },
+    "abstract": {
+      "type": "string",
+      "description": "Paper abstract"
+    },
+    "url": {
+      "type": "string",
+      "description": "Paper URL",
+      "format": "uri"
+    },
+    "pdf_url": {
+      "type": "string",
+      "description": "PDF download URL",
+      "format": "uri"
+    },
+    "citation_count": {
+      "type": "integer",
+      "description": "Number of citations",
+      "minimum": 0
+    },
+    "relevance_score": {
+      "type": "number",
+      "description": "Relevance score (0-1)",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "source": {
+      "type": "string",
+      "description": "Data source (arxiv, semantic_scholar, etc.)",
+      "enum": ["arxiv", "semantic_scholar", "pubmed", "manual"]
+    }
+  }
+}

@@ -1,37 +1,72 @@
 {
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://researchos.dev/schemas/project.schema.json",
+  "title": "Project Configuration",
+  "description": "Schema for project.yaml (T1 PI output)",
   "type": "object",
+  "required": ["project_id", "research_direction", "created_at"],
   "properties": {
     "project_id": {
       "type": "string",
+      "description": "Unique project identifier",
       "minLength": 1
     },
-    "topic": {
-      "type": "string"
+    "research_direction": {
+      "type": "string",
+      "description": "Research direction/topic",
+      "minLength": 10
     },
-    "status": {
-      "type": "string"
+    "research_question": {
+      "type": "string",
+      "description": "Specific research question"
     },
-    "notes": {
-      "type": "string"
+    "keywords": {
+      "type": "array",
+      "description": "Research keywords",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1
+    },
+    "constraints": {
+      "type": "object",
+      "description": "Project constraints",
+      "properties": {
+        "max_budget_usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "deadline": {
+          "type": "string",
+          "format": "date"
+        },
+        "compute_resources": {
+          "type": "object",
+          "properties": {
+            "allow_gpu": {
+              "type": "boolean"
+            },
+            "max_memory_gb": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
     },
     "created_at": {
-      "type": "string"
+      "type": "string",
+      "description": "Project creation timestamp",
+      "format": "date-time"
     },
-    "compute_budget": {
+    "updated_at": {
+      "type": "string",
+      "description": "Last update timestamp",
+      "format": "date-time"
+    },
+    "metadata": {
       "type": "object",
-      "properties": {
-        "max_gpu_hours": {
-          "type": "number"
-        },
-        "pilot_budget_hours": {
-          "type": "number"
-        }
-      },
-      "additionalProperties": true
+      "description": "Additional metadata"
     }
-  },
-  "required": [
-    "project_id"
-  ],
-  "additionalProperties": true
+  }
 }

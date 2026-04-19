@@ -152,10 +152,19 @@ class StateMachine:
         extra = dict(state.task_context)
         extra.update(node.extra or {})
 
+        # P0-9 修复: 设置 skill_dir（如果是 skill 节点）
+        if node.skill:
+            # skill_dir 通常是 workspace_dir/skills/{skill_name}
+            # 但这里我们只设置一个标记，实际路径由 SkillRunner 决定
+            extra["skill_name"] = node.skill
+            # 如果需要具体路径，可以在这里设置
+            # extra["skill_dir"] = workspace_dir / "skills" / node.skill
+
         iteration = state.iteration_count.get(state.current_task, 0)
         if iteration:
             extra["iteration_count"] = iteration
 
+        # P0-2 修复: 检测 resume 场景并设置 extra 字段
         resumed_from = None
         for history in reversed(state.history):
             if history.task != state.current_task:
@@ -164,6 +173,10 @@ class StateMachine:
                 resumed_from = history.run_id
             break
         if resumed_from:
+            # 设计文档 §13.5 要求的字段
+            extra["resumed_from_run_id"] = resumed_from
+            extra["resume_mode"] = True
+            # 保留旧字段以兼容现有代码
             extra["is_resume"] = True
             extra["resumed_from"] = resumed_from
 

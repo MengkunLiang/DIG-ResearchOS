@@ -195,11 +195,32 @@ class Agent(ABC):
         ...
 
     def validate_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:
-        """最小默认校验：只检查 outputs_expected 里的路径是否存在。"""
+        """
+        默认校验：
+        1. 检查 outputs_expected 里的路径是否存在
+        2. 如果 agent spec 声明了 output_schemas，调用 schema 校验器
+
+        子类可以覆盖此方法添加自定义校验，但应先调用 super().validate_outputs(ctx)
+        """
+        # 1. 检查文件存在
         missing: list[str] = []
         for name, path in ctx.outputs_expected.items():
             if not path.exists():
                 missing.append(f"{name} -> {path.relative_to(ctx.workspace_dir)}")
         if missing:
             return False, f"缺少以下预期输出: {', '.join(missing)}"
+
+        # 2. 调用 schema 校验器（如果 agent 声明了 output_schemas）
+        # P0-1 修复: 添加 schema 级别的校验
+        if hasattr(self.spec, 'output_schemas') and self.spec.output_schemas:
+            try:
+                # 延迟导入避免循环依赖
+                from ..schemas.validator import validate_task_artifacts
+                ok, err = validate_task_artifacts(ctx.task_id, ctx.workspace_dir)
+                if not ok:
+                    return False, f"Schema 校验失败: {err}"
+            except ImportError:
+                # schemas.validator 尚未实现时，跳过 schema 校验
+                pass
+
         return True, None

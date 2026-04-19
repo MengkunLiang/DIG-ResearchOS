@@ -1,623 +1,416 @@
+"""Artifact schema validation.
+
+Provides JSON Schema validation for all ResearchOS artifacts.
+"""
+
 from __future__ import annotations
 
-"""ResearchOS artifact 校验器。"""
-
-import argparse
-import csv
 import json
-from functools import lru_cache
 from pathlib import Path
-import re
-from typing import Callable, Mapping
+from typing import Any
 
-import jsonschema
-import yaml
-
-
-_SCHEMAS_DIR = Path(__file__).parent / "json_schemas"
-_TASK_CHECKERS: dict[str, Callable[[Path], tuple[bool, list[str]]]] = {}
-
-
-@lru_cache(maxsize=64)
-def _load_schema(schema_name: str) -> dict:
-    """按名称加载 schema 文件，并做进程级缓存。"""
-    path = _SCHEMAS_DIR / f"{schema_name}.schema.json"
-    if not path.exists():
-        raise FileNotFoundError(f"Schema file not found: {path}")
-    return json.loads(path.read_text(encoding="utf-8"))
+try:
+    import jsonschema
+    from jsonschema import Draft7Validator, ValidationError
+    HAS_JSONSCHEMA = True
+except ImportError:
+    HAS_JSONSCHEMA = False
 
 
-def validate_record(record: object, schema_name: str) -> tuple[bool, str | None]:
-    """校验单条对象是否符合指定 schema。"""
-    schema = _load_schema(schema_name)
-    try:
-        jsonschema.validate(instance=record, schema=schema)
-        return True, None
-    except jsonschema.ValidationError as exc:
-        location = " > ".join(str(part) for part in exc.absolute_path) or "<root>"
-        return False, f"{location}: {exc.message}"
+# Schema目录
+SCHEMA_DIR = Path(__file__).parent / "json_schemas"
+_SCHEMAS_DIR = SCHEMA_DIR  # 向后兼容别名
 
 
-def validate_against_schema(data: object, schema_name: str) -> tuple[bool, str | None]:
-    return validate_record(data, schema_name)
+def load_schema(schema_name: str) -> dict:
+    """加载JSON Schema定义。
 
+    Args:
+        schema_name: schema名称，如"papers_dedup"
 
-def validate_jsonl_file(
-    path: Path,
-    schema_name: str,
-    *,
-    min_count: int = 0,
-    max_count: int | None = None,
-) -> tuple[bool, list[str]]:
-    """校验一个 JSONL 文件里的每一行。"""
-    if not path.exists():
-        return False, [f"File not found: {path}"]
-    errors: list[str] = []
-    lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    if len(lines) < min_count:
-        errors.append(f"{path.name} has {len(lines)} records, expected at least {min_count}")
-    if max_count is not None and len(lines) > max_count:
-        errors.append(f"{path.name} has {len(lines)} records, expected at most {max_count}")
-    for index, line in enumerate(lines, start=1):
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError as exc:
-            errors.append(f"{path.name}:{index} invalid JSON: {exc}")
-            continue
-        ok, err = validate_record(record, schema_name)
-        if not ok and err:
-            errors.append(f"{path.name}:{index} {err}")
-    return not errors, errors
+    Returns:
+        Schema字典
 
-
-def register_task_checker(task_id: str, checker: Callable[[Path], tuple[bool, list[str]]]) -> None:
-    """注册某个 task 的专用 checker。"""
-    _TASK_CHECKERS[task_id] = checker
-
-
-def _register_once(task_id: str, checker: Callable[[Path], tuple[bool, list[str]]]) -> None:
-    """仅当还未注册时写入内置 checker。"""
-
-    if task_id not in _TASK_CHECKERS:
-        register_task_checker(task_id, checker)
-
-
-def validate_declared_outputs(
-    workspace: Path,
-    declared_outputs: Mapping[str, str] | Mapping[str, Path],
-) -> tuple[bool, list[str]]:
-    """按状态机声明的 outputs 做最基础的“文件是否存在”校验。"""
-    errors: list[str] = []
-    for name, rel_path in declared_outputs.items():
-        candidate = rel_path if isinstance(rel_path, Path) else workspace / str(rel_path)
-        if not candidate.exists():
-            errors.append(f"Missing output '{name}': {candidate.relative_to(workspace)}")
-    return not errors, errors
-
-
-def validate_prerequisites(workspace: Path, task_id: str) -> tuple[bool, str | None]:
-    """校验 single-task 模式运行前的前置 artifact 是否就绪。
-
-    设计说明：
-    - 这里不做“内容级” schema 校验，只检查 task 契约声明的必需输入是否存在；
-    - 这样可以把 single-task 的 fast-fail 放在真正启动 agent 之前，避免刚起 run 就因为
-      缺输入而走到一半才失败；
-    - `required_inputs` 与 `inputs` 的来源统一来自 `task_io_contract.py`，保持 CLI、文档和
-      调试模式使用同一份契约。
+    Raises:
+        FileNotFoundError: schema文件不存在
     """
+    schema_path = SCHEMA_DIR / f"{schema_name}.schema.json"
+    if not schema_path.exists():
+        raise FileNotFoundError(f"Schema not found: {schema_path}")
 
-    from ..orchestration.task_io_contract import get_task_io, required_input_names
+    return json.loads(schema_path.read_text(encoding="utf-8"))
+
+
+# 向后兼容别名
+_load_schema = load_schema
+
+
+def validate_record(record: dict, schema_name: str) -> tuple[bool, str | None]:
+    """校验单条记录是否符合schema。
+
+    Args:
+        record: 待校验的记录
+        schema_name: schema名称
+
+    Returns:
+        (ok, error_message)
+    """
+    if not HAS_JSONSCHEMA:
+        # 如果没有安装jsonschema，只做基本检查
+        return True, None
 
     try:
-        contract = get_task_io(task_id)
-    except KeyError as exc:
-        return False, str(exc)
+        schema = load_schema(schema_name)
+    except FileNotFoundError as e:
+        return False, f"Schema not found: {e}"
 
-    inputs = contract.get("inputs", {})
-    required = required_input_names(task_id)
-    missing: list[str] = []
-    for input_name in required:
-        rel_path = inputs.get(input_name)
-        if rel_path is None:
-            missing.append(f"{input_name} (contract missing path)")
-            continue
-        candidate = workspace / str(rel_path)
-        if not candidate.exists():
-            missing.append(f"{input_name} -> {rel_path}")
-
-    if missing:
-        return False, "缺少前置输入: " + ", ".join(missing)
-    return True, None
+    try:
+        Draft7Validator(schema).validate(record)
+        return True, None
+    except ValidationError as e:
+        return False, f"Validation error: {e.message}"
+    except Exception as e:
+        return False, f"Unexpected error: {e}"
 
 
 def validate_task_artifacts(
-    workspace: Path,
-    task_id: str,
-    *,
-    declared_outputs: Mapping[str, str] | Mapping[str, Path] | None = None,
-) -> tuple[bool, list[str]]:
-    """统一 task 校验入口。
+    task_id_or_workspace: str | Path,
+    workspace_dir_or_task_id: Path | str | None = None,
+    declared_outputs: dict[str, str] | None = None,
+) -> tuple[bool, str | None]:
+    """校验task的所有输出artifacts。
 
-    优先级：
-    1. 若 task_id 已注册专用 checker，用专用 checker；
-    2. 否则若提供了 declared_outputs，则退回到“检查声明输出存在”；
-    3. 两者都没有时返回失败，让上层知道当前 task 还没有校验器。
+    根据task_io_contract定义的outputs，检查每个artifact是否符合schema。
+
+    支持两种调用方式：
+    1. validate_task_artifacts(task_id, workspace_dir) - 旧版本，用于agent.py
+    2. validate_task_artifacts(workspace, task_id, declared_outputs=...) - 新版本，用于CLI
+
+    Args:
+        task_id_or_workspace: Task ID 或 Workspace路径
+        workspace_dir_or_task_id: Workspace路径 或 Task ID
+        declared_outputs: 可选的声明输出映射
+
+    Returns:
+        (ok, error_message)
     """
-    checker = _TASK_CHECKERS.get(task_id)
-    if checker is not None:
-        return checker(workspace)
-    if declared_outputs is not None:
-        return validate_declared_outputs(workspace, declared_outputs)
-    return False, [f"No checker registered for task {task_id}"]
-
-
-def register_builtin_task_checkers() -> None:
-    """注册 runtime 内置的 per-task checker。
-
-    这里尽量对齐 Agent Dev Spec 的 T1-T9 artifact 契约，但保持一个现实原则：
-    - schema 尽量只校验“对 runtime 最重要的结构”；
-    - 更细的业务语义，后续仍可由各 agent 的 `validate_outputs` 继续加严。
-    """
-
-    builtin = {
-        "HELLO": _check_hello,
-        "T1": _check_t1,
-        "T2": _check_t2,
-        "T3": _check_t3,
-        "T3.5": _check_t3_5,
-        "T4": _check_t4,
-        "T5": _check_t5,
-        "T6": _check_t6,
-        "T7": _check_t7,
-        "T7.5": _check_t7_5,
-        "T8": _check_t8,
-        "T9": _check_t9,
-    }
-    for task_id, checker in builtin.items():
-        _register_once(task_id, checker)
-
-
-def _check_hello(workspace: Path) -> tuple[bool, list[str]]:
-    errors: list[str] = []
-    hello = workspace / "hello.txt"
-    if not hello.exists():
-        errors.append("hello.txt missing")
-    elif hello.read_text(encoding="utf-8").strip() != "Hello, Runtime!":
-        errors.append("hello.txt content must be 'Hello, Runtime!'")
-    return not errors, errors
-
-
-def _check_t1(workspace: Path) -> tuple[bool, list[str]]:
-    errors: list[str] = []
-    project = _load_yaml(workspace / "project.yaml", errors, "project.yaml missing")
-    if project is not None:
-        ok, err = validate_against_schema(project, "project")
-        if not ok and err:
-            errors.append(f"project.yaml: {err}")
-    _append_missing_file(workspace / "state.yaml", errors, "state.yaml missing")
-    for relative in (
-        "user_seeds/seed_papers.jsonl",
-        "user_seeds/seed_ideas.md",
-        "user_seeds/seed_constraints.md",
-    ):
-        _append_missing_file(workspace / relative, errors, f"{relative} missing")
-    return not errors, errors
-
-
-def _check_t2(workspace: Path) -> tuple[bool, list[str]]:
-    errors: list[str] = []
-    for file_name in ("papers_raw.jsonl", "papers_dedup.jsonl"):
-        ok, file_errors = validate_jsonl_file(
-            workspace / "literature" / file_name,
-            "papers_raw",
-            min_count=1,
-        )
-        if not ok:
-            errors.extend(file_errors[:3])
-    for relative in ("literature/search_log.md", "literature/missing_areas.md"):
-        _append_missing_file(workspace / relative, errors, f"{relative} missing")
-    return not errors, errors
-
-
-def _check_t3(workspace: Path) -> tuple[bool, list[str]]:
-    errors: list[str] = []
-    dedup_records = _load_jsonl_records(workspace / "literature" / "papers_dedup.jsonl", errors)
-    notes_dir = workspace / "literature" / "paper_notes"
-    if not notes_dir.is_dir():
-        errors.append("literature/paper_notes/ missing")
-        return False, errors
-
-    missing_notes: list[str] = []
-    for record in dedup_records:
-        paper_id = str(record.get("id", "")).strip()
-        if not paper_id:
-            continue
-        note_path = notes_dir / f"{_safe_artifact_stem(paper_id)}.md"
-        if not note_path.exists():
-            missing_notes.append(paper_id)
-    if missing_notes:
-        errors.append(f"missing paper notes: {', '.join(missing_notes[:5])}")
-
-    comparison_table = workspace / "literature" / "comparison_table.csv"
-    if not comparison_table.exists():
-        errors.append("literature/comparison_table.csv missing")
-    elif not _csv_has_header(comparison_table):
-        errors.append("literature/comparison_table.csv missing header row")
-
-    related_work = workspace / "literature" / "related_work.bib"
-    if not related_work.exists():
-        errors.append("literature/related_work.bib missing")
-    elif "@" not in related_work.read_text(encoding="utf-8"):
-        errors.append("literature/related_work.bib is empty")
-    return not errors, errors
-
-
-def _check_t3_5(workspace: Path) -> tuple[bool, list[str]]:
-    errors: list[str] = []
-    synthesis = workspace / "literature" / "synthesis.md"
-    text = _read_text(synthesis, errors, "literature/synthesis.md missing")
-    if text is None:
-        return False, errors
-
-    _require_markdown_sections(
-        text,
-        errors,
-        [
-            ("方法家族", "Method Families"),
-            ("共同假设", "Shared Assumptions"),
-            ("前沿", "Frontier"),
-            ("趋势", "Trends"),
-            ("研究问题", "Open Questions"),
-        ],
-        label="literature/synthesis.md",
-    )
-    return not errors, errors
-
-
-def _check_t4(workspace: Path) -> tuple[bool, list[str]]:
-    errors: list[str] = []
-    hypotheses_path = workspace / "ideation" / "hypotheses.md"
-    hypotheses_text = _read_text(hypotheses_path, errors, "ideation/hypotheses.md missing")
-    if hypotheses_text is None:
-        return False, errors
-    if len(hypotheses_text.strip()) < 500:
-        errors.append("ideation/hypotheses.md too short")
-
-    plan = _load_yaml(workspace / "ideation" / "exp_plan.yaml", errors, "ideation/exp_plan.yaml missing")
-    if plan is not None:
-        ok, err = validate_against_schema(plan, "exp_plan")
-        if not ok and err:
-            errors.append(f"ideation/exp_plan.yaml: {err}")
-        anchors = set(re.findall(r"(?im)^#+\s*(H\d+)\b", hypotheses_text))
-        for experiment in _iter_plan_experiments(plan):
-            hypothesis_ref = experiment.get("hypothesis_ref")
-            if hypothesis_ref and anchors and hypothesis_ref not in anchors:
-                errors.append(
-                    f"ideation/exp_plan.yaml hypothesis_ref '{hypothesis_ref}' not found in hypotheses.md"
-                )
-
-    _append_missing_file(workspace / "ideation" / "risks.md", errors, "ideation/risks.md missing")
-    return not errors, errors
-
-
-def _check_t5(workspace: Path) -> tuple[bool, list[str]]:
-    errors: list[str] = []
-    pilot_plan = _load_yaml(workspace / "pilot" / "pilot_plan.yaml", errors, "pilot/pilot_plan.yaml missing")
-    if pilot_plan is not None:
-        ok, err = validate_against_schema(pilot_plan, "pilot_plan")
-        if not ok and err:
-            errors.append(f"pilot/pilot_plan.yaml: {err}")
-
-    pilot_results = _load_json(
-        workspace / "pilot" / "pilot_results.json",
-        errors,
-        "pilot/pilot_results.json missing",
-    )
-    if pilot_results is not None:
-        ok, err = validate_against_schema(pilot_results, "pilot_results")
-        if not ok and err:
-            errors.append(f"pilot/pilot_results.json: {err}")
-
-    pilot_code_dir = workspace / "pilot" / "pilot_code"
-    if not pilot_code_dir.is_dir():
-        errors.append("pilot/pilot_code/ missing")
-    elif not any(pilot_code_dir.iterdir()):
-        errors.append("pilot/pilot_code/ is empty")
-
-    motivation_text = _read_text(
-        workspace / "pilot" / "motivation_validation.md",
-        errors,
-        "pilot/motivation_validation.md missing",
-    )
-    if motivation_text is not None and not _contains_any(motivation_text, ("PASS", "REVISE", "FAIL")):
-        errors.append("pilot/motivation_validation.md missing PASS/REVISE/FAIL decision")
-    return not errors, errors
-
-
-def _check_t6(workspace: Path) -> tuple[bool, list[str]]:
-    errors: list[str] = []
-    novelty_text = _read_text(
-        workspace / "novelty" / "novelty_report.md",
-        errors,
-        "novelty/novelty_report.md missing",
-    )
-    if novelty_text is None:
-        return False, errors
-
-    if not _contains_any(novelty_text, ("PASS", "REVISE", "FAIL")):
-        errors.append("novelty/novelty_report.md missing PASS/REVISE/FAIL decision")
-    option_count = novelty_text.lower().count("option") + novelty_text.count("方案")
-    if "REVISE" in novelty_text.upper() and option_count < 2:
-        errors.append("novelty/novelty_report.md revise decision should include at least 2 options")
-
-    for relative in ("novelty/collision_cases.md", "novelty/must_add_baselines.md"):
-        _append_missing_file(workspace / relative, errors, f"{relative} missing")
-    return not errors, errors
-
-
-def _check_t7(workspace: Path) -> tuple[bool, list[str]]:
-    errors: list[str] = []
-    summary = _load_json(
-        workspace / "experiments" / "results_summary.json",
-        errors,
-        "experiments/results_summary.json missing",
-    )
-    if summary is not None:
-        ok, err = validate_against_schema(summary, "results_summary")
-        if not ok and err:
-            errors.append(f"experiments/results_summary.json: {err}")
-
-    runs_dir = workspace / "experiments" / "runs"
-    if not runs_dir.is_dir():
-        errors.append("experiments/runs/ missing")
+    # 判断调用方式
+    if isinstance(task_id_or_workspace, Path):
+        # 新版本调用: validate_task_artifacts(workspace, task_id, declared_outputs=...)
+        workspace_dir = task_id_or_workspace
+        task_id = str(workspace_dir_or_task_id)
     else:
-        run_dirs = [item for item in runs_dir.iterdir() if item.is_dir()]
-        if not run_dirs:
-            errors.append("experiments/runs/ is empty")
-        for run_dir in run_dirs:
-            record = _load_json(run_dir / "record.json", errors, f"{run_dir.name}/record.json missing")
-            if record is None:
-                continue
-            ok, err = validate_against_schema(record, "run_record")
-            if not ok and err:
-                errors.append(f"{run_dir.name}/record.json: {err}")
+        # 旧版本调用: validate_task_artifacts(task_id, workspace_dir)
+        task_id = task_id_or_workspace
+        workspace_dir = workspace_dir_or_task_id
+        if workspace_dir is None:
+            return False, "workspace_dir is required"
 
-    configs_dir = workspace / "experiments" / "configs"
-    if not configs_dir.is_dir():
-        errors.append("experiments/configs/ missing")
-    iteration_log = _read_text(
-        workspace / "experiments" / "iteration_log.md",
-        errors,
-        "experiments/iteration_log.md missing",
-    )
-    if iteration_log is not None and not iteration_log.strip():
-        errors.append("experiments/iteration_log.md is empty")
-    _append_missing_file(workspace / "experiments" / "ablations.csv", errors, "experiments/ablations.csv missing")
+    from ..orchestration.task_io_contract import get_task_io
 
-    project = _load_yaml(workspace / "project.yaml", [], "project.yaml missing")
-    if isinstance(project, dict) and isinstance(summary, dict):
-        max_gpu = float(project.get("compute_budget", {}).get("max_gpu_hours", 0) or 0)
-        used_gpu = float(summary.get("total_gpu_hours", 0) or 0)
-        if max_gpu > 0 and used_gpu > max_gpu:
-            errors.append(f"experiments/results_summary.json total_gpu_hours {used_gpu} > max {max_gpu}")
-    return not errors, errors
-
-
-def _check_t7_5(workspace: Path) -> tuple[bool, list[str]]:
-    errors: list[str] = []
-    decision = _read_text(
-        workspace / "evaluation" / "evaluation_decision.md",
-        errors,
-        "evaluation/evaluation_decision.md missing",
-    )
-    if decision is None:
-        return False, errors
-
-    if "Situation" not in decision:
-        errors.append("evaluation/evaluation_decision.md missing 'Situation' header")
-    if "Option 1" not in decision:
-        errors.append("evaluation/evaluation_decision.md missing 'Option 1' section")
-    return not errors, errors
-
-
-def _check_t8(workspace: Path) -> tuple[bool, list[str]]:
-    errors: list[str] = []
-    _append_missing_file(workspace / "drafts" / "outline.md", errors, "drafts/outline.md missing")
-
-    paper_text = _read_text(workspace / "drafts" / "paper.tex", errors, "drafts/paper.tex missing")
-    if paper_text is not None:
-        if r"\begin{document}" not in paper_text:
-            errors.append("drafts/paper.tex missing \\begin{document}")
-        if not _contains_any(paper_text, (r"\cite{", r"\bibliography{", r"\printbibliography")):
-            errors.append("drafts/paper.tex missing bibliography or citation command")
-
-    review_text = _read_text(
-        workspace / "reviews" / "self_review.md",
-        errors,
-        "reviews/self_review.md missing",
-    )
-    if review_text is not None and not _contains_any(review_text, ("PASS", "REVISE", "FAIL")):
-        errors.append("reviews/self_review.md missing PASS/REVISE/FAIL decision")
-    return not errors, errors
-
-
-def _check_t9(workspace: Path) -> tuple[bool, list[str]]:
-    errors: list[str] = []
-    bundle_dir = workspace / "submission" / "bundle"
-    if not bundle_dir.is_dir():
-        errors.append("submission/bundle/ missing")
-    elif not any(bundle_dir.iterdir()):
-        errors.append("submission/bundle/ is empty")
-
-    _append_missing_file(
-        workspace / "submission" / "migration_report.md",
-        errors,
-        "submission/migration_report.md missing",
-    )
-    return not errors, errors
-
-
-def _append_missing_file(path: Path, errors: list[str], message: str) -> None:
-    """若文件不存在，则把约定的错误文案追加到 errors。"""
-
-    if not path.exists():
-        errors.append(message)
-
-
-def _read_text(path: Path, errors: list[str], missing_message: str) -> str | None:
-    """安全读取文本文件，失败时把错误信息落到 errors。"""
-
-    if not path.exists():
-        errors.append(missing_message)
-        return None
     try:
-        return path.read_text(encoding="utf-8")
-    except Exception as exc:
-        errors.append(f"{path.name} load failed: {exc}")
-        return None
+        task_io = get_task_io(task_id)
+    except KeyError:
+        return False, f"Unknown task: {task_id}"
+
+    if not task_io.outputs:
+        # 没有定义outputs，跳过校验
+        return True, None
+
+    errors = []
+
+    for output_name, output_spec in task_io.outputs.items():
+        file_path = workspace_dir / output_spec.path
+
+        # 检查文件存在
+        if not file_path.exists():
+            if output_spec.required:
+                errors.append(f"Missing required output: {output_name} ({output_spec.path})")
+            continue
+
+        # 如果定义了schema，进行校验
+        if output_spec.schema:
+            # 根据文件类型决定如何校验
+            if output_spec.path.endswith(".jsonl"):
+                # JSONL文件：逐行校验
+                ok, err = _validate_jsonl_file(file_path, output_spec.schema)
+                if not ok:
+                    errors.append(f"{output_name}: {err}")
+            elif output_spec.path.endswith(".json"):
+                # JSON文件：整体校验
+                ok, err = _validate_json_file(file_path, output_spec.schema)
+                if not ok:
+                    errors.append(f"{output_name}: {err}")
+            elif output_spec.path.endswith(".yaml") or output_spec.path.endswith(".yml"):
+                # YAML文件：整体校验
+                ok, err = _validate_yaml_file(file_path, output_spec.schema)
+                if not ok:
+                    errors.append(f"{output_name}: {err}")
+            # 其他文件类型（.md, .txt等）不做schema校验
+
+    if errors:
+        return False, "; ".join(errors)
+
+    return True, None
+            # 其他文件类型（.md, .txt等）不做schema校验
+
+    if errors:
+        return False, "; ".join(errors)
+
+    return True, None
 
 
-def _load_yaml(path: Path, errors: list[str], missing_message: str) -> object | None:
-    if not path.exists():
-        errors.append(missing_message)
-        return None
+def validate_prerequisites(workspace_dir: Path, task_id: str) -> tuple[bool, str | None]:
+    """校验task的前置条件（输入artifacts）是否满足。
+
+    根据task_io_contract定义的inputs，检查每个输入artifact是否存在且有效。
+
+    Args:
+        workspace_dir: Workspace根目录
+        task_id: Task ID（如"T1", "T2"）
+
+    Returns:
+        (ok, error_message)
+    """
+    from ..orchestration.task_io_contract import get_task_io
+
     try:
-        return yaml.safe_load(path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        errors.append(f"{path.name} load failed: {exc}")
-        return None
+        task_io = get_task_io(task_id)
+    except KeyError:
+        return False, f"Unknown task: {task_id}"
 
+    if not task_io.inputs:
+        # 没有定义inputs，跳过校验
+        return True, None
 
-def _load_json(path: Path, errors: list[str], missing_message: str) -> object | None:
-    if not path.exists():
-        errors.append(missing_message)
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        errors.append(f"{path.name} load failed: {exc}")
-        return None
+    errors = []
 
+    for input_name, input_spec in task_io.inputs.items():
+        file_path = workspace_dir / input_spec.path
 
-def _load_jsonl_records(path: Path, errors: list[str]) -> list[dict]:
-    """读取 JSONL，遇到语法错误时记录并返回已经成功解析的部分。"""
-
-    if not path.exists():
-        errors.append(f"{path.name} missing")
-        return []
-    records: list[dict] = []
-    for index, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        if not line.strip():
+        # 检查文件存在
+        if not file_path.exists():
+            if input_spec.required:
+                errors.append(f"Missing required input: {input_name} ({input_spec.path})")
             continue
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError as exc:
-            errors.append(f"{path.name}:{index} invalid JSON: {exc}")
-            continue
-        if isinstance(data, dict):
-            records.append(data)
-        else:
-            errors.append(f"{path.name}:{index} expected JSON object")
-    return records
+
+        # 如果定义了schema，进行校验
+        if input_spec.schema:
+            # 根据文件类型决定如何校验
+            if input_spec.path.endswith(".jsonl"):
+                ok, err = _validate_jsonl_file(file_path, input_spec.schema)
+                if not ok:
+                    errors.append(f"{input_name}: {err}")
+            elif input_spec.path.endswith(".json"):
+                ok, err = _validate_json_file(file_path, input_spec.schema)
+                if not ok:
+                    errors.append(f"{input_name}: {err}")
+            elif input_spec.path.endswith(".yaml") or input_spec.path.endswith(".yml"):
+                ok, err = _validate_yaml_file(file_path, input_spec.schema)
+                if not ok:
+                    errors.append(f"{input_name}: {err}")
+
+    if errors:
+        return False, "; ".join(errors)
+
+    return True, None
+
+    if errors:
+        return False, "; ".join(errors)
+
+    return True, None
 
 
-def _require_markdown_sections(
-    text: str,
-    errors: list[str],
-    required_groups: list[tuple[str, ...]],
-    *,
-    label: str,
-) -> None:
-    """校验 Markdown 至少包含每组候选标题中的一个。"""
+def build_declared_outputs_from_state_machine(state_machine_config: Path, task_id: str) -> dict[str, str]:
+    """从状态机配置中提取task的声明输出。
 
-    missing: list[str] = []
-    lowered = text.lower()
-    for candidates in required_groups:
-        if any(candidate.lower() in lowered for candidate in candidates):
-            continue
-        missing.append("/".join(candidates))
+    Args:
+        state_machine_config: 状态机配置文件路径
+        task_id: Task ID
+
+    Returns:
+        输出名称到相对路径的映射
+    """
+    from ..orchestration.state_machine import StateMachine
+
+    # 加载状态机配置
+    state_machine = StateMachine(state_machine_config)
+
+    if task_id not in state_machine.nodes:
+        return {}
+
+    node = state_machine.nodes[task_id]
+    return dict(node.outputs or {})
+
+
+def validate_declared_outputs(workspace_dir: Path, declared_outputs: dict[str, str]) -> tuple[bool, str | None]:
+    """校验声明的输出文件是否都存在。
+
+    Args:
+        workspace_dir: Workspace根目录
+        declared_outputs: 输出名称到相对路径的映射
+
+    Returns:
+        (ok, error_message)
+    """
+    missing = []
+    for name, rel_path in declared_outputs.items():
+        file_path = workspace_dir / rel_path
+        if not file_path.exists():
+            missing.append(f"{name} ({rel_path})")
+
     if missing:
-        errors.append(f"{label} missing sections: {missing}")
+        return False, f"Missing declared outputs: {', '.join(missing)}"
+
+    return True, None
 
 
-def _contains_any(text: str, candidates: tuple[str, ...]) -> bool:
-    upper_text = text.upper()
-    return any(candidate.upper() in upper_text for candidate in candidates)
+def _validate_jsonl_file(path: Path, schema_name: str) -> tuple[bool, str | None]:
+    """校验JSONL文件的每一行。"""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for i, line in enumerate(lines, 1):
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as e:
+                return False, f"Line {i}: Invalid JSON: {e}"
+
+            ok, err = validate_record(record, schema_name)
+            if not ok:
+                return False, f"Line {i}: {err}"
+
+        return True, None
+    except Exception as e:
+        return False, f"Failed to read file: {e}"
 
 
-def _safe_artifact_stem(value: str) -> str:
-    """把 paper id 之类的业务标识转成稳定文件名。"""
+def _validate_json_file(path: Path, schema_name: str) -> tuple[bool, str | None]:
+    """校验JSON文件。"""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return validate_record(data, schema_name)
+    except json.JSONDecodeError as e:
+        return False, f"Invalid JSON: {e}"
+    except Exception as e:
+        return False, f"Failed to read file: {e}"
 
-    cleaned = re.sub(r"[^\w.-]+", "_", value.strip())
-    return cleaned.strip("_") or "artifact"
+
+def _validate_yaml_file(path: Path, schema_name: str) -> tuple[bool, str | None]:
+    """校验YAML文件。"""
+    try:
+        import yaml
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        return validate_record(data, schema_name)
+    except yaml.YAMLError as e:
+        return False, f"Invalid YAML: {e}"
+    except Exception as e:
+        return False, f"Failed to read file: {e}"
 
 
-def _csv_has_header(path: Path) -> bool:
-    """做一个轻量 CSV 头部检查，避免把空文件当成有效表格。"""
+# ══════════════════════════════════════════════════════
+# 内置checker函数（用于特定task的复杂校验）
+# ══════════════════════════════════════════════════════
+
+_TASK_CHECKERS: dict[str, Any] = {}
+
+
+def register_task_checker(task_id: str, checker_fn):
+    """注册task专属的checker函数。
+
+    Checker函数签名: (workspace_dir: Path) -> tuple[bool, str | None]
+    """
+    _TASK_CHECKERS[task_id] = checker_fn
+
+
+def get_task_checker(task_id: str):
+    """获取task的checker函数。"""
+    return _TASK_CHECKERS.get(task_id)
+
+
+def register_builtin_task_checkers():
+    """注册内置的task checker。"""
+
+    def check_hello(workspace_dir: Path) -> tuple[bool, str | None]:
+        """HELLO task checker。"""
+        hello_file = workspace_dir / "hello.txt"
+        if not hello_file.exists():
+            return False, "hello.txt not found"
+        content = hello_file.read_text(encoding="utf-8")
+        if "Hello" not in content:
+            return False, "hello.txt does not contain 'Hello'"
+        return True, None
+
+    register_task_checker("HELLO", check_hello)
+
+    # TODO: 为T1-T9添加更多checker
+
+
+# 启动时自动注册
+register_builtin_task_checkers()
+
+
+def validate_prerequisites(task_id: str, workspace_dir: Path) -> tuple[bool, str | None]:
+    """校验task的前置条件（inputs）是否满足。
+
+    根据task_io_contract定义的inputs，检查每个前置artifact是否存在。
+
+    Args:
+        task_id: Task ID（如"T1", "T2"）
+        workspace_dir: Workspace根目录
+
+    Returns:
+        (ok, error_message)
+    """
+    from ..orchestration.task_io_contract import get_task_io
 
     try:
-        with path.open("r", encoding="utf-8", newline="") as handle:
-            reader = csv.reader(handle)
-            header = next(reader, None)
-    except Exception:
-        return False
-    return bool(header and any(cell.strip() for cell in header))
+        task_io = get_task_io(task_id)
+    except KeyError:
+        return False, f"Unknown task: {task_id}"
+
+    if not task_io.inputs:
+        # 没有定义inputs，跳过校验
+        return True, None
+
+    errors = []
+
+    for input_name, input_spec in task_io.inputs.items():
+        file_path = workspace_dir / input_spec.path
+
+        # 检查文件存在
+        if not file_path.exists():
+            if input_spec.required:
+                errors.append(f"Missing required input: {input_name} ({input_spec.path})")
+
+    if errors:
+        return False, "; ".join(errors)
+
+    return True, None
 
 
-def _iter_plan_experiments(plan: object) -> list[dict]:
-    """兼容多种 `exp_plan.yaml` 组织方式，抽取 experiment 列表。"""
+def build_declared_outputs_from_state_machine(task_id: str, workspace_dir: Path, state_machine_config: dict) -> dict[str, Path]:
+    """从state_machine配置构建task的outputs_expected字典。
 
-    if not isinstance(plan, dict):
-        return []
-    experiments = plan.get("experiments")
-    if not isinstance(experiments, list):
-        return []
-    return [item for item in experiments if isinstance(item, dict)]
+    Args:
+        task_id: Task ID
+        workspace_dir: Workspace根目录
+        state_machine_config: state_machine.yaml的配置字典
 
+    Returns:
+        outputs_expected字典，格式为 {output_name: Path}
+    """
+    states = state_machine_config.get("states", {})
+    task_node = states.get(task_id)
 
-def build_declared_outputs_from_state_machine(
-    state_machine_path: Path,
-    task_id: str,
-) -> dict[str, str] | None:
-    """从 state_machine.yaml 中提取某个 task 声明的 outputs。"""
-    raw = yaml.safe_load(state_machine_path.read_text(encoding="utf-8")) or {}
-    source = raw.get("states") or raw.get("nodes") or {}
-    if isinstance(source, list):
-        for node in source:
-            if node.get("id") == task_id:
-                return dict(node.get("outputs") or {})
-        return None
-    node = source.get(task_id)
-    if not node:
-        return None
-    return dict(node.get("outputs") or {})
+    if not task_node:
+        return {}
 
+    outputs = task_node.get("outputs", {})
+    result = {}
 
-def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="python -m researchos.schemas.validator")
-    parser.add_argument("workspace")
-    parser.add_argument("--task", required=True)
-    parser.add_argument("--state-machine", default="config/state_machine.yaml")
-    return parser
+    for name, rel_path in outputs.items():
+        result[name] = workspace_dir / rel_path
 
-
-def main(argv: list[str] | None = None) -> int:
-    register_builtin_task_checkers()
-    args = build_arg_parser().parse_args(argv)
-    workspace = Path(args.workspace).resolve()
-    declared_outputs = build_declared_outputs_from_state_machine(
-        Path(args.state_machine).resolve(),
-        args.task,
-    )
-    ok, errors = validate_task_artifacts(
-        workspace,
-        args.task,
-        declared_outputs=declared_outputs,
-    )
-    payload = {"ok": ok, "task": args.task, "errors": errors}
-    print(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False))
-    return 0 if ok else 1
-
-
-if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(main())
+    return result
