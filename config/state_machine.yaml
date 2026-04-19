@@ -83,6 +83,18 @@ states:
       hypotheses: ideation/hypotheses.md
       exp_plan: ideation/exp_plan.yaml
       risks: ideation/risks.md
+    next_on_success: T6
+    next_on_failure: failed
+
+  T6:
+    agent: experimenter
+    inputs:
+      project: project.yaml
+      exp_plan: ideation/exp_plan.yaml
+      hypotheses: ideation/hypotheses.md
+    outputs:
+      results_summary: experiments/results_summary.json
+      iteration_log: experiments/iteration_log.md
     next_on_success: done
     next_on_failure: failed
 

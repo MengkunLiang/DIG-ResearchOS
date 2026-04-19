@@ -7,6 +7,7 @@ from .pi import PIAgent
 from .scout import ScoutAgent
 from .reader import ReaderAgent
 from .ideation import IdeationAgent
+from .experimenter import ExperimenterAgent
 
 
 # 说明：
@@ -19,6 +20,7 @@ AGENT_REGISTRY = {
     "scout": ScoutAgent,
     "reader": ReaderAgent,  # T3/T3.5
     "ideation": IdeationAgent,  # T4
+    "experimenter": ExperimenterAgent,  # T6
 }
 
 # task -> agent 的映射目前只覆盖当前仓库真实存在的调试 task。
@@ -30,6 +32,7 @@ TASK_TO_AGENT_MAP = {
     "T3": ReaderAgent,  # 深度阅读
     "T3.5": ReaderAgent,  # 文献综合
     "T4": IdeationAgent,  # 假设生成
+    "T6": ExperimenterAgent,  # 实验执行
 }
 
 
