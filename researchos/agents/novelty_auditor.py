@@ -79,6 +79,7 @@ class NoveltyAuditorAgent(Agent):
             comparison_table_preview=comparison_table[:1000],
             hypothesis_count=len(anchors),
             hypothesis_anchors=anchors,
+            temperature=self.spec.temperature,
         )
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
