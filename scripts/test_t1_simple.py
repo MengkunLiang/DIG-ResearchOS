@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""简化的T1测试脚本"""
+
+import asyncio
+import os
+import sys
+from pathlib import Path
+
+# 添加项目根目录到路径
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from researchos.cli_runners import SingleTaskRunner
+from researchos.runtime.llm_client import LLMClient
+from researchos.tools.registry import ToolRegistry
+from researchos.tools.builtin import register_builtin_tools
+from researchos.tools.human_gate import HumanInterface
+
+
+class AutoHumanInterface(HumanInterface):
+    """自动回答的HumanInterface"""
+
+    def __init__(self, topic: str):
+        self.topic = topic
+        self.call_count = 0
+
+    async def ask_approval(self, *, tool_name: str, arguments: dict) -> bool:
+        print(f"[AUTO-APPROVE] Tool: {tool_name}")
+        return True
+
+    async def ask_clarification(self, *, question: str, suggestions: list[str] | None = None) -> str:
+        self.call_count += 1
+        print(f"\n[AUTO-ANSWER #{self.call_count}] Question: {question[:100]}...")
+        if suggestions:
+            print(f"[AUTO-ANSWER] Suggestions: {suggestions}")
+            # 第一次问题返回topic，后续返回第一个建议
+            if self.call_count == 1:
+                return self.topic
+            return suggestions[0] if suggestions else "yes"
+        return self.topic
+
+    async def present_gate(self, *, gate_id: str, presentation: dict, options: list[dict]) -> dict:
+        print(f"[AUTO-GATE] Gate: {gate_id}")
+        if options:
+            print(f"[AUTO-GATE] Selecting first option")
+            return options[0]
+        return {}
+
+
+async def main():
+    # 设置环境变量
+    os.environ["UIUIAPI_API_KEY"] = "sk-o75I3UPDDeWXWmYkrLfuaUcho9qijDDO4SF2yhJYtDbX4Hef"
+    os.environ["UIUIAPI_BASE_URL"] = "https://sg.uiuiapi.com/v1"
+
+    # 配置
+    workspace_dir = Path("/tmp/researchos_real_test_20260419_163709")
+    user_topic = "efficient attention mechanisms for transformers"
+
+    print(f"[TEST] Workspace: {workspace_dir}")
+    print(f"[TEST] Topic: {user_topic}")
+    print(f"[TEST] Starting T1 agent...\n")
+
+    # 创建组件
+    registry = ToolRegistry()
+    register_builtin_tools(registry)
+
+    llm_client = LLMClient(Path(__file__).parent.parent / "config" / "model_routing.yaml")
+    human = AutoHumanInterface(user_topic)
+
+    # 创建runner
+    runner = SingleTaskRunner(
+        task_id="T1",
+        workspace=workspace_dir,
+        llm_client=llm_client,
+        tool_registry=registry,
+        human_interface=human,
+        runtime_settings=None,  # 使用默认设置
+    )
+
+    # 运行
+    try:
+        result = await runner.run()
+        print(f"\n[TEST] ✅ Agent finished with status: {result.status}")
+        print(f"[TEST] Steps: {result.steps_taken}")
+
+        # 检查输出文件
+        project_yaml = workspace_dir / "project.yaml"
+        if project_yaml.exists():
+            print(f"\n[TEST] ✅ project.yaml created:")
+            content = project_yaml.read_text()
+            print(content[:800])
+        else:
+            print(f"\n[TEST] ❌ project.yaml NOT created")
+
+    except Exception as e:
+        print(f"\n[TEST] ❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

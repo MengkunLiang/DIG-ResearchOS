@@ -19,6 +19,7 @@ from .grep_search import GrepSearchTool
 from .latex_compile import LatexCompileTool
 from .multi_source_search import MultiSourceSearchTool
 from .paper_processing import ExtractSectionsTool
+from .paper_fetch import AppendFileTool, FetchPaperPdfTool, ExtractPdfTextTool
 from .registry import ToolRegistry
 from .search_papers import FetchPaperMetadataTool, SearchPapersTool
 from .web_fetch import WebFetchTool
@@ -28,6 +29,7 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
     """注册 runtime 默认内置工具。"""
     registry.register("read_file", lambda ctx: ReadFileTool(ctx.policy))
     registry.register("write_file", lambda ctx: WriteFileTool(ctx.policy))
+    registry.register("append_file", lambda ctx: AppendFileTool(ctx.policy))
     registry.register("list_files", lambda ctx: ListFilesTool(ctx.policy))
     registry.register("finish_task", lambda ctx: FinishTaskTool())
     registry.register("ask_human", lambda ctx: AskHumanTool(ctx.human))
@@ -39,6 +41,8 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
     # Reader / Reviewer 等后续 agent 需要按 section 粒度读取 PDF；
     # 这里直接放进 builtin，避免到 agent 落地时还要回头补 runtime 注册链。
     registry.register("extract_paper_sections", lambda ctx: ExtractSectionsTool(ctx.policy))
+    registry.register("fetch_paper_pdf", lambda ctx: FetchPaperPdfTool(ctx.policy))
+    registry.register("extract_pdf_text", lambda ctx: ExtractPdfTextTool(ctx.policy))
     registry.register(
         "multi_source_search",
         lambda _ctx: MultiSourceSearchTool(os.environ.get("RESEARCHER_EMAIL")),

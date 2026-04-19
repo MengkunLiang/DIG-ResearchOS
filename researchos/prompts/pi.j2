@@ -64,8 +64,14 @@ constraints:
   compute_resources:
     allow_gpu: true  # 根据用户回答
     max_memory_gb: 16  # 根据用户回答或默认值
-created_at: "2024-04-19T10:00:00Z"  # 使用当前时间ISO格式
+created_at: "2024-04-19T10:00:00Z"  # 必须用引号包裹，ISO 8601格式（YYYY-MM-DDTHH:MM:SSZ）
 ```
+
+**重要**：created_at字段必须：
+1. 用双引号包裹（避免YAML解析器将其转换为date对象）
+2. 使用完整的ISO 8601格式：YYYY-MM-DDTHH:MM:SSZ
+3. 示例：`created_at: "2024-04-19T10:00:00Z"`（正确）
+4. 错误示例：`created_at: 2024-04-19`（会被解析为date对象，导致验证失败）
 
 ## seed_papers.jsonl格式
 
