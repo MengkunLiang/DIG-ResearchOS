@@ -1,0 +1,11 @@
+servers:
+  - name: arxiv
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-arxiv"]
+
+  # Semantic Scholar MCP暂时禁用，因为需要安装semantic_scholar_mcp包
+  # - name: semantic_scholar
+  #   command: "python"
+  #   args: ["-m", "semantic_scholar_mcp"]
+  #   env:
+  #     S2_API_KEY: "${S2_API_KEY}"

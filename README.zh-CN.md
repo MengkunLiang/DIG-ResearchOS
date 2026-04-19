@@ -491,6 +491,302 @@ python scripts/debug_hello_agent.py --mock --workspace ./workspace/demo_hello
 - skill runtime
 - Hello mock 集成链路
 
+## 从0开始调试T1/T2 Agent
+
+本节提供完整的T1（项目初始化）和T2（文献检索）agent调试指南，帮助用户从零开始验证runtime和agents功能。
+
+### 前置准备
+
+确保已完成环境安装：
+
+```bash
+cd ResearchOS
+conda activate researchos
+pip install -e '.[dev]'
+```
+
+验证安装：
+
+```bash
+python -c "from researchos.agents.pi import PIAgent; from researchos.agents.scout import ScoutAgent; print('Agents imported successfully')"
+```
+
+### T1 PIAgent 调试（Mock模式）
+
+T1 PIAgent负责项目初始化，通过三轮对话引导用户明确研究方向。
+
+#### 步骤1：运行mock调试脚本
+
+```bash
+python scripts/debug_t1_agent.py --mock --workspace ./workspace/debug_t1
+```
+
+#### 步骤2：检查输出
+
+成功运行后应该看到：
+
+```
+============================================================
+T1 PIAgent 调试结果:
+============================================================
+成功: True
+停止原因: finished
+步数: 6
+Token输入: 650
+Token输出: 240
+成本: $0.0000
+
+产出文件:
+  project: /path/to/workspace/debug_t1/project.yaml ✓
+  seed_papers: /path/to/workspace/debug_t1/user_seeds/seed_papers.jsonl ✓
+  seed_ideas: /path/to/workspace/debug_t1/user_seeds/seed_ideas.md ✓
+  seed_constraints: /path/to/workspace/debug_t1/user_seeds/seed_constraints.md ✓
+
+Trace文件: /path/to/workspace/debug_t1/_runtime/traces/t1_debug_run.jsonl
+============================================================
+```
+
+#### 步骤3：验证产出文件
+
+检查project.yaml是否符合schema：
+
+```bash
+cat workspace/debug_t1/project.yaml
+```
+
+应该包含必需字段：`project_id`、`research_direction`、`created_at`、`keywords`。
+
+验证schema：
+
+```bash
+python -c "
+from researchos.schemas.validator import validate_record, load_schema
+import yaml
+data = yaml.safe_load(open('workspace/debug_t1/project.yaml'))
+ok, err = validate_record(data, 'project')
+print(f'Schema validation: {ok}')
+if err:
+    print(f'Error: {err}')
+"
+```
+
+#### 步骤4：查看trace日志
+
+```bash
+researchos trace t1_debug_run --workspace ./workspace/debug_t1
+```
+
+或查看原始JSONL：
+
+```bash
+researchos trace t1_debug_run --workspace ./workspace/debug_t1 --raw
+```
+
+### T2 ScoutAgent 调试（Mock模式）
+
+T2 ScoutAgent负责文献检索和去重，产出论文池。
+
+#### 步骤1：运行mock调试脚本
+
+```bash
+python scripts/debug_t2_agent.py --mock --workspace ./workspace/debug_t2
+```
+
+注意：脚本会自动创建前置输入文件（project.yaml）。
+
+#### 步骤2：检查输出
+
+成功运行后应该看到：
+
+```
+============================================================
+T2 ScoutAgent 调试结果:
+============================================================
+成功: True
+停止原因: finished
+步数: 6
+Token输入: 1100
+Token输出: 410
+成本: $0.0000
+
+产出文件:
+  papers_raw: /path/to/workspace/debug_t2/literature/papers_raw.jsonl ✓
+  papers_dedup: /path/to/workspace/debug_t2/literature/papers_dedup.jsonl ✓
+  search_log: /path/to/workspace/debug_t2/literature/search_log.md ✓
+  missing_areas: /path/to/workspace/debug_t2/literature/missing_areas.md ✓
+
+Trace文件: /path/to/workspace/debug_t2/_runtime/traces/t2_debug_run.jsonl
+============================================================
+```
+
+#### 步骤3：验证产出文件
+
+检查论文数量：
+
+```bash
+wc -l workspace/debug_t2/literature/papers_dedup.jsonl
+```
+
+应该在15-120篇之间（mock模式产出20篇）。
+
+查看论文格式：
+
+```bash
+head -2 workspace/debug_t2/literature/papers_dedup.jsonl | python -m json.tool
+```
+
+验证schema：
+
+```bash
+python -c "
+from researchos.schemas.validator import validate_task_artifacts
+ok, err = validate_task_artifacts('workspace/debug_t2', 'T2')
+print(f'Task artifacts validation: {ok}')
+if err:
+    print(f'Error: {err}')
+"
+```
+
+#### 步骤4：查看检索日志
+
+```bash
+cat workspace/debug_t2/literature/search_log.md
+cat workspace/debug_t2/literature/missing_areas.md
+```
+
+### 使用真实LLM调试
+
+如果要使用真实LLM而非mock，需要：
+
+#### 步骤1：配置环境变量
+
+复制`.env.example`为`.env`，填入API密钥：
+
+```bash
+cp .env.example .env
+# 编辑.env，添加：
+# ANTHROPIC_API_KEY=your_key_here
+# 或其他provider的密钥
+```
+
+#### 步骤2：安装LLM依赖
+
+```bash
+pip install -e '.[llm]'
+```
+
+#### 步骤3：使用CLI运行（不使用mock脚本）
+
+T1真实运行：
+
+```bash
+researchos run-task T1 \
+  --workspace ./workspace/real_t1 \
+  --topic "discrete diffusion language models"
+```
+
+T2真实运行（需要先有T1产出）：
+
+```bash
+# 先运行T1
+researchos run-task T1 --workspace ./workspace/real_t2 --topic "your research topic"
+
+# 再运行T2
+researchos run-task T2 --workspace ./workspace/real_t2
+```
+
+或使用`--from`复制前置输入：
+
+```bash
+researchos run-task T2 \
+  --workspace ./workspace/real_t2 \
+  --from ./workspace/real_t1
+```
+
+### 常见调试问题
+
+#### 问题1：Schema验证失败
+
+**症状**：`project.yaml不符合schema: Validation error: 'research_direction' is a required property`
+
+**原因**：project.yaml缺少必需字段或字段名错误。
+
+**解决**：检查project.yaml是否包含：
+- `project_id`（字符串）
+- `research_direction`（字符串，至少10字符）
+- `created_at`（ISO 8601格式时间戳）
+
+#### 问题2：Mock LLM响应不足
+
+**症状**：`错误: LLM failed: No mock responses left`
+
+**原因**：Agent需要的轮次超过mock LLM预设的响应数量。
+
+**解决**：在debug脚本的`build_mock_llm_for_*`函数中添加更多`FakeRawCompletion`响应。
+
+#### 问题3：工具未注册
+
+**症状**：`ValueError: Tool 'xxx' not registered`
+
+**原因**：Agent spec中声明的工具未在registry中注册。
+
+**解决**：
+- 检查`researchos/tools/builtin.py`中是否注册了该工具
+- 或在debug脚本中修改AgentSpec，移除未注册的工具
+
+#### 问题4：前置输入缺失
+
+**症状**：T2运行时提示`Missing required input: project`
+
+**原因**：T2需要T1的输出作为输入。
+
+**解决**：
+- 先运行T1产出project.yaml
+- 或使用`--from`参数从其他workspace复制
+- 或在debug脚本中手动创建前置文件（如debug_t2_agent.py所示）
+
+### 调试技巧
+
+1. **查看trace了解执行流程**：
+   ```bash
+   researchos trace <run_id> --workspace <workspace>
+   ```
+
+2. **使用--raw查看原始事件**：
+   ```bash
+   researchos trace <run_id> --workspace <workspace> --raw
+   ```
+
+3. **验证单个artifact**：
+   ```bash
+   researchos validate --workspace <workspace> --task <task_id>
+   ```
+
+4. **检查配置是否正确**：
+   ```bash
+   researchos validate-config
+   ```
+
+5. **查看workspace状态**：
+   ```bash
+   researchos status --workspace <workspace>
+   ```
+
+6. **逐步调试**：
+   - 先用mock模式验证agent逻辑
+   - 再用真实LLM验证完整流程
+   - 最后集成到完整pipeline
+
+### 下一步
+
+完成T1/T2调试后，可以：
+
+1. 修改mock响应，测试不同的用户输入场景
+2. 尝试真实LLM运行，验证实际效果
+3. 查看`researchos/agents/`目录，了解agent实现细节
+4. 参考`RUNTIME_FIXES_SUMMARY.md`了解runtime改进历史
+5. 开始开发T3-T9 agents
+
 ## 调试与排障
 
 建议按这个顺序排查：

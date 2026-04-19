@@ -32,7 +32,19 @@ def load_jsonl(path: Path) -> list[dict]:
     if not path.exists():
         return []
     lines = path.read_text(encoding="utf-8").splitlines()
-    return [json.loads(line) for line in lines if line.strip()]
+    results = []
+    for i, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
+        try:
+            # 清理无效控制字符（如\x00）
+            cleaned_line = line.replace('\x00', '')
+            results.append(json.loads(cleaned_line))
+        except json.JSONDecodeError as e:
+            # 记录错误但继续处理其他行
+            print(f"Warning: Failed to parse line {i}: {e}")
+            continue
+    return results
 
 
 def append_jsonl(path: Path, records: list[dict]) -> None:

@@ -27,9 +27,10 @@ def test_workspace(tmp_path):
     # 创建project.yaml
     project_data = {
         "project_id": "test-scout",
-        "direction": "discrete diffusion language models",
+        "research_direction": "discrete diffusion language models",
         "keywords": ["discrete diffusion", "language model", "factorized"],
         "target_venue": "NeurIPS",
+        "created_at": "2026-04-19T14:00:00Z",
     }
     (workspace / "project.yaml").write_text(yaml.dump(project_data))
 
@@ -70,8 +71,10 @@ def test_scout_agent_spec(scout_agent):
     assert spec.model_tier == "medium"
     assert spec.temperature == 0.5
     assert "search_papers" in spec.tool_names
-    assert "mcp_semantic_scholar_search" in spec.tool_names
-    assert "mcp_arxiv_search" in spec.tool_names
+    assert "fetch_paper_metadata" in spec.tool_names
+    # MCP工具已移除，等MCP配置完成后再启用
+    # assert "mcp_semantic_scholar_search" in spec.tool_names
+    # assert "mcp_arxiv_search" in spec.tool_names
     assert "literature/" in spec.allowed_write_prefixes
 
 
