@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+"""人机交互抽象。"""
+
 from abc import ABC, abstractmethod
 import json
 
 
 class HumanInterface(ABC):
+    """runtime 与外部用户交互的统一接口。"""
+
     @abstractmethod
     async def ask_approval(self, *, tool_name: str, arguments: dict) -> bool:
         ...
@@ -23,9 +27,13 @@ class HumanInterface(ABC):
 
 
 class CLIHumanInterface(HumanInterface):
+    """最小命令行版本的人机接口实现。"""
+
     async def ask_approval(self, *, tool_name: str, arguments: dict) -> bool:
-        print(f"APPROVAL REQUIRED: {tool_name}")
+        print("\n" + "═" * 60)
+        print(f"工具请求批准: {tool_name}")
         print(json.dumps(arguments, indent=2, ensure_ascii=False))
+        print("═" * 60)
         answer = input("批准执行? [y/N]: ").strip().lower()
         return answer in {"y", "yes"}
 
@@ -40,8 +48,23 @@ class CLIHumanInterface(HumanInterface):
     async def present_gate(
         self, *, gate_id: str, presentation: dict, options: list[dict]
     ) -> dict:
+        title = presentation.get("_title")
+        description = presentation.get("_description")
+        print("\n" + "═" * 60)
         print(f"GATE {gate_id}")
-        print(json.dumps(presentation, indent=2, ensure_ascii=False))
+        if title:
+            print(title)
+        if description:
+            print(description)
+        print("═" * 60)
+        for key, value in presentation.items():
+            if key.startswith("_"):
+                continue
+            print(f"\n【{key}】")
+            if isinstance(value, str):
+                print(value)
+            else:
+                print(json.dumps(value, indent=2, ensure_ascii=False))
         for idx, option in enumerate(options, start=1):
             print(f"[{idx}] {option['label']}")
         answer = int(input("请选择: ").strip()) - 1
@@ -49,5 +72,5 @@ class CLIHumanInterface(HumanInterface):
         captured: dict[str, str] = {}
         for field_name in selected.get("collect_input", []):
             captured[field_name] = input(f"{field_name}: ").strip()
-        return {"option_id": selected["id"], "captured": captured}
-
+        option_id = selected.get("id") or selected.get("key")
+        return {"option_id": option_id, "captured": captured}

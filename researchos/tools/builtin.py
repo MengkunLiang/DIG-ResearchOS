@@ -1,17 +1,29 @@
 from __future__ import annotations
 
+"""运行时内置工具注册。
+
+这里集中注册“所有进程默认可用”的工具工厂。
+后续 skill 自带工具、MCP 工具等扩展，会在 CLI 启动时追加注册到同一个 registry。
+"""
+
+import os
+
 from .ask_human import AskHumanTool
 from .bash_run import BashRunTool
+from .docker_exec import DockerExecTool, load_project_config
 from .echo import EchoTool
 from .filesystem import ListFilesTool, ReadFileTool, WriteFileTool
 from .finish_task import FinishTaskTool
 from .glob_files import GlobFilesTool
 from .grep_search import GrepSearchTool
+from .latex_compile import LatexCompileTool
 from .registry import ToolRegistry
+from .search_papers import FetchPaperMetadataTool, SearchPapersTool
 from .web_fetch import WebFetchTool
 
 
 def register_builtin_tools(registry: ToolRegistry) -> None:
+    """注册 runtime 默认内置工具。"""
     registry.register("read_file", lambda ctx: ReadFileTool(ctx.policy))
     registry.register("write_file", lambda ctx: WriteFileTool(ctx.policy))
     registry.register("list_files", lambda ctx: ListFilesTool(ctx.policy))
@@ -22,3 +34,27 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
     registry.register("grep_search", lambda ctx: GrepSearchTool(ctx.policy))
     registry.register("glob_files", lambda ctx: GlobFilesTool(ctx.policy))
     registry.register("web_fetch", lambda ctx: WebFetchTool())
+    registry.register(
+        "search_papers",
+        lambda _ctx: SearchPapersTool(os.environ.get("S2_API_KEY")),
+    )
+    registry.register(
+        "fetch_paper_metadata",
+        lambda _ctx: FetchPaperMetadataTool(os.environ.get("S2_API_KEY")),
+    )
+    registry.register(
+        "docker_exec",
+        lambda ctx: DockerExecTool(
+            ctx.policy,
+            project_config=load_project_config(ctx.policy.workspace_dir),
+        ),
+    )
+    registry.register(
+        "latex_compile",
+        lambda ctx: LatexCompileTool(
+            DockerExecTool(
+                ctx.policy,
+                project_config=load_project_config(ctx.policy.workspace_dir),
+            )
+        ),
+    )

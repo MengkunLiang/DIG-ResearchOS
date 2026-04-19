@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""runtime `state.yaml` 的结构化模型。"""
+
 from pathlib import Path
 from typing import Any, Literal
 
@@ -7,6 +9,8 @@ from pydantic import BaseModel, Field
 
 
 class GateState(BaseModel):
+    """当前挂起的 gate 信息。"""
+
     gate_id: str
     presented_at: str
     presentation: dict[str, Any]
@@ -14,6 +18,8 @@ class GateState(BaseModel):
 
 
 class TaskHistoryEntry(BaseModel):
+    """单次 task run 的审计记录。"""
+
     task: str
     run_id: str
     status: str
@@ -32,12 +38,16 @@ class TaskHistoryEntry(BaseModel):
 
 
 class BudgetCumulative(BaseModel):
+    """项目级累计预算。"""
+
     tokens_total: int = 0
     cost_usd_total: float = 0.0
     gpu_hours_used: float = 0.0
 
 
 class StateYaml(BaseModel):
+    """state.yaml 顶层模型。"""
+
     project_id: str
     current_task: str
     status: Literal["RUNNING", "WAITING_HUMAN", "PAUSED", "COMPLETED", "FAILED"] = "RUNNING"
@@ -45,10 +55,13 @@ class StateYaml(BaseModel):
     history: list[TaskHistoryEntry] = Field(default_factory=list)
     iteration_count: dict[str, int] = Field(default_factory=dict)
     budget_cumulative: BudgetCumulative = Field(default_factory=BudgetCumulative)
+    # task_context 用于承载 gate 选项附带的 extra，供下一个 task 的 ctx.extra 读取。
+    task_context: dict[str, Any] = Field(default_factory=dict)
     paused_at: str | None = None
     last_error: str | None = None
 
     def dump_yaml(self, path: Path) -> None:
+        """原子写入 state.yaml，避免中断时留下半个文件。"""
         import yaml
 
         tmp = path.with_suffix(path.suffix + ".tmp")
@@ -65,7 +78,7 @@ class StateYaml(BaseModel):
         return cls.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
 
 
-# Backward-compatible aliases for existing imports.
+# 兼容旧导入名，避免已有调用点全部重写。
 BudgetSummary = BudgetCumulative
 PendingGate = GateState
 RuntimeState = StateYaml

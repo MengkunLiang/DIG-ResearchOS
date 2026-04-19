@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""Agent 抽象、执行上下文与运行结果模型。"""
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,6 +14,16 @@ PostHook = Callable[["ExecutionContext", "AgentResult"], Awaitable[None]]
 
 @dataclass
 class AgentSpec:
+    """Agent 的静态声明。
+
+    这里存放“写死在 agent 类上的默认行为”：
+    - 用哪个 tier/profile；
+    - 允许哪些工具；
+    - 默认预算；
+    - 默认可读写路径；
+    - 以及 pre/post hooks。
+    """
+
     name: str
     model_tier: str
     tool_names: list[str]
@@ -33,6 +45,8 @@ class AgentSpec:
 
 @dataclass
 class LLMConfigOverride:
+    """状态机或上层 runner 对 LLM 行为的临时覆盖。"""
+
     profile: str | None = None
     tier: str | None = None
     model: str | None = None
@@ -41,6 +55,8 @@ class LLMConfigOverride:
 
 @dataclass
 class BudgetOverride:
+    """对 budget 的临时覆盖。"""
+
     max_steps: int | None = None
     max_tokens: int | None = None
     max_wall_seconds: int | None = None
@@ -48,6 +64,8 @@ class BudgetOverride:
 
 @dataclass
 class ToolPolicyOverride:
+    """对工具权限和工具集的临时覆盖。"""
+
     allowed_read_prefixes: list[str] | None = None
     allowed_write_prefixes: list[str] | None = None
     extra_tool_names: list[str] = field(default_factory=list)
@@ -55,6 +73,13 @@ class ToolPolicyOverride:
 
 @dataclass
 class ExecutionContext:
+    """一次 task run 的完整上下文。
+
+    这是 runtime 在“静态 AgentSpec”和“当前 FSM 状态”之间的桥梁：
+    - AgentSpec 决定默认配置；
+    - ExecutionContext 决定这一次 run 的具体输入、输出、override 与动态 extra。
+    """
+
     workspace_dir: Path
     project_id: str
     task_id: str
@@ -82,6 +107,8 @@ class ExecutionContext:
 
 @dataclass
 class EffectiveConfig:
+    """把 AgentSpec 默认值和 ctx override 合并后的最终配置。"""
+
     llm_profile: str | None
     llm_tier: str
     llm_model_override: str | None
@@ -95,6 +122,7 @@ class EffectiveConfig:
 
 
 def resolve_effective_config(spec: AgentSpec, ctx: ExecutionContext) -> EffectiveConfig:
+    """统一合并静态 spec 与动态 override。"""
     lo = ctx.llm_override
     bo = ctx.budget_override
     to = ctx.tool_policy_override
@@ -124,6 +152,8 @@ def resolve_effective_config(spec: AgentSpec, ctx: ExecutionContext) -> Effectiv
 
 @dataclass
 class AgentResult:
+    """一次 run 的最终结果。"""
+
     ok: bool
     message: str
     outputs_produced: dict[str, Path]
@@ -149,6 +179,8 @@ class AgentResult:
 
 
 class Agent(ABC):
+    """所有正式 agent / skill agent 的共同基类。"""
+
     spec: AgentSpec
 
     def __init__(self, spec: AgentSpec):
@@ -163,6 +195,7 @@ class Agent(ABC):
         ...
 
     def validate_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:
+        """最小默认校验：只检查 outputs_expected 里的路径是否存在。"""
         missing: list[str] = []
         for name, path in ctx.outputs_expected.items():
             if not path.exists():
@@ -170,4 +203,3 @@ class Agent(ABC):
         if missing:
             return False, f"缺少以下预期输出: {', '.join(missing)}"
         return True, None
-

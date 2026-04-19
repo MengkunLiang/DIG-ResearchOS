@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""把外部 skill 包装成 ResearchOS Agent。"""
+
 from jinja2 import StrictUndefined, Template
 
 from ..runtime.agent import Agent, AgentSpec, ExecutionContext
@@ -8,6 +10,14 @@ from .tool_aliases import translate_tool_names
 
 
 class SkillAgent(Agent):
+    """Skill 的运行时适配器。
+
+    设计目标：
+    - 尽量不改 skill 原始 prompt；
+    - 只在 runtime 侧补最小上下文与工具翻译；
+    - 让 skill 能像普通 Agent 一样被 AgentRunner 驱动。
+    """
+
     def __init__(
         self,
         *,
@@ -42,6 +52,7 @@ class SkillAgent(Agent):
     def system_prompt(self, ctx: ExecutionContext) -> str:
         body = self.skill.body
         if self.use_jinja:
+            # 少数 skill 会显式声明 use-jinja，此时才对正文做模板渲染。
             body = Template(body, undefined=StrictUndefined).render(
                 project_id=ctx.project_id,
                 task_id=ctx.task_id,
@@ -66,6 +77,7 @@ class SkillAgent(Agent):
         return header + warning_block + body
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
+        # CLI run-skill 时，用户请求会放在 ctx.extra["user_request"]。
         user_request = ctx.extra.get("user_request")
         if user_request:
             return str(user_request)

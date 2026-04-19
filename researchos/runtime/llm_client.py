@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""LLM 路由与 provider 调用层。"""
+
 import asyncio
 from dataclasses import dataclass, field
 import os
@@ -24,6 +26,8 @@ _log = get_logger("llm_client")
 
 @dataclass
 class Endpoint:
+    """一个具体 API endpoint 的连接信息。"""
+
     name: str
     provider: str
     api_key_env: str | None = None
@@ -34,6 +38,7 @@ class Endpoint:
     rate_limit: dict[str, Any] = field(default_factory=dict)
 
     def to_litellm_kwargs(self) -> dict[str, Any]:
+        """把 endpoint 配置转换成 litellm 需要的关键字参数。"""
         kwargs: dict[str, Any] = {}
         if self.api_key_env:
             key = os.environ.get(self.api_key_env)
@@ -60,6 +65,8 @@ class Endpoint:
 
 @dataclass
 class ModelBinding:
+    """某个 tier/profile 下绑定到 endpoint 的模型。"""
+
     model: str
     endpoint: str
     max_context: int = 100_000
@@ -94,6 +101,15 @@ class LLMResponse:
 
 
 class LLMClient:
+    """ResearchOS 对 litellm 的薄封装。
+
+    核心职责：
+    - 读取 model_routing.yaml；
+    - 解析 endpoints / profiles / fallback；
+    - 提供 `resolve()`、`chat()`、`selftest()` 等统一接口；
+    - 在真正调用 provider 前先经过本地 rate limiter。
+    """
+
     def __init__(self, routing_config_path: Path):
         if not routing_config_path.exists():
             raise ConfigurationError(f"Routing config not found: {routing_config_path}")
@@ -108,6 +124,12 @@ class LLMClient:
         self._validate()
 
     def _load_env_file(self, routing_config_path: Path) -> None:
+        """从项目根目录 `.env` 里补充环境变量。
+
+        这里使用 `setdefault`，意味着：
+        - shell 中已显式设置的值优先；
+        - `.env` 只作为本地开发便利，不强行覆盖外部环境。
+        """
         project_env = routing_config_path.parent.parent / ".env"
         if not project_env.exists():
             return
@@ -166,6 +188,12 @@ class LLMClient:
         tier: str,
         model_override: str | None,
     ) -> list[tuple[ModelBinding, Endpoint]]:
+        """解析某次调用的候选模型链路。
+
+        返回值按优先级排序：
+        - 第一个是 primary；
+        - 后续是 fallback。
+        """
         if model_override:
             binding, endpoint = self._find_binding_for_override(model_override)
             return [(binding, endpoint)]
@@ -209,6 +237,7 @@ class LLMClient:
         return None
 
     async def selftest(self, profiles_to_check: list[str] | None = None) -> dict[str, dict[str, Any]]:
+        """对 profile 涉及的 endpoint 做最小连通性检查。"""
         if litellm is None:
             raise LLMProviderError("litellm is not installed")
 
@@ -264,6 +293,12 @@ class LLMClient:
         timeout: int = 120,
         max_retries_per_model: int = 2,
     ) -> LLMResponse:
+        """执行一次模型调用。
+
+        注意这里有两层保护：
+        - 对同一个候选模型做重试；
+        - 当前候选彻底失败后，才会切换到 fallback 模型。
+        """
         if litellm is None:
             raise LLMProviderError("litellm is not installed")
 
@@ -274,6 +309,7 @@ class LLMClient:
             for attempt in range(max_retries_per_model):
                 started = time.time()
                 try:
+                    # 先做本地限流，避免一撞 provider rate limit 就误触 fallback。
                     estimated_tokens = self.count_tokens(messages, binding) + 4000
                     await self.rate_limiter.wait(endpoint.name, estimated_tokens)
                     kwargs: dict[str, Any] = {
@@ -307,6 +343,7 @@ class LLMClient:
         )
 
     def count_tokens(self, messages: list[dict[str, Any]], binding: ModelBinding) -> int:
+        """尽量准确地估算 token；若 provider 不支持，则退化到字符近似。"""
         if litellm is None:
             return sum(len(str(item.get("content", ""))) for item in messages) // 4
         try:

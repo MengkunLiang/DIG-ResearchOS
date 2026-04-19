@@ -107,6 +107,56 @@ def test_advance_enters_gate_and_resolve_branch_increments_iteration(tmp_workspa
     assert state.iteration_count["T1"] == 1
 
 
+def test_gate_option_extra_flows_into_task_context(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    gates = tmp_workspace / "gates.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T1
+        states:
+          T1:
+            agent: hello
+            gate: review_gate
+          T2:
+            agent: hello
+        """,
+    )
+    _write_yaml(
+        gates,
+        """
+        gates:
+          review_gate:
+            options:
+              - id: go
+                label: Go
+                next: T2
+                extra:
+                  chosen_direction: 2
+        """,
+    )
+    sm = StateMachine(config, gates)
+    state = sm.create_initial_state("p1")
+    state = sm.start_task(state, "run_1")
+    result = AgentResult(
+        ok=True,
+        message="done",
+        outputs_produced={},
+        steps_used=1,
+        tokens_in=1,
+        tokens_out=1,
+        cost_usd=0.0,
+        duration_seconds=0.1,
+        stop_reason=AgentResult.STOP_FINISHED,
+    )
+
+    state = sm.advance(state, result, workspace_dir=tmp_workspace)
+    state = sm.resolve_pending_gate(state, {"option_id": "go", "captured": {}})
+
+    assert state.current_task == "T2"
+    assert state.task_context["chosen_direction"] == 2
+
+
 def test_mark_interrupted_updates_state(tmp_workspace):
     config = tmp_workspace / "fsm.yaml"
     _write_yaml(

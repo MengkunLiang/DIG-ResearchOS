@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""独立运行 skill 的便捷入口。"""
+
 from pathlib import Path
 import uuid
 
@@ -26,6 +28,7 @@ async def run_skill(
     outputs_expected: dict[str, Path] | None = None,
     llm_profile: str | None = None,
 ) -> AgentResult:
+    """在当前 workspace 中执行一个 skill。"""
     agent = SkillAgent(
         skill=skill,
         available_tools=set(tool_registry.available_names()),

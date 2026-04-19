@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""AgentRunner 主循环。"""
+
 import asyncio
 import json
 from pathlib import Path
@@ -26,6 +28,16 @@ MAX_NUDGE_FINISH = 2
 
 
 class AgentRunner:
+    """驱动单个 agent 完成一次完整 run。
+
+    这里集中处理：
+    - budget 与步数限制；
+    - LLM 调用与消息拼装；
+    - tool 调用、异常兜底与结果回填；
+    - finish_task 触发后的输出校验；
+    - trace 写入。
+    """
+
     def __init__(
         self,
         agent: Agent,
@@ -55,6 +67,7 @@ class AgentRunner:
         )
 
     async def run(self, ctx: ExecutionContext) -> AgentResult:
+        """执行一次完整 agent run。"""
         started = time.time()
         eff = resolve_effective_config(self.agent.spec, ctx)
         budget = BudgetTracker(
@@ -100,6 +113,7 @@ class AgentRunner:
                 await hook(ctx)
 
             while True:
+                # 每进入一轮 while，就代表一次“agent step”。
                 budget.tick_step()
                 try:
                     budget.check()
@@ -108,6 +122,8 @@ class AgentRunner:
                     error_msg = str(exc)
                     break
 
+                # 如果上下文太长，这里会按“完整 tool call group”为单位裁掉旧消息，
+                # 同时插入一条 runtime note，提醒模型去读 artifact 而不是假装记得历史。
                 messages = self._maybe_truncate(messages, primary_binding)
 
                 try:
@@ -130,6 +146,7 @@ class AgentRunner:
                 assistant_msg = self._parse_llm_response(llm_resp, step=budget.steps)
                 trace.write_llm_response(llm_resp, assistant_msg)
 
+                # 空回复不是立刻判死刑，而是先给模型一次 nudged retry 的机会。
                 if is_empty_assistant(assistant_msg):
                     empty_count += 1
                     if empty_count > MAX_EMPTY_REPLY:
@@ -148,6 +165,8 @@ class AgentRunner:
                 messages.append(assistant_msg)
                 trace.write_message(assistant_msg)
 
+                # 如果模型只说话不调用工具，runtime 会反复提醒它：
+                # 要么继续推进，要么明确 finish_task。
                 if not assistant_msg.tool_calls:
                     nudge_count += 1
                     if nudge_count > MAX_NUDGE_FINISH:
@@ -163,6 +182,7 @@ class AgentRunner:
                     continue
 
                 nudge_count = 0
+                # 同一轮 assistant 发出的多个 tool call 可以并行执行，但回填顺序保持原顺序。
                 tool_msgs = await asyncio.gather(
                     *[
                         self._execute_one_tool_call(tc, tool_map, step=budget.steps)
@@ -178,6 +198,8 @@ class AgentRunner:
                         finish_requested = True
 
                 if finish_requested:
+                    # finish_task 只是“请求结束”而不是直接结束。
+                    # 真正能否成功结束，仍以 validate_outputs 为准。
                     ok, err = self.agent.validate_outputs(ctx)
                     if ok:
                         stop_reason = AgentResult.STOP_FINISHED
@@ -247,6 +269,7 @@ class AgentRunner:
             )
 
         if tool.requires_human_approval:
+            # 高风险工具先经过 HumanInterface 审批。
             try:
                 approved = await self.human.ask_approval(tool_name=tc.name, arguments=tc.arguments)
             except Exception as exc:
@@ -267,6 +290,7 @@ class AgentRunner:
                 )
 
         try:
+            # 先用 pydantic schema 做参数校验。
             parsed = tool.parameters_schema(**tc.arguments)
         except Exception as exc:
             return Message.tool(
@@ -278,6 +302,7 @@ class AgentRunner:
             )
 
         try:
+            # 工具自身可有细粒度超时，但 runtime 仍统一包一层 wait_for。
             result: ToolResult = await asyncio.wait_for(
                 tool.execute(**parsed.model_dump()),
                 timeout=tool.timeout_seconds,
@@ -347,6 +372,7 @@ class AgentRunner:
         return Message.assistant(content=content, tool_calls=tool_calls, step=step)
 
     def _maybe_truncate(self, messages: list[Message], binding: ModelBinding) -> list[Message]:
+        """按 message group 粒度做上下文裁剪。"""
         config = self.llm.get_truncation_config()
         limit = self.llm.get_context_window(binding)
         trigger = int(limit * config.get("trigger_ratio", 0.8))
@@ -381,6 +407,7 @@ class AgentRunner:
         return flattened
 
     def _split_into_groups(self, messages: list[Message]) -> list[list[Message]]:
+        """把消息拆成“assistant + tool results”为一组的逻辑轮次。"""
         if not messages:
             return []
         groups: list[list[Message]] = []
@@ -448,4 +475,3 @@ class AgentRunner:
             llm_model_used=last_model_used,
             llm_endpoint_used=last_endpoint_used,
         )
-
