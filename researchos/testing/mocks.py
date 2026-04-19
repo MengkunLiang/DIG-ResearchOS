@@ -133,21 +133,43 @@ class MockHumanInterface(HumanInterface):
         approval: bool = True,
         clarification_answer: str = "mock-answer",
         gate_result: dict[str, Any] | None = None,
+        approvals: list[bool] | None = None,
+        clarifications: list[str] | None = None,
+        gate_choices: list[dict[str, Any]] | None = None,
     ):
         self.approval = approval
         self.clarification_answer = clarification_answer
         self.gate_result = gate_result or {"option_id": "default", "captured": {}}
+        self._approvals = list(approvals or [])
+        self._clarifications = list(clarifications or [])
+        self._gate_choices = list(gate_choices or [])
+        self.calls: list[tuple[str, dict[str, Any]]] = []
 
     async def ask_approval(self, *, tool_name: str, arguments: dict) -> bool:
+        self.calls.append(("approval", {"tool_name": tool_name, "arguments": arguments}))
+        if self._approvals:
+            return self._approvals.pop(0)
         return self.approval
 
     async def ask_clarification(
         self, *, question: str, suggestions: list[str] | None = None
     ) -> str:
+        self.calls.append(
+            ("clarification", {"question": question, "suggestions": suggestions or []})
+        )
+        if self._clarifications:
+            return self._clarifications.pop(0)
         return self.clarification_answer
 
     async def present_gate(
         self, *, gate_id: str, presentation: dict, options: list[dict]
     ) -> dict:
+        self.calls.append(
+            (
+                "gate",
+                {"gate_id": gate_id, "presentation": presentation, "options": options},
+            )
+        )
+        if self._gate_choices:
+            return self._gate_choices.pop(0)
         return self.gate_result
-

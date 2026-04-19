@@ -11,6 +11,7 @@ import yaml
 
 from .errors import ConfigurationError, LLMProviderError
 from .logger import get_logger
+from .rate_limiter import EndpointRateLimiter
 
 try:  # pragma: no cover - optional import exercised in integration use
     import litellm
@@ -27,8 +28,10 @@ class Endpoint:
     provider: str
     api_key_env: str | None = None
     api_base: str | None = None
+    api_base_env: str | None = None
     api_version: str | None = None
     extra_headers: dict[str, Any] = field(default_factory=dict)
+    rate_limit: dict[str, Any] = field(default_factory=dict)
 
     def to_litellm_kwargs(self) -> dict[str, Any]:
         kwargs: dict[str, Any] = {}
@@ -39,8 +42,15 @@ class Endpoint:
                     f"Endpoint '{self.name}' requires env var {self.api_key_env}"
                 )
             kwargs["api_key"] = key
-        if self.api_base:
-            kwargs["api_base"] = self.api_base
+        api_base = self.api_base
+        if self.api_base_env:
+            api_base = os.environ.get(self.api_base_env)
+            if not api_base:
+                raise ConfigurationError(
+                    f"Endpoint '{self.name}' requires env var {self.api_base_env}"
+                )
+        if api_base:
+            kwargs["api_base"] = api_base
         if self.api_version:
             kwargs["api_version"] = self.api_version
         if self.extra_headers:
@@ -87,13 +97,32 @@ class LLMClient:
     def __init__(self, routing_config_path: Path):
         if not routing_config_path.exists():
             raise ConfigurationError(f"Routing config not found: {routing_config_path}")
+        self._load_env_file(routing_config_path)
         self.routing_config_path = routing_config_path
         self.raw = yaml.safe_load(routing_config_path.read_text(encoding="utf-8")) or {}
         self.endpoints = self._parse_endpoints(self.raw)
         self.profiles = self._parse_profiles(self.raw)
         self.default_profile_name = self.raw.get("default_profile", "default")
         self.truncation_cfg = self.raw.get("truncation", {})
+        self.rate_limiter = EndpointRateLimiter(self.raw.get("endpoints") or {})
         self._validate()
+
+    def _load_env_file(self, routing_config_path: Path) -> None:
+        project_env = routing_config_path.parent.parent / ".env"
+        if not project_env.exists():
+            return
+        for raw_line in project_env.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if not key:
+                continue
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+                value = value[1:-1]
+            os.environ.setdefault(key, value)
 
     def _parse_endpoints(self, raw: dict[str, Any]) -> dict[str, Endpoint]:
         endpoints = {
@@ -171,6 +200,58 @@ class LLMClient:
     def get_truncation_config(self) -> dict[str, Any]:
         return self.truncation_cfg
 
+    def _any_binding_for(self, endpoint_name: str) -> ModelBinding | None:
+        for profile in self.profiles.values():
+            for tier in profile.tiers.values():
+                for binding in [tier.primary, *tier.fallback]:
+                    if binding.endpoint == endpoint_name:
+                        return binding
+        return None
+
+    async def selftest(self, profiles_to_check: list[str] | None = None) -> dict[str, dict[str, Any]]:
+        if litellm is None:
+            raise LLMProviderError("litellm is not installed")
+
+        profiles = profiles_to_check or [self.default_profile_name]
+        endpoints_to_check: set[str] = set()
+        for profile_name in profiles:
+            profile = self.profiles.get(profile_name)
+            if profile is None:
+                continue
+            for tier in profile.tiers.values():
+                endpoints_to_check.add(tier.primary.endpoint)
+                for fallback in tier.fallback:
+                    endpoints_to_check.add(fallback.endpoint)
+
+        results: dict[str, dict[str, Any]] = {}
+        for endpoint_name in sorted(endpoints_to_check):
+            endpoint = self.endpoints[endpoint_name]
+            binding = self._any_binding_for(endpoint_name)
+            if binding is None:
+                results[endpoint_name] = {"ok": False, "error": "no binding", "latency_ms": 0}
+                continue
+            started = time.time()
+            try:
+                await litellm.acompletion(
+                    model=binding.qualified(endpoint),
+                    messages=[{"role": "user", "content": "ping"}],
+                    max_tokens=1,
+                    timeout=10,
+                    **endpoint.to_litellm_kwargs(),
+                )
+                results[endpoint_name] = {
+                    "ok": True,
+                    "error": None,
+                    "latency_ms": int((time.time() - started) * 1000),
+                }
+            except Exception as exc:
+                results[endpoint_name] = {
+                    "ok": False,
+                    "error": str(exc)[:200],
+                    "latency_ms": int((time.time() - started) * 1000),
+                }
+        return results
+
     async def chat(
         self,
         *,
@@ -193,6 +274,8 @@ class LLMClient:
             for attempt in range(max_retries_per_model):
                 started = time.time()
                 try:
+                    estimated_tokens = self.count_tokens(messages, binding) + 4000
+                    await self.rate_limiter.wait(endpoint.name, estimated_tokens)
                     kwargs: dict[str, Any] = {
                         "model": qualified,
                         "messages": messages,
@@ -234,4 +317,3 @@ class LLMClient:
                 for tool_call in message.get("tool_calls", []):
                     total += len(tool_call.get("function", {}).get("arguments", ""))
             return total // 4
-
