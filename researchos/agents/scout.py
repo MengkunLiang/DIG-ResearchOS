@@ -47,7 +47,8 @@ class ScoutAgent(Agent):
                 tool_names=[
                     "read_file",
                     "write_file",
-                    "search_papers",
+                    "multi_source_search",  # 新增：多源搜索工具（推荐）
+                    "search_papers",  # 保留：单源搜索（备用）
                     "fetch_paper_metadata",
                     "finish_task",
                     # MCP工具暂时移除，等MCP配置完成后再启用
