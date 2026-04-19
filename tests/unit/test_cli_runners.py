@@ -171,6 +171,27 @@ def test_cli_init_workspace_creates_standard_tree(tmp_path: Path):
     assert (workspace / "project.yaml").exists()
 
 
+def test_cli_init_workspace_accepts_shared_options_after_subcommand(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+
+    exit_code = main(
+        [
+            "--no-banner",
+            "init-workspace",
+            "--workspace",
+            str(workspace),
+            "--project-id",
+            "demo-init",
+            "--topic",
+            "runtime verification",
+        ]
+    )
+
+    assert exit_code == 0
+    assert (workspace / "_runtime" / "traces").exists()
+    assert (workspace / "project.yaml").exists()
+
+
 def test_cli_trace_renders_human_readable_output(tmp_path: Path, capsys):
     workspace = tmp_path / "workspace"
     trace_dir = workspace / "_runtime" / "traces"

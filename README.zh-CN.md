@@ -88,6 +88,23 @@ conda activate researchos
 pip install -e '.[dev]'
 ```
 
+安装后建议先检查当前 shell 真正命中的解释器：
+
+```bash
+which python
+which researchos
+python -c "import sys; print(sys.executable)"
+```
+
+理想情况下，它们都应该指向当前 `researchos` 环境，而不是 `base`。
+如果提示符已经显示 `(researchos)`，但这里仍然指向 base，说明你的 shell PATH 顺序有问题。
+这种情况下建议先用更稳妥的方式执行：
+
+```bash
+conda run -n researchos python -m researchos.cli --help
+conda run -n researchos researchos --help
+```
+
 如果你需要真实 LLM：
 
 ```bash
@@ -305,6 +322,13 @@ workspace/
 cd ResearchOS
 conda activate researchos
 researchos init-workspace --workspace ./workspace/demo --project-id demo-project --topic "test topic"
+```
+
+共享参数如 `--workspace`、`--project-id`、`--state-machine` 现在可以放在子命令前，也可以放在子命令后：
+
+```bash
+researchos --workspace ./workspace/demo init-workspace --project-id demo-project
+researchos init-workspace --workspace ./workspace/demo --project-id demo-project
 ```
 
 可选参数：
@@ -628,6 +652,23 @@ researchos --mcp-config ./config/mcp.yaml --mcp-connector your_package.mcp:conne
 
 - 先 `cd` 到仓库根目录
 - 或显式传入 `--state-machine`、`--gates`、`--model-routing`
+
+### 为什么明明显示 `(researchos)`，实际跑的还是 base Python？
+
+这是 shell 初始化或 PATH 顺序问题。请先检查：
+
+```bash
+which python
+which researchos
+python -c "import sys; print(sys.executable)"
+```
+
+如果它们仍然指向 base，请优先使用：
+
+```bash
+conda run -n researchos python -m researchos.cli ...
+conda run -n researchos researchos ...
+```
 
 ### skill 会从哪里自动发现？
 

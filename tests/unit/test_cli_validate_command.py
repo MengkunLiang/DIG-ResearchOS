@@ -60,3 +60,34 @@ states:
     )
 
     assert exit_code == 1
+
+
+def test_cli_validate_accepts_workspace_after_subcommand(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "hello.txt").write_text("Hello, Runtime!", encoding="utf-8")
+    state_machine = tmp_path / "state_machine.yaml"
+    state_machine.write_text(
+        """
+initial_state: HELLO
+states:
+  HELLO:
+    outputs:
+      hello_file: hello.txt
+""".strip(),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "validate",
+            "--workspace",
+            str(workspace),
+            "--state-machine",
+            str(state_machine),
+            "--task",
+            "HELLO",
+        ]
+    )
+
+    assert exit_code == 0

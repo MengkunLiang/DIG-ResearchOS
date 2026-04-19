@@ -550,42 +550,91 @@ def trace_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _add_shared_cli_options(
+    parser: argparse.ArgumentParser,
+    runtime_settings: RuntimeSettings,
+    *,
+    use_defaults: bool,
+) -> None:
+    """给主 parser 或子命令 parser 注入共享参数。
+
+    这么做是为了同时支持两种用户习惯：
+    - `researchos --workspace ./ws run-task HELLO`
+    - `researchos run-task --workspace ./ws HELLO`
+
+    纯 `argparse` 默认只接受前一种；把共享选项也挂到子命令上后，
+    后一种写法也能工作，CLI 体验更接近日常命令行工具。
+    """
+
+    default = argparse.SUPPRESS if not use_defaults else None
+    parser.add_argument(
+        "--workspace",
+        default=runtime_settings.workspace.default_root if use_defaults else default,
+    )
+    parser.add_argument(
+        "--project-id",
+        default="demo-project" if use_defaults else default,
+    )
+    parser.add_argument(
+        "--state-machine",
+        default="config/state_machine.yaml" if use_defaults else default,
+    )
+    parser.add_argument(
+        "--gates",
+        default="config/gates.yaml" if use_defaults else default,
+    )
+    parser.add_argument(
+        "--model-routing",
+        default="config/model_routing.yaml" if use_defaults else default,
+    )
+    parser.add_argument(
+        "--mcp-config",
+        default="config/mcp.yaml" if use_defaults else default,
+    )
+    parser.add_argument(
+        "--mcp-connector",
+        default=None if use_defaults else default,
+        help="可选：MCP 连接函数，格式为 package.module:attr 或 package.module.attr",
+    )
+    parser.add_argument("--skills-root", action="append", default=None if use_defaults else default)
+    parser.add_argument(
+        "--log-level",
+        default=runtime_settings.logging.level if use_defaults else default,
+    )
+    parser.add_argument(
+        "--no-banner",
+        action="store_true",
+        default=False if use_defaults else default,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """构造 CLI 参数解析器。"""
 
     runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
     parser = argparse.ArgumentParser(prog="researchos")
-    parser.add_argument("--workspace", default=runtime_settings.workspace.default_root)
-    parser.add_argument("--project-id", default="demo-project")
-    parser.add_argument("--state-machine", default="config/state_machine.yaml")
-    parser.add_argument("--gates", default="config/gates.yaml")
-    parser.add_argument("--model-routing", default="config/model_routing.yaml")
-    parser.add_argument("--mcp-config", default="config/mcp.yaml")
-    parser.add_argument(
-        "--mcp-connector",
-        default=None,
-        help="可选：MCP 连接函数，格式为 package.module:attr 或 package.module.attr",
-    )
-    parser.add_argument("--skills-root", action="append")
-    parser.add_argument("--log-level", default=runtime_settings.logging.level)
-    parser.add_argument("--no-banner", action="store_true")
+    _add_shared_cli_options(parser, runtime_settings, use_defaults=True)
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init_parser = subparsers.add_parser("init-workspace", help="初始化标准 workspace")
+    _add_shared_cli_options(init_parser, runtime_settings, use_defaults=False)
     init_parser.add_argument("--topic", default="")
     init_parser.add_argument("--no-project-file", action="store_true")
     init_parser.add_argument("--force-project-file", action="store_true")
 
     run_parser = subparsers.add_parser("run", help="运行完整 pipeline")
+    _add_shared_cli_options(run_parser, runtime_settings, use_defaults=False)
     run_parser.add_argument("--startup-selftest", action="store_true")
     run_parser.add_argument("--skip-startup-selftest", action="store_true")
 
     resume_parser = subparsers.add_parser("resume", help="恢复已暂停的 pipeline")
+    _add_shared_cli_options(resume_parser, runtime_settings, use_defaults=False)
     resume_parser.add_argument("--startup-selftest", action="store_true")
     resume_parser.add_argument("--skip-startup-selftest", action="store_true")
 
     run_task_parser = subparsers.add_parser("run-task", help="只运行一个 task")
+    _add_shared_cli_options(run_task_parser, runtime_settings, use_defaults=False)
     run_task_parser.add_argument("task_id")
     run_task_parser.add_argument(
         "--from",
@@ -601,21 +650,27 @@ def build_parser() -> argparse.ArgumentParser:
     run_task_parser.add_argument("--startup-selftest", action="store_true")
     run_task_parser.add_argument("--skip-startup-selftest", action="store_true")
 
-    subparsers.add_parser("status", help="查看当前状态")
+    status_parser = subparsers.add_parser("status", help="查看当前状态")
+    _add_shared_cli_options(status_parser, runtime_settings, use_defaults=False)
 
     selftest_parser = subparsers.add_parser("selftest", help="检查 LLM endpoint 连通性")
+    _add_shared_cli_options(selftest_parser, runtime_settings, use_defaults=False)
     selftest_parser.add_argument("--profile", action="append")
 
     trace_parser = subparsers.add_parser("trace", help="查看某次 run 的 trace")
+    _add_shared_cli_options(trace_parser, runtime_settings, use_defaults=False)
     trace_parser.add_argument("run_id")
     trace_parser.add_argument("--raw", action="store_true", help="直接输出原始 JSONL")
 
     validate_parser = subparsers.add_parser("validate", help="校验 task 产物")
+    _add_shared_cli_options(validate_parser, runtime_settings, use_defaults=False)
     validate_parser.add_argument("--task")
 
-    subparsers.add_parser("validate-config", help="校验状态机与 runtime 配置")
+    validate_config_parser = subparsers.add_parser("validate-config", help="校验状态机与 runtime 配置")
+    _add_shared_cli_options(validate_config_parser, runtime_settings, use_defaults=False)
 
     run_skill_parser = subparsers.add_parser("run-skill", help="独立运行一个 skill")
+    _add_shared_cli_options(run_skill_parser, runtime_settings, use_defaults=False)
     run_skill_parser.add_argument("skill_name")
     run_skill_parser.add_argument("request", nargs="*")
     run_skill_parser.add_argument("--profile")
