@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""T2 Scout Agent测试脚本"""
+"""T3.5 文献综合测试脚本"""
 
 import asyncio
 import os
@@ -49,20 +49,21 @@ async def main():
     os.environ["UIUIAPI_API_KEY"] = "sk-o75I3UPDDeWXWmYkrLfuaUcho9qijDDO4SF2yhJYtDbX4Hef"
     os.environ["UIUIAPI_BASE_URL"] = "https://sg.uiuiapi.com/v1"
 
-    # 配置
-    workspace_dir = Path("/tmp/researchos_test_t2_20260419")
-    workspace_dir.mkdir(parents=True, exist_ok=True)
+    # 使用T3的输出作为输入
+    workspace_dir = Path("/tmp/researchos_test_t3_20260419")
 
-    # 复制project.yaml
-    src_project = Path("/tmp/researchos_real_test_20260419_163709/project.yaml")
-    dst_project = workspace_dir / "project.yaml"
-    if src_project.exists():
-        import shutil
-        shutil.copy2(src_project, dst_project)
-        print(f"[TEST] Copied project.yaml")
+    if not workspace_dir.exists():
+        print("[TEST] ❌ T3 workspace not found. Please run T3 first.")
+        return 1
+
+    # 检查T3输出
+    paper_notes_dir = workspace_dir / "literature" / "paper_notes"
+    if not paper_notes_dir.exists() or not list(paper_notes_dir.glob("*.md")):
+        print("[TEST] ❌ T3 paper_notes not found. Please run T3 first.")
+        return 1
 
     print(f"[TEST] Workspace: {workspace_dir}")
-    print(f"[TEST] Starting T2 (Scout Agent)...\n")
+    print(f"[TEST] Starting T3.5 (Literature Synthesis)...\n")
 
     # 创建组件
     registry = ToolRegistry()
@@ -73,7 +74,7 @@ async def main():
 
     # 创建runner
     runner = SingleTaskRunner(
-        task_id="T2",
+        task_id="T3.5",
         workspace=workspace_dir,
         llm_client=llm_client,
         tool_registry=registry,
@@ -87,32 +88,33 @@ async def main():
         print(f"\n[TEST] ✅ Agent finished with exit code: {exit_code}")
 
         # 检查输出文件
-        papers_raw = workspace_dir / "literature" / "papers_raw.jsonl"
-        papers_dedup = workspace_dir / "literature" / "papers_dedup.jsonl"
-        search_log = workspace_dir / "literature" / "search_log.md"
-        missing_areas = workspace_dir / "literature" / "missing_areas.md"
+        synthesis = workspace_dir / "literature" / "synthesis.md"
 
-        if papers_raw.exists():
-            lines = papers_raw.read_text().strip().split("\n")
-            print(f"\n[TEST] ✅ papers_raw.jsonl: {len(lines)} papers")
-        else:
-            print(f"\n[TEST] ❌ papers_raw.jsonl NOT created")
+        if synthesis.exists():
+            content = synthesis.read_text()
+            print(f"\n[TEST] ✅ synthesis.md created ({len(content)} chars)")
 
-        if papers_dedup.exists():
-            lines = papers_dedup.read_text().strip().split("\n")
-            print(f"[TEST] ✅ papers_dedup.jsonl: {len(lines)} papers")
-        else:
-            print(f"[TEST] ❌ papers_dedup.jsonl NOT created")
+            # 检查必需章节
+            required_sections = [
+                "# 文献综述",
+                "## 1. 研究背景",
+                "## 2. 核心方法",
+                "## 3. 实验结果",
+                "## 4. 研究缺口",
+                "## 5. 未来方向"
+            ]
 
-        if search_log.exists():
-            print(f"[TEST] ✅ search_log.md created")
-        else:
-            print(f"[TEST] ⚠️  search_log.md NOT created (optional)")
+            missing_sections = []
+            for section in required_sections:
+                if section not in content:
+                    missing_sections.append(section)
 
-        if missing_areas.exists():
-            print(f"[TEST] ✅ missing_areas.md created")
+            if missing_sections:
+                print(f"[TEST] ⚠️  Missing sections: {missing_sections}")
+            else:
+                print(f"[TEST] ✅ All required sections present")
         else:
-            print(f"[TEST] ⚠️  missing_areas.md NOT created (optional)")
+            print(f"\n[TEST] ❌ synthesis.md NOT created")
 
         return exit_code
 

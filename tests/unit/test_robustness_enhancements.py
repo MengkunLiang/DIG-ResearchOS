@@ -4,11 +4,20 @@ import json
 from pathlib import Path
 import pytest
 import yaml
+import logging
 
 from researchos.agents.pi import PIAgent
 from researchos.orchestration.state_machine import StateMachine
 from researchos.runtime.agent import ExecutionContext
 from researchos.schemas.state import StateYaml, BudgetCumulative
+
+
+@pytest.fixture(autouse=True)
+def configure_logging_for_tests():
+    """配置日志以便caplog能捕获structlog输出"""
+    from researchos.runtime.logger import configure_logging
+    configure_logging(level="DEBUG", json_logs=False)
+    yield
 
 
 class TestEthicalScreening:
@@ -146,8 +155,10 @@ class TestExternalResources:
 class TestBudgetDriftWarning:
     """测试Runtime预算漂移预警（§7.1）"""
 
-    def test_budget_drift_warning_70_percent(self, tmp_path, capsys):
+    def test_budget_drift_warning_70_percent(self, tmp_path, caplog):
         """测试70%预算警告"""
+        import logging
+
         # 创建state_machine配置
         config_file = tmp_path / "state_machine.yaml"
         config_file.write_text(yaml.dump({
@@ -200,15 +211,18 @@ class TestBudgetDriftWarning:
             stop_reason="finished"
         )
 
-        # 调用advance触发预算检查
-        sm.advance(state, result, workspace_dir=workspace)
+        # 设置caplog捕获WARNING级别
+        with caplog.at_level(logging.WARNING):
+            # 调用advance触发预算检查
+            sm.advance(state, result, workspace_dir=workspace)
 
-        # 检查stdout输出（logger会输出到stdout）
-        captured = capsys.readouterr()
-        assert "预算警告" in captured.out or "预算警告" in captured.err
+        # 检查日志输出（structlog会输出到标准logging）
+        assert any("预算警告" in str(record.msg) for record in caplog.records)
 
-    def test_budget_drift_warning_90_percent(self, tmp_path, capsys):
+    def test_budget_drift_warning_90_percent(self, tmp_path, caplog):
         """测试90%预算严重警告"""
+        import logging
+
         config_file = tmp_path / "state_machine.yaml"
         config_file.write_text(yaml.dump({
             "initial_state": "T1",
@@ -257,11 +271,11 @@ class TestBudgetDriftWarning:
             stop_reason="finished"
         )
 
-        sm.advance(state, result, workspace_dir=workspace)
+        with caplog.at_level(logging.WARNING):
+            sm.advance(state, result, workspace_dir=workspace)
 
-        # 检查stdout输出
-        captured = capsys.readouterr()
-        assert "预算严重超支警告" in captured.out or "预算严重超支警告" in captured.err
+        # 检查日志输出
+        assert any("预算严重超支警告" in str(record.msg) for record in caplog.records)
 
         # 检查是否写入了警告文件
         warning_file = workspace / ".researchos" / "budget_warning.txt"
@@ -270,8 +284,10 @@ class TestBudgetDriftWarning:
         assert "预算严重超支警告" in content
         assert "95.0" in content
 
-    def test_budget_drift_no_warning_below_threshold(self, tmp_path, capsys):
+    def test_budget_drift_no_warning_below_threshold(self, tmp_path, caplog):
         """测试低于70%不触发警告"""
+        import logging
+
         config_file = tmp_path / "state_machine.yaml"
         config_file.write_text(yaml.dump({
             "initial_state": "T1",
@@ -320,11 +336,11 @@ class TestBudgetDriftWarning:
             stop_reason="finished"
         )
 
-        sm.advance(state, result, workspace_dir=workspace)
+        with caplog.at_level(logging.WARNING):
+            sm.advance(state, result, workspace_dir=workspace)
 
         # 检查没有预算警告
-        captured = capsys.readouterr()
-        assert "预算警告" not in captured.out
+        assert not any("预算警告" in str(record.msg) for record in caplog.records)
 
 
 class TestHypothesisPreMortem:

@@ -88,8 +88,18 @@ class ReaderAgent(Agent):
             return False, "缺少literature/paper_notes目录"
 
         note_files = list(notes_dir.glob("*.md"))
-        if len(note_files) < 15:
-            return False, f"paper_notes只有{len(note_files)}篇，至少需要15篇"
+
+        # 动态确定最小笔记数：基于papers_dedup.jsonl的实际数量
+        dedup_path = ctx.workspace_dir / "literature" / "papers_dedup.jsonl"
+        if dedup_path.exists():
+            dedup_papers = load_jsonl(dedup_path)
+            expected_count = len(dedup_papers)
+            min_required = max(3, int(expected_count * 0.8))  # 至少80%的论文应该有笔记，最少3篇
+        else:
+            min_required = 10  # 如果没有papers_dedup.jsonl，使用默认值10
+
+        if len(note_files) < min_required:
+            return False, f"paper_notes只有{len(note_files)}篇，至少需要{min_required}篇（基于{expected_count if dedup_path.exists() else '默认'}篇输入论文）"
 
         ct_path = ctx.workspace_dir / "literature" / "comparison_table.csv"
         if not ct_path.exists():
