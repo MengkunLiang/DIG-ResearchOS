@@ -6,6 +6,7 @@ from pathlib import Path
 import uuid
 
 from ..runtime.agent import AgentResult, ExecutionContext
+from ..runtime.config import RuntimeSettings
 from ..runtime.orchestrator import AgentRunner
 from ..tools.human_gate import HumanInterface
 from ..tools.registry import ToolRegistry
@@ -27,6 +28,7 @@ async def run_skill(
     human_interface: HumanInterface,
     outputs_expected: dict[str, Path] | None = None,
     llm_profile: str | None = None,
+    runtime_settings: RuntimeSettings | None = None,
 ) -> AgentResult:
     """在当前 workspace 中执行一个 skill。"""
     agent = SkillAgent(
@@ -45,5 +47,11 @@ async def run_skill(
             "skill_dir": str(skill.skill_dir),
         },
     )
-    runner = AgentRunner(agent, tool_registry, llm_client, human_interface)
+    runner = AgentRunner(
+        agent,
+        tool_registry,
+        llm_client,
+        human_interface,
+        runtime_settings=runtime_settings,
+    )
     return await runner.run(ctx)

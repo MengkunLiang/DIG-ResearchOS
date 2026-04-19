@@ -1,0 +1,37 @@
+{
+  "type": "object",
+  "properties": {
+    "project_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "topic": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "notes": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "compute_budget": {
+      "type": "object",
+      "properties": {
+        "max_gpu_hours": {
+          "type": "number"
+        },
+        "pilot_budget_hours": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "project_id"
+  ],
+  "additionalProperties": true
+}

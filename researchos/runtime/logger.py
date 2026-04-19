@@ -2,12 +2,43 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+import json
 from typing import Any
 
 try:
     import structlog
 except ModuleNotFoundError:  # pragma: no cover - 是否安装取决于环境
     structlog = None
+
+
+class _StdlibStructuredLogger:
+    """在没有 structlog 时模拟最小 structured logger 接口。"""
+
+    def __init__(self, logger: logging.Logger):
+        self._logger = logger
+
+    def debug(self, event: str, **kwargs: Any) -> None:
+        self._log(logging.DEBUG, event, **kwargs)
+
+    def info(self, event: str, **kwargs: Any) -> None:
+        self._log(logging.INFO, event, **kwargs)
+
+    def warning(self, event: str, **kwargs: Any) -> None:
+        self._log(logging.WARNING, event, **kwargs)
+
+    def error(self, event: str, **kwargs: Any) -> None:
+        self._log(logging.ERROR, event, **kwargs)
+
+    def exception(self, event: str, **kwargs: Any) -> None:
+        self._log(logging.ERROR, event, exc_info=True, **kwargs)
+
+    def _log(self, level: int, event: str, *, exc_info: bool = False, **kwargs: Any) -> None:
+        if kwargs:
+            payload = json.dumps(kwargs, ensure_ascii=False, default=str)
+            message = f"{event} {payload}"
+        else:
+            message = event
+        self._logger.log(level, message, exc_info=exc_info)
 
 
 def configure_logging(level: str = "INFO", json_logs: bool = True) -> None:
@@ -48,14 +79,23 @@ def configure_logging(level: str = "INFO", json_logs: bool = True) -> None:
 
 def get_logger(name: str) -> Any:
     if structlog is None:
-        return logging.getLogger(name)
+        return _StdlibStructuredLogger(logging.getLogger(name))
     return structlog.get_logger(name)
 
 
 def configure_file_logging(log_path: Path, level: str = "INFO") -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    resolved = log_path.resolve()
+    root = logging.getLogger()
+    for existing in root.handlers:
+        if not isinstance(existing, logging.FileHandler):
+            continue
+        try:
+            if Path(existing.baseFilename).resolve() == resolved:
+                return
+        except Exception:
+            continue
     handler = logging.FileHandler(log_path, encoding="utf-8")
     handler.setFormatter(logging.Formatter("%(message)s"))
-    root = logging.getLogger()
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
     root.addHandler(handler)

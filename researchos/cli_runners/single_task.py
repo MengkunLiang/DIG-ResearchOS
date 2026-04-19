@@ -2,6 +2,8 @@ from __future__ import annotations
 
 """单 task 调试运行器。"""
 
+import asyncio
+from datetime import datetime, timezone
 import shutil
 import uuid
 from pathlib import Path
@@ -11,15 +13,22 @@ import yaml
 from ..agents.registry import TASK_TO_AGENT_MAP
 from ..orchestration.task_io_contract import get_task_io, resolve_inputs, resolve_outputs
 from ..runtime.agent import ExecutionContext, LLMConfigOverride
+from ..runtime.config import RuntimeSettings
 from ..runtime.llm_client import LLMClient
 from ..runtime.logger import get_logger
 from ..runtime.orchestrator import AgentRunner
+from ..runtime.workspace import initialize_workspace
+from ..schemas.state import StateYaml, TaskHistoryEntry
 from ..schemas.validator import register_builtin_task_checkers, validate_prerequisites, validate_task_artifacts
-from ..tools.human_gate import CLIHumanInterface
+from ..tools.human_gate import CLIHumanInterface, HumanInterface
 from ..tools.registry import ToolRegistry
 
 
 _LOG = get_logger("single_task")
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 class SingleTaskRunner:
@@ -34,6 +43,8 @@ class SingleTaskRunner:
         tool_registry: ToolRegistry,
         from_workspace: Path | None = None,
         override_profile: str | None = None,
+        human_interface: HumanInterface | None = None,
+        runtime_settings: RuntimeSettings | None = None,
     ) -> None:
         self.workspace = workspace
         self.task_id = task_id
@@ -41,15 +52,19 @@ class SingleTaskRunner:
         self.tools = tool_registry
         self.from_workspace = from_workspace
         self.override_profile = override_profile
+        self.runtime_settings = runtime_settings or RuntimeSettings()
+        self.human = human_interface or CLIHumanInterface()
         register_builtin_task_checkers()
 
     async def run(self) -> int:
         """执行单次 task 调试。"""
         # runner 作为独立 Python API 使用时，也要自己保证 runtime 目录存在，
         # 不能把这个前提完全交给 CLI 调用方。
-        self.workspace.mkdir(parents=True, exist_ok=True)
-        (self.workspace / "_runtime" / "traces").mkdir(parents=True, exist_ok=True)
-        (self.workspace / "_runtime" / "logs").mkdir(parents=True, exist_ok=True)
+        initialize_workspace(
+            self.workspace,
+            create_project_file=False,
+            runtime_dir_name=self.runtime_settings.workspace.runtime_dir,
+        )
 
         if self.from_workspace:
             self._copy_prerequisites()
@@ -77,9 +92,25 @@ class SingleTaskRunner:
         if self.override_profile:
             ctx.llm_override = LLMConfigOverride(profile=self.override_profile)
 
-        human = CLIHumanInterface()
-        runner = AgentRunner(agent, self.tools, self.llm, human)
-        result = await runner.run(ctx)
+        state_path = self.workspace / "state.yaml"
+        state = self._load_or_init_state(ctx.project_id)
+        state = self._record_started(state, ctx.run_id)
+        state.dump_yaml(state_path)
+
+        runner = AgentRunner(
+            agent,
+            self.tools,
+            self.llm,
+            self.human,
+            runtime_settings=self.runtime_settings,
+        )
+        try:
+            result = await runner.run(ctx)
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            state = self._record_interrupted(state)
+            state.dump_yaml(state_path)
+            print("Task interrupted. You can inspect state.yaml and trace files in this workspace.")
+            return 130
 
         io_spec = get_task_io(self.task_id)
         ok, errors = validate_task_artifacts(
@@ -93,6 +124,8 @@ class SingleTaskRunner:
             result.error = "Runtime artifact validation failed: " + "; ".join(errors)
             result.message = result.error
 
+        state = self._record_finished(state, result)
+        state.dump_yaml(state_path)
         self._print_result(result)
         return 0 if result.ok else 5
 
@@ -121,6 +154,71 @@ class SingleTaskRunner:
             except Exception:
                 pass
         return f"single-task-{self.task_id}"
+
+    def _load_or_init_state(self, project_id: str) -> StateYaml:
+        """读取已有 state.yaml，或为单 task 调试初始化一个最小 state。"""
+
+        state_path = self.workspace / "state.yaml"
+        if state_path.exists():
+            state = StateYaml.load_yaml(state_path)
+        else:
+            state = StateYaml(project_id=project_id, current_task=self.task_id)
+        state.current_task = self.task_id
+        state.pending_gate = None
+        state.last_error = None
+        return state
+
+    def _record_started(self, state: StateYaml, run_id: str) -> StateYaml:
+        """记录一次 single-task run 的开始。"""
+
+        state.status = "RUNNING"
+        state.history.append(
+            TaskHistoryEntry(
+                task=self.task_id,
+                run_id=run_id,
+                status="RUNNING",
+                started_at=_now_iso(),
+            )
+        )
+        return state
+
+    def _record_interrupted(self, state: StateYaml) -> StateYaml:
+        """把当前 single-task run 标记为中断。"""
+
+        if state.history:
+            state.history[-1].status = "INTERRUPTED"
+            state.history[-1].finished_at = _now_iso()
+            state.history[-1].stop_reason = "interrupted"
+        state.status = "PAUSED"
+        state.paused_at = _now_iso()
+        return state
+
+    def _record_finished(self, state: StateYaml, result) -> StateYaml:
+        """写回 single-task run 的审计结果，但不推进到其他 task。"""
+
+        if not state.history:
+            return state
+
+        history = state.history[-1]
+        history.finished_at = _now_iso()
+        history.stop_reason = result.stop_reason
+        history.tokens_in = result.tokens_in
+        history.tokens_out = result.tokens_out
+        history.tokens = result.tokens_in + result.tokens_out
+        history.cost_usd = result.cost_usd
+        history.llm_profile = result.llm_profile
+        history.llm_tier = result.llm_tier
+        history.llm_model = result.llm_model_used
+        history.llm_endpoint = result.llm_endpoint_used
+        history.error = result.error
+        history.status = "DONE" if result.ok else "FAILED"
+
+        state.budget_cumulative.tokens_total += history.tokens
+        state.budget_cumulative.cost_usd_total += result.cost_usd
+        state.status = "COMPLETED" if result.ok else "FAILED"
+        state.last_error = result.error
+        state.paused_at = None
+        return state
 
     @staticmethod
     def _print_result(result) -> None:

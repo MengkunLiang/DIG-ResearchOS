@@ -1,0 +1,31 @@
+{
+  "type": "object",
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string"
+    },
+    "command": {
+      "type": [
+        "string",
+        "array"
+      ]
+    },
+    "metrics": {
+      "type": "object"
+    },
+    "artifacts": {
+      "type": "array"
+    },
+    "gpu_hours": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "run_id"
+  ],
+  "additionalProperties": true
+}

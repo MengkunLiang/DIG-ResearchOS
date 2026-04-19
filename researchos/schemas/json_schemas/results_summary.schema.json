@@ -1,0 +1,24 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "key_results": {
+      "type": "array"
+    },
+    "metrics": {
+      "type": "object"
+    },
+    "total_gpu_hours": {
+      "type": "number"
+    },
+    "best_run_id": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": true
+}

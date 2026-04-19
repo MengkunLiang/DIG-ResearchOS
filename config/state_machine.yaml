@@ -1,7 +1,10 @@
-initial_state: T1
+# 默认状态机保持“可立即跑通”的 demo 模式。
+# 正式 T1-T9 workflow 还未全部落地前，不再借用正式 task id 伪装成 T1，
+# 避免与 task_io_contract / validator 产生冲突。
+initial_state: HELLO
 
 states:
-  T1:
+  HELLO:
     agent: hello
     outputs:
       hello_file: hello.txt
@@ -13,4 +16,3 @@ states:
 
   failed:
     terminal: true
-

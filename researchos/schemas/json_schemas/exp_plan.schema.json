@@ -1,0 +1,42 @@
+{
+  "type": "object",
+  "properties": {
+    "goal": {
+      "type": "string"
+    },
+    "experiments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "hypothesis_ref": {
+            "type": "string"
+          },
+          "datasets": {
+            "type": "array"
+          },
+          "metrics": {
+            "type": "array"
+          },
+          "steps": {
+            "type": "array"
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "required": [
+    "experiments"
+  ],
+  "additionalProperties": true
+}

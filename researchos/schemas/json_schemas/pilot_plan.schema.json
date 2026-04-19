@@ -1,0 +1,18 @@
+{
+  "type": "object",
+  "properties": {
+    "goal": {
+      "type": "string"
+    },
+    "success_criteria": {
+      "type": "array"
+    },
+    "steps": {
+      "type": "array"
+    },
+    "budget": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": true
+}

@@ -26,6 +26,7 @@ from ..runtime.agent import (
 )
 from ..schemas.state import BudgetCumulative, GateState, StateYaml, TaskHistoryEntry
 from .gate_presenter import build_presentation
+from .task_io_contract import get_task_io
 
 
 def _now_iso() -> str:
@@ -102,6 +103,40 @@ class StateMachine:
     def create_initial_state(self, project_id: str) -> StateYaml:
         """创建项目首次运行时的状态。"""
         return StateYaml(project_id=project_id, current_task=self.initial_state)
+
+    def validate_definition(self) -> list[str]:
+        """对状态机配置做启动前静态校验。
+
+        这里专注于 runtime 自己有能力判断的结构问题：
+        - 初始节点是否存在；
+        - 非 terminal 节点是否声明了且只声明了一种执行体(agent 或 skill)；
+        - 所有 next/branch 是否都指向已知节点或特殊占位符；
+        - gate 引用是否存在；
+        - 与 task I/O 契约是否明显不一致。
+        """
+
+        errors: list[str] = []
+        if self.initial_state not in self.nodes:
+            errors.append(f"initial_state '{self.initial_state}' not found in state machine nodes")
+
+        for task_id, node in self.nodes.items():
+            if node.terminal:
+                continue
+
+            if bool(node.agent) == bool(node.skill):
+                errors.append(
+                    f"{task_id}: non-terminal node must declare exactly one of 'agent' or 'skill'"
+                )
+
+            for field_name, target in (
+                ("next_on_success", node.next_on_success),
+                ("next_on_failure", node.next_on_failure),
+            ):
+                self._validate_target(task_id, field_name, target, errors)
+
+            self._validate_gate(task_id, node, errors)
+            self._validate_task_contract(task_id, node, errors)
+        return errors
 
     def build_execution_context(self, workspace_dir: Path, state: StateYaml) -> ExecutionContext:
         """把当前状态翻译成 AgentRunner 可执行的 ExecutionContext。"""
@@ -357,3 +392,71 @@ class StateMachine:
             extra_tool_names=tools_block.get("extra_tool_names", tools_block.get("extra", [])),
         )
         return llm_ov, budget_ov, tool_ov
+
+    def _validate_target(
+        self,
+        task_id: str,
+        field_name: str,
+        target: str | None,
+        errors: list[str],
+    ) -> None:
+        if target is None:
+            return
+        if target in {"__terminal__", "__fail__"}:
+            return
+        if target not in self.nodes:
+            errors.append(f"{task_id}: {field_name} points to unknown node '{target}'")
+
+    def _validate_gate(self, task_id: str, node: TaskNode, errors: list[str]) -> None:
+        if not node.gate:
+            return
+
+        gate_id = self._gate_id_for_node(node)
+        inline_gate = node.gate if isinstance(node.gate, dict) else {}
+        gate_spec = self.gates.get(gate_id, {})
+        if gate_id not in self.gates and not inline_gate.get("options"):
+            errors.append(f"{task_id}: gate '{gate_id}' not found in gates config")
+
+        for option in list(gate_spec.get("options", [])) + list(inline_gate.get("options", [])):
+            next_target = option.get("next")
+            if next_target is not None:
+                self._validate_target(task_id, f"gate option '{option.get('id') or option.get('key')}'", next_target, errors)
+
+        branch_maps = [
+            ("branches", node.branches or {}),
+            ("gate.branches", inline_gate.get("branches", {})),
+            (f"gates.{gate_id}.branches", gate_spec.get("branches", {})),
+        ]
+        for field_name, mapping in branch_maps:
+            if not isinstance(mapping, dict):
+                continue
+            for option_id, target in mapping.items():
+                self._validate_target(task_id, f"{field_name}.{option_id}", target, errors)
+
+    def _validate_task_contract(self, task_id: str, node: TaskNode, errors: list[str]) -> None:
+        """检查节点与 task I/O 契约是否一致。
+
+        这里只对 ResearchOS 已定义 contract 的正式 task 生效；像 `done`/`failed` 这类
+        控制节点或自定义调试节点，不做额外限制。
+        """
+
+        try:
+            contract = get_task_io(task_id)
+        except KeyError:
+            return
+
+        declared_inputs = dict(node.inputs or {})
+        declared_outputs = dict(node.outputs or {})
+        contract_inputs = dict(contract.get("inputs", {}))
+        contract_outputs = dict(contract.get("outputs", {}))
+
+        if declared_inputs != contract_inputs:
+            errors.append(
+                f"{task_id}: node.inputs does not match task_io_contract "
+                f"(declared={declared_inputs}, contract={contract_inputs})"
+            )
+        if declared_outputs != contract_outputs:
+            errors.append(
+                f"{task_id}: node.outputs does not match task_io_contract "
+                f"(declared={declared_outputs}, contract={contract_outputs})"
+            )

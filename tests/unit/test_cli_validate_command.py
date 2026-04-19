@@ -32,3 +32,31 @@ states:
     )
 
     assert exit_code == 0
+
+
+def test_cli_validate_config_reports_state_machine_errors(tmp_path: Path):
+    state_machine = tmp_path / "state_machine.yaml"
+    state_machine.write_text(
+        """
+initial_state: T4
+states:
+  T4:
+    agent: hello
+    outputs:
+      wrong_output: ideation/wrong.md
+    next_on_success: done
+  done:
+    terminal: true
+""".strip(),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "--state-machine",
+            str(state_machine),
+            "validate-config",
+        ]
+    )
+
+    assert exit_code == 1

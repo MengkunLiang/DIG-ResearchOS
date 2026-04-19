@@ -5,7 +5,7 @@ import textwrap
 
 import pytest
 
-from researchos.cli import main
+from researchos.cli import PreparedRuntime, main
 from researchos.cli_runners import CompletePipelineRunner, SingleTaskRunner
 from researchos.orchestration.state_machine import StateMachine
 from researchos.testing.mocks import (
@@ -72,6 +72,9 @@ async def test_single_task_runner_runs_hello_happy_path(tmp_workspace: Path):
 
     assert exit_code == 0
     assert (tmp_workspace / "hello.txt").read_text(encoding="utf-8") == "Hello, Runtime!"
+    state_text = (tmp_workspace / "state.yaml").read_text(encoding="utf-8")
+    assert "COMPLETED" in state_text
+    assert "DONE" in state_text
 
 
 @pytest.mark.asyncio
@@ -111,7 +114,11 @@ def test_cli_run_task_command_dispatches(monkeypatch, tmp_path: Path):
 
     async def fake_prepare_runtime(args, workspace_dir):
         observed["workspace"] = workspace_dir
-        return [], ToolRegistry(), object()
+        return PreparedRuntime(
+            skill_roots=[],
+            registry=ToolRegistry(),
+            llm_client=object(),
+        )
 
     async def fake_run(self):
         observed["task_id"] = self.task_id
@@ -125,6 +132,7 @@ def test_cli_run_task_command_dispatches(monkeypatch, tmp_path: Path):
 
     exit_code = main(
         [
+            "--no-banner",
             "--workspace",
             str(workspace),
             "run-task",
@@ -139,3 +147,48 @@ def test_cli_run_task_command_dispatches(monkeypatch, tmp_path: Path):
     assert observed["task_id"] == "HELLO"
     assert observed["from_workspace"] is None
     assert observed["profile"] == "audit"
+
+
+def test_cli_init_workspace_creates_standard_tree(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+
+    exit_code = main(
+        [
+            "--no-banner",
+            "--workspace",
+            str(workspace),
+            "--project-id",
+            "demo-init",
+            "init-workspace",
+            "--topic",
+            "runtime verification",
+        ]
+    )
+
+    assert exit_code == 0
+    assert (workspace / "_runtime" / "traces").exists()
+    assert (workspace / "literature" / "paper_notes").exists()
+    assert (workspace / "project.yaml").exists()
+
+
+def test_cli_trace_renders_human_readable_output(tmp_path: Path, capsys):
+    workspace = tmp_path / "workspace"
+    trace_dir = workspace / "_runtime" / "traces"
+    trace_dir.mkdir(parents=True)
+    (trace_dir / "demo.jsonl").write_text(
+        "\n".join(
+            [
+                '{"seq":1,"ts":"2026-01-01T00:00:00+00:00","type":"run_start","payload":{"run_id":"demo","agent_name":"hello","project_id":"p1","task_id":"HELLO","workspace_dir":"/tmp/ws"}}',
+                '{"seq":2,"ts":"2026-01-01T00:00:01+00:00","type":"message","payload":{"role":"assistant","content":"done","step":1,"metadata":{}}}',
+                '{"seq":3,"ts":"2026-01-01T00:00:02+00:00","type":"run_end","payload":{"ok":true,"stop_reason":"finished","steps_used":1}}',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(["--workspace", str(workspace), "trace", "demo"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "RUN START" in captured.out
+    assert "RUN END" in captured.out

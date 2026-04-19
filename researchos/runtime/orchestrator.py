@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Callable
 from ..pydantic_compat import model_dump
 from .agent import Agent, AgentResult, EffectiveConfig, ExecutionContext, resolve_effective_config
 from .budget import BudgetTracker
+from .config import RuntimeSettings
 from .errors import BudgetExceeded, LLMProviderError, ToolAccessDenied, ToolError
 from .llm_client import LLMClient, ModelBinding
 from .logger import get_logger
@@ -45,6 +46,7 @@ class AgentRunner:
         tool_registry: ToolRegistry,
         llm_client: LLMClient,
         human_interface: HumanInterface,
+        runtime_settings: RuntimeSettings | None = None,
         workspace_policy_factory: Callable[[ExecutionContext, EffectiveConfig], "WorkspaceAccessPolicy"]
         | None = None,
     ):
@@ -52,6 +54,8 @@ class AgentRunner:
         self.tool_registry = tool_registry
         self.llm = llm_client
         self.human = human_interface
+        # runner 默认使用共享 runtime 配置；测试里若不传，则安全回退到默认值。
+        self.runtime_settings = runtime_settings or RuntimeSettings()
         self.workspace_policy_factory = workspace_policy_factory or self._default_policy_factory
         self.log = get_logger(f"runner.{agent.spec.name}")
 
@@ -76,8 +80,15 @@ class AgentRunner:
             max_tokens=eff.max_tokens,
             max_wall_seconds=eff.max_wall_seconds,
         )
-        trace_file = ctx.workspace_dir / "_runtime" / "traces" / f"{ctx.run_id}.jsonl"
+        trace_file = self.runtime_settings.traces_dir(ctx.workspace_dir) / f"{ctx.run_id}.jsonl"
         trace = TraceWriter(trace_file)
+        trace.write_run_start(
+            run_id=ctx.run_id,
+            agent_name=self.agent.spec.name,
+            project_id=ctx.project_id,
+            task_id=ctx.task_id,
+            workspace_dir=ctx.workspace_dir,
+        )
 
         last_model_used: str | None = None
         last_endpoint_used: str | None = None

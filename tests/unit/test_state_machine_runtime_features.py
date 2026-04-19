@@ -177,3 +177,44 @@ def test_mark_interrupted_updates_state(tmp_workspace):
     assert state.status == "PAUSED"
     assert state.history[-1].status == "INTERRUPTED"
     assert state.history[-1].stop_reason == AgentResult.STOP_INTERRUPTED
+
+
+def test_validate_definition_reports_unknown_branch_and_contract_mismatch(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    gates = tmp_workspace / "gates.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T4
+        states:
+          T4:
+            agent: hello
+            inputs:
+              project: project.yaml
+            outputs:
+              wrong_output: ideation/wrong.md
+            gate:
+              id: review_gate
+              branches:
+                retry: T4
+                accept: T_DOES_NOT_EXIST
+        """,
+    )
+    _write_yaml(
+        gates,
+        """
+        gates:
+          review_gate:
+            options:
+              - id: retry
+                label: Retry
+              - id: accept
+                label: Accept
+        """,
+    )
+
+    sm = StateMachine(config, gates)
+    errors = sm.validate_definition()
+
+    assert any("unknown node 'T_DOES_NOT_EXIST'" in item for item in errors)
+    assert any("node.outputs does not match task_io_contract" in item for item in errors)

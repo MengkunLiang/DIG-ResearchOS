@@ -1,0 +1,16 @@
+servers:
+  - name: arxiv
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-arxiv"]
+
+  - name: semantic_scholar
+    command: "python"
+    args: ["-m", "semantic_scholar_mcp"]
+    env:
+      S2_API_KEY: "${S2_API_KEY}"
+
+  - name: github
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    env:
+      GITHUB_TOKEN: "${GITHUB_TOKEN}"

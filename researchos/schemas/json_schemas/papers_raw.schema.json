@@ -1,0 +1,63 @@
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "authors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": true
+      }
+    },
+    "year": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "abstract": {
+      "type": "string"
+    },
+    "venue": {
+      "type": "string"
+    },
+    "citationCount": {
+      "type": "integer"
+    },
+    "externalIds": {
+      "type": "object"
+    },
+    "url": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "source",
+    "title",
+    "authors"
+  ],
+  "additionalProperties": true
+}

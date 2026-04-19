@@ -7,14 +7,16 @@ from pathlib import Path
 
 from ..agents.registry import get_agent_by_id
 from ..orchestration.state_machine import StateMachine
+from ..runtime.config import RuntimeSettings
 from ..runtime.llm_client import LLMClient
 from ..runtime.logger import get_logger
 from ..runtime.orchestrator import AgentRunner
+from ..runtime.workspace import initialize_workspace
 from ..schemas.state import StateYaml
 from ..schemas.validator import register_builtin_task_checkers, validate_task_artifacts
 from ..skills.agent import SkillAgent
 from ..skills.loader import resolve_skill
-from ..tools.human_gate import CLIHumanInterface
+from ..tools.human_gate import CLIHumanInterface, HumanInterface
 from ..tools.registry import ToolRegistry
 
 
@@ -32,12 +34,15 @@ class CompletePipelineRunner:
         llm_client: LLMClient,
         tool_registry: ToolRegistry,
         skill_roots: list[Path] | None = None,
+        human_interface: HumanInterface | None = None,
+        runtime_settings: RuntimeSettings | None = None,
     ) -> None:
         self.workspace = workspace
         self.state_machine = state_machine
         self.llm = llm_client
         self.tools = tool_registry
-        self.human = CLIHumanInterface()
+        self.runtime_settings = runtime_settings or RuntimeSettings()
+        self.human = human_interface or CLIHumanInterface()
         self.skill_roots = skill_roots or []
         register_builtin_task_checkers()
 
@@ -45,9 +50,11 @@ class CompletePipelineRunner:
         """主循环：持续推进直到 completed / failed / paused。"""
         # 与 SingleTaskRunner 相同，这里也把 runtime 目录初始化收敛到 runner 自己，
         # 这样 CLI 之外的测试、脚本或未来上层 API 也能直接复用。
-        self.workspace.mkdir(parents=True, exist_ok=True)
-        (self.workspace / "_runtime" / "traces").mkdir(parents=True, exist_ok=True)
-        (self.workspace / "_runtime" / "logs").mkdir(parents=True, exist_ok=True)
+        initialize_workspace(
+            self.workspace,
+            create_project_file=False,
+            runtime_dir_name=self.runtime_settings.workspace.runtime_dir,
+        )
 
         state_path = self.workspace / "state.yaml"
         if state_path.exists():
@@ -134,4 +141,10 @@ class CompletePipelineRunner:
             )
         else:
             raise ValueError(f"Task {node.task_id} has neither agent nor skill configured")
-        return AgentRunner(agent, self.tools, self.llm, self.human)
+        return AgentRunner(
+            agent,
+            self.tools,
+            self.llm,
+            self.human,
+            runtime_settings=self.runtime_settings,
+        )
