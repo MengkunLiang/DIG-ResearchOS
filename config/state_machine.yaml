@@ -1,9 +1,19 @@
-# 默认状态机保持“可立即跑通”的 demo 模式。
-# 正式 T1-T9 workflow 还未全部落地前，不再借用正式 task id 伪装成 T1，
-# 避免与 task_io_contract / validator 产生冲突。
+# ResearchOS State Machine Configuration
+#
+# 当前支持两种workflow：
+# 1. HELLO - 调试用的简单workflow
+# 2. T1-T4 - 研究前期完整workflow（项目初始化 → 文献检索 → 深度阅读 → 文献综合 → 假设生成）
+#
+# 使用方式：
+# - 调试：initial_state: HELLO
+# - 完整流程：initial_state: T1
+
 initial_state: HELLO
 
 states:
+  # ========================================
+  # 调试workflow
+  # ========================================
   HELLO:
     agent: hello
     outputs:
@@ -11,6 +21,74 @@ states:
     next_on_success: done
     next_on_failure: failed
 
+  # ========================================
+  # T1-T4 完整workflow
+  # ========================================
+  T1:
+    agent: pi
+    mode: init
+    outputs:
+      project: project.yaml
+      state: state.yaml
+    next_on_success: T2
+    next_on_failure: failed
+
+  T2:
+    agent: scout
+    inputs:
+      project: project.yaml
+    outputs:
+      papers_raw: literature/papers_raw.jsonl
+      papers_dedup: literature/papers_dedup.jsonl
+      search_log: literature/search_log.md
+      missing_areas: literature/missing_areas.md
+    next_on_success: T3
+    next_on_failure: failed
+
+  T3:
+    agent: reader
+    mode: read
+    inputs:
+      project: project.yaml
+      papers_dedup: literature/papers_dedup.jsonl
+      missing_areas: literature/missing_areas.md
+    outputs:
+      paper_notes_dir: literature/paper_notes
+      comparison_table: literature/comparison_table.csv
+      related_work_bib: literature/related_work.bib
+    next_on_success: T3.5
+    next_on_failure: failed
+
+  T3.5:
+    agent: reader
+    mode: synthesize
+    inputs:
+      project: project.yaml
+      paper_notes_dir: literature/paper_notes
+      comparison_table: literature/comparison_table.csv
+      missing_areas: literature/missing_areas.md
+    outputs:
+      synthesis: literature/synthesis.md
+    next_on_success: T4
+    next_on_failure: failed
+
+  T4:
+    agent: ideation
+    inputs:
+      project: project.yaml
+      synthesis: literature/synthesis.md
+      comparison_table: literature/comparison_table.csv
+      missing_areas: literature/missing_areas.md
+    outputs:
+      hypotheses: ideation/hypotheses.md
+      exp_plan: ideation/exp_plan.yaml
+      risks: ideation/risks.md
+    next_on_success: done
+    next_on_failure: failed
+
+  # ========================================
+  # 终止状态
+  # ========================================
   done:
     terminal: true
 
