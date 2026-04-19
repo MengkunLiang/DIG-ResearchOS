@@ -13,7 +13,9 @@ import argparse
 import asyncio
 from dataclasses import dataclass
 import importlib
+import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
@@ -54,6 +56,80 @@ def ensure_workspace_layout(workspace_dir: Path, runtime_settings: RuntimeSettin
         create_project_file=False,
         runtime_dir_name=runtime_settings.workspace.runtime_dir,
     )
+
+
+def _path_is_within(child: Path, parent: Path) -> bool:
+    """判断一个路径是否位于另一个路径之下。"""
+
+    try:
+        child.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _detect_environment_warnings() -> list[str]:
+    """检测当前 shell 的环境是否与实际解释器一致。
+
+    这个检查主要用于抓一种很隐蔽但很常见的问题：
+    - 提示符看起来已经 `(researchos)`；
+    - 但 PATH 里优先命中的 `python` / `researchos` 实际仍来自 base 环境。
+
+    这种错配会直接导致：
+    - `python -m researchos.cli` 跑的是错误解释器；
+    - `litellm` 看起来“装了又像没装”；
+    - console script 与当前代码/依赖不一致。
+    """
+
+    warnings: list[str] = []
+    conda_prefix_raw = os.getenv("CONDA_PREFIX")
+    conda_env_name = os.getenv("CONDA_DEFAULT_ENV")
+    sys_prefix = Path(sys.prefix).resolve()
+    sys_executable = Path(sys.executable).resolve()
+
+    if conda_prefix_raw:
+        conda_prefix = Path(conda_prefix_raw).resolve()
+        if not _path_is_within(sys_executable, conda_prefix):
+            warnings.append(
+                f"当前 Python 解释器是 {sys_executable}，但激活的 conda 环境目录是 {conda_prefix}。"
+            )
+
+    shell_python = shutil.which("python")
+    if shell_python:
+        shell_python_path = Path(shell_python).resolve()
+        if shell_python_path != sys_executable:
+            warnings.append(
+                f"PATH 中优先命中的 python 是 {shell_python_path}，当前实际运行的解释器是 {sys_executable}。"
+            )
+
+    researchos_bin = shutil.which("researchos")
+    if researchos_bin:
+        researchos_path = Path(researchos_bin).resolve()
+        if not _path_is_within(researchos_path, sys_prefix):
+            warnings.append(
+                f"`researchos` 命令来自 {researchos_path}，但当前 Python 前缀是 {sys_prefix}。"
+            )
+
+    if warnings and conda_env_name:
+        warnings.append(
+            f"建议优先使用 `conda run -n {conda_env_name} python -m researchos.cli ...` "
+            "或修正 PATH 顺序后再运行。"
+        )
+    return warnings
+
+
+def _emit_environment_warnings() -> None:
+    """把环境错配警告打印到 stderr。"""
+
+    warnings = _detect_environment_warnings()
+    if not warnings:
+        return
+
+    stream = sys.stderr
+    stream.write("[env-warning] 检测到当前 shell 环境与实际解释器可能不一致。\n")
+    for item in warnings:
+        stream.write(f"[env-warning] {item}\n")
+    stream.flush()
 
 
 def _configure_workspace_logging(
@@ -685,6 +761,7 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = build_parser()
     args = parser.parse_args(argv)
+    _emit_environment_warnings()
     runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
     configure_logging(level=args.log_level, json_logs=runtime_settings.logging.json)
     if args.command == "init-workspace":

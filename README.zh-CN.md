@@ -41,13 +41,13 @@ python scripts/debug_hello_agent.py --mock --workspace ./workspace/demo_hello
 ```bash
 cd ResearchOS
 conda activate researchos
-researchos --no-banner init-workspace --workspace ./workspace/demo --project-id demo-project --topic "runtime smoke test"
+researchos init-workspace --workspace ./workspace/demo --project-id demo-project --topic "runtime smoke test"
 ```
 
 如果你没有安装 console script，也可以用：
 
 ```bash
-python -m researchos.cli --no-banner init-workspace --workspace ./workspace/demo --project-id demo-project
+python -m researchos.cli init-workspace --workspace ./workspace/demo --project-id demo-project
 ```
 
 ### 路径 C：查看 CLI 能力与当前 runtime 状态
@@ -330,6 +330,12 @@ researchos init-workspace --workspace ./workspace/demo --project-id demo-project
 researchos --workspace ./workspace/demo init-workspace --project-id demo-project
 researchos init-workspace --workspace ./workspace/demo --project-id demo-project
 ```
+
+说明：
+
+- `DIG` 不是命令，而是 CLI 启动时显示的 ASCII banner。
+- 如果你传了 `--no-banner`，就不会显示这个启动动画。
+- 如果当前输出不是 TTY，runtime 会退化为打印静态 DIG banner，而不是逐帧动画。
 
 可选参数：
 
@@ -669,6 +675,8 @@ python -c "import sys; print(sys.executable)"
 conda run -n researchos python -m researchos.cli ...
 conda run -n researchos researchos ...
 ```
+
+当前版本的 CLI 也会在启动时主动检查这类错配，并打印 `env-warning` 到 stderr。
 
 ### skill 会从哪里自动发现？
 
