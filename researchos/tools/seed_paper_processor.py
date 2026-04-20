@@ -137,7 +137,7 @@ class ProcessSeedPaperTool(Tool):
         2. pdfplumber
         3. 文件名解析
         """
-        metadata =
+        metadata = {}
 
         # 方法 1: PyMuPDF
         try:

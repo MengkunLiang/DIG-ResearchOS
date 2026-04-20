@@ -84,7 +84,7 @@ def _path_is_within(child: Path, parent: Path) -> bool:
 
 
 def _detect_container_environment() -> dict[str, any]:
-    “””检测是否在 Docker 容器内运行。
+    """检测是否在 Docker 容器内运行。
 
     检测方法：
     1. 检查 /.dockerenv 文件（Docker 容器标识）
@@ -96,22 +96,22 @@ def _detect_container_environment() -> dict[str, any]:
             - in_container: bool，是否在容器内
             - container_id: str | None，容器 ID
             - hostname: str | None，主机名
-    “””
+    """
     in_container = (
-        Path(“/.dockerenv”).exists()
-        or Path(“/run/.containerenv”).exists()
-        or os.getenv(“CONTAINER_ID”) is not None
+        Path("/.dockerenv").exists()
+        or Path("/run/.containerenv").exists()
+        or os.getenv("CONTAINER_ID") is not None
     )
 
     return {
-        “in_container”: in_container,
-        “container_id”: os.getenv(“CONTAINER_ID”),
-        “hostname”: os.getenv(“HOSTNAME”),
+        "in_container": in_container,
+        "container_id": os.getenv("CONTAINER_ID"),
+        "hostname": os.getenv("HOSTNAME"),
     }
 
 
 def _detect_environment_warnings() -> list[str]:
-    “””检测当前 shell 的环境是否与实际解释器一致。
+    """检测当前 shell 的环境是否与实际解释器一致。
 
     容器内模式：
     - 跳过 conda 环境检查（容器内不需要 conda）
@@ -127,20 +127,20 @@ def _detect_environment_warnings() -> list[str]:
 
     这种错配会直接导致：
     - `python -m researchos.cli` 跑的是错误解释器；
-    - `litellm` 看起来”装了又像没装”；
+    - `litellm` 看起来"装了又像没装"；
     - console script 与当前代码/依赖不一致。
-    “””
+    """
     # 检测容器环境
     container_env = _detect_container_environment()
 
     # 容器内模式：跳过 conda 检查
-    if container_env[“in_container”]:
+    if container_env["in_container"]:
         return []  # 容器内不需要警告
 
     # 宿主机模式：执行完整检查
     warnings: list[str] = []
-    conda_prefix_raw = os.getenv(“CONDA_PREFIX”)
-    conda_env_name = os.getenv(“CONDA_DEFAULT_ENV”)
+    conda_prefix_raw = os.getenv("CONDA_PREFIX")
+    conda_env_name = os.getenv("CONDA_DEFAULT_ENV")
     sys_prefix = Path(sys.prefix).resolve()
     sys_executable = Path(sys.executable).resolve()
 
@@ -148,29 +148,29 @@ def _detect_environment_warnings() -> list[str]:
         conda_prefix = Path(conda_prefix_raw).resolve()
         if not _path_is_within(sys_executable, conda_prefix):
             warnings.append(
-                f”当前 Python 解释器是 {sys_executable}，但激活的 conda 环境目录是 {conda_prefix}。”
+                f"当前 Python 解释器是 {sys_executable}，但激活的 conda 环境目录是 {conda_prefix}。"
             )
 
-    shell_python = shutil.which(“python”)
+    shell_python = shutil.which("python")
     if shell_python:
         shell_python_path = Path(shell_python).resolve()
         if shell_python_path != sys_executable:
             warnings.append(
-                f”PATH 中优先命中的 python 是 {shell_python_path}，当前实际运行的解释器是 {sys_executable}。”
+                f"PATH 中优先命中的 python 是 {shell_python_path}，当前实际运行的解释器是 {sys_executable}。"
             )
 
-    researchos_bin = shutil.which(“researchos”)
+    researchos_bin = shutil.which("researchos")
     if researchos_bin:
         researchos_path = Path(researchos_bin).resolve()
         if not _path_is_within(researchos_path, sys_prefix):
             warnings.append(
-                f”`researchos` 命令来自 {researchos_path}，但当前 Python 前缀是 {sys_prefix}。”
+                f"`researchos` 命令来自 {researchos_path}，但当前 Python 前缀是 {sys_prefix}。"
             )
 
     if warnings and conda_env_name:
         warnings.append(
-            f”建议优先使用 `conda run -n {conda_env_name} python -m researchos.cli ...` “
-            “或修正 PATH 顺序后再运行。”
+            f"建议优先使用 `conda run -n {conda_env_name} python -m researchos.cli ...` "
+            "或修正 PATH 顺序后再运行。"
         )
     return warnings
 
@@ -369,9 +369,20 @@ def _maybe_check_docker_availability() -> None:
     现阶段正式 agent 只有 Hello，不会触发这个检查；但把逻辑先固化在 CLI 里，
     后续 T5/T7/T9 agent 落地后无需再改主入口。
     """
+    # 容器内模式：跳过 Docker 检查
+    container_env = _detect_container_environment()
+    if container_env["in_container"]:
+        return
 
     if not _any_registered_agent_uses_any_tool({"docker_exec", "latex_compile"}):
         return
+
+    # 检查 docker 命令是否存在
+    if shutil.which("docker") is None:
+        # Docker 命令不存在，但某些 agent 可能需要它
+        # 这里只是警告，不阻止运行
+        return
+
     result = subprocess.run(
         ["docker", "version"],
         capture_output=True,
