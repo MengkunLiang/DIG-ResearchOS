@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -164,3 +165,182 @@ def write_text_file(path: Path, content: str) -> None:
     """写入文本文件，自动创建父目录。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+# ══════════════════════════════════════════════════════
+# 5. Findings.md 模式（Token 优化）
+# ══════════════════════════════════════════════════════
+
+def generate_findings_summary(
+    ctx: "ExecutionContext",
+    findings: list[str],
+    output_dir: str,
+) -> Path:
+    """生成 findings.md，关键发现持久化供后续 Agent 复用。
+
+    来源: AI-Research-SKILLs - findings.md pattern
+    Token 节省: ~200 tokens/agent（避免重复上下文）
+
+    Args:
+        ctx: ExecutionContext
+        findings: 关键发现列表
+        output_dir: Agent 输出目录（如 "ideation/"、"pilot/"）
+
+    Returns:
+        findings.md 的路径
+    """
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    content = f"""# Key Findings
+
+生成时间: {timestamp}
+Agent: {ctx.task_id}
+
+## 关键发现
+
+"""
+    for i, finding in enumerate(findings, 1):
+        content += f"{i}. {finding}\n"
+
+    findings_path = ctx.workspace_dir / output_dir / "findings.md"
+    write_text_file(findings_path, content)
+    return findings_path
+
+
+# ══════════════════════════════════════════════════════
+# 6. Research Log 模式（Token 优化）
+# ══════════════════════════════════════════════════════
+
+def generate_research_log(
+    ctx: "ExecutionContext",
+    decision: str,
+    rationale: str,
+    metadata: dict | None = None,
+) -> Path:
+    """追加决策到 research-log.md，记录关键决策时间线。
+
+    来源: AI-Research-SKILLs - research-log.md pattern
+    Token 节省: ~150 tokens/agent（避免重复推理上下文）
+
+    Args:
+        ctx: ExecutionContext
+        decision: 决策描述
+        rationale: 决策原因
+        metadata: 额外元数据（如 hypotheses_validated, risks 等）
+
+    Returns:
+        research-log.md 的路径
+    """
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_path = ctx.workspace_dir / "research-log.md"
+
+    # 读取现有 log（如果存在）
+    existing_content = ""
+    if log_path.exists():
+        existing_content = read_text_file(log_path)
+
+    # 构建新条目
+    new_entry = f"""
+## {timestamp} {ctx.task_id}
+
+- **决策**: {decision}
+- **原因**: {rationale}
+"""
+    if metadata:
+        for key, value in metadata.items():
+            new_entry += f"- **{key}**: {value}\n"
+
+    # 追加或创建
+    if existing_content:
+        # 如果已存在，找到最后一个 ## 块的位置，在其前插入
+        last_two_headers = existing_content.rfind("\n## ")
+        if last_two_headers > 0:
+            content = existing_content[:last_two_headers] + new_entry + existing_content[last_two_headers:]
+        else:
+            content = existing_content + new_entry
+    else:
+        content = f"# Research Log\n\n本文件记录研究过程中的关键决策时间线。\n用于后续 Agent 复用决策上下文，避免重复推理。\n{new_entry}"
+
+    write_text_file(log_path, content)
+    return log_path
+
+
+# ══════════════════════════════════════════════════════
+# 7. Material Passport（来源：academic-research-skills）
+# ══════════════════════════════════════════════════════
+
+def generate_manifest(
+    ctx: "ExecutionContext",
+    output_dir: str,
+    artifacts: list[dict],
+    inputs: list[dict] | None = None,
+) -> Path:
+    """生成 Material Passport (manifest.yaml)，记录制品来源和元数据。
+
+    来源: academic-research-skills - Material Passport
+    用途: 跨会话追踪制品版本、依赖输入、时间戳
+
+    Args:
+        ctx: ExecutionContext
+        output_dir: Agent 输出目录（如 "ideation/"、"pilot/"）
+        artifacts: 产出的文件列表
+            [{"path": "hypotheses.md", "type": "markdown"}, ...]
+        inputs: 输入文件列表（可选）
+            [{"path": "synthesis.md", "required": true}, ...]
+
+    Returns:
+        manifest.yaml 的路径
+    """
+    import hashlib
+
+    timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    manifest = {
+        "manifest_version": "1.0",
+        "created_at": timestamp,
+        "agent": getattr(ctx, "agent_name", getattr(ctx, "task_id", "unknown")),
+        "task_id": ctx.task_id,
+        "artifacts": [],
+        "inputs": inputs or [],
+    }
+
+    # 计算 artifacts 的校验和
+    workspace = ctx.workspace_dir / output_dir
+    for artifact in artifacts:
+        artifact_path = artifact.get("path", "")
+        full_path = ctx.workspace_dir / output_dir / artifact_path
+
+        checksum = None
+        if full_path.exists() and full_path.is_file():
+            try:
+                content_bytes = full_path.read_bytes()
+                checksum = f"sha256:{hashlib.sha256(content_bytes).hexdigest()[:16]}"
+            except Exception:
+                pass
+
+        manifest["artifacts"].append({
+            "path": artifact_path,
+            "type": artifact.get("type", "unknown"),
+            "checksum": checksum,
+        })
+
+    manifest_path = workspace / "manifest.yaml"
+
+    # 写入 manifest.yaml
+    import yaml
+    with manifest_path.open("w", encoding="utf-8") as f:
+        yaml.dump(manifest, f, allow_unicode=True, default_flow_style=False)
+
+    return manifest_path
+
+
+def load_manifest(ctx: "ExecutionContext", output_dir: str) -> dict | None:
+    """读取指定目录的 manifest.yaml（如果存在）。"""
+    manifest_path = ctx.workspace_dir / output_dir / "manifest.yaml"
+    if not manifest_path.exists():
+        return None
+    try:
+        import yaml
+        return yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None

@@ -43,7 +43,7 @@ def test_ideation_agent_spec(ideation_agent):
     spec = ideation_agent.spec
     assert spec.name == "ideation"
     assert spec.model_tier == "heavy"
-    assert spec.llm_profile == "deep_reasoning"
+    assert spec.llm_profile is None  # 使用默认profile
     assert "read_file" in spec.tool_names
     assert "write_file" in spec.tool_names
     assert "ask_human" in spec.tool_names

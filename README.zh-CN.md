@@ -621,7 +621,27 @@ python scripts/debug_hello_agent.py --mock --workspace ./workspace/demo_hello
 - PDF section 提取
 - skill runtime
 - Hello mock 集成链路
-- T1-T6 agents 单元测试
+- T1-T9 agents 单元测试
+- 集成测试：Agent 输出契约、数据流、状态转换
+- 端到端测试：多 Agent 协作流程
+- 边界和失败路径测试：错误层级、访问控制、重试行为
+
+### 测试目录结构
+
+```
+tests/
+├── unit/                    # 单元测试
+│   ├── test_runner_*.py     # AgentRunner 测试
+│   ├── test_state_machine_*.py  # 状态机测试
+│   ├── test_scout_agent.py  # Scout Agent 测试
+│   ├── test_experimenter_*.py   # Experimenter 测试
+│   ├── test_robustness_enhancements.py  # 鲁棒性增强测试
+│   └── test_boundary_and_failure_paths.py  # 边界和失败路径测试
+├── integration/             # 集成测试
+│   └── test_collaborative_workflows.py   # Agent 协作流程测试
+└── e2e/                    # 端到端测试
+    └── test_end_to_end.py  # 多 Agent 协作流程测试
+```
 
 ## 从0开始调试T1/T2 Agent
 
@@ -1215,7 +1235,7 @@ pytest tests/unit/test_robustness_enhancements.py -v
 
 ## 已知限制
 
-- 当前已实现的 agent：`HelloAgent`、`PIAgent`（T1/T7.5）、`ScoutAgent`（T2）、`ReaderAgent`（T3/T3.5）、`IdeationAgent`（T4）、`ExperimenterAgent`（T6），T5、T7-T9 正式 agent 还在开发中。
+- 当前已实现的 agent：`HelloAgent`、`PIAgent`（T1/T7.5）、`ScoutAgent`（T2）、`ReaderAgent`（T3/T3.5）、`IdeationAgent`（T4）、`NoveltyAuditorAgent`（T4.5）、`ExperimenterAgent`（T5/T6），T7-T9 正式 agent 还在开发中。
 - 默认 [config/state_machine.yaml](./config/state_machine.yaml) 仍是 demo workflow，不是完整 ResearchOS pipeline。
 - `task_io_contract.py` 里虽然已经有 T1-T9 契约，但这不代表所有 task 现在都可运行。
 - MCP runtime 接口已具备，但仓库未默认提供真实 `config/mcp.yaml` 与 connector。
@@ -1223,6 +1243,22 @@ pytest tests/unit/test_robustness_enhancements.py -v
 - task 级 validator 目前仍以 `HELLO` / 基础 `T1` 为主，其余 T-stage 还需要继续深化。
 - `config/runtime.yaml` 目前只是部分生效，不是完整共享配置中心。
 - 当前还没有正式的 `new-agent` scaffold 命令；新增 agent 需要按本文档手工修改相关文件。
+
+## 测试统计
+
+**当前测试总数：239 个**
+
+- 单元测试：231 个
+- 集成测试：17 个
+- 端到端测试：8 个
+
+所有测试均通过，覆盖以下方面：
+- Agent 输出契约验证
+- 多 Agent 数据流
+- 状态转换和持久化
+- 文件契约完整性
+- 边界和失败路径
+- 错误层级和重试行为
 
 ## 下一步建议
 

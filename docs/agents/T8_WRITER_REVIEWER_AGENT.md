@@ -1,3 +1,6 @@
+> ⚠️ **此 Agent 尚未实现 (NOT IMPLEMENTED)**
+> 此文档描述的是规划中的 T8 Writer/Reviewer Agent，设计已完成但代码尚未实现。
+
 # T8 Writer和Reviewer Agent 实现文档
 
 ## 概述

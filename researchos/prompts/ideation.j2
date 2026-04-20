@@ -61,6 +61,84 @@
   - ❌ 纯数据集tricks（"在新数据集上测试XXX"）
 - 每个方向必须有observable metrics（可测量的成功标准）
 
+### Step 2.5: Ideation Lenses 审视（多视角深度分析）
+
+**来源**: AI-Research-SKILLs - 10个互补视角
+
+对每个候选方向，用以下10个视角进行深度审视。如果某个视角发现了重要问题，需要在 `key_risks` 中记录。
+
+#### 10个Ideation Lenses
+
+| # | 视角 | 核心问题 | 审视要点 |
+|---|------|----------|----------|
+| 1 | **Contrastive（对比视角）** | 与现有方法的关键区别是什么？ | 对比SOTA方法，识别真正的差异化贡献；避免"略好一点点"的增量改进 |
+| 2 | **First-principles（第一性原理）** | 这个方向的根本动机是什么？ | 从物理/数学/信息论角度分析可行性；检查是否违反基本约束 |
+| 3 | **Analogical（类比视角）** | 其他领域有类似的成功案例吗？ | 寻找跨领域的类比（如NLP→CV的成功经验）；识别类比的边界条件 |
+| 4 | **Constraint-based（约束视角）** | 在什么约束条件下成立？ | 分析假设的适用范围和边界条件；明确"在X条件下成立" |
+| 5 | **Multi-scale（多尺度视角）** | 在不同尺度上表现如何？ | 检查从token级别到系统级别的效果；考虑 scaling law |
+| 6 | **Temporal（时间视角）** | 这个方向的生命周期如何？ | 评估3-5年后的影响力；考虑技术发展的时序风险 |
+| 7 | **Causal（因果视角）** | 为什么这个方法会有效？ | 明确因果机制，而非相关性；避免 spurious correlations |
+| 8 | **Uncertainty（不确定性视角）** | 哪些地方可能出错？ | 量化假设的不确定性；识别单点故障风险 |
+| 9 | **Resource（资源视角）** | 资源投入产出比如何？ | 评估计算/数据/人力成本；与同等资源下的其他方向对比 |
+| 10 | **Stakeholder（利益相关者视角）** | 谁会关心这个成果？ | 识别目标用户和受益者；评估实际应用价值 |
+
+**审视输出格式**：
+对每个候选方向，输出10个视角的审视结果：
+
+```json
+{
+  "direction_id": "D1",
+  "lens_analysis": {
+    "contrastive": {
+      "key_insight": "与Diffusion Transformer相比，关键区别在于...",
+      "concern": "如果差异仅在超参数调优，可能不够novelty"
+    },
+    "first_principles": {
+      "key_insight": "从信息论角度，理论上界提升...",
+      "concern": null
+    },
+    "analogical": {
+      "key_insight": "类似GAN在CV领域的成功...",
+      "concern": "但NLP生成有独特挑战，如语法正确性"
+    },
+    "constraint_based": {
+      "key_insight": "在低资源场景下特别有效",
+      "concern": "高资源场景可能收益递减"
+    },
+    "multi_scale": {
+      "key_insight": "在句子级别效果显著",
+      "concern": "文档级别可能需要额外设计"
+    },
+    "temporal": {
+      "key_insight": "与LLM发展趋势契合",
+      "concern": "可能被foundation model直接解决"
+    },
+    "causal": {
+      "key_insight": "通过X机制实现Y效果",
+      "concern": "可能存在混淆因素"
+    },
+    "uncertainty": {
+      "key_insight": "主要不确定性在数据集质量",
+      "concern": "实验结果可能存在高方差"
+    },
+    "resource": {
+      "key_insight": "计算效率提升50%",
+      "concern": "需要额外的标注成本"
+    },
+    "stakeholder": {
+      "key_insight": "对NMT工业应用有价值",
+      "concern": "学术界可能更关注理论贡献"
+    }
+  }
+}
+```
+
+**综合评分更新**：
+基于10个视角的审视，更新原始的三维评分。如果某个视角发现重大问题，可能需要降低评分或重新设计方向。
+
+**输出位置**：
+将审视结果写入 `ideation/_lens_analysis.json`（内部使用，不直接暴露给用户）
+
 ### Step 3: 写入候选方向
 将候选方向写入 `ideation/_candidate_directions.json`，格式：
 ```json

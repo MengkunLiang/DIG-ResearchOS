@@ -138,23 +138,195 @@ states:
       comparison_table: literature/comparison_table.csv # 输入：对比表
     outputs:
       novelty_audit: ideation/novelty_audit.md          # 新颖性审计报告
-    next_on_success: T6
+    next_on_success: T5
     next_on_failure: failed
 
-  # T6 状态：实验执行（Experimentation）
-  # 用途：执行实验计划，收集结果
+  # T5 状态：试点实验（Pilot Experimentation）
+  # 用途：执行小规模试点实验，验证假设可行性
   # Agent：experimenter（实验执行器）
-  T6:
+  # 模式：pilot（试点模式）
+  T5:
     agent: experimenter
+    mode: pilot
     inputs:
       project: project.yaml                             # 输入：项目配置
-      exp_plan: ideation/exp_plan.yaml                  # 输入：实验计划
       hypotheses: ideation/hypotheses.md                # 输入：研究假设
+      exp_plan: ideation/exp_plan.yaml                  # 输入：实验计划
+    outputs:
+      pilot_results: pilot/pilot_results.json           # 试点实验结果
+      motivation_validation: pilot/motivation_validation.md  # 动机验证报告
+      smoke_test_marker: pilot/smoke_test_passed.marker # 冒烟测试通过标记
+      docker_digests: pilot/docker_digests.txt          # Docker 镜像摘要
+    next_on_success: T6
+    next_on_failure: T4
+
+  # T6 状态：新颖性最终验证（Novelty Final Verification）
+  # 用途：基于 Pilot 结果验证新颖性，补充必须的基线方法
+  # Agent：novelty（新颖性验证）
+  T6:
+    agent: novelty
+    inputs:
+      project: project.yaml                             # 输入：项目配置
+      hypotheses: ideation/hypotheses.md                # 输入：研究假设
+      exp_plan: ideation/exp_plan.yaml                  # 输入：实验计划
+      pilot_results: pilot/pilot_results.json           # 输入：试点结果
+      synthesis: literature/synthesis.md                # 输入：文献综述
+    outputs:
+      novelty_report: novelty/novelty_report.md           # 新颖性报告
+      collision_cases: novelty/collision_cases.md         # 潜在撞车案例（如有）
+      must_add_baselines: novelty/must_add_baselines.md # 必须补充的基线方法
+    gate:
+      type: novelty_check
+      prompt: |
+        新颖性评估完成。判定：{verdict}
+
+        - PASS: 继续完整实验
+        - REVISE: 需要修改假设（建议方案见 novelty_report.md）
+        - FAIL: 新颖性不足，需要重新构思
+
+        是否继续？
+    next_on_success: T7
+    next_on_failure: T4
+
+  # T7 状态：完整实验（Full Experimentation）
+  # 用途：执行完整的实验计划，收集全面结果
+  # Agent：experimenter（实验执行器）
+  # 模式：full（完整模式）
+  T7:
+    agent: experimenter
+    mode: full
+    inputs:
+      project: project.yaml                             # 输入：项目配置
+      hypotheses: ideation/hypotheses.md                # 输入：研究假设
+      exp_plan: ideation/exp_plan.yaml                  # 输入：实验计划
+      pilot_results: pilot/pilot_results.json           # 输入：试点结果
+      novelty_report: novelty/novelty_report.md        # 输入：T6新颖性报告
     outputs:
       results_summary: experiments/results_summary.json # 结果摘要
       iteration_log: experiments/iteration_log.md       # 迭代日志
-    next_on_success: done
+      ablations: experiments/ablations.csv              # 消融实验结果
+      seed_ensemble_summary: experiments/seed_ensemble_summary.json  # 种子集成摘要
+      iteration_diversity_check: experiments/iteration_diversity_check.md  # 迭代多样性检查
+      docker_digests: experiments/docker_digests.txt    # Docker 镜像摘要
+    next_on_success: T8-WRITE
     next_on_failure: failed
+
+  # T8-WRITE 状态：论文写作（Paper Writing）
+  # 用途：生成论文大纲、初稿、修订
+  # Agent：writer（论文写作）
+  T8-WRITE:
+    agent: writer
+    mode: outline  # 先生成大纲
+    inputs:
+      project: project.yaml                             # 输入：项目配置
+      results_summary: experiments/results_summary.json # 输入：实验结果
+      synthesis: literature/synthesis.md                # 输入：文献综述
+      related_work: literature/related_work.bib         # 输入：引用库
+      hypotheses: ideation/hypotheses.md                # 输入：研究假设
+    outputs:
+      outline: drafts/outline.md                       # 论文大纲
+    next_on_success: T8-DRAFT
+    next_on_failure: failed
+
+  # T8-DRAFT 状态：论文初稿（Paper Draft）
+  # 用途：基于大纲生成完整论文
+  # Agent：writer（论文写作）
+  T8-DRAFT:
+    agent: writer
+    mode: draft
+    inputs:
+      project: project.yaml                             # 输入：项目配置
+      results_summary: experiments/results_summary.json # 输入：实验结果
+      outline: drafts/outline.md                        # 输入：论文大纲
+    outputs:
+      paper: drafts/paper.tex                           # 论文草稿
+    next_on_success: T8-REVIEW-1
+    next_on_failure: failed
+
+  # T8-REVIEW-1 状态：论文审稿第1轮（Paper Review Round 1）
+  # 用途：审稿人审查论文并提出改进建议
+  # Agent：reviewer（论文审稿）
+  T8-REVIEW-1:
+    agent: reviewer
+    round: 1
+    inputs:
+      project: project.yaml                             # 输入：项目配置
+      paper: drafts/paper.tex                           # 输入：论文草稿
+      results_summary: experiments/results_summary.json # 输入：实验结果
+    outputs:
+      review_report: drafts/review_rounds/round_1.md   # 审稿报告
+    next_on_success: T8-REVISE-1
+    next_on_failure: failed
+
+  # T8-REVISE-1 状态：论文修订第1轮（Paper Revision Round 1）
+  # 用途：根据审稿意见修订论文
+  # Agent：writer（论文写作）
+  T8-REVISE-1:
+    agent: writer
+    mode: revise
+    round: 1
+    inputs:
+      project: project.yaml                             # 输入：项目配置
+      paper: drafts/paper.tex                           # 输入：论文草稿
+      review_report: drafts/review_rounds/round_1.md   # 输入：审稿报告
+    outputs:
+      paper: drafts/paper.tex                           # 修订后的论文
+    next_on_success: T8-REVIEW-2
+    next_on_failure: failed
+
+  # T8-REVIEW-2 状态：论文审稿第2轮（Paper Review Round 2）
+  # 用途：审稿人审查修订后的论文
+  # Agent：reviewer（论文审稿）
+  T8-REVIEW-2:
+    agent: reviewer
+    round: 2
+    inputs:
+      project: project.yaml                             # 输入：项目配置
+      paper: drafts/paper.tex                           # 输入：修订后的论文
+    outputs:
+      review_report: drafts/review_rounds/round_2.md   # 审稿报告
+    next_on_success: T8-REVISE-2
+    next_on_failure: T9
+
+  # T8-REVISE-2 状态：论文修订第2轮（Paper Revision Round 2）
+  # 用途：根据第2轮审稿意见修订论文
+  # Agent：writer（论文写作）
+  T8-REVISE-2:
+    agent: writer
+    mode: revise
+    round: 2
+    inputs:
+      project: project.yaml                             # 输入：项目配置
+      paper: drafts/paper.tex                           # 输入：论文草稿
+      review_report: drafts/review_rounds/round_2.md   # 输入：审稿报告
+    outputs:
+      paper: drafts/paper.tex                           # 修订后的论文
+    next_on_success: T9
+    next_on_failure: T9
+
+  # T9 状态：投稿准备（Submission Preparation）
+  # 用途：将论文迁移到目标会议格式，匿名化检查，编译验证
+  # Agent：submission（投稿准备）
+  T9:
+    agent: submission
+    inputs:
+      project: project.yaml                             # 输入：项目配置
+      paper: drafts/paper.tex                           # 输入：论文草稿
+      related_work: literature/related_work.bib         # 输入：引用库
+    outputs:
+      bundle_dir: submission/bundle/                    # 投稿包目录
+      migration_report: submission/migration_report.md  # 迁移报告
+    gate:
+      type: user_confirm
+      prompt: |
+        投稿包准备完成。请审核：
+        - migration_report.md 中的迁移详情
+        - submission/bundle/ 中的文件
+        - 匿名化检查结果
+
+        确认无误后，工作流结束。确认继续吗？
+    next_on_success: done
+    next_on_failure: T8-WRITE  # 允许返回修改论文
 
   # ========================================
   # 终止状态

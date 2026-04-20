@@ -1,3 +1,6 @@
+> ⚠️ **此 Agent 尚未实现 (NOT IMPLEMENTED)**
+> 此文档描述的是规划中的 T9 Submission Agent，设计已完成但代码尚未实现。
+
 # T9 Submission Agent 实现文档
 
 ## 概述

@@ -66,7 +66,7 @@
 
 ### Agent类规范
 
-- 代码不超过120行（不含注释和docstring）
+- 代码行数无所谓（不含注释和docstring）
 - 每个方法都有详细注释
 - 使用`agents/_common.py`的helper函数
 - 遵循Agent Dev Spec §2的模式

@@ -126,30 +126,107 @@
 
 ---
 
-### T6: Experimenter Agent（实验执行）
-**文档**: [T6_EXPERIMENTER_AGENT.md](./T6_EXPERIMENTER_AGENT.md)
+### T4.5: Novelty Auditor Agent（新颖性预审）
+**文档**: [T4.5_NOVELTY_AUDITOR_AGENT.md](./T4.5_NOVELTY_AUDITOR_AGENT.md)
 
-**职责**: 执行实验计划，收集结果
+**职责**: 对研究假设进行新颖性预审，检查是否与已有工作重复，在 Pilot 实验前识别撞车风险
 
-**输入**: `ideation/exp_plan.yaml`, `hypotheses.md`, `project.yaml`
+**输入**: `ideation/hypotheses.md`, `literature/synthesis.md`, `comparison_table.csv`
+
+**输出**:
+- `ideation/novelty_audit.md`（新颖性审计报告）
+- `ideation/collision_cases.md`（潜在撞车案例，如果有）
+
+**模型层级**: heavy
+
+**关键区别 vs T6**:
+| 方面 | T4.5 NoveltyAuditor | T6 Novelty |
+|------|---------------------|------------|
+| 时机 | T4 Ideation 后，Pilot 前 | T5 Pilot 后，Full 前 |
+| 输入 | 纯假设，无实验结果 | 有 Pilot 实验证据 |
+| 目的 | 预审假设新颖性，识别撞车风险 | 基于实验验证新颖性，补充基线 |
+| 输出目录 | `ideation/` | `novelty/` |
+
+**新颖性等级**:
+- Level 3: 高新颖性（几乎没有直接相关工作）
+- Level 2: 中等新颖性（有相关工作但差异明显）
+- Level 1: 低新颖性（有多篇相似工作）
+- Level 0: 无新颖性（已有几乎相同的工作）
+
+---
+
+### T6: Novelty Agent（新颖性最终验证）
+**文档**: [T6_NOVELTY_AGENT.md](./T6_NOVELTY_AGENT.md)（与 T5 Experimenter 共享代码）
+
+**职责**: 基于 Pilot 实验结果验证新颖性，搜索近期相关工作，补充必须的基线方法
+
+**输入**: `ideation/hypotheses.md`, `pilot/pilot_results.json`, `pilot/motivation_validation.md`
+
+**输出**:
+- `novelty/novelty_report.md`（新颖性最终报告）
+- `novelty/collision_cases.md`（潜在撞车案例，如果有）
+- `novelty/must_add_baselines.md`（必须补充的基线方法）
+
+**模型层级**: medium
+
+**Gate T6-DECIDE**:
+- PASS: 所有假设 Level 2+ 且 Pilot 充分验证 → 进入 T7 完整实验
+- REVISE: 存在 Level 1 假设或 Pilot 部分验证 → 修改假设
+- FAIL: 存在 Level 0 假设或 Pilot 未验证核心假设 → 重新构思
+
+---
+
+### T7: Experimenter Agent（完整实验）
+**文档**: [T7_EXPERIMENTER_AGENT.md](./T7_EXPERIMENTER_AGENT_AGENT.md)（与 T5 共享代码）
+
+**职责**: 执行完整的实验计划，收集全面结果，支持 Docker 隔离执行
+
+**输入**: `ideation/hypotheses.md`, `ideation/exp_plan.yaml`, `pilot/pilot_results.json`, `novelty/novelty_report.md`
 
 **输出**:
 - `experiments/results_summary.json`（实验结果汇总）
 - `experiments/iteration_log.md`（实验迭代日志）
-- `experiments/runs/{run_id}/`（每个实验的详细结果）
+- `experiments/ablations.csv`（消融实验结果）
+- `experiments/docker_digests.txt`（Docker 镜像摘要）
 
 **模型层级**: medium
 
 **关键特性**:
-- 支持Docker隔离执行
+- 支持 Docker 隔离执行
 - 依赖关系管理（拓扑排序）
-- 预算管理（GPU时间和成本估算）
-- 最多5轮迭代
+- 预算管理（GPU 时间和成本估算）
+- 最多 5 轮迭代
 
 ---
 
-### T8: Writer和Reviewer Agent（论文写作与审稿）
+### T5: Experimenter Agent（试点实验 Pilot）
+**文档**: [T5_EXPERIMENTER_PILOT_AGENT.md](./T5_EXPERIMENTER_PILOT_AGENT.md)
+
+**职责**: 执行小规模试点实验，验证假设可行性，收集动机验证证据
+
+**输入**: `ideation/hypotheses.md`, `ideation/exp_plan.yaml`, `project.yaml`
+
+**输出**:
+- `pilot/pilot_results.json`（试点实验结果）
+- `pilot/motivation_validation.md`（动机验证报告）
+- `pilot/smoke_test_passed.marker`（冒烟测试通过标记）
+- `pilot/docker_digests.txt`（Docker 镜像摘要）
+
+**模型层级**: medium
+
+**关键特性**:
+- 试点模式（小规模验证）
+- 动机验证（验证假设的动机是否成立）
+- 冒烟测试（快速检查核心假设）
+
+> ⚠️ **注意**: T8 和 T9 Agent 尚未实现（代码未实现），以下是规划中的设计文档
+
+---
+
+### T8: Writer和Reviewer Agent（论文写作与审稿）⚠️规划中
 **文档**: [T8_WRITER_REVIEWER_AGENT.md](./T8_WRITER_REVIEWER_AGENT.md)
+
+**状态**: 规划中（NOT IMPLEMENTED）
 
 **职责**: 
 - **Writer**: 生成论文各个部分（大纲、初稿、修订、最终版）
@@ -172,8 +249,10 @@
 
 ---
 
-### T9: Submission Agent（投稿准备）
+### T9: Submission Agent（投稿准备）⚠️规划中
 **文档**: [T9_SUBMISSION_AGENT.md](./T9_SUBMISSION_AGENT.md)
+
+**状态**: 规划中（NOT IMPLEMENTED）
 
 **职责**: 将论文草稿转换为符合目标会议格式的投稿包
 
@@ -207,17 +286,21 @@ T3.5 (Reader Agent - synthesize)
   ↓ synthesis.md
 T4 (Ideation Agent)
   ↓ hypotheses.md, exp_plan.yaml
-T4.5 (Novelty Auditor Agent)
+T4.5 (NoveltyAuditor Agent) ← 新颖性预审（无实验证据）
   ↓ novelty_audit.md
-T6 (Experimenter Agent)
+T5 (Experimenter Agent - pilot) ← 试点实验
+  ↓ pilot_results.json
+T6 (Novelty Agent) ← 新颖性最终验证（基于实验证据）
+  ↓ novelty_report.md
+T7 (Experimenter Agent - full) ← 完整实验
   ↓ results_summary.json
 T7.5 (PI Agent - evaluate)
   ↓ evaluation_decision.md
   ├─→ 继续迭代（回到T4或T6）
   └─→ 准备写作
-T8 (Writer + Reviewer Agents)
+T8 (Writer + Reviewer Agents) ⚠️规划中
   ↓ paper.tex
-T9 (Submission Agent)
+T9 (Submission Agent) ⚠️规划中
   ↓ submission/bundle/
 ```
 
@@ -342,13 +425,38 @@ pytest tests/integration/test_scout_agent_e2e.py -v
 - **代码实现**: `/home/liangmengkun/ResearchOS/researchos/agents/`
 - **测试**: `/home/liangmengkun/ResearchOS/tests/`
 
+## Agent 状态矩阵
+
+| Agent | Task | 代码状态 | 文档状态 | 模型层级 | 备注 |
+|-------|------|---------|---------|---------|------|
+| Hello | HELLO | ✅ 已实现 | ✅ 完整 | medium | 调试用 |
+| PI | T1, T7.5 | ✅ 已实现 | ✅ 完整 | heavy | init/evaluate 模式 |
+| Scout | T2 | ✅ 已实现 | ✅ 完整 | medium | |
+| Reader | T3, T3.5 | ✅ 已实现 | ✅ 完整 | medium | read/synthesize 模式 |
+| Ideation | T4 | ✅ 已实现 | ✅ 完整 | heavy | |
+| NoveltyAuditor | T4.5 | ✅ 已实现 | ✅ 完整 | heavy | 新颖性预审 |
+| Experimenter | T5, T7 | ✅ 已实现 | ✅ 完整 | medium | pilot/full 模式 |
+| Novelty | T6 | ✅ 已实现 | ✅ 完整 | medium | 新颖性最终验证 |
+| Writer | T8 | ❌ 未实现 | ⚠️ 规划中 | heavy | |
+| Reviewer | T8 | ❌ 未实现 | ⚠️ 规划中 | heavy | |
+| Submission | T9 | ❌ 未实现 | ⚠️ 规划中 | medium | |
+
 ## 已知限制
 
-1. **T5 Pilot模式**: 当前Experimenter Agent主要实现了full模式，pilot模式待完善
-2. **T7 正式实验**: 与T6功能重叠，可能需要合并或重新设计
-3. **Writer/Reviewer Agent**: 当前为设计文档，代码实现待完成
-4. **Submission Agent**: 当前为设计文档，代码实现待完成
-5. **MCP集成**: 当前T2 Scout Agent的MCP工具已注释，等MCP配置完成后再启用
+1. **MCP集成**: 当前 T2 Scout Agent 的 MCP 工具已注释，等 MCP 配置完成后再启用
+2. **T8/T9**: Writer/Reviewer Agent 和 Submission Agent 代码尚未实现，只有设计文档
+
+## T4.5 vs T6 新颖性验证的区别
+
+| 方面 | T4.5 NoveltyAuditor | T6 Novelty |
+|------|---------------------|------------|
+| **时机** | T4 Ideation 后，Pilot 前 | T5 Pilot 后，Full 前 |
+| **输入** | 纯假设，无实验结果 | 有 Pilot 实验证据 |
+| **目的** | 预审假设新颖性，识别撞车风险 | 基于实验验证新颖性，补充基线 |
+| **模型** | heavy (deep_reasoning) | medium |
+| **输出目录** | `ideation/` | `novelty/` |
+| **Gate** | 无 | T6-DECIDE (PASS/REVISE/FAIL) |
+| **关键区别** | 无实验证据，纯假设审计 | 有 Pilot 证据支撑判断 |
 
 ## 更新日志
 

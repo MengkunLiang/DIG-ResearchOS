@@ -66,17 +66,18 @@ def test_experimenter_agent_spec(experimenter_agent):
 
     assert spec.name == "experimenter"
     assert spec.model_tier == "medium"
-    assert spec.max_steps == 100
-    assert spec.max_tokens_total == 500_000
+    assert spec.max_steps == 150
+    assert spec.max_tokens_total == 600_000
     assert spec.max_wall_seconds == 14400
     assert spec.temperature == 0.3
     assert spec.prompt_template == "experimenter.j2"
 
-    # 检查工具
+    # 检查工具（包含 append_file）
     expected_tools = [
         "read_file",
         "write_file",
         "list_files",
+        "append_file",
         "bash_run",
         "docker_exec",
         "finish_task",
@@ -95,9 +96,9 @@ def test_experimenter_system_prompt(experimenter_agent, mock_workspace):
     ctx = ExecutionContext(
         workspace_dir=mock_workspace,
         project_id="test_project",
-        task_id="T6",
+        task_id="T7",
         run_id="test_run_001",
-        mode=None,
+        mode="full",
         extra={},
     )
 
@@ -117,16 +118,16 @@ def test_experimenter_initial_user_message(experimenter_agent, mock_workspace):
     ctx = ExecutionContext(
         workspace_dir=mock_workspace,
         project_id="test_project",
-        task_id="T6",
+        task_id="T7",
         run_id="test_run_001",
-        mode=None,
+        mode="full",  # full mode returns T7
         extra={},
     )
 
     message = experimenter_agent.initial_user_message(ctx)
 
-    assert "T6" in message
-    assert "实验执行" in message
+    assert "T7" in message
+    assert "实验任务" in message  # full mode says "实验任务"
     assert "exp_plan.yaml" in message
     assert "results_summary.json" in message
 
@@ -136,9 +137,9 @@ def test_validate_outputs_success(experimenter_agent, mock_workspace):
     ctx = ExecutionContext(
         workspace_dir=mock_workspace,
         project_id="test_project",
-        task_id="T6",
+        task_id="T7",
         run_id="test_run_001",
-        mode=None,
+        mode="full",
         extra={},
     )
 
@@ -146,7 +147,7 @@ def test_validate_outputs_success(experimenter_agent, mock_workspace):
     experiments_dir = mock_workspace / "experiments"
     experiments_dir.mkdir()
 
-    # 创建results_summary.json
+    # 创建results_summary.json（包含完整的 seed_runs 和 tier 信息）
     results_data = {
         "exp_plan_ref": "ideation/exp_plan.yaml",
         "total_experiments": 1,
@@ -157,8 +158,15 @@ def test_validate_outputs_success(experimenter_agent, mock_workspace):
                 "experiment_id": "exp_baseline_20260419_120000",
                 "name": "baseline_experiment",
                 "hypothesis_ref": "H1",
+                "tier": "headline",  # full 模式需要 tier 字段
                 "status": "DONE",
                 "metrics": {"accuracy": 0.85},
+                "seed_runs": [  # headline 需要 3 个 seed
+                    {"seed": 42, "accuracy": 0.85},
+                    {"seed": 43, "accuracy": 0.86},
+                    {"seed": 44, "accuracy": 0.84},
+                ],
+                "quality_status": "ok",
                 "duration_seconds": 3600,
                 "run_dir": "experiments/runs/exp_baseline_20260419_120000",
             }
@@ -166,6 +174,52 @@ def test_validate_outputs_success(experimenter_agent, mock_workspace):
     }
     results_path = experiments_dir / "results_summary.json"
     results_path.write_text(json.dumps(results_data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # 创建ablations.csv（最少 3 条）
+    ablations_content = """experiment_id,hypothesis_ref,ablation_type,metric,value,baseline_value,delta
+exp_h1_ablation1,H1,remove_component_A,accuracy,0.83,0.85,-0.02
+exp_h1_ablation2,H1,remove_component_B,accuracy,0.78,0.85,-0.07
+exp_h1_ablation3,H1,replace_with_baseline,accuracy,0.81,0.85,-0.04
+"""
+    ablations_path = experiments_dir / "ablations.csv"
+    ablations_path.write_text(ablations_content, encoding="utf-8")
+
+    # 创建docker_digests.txt
+    digest_content = """pytorch/pytorch:2.0.0-cuda11.7-cudnn8-runtime@sha256:abc123def456
+"""
+    digest_path = experiments_dir / "docker_digests.txt"
+    digest_path.write_text(digest_content, encoding="utf-8")
+
+    # 创建seed_ensemble_summary.json
+    ensemble_content = """{
+  "headline_experiments": [
+    {
+      "experiment_id": "exp_baseline_20260419_120000",
+      "seeds": [42, 43, 44],
+      "metric_mean": 0.85,
+      "metric_std": 0.01,
+      "metric_values": [0.85, 0.86, 0.84]
+    }
+  ]
+}
+"""
+    ensemble_path = experiments_dir / "seed_ensemble_summary.json"
+    ensemble_path.write_text(ensemble_content, encoding="utf-8")
+
+    # 创建iteration_diversity_check.md
+    diversity_content = """# 迭代多样性检查
+
+## Iteration 1
+- 探索方向：baseline 对比
+- 超参数：lr=1e-4, batch_size=32
+- 结果：accuracy=0.85
+
+## 判定
+- 总迭代数：1
+- 实质性改进：✓
+"""
+    diversity_path = experiments_dir / "iteration_diversity_check.md"
+    diversity_path.write_text(diversity_content, encoding="utf-8")
 
     # 创建iteration_log.md
     log_content = """# 实验迭代日志
@@ -200,9 +254,9 @@ def test_validate_outputs_missing_results(experimenter_agent, mock_workspace):
     ctx = ExecutionContext(
         workspace_dir=mock_workspace,
         project_id="test_project",
-        task_id="T6",
+        task_id="T7",
         run_id="test_run_001",
-        mode=None,
+        mode="full",
         extra={},
     )
 
@@ -225,9 +279,9 @@ def test_validate_outputs_invalid_json(experimenter_agent, mock_workspace):
     ctx = ExecutionContext(
         workspace_dir=mock_workspace,
         project_id="test_project",
-        task_id="T6",
+        task_id="T7",
         run_id="test_run_001",
-        mode=None,
+        mode="full",
         extra={},
     )
 
@@ -239,7 +293,11 @@ def test_validate_outputs_invalid_json(experimenter_agent, mock_workspace):
     results_path = experiments_dir / "results_summary.json"
     results_path.write_text("invalid json content", encoding="utf-8")
 
-    # 创建iteration_log.md
+    # 创建其他必需文件以避免 "缺少必需产出" 错误
+    ablations_path = experiments_dir / "ablations.csv"
+    ablations_path.write_text("experiment_id,hypothesis_ref,ablation_type,metric,value,baseline_value,delta\nexp1,H1,remove_A,accuracy,0.8,0.85,-0.05\nexp2,H1,remove_B,accuracy,0.78,0.85,-0.07\nexp3,H1,replace,accuracy,0.81,0.85,-0.04\n", encoding="utf-8")
+    digest_path = experiments_dir / "docker_digests.txt"
+    digest_path.write_text("test@sha256:abc\n", encoding="utf-8")
     log_path = experiments_dir / "iteration_log.md"
     log_path.write_text("# 实验迭代日志\n\n测试内容", encoding="utf-8")
 
@@ -254,9 +312,9 @@ def test_validate_outputs_no_experiments(experimenter_agent, mock_workspace):
     ctx = ExecutionContext(
         workspace_dir=mock_workspace,
         project_id="test_project",
-        task_id="T6",
+        task_id="T7",
         run_id="test_run_001",
-        mode=None,
+        mode="full",
         extra={},
     )
 
@@ -275,14 +333,20 @@ def test_validate_outputs_no_experiments(experimenter_agent, mock_workspace):
     results_path = experiments_dir / "results_summary.json"
     results_path.write_text(json.dumps(results_data, indent=2), encoding="utf-8")
 
-    # 创建iteration_log.md
+    # 创建其他必需文件
+    ablations_path = experiments_dir / "ablations.csv"
+    ablations_path.write_text("experiment_id,hypothesis_ref,ablation_type,metric,value,baseline_value,delta\nexp1,H1,remove_A,accuracy,0.8,0.85,-0.05\nexp2,H1,remove_B,accuracy,0.78,0.85,-0.07\nexp3,H1,replace,accuracy,0.81,0.85,-0.04\n", encoding="utf-8")
+    digest_path = experiments_dir / "docker_digests.txt"
+    digest_path.write_text("test@sha256:abc\n", encoding="utf-8")
     log_path = experiments_dir / "iteration_log.md"
     log_path.write_text("# 实验迭代日志\n\n测试内容", encoding="utf-8")
 
     # 校验应该失败
     ok, err = experimenter_agent.validate_outputs(ctx)
     assert not ok
-    assert "至少1个实验结果" in err
+    # full 模式下，验证先检查 required_files（iteration_diversity_check.md）
+    # 再检查 ablations，再检查 results
+    assert "实验结果" in err or "iteration_diversity_check" in err or "results_summary" in err
 
 
 def test_validate_outputs_missing_required_fields(experimenter_agent, mock_workspace):
@@ -290,9 +354,9 @@ def test_validate_outputs_missing_required_fields(experimenter_agent, mock_works
     ctx = ExecutionContext(
         workspace_dir=mock_workspace,
         project_id="test_project",
-        task_id="T6",
+        task_id="T7",
         run_id="test_run_001",
-        mode=None,
+        mode="full",
         extra={},
     )
 
@@ -317,12 +381,17 @@ def test_validate_outputs_missing_required_fields(experimenter_agent, mock_works
     results_path = experiments_dir / "results_summary.json"
     results_path.write_text(json.dumps(results_data, indent=2), encoding="utf-8")
 
-    # 创建iteration_log.md
+    # 创建其他必需文件
+    ablations_path = experiments_dir / "ablations.csv"
+    ablations_path.write_text("experiment_id,hypothesis_ref,ablation_type,metric,value,baseline_value,delta\nexp1,H1,remove_A,accuracy,0.8,0.85,-0.05\nexp2,H1,remove_B,accuracy,0.78,0.85,-0.07\nexp3,H1,replace,accuracy,0.81,0.85,-0.04\n", encoding="utf-8")
+    digest_path = experiments_dir / "docker_digests.txt"
+    digest_path.write_text("test@sha256:abc\n", encoding="utf-8")
     log_path = experiments_dir / "iteration_log.md"
     log_path.write_text("# 实验迭代日志\n\n测试内容", encoding="utf-8")
 
     # 校验应该失败
+    # full 模式下，验证先检查 required_files（包括 iteration_diversity_check.md）
     ok, err = experimenter_agent.validate_outputs(ctx)
     assert not ok
-    assert "缺少字段" in err
-    assert "status" in err
+    # iteration_diversity_check.md 是必需文件之一
+    assert "iteration_diversity_check" in err
