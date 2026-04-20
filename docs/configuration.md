@@ -492,6 +492,422 @@ profiles:
 
 ## 进一步阅读
 
-- [Agent 开发指南](AGENT_DEVELOPMENT_GUIDE.md)
-- [Docker 使用指南](docker-usage.md)
-- [README 中文版](../README.zh-CN.md)
+- [配置系统概览](../config/README.md) - 配置文件快速参考
+- [Agent 开发指南](AGENT_DEVELOPMENT_GUIDE.md) - Agent 开发和配置
+- [Docker 使用指南](docker-usage.md) - Docker 部署配置
+- [README 中文版](../README.zh-CN.md) - 项目总览
+
+## 附录
+
+### A. 完整配置示例
+
+#### 开发环境配置
+
+```bash
+# .env
+OPENAI_API_KEY=sk-xxxxx
+OPENAI_BASE_URL=https://api.openai.com/v1
+LOG_LEVEL=DEBUG
+ENABLE_TRACE=true
+```
+
+```yaml
+# config/runtime.yaml
+workspace:
+  default_root: "./workspace"
+  runtime_dir: "_runtime"
+
+logging:
+  level: "DEBUG"
+  json: false
+
+human_interface:
+  backend: "cli"
+
+agent_behavior:
+  max_empty_reply: 2
+  max_nudge_finish: 2
+  max_validation_retries: 3
+
+debug:
+  enable_trace: true
+
+execution:
+  mode: "auto"
+  detect_container: true
+
+docker:
+  default_image: "researchos/system:latest"
+  build_context: "infra/docker"
+```
+
+```yaml
+# config/model_routing.yaml
+default_profile: default
+
+endpoints:
+  relay:
+    provider: openai
+    api_key_env: OPENAI_API_KEY
+    api_base_env: OPENAI_BASE_URL
+
+profiles:
+  default:
+    heavy:
+      primary:
+        model: "gpt-4"
+        endpoint: relay
+        max_context: 128000
+    medium:
+      primary:
+        model: "gpt-3.5-turbo"
+        endpoint: relay
+        max_context: 16000
+    light:
+      primary:
+        model: "gpt-3.5-turbo"
+        endpoint: relay
+        max_context: 4000
+
+truncation:
+  trigger_ratio: 0.8
+  target_ratio: 0.6
+  keep_system: true
+  keep_recent_turns: 10
+```
+
+#### 生产环境配置
+
+```bash
+# 使用系统环境变量（不使用 .env 文件）
+export OPENAI_API_KEY=sk-xxxxx
+export OPENAI_BASE_URL=https://api.openai.com/v1
+export LOG_LEVEL=INFO
+export ENABLE_TRACE=false
+export SENTRY_DSN=https://xxxxx@sentry.io/xxxxx
+```
+
+```yaml
+# config/runtime.yaml
+workspace:
+  default_root: "/data/researchos/workspace"
+  runtime_dir: "_runtime"
+
+logging:
+  level: "INFO"
+  json: true
+
+human_interface:
+  backend: "cli"
+
+agent_behavior:
+  max_empty_reply: 1
+  max_nudge_finish: 2
+  max_validation_retries: 2
+
+debug:
+  enable_trace: false
+
+execution:
+  mode: "docker"
+  detect_container: true
+
+docker:
+  default_image: "researchos/system:v1.0.0"
+  build_context: "infra/docker"
+```
+
+### B. 配置参数完整列表
+
+#### runtime.yaml 参数
+
+| 参数路径 | 类型 | 默认值 | 说明 |
+|---------|------|--------|------|
+| `workspace.default_root` | string | `"./workspace"` | 工作空间根目录 |
+| `workspace.runtime_dir` | string | `"_runtime"` | Runtime 私有目录名 |
+| `logging.level` | string | `"INFO"` | 日志级别 |
+| `logging.json` | boolean | `true` | 是否使用 JSON 格式 |
+| `human_interface.backend` | string | `"cli"` | 人机接口类型 |
+| `agent_behavior.max_empty_reply` | integer | `2` | 最大空回复次数 |
+| `agent_behavior.max_nudge_finish` | integer | `2` | 最大推动完成次数 |
+| `agent_behavior.max_validation_retries` | integer | `3` | 验证重试次数 |
+| `debug.enable_trace` | boolean | `true` | 是否启用 trace |
+| `execution.mode` | string | `"auto"` | 执行模式 |
+| `execution.detect_container` | boolean | `true` | 是否检测容器环境 |
+| `docker.default_image` | string | `"researchos/system:latest"` | 默认 Docker 镜像 |
+| `docker.build_context` | string | `"infra/docker"` | Docker 构建上下文 |
+
+#### model_routing.yaml 参数
+
+| 参数路径 | 类型 | 默认值 | 说明 |
+|---------|------|--------|------|
+| `default_profile` | string | `"default"` | 默认配置文件名 |
+| `endpoints.<name>.provider` | string | - | 服务提供商 |
+| `endpoints.<name>.api_key_env` | string | - | API Key 环境变量名 |
+| `endpoints.<name>.api_base_env` | string | - | Base URL 环境变量名 |
+| `profiles.<name>.<load>.primary.model` | string | - | 模型名称 |
+| `profiles.<name>.<load>.primary.endpoint` | string | - | 端点名称 |
+| `profiles.<name>.<load>.primary.max_context` | integer | - | 最大上下文长度 |
+| `truncation.trigger_ratio` | float | `0.8` | 触发截断阈值 |
+| `truncation.target_ratio` | float | `0.6` | 截断目标比例 |
+| `truncation.keep_system` | boolean | `true` | 保留系统消息 |
+| `truncation.keep_recent_turns` | integer | `10` | 保留最近轮数 |
+
+#### state_machine.yaml 参数
+
+| 参数路径 | 类型 | 默认值 | 说明 |
+|---------|------|--------|------|
+| `initial_state` | string | - | 初始状态名 |
+| `states.<name>.agent` | string | - | Agent 名称 |
+| `states.<name>.mode` | string | - | Agent 模式（可选）|
+| `states.<name>.inputs` | object | - | 输入文件映射 |
+| `states.<name>.outputs` | object | - | 输出文件映射 |
+| `states.<name>.next_on_success` | string | - | 成功后的下一状态 |
+| `states.<name>.next_on_failure` | string | - | 失败后的下一状态 |
+| `states.<name>.terminal` | boolean | `false` | 是否为终止状态 |
+
+### C. 环境变量完整列表
+
+| 环境变量 | 必需 | 默认值 | 说明 |
+|---------|------|--------|------|
+| `OPENAI_API_KEY` | ✅ | - | OpenAI API Key |
+| `OPENAI_BASE_URL` | ❌ | `https://api.openai.com/v1` | OpenAI API Base URL |
+| `S2_API_KEY` | ❌ | - | Semantic Scholar API Key |
+| `GITHUB_TOKEN` | ❌ | - | GitHub Personal Access Token |
+| `LOG_LEVEL` | ❌ | - | 日志级别（覆盖 runtime.yaml）|
+| `ENABLE_TRACE` | ❌ | - | 启用 trace（覆盖 runtime.yaml）|
+| `EXECUTION_MODE` | ❌ | - | 执行模式（覆盖 runtime.yaml）|
+| `DOCKER_IMAGE_TAG` | ❌ | `latest` | Docker 镜像标签 |
+| `DEV_MODE` | ❌ | `false` | 开发模式 |
+| `SENTRY_DSN` | ❌ | - | Sentry DSN（错误追踪）|
+
+### D. 配置模板
+
+#### 最小可运行配置
+
+```bash
+# .env
+OPENAI_API_KEY=sk-xxxxx
+```
+
+```yaml
+# config/runtime.yaml
+workspace:
+  default_root: "./workspace"
+
+logging:
+  level: "INFO"
+```
+
+```yaml
+# config/model_routing.yaml
+default_profile: default
+
+endpoints:
+  relay:
+    provider: openai
+    api_key_env: OPENAI_API_KEY
+    api_base_env: OPENAI_BASE_URL
+
+profiles:
+  default:
+    heavy:
+      primary:
+        model: "gpt-3.5-turbo"
+        endpoint: relay
+```
+
+```yaml
+# config/state_machine.yaml
+initial_state: HELLO
+
+states:
+  HELLO:
+    agent: hello
+    outputs:
+      hello_file: hello.txt
+    next_on_success: done
+    next_on_failure: failed
+  
+  done:
+    terminal: true
+  
+  failed:
+    terminal: true
+```
+
+### E. 配置迁移指南
+
+#### 从旧版本迁移
+
+如果你从旧版本的 ResearchOS 迁移，请注意以下变更：
+
+**v0.x → v1.0**
+
+1. 配置文件位置变更：
+   - 旧：`config.yaml`（单文件）
+   - 新：`config/*.yaml`（多文件）
+
+2. 环境变量变更：
+   - 旧：`API_KEY`
+   - 新：`OPENAI_API_KEY`
+
+3. 日志配置变更：
+   - 旧：`log_level`
+   - 新：`logging.level`
+
+**迁移步骤：**
+
+```bash
+# 1. 备份旧配置
+cp config.yaml config.yaml.backup
+
+# 2. 创建新配置文件
+cp config/runtime.yaml.example config/runtime.yaml
+cp config/model_routing.yaml.example config/model_routing.yaml
+
+# 3. 迁移环境变量
+# 编辑 .env 文件，将 API_KEY 改为 OPENAI_API_KEY
+
+# 4. 验证新配置
+python -m researchos.cli validate-config
+
+# 5. 测试运行
+python -m researchos.cli run --dry-run
+```
+
+### F. 性能调优建议
+
+#### 1. 上下文管理
+
+```yaml
+# 激进截断（节省成本）
+truncation:
+  trigger_ratio: 0.6
+  target_ratio: 0.4
+  keep_recent_turns: 5
+
+# 保守截断（保持上下文）
+truncation:
+  trigger_ratio: 0.9
+  target_ratio: 0.7
+  keep_recent_turns: 20
+```
+
+#### 2. 模型选择
+
+```yaml
+# 成本优先
+profiles:
+  cost_optimized:
+    heavy:
+      primary:
+        model: "gpt-3.5-turbo"
+        max_context: 16000
+    medium:
+      primary:
+        model: "gpt-3.5-turbo"
+        max_context: 8000
+    light:
+      primary:
+        model: "gpt-3.5-turbo"
+        max_context: 4000
+
+# 质量优先
+profiles:
+  quality_optimized:
+    heavy:
+      primary:
+        model: "gpt-4"
+        max_context: 128000
+    medium:
+      primary:
+        model: "gpt-4"
+        max_context: 32000
+    light:
+      primary:
+        model: "gpt-3.5-turbo"
+        max_context: 16000
+```
+
+#### 3. 并发控制
+
+```yaml
+# 高并发（需要更多资源）
+agent_behavior:
+  max_empty_reply: 3
+  max_nudge_finish: 3
+  max_validation_retries: 5
+
+# 低并发（节省资源）
+agent_behavior:
+  max_empty_reply: 1
+  max_nudge_finish: 1
+  max_validation_retries: 2
+```
+
+### G. 安全配置建议
+
+#### 1. API Key 管理
+
+```bash
+# ❌ 不要这样做
+OPENAI_API_KEY=sk-xxxxx  # 硬编码在脚本中
+
+# ✅ 推荐做法
+# 使用 .env 文件（开发环境）
+echo "OPENAI_API_KEY=sk-xxxxx" > .env
+chmod 600 .env
+
+# 使用密钥管理服务（生产环境）
+export OPENAI_API_KEY=$(aws secretsmanager get-secret-value --secret-id openai-key --query SecretString --output text)
+```
+
+#### 2. 日志安全
+
+```yaml
+# 生产环境：不记录敏感信息
+logging:
+  level: "INFO"  # 不使用 DEBUG
+  json: true     # 结构化日志便于过滤
+
+# 开发环境：详细日志
+logging:
+  level: "DEBUG"
+  json: false
+```
+
+#### 3. 网络安全
+
+```yaml
+# 使用 HTTPS 端点
+endpoints:
+  relay:
+    provider: openai
+    api_key_env: OPENAI_API_KEY
+    api_base_env: OPENAI_BASE_URL  # 确保是 https://
+
+# ❌ 不要使用 HTTP
+# api_base_env: http://insecure-api.com
+```
+
+## 获取帮助
+
+如果遇到配置问题：
+
+1. 查看本文档的"故障排查"部分
+2. 查看配置系统概览：`config/README.md`
+3. 查看日志文件：`workspace/_runtime/logs/`
+4. 运行配置验证：`python -m researchos.cli validate-config`
+5. 提交 Issue：https://github.com/MengkunLiang/DIG-ResearchOS/issues
+
+## 贡献
+
+欢迎贡献配置相关的改进：
+
+- 新的配置选项
+- 配置验证规则
+- 配置文档改进
+- 配置示例和模板
+
+请参考 [CONTRIBUTING.md](../CONTRIBUTING.md) 了解贡献指南。
