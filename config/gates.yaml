@@ -1,1 +1,29 @@
+# ResearchOS Gates 配置文件
+# Gates 用于在 Agent 状态转换时进行条件检查和验证
+#
+# 配置格式：
+# gates:
+#   <gate_name>:
+#     type: <gate_type>        # Gate 类型（如 budget_check, quality_check 等）
+#     config:                  # Gate 特定配置
+#       <key>: <value>
+#
+# 示例：
+# gates:
+#   budget_gate:
+#     type: budget_check
+#     config:
+#       max_cost: 10.0         # 最大成本（美元）
+#       warn_threshold: 0.8    # 警告阈值（80%）
+#
+#   quality_gate:
+#     type: output_validation
+#     config:
+#       min_length: 100        # 最小输出长度
+#       required_fields:       # 必需字段
+#         - title
+#         - summary
+#
+# 当前配置：空（无 Gate 限制）
+# 如需启用 Gate，请参考上述示例添加配置
 gates: {}

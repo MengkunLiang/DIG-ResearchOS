@@ -1,38 +1,76 @@
+# ResearchOS Runtime 配置文件
+# 本文件定义 ResearchOS 运行时的核心行为和路径配置
+
+# Workspace 工作空间配置
 workspace:
+  # 默认工作空间根目录
+  # 所有研究项目的数据、文献、输出都存储在此目录下
   default_root: "./workspace"
+
+  # Runtime 私有目录名称
+  # 用于存储运行时数据（日志、trace、状态等），与用户数据分离
   runtime_dir: "_runtime"
 
+# 日志配置
 logging:
+  # 日志级别：DEBUG, INFO, WARNING, ERROR, CRITICAL
+  # 建议开发时使用 DEBUG，生产环境使用 INFO
   level: "INFO"
+
+  # 是否使用 JSON 格式输出日志
+  # true: 结构化日志，便于机器解析和日志聚合
+  # false: 人类可读的文本格式
   json: true
 
+# 人机接口配置
 human_interface:
+  # 接口后端类型
+  # 当前支持：
+  # - "cli": 命令行接口（默认）
+  # 未来可扩展：web, api 等
   backend: "cli"
 
+# Agent 行为配置
 agent_behavior:
+  # Agent 连续返回空回复的最大次数
+  # 超过此次数将触发错误，防止无限循环
   max_empty_reply: 2
+
+  # 最大"推动完成"次数
+  # 当 Agent 未主动结束时，系统推动其完成的最大尝试次数
   max_nudge_finish: 2
+
+  # 输出验证失败的最大重试次数
+  # Agent 输出不符合预期格式时的重试上限
   max_validation_retries: 3
 
+# 调试配置
 debug:
+  # 是否启用详细的执行追踪
+  # true: 记录详细的 Agent 执行过程到 trace 文件
   enable_trace: true
 
-# Docker 执行模式配置（方案 D1）
+# Docker 执行模式配置
 execution:
   # 执行模式：
-  # - "auto": 自动检测（容器内使用 container-native，宿主机使用 docker）
+  # - "auto": 自动检测环境（推荐）
+  #   * 容器内：使用 container-native（直接执行）
+  #   * 宿主机：使用 docker（隔离执行）
   # - "docker": 强制使用 docker run（宿主机模式）
   # - "container-native": 强制使用 subprocess（容器内模式）
   mode: "auto"
 
-  # 是否启用容器环境检测
+  # 是否启用容器环境自动检测
+  # true: 检查 /.dockerenv 等标志判断是否在容器内
   detect_container: true
 
 # Docker 镜像配置
 docker:
-  # 默认镜像（用于宿主机模式）
+  # 默认使用的 Docker 镜像
+  # 用于宿主机模式下的隔离执行
   default_image: "researchos/system:latest"
 
   # Docker 构建上下文路径
+  # 相对于项目根目录
   build_context: "infra/docker"
 

@@ -1,31 +1,67 @@
+# 默认使用的配置文件名称
 default_profile: default
 
+# API 端点配置
+# 定义可用的 LLM 服务端点，支持 OpenAI 及兼容服务
 endpoints:
   relay:
+    # 服务提供商类型，目前支持 openai
     provider: openai
-    api_key_env: UIUIAPI_API_KEY
-    api_base_env: UIUIAPI_BASE_URL
 
+    # API Key 环境变量名
+    # 从环境变量中读取 API Key，避免硬编码敏感信息
+    api_key_env: OPENAI_API_KEY
+
+    # API Base URL 环境变量名
+    # 支持自定义 API 端点，可用于第三方 OpenAI 兼容服务
+    api_base_env: OPENAI_BASE_URL
+
+# 配置文件定义
+# 每个 profile 包含不同负载级别的模型配置
 profiles:
   default:
+    # heavy: 重负载任务（如文献综合、深度分析）
+    # 需要更强的推理能力和更大的上下文窗口
     heavy:
       primary:
+        # 模型名称，需与 API 端点支持的模型匹配
         model: "gpt-3.5-turbo"
+        # 使用的端点名称，引用上面 endpoints 中定义的端点
         endpoint: relay
+        # 最大上下文长度（tokens）
         max_context: 128000
+
+    # medium: 中等负载任务（如文献检索、信息提取）
+    # 平衡性能和成本
     medium:
       primary:
         model: "gpt-3.5-turbo"
         endpoint: relay
         max_context: 128000
+
+    # light: 轻负载任务（如简单查询、格式转换）
+    # 优先考虑响应速度和成本
     light:
       primary:
         model: "gpt-3.5-turbo"
         endpoint: relay
         max_context: 128000
 
+# 上下文截断配置
+# 当对话历史超过模型上下文限制时自动截断
 truncation:
+  # 触发截断的阈值比例（相对于 max_context）
+  # 当使用量达到 80% 时触发截断
   trigger_ratio: 0.8
+
+  # 截断后保留的目标比例
+  # 截断到 60% 以留出足够空间继续对话
   target_ratio: 0.6
+
+  # 是否保留系统提示词
+  # true: 始终保留系统消息，确保 Agent 行为一致
   keep_system: true
+
+  # 保留最近的对话轮数
+  # 确保最新的上下文不被截断，保持对话连贯性
   keep_recent_turns: 10

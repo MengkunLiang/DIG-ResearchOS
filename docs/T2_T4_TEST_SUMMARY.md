@@ -1,7 +1,7 @@
 # ResearchOS T2-T4 真实LLM测试总结
 
 **测试日期**: 2026-04-19  
-**测试环境**: UIUIAPI (OpenAI-compatible API)  
+**测试环境**: OpenAI-compatible API  
 **模型**: gpt-3.5-turbo  
 **总成本**: $0.1478
 

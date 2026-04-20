@@ -1,7 +1,7 @@
 # T2-T4 真实LLM测试Bug报告
 
 **测试日期**: 2026-04-19  
-**测试环境**: UIUIAPI (OpenAI-compatible API)  
+**测试环境**: OpenAI-compatible API  
 **Workspace**: /tmp/researchos_real_test_20260419_163709
 
 ## 测试状态总览
@@ -290,8 +290,8 @@ papers_dedup.jsonl格式正确：
 endpoints:
   relay:
     provider: openai
-    api_key_env: UIUIAPI_API_KEY
-    api_base_env: UIUIAPI_BASE_URL
+    api_key_env: OPENAI_API_KEY
+    api_base_env: OPENAI_BASE_URL
 
 profiles:
   default:

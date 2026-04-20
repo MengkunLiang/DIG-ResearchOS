@@ -22,8 +22,8 @@ from researchos.config.loader import load_model_routing_config
 
 async def main():
     # 设置环境变量
-    os.environ.setdefault("UIUIAPI_API_KEY", "sk-o75I3UPDDeWXWmYkrLfuaUcho9qijDDO4SF2yhJYtDbX4Hef")
-    os.environ.setdefault("UIUIAPI_BASE_URL", "https://sg.uiuiapi.com/v1")
+    os.environ.setdefault("OPENAI_API_KEY", "sk-o75I3UPDDeWXWmYkrLfuaUcho9qijDDO4SF2yhJYtDbX4Hef")
+    os.environ.setdefault("OPENAI_BASE_URL", "https://sg.uiuiapi.com/v1")
 
     # 配置
     workspace_dir = Path("/tmp/researchos_real_test_20260419_163709")

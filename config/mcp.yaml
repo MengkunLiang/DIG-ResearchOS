@@ -1,9 +1,43 @@
+# ResearchOS MCP (Model Context Protocol) 配置文件
+# MCP 用于为 Agent 提供外部工具和数据源访问能力
+#
+# 配置格式：
+# servers:
+#   - name: <server_name>      # MCP 服务器名称（唯一标识）
+#     command: <command>        # 启动命令（如 npx, python）
+#     args: [<arg1>, <arg2>]   # 命令参数
+#     env:                      # 环境变量（可选）
+#       <VAR_NAME>: "${VAR_NAME}"  # 从系统环境变量读取
+#
+# 支持的 MCP 服务器：
+# 1. arxiv: arXiv 论文搜索和下载
+# 2. semantic_scholar: Semantic Scholar 学术搜索
+# 3. github: GitHub 仓库和代码搜索
+# 4. filesystem: 本地文件系统访问
+# 5. web: 网页抓取和搜索
+#
+# 注意事项：
+# - 使用 npx 的服务器需要 Node.js 环境
+# - 使用 python 的服务器需要安装对应的 Python 包
+# - 环境变量需要在 .env 文件或系统环境中设置
+
 servers:
+  # arXiv MCP 服务器
+  # 功能：搜索和下载 arXiv 论文
+  # 依赖：Node.js, npx
+  # 无需 API Key
   - name: arxiv
     command: "npx"
     args: ["-y", "@modelcontextprotocol/server-arxiv"]
 
-  # Semantic Scholar MCP暂时禁用，因为需要安装semantic_scholar_mcp包
+  # Semantic Scholar MCP 服务器（暂时禁用）
+  # 功能：学术论文搜索、引用分析、作者信息查询
+  # 依赖：Python, semantic_scholar_mcp 包
+  # 需要 API Key：在 .env 中设置 S2_API_KEY
+  # 启用方法：
+  #   1. pip install semantic_scholar_mcp
+  #   2. 在 .env 中添加 S2_API_KEY=your-api-key
+  #   3. 取消下面的注释
   # - name: semantic_scholar
   #   command: "python"
   #   args: ["-m", "semantic_scholar_mcp"]

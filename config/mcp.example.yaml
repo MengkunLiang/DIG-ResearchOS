@@ -1,14 +1,42 @@
+# ResearchOS MCP (Model Context Protocol) 配置文件示例
+# 复制此文件为 mcp.yaml 并根据需要启用/禁用服务器
+#
+# 快速开始：
+#   cp config/mcp.example.yaml config/mcp.yaml
+#
+# 配置格式说明请参考 mcp.yaml 中的详细注释
+
 servers:
+  # arXiv MCP 服务器（推荐启用）
+  # 功能：搜索和下载 arXiv 论文
+  # 依赖：Node.js, npx
+  # 无需 API Key
   - name: arxiv
     command: "npx"
     args: ["-y", "@modelcontextprotocol/server-arxiv"]
 
+  # Semantic Scholar MCP 服务器（可选）
+  # 功能：学术论文搜索、引用分析、作者信息查询
+  # 依赖：Python, semantic_scholar_mcp 包
+  # 需要 API Key：在 .env 中设置 S2_API_KEY
+  # 启用步骤：
+  #   1. pip install semantic_scholar_mcp
+  #   2. 在 .env 中添加 S2_API_KEY=your-api-key
+  #   3. 取消下面的注释
   - name: semantic_scholar
     command: "python"
     args: ["-m", "semantic_scholar_mcp"]
     env:
       S2_API_KEY: "${S2_API_KEY}"
 
+  # GitHub MCP 服务器（可选）
+  # 功能：GitHub 仓库搜索、代码搜索、Issue/PR 管理
+  # 依赖：Node.js, npx
+  # 需要 API Token：在 .env 中设置 GITHUB_TOKEN
+  # 启用步骤：
+  #   1. 在 GitHub 创建 Personal Access Token
+  #   2. 在 .env 中添加 GITHUB_TOKEN=your-token
+  #   3. 取消下面的注释
   - name: github
     command: "npx"
     args: ["-y", "@modelcontextprotocol/server-github"]

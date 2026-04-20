@@ -14,8 +14,8 @@
 # 运行命令：
 #   docker run --rm -it \
 #     -v $(pwd)/workspace:/workspace \
-#     -e UIUIAPI_API_KEY=$UIUIAPI_API_KEY \
-#     -e UIUIAPI_BASE_URL=$UIUIAPI_BASE_URL \
+#     -e OPENAI_API_KEY=$OPENAI_API_KEY \
+#     -e OPENAI_BASE_URL=$OPENAI_BASE_URL \
 #     --gpus all \
 #     researchos/system:latest \
 #     run --workspace /workspace

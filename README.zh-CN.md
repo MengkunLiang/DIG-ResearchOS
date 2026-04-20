@@ -73,8 +73,8 @@ cd /home/liangmengkun/ResearchOS
 bash infra/docker/build.sh
 
 # 2. 设置环境变量
-export UIUIAPI_API_KEY="your-api-key"
-export UIUIAPI_BASE_URL="https://api.example.com"
+export OPENAI_API_KEY="your-api-key"
+export OPENAI_BASE_URL="https://api.example.com"
 
 # 3. 运行
 bash infra/docker/run.sh --help

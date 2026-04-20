@@ -106,7 +106,7 @@ python -m researchos.cli run-task T2 \
 ## 已知问题和解决方案
 
 ### 问题1：API key未配置
-**错误信息**: `ConfigurationError: Endpoint 'relay' requires env var UIUIAPI_API_KEY`
+**错误信息**: `ConfigurationError: Endpoint 'relay' requires env var OPENAI_API_KEY`
 
 **解决方案**: 
 1. 配置环境变量（见上文）

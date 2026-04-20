@@ -1,7 +1,7 @@
 # T1-T4 真实LLM测试Bug报告
 
 **测试日期**: 2026-04-19  
-**测试环境**: UIUIAPI (OpenAI-compatible API)  
+**测试环境**: OpenAI-compatible API  
 **Workspace**: /tmp/researchos_real_test_20260419_163709
 
 ## 测试状态总览
@@ -99,7 +99,7 @@ EOFError: EOF when reading a line
 
 ### 成功的部分 ✅
 
-1. **API连接**: 成功连接到UIUIAPI
+1. **API连接**: 成功连接到OpenAI-compatible API
 2. **Agent启动**: T1 agent成功初始化
 3. **工具调用**: 所有工具调用成功
 4. **人机交互**: 5次ask_human调用都成功（通过AutoHumanInterface）
@@ -157,8 +157,8 @@ EOFError: EOF when reading a line
 endpoints:
   relay:
     provider: openai
-    api_key_env: UIUIAPI_API_KEY
-    api_base_env: UIUIAPI_BASE_URL
+    api_key_env: OPENAI_API_KEY
+    api_base_env: OPENAI_BASE_URL
 
 profiles:
   default:

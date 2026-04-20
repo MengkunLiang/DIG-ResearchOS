@@ -43,12 +43,12 @@ if ! docker images "$IMAGE_NAME" --format "{{.Repository}}:{{.Tag}}" | grep -q "
 fi
 
 # 检查环境变量
-if [ -z "$UIUIAPI_API_KEY" ]; then
-    echo "警告: UIUIAPI_API_KEY 环境变量未设置"
+if [ -z "$OPENAI_API_KEY" ]; then
+    echo "警告: OPENAI_API_KEY 环境变量未设置"
 fi
 
-if [ -z "$UIUIAPI_BASE_URL" ]; then
-    echo "警告: UIUIAPI_BASE_URL 环境变量未设置"
+if [ -z "$OPENAI_BASE_URL" ]; then
+    echo "警告: OPENAI_BASE_URL 环境变量未设置"
 fi
 
 # 创建 workspace 目录（如果不存在）
@@ -77,8 +77,8 @@ echo ""
 
 docker run --rm -it \
     -v "$WORKSPACE_DIR:/workspace" \
-    -e UIUIAPI_API_KEY="${UIUIAPI_API_KEY}" \
-    -e UIUIAPI_BASE_URL="${UIUIAPI_BASE_URL}" \
+    -e OPENAI_API_KEY="${OPENAI_API_KEY}" \
+    -e OPENAI_BASE_URL="${OPENAI_BASE_URL}" \
     ${GPU_FLAG} \
     "$IMAGE_NAME" \
     "$@"

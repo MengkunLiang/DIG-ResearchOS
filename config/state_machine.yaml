@@ -1,120 +1,171 @@
-# ResearchOS State Machine Configuration
+# ResearchOS State Machine 配置文件
+# 定义 ResearchOS 的工作流状态机，控制 Agent 的执行顺序和数据流
 #
-# 当前支持两种workflow：
-# 1. HELLO - 调试用的简单workflow
-# 2. T1-T4 - 研究前期完整workflow（项目初始化 → 文献检索 → 深度阅读 → 文献综合 → 假设生成）
+# 配置结构：
+# initial_state: <state_name>    # 初始状态（工作流入口）
+# states:                        # 状态定义
+#   <state_name>:
+#     agent: <agent_name>        # 使用的 Agent
+#     mode: <mode>               # Agent 模式（可选）
+#     inputs:                    # 输入文件映射
+#       <key>: <file_path>
+#     outputs:                   # 输出文件映射
+#       <key>: <file_path>
+#     next_on_success: <state>   # 成功后的下一状态
+#     next_on_failure: <state>   # 失败后的下一状态
+#     terminal: true             # 是否为终止状态（可选）
+#
+# 当前支持的工作流：
+# 1. HELLO - 调试用的简单 workflow
+# 2. T1-T4 - 研究前期完整 workflow（项目初始化 → 文献检索 → 深度阅读 → 文献综合 → 假设生成）
 #
 # 使用方式：
 # - 调试：initial_state: HELLO
 # - 完整流程：initial_state: T1
 
+# 初始状态配置
+# 可选值：HELLO（调试）, T1（完整研究流程）
 initial_state: HELLO
 
 states:
   # ========================================
-  # 调试workflow
+  # 调试 Workflow
   # ========================================
+
+  # HELLO 状态：简单的 Hello World 测试
+  # 用途：验证 Runtime 基本功能
+  # Agent：hello（输出简单的问候消息）
   HELLO:
     agent: hello
     outputs:
-      hello_file: hello.txt
-    next_on_success: done
-    next_on_failure: failed
+      hello_file: hello.txt      # 输出文件：问候消息
+    next_on_success: done        # 成功后进入 done 状态
+    next_on_failure: failed      # 失败后进入 failed 状态
 
   # ========================================
-  # T1-T4 完整workflow
+  # T1-T4 完整研究 Workflow
   # ========================================
+
+  # T1 状态：项目初始化（Project Initialization）
+  # 用途：创建研究项目，定义研究问题和目标
+  # Agent：pi（Project Initializer）
+  # 模式：init
   T1:
     agent: pi
     mode: init
     outputs:
-      project: project.yaml
-      state: state.yaml
+      project: project.yaml      # 项目配置文件
+      state: state.yaml          # 项目状态文件
     next_on_success: T2
     next_on_failure: failed
 
+  # T2 状态：文献检索（Literature Scouting）
+  # 用途：搜索相关文献，构建初步文献库
+  # Agent：scout（文献侦察员）
   T2:
     agent: scout
     inputs:
-      project: project.yaml
+      project: project.yaml      # 输入：项目配置
     outputs:
-      papers_raw: literature/papers_raw.jsonl
-      papers_dedup: literature/papers_dedup.jsonl
-      search_log: literature/search_log.md
-      missing_areas: literature/missing_areas.md
+      papers_raw: literature/papers_raw.jsonl           # 原始检索结果
+      papers_dedup: literature/papers_dedup.jsonl       # 去重后的论文列表
+      search_log: literature/search_log.md              # 检索日志
+      missing_areas: literature/missing_areas.md        # 识别的研究空白
     next_on_success: T3
     next_on_failure: failed
 
+  # T3 状态：深度阅读（Deep Reading）
+  # 用途：深度阅读文献，提取关键信息
+  # Agent：reader（文献阅读器）
+  # 模式：read
   T3:
     agent: reader
     mode: read
     inputs:
-      project: project.yaml
-      papers_dedup: literature/papers_dedup.jsonl
-      missing_areas: literature/missing_areas.md
+      project: project.yaml                             # 输入：项目配置
+      papers_dedup: literature/papers_dedup.jsonl       # 输入：去重论文列表
+      missing_areas: literature/missing_areas.md        # 输入：研究空白
     outputs:
-      paper_notes_dir: literature/paper_notes
-      comparison_table: literature/comparison_table.csv
-      related_work_bib: literature/related_work.bib
+      paper_notes_dir: literature/paper_notes           # 论文笔记目录
+      comparison_table: literature/comparison_table.csv # 方法对比表
+      related_work_bib: literature/related_work.bib     # 相关工作引用
     next_on_success: T3.5
     next_on_failure: failed
 
+  # T3.5 状态：文献综合（Literature Synthesis）
+  # 用途：综合文献信息，形成系统性理解
+  # Agent：reader（文献阅读器）
+  # 模式：synthesize
   T3.5:
     agent: reader
     mode: synthesize
     inputs:
-      project: project.yaml
-      paper_notes_dir: literature/paper_notes
-      comparison_table: literature/comparison_table.csv
-      missing_areas: literature/missing_areas.md
+      project: project.yaml                             # 输入：项目配置
+      paper_notes_dir: literature/paper_notes           # 输入：论文笔记
+      comparison_table: literature/comparison_table.csv # 输入：对比表
+      missing_areas: literature/missing_areas.md        # 输入：研究空白
     outputs:
-      synthesis: literature/synthesis.md
+      synthesis: literature/synthesis.md                # 文献综述
     next_on_success: T4
     next_on_failure: failed
 
+  # T4 状态：假设生成（Hypothesis Generation）
+  # 用途：基于文献综述生成研究假设和实验计划
+  # Agent：ideation（创意生成器）
   T4:
     agent: ideation
     inputs:
-      project: project.yaml
-      synthesis: literature/synthesis.md
-      comparison_table: literature/comparison_table.csv
-      missing_areas: literature/missing_areas.md
+      project: project.yaml                             # 输入：项目配置
+      synthesis: literature/synthesis.md                # 输入：文献综述
+      comparison_table: literature/comparison_table.csv # 输入：对比表
+      missing_areas: literature/missing_areas.md        # 输入：研究空白
     outputs:
-      hypotheses: ideation/hypotheses.md
-      exp_plan: ideation/exp_plan.yaml
-      risks: ideation/risks.md
+      hypotheses: ideation/hypotheses.md                # 研究假设
+      exp_plan: ideation/exp_plan.yaml                  # 实验计划
+      risks: ideation/risks.md                          # 风险评估
     next_on_success: T4.5
     next_on_failure: failed
 
+  # T4.5 状态：新颖性审计（Novelty Auditing）
+  # 用途：评估研究假设的新颖性和可行性
+  # Agent：novelty_auditor（新颖性审计员）
   T4.5:
     agent: novelty_auditor
     inputs:
-      project: project.yaml
-      hypotheses: ideation/hypotheses.md
-      synthesis: literature/synthesis.md
-      comparison_table: literature/comparison_table.csv
+      project: project.yaml                             # 输入：项目配置
+      hypotheses: ideation/hypotheses.md                # 输入：研究假设
+      synthesis: literature/synthesis.md                # 输入：文献综述
+      comparison_table: literature/comparison_table.csv # 输入：对比表
     outputs:
-      novelty_audit: ideation/novelty_audit.md
+      novelty_audit: ideation/novelty_audit.md          # 新颖性审计报告
     next_on_success: T6
     next_on_failure: failed
 
+  # T6 状态：实验执行（Experimentation）
+  # 用途：执行实验计划，收集结果
+  # Agent：experimenter（实验执行器）
   T6:
     agent: experimenter
     inputs:
-      project: project.yaml
-      exp_plan: ideation/exp_plan.yaml
-      hypotheses: ideation/hypotheses.md
+      project: project.yaml                             # 输入：项目配置
+      exp_plan: ideation/exp_plan.yaml                  # 输入：实验计划
+      hypotheses: ideation/hypotheses.md                # 输入：研究假设
     outputs:
-      results_summary: experiments/results_summary.json
-      iteration_log: experiments/iteration_log.md
+      results_summary: experiments/results_summary.json # 结果摘要
+      iteration_log: experiments/iteration_log.md       # 迭代日志
     next_on_success: done
     next_on_failure: failed
 
   # ========================================
   # 终止状态
   # ========================================
+
+  # done 状态：成功完成
+  # 工作流正常结束
   done:
     terminal: true
 
+  # failed 状态：失败终止
+  # 工作流因错误而终止
   failed:
     terminal: true

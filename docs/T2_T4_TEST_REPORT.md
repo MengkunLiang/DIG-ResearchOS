@@ -1,7 +1,7 @@
 # T2-T4 真实LLM测试报告
 
 **测试日期**: 2026-04-19  
-**测试环境**: UIUIAPI API (gpt-3.5-turbo)  
+**测试环境**: OpenAI-compatible API (gpt-3.5-turbo)  
 **Workspace**: /tmp/researchos_real_test_20260419_163709  
 **研究主题**: efficient attention mechanisms for transformers
 
@@ -160,7 +160,7 @@ max_tokens_total=200_000,  # 从120K增加到200K
 ### 全流程测试（T2-T4）
 
 **测试环境**:
-- API: UIUIAPI (gpt-3.5-turbo)
+- API: OpenAI-compatible API (gpt-3.5-turbo)
 - Workspace: /tmp/researchos_test_t3_20260419
 - 研究主题: efficient attention mechanisms for transformers
 
@@ -272,15 +272,15 @@ Step 8: tokens_in=31475, tokens_out=756   (最后处理)
 
 ```yaml
 # .env
-UIUIAPI_API_KEY=sk-o75I3UPDDeWXWmYkrLfuaUcho9qijDDO4SF2yhJYtDbX4Hef
-UIUIAPI_BASE_URL=https://sg.uiuiapi.com/v1
+OPENAI_API_KEY=sk-o75I3UPDDeWXWmYkrLfuaUcho9qijDDO4SF2yhJYtDbX4Hef
+OPENAI_BASE_URL=https://sg.uiuiapi.com/v1
 
 # config/model_routing.yaml
 endpoints:
   relay:
     provider: openai
-    api_key_env: UIUIAPI_API_KEY
-    api_base_env: UIUIAPI_BASE_URL
+    api_key_env: OPENAI_API_KEY
+    api_base_env: OPENAI_BASE_URL
 
 profiles:
   default:

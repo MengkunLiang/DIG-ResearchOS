@@ -46,8 +46,8 @@ class AutoHumanInterface(HumanInterface):
 
 async def main():
     # 设置环境变量
-    os.environ["UIUIAPI_API_KEY"] = "sk-o75I3UPDDeWXWmYkrLfuaUcho9qijDDO4SF2yhJYtDbX4Hef"
-    os.environ["UIUIAPI_BASE_URL"] = "https://sg.uiuiapi.com/v1"
+    os.environ["OPENAI_API_KEY"] = "sk-o75I3UPDDeWXWmYkrLfuaUcho9qijDDO4SF2yhJYtDbX4Hef"
+    os.environ["OPENAI_BASE_URL"] = "https://sg.uiuiapi.com/v1"
 
     # 使用T3的输出作为输入
     workspace_dir = Path("/tmp/researchos_test_t3_20260419")
