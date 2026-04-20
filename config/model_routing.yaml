@@ -25,7 +25,7 @@ profiles:
     heavy:
       primary:
         # 模型名称，需与 API 端点支持的模型匹配
-        model: "gpt-3.5-turbo"
+        model: "gpt-5"
         # 使用的端点名称，引用上面 endpoints 中定义的端点
         endpoint: relay
         # 最大上下文长度（tokens）
@@ -35,7 +35,7 @@ profiles:
     # 平衡性能和成本
     medium:
       primary:
-        model: "gpt-3.5-turbo"
+        model: "gpt-4o"
         endpoint: relay
         max_context: 128000
 
