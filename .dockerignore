@@ -1,0 +1,53 @@
+# Python 缓存和编译文件
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# 虚拟环境
+venv/
+env/
+ENV/
+.venv
+
+# 测试和覆盖率
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+
+# IDE 配置
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Workspace 数据（不打包到镜像）
+workspace/
+tmp/
+
+# 文档
+docs/
+*.md
+!README.md
+
+# 日志
+*.log
+
+# 环境变量文件（敏感信息）
+.env
+.env.*
+
+# 构建产物
+dist/
+build/
+*.egg-info/
+
+# 其他
+.DS_Store
