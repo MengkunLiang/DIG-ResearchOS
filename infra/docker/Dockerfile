@@ -61,7 +61,8 @@ COPY requirements.txt requirements-llm.txt requirements-dev.txt ./
 # 安装 Python 依赖（ResearchOS runtime）
 # 注意：这里先安装依赖，后面再安装 ResearchOS 本身（利用 Docker 缓存）
 RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir -r requirements-llm.txt
+    pip install --no-cache-dir -r requirements-llm.txt && \
+    pip install --no-cache-dir -r requirements-dev.txt
 
 # 安装常用 ML 依赖（实验代码常用）
 # 这些包会被 Agent 生成的实验代码使用

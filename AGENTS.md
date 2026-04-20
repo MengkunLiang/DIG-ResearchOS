@@ -1,5 +1,8 @@
 # ResearchOS Working Agreement
 
+## Language
+- Prefer Chinese for final explanations and user-facing documentation unless the repository already requires English-only docs.
+
 ## Mission
 - Primary goal: build the ResearchOS runtime first.
 - Try to complete as much of the current runtime as reasonably possible within the task scope, not just a superficial scaffold.
@@ -13,6 +16,8 @@
 - Read design references from `/home/liangmengkun/reference_materials`.
 - Put downloads, caches, generated artifacts, and temporary files only under `/home/liangmengkun/downloads` or `/home/liangmengkun/tmp`.
 - Do not write files under `/root`.
+- Never write downloads, caches, or temporary files under `/root`.
+- Prefer paths under `/home/liangmengkun` for all persistent work.
 
 ## Environment
 - Use the conda environment `/home/liangmengkun/.conda/envs/researchos`.
@@ -76,4 +81,5 @@
 - Push is allowed after checks and documentation updates are complete.
 - It is acceptable to commit and push directly when the implementation is ready.
 - Before finishing, summarize the implementation, verification results, and next recommended steps.
-
+- Prefer small, clear commits.
+- Before ending a task, summarize what changed, how it was verified, and any remaining risks.

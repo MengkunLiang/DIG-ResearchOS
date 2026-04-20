@@ -38,22 +38,58 @@ class Endpoint:
     rate_limit: dict[str, Any] = field(default_factory=dict)
 
     def to_litellm_kwargs(self) -> dict[str, Any]:
-        """把 endpoint 配置转换成 litellm 需要的关键字参数。"""
+        """把 endpoint 配置转换成 litellm 需要的关键字参数。
+
+        支持多种环境变量名称：
+        - 优先使用配置中指定的环境变量名
+        - 如果未设置，尝试常见的备选名称（如 OPENAI_API_KEY）
+        """
         kwargs: dict[str, Any] = {}
         if self.api_key_env:
             key = os.environ.get(self.api_key_env)
+            # 如果主环境变量未设置，尝试备选名称
+            if not key:
+                # 常见的备选环境变量名
+                fallback_names = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]
+                for fallback in fallback_names:
+                    key = os.environ.get(fallback)
+                    if key:
+                        _log.info(
+                            "using_fallback_api_key",
+                            requested=self.api_key_env,
+                            fallback=fallback,
+                        )
+                        break
+
             if not key:
                 raise ConfigurationError(
-                    f"Endpoint '{self.name}' requires env var {self.api_key_env}"
+                    f"Endpoint '{self.name}' requires env var {self.api_key_env} "
+                    f"(or fallback: OPENAI_API_KEY, ANTHROPIC_API_KEY)"
                 )
             kwargs["api_key"] = key
+
         api_base = self.api_base
         if self.api_base_env:
             api_base = os.environ.get(self.api_base_env)
+            # 如果主环境变量未设置，尝试备选名称
+            if not api_base:
+                fallback_names = ["OPENAI_API_BASE", "OPENAI_BASE_URL"]
+                for fallback in fallback_names:
+                    api_base = os.environ.get(fallback)
+                    if api_base:
+                        _log.info(
+                            "using_fallback_api_base",
+                            requested=self.api_base_env,
+                            fallback=fallback,
+                        )
+                        break
+
             if not api_base:
                 raise ConfigurationError(
-                    f"Endpoint '{self.name}' requires env var {self.api_base_env}"
+                    f"Endpoint '{self.name}' requires env var {self.api_base_env} "
+                    f"(or fallback: OPENAI_API_BASE, OPENAI_BASE_URL)"
                 )
+
         if api_base:
             kwargs["api_base"] = api_base
         if self.api_version:

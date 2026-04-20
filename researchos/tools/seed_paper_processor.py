@@ -1,0 +1,346 @@
+from __future__ import annotations
+
+"""种子论文处理工具。
+
+支持用户提供种子论文的多种方式：
+- PDF 文件路径
+- arXiv ID
+- DOI
+- 论文标题 + 作者
+"""
+
+import json
+from pathlib import Path
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+from .base import Tool, ToolResult
+from .workspace_policy import WorkspaceAccessPolicy
+from ..runtime.logger import get_logger
+
+_LOG = get_logger("seed_paper_processor")
+
+
+class ProcessSeedPaperParams(BaseModel):
+    """处理种子论文参数"""
+
+    source: str = Field(..., description="论文来源：pdf_path、arxiv_id、doi、title")
+    value: str = Field(..., description="对应的值（文件路径、ID、标题等）")
+    role: str = Field("reference", description="论文角色：anchor 或 reference")
+    why_relevant: str = Field("", description="为什么相关")
+    authors: list[str] = Field(default_factory=list, description="作者列表（可选）")
+    year: int | None = Field(None, description="年份（可选）")
+
+
+class ProcessSeedPaperTool(Tool):
+    """处理种子论文工具。
+
+    将用户提供的种子论文（PDF、arXiv ID、DOI等）转换为标准格式，
+    并提取元数据（标题、作者、年份等）。
+    """
+
+    name = "process_seed_paper"
+    description = (
+        "处理用户提供的种子论文，支持 PDF 文件、arXiv ID、DOI 等多种输入方式。"
+        "自动提取论文元数据（标题、作者、年份）并转换为标准格式。"
+    )
+    parameters_schema = ProcessSeedPaperParams
+    timeout_seconds = 60.0
+    requires_human_approval = False
+    idempotent = True
+
+    def __init__(self, policy: WorkspaceAccessPolicy):
+        self.policy = policy
+
+    async def execute(self, **kwargs: Any) -> ToolResult:
+        params = ProcessSeedPaperParams(**kwargs)
+
+        try:
+            if params.source == "pdf_path":
+                return await self._process_pdf(params)
+            elif params.source == "arxiv_id":
+                return await self._process_arxiv(params)
+            elif params.source == "doi":
+                return await self._process_doi(params)
+            elif params.source == "title":
+                return await self._process_title(params)
+            else:
+                return ToolResult(
+                    ok=False,
+                    content=f"不支持的来源类型: {params.source}",
+                    error="unsupported_source",
+                )
+        except Exception as e:
+            _LOG.error("process_seed_paper_failed", source=params.source, error=str(e))
+            return ToolResult(
+                ok=False,
+                content=f"处理种子论文失败: {e}",
+                error="processing_failed",
+            )
+
+    async def _process_pdf(self, params: ProcessSeedPaperParams) -> ToolResult:
+        """处理 PDF 文件。
+
+        步骤：
+        1. 验证 PDF 文件存在
+        2. 提取元数据（标题、作者、年份）
+        3. 复制 PDF 到 user_seeds/pdfs/ 目录
+        4. 返回标准格式的论文信息
+        """
+        # 解析 PDF 路径
+        pdf_path = Path(params.value)
+        if not pdf_path.is_absolute():
+            # 相对路径，相对于 workspace
+            pdf_path = self.policy.workspace_dir / pdf_path
+
+        if not pdf_path.exists():
+            return ToolResult(
+                ok=False,
+                content=f"PDF 文件不存在: {params.value}",
+                error="pdf_not_found",
+            )
+
+        # 提取元数据
+        metadata = await self._extract_pdf_metadata(pdf_path)
+
+        # 复制 PDF 到 user_seeds/pdfs/
+        pdfs_dir = self.policy.workspace_dir / "user_seeds" / "pdfs"
+        pdfs_dir.mkdir(parents=True, exist_ok=True)
+
+        dest_path = pdfs_dir / pdf_path.name
+        if not dest_path.exists():
+            import shutil
+            shutil.copy2(pdf_path, dest_path)
+
+        # 构建标准格式
+        paper_info = {
+            "title": metadata.get("title", pdf_path.stem),
+            "authors": params.authors or metadata.get("authors", []),
+            "year": params.year or metadata.get("year"),
+            "role": params.role,
+            "why_relevant": params.why_relevant,
+            "pdf_path": f"user_seeds/pdfs/{pdf_path.name}",
+        }
+
+        return ToolResult(
+            ok=True,
+            content=f"已处理 PDF: {paper_info['title']}",
+            data={"paper": paper_info},
+        )
+
+    async def _extract_pdf_metadata(self, pdf_path: Path) -> dict[str, Any]:
+        """从 PDF 提取元数据。
+
+        尝试多种方法：
+        1. PyMuPDF (fitz)
+        2. pdfplumber
+        3. 文件名解析
+        """
+        metadata =
+
+        # 方法 1: PyMuPDF
+        try:
+            import fitz  # PyMuPDF
+            doc = fitz.open(pdf_path)
+            meta = doc.metadata
+
+            if meta.get("title"):
+                metadata["title"] = meta["title"]
+            if meta.get("author"):
+                # 作者可能是逗号分隔的字符串
+                authors = [a.strip() for a in meta["author"].split(",")]
+                metadata["authors"] = authors
+            if meta.get("creationDate"):
+                # 尝试提取年份
+                import re
+                year_match = re.search(r"(\d{4})", meta["creationDate"])
+                if year_match:
+                    metadata["year"] = int(year_match.group(1))
+
+            doc.close()
+        except Exception as e:
+            _LOG.debug("pymupdf_extraction_failed", error=str(e))
+
+        # 方法 2: pdfplumber（如果 PyMuPDF 失败）
+        if not metadata.get("title"):
+            try:
+                import pdfplumber
+                with pdfplumber.open(pdf_path) as pdf:
+                    first_page = pdf.pages[0]
+                    text = first_page.extract_text()
+
+                    # 简单启发式：第一行通常是标题
+                    lines = text.split("\n")
+                    if lines:
+                        metadata["title"] = lines[0].strip()
+            except Exception as e:
+                _LOG.debug("pdfplumber_extraction_failed", error=str(e))
+
+        # 方法 3: 文件名解析（最后的备选）
+        if not metadata.get("title"):
+            # 使用文件名作为标题
+            metadata["title"] = pdf_path.stem.replace("_", " ").replace("-", " ")
+
+        return metadata
+
+    async def _process_arxiv(self, params: ProcessSeedPaperParams) -> ToolResult:
+        """处理 arXiv ID。
+
+        步骤：
+        1. 验证 arXiv ID 格式
+        2. 从 arXiv API 获取元数据
+        3. 返回标准格式的论文信息
+        """
+        arxiv_id = params.value.strip()
+
+        # 验证格式（如 2401.12345 或 arXiv:2401.12345）
+        import re
+        if arxiv_id.startswith("arXiv:"):
+            arxiv_id = arxiv_id[6:]
+
+        if not re.match(r"^\d{4}\.\d{4,5}(v\d+)?$", arxiv_id):
+            return ToolResult(
+                ok=False,
+                content=f"无效的 arXiv ID 格式: {params.value}",
+                error="invalid_arxiv_id",
+            )
+
+        # 从 arXiv API 获取元数据
+        try:
+            import httpx
+            url = f"http://export.arxiv.org/api/query?id_list={arxiv_id}"
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, timeout=10.0)
+                response.raise_for_status()
+
+                # 解析 XML
+                import xml.etree.ElementTree as ET
+                root = ET.fromstring(response.text)
+
+                # 提取信息
+                ns = {"atom": "http://www.w3.org/2005/Atom"}
+                entry = root.find("atom:entry", ns)
+
+                if entry is None:
+                    return ToolResult(
+                        ok=False,
+                        content=f"未找到 arXiv 论文: {arxiv_id}",
+                        error="arxiv_not_found",
+                    )
+
+                title = entry.find("atom:title", ns).text.strip()
+                authors = [
+                    author.find("atom:name", ns).text
+                    for author in entry.findall("atom:author", ns)
+                ]
+                published = entry.find("atom:published", ns).text
+                year = int(published[:4])
+
+                paper_info = {
+                    "title": title,
+                    "authors": authors,
+                    "year": year,
+                    "role": params.role,
+                    "why_relevant": params.why_relevant,
+                    "arxiv_id": arxiv_id,
+                    "url": f"https://arxiv.org/abs/{arxiv_id}",
+                }
+
+                return ToolResult(
+                    ok=True,
+                    content=f"已处理 arXiv 论文: {title}",
+                    data={"paper": paper_info},
+                )
+        except Exception as e:
+            _LOG.error("arxiv_fetch_failed", arxiv_id=arxiv_id, error=str(e))
+            return ToolResult(
+                ok=False,
+                content=f"获取 arXiv 元数据失败: {e}",
+                error="arxiv_fetch_failed",
+            )
+
+    async def _process_doi(self, params: ProcessSeedPaperParams) -> ToolResult:
+        """处理 DOI。
+
+        步骤：
+        1. 验证 DOI 格式
+        2. 从 CrossRef API 获取元数据
+        3. 返回标准格式的论文信息
+        """
+        doi = params.value.strip()
+
+        # 移除 doi: 前缀（如果有）
+        if doi.lower().startswith("doi:"):
+            doi = doi[4:].strip()
+
+        # 从 CrossRef API 获取元数据
+        try:
+            import httpx
+            url = f"https://api.crossref.org/works/{doi}"
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, timeout=10.0)
+                response.raise_for_status()
+
+                data = response.json()
+                message = data["message"]
+
+                title = message["title"][0] if message.get("title") else doi
+                authors = [
+                    f"{a.get('given', '')} {a.get('family', '')}".strip()
+                    for a in message.get("author", [])
+                ]
+                year = None
+                if message.get("published-print"):
+                    year = message["published-print"]["date-parts"][0][0]
+                elif message.get("published-online"):
+                    year = message["published-online"]["date-parts"][0][0]
+
+                paper_info = {
+                    "title": title,
+                    "authors": authors,
+                    "year": year,
+                    "role": params.role,
+                    "why_relevant": params.why_relevant,
+                    "doi": doi,
+                    "url": f"https://doi.org/{doi}",
+                }
+
+                return ToolResult(
+                    ok=True,
+                    content=f"已处理 DOI 论文: {title}",
+                    data={"paper": paper_info},
+                )
+        except Exception as e:
+            _LOG.error("doi_fetch_failed", doi=doi, error=str(e))
+            return ToolResult(
+                ok=False,
+                content=f"获取 DOI 元数据失败: {e}",
+                error="doi_fetch_failed",
+            )
+
+    async def _process_title(self, params: ProcessSeedPaperParams) -> ToolResult:
+        """处理论文标题。
+
+        用户直接提供标题和作者，不需要额外处理。
+        """
+        if not params.authors:
+            return ToolResult(
+                ok=False,
+                content="使用标题方式时必须提供作者列表",
+                error="missing_authors",
+            )
+
+        paper_info = {
+            "title": params.value,
+            "authors": params.authors,
+            "year": params.year,
+            "role": params.role,
+            "why_relevant": params.why_relevant,
+        }
+
+        return ToolResult(
+            ok=True,
+            content=f"已处理论文: {params.value}",
+            data={"paper": paper_info},
+        )

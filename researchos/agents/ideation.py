@@ -86,9 +86,14 @@ class IdeationAgent(Agent):
         hyp_text = read_text_file(ws / "ideation" / "hypotheses.md")
         if len(hyp_text) < 500:
             return False, f"hypotheses.md 过短({len(hyp_text)} 字符)"
+
+        # 提取假设anchors（支持 ## H1, ## H2 等格式）
         anchors = re.findall(r"^#+\s*(H\d+)", hyp_text, re.MULTILINE)
         if not anchors:
             return False, "hypotheses.md 必须包含假设anchor（## H1, ## H2等）"
+
+        # 规范化anchors为大写
+        anchor_set = set(a.upper() for a in anchors)
 
         try:
             plan_data = yaml.safe_load(read_text_file(ws / "ideation" / "exp_plan.yaml"))
@@ -101,12 +106,15 @@ class IdeationAgent(Agent):
         experiments = plan_data.get("experiments", [])
         if not experiments:
             return False, "exp_plan.yaml 必须包含至少一个实验"
-        anchor_set = set(anchors)
+
+        # 检查hypothesis_ref引用
         for i, exp in enumerate(experiments):
             if "hypothesis_ref" in exp:
-                ref = exp["hypothesis_ref"].strip("#").strip().upper()
-                if ref not in anchor_set:
-                    return False, f"实验{i+1}的hypothesis_ref '{ref}' 不存在"
+                ref = exp["hypothesis_ref"].strip()
+                # 移除可能的 # 前缀，并转为大写
+                ref_normalized = ref.lstrip("#").strip().upper()
+                if ref_normalized not in anchor_set:
+                    return False, f"实验{i+1}的hypothesis_ref '{ref}' 不存在于hypotheses.md中（可用: {anchor_set}）"
 
         risks_text = read_text_file(ws / "ideation" / "risks.md")
         risk_markers = risks_text.count("## 风险") + risks_text.count("## Risk")

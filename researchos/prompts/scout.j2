@@ -83,14 +83,30 @@
 
 用 `write_file` 写入以下文件：
 
-**literature/papers_raw.jsonl**（所有原始结果，每行一条）
+**literature/papers_raw.jsonl**（所有原始结果，每行一条JSON）
 ```json
 {"id": "s2:abc123", "source": "semantic_scholar", "title": "...", "authors": [{"name": "..."}], "year": 2024, "venue": "NeurIPS", "abstract": "...", "doi": "10.xxx/...", "citation_count": 123}
 ```
 
-**重要**: 每条记录必须包含以下必需字段：
+**重要格式要求**：
+- **JSONL格式**: 每行必须是一个完整的JSON对象，行与行之间用换行符分隔
+- **不要使用JSON数组**: 不要写成 `[{...}, {...}]` 这种数组格式
+- **正确示例**:
+  ```
+  {"id": "paper1", "title": "..."}
+  {"id": "paper2", "title": "..."}
+  ```
+- **错误示例**:
+  ```
+  [
+    {"id": "paper1", "title": "..."},
+    {"id": "paper2", "title": "..."}
+  ]
+  ```
+
+**必需字段**：
 - `id`: 论文唯一标识（如"s2:abc123"或"arxiv:2401.00001"）
-- `source`: 数据源（"semantic_scholar"或"arxiv"）
+- `source`: 数据源（"semantic_scholar"、"arxiv"、"crossref"、"europepmc"等）
 - `title`: 论文标题
 - `authors`: 作者列表，每个作者是对象格式 `[{"name": "..."}]`
 - `year`: 发表年份（整数）
@@ -98,15 +114,27 @@
 - `venue`: 发表会议/期刊
 - `citation_count`: 引用次数（整数，如无则为0）
 
-**literature/papers_dedup.jsonl**（去重后，每行一条）
+**literature/papers_dedup.jsonl**（去重后，每行一条JSON）
 ```json
 {"id": "s2:abc123", "source": "semantic_scholar", "title": "...", "authors": ["Ada", "Bob"], "year": 2024, "venue": "NeurIPS", "source_type": "top_conference", "relevance_score": 0.85, "why_relevant": "解决了离散扩散模型的factorized gap问题", "abstract": "...", "citation_count": 123, "url": "https://..."}
 ```
 
-**重要**: papers_dedup中authors格式改为字符串数组 `["Ada", "Bob"]`，并添加：
+**重要格式要求**：
+- **JSONL格式**: 每行必须是一个完整的JSON对象，行与行之间用换行符分隔
+- **不要使用JSON数组**: 不要写成 `[{...}, {...}]` 这种数组格式
+
+**必需字段**：
+- `id`: 论文唯一标识（必需）
 - `source`: 数据源（必需）
+- `title`: 论文标题（必需）
+- `authors`: 作者列表，改为字符串数组 `["Ada", "Bob"]`（必需）
+- `year`: 发表年份（必需）
+- `venue`: 发表会议/期刊（必需）
+- `source_type`: 来源类型（必需）
 - `relevance_score`: 相关性评分0.0-1.0（必需）
 - `why_relevant`: 相关性说明（必需）
+- `abstract`: 摘要（必需）
+- `citation_count`: 引用次数（必需）
 - `url`: 论文链接（必需）
 
 **literature/search_log.md**（审计日志）

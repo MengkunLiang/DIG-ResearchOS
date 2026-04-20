@@ -129,19 +129,29 @@ class ReaderAgent(Agent):
 
         content = read_text_file(syn_path)
 
-        required_keywords = [
+        required_sections = [
             ("方法家族", "Method Families"),
             ("共同假设", "Shared Assumptions", "Assumptions"),
-            ("前沿", "Frontier", "前沿工作"),
+            ("前沿", "Frontier", "前沿工作", "Performance-Efficiency"),
             ("趋势", "Trends", "技术趋势"),
-            ("研究问题", "Research Questions", "Open Questions"),
+            ("研究问题", "Research Questions", "Open Questions", "Actionable"),
         ]
 
-        missing = [kws[0] for kws in required_keywords if not any(kw in content for kw in kws)]
+        missing = []
+        for section_keywords in required_sections:
+            if not any(kw in content for kw in section_keywords):
+                missing.append(section_keywords[0])
+
         if missing:
             return False, f"synthesis.md缺少以下章节: {missing}"
 
         if len(content) < 2000:
             return False, f"synthesis.md过短({len(content)}字符)，可能没有认真综合"
+
+        # 检查是否有论文ID引用（至少应该引用一些论文）
+        import re
+        paper_refs = re.findall(r'\[[\w_:]+\]', content)
+        if len(paper_refs) < 5:
+            return False, f"synthesis.md中论文引用过少({len(paper_refs)}个)，应该引用更多paper_notes中的论文"
 
         return True, None

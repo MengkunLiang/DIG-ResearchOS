@@ -22,6 +22,21 @@ import sys
 
 import yaml
 
+# 加载 .env 文件（如果存在）
+try:
+    from dotenv import load_dotenv
+    # 尝试从多个位置加载 .env
+    for env_path in [
+        Path.cwd() / ".env",
+        Path(__file__).parent.parent / ".env",
+        Path.home() / ".env",
+    ]:
+        if env_path.exists():
+            load_dotenv(env_path, override=False)
+            break
+except ImportError:
+    pass  # python-dotenv 未安装，跳过
+
 from .agents.registry import AGENT_REGISTRY
 from .cli_runners import CompletePipelineRunner, SingleTaskRunner
 from .orchestration.state_machine import StateMachine

@@ -91,8 +91,8 @@ class MultiSourceSearchTool(Tool):
                 if len(all_papers) >= params.max_results:
                     break
 
-                # 避免速率限制
-                await asyncio.sleep(1)
+                # 避免速率限制：每个数据源之间间隔2秒
+                await asyncio.sleep(2)
 
             except Exception as e:
                 source_stats[source] = f"failed: {str(e)[:50]}"

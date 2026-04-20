@@ -22,6 +22,7 @@ from .paper_processing import ExtractSectionsTool
 from .paper_fetch import AppendFileTool, FetchPaperPdfTool, ExtractPdfTextTool
 from .registry import ToolRegistry
 from .search_papers import FetchPaperMetadataTool, SearchPapersTool
+from .seed_paper_processor import ProcessSeedPaperTool
 from .web_fetch import WebFetchTool
 
 
@@ -71,3 +72,4 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
             )
         ),
     )
+    registry.register("process_seed_paper", lambda ctx: ProcessSeedPaperTool(ctx.policy))

@@ -36,7 +36,7 @@ class PIAgent(Agent):
             AgentSpec(
                 name="pi",
                 model_tier="heavy",
-                tool_names=["read_file", "write_file", "ask_human", "finish_task"],
+                tool_names=["read_file", "write_file", "ask_human", "finish_task", "process_seed_paper"],
                 max_steps=30,
                 max_tokens_total=100_000,
                 max_wall_seconds=1800,
