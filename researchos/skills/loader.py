@@ -53,7 +53,13 @@ def load_skill(skill_dir: Path) -> Skill:
     name = meta.get("name") or skill_dir.name
     tools = meta.get("tools")
     if tools is None:
-        tools = meta.get("allowed-tools", [])
+        # 支持 hyphen (allowed-tools) 和 underscore (allowed_tools) 两种格式
+        tools = meta.get("allowed-tools")
+        if tools is None:
+            tools = meta.get("allowed_tools", [])
+    # 支持逗号分隔的字符串格式（如 "Bash(*), Read, Write"）
+    if isinstance(tools, str):
+        tools = [t.strip() for t in tools.split(",") if t.strip()]
     if not isinstance(tools, list):
         raise ConfigurationError(f"Skill tools must be a list: {skill_md}")
     return Skill(

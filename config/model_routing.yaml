@@ -25,7 +25,7 @@ profiles:
     heavy:
       primary:
         # 模型名称，需与 API 端点支持的模型匹配
-        model: "gpt-5"
+        model: "gpt-4o"
         # 使用的端点名称，引用上面 endpoints 中定义的端点
         endpoint: relay
         # 最大上下文长度（tokens）

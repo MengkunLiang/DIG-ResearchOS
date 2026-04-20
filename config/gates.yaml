@@ -26,4 +26,36 @@
 #
 # 当前配置：空（无 Gate 限制）
 # 如需启用 Gate，请参考上述示例添加配置
-gates: {}
+gates:
+  # 预算门控：限制单次运行的最大成本
+  budget_gate:
+    type: budget_check
+    config:
+      max_cost: 50.0
+      warn_threshold: 0.8
+
+  # 质量门控：验证输出基本质量
+  quality_gate:
+    type: output_validation
+    config:
+      min_length: 500
+      required_fields:
+        - content
+
+  # 新颖性门控：验证假设的新颖性评分
+  novelty_gate:
+    type: novelty_check
+    config:
+      min_novelty_score: 0.6
+
+  # 投稿匿名化门控：检查论文匿名化完整性
+  submission_gate:
+    type: anonymization_check
+    config:
+      allowed_patterns: []
+      forbidden_patterns:
+        - email
+        - github_url
+        - acknowledgments_section
+        - author_name
+        - institution_identifiable

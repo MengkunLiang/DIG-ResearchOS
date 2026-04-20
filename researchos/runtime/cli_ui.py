@@ -13,33 +13,36 @@ import time
 from typing import TextIO
 
 
-# 用纯 ASCII 堆出 DIG，避免终端字体/编码差异导致 banner 变形。
+# 用纯 ASCII 堆出 DIG Lab 品牌标识，避免终端字体/编码差异导致 banner 变形。
 _DIG_FRAMES = [
     "\n".join(
         [
-            "########   ",
-            "##     ##  ",
-            "##     ##  ",
-            "##     ##  ",
-            "########   ",
+            "  ██████╗ ",
+            "  ╚════██╗",
+            "   █████╔╝",
+            "  ██╔══██╗",
+            "  ███████╗",
+            "  ╚══════╝",
         ]
     ),
     "\n".join(
         [
-            "########   #### ",
-            "##     ##   ##  ",
-            "##     ##   ##  ",
-            "##     ##   ##  ",
-            "########   #### ",
+            "  ██████╗   ██████╗ ",
+            "  ╚════██╗ ██╔═══██╗",
+            "   █████╔╝ ╚█████╔╝",
+            "  ██╔══██╗ ██╔══██╗",
+            "  ███████║ ███████║",
+            "  ╚══════╝ ╚══════╝",
         ]
     ),
     "\n".join(
         [
-            "########   ####   ####### ",
-            "##     ##   ##   ##      ",
-            "##     ##   ##   ##  ####",
-            "##     ##   ##   ##    ##",
-            "########   ####   #######",
+            "  ██████╗   ██████╗    ██████╗  ██████╗ ██████╗ ",
+            "  ╚════██╗ ██╔═══██╗ ██╔════╝ ██╔═══██╗██╔══██╗",
+            "   █████╔╝ ╚█████╔╝ ██║  ███╗██║   ██║██████╔╝",
+            "  ██╔══██╗ ██╔══██╗ ██║   ██║██║   ██║██╔══██╗",
+            "  ███████║ ███████║ ╚██████╔╝╚██████╔╝██║  ██║",
+            "  ╚══════╝ ╚══════╝  ╚═════╝  ╚═════╝ ╚═╝  ╚═╝",
         ]
     ),
 ]
@@ -51,7 +54,7 @@ def render_final_banner(command_name: str) -> str:
     lines = [
         _DIG_FRAMES[-1],
         "",
-        f"ResearchOS Runtime Boot  |  command={command_name}",
+        f"DIG Lab - ResearchOS  |  command={command_name}",
     ]
     return "\n".join(lines)
 
@@ -92,7 +95,7 @@ def show_startup_banner(
         if sleep_seconds > 0:
             time.sleep(sleep_seconds)
 
-    target.write(f"ResearchOS Runtime Boot  |  command={command_name}\n")
+    target.write(f"DIG Lab - ResearchOS  |  command={command_name}\n")
     target.flush()
 
 

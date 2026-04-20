@@ -14,9 +14,9 @@ class _FakeStream(StringIO):
 def test_render_final_banner_contains_dig_and_command():
     banner = render_final_banner("run-task")
 
-    assert "ResearchOS Runtime Boot" in banner
+    assert "DIG Lab" in banner
+    assert "ResearchOS" in banner
     assert "command=run-task" in banner
-    assert "########" in banner
 
 
 def test_show_startup_banner_falls_back_to_static_output_for_non_tty():
@@ -25,7 +25,7 @@ def test_show_startup_banner_falls_back_to_static_output_for_non_tty():
     show_startup_banner("run", stream=stream, sleep_seconds=0)
 
     output = stream.getvalue()
-    assert "ResearchOS Runtime Boot" in output
+    assert "DIG Lab" in output
     assert "command=run" in output
 
 
