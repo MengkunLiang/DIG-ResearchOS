@@ -21,7 +21,56 @@
 | 模型路由 | ✅ 已修复 | gpt-5 → gpt-4o |
 | Gates 配置 | ✅ 已补全 | 关键 gate 已配置 |
 
-### 1.2 关键配置文件
+### 1.2 真实 API 测试结果
+
+| Agent | Task | 状态 | 耗时 | API调用 | 成本 |
+|-------|------|------|------|---------|------|
+| hello | HELLO | ✅ | 3149ms | 1 | $0.0008 |
+| pi | T1 | ✅ | 3346ms | 2 | $0.0116 |
+| scout | T2 | ✅ | 2290ms | 1 | $0.0080 |
+| reader | T3 | ✅ | 1501ms | 1 | $0.0042 |
+| ideation | T4 | ✅ | 2601ms | 1 | $0.0132 |
+| novelty_auditor | T4.5 | ✅ | 2464ms | 1 | $0.0100 |
+| novelty | T6 | ✅ | 2630ms | 1 | $0.0109 |
+| writer | T8-WRITE | ✅ | 5872ms | 1 | $0.0111 |
+| reviewer | T8-REVIEW-1 | ✅ | 5224ms | 1 | $0.0099 |
+| submission | T9 | ✅ | 2554ms | 1 | $0.0038 |
+
+**总计**: 10/10 通过，总耗时 31.6s，总成本 $0.0835
+
+### 1.3 已加载 Skills
+
+| Skill | allowed_tools |
+|-------|---------------|
+| deepxiv | Bash(*), Read, Write |
+| paper-compile | Bash(*), Read, Write, Edit, Grep, Glob |
+| paper-write | Bash(*), Read, Write, Edit, Grep, Glob, Agent, WebSearch, WebFetch, mcp__codex__* |
+
+### 1.4 测试命令
+
+```bash
+# 运行全部 Agent 真实 API 测试
+python scripts/test_all_agents_real_api.py
+
+# 测试单个 Agent
+python scripts/test_all_agents_real_api.py --agent hello
+python scripts/test_all_agents_real_api.py --agent pi
+python scripts/test_all_agents_real_api.py --agent reader
+
+# 详细日志模式
+python scripts/test_all_agents_real_api.py --verbose
+
+# 指定 workspace
+python scripts/test_all_agents_real_api.py --workspace /tmp/my_tests
+
+# 验证 Skills 加载
+python -c "from researchos.skills.loader import discover_skills; from pathlib import Path; print(discover_skills(Path('skills')))"
+
+# 单元测试
+python -m pytest tests/unit/ -v
+```
+
+### 1.5 关键配置文件
 
 | 文件 | 修复内容 |
 |------|----------|
