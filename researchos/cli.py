@@ -68,8 +68,43 @@ def _path_is_within(child: Path, parent: Path) -> bool:
         return False
 
 
+def _detect_container_environment() -> dict[str, any]:
+    “””检测是否在 Docker 容器内运行。
+
+    检测方法：
+    1. 检查 /.dockerenv 文件（Docker 容器标识）
+    2. 检查 /run/.containerenv 文件（Podman 容器标识）
+    3. 检查 CONTAINER_ID 环境变量（自定义标识）
+
+    Returns:
+        dict: 包含容器环境信息的字典
+            - in_container: bool，是否在容器内
+            - container_id: str | None，容器 ID
+            - hostname: str | None，主机名
+    “””
+    in_container = (
+        Path(“/.dockerenv”).exists()
+        or Path(“/run/.containerenv”).exists()
+        or os.getenv(“CONTAINER_ID”) is not None
+    )
+
+    return {
+        “in_container”: in_container,
+        “container_id”: os.getenv(“CONTAINER_ID”),
+        “hostname”: os.getenv(“HOSTNAME”),
+    }
+
+
 def _detect_environment_warnings() -> list[str]:
-    """检测当前 shell 的环境是否与实际解释器一致。
+    “””检测当前 shell 的环境是否与实际解释器一致。
+
+    容器内模式：
+    - 跳过 conda 环境检查（容器内不需要 conda）
+    - 只输出容器环境信息
+
+    宿主机模式：
+    - 执行完整的环境一致性检查
+    - 检查 conda 环境、PATH、解释器等
 
     这个检查主要用于抓一种很隐蔽但很常见的问题：
     - 提示符看起来已经 `(researchos)`；
@@ -77,13 +112,20 @@ def _detect_environment_warnings() -> list[str]:
 
     这种错配会直接导致：
     - `python -m researchos.cli` 跑的是错误解释器；
-    - `litellm` 看起来“装了又像没装”；
+    - `litellm` 看起来”装了又像没装”；
     - console script 与当前代码/依赖不一致。
-    """
+    “””
+    # 检测容器环境
+    container_env = _detect_container_environment()
 
+    # 容器内模式：跳过 conda 检查
+    if container_env[“in_container”]:
+        return []  # 容器内不需要警告
+
+    # 宿主机模式：执行完整检查
     warnings: list[str] = []
-    conda_prefix_raw = os.getenv("CONDA_PREFIX")
-    conda_env_name = os.getenv("CONDA_DEFAULT_ENV")
+    conda_prefix_raw = os.getenv(“CONDA_PREFIX”)
+    conda_env_name = os.getenv(“CONDA_DEFAULT_ENV”)
     sys_prefix = Path(sys.prefix).resolve()
     sys_executable = Path(sys.executable).resolve()
 
@@ -91,41 +133,63 @@ def _detect_environment_warnings() -> list[str]:
         conda_prefix = Path(conda_prefix_raw).resolve()
         if not _path_is_within(sys_executable, conda_prefix):
             warnings.append(
-                f"当前 Python 解释器是 {sys_executable}，但激活的 conda 环境目录是 {conda_prefix}。"
+                f”当前 Python 解释器是 {sys_executable}，但激活的 conda 环境目录是 {conda_prefix}。”
             )
 
-    shell_python = shutil.which("python")
+    shell_python = shutil.which(“python”)
     if shell_python:
         shell_python_path = Path(shell_python).resolve()
         if shell_python_path != sys_executable:
             warnings.append(
-                f"PATH 中优先命中的 python 是 {shell_python_path}，当前实际运行的解释器是 {sys_executable}。"
+                f”PATH 中优先命中的 python 是 {shell_python_path}，当前实际运行的解释器是 {sys_executable}。”
             )
 
-    researchos_bin = shutil.which("researchos")
+    researchos_bin = shutil.which(“researchos”)
     if researchos_bin:
         researchos_path = Path(researchos_bin).resolve()
         if not _path_is_within(researchos_path, sys_prefix):
             warnings.append(
-                f"`researchos` 命令来自 {researchos_path}，但当前 Python 前缀是 {sys_prefix}。"
+                f”`researchos` 命令来自 {researchos_path}，但当前 Python 前缀是 {sys_prefix}。”
             )
 
     if warnings and conda_env_name:
         warnings.append(
-            f"建议优先使用 `conda run -n {conda_env_name} python -m researchos.cli ...` "
-            "或修正 PATH 顺序后再运行。"
+            f”建议优先使用 `conda run -n {conda_env_name} python -m researchos.cli ...` “
+            “或修正 PATH 顺序后再运行。”
         )
     return warnings
 
 
 def _emit_environment_warnings() -> None:
-    """把环境错配警告打印到 stderr。"""
+    """把环境信息和警告打印到 stderr。
 
+    容器内模式：
+    - 输出容器环境信息
+    - 不输出 conda 相关警告
+
+    宿主机模式：
+    - 输出环境错配警告
+    """
+    # 检测容器环境
+    container_env = _detect_container_environment()
+
+    stream = sys.stderr
+
+    # 容器内模式：输出容器信息
+    if container_env["in_container"]:
+        stream.write("[env-info] 运行在 Docker 容器内\n")
+        if container_env["container_id"]:
+            stream.write(f"[env-info] 容器 ID: {container_env['container_id']}\n")
+        if container_env["hostname"]:
+            stream.write(f"[env-info] 主机名: {container_env['hostname']}\n")
+        stream.flush()
+        return
+
+    # 宿主机模式：输出警告
     warnings = _detect_environment_warnings()
     if not warnings:
         return
 
-    stream = sys.stderr
     stream.write("[env-warning] 检测到当前 shell 环境与实际解释器可能不一致。\n")
     for item in warnings:
         stream.write(f"[env-warning] {item}\n")

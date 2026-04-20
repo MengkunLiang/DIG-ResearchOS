@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,21 @@ from researchos.tools.docker_exec import DockerExecTool
 from researchos.tools.latex_compile import LatexCompileTool
 from researchos.tools.search_papers import FetchPaperMetadataTool, SearchPapersTool
 from researchos.tools.workspace_policy import WorkspaceAccessPolicy
+
+
+@pytest.fixture
+def container_mode():
+    """检测是否在容器内运行测试。
+
+    用于根据环境调整测试预期：
+    - 容器内：docker_exec 直接执行 bash 命令
+    - 宿主机：docker_exec 构建 docker run 命令
+    """
+    return (
+        Path("/.dockerenv").exists()
+        or Path("/run/.containerenv").exists()
+        or os.getenv("CONTAINER_ID") is not None
+    )
 
 
 @pytest.mark.asyncio
@@ -90,7 +106,12 @@ class _FakeProc:
 
 
 @pytest.mark.asyncio
-async def test_docker_exec_success(monkeypatch, tmp_workspace: Path):
+async def test_docker_exec_success(monkeypatch, tmp_workspace: Path, container_mode: bool):
+    """测试 docker_exec 成功执行。
+
+    容器内模式：验证直接执行 bash 命令
+    宿主机模式：验证构建 docker run 命令
+    """
     (tmp_workspace / "project.yaml").write_text(
         """
 docker:
@@ -123,8 +144,17 @@ compute_budget:
     )
 
     assert result.ok
-    assert "docker" in captured["args"][0]
     assert result.data["exit_code"] == 0
+
+    # 根据模式验证命令格式
+    if container_mode:
+        # 容器内模式：应该是 bash -lc 命令
+        assert captured["args"][0] == "bash"
+        assert captured["args"][1] == "-lc"
+    else:
+        # 宿主机模式：应该是 docker run 命令
+        assert captured["args"][0] == "docker"
+        assert "run" in captured["args"]
 
 
 @pytest.mark.asyncio
@@ -148,20 +178,39 @@ async def test_docker_exec_rejects_gpu_when_project_disallows(tmp_workspace: Pat
 
 
 @pytest.mark.asyncio
-async def test_latex_compile_reports_pdf_path(tmp_workspace: Path):
+async def test_latex_compile_reports_pdf_path(tmp_workspace: Path, monkeypatch, container_mode: bool):
+    """测试 LaTeX 编译并验证 PDF 路径。
+
+    容器内模式：直接调用 latexmk
+    宿主机模式：通过 docker_exec
+    """
     (tmp_workspace / "drafts").mkdir()
     tex_path = tmp_workspace / "drafts" / "paper.tex"
     tex_path.write_text("\\documentclass{article}", encoding="utf-8")
     pdf_path = tmp_workspace / "drafts" / "paper.pdf"
 
-    class _FakeDockerTool:
-        policy = WorkspaceAccessPolicy(tmp_workspace, ["", "drafts/"], ["", "drafts/"])
-
-        async def execute(self, **kwargs):
+    if container_mode:
+        # 容器内模式：mock latexmk 命令
+        async def fake_create(*args, **kwargs):
+            # 模拟 PDF 生成
             pdf_path.write_text("pdf", encoding="utf-8")
-            return ToolResult(ok=True, content="compiled", data={})
+            return _FakeProc(stdout=b"compiled", stderr=b"")
 
-    tool = LatexCompileTool(_FakeDockerTool())
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create)
+
+        policy = WorkspaceAccessPolicy(tmp_workspace, ["", "drafts/"], ["", "drafts/"])
+        docker_tool = DockerExecTool(policy)
+        tool = LatexCompileTool(docker_tool)
+    else:
+        # 宿主机模式：使用 fake docker tool
+        class _FakeDockerTool:
+            policy = WorkspaceAccessPolicy(tmp_workspace, ["", "drafts/"], ["", "drafts/"])
+
+            async def execute(self, **kwargs):
+                pdf_path.write_text("pdf", encoding="utf-8")
+                return ToolResult(ok=True, content="compiled", data={})
+
+        tool = LatexCompileTool(_FakeDockerTool())
 
     result = await tool.execute(tex_path="drafts/paper.tex")
 

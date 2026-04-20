@@ -2,19 +2,28 @@ from __future__ import annotations
 
 """LaTeX 编译工具。
 
-它是 docker_exec 的薄封装：
-- 对外暴露更符合论文场景的参数；
-- 内部统一落到 LaTeX 镜像里执行 latexmk；
-- 编译结束后检查 PDF 是否真的生成。
+容器内模式（方案 D1）：
+- 直接调用系统的 latexmk 命令（容器内已安装 texlive-full）
+- 不再通过 docker_exec 嵌套启动容器
+
+宿主机模式（方案 A）：
+- 通过 docker_exec 在 LaTeX 镜像中执行 latexmk
+- 保持原有行为
 """
 
+import asyncio
+import os
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
+from ..runtime.errors import ToolRuntimeError
+from ..runtime.logger import get_logger
 from .base import Tool, ToolResult
 from .docker_exec import DockerExecTool
+
+_LOG = get_logger("latex_compile")
 
 
 class LatexCompileParams(BaseModel):
@@ -33,8 +42,117 @@ class LatexCompileTool(Tool):
     def __init__(self, docker_tool: DockerExecTool):
         self.docker = docker_tool
 
+    def _is_running_in_container(self) -> bool:
+        """检测是否在容器内运行（与 docker_exec 保持一致）"""
+        return (
+            Path("/.dockerenv").exists()
+            or Path("/run/.containerenv").exists()
+            or os.getenv("CONTAINER_ID") is not None
+        )
+
     async def execute(self, **kwargs: Any) -> ToolResult:
         params = LatexCompileParams(**kwargs)
+
+        # 容器内模式：直接调用 latexmk
+        if self._is_running_in_container():
+            return await self._compile_native(params)
+
+        # 宿主机模式：通过 docker_exec
+        return await self._compile_via_docker(params)
+
+    async def _compile_native(self, params: LatexCompileParams) -> ToolResult:
+        """容器内直接编译（方案 D1）"""
+        tex_abs = self.docker.policy.resolve_read(params.tex_path)
+        tex_dir = tex_abs.parent
+        tex_name = tex_abs.name
+
+        # 构建 latexmk 命令
+        cmd = [
+            "latexmk",
+            f"-{params.engine}",
+            "-interaction=nonstopmode",
+            "-bibtex" if params.bibtex else "-bibtex-",
+        ]
+
+        if params.output_dir:
+            cmd.extend(["-outdir", params.output_dir])
+
+        cmd.append(tex_name)
+
+        _LOG.info(
+            "latex_compile_native",
+            tex_path=params.tex_path,
+            engine=params.engine,
+            cwd=str(tex_dir),
+        )
+
+        # 执行编译
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=tex_dir,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except OSError as exc:
+            raise ToolRuntimeError(self.name, exc) from exc
+
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=self.timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            return ToolResult(
+                ok=False,
+                content=f"LaTeX compilation timed out after {self.timeout_seconds}s",
+                error="timeout",
+            )
+
+        # 处理输出
+        out = stdout.decode("utf-8", errors="replace")
+        err = stderr.decode("utf-8", errors="replace")
+
+        content_parts = []
+        if out:
+            content_parts.append(f"STDOUT:\n{out}")
+        if err:
+            content_parts.append(f"STDERR:\n{err}")
+        content_parts.append(f"EXIT: {proc.returncode}")
+
+        if proc.returncode != 0:
+            return ToolResult(
+                ok=False,
+                content="\n\n".join(content_parts),
+                error="nonzero_exit",
+            )
+
+        # 检查 PDF 是否生成
+        pdf_path = self._expected_pdf_path(tex_abs, params.output_dir)
+        if not pdf_path.exists():
+            return ToolResult(
+                ok=False,
+                content=(
+                    f"LaTeX command finished but PDF was not generated: "
+                    f"{pdf_path.relative_to(self.docker.policy.workspace_dir)}\n\n"
+                    + "\n\n".join(content_parts)
+                ),
+                error="pdf_missing",
+            )
+
+        pdf_rel = pdf_path.relative_to(self.docker.policy.workspace_dir).as_posix()
+        content_parts.append(f"\nPDF: {pdf_rel}")
+
+        return ToolResult(
+            ok=True,
+            content="\n\n".join(content_parts),
+            data={"pdf_path": pdf_rel, "exit_code": proc.returncode},
+        )
+
+    async def _compile_via_docker(self, params: LatexCompileParams) -> ToolResult:
+        """宿主机模式：通过 docker_exec 编译（方案 A）"""
         tex_abs = self.docker.policy.resolve_read(params.tex_path)
         tex_dir_rel = tex_abs.parent.relative_to(self.docker.policy.workspace_dir).as_posix()
         tex_name = tex_abs.name

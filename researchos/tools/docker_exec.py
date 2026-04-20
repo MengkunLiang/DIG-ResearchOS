@@ -6,6 +6,11 @@ from __future__ import annotations
 - 训练/推理/批处理代码不直接污染宿主机；
 - 通过镜像 allowlist、网络开关、GPU 开关把执行边界固定下来；
 - 把 stdout/stderr/exit_code 结构化回填给 runtime。
+
+容器内模式（方案 D1）：
+- 当检测到运行在 Docker 容器内时，直接使用 subprocess 执行命令
+- 不再嵌套启动新的 Docker 容器（避免 Docker-in-Docker 复杂度）
+- 保持工具接口不变，确保向后兼容
 """
 
 import asyncio
@@ -65,6 +70,8 @@ class DockerExecTool(Tool):
         self.policy = policy
         self.project_config = project_config or load_project_config(policy.workspace_dir)
         self.max_output_bytes = max_output_bytes
+        # 检测是否在容器内运行（方案 D1）
+        self._container_mode = self._is_running_in_container()
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         params = DockerExecParams(**kwargs)
@@ -140,34 +147,110 @@ class DockerExecTool(Tool):
         )
 
     def _validate_params(self, params: DockerExecParams) -> ToolResult | None:
+        """验证执行参数。
+
+        容器内模式：
+        - 镜像白名单检查被跳过（因为已经在容器内）
+        - 其他安全检查保持不变
+
+        宿主机模式：
+        - 完整的参数校验
+        """
         docker_cfg = self.project_config.get("docker", {})
         allowed_images = docker_cfg.get("allowed_images", _DEFAULT_ALLOWED_IMAGES)
-        if params.image not in allowed_images:
-            return ToolResult(
-                ok=False,
-                content=f"Image '{params.image}' not in allowlist: {allowed_images}",
-                error="image_not_allowed",
-            )
+
+        # 容器内模式：跳过镜像白名单检查（image 参数被忽略）
+        if not self._container_mode:
+            if params.image not in allowed_images:
+                return ToolResult(
+                    ok=False,
+                    content=f"Image '{params.image}' not in allowlist: {allowed_images}",
+                    error="image_not_allowed",
+                )
+
+        # 工作目录检查（两种模式都需要）
         if not params.cwd.startswith("/workspace"):
             return ToolResult(
                 ok=False,
                 content="Docker cwd must stay within /workspace",
                 error="invalid_cwd",
             )
+
+        # GPU 权限检查（两种模式都需要）
         if params.gpu and not self.project_config.get("compute_budget", {}).get("gpu_enabled", False):
             return ToolResult(
                 ok=False,
                 content="Project config does not allow GPU execution",
                 error="gpu_not_allowed",
             )
-        try:
-            for mount in params.extra_mounts:
-                self._normalize_mount(mount)
-        except ToolAccessDenied as exc:
-            return ToolResult(ok=False, content=str(exc), error="mount_denied")
+
+        # 挂载路径检查（仅宿主机模式需要）
+        if not self._container_mode:
+            try:
+                for mount in params.extra_mounts:
+                    self._normalize_mount(mount)
+            except ToolAccessDenied as exc:
+                return ToolResult(ok=False, content=str(exc), error="mount_denied")
+
         return None
 
+    def _is_running_in_container(self) -> bool:
+        """检测是否在 Docker 容器内运行。
+
+        检测方法：
+        1. 检查 /.dockerenv 文件（Docker 容器标识）
+        2. 检查 /run/.containerenv 文件（Podman 容器标识）
+        3. 检查 CONTAINER_ID 环境变量（自定义标识）
+
+        Returns:
+            bool: 如果在容器内运行返回 True，否则返回 False
+        """
+        return (
+            Path("/.dockerenv").exists()
+            or Path("/run/.containerenv").exists()
+            or os.getenv("CONTAINER_ID") is not None
+        )
+
     def _build_docker_command(self, params: DockerExecParams) -> list[str]:
+        """构建执行命令。
+
+        容器内模式（方案 D1）：
+        - 直接返回 bash 命令，不包装 docker run
+        - 环境变量通过 bash 前缀设置
+        - 工作目录通过 cd 切换
+
+        宿主机模式（方案 A）：
+        - 构建完整的 docker run 命令
+        - 挂载 workspace、设置资源限制等
+        """
+        # 容器内模式：直接执行命令
+        if self._container_mode:
+            _LOG.info(
+                "docker_exec_container_native_mode",
+                command=params.command,
+                cwd=params.cwd,
+                env=params.env,
+            )
+
+            # 构建命令：设置环境变量 + 切换目录 + 执行命令
+            cmd_parts = []
+
+            # 添加环境变量
+            if params.env:
+                env_exports = " ".join(f"export {k}={v};" for k, v in params.env.items())
+                cmd_parts.append(env_exports)
+
+            # 切换工作目录（如果不是默认的 /workspace）
+            if params.cwd != "/workspace":
+                cmd_parts.append(f"cd {params.cwd};")
+
+            # 添加实际命令
+            cmd_parts.append(params.command)
+
+            full_command = " ".join(cmd_parts)
+            return ["bash", "-lc", full_command]
+
+        # 宿主机模式：构建 docker run 命令
         docker_cfg = self.project_config.get("docker", {})
         workspace_dir = self.policy.workspace_dir.resolve()
         memory_limit = params.memory_limit or docker_cfg.get("default_memory_limit", "16g")

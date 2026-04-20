@@ -17,3 +17,22 @@ agent_behavior:
 debug:
   enable_trace: true
 
+# Docker 执行模式配置（方案 D1）
+execution:
+  # 执行模式：
+  # - "auto": 自动检测（容器内使用 container-native，宿主机使用 docker）
+  # - "docker": 强制使用 docker run（宿主机模式）
+  # - "container-native": 强制使用 subprocess（容器内模式）
+  mode: "auto"
+
+  # 是否启用容器环境检测
+  detect_container: true
+
+# Docker 镜像配置
+docker:
+  # 默认镜像（用于宿主机模式）
+  default_image: "researchos/system:latest"
+
+  # Docker 构建上下文路径
+  build_context: "infra/docker"
+
