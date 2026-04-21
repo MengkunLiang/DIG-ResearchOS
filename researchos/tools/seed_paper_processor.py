@@ -125,7 +125,14 @@ class ProcessSeedPaperTool(Tool):
 
         return ToolResult(
             ok=True,
-            content=f"已处理 PDF: {paper_info['title']}",
+            content=(
+                f"✅ 成功处理 PDF 论文\n"
+                f"标题: {paper_info['title']}\n"
+                f"作者: {', '.join(paper_info['authors'][:3])}{'...' if len(paper_info['authors']) > 3 else ''}\n"
+                f"年份: {paper_info['year']}\n"
+                f"角色: {paper_info['role']}\n"
+                f"PDF 已复制到: {paper_info['pdf_path']}"
+            ),
             data={"paper": paper_info},
         )
 
@@ -209,8 +216,8 @@ class ProcessSeedPaperTool(Tool):
         # 从 arXiv API 获取元数据
         try:
             import httpx
-            url = f"http://export.arxiv.org/api/query?id_list={arxiv_id}"
-            async with httpx.AsyncClient() as client:
+            url = f"https://export.arxiv.org/api/query?id_list={arxiv_id}"
+            async with httpx.AsyncClient(follow_redirects=True) as client:
                 response = await client.get(url, timeout=10.0)
                 response.raise_for_status()
 
@@ -249,7 +256,15 @@ class ProcessSeedPaperTool(Tool):
 
                 return ToolResult(
                     ok=True,
-                    content=f"已处理 arXiv 论文: {title}",
+                    content=(
+                        f"✅ 成功从 arXiv 获取论文信息\n"
+                        f"arXiv ID: {arxiv_id}\n"
+                        f"标题: {title}\n"
+                        f"作者: {', '.join(authors[:3])}{'...' if len(authors) > 3 else ''}\n"
+                        f"年份: {year}\n"
+                        f"角色: {params.role}\n"
+                        f"URL: https://arxiv.org/abs/{arxiv_id}"
+                    ),
                     data={"paper": paper_info},
                 )
         except Exception as e:
@@ -265,14 +280,25 @@ class ProcessSeedPaperTool(Tool):
 
         步骤：
         1. 验证 DOI 格式
-        2. 从 CrossRef API 获取元数据
-        3. 返回标准格式的论文信息
+        2. 检查是否为 arXiv DOI，如果是则转换为 arXiv ID
+        3. 从 CrossRef API 获取元数据
+        4. 返回标准格式的论文信息
         """
         doi = params.value.strip()
 
         # 移除 doi: 前缀（如果有）
         if doi.lower().startswith("doi:"):
             doi = doi[4:].strip()
+
+        # 检查是否为 arXiv DOI (格式: 10.48550/arXiv.XXXX.XXXXX)
+        import re
+        arxiv_doi_match = re.match(r"10\.48550/arXiv\.(\d{4}\.\d{4,5}(?:v\d+)?)", doi)
+        if arxiv_doi_match:
+            arxiv_id = arxiv_doi_match.group(1)
+            _LOG.info("arxiv_doi_detected", doi=doi, arxiv_id=arxiv_id)
+            # 转换为 arXiv 处理
+            params.value = arxiv_id
+            return await self._process_arxiv(params)
 
         # 从 CrossRef API 获取元数据
         try:

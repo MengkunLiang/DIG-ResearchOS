@@ -24,6 +24,7 @@ def _now_iso() -> str:
 
 STANDARD_WORKSPACE_DIRS = [
     "user_seeds",
+    "user_seeds/pdfs",
     "literature",
     "literature/pdfs",
     "literature/paper_notes",
@@ -103,6 +104,9 @@ def initialize_workspace(
             force=force_project_file,
         )
 
+    # 创建 user_seeds 示例文件
+    create_user_seeds_examples(workspace_dir)
+
     return WorkspaceInitResult(
         workspace_dir=workspace_dir,
         created_dirs=created_dirs,
@@ -138,6 +142,152 @@ def write_project_stub(
         encoding="utf-8",
     )
     return project_path
+
+
+def create_user_seeds_examples(workspace_dir: Path) -> None:
+    """在 user_seeds 目录下创建示例文件，指导用户如何放置种子数据。"""
+
+    user_seeds_dir = workspace_dir / "user_seeds"
+
+    # 1. README.md - 使用说明
+    readme_path = user_seeds_dir / "README.md"
+    if not readme_path.exists():
+        readme_content = """# User Seeds 目录说明
+
+这个目录用于存放项目的种子数据，T1 Agent 会在初始化时收集这些信息。
+
+## 目录结构
+
+```
+user_seeds/
+├── README.md                        # 本说明文件
+├── seed_papers.jsonl.example        # 种子论文示例
+├── seed_ideas.md.example            # 初步想法示例
+├── seed_constraints.md.example      # 硬约束清单示例
+├── seed_external_resources.jsonl.example  # 外部资源示例
+└── pdfs/                            # 存放 PDF 文件
+```
+
+## 使用方式
+
+### 1. 提供种子论文
+
+**方式 1：直接提供 PDF 文件**
+- 将 PDF 文件放入 `pdfs/` 目录
+- 在 T1 对话中提供相对路径：`user_seeds/pdfs/paper.pdf`
+- 支持批量：提供目录路径 `user_seeds/pdfs/`
+
+**方式 2：提供 arXiv ID**
+- 在 T1 对话中直接提供 arXiv ID：`2601.03192`
+- 或 arXiv DOI：`10.48550/arXiv.2601.03192`
+
+**方式 3：提供 DOI**
+- 在 T1 对话中提供 DOI：`10.1145/3534678.3539147`
+
+**方式 4：手动编辑 seed_papers.jsonl**
+- 复制 `seed_papers.jsonl.example` 为 `seed_papers.jsonl`
+- 按照示例格式填写论文信息
+
+### 2. 提供初步想法
+
+- 复制 `seed_ideas.md.example` 为 `seed_ideas.md`
+- 填写你的研究想法和假设
+
+### 3. 提供硬约束
+
+- 复制 `seed_constraints.md.example` 为 `seed_constraints.md`
+- 填写必须遵守的技术或方法约束
+
+### 4. 提供外部资源（可选）
+
+- 复制 `seed_external_resources.jsonl.example` 为 `seed_external_resources.jsonl`
+- 填写已有的数据集、代码仓库、预训练模型等资源
+
+## 注意事项
+
+1. `.example` 文件仅作为示例，不会被 T1 Agent 读取
+2. 实际使用时，去掉 `.example` 后缀
+3. 如果通过 T1 对话提供信息，Agent 会自动生成这些文件
+4. 也可以手动创建这些文件，T1 Agent 会读取并使用
+"""
+        readme_path.write_text(readme_content, encoding="utf-8")
+
+    # 2. seed_papers.jsonl.example
+    papers_example_path = user_seeds_dir / "seed_papers.jsonl.example"
+    if not papers_example_path.exists():
+        papers_example = """{"title": "Attention Is All You Need", "authors": ["Vaswani, Ashish", "Shazeer, Noam"], "year": 2017, "role": "anchor", "why_relevant": "Transformer 架构的开创性论文，是我们研究的核心参考"}
+{"title": "BERT: Pre-training of Deep Bidirectional Transformers", "authors": ["Devlin, Jacob", "Chang, Ming-Wei"], "year": 2019, "role": "reference", "why_relevant": "预训练语言模型的重要参考"}
+"""
+        papers_example_path.write_text(papers_example, encoding="utf-8")
+
+    # 3. seed_ideas.md.example
+    ideas_example_path = user_seeds_dir / "seed_ideas.md.example"
+    if not ideas_example_path.exists():
+        ideas_example = """# 初步研究想法
+
+## 核心假设
+
+我们假设通过改进注意力机制的计算方式，可以在保持模型性能的同时显著降低计算复杂度。
+
+## 初步方案
+
+1. **稀疏注意力**：只计算最相关的 token 之间的注意力
+2. **局部注意力**：限制注意力窗口大小
+3. **分层注意力**：在不同层使用不同的注意力模式
+
+## 预期效果
+
+- 计算复杂度从 O(n²) 降低到 O(n log n)
+- 在长文本任务上性能提升 20%
+- 训练速度提升 2-3 倍
+
+## 需要验证的问题
+
+1. 稀疏注意力是否会损失重要的长距离依赖？
+2. 如何自动学习最优的注意力模式？
+3. 在不同任务上的泛化能力如何？
+"""
+        ideas_example_path.write_text(ideas_example, encoding="utf-8")
+
+    # 4. seed_constraints.md.example
+    constraints_example_path = user_seeds_dir / "seed_constraints.md.example"
+    if not constraints_example_path.exists():
+        constraints_example = """# 硬约束清单
+
+## 技术约束
+
+1. **必须使用 PyTorch**：团队熟悉 PyTorch，不考虑其他框架
+2. **必须兼容 Hugging Face Transformers**：便于复用预训练模型
+3. **不使用外部 API**：所有计算必须在本地完成
+
+## 方法约束
+
+1. **不使用知识蒸馏**：我们关注架构改进，不依赖教师模型
+2. **必须保持端到端训练**：不使用多阶段训练
+
+## 资源约束
+
+1. **GPU 限制**：最多使用 4 张 A100 GPU
+2. **时间限制**：单次实验不超过 24 小时
+3. **存储限制**：模型大小不超过 10GB
+
+## 评估约束
+
+1. **必须在 GLUE 基准上评估**：便于与现有工作比较
+2. **必须报告推理速度**：不仅关注准确率，也关注效率
+"""
+        constraints_example_path.write_text(constraints_example, encoding="utf-8")
+
+    # 5. seed_external_resources.jsonl.example
+    resources_example_path = user_seeds_dir / "seed_external_resources.jsonl.example"
+    if not resources_example_path.exists():
+        resources_example = """{"type": "dataset", "name": "GLUE", "source": "huggingface:glue", "access": "auto", "purpose": "主要评估基准"}
+{"type": "baseline_repo", "name": "Transformers", "source": "github:huggingface/transformers", "commit": "v4.30.0", "purpose": "baseline 实现和预训练模型"}
+{"type": "pretrained_model", "name": "BERT-base", "source": "huggingface:bert-base-uncased", "purpose": "预训练编码器"}
+{"type": "docker_image", "name": "pytorch-env", "source": "docker:pytorch/pytorch:2.0.0-cuda11.7-cudnn8-runtime", "purpose": "实验环境"}
+{"type": "tool", "name": "wandb", "source": "pip:wandb", "purpose": "实验跟踪"}
+"""
+        resources_example_path.write_text(resources_example, encoding="utf-8")
 
 
 def render_workspace_tree(runtime_dir_name: str = "_runtime") -> str:

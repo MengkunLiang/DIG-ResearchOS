@@ -36,7 +36,7 @@ class PIAgent(Agent):
             AgentSpec(
                 name="pi",
                 model_tier="heavy",
-                tool_names=["read_file", "write_file", "ask_human", "finish_task", "process_seed_paper"],
+                tool_names=["read_file", "write_file", "list_files", "ask_human", "finish_task", "process_seed_paper"],
                 max_steps=30,
                 max_tokens_total=100_000,
                 max_wall_seconds=1800,
@@ -51,11 +51,12 @@ class PIAgent(Agent):
         """根据mode渲染不同的system prompt。"""
         mode = ctx.mode or "init"
 
-        # 准备上下文变量（不包含mode，因为render_prompt已经传递了ctx.mode）
+        # 准备上下文变量
         context_vars = {}
 
         if mode == "init":
             # T1模式：用户topic从extra中获取
+            # 注意：必须显式传递 user_topic，因为模板中直接使用 {{ user_topic }}
             context_vars["user_topic"] = ctx.extra.get("user_topic", "")
         elif mode == "evaluate":
             # T7.5模式：读取实验结果
@@ -74,11 +75,17 @@ class PIAgent(Agent):
         mode = ctx.mode or "init"
 
         if mode == "init":
-            user_topic = ctx.extra.get("user_topic", "")
+            # 不要在这里透露 user_topic，让 Agent 从第1轮对话开始询问
+            # user_topic 会在 system prompt 中提供作为背景信息
             return (
-                f"请开始T1项目初始化流程。用户的研究方向是：{user_topic}\n\n"
-                f"请按照system prompt中的三轮对话流程，引导用户明确研究方向，"
-                f"最终产出project.yaml和seed文件。"
+                f"请开始T1项目初始化流程。\n\n"
+                f"请严格按照system prompt中的三轮对话流程执行：\n"
+                f"- 第1轮：明确研究边界与约束\n"
+                f"- 第2轮：收集已有基础（论文、想法、约束）\n"
+                f"- 第2.5轮：收集外部资源\n"
+                f"- 第3轮：确认并生成所有文件\n\n"
+                f"重要：必须严格按照 prompt 中的 project.yaml 格式要求生成文件，"
+                f"包含所有必需字段（project_id, research_direction, keywords, constraints, created_at, seed_ensemble）。"
             )
         elif mode == "evaluate":
             return (
@@ -128,21 +135,9 @@ class PIAgent(Agent):
         if not ok:
             return False, err
 
-        # 3. 检查三个必需的seed文件存在（可以为空，但必须存在）
-        seed_dir = ctx.workspace_dir / "user_seeds"
-        required_seeds = ["seed_papers.jsonl", "seed_ideas.md", "seed_constraints.md"]
-
-        for fname in required_seeds:
-            seed_path = seed_dir / fname
-            if not seed_path.exists():
-                return False, f"缺少seed文件: user_seeds/{fname}"
-
-        # 4. 检查可选的seed_external_resources.jsonl（如果存在，验证格式）
-        external_resources_path = seed_dir / "seed_external_resources.jsonl"
-        if external_resources_path.exists():
-            ok, err = self._validate_external_resources(external_resources_path)
-            if not ok:
-                return False, err
+        # 3. seed 文件是可选的，不强制要求
+        # 如果用户没有提供种子数据，Agent 可以不创建这些文件
+        # 这里只检查 project.yaml 和 state.yaml
 
         return True, None
 

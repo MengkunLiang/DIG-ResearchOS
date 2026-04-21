@@ -25,9 +25,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "outputs": {
             "project": "project.yaml",
             "state": "state.yaml",
-            "seed_papers": "user_seeds/seed_papers.jsonl",
-            "seed_ideas": "user_seeds/seed_ideas.md",
-            "seed_constraints": "user_seeds/seed_constraints.md",
+            # seed 文件是可选的，如果用户没有提供则可以不创建或创建空文件
         },
         "required_inputs": [],
         "schemas": {

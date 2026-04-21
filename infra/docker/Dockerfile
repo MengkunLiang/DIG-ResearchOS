@@ -96,17 +96,13 @@ RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple \
     datasets \
     accelerate
 
-# 安装 MCP 服务器（可选，如果网络不可用会跳过）
-# @modelcontextprotocol/server-arxiv: arXiv 论文搜索
-# @modelcontextprotocol/server-filesystem: 本地文件系统访问
-# @modelcontextprotocol/server-github: GitHub 仓库和代码搜索
-# 注意：如果构建时无法访问 npm registry，可以注释掉这一步
-RUN npm config set registry https://registry.npmmirror.com && \
-    npm install -g \
-    @modelcontextprotocol/server-arxiv \
-    @modelcontextprotocol/server-filesystem \
-    @modelcontextprotocol/server-github || \
-    echo "Warning: MCP servers installation failed, skipping..."
+# 安装 MCP 服务器（可选）
+# 注意：@modelcontextprotocol/server-* 包目前不在公共 npm registry 中
+# ResearchOS 使用内置的 MCP 适配层，不强制依赖外部 MCP 服务器
+# 如果需要 MCP 服务器，可以在运行时通过配置文件指定
+#
+# 这里跳过 MCP 服务器安装，不影响核心功能
+RUN echo "Skipping MCP server installation (not required for core functionality)"
 
 # 复制 ResearchOS 源代码
 COPY researchos /app/researchos

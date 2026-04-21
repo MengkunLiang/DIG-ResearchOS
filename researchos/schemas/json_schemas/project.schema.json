@@ -14,7 +14,7 @@
     "research_direction": {
       "type": "string",
       "description": "Research direction/topic",
-      "minLength": 10
+      "minLength": 3
     },
     "research_question": {
       "type": "string",

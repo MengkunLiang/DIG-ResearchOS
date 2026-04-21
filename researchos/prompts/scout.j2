@@ -24,27 +24,26 @@
 
 ## 你的任务（5步流程）
 
-### Step 1: 读取项目配置
+### Step 1: 读取项目配置和扩展检索式
 - 用 `read_file` 读取 project.yaml 确认研究方向
-- 如果有 user_seeds/seed_papers.jsonl，读取完整列表
-- 对于 role=anchor 的论文，用 `mcp_semantic_scholar_get_paper` 获取引用关系
+- 使用 `expand_queries` 工具自动生成检索式：
+  ```
+  expand_queries(seed_papers=[], topic="研究方向", max_queries=10)
+  ```
+  注意：即使没有种子论文，也可以传空列表 `seed_papers=[]`
 
-### Step 2: 构建检索式（5-10条）
-基于研究方向和关键词，生成多样化的检索式：
-- **Broad 概念**（如 "discrete diffusion models"）
-- **Specific 术语**（如 "factorized gap in language models"）
-- **同义词变体**（如 "discrete flow" vs "discrete diffusion"）
-- **Recent 限定**（如 "discrete diffusion 2023-2024"）
+**🚨 重要：避免关键词歧义 🚨**
+- 如果研究方向包含"memory"、"retrieval"等通用词，必须添加领域限定词
+- 例如："agent memory retrieval" → "LLM agent memory system" 或 "AI agent episodic memory"
+- 避免检索到心理学、认知科学等其他领域的论文
 
-### Step 3: 跨源检索（多源策略）
+### Step 2: 跨源检索（多源策略）
 
 **当前可用工具**：
 - `multi_source_search`: 多源论文搜索工具（推荐）
   - 参数: query, max_results, sources（默认["crossref", "arxiv", "europepmc"]）
   - 自动处理速率限制和API失败
   - 返回真实可验证的论文数据
-- `search_papers`: 单源检索接口（备用）
-  - 参数: query, source（"semantic_scholar" 或 "arxiv"）, max_results
 
 **检索策略（重要）**：
 1. **优先使用 multi_source_search**（推荐）
@@ -53,31 +52,78 @@
    - 自动去重和容错处理
 
 2. **检索式设计**：
-   - 构建5-10条多样化的检索式
-   - 每条检索式获取20-30篇论文
+   - 使用 5-10 条多样化的检索式
+   - 每条检索式获取 20-30 篇论文
    - 总原始结果控制在 50-200 篇
 
 3. **容错处理**：
-   - multi_source_search会自动处理API失败
+   - multi_source_search 会自动处理 API 失败
    - 如果某个检索式返回结果少，继续下一个检索式
-   - 总结果至少要有 20 篇才能继续（如果少于20篇，扩大检索式重试）
+   - 总结果至少要有 20 篇才能继续（如果少于 20 篇，扩大检索式重试）
+
+4. **🚨 重要：如何收集检索结果 🚨**
+
+   **错误做法**：
+   ```python
+   # ❌ 错误：没有从工具返回中提取论文数据
+   all_papers = []
+   for query in queries:
+       multi_source_search(query=query, max_results=30)  # 调用工具但没有保存结果
+   ```
+
+   **正确做法**：
+   ```python
+   # ✅ 正确：从工具返回的文本中提取论文列表
+   # multi_source_search 返回的文本格式：
+   # "检索到 N 篇论文（数据源统计: {...}）\n\n[1] Title (Authors, Year) - source, citations=X\n[2] ..."
+   #
+   # 你需要：
+   # 1. 多次调用 multi_source_search，每次使用不同的检索式
+   # 2. 将所有返回的论文文本保存下来
+   # 3. 使用 write_file 将所有论文写入 papers_raw.jsonl
+   # 4. 使用 read_file 读取 papers_raw.jsonl，解析成论文列表
+   # 5. 将论文列表传递给 deduplicate_papers 等工具
+   ```
+
+   **实际操作步骤**：
+   - 步骤 1：调用 multi_source_search 多次，记录每次返回的论文文本
+   - 步骤 2：将所有论文文本合并，写入 literature/papers_raw.jsonl
+   - 步骤 3：用 read_file 读取 papers_raw.jsonl，得到论文列表
+   - 步骤 4：将论文列表传递给 deduplicate_papers(papers=[论文列表])
+
+### Step 3: 领域过滤（可选但推荐）
+
+如果研究方向是 AI/ML/NLP 相关，使用 `filter_by_domain` 工具过滤论文：
+```
+filter_by_domain(papers=[论文列表], target_domain="cs")
+```
+这会过滤掉心理学、生物学等其他领域的论文。
 
 ### Step 4: 去重 + 打分
 
-**两阶段去重**：
-1. **DOI 精确去重**: 相同 DOI 只保留一条
-2. **标题相似度去重**: 标题相似度 ≥ 0.9 视为重复（用 difflib.SequenceMatcher）
+**使用确定性工具（不要手动实现）**：
 
-**打分维度**（relevance_score: 0.0-1.0）：
-- source_type 权重: top_conference(1.0) > journal(0.8) > preprint(0.6) > blog(0.3)
-- year 权重: 2024(1.0), 2023(0.9), 2022(0.8), 更早递减
-- citation_count 权重: >100(1.0), 50-100(0.8), 10-50(0.6), <10(0.4)
-- 关键词匹配度: title/abstract 中出现项目关键词的比例
+1. **去重**：使用 `deduplicate_papers` 工具
+   ```
+   deduplicate_papers(papers=[论文列表], doi_dedup=true, title_threshold=0.95)
+   ```
+   - DOI 精确去重 + 标题相似度去重
+   - 阈值 0.95 表示只去除几乎完全相同的标题
+   - **注意**：必须传入实际的论文列表，不能传空列表 []
 
-**最终筛选**：
-- 按 relevance_score 排序
-- 取 top 30-80 篇（如果 >120 篇则裁剪到 80）
-- 如果 <15 篇，扩大检索式重试
+2. **打分**：使用 `score_papers` 工具
+   ```
+   score_papers(papers=[论文列表], keywords=["关键词1", "关键词2", ...])
+   ```
+   - 自动计算 relevance_score（0.0-1.0）
+   - 基于来源类型、年份、引用数、关键词匹配度
+   - **注意**：必须传入实际的论文列表，不能传空列表 []
+
+3. **最终筛选**：
+   - 按 relevance_score 排序
+   - 保留所有相关论文（relevance_score ≥ 0.5）
+   - 如果 >120 篇，取 top 80
+   - 如果 <10 篇，扩大检索式重试
 
 ### Step 5: 产出文件
 
@@ -138,26 +184,37 @@
 - `url`: 论文链接（必需）
 
 **literature/search_log.md**（审计日志）
+
+**🚨 重要：使用 generate_search_log 工具生成日志 🚨**
+
+不要手动编写 search_log.md，使用 `generate_search_log` 工具：
+```
+generate_search_log(
+    raw_count=实际原始结果数量,
+    dedup_count=实际去重后数量,
+    queries=["检索式1", "检索式2", ...],
+    query_results={"检索式1": 结果数, "检索式2": 结果数, ...}
+)
+```
+
+工具会自动生成基于真实数据的日志，格式如下：
 ```markdown
 # T2 Scout 检索日志
 
 ## 检索式
-1. "discrete diffusion language models" → Semantic Scholar: 45篇, arXiv: 12篇
-2. "factorized gap in diffusion" → Semantic Scholar: 23篇, arXiv: 8篇
+1. "discrete diffusion language models" → 45篇
+2. "factorized gap in diffusion" → 23篇
 ...
 
-## 去重统计
-- 原始结果: 156篇
-- DOI去重后: 134篇
-- 标题相似度去重后: 72篇
-- 最终（按relevance裁剪）: 65篇
-
-## 工具使用统计
-- search_papers (semantic_scholar): 成功 X次, 失败 Y次
-- search_papers (arxiv): 成功 X次, 失败 Y次
+## 检索统计
+- 原始结果: X篇
+- 去重后: Y篇
+- 去重率: Z%
 ```
 
 **literature/missing_areas.md**（缺口分析）
+
+手动分析文献覆盖情况，写入此文件：
 ```markdown
 # 文献缺口分析
 
@@ -191,11 +248,11 @@
    - **不要**为了满足输出要求而编造数据
    - 正确的做法：`finish_task(summary="所有API调用失败，无法检索论文。建议稍后重试或配置API密钥。")`
 
-3. **如何验证数据真实性**
-   - 检查 multi_source_search 返回的 data.papers 列表
-   - 只使用返回列表中的论文
-   - 如果返回列表为空或论文数量太少（<20篇），扩大检索式重试
-   - 如果重试后仍然<20篇，让任务失败而不是编造数据
+3. **使用确定性工具处理论文数据**
+   - 去重：使用 `deduplicate_papers` 工具，不要手动实现
+   - 评分：使用 `score_papers` 工具，不要手动实现
+   - 日志：使用 `generate_search_log` 工具，不要手动编写
+   - 检索式扩展：使用 `expand_queries` 工具（如果有种子论文）
 
 4. **数据质量检查**
    - 每篇论文必须有真实的 title（不能是"Agent Memory Retrieval Paper 1"这种模式）
@@ -210,41 +267,77 @@
    - preprint: arXiv, bioRxiv 等
    - blog: 技术博客、公司博客
 
-2. **数量控制**: 最终 papers_dedup.jsonl 必须在 20-120 篇之间
-   - 少于 20 篇 → 扩大检索式重试，如果仍然不够则让任务失败
+2. **数量控制**: 最终 papers_dedup.jsonl 必须在 10-120 篇之间
+   - 少于 10 篇 → 扩大检索式重试，如果仍然不够则让任务失败
    - 多于 120 篇 → 按 relevance_score 取 top 80
 
 3. **完成标志**: 所有文件写入完成后，调用 `finish_task`
 
-## 示例：去重逻辑伪代码
+## 工作流程示例
 
 ```python
-# 阶段1: DOI精确去重
-seen_dois = set()
-stage1 = []
-for paper in raw_papers:
-    doi = paper.get("doi", "").strip().lower()
-    if doi and doi in seen_dois:
-        continue
-    if doi:
-        seen_dois.add(doi)
-    stage1.append(paper)
+# Step 1: 扩展检索式（如果有种子论文）
+queries_result = expand_queries(
+    seed_papers=seed_papers,
+    topic="agent memory retrieval",
+    max_queries=10
+)
+queries = queries_result["data"]["queries"]
 
-# 阶段2: 标题相似度去重
-from difflib import SequenceMatcher
-stage2 = []
-seen_titles = []
-for paper in stage1:
-    title = paper.get("title", "").strip().lower()
-    is_dup = False
-    for seen in seen_titles:
-        sim = SequenceMatcher(None, title, seen).ratio()
-        if sim >= 0.9:
-            is_dup = True
-            break
-    if not is_dup:
-        stage2.append(paper)
-        seen_titles.append(title)
+# Step 2: 跨源检索
+all_papers = []
+query_results = {}
+for query in queries:
+    result = multi_source_search(query=query, max_results=30)
+    papers = result["data"]["papers"]
+    all_papers.extend(papers)
+    query_results[query] = len(papers)
+
+# 写入原始结果
+write_file("literature/papers_raw.jsonl", jsonl_format(all_papers))
+
+# Step 3: 领域过滤（可选）
+filtered_result = filter_by_domain(papers=all_papers, target_domain="cs")
+filtered_papers = filtered_result["data"]["papers"]
+
+# Step 4: 去重
+dedup_result = deduplicate_papers(
+    papers=filtered_papers,
+    doi_dedup=True,
+    title_threshold=0.95
+)
+dedup_papers = dedup_result["data"]["papers"]
+
+# Step 5: 评分
+scored_result = score_papers(
+    papers=dedup_papers,
+    keywords=["agent", "memory", "retrieval", "LLM"]
+)
+scored_papers = scored_result["data"]["papers"]
+
+# Step 6: 筛选和排序
+sorted_papers = sorted(scored_papers, key=lambda x: x["relevance_score"], reverse=True)
+final_papers = [p for p in sorted_papers if p["relevance_score"] >= 0.5]
+if len(final_papers) > 120:
+    final_papers = final_papers[:80]
+
+# 写入去重后结果
+write_file("literature/papers_dedup.jsonl", jsonl_format(final_papers))
+
+# Step 7: 生成日志
+log_result = generate_search_log(
+    raw_count=len(all_papers),
+    dedup_count=len(final_papers),
+    queries=queries,
+    query_results=query_results
+)
+write_file("literature/search_log.md", log_result["data"]["log"])
+
+# Step 8: 手动分析缺口
+# 分析 final_papers，写入 missing_areas.md
+
+# Step 9: 完成任务
+finish_task(summary=f"检索完成：{len(all_papers)} 篇原始结果 → {len(final_papers)} 篇去重后论文")
 ```
 
 ## 注意事项

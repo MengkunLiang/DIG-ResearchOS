@@ -60,8 +60,8 @@
     },
     "source": {
       "type": "string",
-      "description": "Data source (arxiv, semantic_scholar, etc.)",
-      "enum": ["arxiv", "semantic_scholar", "pubmed", "manual"]
+      "description": "Data source (arxiv, semantic_scholar, crossref, europepmc, pubmed, manual, etc.)",
+      "enum": ["arxiv", "semantic_scholar", "crossref", "europepmc", "pubmed", "dblp", "manual"]
     }
   }
 }

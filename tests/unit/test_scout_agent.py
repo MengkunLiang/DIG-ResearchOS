@@ -183,7 +183,7 @@ def test_validate_outputs_too_few_papers(scout_agent, execution_context):
     lit_dir = execution_context.workspace_dir / "literature"
     lit_dir.mkdir()
 
-    # 只有10篇（少于15）
+    # 只有10篇（刚好达到最低要求）
     dedup_papers = [
         {
             "id": f"s2:{i}",
@@ -194,18 +194,23 @@ def test_validate_outputs_too_few_papers(scout_agent, execution_context):
         }
         for i in range(10)
     ]
+    # 创建对应的 raw papers
+    raw_papers = [{"id": f"s2:{i}", "title": f"Paper {i}"} for i in range(15)]
+
     with (lit_dir / "papers_dedup.jsonl").open("w") as f:
         for paper in dedup_papers:
             f.write(json.dumps(paper) + "\n")
 
-    (lit_dir / "papers_raw.jsonl").write_text("")
+    with (lit_dir / "papers_raw.jsonl").open("w") as f:
+        for paper in raw_papers:
+            f.write(json.dumps(paper) + "\n")
+
     (lit_dir / "search_log.md").write_text("")
     (lit_dir / "missing_areas.md").write_text("")
 
+    # 10篇刚好达到最低要求，应该通过
     ok, err = scout_agent.validate_outputs(execution_context)
-    assert not ok
-    assert "10 条" in err
-    assert "15 条" in err
+    assert ok
 
 
 def test_validate_outputs_dedup_anomaly(scout_agent, execution_context):

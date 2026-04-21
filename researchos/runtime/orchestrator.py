@@ -86,6 +86,9 @@ class AgentRunner:
             workspace_dir=ctx.workspace_dir,
         )
 
+
+        # 输出初始化信息
+        print(f"[Agent] 初始化完成 (模型层级: {eff.llm_tier}, 最大步数: {eff.max_steps})", flush=True)
         last_model_used: str | None = None
         last_endpoint_used: str | None = None
         stop_reason = AgentResult.STOP_ERROR
@@ -124,6 +127,10 @@ class AgentRunner:
             while True:
                 # 每进入一轮 while，就代表一次“agent step”。
                 budget.tick_step()
+
+                # 每5步输出一次进度
+                if budget.steps % 5 == 1 or budget.steps == 1:
+                    print(f"[Agent] 步骤 {budget.steps}/{eff.max_steps} | Token: {budget.tokens_in + budget.tokens_out} | 成本: ${budget.cost_usd:.4f}", flush=True)
                 try:
                     budget.check()
                 except BudgetExceeded as exc:
@@ -174,6 +181,10 @@ class AgentRunner:
                 messages.append(assistant_msg)
                 trace.write_message(assistant_msg)
 
+                # 输出 Agent 的文本回复（如果有）
+                if assistant_msg.content and assistant_msg.content.strip():
+                    print(f"\n[Agent 输出]\n{assistant_msg.content}\n", flush=True)
+
                 # 如果模型只说话不调用工具，runtime 会反复提醒它：
                 # 要么继续推进，要么明确 finish_task。
                 if not assistant_msg.tool_calls:
@@ -191,6 +202,11 @@ class AgentRunner:
                     continue
 
                 nudge_count = 0
+                # 输出工具调用信息
+                if len(assistant_msg.tool_calls) > 0:
+                    tool_names = [tc.name for tc in assistant_msg.tool_calls]
+                    print(f"[Agent] 调用工具: {', '.join(tool_names)}", flush=True)
+
                 # 同一轮 assistant 发出的多个 tool call 可以并行执行，但回填顺序保持原顺序。
                 tool_msgs = await asyncio.gather(
                     *[
@@ -209,11 +225,14 @@ class AgentRunner:
                 if finish_requested:
                     # finish_task 只是“请求结束”而不是直接结束。
                     # 真正能否成功结束，仍以 validate_outputs 为准。
+                    print(f"[Agent] Agent 请求完成任务，开始校验输出...", flush=True)
                     ok, err = self.agent.validate_outputs(ctx)
                     if ok:
+                        print(f"[Agent] 输出校验通过，任务完成", flush=True)
                         stop_reason = AgentResult.STOP_FINISHED
                         break
                     validation_fails += 1
+                    print(f"[Agent] 输出校验失败 ({validation_fails}/{self.agent.spec.max_validation_retries}): {err}", flush=True)
                     if validation_fails >= self.agent.spec.max_validation_retries:
                         stop_reason = AgentResult.STOP_ERROR
                         error_msg = f"Validation failed {validation_fails} times. Last reason: {err}"

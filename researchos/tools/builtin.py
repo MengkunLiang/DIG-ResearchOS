@@ -26,6 +26,12 @@ from .search_papers import FetchPaperMetadataTool, SearchPapersTool
 from .seed_paper_processor import ProcessSeedPaperTool
 from .upload_seed_materials import UploadSeedCodeTool, UploadSeedDataTool, UploadSeedPdfTool
 from .web_fetch import WebFetchTool
+from .paper_utils_tool import (
+    DeduplicatePapersTool,
+    ScorePapersTool,
+    ExpandQueriesTool,
+    GenerateSearchLogTool,
+)
 
 
 def register_builtin_tools(registry: ToolRegistry) -> None:
@@ -79,3 +85,8 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
     registry.register("upload_seed_pdf", lambda ctx: UploadSeedPdfTool(ctx.policy))
     registry.register("upload_seed_data", lambda ctx: UploadSeedDataTool(ctx.policy))
     registry.register("upload_seed_code", lambda ctx: UploadSeedCodeTool(ctx.policy))
+    # 新增：确定性论文处理工具
+    registry.register("deduplicate_papers", lambda ctx: DeduplicatePapersTool())
+    registry.register("score_papers", lambda ctx: ScorePapersTool())
+    registry.register("expand_queries", lambda ctx: ExpandQueriesTool())
+    registry.register("generate_search_log", lambda ctx: GenerateSearchLogTool())

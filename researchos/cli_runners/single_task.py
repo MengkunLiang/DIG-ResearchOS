@@ -60,6 +60,7 @@ class SingleTaskRunner:
         """执行单次 task 调试。"""
         # runner 作为独立 Python API 使用时，也要自己保证 runtime 目录存在，
         # 不能把这个前提完全交给 CLI 调用方。
+        print(f"\n[进度] 初始化 workspace: {self.workspace}")
         initialize_workspace(
             self.workspace,
             create_project_file=False,
@@ -67,19 +68,36 @@ class SingleTaskRunner:
         )
 
         if self.from_workspace:
+            print(f"[进度] 从 {self.from_workspace} 复制前置产物...", flush=True)
             self._copy_prerequisites()
 
+        print(f"[进度] 校验前置条件...", flush=True)
         ok, err = validate_prerequisites(self.workspace, self.task_id)
         if not ok:
             print(f"Prerequisites not met for {self.task_id}: {err}")
             print("Hint: use --from <other-workspace> to copy upstream artifacts.")
             return 3
 
+        print(f"[进度] 加载 Agent: {self.task_id}", flush=True)
         agent_cls = TASK_TO_AGENT_MAP.get(self.task_id)
         if agent_cls is None:
             print(f"Unknown or unimplemented task: {self.task_id}")
             return 4
         agent = agent_cls()
+
+        # 为 T1 准备 extra 参数（从 project.yaml 读取 topic）
+        extra = {}
+        if self.task_id == "T1":
+            project_path = self.workspace / "project.yaml"
+            if project_path.exists():
+                try:
+                    project_data = yaml.safe_load(project_path.read_text(encoding="utf-8")) or {}
+                    # 支持 topic 或 research_direction 字段
+                    topic = project_data.get("topic") or project_data.get("research_direction", "")
+                    if topic:
+                        extra["user_topic"] = topic
+                except Exception:
+                    pass
 
         ctx = ExecutionContext(
             workspace_dir=self.workspace.resolve(),
@@ -88,15 +106,19 @@ class SingleTaskRunner:
             run_id=f"{self.task_id}_single_{uuid.uuid4().hex[:8]}",
             inputs=resolve_inputs(self.workspace, self.task_id),
             outputs_expected=resolve_outputs(self.workspace, self.task_id),
+            extra=extra,
         )
         if self.override_profile:
             ctx.llm_override = LLMConfigOverride(profile=self.override_profile)
 
+        print(f"[进度] 准备执行上下文 (run_id: {ctx.run_id})", flush=True)
         state_path = self.workspace / "state.yaml"
         state = self._load_or_init_state(ctx.project_id)
         state = self._record_started(state, ctx.run_id)
         state.dump_yaml(state_path)
 
+        print(f"[进度] 启动 Agent 执行...", flush=True)
+        print(f"[进度] Agent 将执行最多 {agent.spec.max_steps} 步", flush=True)
         runner = AgentRunner(
             agent,
             self.tools,
@@ -107,11 +129,13 @@ class SingleTaskRunner:
         try:
             result = await runner.run(ctx)
         except (asyncio.CancelledError, KeyboardInterrupt):
+            print("\n[进度] 任务被中断")
             state = self._record_interrupted(state)
             state.dump_yaml(state_path)
             print("Task interrupted. You can inspect state.yaml and trace files in this workspace.")
             return 130
 
+        print(f"\n[进度] Agent 执行完成，开始校验输出产物...")
         io_spec = get_task_io(self.task_id)
         ok, errors = validate_task_artifacts(
             self.workspace,
@@ -119,10 +143,13 @@ class SingleTaskRunner:
             declared_outputs=io_spec["outputs"],
         )
         if result.ok and not ok:
+            print(f"[进度] 输出校验失败: {'; '.join(errors)}", flush=True)
             result.ok = False
             result.stop_reason = result.STOP_ERROR
             result.error = "Runtime artifact validation failed: " + "; ".join(errors)
             result.message = result.error
+        else:
+            print(f"[进度] 输出校验通过", flush=True)
 
         state = self._record_finished(state, result)
         state.dump_yaml(state_path)

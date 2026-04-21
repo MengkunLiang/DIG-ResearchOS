@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
 from pydantic import BaseModel, Field
 
 from .base import Tool, ToolResult
 from .workspace_policy import WorkspaceAccessPolicy
 from ..runtime.errors import ToolAccessDenied, ToolRuntimeError
+from ..runtime.logger import get_logger
+
+_LOG = get_logger("filesystem")
 
 
 class ReadFileParams(BaseModel):
@@ -55,6 +60,11 @@ class WriteFileTool(Tool):
         content = kwargs["content"]
         try:
             abs_path = self.policy.resolve_write(path)
+
+            # 特殊处理：如果是 project.yaml，自动修正格式错误
+            if path == "project.yaml" or path.endswith("/project.yaml"):
+                content = self._fix_project_yaml(content, path)
+
             abs_path.write_text(content, encoding="utf-8")
             return ToolResult(
                 ok=True,
@@ -65,6 +75,93 @@ class WriteFileTool(Tool):
             return ToolResult(ok=False, content=str(exc), error="access_denied")
         except OSError as exc:
             raise ToolRuntimeError("write_file", exc) from exc
+
+    def _fix_project_yaml(self, content: str, path: str) -> str:
+        """自动修正 project.yaml 的常见格式错误。
+
+        常见错误：
+        1. constraints 是空对象 {} - 填充默认值
+        2. constraints 是数组 [] - 转换为对象
+        3. seed_ensemble 是数组 [] - 转换为对象
+        4. created_at 格式错误 - 修正为 ISO 8601
+        """
+        try:
+            data = yaml.safe_load(content)
+            if not isinstance(data, dict):
+                return content
+
+            fixed = False
+
+            # 修正 1: constraints 是空对象、缺失、或是数组
+            constraints = data.get("constraints")
+            if not constraints or constraints == {} or isinstance(constraints, list):
+                data["constraints"] = {
+                    "max_budget_usd": 100.0,
+                    "compute_resources": {
+                        "allow_gpu": True,
+                        "max_memory_gb": 16
+                    }
+                }
+                fixed = True
+                reason = "array" if isinstance(constraints, list) else "empty or missing"
+                _LOG.info("auto_fix_project_yaml", field="constraints", reason=reason)
+
+            # 修正 2: seed_ensemble 是数组
+            if isinstance(data.get("seed_ensemble"), list):
+                data["seed_ensemble"] = {
+                    "tier1_seeds": [42, 123, 456],
+                    "tier2_seeds": [789],
+                    "tier3_seeds": [999]
+                }
+                fixed = True
+                _LOG.info("auto_fix_project_yaml", field="seed_ensemble", reason="array instead of object")
+
+            # 修正 3: seed_ensemble 缺失
+            if not data.get("seed_ensemble"):
+                data["seed_ensemble"] = {
+                    "tier1_seeds": [42, 123, 456],
+                    "tier2_seeds": [789],
+                    "tier3_seeds": [999]
+                }
+                fixed = True
+                _LOG.info("auto_fix_project_yaml", field="seed_ensemble", reason="missing")
+
+            # 修正 4: created_at 格式错误
+            if "created_at" in data:
+                created_at = data["created_at"]
+                # 如果是字符串但格式不对（没有时间部分）
+                if isinstance(created_at, str) and "T" not in created_at:
+                    # 添加时间部分
+                    data["created_at"] = f"{created_at}T00:00:00Z"
+                    fixed = True
+                    _LOG.info("auto_fix_project_yaml", field="created_at", reason="missing time part")
+                # 如果是 date 对象（YAML 解析器自动转换的）
+                elif not isinstance(created_at, str):
+                    # 转换为 ISO 8601 字符串
+                    data["created_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                    fixed = True
+                    _LOG.info("auto_fix_project_yaml", field="created_at", reason="not a string")
+
+            # 修正 5: keywords 是字符串（逗号分隔）
+            if isinstance(data.get("keywords"), str):
+                # 将逗号分隔的字符串转换为列表
+                keywords_str = data["keywords"]
+                data["keywords"] = [k.strip() for k in keywords_str.split(",") if k.strip()]
+                fixed = True
+                _LOG.info("auto_fix_project_yaml", field="keywords", reason="string instead of array")
+
+            if fixed:
+                # 重新序列化为 YAML
+                fixed_content = yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+                _LOG.info("auto_fix_project_yaml_success", path=path, fixes_applied=True)
+                return fixed_content
+
+            return content
+
+        except Exception as e:
+            # 如果修正失败，返回原始内容
+            _LOG.warning("auto_fix_project_yaml_failed", path=path, error=str(e))
+            return content
 
 
 class ListFilesParams(BaseModel):

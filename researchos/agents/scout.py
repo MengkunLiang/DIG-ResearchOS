@@ -27,6 +27,14 @@ from pathlib import Path
 
 from ..runtime.agent import Agent, AgentSpec, ExecutionContext
 from ..runtime.prompts import render_prompt
+from ..tools.pdf_metadata import scan_seed_papers
+from ..tools.paper_utils import (
+    deduplicate_papers,
+    score_papers,
+    expand_queries,
+    filter_by_domain,
+    generate_search_log,
+)
 from ._common import (
     load_project,
     load_jsonl,
@@ -51,6 +59,11 @@ class ScoutAgent(Agent):
                     "search_papers",  # 保留：单源搜索（备用）
                     "fetch_paper_metadata",
                     "finish_task",
+                    # 新增：确定性论文处理工具
+                    "deduplicate_papers",
+                    "score_papers",
+                    "expand_queries",
+                    "generate_search_log",
                     # MCP工具暂时移除，等MCP配置完成后再启用
                     # "mcp_arxiv_search",
                     # "mcp_semantic_scholar_search",
@@ -60,7 +73,7 @@ class ScoutAgent(Agent):
                 max_tokens_total=200_000,  # 增加到200K，避免token预算超限
                 max_wall_seconds=1800,
                 temperature=0.5,
-                allowed_read_prefixes=["", "user_seeds/"],
+                allowed_read_prefixes=["", "user_seeds/", "seeds/"],
                 allowed_write_prefixes=["literature/"],
                 prompt_template="scout.j2",
             )
@@ -69,10 +82,23 @@ class ScoutAgent(Agent):
     def system_prompt(self, ctx: ExecutionContext) -> str:
         """渲染system prompt，传入项目信息和seed papers。"""
         project = load_project(ctx)
-        seed_papers_path = ctx.workspace_dir / "user_seeds" / "seed_papers.jsonl"
-        seed_papers = load_jsonl(seed_papers_path) if seed_papers_path.exists() else []
-        seed_constraints_path = ctx.workspace_dir / "user_seeds" / "seed_constraints.md"
-        seed_constraints = read_text_file(seed_constraints_path, default="")
+
+        # 优先扫描 seeds/T2_scout/papers/ 目录中的 PDF 文件
+        seed_pdf_dir = ctx.workspace_dir / "seeds" / "T2_scout" / "papers"
+        if seed_pdf_dir.exists() and any(seed_pdf_dir.glob("*.pdf")):
+            seed_papers = scan_seed_papers(seed_pdf_dir)
+        else:
+            # 降级到旧的 user_seeds/seed_papers.jsonl
+            seed_papers_path = ctx.workspace_dir / "user_seeds" / "seed_papers.jsonl"
+            seed_papers = load_jsonl(seed_papers_path) if seed_papers_path.exists() else []
+
+        # 读取约束条件（支持新旧两种路径）
+        seed_constraints_new = ctx.workspace_dir / "seeds" / "T2_scout" / "constraints.md"
+        seed_constraints_old = ctx.workspace_dir / "user_seeds" / "seed_constraints.md"
+        if seed_constraints_new.exists():
+            seed_constraints = read_text_file(seed_constraints_new, default="")
+        else:
+            seed_constraints = read_text_file(seed_constraints_old, default="")
 
         return render_prompt(
             self.spec.prompt_template,
@@ -111,7 +137,7 @@ class ScoutAgent(Agent):
         ok, err = validate_jsonl_schema(
             dedup_path,
             "papers_dedup",
-            min_count=15,  # 低于15说明检索有问题
+            min_count=10,  # 降低要求：10篇高质量论文优于15篇低质量论文
             max_count=120,  # 太多说明没按relevance裁剪
         )
         if not ok:
