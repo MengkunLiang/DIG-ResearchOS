@@ -1,5 +1,6 @@
-> ⚠️ **此 Agent 尚未实现 (NOT IMPLEMENTED)**
-> 此文档描述的是规划中的 T8 Writer/Reviewer Agent，设计已完成但代码尚未实现。
+> ✅ **此 Agent 已实现 (IMPLEMENTED)**
+> 代码位置：`researchos/agents/writer.py`（WriterAgent）和 `researchos/agents/reviewer.py`（ReviewerAgent）
+> Prompt 模板：`researchos/prompts/writer.j2` 和 `researchos/prompts/reviewer.j2`
 
 # T8 Writer和Reviewer Agent 实现文档
 
@@ -10,9 +11,9 @@ T8阶段包含两个协作的Agent：Writer Agent（论文写作）和Reviewer A
 **在Pipeline中的位置**: T8（论文写作与审稿阶段）
 
 **代码位置**: 
-- Writer Agent实现: `/home/liangmengkun/ResearchOS/researchos/agents/writer.py`（待实现）
-- Reviewer Agent实现: `/home/liangmengkun/ResearchOS/researchos/agents/reviewer.py`（待实现）
-- Prompt模板: `/home/liangmengkun/ResearchOS/researchos/prompts/writer.j2`, `reviewer.j2`（待实现）
+- Writer Agent实现: `/home/liangmengkun/ResearchOS/researchos/agents/writer.py`（WriterAgent 类）
+- Reviewer Agent实现: `/home/liangmengkun/ResearchOS/researchos/agents/reviewer.py`（ReviewerAgent 类）
+- Prompt模板: `/home/liangmengkun/ResearchOS/researchos/prompts/writer.j2`, `reviewer.j2`
 
 ## Writer Agent
 

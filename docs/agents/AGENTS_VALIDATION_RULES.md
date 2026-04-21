@@ -545,7 +545,7 @@ def _validate_external_resources(self, resources_path: Path) -> tuple[bool, str 
     return True, None
 ```
 
-### 8.5 T8 声明追溯验证（规划中）
+### 8.5 T8 声明追溯验证
 
 **位置**: T8 Writer Agent，post-hooks
 
@@ -555,7 +555,7 @@ def _validate_external_resources(self, resources_path: Path) -> tuple[bool, str 
 
 **失败处理**: 返回不一致的声明列表，要求 Agent 修正
 
-**状态**: ⚠️ 规划中（T8 未实现）
+**状态**: ✅ 已实现（见 `researchos/agents/writer.py` 的 `validate_outputs` 方法）
 
 ### 8.6 T6 机制相似度搜索验证
 

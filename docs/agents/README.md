@@ -177,7 +177,7 @@
 ---
 
 ### T7: Experimenter Agent（完整实验）
-**文档**: [T7_EXPERIMENTER_AGENT.md](./T7_EXPERIMENTER_AGENT_AGENT.md)（与 T5 共享代码）
+**文档**: [T7_EXPERIMENTER_FULL_AGENT.md](./T7_EXPERIMENTER_FULL_AGENT.md)（与 T5 共享代码）
 
 **职责**: 执行完整的实验计划，收集全面结果，支持 Docker 隔离执行
 
@@ -200,7 +200,7 @@
 ---
 
 ### T5: Experimenter Agent（试点实验 Pilot）
-**文档**: [T5_EXPERIMENTER_PILOT_AGENT.md](./T5_EXPERIMENTER_PILOT_AGENT.md)
+**文档**: [T5_EXPERIMENTER_PILOT_AGENT.md](./T5_EXPERIMENTER_PILOT_AGENT.md)（与 T7 共享代码）
 
 **职责**: 执行小规模试点实验，验证假设可行性，收集动机验证证据
 
@@ -215,18 +215,21 @@
 **模型层级**: medium
 
 **关键特性**:
-- 试点模式（小规模验证）
-- 动机验证（验证假设的动机是否成立）
+- 试点模式（小规模验证，5-10% 数据）
+- 固定 seed=42（确保可复现）
+- 动机验证（验证假设的动机是否成立，PASS/REVISE/FAIL）
 - 冒烟测试（快速检查核心假设）
 
-> ⚠️ **注意**: T8 和 T9 Agent 尚未实现（代码未实现），以下是规划中的设计文档
+**说明**: T5 与 T7 共享同一个 `ExperimenterAgent` 类，通过 `mode="pilot"` 参数区分。Pilot 模式强制执行 smoke test，使用固定 seed=42，产出 motivation_validation.md 报告。
+
+> ⚠️ **注意**: T8 和 T9 Agent 已实现（代码已实现），以下是实现文档
 
 ---
 
-### T8: Writer和Reviewer Agent（论文写作与审稿）⚠️规划中
+### T8: Writer和Reviewer Agent（论文写作与审稿）✅已实现
 **文档**: [T8_WRITER_REVIEWER_AGENT.md](./T8_WRITER_REVIEWER_AGENT.md)
 
-**状态**: 规划中（NOT IMPLEMENTED）
+**状态**: ✅ 已实现（代码见 `researchos/agents/writer.py`, `researchos/agents/reviewer.py`）
 
 **职责**: 
 - **Writer**: 生成论文各个部分（大纲、初稿、修订、最终版）
@@ -249,10 +252,10 @@
 
 ---
 
-### T9: Submission Agent（投稿准备）⚠️规划中
+### T9: Submission Agent（投稿准备）✅已实现
 **文档**: [T9_SUBMISSION_AGENT.md](./T9_SUBMISSION_AGENT.md)
 
-**状态**: 规划中（NOT IMPLEMENTED）
+**状态**: ✅ 已实现（代码见 `researchos/agents/submission.py`）
 
 **职责**: 将论文草稿转换为符合目标会议格式的投稿包
 
@@ -298,9 +301,9 @@ T7.5 (PI Agent - evaluate)
   ↓ evaluation_decision.md
   ├─→ 继续迭代（回到T4或T6）
   └─→ 准备写作
-T8 (Writer + Reviewer Agents) ⚠️规划中
+T8 (Writer + Reviewer Agents) ✅已实现
   ↓ paper.tex
-T9 (Submission Agent) ⚠️规划中
+T9 (Submission Agent) ✅已实现
   ↓ submission/bundle/
 ```
 
@@ -437,9 +440,9 @@ pytest tests/integration/test_scout_agent_e2e.py -v
 | NoveltyAuditor | T4.5 | ✅ 已实现 | ✅ 完整 | heavy | 新颖性预审 |
 | Experimenter | T5, T7 | ✅ 已实现 | ✅ 完整 | medium | pilot/full 模式 |
 | Novelty | T6 | ✅ 已实现 | ✅ 完整 | medium | 新颖性最终验证 |
-| Writer | T8 | ❌ 未实现 | ⚠️ 规划中 | heavy | |
-| Reviewer | T8 | ❌ 未实现 | ⚠️ 规划中 | heavy | |
-| Submission | T9 | ❌ 未实现 | ⚠️ 规划中 | medium | |
+| Writer | T8 | ✅ 已实现 | ✅ 完整 | heavy | |
+| Reviewer | T8 | ✅ 已实现 | ✅ 完整 | heavy | |
+| Submission | T9 | ✅ 已实现 | ✅ 完整 | medium | |
 
 ## 鲁棒性增强功能
 
@@ -447,7 +450,7 @@ ResearchOS 实现了多项鲁棒性增强功能，提高系统的可靠性和研
 
 ### 1. T4 Hypothesis Pre-mortem（假设预演）
 
-**位置**: T4 Ideation Agent，Gate1 和 Gate2 之间
+**位置**: T4 Ideation Agent，Gate1 和 Gate2 之间文档
 
 **功能**: 对选定的研究方向执行三维检查
 - 物理/数学约束检查
@@ -497,7 +500,7 @@ ResearchOS 实现了多项鲁棒性增强功能，提高系统的可靠性和研
 - 声明追溯：检查每个声明是否有对应的实验结果
 - 数值一致性：验证论文中的数值与实验结果一致
 
-**状态**: ⚠️ 规划中（T8 未实现）
+**状态**: ✅ 已实现（T8 Writer Agent 实现）
 
 ### 6. T6 机制相似度搜索
 
@@ -537,7 +540,7 @@ ResearchOS 实现了多项鲁棒性增强功能，提高系统的可靠性和研
 ## 已知限制
 
 1. **MCP集成**: 当前 T2 Scout Agent 的 MCP 工具已注释，等 MCP 配置完成后再启用
-2. **T8/T9**: Writer/Reviewer Agent 和 Submission Agent 代码尚未实现，只有设计文档
+2. **T8/T9**: Writer/Reviewer Agent 和 Submission Agent 代码已实现（见 `researchos/agents/writer.py`, `reviewer.py`, `submission.py`）
 3. **容器环境**: 所有 Agent 在统一 Docker 环境中运行，自动检测容器环境并适配执行模式
 
 ## T4.5 vs T6 新颖性验证的区别

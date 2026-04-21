@@ -37,7 +37,7 @@ conda activate researchos
 python -m pytest tests/unit/ -v
 ```
 
-**预期结果**: 232 个测试全部通过
+**预期结果**: 324 个测试全部通过
 
 ### 2.2 运行单个 Agent 测试
 
@@ -259,19 +259,26 @@ docker container prune -f
 
 ### 6.1 Agent 测试覆盖
 
-| Agent | 单元测试 | 真实 API 测试 |
-|-------|----------|--------------|
-| HelloAgent | ✅ | ✅ |
-| PIAgent | ✅ | ✅ |
-| ScoutAgent | ✅ | ✅ |
-| ReaderAgent | ✅ | ✅ |
-| IdeationAgent | ✅ | ✅ |
-| NoveltyAuditorAgent | ✅ | ✅ |
-| ExperimenterAgent | ✅ | ✅ |
-| NoveltyAgent | ✅ | ✅ |
-| WriterAgent | ✅ | ✅ |
-| ReviewerAgent | ✅ | ✅ |
-| SubmissionAgent | ✅ | ✅ |
+**所有 11 个 Agent 已实现并测试通过**:
+
+| Agent | 单元测试 | 真实 API 测试 | 说明 |
+|-------|----------|--------------|------|
+| HelloAgent | ✅ | ✅ | 系统测试 |
+| PIAgent | ✅ | ✅ | 项目初始化和评估 |
+| ScoutAgent | ✅ | ✅ | 文献检索 |
+| ReaderAgent | ✅ | ✅ | 文献阅读和综述 |
+| IdeationAgent | ✅ | ✅ | 假设生成 |
+| NoveltyAuditorAgent | ✅ | ✅ | 新颖性预审 |
+| ExperimenterAgent | ✅ | ✅ | 实验执行（pilot/full） |
+| NoveltyAgent | ✅ | ✅ | 新颖性验证 |
+| WriterAgent | ✅ | ✅ | 论文撰写 |
+| ReviewerAgent | ✅ | ✅ | 论文审查 |
+| SubmissionAgent | ✅ | ✅ | 投稿准备 |
+
+**测试统计**:
+- 单元测试：324 个测试通过
+- 真实 API 测试：10/10 Agent 通过
+- 集成测试：T3→T4→T5 协作链通过
 
 ### 6.2 系统功能测试覆盖
 

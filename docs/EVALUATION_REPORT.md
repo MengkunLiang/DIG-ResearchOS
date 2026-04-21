@@ -12,11 +12,12 @@
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| T1-T9 Agent | ✅ 全部实现 | 11 个 agent 类，全部测试通过 |
-| 单元测试 | ✅ 232 个通过 | 覆盖率良好 |
+| Agent 实现 | ✅ 全部实现 | 11 个 agent 类，全部测试通过 |
+| 单元测试 | ✅ 324 个通过 | 覆盖率良好 |
 | 集成测试 | ✅ 通过 | pipeline 验证 |
 | Skills 系统 | ✅ 已实现 | loader/agent/runner 完整 |
 | Docker 执行 | ✅ 已验证 | container-native/host 双模式架构 |
+| GPU 支持 | ✅ 已验证 | CUDA 12.4 + PyTorch 2.6.0+cu124 |
 | CLI 界面 | ✅ DIG Lab 风格 | ASCII art 品牌化 |
 | 模型路由 | ✅ 已修复 | gpt-5 → gpt-4o |
 | Gates 配置 | ✅ 已补全 | 关键 gate 已配置 |
@@ -24,6 +25,19 @@
 | 断点恢复机制 | ✅ 已验证 | 5/5 测试通过 |
 | 内容质量审查 | ✅ 已验证 | 4/4 测试通过 |
 | T5 Pilot 集成测试 | ✅ 已验证 | 1/1 测试通过 |
+
+**已实现的 11 个 Agent**:
+1. HelloAgent - 系统测试
+2. PIAgent - 项目初始化和评估
+3. ScoutAgent - 文献检索
+4. ReaderAgent - 文献阅读和综述
+5. IdeationAgent - 假设生成
+6. NoveltyAuditorAgent - 新颖性预审
+7. ExperimenterAgent - 实验执行（pilot/full 模式）
+8. NoveltyAgent - 新颖性验证
+9. WriterAgent - 论文撰写
+10. ReviewerAgent - 论文审查
+11. SubmissionAgent - 投稿准备
 
 ### 1.2 真实 API 测试结果
 
@@ -90,7 +104,7 @@ python -m pytest tests/unit/ -v
 ### 2.1 单元测试结果
 
 ```
-232 passed in 3.25s
+324 passed in 3.25s
 ```
 
 **覆盖率分析**:

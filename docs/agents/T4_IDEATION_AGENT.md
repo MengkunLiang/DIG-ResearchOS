@@ -14,6 +14,7 @@ Ideation Agent（假设生成Agent）是ResearchOS pipeline中的创新核心，
 
 - **Agent名称**: `ideation`
 - **模型层级**: `heavy`（需要深度推理和创造性思维）
+- **LLM Profile**: 默认（不使用deep_reasoning profile）
 - **Temperature**: 0.75（鼓励创造性，但不过度随机）
 - **工具**: `read_file`, `write_file`, `list_files`, `ask_human`, `finish_task`
 - **最大步数**: 40
@@ -503,8 +504,9 @@ agents:
   ideation:
     max_retries: 3
     timeout_seconds: 3600
-    enable_thinking: true  # 需要深度推理
     temperature: 0.75  # 鼓励创造性
 ```
+
+**注意**: Ideation Agent 不使用 `deep_reasoning` LLM profile，而是使用默认配置。这是因为当前实现中 `deep_reasoning` profile 尚未完全配置。
 
 详见 ResearchOS Runtime Dev Spec §6 和 §17。

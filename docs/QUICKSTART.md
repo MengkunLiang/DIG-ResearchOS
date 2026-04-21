@@ -72,7 +72,16 @@ bash infra/docker/run.sh run --workspace /workspace
 
 # 运行单个任务
 bash infra/docker/run.sh run-task --workspace /workspace --task T1
+
+# GPU 验证（如果有 GPU）
+bash infra/docker/run.sh bash -c "python -c 'import torch; print(f\"CUDA available: {torch.cuda.is_available()}\"); print(f\"CUDA version: {torch.version.cuda}\")'"
 ```
+
+**GPU 支持说明**:
+- 基础镜像：`nvidia/cuda:12.4.0-runtime-ubuntu22.04`
+- PyTorch 版本：2.6.0+cu124
+- 自动检测：`run.sh` 会自动检测 GPU 并添加 `--gpus all` 标志
+- 要求：宿主机需要安装 nvidia-docker2
 
 ### 2.5 查看日志
 
@@ -253,9 +262,11 @@ researchos selftest
 
 ## 六、工作流程
 
-ResearchOS 的完整工作流程包含以下阶段：
+ResearchOS 的完整工作流程包含以下阶段（所有 Agent 已实现）：
 
 ```
+HELLO (Hello Agent)
+  ↓ 系统测试
 T1 (PI Agent - init)
   ↓ 项目配置、种子数据
 T2 (Scout Agent)
@@ -276,11 +287,24 @@ T7 (Experimenter Agent - full)
   ↓ 完整实验结果
 T7.5 (PI Agent - evaluate)
   ↓ 评估决策
-T8 (Writer + Reviewer Agents) ⚠️ 规划中
+T8 (Writer + Reviewer Agents)
   ↓ 论文草稿
-T9 (Submission Agent) ⚠️ 规划中
+T9 (Submission Agent)
   ↓ 投稿包
 ```
+
+**已实现的 Agent**（11 个）:
+- HelloAgent - 系统测试
+- PIAgent - 项目初始化和评估
+- ScoutAgent - 文献检索
+- ReaderAgent - 文献阅读和综述
+- IdeationAgent - 假设生成
+- NoveltyAuditorAgent - 新颖性预审
+- ExperimenterAgent - 实验执行（pilot/full 模式）
+- NoveltyAgent - 新颖性验证
+- WriterAgent - 论文撰写
+- ReviewerAgent - 论文审查
+- SubmissionAgent - 投稿准备
 
 ---
 

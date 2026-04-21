@@ -76,12 +76,15 @@ RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r re
     pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements-dev.txt
 
 # 安装常用 ML 依赖（实验代码常用）
-# 这些包会被 Agent 生成的实验代码使用
-# 注意：使用清华镜像加速下载，避免网络问题
+# 使用 CUDA 12.4 与基础镜像 nvidia/cuda:12.4.0 匹配
+# 使用清华镜像加速下载
+# 依赖版本不写死，让 pip 自动解析兼容版本
 RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple \
-    torch==2.6.0 \
-    transformers==4.45.0 \
-    datasets==2.20.0 \
+    torch \
+    torchvision \
+    torchaudio \
+    --index-url https://download.pytorch.org/whl/cu124 && \
+    pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple \
     numpy \
     pandas \
     scikit-learn \
@@ -89,6 +92,8 @@ RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple \
     seaborn \
     tqdm \
     wandb \
+    transformers \
+    datasets \
     accelerate
 
 # npm 需要代理访问外网，设置后再清除

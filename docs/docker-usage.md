@@ -63,12 +63,15 @@ bash infra/docker/build.sh v0.1.0
 ### 构建内容
 
 镜像包含：
-- Ubuntu 22.04 + CUDA 12.4 运行时
-- Python 3.11
-- ResearchOS runtime 及其依赖
-- 常用 ML 库（PyTorch 2.6.0、Transformers 4.45.0 等）
-- LaTeX 完整工具链（texlive-full）
-- MCP 服务器（@modelcontextprotocol/server-arxiv）
+- **基础镜像**: `nvidia/cuda:12.4.0-runtime-ubuntu22.04`
+- **操作系统**: Ubuntu 22.04 LTS
+- **CUDA 版本**: 12.4 运行时
+- **Python 版本**: 3.11
+- **ResearchOS runtime** 及其依赖
+- **ML 库**: PyTorch 2.6.0+cu124、Transformers 4.45.0 等
+- **LaTeX 工具链**: texlive-full（完整版）
+- **MCP 服务器**: @modelcontextprotocol/server-arxiv
+- **系统工具**: git, curl, wget, ripgrep
 
 ### 镜像大小
 
@@ -229,6 +232,8 @@ docker run --rm -it \
 
 ### 验证 GPU 可用性
 
+**方法 1：检查 CUDA 是否可用**
+
 ```bash
 docker run --rm --gpus all \
   researchos/system:latest \
@@ -236,6 +241,50 @@ docker run --rm --gpus all \
 ```
 
 应该输出 `True`。
+
+**方法 2：查看详细 GPU 信息**
+
+```bash
+docker run --rm --gpus all \
+  researchos/system:latest \
+  bash -c "python -c 'import torch; print(f\"CUDA available: {torch.cuda.is_available()}\"); print(f\"CUDA version: {torch.version.cuda}\"); print(f\"PyTorch version: {torch.__version__}\"); print(f\"GPU count: {torch.cuda.device_count()}\")'"
+```
+
+**预期输出**:
+```
+CUDA available: True
+CUDA version: 12.4
+PyTorch version: 2.6.0+cu124
+GPU count: 1
+```
+
+**方法 3：运行 nvidia-smi**
+
+```bash
+docker run --rm --gpus all \
+  researchos/system:latest \
+  nvidia-smi
+```
+
+**常见问题排查**:
+
+如果 `torch.cuda.is_available()` 返回 `False`：
+
+1. 检查宿主机 GPU：
+   ```bash
+   nvidia-smi
+   ```
+
+2. 检查 nvidia-docker2：
+   ```bash
+   docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi
+   ```
+
+3. 重新安装 nvidia-docker2：
+   ```bash
+   sudo apt-get install nvidia-docker2
+   sudo systemctl restart docker
+   ```
 
 ### 指定特定 GPU
 
