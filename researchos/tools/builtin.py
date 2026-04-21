@@ -10,6 +10,7 @@ import os
 
 from .ask_human import AskHumanTool
 from .bash_run import BashRunTool
+from .clone_repo import CloneRepoTool
 from .docker_exec import DockerExecTool, load_project_config
 from .echo import EchoTool
 from .filesystem import ListFilesTool, ReadFileTool, WriteFileTool
@@ -39,6 +40,7 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
     registry.register("grep_search", lambda ctx: GrepSearchTool(ctx.policy))
     registry.register("glob_files", lambda ctx: GlobFilesTool(ctx.policy))
     registry.register("web_fetch", lambda ctx: WebFetchTool())
+    registry.register("clone_repo", lambda ctx: CloneRepoTool(ctx.policy))
     # Reader / Reviewer 等后续 agent 需要按 section 粒度读取 PDF；
     # 这里直接放进 builtin，避免到 agent 落地时还要回头补 runtime 注册链。
     registry.register("extract_paper_sections", lambda ctx: ExtractSectionsTool(ctx.policy))

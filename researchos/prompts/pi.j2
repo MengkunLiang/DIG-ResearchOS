@@ -102,6 +102,10 @@ constraints:
     allow_gpu: true  # 根据用户回答
     max_memory_gb: 16  # 根据用户回答或默认值
 created_at: "2024-04-19T10:00:00Z"  # 必须用引号包裹，ISO 8601格式（YYYY-MM-DDTHH:MM:SSZ）
+seed_ensemble:  # 种子集成配置（§2.5）
+  tier1_seeds: [42, 123, 456]  # 关键实验（headline results）
+  tier2_seeds: [789]  # 消融实验
+  tier3_seeds: [999]  # 快速测试
 ```
 
 **重要**：created_at字段必须：

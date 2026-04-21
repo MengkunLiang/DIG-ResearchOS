@@ -349,6 +349,13 @@ class ExperimenterAgent(Agent):
         if mode == "full" and novelty_report_path.exists():
             novelty_report = read_text_file(novelty_report_path, default="")[:1000]
 
+        # 读取 seed_ensemble 配置（§2.5）
+        seed_ensemble = project.get("seed_ensemble", {
+            "tier1_seeds": [42, 123, 456],
+            "tier2_seeds": [789],
+            "tier3_seeds": [999]
+        })
+
         # 根据 mode 设置预算提示
         if mode == "pilot":
             budget_hint = "建议 100 步内完成，2 小时内，400K tokens"
@@ -366,6 +373,7 @@ class ExperimenterAgent(Agent):
             pilot_results=pilot_results,
             novelty_report_preview=novelty_report,
             budget_hint=budget_hint,
+            seed_ensemble=seed_ensemble,
         )
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:

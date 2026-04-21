@@ -67,6 +67,44 @@
     "metadata": {
       "type": "object",
       "description": "Additional metadata"
+    },
+    "seed_ensemble": {
+      "type": "object",
+      "description": "Seed ensemble configuration for experiments",
+      "properties": {
+        "tier1_seeds": {
+          "type": "array",
+          "description": "Seeds for critical experiments (headline results)",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 1,
+          "default": [42, 123, 456]
+        },
+        "tier2_seeds": {
+          "type": "array",
+          "description": "Seeds for ablation experiments",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 1,
+          "default": [789]
+        },
+        "tier3_seeds": {
+          "type": "array",
+          "description": "Seeds for quick tests",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 1,
+          "default": [999]
+        }
+      },
+      "default": {
+        "tier1_seeds": [42, 123, 456],
+        "tier2_seeds": [789],
+        "tier3_seeds": [999]
+      }
     }
   }
 }
