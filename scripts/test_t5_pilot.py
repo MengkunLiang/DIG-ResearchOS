@@ -176,6 +176,65 @@ def prepare_pilot_workspace(workspace_dir: Path) -> None:
         encoding="utf-8"
     )
 
+    # 创建 novelty_audit.md (T4.5 NoveltyAuditor 输出)
+    novelty_audit_content = """# 新颖性审计报告
+
+## 审计结论：PASS
+
+## 各假设新颖性评估
+
+### H1: 自适应调度策略
+
+**新颖性评级：Level 2**
+
+**评估依据**：
+- 自适应调度策略在扩散模型中的应用有一定的新颖性
+- 现有工作主要集中在固定步数调度，本方法动态调整步数
+- 但核心思想在其他生成模型中已有类似应用
+
+**创新点**：
+1. 将样本复杂度估计引入扩散步数调整
+2. 提出了基于复杂度阈值的动态步数策略
+
+**与现有工作关系**：
+- 与 DDPM 的固定步数策略形成对比
+- 与 DPMSolver 的自适应步长有相似之处
+
+### H2: 层次化表示学习
+
+**新颖性评级：Level 2**
+
+**评估依据**：
+- 层次化表示在扩散模型中是一个较新的方向
+- 现有工作主要关注单层潜在表示
+- 两层架构（全局规划+局部生成）具有较好的创新性
+
+**创新点**：
+1. 提出双层潜在表示架构
+2. 显式建模全局和局部依赖关系
+
+**与现有工作关系**：
+- 与 LDMs 的层级架构有关联
+- 但目标和解码策略有所不同
+
+## 总体判定
+
+**PASS** - 两个假设均达到 Level 2 新颖性标准
+
+**理由**：
+1. 均有明确的创新点
+2. 与现有工作有差异化
+3. 具有实际应用价值
+
+**建议**：
+- 在 pilot 实验中验证假设的可行性
+- 如 pilot 通过，进入 full 实验
+"""
+    (ideation_dir / "novelty_audit.md").write_text(
+        novelty_audit_content,
+        encoding="utf-8"
+    )
+
 
 def create_pilot_outputs(workspace_dir: Path) -> None:
     """创建 pilot 模式的输出文件（用于测试校验逻辑）。
