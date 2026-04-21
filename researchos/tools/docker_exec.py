@@ -28,10 +28,77 @@ from .workspace_policy import WorkspaceAccessPolicy
 
 
 _LOG = get_logger("docker_exec")
+
+# 默认允许的 Docker 镜像列表
+# 优先级：runtime.yaml > 此列表
 _DEFAULT_ALLOWED_IMAGES = [
-    "researchos/python:3.11-ml",
+    "researchos/system:latest",  # 与 config/runtime.yaml 保持一致
+    "researchos/python:3.11-ml",  # 保留旧镜像以支持迁移
     "researchos/latex:texlive-2024",
 ]
+
+
+def get_default_image() -> str:
+    """获取默认 Docker 镜像。
+
+    优先从 config/runtime.yaml 读取，失败时使用内置默认值。
+    与 Dockerfile 构建的镜像名保持一致。
+
+    Returns:
+        str: 默认镜像名，如 "researchos/system:latest"
+    """
+    # 尝试从 runtime.yaml 读取
+    config_paths = [
+        Path(__file__).parent.parent.parent / "config" / "runtime.yaml",
+        Path(__file__).parent.parent.parent.parent / "config" / "runtime.yaml",
+    ]
+
+    for config_path in config_paths:
+        if config_path.exists():
+            try:
+                runtime_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+                if runtime_config:
+                    docker_cfg = runtime_config.get("docker", {})
+                    default_image = docker_cfg.get("default_image")
+                    if default_image:
+                        return default_image
+            except Exception:
+                pass
+
+    # 回退到内置默认值
+    return "researchos/system:latest"
+
+
+# 动态获取的默认镜像（延迟加载）
+_default_image_cache: str | None = None
+
+
+def get_default_allowed_images() -> list[str]:
+    """获取允许的镜像列表。
+
+    从 runtime.yaml 读取 allowed_images 配置，否则使用内置列表。
+
+    Returns:
+        list[str]: 允许的镜像列表
+    """
+    config_paths = [
+        Path(__file__).parent.parent.parent / "config" / "runtime.yaml",
+        Path(__file__).parent.parent.parent.parent / "config" / "runtime.yaml",
+    ]
+
+    for config_path in config_paths:
+        if config_path.exists():
+            try:
+                runtime_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+                if runtime_config:
+                    docker_cfg = runtime_config.get("docker", {})
+                    allowed = docker_cfg.get("allowed_images")
+                    if allowed:
+                        return allowed
+            except Exception:
+                pass
+
+    return list(_DEFAULT_ALLOWED_IMAGES)
 
 
 class DockerExecParams(BaseModel):
@@ -156,8 +223,13 @@ class DockerExecTool(Tool):
         宿主机模式：
         - 完整的参数校验
         """
+        # 优先从 runtime.yaml 读取配置，其次从 project.yaml，再次回退到内置默认值
+        allowed_images = get_default_allowed_images()
+
+        # 尝试从 project.yaml 覆盖（如果有的话）
         docker_cfg = self.project_config.get("docker", {})
-        allowed_images = docker_cfg.get("allowed_images", _DEFAULT_ALLOWED_IMAGES)
+        if docker_cfg.get("allowed_images"):
+            allowed_images = docker_cfg["allowed_images"]
 
         # 容器内模式：跳过镜像白名单检查（image 参数被忽略）
         if not self._container_mode:
@@ -307,13 +379,13 @@ def load_project_config(workspace_dir: Path) -> dict[str, Any]:
     project_path = workspace_dir / "project.yaml"
     if not project_path.exists():
         return {
-            "docker": {"allowed_images": list(_DEFAULT_ALLOWED_IMAGES)},
+            "docker": {"allowed_images": get_default_allowed_images()},
             "compute_budget": {"gpu_enabled": False},
         }
     try:
         return yaml.safe_load(project_path.read_text(encoding="utf-8")) or {}
     except Exception:
         return {
-            "docker": {"allowed_images": list(_DEFAULT_ALLOWED_IMAGES)},
+            "docker": {"allowed_images": get_default_allowed_images()},
             "compute_budget": {"gpu_enabled": False},
         }

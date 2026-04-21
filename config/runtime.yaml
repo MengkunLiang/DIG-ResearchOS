@@ -68,7 +68,18 @@ execution:
 docker:
   # 默认使用的 Docker 镜像
   # 用于宿主机模式下的隔离执行
+  # 必须与 infra/docker/Dockerfile 构建的镜像名一致
   default_image: "researchos/system:latest"
+
+  # 允许使用的 Docker 镜像白名单
+  # 只有在此列表中的镜像才能被 docker_exec 工具使用
+  allowed_images:
+    - "researchos/system:latest"  # 主镜像（与 default_image 一致）
+    - "researchos/python:3.11-ml"  # 保留以支持迁移
+    - "researchos/latex:texlive-2024"  # LaTeX 编译专用
+
+  # 默认内存限制
+  default_memory_limit: "16g"
 
   # Docker 构建上下文路径
   # 相对于项目根目录

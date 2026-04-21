@@ -647,6 +647,15 @@ tests/
     └── test_end_to_end.py  # 多 Agent 协作流程测试
 ```
 
+### 更多测试文档
+
+详细的测试指南和评测报告：
+
+- [测试指南](docs/TESTING_GUIDE.md) - 完整的测试使用文档，包括单元测试、集成测试、真实 API 测试等
+- [真实评测报告](docs/REAL_EVALUATION.md) - 第二轮全面评测结果，包括 CLI 优化、Docker 配置统一等修复内容
+- [Docker 使用指南](docs/docker-usage.md) - Docker 隔离执行的详细使用说明
+- [评测报告](docs/EVALUATION_REPORT.md) - 完整系统评测报告
+
 ## 从0开始调试T1/T2 Agent
 
 本节提供完整的T1（项目初始化）和T2（文献检索）agent调试指南，帮助用户从零开始验证runtime和agents功能。
