@@ -7,6 +7,10 @@
 #
 # 参数：
 #   TAG: 镜像标签（默认：latest）
+#
+# 代理配置：
+#   如果需要通过代理构建，设置 HTTP_PROXY 和 HTTPS_PROXY 环境变量
+#   例如：HTTP_PROXY=http://proxy.example.com:8080 bash infra/docker/build.sh
 
 set -e  # 遇到错误立即退出
 
@@ -27,6 +31,20 @@ echo "Dockerfile: infra/docker/Dockerfile"
 echo "=========================================="
 echo ""
 
+# 显示网络配置
+echo "[网络配置检查]"
+if [ -n "$HTTP_PROXY" ]; then
+    echo "  HTTP_PROXY: $HTTP_PROXY"
+else
+    echo "  HTTP_PROXY: 未设置"
+fi
+if [ -n "$HTTPS_PROXY" ]; then
+    echo "  HTTPS_PROXY: $HTTPS_PROXY"
+else
+    echo "  HTTPS_PROXY: 未设置"
+fi
+echo ""
+
 # 检查 Docker 是否可用
 if ! command -v docker &> /dev/null; then
     echo "错误: Docker 未安装或不在 PATH 中"
@@ -44,6 +62,12 @@ if [ ! -f "pyproject.toml" ]; then
     exit 1
 fi
 
+# 处理 .dockerignore（如果存在于 infra/docker/ 但不存在于根目录）
+if [ -f "infra/docker/.dockerignore" ] && [ ! -f ".dockerignore" ]; then
+    echo "复制 .dockerignore 到项目根目录..."
+    cp infra/docker/.dockerignore .dockerignore
+fi
+
 # 开始构建
 echo "开始构建镜像..."
 echo ""
@@ -51,12 +75,24 @@ echo ""
 # 使用 BuildKit 加速构建（如果可用）
 export DOCKER_BUILDKIT=1
 
+# 构建参数
+BUILD_ARGS=()
+
+# 添加代理支持
+if [ -n "$HTTP_PROXY" ]; then
+    BUILD_ARGS+=("--build-arg" "HTTP_PROXY=$HTTP_PROXY")
+fi
+if [ -n "$HTTPS_PROXY" ]; then
+    BUILD_ARGS+=("--build-arg" "HTTPS_PROXY=$HTTPS_PROXY")
+fi
+
+# 显示构建命令
+echo "构建命令: docker build ${BUILD_ARGS[@]} --file infra/docker/Dockerfile --tag $IMAGE_NAME --progress=plain ."
+echo ""
+
 # 构建镜像
-# --file: 指定 Dockerfile 路径
-# --tag: 镜像标签
-# --progress: 显示构建进度
-# .: 构建上下文为当前目录
 docker build \
+    "${BUILD_ARGS[@]}" \
     --file infra/docker/Dockerfile \
     --tag "$IMAGE_NAME" \
     --progress=plain \

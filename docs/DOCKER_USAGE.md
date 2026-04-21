@@ -1,6 +1,6 @@
 # ResearchOS Docker 使用指南
 
-> **文档版本**: v1.0
+> **文档版本**: v1.1
 > **更新日期**: 2026-04-21
 
 ---
@@ -16,7 +16,7 @@ ResearchOS 使用统一的 Docker 镜像 `researchos/system:latest`，包含：
 | PyTorch | 2.6.0 |
 | Transformers | 4.45.0 |
 | LaTeX | texlive-full |
-| MCP 服务器 | @modelcontextprotocol/server-arxiv |
+| MCP 服务器 | arxiv, filesystem, github |
 
 **优势**：一个镜像跑完整系统，用户无需配置多个镜像。
 
@@ -32,8 +32,8 @@ cd /home/liangmengkun/ResearchOS
 # 使用构建脚本
 bash infra/docker/build.sh
 
-# 或直接使用 docker build
-docker build -t researchos/system:latest -f infra/docker/Dockerfile .
+# 如需通过代理构建
+HTTP_PROXY=http://proxy.example.com:8080 HTTPS_PROXY=http://proxy.example.com:8080 bash infra/docker/build.sh
 ```
 
 ### 2.2 运行系统
@@ -132,7 +132,21 @@ result = await tool.execute(
 
 ---
 
-## 五、常见问题
+## 五、MCP 服务器
+
+ResearchOS 预装了以下 MCP 服务器：
+
+| 服务器 | 功能 | API Key |
+|--------|------|---------|
+| arxiv | arXiv 论文搜索和下载 | 不需要 |
+| filesystem | 本地文件系统访问 | 不需要 |
+| github | GitHub 仓库和代码搜索 | GITHUB_TOKEN |
+
+配置位于 `config/mcp.yaml`。如需添加 Semantic Scholar（学术论文搜索更强），请参考配置文件中的说明。
+
+---
+
+## 六、常见问题
 
 ### 5.1 GPU 不可用
 
@@ -170,7 +184,7 @@ chmod 777 workspace
 
 ---
 
-## 六、自定义镜像
+## 七、自定义镜像
 
 如需在基础镜像上添加额外依赖：
 
@@ -186,7 +200,7 @@ RUN apt-get update && apt-get install -y your-package && rm -rf /var/lib/apt/lis
 
 ---
 
-## 七、性能优化建议
+## 八、性能优化建议
 
 1. **使用 BuildKit**：
    ```bash
@@ -205,7 +219,7 @@ RUN apt-get update && apt-get install -y your-package && rm -rf /var/lib/apt/lis
 
 ---
 
-## 八、联系与支持
+## 九、联系与支持
 
 - **项目主页**: https://github.com/MengkunLiang/DIG-ResearchOS
 - **问题反馈**: GitHub Issues

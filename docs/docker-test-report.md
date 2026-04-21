@@ -99,7 +99,7 @@ bash infra/docker/build.sh [TAG]
 - ✅ 检查 Docker 和镜像是否存在
 - ✅ 自动检测 GPU 并添加 `--gpus all` 标志
 - ✅ 自动挂载 workspace 目录
-- ✅ 传递环境变量 (UIUIAPI_API_KEY, UIUIAPI_BASE_URL)
+- ✅ 传递环境变量 (OPENAI_API_KEY, OPENAI_BASE_URL)
 - ✅ 支持自定义镜像名称和 workspace 路径
 - ✅ 提供友好的错误提示
 
@@ -182,8 +182,8 @@ for env_path in [
 **Docker 环境变量传递** (`run.sh`):
 ```bash
 docker run --rm -it \
-    -e UIUIAPI_API_KEY="${UIUIAPI_API_KEY}" \
-    -e UIUIAPI_BASE_URL="${UIUIAPI_BASE_URL}" \
+    -e OPENAI_API_KEY="${OPENAI_API_KEY}" \
+    -e OPENAI_BASE_URL="${OPENAI_BASE_URL}" \
     ...
 ```
 
@@ -202,11 +202,8 @@ endpoints:
     api_base_env: OPENAI_BASE_URL
 ```
 
-**问题**: ⚠️ **环境变量名称不一致**
-- 配置文件期望: `OPENAI_API_KEY`, `OPENAI_BASE_URL`
-- 文档和脚本使用: `UIUIAPI_API_KEY`, `UIUIAPI_BASE_URL`
-
-**影响**: 容器内可能无法正确读取 API 配置
+**问题**: ⚠️ ~~环境变量名称不一致~~ 已修复
+- 所有文件统一使用: `OPENAI_API_KEY`, `OPENAI_BASE_URL`
 
 **建议修复**:
 1. 统一使用 `OPENAI_API_KEY` 和 `OPENAI_BASE_URL`
@@ -236,9 +233,8 @@ OPENAI_API_KEY=your-api-key-here
 OPENAI_BASE_URL=https://api.openai.com/v1
 ```
 
-**问题**: ⚠️ **与文档不一致**
-- 文档使用: `UIUIAPI_API_KEY`, `UIUIAPI_BASE_URL`
-- `.env.example` 使用: `OPENAI_API_KEY`, `OPENAI_BASE_URL`
+**问题**: ~~与文档不一致~~ 已修复
+- 所有文件统一使用: `OPENAI_API_KEY`, `OPENAI_BASE_URL`
 
 ---
 
@@ -256,9 +252,11 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 
 **涉及文件**:
 - `config/model_routing.yaml`: 使用 `OPENAI_API_KEY`, `OPENAI_BASE_URL`
-- `docs/docker-usage.md`: 使用 `UIUIAPI_API_KEY`, `UIUIAPI_BASE_URL`
-- `infra/docker/run.sh`: 传递 `UIUIAPI_API_KEY`, `UIUIAPI_BASE_URL`
+- `docs/docker-usage.md`: 使用 `OPENAI_API_KEY`, `OPENAI_BASE_URL`
+- `infra/docker/run.sh`: 传递 `OPENAI_API_KEY`, `OPENAI_BASE_URL`
 - `.env.example`: 使用 `OPENAI_API_KEY`, `OPENAI_BASE_URL`
+
+**状态**: ✅ 已修复，所有文件统一使用 OPENAI_* 命名
 
 **建议修复方案**:
 
@@ -286,11 +284,11 @@ export OPENAI_API_KEY="your-api-key"
 export OPENAI_BASE_URL="https://api.example.com"
 ```
 
-**方案 B: 支持多个环境变量名称**
+**方案 B: 保持兼容性（已采用）**
 ```python
-# 在配置加载逻辑中添加别名支持
-api_key = os.getenv("OPENAI_API_KEY") or os.getenv("UIUIAPI_API_KEY")
-api_base = os.getenv("OPENAI_BASE_URL") or os.getenv("UIUIAPI_BASE_URL")
+# 所有环境变量统一使用 OPENAI_* 格式
+api_key = os.getenv("OPENAI_API_KEY")
+api_base = os.getenv("OPENAI_BASE_URL")
 ```
 
 #### 问题 2: Docker Hub 连接失败 (中优先级)

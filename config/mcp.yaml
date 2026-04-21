@@ -11,10 +11,9 @@
 #
 # 支持的 MCP 服务器：
 # 1. arxiv: arXiv 论文搜索和下载
-# 2. semantic_scholar: Semantic Scholar 学术搜索
+# 2. filesystem: 本地文件系统访问
 # 3. github: GitHub 仓库和代码搜索
-# 4. filesystem: 本地文件系统访问
-# 5. web: 网页抓取和搜索
+# 4. semantic_scholar: Semantic Scholar 学术搜索（需 API Key）
 #
 # 注意事项：
 # - 使用 npx 的服务器需要 Node.js 环境
@@ -29,6 +28,24 @@ servers:
   - name: arxiv
     command: "npx"
     args: ["-y", "@modelcontextprotocol/server-arxiv"]
+
+  # 本地文件系统 MCP 服务器
+  # 功能：读写本地文件，列出目录等
+  # 依赖：Node.js, npx
+  # 无需 API Key
+  - name: filesystem
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
+
+  # GitHub MCP 服务器
+  # 功能：搜索仓库、获取代码、查看 issue 等
+  # 依赖：Node.js, npx
+  # 需要 API Key：在 .env 中设置 GITHUB_TOKEN
+  - name: github
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    env:
+      GITHUB_TOKEN: "${GITHUB_TOKEN}"
 
   # Semantic Scholar MCP 服务器（暂时禁用）
   # 功能：学术论文搜索、引用分析、作者信息查询

@@ -81,7 +81,12 @@ RUN pip install --no-cache-dir \
 
 # 安装 MCP 服务器
 # @modelcontextprotocol/server-arxiv: arXiv 论文搜索
-RUN npm install -g @modelcontextprotocol/server-arxiv
+# @modelcontextprotocol/server-filesystem: 本地文件系统访问
+# @modelcontextprotocol/server-github: GitHub 仓库和代码搜索
+RUN npm install -g \
+    @modelcontextprotocol/server-arxiv \
+    @modelcontextprotocol/server-filesystem \
+    @modelcontextprotocol/server-github
 
 # 复制 ResearchOS 源代码
 COPY researchos /app/researchos
