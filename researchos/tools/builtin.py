@@ -24,6 +24,7 @@ from .paper_fetch import AppendFileTool, FetchPaperPdfTool, ExtractPdfTextTool
 from .registry import ToolRegistry
 from .search_papers import FetchPaperMetadataTool, SearchPapersTool
 from .seed_paper_processor import ProcessSeedPaperTool
+from .upload_seed_materials import UploadSeedCodeTool, UploadSeedDataTool, UploadSeedPdfTool
 from .web_fetch import WebFetchTool
 
 
@@ -75,3 +76,6 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
         ),
     )
     registry.register("process_seed_paper", lambda ctx: ProcessSeedPaperTool(ctx.policy))
+    registry.register("upload_seed_pdf", lambda ctx: UploadSeedPdfTool(ctx.policy))
+    registry.register("upload_seed_data", lambda ctx: UploadSeedDataTool(ctx.policy))
+    registry.register("upload_seed_code", lambda ctx: UploadSeedCodeTool(ctx.policy))

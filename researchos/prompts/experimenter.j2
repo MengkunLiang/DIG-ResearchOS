@@ -260,13 +260,165 @@ docker_exec(
 )
 ```
 
-### 错误处理
+### 错误处理与自动调试（关键增强）
 
-如果实验失败：
+**实验执行必须包含自动调试循环**（最多3次重试）：
+
+#### 调试循环流程
+
+1. **首次执行**：
+   ```python
+   result = docker_exec(
+       command="python train.py --config config.yaml",
+       workdir=f"experiments/runs/{run_id}",
+       timeout=7200
+   )
+   ```
+
+2. **失败检测**（exit_code != 0）：
+   - 使用 `read_file` 读取错误日志（stderr, logs.txt）
+   - 分析错误类型并自动修复
+
+3. **错误分类与修复策略**：
+
+   **依赖缺失**（ImportError, ModuleNotFoundError）：
+   ```python
+   # 示例：ModuleNotFoundError: No module named 'transformers'
+   # 修复：安装缺失的包
+   docker_exec(command="pip install transformers")
+   ```
+
+   **路径错误**（FileNotFoundError）：
+   ```python
+   # 示例：FileNotFoundError: [Errno 2] No such file or directory: 'data/train.csv'
+   # 修复：检查并修正路径，或创建缺失目录
+   # 读取代码，修改路径为正确的相对路径
+   ```
+
+   **参数错误**（ValueError, TypeError）：
+   ```python
+   # 示例：ValueError: learning_rate must be positive
+   # 修复：调整配置文件中的超参数
+   config["hyperparameters"]["learning_rate"] = 0.001
+   write_file(f"experiments/runs/{run_id}/config.yaml", config)
+   ```
+
+   **内存不足**（OOM, CUDA out of memory）：
+   ```python
+   # 修复：减小 batch_size 或模型规模
+   config["hyperparameters"]["batch_size"] //= 2
+   write_file(f"experiments/runs/{run_id}/config.yaml", config)
+   ```
+
+   **逻辑错误**（AssertionError, RuntimeError）：
+   ```python
+   # 修复：读取代码，分析错误原因，修改代码逻辑
+   code = read_file(f"experiments/runs/{run_id}/train.py")
+   # 根据错误信息修改代码
+   fixed_code = fix_code_logic(code, error_message)
+   write_file(f"experiments/runs/{run_id}/train.py", fixed_code)
+   ```
+
+4. **重新执行**：
+   - 应用修复后重新运行实验
+   - 记录每次尝试到 `iteration_history`
+
+5. **迭代历史记录**：
+   ```json
+   {
+     "experiment_id": "exp_h1_run1",
+     "attempts": [
+       {
+         "attempt": 1,
+         "status": "FAILED",
+         "error": "ModuleNotFoundError: No module named 'transformers'",
+         "fix_applied": "pip install transformers"
+       },
+       {
+         "attempt": 2,
+         "status": "FAILED",
+         "error": "FileNotFoundError: data/train.csv",
+         "fix_applied": "修正路径为 ../data/train.csv"
+       },
+       {
+         "attempt": 3,
+         "status": "DONE",
+         "metrics": {"accuracy": 0.87}
+       }
+     ]
+   }
+   ```
+
+6. **成功标准**：
+   - exit_code == 0
+   - 生成预期输出文件（metrics.json, results_summary.json）
+   - 数值结果在合理范围内（不是 NaN/Inf）
+
+7. **失败退出**：
+   - 3次重试后仍失败 → 记录详细错误并标记 status="FAILED"
+   - 超时（>2小时）→ 终止并报告
+   - 在 iteration_log.md 中记录完整调试过程
+
+#### 调试示例
+
+```python
+max_retries = 3
+for attempt in range(1, max_retries + 1):
+    result = docker_exec(...)
+
+    if result["exit_code"] == 0:
+        # 成功，收集结果
+        break
+
+    # 失败，读取错误日志
+    error_log = read_file(f"experiments/runs/{run_id}/logs.txt")
+
+    # 分析错误类型
+    if "ModuleNotFoundError" in error_log:
+        # 提取缺失的模块名
+        import re
+        match = re.search(r"No module named '(\w+)'", error_log)
+        if match:
+            module = match.group(1)
+            docker_exec(command=f"pip install {module}")
+
+    elif "FileNotFoundError" in error_log:
+        # 分析路径问题并修复
+        # ...
+
+    elif "CUDA out of memory" in error_log:
+        # 减小 batch_size
+        config = read_file(f"experiments/runs/{run_id}/config.yaml")
+        config["batch_size"] //= 2
+        write_file(f"experiments/runs/{run_id}/config.yaml", config)
+
+    # 记录本次尝试
+    append_file(
+        f"experiments/runs/{run_id}/debug_log.txt",
+        f"Attempt {attempt}: {error_log[:200]}\nFix applied: ...\n\n"
+    )
+
+    if attempt == max_retries:
+        # 最后一次尝试失败
+        write_file(
+            f"experiments/runs/{run_id}/FAILED.marker",
+            f"Failed after {max_retries} attempts\n{error_log}"
+        )
+```
+
+#### 关键原则
+
+- **主动调试**：不要在第一次失败后就放弃，必须尝试自动修复
+- **记录完整**：每次尝试的错误和修复都要记录
+- **智能分析**：根据错误类型选择合适的修复策略
+- **避免死循环**：最多3次重试，防止无限循环
+- **保留现场**：失败后保留所有日志和中间文件供人工分析
+
+如果实验最终失败：
 1. 捕获错误信息（stderr）
-2. 记录到 logs.txt
+2. 记录到 logs.txt 和 debug_log.txt
 3. 在 results_summary.json 中标记 status="FAILED"
-4. 在 iteration_log.md 中记录失败原因
+4. 在 iteration_log.md 中记录失败原因和所有调试尝试
 5. 继续执行下一个实验（不要中断整个流程）
 
 ### 资源管理

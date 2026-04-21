@@ -12,6 +12,12 @@
 #
 #   3. 或在后台运行
 #      docker-compose up -d
+#
+#   4. 查看日志
+#      docker-compose logs -f
+#
+#   5. 停止系统
+#      docker-compose down
 
 services:
   researchos:
@@ -22,22 +28,36 @@ services:
     container_name: researchos
     restart: unless-stopped
 
-    # 端口映射（CLI 模式）
+    # 端口映射（预留 Web 服务端口）
     ports:
       - "8000:8000"  # 如果将来有 Web 服务
 
     # 环境变量
     environment:
+      # LLM API 配置
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
-      - RESEARCHOS_NO_BANNER=0
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+
+      # Semantic Scholar API（可选）
+      - S2_API_KEY=${S2_API_KEY:-}
+      - RESEARCHER_EMAIL=${RESEARCHER_EMAIL:-}
+
+      # 系统配置
+      - RESEARCHOS_NO_BANNER=${RESEARCHOS_NO_BANNER:-0}
+      - PYTHONUNBUFFERED=1
+
+      # 容器标识
+      - CONTAINER_ID=researchos-docker
 
     # 挂载工作空间
     volumes:
       - ./workspace:/workspace
-      - researchos_data:/app  # 研究数据持久化
+      - researchos_cache:/root/.cache  # 缓存目录（pip, huggingface 等）
+      - researchos_data:/app/data      # 研究数据持久化
 
     # GPU 支持（需要 nvidia-container-toolkit）
+    # 如果没有 GPU，注释掉这个 deploy 段落
     deploy:
       resources:
         reservations:
@@ -53,10 +73,13 @@ services:
     # 工作目录
     working_dir: /workspace
 
-    # 默认命令：运行系统
-    command: run --workspace /workspace
+    # 默认命令：显示帮助信息
+    # 实际使用时通过 docker-compose run 指定命令
+    command: --help
 
 volumes:
+  researchos_cache:
+    driver: local
   researchos_data:
     driver: local
 

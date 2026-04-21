@@ -709,6 +709,72 @@ def trace_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def list_skills_command(args: argparse.Namespace) -> int:
+    """列出所有可用的 skills。"""
+    runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
+    workspace_dir = Path(args.workspace).resolve()
+
+    # 收集 skills 根目录
+    skills_roots = []
+    if args.skills_root:
+        skills_roots.extend([Path(p).resolve() for p in args.skills_root])
+    else:
+        # 使用默认 skills 目录
+        default_skills = Path(__file__).parent.parent / "skills"
+        if default_skills.exists():
+            skills_roots.append(default_skills)
+
+    # 扫描所有 skills
+    all_skills = []
+    for skills_root in skills_roots:
+        if not skills_root.exists():
+            continue
+
+        for skill_dir in skills_root.iterdir():
+            if not skill_dir.is_dir():
+                continue
+
+            # 检查是否有 skill.yaml
+            skill_yaml = skill_dir / "skill.yaml"
+            if not skill_yaml.exists():
+                continue
+
+            try:
+                skill_config = yaml.safe_load(skill_yaml.read_text(encoding="utf-8"))
+                skill_info = {
+                    "name": skill_config.get("name", skill_dir.name),
+                    "description": skill_config.get("description", ""),
+                    "version": skill_config.get("version", "unknown"),
+                    "path": str(skill_dir),
+                    "tools": skill_config.get("tools", []),
+                    "agents": skill_config.get("agents", []),
+                }
+                all_skills.append(skill_info)
+            except Exception as e:
+                if args.verbose:
+                    print(f"Warning: Failed to load {skill_yaml}: {e}", file=sys.stderr)
+
+    # 输出结果
+    if not all_skills:
+        print("No skills found.")
+        return 0
+
+    if args.verbose:
+        # 详细模式：显示完整信息
+        print(yaml.safe_dump(
+            {"skills": all_skills},
+            allow_unicode=True,
+            sort_keys=False,
+        ))
+    else:
+        # 简洁模式：只显示名称和描述
+        print(f"Found {len(all_skills)} skill(s):\n")
+        for skill in all_skills:
+            print(f"  {skill['name']:<20} {skill['description']}")
+
+    return 0
+
+
 def _add_shared_cli_options(
     parser: argparse.ArgumentParser,
     runtime_settings: RuntimeSettings,
@@ -836,6 +902,10 @@ def build_parser() -> argparse.ArgumentParser:
     run_skill_parser.add_argument("--startup-selftest", action="store_true")
     run_skill_parser.add_argument("--skip-startup-selftest", action="store_true")
 
+    list_skills_parser = subparsers.add_parser("list-skills", help="列出所有可用的 skills")
+    _add_shared_cli_options(list_skills_parser, runtime_settings, use_defaults=False)
+    list_skills_parser.add_argument("--verbose", "-v", action="store_true", help="显示详细信息")
+
     return parser
 
 
@@ -859,6 +929,8 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(run_task_command(args))
     if args.command == "run-skill":
         return asyncio.run(run_skill_command(args))
+    if args.command == "list-skills":
+        return list_skills_command(args)
     if args.command == "status":
         return status_command(args)
     if args.command == "selftest":
