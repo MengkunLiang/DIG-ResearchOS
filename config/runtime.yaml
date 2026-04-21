@@ -50,20 +50,6 @@ debug:
   # true: 记录详细的 Agent 执行过程到 trace 文件
   enable_trace: true
 
-# Docker 执行模式配置
-execution:
-  # 执行模式：
-  # - "auto": 自动检测环境（推荐）
-  #   * 容器内：使用 container-native（直接执行）
-  #   * 宿主机：使用 docker（隔离执行）
-  # - "docker": 强制使用 docker run（宿主机模式）
-  # - "container-native": 强制使用 subprocess（容器内模式）
-  mode: "auto"
-
-  # 是否启用容器环境自动检测
-  # true: 检查 /.dockerenv 等标志判断是否在容器内
-  detect_container: true
-
 # Docker 镜像配置
 docker:
   # 统一镜像：researchos/system:latest
