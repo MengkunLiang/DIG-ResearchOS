@@ -96,30 +96,29 @@ RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple \
     datasets \
     accelerate
 
-# npm 需要代理访问外网，设置后再清除
-ENV HTTP_PROXY=http://127.0.0.1:7890
-ENV HTTPS_PROXY=http://127.0.0.1:7890
-
-# 安装 MCP 服务器
+# 安装 MCP 服务器（可选，如果网络不可用会跳过）
 # @modelcontextprotocol/server-arxiv: arXiv 论文搜索
 # @modelcontextprotocol/server-filesystem: 本地文件系统访问
 # @modelcontextprotocol/server-github: GitHub 仓库和代码搜索
-RUN npm install -g \
+# 注意：如果构建时无法访问 npm registry，可以注释掉这一步
+RUN npm config set registry https://registry.npmmirror.com && \
+    npm install -g \
     @modelcontextprotocol/server-arxiv \
     @modelcontextprotocol/server-filesystem \
-    @modelcontextprotocol/server-github
-
-# 清除代理环境变量
-ENV HTTP_PROXY=
-ENV HTTPS_PROXY=
+    @modelcontextprotocol/server-github || \
+    echo "Warning: MCP servers installation failed, skipping..."
 
 # 复制 ResearchOS 源代码
 COPY researchos /app/researchos
 COPY config /app/config
 COPY scripts /app/scripts
 
-# 安装 ResearchOS（可编辑模式，方便开发）
-RUN pip install -e .
+# 安装 ResearchOS
+# 注意：使用普通安装而非可编辑模式，因为 Docker 容器中不需要开发模式
+RUN pip install .
+
+# 创建 python 符号链接（兼容性）
+RUN ln -s /usr/bin/python3 /usr/bin/python
 
 # 创建 workspace 挂载点
 RUN mkdir -p /workspace
@@ -128,7 +127,7 @@ RUN mkdir -p /workspace
 ENV CONTAINER_ID=researchos-docker
 
 # 入口点：使用 Python 模块方式启动 CLI
-ENTRYPOINT ["python", "-m", "researchos.cli"]
+ENTRYPOINT ["python3", "-m", "researchos.cli"]
 
 # 默认命令：显示帮助信息
 CMD ["--help"]
