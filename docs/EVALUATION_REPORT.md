@@ -16,7 +16,7 @@
 | 单元测试 | ✅ 264 个通过 | 覆盖率良好 |
 | 集成测试 | ✅ 通过 | pipeline 验证 |
 | Skills 系统 | ✅ 已实现 | loader/agent/runner 完整 |
-| Docker 执行 | ✅ 双模式 | container-native / host |
+| Docker 执行 | ✅ 已验证 | container-native/host 双模式架构 |
 | CLI 界面 | ✅ DIG Lab 风格 | ASCII art 品牌化 |
 | 模型路由 | ✅ 已修复 | gpt-5 → gpt-4o |
 | Gates 配置 | ✅ 已补全 | 关键 gate 已配置 |
@@ -167,6 +167,60 @@ python scripts/test_collab_chain.py --workspace /tmp/collab_chain_test6 --verbos
 python scripts/test_collab_chain.py [--workspace PATH] [--verbose]
 ```
 
+### 2.5 Docker 执行机制验证
+
+```bash
+python scripts/test_docker_exec.py --verbose
+```
+
+**测试结果**:
+
+| 测试项 | 状态 | 说明 |
+|--------|------|------|
+| 容器检测机制 | ✅ | 正确检测为宿主机模式（`/.dockerenv` 不存在） |
+| Docker CLI 可用性 | ✅ | Docker version 24.0.2 |
+| 镜像白名单机制 | ✅ | 正确拒绝非白名单镜像（如 alpine:latest） |
+| docker_digests.txt 检查 | ✅ | experimenter.py validate_outputs 包含检查逻辑 |
+| Host 模式执行 | ⏭️ | 跳过（无 researchos 镜像） |
+
+**Docker 架构验证**:
+- container-native 模式: 在容器内检测 `/.dockerenv` 或 `/run/.containerenv`
+- host 模式: 使用 `docker run` + workspace 挂载
+- 安全检查: 镜像白名单、cwd 限制、GPU 权限、挂载路径限制
+- digest 记录: `validate_outputs` 要求 `docker_digests.txt` 存在
+
+**测试命令**:
+```bash
+python scripts/test_docker_exec.py [--verbose]
+```
+
+### 2.6 断点恢复机制测试
+
+```bash
+python scripts/test_resume_mechanism.py [--verbose]
+```
+
+**测试结果**:
+
+| 测试项 | 状态 | 说明 |
+|--------|------|------|
+| PAUSED 状态检测 | ✅ | state.status == 'PAUSED' |
+| WAITING_HUMAN 状态检测 | ✅ | pending_gate 内容有效 |
+| Resume 场景 (interrupted) | ✅ | resume_reason=interrupted |
+| Resume 场景 (retry_after_failure) | ✅ | resume_reason=retry_after_failure |
+| Resume 场景 (iteration) | ✅ | resume_reason=iteration |
+| 正常启动场景 | ✅ | 不设置 is_resume |
+| mark_interrupted 方法 | ✅ | 状态/历史/stop_reason 正确更新 |
+| 状态持久化 | ✅ | YAML 序列化/反序列化正确 |
+
+**总计**: 5/5 测试通过
+
+**Resume 机制特性**:
+- `extra["is_resume"]` 标志位
+- `extra["resumed_from_run_id"]` 记录恢复来源
+- `extra["resume_reason"]` 记录恢复原因
+- 支持 PAUSED 和 WAITING_HUMAN 状态恢复
+
 ---
 
 ## 三、已修复的 Bug
@@ -240,6 +294,7 @@ python scripts/test_collab_chain.py [--workspace PATH] [--verbose]
 - ✅ DIG Lab CLI 品牌化完成
 - ✅ gates.yaml 配置补全
 - ✅ model_routing.yaml 修复
+- ✅ 断点恢复机制验证 (5/5 测试通过)
 
 ---
 

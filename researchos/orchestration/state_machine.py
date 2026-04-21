@@ -52,6 +52,7 @@ class TaskNode:
     gate: str | dict[str, Any] | None = None
     branches: dict[str, str] | None = None
     max_iterations: int | None = None
+    round: int | None = None
     extra: dict[str, Any] | None = None
 
 

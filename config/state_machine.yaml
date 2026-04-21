@@ -124,7 +124,7 @@ states:
       exp_plan: ideation/exp_plan.yaml                  # 实验计划
       risks: ideation/risks.md                          # 风险评估
     next_on_success: T4.5
-    next_on_failure: failed
+    next_on_failure: T4  # 允许失败后重试
 
   # T4.5 状态：新颖性审计（Novelty Auditing）
   # 用途：评估研究假设的新颖性和可行性
