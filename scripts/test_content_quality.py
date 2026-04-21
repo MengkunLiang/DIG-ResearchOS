@@ -377,17 +377,41 @@ async def test_logic_consistency(paper_dir: Path) -> dict[str, Any]:
     for tex_file in tex_files:
         content = tex_file.read_text()
 
-        # 提取摘要
+        # 提取摘要 - 支持两种格式:
+        # 1. 命令格式: \abstract{...}
+        # 2. 环境格式: \begin abstract}...\end abstract}
         for kw in abstract_keywords:
+            # 命令格式: \abstract{content}
             pattern = rf'\\{kw}\{{([^}}]+)\}}'
             match = re.search(pattern, content, re.IGNORECASE)
             if match:
                 abstract_text += match.group(1) + " "
+            # 环境格式: \begin abstract}content\end abstract}
+            pattern = f'\\\\begin{{{kw}}}\s*(.*?)\\s*\\\\end{{{kw}}}'
+            match = re.search(pattern, content, re.IGNORECASE | re.DOTALL)
+            if match:
+                abstract_text += match.group(1) + " "
 
-        # 提取结论
+        # 提取结论 - 支持三种格式:
+        # 1. 命令格式: \conclusion{...}
+        # 2. 环境格式: \begin{conclusion}...\end{conclusion}
+        # 3. 章节格式: \section{Conclusion} 或 \section{总结}
         for kw in conclusion_keywords:
+            # 命令格式: \conclusion{content}
             pattern = rf'\\{kw}\{{([^}}]+)\}}'
             match = re.search(pattern, content, re.IGNORECASE)
+            if match:
+                conclusion_text += match.group(1) + " "
+            # 环境格式: \begin{conclusion}content\end{conclusion}
+            pattern = f'\\\\begin{{{kw}}}\s*(.*?)\\s*\\\\end{{{kw}}}'
+            match = re.search(pattern, content, re.IGNORECASE | re.DOTALL)
+            if match:
+                conclusion_text += match.group(1) + " "
+
+        # 章节格式 - 提取 \section{Conclusion} 后的内容（到下一个 \section 或 \end{document}）
+        for kw in conclusion_keywords:
+            pattern = f'\\\\section{{{kw}}}\\s*(.*?)(?=\\\\section|$)'
+            match = re.search(pattern, content, re.IGNORECASE | re.DOTALL)
             if match:
                 conclusion_text += match.group(1) + " "
 
