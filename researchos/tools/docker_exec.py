@@ -29,12 +29,9 @@ from .workspace_policy import WorkspaceAccessPolicy
 
 _LOG = get_logger("docker_exec")
 
-# 默认允许的 Docker 镜像列表
-# 优先级：runtime.yaml > 此列表
+# 默认允许的 Docker 镜像列表（统一镜像策略）
 _DEFAULT_ALLOWED_IMAGES = [
-    "researchos/system:latest",  # 与 config/runtime.yaml 保持一致
-    "researchos/python:3.11-ml",  # 保留旧镜像以支持迁移
-    "researchos/latex:texlive-2024",
+    "researchos/system:latest",  # 统一镜像
 ]
 
 
@@ -102,7 +99,7 @@ def get_default_allowed_images() -> list[str]:
 
 
 class DockerExecParams(BaseModel):
-    image: str = Field(..., description="Docker 镜像，如 researchos/python:3.11-ml")
+    image: str = Field("researchos/system:latest", description="Docker 镜像，默认 researchos/system:latest")
     command: str = Field(..., description="容器内执行的命令")
     cwd: str = Field("/workspace", description="容器内工作目录，默认 /workspace")
     timeout_seconds: int = Field(600, ge=10, le=7200, description="容器执行超时")

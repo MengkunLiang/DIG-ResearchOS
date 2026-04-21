@@ -122,8 +122,8 @@ async def test_host_mode(workspace_dir: Path, verbose: bool = True) -> dict[str,
         results["skip_reason"] = "Docker CLI not available"
         return results
 
-    # 检查允许的镜像是否可用
-    allowed_images = ["researchos/python:3.11-ml", "researchos/latex:texlive-2024"]
+    # 检查允许的镜像是否可用（统一镜像策略）
+    allowed_images = ["researchos/system:latest"]
     available_images = []
     for image in allowed_images:
         try:
@@ -266,10 +266,10 @@ async def test_workflow_integration(workspace_dir: Path, verbose: bool = True) -
     policy = create_policy(test_workspace)
     tool = DockerExecTool(policy)
 
-    # 步骤 1: 在容器中创建文件
+    # 步骤 1: 在容器中创建文件（使用统一镜像）
     log("步骤 1: 在容器中创建测试文件", verbose)
     create_result = await tool.execute(
-        image="alpine:latest",
+        image="researchos/system:latest",
         command='echo "Test content from docker" > /workspace/test_file.txt && cat /workspace/test_file.txt',
         cwd="/workspace",
         timeout_seconds=60,

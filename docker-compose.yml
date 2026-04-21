@@ -1,0 +1,65 @@
+# ResearchOS Docker Compose 配置
+#
+# 一键启动整个 ResearchOS 系统
+#
+# 使用方法：
+#   1. 复制并配置环境变量
+#      cp .env.example .env
+#      # 编辑 .env 填入 API Key
+#
+#   2. 启动系统
+#      docker-compose up
+#
+#   3. 或在后台运行
+#      docker-compose up -d
+
+services:
+  researchos:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile
+    image: researchos/system:latest
+    container_name: researchos
+    restart: unless-stopped
+
+    # 端口映射（CLI 模式）
+    ports:
+      - "8000:8000"  # 如果将来有 Web 服务
+
+    # 环境变量
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      - RESEARCHOS_NO_BANNER=0
+
+    # 挂载工作空间
+    volumes:
+      - ./workspace:/workspace
+      - researchos_data:/app  # 研究数据持久化
+
+    # GPU 支持（需要 nvidia-container-toolkit）
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    # 网络配置
+    networks:
+      - researchos-net
+
+    # 工作目录
+    working_dir: /workspace
+
+    # 默认命令
+    # command: run --workspace /workspace
+
+volumes:
+  researchos_data:
+    driver: local
+
+networks:
+  researchos-net:
+    driver: bridge
