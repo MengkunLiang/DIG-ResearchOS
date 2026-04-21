@@ -115,6 +115,104 @@ class NoveltyAgent(Agent):
             "novelty/must_add_baselines.md。"
         )
 
+    def _extract_mechanism_keywords(self, hypothesis: dict) -> list[str]:
+        """从假设中提取技术机制关键词。
+
+        识别算法名、架构名、技术术语等。
+
+        Args:
+            hypothesis: 假设字典，包含 title 和 content 字段
+
+        Returns:
+            机制关键词列表
+        """
+        # 常见技术术语模式
+        common_mechanisms = {
+            # 深度学习架构
+            "transformer", "bert", "gpt", "llama", "t5", "bart",
+            "cnn", "convolutional neural network", "resnet", "vgg", "inception",
+            "rnn", "lstm", "gru", "recurrent neural network",
+            "gan", "generative adversarial network", "vae", "variational autoencoder",
+            "diffusion", "stable diffusion", "ddpm",
+            "vision transformer", "vit", "swin transformer",
+
+            # 注意力机制
+            "attention", "self-attention", "cross-attention", "multi-head attention",
+            "flash attention", "linear attention",
+
+            # 优化算法
+            "adam", "sgd", "adamw", "rmsprop", "adagrad",
+            "gradient descent", "momentum",
+
+            # 强化学习
+            "reinforcement learning", "rl", "ppo", "dqn", "a3c", "sac",
+            "q-learning", "policy gradient", "actor-critic",
+
+            # 训练技术
+            "fine-tuning", "prompt tuning", "lora", "qlora", "adapter",
+            "knowledge distillation", "transfer learning",
+            "contrastive learning", "self-supervised learning",
+            "few-shot learning", "zero-shot learning", "meta-learning",
+
+            # 架构组件
+            "encoder", "decoder", "encoder-decoder",
+            "feedforward", "mlp", "residual connection", "skip connection",
+            "batch normalization", "layer normalization", "dropout",
+
+            # 其他技术
+            "graph neural network", "gnn", "gcn",
+            "neural architecture search", "nas",
+            "pruning", "quantization", "compression",
+            "retrieval", "rag", "retrieval-augmented generation",
+        }
+
+        # 提取文本
+        text = ""
+        if isinstance(hypothesis, dict):
+            text = f"{hypothesis.get('title', '')} {hypothesis.get('content', '')}"
+        else:
+            text = str(hypothesis)
+
+        text_lower = text.lower()
+
+        # 查找匹配的机制关键词
+        found_keywords = []
+        for mechanism in common_mechanisms:
+            if mechanism in text_lower:
+                found_keywords.append(mechanism)
+
+        # 去重并返回
+        return list(set(found_keywords))
+
+    def _search_similar_mechanisms(
+        self, mechanism_keywords: list[str], tool_registry
+    ) -> list[dict]:
+        """搜索使用相似机制的论文。
+
+        Args:
+            mechanism_keywords: 机制关键词列表
+            tool_registry: 工具注册表（用于调用 search_papers）
+
+        Returns:
+            搜索到的论文列表
+        """
+        if not mechanism_keywords:
+            logger.info("未提取到机制关键词，跳过机制相似度搜索")
+            return []
+
+        logger.info(f"提取到 {len(mechanism_keywords)} 个机制关键词: {mechanism_keywords[:5]}")
+
+        # 构建机制聚焦的查询
+        # 选择最重要的几个关键词（避免查询过长）
+        top_keywords = mechanism_keywords[:3]
+        query = " ".join(top_keywords)
+
+        logger.info(f"机制相似度搜索查询: {query}")
+
+        # 注意：这里返回空列表，因为实际搜索需要在 agent 运行时通过 tool_call 完成
+        # 这个方法主要用于生成搜索策略和关键词
+        return []
+
     def validate_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:
         """验证 T6 输出。"""
         ws = ctx.workspace_dir
