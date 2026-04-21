@@ -441,10 +441,104 @@ pytest tests/integration/test_scout_agent_e2e.py -v
 | Reviewer | T8 | ❌ 未实现 | ⚠️ 规划中 | heavy | |
 | Submission | T9 | ❌ 未实现 | ⚠️ 规划中 | medium | |
 
+## 鲁棒性增强功能
+
+ResearchOS 实现了多项鲁棒性增强功能，提高系统的可靠性和研究质量：
+
+### 1. T4 Hypothesis Pre-mortem（假设预演）
+
+**位置**: T4 Ideation Agent，Gate1 和 Gate2 之间
+
+**功能**: 对选定的研究方向执行三维检查
+- 物理/数学约束检查
+- 已知反例识别
+- 资源可行性评估
+
+**触发条件**: 发现 High 风险且无缓解方案时，提示用户重新选择方向
+
+**实现**: `researchos/prompts/ideation.j2`（阶段 A.5）
+
+### 2. Runtime Budget Drift Warning（预算漂移预警）
+
+**位置**: StateMachine，每个 task 完成后
+
+**功能**: 监控累计花费，防止预算超支
+- 超过预算 70%：记录警告日志
+- 超过预算 90%：记录严重警告并写入警告文件
+
+**实现**: `researchos/orchestration/state_machine.py`（`_check_budget_drift` 方法）
+
+### 3. T1 Ethical Screening（敏感方向拦截）
+
+**位置**: T1 PI Agent，`validate_outputs` 阶段
+
+**功能**: 检测敏感研究方向
+- 武器、监控、操纵、隐私侵犯、歧视等敏感领域
+- 检测到敏感词时返回警告并要求用户确认
+
+**实现**: `researchos/agents/pi.py`（`_check_ethical_concerns` 方法）
+
+### 4. T1 External Resources Management（外部资源管理）
+
+**位置**: T1 PI Agent，三轮对话中的第 2.5 轮
+
+**功能**: 询问并记录用户已有的外部资源
+- 支持 7 种资源类型：dataset、baseline_repo、pretrained_model、docker_image、tool、script、other
+- 生成 `user_seeds/seed_external_resources.jsonl` 文件
+- 验证资源格式和 source 前缀
+
+**实现**: `researchos/prompts/pi.j2`（第 2.5 轮对话）和 `researchos/agents/pi.py`（`_validate_external_resources` 方法）
+
+### 5. T8 声明追溯与数值一致性检查
+
+**位置**: T8 Writer Agent，post-hooks
+
+**功能**: 确保论文中的声明有实验支撑，数值准确
+- 声明追溯：检查每个声明是否有对应的实验结果
+- 数值一致性：验证论文中的数值与实验结果一致
+
+**状态**: ⚠️ 规划中（T8 未实现）
+
+### 6. T6 机制相似度搜索
+
+**位置**: T6 Novelty Agent
+
+**功能**: 基于 Pilot 实验结果，搜索近期相关工作
+- 使用实验证据验证新颖性
+- 补充必须的基线方法
+
+**实现**: `researchos/agents/novelty.py`
+
+### 7. T5/T7 种子集成与外部资源
+
+**位置**: T5 Pilot 和 T7 Full Experimenter
+
+**功能**: 集成用户提供的外部资源
+- 读取 `user_seeds/seed_external_resources.jsonl`
+- 在实验中使用用户提供的数据集、模型、代码等
+
+**实现**: `researchos/agents/experimenter.py`
+
+### 8. 迭代死锁检测（所有 Agent）
+
+**位置**: AgentRunner 主循环
+
+**功能**: 检测 Agent 是否陷入无限循环
+- 监控连续空回复次数
+- 监控验证失败重试次数
+- 超过阈值时终止执行
+
+**实现**: `researchos/runtime/agent_runner.py`
+
+**测试**: 所有功能均有对应的单元测试，见 `tests/unit/test_robustness_enhancements.py`
+
+---
+
 ## 已知限制
 
 1. **MCP集成**: 当前 T2 Scout Agent 的 MCP 工具已注释，等 MCP 配置完成后再启用
 2. **T8/T9**: Writer/Reviewer Agent 和 Submission Agent 代码尚未实现，只有设计文档
+3. **容器环境**: 所有 Agent 在统一 Docker 环境中运行，自动检测容器环境并适配执行模式
 
 ## T4.5 vs T6 新颖性验证的区别
 

@@ -7,10 +7,10 @@
 - [快速开始](#快速开始)
 - [构建镜像](#构建镜像)
 - [运行容器](#运行容器)
-- [常用命令](#常用命令)
 - [环境变量](#环境变量)
 - [GPU 支持](#gpu-支持)
 - [数据持久化](#数据持久化)
+- [日志查看](#日志查看)
 - [故障排查](#故障排查)
 
 ---
@@ -35,7 +35,8 @@ export OPENAI_API_KEY="your-api-key"
 export OPENAI_BASE_URL="https://api.example.com"
 
 # 3. 运行
-bash infra/docker/run.sh --help
+bash infra/docker/run.sh init-workspace --workspace /workspace
+bash infra/docker/run.sh run --workspace /workspace
 ```
 
 ---
@@ -77,7 +78,7 @@ bash infra/docker/build.sh v0.1.0
 
 ## 运行容器
 
-### 使用便捷脚本
+### 使用便捷脚本（推荐）
 
 ```bash
 # 显示帮助
@@ -96,6 +97,13 @@ bash infra/docker/run.sh run-task --workspace /workspace --task hello --mock
 ### 手动运行
 
 ```bash
+# 初始化 workspace
+docker run --rm -it \
+  -v $(pwd)/workspace:/workspace \
+  researchos/system:latest \
+  init-workspace --workspace /workspace
+
+# 运行完整 pipeline
 docker run --rm -it \
   -v $(pwd)/workspace:/workspace \
   -e OPENAI_API_KEY=$OPENAI_API_KEY \
@@ -103,6 +111,24 @@ docker run --rm -it \
   --gpus all \
   researchos/system:latest \
   run --workspace /workspace
+
+# 单 task 调试（Mock 模式）
+docker run --rm -it \
+  -v $(pwd)/workspace:/workspace \
+  researchos/system:latest \
+  run-task --workspace /workspace --task hello --mock
+
+# 查看 workspace 状态
+docker run --rm -it \
+  -v $(pwd)/workspace:/workspace \
+  researchos/system:latest \
+  status --workspace /workspace
+
+# 进入容器 shell
+docker run --rm -it \
+  -v $(pwd)/workspace:/workspace \
+  --entrypoint bash \
+  researchos/system:latest
 ```
 
 ### 参数说明
@@ -112,77 +138,6 @@ docker run --rm -it \
 - `-v $(pwd)/workspace:/workspace`: 挂载 workspace 目录
 - `-e`: 传递环境变量
 - `--gpus all`: 挂载所有 GPU（需要 nvidia-docker2）
-
----
-
-## 常用命令
-
-### 初始化 workspace
-
-```bash
-docker run --rm -it \
-  -v $(pwd)/workspace:/workspace \
-  researchos/system:latest \
-  init-workspace --workspace /workspace
-```
-
-### 运行完整 pipeline
-
-```bash
-docker run --rm -it \
-  -v $(pwd)/workspace:/workspace \
-  -e OPENAI_API_KEY=$OPENAI_API_KEY \
-  -e OPENAI_BASE_URL=$OPENAI_BASE_URL \
-  researchos/system:latest \
-  run --workspace /workspace
-```
-
-### 单 task 调试（Mock 模式）
-
-```bash
-docker run --rm -it \
-  -v $(pwd)/workspace:/workspace \
-  researchos/system:latest \
-  run-task --workspace /workspace --task hello --mock
-```
-
-### 单 task 调试（真实 LLM）
-
-```bash
-docker run --rm -it \
-  -v $(pwd)/workspace:/workspace \
-  -e OPENAI_API_KEY=$OPENAI_API_KEY \
-  -e OPENAI_BASE_URL=$OPENAI_BASE_URL \
-  researchos/system:latest \
-  run-task --workspace /workspace --task scout
-```
-
-### 查看 workspace 状态
-
-```bash
-docker run --rm -it \
-  -v $(pwd)/workspace:/workspace \
-  researchos/system:latest \
-  status --workspace /workspace
-```
-
-### 查看 trace
-
-```bash
-docker run --rm -it \
-  -v $(pwd)/workspace:/workspace \
-  researchos/system:latest \
-  trace --workspace /workspace --run-id <run-id>
-```
-
-### 进入容器 shell
-
-```bash
-docker run --rm -it \
-  -v $(pwd)/workspace:/workspace \
-  --entrypoint bash \
-  researchos/system:latest
-```
 
 ---
 
@@ -345,8 +300,6 @@ workspace/
 
 ## 日志查看
 
-### 查看容器日志
-
 Docker 模式下，ResearchOS 的日志会同时输出到：
 1. **日志文件**：`workspace/_runtime/logs/researchos.log`（持久化）
 2. **容器标准输出**：可通过 `docker logs` 查看
@@ -380,9 +333,6 @@ docker logs -f <container-id>
 
 # 查看最近 100 行
 docker logs --tail 100 <container-id>
-
-# 查看带时间戳的日志
-docker logs -t <container-id>
 ```
 
 ### 方法 3：进入容器查看
@@ -396,16 +346,6 @@ docker run --rm -it \
 
 # 容器内查看日志
 tail -f /workspace/_runtime/logs/researchos.log
-```
-
-### 方法 4：使用 docker exec
-
-```bash
-# 找到运行中的容器 ID
-docker ps
-
-# 在运行中的容器内执行命令
-docker exec -it <container-id> tail -f /workspace/_runtime/logs/researchos.log
 ```
 
 ### 日志级别控制
@@ -424,168 +364,6 @@ docker run --rm -it \
   -v $(pwd)/workspace:/workspace \
   researchos/system:latest \
   run --workspace /workspace --log-level WARNING
-```
-
----
-
-## 调试技巧
-
-### 1. 验证容器环境
-
-```bash
-# 检查容器是否能正常启动
-docker run --rm researchos/system:latest --help
-
-# 检查 Python 环境
-docker run --rm researchos/system:latest bash -c "python --version"
-
-# 检查依赖是否安装
-docker run --rm researchos/system:latest bash -c "pip list | grep litellm"
-
-# 检查 LaTeX 是否可用
-docker run --rm researchos/system:latest bash -c "latexmk --version"
-```
-
-### 2. 测试 workspace 挂载
-
-```bash
-# 创建测试文件
-echo "test" > workspace/test.txt
-
-# 在容器内验证文件可见
-docker run --rm -it \
-  -v $(pwd)/workspace:/workspace \
-  researchos/system:latest \
-  bash -c "cat /workspace/test.txt"
-
-# 清理测试文件
-rm workspace/test.txt
-```
-
-### 3. 调试网络问题
-
-```bash
-# 测试容器网络（允许网络）
-docker run --rm -it \
-  researchos/system:latest \
-  bash -c "curl -I https://www.google.com"
-
-# 测试 API 连接
-docker run --rm -it \
-  -e OPENAI_API_KEY=$OPENAI_API_KEY \
-  -e OPENAI_BASE_URL=$OPENAI_BASE_URL \
-  researchos/system:latest \
-  bash -c "curl -I $OPENAI_BASE_URL"
-```
-
-### 4. 调试 GPU 支持
-
-```bash
-# 检查 GPU 是否可用
-docker run --rm --gpus all \
-  researchos/system:latest \
-  bash -c "nvidia-smi"
-
-# 检查 PyTorch GPU 支持
-docker run --rm --gpus all \
-  researchos/system:latest \
-  bash -c "python -c 'import torch; print(torch.cuda.is_available())'"
-
-# 查看 GPU 信息
-docker run --rm --gpus all \
-  researchos/system:latest \
-  bash -c "python -c 'import torch; print(torch.cuda.get_device_name(0))'"
-```
-
-### 5. 交互式调试
-
-```bash
-# 进入容器 shell 进行交互式调试
-docker run --rm -it \
-  -v $(pwd)/workspace:/workspace \
-  -e OPENAI_API_KEY=$OPENAI_API_KEY \
-  -e OPENAI_BASE_URL=$OPENAI_BASE_URL \
-  --entrypoint bash \
-  researchos/system:latest
-
-# 容器内手动运行命令
-python -m researchos.cli status --workspace /workspace
-python -m researchos.cli run-task --workspace /workspace --task hello --mock
-```
-
-### 6. 检查容器资源使用
-
-```bash
-# 查看容器资源使用情况
-docker stats <container-id>
-
-# 查看容器详细信息
-docker inspect <container-id>
-
-# 查看容器进程
-docker top <container-id>
-```
-
-### 7. 调试 docker_exec 工具
-
-容器内模式下，`docker_exec` 工具会直接执行命令而不是启动新容器：
-
-```bash
-# 进入容器
-docker run --rm -it \
-  -v $(pwd)/workspace:/workspace \
-  --entrypoint bash \
-  researchos/system:latest
-
-# 容器内测试 docker_exec 行为
-# docker_exec 会检测到容器环境并直接执行命令
-python -c "
-from pathlib import Path
-print('In container:', Path('/.dockerenv').exists())
-"
-```
-
-### 8. 调试 LaTeX 编译
-
-```bash
-# 测试 LaTeX 工具链
-docker run --rm -it \
-  -v $(pwd)/workspace:/workspace \
-  researchos/system:latest \
-  bash -c "cd /workspace && echo '\\documentclass{article}\\begin{document}Hello\\end{document}' > test.tex && latexmk -pdf test.tex"
-
-# 检查 PDF 是否生成
-ls -la workspace/test.pdf
-```
-
-### 9. 使用 Mock 模式快速测试
-
-```bash
-# Mock 模式不需要 API key，适合快速验证环境
-docker run --rm -it \
-  -v $(pwd)/workspace:/workspace \
-  researchos/system:latest \
-  run-task --workspace /workspace --task hello --mock
-```
-
-### 10. 保留容器用于事后分析
-
-```bash
-# 不使用 --rm，容器退出后仍保留
-docker run -it \
-  -v $(pwd)/workspace:/workspace \
-  researchos/system:latest \
-  run --workspace /workspace
-
-# 容器退出后查看日志
-docker logs <container-id>
-
-# 进入已停止的容器
-docker start <container-id>
-docker exec -it <container-id> bash
-
-# 清理容器
-docker rm <container-id>
 ```
 
 ---
@@ -709,46 +487,16 @@ docker network inspect bridge
 sudo systemctl restart docker
 ```
 
-### 问题 6：镜像体积过大
+### 问题 6：日志文件不存在
 
-**症状**：镜像超过 15GB
-
-**可能原因**：
-- 未清理 apt 缓存
-- 未清理 pip 缓存
-
-**解决方法**：
-```bash
-# 查看镜像大小
-docker images researchos/system
-
-# 查看镜像层
-docker history researchos/system:latest
-
-# 优化 Dockerfile（已在当前版本中实现）
-# - 使用 --no-cache-dir
-# - 清理 apt lists
-# - 合并 RUN 命令
-```
-
-### 问题 7：容器内看不到日志
-
-**症状**：容器内 `/workspace/_runtime/logs/` 目录为空或日志文件不存在
+**症状**：容器内 `/workspace/_runtime/logs/` 目录为空
 
 **可能原因**：
 - Workspace 未正确挂载
 - 日志目录未初始化
-- 首次运行尚未创建日志文件
 
 **解决方法**：
 ```bash
-# 检查 workspace 挂载
-docker run --rm -it \
-  -v $(pwd)/workspace:/workspace \
-  --entrypoint bash \
-  researchos/system:latest \
-  -c "ls -la /workspace/_runtime/"
-
 # 初始化 workspace
 docker run --rm -it \
   -v $(pwd)/workspace:/workspace \
@@ -760,83 +508,6 @@ docker run --rm -it \
   -v $(pwd)/workspace:/workspace \
   researchos/system:latest \
   status --workspace /workspace
-```
-
-### 问题 8：容器退出后日志丢失
-
-**症状**：容器停止后无法查看日志文件
-
-**可能原因**：
-- Workspace 未挂载到宿主机
-- 使用了 `--rm` 标志但未挂载 workspace
-
-**解决方法**：
-```bash
-# 确保挂载 workspace（推荐）
-docker run --rm -it \
-  -v $(pwd)/workspace:/workspace \
-  researchos/system:latest \
-  run --workspace /workspace
-
-# 或者不使用 --rm，容器退出后仍可查看
-docker run -it \
-  -v $(pwd)/workspace:/workspace \
-  researchos/system:latest \
-  run --workspace /workspace
-
-# 事后查看容器标准输出
-docker logs <container-id>
-
-# 从已停止的容器复制日志
-docker cp <container-id>:/workspace/_runtime/logs/researchos.log ./
-```
-
-### 问题 9：日志级别过高，缺少调试信息
-
-**症状**：日志中缺少详细的执行信息
-
-**可能原因**：
-- 默认日志级别为 INFO
-- 需要更详细的调试信息
-
-**解决方法**：
-```bash
-# 使用 DEBUG 级别重新运行
-docker run --rm -it \
-  -v $(pwd)/workspace:/workspace \
-  -e OPENAI_API_KEY=$OPENAI_API_KEY \
-  -e OPENAI_BASE_URL=$OPENAI_BASE_URL \
-  researchos/system:latest \
-  run --workspace /workspace --log-level DEBUG
-
-# 查看详细日志
-tail -f workspace/_runtime/logs/researchos.log
-```
-
-### 问题 10：docker_exec 工具行为异常
-
-**症状**：容器内运行时 docker_exec 工具报错或行为不符合预期
-
-**可能原因**：
-- 容器内模式下，docker_exec 直接执行命令而不是启动新容器
-- 镜像白名单检查在容器内被跳过
-
-**解决方法**：
-```bash
-# 检查是否在容器内运行
-docker run --rm -it \
-  -v $(pwd)/workspace:/workspace \
-  --entrypoint bash \
-  researchos/system:latest \
-  -c "test -f /.dockerenv && echo 'In container' || echo 'Not in container'"
-
-# 查看 docker_exec 日志
-docker run --rm -it \
-  -v $(pwd)/workspace:/workspace \
-  researchos/system:latest \
-  run-task --workspace /workspace --task hello --mock --log-level DEBUG | grep docker_exec
-
-# 容器内模式是预期行为，docker_exec 会自动适配
 ```
 
 ---
@@ -882,26 +553,12 @@ docker system prune -a
 
 ---
 
-## 与宿主机模式对比
-
-| 特性 | Docker 模式 | 宿主机模式 |
-|------|------------|-----------|
-| 环境配置 | 零配置（只需 Docker） | 需要配置 conda 环境 |
-| 复现性 | 完全一致 | 依赖宿主机环境 |
-| 隔离性 | 强隔离 | 弱隔离 |
-| 性能 | 轻微开销（< 5%） | 原生性能 |
-| GPU 支持 | 需要 nvidia-docker2 | 直接使用 |
-| 调试便利性 | 需要进入容器 | 直接调试 |
-| 适用场景 | 生产部署、论文复现 | 开发调试 |
-
----
-
 ## 下一步
 
-- 阅读 [日志系统文档](logging.md) - 了解如何查看和分析日志
-- 阅读 [ResearchOS Runtime 开发文档](../reference_materials/ResearchOS_Runtime_Dev_Spec.md)
-- 查看 [Docker 迁移设计文档](../reference_materials/ResearchOS_Docker_Migration_Design.md)
-- 运行测试：`docker run --rm researchos/system:latest bash -c "cd /app && pytest tests/"`
+- 阅读 [快速开始指南](QUICKSTART.md)
+- 阅读 [配置文档](configuration.md)
+- 阅读 [故障排查指南](TROUBLESHOOTING.md)
+- 阅读 [日志系统文档](logging.md)
 
 ---
 

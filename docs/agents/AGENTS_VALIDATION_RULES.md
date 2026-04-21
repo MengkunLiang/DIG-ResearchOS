@@ -458,9 +458,190 @@ def generate_manifest(
 
 ---
 
-## 8. 参考
+## 8. 鲁棒性增强验证规则
+
+ResearchOS 实现了多项鲁棒性增强功能，以下是相关的验证规则：
+
+### 8.1 T4 Hypothesis Pre-mortem 验证
+
+**位置**: T4 Ideation Agent，阶段 A.5
+
+**验证内容**:
+- 检查是否执行了三维检查（物理/数学约束、已知反例、资源可行性）
+- 检查是否识别了 High 风险
+- 检查是否提供了缓解方案
+
+**失败处理**: 如果发现 High 风险且无缓解方案，提示用户重新选择方向
+
+### 8.2 Runtime Budget Drift 验证
+
+**位置**: StateMachine，每个 task 完成后
+
+**验证内容**:
+- 检查累计花费是否超过预算 70%（警告）
+- 检查累计花费是否超过预算 90%（严重警告）
+
+**失败处理**: 记录警告日志，超过 90% 时写入警告文件
+
+### 8.3 T1 Ethical Screening 验证
+
+**位置**: T1 PI Agent，`validate_outputs` 阶段
+
+**验证内容**:
+- 检查研究方向是否包含敏感词（武器、监控、操纵、隐私侵犯、歧视等）
+- 检查是否涉及敏感领域
+
+**失败处理**: 返回警告并要求用户确认
+
+**实现示例**:
+```python
+def _check_ethical_concerns(self, project_yaml_path: Path) -> tuple[bool, str | None]:
+    """检查敏感研究方向"""
+    sensitive_keywords = [
+        "weapon", "surveillance", "manipulation", "privacy invasion", "discrimination",
+        "武器", "监控", "操纵", "隐私侵犯", "歧视"
+    ]
+    
+    project_text = read_text_file(project_yaml_path).lower()
+    
+    for keyword in sensitive_keywords:
+        if keyword in project_text:
+            return False, f"检测到敏感词: {keyword}，请确认研究方向的伦理合规性"
+    
+    return True, None
+```
+
+### 8.4 T1 External Resources 验证
+
+**位置**: T1 PI Agent，第 2.5 轮对话后
+
+**验证内容**:
+- 检查 `user_seeds/seed_external_resources.jsonl` 是否存在
+- 验证资源格式（type, source, description）
+- 验证 source 前缀（http://, https://, file://, git://, docker://）
+
+**失败处理**: 返回格式错误信息，要求 Agent 修正
+
+**实现示例**:
+```python
+def _validate_external_resources(self, resources_path: Path) -> tuple[bool, str | None]:
+    """验证外部资源格式"""
+    if not resources_path.exists():
+        return True, None  # 可选文件
+    
+    valid_types = ["dataset", "baseline_repo", "pretrained_model", "docker_image", "tool", "script", "other"]
+    valid_prefixes = ["http://", "https://", "file://", "git://", "docker://"]
+    
+    for line in read_jsonl(resources_path):
+        if "type" not in line or line["type"] not in valid_types:
+            return False, f"无效的资源类型: {line.get('type')}"
+        
+        if "source" not in line:
+            return False, "缺少 source 字段"
+        
+        if not any(line["source"].startswith(prefix) for prefix in valid_prefixes):
+            return False, f"无效的 source 前缀: {line['source']}"
+    
+    return True, None
+```
+
+### 8.5 T8 声明追溯验证（规划中）
+
+**位置**: T8 Writer Agent，post-hooks
+
+**验证内容**:
+- 检查论文中的每个声明是否有对应的实验结果
+- 验证论文中的数值与实验结果一致
+
+**失败处理**: 返回不一致的声明列表，要求 Agent 修正
+
+**状态**: ⚠️ 规划中（T8 未实现）
+
+### 8.6 T6 机制相似度搜索验证
+
+**位置**: T6 Novelty Agent
+
+**验证内容**:
+- 检查是否搜索了近期相关工作
+- 检查是否基于 Pilot 实验结果验证新颖性
+- 检查是否补充了必须的基线方法
+
+**失败处理**: 返回缺失的基线方法列表
+
+### 8.7 迭代死锁检测验证
+
+**位置**: AgentRunner 主循环
+
+**验证内容**:
+- 检查连续空回复次数是否超过 `max_empty_reply`
+- 检查验证失败重试次数是否超过 `max_validation_retries`
+
+**失败处理**: 终止 Agent 执行，返回错误信息
+
+**实现示例**:
+```python
+# 在 AgentRunner 主循环中
+empty_reply_count = 0
+validation_retry_count = 0
+
+while not finished:
+    response = llm_client.call(messages)
+    
+    if not response.content:
+        empty_reply_count += 1
+        if empty_reply_count >= max_empty_reply:
+            raise AgentError("Agent 连续空回复，可能陷入死锁")
+    else:
+        empty_reply_count = 0
+    
+    # 验证输出
+    ok, err = agent.validate_outputs(ctx)
+    if not ok:
+        validation_retry_count += 1
+        if validation_retry_count >= max_validation_retries:
+            raise AgentError("输出验证失败次数过多，可能陷入死锁")
+    else:
+        validation_retry_count = 0
+```
+
+---
+
+## 9. 容器环境验证
+
+### 9.1 容器检测验证
+
+**位置**: Runtime 初始化
+
+**验证内容**:
+- 检查 `/.dockerenv` 文件是否存在
+- 检查 `/proc/1/cgroup` 是否包含 docker 标识
+
+**行为**:
+- 容器内：直接执行命令，避免嵌套 Docker
+- 宿主机：使用 Docker 隔离执行（如果需要）
+
+**实现示例**:
+```python
+def is_in_container() -> bool:
+    """检测是否在容器内运行"""
+    # 方法 1: 检查 /.dockerenv
+    if Path("/.dockerenv").exists():
+        return True
+    
+    # 方法 2: 检查 /proc/1/cgroup
+    try:
+        with open("/proc/1/cgroup", "r") as f:
+            return "docker" in f.read()
+    except:
+        return False
+```
+
+---
+
+## 10. 参考
 
 - Agent 实现: `/home/liangmengkun/ResearchOS/researchos/agents/`
 - 验证函数: `/home/liangmengkun/ResearchOS/researchos/agents/_common.py`
 - 状态机配置: `/home/liangmengkun/ResearchOS/config/state_machine.yaml`
+- 鲁棒性增强测试: `/home/liangmengkun/ResearchOS/tests/unit/test_robustness_enhancements.py`
 - 外部参考: [academic-research-skills](https://github.com/Imbad0202/academic-research-skills)
