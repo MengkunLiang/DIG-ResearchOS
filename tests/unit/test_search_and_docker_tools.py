@@ -163,7 +163,7 @@ async def test_docker_exec_rejects_gpu_when_project_disallows(tmp_workspace: Pat
     tool = DockerExecTool(policy, project_config={"compute_budget": {"gpu_enabled": False}})
 
     result = await tool.execute(
-        image="researchos/python:3.11-ml",
+        image="researchos/system:latest",
         command="python run.py",
         cwd="/workspace",
         timeout_seconds=30,
