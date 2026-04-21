@@ -20,6 +20,7 @@
 | CLI 界面 | ✅ DIG Lab 风格 | ASCII art 品牌化 |
 | 模型路由 | ✅ 已修复 | gpt-5 → gpt-4o |
 | Gates 配置 | ✅ 已补全 | 关键 gate 已配置 |
+| 多 Agent 协作链 | ✅ 已验证 | T3→T4→T5 通过 |
 
 ### 1.2 真实 API 测试结果
 
@@ -130,6 +131,40 @@ $ python -m researchos.cli --workspace /tmp/test_eval run-task HELLO
 deepxiv: allowed_tools=['Bash(*)', 'Read', 'Write']
 paper-compile: allowed_tools=['Bash(*)', 'Read', 'Write', 'Edit', 'Grep', 'Glob']
 paper-write: allowed_tools=['Bash(*)', 'Read', 'Write', 'Edit', 'Grep', 'Glob', 'Agent', ...]
+```
+
+### 2.4 多 Agent 协作链测试 (T3→T4→T5)
+
+```bash
+python scripts/test_collab_chain.py --workspace /tmp/collab_chain_test6 --verbose
+```
+
+**测试结果**:
+
+| 阶段 | 状态 | 耗时 | API调用 | 成本 | 产出 |
+|------|------|------|---------|------|------|
+| T3-Reader | ✅ | 24307ms | 1 | $0.0286 | synthesis.md (4119 chars) |
+| T4-Ideation | ✅ | 26290ms | 2 | $0.0551 | hypotheses.md (1195 bytes) + exp_plan.yaml (3506 bytes) |
+| T5-Experimenter-Pilot | ✅ | 2231ms | 1 | $0.0073 | 处理 exp_plan.yaml |
+
+**总计**: 3/3 通过，总耗时 52828ms，总 API 调用 4 次，总成本 $0.0909
+
+**数据流验证**:
+- T3→synthesis.md: ✅
+- T4→hypotheses.md: ✅
+- T4→exp_plan.yaml: ✅ (valid YAML with 2 experiments)
+- T5→pilot_results: ✅
+
+**关键修复点**:
+1. T3-Reader: 在用户消息中直接包含 paper_notes 内容
+2. T4-Ideation: 明确说明 synthesis 内容已直接提供，不要尝试 read_file
+3. T4-Ideation Round 2: 明确要求生成完整的 hypotheses.md 和 exp_plan.yaml 格式
+4. T5-Experimenter: 添加 domain 字段到 project.yaml
+5. T5-Experimenter: 修复 exp_plan_path 为空时 Path("") 的问题
+
+**测试命令**:
+```bash
+python scripts/test_collab_chain.py [--workspace PATH] [--verbose]
 ```
 
 ---
