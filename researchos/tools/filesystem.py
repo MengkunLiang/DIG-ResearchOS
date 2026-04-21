@@ -83,7 +83,9 @@ class WriteFileTool(Tool):
         1. constraints 是空对象 {} - 填充默认值
         2. constraints 是数组 [] - 转换为对象
         3. seed_ensemble 是数组 [] - 转换为对象
-        4. created_at 格式错误 - 修正为 ISO 8601
+        4. seed_ensemble 包含论文信息 - 移除论文信息，只保留随机种子
+        5. created_at 格式错误 - 修正为 ISO 8601
+        6. keywords 是字符串 - 转换为数组
         """
         try:
             data = yaml.safe_load(content)
@@ -158,6 +160,19 @@ class WriteFileTool(Tool):
 
             return content
 
+        except yaml.YAMLError as e:
+            # YAML 解析失败，可能是因为 Agent 在 seed_ensemble 中嵌入了论文信息
+            _LOG.warning("auto_fix_project_yaml_parse_error", path=path, error=str(e))
+
+            # 检测是否是 seed_ensemble 包含论文信息导致的错误
+            if "seed_ensemble:" in content and ("title:" in content or "authors:" in content or "source:" in content):
+                _LOG.error("auto_fix_project_yaml_paper_info_detected", path=path)
+                # 不自动修复，而是返回原始内容，让 Agent 看到错误信息后自己修正
+                # 这样 Agent 会意识到应该用 process_seed_paper 工具处理论文
+                return content
+
+            # 其他 YAML 错误，返回原始内容
+            return content
         except Exception as e:
             # 如果修正失败，返回原始内容
             _LOG.warning("auto_fix_project_yaml_failed", path=path, error=str(e))

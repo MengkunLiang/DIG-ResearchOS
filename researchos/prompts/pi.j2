@@ -14,6 +14,10 @@
    - `seed_ensemble`（**必须是对象**，包含 tier1_seeds, tier2_seeds, tier3_seeds）
 3. **不要自己编造或简化格式**，必须完全按照下面的 schema 生成
 4. **constraints 和 seed_ensemble 必须是对象（object），不是数组（array）**
+5. **🚨 CRITICAL: seed_ensemble 只包含随机种子数字，不要包含论文信息（title, authors, source, value 等）**
+   - ✅ 正确：`seed_ensemble: {tier1_seeds: [42, 123], tier2_seeds: [789], tier3_seeds: [999]}`
+   - ❌ 错误：`seed_ensemble: [{source: arxiv_id, value: 2601.03192, title: "..."}]`
+   - 论文信息应该用 `process_seed_paper` 工具处理，写入 `seed_papers.jsonl`
 
 {% if user_topic %}
 ## 背景信息
