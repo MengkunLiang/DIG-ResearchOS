@@ -221,6 +221,29 @@ python scripts/test_resume_mechanism.py [--verbose]
 - `extra["resume_reason"]` 记录恢复原因
 - 支持 PAUSED 和 WAITING_HUMAN 状态恢复
 
+### 2.7 内容质量审查框架测试
+
+```bash
+python scripts/test_content_quality.py [--verbose]
+```
+
+**测试结果**:
+
+| 测试项 | 状态 | 说明 |
+|--------|------|------|
+| 引用幻觉检测 | ✅ | 所有引用都有对应 bib 条目 |
+| 数字幻觉检测 | ✅ | 框架正常，可提取论文和实验数据中的数字 |
+| 逻辑一致性检测 | ⏭️ | 需要完整论文进行测试 |
+| LaTeX 编译测试 | ⏭️ | latexmk 不可用（环境依赖） |
+
+**总计**: 2/4 测试通过 (2 跳过)
+
+**审查框架特性**:
+- 提取 tex 文件中的 `\cite{}` key 并与 bib 文件匹配
+- 从实验结果 JSON 提取数字，与论文数字对比
+- 检测论文摘要和结论的一致性
+- LaTeX 编译测试（需要 latexmk）
+
 ---
 
 ## 三、已修复的 Bug
