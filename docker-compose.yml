@@ -53,8 +53,8 @@ services:
     # 工作目录
     working_dir: /workspace
 
-    # 默认命令
-    # command: run --workspace /workspace
+    # 默认命令：运行系统
+    command: run --workspace /workspace
 
 volumes:
   researchos_data:

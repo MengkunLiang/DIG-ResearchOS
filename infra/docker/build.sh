@@ -75,16 +75,9 @@ echo ""
 # 使用 BuildKit 加速构建（如果可用）
 export DOCKER_BUILDKIT=1
 
-# 构建参数
+# Docker daemon 已通过 systemd 配置代理，无需通过 build-arg 传递
+# Dockerfile 内部会处理 npm 的代理配置
 BUILD_ARGS=()
-
-# 添加代理支持
-if [ -n "$HTTP_PROXY" ]; then
-    BUILD_ARGS+=("--build-arg" "HTTP_PROXY=$HTTP_PROXY")
-fi
-if [ -n "$HTTPS_PROXY" ]; then
-    BUILD_ARGS+=("--build-arg" "HTTPS_PROXY=$HTTPS_PROXY")
-fi
 
 # 显示构建命令
 echo "构建命令: docker build ${BUILD_ARGS[@]} --file infra/docker/Dockerfile --tag $IMAGE_NAME --progress=plain ."

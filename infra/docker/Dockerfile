@@ -31,10 +31,17 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=1
 
+# 清除代理环境变量（apt 和 Ubuntu 源不走代理）
+# 只有 npm 需要代理
+ENV HTTP_PROXY=
+ENV HTTPS_PROXY=
+ENV http_proxy=
+ENV https_proxy=
+
 # 安装系统依赖
 # - python3.11: Python 运行时
 # - git, curl, wget: 版本控制和下载工具
-# - texlive-full, latexmk: LaTeX 完整工具链
+# - texlive-latex-base + 必要包: LaTeX 基础工具链（替代 texlive-full 节省 ~3GB）
 # - ripgrep: 快速文本搜索（某些工具可能需要）
 # - nodejs, npm: MCP 服务器依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -44,7 +51,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
     wget \
-    texlive-full \
+    texlive-latex-base \
+    texlive-latex-extra \
+    texlive-fonts-recommended \
+    texlive-xetex \
     latexmk \
     ripgrep \
     nodejs \
@@ -60,13 +70,15 @@ COPY requirements.txt requirements-llm.txt requirements-dev.txt ./
 
 # 安装 Python 依赖（ResearchOS runtime）
 # 注意：这里先安装依赖，后面再安装 ResearchOS 本身（利用 Docker 缓存）
-RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir -r requirements-llm.txt && \
-    pip install --no-cache-dir -r requirements-dev.txt
+# 使用清华镜像加速下载
+RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt && \
+    pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements-llm.txt && \
+    pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements-dev.txt
 
 # 安装常用 ML 依赖（实验代码常用）
 # 这些包会被 Agent 生成的实验代码使用
-RUN pip install --no-cache-dir \
+# 注意：使用清华镜像加速下载，避免网络问题
+RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple \
     torch==2.6.0 \
     transformers==4.45.0 \
     datasets==2.20.0 \
@@ -79,6 +91,10 @@ RUN pip install --no-cache-dir \
     wandb \
     accelerate
 
+# npm 需要代理访问外网，设置后再清除
+ENV HTTP_PROXY=http://127.0.0.1:7890
+ENV HTTPS_PROXY=http://127.0.0.1:7890
+
 # 安装 MCP 服务器
 # @modelcontextprotocol/server-arxiv: arXiv 论文搜索
 # @modelcontextprotocol/server-filesystem: 本地文件系统访问
@@ -87,6 +103,10 @@ RUN npm install -g \
     @modelcontextprotocol/server-arxiv \
     @modelcontextprotocol/server-filesystem \
     @modelcontextprotocol/server-github
+
+# 清除代理环境变量
+ENV HTTP_PROXY=
+ENV HTTPS_PROXY=
 
 # 复制 ResearchOS 源代码
 COPY researchos /app/researchos
