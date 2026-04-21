@@ -142,6 +142,10 @@ class StateMachine:
     def build_execution_context(self, workspace_dir: Path, state: StateYaml) -> ExecutionContext:
         """把当前状态翻译成 AgentRunner 可执行的 ExecutionContext。"""
         node = self.nodes[state.current_task]
+
+        # Phase 2.3: 检查迭代死锁（相同参数重复3次以上）
+        self._check_iteration_deadlock(state, node)
+
         run_id = f"{state.current_task.lower()}_{uuid.uuid4().hex[:8]}"
         outputs = {name: workspace_dir / rel for name, rel in (node.outputs or {}).items()}
         inputs = {name: workspace_dir / rel for name, rel in (node.inputs or {}).items()}
@@ -237,6 +241,10 @@ class StateMachine:
                 started_at=_now_iso(),
             )
         )
+
+        # Phase 2.3: 记录迭代历史（用于死锁检测）
+        self._record_iteration_attempt(state, self.nodes[state.current_task])
+
         return state
 
     def mark_interrupted(self, state: StateYaml) -> StateYaml:
@@ -552,4 +560,99 @@ class StateMachine:
                 )
         except Exception as e:
             logger.debug(f"预算检查失败: {e}")
+
+    def _check_iteration_deadlock(self, state: StateYaml, node: TaskNode) -> None:
+        """检查迭代死锁：相同参数组合尝试3次以上时快速失败。
+
+        Phase 2.3: 防止 Agent 在相同参数上无限迭代。
+        """
+        from ..runtime.logger import get_logger
+
+        logger = get_logger("state_machine.deadlock")
+
+        task_id = state.current_task
+        task_history = state.iteration_history.get(task_id, [])
+
+        if not task_history:
+            return
+
+        # 计算当前参数哈希
+        current_params = self._extract_task_params(node)
+        current_hash = self._compute_param_hash(current_params)
+
+        # 统计相同参数哈希出现次数
+        same_param_count = sum(1 for entry in task_history if entry.get("param_hash") == current_hash)
+
+        if same_param_count >= 3:
+            error_msg = (
+                f"检测到迭代死锁：任务 '{task_id}' 使用相同参数已尝试 {same_param_count} 次。"
+                f"\n参数哈希: {current_hash}"
+                f"\n参数内容: {current_params}"
+                f"\n建议：检查任务配置或修改参数以避免无限循环。"
+            )
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+
+        if same_param_count >= 2:
+            logger.warning(
+                f"迭代警告：任务 '{task_id}' 使用相同参数已尝试 {same_param_count} 次，"
+                f"再次尝试将触发死锁保护。"
+            )
+
+    def _record_iteration_attempt(self, state: StateYaml, node: TaskNode) -> None:
+        """记录本次迭代尝试到 iteration_history。
+
+        Phase 2.3: 用于后续死锁检测。
+        """
+        task_id = state.current_task
+        params = self._extract_task_params(node)
+        param_hash = self._compute_param_hash(params)
+
+        if task_id not in state.iteration_history:
+            state.iteration_history[task_id] = []
+
+        state.iteration_history[task_id].append(
+            {
+                "param_hash": param_hash,
+                "timestamp": _now_iso(),
+                "params": params,
+            }
+        )
+
+    @staticmethod
+    def _extract_task_params(node: TaskNode) -> dict[str, Any]:
+        """提取任务的关键参数用于死锁检测。
+
+        包括：inputs, outputs, llm配置, budget配置等影响任务行为的参数。
+        """
+        params = {}
+
+        if node.inputs:
+            params["inputs"] = dict(node.inputs)
+        if node.outputs:
+            params["outputs"] = dict(node.outputs)
+        if node.llm:
+            params["llm"] = dict(node.llm)
+        if node.budget:
+            params["budget"] = dict(node.budget)
+        if node.mode:
+            params["mode"] = node.mode
+        if node.extra:
+            params["extra"] = dict(node.extra)
+
+        return params
+
+    @staticmethod
+    def _compute_param_hash(params: dict[str, Any]) -> str:
+        """计算参数字典的哈希值。
+
+        使用 frozenset 处理嵌套字典，确保参数顺序不影响哈希结果。
+        """
+        import json
+
+        # 将参数转换为规范化的JSON字符串，然后计算哈希
+        # 使用 sort_keys 确保字典顺序一致
+        normalized = json.dumps(params, sort_keys=True, default=str)
+        return str(hash(normalized))
+
 

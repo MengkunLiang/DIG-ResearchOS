@@ -56,6 +56,7 @@ class StateYaml(BaseModel):
     pending_gate: GateState | None = None
     history: list[TaskHistoryEntry] = Field(default_factory=list)
     iteration_count: dict[str, int] = Field(default_factory=dict)
+    iteration_history: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
     budget_cumulative: BudgetCumulative = Field(default_factory=BudgetCumulative)
     # task_context 用于承载 gate 选项附带的 extra，供下一个 task 的 ctx.extra 读取。
     task_context: dict[str, Any] = Field(default_factory=dict)
