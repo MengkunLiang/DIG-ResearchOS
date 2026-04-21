@@ -86,10 +86,7 @@ def _path_is_within(child: Path, parent: Path) -> bool:
 def _detect_container_environment() -> dict[str, any]:
     """检测是否在 Docker 容器内运行。
 
-    检测方法：
-    1. 检查 /.dockerenv 文件（Docker 容器标识）
-    2. 检查 /run/.containerenv 文件（Podman 容器标识）
-    3. 检查 CONTAINER_ID 环境变量（自定义标识）
+    使用共享的容器检测工具。
 
     Returns:
         dict: 包含容器环境信息的字典
@@ -97,14 +94,10 @@ def _detect_container_environment() -> dict[str, any]:
             - container_id: str | None，容器 ID
             - hostname: str | None，主机名
     """
-    in_container = (
-        Path("/.dockerenv").exists()
-        or Path("/run/.containerenv").exists()
-        or os.getenv("CONTAINER_ID") is not None
-    )
+    from researchos.runtime.container_detection import is_running_in_container
 
     return {
-        "in_container": in_container,
+        "in_container": is_running_in_container(),
         "container_id": os.getenv("CONTAINER_ID"),
         "hostname": os.getenv("HOSTNAME"),
     }

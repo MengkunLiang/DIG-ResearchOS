@@ -43,12 +43,10 @@ class LatexCompileTool(Tool):
         self.docker = docker_tool
 
     def _is_running_in_container(self) -> bool:
-        """检测是否在容器内运行（与 docker_exec 保持一致）"""
-        return (
-            Path("/.dockerenv").exists()
-            or Path("/run/.containerenv").exists()
-            or os.getenv("CONTAINER_ID") is not None
-        )
+        """检测是否在容器内运行（使用共享工具）"""
+        from researchos.runtime.container_detection import is_running_in_container
+
+        return is_running_in_container()
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         params = LatexCompileParams(**kwargs)

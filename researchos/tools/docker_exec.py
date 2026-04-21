@@ -266,19 +266,14 @@ class DockerExecTool(Tool):
     def _is_running_in_container(self) -> bool:
         """检测是否在 Docker 容器内运行。
 
-        检测方法：
-        1. 检查 /.dockerenv 文件（Docker 容器标识）
-        2. 检查 /run/.containerenv 文件（Podman 容器标识）
-        3. 检查 CONTAINER_ID 环境变量（自定义标识）
+        使用共享的容器检测工具。
 
         Returns:
             bool: 如果在容器内运行返回 True，否则返回 False
         """
-        return (
-            Path("/.dockerenv").exists()
-            or Path("/run/.containerenv").exists()
-            or os.getenv("CONTAINER_ID") is not None
-        )
+        from researchos.runtime.container_detection import is_running_in_container
+
+        return is_running_in_container()
 
     def _build_docker_command(self, params: DockerExecParams) -> list[str]:
         """构建执行命令。

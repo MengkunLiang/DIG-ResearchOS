@@ -20,12 +20,12 @@ def container_mode():
     用于根据环境调整测试预期：
     - 容器内：docker_exec 直接执行 bash 命令
     - 宿主机：docker_exec 构建 docker run 命令
+
+    使用共享的容器检测工具。
     """
-    return (
-        Path("/.dockerenv").exists()
-        or Path("/run/.containerenv").exists()
-        or os.getenv("CONTAINER_ID") is not None
-    )
+    from researchos.runtime.container_detection import is_running_in_container
+
+    return is_running_in_container()
 
 
 @pytest.mark.asyncio
