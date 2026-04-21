@@ -14,7 +14,7 @@
 **输入**: 用户研究方向（T1）或实验结果（T7.5）
 
 **输出**: 
-- T1: `project.yaml`, `user_seeds/seed_papers.jsonl`, `seed_ideas.md`, `seed_constraints.md`
+- T1: `project.yaml`, `state.yaml`（seed 文件可选：`user_seeds/seed_papers.jsonl`, `seed_ideas.md`, `seed_constraints.md`）
 - T7.5: `evaluation/evaluation_decision.md`
 
 **模型层级**: heavy

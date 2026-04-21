@@ -145,7 +145,12 @@ def write_project_stub(
 
 
 def create_user_seeds_examples(workspace_dir: Path) -> None:
-    """在 user_seeds 目录下创建示例文件，指导用户如何放置种子数据。"""
+    """在 user_seeds 目录下创建示例文件和空模板，指导用户如何放置种子数据。
+
+    策略：
+    1. 创建 .example 示例文件（仅作参考）
+    2. 如果实际 seed 文件不存在，创建空模板（避免 Agent 读取时报错）
+    """
 
     user_seeds_dir = workspace_dir / "user_seeds"
 
@@ -288,6 +293,36 @@ user_seeds/
 {"type": "tool", "name": "wandb", "source": "pip:wandb", "purpose": "实验跟踪"}
 """
         resources_example_path.write_text(resources_example, encoding="utf-8")
+
+    # 6. 创建空模板文件（如果实际文件不存在）
+    # 这样 Agent 读取时不会因为文件不存在而报错
+    _create_empty_seed_files_if_missing(user_seeds_dir)
+
+
+def _create_empty_seed_files_if_missing(user_seeds_dir: Path) -> None:
+    """如果 seed 文件不存在，创建空模板。
+
+    这样 Agent 读取时不会因为文件不存在而报错，
+    同时也不会覆盖用户已经创建的文件。
+    """
+
+    # seed_papers.jsonl - 空文件（JSONL 格式，每行一个 JSON 对象）
+    papers_path = user_seeds_dir / "seed_papers.jsonl"
+    if not papers_path.exists():
+        papers_path.write_text("", encoding="utf-8")
+
+    # seed_ideas.md - 空文件
+    ideas_path = user_seeds_dir / "seed_ideas.md"
+    if not ideas_path.exists():
+        ideas_path.write_text("# 初步研究想法\n\n（暂无）\n", encoding="utf-8")
+
+    # seed_constraints.md - 空文件
+    constraints_path = user_seeds_dir / "seed_constraints.md"
+    if not constraints_path.exists():
+        constraints_path.write_text("# 硬约束清单\n\n（暂无）\n", encoding="utf-8")
+
+    # seed_external_resources.jsonl - 空文件（可选，不强制创建）
+    # 这个文件是可选的，所以不创建空模板
 
 
 def render_workspace_tree(runtime_dir_name: str = "_runtime") -> str:

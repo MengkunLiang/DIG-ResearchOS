@@ -37,10 +37,13 @@ PI Agent（项目初始化与评估Agent）是ResearchOS pipeline的起点和关
 #### 产出文件
 
 1. **project.yaml**: 项目配置文件（必须符合project.schema.json）
-2. **user_seeds/seed_papers.jsonl**: 种子论文列表
-3. **user_seeds/seed_ideas.md**: 用户的初步想法
-4. **user_seeds/seed_constraints.md**: 硬约束清单
-5. **user_seeds/seed_external_resources.jsonl**: 外部资源（可选）
+2. **state.yaml**: 任务状态文件
+
+**可选文件**（如果用户提供了种子数据）:
+3. **user_seeds/seed_papers.jsonl**: 种子论文列表
+4. **user_seeds/seed_ideas.md**: 用户的初步想法
+5. **user_seeds/seed_constraints.md**: 硬约束清单
+6. **user_seeds/seed_external_resources.jsonl**: 外部资源
 
 ### 三轮对话流程
 
