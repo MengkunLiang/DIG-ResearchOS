@@ -295,6 +295,7 @@ class ExperimenterAgent(Agent):
                 tool_names=[
                     "read_file",
                     "write_file",
+                    "write_structured_file",
                     "list_files",
                     "append_file",
                     "bash_run",
@@ -309,6 +310,11 @@ class ExperimenterAgent(Agent):
                 allowed_read_prefixes=["", "ideation/", "experiments/", "pilot/", "literature/"],
                 allowed_write_prefixes=["experiments/", "pilot/"],
                 prompt_template="experimenter.j2",
+                structured_outputs={
+                    "experiments/results_summary.json": "results_summary",
+                    "pilot/pilot_results.json": "pilot_results",
+                    "pilot/pilot_plan.yaml": "pilot_plan",
+                },
             )
         )
 

@@ -34,6 +34,7 @@ class IdeationAgent(Agent):
                 tool_names=[
                     "read_file",
                     "write_file",
+                    "write_structured_file",
                     "list_files",
                     "ask_human",
                     "finish_task",
@@ -45,6 +46,9 @@ class IdeationAgent(Agent):
                 allowed_read_prefixes=["", "literature/", "user_seeds/"],
                 allowed_write_prefixes=["ideation/"],
                 prompt_template="ideation.j2",
+                structured_outputs={
+                    "ideation/exp_plan.yaml": "exp_plan",
+                },
             )
         )
 

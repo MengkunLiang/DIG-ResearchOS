@@ -321,6 +321,23 @@
 #### 文件2: `ideation/exp_plan.yaml`
 实验计划，**严格符合** exp_plan.schema.json。
 
+**⚠️ 推荐使用 write_structured_file 工具生成此文件**：
+- 自动验证 schema（确保符合 exp_plan.schema.json）
+- 自动序列化为 YAML 格式
+- 提供清晰的错误信息
+
+调用方式：
+```
+write_structured_file(
+    path="ideation/exp_plan.yaml",
+    schema_name="exp_plan",
+    format="yaml",
+    data={实验计划对象}
+)
+```
+
+如果 `write_structured_file` 不可用，降级使用 `write_file`。
+
 **格式示例**：
 ```yaml
 goal: "验证假设H1：XXX方法能提升YYY性能"

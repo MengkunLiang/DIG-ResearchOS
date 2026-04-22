@@ -175,12 +175,15 @@ user_seeds/
 
 ## 使用方式
 
-### 1. 提供种子论文
+### 1. 提供种子论文（推荐方式）
 
-**方式 1：直接提供 PDF 文件**
-- 将 PDF 文件放入 `pdfs/` 目录
-- 在 T1 对话中提供相对路径：`user_seeds/pdfs/paper.pdf`
-- 支持批量：提供目录路径 `user_seeds/pdfs/`
+**🎯 推荐方式：直接放入 PDF 文件（自动识别）**
+- **将 PDF 文件放入 `pdfs/` 目录**
+- **T1 Agent 会自动扫描并识别所有 PDF 文件**
+- **无需手动提供路径或编辑配置文件**
+- 支持批量：一次性放入多个 PDF，T1 会逐个处理
+
+**其他方式（在 T1 对话中提供）：**
 
 **方式 2：提供 arXiv ID**
 - 在 T1 对话中直接提供 arXiv ID：`2601.03192`
@@ -193,27 +196,40 @@ user_seeds/
 - 复制 `seed_papers.jsonl.example` 为 `seed_papers.jsonl`
 - 按照示例格式填写论文信息
 
-### 2. 提供初步想法
+### 2. 提供初步想法（可选）
 
 - 复制 `seed_ideas.md.example` 为 `seed_ideas.md`
 - 填写你的研究想法和假设
+- **用途**：T4 Ideation Agent 会将其作为候选研究方向之一
 
-### 3. 提供硬约束
+### 3. 提供硬约束（可选）
 
 - 复制 `seed_constraints.md.example` 为 `seed_constraints.md`
 - 填写必须遵守的技术或方法约束
+- **用途**：T2 Scout Agent 会在文献检索时考虑这些约束
 
 ### 4. 提供外部资源（可选）
 
 - 复制 `seed_external_resources.jsonl.example` 为 `seed_external_resources.jsonl`
 - 填写已有的数据集、代码仓库、预训练模型等资源
+- **用途**：T5 Experimenter Agent 等后续阶段会使用这些资源
 
 ## 注意事项
 
 1. `.example` 文件仅作为示例，不会被 T1 Agent 读取
 2. 实际使用时，去掉 `.example` 后缀
-3. 如果通过 T1 对话提供信息，Agent 会自动生成这些文件
+3. **推荐做法**：将 PDF 放入 `pdfs/` 目录，其他信息在 T1 对话中提供
 4. 也可以手动创建这些文件，T1 Agent 会读取并使用
+
+## 各文件的使用阶段
+
+| 文件 | 使用阶段 | 用途 |
+|------|---------|------|
+| `seed_papers.jsonl` | T1 生成，T2 使用 | 种子论文列表 |
+| `seed_ideas.md` | T4 Ideation Agent | 作为候选研究方向 |
+| `seed_constraints.md` | T2 Scout Agent | 文献检索约束 |
+| `seed_external_resources.jsonl` | T5+ | 外部资源清单 |
+| `pdfs/` | T1 自动扫描 | 存放 PDF 文件 |
 """
         readme_path.write_text(readme_content, encoding="utf-8")
 

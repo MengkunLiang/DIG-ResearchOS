@@ -43,7 +43,22 @@ class CLIHumanInterface(HumanInterface):
         print(question)
         if suggestions:
             print(json.dumps(suggestions, indent=2, ensure_ascii=False))
-        return input("请输入回答: ").strip()
+        print("请输入回答（多行输入请在最后输入单独一行 'END' 结束，或直接按 Ctrl+D）:")
+
+        # 支持多行输入
+        lines = []
+        try:
+            while True:
+                line = input()
+                # 如果用户输入 END，停止读取
+                if line.strip() == "END":
+                    break
+                lines.append(line)
+        except EOFError:
+            # Ctrl+D 触发 EOFError，正常结束
+            pass
+
+        return "\n".join(lines).strip()
 
     async def present_gate(
         self, *, gate_id: str, presentation: dict, options: list[dict]

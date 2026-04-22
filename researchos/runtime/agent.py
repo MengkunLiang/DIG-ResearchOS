@@ -42,6 +42,7 @@ class AgentSpec:
     post_hooks: list[PostHook] = field(default_factory=list)
     prompt_template: str | None = None
     output_schemas: dict[str, str] | None = None  # 输出名称到schema名称的映射
+    structured_outputs: dict[str, str] | None = None  # 文件路径到schema名称的映射（Phase 1）
 
 
 @dataclass

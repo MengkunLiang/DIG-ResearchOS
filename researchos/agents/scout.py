@@ -55,6 +55,7 @@ class ScoutAgent(Agent):
                 tool_names=[
                     "read_file",
                     "write_file",
+                    "write_structured_file",
                     "multi_source_search",  # 新增：多源搜索工具（推荐）
                     "search_papers",  # 保留：单源搜索（备用）
                     "fetch_paper_metadata",
@@ -76,6 +77,10 @@ class ScoutAgent(Agent):
                 allowed_read_prefixes=["", "user_seeds/", "seeds/"],
                 allowed_write_prefixes=["literature/"],
                 prompt_template="scout.j2",
+                structured_outputs={
+                    "literature/papers_dedup.jsonl": "papers_dedup",
+                    "literature/papers_raw.jsonl": "papers_raw",
+                },
             )
         )
 

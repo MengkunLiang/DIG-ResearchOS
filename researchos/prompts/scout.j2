@@ -63,33 +63,88 @@
 
 4. **🚨 重要：如何收集检索结果 🚨**
 
-   **错误做法**：
-   ```python
-   # ❌ 错误：没有从工具返回中提取论文数据
+   **工具返回格式说明**：
+   - `multi_source_search` 工具返回包含两部分：
+     1. `content`（文本）：用于显示的格式化文本
+     2. `data`（结构化数据）：包含 `papers` 字段（论文对象数组）
+
+   **你必须从工具返回的结构化数据中提取论文列表！**
+
+   **正确的工作流程**：
+
+   **步骤 1：收集所有检索结果**
+   ```
+   # 调用 multi_source_search 多次，每次使用不同的检索式
+   # 工具会返回包含 data.papers 的结果
+
+   # 第1次调用
+   result1 = multi_source_search(query="LLM agent memory retrieval", max_results=30)
+   # result1.data.papers 包含论文列表
+
+   # 第2次调用
+   result2 = multi_source_search(query="episodic memory for AI agents", max_results=30)
+   # result2.data.papers 包含论文列表
+
+   # ... 继续其他检索式
+   ```
+
+   **步骤 2：合并所有论文到一个列表**
+   ```
+   # 将所有检索结果中的论文合并
    all_papers = []
-   for query in queries:
-       multi_source_search(query=query, max_results=30)  # 调用工具但没有保存结果
+   all_papers.extend(result1.data.papers)
+   all_papers.extend(result2.data.papers)
+   # ... 继续添加其他结果
    ```
 
-   **正确做法**：
-   ```python
-   # ✅ 正确：从工具返回的文本中提取论文列表
-   # multi_source_search 返回的文本格式：
-   # "检索到 N 篇论文（数据源统计: {...}）\n\n[1] Title (Authors, Year) - source, citations=X\n[2] ..."
-   #
-   # 你需要：
-   # 1. 多次调用 multi_source_search，每次使用不同的检索式
-   # 2. 将所有返回的论文文本保存下来
-   # 3. 使用 write_file 将所有论文写入 papers_raw.jsonl
-   # 4. 使用 read_file 读取 papers_raw.jsonl，解析成论文列表
-   # 5. 将论文列表传递给 deduplicate_papers 等工具
+   **步骤 3：保存原始结果**
+   ```
+   # 使用 write_structured_file 保存所有原始论文
+   write_structured_file(
+       path="literature/papers_raw.jsonl",
+       schema_name="papers_raw",
+       format="jsonl",
+       data=all_papers  # 传递合并后的论文列表
+   )
    ```
 
-   **实际操作步骤**：
-   - 步骤 1：调用 multi_source_search 多次，记录每次返回的论文文本
-   - 步骤 2：将所有论文文本合并，写入 literature/papers_raw.jsonl
-   - 步骤 3：用 read_file 读取 papers_raw.jsonl，得到论文列表
-   - 步骤 4：将论文列表传递给 deduplicate_papers(papers=[论文列表])
+   **步骤 4：去重**
+   ```
+   # 将合并后的论文列表传递给去重工具
+   dedup_result = deduplicate_papers(
+       papers=all_papers,  # ✅ 正确：传递实际的论文列表
+       doi_dedup=true,
+       title_threshold=0.95
+   )
+   # dedup_result.data.papers 包含去重后的论文列表
+   ```
+
+   **步骤 5：评分和筛选**
+   ```
+   # 使用去重后的论文列表进行评分
+   score_result = score_papers(
+       papers=dedup_result.data.papers,  # ✅ 正确：使用去重后的列表
+       keywords=["关键词1", "关键词2", ...]
+   )
+   # score_result.data.papers 包含评分后的论文列表
+   ```
+
+   **步骤 6：保存最终结果**
+   ```
+   # 保存去重和评分后的论文
+   write_structured_file(
+       path="literature/papers_dedup.jsonl",
+       schema_name="papers_dedup",
+       format="jsonl",
+       data=score_result.data.papers  # 传递最终的论文列表
+   )
+   ```
+
+   **❌ 常见错误**：
+   - 错误 1：调用工具但不保存返回结果
+   - 错误 2：只使用 content 文本，忽略 data.papers
+   - 错误 3：传递空列表 `papers=[]` 给去重/评分工具
+   - 错误 4：没有合并多次检索的结果
 
 ### Step 3: 领域过滤（可选但推荐）
 
@@ -127,7 +182,24 @@ filter_by_domain(papers=[论文列表], target_domain="cs")
 
 ### Step 5: 产出文件
 
-用 `write_file` 写入以下文件：
+**⚠️ 推荐使用 write_structured_file 工具生成 JSONL 文件**
+
+对于结构化数据文件（JSONL），优先使用 `write_structured_file` 工具：
+- 自动验证 schema（确保每条记录符合格式要求）
+- 自动序列化为 JSONL 格式
+- 提供清晰的错误信息
+
+调用方式：
+```
+write_structured_file(
+    path="literature/papers_raw.jsonl",
+    schema_name="papers_raw",
+    format="jsonl",
+    data=[论文列表]  # 传递论文对象数组
+)
+```
+
+如果 `write_structured_file` 不可用，降级使用 `write_file`。
 
 **literature/papers_raw.jsonl**（所有原始结果，每行一条JSON）
 ```json

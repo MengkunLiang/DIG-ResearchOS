@@ -15,6 +15,7 @@ from .docker_exec import DockerExecTool, load_project_config
 from .echo import EchoTool
 from .filesystem import ListFilesTool, ReadFileTool, WriteFileTool
 from .finish_task import FinishTaskTool
+from .structured_file import WriteStructuredFileTool
 from .glob_files import GlobFilesTool
 from .grep_search import GrepSearchTool
 from .latex_compile import LatexCompileTool
@@ -38,6 +39,7 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
     """注册 runtime 默认内置工具。"""
     registry.register("read_file", lambda ctx: ReadFileTool(ctx.policy))
     registry.register("write_file", lambda ctx: WriteFileTool(ctx.policy))
+    registry.register("write_structured_file", lambda ctx: WriteStructuredFileTool(ctx.policy))
     registry.register("append_file", lambda ctx: AppendFileTool(ctx.policy))
     registry.register("list_files", lambda ctx: ListFilesTool(ctx.policy))
     registry.register("finish_task", lambda ctx: FinishTaskTool())

@@ -161,10 +161,19 @@ class WriteFileTool(Tool):
             return content
 
         except yaml.YAMLError as e:
-            # YAML 解析失败，可能是因为 Agent 在 seed_ensemble 中嵌入了论文信息
+            # YAML 解析失败，尝试修复常见问题
             _LOG.warning("auto_fix_project_yaml_parse_error", path=path, error=str(e))
 
-            # 检测是否是 seed_ensemble 包含论文信息导致的错误
+            # 修复 1: 检测是否是未转义的冒号导致的错误（如论文标题中的冒号）
+            error_str = str(e)
+            if "mapping values are not allowed here" in error_str:
+                # 尝试修复：将包含冒号的值用引号包裹
+                fixed_content = self._fix_unquoted_colons(content)
+                if fixed_content != content:
+                    _LOG.info("auto_fix_project_yaml_colons", path=path)
+                    return fixed_content
+
+            # 修复 2: 检测是否是 seed_ensemble 包含论文信息导致的错误
             if "seed_ensemble:" in content and ("title:" in content or "authors:" in content or "source:" in content):
                 _LOG.error("auto_fix_project_yaml_paper_info_detected", path=path)
                 # 不自动修复，而是返回原始内容，让 Agent 看到错误信息后自己修正
@@ -177,6 +186,48 @@ class WriteFileTool(Tool):
             # 如果修正失败，返回原始内容
             _LOG.warning("auto_fix_project_yaml_failed", path=path, error=str(e))
             return content
+
+    def _fix_unquoted_colons(self, content: str) -> str:
+        """修复 YAML 中未转义的冒号（如论文标题中的冒号）。
+
+        策略：逐行检查，如果某行包含冒号但值部分也包含冒号且未被引号包裹，
+        则将值部分用引号包裹。
+        """
+        lines = content.split('\n')
+        fixed_lines = []
+
+        for line in lines:
+            # 跳过注释和空行
+            if line.strip().startswith('#') or not line.strip():
+                fixed_lines.append(line)
+                continue
+
+            # 检查是否是键值对（包含冒号）
+            if ':' in line:
+                # 找到第一个冒号的位置
+                colon_idx = line.find(':')
+                key_part = line[:colon_idx]
+                value_part = line[colon_idx+1:].strip()
+
+                # 如果值部分包含冒号且未被引号包裹
+                if ':' in value_part and not (
+                    (value_part.startswith('"') and value_part.endswith('"')) or
+                    (value_part.startswith("'") and value_part.endswith("'"))
+                ):
+                    # 检查是否是嵌套对象（如 "key: {}"）
+                    if value_part.strip() in ['{', '[', '{}', '[]'] or value_part.strip().startswith('{') or value_part.strip().startswith('['):
+                        fixed_lines.append(line)
+                        continue
+
+                    # 用双引号包裹值
+                    indent = len(line) - len(line.lstrip())
+                    fixed_line = ' ' * indent + key_part + ': "' + value_part + '"'
+                    fixed_lines.append(fixed_line)
+                    continue
+
+            fixed_lines.append(line)
+
+        return '\n'.join(fixed_lines)
 
 
 class ListFilesParams(BaseModel):

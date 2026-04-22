@@ -36,7 +36,7 @@ class PIAgent(Agent):
             AgentSpec(
                 name="pi",
                 model_tier="heavy",
-                tool_names=["read_file", "write_file", "list_files", "ask_human", "finish_task", "process_seed_paper"],
+                tool_names=["read_file", "write_file", "write_structured_file", "list_files", "ask_human", "finish_task", "process_seed_paper"],
                 max_steps=30,
                 max_tokens_total=100_000,
                 max_wall_seconds=1800,
@@ -44,6 +44,9 @@ class PIAgent(Agent):
                 allowed_read_prefixes=["", "user_seeds/", "experiments/", "ideation/", "evaluation/"],
                 allowed_write_prefixes=["", "user_seeds/", "evaluation/"],
                 prompt_template="pi.j2",
+                structured_outputs={
+                    "project.yaml": "project",
+                },
             )
         )
 

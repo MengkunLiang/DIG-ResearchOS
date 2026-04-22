@@ -231,6 +231,23 @@ result = docker_exec(
 
 ### Step 5: 生成results_summary.json
 
+**⚠️ 推荐使用 write_structured_file 工具生成此文件**：
+- 自动验证 schema（确保符合 results_summary.schema.json）
+- 自动序列化为 JSON 格式
+- 提供清晰的错误信息
+
+调用方式：
+```
+write_structured_file(
+    path="experiments/results_summary.json",
+    schema_name="results_summary",
+    format="json",
+    data={实验结果汇总对象}
+)
+```
+
+如果 `write_structured_file` 不可用，降级使用 `write_file`。
+
 汇总所有实验结果到 `experiments/results_summary.json`。
 
 > 详细格式见: `docs/protocols/EXPERIMENT_PROTOCOL.md` §输出格式
