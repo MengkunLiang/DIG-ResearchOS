@@ -123,6 +123,9 @@ class ProcessSeedPaperTool(Tool):
             "pdf_path": f"user_seeds/pdfs/{pdf_path.name}",
         }
 
+        # 写入 seed_papers.jsonl
+        await self._append_to_seed_papers(paper_info)
+
         return ToolResult(
             ok=True,
             content=(
@@ -131,7 +134,8 @@ class ProcessSeedPaperTool(Tool):
                 f"作者: {', '.join(paper_info['authors'][:3])}{'...' if len(paper_info['authors']) > 3 else ''}\n"
                 f"年份: {paper_info['year']}\n"
                 f"角色: {paper_info['role']}\n"
-                f"PDF 已复制到: {paper_info['pdf_path']}"
+                f"PDF 已复制到: {paper_info['pdf_path']}\n"
+                f"已追加到: user_seeds/seed_papers.jsonl"
             ),
             data={"paper": paper_info},
         )
@@ -254,6 +258,9 @@ class ProcessSeedPaperTool(Tool):
                     "url": f"https://arxiv.org/abs/{arxiv_id}",
                 }
 
+                # 写入 seed_papers.jsonl
+                await self._append_to_seed_papers(paper_info)
+
                 return ToolResult(
                     ok=True,
                     content=(
@@ -263,7 +270,8 @@ class ProcessSeedPaperTool(Tool):
                         f"作者: {', '.join(authors[:3])}{'...' if len(authors) > 3 else ''}\n"
                         f"年份: {year}\n"
                         f"角色: {params.role}\n"
-                        f"URL: https://arxiv.org/abs/{arxiv_id}"
+                        f"URL: https://arxiv.org/abs/{arxiv_id}\n"
+                        f"已追加到: user_seeds/seed_papers.jsonl"
                     ),
                     data={"paper": paper_info},
                 )
@@ -332,9 +340,17 @@ class ProcessSeedPaperTool(Tool):
                     "url": f"https://doi.org/{doi}",
                 }
 
+                # 写入 seed_papers.jsonl
+                await self._append_to_seed_papers(paper_info)
+
                 return ToolResult(
                     ok=True,
-                    content=f"已处理 DOI 论文: {title}",
+                    content=(
+                        f"✅ 成功从 DOI 获取论文信息\n"
+                        f"DOI: {doi}\n"
+                        f"标题: {title}\n"
+                        f"已追加到: user_seeds/seed_papers.jsonl"
+                    ),
                     data={"paper": paper_info},
                 )
         except Exception as e:
@@ -365,8 +381,32 @@ class ProcessSeedPaperTool(Tool):
             "why_relevant": params.why_relevant,
         }
 
+        # 写入 seed_papers.jsonl
+        await self._append_to_seed_papers(paper_info)
+
         return ToolResult(
             ok=True,
-            content=f"已处理论文: {params.value}",
+            content=(
+                f"✅ 成功处理论文\n"
+                f"标题: {params.value}\n"
+                f"已追加到: user_seeds/seed_papers.jsonl"
+            ),
             data={"paper": paper_info},
         )
+
+    async def _append_to_seed_papers(self, paper_info: dict[str, Any]) -> None:
+        """将论文信息追加到 seed_papers.jsonl 文件。
+
+        Args:
+            paper_info: 论文信息字典
+        """
+        seed_papers_path = self.policy.workspace_dir / "user_seeds" / "seed_papers.jsonl"
+
+        # 确保目录存在
+        seed_papers_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # 追加到文件（JSONL 格式，每行一个 JSON 对象）
+        with open(seed_papers_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(paper_info, ensure_ascii=False) + "\n")
+
+        _LOG.info("seed_paper_appended", title=paper_info.get("title", "unknown"))
