@@ -40,17 +40,20 @@
     "venue": {
       "type": "string"
     },
-    "citationCount": {
+    "citation_count": {
       "type": "integer"
     },
-    "externalIds": {
-      "type": "object"
+    "doi": {
+      "type": "string"
     },
     "url": {
       "type": [
         "string",
         "null"
       ]
+    },
+    "externalIds": {
+      "type": "object"
     }
   },
   "required": [

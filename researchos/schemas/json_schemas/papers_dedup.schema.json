@@ -4,12 +4,16 @@
   "title": "Deduplicated Papers",
   "description": "Schema for deduplicated paper records (T2 Scout output)",
   "type": "object",
-  "required": ["id", "title", "year"],
+  "required": ["id", "source", "title", "authors", "year", "venue", "source_type", "relevance_score", "why_relevant", "abstract", "citation_count", "url"],
   "properties": {
     "id": {
       "type": "string",
       "description": "Paper ID (arXiv ID, DOI, or S2 corpus ID)",
       "minLength": 1
+    },
+    "source": {
+      "type": "string",
+      "description": "Data source (arxiv, semantic_scholar, crossref, europepmc, pubmed, manual, etc.)"
     },
     "title": {
       "type": "string",
@@ -18,7 +22,7 @@
     },
     "authors": {
       "type": "array",
-      "description": "List of author names",
+      "description": "List of author names (string array)",
       "items": {
         "type": "string"
       }
@@ -33,24 +37,9 @@
       "type": "string",
       "description": "Publication venue (conference/journal)"
     },
-    "abstract": {
+    "source_type": {
       "type": "string",
-      "description": "Paper abstract"
-    },
-    "url": {
-      "type": "string",
-      "description": "Paper URL",
-      "format": "uri"
-    },
-    "pdf_url": {
-      "type": "string",
-      "description": "PDF download URL",
-      "format": "uri"
-    },
-    "citation_count": {
-      "type": "integer",
-      "description": "Number of citations",
-      "minimum": 0
+      "description": "Source type (top_conference, journal, preprint, workshop, etc.)"
     },
     "relevance_score": {
       "type": "number",
@@ -58,10 +47,31 @@
       "minimum": 0,
       "maximum": 1
     },
-    "source": {
+    "why_relevant": {
       "type": "string",
-      "description": "Data source (arxiv, semantic_scholar, crossref, europepmc, pubmed, manual, etc.)",
-      "enum": ["arxiv", "semantic_scholar", "crossref", "europepmc", "pubmed", "dblp", "manual"]
+      "description": "Why this paper is relevant to the research"
+    },
+    "abstract": {
+      "type": "string",
+      "description": "Paper abstract"
+    },
+    "citation_count": {
+      "type": "integer",
+      "description": "Number of citations",
+      "minimum": 0
+    },
+    "url": {
+      "type": "string",
+      "description": "Paper URL"
+    },
+    "pdf_url": {
+      "type": "string",
+      "description": "PDF download URL (optional)"
+    },
+    "doi": {
+      "type": "string",
+      "description": "DOI (optional)"
     }
-  }
+  },
+  "additionalProperties": true
 }

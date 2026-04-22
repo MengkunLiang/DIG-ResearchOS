@@ -132,6 +132,7 @@ def test_validate_outputs_success(scout_agent, execution_context):
     raw_papers = [
         {
             "id": f"s2:{i}",
+            "source": "semantic_scholar",
             "title": f"Paper {i}",
             "authors": ["Author A", "Author B"],
             "year": 2023,
@@ -139,6 +140,7 @@ def test_validate_outputs_success(scout_agent, execution_context):
             "abstract": "Abstract",
             "doi": f"10.1234/{i}",
             "citation_count": 100,
+            "url": f"https://example.com/{i}",
         }
         for i in range(50)
     ]
@@ -150,6 +152,7 @@ def test_validate_outputs_success(scout_agent, execution_context):
     dedup_papers = [
         {
             "id": f"s2:{i}",
+            "source": "semantic_scholar",
             "title": f"Paper {i}",
             "authors": ["Author A", "Author B"],
             "year": 2023,
@@ -160,6 +163,7 @@ def test_validate_outputs_success(scout_agent, execution_context):
             "abstract": "Abstract",
             "doi": f"10.1234/{i}",
             "citation_count": 100,
+            "url": f"https://example.com/{i}",
         }
         for i in range(30)
     ]
@@ -187,15 +191,36 @@ def test_validate_outputs_too_few_papers(scout_agent, execution_context):
     dedup_papers = [
         {
             "id": f"s2:{i}",
+            "source": "semantic_scholar",
             "title": f"Paper {i}",
             "authors": ["Author A"],
             "year": 2023,
+            "venue": "Test Venue",
+            "source_type": "preprint",
             "relevance_score": 0.8,
+            "why_relevant": "Relevant",
+            "abstract": "Abstract",
+            "citation_count": 10,
+            "url": f"https://example.com/{i}",
         }
         for i in range(10)
     ]
     # 创建对应的 raw papers
-    raw_papers = [{"id": f"s2:{i}", "title": f"Paper {i}"} for i in range(15)]
+    raw_papers = [
+        {
+            "id": f"s2:{i}",
+            "source": "semantic_scholar",
+            "title": f"Paper {i}",
+            "authors": ["Author A"],
+            "year": 2023,
+            "venue": "Test Venue",
+            "abstract": "Abstract",
+            "citation_count": 10,
+            "doi": "",
+            "url": f"https://example.com/{i}",
+        }
+        for i in range(15)
+    ]
 
     with (lit_dir / "papers_dedup.jsonl").open("w") as f:
         for paper in dedup_papers:
@@ -219,7 +244,21 @@ def test_validate_outputs_dedup_anomaly(scout_agent, execution_context):
     lit_dir.mkdir()
 
     # raw只有10篇
-    raw_papers = [{"id": f"s2:{i}", "title": f"Paper {i}"} for i in range(10)]
+    raw_papers = [
+        {
+            "id": f"s2:{i}",
+            "source": "semantic_scholar",
+            "title": f"Paper {i}",
+            "authors": ["Author A"],
+            "year": 2023,
+            "venue": "Test Venue",
+            "abstract": "Abstract",
+            "citation_count": 10,
+            "doi": "",
+            "url": f"https://example.com/{i}",
+        }
+        for i in range(10)
+    ]
     with (lit_dir / "papers_raw.jsonl").open("w") as f:
         for paper in raw_papers:
             f.write(json.dumps(paper) + "\n")
@@ -228,10 +267,17 @@ def test_validate_outputs_dedup_anomaly(scout_agent, execution_context):
     dedup_papers = [
         {
             "id": f"s2:{i}",
+            "source": "semantic_scholar",
             "title": f"Paper {i}",
             "authors": ["Author A"],
             "year": 2023,
+            "venue": "Test Venue",
+            "source_type": "preprint",
             "relevance_score": 0.8,
+            "why_relevant": "Relevant",
+            "abstract": "Abstract",
+            "citation_count": 10,
+            "url": f"https://example.com/{i}",
         }
         for i in range(20)
     ]

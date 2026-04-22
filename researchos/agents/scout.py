@@ -65,13 +65,24 @@ class ScoutAgent(Agent):
                     "score_papers",
                     "expand_queries",
                     "generate_search_log",
-                    # MCP工具暂时移除，等MCP配置完成后再启用
-                    # "mcp_arxiv_search",
-                    # "mcp_semantic_scholar_search",
-                    # "mcp_semantic_scholar_get_paper",
+                    # 论文数据增强工具（自动补充缺失字段、检测重复度）
+                    "enrich_papers",
+                    "detect_duplicate_queries",
+                    "analyze_dedup_rate",
+                    # Semantic Scholar 工具（提供更完整的论文数据）
+                    "semantic_scholar_search",
+                    "semantic_scholar_get_paper",
+                    # arXiv 工具（预印本搜索，完全免费）
+                    "arxiv_search",
+                    # OpenAlex 工具（综合学术搜索，2.5亿+ 论文）
+                    "openalex_search",
+                    "openalex_get_work",
+                    # CrossRef 工具（DOI 元数据，1.4亿+ DOI）
+                    "crossref_search",
+                    "crossref_get_work",
                 ],
                 max_steps=50,
-                max_tokens_total=200_000,  # 增加到200K，避免token预算超限
+                max_tokens_total=500_000,  # 增加到200K，避免token预算超限
                 max_wall_seconds=1800,
                 temperature=0.5,
                 allowed_read_prefixes=["", "user_seeds/", "seeds/"],

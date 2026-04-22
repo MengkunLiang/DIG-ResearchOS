@@ -33,6 +33,15 @@ from .paper_utils_tool import (
     ExpandQueriesTool,
     GenerateSearchLogTool,
 )
+from .paper_enrichment_tool import (
+    EnrichPapersTool,
+    DetectDuplicateQueriesTool,
+    AnalyzeDedupRateTool,
+)
+from .semantic_scholar import SemanticScholarSearchTool, SemanticScholarGetPaperTool
+from .arxiv_api import ArxivSearchTool
+from .openalex_api import OpenAlexSearchTool, OpenAlexGetWorkTool
+from .crossref_api import CrossRefSearchTool, CrossRefGetWorkTool
 
 
 def register_builtin_tools(registry: ToolRegistry) -> None:
@@ -92,3 +101,18 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
     registry.register("score_papers", lambda ctx: ScorePapersTool())
     registry.register("expand_queries", lambda ctx: ExpandQueriesTool())
     registry.register("generate_search_log", lambda ctx: GenerateSearchLogTool())
+    # 论文数据增强工具
+    registry.register("enrich_papers", lambda ctx: EnrichPapersTool())
+    registry.register("detect_duplicate_queries", lambda ctx: DetectDuplicateQueriesTool())
+    registry.register("analyze_dedup_rate", lambda ctx: AnalyzeDedupRateTool())
+    # Semantic Scholar 工具（直接 API 调用，不依赖 MCP）
+    registry.register("semantic_scholar_search", lambda ctx: SemanticScholarSearchTool())
+    registry.register("semantic_scholar_get_paper", lambda ctx: SemanticScholarGetPaperTool())
+    # arXiv 工具（预印本搜索）
+    registry.register("arxiv_search", lambda ctx: ArxivSearchTool())
+    # OpenAlex 工具（综合学术搜索）
+    registry.register("openalex_search", lambda ctx: OpenAlexSearchTool())
+    registry.register("openalex_get_work", lambda ctx: OpenAlexGetWorkTool())
+    # CrossRef 工具（DOI 元数据）
+    registry.register("crossref_search", lambda ctx: CrossRefSearchTool())
+    registry.register("crossref_get_work", lambda ctx: CrossRefGetWorkTool())

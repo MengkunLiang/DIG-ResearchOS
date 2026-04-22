@@ -29,34 +29,12 @@ servers:
     command: "npx"
     args: ["-y", "@modelcontextprotocol/server-arxiv"]
 
-  # 本地文件系统 MCP 服务器
-  # 功能：读写本地文件，列出目录等
-  # 依赖：Node.js, npx
-  # 无需 API Key
-  - name: filesystem
-    command: "npx"
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
-
-  # GitHub MCP 服务器
-  # 功能：搜索仓库、获取代码、查看 issue 等
-  # 依赖：Node.js, npx
-  # 需要 API Key：在 .env 中设置 GITHUB_TOKEN
-  - name: github
-    command: "npx"
-    args: ["-y", "@modelcontextprotocol/server-github"]
-    env:
-      GITHUB_TOKEN: "${GITHUB_TOKEN}"
-
-  # Semantic Scholar MCP 服务器（暂时禁用）
+  # Semantic Scholar MCP 服务器（已启用）
   # 功能：学术论文搜索、引用分析、作者信息查询
-  # 依赖：Python, semantic_scholar_mcp 包
-  # 需要 API Key：在 .env 中设置 S2_API_KEY
-  # 启用方法：
-  #   1. pip install semantic_scholar_mcp
-  #   2. 在 .env 中添加 S2_API_KEY=your-api-key
-  #   3. 取消下面的注释
-  # - name: semantic_scholar
-  #   command: "python"
-  #   args: ["-m", "semantic_scholar_mcp"]
-  #   env:
-  #     S2_API_KEY: "${S2_API_KEY}"
+  # 依赖：Node.js, npx
+  # 需要 API Key：在 .env 中设置 S2_API_KEY（可选，无 key 时使用免费 API）
+  - name: semantic_scholar
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-semantic-scholar"]
+    env:
+      S2_API_KEY: "${S2_API_KEY}"
