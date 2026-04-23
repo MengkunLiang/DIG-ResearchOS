@@ -12,8 +12,8 @@ from pathlib import Path
 
 import yaml
 
-from ..runtime.agent import Agent, AgentSpec, ExecutionContext
-from ..runtime.agent_params import get_agent_params
+from ..runtime.agent import Agent, ExecutionContext
+from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
 from ..schemas.validator import validate_record
 from ._common import (
@@ -27,30 +27,30 @@ class IdeationAgent(Agent):
     """假设生成Agent。深度推理+两轮Gate确认。"""
 
     def __init__(self):
-        params = get_agent_params("ideation")
         super().__init__(
-            AgentSpec(
-                name="ideation",
-                model_tier=params.get("model_tier", "heavy"),
-                llm_profile=None,
-                tool_names=[
-                    "read_file",
-                    "write_file",
-                    "write_structured_file",
-                    "list_files",
-                    "ask_human",
-                    "finish_task",
-                ],
-                max_steps=params.get("max_steps", 60),
-                max_tokens_total=params.get("max_tokens_total", 200_000),
-                max_wall_seconds=params.get("max_wall_seconds", 600),
-                max_validation_retries=params.get("max_validation_retries", 3),
-                temperature=0.75,
-                allowed_read_prefixes=["", "literature/", "user_seeds/"],
-                allowed_write_prefixes=["ideation/"],
-                prompt_template="ideation.j2",
-                structured_outputs={
-                    "ideation/exp_plan.yaml": "exp_plan",
+            build_agent_spec(
+                "ideation",
+                defaults={
+                    "model_tier": "heavy",
+                    "tool_names": [
+                        "read_file",
+                        "write_file",
+                        "write_structured_file",
+                        "list_files",
+                        "ask_human",
+                        "finish_task",
+                    ],
+                    "max_steps": 60,
+                    "max_tokens_total": 200_000,
+                    "max_wall_seconds": 600,
+                    "max_validation_retries": 3,
+                    "temperature": 0.75,
+                    "allowed_read_prefixes": ["", "literature/", "user_seeds/"],
+                    "allowed_write_prefixes": ["ideation/"],
+                    "prompt_template": "ideation.j2",
+                    "structured_outputs": {
+                        "ideation/exp_plan.yaml": "exp_plan",
+                    },
                 },
             )
         )

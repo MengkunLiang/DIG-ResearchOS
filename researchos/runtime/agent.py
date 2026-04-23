@@ -33,6 +33,8 @@ class AgentSpec:
     temperature: float = 0.7
     model_override: str | None = None
     llm_profile: str | None = None
+    llm_endpoint: str | None = None
+    llm_max_context: int | None = None
     allowed_read_prefixes: list[str] = field(
         default_factory=lambda: ["", "user_seeds/", "papers/", "hypotheses/", "exp_plans/"]
     )
@@ -52,6 +54,8 @@ class LLMConfigOverride:
     profile: str | None = None
     tier: str | None = None
     model: str | None = None
+    endpoint: str | None = None
+    max_context: int | None = None
     temperature: float | None = None
 
 
@@ -114,6 +118,8 @@ class EffectiveConfig:
     llm_profile: str | None
     llm_tier: str
     llm_model_override: str | None
+    llm_endpoint_override: str | None
+    llm_max_context_override: int | None
     llm_temperature: float
     max_steps: int
     max_tokens: int
@@ -132,6 +138,10 @@ def resolve_effective_config(spec: AgentSpec, ctx: ExecutionContext) -> Effectiv
         llm_profile=lo.profile if lo.profile is not None else spec.llm_profile,
         llm_tier=lo.tier if lo.tier is not None else spec.model_tier,
         llm_model_override=lo.model if lo.model is not None else spec.model_override,
+        llm_endpoint_override=lo.endpoint if lo.endpoint is not None else spec.llm_endpoint,
+        llm_max_context_override=(
+            lo.max_context if lo.max_context is not None else spec.llm_max_context
+        ),
         llm_temperature=lo.temperature if lo.temperature is not None else spec.temperature,
         max_steps=bo.max_steps if bo.max_steps is not None else spec.max_steps,
         max_tokens=bo.max_tokens if bo.max_tokens is not None else spec.max_tokens_total,

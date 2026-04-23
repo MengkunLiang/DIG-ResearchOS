@@ -1,26 +1,27 @@
 from __future__ import annotations
 
-from ..runtime.agent import Agent, AgentSpec, ExecutionContext
-from ..runtime.agent_params import get_agent_params
+from ..runtime.agent import Agent, ExecutionContext
+from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
 
 
 class HelloAgent(Agent):
     def __init__(self):
-        params = get_agent_params("hello")
         super().__init__(
-            AgentSpec(
-                name="hello",
-                model_tier=params.get("model_tier", "medium"),
-                tool_names=["echo", "write_file", "read_file", "finish_task"],
-                max_steps=params.get("max_steps", 10),
-                max_tokens_total=params.get("max_tokens_total", 20_000),
-                max_wall_seconds=params.get("max_wall_seconds", 300),
-                max_validation_retries=params.get("max_validation_retries", 3),
-                temperature=0.3,
-                allowed_read_prefixes=[""],
-                allowed_write_prefixes=[""],
-                prompt_template="hello.j2",
+            build_agent_spec(
+                "hello",
+                defaults={
+                    "model_tier": "medium",
+                    "tool_names": ["echo", "write_file", "read_file", "finish_task"],
+                    "max_steps": 10,
+                    "max_tokens_total": 20_000,
+                    "max_wall_seconds": 300,
+                    "max_validation_retries": 3,
+                    "temperature": 0.3,
+                    "allowed_read_prefixes": [""],
+                    "allowed_write_prefixes": [""],
+                    "prompt_template": "hello.j2",
+                },
             )
         )
 
@@ -40,4 +41,3 @@ class HelloAgent(Agent):
         if hello_path.read_text(encoding="utf-8").strip() != "Hello, Runtime!":
             return False, "hello_file 内容必须是 'Hello, Runtime!'"
         return True, None
-

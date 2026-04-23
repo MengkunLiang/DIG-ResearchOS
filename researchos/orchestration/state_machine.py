@@ -428,6 +428,8 @@ class StateMachine:
             profile=llm_block.get("profile"),
             tier=llm_block.get("tier"),
             model=llm_block.get("model"),
+            endpoint=llm_block.get("endpoint"),
+            max_context=llm_block.get("max_context"),
             temperature=llm_block.get("temperature"),
         )
 
@@ -654,5 +656,4 @@ class StateMachine:
         # 使用 sort_keys 确保字典顺序一致
         normalized = json.dumps(params, sort_keys=True, default=str)
         return str(hash(normalized))
-
 

@@ -50,8 +50,8 @@ from pathlib import Path
 import structlog
 import yaml
 
-from ..runtime.agent import Agent, AgentSpec, ExecutionContext
-from ..runtime.agent_params import get_agent_mode_params
+from ..runtime.agent import Agent, ExecutionContext
+from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
 from ..schemas.validator import validate_record
 from ._common import (
@@ -289,33 +289,35 @@ class ExperimenterAgent(Agent):
     """
 
     def __init__(self, mode: str | None = None):
-        params = get_agent_mode_params("experimenter", mode)
         super().__init__(
-            AgentSpec(
-                name="experimenter",
-                model_tier=params.get("model_tier", "medium"),
-                tool_names=[
-                    "read_file",
-                    "write_file",
-                    "write_structured_file",
-                    "list_files",
-                    "append_file",
-                    "bash_run",
-                    "docker_exec",
-                    "finish_task",
-                ],
-                max_steps=params.get("max_steps", 150),
-                max_tokens_total=params.get("max_tokens_total", 800_000),
-                max_wall_seconds=params.get("max_wall_seconds", 14400),
-                max_validation_retries=params.get("max_validation_retries", 2),
-                temperature=0.3,
-                allowed_read_prefixes=["", "ideation/", "experiments/", "pilot/", "literature/"],
-                allowed_write_prefixes=["experiments/", "pilot/"],
-                prompt_template="experimenter.j2",
-                structured_outputs={
-                    "experiments/results_summary.json": "results_summary",
-                    "pilot/pilot_results.json": "pilot_results",
-                    "pilot/pilot_plan.yaml": "pilot_plan",
+            build_agent_spec(
+                "experimenter",
+                mode=mode,
+                defaults={
+                    "model_tier": "medium",
+                    "tool_names": [
+                        "read_file",
+                        "write_file",
+                        "write_structured_file",
+                        "list_files",
+                        "append_file",
+                        "bash_run",
+                        "docker_exec",
+                        "finish_task",
+                    ],
+                    "max_steps": 150,
+                    "max_tokens_total": 800_000,
+                    "max_wall_seconds": 14400,
+                    "max_validation_retries": 2,
+                    "temperature": 0.3,
+                    "allowed_read_prefixes": ["", "ideation/", "experiments/", "pilot/", "literature/"],
+                    "allowed_write_prefixes": ["experiments/", "pilot/"],
+                    "prompt_template": "experimenter.j2",
+                    "structured_outputs": {
+                        "experiments/results_summary.json": "results_summary",
+                        "pilot/pilot_results.json": "pilot_results",
+                        "pilot/pilot_plan.yaml": "pilot_plan",
+                    },
                 },
             )
         )

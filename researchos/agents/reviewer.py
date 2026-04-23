@@ -9,8 +9,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from ..runtime.agent import Agent, AgentSpec, ExecutionContext
-from ..runtime.agent_params import get_agent_params
+from ..runtime.agent import Agent, ExecutionContext
+from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
 from ._common import load_project, read_text_file
 
@@ -19,30 +19,30 @@ class ReviewerAgent(Agent):
     """论文审稿Agent，提供结构化审稿意见。"""
 
     def __init__(self):
-        params = get_agent_params("reviewer")
         super().__init__(
-            AgentSpec(
-                name="reviewer",
-                model_tier=params.get("model_tier", "heavy"),
-                llm_profile=None,
-                tool_names=[
-                    "read_file",
-                    "write_file",
-                    "finish_task",
-                ],
-                max_steps=params.get("max_steps", 60),
-                max_tokens_total=params.get("max_tokens_total", 200_000),
-                max_wall_seconds=params.get("max_wall_seconds", 600),
-                max_validation_retries=params.get("max_validation_retries", 3),
-                temperature=0.3,
-                allowed_read_prefixes=[
-                    "",
-                    "drafts/",
-                    "literature/",
-                    "experiments/",
-                ],
-                allowed_write_prefixes=["drafts/review_rounds/"],
-                prompt_template="reviewer.j2",
+            build_agent_spec(
+                "reviewer",
+                defaults={
+                    "model_tier": "heavy",
+                    "tool_names": [
+                        "read_file",
+                        "write_file",
+                        "finish_task",
+                    ],
+                    "max_steps": 60,
+                    "max_tokens_total": 200_000,
+                    "max_wall_seconds": 600,
+                    "max_validation_retries": 3,
+                    "temperature": 0.3,
+                    "allowed_read_prefixes": [
+                        "",
+                        "drafts/",
+                        "literature/",
+                        "experiments/",
+                    ],
+                    "allowed_write_prefixes": ["drafts/review_rounds/"],
+                    "prompt_template": "reviewer.j2",
+                },
             )
         )
 

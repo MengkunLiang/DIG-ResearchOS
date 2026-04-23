@@ -13,8 +13,8 @@ from pathlib import Path
 
 import yaml
 
-from ..runtime.agent import Agent, AgentSpec, ExecutionContext
-from ..runtime.agent_params import get_agent_mode_params
+from ..runtime.agent import Agent, ExecutionContext
+from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
 from ._common import (
     load_project,
@@ -33,22 +33,38 @@ class PIAgent(Agent):
     """
 
     def __init__(self, mode: str | None = None):
-        params = get_agent_mode_params("pi", mode)
         super().__init__(
-            AgentSpec(
-                name="pi",
-                model_tier=params.get("model_tier", "heavy"),
-                tool_names=["read_file", "write_file", "write_structured_file", "list_files", "ask_human", "finish_task", "process_seed_paper"],
-                max_steps=params.get("max_steps", 30),
-                max_tokens_total=params.get("max_tokens_total", 100_000),
-                max_wall_seconds=params.get("max_wall_seconds", 1800),
-                max_validation_retries=params.get("max_validation_retries", 3),
-                temperature=0.3,
-                allowed_read_prefixes=["", "user_seeds/", "experiments/", "ideation/", "evaluation/"],
-                allowed_write_prefixes=["", "user_seeds/", "evaluation/"],
-                prompt_template="pi.j2",
-                structured_outputs={
-                    "project.yaml": "project",
+            build_agent_spec(
+                "pi",
+                mode=mode,
+                defaults={
+                    "model_tier": "heavy",
+                    "tool_names": [
+                        "read_file",
+                        "write_file",
+                        "write_structured_file",
+                        "list_files",
+                        "ask_human",
+                        "finish_task",
+                        "process_seed_paper",
+                    ],
+                    "max_steps": 30,
+                    "max_tokens_total": 100_000,
+                    "max_wall_seconds": 1800,
+                    "max_validation_retries": 3,
+                    "temperature": 0.3,
+                    "allowed_read_prefixes": [
+                        "",
+                        "user_seeds/",
+                        "experiments/",
+                        "ideation/",
+                        "evaluation/",
+                    ],
+                    "allowed_write_prefixes": ["", "user_seeds/", "evaluation/"],
+                    "prompt_template": "pi.j2",
+                    "structured_outputs": {
+                        "project.yaml": "project",
+                    },
                 },
             )
         )
@@ -240,5 +256,4 @@ class PIAgent(Agent):
 
         except Exception as e:
             return False, f"seed_external_resources.jsonl验证失败: {e}"
-
 

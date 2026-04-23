@@ -183,6 +183,54 @@ class DockerExecTool(Tool):
         err = stderr[: self.max_output_bytes].decode("utf-8", errors="replace")
         truncated = len(stdout) > self.max_output_bytes or len(stderr) > self.max_output_bytes
 
+        # GPU 降级处理：检测 GPU 挂载失败错误，自动重试（不加 --gpus）
+        _GPU_ERROR_MARKERS = [
+            "could not select device driver",
+            "no device drivers found",
+            "nvidia runtime is not configured",
+            "NV Runtime Error",
+        ]
+        _GPU_CAPABILITY_MSG = "Capabilities: [[gpu]]"
+
+        if params.gpu and proc.returncode != 0:
+            stderr_lower = err.lower()
+            if any(marker.lower() in stderr_lower for marker in _GPU_ERROR_MARKERS):
+                _LOG.warning(
+                    "gpu_not_available_fallback_to_cpu",
+                    original_error=err[:500],
+                    hint="GPU 不可用，任务将在 CPU 模式下执行",
+                )
+                # 不带 --gpus 重试
+                params_no_gpu = DockerExecParams(
+                    image=params.image,
+                    command=params.command,
+                    cwd=params.cwd,
+                    timeout_seconds=params.timeout_seconds,
+                    allow_network=params.allow_network,
+                    gpu=False,
+                    env=params.env,
+                    memory_limit=params.memory_limit,
+                    extra_mounts=params.extra_mounts,
+                )
+                docker_cmd_no_gpu = self._build_docker_command(params_no_gpu)
+                _LOG.info("docker_exec_retry_cpu", command_parts=docker_cmd_no_gpu[:5])
+                try:
+                    proc2 = await asyncio.create_subprocess_exec(
+                        *docker_cmd_no_gpu,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    stdout2, stderr2 = await asyncio.wait_for(
+                        proc2.communicate(),
+                        timeout=params.timeout_seconds,
+                    )
+                    out = stdout2[: self.max_output_bytes].decode("utf-8", errors="replace")
+                    err = stderr2[: self.max_output_bytes].decode("utf-8", errors="replace")
+                    truncated = len(stdout2) > self.max_output_bytes or len(stderr2) > self.max_output_bytes
+                    proc = proc2  # 用于后续 content 组装
+                except OSError as exc2:
+                    raise ToolRuntimeError(self.name, exc2) from exc2
+
         content_parts: list[str] = []
         if out:
             content_parts.append(f"STDOUT:\n{out}")

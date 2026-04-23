@@ -25,8 +25,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..runtime.agent import Agent, AgentSpec, ExecutionContext
-from ..runtime.agent_params import get_agent_params
+from ..runtime.agent import Agent, ExecutionContext
+from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
 from ..tools.pdf_metadata import scan_seed_papers
 from ..tools.paper_utils import (
@@ -49,45 +49,46 @@ class ScoutAgent(Agent):
     """文献侦察员。跨源检索+去重，产出论文池。"""
 
     def __init__(self):
-        params = get_agent_params("scout")
         super().__init__(
-            AgentSpec(
-                name="scout",
-                model_tier=params.get("model_tier", "medium"),
-                tool_names=[
-                    "read_file",
-                    "write_file",
-                    "write_structured_file",
-                    "multi_source_search",
-                    "search_papers",
-                    "fetch_paper_metadata",
-                    "finish_task",
-                    "deduplicate_papers",
-                    "score_papers",
-                    "expand_queries",
-                    "generate_search_log",
-                    "enrich_papers",
-                    "detect_duplicate_queries",
-                    "analyze_dedup_rate",
-                    "semantic_scholar_search",
-                    "semantic_scholar_get_paper",
-                    "arxiv_search",
-                    "openalex_search",
-                    "openalex_get_work",
-                    "crossref_search",
-                    "crossref_get_work",
-                ],
-                max_steps=params.get("max_steps", 50),
-                max_tokens_total=params.get("max_tokens_total", 150_000),
-                max_wall_seconds=params.get("max_wall_seconds", 600),
-                max_validation_retries=params.get("max_validation_retries", 3),
-                temperature=0.5,
-                allowed_read_prefixes=["", "user_seeds/", "seeds/"],
-                allowed_write_prefixes=["literature/"],
-                prompt_template="scout.j2",
-                structured_outputs={
-                    "literature/papers_dedup.jsonl": "papers_dedup",
-                    "literature/papers_raw.jsonl": "papers_raw",
+            build_agent_spec(
+                "scout",
+                defaults={
+                    "model_tier": "medium",
+                    "tool_names": [
+                        "read_file",
+                        "write_file",
+                        "write_structured_file",
+                        "multi_source_search",
+                        "search_papers",
+                        "fetch_paper_metadata",
+                        "finish_task",
+                        "deduplicate_papers",
+                        "score_papers",
+                        "expand_queries",
+                        "generate_search_log",
+                        "enrich_papers",
+                        "detect_duplicate_queries",
+                        "analyze_dedup_rate",
+                        "semantic_scholar_search",
+                        "semantic_scholar_get_paper",
+                        "arxiv_search",
+                        "openalex_search",
+                        "openalex_get_work",
+                        "crossref_search",
+                        "crossref_get_work",
+                    ],
+                    "max_steps": 50,
+                    "max_tokens_total": 150_000,
+                    "max_wall_seconds": 600,
+                    "max_validation_retries": 3,
+                    "temperature": 0.5,
+                    "allowed_read_prefixes": ["", "user_seeds/", "seeds/"],
+                    "allowed_write_prefixes": ["literature/"],
+                    "prompt_template": "scout.j2",
+                    "structured_outputs": {
+                        "literature/papers_dedup.jsonl": "papers_dedup",
+                        "literature/papers_raw.jsonl": "papers_raw",
+                    },
                 },
             )
         )

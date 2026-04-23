@@ -113,6 +113,8 @@ class AgentRunner:
             profile=eff.llm_profile,
             tier=eff.llm_tier,
             model_override=eff.llm_model_override,
+            endpoint_override=eff.llm_endpoint_override,
+            max_context_override=eff.llm_max_context_override,
         )[0][0]
 
         empty_count = 0
@@ -150,6 +152,8 @@ class AgentRunner:
                         tier=eff.llm_tier,
                         profile=eff.llm_profile,
                         model_override=eff.llm_model_override,
+                        endpoint_override=eff.llm_endpoint_override,
+                        max_context_override=eff.llm_max_context_override,
                     )
                 except LLMProviderError as exc:
                     stop_reason = AgentResult.STOP_ERROR

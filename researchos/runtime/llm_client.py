@@ -285,6 +285,8 @@ class LLMClient:
         profile: str | None,
         tier: str,
         model_override: str | None,
+        endpoint_override: str | None = None,
+        max_context_override: int | None = None,
     ) -> list[tuple[ModelBinding, Endpoint]]:
         """解析某次调用的候选模型链路。
 
@@ -292,8 +294,14 @@ class LLMClient:
         - 第一个是 primary；
         - 后续是 fallback。
         """
-        if model_override:
-            binding, endpoint = self._find_binding_for_override(model_override)
+        if model_override is not None or endpoint_override is not None or max_context_override is not None:
+            binding, endpoint = self._resolve_override_binding(
+                profile=profile,
+                tier=tier,
+                model_override=model_override,
+                endpoint_override=endpoint_override,
+                max_context_override=max_context_override,
+            )
             return [(binding, endpoint)]
         profile_name = profile or self.default_profile_name
         profile_obj = self.profiles.get(profile_name)
@@ -305,6 +313,40 @@ class LLMClient:
         out = [(tier_cfg.primary, self.endpoints[tier_cfg.primary.endpoint])]
         out.extend((binding, self.endpoints[binding.endpoint]) for binding in tier_cfg.fallback)
         return out
+
+    def _resolve_override_binding(
+        self,
+        *,
+        profile: str | None,
+        tier: str,
+        model_override: str | None,
+        endpoint_override: str | None,
+        max_context_override: int | None,
+    ) -> tuple[ModelBinding, Endpoint]:
+        if model_override is not None:
+            binding, endpoint = self._find_binding_for_override(model_override)
+        else:
+            binding, endpoint = self.resolve(
+                profile=profile,
+                tier=tier,
+                model_override=None,
+            )[0]
+
+        if endpoint_override is not None:
+            endpoint = self.endpoints.get(endpoint_override)
+            if endpoint is None:
+                raise ConfigurationError(f"Unknown endpoint override: {endpoint_override}")
+
+        return (
+            ModelBinding(
+                model=model_override if model_override is not None else binding.model,
+                endpoint=endpoint.name,
+                max_context=(
+                    max_context_override if max_context_override is not None else binding.max_context
+                ),
+            ),
+            endpoint,
+        )
 
     def _find_binding_for_override(self, model_override: str) -> tuple[ModelBinding, Endpoint]:
         for profile in self.profiles.values():
@@ -388,6 +430,8 @@ class LLMClient:
         tier: str,
         profile: str | None = None,
         model_override: str | None = None,
+        endpoint_override: str | None = None,
+        max_context_override: int | None = None,
         timeout: int = 120,
         max_retries_per_model: int = 2,
     ) -> LLMResponse:
@@ -401,7 +445,13 @@ class LLMClient:
             raise LLMProviderError("litellm is not installed")
 
         errors: list[str] = []
-        candidates = self.resolve(profile=profile, tier=tier, model_override=model_override)
+        candidates = self.resolve(
+            profile=profile,
+            tier=tier,
+            model_override=model_override,
+            endpoint_override=endpoint_override,
+            max_context_override=max_context_override,
+        )
         for binding, endpoint in candidates:
             qualified = binding.qualified(endpoint)
             for attempt in range(max_retries_per_model):

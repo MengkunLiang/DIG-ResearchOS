@@ -22,8 +22,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from ..runtime.agent import Agent, AgentSpec, ExecutionContext
-from ..runtime.agent_params import get_agent_params
+from ..runtime.agent import Agent, ExecutionContext
+from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
 from ._common import (
     load_project,
@@ -36,28 +36,28 @@ class NoveltyAuditorAgent(Agent):
     """新颖性审计员。审计研究假设的新颖性，避免与已有工作重复。"""
 
     def __init__(self):
-        params = get_agent_params("novelty_auditor")
         super().__init__(
-            AgentSpec(
-                name="novelty_auditor",
-                model_tier=params.get("model_tier", "heavy"),
-                llm_profile=None,
-                tool_names=[
-                    "read_file",
-                    "write_file",
-                    "list_files",
-                    "search_papers",
-                    "fetch_paper_metadata",
-                    "finish_task",
-                ],
-                max_steps=params.get("max_steps", 60),
-                max_tokens_total=params.get("max_tokens_total", 150_000),
-                max_wall_seconds=params.get("max_wall_seconds", 600),
-                max_validation_retries=params.get("max_validation_retries", 3),
-                temperature=0.3,
-                allowed_read_prefixes=["", "ideation/", "literature/"],
-                allowed_write_prefixes=["ideation/"],
-                prompt_template="novelty_auditor.j2",
+            build_agent_spec(
+                "novelty_auditor",
+                defaults={
+                    "model_tier": "heavy",
+                    "tool_names": [
+                        "read_file",
+                        "write_file",
+                        "list_files",
+                        "search_papers",
+                        "fetch_paper_metadata",
+                        "finish_task",
+                    ],
+                    "max_steps": 60,
+                    "max_tokens_total": 150_000,
+                    "max_wall_seconds": 600,
+                    "max_validation_retries": 3,
+                    "temperature": 0.3,
+                    "allowed_read_prefixes": ["", "ideation/", "literature/"],
+                    "allowed_write_prefixes": ["ideation/"],
+                    "prompt_template": "novelty_auditor.j2",
+                },
             )
         )
 
