@@ -42,13 +42,13 @@ if ! docker images "$IMAGE_NAME" --format "{{.Repository}}:{{.Tag}}" | grep -q "
     exit 1
 fi
 
-# 检查环境变量
-if [ -z "$OPENAI_API_KEY" ]; then
-    echo "警告: OPENAI_API_KEY 环境变量未设置"
-fi
-
-if [ -z "$OPENAI_BASE_URL" ]; then
-    echo "警告: OPENAI_BASE_URL 环境变量未设置"
+# 检查环境变量（可选，现在支持在 model_routing.yaml 中配置 API key）
+# 注意：现在支持直接在 config/model_routing.yaml 的 api_keys 部分配置 API key
+# 如果使用环境变量，确保设置了必要的变量
+if [ -z "$SILICONFLOW_API_KEY" ] && [ -z "$OPENAI_API_KEY" ] && [ -z "$OPENROUTER_API_KEY" ]; then
+    echo "提示: 未检测到 LLM API 密钥"
+    echo "  - 选项 1: 在 config/model_routing.yaml 的 api_keys 部分配置"
+    echo "  - 选项 2: 设置环境变量 SILICONFLOW_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY"
 fi
 
 # 创建 workspace 目录（如果不存在）
@@ -56,11 +56,22 @@ mkdir -p "$WORKSPACE_DIR"
 
 # 检测是否有 GPU
 GPU_FLAG=""
+RUNTIME_FLAG=""
 if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
-    GPU_FLAG="--gpus all"
-    echo "检测到 GPU，将使用 --gpus all"
+    # 尝试使用 --gpus all (Docker 19.03+)
+    if docker run --rm --help 2>&1 | grep -q "\-\-gpus"; then
+        GPU_FLAG="--gpus all"
+        echo "检测到 GPU，使用 --gpus all"
+    elif docker run --rm --help 2>&1 | grep -q "\-\-runtime"; then
+        # 回退到 --runtime=nvidia
+        RUNTIME_FLAG="--runtime=nvidia"
+        GPU_FLAG="--gpus all"
+        echo "检测到 GPU，使用 --runtime=nvidia --gpus all"
+    else
+        echo "未检测到 GPU 或 Docker 版本不支持 GPU 传递"
+    fi
 else
-    echo "未检测到 GPU 或 nvidia-docker2 未安装"
+    echo "未检测到 GPU"
 fi
 
 # 运行容器
@@ -68,7 +79,7 @@ fi
 # -it: 交互式终端
 # -v: 挂载 workspace
 # -e: 传递环境变量
-# --gpus: GPU 支持（如果可用）
+# --gpus/--runtime: GPU 支持（如果可用）
 echo "运行 ResearchOS 容器..."
 echo "镜像: $IMAGE_NAME"
 echo "Workspace: $WORKSPACE_DIR"
@@ -77,8 +88,12 @@ echo ""
 
 docker run --rm -it \
     -v "$WORKSPACE_DIR:/workspace" \
+    -e SILICONFLOW_API_KEY="${SILICONFLOW_API_KEY}" \
+    -e SILICONFLOW_BASE_URL="${SILICONFLOW_BASE_URL}" \
     -e OPENAI_API_KEY="${OPENAI_API_KEY}" \
     -e OPENAI_BASE_URL="${OPENAI_BASE_URL}" \
+    -e OPENROUTER_API_KEY="${OPENROUTER_API_KEY}" \
+    ${RUNTIME_FLAG} \
     ${GPU_FLAG} \
     "$IMAGE_NAME" \
     "$@"

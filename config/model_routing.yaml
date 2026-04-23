@@ -14,12 +14,35 @@
 # - 想“按任务切 provider”，优先改 state_machine.yaml 的 llm.profile
 # - 想“给一组任务共用一套模型策略”，就在这里新增一个 profile
 
+# ========================================
+# API 密钥配置（可选）
+# 可以在这里直接配置 API key，也可以通过环境变量引用
+# 优先级：api_key > api_key_env
+# ========================================
+api_keys:
+  # SiliconFlow API Key（直接配置，不依赖环境变量）
+  SILICONFLOW_API_KEY: "your-siliconflow-key-here"
+  SILICONFLOW_BASE_URL: "https://api.siliconflow.cn/v1"
+
+  # OpenRouter API Key（直接配置）
+  OPENROUTER_API_KEY: ""
+
+  # OpenAI API Key（直接配置）
+  OPENAI_API_KEY: ""
+  OPENAI_BASE_URL: "https://api.openai.com/v1"
+
+  # Anthropic API Key（直接配置）
+  ANTHROPIC_API_KEY: ""
+
 # 默认 profile。
 # 保守策略：继续保持当前默认链路为 SiliconFlow，避免影响已有运行方式。
 default_profile: default
 
 # API 端点配置。
 # 每个 endpoint 都可以有自己独立的 provider / API key / base URL。
+# 支持两种配置方式：
+#   1. api_key_env: 从环境变量读取（如 "SILICONFLOW_API_KEY"）
+#   2. api_key: 直接在这里配置（见上方 api_keys 配置）
 endpoints:
   siliconflow:
     # SiliconFlow 走 OpenAI-compatible 协议，因此 provider 仍是 openai。
@@ -32,18 +55,16 @@ endpoints:
     provider: openrouter
     api_key_env: OPENROUTER_API_KEY
 
-  # 如需启用 OpenAI 官方接口，可取消下面注释并在 .env 中提供变量：
-  #
-  # openai_official:
-  #   provider: openai
-  #   api_key_env: OPENAI_API_KEY
-  #   api_base_env: OPENAI_BASE_URL
+  # 如需启用 OpenAI 官方接口，可取消下面注释：
+  openai_official:
+    provider: openai
+    api_key_env: OPENAI_API_KEY
+    api_base_env: OPENAI_BASE_URL
 
-  # 如需启用 Anthropic 官方接口，可取消下面注释并在 .env 中提供变量：
-  #
-  # anthropic_main:
-  #   provider: anthropic
-  #   api_key_env: ANTHROPIC_API_KEY
+  # 如需启用 Anthropic 官方接口，可取消下面注释：
+  anthropic_main:
+    provider: anthropic
+    api_key_env: ANTHROPIC_API_KEY
 
 # 路由配置。
 # profile = 一套路由策略；

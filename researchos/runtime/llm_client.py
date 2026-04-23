@@ -31,72 +31,114 @@ class Endpoint:
     name: str
     provider: str
     api_key_env: str | None = None
+    api_key: str | None = None  # 直接从配置文件读取的 API key
     api_base: str | None = None
     api_base_env: str | None = None
     api_version: str | None = None
     extra_headers: dict[str, Any] = field(default_factory=dict)
     rate_limit: dict[str, Any] = field(default_factory=dict)
+    # 用于从配置文件中读取 api_keys 的引用
+    _config_api_keys: dict[str, str] = field(default_factory=dict, repr=False)
 
     def litellm_provider(self) -> str:
         """返回传给 LiteLLM 的 provider 前缀。"""
 
         return self.provider
 
+    def _get_api_key(self) -> str | None:
+        """获取 API key。
+
+        优先级：
+        1. 直接配置的 api_key（来自配置文件 api_keys 部分）
+        2. 环境变量（api_key_env）
+        3. 常见备选环境变量
+        """
+        # 1. 优先使用配置文件中的 api_keys
+        if self.api_key_env and self.api_key_env in self._config_api_keys:
+            key = self._config_api_keys[self.api_key_env]
+            if key and key != "your-siliconflow-key-here":
+                return key
+
+        # 2. 回退到环境变量
+        key = os.environ.get(self.api_key_env) if self.api_key_env else None
+        if key:
+            return key
+
+        # 3. 尝试常见备选名称
+        fallback_names = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "SILICONFLOW_API_KEY"]
+        for fallback in fallback_names:
+            key = os.environ.get(fallback)
+            if key:
+                _log.info(
+                    "using_fallback_api_key",
+                    requested=self.api_key_env,
+                    fallback=fallback,
+                )
+                return key
+        return None
+
+    def _get_api_base(self) -> str | None:
+        """获取 API base URL。
+
+        优先级：
+        1. 直接配置的 api_base（来自配置文件）
+        2. 环境变量（api_base_env）
+        3. 常见备选环境变量
+        """
+        if self.api_base:
+            return self.api_base
+
+        if self.api_base_env:
+            # 先检查配置文件中的 api_keys
+            if self.api_base_env in self._config_api_keys:
+                base = self._config_api_keys[self.api_base_env]
+                if base:
+                    return base
+
+            # 回退到环境变量
+            base = os.environ.get(self.api_base_env)
+            if base:
+                return base
+
+            # 尝试常见备选名称
+            fallback_names = ["OPENAI_API_BASE", "OPENAI_BASE_URL", "SILICONFLOW_BASE_URL"]
+            for fallback in fallback_names:
+                base = os.environ.get(fallback)
+                if base:
+                    _log.info(
+                        "using_fallback_api_base",
+                        requested=self.api_base_env,
+                        fallback=fallback,
+                    )
+                    return base
+        return None
+
     def to_litellm_kwargs(self) -> dict[str, Any]:
         """把 endpoint 配置转换成 litellm 需要的关键字参数。
 
-        支持多种环境变量名称：
-        - 优先使用配置中指定的环境变量名
-        - 如果未设置，尝试常见的备选名称（如 OPENAI_API_KEY）
+        支持多种配置方式：
+        1. 配置文件中的 api_keys 部分（最高优先级）
+        2. api_key_env / api_base_env 环境变量引用
+        3. 常见备选环境变量
         """
         kwargs: dict[str, Any] = {}
-        if self.api_key_env:
-            key = os.environ.get(self.api_key_env)
-            # 如果主环境变量未设置，尝试备选名称
-            if not key:
-                # 常见的备选环境变量名
-                fallback_names = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]
-                for fallback in fallback_names:
-                    key = os.environ.get(fallback)
-                    if key:
-                        _log.info(
-                            "using_fallback_api_key",
-                            requested=self.api_key_env,
-                            fallback=fallback,
-                        )
-                        break
 
-            if not key:
-                raise ConfigurationError(
-                    f"Endpoint '{self.name}' requires env var {self.api_key_env} "
-                    f"(or fallback: OPENAI_API_KEY, ANTHROPIC_API_KEY)"
-                )
+        key = self._get_api_key()
+        if key:
             kwargs["api_key"] = key
+        elif self.api_key_env:
+            # 给出友好提示
+            _log.warning(
+                "no_api_key_for_endpoint",
+                endpoint=self.name,
+                api_key_env=self.api_key_env,
+                hint="在 config/model_routing.yaml 的 api_keys 部分配置，或设置环境变量",
+            )
 
-        api_base = self.api_base
-        if self.api_base_env:
-            api_base = os.environ.get(self.api_base_env)
-            # 如果主环境变量未设置，尝试备选名称
-            if not api_base:
-                fallback_names = ["OPENAI_API_BASE", "OPENAI_BASE_URL"]
-                for fallback in fallback_names:
-                    api_base = os.environ.get(fallback)
-                    if api_base:
-                        _log.info(
-                            "using_fallback_api_base",
-                            requested=self.api_base_env,
-                            fallback=fallback,
-                        )
-                        break
-
-            if not api_base:
-                raise ConfigurationError(
-                    f"Endpoint '{self.name}' requires env var {self.api_base_env} "
-                    f"(or fallback: OPENAI_API_BASE, OPENAI_BASE_URL)"
-                )
-
+        api_base = self._get_api_base()
         if api_base:
             kwargs["api_base"] = api_base
+
         if self.api_version:
             kwargs["api_version"] = self.api_version
         if self.extra_headers:
@@ -196,9 +238,16 @@ class LLMClient:
             os.environ.setdefault(key, value)
 
     def _parse_endpoints(self, raw: dict[str, Any]) -> dict[str, Endpoint]:
-        endpoints = {
-            name: Endpoint(name=name, **cfg) for name, cfg in (raw.get("endpoints") or {}).items()
-        }
+        # 获取配置文件中直接设置的 api_keys
+        api_keys = raw.get("api_keys") or {}
+
+        endpoints = {}
+        for name, cfg in (raw.get("endpoints") or {}).items():
+            # 将 api_keys 传递给每个 endpoint
+            endpoint = Endpoint(name=name, **cfg)
+            endpoint._config_api_keys = api_keys
+            endpoints[name] = endpoint
+
         if not endpoints:
             raise ConfigurationError("model_routing.yaml: 'endpoints' is empty")
         return endpoints
