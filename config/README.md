@@ -8,6 +8,7 @@
 |------|------|------|------|
 | `runtime.yaml` | Runtime 核心配置 | ✅ | 工作空间、日志、Agent 行为、Docker 执行模式 |
 | `model_routing.yaml` | LLM 模型路由 | ✅ | API 端点、模型选择、上下文截断策略 |
+| `agent_params.yaml` | Agent 默认参数 | ✅ | 每个 Agent 的 LLM、预算、工具、路径等静态默认值 |
 | `state_machine.yaml` | 状态机定义 | ✅ | Agent 工作流、状态转换、输入输出映射 |
 | `mcp.yaml` | MCP 工具配置 | ❌ | 外部工具和数据源（arXiv, Semantic Scholar 等）|
 | `gates.yaml` | Gate 配置 | ❌ | 状态转换的条件检查和验证 |
@@ -176,6 +177,64 @@ profiles:
         model: "gpt-4"
 ```
 
+### agent_params.yaml - Agent 默认参数
+
+定义每个 Agent 的默认静态参数。
+
+最常用的是 `llm` 这一段：
+
+- `llm.model + llm.endpoint`
+  - 当前推荐写法
+  - 直接指定模型和 endpoint
+  - provider 不在这里写，而是在 `model_routing.yaml` 的 `endpoints` 层统一定义
+- `llm.profile`
+  - 直接选用 `model_routing.yaml` 中某个 profile
+  - 适合一组 Agent / task 共用一套路由策略
+- `llm.tier`
+  - `heavy / medium / light` 的兼容抽象
+  - 现在更适合作为回退字段或批量路由时使用
+- `llm.max_context`
+  - 给直接模型覆盖指定上下文窗口
+- `llm.temperature`
+  - 直接定义 Agent 默认温度
+
+其他静态默认值也在这里调：
+
+- `max_steps`
+- `max_tokens_total`
+- `max_wall_seconds`
+- `tool_names`
+- `allowed_read_prefixes`
+- `allowed_write_prefixes`
+- `prompt_template`
+
+示例：
+
+```yaml
+agents:
+  hello:
+    llm:
+      model: "openrouter/openai/gpt-4o-mini"
+      endpoint: openrouter_main
+      max_context: 128000
+      temperature: 0.3
+    max_steps: 5
+    max_tokens_total: 10000
+
+  ideation:
+    llm:
+      model: "Pro/deepseek-ai/DeepSeek-V3.2"
+      endpoint: siliconflow
+      max_context: 128000
+      temperature: 0.75
+    max_steps: 60
+    max_tokens_total: 200000
+```
+
+建议：
+- 想单独给某个 Agent 绑定固定模型/provider，优先改 `agent_params.yaml` 的 `llm.model + llm.endpoint`
+- 想批量切一组任务的模型策略，优先改 `model_routing.yaml` 的 `profile`
+
 ### state_machine.yaml - 状态机定义
 
 定义 Agent 工作流的状态转换和数据流。
@@ -192,6 +251,8 @@ profiles:
   - `llm.profile`: 给当前 task 单独指定 LLM profile（可选）
   - `llm.tier`: 临时覆盖当前 task 的 tier（可选）
   - `llm.model`: 临时覆盖当前 task 的模型名（可选）
+  - `llm.endpoint`: 临时覆盖当前 task 的 endpoint（可选）
+  - `llm.max_context`: 临时覆盖当前 task 的上下文窗口（可选）
   - `llm.temperature`: 临时覆盖当前 task 的温度（可选）
   - `inputs`: 输入文件映射
   - `outputs`: 输出文件映射
@@ -227,11 +288,27 @@ states:
     next_on_failure: T4
 ```
 
+**按 task 直接切模型和 endpoint 的示例：**
+
+```yaml
+states:
+  HELLO:
+    agent: hello
+    llm:
+      model: "Pro/zai-org/GLM-4.7"
+      endpoint: siliconflow
+      max_context: 128000
+    outputs:
+      hello_file: hello.txt
+    next_on_success: done
+    next_on_failure: failed
+```
+
 说明：
-- `profile` 是最常用的覆盖方式，适合“这个 task 用哪家 provider/哪套模型”
-- `tier` 适合临时把某个 task 从 `medium` 提升到 `heavy`
-- `model` 适合调试时强制指定某个模型
-- 一般优先推荐改 `profile`，而不是在每个 agent Python 文件里写死 provider
+- `agent_params.yaml` 更适合配置“某个 Agent 默认用什么模型/provider”
+- `profile` 适合“这一组 task 共用哪套模型策略”
+- `model + endpoint` 适合“当前 task 临时强制切到某个模型/provider”
+- `tier` 适合临时回退到分档路由，而不是日常主入口
 
 **工作流说明：**
 

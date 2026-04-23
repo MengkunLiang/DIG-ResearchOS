@@ -72,12 +72,15 @@ states:
   T2:
     agent: scout
     inputs:
-      project: project.yaml      # 输入：项目配置
+      project: project.yaml                            # 项目配置
+      seed_papers: user_seeds/seed_papers.jsonl        # 种子论文（可选）
+      seed_constraints: user_seeds/seed_constraints.md # 种子约束（可选）
+      seed_ideas: user_seeds/seed_ideas.md             # 种子想法（可选）
     outputs:
       papers_raw: literature/papers_raw.jsonl           # 原始检索结果
-      papers_dedup: literature/papers_dedup.jsonl       # 去重后的论文列表
-      search_log: literature/search_log.md              # 检索日志
-      missing_areas: literature/missing_areas.md        # 识别的研究空白
+      papers_dedup: literature/papers_dedup.jsonl      # 去重后的论文列表
+      search_log: literature/search_log.md             # 检索日志
+      missing_areas: literature/missing_areas.md       # 识别的研究空白
     next_on_success: T3
     next_on_failure: failed
 
@@ -124,14 +127,16 @@ states:
     # llm:
     #   profile: ideation_deep
     inputs:
-      project: project.yaml                             # 输入：项目配置
-      synthesis: literature/synthesis.md                # 输入：文献综述
-      comparison_table: literature/comparison_table.csv # 输入：对比表
-      missing_areas: literature/missing_areas.md        # 输入：研究空白
+      project: project.yaml                             # 项目配置
+      synthesis: literature/synthesis.md               # 文献综述
+      comparison_table: literature/comparison_table.csv # 方法对比表
+      missing_areas: literature/missing_areas.md       # 研究空白
+      seed_ideas: user_seeds/seed_ideas.md            # 种子想法（可选）
+      seed_constraints: user_seeds/seed_constraints.md # 种子约束（可选）
     outputs:
       hypotheses: ideation/hypotheses.md                # 研究假设
-      exp_plan: ideation/exp_plan.yaml                  # 实验计划
-      risks: ideation/risks.md                          # 风险评估
+      exp_plan: ideation/exp_plan.yaml                 # 实验计划
+      risks: ideation/risks.md                        # 风险评估
     next_on_success: T4.5
     next_on_failure: T4  # 允许失败后重试
 
@@ -158,14 +163,15 @@ states:
     agent: experimenter
     mode: pilot
     inputs:
-      project: project.yaml                             # 输入：项目配置
-      hypotheses: ideation/hypotheses.md                # 输入：研究假设
-      exp_plan: ideation/exp_plan.yaml                  # 输入：实验计划
+      project: project.yaml                             # 项目配置
+      hypotheses: ideation/hypotheses.md               # 研究假设
+      exp_plan: ideation/exp_plan.yaml                 # 实验计划
+      risks: ideation/risks.md                       # 风险评估
     outputs:
-      pilot_results: pilot/pilot_results.json           # 试点实验结果
+      pilot_plan: pilot/pilot_plan.yaml              # 试点计划
+      pilot_code: pilot/pilot_code                    # 试点代码
+      pilot_results: pilot/pilot_results.json        # 试点实验结果
       motivation_validation: pilot/motivation_validation.md  # 动机验证报告
-      smoke_test_marker: pilot/smoke_test_passed.marker # 冒烟测试通过标记
-      docker_digests: pilot/docker_digests.txt          # Docker 镜像摘要
     next_on_success: T6
     next_on_failure: T4
 
@@ -175,17 +181,17 @@ states:
   T6:
     agent: novelty
     inputs:
-      project: project.yaml                             # 输入：项目配置
-      hypotheses: ideation/hypotheses.md                # 输入：研究假设
-      exp_plan: ideation/exp_plan.yaml                  # 输入：实验计划
-      pilot_results: pilot/pilot_results.json           # 输入：试点结果
-      synthesis: literature/synthesis.md                # 输入：文献综述
+      hypotheses: ideation/hypotheses.md               # 研究假设
+      exp_plan: ideation/exp_plan.yaml               # 实验计划
+      pilot_results: pilot/pilot_results.json       # 试点结果
+      motivation_validation: pilot/motivation_validation.md  # 动机验证
+      comparison_table: literature/comparison_table.csv # 方法对比表
     outputs:
-      novelty_report: novelty/novelty_report.md           # 新颖性报告
-      collision_cases: novelty/collision_cases.md         # 潜在撞车案例（如有）
+      novelty_report: novelty/novelty_report.md        # 新颖性报告
+      collision_cases: novelty/collision_cases.md     # 潜在撞车案例（如有）
       must_add_baselines: novelty/must_add_baselines.md # 必须补充的基线方法
     gate:
-      type: novelty_check
+      type: novelty_gate
       prompt: |
         新颖性评估完成。判定：{verdict}
 
@@ -205,18 +211,17 @@ states:
     agent: experimenter
     mode: full
     inputs:
-      project: project.yaml                             # 输入：项目配置
-      hypotheses: ideation/hypotheses.md                # 输入：研究假设
-      exp_plan: ideation/exp_plan.yaml                  # 输入：实验计划
-      pilot_results: pilot/pilot_results.json           # 输入：试点结果
-      novelty_report: novelty/novelty_report.md        # 输入：T6新颖性报告
+      project: project.yaml                           # 项目配置
+      exp_plan: ideation/exp_plan.yaml               # 实验计划
+      pilot_code: pilot/pilot_code                   # 试点代码
+      novelty_report: novelty/novelty_report.md      # 新颖性报告
+      must_add_baselines: novelty/must_add_baselines.md # 必须补充的基线
     outputs:
       results_summary: experiments/results_summary.json # 结果摘要
-      iteration_log: experiments/iteration_log.md       # 迭代日志
-      ablations: experiments/ablations.csv              # 消融实验结果
-      seed_ensemble_summary: experiments/seed_ensemble_summary.json  # 种子集成摘要
-      iteration_diversity_check: experiments/iteration_diversity_check.md  # 迭代多样性检查
-      docker_digests: experiments/docker_digests.txt    # Docker 镜像摘要
+      runs_dir: experiments/runs                       # 运行结果目录
+      configs_dir: experiments/configs                  # 配置目录
+      iteration_log: experiments/iteration_log.md     # 迭代日志
+      ablations: experiments/ablations.csv            # 消融实验结果
     next_on_success: T8-WRITE
     next_on_failure: failed
 
@@ -319,14 +324,13 @@ states:
   T9:
     agent: submission
     inputs:
-      project: project.yaml                             # 输入：项目配置
-      paper: drafts/paper.tex                           # 输入：论文草稿
-      related_work: literature/related_work.bib         # 输入：引用库
+      paper: drafts/paper.tex                         # 论文草稿
+      related_work_bib: literature/related_work.bib    # 引用库
     outputs:
-      bundle_dir: submission/bundle/                    # 投稿包目录
+      bundle_dir: submission/bundle                  # 投稿包目录
       migration_report: submission/migration_report.md  # 迁移报告
     gate:
-      type: user_confirm
+      type: submission_gate
       prompt: |
         投稿包准备完成。请审核：
         - migration_report.md 中的迁移详情

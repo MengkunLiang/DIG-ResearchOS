@@ -83,9 +83,16 @@ class MockLLMClient:
         self.last_messages: list[list[dict[str, Any]]] = []
 
     def resolve(
-        self, *, profile: str | None, tier: str, model_override: str | None
+        self,
+        *,
+        profile: str | None,
+        tier: str,
+        model_override: str | None = None,
+        endpoint_override: str | None = None,
+        max_context_override: int | None = None,
     ) -> list[tuple[ModelBinding, SimpleNamespace]]:
-        return [(ModelBinding(model=model_override or "mock-model", endpoint="mock", max_context=self.context_window), SimpleNamespace(name="mock"))]
+        max_ctx = max_context_override or self.context_window
+        return [(ModelBinding(model=model_override or "mock-model", endpoint=endpoint_override or "mock", max_context=max_ctx), SimpleNamespace(name="mock"))]
 
     def get_context_window(self, binding: ModelBinding) -> int:
         return self.context_window
@@ -105,6 +112,8 @@ class MockLLMClient:
         tier: str,
         profile: str | None = None,
         model_override: str | None = None,
+        endpoint_override: str | None = None,
+        max_context_override: int | None = None,
         timeout: int = 120,
         max_retries_per_model: int = 2,
     ) -> LLMResponse:
@@ -118,7 +127,7 @@ class MockLLMClient:
         return LLMResponse(
             raw=raw,
             model_used=model_override or "mock-model",
-            endpoint_used="mock-endpoint",
+            endpoint_used=endpoint_override or "mock-endpoint",
             tokens_in=raw.prompt_tokens,
             tokens_out=raw.completion_tokens,
             cost_usd=raw.cost_usd,

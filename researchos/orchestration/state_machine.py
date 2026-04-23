@@ -352,7 +352,7 @@ class StateMachine:
 
     def _gate_id_for_node(self, node: TaskNode) -> str:
         if isinstance(node.gate, dict):
-            return str(node.gate.get("id") or node.gate.get("ref"))
+            return str(node.gate.get("id") or node.gate.get("ref") or node.gate.get("type"))
         return str(node.gate)
 
     def _find_gate(self, gate_id: str) -> dict[str, Any]:

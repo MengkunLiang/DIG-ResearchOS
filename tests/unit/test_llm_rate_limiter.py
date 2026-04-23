@@ -121,6 +121,46 @@ profiles:
     ]
 
 
+def test_resolve_supports_direct_model_and_endpoint_override(tmp_path):
+    routing = tmp_path / "model_routing.yaml"
+    routing.write_text(
+        """
+default_profile: default
+
+endpoints:
+  siliconflow:
+    provider: openai
+    api_key_env: SILICONFLOW_API_KEY
+    api_base_env: SILICONFLOW_BASE_URL
+  openrouter_main:
+    provider: openrouter
+    api_key_env: OPENROUTER_API_KEY
+
+profiles:
+  default:
+    medium:
+      primary:
+        model: gpt-4o-mini
+        endpoint: siliconflow
+        max_context: 32000
+""".strip(),
+        encoding="utf-8",
+    )
+
+    client = LLMClient(routing)
+    binding, endpoint = client.resolve(
+        profile="default",
+        tier="medium",
+        model_override="openrouter/openai/gpt-4o-mini",
+        endpoint_override="openrouter_main",
+        max_context_override=128000,
+    )[0]
+
+    assert endpoint.name == "openrouter_main"
+    assert binding.model == "openrouter/openai/gpt-4o-mini"
+    assert binding.max_context == 128000
+
+
 @pytest.mark.asyncio
 async def test_llm_client_selftest_uses_profile_endpoints(tmp_path, monkeypatch):
     routing = tmp_path / "model_routing.yaml"

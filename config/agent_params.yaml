@@ -1,0 +1,498 @@
+# ResearchOS Agent 参数配置
+#
+# 目标：
+# - 把每个 Agent 的默认 LLM / budget / tool / 路径参数集中到这里管理
+# - 便于按 Agent 单独切换模型、provider、profile，而不必改 Python 源码
+#
+# 设计说明：
+# 1. llm.model + llm.endpoint
+#    - 这是当前推荐写法：每个 Agent 直接绑定自己的模型和 endpoint
+#    - endpoint 需要对应 config/model_routing.yaml 里的 endpoints.<name>
+#    - provider 不在这里写，而是在 endpoint 层统一定义
+#
+# 2. llm.tier
+#    - 现在只作为兼容/回退字段保留
+#    - 当 llm.model / llm.endpoint 未设置，或你想批量走 profile 路由时再使用
+#
+# 3. llm.profile
+#    - 直接指定 config/model_routing.yaml 中的 profile
+#    - 适合“这个 Agent 永远走某个 profile”，或想临时恢复到分档路由
+#
+# 4. max_tokens_total
+#    - 这里使用普通整数写法，例如 100000
+#    - 之前的 100_000 只是可读性写法，语义完全相同；现在统一成普通整数，避免阅读困惑
+
+agents:
+  hello:
+    llm:
+      # model + endpoint 是当前主入口；tier 仅作为回退保留
+      model: "openrouter/openai/gpt-4o-mini"
+      endpoint: openrouter_main
+      max_context: 128000
+      tier: medium
+      temperature: 0.3
+      # profile: hello_fast
+    max_steps: 5
+    max_tokens_total: 10000
+    max_wall_seconds: 60
+    max_validation_retries: 3
+    tool_names:
+      - echo
+      - write_file
+      - read_file
+      - finish_task
+    allowed_read_prefixes:
+      - ""
+    allowed_write_prefixes:
+      - ""
+    prompt_template: hello.j2
+
+  pi:
+    llm:
+      model: "Pro/deepseek-ai/DeepSeek-V3.2"
+      endpoint: siliconflow
+      max_context: 128000
+      tier: heavy
+      temperature: 0.3
+      # profile: siliconflow_only
+    max_steps: 30
+    max_tokens_total: 100000
+    max_wall_seconds: 300
+    max_validation_retries: 3
+    tool_names:
+      - read_file
+      - write_file
+      - write_structured_file
+      - list_files
+      - ask_human
+      - finish_task
+      - process_seed_paper
+    allowed_read_prefixes:
+      - ""
+      - user_seeds/
+      - experiments/
+      - ideation/
+      - evaluation/
+    allowed_write_prefixes:
+      - ""
+      - user_seeds/
+      - evaluation/
+    prompt_template: pi.j2
+    structured_outputs:
+      project.yaml: project
+    modes:
+      init:
+        description: 项目初始化
+        expected_rounds: 3
+      evaluate:
+        description: 结果评估
+        expected_rounds: 2
+
+  scout:
+    llm:
+      model: "Pro/deepseek-ai/DeepSeek-V3.2"
+      endpoint: siliconflow
+      max_context: 128000
+      tier: medium
+      temperature: 0.5
+      # profile: mixed
+    max_steps: 50
+    max_tokens_total: 1500000
+    max_wall_seconds: 600
+    max_validation_retries: 3
+    tool_names:
+      - read_file
+      - write_file
+      - write_structured_file
+      - multi_source_search
+      - search_papers
+      - fetch_paper_metadata
+      - finish_task
+      - deduplicate_papers
+      - score_papers
+      - expand_queries
+      - generate_search_log
+      - enrich_papers
+      - detect_duplicate_queries
+      - analyze_dedup_rate
+      - semantic_scholar_search
+      - semantic_scholar_get_paper
+      - arxiv_search
+      - openalex_search
+      - openalex_get_work
+      - crossref_search
+      - crossref_get_work
+    allowed_read_prefixes:
+      - ""
+      - user_seeds/
+      - seeds/
+    allowed_write_prefixes:
+      - literature/
+    prompt_template: scout.j2
+    structured_outputs:
+      literature/papers_dedup.jsonl: papers_dedup
+      literature/papers_raw.jsonl: papers_raw
+    expected_outputs:
+      papers_raw_min: 30
+      papers_dedup_min: 15
+      papers_dedup_max: 120
+
+  reader:
+    llm:
+      model: "Pro/deepseek-ai/DeepSeek-V3.2"
+      endpoint: siliconflow
+      max_context: 128000
+      tier: medium
+      temperature: 0.5
+      # profile: mixed
+    max_steps: 100
+    max_tokens_total: 300000
+    max_wall_seconds: 1200
+    max_validation_retries: 3
+    tool_names:
+      - read_file
+      - write_file
+      - append_file
+      - list_files
+      - fetch_paper_pdf
+      - extract_pdf_text
+      - finish_task
+    allowed_read_prefixes:
+      - ""
+      - literature/
+    allowed_write_prefixes:
+      - literature/
+    prompt_template: reader.j2
+    modes:
+      read:
+        description: 深度阅读
+        max_steps: 80
+        max_tokens_total: 200000
+        expected_notes_ratio: 0.8
+        expected_outputs:
+          paper_notes_min: 10
+          comparison_table_required: true
+          related_work_bib_required: true
+      synthesize:
+        description: 文献综合
+        max_steps: 50
+        max_tokens_total: 150000
+        expected_sections:
+          - "## Method Families"
+          - "## Shared Assumptions"
+          - "## Performance-Efficiency Frontier"
+          - "## Technology Trends"
+          - "## Research Questions"
+        expected_length_min: 1000
+        expected_citations_min: 5
+
+  ideation:
+    llm:
+      model: "Pro/deepseek-ai/DeepSeek-V3.2"
+      endpoint: siliconflow
+      max_context: 128000
+      tier: heavy
+      temperature: 0.75
+      # profile: ideation_deep
+    max_steps: 60
+    max_tokens_total: 200000
+    max_wall_seconds: 600
+    max_validation_retries: 3
+    tool_names:
+      - read_file
+      - write_file
+      - write_structured_file
+      - list_files
+      - ask_human
+      - finish_task
+    allowed_read_prefixes:
+      - ""
+      - literature/
+      - user_seeds/
+    allowed_write_prefixes:
+      - ideation/
+    prompt_template: ideation.j2
+    structured_outputs:
+      ideation/exp_plan.yaml: exp_plan
+    expected_outputs:
+      hypothesis_count: 3
+      risk_count: 3
+    gates:
+      - id: gate1
+        description: 选择研究方向
+        type: user_select
+      - id: gate2
+        description: 确认假设方案
+        type: user_confirm
+
+  novelty_auditor:
+    llm:
+      model: "Pro/deepseek-ai/DeepSeek-V3.2"
+      endpoint: siliconflow
+      max_context: 128000
+      tier: heavy
+      temperature: 0.3
+      # profile: audit_safe
+    max_steps: 50
+    max_tokens_total: 300000
+    max_wall_seconds: 400
+    max_validation_retries: 3
+    tool_names:
+      - read_file
+      - write_file
+      - list_files
+      - search_papers
+      - fetch_paper_metadata
+      - finish_task
+    allowed_read_prefixes:
+      - ""
+      - ideation/
+      - literature/
+    allowed_write_prefixes:
+      - ideation/
+    prompt_template: novelty_auditor.j2
+    novelty_levels:
+      - Level 0
+      - Level 1
+      - Level 2
+      - Level 3
+
+  novelty:
+    llm:
+      model: "openrouter/openai/gpt-4o-mini"
+      endpoint: openrouter_main
+      max_context: 128000
+      tier: medium
+      temperature: 0.3
+      # profile: mixed
+    max_steps: 50
+    max_tokens_total: 300000
+    max_wall_seconds: 400
+    max_validation_retries: 3
+    tool_names:
+      - read_file
+      - write_file
+      - list_files
+      - search_papers
+      - ask_human
+      - finish_task
+    allowed_read_prefixes:
+      - ""
+      - ideation/
+      - literature/
+      - pilot/
+    allowed_write_prefixes:
+      - novelty/
+    prompt_template: novelty.j2
+
+  experimenter:
+    llm:
+      model: "Pro/deepseek-ai/DeepSeek-V3.2"
+      endpoint: siliconflow
+      max_context: 128000
+      tier: medium
+      temperature: 0.3
+      # profile: mixed
+    max_steps: 150
+    max_tokens_total: 600000
+    max_wall_seconds: 14400
+    max_validation_retries: 2
+    tool_names:
+      - read_file
+      - write_file
+      - write_structured_file
+      - list_files
+      - append_file
+      - bash_run
+      - docker_exec
+      - finish_task
+    allowed_read_prefixes:
+      - ""
+      - ideation/
+      - experiments/
+      - pilot/
+      - literature/
+    allowed_write_prefixes:
+      - experiments/
+      - pilot/
+    prompt_template: experimenter.j2
+    structured_outputs:
+      experiments/results_summary.json: results_summary
+      pilot/pilot_results.json: pilot_results
+      pilot/pilot_plan.yaml: pilot_plan
+    modes:
+      pilot:
+        description: 试点实验
+        max_steps: 100
+        max_tokens_total: 500000
+        max_wall_seconds: 7200
+        max_validation_retries: 2
+        docker_required: true
+        gpu_required: true
+        expected_outputs:
+          smoke_test_required: true
+          motivation_validation_required: true
+      full:
+        description: 完整实验
+        max_steps: 150
+        max_tokens_total: 800000
+        max_wall_seconds: 14400
+        max_validation_retries: 2
+        docker_required: true
+        gpu_required: true
+        expected_outputs:
+          ablation_min: 3
+          seed_ensemble_min: 3
+          results_summary_required: true
+
+  writer:
+    llm:
+      model: "openrouter/openai/gpt-4o"
+      endpoint: openrouter_main
+      max_context: 128000
+      tier: heavy
+      temperature: 0.7
+      # profile: ideation_deep
+    max_steps: 60
+    max_tokens_total: 500000
+    max_wall_seconds: 1200
+    max_validation_retries: 3
+    tool_names:
+      - read_file
+      - write_file
+      - list_files
+      - finish_task
+    allowed_read_prefixes:
+      - ""
+      - literature/
+      - experiments/
+      - ideation/
+    allowed_write_prefixes:
+      - drafts/
+    prompt_template: writer.j2
+    modes:
+      outline:
+        description: 生成大纲
+        max_steps: 30
+        max_tokens_total: 100000
+      draft:
+        description: 生成初稿
+        max_steps: 50
+        max_tokens_total: 250000
+      revise:
+        description: 修订
+        max_steps: 30
+        max_tokens_total: 150000
+    latex_required: true
+
+  reviewer:
+    llm:
+      model: "openrouter/openai/gpt-4o"
+      endpoint: openrouter_main
+      max_context: 128000
+      tier: heavy
+      temperature: 0.3
+      # profile: audit_safe
+    max_steps: 30
+    max_tokens_total: 300000
+    max_wall_seconds: 600
+    max_validation_retries: 3
+    tool_names:
+      - read_file
+      - write_file
+      - finish_task
+    allowed_read_prefixes:
+      - ""
+      - drafts/
+      - literature/
+      - experiments/
+    allowed_write_prefixes:
+      - drafts/review_rounds/
+    prompt_template: reviewer.j2
+    expected_sections:
+      - "## Overall Assessment"
+      - "## Major Issues"
+      - "## Minor Issues"
+    expected_length_min: 500
+
+  submission:
+    llm:
+      model: "openrouter/openai/gpt-4o-mini"
+      endpoint: openrouter_main
+      max_context: 128000
+      tier: medium
+      temperature: 0.3
+      # profile: mixed
+    max_steps: 40
+    max_tokens_total: 200000
+    max_wall_seconds: 300
+    max_validation_retries: 3
+    tool_names:
+      - read_file
+      - write_file
+      - list_files
+      - bash_run
+      - docker_exec
+      - finish_task
+    allowed_read_prefixes:
+      - ""
+      - drafts/
+      - literature/
+      - experiments/
+    allowed_write_prefixes:
+      - submission/
+    prompt_template: submission.j2
+    docker_required: true
+    expected_outputs:
+      bundle_required: true
+      anonymization_required: true
+      compile_required: true
+
+global_budget:
+  default_max_budget_usd: 100.0
+  warning_threshold: 0.7
+  critical_threshold: 0.9
+  stage_allocation:
+    T1_init: 0.05
+    T2_scout: 0.10
+    T3_read: 0.15
+    T4_ideation: 0.10
+    T5_pilot: 0.20
+    T7_full: 0.30
+    T8_write: 0.08
+    T9_submission: 0.02
+
+global_timeout:
+  max_agent_runtime: 14400
+  max_tool_call: 300
+  docker_operation: 7200
+  llm_call: 120
+
+docker:
+  requires_docker:
+    - experimenter
+    - submission
+  requires_gpu:
+    - experimenter
+  default_image: researchos/system:latest
+  gpu:
+    default_count: 1
+    max_count: 2
+    memory_limit: 16g
+
+retry_policy:
+  llm_retries: 2
+  llm_retry_delay: 2
+  tool_retries: 3
+  tool_retry_delay: 1
+  validation_retries: 3
+  no_retry_errors:
+    - AuthenticationError
+    - PermissionDenied
+    - BudgetExceeded
+
+logging:
+  level: INFO
+  trace_enabled: true
+  trace_retention_days: 30
+  trace_max_size_mb: 10

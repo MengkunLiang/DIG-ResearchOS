@@ -1,27 +1,31 @@
 # ResearchOS LLM 路由配置
 #
 # 这份文件只负责回答两个问题：
-# 1. 某个 task / agent 选中了 heavy|medium|light 之后，对应具体用哪个模型？
-# 2. 这个模型最终通过哪个 endpoint / provider 发出去？
+# 1. 某个 task / agent 最终要走哪个 endpoint？
+# 2. 这个 endpoint 背后对应哪个 provider / API key / base URL？
 #
 # 使用顺序：
-# - Agent 先声明自己的 model_tier（例如 Hello=medium, Ideation=heavy）
+# - Agent 可以直接在 config/agent_params.yaml 里声明 llm.model + llm.endpoint
+# - 如果 state_machine.yaml 里给某个 task 配了 llm.model / llm.endpoint，会再覆盖 Agent 默认值
+# - 如果没有显式 model + endpoint，才回退到 Agent 的 model_tier（例如 Hello=medium, Ideation=heavy）
 # - 如果 state_machine.yaml 里给某个 task 配了 llm.profile，则优先使用该 profile
 # - 否则回退到 agent 自己的 llm_profile
 # - 再否则回退到本文件的 default_profile
 #
 # 建议：
-# - 想“按任务切 provider”，优先改 state_machine.yaml 的 llm.profile
+# - 想“按 Agent 固定模型/provider”，优先改 config/agent_params.yaml
+# - 想“按 task 临时切 provider”，优先改 state_machine.yaml 的 llm.model / llm.endpoint 或 llm.profile
 # - 想“给一组任务共用一套模型策略”，就在这里新增一个 profile
 
 # ========================================
 # API 密钥配置（可选）
 # 可以在这里直接配置 API key，也可以通过环境变量引用
 # 优先级：api_key > api_key_env
+# 实际使用时更推荐把密钥放在项目根目录 `.env` 中
 # ========================================
 api_keys:
-  # SiliconFlow API Key（直接配置，不依赖环境变量）
-  SILICONFLOW_API_KEY: "your-siliconflow-key-here"
+  # SiliconFlow API Key（示例占位；留空表示完全走 `.env`）
+  SILICONFLOW_API_KEY: ""
   SILICONFLOW_BASE_URL: "https://api.siliconflow.cn/v1"
 
   # OpenRouter API Key（直接配置）
@@ -40,6 +44,7 @@ default_profile: default
 
 # API 端点配置。
 # 每个 endpoint 都可以有自己独立的 provider / API key / base URL。
+# agent_params.yaml 里的 llm.endpoint 引用的就是这里的名字。
 # 支持两种配置方式：
 #   1. api_key_env: 从环境变量读取（如 "SILICONFLOW_API_KEY"）
 #   2. api_key: 直接在这里配置（见上方 api_keys 配置）
