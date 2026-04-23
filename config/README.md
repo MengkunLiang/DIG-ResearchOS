@@ -97,10 +97,29 @@ logging:
 
 定义 LLM 服务端点和模型选择策略。
 
+#### 一张表看懂 LLM 选择链路
+
+| 层级 | 你配置什么 | 作用 | 例子 |
+|------|------------|------|------|
+| Agent | `model_tier` | 只声明任务需要 `heavy` / `medium` / `light` 哪一档 | `HelloAgent -> medium`，`IdeationAgent -> heavy` |
+| state_machine | `states.<task>.llm.profile` | 给某个 task 单独指定用哪套路由 | `HELLO -> hello_fast`，`T4 -> ideation_deep` |
+| model_routing | `profiles.<profile>.<tier>` | 把某个 profile 下的 tier 映射到具体模型 | `ideation_deep.heavy -> Pro/deepseek-ai/DeepSeek-V3.2` |
+| endpoint | `endpoints.<name>` | 决定最终 provider / API key / base URL | `siliconflow -> provider=openai` |
+
+默认链路：
+- Agent 先给出 `tier`
+- 如果 `state_machine.yaml` 里给当前 task 配了 `llm.profile`，优先用它
+- 否则回退到 agent 自带的 `llm_profile`
+- 再否则使用 `model_routing.yaml` 的 `default_profile`
+
+对 `run-task HELLO` 这种单任务调试模式：
+- 不读取 `state_machine.yaml`
+- 需要用 `--profile xxx` 或依赖 `default_profile`
+
 **主要配置项：**
 
 - **endpoints**: API 端点定义
-  - `provider`: 服务提供商（当前支持 `openai`）
+  - `provider`: 服务提供商（如 `openai`、`anthropic`、`azure`）
   - `api_key_env`: API Key 环境变量名
   - `api_base_env`: Base URL 环境变量名
 
@@ -108,6 +127,15 @@ logging:
   - `heavy`: 重负载任务（文献综合、深度分析）
   - `medium`: 中等负载任务（文献检索、信息提取）
   - `light`: 轻负载任务（简单查询、格式转换）
+
+说明：
+- Agent 本身只声明 `model_tier` / `llm_profile`，并不把 provider 写死在代码里。
+- 每个 `primary` / `fallback` 都可以指向不同的 `endpoint`。
+- provider 是挂在 `endpoints.<name>.provider` 上的，所以完全可以做到：
+  - `heavy.primary -> siliconflow(openai-compatible)`
+  - `heavy.fallback -> anthropic`
+  - `medium.primary -> openai`
+- 可参考 [model_routing.multi_provider.example.yaml](./model_routing.multi_provider.example.yaml)。
 
 - **truncation**: 上下文截断策略
   - `trigger_ratio`: 触发截断的阈值（默认：0.8）
@@ -161,11 +189,49 @@ profiles:
 - **states**: 状态定义
   - `agent`: 使用的 Agent 名称
   - `mode`: Agent 模式（可选）
+  - `llm.profile`: 给当前 task 单独指定 LLM profile（可选）
+  - `llm.tier`: 临时覆盖当前 task 的 tier（可选）
+  - `llm.model`: 临时覆盖当前 task 的模型名（可选）
+  - `llm.temperature`: 临时覆盖当前 task 的温度（可选）
   - `inputs`: 输入文件映射
   - `outputs`: 输出文件映射
   - `next_on_success`: 成功后的下一状态
   - `next_on_failure`: 失败后的下一状态
   - `terminal`: 是否为终止状态
+
+**按 task 单独切 profile 的示例：**
+
+```yaml
+states:
+  HELLO:
+    agent: hello
+    llm:
+      profile: hello_fast
+    outputs:
+      hello_file: hello.txt
+    next_on_success: done
+    next_on_failure: failed
+
+  T4:
+    agent: ideation
+    llm:
+      profile: ideation_deep
+    inputs:
+      project: project.yaml
+      synthesis: literature/synthesis.md
+    outputs:
+      hypotheses: ideation/hypotheses.md
+      exp_plan: ideation/exp_plan.yaml
+      risks: ideation/risks.md
+    next_on_success: T4.5
+    next_on_failure: T4
+```
+
+说明：
+- `profile` 是最常用的覆盖方式，适合“这个 task 用哪家 provider/哪套模型”
+- `tier` 适合临时把某个 task 从 `medium` 提升到 `heavy`
+- `model` 适合调试时强制指定某个模型
+- 一般优先推荐改 `profile`，而不是在每个 agent Python 文件里写死 provider
 
 **工作流说明：**
 

@@ -105,17 +105,16 @@ def test_validate_t2_artifacts_with_builtin_checker(tmp_path: Path):
     workspace = tmp_path / "workspace"
     (workspace / "literature").mkdir(parents=True)
 
-    # papers_raw使用对象格式的authors（来自API）
+    # papers_raw使用字符串格式的authors（与schema一致）
     paper_raw = {
         "id": "paper-1",
         "source": "semantic_scholar",
         "title": "A Runtime Paper",
-        "authors": [{"name": "Ada"}, {"name": "Bob"}],
+        "authors": ["Ada", "Bob"],
         "year": 2025,
         "abstract": "demo",
         "venue": "Conf",
-        "citationCount": 1,
-        "externalIds": {},
+        "citation_count": 1,
         "url": "https://example.com/paper-1",
     }
     (workspace / "literature" / "papers_raw.jsonl").write_text(
@@ -132,6 +131,9 @@ def test_validate_t2_artifacts_with_builtin_checker(tmp_path: Path):
         "year": 2025,
         "abstract": "demo",
         "venue": "Conf",
+        "source_type": "conference",
+        "relevance_score": 0.95,
+        "why_relevant": "Directly related to the research topic",
         "citation_count": 1,
         "url": "https://example.com/paper-1",
     }

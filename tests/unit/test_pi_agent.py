@@ -107,8 +107,8 @@ def test_pi_agent_initial_user_message_init(pi_agent, temp_workspace):
 
     message = pi_agent.initial_user_message(ctx)
 
+    # initial_user_message 不包含 user_topic（topic 在 system_prompt 中作为背景信息）
     assert "T1" in message or "初始化" in message
-    assert "test topic" in message
 
 
 def test_pi_agent_initial_user_message_evaluate(pi_agent, temp_workspace):
@@ -180,7 +180,10 @@ def test_validate_init_outputs_missing_project(pi_agent, temp_workspace):
 
 
 def test_validate_init_outputs_missing_seed_files(pi_agent, temp_workspace):
-    """测试init模式缺少seed文件的情况。"""
+    """测试init模式缺少seed文件的情况。
+
+    注意：seed 文件现在是可选的，所以验证应该通过。
+    """
     # 只创建project.yaml，不创建seed文件
     project_data = {
         "project_id": "test-project",
@@ -201,10 +204,10 @@ def test_validate_init_outputs_missing_seed_files(pi_agent, temp_workspace):
         outputs_expected={"project": project_path},
     )
 
+    # seed 文件是可选的，验证应该通过
     ok, err = pi_agent.validate_outputs(ctx)
 
-    assert not ok
-    assert "seed" in err.lower()
+    assert ok, f"验证应该通过，因为 seed 文件是可选的。错误: {err}"
 
 
 def test_validate_init_outputs_invalid_schema(pi_agent, temp_workspace):

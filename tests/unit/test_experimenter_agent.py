@@ -72,10 +72,11 @@ def test_experimenter_agent_spec(experimenter_agent):
     assert spec.temperature == 0.3
     assert spec.prompt_template == "experimenter.j2"
 
-    # 检查工具（包含 append_file）
+    # 检查工具（包含 write_structured_file）
     expected_tools = [
         "read_file",
         "write_file",
+        "write_structured_file",
         "list_files",
         "append_file",
         "bash_run",

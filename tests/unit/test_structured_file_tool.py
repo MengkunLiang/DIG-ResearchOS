@@ -259,14 +259,28 @@ async def test_write_structured_file_jsonl_format(tool: WriteStructuredFileTool,
                 "title": "Paper 1",
                 "authors": ["Author A"],
                 "year": 2024,
-                "source": "arxiv"
+                "source": "arxiv",
+                "venue": "arXiv",
+                "source_type": "preprint",
+                "relevance_score": 0.95,
+                "why_relevant": "Directly related to the research topic",
+                "abstract": "This is an abstract about discrete diffusion for language.",
+                "citation_count": 10,
+                "url": "https://arxiv.org/abs/2401.00001"
             },
             {
                 "id": "2401.00002",
                 "title": "Paper 2",
                 "authors": ["Author B"],
                 "year": 2024,
-                "source": "arxiv"
+                "source": "arxiv",
+                "venue": "arXiv",
+                "source_type": "preprint",
+                "relevance_score": 0.90,
+                "why_relevant": "Related to the research topic",
+                "abstract": "This is an abstract about diffusion for language generation.",
+                "citation_count": 5,
+                "url": "https://arxiv.org/abs/2401.00002"
             }
         ]
     )
@@ -299,7 +313,14 @@ async def test_write_structured_file_jsonl_single_object(tool: WriteStructuredFi
             "title": "Paper 1",
             "authors": ["Author A"],
             "year": 2024,
-            "source": "arxiv"
+            "source": "arxiv",
+            "venue": "arXiv",
+            "source_type": "preprint",
+            "relevance_score": 0.95,
+            "why_relevant": "Directly related to the research topic",
+            "abstract": "This is an abstract about discrete diffusion for language.",
+            "citation_count": 10,
+            "url": "https://arxiv.org/abs/2401.00001"
         }
     )
 

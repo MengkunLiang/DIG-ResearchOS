@@ -1,67 +1,193 @@
-# 默认使用的配置文件名称
+# ResearchOS LLM 路由配置
+#
+# 这份文件只负责回答两个问题：
+# 1. 某个 task / agent 选中了 heavy|medium|light 之后，对应具体用哪个模型？
+# 2. 这个模型最终通过哪个 endpoint / provider 发出去？
+#
+# 使用顺序：
+# - Agent 先声明自己的 model_tier（例如 Hello=medium, Ideation=heavy）
+# - 如果 state_machine.yaml 里给某个 task 配了 llm.profile，则优先使用该 profile
+# - 否则回退到 agent 自己的 llm_profile
+# - 再否则回退到本文件的 default_profile
+#
+# 建议：
+# - 想“按任务切 provider”，优先改 state_machine.yaml 的 llm.profile
+# - 想“给一组任务共用一套模型策略”，就在这里新增一个 profile
+
+# 默认 profile。
+# 保守策略：继续保持当前默认链路为 SiliconFlow，避免影响已有运行方式。
 default_profile: default
 
-# API 端点配置
-# 定义可用的 LLM 服务端点，支持 OpenAI 及兼容服务
+# API 端点配置。
+# 每个 endpoint 都可以有自己独立的 provider / API key / base URL。
 endpoints:
-  relay:
-    # 服务提供商类型，目前支持 openai
+  siliconflow:
+    # SiliconFlow 走 OpenAI-compatible 协议，因此 provider 仍是 openai。
     provider: openai
+    api_key_env: SILICONFLOW_API_KEY
+    api_base_env: SILICONFLOW_BASE_URL
 
-    # API Key 环境变量名
-    # 从环境变量中读取 API Key，避免硬编码敏感信息
-    api_key_env: OPENAI_API_KEY
+  openrouter_main:
+    # OpenRouter 在 LiteLLM 中有独立 provider。
+    provider: openrouter
+    api_key_env: OPENROUTER_API_KEY
 
-    # API Base URL 环境变量名
-    # 支持自定义 API 端点，可用于第三方 OpenAI 兼容服务
-    api_base_env: OPENAI_BASE_URL
+  # 如需启用 OpenAI 官方接口，可取消下面注释并在 .env 中提供变量：
+  #
+  # openai_official:
+  #   provider: openai
+  #   api_key_env: OPENAI_API_KEY
+  #   api_base_env: OPENAI_BASE_URL
 
-# 配置文件定义
-# 每个 profile 包含不同负载级别的模型配置
+  # 如需启用 Anthropic 官方接口，可取消下面注释并在 .env 中提供变量：
+  #
+  # anthropic_main:
+  #   provider: anthropic
+  #   api_key_env: ANTHROPIC_API_KEY
+
+# 路由配置。
+# profile = 一套路由策略；
+# heavy / medium / light = agent 选中的负载档位；
+# endpoint = 最终走哪个 provider。
 profiles:
+  # 默认 profile：保持你当前的 SiliconFlow 行为不变。
+  # 如果你什么都不配，所有未覆盖的 task 都会走这里。
   default:
-    # heavy: 重负载任务（如文献综合、深度分析）
-    # 需要更强的推理能力和更大的上下文窗口
     heavy:
       primary:
-        # 模型名称，需与 API 端点支持的模型匹配
-        model: "gpt-5.4"
-        # 使用的端点名称，引用上面 endpoints 中定义的端点
-        endpoint: relay
-        # 最大上下文长度（tokens）
+        # OpenAI-compatible 的原始模型名可以保留，不必手工写 openai/ 前缀。
+        model: "Pro/deepseek-ai/DeepSeek-V3.2"
+        endpoint: siliconflow
         max_context: 128000
 
-    # medium: 中等负载任务（如文献检索、信息提取）
-    # 平衡性能和成本
     medium:
       primary:
-        model: "gpt-4o"
-        endpoint: relay
+        model: "Pro/deepseek-ai/DeepSeek-V3.2"
+        endpoint: siliconflow
         max_context: 128000
 
-    # light: 轻负载任务（如简单查询、格式转换）
-    # 优先考虑响应速度和成本
     light:
       primary:
-        model: "gpt-3.5-turbo"
-        endpoint: relay
+        model: "Pro/deepseek-ai/DeepSeek-V3.2"
+        endpoint: siliconflow
         max_context: 128000
 
-# 上下文截断配置
-# 当对话历史超过模型上下文限制时自动截断
+  # 显式的 SiliconFlow-only profile。
+  # 适合在 state_machine 里直接写 llm.profile: siliconflow_only，
+  # 这样即便以后 default_profile 改了，这些 task 也不会漂移。
+  siliconflow_only:
+    heavy:
+      primary:
+        model: "Pro/deepseek-ai/DeepSeek-V3.2"
+        endpoint: siliconflow
+        max_context: 128000
+
+    medium:
+      primary:
+        model: "Pro/deepseek-ai/DeepSeek-V3.2"
+        endpoint: siliconflow
+        max_context: 128000
+
+    light:
+      primary:
+        model: "Pro/zai-org/GLM-4.7"
+        endpoint: siliconflow
+        max_context: 128000
+
+  # OpenRouter 快速 profile。
+  # 说明：
+  # - openrouter 作为 provider 时，模型名建议写成
+  #   openrouter/<upstream-provider>/<model-name>
+  # - 比如 openrouter/openai/gpt-4o-mini
+  openrouter_fast:
+    heavy:
+      primary:
+        model: "openrouter/openai/gpt-4o"
+        endpoint: openrouter_main
+        max_context: 128000
+
+    medium:
+      primary:
+        model: "openrouter/openai/gpt-4o-mini"
+        endpoint: openrouter_main
+        max_context: 128000
+
+    light:
+      primary:
+        model: "openrouter/openai/gpt-4.1-mini"
+        endpoint: openrouter_main
+        max_context: 128000
+
+  # 混合 profile。
+  # 典型用法：
+  # - heavy 任务走 SiliconFlow 的 DeepSeek
+  # - medium / light 任务走 OpenRouter
+  mixed:
+    heavy:
+      primary:
+        model: "Pro/deepseek-ai/DeepSeek-V3.2"
+        endpoint: siliconflow
+        max_context: 128000
+      fallback:
+        - model: "openrouter/openai/gpt-4o"
+          endpoint: openrouter_main
+          max_context: 128000
+
+    medium:
+      primary:
+        model: "openrouter/openai/gpt-4o-mini"
+        endpoint: openrouter_main
+        max_context: 128000
+      fallback:
+        - model: "Pro/deepseek-ai/DeepSeek-V3.2"
+          endpoint: siliconflow
+          max_context: 128000
+
+    light:
+      primary:
+        model: "openrouter/openai/gpt-4.1-mini"
+        endpoint: openrouter_main
+        max_context: 128000
+
+  # 示例：按任务单独选 profile 时可以这么命名。
+  # - HELLO 之类的小任务：hello_fast
+  # - T4 假设生成：ideation_deep
+  # - T4.5 审计任务：audit_safe
+  hello_fast:
+    medium:
+      primary:
+        model: "openrouter/openai/gpt-4o-mini"
+        endpoint: openrouter_main
+        max_context: 128000
+
+  ideation_deep:
+    heavy:
+      primary:
+        model: "Pro/deepseek-ai/DeepSeek-V3.2"
+        endpoint: siliconflow
+        max_context: 128000
+      fallback:
+        - model: "openrouter/openai/gpt-4o"
+          endpoint: openrouter_main
+          max_context: 128000
+
+  audit_safe:
+    heavy:
+      primary:
+        model: "openrouter/openai/gpt-4o"
+        endpoint: openrouter_main
+        max_context: 128000
+
+# 上下文截断配置。
 truncation:
-  # 触发截断的阈值比例（相对于 max_context）
-  # 当使用量达到 80% 时触发截断
+  # 当消息累计接近 max_context 的 80% 时开始截断。
   trigger_ratio: 0.8
 
-  # 截断后保留的目标比例
-  # 截断到 60% 以留出足够空间继续对话
+  # 截断后的目标占用比例。
   target_ratio: 0.6
 
-  # 是否保留系统提示词
-  # true: 始终保留系统消息，确保 Agent 行为一致
+  # 是否始终保留 system prompt。
   keep_system: true
 
-  # 保留最近的对话轮数
-  # 确保最新的上下文不被截断，保持对话连贯性
+  # 截断时至少保留最近 N 轮对话。
   keep_recent_turns: 10

@@ -270,6 +270,15 @@ truncation:
 
 每个 profile 定义三个负载等级：
 
+- `primary.endpoint` / `fallback[].endpoint` 决定这条路由实际走哪个 endpoint
+- 每个 endpoint 都可以有自己独立的 `provider`、`api_key_env`、`api_base_env`
+- 这意味着你可以在同一个 profile 里混用不同 provider
+  - 例如：`heavy.primary -> siliconflow(openai-compatible)`
+  - 例如：`heavy.fallback -> anthropic`
+  - 例如：`medium.primary -> openai`
+- Agent 代码通常只声明 `model_tier="heavy|medium|light"`，真正选到哪个 provider 由路由配置决定
+- 可参考 `config/model_routing.multi_provider.example.yaml`
+
 - **`heavy`**: 重负载任务
   - 用于：T1 PI, T3.5 Synthesis, T4 Ideation, T4.5 Novelty Auditor, T8 Writer/Reviewer
   - 推荐模型：GPT-4, Claude Opus

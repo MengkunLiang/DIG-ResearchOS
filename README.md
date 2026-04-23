@@ -187,9 +187,9 @@ T7 (Experimenter Agent - full)
   ↓ full experiment results
 T7.5 (PI Agent - evaluate)
   ↓ evaluation decision
-T8 (Writer + Reviewer Agents) ⚠️ Planned
+T8 (Writer + Reviewer Agents)
   ↓ paper draft
-T9 (Submission Agent) ⚠️ Planned
+T9 (Submission Agent)
   ↓ submission package
 ```
 

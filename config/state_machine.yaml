@@ -7,6 +7,11 @@
 #   <state_name>:
 #     agent: <agent_name>        # 使用的 Agent
 #     mode: <mode>               # Agent 模式（可选）
+#     llm:                       # LLM 覆盖（可选）
+#       profile: <profile_name>  # 给当前 task 单独指定 profile
+#       tier: <tier_name>        # 临时覆盖为 heavy / medium / light
+#       model: <model_name>      # 临时强制指定模型
+#       temperature: <float>     # 临时覆盖温度
 #     inputs:                    # 输入文件映射
 #       <key>: <file_path>
 #     outputs:                   # 输出文件映射
@@ -37,6 +42,8 @@ states:
   # Agent：hello（输出简单的问候消息）
   HELLO:
     agent: hello
+    # llm:
+    #   profile: hello_fast
     outputs:
       hello_file: hello.txt      # 输出文件：问候消息
     next_on_success: done        # 成功后进入 done 状态
@@ -114,6 +121,8 @@ states:
   # Agent：ideation（创意生成器）
   T4:
     agent: ideation
+    # llm:
+    #   profile: ideation_deep
     inputs:
       project: project.yaml                             # 输入：项目配置
       synthesis: literature/synthesis.md                # 输入：文献综述

@@ -37,6 +37,11 @@ class Endpoint:
     extra_headers: dict[str, Any] = field(default_factory=dict)
     rate_limit: dict[str, Any] = field(default_factory=dict)
 
+    def litellm_provider(self) -> str:
+        """返回传给 LiteLLM 的 provider 前缀。"""
+
+        return self.provider
+
     def to_litellm_kwargs(self) -> dict[str, Any]:
         """把 endpoint 配置转换成 litellm 需要的关键字参数。
 
@@ -108,9 +113,17 @@ class ModelBinding:
     max_context: int = 100_000
 
     def qualified(self, endpoint_obj: Endpoint) -> str:
+        provider = endpoint_obj.litellm_provider()
+        if self.model.startswith(f"{provider}/"):
+            return self.model
+        # OpenAI-compatible endpoints 经常使用带 `/` 的原始模型名，
+        # 例如 `Pro/deepseek-ai/DeepSeek-V3.2`。这类名字仍然需要
+        # 由 LiteLLM 看到 `openai/...` 前缀，不能仅凭 `/` 判断为已限定。
+        if provider == "openai":
+            return f"{provider}/{self.model}"
         if "/" in self.model:
             return self.model
-        return f"{endpoint_obj.provider}/{self.model}"
+        return f"{provider}/{self.model}"
 
 
 @dataclass
