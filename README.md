@@ -171,7 +171,20 @@ The `/workspace` directory inside Docker container mounts to host, ensuring resu
 | [config/state_machine.yaml](./config/state_machine.yaml) | workflow nodes, agents, I/O, success/failure transitions | Yes |
 | [config/gates.yaml](./config/gates.yaml) | gate options and display content | Yes |
 | [config/runtime.yaml](./config/runtime.yaml) | runtime shared defaults | Yes |
+| [config/agent_params.yaml](./config/agent_params.yaml) | Agent params (model_tier, budget, timeout) | Reference |
 | [config/mcp.example.yaml](./config/mcp.example.yaml) | MCP server config template | Template |
+
+### Agent Parameters
+
+[config/agent_params.yaml](./config/agent_params.yaml) centralizes all agent parameters:
+
+- **Model selection**: model_tier (heavy/medium/light)
+- **Budget limits**: max_steps, timeout, budget_hint
+- **Output expectations**: expected_outputs, expected_sections
+- **Docker/GPU requirements**: docker_required, gpu_required
+- **Retry policy**: retry_policy
+
+See [config/agent_params.yaml](./config/agent_params.yaml) for details.
 
 ### Environment Variables
 
