@@ -51,6 +51,7 @@ import structlog
 import yaml
 
 from ..runtime.agent import Agent, AgentSpec, ExecutionContext
+from ..runtime.agent_params import get_agent_mode_params
 from ..runtime.prompts import render_prompt
 from ..schemas.validator import validate_record
 from ._common import (
@@ -287,11 +288,12 @@ class ExperimenterAgent(Agent):
     - full 模式：完整实验，强制 ablation（最少 3 条），支持 seed ensemble
     """
 
-    def __init__(self):
+    def __init__(self, mode: str | None = None):
+        params = get_agent_mode_params("experimenter", mode)
         super().__init__(
             AgentSpec(
                 name="experimenter",
-                model_tier="medium",
+                model_tier=params.get("model_tier", "medium"),
                 tool_names=[
                     "read_file",
                     "write_file",
@@ -302,10 +304,10 @@ class ExperimenterAgent(Agent):
                     "docker_exec",
                     "finish_task",
                 ],
-                # Full 模式的上限（pilot 会在 system_prompt 中说明更严格的限制）
-                max_steps=150,
-                max_tokens_total=600_000,
-                max_wall_seconds=14400,  # 4 小时
+                max_steps=params.get("max_steps", 150),
+                max_tokens_total=params.get("max_tokens_total", 800_000),
+                max_wall_seconds=params.get("max_wall_seconds", 14400),
+                max_validation_retries=params.get("max_validation_retries", 2),
                 temperature=0.3,
                 allowed_read_prefixes=["", "ideation/", "experiments/", "pilot/", "literature/"],
                 allowed_write_prefixes=["experiments/", "pilot/"],
@@ -317,6 +319,7 @@ class ExperimenterAgent(Agent):
                 },
             )
         )
+        self._mode = mode
 
     def system_prompt(self, ctx: ExecutionContext) -> str:
         """渲染 system prompt，根据 mode 动态生成不同的指令。

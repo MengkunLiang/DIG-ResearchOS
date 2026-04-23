@@ -14,6 +14,7 @@ from pathlib import Path
 import yaml
 
 from ..runtime.agent import Agent, AgentSpec, ExecutionContext
+from ..runtime.agent_params import get_agent_mode_params
 from ..runtime.prompts import render_prompt
 from ._common import (
     load_project,
@@ -31,16 +32,18 @@ class PIAgent(Agent):
     - evaluate (T7.5): 评估实验结果，给出后续建议
     """
 
-    def __init__(self):
+    def __init__(self, mode: str | None = None):
+        params = get_agent_mode_params("pi", mode)
         super().__init__(
             AgentSpec(
                 name="pi",
-                model_tier="heavy",
+                model_tier=params.get("model_tier", "heavy"),
                 tool_names=["read_file", "write_file", "write_structured_file", "list_files", "ask_human", "finish_task", "process_seed_paper"],
-                max_steps=30,
-                max_tokens_total=100_000,
-                max_wall_seconds=1800,
-                temperature=0.3,  # init模式用0.3，evaluate模式会在prompt中说明
+                max_steps=params.get("max_steps", 30),
+                max_tokens_total=params.get("max_tokens_total", 100_000),
+                max_wall_seconds=params.get("max_wall_seconds", 1800),
+                max_validation_retries=params.get("max_validation_retries", 3),
+                temperature=0.3,
                 allowed_read_prefixes=["", "user_seeds/", "experiments/", "ideation/", "evaluation/"],
                 allowed_write_prefixes=["", "user_seeds/", "evaluation/"],
                 prompt_template="pi.j2",
@@ -49,6 +52,7 @@ class PIAgent(Agent):
                 },
             )
         )
+        self._mode = mode
 
     def system_prompt(self, ctx: ExecutionContext) -> str:
         """根据mode渲染不同的system prompt。"""

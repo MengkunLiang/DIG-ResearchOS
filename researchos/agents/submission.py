@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 
 from ..runtime.agent import Agent, AgentSpec, ExecutionContext
+from ..runtime.agent_params import get_agent_params
 from ..runtime.prompts import render_prompt
 from ._common import load_project, read_text_file
 
@@ -49,10 +50,11 @@ class SubmissionAgent(Agent):
     """投稿准备Agent，处理模板迁移、匿名化检查、编译验证。"""
 
     def __init__(self):
+        params = get_agent_params("submission")
         super().__init__(
             AgentSpec(
                 name="submission",
-                model_tier="medium",
+                model_tier=params.get("model_tier", "medium"),
                 llm_profile=None,
                 tool_names=[
                     "read_file",
@@ -62,16 +64,12 @@ class SubmissionAgent(Agent):
                     "docker_exec",
                     "finish_task",
                 ],
-                max_steps=40,
-                max_tokens_total=200_000,
-                max_wall_seconds=1800,
-                temperature=0.2,
-                allowed_read_prefixes=[
-                    "",
-                    "drafts/",
-                    "literature/",
-                    "references/",
-                ],
+                max_steps=params.get("max_steps", 40),
+                max_tokens_total=params.get("max_tokens_total", 80_000),
+                max_wall_seconds=params.get("max_wall_seconds", 300),
+                max_validation_retries=params.get("max_validation_retries", 3),
+                temperature=0.3,
+                allowed_read_prefixes=["", "drafts/", "literature/", "experiments/"],
                 allowed_write_prefixes=["submission/"],
                 prompt_template="submission.j2",
                 pre_hooks=[check_anonymization],

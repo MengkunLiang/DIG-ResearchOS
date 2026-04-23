@@ -9,6 +9,7 @@ T3.5 (synthesize模式): 综合所有笔记，产出synthesis.md
 from __future__ import annotations
 
 from ..runtime.agent import Agent, AgentSpec, ExecutionContext
+from ..runtime.agent_params import get_agent_mode_params
 from ..runtime.prompts import render_prompt
 from ._common import load_project, load_jsonl, read_text_file
 
@@ -16,24 +17,27 @@ from ._common import load_project, load_jsonl, read_text_file
 class ReaderAgent(Agent):
     """深度阅读Agent。read (T3)逐篇精读，synthesize (T3.5)综合。"""
 
-    def __init__(self):
+    def __init__(self, mode: str | None = None):
+        params = get_agent_mode_params("reader", mode)
         super().__init__(
             AgentSpec(
                 name="reader",
-                model_tier="medium",
+                model_tier=params.get("model_tier", "medium"),
                 tool_names=[
                     "read_file", "write_file", "append_file", "list_files",
                     "fetch_paper_pdf", "extract_pdf_text", "finish_task",
                 ],
-                max_steps=80,
-                max_tokens_total=400_000,
-                max_wall_seconds=7200,
+                max_steps=params.get("max_steps", 100),
+                max_tokens_total=params.get("max_tokens_total", 300_000),
+                max_wall_seconds=params.get("max_wall_seconds", 1200),
+                max_validation_retries=params.get("max_validation_retries", 3),
                 temperature=0.5,
                 allowed_read_prefixes=["", "literature/"],
                 allowed_write_prefixes=["literature/"],
                 prompt_template="reader.j2",
             )
         )
+        self._mode = mode
 
     def system_prompt(self, ctx: ExecutionContext) -> str:
         """根据mode渲染不同的system prompt。"""

@@ -26,6 +26,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..runtime.agent import Agent, AgentSpec, ExecutionContext
+from ..runtime.agent_params import get_agent_params
 from ..runtime.prompts import render_prompt
 from ..tools.pdf_metadata import scan_seed_papers
 from ..tools.paper_utils import (
@@ -48,42 +49,38 @@ class ScoutAgent(Agent):
     """文献侦察员。跨源检索+去重，产出论文池。"""
 
     def __init__(self):
+        params = get_agent_params("scout")
         super().__init__(
             AgentSpec(
                 name="scout",
-                model_tier="medium",
+                model_tier=params.get("model_tier", "medium"),
                 tool_names=[
                     "read_file",
                     "write_file",
                     "write_structured_file",
-                    "multi_source_search",  # 新增：多源搜索工具（推荐）
-                    "search_papers",  # 保留：单源搜索（备用）
+                    "multi_source_search",
+                    "search_papers",
                     "fetch_paper_metadata",
                     "finish_task",
-                    # 新增：确定性论文处理工具
                     "deduplicate_papers",
                     "score_papers",
                     "expand_queries",
                     "generate_search_log",
-                    # 论文数据增强工具（自动补充缺失字段、检测重复度）
                     "enrich_papers",
                     "detect_duplicate_queries",
                     "analyze_dedup_rate",
-                    # Semantic Scholar 工具（提供更完整的论文数据）
                     "semantic_scholar_search",
                     "semantic_scholar_get_paper",
-                    # arXiv 工具（预印本搜索，完全免费）
                     "arxiv_search",
-                    # OpenAlex 工具（综合学术搜索，2.5亿+ 论文）
                     "openalex_search",
                     "openalex_get_work",
-                    # CrossRef 工具（DOI 元数据，1.4亿+ DOI）
                     "crossref_search",
                     "crossref_get_work",
                 ],
-                max_steps=50,
-                max_tokens_total=500_000,  # 增加到200K，避免token预算超限
-                max_wall_seconds=1800,
+                max_steps=params.get("max_steps", 50),
+                max_tokens_total=params.get("max_tokens_total", 150_000),
+                max_wall_seconds=params.get("max_wall_seconds", 600),
+                max_validation_retries=params.get("max_validation_retries", 3),
                 temperature=0.5,
                 allowed_read_prefixes=["", "user_seeds/", "seeds/"],
                 allowed_write_prefixes=["literature/"],

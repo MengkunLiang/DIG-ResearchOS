@@ -1,16 +1,14 @@
-# ResearchOS Agent 参数配置
+# ResearchOS Agent 实际参数配置
 #
-# 本文件集中管理所有 Agent 的参数配置，包括：
-# - 模型选择（model_tier）
-# - 实际限制（max_steps, timeout_seconds）
-# - 预算提示（budget_hint，仅供参考，非强制限制）
-# - 重试策略（retries）
-# - Docker 配置
+# 本文件集中管理所有 Agent 的实际限制参数，这些参数会真实生效。
+# 实际预算控制由 BudgetTracker 和 project.yaml 中的 constraints 决定。
 #
 # 使用说明：
+# - max_steps: 最大步数限制
+# - max_tokens_total: 最大 token 数限制
+# - max_wall_seconds: 最大运行时间（秒）
+# - max_validation_retries: 输出验证重试次数
 # - 在 state_machine.yaml 中可以通过 llm.profile 或 llm.tier 覆盖 model_tier 设置
-# - 实际预算控制由 BudgetTracker 和 project.yaml 中的 constraints 决定
-# - max_steps 和 timeout_seconds 是实际限制，会被 orchestrator 执行
 
 # ========================================
 # Agent 模型配置
@@ -27,42 +25,45 @@ agents:
   # Hello Agent (T0)
   # 用途：调试用，最简单的 agent
   # ========================================
-  # hello:
-  #   model_tier: "medium"          # 调试任务，使用中等模型
-  #   max_steps: 5                 # 最大步数
-  #   timeout_seconds: 60           # 超时时间
-  #   budget_hint: "极低消耗"
+  hello:
+    model_tier: "medium"
+    max_steps: 5
+    max_tokens_total: 10_000
+    max_wall_seconds: 60
+    max_validation_retries: 3
 
   # ========================================
   # PI Agent (T1 / T7.5)
   # 用途：项目初始化 / 结果评估
   # ========================================
   pi:
-    model_tier: "heavy"          # 需要深度理解，使用最强模型
-    max_steps: 30                # 三轮对话 + 多次交互
-    timeout_seconds: 300         # 5 分钟超时
-    budget_hint: "50K tokens，$0.50"
+    model_tier: "heavy"
+    max_steps: 30
+    max_tokens_total: 100_000
+    max_wall_seconds: 300
+    max_validation_retries: 3
     modes:
       init:
         description: "项目初始化"
-        expected_rounds: 3       # 三轮对话
+        expected_rounds: 3
       evaluate:
         description: "结果评估"
-        expected_rounds: 2       # 两轮对话
+        expected_rounds: 2
 
   # ========================================
   # Scout Agent (T2)
   # 用途：文献检索
   # ========================================
   scout:
-    model_tier: "medium"         # 标准任务
-    max_steps: 50                # 检索 + 去重
-    timeout_seconds: 600         # 10 分钟超时
-    budget_hint: "100K tokens，$1.00"
+    model_tier: "medium"
+    max_steps: 50
+    max_tokens_total: 150_000
+    max_wall_seconds: 600
+    max_validation_retries: 3
     expected_outputs:
-      papers_raw_min: 30        # 最少原始论文数
-      papers_dedup_min: 15      # 最少去重后论文数
-      papers_dedup_max: 120     # 最多去重后论文数
+      papers_raw_min: 30
+      papers_dedup_min: 15
+      papers_dedup_max: 120
     tools:
       - search_papers
       - fetch_paper_metadata
@@ -73,101 +74,111 @@ agents:
   # 用途：深度阅读 / 文献综合
   # ========================================
   reader:
-    model_tier: "medium"         # 标准任务
-    max_steps: 100               # 多篇论文阅读
-    timeout_seconds: 1200        # 20 分钟超时
-    budget_hint: "150K tokens，$1.50"
+    model_tier: "medium"
+    max_steps: 100
+    max_tokens_total: 300_000
+    max_wall_seconds: 1200
+    max_validation_retries: 3
     modes:
       read:
         description: "深度阅读"
-        expected_notes_ratio: 0.8  # 至少 80% 论文有笔记
+        max_steps: 80
+        max_tokens_total: 200_000
+        expected_notes_ratio: 0.8
         expected_outputs:
           paper_notes_min: 10
           comparison_table_required: true
           related_work_bib_required: true
       synthesize:
         description: "文献综合"
-        expected_sections:       # synthesis.md 必需章节
+        max_steps: 50
+        max_tokens_total: 150_000
+        expected_sections:
           - "## Method Families"
           - "## Shared Assumptions"
           - "## Performance-Efficiency Frontier"
           - "## Technology Trends"
           - "## Research Questions"
-        expected_length_min: 1000  # 最少字符数
-        expected_citations_min: 5  # 最少引用数
+        expected_length_min: 1000
+        expected_citations_min: 5
 
   # ========================================
   # Ideation Agent (T4)
   # 用途：假设生成
   # ========================================
   ideation:
-    model_tier: "heavy"          # 需要深度推理
-    max_steps: 60                # 两轮 Gate 交互
-    timeout_seconds: 600         # 10 分钟超时
-    budget_hint: "150K tokens，$1.00"
+    model_tier: "heavy"
+    max_steps: 60
+    max_tokens_total: 200_000
+    max_wall_seconds: 600
+    max_validation_retries: 3
     expected_outputs:
-      hypothesis_count: 3        # 最少假设数
-      risk_count: 3              # 最少风险数
+      hypothesis_count: 3
+      risk_count: 3
     gates:
       - id: "gate1"
         description: "选择研究方向"
-        type: "user_select"      # 用户选择
+        type: "user_select"
       - id: "gate2"
         description: "确认假设方案"
-        type: "user_confirm"     # 用户确认
+        type: "user_confirm"
 
   # ========================================
   # Novelty Auditor Agent (T4.5)
   # 用途：新颖性审计
   # ========================================
   novelty_auditor:
-    model_tier: "heavy"          # 需要深度分析
-    max_steps: 40                # 审计分析
-    timeout_seconds: 400         # 7 分钟超时
-    budget_hint: "100K tokens，$0.60"
+    model_tier: "heavy"
+    max_steps: 40
+    max_tokens_total: 150_000
+    max_wall_seconds: 400
+    max_validation_retries: 3
     novelty_levels:
-      - "Level 0"                # 无新颖性
-      - "Level 1"                # 增量改进
-      - "Level 2"                # 中等创新
-      - "Level 3"                # 重大创新
+      - "Level 0"
+      - "Level 1"
+      - "Level 2"
+      - "Level 3"
 
   # ========================================
   # Novelty Agent (T6)
   # 用途：新颖性最终验证
   # ========================================
   novelty:
-    model_tier: "medium"         # 标准任务
+    model_tier: "medium"
     max_steps: 40
-    timeout_seconds: 400         # 7 分钟超时
-    budget_hint: "100K tokens，$0.50"
+    max_tokens_total: 100_000
+    max_wall_seconds: 400
+    max_validation_retries: 3
 
   # ========================================
   # Experimenter Agent (T5 / T7)
   # 用途：试点实验 / 完整实验
   # ========================================
   experimenter:
-    model_tier: "medium"         # 标准任务
+    model_tier: "medium"
     modes:
       pilot:
         description: "试点实验"
         max_steps: 100
-        timeout_seconds: 7200    # 2 小时超时
-        budget_hint: "建议 100 步内完成，2 小时内，400K tokens"
-        docker_required: true     # 需要 Docker
-        gpu_required: true        # 需要 GPU
+        max_tokens_total: 500_000
+        max_wall_seconds: 7200
+        max_validation_retries: 2
+        docker_required: true
+        gpu_required: true
         expected_outputs:
           smoke_test_required: true
           motivation_validation_required: true
       full:
         description: "完整实验"
         max_steps: 150
-        timeout_seconds: 14400   # 4 小时超时
-        budget_hint: "最多 150 步，4 小时，600K tokens"
-        docker_required: true     # 需要 Docker
-        gpu_required: true        # 需要 GPU
+        max_tokens_total: 800_000
+        max_wall_seconds: 14400
+        max_validation_retries: 2
+        docker_required: true
+        gpu_required: true
         expected_outputs:
-          ablation_min: 3        # 最少消融实验数
-          seed_ensemble_min: 3    # 最少 seed 集成数
+          ablation_min: 3
+          seed_ensemble_min: 3
           results_summary_required: true
 
   # ========================================
@@ -175,133 +186,131 @@ agents:
   # 用途：论文写作
   # ========================================
   writer:
-    model_tier: "heavy"          # 需要高质量输出
+    model_tier: "heavy"
     max_steps: 100
-    timeout_seconds: 1200        # 20 分钟超时
-    budget_hint: "150K tokens，$1.50"
+    max_tokens_total: 400_000
+    max_wall_seconds: 1200
+    max_validation_retries: 3
     modes:
       outline:
         description: "生成大纲"
         max_steps: 30
+        max_tokens_total: 100_000
       draft:
         description: "生成初稿"
         max_steps: 50
+        max_tokens_total: 250_000
       revise:
         description: "修订"
         max_steps: 30
-    latex_required: true         # 需要 LaTeX 支持
+        max_tokens_total: 150_000
+    latex_required: true
 
   # ========================================
   # Reviewer Agent (T8-REVIEW)
   # 用途：论文审稿
   # ========================================
   reviewer:
-    model_tier: "heavy"          # 需要深度分析
+    model_tier: "heavy"
     max_steps: 60
-    timeout_seconds: 600         # 10 分钟超时
-    budget_hint: "80K tokens，$0.80"
-    expected_sections:           # 审稿报告必需章节
-      - "## Overall Assessment"  # 总体评价
-      - "## Major Issues"        # 主要问题
-      - "## Minor Issues"        # 次要问题
-    expected_length_min: 500     # 最少字符数
+    max_tokens_total: 200_000
+    max_wall_seconds: 600
+    max_validation_retries: 3
+    expected_sections:
+      - "## Overall Assessment"
+      - "## Major Issues"
+      - "## Minor Issues"
+    expected_length_min: 500
 
   # ========================================
   # Submission Agent (T9)
   # 用途：投稿准备
   # ========================================
   submission:
-    model_tier: "medium"         # 标准任务
+    model_tier: "medium"
     max_steps: 40
-    timeout_seconds: 300         # 5 分钟超时
-    budget_hint: "30K tokens，$0.30"
-    docker_required: true        # 需要 Docker (LaTeX 编译)
+    max_tokens_total: 80_000
+    max_wall_seconds: 300
+    max_validation_retries: 3
+    docker_required: true
     expected_outputs:
       bundle_required: true
       anonymization_required: true
-      compile_required: true      # 需要成功编译
+      compile_required: true
 
 # ========================================
-# 全局预算配置
+# 全局预算配置（实际生效）
 # ========================================
-# 这些默认值可以被 project.yaml 中的 constraints 覆盖
+# 实际预算控制由 BudgetTracker 和 project.yaml 中的 constraints 决定
 
 global_budget:
-  # 默认总预算（美元）
+  # 默认总预算（美元）- 来自 project.yaml 的 constraints.max_budget_usd
   default_max_budget_usd: 100.0
 
-  # 预算警告阈值
-  warning_threshold: 0.7         # 70% 时警告
-  critical_threshold: 0.9        # 90% 时严重警告
+  # 预算警告阈值（实际生效）
+  warning_threshold: 0.7
+  critical_threshold: 0.9
 
-  # 各阶段预算分配（占总预算百分比）
+  # 各阶段预算分配（占总预算百分比）- 仅供参考
   stage_allocation:
-    T1_init: 0.05               # 5%
-    T2_scout: 0.10              # 10%
-    T3_read: 0.15               # 15%
-    T4_ideation: 0.10           # 10%
-    T5_pilot: 0.20              # 20%
-    T7_full: 0.30               # 30%
-    T8_write: 0.08              # 8%
-    T9_submission: 0.02          # 2%
+    T1_init: 0.05
+    T2_scout: 0.10
+    T3_read: 0.15
+    T4_ideation: 0.10
+    T5_pilot: 0.20
+    T7_full: 0.30
+    T8_write: 0.08
+    T9_submission: 0.02
 
 # ========================================
-# 全局超时配置
+# 全局超时配置（实际生效）
 # ========================================
 
 global_timeout:
   # 单个 Agent 最大运行时间（秒）
-  max_agent_runtime: 14400      # 4 小时
+  max_agent_runtime: 14400
 
   # 单个工具调用最大时间（秒）
-  max_tool_call: 300            # 5 分钟
+  max_tool_call: 300
 
   # Docker 操作超时（秒）
-  docker_operation: 7200         # 2 小时
+  docker_operation: 7200
 
   # LLM 调用超时（秒）
-  llm_call: 120                  # 2 分钟
+  llm_call: 120
 
 # ========================================
 # Docker 配置
 # ========================================
 
 docker:
-  # 需要 Docker 的 Agent
   requires_docker:
-    - experimenter               # T5 / T7
-    - submission                 # T9
+    - experimenter
+    - submission
 
-  # 需要 GPU 的 Agent
   requires_gpu:
-    - experimenter               # T5 / T7
+    - experimenter
 
-  # 默认镜像
   default_image: "researchos/system:latest"
 
-  # GPU 配置
   gpu:
-    default_count: 1             # 默认使用 1 个 GPU
-    max_count: 2                 # 最多使用 2 个 GPU
-    memory_limit: "16g"           # 默认内存限制
+    default_count: 1
+    max_count: 2
+    memory_limit: "16g"
 
 # ========================================
-# 重试策略
+# 重试策略（实际生效）
 # ========================================
 
 retry_policy:
-  # LLM 调用失败重试
-  llm_retries: 5
-  llm_retry_delay: 2             # 秒（指数退避）
+  llm_retries: 2
+  llm_retry_delay: 2
 
-  # 工具调用失败重试
   tool_retries: 3
   tool_retry_delay: 1
 
-  # 输出验证失败重试
   validation_retries: 3
 
-  # 不重试的错误类型
   no_retry_errors:
     - "AuthenticationError"
     - "PermissionDenied"
@@ -312,14 +321,7 @@ retry_policy:
 # ========================================
 
 logging:
-  # 日志级别
   level: "INFO"
-
-  # 是否启用详细追踪
   trace_enabled: true
-
-  # 追踪保留天数
   trace_retention_days: 30
-
-  # 每个 trace 最大大小（MB）
   trace_max_size_mb: 10

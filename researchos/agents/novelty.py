@@ -28,6 +28,7 @@ from pathlib import Path
 import structlog
 
 from ..runtime.agent import Agent, AgentSpec, ExecutionContext
+from ..runtime.agent_params import get_agent_params
 from ..runtime.prompts import render_prompt
 from ._common import (
     load_project,
@@ -42,10 +43,11 @@ class NoveltyAgent(Agent):
     """T6 Novelty Agent。新颖性验证与基线补充。"""
 
     def __init__(self):
+        params = get_agent_params("novelty")
         super().__init__(
             AgentSpec(
                 name="novelty",
-                model_tier="medium",
+                model_tier=params.get("model_tier", "medium"),
                 tool_names=[
                     "read_file",
                     "write_file",
@@ -54,9 +56,10 @@ class NoveltyAgent(Agent):
                     "ask_human",
                     "finish_task",
                 ],
-                max_steps=50,
-                max_tokens_total=300_000,
-                max_wall_seconds=3600,
+                max_steps=params.get("max_steps", 60),
+                max_tokens_total=params.get("max_tokens_total", 150_000),
+                max_wall_seconds=params.get("max_wall_seconds", 600),
+                max_validation_retries=params.get("max_validation_retries", 3),
                 temperature=0.3,
                 allowed_read_prefixes=["", "ideation/", "literature/", "pilot/"],
                 allowed_write_prefixes=["novelty/"],
