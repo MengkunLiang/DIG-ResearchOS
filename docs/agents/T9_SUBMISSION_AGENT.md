@@ -1,6 +1,7 @@
-> ✅ **此 Agent 已实现 (IMPLEMENTED)**
+> ✅ **此 Agent 已完整实现 (FULLY IMPLEMENTED)**
 > 代码位置：`researchos/agents/submission.py`（SubmissionAgent）
 > Prompt 模板：`researchos/prompts/submission.j2`
+> 状态：模板迁移、匿名化检查、Docker 编译验证均已实现
 
 # T9 Submission Agent 实现文档
 
@@ -516,11 +517,11 @@ if result.returncode != 0:
 
 ## 已知限制和注意事项
 
-1. **LaTeX编译**: 需要Docker和texlive，首次运行可能需要下载镜像
+1. **Docker 环境**: 需要 Docker 环境进行 LaTeX 编译验证
 2. **模板更新**: 每年需要手动更新会议模板
 3. **匿名化检查**: 基于正则表达式，可能有漏检或误报
-4. **格式兼容性**: 不同会议的LaTeX模板可能有冲突
-5. **图表格式**: 某些会议要求特定的图表格式（如EPS vs PDF）
+4. **格式兼容性**: 不同会议的 LaTeX 模板可能有冲突
+5. **图表格式**: 某些会议要求特定的图表格式（如 EPS vs PDF）
 
 ## 测试
 

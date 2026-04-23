@@ -1,7 +1,7 @@
 # ResearchOS 快速入门指南
 
-> **版本**: v1.0  
-> **更新日期**: 2026-04-21
+> **版本**: v2.0
+> **更新日期**: 2026-04-23
 
 ---
 
@@ -13,6 +13,7 @@
 - Docker 20.10+
 - （可选）nvidia-docker2（GPU 支持）
 - 至少 20GB 磁盘空间
+- 统一镜像：`researchos/system:latest`（支持实验和 TeX 编译）
 
 **宿主机模式（开发调试）**:
 - Python 3.11
@@ -305,6 +306,12 @@ T9 (Submission Agent)
 - WriterAgent - 论文撰写
 - ReviewerAgent - 论文审查
 - SubmissionAgent - 投稿准备
+
+**测试状态**:
+- 449 个测试全部通过
+- tests/real/：113 个真实测试
+- tests/unit/：单元测试
+- tests/integration/：集成测试（已删除旧文件）
 
 ---
 

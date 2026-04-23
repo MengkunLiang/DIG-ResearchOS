@@ -4,6 +4,21 @@
 
 ## Agent列表
 
+### T0: Hello Agent（调试用）✅已实现
+**文档**: [HelloAgent](代码见 `researchos/agents/hello.py`)
+
+**状态**: ✅ 已实现
+
+**职责**: 简单的调试 Agent，用于验证系统基本功能
+
+**输入**: 无
+
+**输出**: "Hello, ResearchOS!" 消息
+
+**模型层级**: medium
+
+---
+
 ### T1: PI Agent（项目初始化与评估）
 **文档**: [T1_PI_AGENT.md](./T1_PI_AGENT.md)
 
@@ -432,23 +447,23 @@ pytest tests/integration/test_scout_agent_e2e.py -v
 
 | Agent | Task | 代码状态 | 文档状态 | 模型层级 | 备注 |
 |-------|------|---------|---------|---------|------|
-| Hello | HELLO | ✅ 已实现 | ✅ 完整 | medium | 调试用 |
-| PI | T1, T7.5 | ✅ 已实现 | ✅ 完整 | heavy | init/evaluate 模式 |
-| Scout | T2 | ✅ 已实现 | ✅ 完整 | medium | |
-| Reader | T3, T3.5 | ✅ 已实现 | ✅ 完整 | medium | read/synthesize 模式 |
-| Ideation | T4 | ✅ 已实现 | ✅ 完整 | heavy | |
-| NoveltyAuditor | T4.5 | ✅ 已实现 | ✅ 完整 | heavy | 新颖性预审 |
-| Experimenter | T5, T7 | ✅ 已实现 | ✅ 完整 | medium | pilot/full 模式 |
-| Novelty | T6 | ✅ 已实现 | ✅ 完整 | medium | 新颖性最终验证 |
-| Writer | T8 | ✅ 已实现 | ✅ 完整 | heavy | |
-| Reviewer | T8 | ✅ 已实现 | ✅ 完整 | heavy | |
-| Submission | T9 | ✅ 已实现 | ✅ 完整 | medium | |
+| HelloAgent | HELLO | ✅ 已实现 | ✅ 完整 | medium | 调试用 |
+| PIAgent | T1, T7.5 | ✅ 已实现 | ✅ 完整 | heavy | init/evaluate 模式 |
+| ScoutAgent | T2 | ✅ 已实现 | ✅ 完整 | medium | 多源论文搜索 |
+| ReaderAgent | T3, T3.5 | ✅ 已实现 | ✅ 完整 | medium | read/synthesize 模式 |
+| IdeationAgent | T4 | ✅ 已实现 | ✅ 完整 | heavy | 假设生成 |
+| NoveltyAuditorAgent | T4.5 | ✅ 已实现 | ✅ 完整 | heavy | 新颖性预审 |
+| ExperimenterAgent | T5, T7 | ✅ 已实现 | ✅ 完整 | medium | pilot/full 模式，需要 Docker |
+| NoveltyAgent | T6 | ✅ 已实现 | ✅ 完整 | medium | 新颖性最终验证 |
+| WriterAgent | T8-WRITE-* | ✅ 已实现 | ✅ 完整 | heavy | 5个 phase |
+| ReviewerAgent | T8-REVIEW-* | ✅ 已实现 | ✅ 完整 | heavy | 迭代审稿 |
+| SubmissionAgent | T9 | ✅ 已实现 | ✅ 完整 | medium | 需要 Docker |
 
 ## 鲁棒性增强功能
 
 ResearchOS 实现了多项鲁棒性增强功能，提高系统的可靠性和研究质量：
 
-### 1. T4 Hypothesis Pre-mortem（假设预演）
+### 1. T4 Hypothesis Pre-mortem（假设预演）✅已实现
 
 **位置**: T4 Ideation Agent，Gate1 和 Gate2 之间文档
 
@@ -461,7 +476,7 @@ ResearchOS 实现了多项鲁棒性增强功能，提高系统的可靠性和研
 
 **实现**: `researchos/prompts/ideation.j2`（阶段 A.5）
 
-### 2. Runtime Budget Drift Warning（预算漂移预警）
+### 2. Runtime Budget Drift Warning（预算漂移预警）✅已实现
 
 **位置**: StateMachine，每个 task 完成后
 
@@ -471,7 +486,7 @@ ResearchOS 实现了多项鲁棒性增强功能，提高系统的可靠性和研
 
 **实现**: `researchos/orchestration/state_machine.py`（`_check_budget_drift` 方法）
 
-### 3. T1 Ethical Screening（敏感方向拦截）
+### 3. T1 Ethical Screening（敏感方向拦截）✅已实现
 
 **位置**: T1 PI Agent，`validate_outputs` 阶段
 
@@ -481,7 +496,7 @@ ResearchOS 实现了多项鲁棒性增强功能，提高系统的可靠性和研
 
 **实现**: `researchos/agents/pi.py`（`_check_ethical_concerns` 方法）
 
-### 4. T1 External Resources Management（外部资源管理）
+### 4. T1 External Resources Management（外部资源管理）✅已实现
 
 **位置**: T1 PI Agent，三轮对话中的第 2.5 轮
 
@@ -492,7 +507,7 @@ ResearchOS 实现了多项鲁棒性增强功能，提高系统的可靠性和研
 
 **实现**: `researchos/prompts/pi.j2`（第 2.5 轮对话）和 `researchos/agents/pi.py`（`_validate_external_resources` 方法）
 
-### 5. T8 声明追溯与数值一致性检查
+### 5. T8 声明追溯与数值一致性检查 ✅已实现
 
 **位置**: T8 Writer Agent，post-hooks
 
@@ -502,7 +517,7 @@ ResearchOS 实现了多项鲁棒性增强功能，提高系统的可靠性和研
 
 **状态**: ✅ 已实现（T8 Writer Agent 实现）
 
-### 6. T6 机制相似度搜索
+### 6. T6 机制相似度搜索 ✅已实现
 
 **位置**: T6 Novelty Agent
 
@@ -512,7 +527,7 @@ ResearchOS 实现了多项鲁棒性增强功能，提高系统的可靠性和研
 
 **实现**: `researchos/agents/novelty.py`
 
-### 7. T5/T7 种子集成与外部资源
+### 7. T5/T7 种子集成与外部资源 ✅已实现
 
 **位置**: T5 Pilot 和 T7 Full Experimenter
 
@@ -522,7 +537,7 @@ ResearchOS 实现了多项鲁棒性增强功能，提高系统的可靠性和研
 
 **实现**: `researchos/agents/experimenter.py`
 
-### 8. 迭代死锁检测（所有 Agent）
+### 8. 迭代死锁检测（所有 Agent）✅已实现
 
 **位置**: AgentRunner 主循环
 
@@ -539,9 +554,12 @@ ResearchOS 实现了多项鲁棒性增强功能，提高系统的可靠性和研
 
 ## 已知限制
 
-1. **MCP集成**: 当前 T2 Scout Agent 的 MCP 工具已注释，等 MCP 配置完成后再启用
-2. **T8/T9**: Writer/Reviewer Agent 和 Submission Agent 代码已实现（见 `researchos/agents/writer.py`, `reviewer.py`, `submission.py`）
-3. **容器环境**: 所有 Agent 在统一 Docker 环境中运行，自动检测容器环境并适配执行模式
+1. **Docker 环境**: T5、T7 和 T9 Agent 需要 Docker 环境进行隔离执行和 LaTeX 编译
+2. **外部 API**: T2 Scout Agent 依赖外部学术 API（Crossref、arXiv、Europe PMC 等）
+3. **外部资源验证**: 只验证外部资源格式，不验证资源是否真实可用
+4. **伦理审查**: 当前敏感词列表是基础版本，可能需要扩展
+5. **假设质量**: 假设质量依赖于文献综述和用户输入的质量
+6. **测试框架**: 旧测试文件（tests/e2e/, tests/integration/ 下的旧文件）已删除
 
 ## T4.5 vs T6 新颖性验证的区别
 
@@ -557,7 +575,14 @@ ResearchOS 实现了多项鲁棒性增强功能，提高系统的可靠性和研
 
 ## 更新日志
 
-- **2024-04-20**: 创建完整的Agent文档集
+- **2026-04-23**: 文档全面更新，确认为最新状态
+  - 确认所有 11 个 Agent 均已完整实现
+  - 更新 Agent 状态矩阵
+  - 更新鲁棒性增强功能状态（全部标记为已实现）
+  - 更新已知限制
+  - 更新最后更新日期
+
+- **2024-04-21**: 创建完整的Agent文档集
   - 补充T1 PI Agent详细文档
   - 创建T4 Ideation Agent文档
   - 创建T4.5 Novelty Auditor Agent文档
@@ -577,4 +602,4 @@ ResearchOS 实现了多项鲁棒性增强功能，提高系统的可靠性和研
 ---
 
 **维护者**: ResearchOS开发团队  
-**最后更新**: 2024-04-20
+**最后更新**: 2026-04-23

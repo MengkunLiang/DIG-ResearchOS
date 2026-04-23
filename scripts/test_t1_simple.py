@@ -1,5 +1,26 @@
 #!/usr/bin/env python3
-"""简化的T1测试脚本"""
+"""
+T1 PIAgent 简化测试脚本
+
+用途：
+    使用 SingleTaskRunner 测试 T1 PIAgent 的基本功能。
+
+用法：
+    python scripts/test_t1_simple.py
+
+输出产物：
+    - project.yaml: 项目配置
+    - user_seeds/seed_papers.jsonl: 种子论文
+    - user_seeds/seed_ideas.md: 种子想法
+    - user_seeds/seed_constraints.md: 约束条件
+
+前置条件：
+    - 需要配置 config/model_routing.yaml
+    - 需要有效的 LLM API key（硬编码在脚本中）
+
+注意：
+    此脚本使用硬编码的 API key，仅用于开发测试。
+"""
 
 import asyncio
 import os

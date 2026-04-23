@@ -1,5 +1,24 @@
 #!/usr/bin/env python3
-"""T1测试脚本 - 通过extra参数传递user_topic"""
+"""
+T1 PIAgent 测试脚本 - 通过 extra 参数传递 user_topic
+
+用途：
+    测试通过 ExecutionContext.extra 传递 user_topic 的方式运行 T1。
+
+用法：
+    python scripts/test_t1_with_topic.py
+
+输出产物：
+    - project.yaml: 项目配置
+    - user_seeds/: 种子文件目录
+
+前置条件：
+    - 需要配置 config/model_routing.yaml
+    - 需要有效的 LLM API key
+
+注意：
+    此脚本使用硬编码的 API key，仅用于开发测试。
+"""
 
 import asyncio
 import os

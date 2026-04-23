@@ -61,12 +61,16 @@ heavy: gpt-4o
 ```
 
 **使用建议**：
-- T1 (PI): `medium` - 需要理解用户意图
+- T1 (PI): `heavy` - 需要理解用户意图
 - T2 (Scout): `medium` - 需要处理大量论文数据
-- T3 (Reader): `heavy` - 需要深度理解论文内容
+- T3 (Reader): `medium` - 需要处理大量论文数据
+- T3.5 (Synthesis): `heavy` - 需要深度推理和综合
 - T4 (Ideation): `heavy` - 需要创造性思维
-- T5 (Experimenter): `heavy` - 需要编写和调试代码
-- T6 (Writer): `heavy` - 需要高质量写作
+- T5 (Experimenter pilot): `medium` - 需要代码生成
+- T6 (Novelty): `medium` - 需要分析验证
+- T7 (Experimenter full): `medium` - 需要代码生成
+- T8 (Writer/Reviewer): `heavy` - 需要高质量写作
+- T9 (Submission): `medium` - 需要格式处理
 
 ### 2. max_tokens_total（Token 预算）
 
@@ -78,12 +82,15 @@ heavy: gpt-4o
 - 复杂任务：200,000 - 500,000
 
 **当前配置**：
-- T1 (PI): 100,000
-- T2 (Scout): 200,000
-- T3 (Reader): 300,000
-- T4 (Ideation): 200,000
-- T5 (Experimenter): 500,000
-- T6 (Writer): 300,000
+- T1 (PI): 100,000 tokens
+- T2 (Scout): 500,000 tokens
+- T3 (Reader): 300,000 tokens
+- T4 (Ideation): 200,000 tokens
+- T5 (Experimenter): 500,000 tokens
+- T6 (Novelty): 300,000 tokens
+- T7 (Experimenter): 600,000 tokens
+- T8 (Writer/Reviewer): 500,000 tokens
+- T9 (Submission): 200,000 tokens
 
 **如何调整**：
 ```python
@@ -106,11 +113,14 @@ max_tokens_total=250_000,
 
 **当前配置**：
 - T1 (PI): 30 步
-- T2 (Scout): 50 步
+- T2 (Scout): 100 步
 - T3 (Reader): 100 步
 - T4 (Ideation): 50 步
 - T5 (Experimenter): 100 步
-- T6 (Writer): 80 步
+- T6 (Novelty): 50 步
+- T7 (Experimenter): 150 步
+- T8 (Writer/Reviewer): 100 步
+- T9 (Submission): 50 步
 
 **如何调整**：
 ```python
@@ -143,9 +153,13 @@ max_steps=80,
 - T1 (PI): 0.3（需要准确理解用户意图）
 - T2 (Scout): 0.5（平衡）
 - T3 (Reader): 0.3（需要准确理解论文）
-- T4 (Ideation): 0.7（需要创造性）
-- T5 (Experimenter): 0.5（平衡）
-- T6 (Writer): 0.7（需要创造性写作）
+- T4 (Ideation): 0.75（需要创造性）
+- T5 (Experimenter pilot): 0.5（平衡）
+- T6 (Novelty): 0.5（平衡）
+- T7 (Experimenter full): 0.5（平衡）
+- T8 (Writer): 0.7（需要创造性写作）
+- T8 (Reviewer): 0.3（需要批判性分析）
+- T9 (Submission): 0.3（需要准确格式转换）
 
 ### 6. tool_names（可用工具列表）
 
@@ -308,16 +322,32 @@ temperature=0.8,  # 从 0.5 增加到 0.8
 
 **文件**：`config/model_routing.yaml`
 
+**支持的 LLM 提供商**：
+- SiliconFlow（OpenAI 兼容）
+- OpenRouter（OpenAI 兼容）
+- OpenAI
+- Anthropic
+
+**示例配置**：
 ```yaml
 # 模型层级映射
 light: gpt-4o-mini
 medium: gpt-4o
-heavy: gpt-4o
+heavy: claude-opus-4-5
 
-# 或者使用不同的模型
-light: gpt-4o-mini
-medium: gpt-4o
-heavy: claude-opus-4
+# 多提供商配置示例
+endpoints:
+  siliconflow:
+    provider: openai
+    api_key_env: SILICONFLOW_API_KEY
+    api_base_env: SILICONFLOW_BASE_URL
+  openrouter:
+    provider: openai
+    api_key_env: OPENROUTER_API_KEY
+    api_base_env: OPENROUTER_BASE_URL
+  anthropic:
+    provider: anthropic
+    api_key_env: ANTHROPIC_API_KEY
 ```
 
 ### 状态机配置
@@ -382,6 +412,6 @@ grep "成本:" workspace/local-test/_runtime/traces/T2_*.jsonl | tail -1
 
 ---
 
-**文档创建时间**: 2026-04-22  
-**ResearchOS 版本**: 0.1.0  
+**文档创建时间**: 2026-04-23
+**ResearchOS 版本**: 0.1.0
 **作者**: Claude Opus 4.7

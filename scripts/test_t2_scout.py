@@ -1,5 +1,27 @@
 #!/usr/bin/env python3
-"""T2 Scout Agent测试脚本"""
+"""
+T2 ScoutAgent 测试脚本
+
+用途：
+    使用 SingleTaskRunner 测试 T2 ScoutAgent 的文献检索功能。
+
+用法：
+    python scripts/test_t2_scout.py
+
+输出产物：
+    - literature/papers_raw.jsonl: 原始检索结果
+    - literature/papers_dedup.jsonl: 去重后论文
+    - literature/search_log.md: 检索日志（可选）
+    - literature/missing_areas.md: 文献缺口分析（可选）
+
+前置条件：
+    - 需要存在 project.yaml（脚本会从 test_t1_simple 的输出复制）
+    - 需要配置 config/model_routing.yaml
+    - 需要有效的 LLM API key
+
+注意：
+    此脚本使用硬编码的 API key，仅用于开发测试。
+"""
 
 import asyncio
 import os

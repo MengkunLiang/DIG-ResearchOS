@@ -1,5 +1,26 @@
 #!/usr/bin/env python
-"""T1 PIAgent调试脚本 - Mock模式"""
+"""
+T1 PIAgent 调试脚本 - Mock模式
+
+用途：
+    调试项目初始化 Agent (PIAgent)，验证 init 模式。
+
+用法：
+    python scripts/debug_t1_agent.py --mock [--workspace ./workspace/debug_t1]
+
+输出产物：
+    - project.yaml: 项目配置
+    - user_seeds/seed_papers.jsonl: 种子论文
+    - user_seeds/seed_ideas.md: 种子想法
+    - user_seeds/seed_constraints.md: 约束条件
+
+前置条件：
+    无
+
+示例：
+    python scripts/debug_t1_agent.py --mock
+    python scripts/debug_t1_agent.py --mock --workspace /tmp/t1_debug
+"""
 
 from __future__ import annotations
 

@@ -1,5 +1,8 @@
 # Experimenter Agent 实验协议
 
+> **版本**: v1.0
+> **更新日期**: 2026-04-23
+
 本文档定义 Experimenter Agent（T5 Pilot / T7 Full）的详细执行协议，供 prompt 模板引用。
 
 ## 目录

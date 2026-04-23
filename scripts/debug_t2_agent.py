@@ -1,5 +1,26 @@
 #!/usr/bin/env python
-"""T2 ScoutAgent调试脚本 - Mock模式"""
+"""
+T2 ScoutAgent 调试脚本 - Mock模式
+
+用途：
+    调试文献普查 Agent (ScoutAgent)，验证 search 模式。
+
+用法：
+    python scripts/debug_t2_agent.py --mock [--workspace ./workspace/debug_t2]
+
+输出产物：
+    - literature/papers_raw.jsonl: 原始检索结果
+    - literature/papers_dedup.jsonl: 去重后论文
+    - literature/search_log.md: 检索日志
+    - literature/missing_areas.md: 文献缺口分析
+
+前置条件：
+    需要存在 project.yaml（脚本会自动创建）
+
+示例：
+    python scripts/debug_t2_agent.py --mock
+    python scripts/debug_t2_agent.py --mock --workspace /tmp/t2_debug
+"""
 
 from __future__ import annotations
 

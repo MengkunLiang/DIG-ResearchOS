@@ -1,5 +1,39 @@
 #!/usr/bin/env python
-"""T1+T2真实调试脚本 - 使用真实LLM和API"""
+"""
+T1+T2 真实调试脚本 - 使用真实LLM和API
+
+用途：
+    使用真实 LLM 和 API 运行 T1+T2，验证端到端流程。
+
+用法：
+    # 运行完整流程
+    python scripts/real_debug_t1_t2.py --all
+
+    # 只运行 T1
+    python scripts/real_debug_t1_t2.py --run-t1
+
+    # 只运行 T2 (需要先运行 T1)
+    python scripts/real_debug_t1_t2.py --run-t2
+
+    # 自定义参数
+    python scripts/real_debug_t1_t2.py --all \\
+        --workspace ./workspace/real_debug \\
+        --topic "agent memory retrieval"
+
+参数：
+    --workspace: 工作目录
+    --topic: 研究主题
+    --run-t1: 运行 T1
+    --run-t2: 运行 T2
+    --all: 运行 T1 和 T2
+
+前置条件：
+    - 需要配置 config/model_routing.yaml
+    - 需要有效的 LLM API key
+
+示例：
+    python scripts/real_debug_t1_t2.py --all
+"""
 
 from __future__ import annotations
 

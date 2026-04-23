@@ -1,6 +1,7 @@
-> ✅ **此 Agent 已实现 (IMPLEMENTED)**
+> ✅ **此 Agent 已完整实现 (FULLY IMPLEMENTED)**
 > 代码位置：`researchos/agents/writer.py`（WriterAgent）和 `researchos/agents/reviewer.py`（ReviewerAgent）
 > Prompt 模板：`researchos/prompts/writer.j2` 和 `researchos/prompts/reviewer.j2`
+> 状态：所有 5 个 phase 已实现（outline, draft, self_check, revise, final）
 
 # T8 Writer和Reviewer Agent 实现文档
 

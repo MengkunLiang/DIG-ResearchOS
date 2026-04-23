@@ -1,3 +1,25 @@
+#!/usr/bin/env python
+"""
+HelloAgent 调试脚本 - Mock模式
+
+用途：
+    调试最小的 HelloAgent，验证 AgentRunner 基础功能。
+
+用法：
+    python scripts/debug_hello_agent.py --mock [--workspace ./workspace]
+
+输出产物：
+    - hello.txt: Hello 测试文件
+    - _runtime/traces/: 执行轨迹
+
+前置条件：
+    无
+
+示例：
+    python scripts/debug_hello_agent.py --mock
+    python scripts/debug_hello_agent.py --mock --workspace /tmp/hello_debug
+"""
+
 from __future__ import annotations
 
 import argparse
