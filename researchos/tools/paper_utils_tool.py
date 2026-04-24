@@ -144,14 +144,26 @@ class GenerateSearchLogParams(BaseModel):
 
 
 class GenerateSearchLogTool(Tool):
-    """检索日志生成工具。"""
+    """检索日志生成工具。
+
+    直接写入 `literature/search_log.md`，无需 LLM 额外调用 write_file。
+    """
 
     name = "generate_search_log"
-    description = "生成检索日志（基于实际数据，不允许编造）"
+    description = "生成检索日志并写入 literature/search_log.md（基于实际数据，不允许编造）"
     parameters_schema = GenerateSearchLogParams
 
+    def __init__(self, workspace_dir: str | None = None) -> None:
+        """构造函数，接收 workspace_dir。"""
+        super().__init__()
+        self.workspace_dir = workspace_dir
+
+    def set_workspace_dir(self, workspace_dir: str | None) -> None:
+        """由 runtime 在工具初始化时注入 workspace_dir。"""
+        self.workspace_dir = workspace_dir
+
     async def execute(self, **kwargs: Any) -> ToolResult:
-        """执行日志生成。"""
+        """执行日志生成并写入文件。"""
         params = GenerateSearchLogParams(**kwargs)
         try:
             result = generate_search_log(
@@ -160,11 +172,24 @@ class GenerateSearchLogTool(Tool):
                 params.queries,
                 params.query_results,
             )
-            return ToolResult(
-                ok=True,
-                content="检索日志生成完成",
-                data={"log": result},
-            )
+            # 直接写入文件
+            if self.workspace_dir:
+                from pathlib import Path
+                log_path = Path(self.workspace_dir) / "literature" / "search_log.md"
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                log_path.write_text(result, encoding="utf-8")
+                return ToolResult(
+                    ok=True,
+                    content=f"检索日志已写入 {log_path}",
+                    data={"log": result, "path": str(log_path)},
+                )
+            else:
+                # 降级：只返回内容
+                return ToolResult(
+                    ok=True,
+                    content="检索日志生成完成（未设置 workspace_dir，无法写入文件）",
+                    data={"log": result},
+                )
         except Exception as e:
             return ToolResult(ok=False, content="", error=str(e))
 

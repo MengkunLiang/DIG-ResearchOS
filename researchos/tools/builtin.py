@@ -102,7 +102,7 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
     registry.register("deduplicate_papers", lambda ctx: DeduplicatePapersTool())
     registry.register("score_papers", lambda ctx: ScorePapersTool())
     registry.register("expand_queries", lambda ctx: ExpandQueriesTool())
-    registry.register("generate_search_log", lambda ctx: GenerateSearchLogTool())
+    registry.register("generate_search_log", lambda ctx: GenerateSearchLogTool(workspace_dir=str(ctx.policy.workspace_dir)))
     # 论文数据增强工具
     registry.register("enrich_papers", lambda ctx: EnrichPapersTool())
     registry.register("detect_duplicate_queries", lambda ctx: DetectDuplicateQueriesTool())
