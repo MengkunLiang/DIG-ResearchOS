@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import pytest
 from pydantic import BaseModel
@@ -85,6 +86,74 @@ class T2SearchAgent(Agent):
         return "search then finish"
 
 
+class RecoverySearchTool(Tool):
+    name = "arxiv_search"
+    description = "search with enough papers to recover T2 outputs"
+    parameters_schema = SearchParams
+
+    async def execute(self, **kwargs):
+        topic_variants = [
+            "causal modeling for ai agent memory retrieval",
+            "episodic memory for llm agents",
+            "pytorch memory retrieval for autonomous agents",
+            "causal inference in agent retrieval systems",
+            "reinforcement learning with episodic memory",
+            "memory routing for ai agents",
+            "retrieval benchmarks for agent memory",
+            "tool-using agents with long-term memory",
+            "auditable memory retrieval in llm agents",
+            "causal memory tracing for ai agents",
+            "agent memory evaluation with pytorch",
+            "retrieval-augmented episodic memory agents",
+        ]
+        papers = []
+        for i, topic in enumerate(topic_variants):
+            papers.append(
+                {
+                    "id": f"2501.{i:05d}",
+                    "source": "arxiv",
+                    "title": topic.title(),
+                    "authors": ["Test Author"],
+                    "year": 2025,
+                    "abstract": f"{topic} with causal modeling, episodic memory, and PyTorch.",
+                    "venue": "arXiv",
+                    "url": f"https://arxiv.org/abs/2501.{i:05d}",
+                    "citation_count": i,
+                    "doi": "",
+                }
+            )
+        return ToolResult(ok=True, content="found 12 papers", data={"papers": papers})
+
+
+class T2RecoveryAgent(Agent):
+    def __init__(self):
+        super().__init__(
+            AgentSpec(
+                name="t2-recovery",
+                model_tier="medium",
+                tool_names=["arxiv_search"],
+                allowed_write_prefixes=["literature/"],
+            )
+        )
+
+    def system_prompt(self, ctx):
+        return "t2 recover"
+
+    def initial_user_message(self, ctx):
+        return "search"
+
+    def validate_outputs(self, ctx):
+        for path in ctx.outputs_expected.values():
+            if not path.exists():
+                return False, f"missing {path.name}"
+        dedup_lines = (ctx.workspace_dir / "literature" / "papers_dedup.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if len([line for line in dedup_lines if line.strip()]) < 10:
+            return False, "too few dedup papers"
+        return True, None
+
+
 @pytest.mark.asyncio
 async def test_multiple_tool_calls_keep_order(tmp_workspace):
     registry = ToolRegistry()
@@ -162,3 +231,70 @@ async def test_t2_search_results_are_auto_persisted_to_papers_raw(tmp_workspace)
     assert raw_path.exists()
     content = raw_path.read_text(encoding="utf-8")
     assert "Runtime Auto Save for T2" in content
+
+
+@pytest.mark.asyncio
+async def test_t2_failed_run_can_finalize_outputs_from_raw(tmp_workspace):
+    (tmp_workspace / "project.yaml").write_text(
+        json.dumps(
+            {
+                "project_id": "p1",
+                "research_direction": "Causal modeling for AI agent memory retrieval",
+                "keywords": [
+                    "AI agent",
+                    "memory retrieval",
+                    "causal modeling",
+                    "episodic memory",
+                    "PyTorch",
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    registry = ToolRegistry()
+    registry.register("arxiv_search", lambda ctx: RecoverySearchTool())
+
+    llm = MockLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[
+                        FakeToolCall(
+                            name="arxiv_search",
+                            arguments={"query": "causal agent memory retrieval"},
+                            id="tc1",
+                        )
+                    ]
+                )
+            )
+        ]
+    )
+
+    runner = AgentRunner(
+        T2RecoveryAgent(),
+        registry,
+        llm,
+        MockHumanInterface(),
+    )
+    result = await runner.run(
+        ExecutionContext(
+            workspace_dir=tmp_workspace,
+            project_id="p1",
+            task_id="T2",
+            run_id="T2_single_recover",
+            outputs_expected={
+                "papers_raw": tmp_workspace / "literature" / "papers_raw.jsonl",
+                "papers_dedup": tmp_workspace / "literature" / "papers_dedup.jsonl",
+                "search_log": tmp_workspace / "literature" / "search_log.md",
+                "missing_areas": tmp_workspace / "literature" / "missing_areas.md",
+            },
+        )
+    )
+
+    assert result.ok
+    assert result.stop_reason == result.STOP_FINISHED
+    assert (tmp_workspace / "literature" / "papers_dedup.jsonl").exists()
+    assert (tmp_workspace / "literature" / "search_log.md").exists()
+    assert (tmp_workspace / "literature" / "missing_areas.md").exists()

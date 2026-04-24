@@ -428,25 +428,24 @@ gates:
 
 ## 配置优先级
 
-ResearchOS 按以下优先级读取配置：
+ResearchOS 建议按以下方式管理配置：
 
-1. **环境变量**（最高优先级）
-   ```bash
-   export LOG_LEVEL=DEBUG
-   python -m researchos.cli run
-   ```
+1. **环境变量 / `.env`**
+   只放密钥、Token、邮箱等用户环境相关值。
 
-2. **`.env` 文件**（中等优先级）
-   ```bash
-   # .env
-   LOG_LEVEL=DEBUG
-   ```
+2. **配置文件**
+   `config/runtime.yaml` 管理运行参数，例如日志级别、trace、banner、web_fetch allowlist。
 
-3. **配置文件**（最低优先级）
+3. **CLI 参数**
+   适合单次覆盖，例如 `--log-level DEBUG`、`--no-banner`。
+
+例如：
    ```yaml
    # runtime.yaml
    logging:
-     level: "INFO"
+     level: "DEBUG"
+   debug:
+     enable_trace: true
    ```
 
 ## 配置验证
@@ -583,7 +582,7 @@ curl -H "Authorization: Bearer $OPENAI_API_KEY" \
      $OPENAI_BASE_URL/models
 
 # 查看详细错误日志
-LOG_LEVEL=DEBUG python -m researchos.cli run
+python -m researchos.cli run --log-level DEBUG
 ```
 
 ### 问题 3：MCP 工具不可用

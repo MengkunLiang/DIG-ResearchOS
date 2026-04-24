@@ -50,6 +50,24 @@ debug:
   # true: 记录详细的 Agent 执行过程到 trace 文件
   enable_trace: true
 
+# CLI 展示配置
+ui:
+  # 是否默认禁用启动横幅
+  # true: 不显示 DIG Lab 启动动画
+  # false: 正常显示（可用 CLI `--no-banner` 临时覆盖）
+  no_banner: false
+
+# 网页抓取 allowlist
+web_fetch:
+  # 允许的协议列表
+  allowed_schemes:
+    - "http"
+    - "https"
+
+  # 允许抓取的主机列表
+  # 留空表示不限制主机，只按 allowed_schemes 控制
+  allowed_hosts: []
+
 # Docker 镜像配置
 docker:
   # 统一镜像：researchos/system:latest
@@ -63,4 +81,3 @@ docker:
 
   default_memory_limit: "16g"
   build_context: "infra/docker"
-

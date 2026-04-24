@@ -101,6 +101,22 @@ class TraceWriter:
         return value
 
 
+class NullTraceWriter:
+    """禁用 trace 时使用的空实现。"""
+
+    def write_run_start(self, **_: Any) -> None:
+        return
+
+    def write_message(self, _message: Message) -> None:
+        return
+
+    def write_llm_response(self, _response: Any, _assistant_message: Message) -> None:
+        return
+
+    def close(self, _result: Any | None = None) -> None:
+        return
+
+
 def render_trace_for_humans(trace_path: Path) -> str:
     """把 trace JSONL 转成便于阅读的文本。"""
 

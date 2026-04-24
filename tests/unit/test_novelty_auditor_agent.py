@@ -52,8 +52,8 @@ def test_novelty_auditor_agent_spec(novelty_auditor_agent):
     assert "ideation/" in spec.allowed_read_prefixes
     assert "literature/" in spec.allowed_read_prefixes
     assert "ideation/" in spec.allowed_write_prefixes
-    assert spec.max_steps == 50
-    assert spec.max_tokens_total == 300_000
+    assert spec.max_steps == 100
+    assert spec.max_tokens_total == 600_000
 
 
 def test_novelty_auditor_system_prompt(novelty_auditor_agent, temp_workspace):

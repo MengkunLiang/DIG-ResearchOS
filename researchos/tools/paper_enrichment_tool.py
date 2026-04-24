@@ -2,16 +2,31 @@
 
 from __future__ import annotations
 
+from difflib import SequenceMatcher
+from html import unescape
+import json
+from pathlib import Path
 from typing import Any
+from urllib.parse import quote
+import xml.etree.ElementTree as ET
+
+try:
+    import httpx
+except ModuleNotFoundError:  # pragma: no cover - 依赖是否安装取决于环境
+    httpx = None
 
 from pydantic import BaseModel, Field
 
+from ..agents._common import normalize_text_key
 from .base import Tool, ToolResult
 from .paper_enrichment import (
+    build_access_audit,
+    build_deep_read_queue,
     enrich_papers,
     detect_duplicate_queries,
     analyze_dedup_rate,
 )
+from .workspace_policy import WorkspaceAccessPolicy
 
 
 class EnrichPapersParams(BaseModel):
@@ -243,4 +258,377 @@ class AnalyzeDedupRateTool(Tool):
                 ok=False,
                 content=f"❌ 去重率分析失败: {e}",
                 error="analysis_failed"
+            )
+
+
+class BuildVerifiedPapersParams(BaseModel):
+    papers: list[dict[str, Any]] = Field(..., description="去重并增强后的论文列表")
+    title_similarity_threshold: float = Field(
+        0.84,
+        description="标题相似度阈值；低于该值视为 metadata verification 失败",
+    )
+
+
+class BuildVerifiedPapersTool(Tool):
+    """对论文做确定性 metadata verification，并落盘 verified / failure artifacts。"""
+
+    name = "build_verified_papers"
+    description = (
+        "基于 arXiv / DOI / OpenAlex / Semantic Scholar 对论文做确定性校验，"
+        "生成 literature/papers_verified.jsonl 和 literature/verification_failures.jsonl。"
+    )
+    parameters_schema = BuildVerifiedPapersParams
+    timeout_seconds = 90.0
+
+    def __init__(self, policy: WorkspaceAccessPolicy):
+        self.policy = policy
+
+    async def execute(self, **kwargs):
+        params = BuildVerifiedPapersParams(**kwargs)
+
+        if httpx is None:
+            return ToolResult(
+                ok=False,
+                content="❌ 缺少 httpx 依赖，无法执行 metadata verification",
+                error="dependency_missing",
+            )
+
+        try:
+            verified_records: list[dict[str, Any]] = []
+            failure_records: list[dict[str, Any]] = []
+
+            # 这里集中做真实性核验，避免把“长得像论文”的记录直接送进 T3。
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                for paper in params.papers:
+                    verified, failure = await self._verify_one_paper(
+                        client,
+                        paper,
+                        title_similarity_threshold=params.title_similarity_threshold,
+                    )
+                    if verified is not None:
+                        verified_records.append(verified)
+                    elif failure is not None:
+                        failure_records.append(failure)
+
+            verified_path = self.policy.resolve_write("literature/papers_verified.jsonl")
+            failure_path = self.policy.resolve_write("literature/verification_failures.jsonl")
+            verified_path.parent.mkdir(parents=True, exist_ok=True)
+            verified_path.write_text(
+                "\n".join(json.dumps(item, ensure_ascii=False) for item in verified_records) + ("\n" if verified_records else ""),
+                encoding="utf-8",
+            )
+            failure_path.write_text(
+                "\n".join(json.dumps(item, ensure_ascii=False) for item in failure_records) + ("\n" if failure_records else ""),
+                encoding="utf-8",
+            )
+
+            return ToolResult(
+                ok=True,
+                content=(
+                    f"✅ metadata verification 完成：verified={len(verified_records)}，"
+                    f"failed={len(failure_records)}"
+                ),
+                data={
+                    "verified_path": "literature/papers_verified.jsonl",
+                    "failure_path": "literature/verification_failures.jsonl",
+                    "verified_count": len(verified_records),
+                    "failure_count": len(failure_records),
+                    "verified_papers": verified_records,
+                    "verification_failures": failure_records,
+                },
+            )
+        except Exception as e:
+            return ToolResult(
+                ok=False,
+                content=f"❌ 构建 verified papers 失败: {e}",
+                error="build_verified_papers_failed",
+            )
+
+    async def _verify_one_paper(
+        self,
+        client: "httpx.AsyncClient",
+        paper: dict[str, Any],
+        *,
+        title_similarity_threshold: float,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """按最佳可用标识做单篇校验。"""
+
+        canonical_id = str(paper.get("canonical_id") or paper.get("id") or "").strip()
+        title = str(paper.get("title", "")).strip()
+
+        reference = None
+        method = "none"
+        try:
+            if canonical_id.startswith("arxiv:"):
+                method = "arxiv"
+                reference = await self._fetch_arxiv_metadata(client, canonical_id.removeprefix("arxiv:"))
+            elif str(paper.get("doi", "")).strip() or canonical_id.startswith("10."):
+                method = "crossref"
+                reference = await self._fetch_crossref_metadata(
+                    client,
+                    str(paper.get("doi", "")).strip() or canonical_id,
+                )
+            elif canonical_id.startswith("W") and canonical_id[1:].isdigit():
+                method = "openalex"
+                reference = await self._fetch_openalex_metadata(client, canonical_id)
+            else:
+                method = "semantic_scholar"
+                reference = await self._fetch_semantic_scholar_metadata(client, str(paper.get("id", "")).strip())
+        except Exception as exc:
+            return None, self._build_failure_record(
+                paper,
+                method=method,
+                reason="verification_request_failed",
+                error=str(exc),
+            )
+
+        if not reference:
+            return None, self._build_failure_record(
+                paper,
+                method=method,
+                reason="no_reference_metadata",
+            )
+
+        similarity = SequenceMatcher(
+            None,
+            normalize_text_key(title),
+            normalize_text_key(str(reference.get("title", ""))),
+        ).ratio()
+        source_year = paper.get("year")
+        ref_year = reference.get("year")
+        year_match = source_year is None or ref_year is None or abs(int(source_year) - int(ref_year)) <= 1
+
+        if similarity < title_similarity_threshold or not year_match:
+            return None, self._build_failure_record(
+                paper,
+                method=method,
+                reason="metadata_mismatch",
+                error=f"title_similarity={similarity:.2f}, year_match={year_match}",
+                confidence=round(similarity * (1.0 if year_match else 0.6), 2),
+            )
+
+        # 本地 PDF 是最强的二级证据，因此在 verified 层里明确升成 pdf_verified。
+        normalized_id = str(paper.get("canonical_id") or paper.get("id") or "").replace(":", "_").replace("/", "_")
+        has_local_pdf = bool(normalized_id and (self.policy.workspace_dir / "literature" / "pdfs" / f"{normalized_id}.pdf").exists())
+        verified_record = dict(paper)
+        verified_record["canonical_id"] = canonical_id or str(paper.get("id", "")).strip()
+        verified_record["verification_status"] = "pdf_verified" if has_local_pdf else "metadata_verified"
+        verified_record["verification_method"] = method
+        verified_record["verification_source"] = str(reference.get("source", method))
+        verified_record["verification_confidence"] = round(min(1.0, max(similarity, 0.9 if year_match else similarity)), 2)
+        verified_record["verification_title_similarity"] = round(similarity, 2)
+        verified_record["verification_year_match"] = year_match
+        return verified_record, None
+
+    @staticmethod
+    def _build_failure_record(
+        paper: dict[str, Any],
+        *,
+        method: str,
+        reason: str,
+        error: str = "",
+        confidence: float = 0.0,
+    ) -> dict[str, Any]:
+        """把失败原因结构化落盘，便于后续 audit。"""
+
+        return {
+            "paper_id": str(paper.get("id", "")).strip(),
+            "canonical_id": str(paper.get("canonical_id") or paper.get("id") or "").strip(),
+            "title": str(paper.get("title", "")).strip(),
+            "source": str(paper.get("source", "")).strip(),
+            "doi": str(paper.get("doi", "")).strip(),
+            "verification_status": "failed_verification",
+            "verification_method": method,
+            "failure_reason": reason,
+            "verification_error": error,
+            "verification_confidence": round(confidence, 2),
+        }
+
+    async def _fetch_crossref_metadata(
+        self,
+        client: "httpx.AsyncClient",
+        doi: str,
+    ) -> dict[str, Any] | None:
+        response = await client.get(f"https://api.crossref.org/works/{quote(doi, safe='')}")
+        response.raise_for_status()
+        item = response.json().get("message", {})
+        title = item.get("title", [""])
+        date_parts = item.get("published", {}).get("date-parts", [[]])
+        year = date_parts[0][0] if date_parts and date_parts[0] else None
+        return {
+            "source": "crossref",
+            "title": title[0] if title else "",
+            "year": year,
+        }
+
+    async def _fetch_openalex_metadata(
+        self,
+        client: "httpx.AsyncClient",
+        work_id: str,
+    ) -> dict[str, Any] | None:
+        response = await client.get(f"https://api.openalex.org/works/{quote(work_id, safe=':/')}")
+        response.raise_for_status()
+        item = response.json()
+        return {
+            "source": "openalex",
+            "title": item.get("title", ""),
+            "year": item.get("publication_year"),
+        }
+
+    async def _fetch_semantic_scholar_metadata(
+        self,
+        client: "httpx.AsyncClient",
+        paper_id: str,
+    ) -> dict[str, Any] | None:
+        if not paper_id:
+            return None
+        response = await client.get(
+            f"https://api.semanticscholar.org/graph/v1/paper/{quote(paper_id, safe='')}",
+            params={"fields": "title,year"},
+        )
+        response.raise_for_status()
+        item = response.json()
+        return {
+            "source": "semantic_scholar",
+            "title": item.get("title", ""),
+            "year": item.get("year"),
+        }
+
+    async def _fetch_arxiv_metadata(
+        self,
+        client: "httpx.AsyncClient",
+        arxiv_id: str,
+    ) -> dict[str, Any] | None:
+        response = await client.get(
+            f"https://export.arxiv.org/api/query?id_list={quote(arxiv_id, safe='')}"
+        )
+        response.raise_for_status()
+        root = ET.fromstring(response.text)
+        ns = {"atom": "http://www.w3.org/2005/Atom"}
+        entry = root.find("atom:entry", ns)
+        if entry is None:
+            return None
+
+        title = unescape(" ".join((entry.findtext("atom:title", default="", namespaces=ns) or "").split()))
+        published = entry.findtext("atom:published", default="", namespaces=ns) or ""
+        year = int(published[:4]) if published[:4].isdigit() else None
+        return {
+            "source": "arxiv",
+            "title": title,
+            "year": year,
+        }
+
+
+class BuildDeepReadQueueParams(BaseModel):
+    papers: list[dict[str, Any]] = Field(..., description="去重并增强后的论文列表")
+    deep_read_min: int = Field(18, description="最低有效 deep-read 数")
+    deep_read_target: int = Field(24, description="目标 deep-read 数")
+    deep_read_max: int = Field(30, description="最大 deep-read 数")
+    probe_pool: int = Field(45, description="实际先 probe 的候选数")
+
+
+class BuildAccessAuditParams(BaseModel):
+    papers: list[dict[str, Any]] = Field(..., description="去重并增强后的论文列表")
+    top_n: int = Field(50, description="在 markdown 里展示前多少篇")
+
+
+class BuildDeepReadQueueTool(Tool):
+    """构建 deep-read 队列并直接写入 artifact。"""
+
+    name = "build_deep_read_queue"
+    description = (
+        "基于 relevance_score、access_score_estimate 和 seed priority 构建 "
+        "literature/deep_read_queue.jsonl。"
+    )
+    parameters_schema = BuildDeepReadQueueParams
+    timeout_seconds = 30.0
+
+    def __init__(self, policy: WorkspaceAccessPolicy):
+        self.policy = policy
+
+    async def execute(self, **kwargs):
+        params = BuildDeepReadQueueParams(**kwargs)
+
+        try:
+            queue_records, metadata = build_deep_read_queue(
+                params.papers,
+                self.policy.workspace_dir,
+                deep_read_min=params.deep_read_min,
+                deep_read_target=params.deep_read_target,
+                deep_read_max=params.deep_read_max,
+                probe_pool=params.probe_pool,
+            )
+            queue_path = self.policy.resolve_write("literature/deep_read_queue.jsonl")
+            queue_path.parent.mkdir(parents=True, exist_ok=True)
+            queue_path.write_text(
+                "\n".join(__import__("json").dumps(item, ensure_ascii=False) for item in queue_records) + "\n",
+                encoding="utf-8",
+            )
+            meta_path = self.policy.resolve_write("literature/deep_read_queue_meta.json")
+            meta_path.write_text(__import__("json").dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+
+            return ToolResult(
+                ok=True,
+                content=(
+                    f"✅ 已生成 deep-read 队列 {len(queue_records)} 篇，"
+                    f"target={metadata['deep_read_target']}, probe_pool={metadata['probe_pool']}"
+                ),
+                data={
+                    "queue_path": "literature/deep_read_queue.jsonl",
+                    "meta_path": "literature/deep_read_queue_meta.json",
+                    "queue_count": len(queue_records),
+                    "metadata": metadata,
+                },
+            )
+        except Exception as e:
+            return ToolResult(
+                ok=False,
+                content=f"❌ 构建 deep-read 队列失败: {e}",
+                error="build_queue_failed",
+            )
+
+
+class BuildAccessAuditTool(Tool):
+    """构建 access audit 清单并直接写入 artifact。"""
+
+    name = "build_access_audit"
+    description = "生成 literature/access_audit.md，汇总论文可读性与 PDF 可得性。"
+    parameters_schema = BuildAccessAuditParams
+    timeout_seconds = 30.0
+
+    def __init__(self, policy: WorkspaceAccessPolicy):
+        self.policy = policy
+
+    async def execute(self, **kwargs):
+        params = BuildAccessAuditParams(**kwargs)
+
+        try:
+            records, markdown = build_access_audit(
+                params.papers,
+                self.policy.workspace_dir,
+                top_n=params.top_n,
+            )
+            audit_md_path = self.policy.resolve_write("literature/access_audit.md")
+            audit_jsonl_path = self.policy.resolve_write("literature/access_audit.jsonl")
+            audit_md_path.parent.mkdir(parents=True, exist_ok=True)
+            audit_md_path.write_text(markdown, encoding="utf-8")
+            audit_jsonl_path.write_text(
+                "\n".join(__import__("json").dumps(item, ensure_ascii=False) for item in records) + "\n",
+                encoding="utf-8",
+            )
+
+            return ToolResult(
+                ok=True,
+                content=f"✅ 已生成 access audit，共 {len(records)} 篇候选论文",
+                data={
+                    "audit_md_path": "literature/access_audit.md",
+                    "audit_jsonl_path": "literature/access_audit.jsonl",
+                    "count": len(records),
+                },
+            )
+        except Exception as e:
+            return ToolResult(
+                ok=False,
+                content=f"❌ 构建 access audit 失败: {e}",
+                error="build_access_audit_failed",
             )

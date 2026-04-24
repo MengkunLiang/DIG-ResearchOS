@@ -87,8 +87,13 @@ class SingleTaskRunner:
             print(f"Unknown or unimplemented task: {self.task_id}")
             return 4
 
-        # 为 T1 准备 extra 参数（从 project.yaml 读取 topic）
+        project_id = self._load_or_fake_project_id()
+        state = self._load_or_init_state(project_id)
+
+        # 单任务模式没有独立的 resume 子命令；当用户在同一 workspace
+        # 中重跑失败/中断过的任务时，自动把“恢复运行”语义透传给 Agent。
         extra = self._build_task_extra(task_node)
+        self._inject_resume_extra(extra, state)
         if self.task_id == "T1":
             project_path = self.workspace / "project.yaml"
             if project_path.exists():
@@ -103,7 +108,7 @@ class SingleTaskRunner:
 
         ctx = ExecutionContext(
             workspace_dir=self.workspace.resolve(),
-            project_id=self._load_or_fake_project_id(),
+            project_id=project_id,
             task_id=self.task_id,
             run_id=f"{self.task_id}_single_{uuid.uuid4().hex[:8]}",
             inputs=resolve_inputs(self.workspace, self.task_id),
@@ -116,7 +121,6 @@ class SingleTaskRunner:
 
         print(f"[进度] 准备执行上下文 (run_id: {ctx.run_id})", flush=True)
         state_path = self.workspace / "state.yaml"
-        state = self._load_or_init_state(ctx.project_id)
         state = self._record_started(state, ctx.run_id)
         state.dump_yaml(state_path)
 
@@ -205,6 +209,37 @@ class SingleTaskRunner:
         if task_node is not None and task_node.round is not None:
             extra.setdefault("round", task_node.round)
         return extra
+
+    def _inject_resume_extra(self, extra: dict[str, object], state: StateYaml) -> None:
+        """在单任务模式下补充 resume 语义。"""
+
+        if extra.get("is_resume"):
+            return
+
+        resumed_from = None
+        resume_reason = None
+
+        for history in reversed(state.history):
+            if history.task != self.task_id:
+                continue
+            if history.status == "INTERRUPTED":
+                resumed_from = history.run_id
+                resume_reason = "interrupted"
+                break
+            if history.status == "FAILED":
+                resumed_from = history.run_id
+                resume_reason = "retry_after_failure"
+                break
+            break
+
+        if resumed_from is None:
+            return
+
+        extra["is_resume"] = True
+        extra["resume_mode"] = True
+        extra["resumed_from"] = resumed_from
+        extra["resumed_from_run_id"] = resumed_from
+        extra["resume_reason"] = resume_reason
 
     def _load_or_fake_project_id(self) -> str:
         """尽量从 project.yaml 读 project_id，没有则生成一个临时值。"""

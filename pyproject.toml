@@ -25,6 +25,9 @@ dev = [
 llm = [
   "litellm>=1.65,<2",
 ]
+pdf_extra = [
+  "PyMuPDF>=1.23,<2",
+]
 
 [project.scripts]
 researchos = "researchos.cli:main"

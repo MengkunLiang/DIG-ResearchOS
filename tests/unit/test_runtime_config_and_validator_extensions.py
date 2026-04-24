@@ -7,7 +7,16 @@ import textwrap
 import yaml
 
 from researchos.cli_runners.single_task import SingleTaskRunner
-from researchos.runtime.config import LoggingSettings, RuntimeSettings, WorkspaceSettings, load_runtime_settings
+from researchos.runtime.config_audit import build_config_audit_summary
+from researchos.runtime.config import (
+    DebugSettings,
+    LoggingSettings,
+    RuntimeSettings,
+    UISettings,
+    WebFetchSettings,
+    WorkspaceSettings,
+    load_runtime_settings,
+)
 from researchos.schemas import validator
 from researchos.testing.mocks import (
     FakeLLMMessage,
@@ -67,6 +76,13 @@ def test_load_runtime_settings_reads_shared_runtime_options(tmp_path: Path):
               json: false
             human_interface:
               backend: "cli"
+            debug:
+              enable_trace: false
+            ui:
+              no_banner: true
+            web_fetch:
+              allowed_schemes: ["https"]
+              allowed_hosts: ["example.com", "openalex.org"]
             """
         ).strip()
         + "\n",
@@ -78,6 +94,12 @@ def test_load_runtime_settings_reads_shared_runtime_options(tmp_path: Path):
     assert settings.workspace.default_root == "./shared-workspace"
     assert settings.workspace.runtime_dir == ".runtime"
     assert settings.logging == LoggingSettings(level="DEBUG", json=False)
+    assert settings.debug == DebugSettings(enable_trace=False)
+    assert settings.ui == UISettings(no_banner=True)
+    assert settings.web_fetch == WebFetchSettings(
+        allowed_schemes=("https",),
+        allowed_hosts=("example.com", "openalex.org"),
+    )
 
 
 async def test_single_task_runner_respects_custom_runtime_dir(tmp_workspace: Path):
@@ -98,6 +120,25 @@ async def test_single_task_runner_respects_custom_runtime_dir(tmp_workspace: Pat
     trace_dir = tmp_workspace / ".runtime" / "traces"
     assert trace_dir.exists()
     assert any(trace_dir.glob("*.jsonl"))
+
+
+async def test_single_task_runner_can_disable_trace_output(tmp_workspace: Path):
+    settings = RuntimeSettings(
+        debug=DebugSettings(enable_trace=False),
+    )
+    runner = SingleTaskRunner(
+        workspace=tmp_workspace,
+        task_id="HELLO",
+        llm_client=_hello_llm(),
+        tool_registry=_registry(),
+        runtime_settings=settings,
+    )
+
+    exit_code = await runner.run()
+
+    assert exit_code == 0
+    trace_dir = tmp_workspace / "_runtime" / "traces"
+    assert not any(trace_dir.glob("*.jsonl"))
 
 
 def test_validate_t2_artifacts_with_builtin_checker(tmp_path: Path):
@@ -139,6 +180,55 @@ def test_validate_t2_artifacts_with_builtin_checker(tmp_path: Path):
     }
     (workspace / "literature" / "papers_dedup.jsonl").write_text(
         json.dumps(paper_dedup, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    verified_paper = {
+        **paper_dedup,
+        "canonical_id": "paper-1",
+        "preferred_id_source": "doi",
+        "verification_status": "metadata_verified",
+        "verification_method": "crossref",
+        "verification_source": "crossref",
+        "verification_confidence": 0.95,
+        "verification_title_similarity": 0.99,
+        "verification_year_match": True,
+    }
+    (workspace / "literature" / "papers_verified.jsonl").write_text(
+        json.dumps(verified_paper, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    (workspace / "literature" / "verification_failures.jsonl").write_text(
+        "",
+        encoding="utf-8",
+    )
+    deep_read_item = {
+        "paper_id": "paper-1",
+        "title": "A Runtime Paper",
+        "source": "semantic_scholar",
+        "year": 2025,
+        "venue": "Conf",
+        "relevance_score": 0.95,
+        "access_score_estimate": 0.6,
+        "access_score": 0.6,
+        "evidence_level": "ABSTRACT_ONLY",
+        "seed_priority": False,
+        "has_local_pdf": False,
+        "why_relevant": "Directly related to the research topic",
+        "queue_reason": "high relevance",
+        "normalized_id": "paper-1",
+        "url": "https://example.com/paper-1",
+        "verification_status": "metadata_verified",
+        "verification_confidence": 0.95,
+        "read_priority": 0.83,
+        "queue_rank": 1,
+        "target_bucket": "target",
+    }
+    (workspace / "literature" / "deep_read_queue.jsonl").write_text(
+        json.dumps(deep_read_item, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    (workspace / "literature" / "access_audit.md").write_text(
+        "# Access Audit\n",
         encoding="utf-8",
     )
 
@@ -214,3 +304,36 @@ def test_validate_t7_artifacts_happy_path(tmp_path: Path):
     assert ok
     # validate_task_artifacts返回(ok, error_message)，成功时error_message为None
     assert errors is None
+
+
+def test_build_config_audit_summary_reports_direct_llm_bindings(tmp_path: Path):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "agent_params.yaml").write_text(
+        textwrap.dedent(
+            """
+            agents:
+              scout:
+                llm:
+                  profile: scout_resilient
+                  tier: medium
+              writer:
+                llm:
+                  model: openrouter/openai/gpt-4o
+                  endpoint: openrouter_main
+                modes:
+                  revise:
+                    llm:
+                      model: openrouter/openai/gpt-4o-mini
+                      endpoint: openrouter_main
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    summary = build_config_audit_summary(config_dir)
+
+    assert "writer (base)" in summary["agents_disabling_profile_fallback"]
+    assert "writer.revise" in summary["agents_disabling_profile_fallback"]
+    assert "scout (base)" not in summary["agents_disabling_profile_fallback"]

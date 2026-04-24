@@ -204,6 +204,19 @@ profiles:
         endpoint: openrouter_main
         max_context: 128000
 
+  # T2 Scout 专用：保留当前 SiliconFlow 首选链路，但在 provider 超时/抖动时
+  # 自动切到 OpenRouter，避免单次 run 因单一 endpoint 卡死。
+  scout_resilient:
+    medium:
+      primary:
+        model: "Pro/deepseek-ai/DeepSeek-V3.2"
+        endpoint: siliconflow
+        max_context: 128000
+      fallback:
+        - model: "openrouter/openai/gpt-4o-mini"
+          endpoint: openrouter_main
+          max_context: 128000
+
 # 上下文截断配置。
 truncation:
   # 当消息累计接近 max_context 的 80% 时开始截断。

@@ -60,6 +60,15 @@ def load_jsonl(path: Path) -> list[dict]:
     return results
 
 
+def normalize_text_key(value: str) -> str:
+    """把标题/ID 归一化，便于跨来源做弱匹配。"""
+    if not value:
+        return ""
+    normalized = value.casefold()
+    normalized = " ".join(normalized.split())
+    return normalized
+
+
 def append_jsonl(path: Path, records: list[dict]) -> None:
     """追加到JSONL（agent产出期间用）。"""
     path.parent.mkdir(parents=True, exist_ok=True)

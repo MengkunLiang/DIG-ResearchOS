@@ -116,6 +116,7 @@ class MockLLMClient:
         max_context_override: int | None = None,
         timeout: int = 120,
         max_retries_per_model: int = 2,
+        retry_base_delay: float = 2.0,
     ) -> LLMResponse:
         self.call_count += 1
         self.last_messages.append(messages)

@@ -148,13 +148,13 @@ python scripts/real_debug_t1_t2.py --all \
 
 **用途**: 使用 SingleTaskRunner 测试 T1 PIAgent 的基本功能。
 
-**注意**: 此脚本包含硬编码的 API key，仅用于开发测试。
+**注意**: 运行前请先在项目根目录 `.env` 或当前 shell 中配置可用的 LLM API key。
 
 ### test_t1_with_topic.py
 
 **用途**: 测试通过 ExecutionContext.extra 传递 user_topic 的方式运行 T1。
 
-**注意**: 此脚本包含硬编码的 API key，仅用于开发测试。
+**注意**: 运行前请先在项目根目录 `.env` 或当前 shell 中配置可用的 LLM API key。
 
 ---
 

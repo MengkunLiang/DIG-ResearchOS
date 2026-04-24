@@ -5,7 +5,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
+
+from ..agents._common import load_jsonl, normalize_text_key
 
 
 def enrich_papers(
@@ -93,6 +96,15 @@ def enrich_papers(
             paper["abstract"] = ""
             paper["_missing_abstract"] = True  # 标记数据质量问题
 
+        if "access_score_estimate" not in paper:
+            paper["access_score_estimate"] = _estimate_access_score(paper)
+
+        if "access_score" not in paper:
+            paper["access_score"] = paper["access_score_estimate"]
+
+        if "evidence_level" not in paper:
+            paper["evidence_level"] = _estimate_evidence_level(paper)
+
         if "url" not in paper or not paper["url"]:
             # 尝试从 DOI 生成 URL
             doi = paper.get("doi", "")
@@ -119,6 +131,330 @@ def enrich_papers(
         enriched.append(paper)
 
     return enriched
+
+
+def build_deep_read_queue(
+    papers: list[dict[str, Any]],
+    workspace_dir: Path,
+    *,
+    deep_read_min: int = 18,
+    deep_read_target: int = 24,
+    deep_read_max: int = 30,
+    probe_pool: int = 45,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """为 T3 构建 deep-read 队列。
+
+    设计目标：
+    1. seed papers 必须最高优先级；
+    2. relevance_score 与 access_score_estimate 联合排序；
+    3. probe_pool 故意大于 target，给后续下载/解析失败留冗余；
+    4. 输出单独 artifact，避免 T3 被整个 dedup 池绑死。
+    """
+
+    seed_path = workspace_dir / "user_seeds" / "seed_papers.jsonl"
+    seed_papers = load_jsonl(seed_path) if seed_path.exists() else []
+    local_pdf_dir = workspace_dir / "literature" / "pdfs"
+
+    seed_keys: set[str] = set()
+    seed_titles: list[str] = []
+    for seed in seed_papers:
+        seed_keys.update(_paper_match_keys(seed))
+        seed_title = str(seed.get("title", "")).strip()
+        if seed_title:
+            seed_titles.append(str(seed.get("title", "")).strip())
+
+    ranked_records: list[dict[str, Any]] = []
+    for paper in papers:
+        verification_status = str(paper.get("verification_status", "retrieved")).strip() or "retrieved"
+        # 失败样本不应继续进入 deep-read 队列，避免把 T3 预算浪费在坏样本上。
+        if verification_status == "failed_verification":
+            continue
+
+        paper_id = str(paper.get("id", "")).strip()
+        title = str(paper.get("title", "")).strip()
+        key_candidates = _paper_match_keys(paper)
+        is_seed = any(candidate and candidate in seed_keys for candidate in key_candidates)
+
+        canonical_id = str(paper.get("canonical_id") or paper_id or title).strip()
+        normalized_id = _normalize_paper_filename(canonical_id)
+        has_local_pdf = bool(normalized_id and (local_pdf_dir / f"{normalized_id}.pdf").exists())
+        access_est = float(paper.get("access_score_estimate", _estimate_access_score(paper)))
+        access_score = max(access_est, 1.0 if has_local_pdf else access_est)
+        relevance_score = float(paper.get("relevance_score", 0.0))
+        verification_confidence = float(paper.get("verification_confidence", 0.0))
+        verification_bonus = 0.25 if verification_status in {"metadata_verified", "pdf_verified"} else 0.0
+        read_priority = round(
+            (1.0 if is_seed else 0.0) * 100.0
+            + relevance_score * 0.55
+            + access_score * 0.25
+            + verification_confidence * 0.20
+            + verification_bonus,
+            4,
+        )
+
+        record = {
+            "paper_id": canonical_id or paper_id,
+            "title": title,
+            "source": paper.get("source", ""),
+            "year": paper.get("year"),
+            "venue": paper.get("venue", ""),
+            "relevance_score": round(relevance_score, 2),
+            "access_score_estimate": round(access_est, 2),
+            "access_score": round(access_score, 2),
+            "evidence_level": paper.get("evidence_level", _estimate_evidence_level(paper)),
+            "seed_priority": is_seed,
+            "has_local_pdf": has_local_pdf,
+            "why_relevant": paper.get("why_relevant", ""),
+            "queue_reason": "seed_paper" if is_seed else "ranked_candidate",
+            "normalized_id": normalized_id,
+            "url": paper.get("url", ""),
+            "doi": paper.get("doi", ""),
+            "verification_status": verification_status,
+            "verification_confidence": round(verification_confidence, 2),
+            "read_priority": read_priority,
+        }
+        ranked_records.append(record)
+
+    ranked_records.sort(
+        key=lambda item: (
+            not item["seed_priority"],
+            -item["read_priority"],
+            -item["relevance_score"],
+            -item["access_score"],
+            str(item["title"]).casefold(),
+        )
+    )
+
+    selected_count = min(len(ranked_records), max(probe_pool, deep_read_target, deep_read_min))
+    queue_records = ranked_records[:selected_count]
+    for idx, record in enumerate(queue_records, start=1):
+        record["queue_rank"] = idx
+        record["target_bucket"] = (
+            "seed" if record["seed_priority"] else "target"
+            if idx <= deep_read_target
+            else "overflow"
+        )
+
+    metadata = {
+        "deep_read_min": deep_read_min,
+        "deep_read_target": deep_read_target,
+        "deep_read_max": deep_read_max,
+        "probe_pool": probe_pool,
+        "queue_count": len(queue_records),
+        "seed_total": len(seed_papers),
+        "seed_titles": seed_titles[:20],
+        "seed_in_queue": sum(1 for item in queue_records if item["seed_priority"]),
+        "full_text_candidates": sum(
+            1
+            for item in queue_records
+            if item["evidence_level"] in {"FULL_TEXT", "PARTIAL_TEXT"}
+        ),
+        "verified_candidates": sum(
+            1
+            for item in queue_records
+            if item["verification_status"] in {"metadata_verified", "pdf_verified"}
+        ),
+    }
+    return queue_records, metadata
+
+
+def build_access_audit(
+    papers: list[dict[str, Any]],
+    workspace_dir: Path,
+    *,
+    top_n: int = 50,
+) -> tuple[list[dict[str, Any]], str]:
+    """构建文献可读性审计清单。
+
+    输出目标：
+    1. 告诉用户当前候选池里多少篇有本地 PDF；
+    2. 哪些论文最值得优先 probe / deep-read；
+    3. 哪些论文只有摘要，哪些几乎只有 metadata。
+    """
+
+    local_pdf_dir = workspace_dir / "literature" / "pdfs"
+    seed_pdf_dir = workspace_dir / "user_seeds" / "pdfs"
+    records: list[dict[str, Any]] = []
+
+    for paper in papers:
+        paper_id = str(paper.get("id", "")).strip()
+        title = str(paper.get("title", "")).strip()
+        normalized_id = _normalize_paper_filename(paper_id or title)
+        has_local_pdf = bool(normalized_id and (local_pdf_dir / f"{normalized_id}.pdf").exists())
+        has_seed_pdf = False
+        if seed_pdf_dir.exists() and title:
+            title_key = normalize_text_key(title)
+            for path in seed_pdf_dir.glob("*.pdf"):
+                if title_key and title_key in normalize_text_key(path.stem):
+                    has_seed_pdf = True
+                    break
+
+        access_est = float(paper.get("access_score_estimate", _estimate_access_score(paper)))
+        evidence_level = str(paper.get("evidence_level", _estimate_evidence_level(paper)))
+        records.append(
+            {
+                "paper_id": str(paper.get("canonical_id") or paper_id),
+                "title": title,
+                "source": paper.get("source", ""),
+                "year": paper.get("year"),
+                "relevance_score": round(float(paper.get("relevance_score", 0.0)), 2),
+                "access_score_estimate": round(access_est, 2),
+                "evidence_level": evidence_level,
+                "verification_status": str(paper.get("verification_status", "retrieved")),
+                "verification_confidence": round(float(paper.get("verification_confidence", 0.0)), 2),
+                "has_local_pdf": has_local_pdf,
+                "has_seed_pdf": has_seed_pdf,
+                "recommended_action": _recommended_action(
+                    has_local_pdf=has_local_pdf,
+                    has_seed_pdf=has_seed_pdf,
+                    evidence_level=evidence_level,
+                    verification_status=str(paper.get("verification_status", "retrieved")),
+                ),
+            }
+        )
+
+    records.sort(
+        key=lambda item: (
+            not item["has_local_pdf"],
+            not item["has_seed_pdf"],
+            -item["access_score_estimate"],
+            -item["relevance_score"],
+            str(item["title"]).casefold(),
+        )
+    )
+
+    local_pdf_count = sum(1 for item in records if item["has_local_pdf"])
+    seed_pdf_count = sum(1 for item in records if item["has_seed_pdf"])
+    evidence_counts: dict[str, int] = {
+        level: sum(1 for item in records if item["evidence_level"] == level)
+        for level in ["FULL_TEXT", "PARTIAL_TEXT", "ABSTRACT_ONLY", "METADATA_ONLY"]
+    }
+
+    lines = [
+        "# Access Audit",
+        "",
+        f"- 候选论文总数: {len(records)}",
+        f"- `literature/pdfs/` 本地 PDF: {local_pdf_count}",
+        f"- `user_seeds/pdfs/` 可匹配的 seed PDF: {seed_pdf_count}",
+        f"- `FULL_TEXT`: {evidence_counts['FULL_TEXT']}",
+        f"- `PARTIAL_TEXT`: {evidence_counts['PARTIAL_TEXT']}",
+        f"- `ABSTRACT_ONLY`: {evidence_counts['ABSTRACT_ONLY']}",
+        f"- `METADATA_ONLY`: {evidence_counts['METADATA_ONLY']}",
+        "",
+        "## Top Candidates",
+        "",
+        "| Rank | Title | Source | Relevance | Access | Evidence | Verified | Local PDF | Seed PDF | Recommended Action |",
+        "|---|---|---|---:|---:|---|---|---|---|---|",
+    ]
+
+    for idx, item in enumerate(records[:top_n], start=1):
+        lines.append(
+            "| {rank} | {title} | {source} | {rel:.2f} | {acc:.2f} | {evi} | {ver} ({conf:.2f}) | {local} | {seed} | {action} |".format(
+                rank=idx,
+                title=str(item["title"]).replace("|", "/"),
+                source=str(item["source"]).replace("|", "/"),
+                rel=float(item["relevance_score"]),
+                acc=float(item["access_score_estimate"]),
+                evi=item["evidence_level"],
+                ver=item["verification_status"],
+                conf=float(item["verification_confidence"]),
+                local="yes" if item["has_local_pdf"] else "no",
+                seed="yes" if item["has_seed_pdf"] else "no",
+                action=item["recommended_action"],
+            )
+        )
+
+    markdown = "\n".join(lines) + "\n"
+    return records, markdown
+
+
+def _estimate_access_score(paper: dict[str, Any]) -> float:
+    """基于 metadata 估计资料可用性。"""
+
+    score = 0.1
+    source = str(paper.get("source", "")).casefold()
+    url = str(paper.get("url", "")).strip()
+    doi = str(paper.get("doi", "")).strip()
+    abstract = str(paper.get("abstract", "")).strip()
+    external_ids = paper.get("externalIds") or {}
+
+    has_arxiv = (
+        source == "arxiv"
+        or "arxiv" in url.casefold()
+        or bool(external_ids.get("ArXiv"))
+        or str(paper.get("id", "")).startswith("arxiv:")
+    )
+    if has_arxiv:
+        score += 0.45
+    if doi:
+        score += 0.15
+    if url:
+        score += 0.1
+        if url.casefold().endswith(".pdf"):
+            score += 0.15
+    if abstract:
+        score += 0.2
+    if paper.get("pdf_url"):
+        score += 0.25
+    if str(paper.get("source_type", "")).casefold() in {"top_conference", "journal"}:
+        score += 0.05
+
+    return round(min(1.0, score), 2)
+
+
+def _estimate_evidence_level(paper: dict[str, Any]) -> str:
+    """基于 metadata 给出粗粒度证据等级。"""
+
+    access_score = float(paper.get("access_score_estimate", _estimate_access_score(paper)))
+    has_abstract = bool(str(paper.get("abstract", "")).strip())
+    if access_score >= 0.8:
+        return "FULL_TEXT"
+    if access_score >= 0.55:
+        return "PARTIAL_TEXT"
+    if has_abstract:
+        return "ABSTRACT_ONLY"
+    return "METADATA_ONLY"
+
+
+def _normalize_paper_filename(identifier: str) -> str:
+    return identifier.replace(":", "_").replace("/", "_").replace("\\", "_").strip()
+
+
+def _recommended_action(
+    *,
+    has_local_pdf: bool,
+    has_seed_pdf: bool,
+    evidence_level: str,
+    verification_status: str,
+) -> str:
+    # 未核验论文先做 metadata backfill / verification，避免直接把幻觉候选送进 T3。
+    if verification_status == "retrieved":
+        return "verify_metadata"
+    if verification_status == "failed_verification":
+        return "exclude_from_t3"
+    if has_local_pdf:
+        return "read_local_pdf"
+    if has_seed_pdf:
+        return "read_seed_pdf"
+    if evidence_level in {"FULL_TEXT", "PARTIAL_TEXT"}:
+        return "probe_pdf"
+    if evidence_level == "ABSTRACT_ONLY":
+        return "abstract_only"
+    return "metadata_backlog"
+
+
+def _paper_match_keys(paper: dict[str, Any]) -> set[str]:
+    external_ids = paper.get("externalIds") or {}
+    candidates = {
+        str(paper.get("id", "")),
+        str(paper.get("canonical_id", "")),
+        str(paper.get("title", "")),
+        str(paper.get("doi", "")),
+        str(paper.get("url", "")),
+        str(external_ids.get("ArXiv", "")),
+        str(external_ids.get("DOI", "")),
+    }
+    return {normalize_text_key(candidate) for candidate in candidates if str(candidate).strip()}
 
 
 def detect_duplicate_queries(queries: list[str], threshold: float = 0.7) -> dict[str, Any]:

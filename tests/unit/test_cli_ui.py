@@ -29,6 +29,14 @@ def test_show_startup_banner_falls_back_to_static_output_for_non_tty():
     assert "command=run" in output
 
 
+def test_show_startup_banner_respects_runtime_default_no_banner():
+    stream = _FakeStream()
+
+    show_startup_banner("run", stream=stream, default_no_banner=True, sleep_seconds=0)
+
+    assert stream.getvalue() == ""
+
+
 def test_format_startup_summary_renders_paths():
     summary = format_startup_summary(
         workspace_dir=Path("/tmp/workspace"),

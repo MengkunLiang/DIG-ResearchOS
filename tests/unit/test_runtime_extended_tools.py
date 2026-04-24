@@ -6,12 +6,13 @@ from pathlib import Path
 
 import pytest
 
+from researchos.runtime.config import RuntimeSettings, WebFetchSettings
 from researchos.testing.mocks import MockHumanInterface
 from researchos.tools.bash_run import BashRunTool
 from researchos.tools.glob_files import GlobFilesTool
 from researchos.tools.grep_search import GrepSearchTool
 from researchos.tools.registry import ToolBuildContext, ToolRegistry
-from researchos.tools.web_fetch import WebFetchTool
+from researchos.tools.web_fetch import WebFetchAllowlist, WebFetchTool
 from researchos.tools.workspace_policy import WorkspaceAccessPolicy
 
 
@@ -147,9 +148,14 @@ async def test_web_fetch_fetches_text_and_follows_allowed_redirects(local_http_s
 
 
 @pytest.mark.asyncio
-async def test_web_fetch_enforces_allowlist(monkeypatch, local_http_server: str):
-    monkeypatch.setenv("RESEARCHOS_WEB_FETCH_ALLOWED_HOSTS", "example.com")
-    tool = WebFetchTool()
+async def test_web_fetch_enforces_allowlist(local_http_server: str):
+    settings = RuntimeSettings(
+        web_fetch=WebFetchSettings(
+            allowed_schemes=("http",),
+            allowed_hosts=("example.com",),
+        )
+    )
+    tool = WebFetchTool(allowlist=WebFetchAllowlist.from_runtime_settings(settings))
 
     result = await tool.execute(url=f"{local_http_server}/hello", timeout_seconds=5, max_bytes=1024)
 
@@ -162,7 +168,7 @@ def test_builtin_registry_registers_extended_tools(tmp_workspace: Path):
 
     policy = WorkspaceAccessPolicy(tmp_workspace, [""], [""])
     registry = ToolRegistry()
-    register_builtin_tools(registry)
+    register_builtin_tools(registry, RuntimeSettings())
     built = registry.build(
         ["bash_run", "grep_search", "glob_files", "web_fetch", "extract_paper_sections"],
         ToolBuildContext(policy=policy, human=MockHumanInterface()),

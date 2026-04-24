@@ -80,6 +80,10 @@ states:
     outputs:
       papers_raw: literature/papers_raw.jsonl           # 原始检索结果
       papers_dedup: literature/papers_dedup.jsonl      # 去重后的论文列表
+      papers_verified: literature/papers_verified.jsonl # 已做 metadata verification 的论文
+      verification_failures: literature/verification_failures.jsonl # verification 失败清单
+      deep_read_queue: literature/deep_read_queue.jsonl # T3 精读队列
+      access_audit: literature/access_audit.md         # PDF/可读性审计清单
       search_log: literature/search_log.md             # 检索日志
       missing_areas: literature/missing_areas.md       # 识别的研究空白
     next_on_success: T3
@@ -95,6 +99,9 @@ states:
     inputs:
       project: project.yaml                             # 输入：项目配置
       papers_dedup: literature/papers_dedup.jsonl       # 输入：去重论文列表
+      papers_verified: literature/papers_verified.jsonl # 输入：已核验论文列表（优先）
+      deep_read_queue: literature/deep_read_queue.jsonl # 输入：精读队列（优先）
+      access_audit: literature/access_audit.md          # 输入：可读性审计
       missing_areas: literature/missing_areas.md        # 输入：研究空白
     outputs:
       paper_notes_dir: literature/paper_notes           # 论文笔记目录

@@ -734,8 +734,6 @@ docker run --rm -it \
 | `OPENAI_BASE_URL` | ❌ | `https://api.openai.com/v1` | OpenAI API Base URL |
 | `S2_API_KEY` | ❌ | - | Semantic Scholar API Key |
 | `GITHUB_TOKEN` | ❌ | - | GitHub Personal Access Token |
-| `LOG_LEVEL` | ❌ | - | 日志级别（覆盖 runtime.yaml）|
-| `ENABLE_TRACE` | ❌ | - | 启用 trace（覆盖 runtime.yaml）|
 
 ## 性能调优建议
 

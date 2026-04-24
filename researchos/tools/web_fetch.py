@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -13,6 +12,7 @@ except ModuleNotFoundError:  # pragma: no cover - 依赖是否安装取决于环
     httpx = None
 from pydantic import BaseModel, Field
 
+from ..runtime.config import RuntimeSettings
 from .base import Tool, ToolResult
 
 
@@ -26,13 +26,19 @@ class WebFetchAllowlist:
     allow_all_hosts: bool
 
     @classmethod
-    def from_env(cls) -> "WebFetchAllowlist":
-        schemes_raw = os.getenv("RESEARCHOS_WEB_FETCH_ALLOWED_SCHEMES", "http,https")
-        hosts_raw = os.getenv("RESEARCHOS_WEB_FETCH_ALLOWED_HOSTS", "")
-        schemes = frozenset(
-            part.strip().lower() for part in schemes_raw.split(",") if part.strip()
-        ) or frozenset({"http", "https"})
-        hosts = frozenset(part.strip().lower() for part in hosts_raw.split(",") if part.strip())
+    def default(cls) -> "WebFetchAllowlist":
+        return cls(
+            allowed_schemes=frozenset({"http", "https"}),
+            allowed_hosts=frozenset(),
+            allow_all_hosts=True,
+        )
+
+    @classmethod
+    def from_runtime_settings(cls, settings: RuntimeSettings | None) -> "WebFetchAllowlist":
+        if settings is None:
+            return cls.default()
+        schemes = frozenset(item.lower() for item in settings.web_fetch.allowed_schemes if item) or frozenset({"http", "https"})
+        hosts = frozenset(item.lower() for item in settings.web_fetch.allowed_hosts if item)
         return cls(
             allowed_schemes=schemes,
             allowed_hosts=hosts,
@@ -74,7 +80,7 @@ class WebFetchTool(Tool):
         user_agent: str = "ResearchOS/0.1 web_fetch",
         max_redirects: int = 5,
     ) -> None:
-        self.allowlist = allowlist or WebFetchAllowlist.from_env()
+        self.allowlist = allowlist or WebFetchAllowlist.default()
         self.user_agent = user_agent
         self.max_redirects = max_redirects
 

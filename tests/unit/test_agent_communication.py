@@ -58,7 +58,8 @@ class MockLLMClient:
 
     async def chat(self, messages, tools=None, temperature=None, tier=None,
                    profile=None, model_override=None, endpoint_override=None,
-                   max_context_override=None):
+                   max_context_override=None, timeout=120,
+                   max_retries_per_model=2, retry_base_delay=2.0):
         response = self.responses[self.call_count % len(self.responses)]
         self.call_count += 1
         self.calls.append({
@@ -66,6 +67,9 @@ class MockLLMClient:
             "tools": tools,
             "temperature": temperature,
             "tier": tier,
+            "timeout": timeout,
+            "max_retries_per_model": max_retries_per_model,
+            "retry_base_delay": retry_base_delay,
         })
         return response
 

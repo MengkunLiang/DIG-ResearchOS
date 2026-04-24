@@ -42,6 +42,7 @@ from .cli_runners import CompletePipelineRunner, SingleTaskRunner
 from .orchestration.state_machine import StateMachine
 from .pydantic_compat import model_dump
 from .runtime.agent import AgentResult
+from .runtime.config_audit import build_config_audit_summary
 from .runtime.cli_ui import format_startup_summary, show_startup_banner
 from .runtime.config import RuntimeSettings, load_runtime_settings
 from .runtime.llm_client import LLMClient
@@ -285,11 +286,14 @@ def _resolve_skill_roots(args: argparse.Namespace, workspace_dir: Path) -> list[
     return candidates
 
 
-def _build_tool_registry(skill_roots: list[Path]) -> ToolRegistry:
+def _build_tool_registry(
+    skill_roots: list[Path],
+    runtime_settings: RuntimeSettings,
+) -> ToolRegistry:
     """构造本次 CLI 运行用到的完整 ToolRegistry。"""
 
     registry = ToolRegistry()
-    register_builtin_tools(registry)
+    register_builtin_tools(registry, runtime_settings)
     register_skill_tools(registry, skill_roots)
     return registry
 
@@ -408,6 +412,7 @@ async def _maybe_run_selftest(args: argparse.Namespace, llm_client: LLMClient) -
 def _emit_startup_ui(
     *,
     args: argparse.Namespace,
+    runtime_settings: RuntimeSettings,
     workspace_dir: Path | None,
     show_banner: bool = True,
     show_summary: bool = True,
@@ -418,7 +423,11 @@ def _emit_startup_ui(
     """打印 CLI 启动动画与启动摘要。"""
 
     if show_banner:
-        show_startup_banner(args.command, no_banner=getattr(args, "no_banner", False))
+        show_startup_banner(
+            args.command,
+            no_banner=getattr(args, "no_banner", False),
+            default_no_banner=runtime_settings.ui.no_banner,
+        )
     if not show_summary:
         return
     summary = format_startup_summary(
@@ -446,7 +455,8 @@ async def _prepare_runtime(args: argparse.Namespace, workspace_dir: Path) -> Pre
 
     register_builtin_task_checkers()
     skill_roots = _resolve_skill_roots(args, workspace_dir)
-    registry = _build_tool_registry(skill_roots)
+    runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
+    registry = _build_tool_registry(skill_roots, runtime_settings)
     mcp_server_count, mcp_tool_count = await _maybe_register_mcp_tools(args, registry)
     _validate_agent_tools(registry)
     _maybe_check_docker_availability()
@@ -468,7 +478,12 @@ async def run_command(args: argparse.Namespace) -> int:
     workspace_dir = Path(args.workspace).resolve()
     ensure_workspace_layout(workspace_dir, runtime_settings)
     _configure_workspace_logging(args, workspace_dir, runtime_settings)
-    _emit_startup_ui(args=args, workspace_dir=workspace_dir, show_summary=False)
+    _emit_startup_ui(
+        args=args,
+        runtime_settings=runtime_settings,
+        workspace_dir=workspace_dir,
+        show_summary=False,
+    )
     install_signal_handlers()
     prepared = await _prepare_runtime(args, workspace_dir)
     state_machine = StateMachine(
@@ -482,6 +497,7 @@ async def run_command(args: argparse.Namespace) -> int:
         )
     _emit_startup_ui(
         args=args,
+        runtime_settings=runtime_settings,
         workspace_dir=workspace_dir,
         show_banner=False,
         skill_roots=prepared.skill_roots,
@@ -507,11 +523,17 @@ async def run_task_command(args: argparse.Namespace) -> int:
     workspace_dir = Path(args.workspace).resolve()
     ensure_workspace_layout(workspace_dir, runtime_settings)
     _configure_workspace_logging(args, workspace_dir, runtime_settings)
-    _emit_startup_ui(args=args, workspace_dir=workspace_dir, show_summary=False)
+    _emit_startup_ui(
+        args=args,
+        runtime_settings=runtime_settings,
+        workspace_dir=workspace_dir,
+        show_summary=False,
+    )
     install_signal_handlers()
     prepared = await _prepare_runtime(args, workspace_dir)
     _emit_startup_ui(
         args=args,
+        runtime_settings=runtime_settings,
         workspace_dir=workspace_dir,
         show_banner=False,
         skill_roots=prepared.skill_roots,
@@ -539,11 +561,17 @@ async def run_skill_command(args: argparse.Namespace) -> int:
     workspace_dir = Path(args.workspace).resolve()
     ensure_workspace_layout(workspace_dir, runtime_settings)
     _configure_workspace_logging(args, workspace_dir, runtime_settings)
-    _emit_startup_ui(args=args, workspace_dir=workspace_dir, show_summary=False)
+    _emit_startup_ui(
+        args=args,
+        runtime_settings=runtime_settings,
+        workspace_dir=workspace_dir,
+        show_summary=False,
+    )
     install_signal_handlers()
     prepared = await _prepare_runtime(args, workspace_dir)
     _emit_startup_ui(
         args=args,
+        runtime_settings=runtime_settings,
         workspace_dir=workspace_dir,
         show_banner=False,
         skill_roots=prepared.skill_roots,
@@ -595,7 +623,13 @@ async def run_skill_command(args: argparse.Namespace) -> int:
 async def selftest_command(args: argparse.Namespace) -> int:
     """LLM endpoint 自检。"""
 
-    _emit_startup_ui(args=args, workspace_dir=None, show_summary=False)
+    runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
+    _emit_startup_ui(
+        args=args,
+        runtime_settings=runtime_settings,
+        workspace_dir=None,
+        show_summary=False,
+    )
     client = LLMClient(Path(args.model_routing).resolve())
     results = await client.selftest(args.profile or None)
     print(yaml.safe_dump(results, allow_unicode=True, sort_keys=False))
@@ -609,7 +643,12 @@ def init_workspace_command(args: argparse.Namespace) -> int:
     workspace_dir = Path(args.workspace).resolve()
     ensure_workspace_layout(workspace_dir, runtime_settings)
     _configure_workspace_logging(args, workspace_dir, runtime_settings)
-    _emit_startup_ui(args=args, workspace_dir=workspace_dir, show_summary=False)
+    _emit_startup_ui(
+        args=args,
+        runtime_settings=runtime_settings,
+        workspace_dir=workspace_dir,
+        show_summary=False,
+    )
     result: WorkspaceInitResult = initialize_workspace(
         workspace_dir,
         create_project_file=not args.no_project_file,
@@ -664,6 +703,7 @@ def validate_config_command(args: argparse.Namespace) -> int:
     """校验 workflow/gate/runtime 配置的一致性。"""
 
     runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
+    config_dir = Path("config").resolve()
     state_machine = StateMachine(
         Path(args.state_machine).resolve(),
         Path(args.gates).resolve() if args.gates else None,
@@ -679,7 +719,12 @@ def validate_config_command(args: argparse.Namespace) -> int:
             "log_level": runtime_settings.logging.level,
             "log_json": runtime_settings.logging.json,
             "human_backend": runtime_settings.human_interface.backend,
+            "enable_trace": runtime_settings.debug.enable_trace,
+            "no_banner": runtime_settings.ui.no_banner,
+            "web_fetch_allowed_schemes": list(runtime_settings.web_fetch.allowed_schemes),
+            "web_fetch_allowed_hosts": list(runtime_settings.web_fetch.allowed_hosts),
         },
+        "parameter_audit": build_config_audit_summary(config_dir),
         "errors": errors,
     }
     print(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False))

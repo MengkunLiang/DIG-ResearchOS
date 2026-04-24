@@ -1,7 +1,9 @@
+import asyncio
 import types
 
 import pytest
 
+from researchos.runtime.errors import LLMProviderError
 from researchos.runtime.llm_client import LLMClient
 
 
@@ -213,3 +215,75 @@ async def test_llm_client_chat_waits_on_rate_limiter(tmp_path, monkeypatch):
     assert response.endpoint_used == "relay"
     assert calls and calls[0][0] == "relay"
     assert calls[0][1] >= 4000
+
+
+@pytest.mark.asyncio
+async def test_llm_client_chat_enforces_runtime_hard_timeout(tmp_path, monkeypatch):
+    routing = tmp_path / "model_routing.yaml"
+    _write_routing(routing)
+    monkeypatch.setenv("TEST_API_KEY", "secret")
+
+    async def slow_acompletion(**kwargs):
+        await asyncio.sleep(0.05)
+        return _FakeResponse()
+
+    monkeypatch.setattr(
+        "researchos.runtime.llm_client.litellm",
+        types.SimpleNamespace(acompletion=slow_acompletion, token_counter=lambda **_: 12),
+    )
+
+    client = LLMClient(routing)
+    async def noop_wait(*args, **kwargs):
+        return None
+    client.rate_limiter.wait = noop_wait
+
+    with pytest.raises(LLMProviderError) as exc_info:
+        await client.chat(
+            messages=[{"role": "user", "content": "ping"}],
+            tools=None,
+            temperature=0.0,
+            tier="medium",
+            timeout=0.01,
+            max_retries_per_model=1,
+        )
+
+    assert "TimeoutError" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_llm_client_chat_uses_configurable_retry_delay(tmp_path, monkeypatch):
+    routing = tmp_path / "model_routing.yaml"
+    _write_routing(routing)
+    monkeypatch.setenv("TEST_API_KEY", "secret")
+
+    async def failing_acompletion(**kwargs):
+        raise RuntimeError("boom")
+
+    delays: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        delays.append(seconds)
+
+    monkeypatch.setattr(
+        "researchos.runtime.llm_client.litellm",
+        types.SimpleNamespace(acompletion=failing_acompletion, token_counter=lambda **_: 12),
+    )
+    monkeypatch.setattr("researchos.runtime.llm_client.asyncio.sleep", fake_sleep)
+
+    client = LLMClient(routing)
+    async def noop_wait(*args, **kwargs):
+        return None
+    client.rate_limiter.wait = noop_wait
+
+    with pytest.raises(LLMProviderError):
+        await client.chat(
+            messages=[{"role": "user", "content": "ping"}],
+            tools=None,
+            temperature=0.0,
+            tier="medium",
+            timeout=1,
+            max_retries_per_model=2,
+            retry_base_delay=0.25,
+        )
+
+    assert delays == [0.25]

@@ -434,6 +434,7 @@ class LLMClient:
         max_context_override: int | None = None,
         timeout: int = 120,
         max_retries_per_model: int = 2,
+        retry_base_delay: float = 2.0,
     ) -> LLMResponse:
         """执行一次模型调用。
 
@@ -470,7 +471,12 @@ class LLMClient:
                     if tools:
                         kwargs["tools"] = tools
                         kwargs["tool_choice"] = "auto"
-                    raw = await litellm.acompletion(**kwargs)
+                    # 对 LiteLLM 再包一层 runtime 级硬超时，避免 provider/SDK
+                    # 未按预期尊重 timeout 时单次调用悬挂过久。
+                    raw = await asyncio.wait_for(
+                        litellm.acompletion(**kwargs),
+                        timeout=max(float(timeout), 0.001),
+                    )
                     usage = getattr(raw, "usage", None)
                     hidden = getattr(raw, "_hidden_params", {}) or {}
                     return LLMResponse(
@@ -484,7 +490,8 @@ class LLMClient:
                     )
                 except Exception as exc:
                     errors.append(f"{qualified}@{endpoint.name} attempt {attempt + 1}: {exc!r}")
-                    await asyncio.sleep(min(2**attempt, 8))
+                    if attempt < max_retries_per_model - 1:
+                        await asyncio.sleep(min(retry_base_delay * (2**attempt), 8))
         raise LLMProviderError(
             f"All candidates failed (profile={profile or self.default_profile_name}, "
             f"tier={tier}). Errors: {errors}"

@@ -58,7 +58,7 @@ agents:
     max_steps: 40
     max_tokens_total: 1000000
     max_wall_seconds: 3000
-    max_validation_retries: 3
+    max_validation_retries: 10
     tool_names:
       - read_file
       - write_file
@@ -90,15 +90,13 @@ agents:
 
   scout:
     llm:
-      model: "Pro/deepseek-ai/DeepSeek-V3.2"
-      endpoint: siliconflow
+      profile: scout_resilient
       max_context: 128000
       tier: medium
       temperature: 0.5
-      # profile: mixed
-    max_steps: 500
+    max_steps: 300
     max_tokens_total: 50000000
-    max_wall_seconds: 6000
+    max_wall_seconds: 3600
     max_validation_retries: 3
     tool_names:
       - read_file
@@ -120,6 +118,9 @@ agents:
       - enrich_papers
       - detect_duplicate_queries
       - analyze_dedup_rate
+      - build_verified_papers
+      - build_access_audit
+      - build_deep_read_queue
       - semantic_scholar_search
       - semantic_scholar_get_paper
       - arxiv_search
@@ -137,6 +138,7 @@ agents:
     prompt_template: scout.j2
     structured_outputs:
       literature/papers_dedup.jsonl: papers_dedup
+      literature/papers_verified.jsonl: papers_verified
       literature/papers_raw.jsonl: papers_raw
     expected_outputs:
       papers_raw_min: 30
@@ -151,38 +153,44 @@ agents:
       tier: medium
       temperature: 0.5
       # profile: mixed
-    max_steps: 100
-    max_tokens_total: 300000
-    max_wall_seconds: 1200
-    max_validation_retries: 3
+    max_steps: 200
+    max_tokens_total: 600000
+    max_wall_seconds: 5000
+    max_validation_retries: 10
     tool_names:
       - read_file
       - write_file
       - append_file
       - list_files
       - fetch_paper_pdf
+      - extract_paper_sections
       - extract_pdf_text
       - finish_task
     allowed_read_prefixes:
       - ""
       - literature/
+      - user_seeds/
     allowed_write_prefixes:
       - literature/
     prompt_template: reader.j2
     modes:
       read:
         description: 深度阅读
-        max_steps: 80
-        max_tokens_total: 200000
+        max_steps: 200
+        max_tokens_total: 20000000
         expected_notes_ratio: 0.8
+        deep_read_min: 18
+        deep_read_target: 24
+        deep_read_max: 30
+        probe_pool: 45
         expected_outputs:
           paper_notes_min: 10
           comparison_table_required: true
           related_work_bib_required: true
       synthesize:
         description: 文献综合
-        max_steps: 50
-        max_tokens_total: 150000
+        max_steps: 100
+        max_tokens_total: 15000000
         expected_sections:
           - "## Method Families"
           - "## Shared Assumptions"
@@ -200,10 +208,10 @@ agents:
       tier: heavy
       temperature: 0.75
       # profile: ideation_deep
-    max_steps: 60
-    max_tokens_total: 200000
-    max_wall_seconds: 600
-    max_validation_retries: 3
+    max_steps: 150
+    max_tokens_total: 500000
+    max_wall_seconds: 1200
+    max_validation_retries: 10
     tool_names:
       - read_file
       - write_file
@@ -239,10 +247,10 @@ agents:
       tier: heavy
       temperature: 0.3
       # profile: audit_safe
-    max_steps: 50
-    max_tokens_total: 300000
-    max_wall_seconds: 400
-    max_validation_retries: 3
+    max_steps: 100
+    max_tokens_total: 600000
+    max_wall_seconds: 800
+    max_validation_retries: 10
     tool_names:
       - read_file
       - write_file
@@ -271,10 +279,10 @@ agents:
       tier: medium
       temperature: 0.3
       # profile: mixed
-    max_steps: 50
-    max_tokens_total: 300000
-    max_wall_seconds: 400
-    max_validation_retries: 3
+    max_steps: 100
+    max_tokens_total: 600000
+    max_wall_seconds: 800
+    max_validation_retries: 10
     tool_names:
       - read_file
       - write_file
@@ -302,7 +310,7 @@ agents:
     max_steps: 150
     max_tokens_total: 600000
     max_wall_seconds: 14400
-    max_validation_retries: 2
+    max_validation_retries: 10
     tool_names:
       - read_file
       - write_file
@@ -359,9 +367,9 @@ agents:
       tier: heavy
       temperature: 0.7
       # profile: ideation_deep
-    max_steps: 60
-    max_tokens_total: 500000
-    max_wall_seconds: 1200
+    max_steps: 150
+    max_tokens_total: 1000000
+    max_wall_seconds: 2400
     max_validation_retries: 3
     tool_names:
       - read_file
@@ -399,10 +407,10 @@ agents:
       tier: heavy
       temperature: 0.3
       # profile: audit_safe
-    max_steps: 30
-    max_tokens_total: 300000
-    max_wall_seconds: 600
-    max_validation_retries: 3
+    max_steps: 80
+    max_tokens_total: 600000
+    max_wall_seconds: 1200
+    max_validation_retries: 10
     tool_names:
       - read_file
       - write_file
@@ -429,10 +437,10 @@ agents:
       tier: medium
       temperature: 0.3
       # profile: mixed
-    max_steps: 40
-    max_tokens_total: 200000
-    max_wall_seconds: 300
-    max_validation_retries: 3
+    max_steps: 100
+    max_tokens_total: 500000
+    max_wall_seconds: 600
+    max_validation_retries: 10
     tool_names:
       - read_file
       - write_file
@@ -469,10 +477,10 @@ global_budget:
     T9_submission: 0.02
 
 global_timeout:
-  max_agent_runtime: 14400
-  max_tool_call: 300
+  max_agent_runtime: 7200
+  max_tool_call: 180
   docker_operation: 7200
-  llm_call: 120
+  llm_call: 90
 
 docker:
   requires_docker:
@@ -487,8 +495,8 @@ docker:
     memory_limit: 16g
 
 retry_policy:
-  llm_retries: 2
-  llm_retry_delay: 2
+  llm_retries: 1
+  llm_retry_delay: 1
   tool_retries: 3
   tool_retry_delay: 1
   validation_retries: 3

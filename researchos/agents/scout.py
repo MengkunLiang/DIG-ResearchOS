@@ -17,6 +17,7 @@ from __future__ import annotations
 输出：
 - literature/papers_raw.jsonl: 原始检索结果
 - literature/papers_dedup.jsonl: 去重后论文池（15-120篇）
+- literature/deep_read_queue.jsonl: T3精读队列
 - literature/search_log.md: 检索审计日志
 - literature/missing_areas.md: 缺口分析
 
@@ -75,6 +76,8 @@ class ScoutAgent(Agent):
                         "enrich_papers",
                         "detect_duplicate_queries",
                         "analyze_dedup_rate",
+                        "build_verified_papers",
+                        "build_deep_read_queue",
                         "semantic_scholar_search",
                         "semantic_scholar_get_paper",
                         "arxiv_search",
@@ -94,6 +97,7 @@ class ScoutAgent(Agent):
                     "prompt_template": "scout.j2",
                     "structured_outputs": {
                         "literature/papers_dedup.jsonl": "papers_dedup",
+                        "literature/papers_verified.jsonl": "papers_verified",
                         "literature/papers_raw.jsonl": "papers_raw",
                     },
                 },
@@ -150,7 +154,8 @@ class ScoutAgent(Agent):
             "研究方向已写入 project.yaml。"
             "如有用户种子论文会在 user_seeds/seed_papers.jsonl 里，"
             "也请参考 seed_ideas.md 和 seed_external_resources.jsonl。"
-            "目标产出 15-120 篇去重后论文，写入 literature/papers_dedup.jsonl。"
+            "目标产出 15-120 篇去重后论文，先完成 metadata verification，"
+            "再额外生成 literature/deep_read_queue.jsonl。"
         )
 
     def validate_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:
@@ -189,6 +194,54 @@ class ScoutAgent(Agent):
                     False,
                     f"papers_dedup({dedup_count}) > papers_raw({raw_count})，去重异常",
                 )
+
+        # 5. 校验 verified artifact：这是 T3 的真实性护栏，不应缺失。
+        verified_path = ctx.workspace_dir / "literature" / "papers_verified.jsonl"
+        ok, err = validate_jsonl_schema(
+            verified_path,
+            "papers_verified",
+            min_count=min(10, len(dedup_records)),
+            max_count=len(dedup_records),
+        )
+        if not ok:
+            return False, err
+
+        failure_path = ctx.workspace_dir / "literature" / "verification_failures.jsonl"
+        ok, err = validate_jsonl_schema(
+            failure_path,
+            "verification_failure",
+            min_count=0,
+        )
+        if not ok:
+            return False, err
+
+        verified_records = load_jsonl(verified_path)
+        verified_ids = {
+            str(item.get("canonical_id") or item.get("id") or "").strip()
+            for item in verified_records
+        }
+        verified_ids = {paper_id for paper_id in verified_ids if paper_id}
+
+        # 6. 校验 deep_read_queue：必须建立在 verified 池之上。
+        queue_path = ctx.workspace_dir / "literature" / "deep_read_queue.jsonl"
+        ok, err = validate_jsonl_schema(
+            queue_path,
+            "deep_read_queue",
+            min_count=min(10, len(verified_records)),
+            max_count=len(verified_records),
+        )
+        if not ok:
+            return False, err
+
+        queue_records = load_jsonl(queue_path)
+        queue_ids = {str(item.get("paper_id", "")).strip() for item in queue_records}
+        if any(paper_id and paper_id not in verified_ids for paper_id in queue_ids):
+            return False, "deep_read_queue 中存在不在 papers_verified 里的论文"
+
+        seed_in_queue = any(bool(item.get("seed_priority")) for item in queue_records)
+        seed_path = ctx.workspace_dir / "user_seeds" / "seed_papers.jsonl"
+        if seed_path.exists() and load_jsonl(seed_path) and not seed_in_queue:
+            return False, "存在用户 seed papers，但 deep_read_queue 没有保留任何 seed 论文"
 
         return True, None
 

@@ -155,6 +155,32 @@ async def test_extract_sections_returns_dependency_missing_when_pdfplumber_unava
     assert result.error == "dependency_missing"
 
 
+def test_extract_sections_full_text_fallback_handles_embedded_headers():
+    lines = [
+        (
+            "MemR3: Memory Retrieval via Reflective Reasoning for LLM Agents "
+            "Abstract We study memory retrieval. "
+            "1 Introduction This section explains the motivation. "
+            "2 Method Our system uses a router and reflection loop. "
+            "3 Results We outperform baselines on three benchmarks. "
+            "4 Conclusion MemR3 improves retrieval quality."
+        )
+    ]
+
+    sections = ExtractSectionsTool._extract_from_full_text(
+        lines,
+        ["abstract", "introduction", "method", "results", "conclusion"],
+    )
+
+    assert "abstract" in sections
+    assert "introduction" in sections
+    assert "method" in sections
+    assert "results" in sections
+    assert "conclusion" in sections
+    assert "memory retrieval" in sections["abstract"].lower()
+    assert "router" in sections["method"].lower()
+
+
 @pytest.mark.asyncio
 async def test_extract_sections_rejects_non_pdf_input(tmp_workspace: Path):
     txt_path = tmp_workspace / "papers" / "note.txt"

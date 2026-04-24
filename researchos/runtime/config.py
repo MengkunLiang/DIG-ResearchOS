@@ -13,6 +13,10 @@ from __future__ import annotations
 - `logging.level`
 - `logging.json`
 - `human_interface.backend`
+- `debug.enable_trace`
+- `ui.no_banner`
+- `web_fetch.allowed_schemes`
+- `web_fetch.allowed_hosts`
 
 未来如果要继续扩展 runtime 级共享配置，优先在这里加字段，再逐步把调用点接过来。
 """
@@ -61,6 +65,28 @@ class AgentBehaviorSettings:
 
 
 @dataclass(frozen=True)
+class DebugSettings:
+    """调试与追踪配置。"""
+
+    enable_trace: bool = True
+
+
+@dataclass(frozen=True)
+class UISettings:
+    """CLI 展示相关配置。"""
+
+    no_banner: bool = False
+
+
+@dataclass(frozen=True)
+class WebFetchSettings:
+    """网页抓取 allowlist 配置。"""
+
+    allowed_schemes: tuple[str, ...] = ("http", "https")
+    allowed_hosts: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class RuntimeSettings:
     """Runtime 共享配置的内存表示。"""
 
@@ -68,6 +94,9 @@ class RuntimeSettings:
     logging: LoggingSettings = field(default_factory=LoggingSettings)
     human_interface: HumanInterfaceSettings = field(default_factory=HumanInterfaceSettings)
     agent_behavior: AgentBehaviorSettings = field(default_factory=AgentBehaviorSettings)
+    debug: DebugSettings = field(default_factory=DebugSettings)
+    ui: UISettings = field(default_factory=UISettings)
+    web_fetch: WebFetchSettings = field(default_factory=WebFetchSettings)
 
     def runtime_root(self, workspace_dir: Path) -> Path:
         """返回某个 workspace 下 runtime 私有目录的根路径。"""
@@ -106,6 +135,9 @@ def load_runtime_settings(config_path: Path | None = None) -> RuntimeSettings:
     logging_block = _as_mapping(raw.get("logging"))
     human_block = _as_mapping(raw.get("human_interface"))
     agent_behavior_block = _as_mapping(raw.get("agent_behavior"))
+    debug_block = _as_mapping(raw.get("debug"))
+    ui_block = _as_mapping(raw.get("ui"))
+    web_fetch_block = _as_mapping(raw.get("web_fetch"))
 
     return RuntimeSettings(
         workspace=WorkspaceSettings(
@@ -123,6 +155,22 @@ def load_runtime_settings(config_path: Path | None = None) -> RuntimeSettings:
             max_empty_reply=int(agent_behavior_block.get("max_empty_reply", 2)),
             max_nudge_finish=int(agent_behavior_block.get("max_nudge_finish", 2)),
             max_validation_retries=int(agent_behavior_block.get("max_validation_retries", 3)),
+        ),
+        debug=DebugSettings(
+            enable_trace=bool(debug_block.get("enable_trace", True)),
+        ),
+        ui=UISettings(
+            no_banner=bool(ui_block.get("no_banner", False)),
+        ),
+        web_fetch=WebFetchSettings(
+            allowed_schemes=_normalize_csv_like_list(
+                web_fetch_block.get("allowed_schemes"),
+                default=("http", "https"),
+            ),
+            allowed_hosts=_normalize_csv_like_list(
+                web_fetch_block.get("allowed_hosts"),
+                default=(),
+            ),
         ),
     )
 
@@ -172,6 +220,9 @@ def validate_runtime_config(settings: RuntimeSettings, config_dir: Path) -> list
     if settings.logging.level.upper() not in valid_levels:
         errors.append(f"logging.level必须是{valid_levels}之一")
 
+    if not settings.web_fetch.allowed_schemes:
+        errors.append("web_fetch.allowed_schemes 至少需要一个协议")
+
     return errors
 
 
@@ -179,3 +230,20 @@ def _as_mapping(value: Any) -> dict[str, Any]:
     """把 YAML 段落安全地收敛成字典。"""
 
     return value if isinstance(value, dict) else {}
+
+
+def _normalize_csv_like_list(value: Any, *, default: tuple[str, ...]) -> tuple[str, ...]:
+    """把 YAML 里的字符串/列表规范化为去重后的字符串元组。"""
+
+    if value is None:
+        return default
+
+    if isinstance(value, str):
+        items = [part.strip().lower() for part in value.split(",")]
+    elif isinstance(value, (list, tuple)):
+        items = [str(part).strip().lower() for part in value]
+    else:
+        return default
+
+    normalized = tuple(dict.fromkeys(item for item in items if item))
+    return normalized or default

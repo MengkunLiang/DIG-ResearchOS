@@ -43,8 +43,6 @@ services:
       - S2_API_KEY=${S2_API_KEY:-}
       - RESEARCHER_EMAIL=${RESEARCHER_EMAIL:-}
 
-      # 系统配置
-      - RESEARCHOS_NO_BANNER=${RESEARCHOS_NO_BANNER:-0}
       - PYTHONUNBUFFERED=1
 
       # 容器标识

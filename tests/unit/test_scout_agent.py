@@ -58,6 +58,10 @@ def execution_context(test_workspace):
         outputs_expected={
             "papers_raw": test_workspace / "literature" / "papers_raw.jsonl",
             "papers_dedup": test_workspace / "literature" / "papers_dedup.jsonl",
+            "papers_verified": test_workspace / "literature" / "papers_verified.jsonl",
+            "verification_failures": test_workspace / "literature" / "verification_failures.jsonl",
+            "deep_read_queue": test_workspace / "literature" / "deep_read_queue.jsonl",
+            "access_audit": test_workspace / "literature" / "access_audit.md",
             "search_log": test_workspace / "literature" / "search_log.md",
             "missing_areas": test_workspace / "literature" / "missing_areas.md",
         },
@@ -74,6 +78,8 @@ def test_scout_agent_spec(scout_agent):
     assert "fetch_paper_metadata" in spec.tool_names
     assert "save_papers_dedup" in spec.tool_names
     assert "filter_by_domain" in spec.tool_names
+    assert "build_verified_papers" in spec.tool_names
+    assert "build_deep_read_queue" in spec.tool_names
     # MCP工具已移除，等MCP配置完成后再启用
     # assert "mcp_semantic_scholar_search" in spec.tool_names
     # assert "mcp_arxiv_search" in spec.tool_names
@@ -158,6 +164,8 @@ def test_scout_initial_user_message(scout_agent, execution_context):
     assert "T2" in msg
     assert "文献普查" in msg
     assert "15-120" in msg
+    assert "metadata verification" in msg
+    assert "deep_read_queue.jsonl" in msg
 
 
 def test_validate_outputs_success(scout_agent, execution_context):
@@ -209,11 +217,48 @@ def test_validate_outputs_success(scout_agent, execution_context):
         for paper in dedup_papers:
             f.write(json.dumps(paper) + "\n")
 
+    with (lit_dir / "papers_verified.jsonl").open("w") as f:
+        for i, paper in enumerate(dedup_papers[:24], start=1):
+            verified = dict(paper)
+            verified["canonical_id"] = paper["id"]
+            verified["preferred_id_source"] = "source_id"
+            verified["verification_status"] = "metadata_verified"
+            verified["verification_method"] = "crossref"
+            verified["verification_source"] = "crossref"
+            verified["verification_confidence"] = 0.95
+            verified["verification_title_similarity"] = 0.98
+            verified["verification_year_match"] = True
+            f.write(json.dumps(verified) + "\n")
+
+    (lit_dir / "verification_failures.jsonl").write_text("", encoding="utf-8")
+
+    with (lit_dir / "deep_read_queue.jsonl").open("w") as f:
+        for i, paper in enumerate(dedup_papers[:24], start=1):
+            queue_record = {
+                "paper_id": paper["id"],
+                "title": paper["title"],
+                "relevance_score": paper["relevance_score"],
+                "access_score_estimate": 0.7,
+                "access_score": 0.7,
+                "evidence_level": "PARTIAL_TEXT",
+                "verification_status": "metadata_verified",
+                "verification_confidence": 0.95,
+                "seed_priority": i == 1,
+                "queue_rank": i,
+                "read_priority": 0.8,
+                "target_bucket": "seed" if i == 1 else "target",
+            }
+            f.write(json.dumps(queue_record) + "\n")
+
     # search_log.md
+    (lit_dir / "access_audit.md").write_text("# Access Audit\n")
     (lit_dir / "search_log.md").write_text("# Search Log\n")
 
     # missing_areas.md
     (lit_dir / "missing_areas.md").write_text("# Missing Areas\n")
+
+    seed_path = execution_context.workspace_dir / "user_seeds" / "seed_papers.jsonl"
+    seed_path.write_text(json.dumps({"title": "Paper 0", "role": "anchor"}) + "\n")
 
     ok, err = scout_agent.validate_outputs(execution_context)
     assert ok
@@ -268,6 +313,39 @@ def test_validate_outputs_too_few_papers(scout_agent, execution_context):
         for paper in raw_papers:
             f.write(json.dumps(paper) + "\n")
 
+    with (lit_dir / "deep_read_queue.jsonl").open("w") as f:
+        for i, paper in enumerate(dedup_papers, start=1):
+            queue_record = {
+                "paper_id": paper["id"],
+                "title": paper["title"],
+                "relevance_score": paper["relevance_score"],
+                "access_score_estimate": 0.7,
+                "access_score": 0.7,
+                "evidence_level": "PARTIAL_TEXT",
+                "verification_status": "metadata_verified",
+                "verification_confidence": 0.9,
+                "seed_priority": False,
+                "queue_rank": i,
+                "read_priority": 0.8,
+                "target_bucket": "target",
+            }
+            f.write(json.dumps(queue_record) + "\n")
+
+    with (lit_dir / "papers_verified.jsonl").open("w") as f:
+        for paper in dedup_papers:
+            verified = dict(paper)
+            verified["canonical_id"] = paper["id"]
+            verified["verification_status"] = "metadata_verified"
+            verified["verification_method"] = "semantic_scholar"
+            verified["verification_source"] = "semantic_scholar"
+            verified["verification_confidence"] = 0.9
+            verified["verification_title_similarity"] = 0.99
+            verified["verification_year_match"] = True
+            f.write(json.dumps(verified) + "\n")
+
+    (lit_dir / "verification_failures.jsonl").write_text("", encoding="utf-8")
+
+    (lit_dir / "access_audit.md").write_text("# Access Audit\n")
     (lit_dir / "search_log.md").write_text("")
     (lit_dir / "missing_areas.md").write_text("")
 
@@ -323,6 +401,11 @@ def test_validate_outputs_dedup_anomaly(scout_agent, execution_context):
         for paper in dedup_papers:
             f.write(json.dumps(paper) + "\n")
 
+    (lit_dir / "papers_verified.jsonl").write_text("", encoding="utf-8")
+    (lit_dir / "verification_failures.jsonl").write_text("", encoding="utf-8")
+    (lit_dir / "deep_read_queue.jsonl").write_text("", encoding="utf-8")
+
+    (lit_dir / "access_audit.md").write_text("# Access Audit\n")
     (lit_dir / "search_log.md").write_text("")
     (lit_dir / "missing_areas.md").write_text("")
 
@@ -357,6 +440,11 @@ def test_validate_outputs_missing_required_field(scout_agent, execution_context)
         for paper in dedup_papers:
             f.write(json.dumps(paper) + "\n")
 
+    (lit_dir / "papers_verified.jsonl").write_text("", encoding="utf-8")
+    (lit_dir / "verification_failures.jsonl").write_text("", encoding="utf-8")
+    (lit_dir / "deep_read_queue.jsonl").write_text("", encoding="utf-8")
+
+    (lit_dir / "access_audit.md").write_text("# Access Audit\n")
     (lit_dir / "search_log.md").write_text("")
     (lit_dir / "missing_areas.md").write_text("")
 

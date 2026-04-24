@@ -4,10 +4,19 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from researchos.agents.writer import WriterAgent
 from researchos.agents.reviewer import ReviewerAgent
 from researchos.agents.submission import SubmissionAgent, check_anonymization
+
+
+def _load_agent_params():
+    """从 YAML 加载 agent 参数，用于测试断言"""
+    config_path = Path(__file__).parent.parent.parent / "config" / "agent_params.yaml"
+    with open(config_path) as f:
+        config = yaml.safe_load(f)
+    return config["agents"]
 
 
 class MockExecutionContext:
@@ -52,9 +61,10 @@ def temp_workspace(tmp_path):
 def test_writer_agent_initialization():
     """测试 WriterAgent 初始化"""
     agent = WriterAgent()
+    params = _load_agent_params()["writer"]
     assert agent.spec.name == "writer"
-    assert agent.spec.max_steps == 60
-    assert agent.spec.max_tokens_total == 500_000
+    assert agent.spec.max_steps == params["max_steps"]
+    assert agent.spec.max_tokens_total == params["max_tokens_total"]
     assert "write_file" in agent.spec.tool_names
     assert "drafts/" in agent.spec.allowed_write_prefixes
 
@@ -221,9 +231,10 @@ More text.
 def test_reviewer_agent_initialization():
     """测试 ReviewerAgent 初始化"""
     agent = ReviewerAgent()
+    params = _load_agent_params()["reviewer"]
     assert agent.spec.name == "reviewer"
-    assert agent.spec.max_steps == 30
-    assert agent.spec.max_tokens_total == 300_000
+    assert agent.spec.max_steps == params["max_steps"]
+    assert agent.spec.max_tokens_total == params["max_tokens_total"]
     assert "read_file" in agent.spec.tool_names
     assert "drafts/review_rounds/" in agent.spec.allowed_write_prefixes
 
@@ -325,9 +336,10 @@ def test_reviewer_validate_outputs_missing_sections(temp_workspace):
 def test_submission_agent_initialization():
     """测试 SubmissionAgent 初始化"""
     agent = SubmissionAgent()
+    params = _load_agent_params()["submission"]
     assert agent.spec.name == "submission"
-    assert agent.spec.max_steps == 40
-    assert agent.spec.max_tokens_total == 200_000
+    assert agent.spec.max_steps == params["max_steps"]
+    assert agent.spec.max_tokens_total == params["max_tokens_total"]
     assert "docker_exec" in agent.spec.tool_names
     assert "submission/" in agent.spec.allowed_write_prefixes
     # 检查 pre_hooks 包含 check_anonymization 函数

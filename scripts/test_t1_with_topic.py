@@ -17,11 +17,10 @@ T1 PIAgent 测试脚本 - 通过 extra 参数传递 user_topic
     - 需要有效的 LLM API key
 
 注意：
-    此脚本使用硬编码的 API key，仅用于开发测试。
+    运行前请先配置项目根目录 `.env`。
 """
 
 import asyncio
-import os
 import sys
 from pathlib import Path
 
@@ -37,12 +36,11 @@ from researchos.tools.human_gate import HumanInterface
 from researchos.agents.registry import TASK_TO_AGENT_MAP
 from researchos.runtime.llm_client import LLMClient
 from researchos.config.loader import load_model_routing_config
+from scripts._script_env import ensure_script_llm_env
 
 
 async def main():
-    # 设置环境变量
-    os.environ.setdefault("OPENAI_API_KEY", "sk-o75I3UPDDeWXWmYkrLfuaUcho9qijDDO4SF2yhJYtDbX4Hef")
-    os.environ.setdefault("OPENAI_BASE_URL", "https://sg.uiuiapi.com/v1")
+    ensure_script_llm_env(Path(__file__).parent.parent)
 
     # 配置
     workspace_dir = Path("/tmp/researchos_real_test_20260419_163709")

@@ -16,14 +16,13 @@ T1 PIAgent 简化测试脚本
 
 前置条件：
     - 需要配置 config/model_routing.yaml
-    - 需要有效的 LLM API key（硬编码在脚本中）
+    - 需要有效的 LLM API key（从 `.env` 或 shell 环境读取）
 
 注意：
-    此脚本使用硬编码的 API key，仅用于开发测试。
+    运行前请先配置项目根目录 `.env`。
 """
 
 import asyncio
-import os
 import sys
 from pathlib import Path
 
@@ -35,6 +34,7 @@ from researchos.runtime.llm_client import LLMClient
 from researchos.tools.registry import ToolRegistry
 from researchos.tools.builtin import register_builtin_tools
 from researchos.tools.human_gate import HumanInterface
+from scripts._script_env import ensure_script_llm_env
 
 
 class AutoHumanInterface(HumanInterface):
@@ -68,9 +68,7 @@ class AutoHumanInterface(HumanInterface):
 
 
 async def main():
-    # 设置环境变量
-    os.environ["OPENAI_API_KEY"] = "sk-o75I3UPDDeWXWmYkrLfuaUcho9qijDDO4SF2yhJYtDbX4Hef"
-    os.environ["OPENAI_BASE_URL"] = "https://sg.uiuiapi.com/v1"
+    ensure_script_llm_env(Path(__file__).parent.parent)
 
     # 配置
     workspace_dir = Path("/tmp/researchos_real_test_20260419_163709")

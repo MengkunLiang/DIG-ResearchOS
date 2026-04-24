@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 try:
     import httpx
@@ -47,6 +48,12 @@ class AppendFileTool(Tool):
             abs_path = self.policy.resolve_write(path)
             # 确保父目录存在
             abs_path.parent.mkdir(parents=True, exist_ok=True)
+            if abs_path.exists() and abs_path.stat().st_size > 0:
+                suffix = abs_path.suffix.lower()
+                if suffix in {".csv", ".bib", ".jsonl", ".md"}:
+                    existing_tail = abs_path.read_text(encoding="utf-8")[-1:]
+                    if existing_tail and existing_tail != "\n" and content and not content.startswith("\n"):
+                        content = "\n" + content
             # 追加模式写入
             with abs_path.open("a", encoding="utf-8") as f:
                 f.write(content)
@@ -88,36 +95,60 @@ class FetchPaperPdfTool(Tool):
         # 确保父目录存在
         abs_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # 构造下载URL
-        pdf_url = self._get_pdf_url(params.paper_id)
-        if not pdf_url:
-            return ToolResult(
-                ok=False,
-                content=f"Unsupported paper ID format: {params.paper_id}",
-                error="unsupported_id",
-            )
-
-        try:
-            if httpx is None:
-                raise ModuleNotFoundError("httpx")
-
-            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
-                response = await client.get(pdf_url)
-                response.raise_for_status()
-
-                # 写入PDF文件
-                abs_path.write_bytes(response.content)
-
-            return ToolResult(
-                ok=True,
-                content=f"Downloaded PDF to {params.save_path} ({len(response.content)} bytes)",
-                data={"path": params.save_path, "size": len(response.content), "url": pdf_url},
-            )
-        except ModuleNotFoundError:
+        httpx_mod = httpx
+        if httpx_mod is None:
             return ToolResult(
                 ok=False,
                 content="缺少 httpx 依赖，无法下载PDF。",
                 error="dependency_missing",
+            )
+
+        try:
+            async with httpx_mod.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+                pdf_candidates = await self._resolve_pdf_candidates(client, params.paper_id)
+                if not pdf_candidates:
+                    return ToolResult(
+                        ok=False,
+                        content=f"Unsupported or unresolved paper ID format: {params.paper_id}",
+                        error="unsupported_id",
+                    )
+
+                last_error = None
+                response = None
+                pdf_url = None
+                for candidate in pdf_candidates:
+                    try:
+                        response = await client.get(candidate)
+                        response.raise_for_status()
+                        if not self._looks_like_pdf(response, candidate):
+                            last_error = f"URL did not return a PDF: {candidate}"
+                            continue
+                        abs_path.write_bytes(response.content)
+                        pdf_url = candidate
+                        break
+                    except Exception as exc:  # pragma: no cover - 具体分支由 ToolResult 兜底
+                        last_error = str(exc)
+                        continue
+
+                if response is None or pdf_url is None:
+                    return ToolResult(
+                        ok=False,
+                        content=(
+                            f"Failed to download PDF for {params.paper_id}. "
+                            f"Tried {len(pdf_candidates)} candidate URLs. Last error: {last_error}"
+                        ),
+                        error="download_failed",
+                    )
+
+            return ToolResult(
+                ok=True,
+                content=f"Downloaded PDF to {params.save_path} ({len(response.content)} bytes)",
+                data={
+                    "path": params.save_path,
+                    "size": len(response.content),
+                    "url": pdf_url,
+                    "candidates_tried": pdf_candidates,
+                },
             )
         except Exception as exc:
             if httpx is not None and isinstance(exc, httpx.HTTPError):
@@ -128,21 +159,135 @@ class FetchPaperPdfTool(Tool):
                 )
             raise ToolRuntimeError(self.name, exc) from exc
 
-    @staticmethod
-    def _get_pdf_url(paper_id: str) -> str | None:
-        """根据paper_id构造PDF下载URL。"""
+    async def _resolve_pdf_candidates(
+        self,
+        client: "httpx.AsyncClient",
+        paper_id: str,
+    ) -> list[str]:
+        """根据 paper_id 推断一组可能的 PDF URL。"""
+
         paper_id = paper_id.strip()
+        candidates: list[str] = []
 
         # arXiv格式: arxiv:2301.12345 或 2301.12345
         if paper_id.startswith("arxiv:"):
             arxiv_id = paper_id[6:]
-            return f"https://arxiv.org/pdf/{arxiv_id}.pdf"
-        elif "." in paper_id and paper_id.replace(".", "").replace("v", "").isdigit():
-            # 看起来像arXiv ID
-            return f"https://arxiv.org/pdf/{paper_id}.pdf"
+            candidates.extend(self._arxiv_pdf_candidates(arxiv_id))
+        elif self._looks_like_arxiv_id(paper_id):
+            candidates.extend(self._arxiv_pdf_candidates(paper_id))
 
-        # 其他格式暂不支持
-        return None
+        # DOI / OpenAlex work id：优先从 OpenAlex 补开放获取位置
+        if paper_id.startswith("10."):
+            candidates.extend(await self._openalex_pdf_candidates(client, doi=paper_id))
+            candidates.extend(self._doi_fallback_candidates(paper_id))
+        elif paper_id.startswith("W") and paper_id[1:].isdigit():
+            candidates.extend(await self._openalex_pdf_candidates(client, openalex_id=paper_id))
+
+        # 有些上游记录会把 DOI URL 或 arXiv abs URL 直接放进 id
+        if paper_id.startswith("http://") or paper_id.startswith("https://"):
+            candidates.extend(self._url_to_pdf_candidates(paper_id))
+
+        return self._dedupe_candidates(candidates)
+
+    @staticmethod
+    def _looks_like_arxiv_id(paper_id: str) -> bool:
+        normalized = paper_id.strip().replace("arxiv:", "")
+        return "." in normalized and normalized.replace(".", "").replace("v", "").isdigit()
+
+    @staticmethod
+    def _arxiv_pdf_candidates(arxiv_id: str) -> list[str]:
+        return [
+            f"https://arxiv.org/pdf/{arxiv_id}.pdf",
+            f"https://export.arxiv.org/pdf/{arxiv_id}.pdf",
+        ]
+
+    @staticmethod
+    def _doi_fallback_candidates(doi: str) -> list[str]:
+        return [
+            f"https://doi.org/{doi}",
+            f"https://dx.doi.org/{doi}",
+        ]
+
+    @classmethod
+    def _url_to_pdf_candidates(cls, url: str) -> list[str]:
+        candidates = [url]
+        if "arxiv.org/abs/" in url:
+            candidates.append(url.replace("/abs/", "/pdf/") + ".pdf")
+        if "arxiv.org/html/" in url:
+            candidates.append(url.replace("/html/", "/pdf/") + ".pdf")
+        return candidates
+
+    async def _openalex_pdf_candidates(
+        self,
+        client: "httpx.AsyncClient",
+        *,
+        doi: str | None = None,
+        openalex_id: str | None = None,
+    ) -> list[str]:
+        """从 OpenAlex work 详情里抽取开放获取 PDF 链接。"""
+
+        if doi is None and openalex_id is None:
+            return []
+
+        if doi is not None:
+            identifier = f"https://doi.org/{doi}"
+        else:
+            identifier = openalex_id or ""
+
+        url = f"https://api.openalex.org/works/{quote(identifier, safe=':/')}"
+        params = {"mailto": os.environ.get("RESEARCHER_EMAIL", "researcher@example.com")}
+
+        try:
+            response = await client.get(url, params=params)
+            response.raise_for_status()
+        except Exception:
+            return []
+
+        work = response.json()
+        candidates: list[str] = []
+
+        def add_location(location: dict[str, Any] | None) -> None:
+            if not isinstance(location, dict):
+                return
+            pdf_url = location.get("pdf_url")
+            landing_page_url = location.get("landing_page_url")
+            if isinstance(pdf_url, str) and pdf_url.strip():
+                candidates.append(pdf_url.strip())
+            if isinstance(landing_page_url, str) and landing_page_url.strip():
+                candidates.extend(self._url_to_pdf_candidates(landing_page_url.strip()))
+
+        add_location(work.get("best_oa_location"))
+        add_location(work.get("primary_location"))
+        for location in work.get("locations", []) or []:
+            add_location(location)
+
+        doi_value = work.get("doi")
+        if isinstance(doi_value, str) and doi_value.startswith("https://doi.org/"):
+            candidates.append(doi_value)
+
+        return candidates
+
+    @staticmethod
+    def _looks_like_pdf(response: "httpx.Response", url: str) -> bool:
+        content_type = response.headers.get("content-type", "").lower()
+        if "application/pdf" in content_type:
+            return True
+        if url.lower().endswith(".pdf"):
+            return True
+        content = response.content[:5]
+        return content.startswith(b"%PDF-")
+
+    @staticmethod
+    def _dedupe_candidates(candidates: list[str]) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            normalized = candidate.strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            out.append(normalized)
+        return out
 
 
 class ExtractPdfTextParams(BaseModel):
@@ -216,7 +361,7 @@ class ExtractPdfTextTool(Tool):
         except ModuleNotFoundError:
             return ToolResult(
                 ok=False,
-                content="缺少 pdfplumber 依赖，无法解析 PDF。",
+                content="缺少 pdfplumber 依赖，无法解析 PDF。请安装 requirements.txt 中的依赖后重试。",
                 error="dependency_missing",
             )
         except Exception as exc:

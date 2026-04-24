@@ -43,6 +43,10 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "outputs": {
             "papers_raw": "literature/papers_raw.jsonl",
             "papers_dedup": "literature/papers_dedup.jsonl",
+            "papers_verified": "literature/papers_verified.jsonl",
+            "verification_failures": "literature/verification_failures.jsonl",
+            "deep_read_queue": "literature/deep_read_queue.jsonl",
+            "access_audit": "literature/access_audit.md",
             "search_log": "literature/search_log.md",
             "missing_areas": "literature/missing_areas.md",
         },
@@ -50,12 +54,18 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "schemas": {
             "papers_raw": "papers_raw",
             "papers_dedup": "papers_dedup",
+            "papers_verified": "papers_verified",
+            "verification_failures": "verification_failure",
+            "deep_read_queue": "deep_read_queue",
         },
     },
     "T3": {
         "inputs": {
             "project": "project.yaml",
             "papers_dedup": "literature/papers_dedup.jsonl",
+            "papers_verified": "literature/papers_verified.jsonl",
+            "deep_read_queue": "literature/deep_read_queue.jsonl",
+            "access_audit": "literature/access_audit.md",
             "missing_areas": "literature/missing_areas.md",
         },
         "outputs": {

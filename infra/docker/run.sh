@@ -118,11 +118,7 @@ for env_name in \
     ANTHROPIC_API_KEY \
     S2_API_KEY \
     RESEARCHER_EMAIL \
-    GITHUB_TOKEN \
-    LOG_LEVEL \
-    DEV_MODE \
-    ENABLE_TRACE \
-    RESEARCHOS_NO_BANNER
+    GITHUB_TOKEN
 do
     env_value="${!env_name}"
     if [ -n "$env_value" ]; then

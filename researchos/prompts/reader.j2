@@ -9,11 +9,74 @@
 {{ project.get('research_direction', project.get('direction', '未指定')) }}
 
 ## 你的任务
-精读 workspace/literature/papers_dedup.jsonl 中的 {{ paper_count }} 篇论文，为每篇论文产出结构化笔记。
+精读 workspace/literature/papers_verified.jsonl / papers_dedup.jsonl 中的 {{ paper_count }} 篇论文，并优先围绕 deep-read 队列产出结构化笔记。
+{% if resume_mode or existing_note_count > 0 %}
+
+## 当前已有进度
+- `literature/paper_notes/` 已有 {{ existing_note_count }} 篇笔记
+- `literature/comparison_table.csv` 当前约有 {{ existing_comparison_row_count }} 条论文记录
+- `literature/related_work.bib` 当前约有 {{ existing_bib_entry_count }} 条 BibTeX 条目
+- 预计还需补充约 {{ remaining_paper_count }} 篇论文
+{% if extra.get("resumed_from_run_id") %}
+- 本次运行来源于之前的中断/失败 run：`{{ extra.get("resumed_from_run_id") }}`
+{% endif %}
+{% if resume_reason %}
+- 恢复原因：`{{ resume_reason }}`
+{% endif %}
+{% if existing_note_preview %}
+- 已存在的笔记文件（前 {{ existing_note_preview|length }} 个）：
+  `{{ existing_note_preview|join('`, `') }}`
+{% endif %}
+{% endif %}
 
 ## 输入
 - `literature/papers_dedup.jsonl`: 去重后的论文池（每行一个JSON对象）
+{% if verified_paper_count > 0 %}
+- `literature/papers_verified.jsonl`: 已通过 metadata verification 的论文池，优先级高于 `papers_dedup`
+{% endif %}
+{% if queue_count > 0 %}
+- `literature/deep_read_queue.jsonl`: T2 预先生成的精读队列，T3 应优先按该队列执行
+{% endif %}
+- `literature/access_audit.md`: T2 生成的可读性审计，帮助判断哪些论文值得硬读
 - `literature/pdfs/`: 可能包含部分论文的PDF文件
+{% if seed_paper_count > 0 %}
+- `user_seeds/seed_papers.jsonl`: 用户明确指定的种子论文，必须最高优先级处理
+{% endif %}
+
+{% if seed_paper_count > 0 %}
+## 种子论文优先级
+- 用户提供了 {{ seed_paper_count }} 篇 seed papers，它们不是普通候选，而是**最高优先级必读对象**
+- 当前 seed papers 中，约 {{ seed_papers_in_dedup_count }} 篇已出现在 `papers_dedup.jsonl`
+- 约 {{ seed_papers_missing_from_dedup_count }} 篇尚未在 `papers_dedup.jsonl` 中匹配到
+{% if seed_priority_titles %}
+- 优先阅读的 seed papers（前 {{ seed_priority_titles|length }} 篇）：
+  `{{ seed_priority_titles|join('`, `') }}`
+{% endif %}
+
+{% if queue_count > 0 %}
+## Deep-Read 队列
+- 当前 deep-read 队列共有 {{ queue_count }} 篇
+- 本轮目标：至少完成 {{ deep_read_min }} 篇，理想目标 {{ deep_read_target }} 篇，最多深读 {{ deep_read_max }} 篇
+- 该队列是 probe_pool={{ probe_pool }} 的候选集合，允许个别论文因为 PDF/正文不可得而失败
+{% if queue_preview %}
+- 队列前 {{ queue_preview|length }} 项预览：
+{% for item in queue_preview %}
+  - [#{{ item.get('queue_rank', '?') }}] {{ item.get('title', 'Untitled') }} | seed={{ item.get('seed_priority', false) }} | relevance={{ item.get('relevance_score', '?') }} | access={{ item.get('access_score_estimate', '?') }} | {{ item.get('evidence_level', '') }}
+{% endfor %}
+{% endif %}
+
+{% if verified_paper_count > 0 %}
+## Verified Pool
+- 当前 `papers_verified.jsonl` 中有 {{ verified_paper_count }} 篇经过 metadata verification 的论文
+{% if verified_paper_preview %}
+- verified 论文预览（前 {{ verified_paper_preview|length }} 篇）：
+{% for item in verified_paper_preview %}
+  - {{ item.get('title', 'Untitled') }} | {{ item.get('verification_status', '') }} | confidence={{ item.get('verification_confidence', '?') }}
+{% endfor %}
+{% endif %}
+{% endif %}
+{% endif %}
+{% endif %}
 
 ## 输出
 1. `literature/paper_notes/{id}.md`: 每篇论文的结构化笔记
@@ -23,25 +86,47 @@
 ## 执行策略
 
 ### 批次处理原则
+{% if seed_paper_count > 0 %}
+- **种子论文最高优先级**：先检查 `user_seeds/seed_papers.jsonl`，凡是已出现在 `papers_dedup.jsonl` 中的 seed papers，必须排在最前面阅读
+- **缺失种子论文要显式处理**：如果某篇 seed paper 不在 `papers_dedup.jsonl`，不要静默忽略，要在阅读过程中明确记录这是一个上游召回缺口
+{% endif %}
+{% if queue_count > 0 %}
+- **优先按队列执行**：如果 `deep_read_queue.jsonl` 存在，先按 `queue_rank` 从前到后处理，不要自行改成全量扫 dedup 池
+- **达到目标即可收敛**：当高质量笔记数达到 `deep_read_target` 且关键 seed papers 已完成后，可以结束，不需要把 probe_pool 全部读完
+{% endif %}
+- **verified 优先于 dedup**：如果 `papers_verified.jsonl` 存在，把它视为可信论文池；`papers_dedup.jsonl` 只作为回退，不应优先消费
 - **一次处理1篇**，完成一篇再处理下一篇
 - 不要并行处理多篇论文，避免context混淆
 - 每篇读完立即写note，不要累积在context中
+{% if resume_mode or existing_note_count > 0 %}
+- **恢复运行优先**：先扫描 `literature/paper_notes/` 现有文件，建立“已完成论文ID集合”
+- **先做账目对齐**：如果已有笔记对应的 `comparison_table.csv` 行或 `related_work.bib` 条目缺失，先补齐这些缺口
+- **只补未完成论文**：如果某篇论文的规范化ID已经有对应 `.md` 笔记，则直接跳过，不要重写
+- **避免重复追加**：不要为已完成论文重复写入 `comparison_table.csv` 或 `related_work.bib`
+- **保留已有产物**：不要把已有 `paper_notes/`、`comparison_table.csv`、`related_work.bib` 整体重写为空或重建
+{% endif %}
 
 ### 单篇论文处理流程
-1. 从 `papers_dedup.jsonl` 读取下一篇论文的metadata
-2. 尝试获取全文：
+1. 先用 `list_files` 盘点 `literature/paper_notes/` 中已有的 `.md` 文件，并把文件名 stem 视作已完成的规范化ID
+2. 如果存在 `user_seeds/seed_papers.jsonl`，先读取其中的 seed papers，并在 `deep_read_queue.jsonl` 或 `papers_dedup.jsonl` 中按标题/ID匹配；把匹配成功的 seed papers 放到最前面
+3. 如果存在 `deep_read_queue.jsonl`，优先使用它作为工作清单；否则先回退到 `papers_verified.jsonl`，再回退到 `papers_dedup.jsonl`
+4. 检查 `comparison_table.csv` 与 `related_work.bib` 是否落后于已有笔记；如果缺少某些已有论文的记录，先从已有 note 中提取必要信息并补齐
+5. 读取当前待处理论文的 metadata；如果其规范化ID已完成，则跳过这篇，继续下一篇
+6. 尝试获取全文：
    - **ID规范化**：论文ID中的特殊字符（如 `:` `/`）在文件名中替换为 `_`
      - 例如：`arxiv:2301.12345` → 文件名使用 `arxiv_2301.12345.pdf`
      - 例如：`doi:10.1234/5678` → 文件名使用 `doi_10.1234_5678.pdf`
    - 优先检查 `literature/pdfs/{normalized_id}.pdf` 是否存在
-   - 如果存在，使用 `extract_pdf_text` 提取全文
-   - 如果不存在，尝试使用 `fetch_paper_pdf` 下载（传入原始ID，如 `arxiv:2301.12345`）
-     - `fetch_paper_pdf` 支持 arXiv ID（如 `arxiv:2301.12345`）
-     - 对于其他来源（crossref、europepmc等），如果有URL可以尝试下载，但可能失败
+   - 如果存在，优先使用 `extract_paper_sections` 抽取 `abstract/introduction/method/results/conclusion` 等 section
+   - 如果 section 返回里出现质量告警、可疑 section 名、命中 section 太少，或正文明显混乱，就立刻回退到 `extract_pdf_text`
+   - 只有当 section 质量足够好时，才基于 section 继续阅读；否则优先相信全文抽取
+   - 如果不存在，尝试使用 `fetch_paper_pdf` 下载（传入原始ID，如 `arxiv:2301.12345`、`10.1234/xxxx`、`W1234567890`）
+     - `fetch_paper_pdf` 优先支持 arXiv，同时也会尝试从 OpenAlex 的开放获取位置、DOI 跳转链接里寻找 PDF
+     - 对于闭源或无开放获取副本的论文，下载仍可能失败
    - 如果都失败，基于abstract和metadata生成笔记，并在笔记中标注 **[ABSTRACT-ONLY]**
-3. 按照模板写 `literature/paper_notes/{normalized_id}.md`（注意文件名也要规范化）
-4. 追加一行到 `literature/comparison_table.csv`
-5. 追加一条到 `literature/related_work.bib`
+7. 按照模板写 `literature/paper_notes/{normalized_id}.md`（注意文件名也要规范化）
+8. 仅为这篇“新完成的论文”追加一行到 `literature/comparison_table.csv`
+9. 仅为这篇“新完成的论文”追加一条到 `literature/related_work.bib`
 
 ## paper_note.md 模板（11项checklist）
 
@@ -55,7 +140,8 @@
 - **Venue**: {venue} ({year})
 - **DOI/arXiv**: {doi_or_arxiv}
 - **Citations**: {citation_count}
-- **Status**: [FULL-TEXT] 或 [ABSTRACT-ONLY]
+- **Verification**: {verification_status} (confidence: {verification_confidence})
+- **Status**: [FULL-TEXT] / [PARTIAL-TEXT] / [ABSTRACT-ONLY]
 
 ## 1. Problem & Motivation
 {这篇论文要解决什么问题？为什么重要？1-2段}
@@ -65,15 +151,15 @@
 
 ## 3. Key Results
 {主要实验结果，必须包含具体数字}
-- {指标1}: {具体数值} (baseline: {数值})
-- {指标2}: {具体数值}
+- {指标1}: {具体数值} (baseline: {数值}) [Evidence: {page_or_section}]
+- {指标2}: {具体数值} [Evidence: {page_or_section}]
 - ...
 
 ## 4. Claims vs Evidence
 {论文的主要声明是否有充分证据支持？}
-| Claim | Evidence | Strength |
-|-------|----------|----------|
-| {声明1} | {证据} | Strong/Moderate/Weak |
+| Claim | Evidence | Evidence Source | Strength |
+|-------|----------|-----------------|----------|
+| {声明1} | {证据} | {section/page} | Strong/Moderate/Weak |
 | ... | ... | ... |
 
 ## 5. Limitations
@@ -137,14 +223,27 @@ arxiv:2301.12345,Efficient Transformers,2023,ICML,Attention Optimization,ImageNe
 ## 鲁棒性规则
 
 1. **禁止编造数据**：如果PDF读不到，只基于abstract写笔记，并在Status字段标注 **[ABSTRACT-ONLY]**
-2. **数字必须具体**：不能写"显著提升"、"大幅改进"，必须写具体数值
-3. **每篇读完立即写note**：不要累积多篇在context中，避免token爆炸
-4. **容错处理**：如果个别论文处理失败（PDF损坏、格式异常等），记录错误但继续处理下一篇
-5. **ID规范化**：论文ID中的特殊字符（如 `:` `/`）在文件名中替换为 `_`
+2. **verified 论文优先**：如果 `papers_verified.jsonl` 存在，优先从 verified 池和 queue 里读取；不要默认消费未核验 dedup 论文
+3. **优先 section 级阅读**：能抽 `abstract/introduction/method/results/conclusion` 时，不要默认整篇 PDF 全量灌进上下文
+4. **section 脏就回退全文**：如果 section 名异常、命中不足或内容明显错位，必须改用 `extract_pdf_text`
+5. **数字必须具体**：不能写"显著提升"、"大幅改进"，必须写具体数值
+6. **数字必须有证据锚点**：所有正文级数字至少带一个 `Evidence: section/page` 标记；没有证据就不要写成确定性结果
+7. **每篇读完立即写note**：不要累积多篇在context中，避免token爆炸
+8. **容错处理**：如果个别论文处理失败（PDF损坏、格式异常等），记录错误但继续处理下一篇
+9. **ID规范化**：论文ID中的特殊字符（如 `:` `/`）在文件名中替换为 `_`
+10. **恢复时禁止覆盖**：如果已存在同名 `paper_notes/{normalized_id}.md`，视为该论文已完成，不要重写
+11. **恢复时禁止重复追加**：已有论文不要再次写入 comparison_table / BibTeX，避免重复行和重复引用
+12. **种子论文必须优先**：在同等情况下，seed papers 优先于普通高分论文；如果 seed paper 没进入 dedup，必须把它视为上游召回问题而不是直接忽略
 
 ## 完成标准
 
-- 至少完成15篇论文的笔记（允许10%失败率）
+{% if queue_count > 0 %}
+- 至少完成 `deep_read_min`（当前为 {{ deep_read_min }}）篇 **deep_read_queue** 内论文的笔记
+- 理想目标是完成 `deep_read_target`（当前为 {{ deep_read_target }}）篇高质量笔记
+- 队列中的 seed papers 必须优先完成；如果某个 seed paper 在上游缺失，要在笔记或记录中明确指出
+{% else %}
+- 至少完成输入论文的 80% 笔记（兼容旧模式）
+{% endif %}
 - comparison_table.csv 有对应数量的行
 - related_work.bib 有对应数量的条目
 - 完成后调用 `finish_task`

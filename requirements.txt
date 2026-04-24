@@ -5,6 +5,5 @@ pydantic>=2.7,<3
 pyyaml>=6,<7
 structlog>=24.1,<26
 pdfplumber>=0.10,<1
-PyMuPDF>=1.23,<2
 bibtexparser>=1.4,<2
 python-dotenv>=1.0,<2

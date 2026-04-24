@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,12 @@ from ..schemas.validator import validate_record
 from .base import Tool, ToolResult
 from .workspace_policy import ToolAccessDenied, WorkspaceAccessPolicy
 from ..runtime.errors import ToolRuntimeError
+
+
+def _now_iso() -> str:
+    """返回统一的 UTC 时间戳字符串。"""
+
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _normalize_authors(authors: Any) -> list[str]:
@@ -71,6 +78,69 @@ def _normalize_year(year: Any) -> int | None:
     return None
 
 
+def _normalize_arxiv_identifier(value: str) -> str:
+    """把各种 arXiv 表示统一成 `arxiv:<id>`。"""
+
+    normalized = str(value or "").strip()
+    if not normalized:
+        return ""
+    if normalized.startswith("arxiv:"):
+        return normalized
+    if normalized.startswith("http"):
+        tail = normalized.rstrip("/").split("/")[-1]
+        if tail.endswith(".pdf"):
+            tail = tail[:-4]
+        return f"arxiv:{tail}"
+    return f"arxiv:{normalized}"
+
+
+def _select_preferred_paper_id(paper: dict[str, Any]) -> tuple[str, str]:
+    """选择稳定的主 ID。
+
+    设计约束：
+    - 对开放论文优先用 arXiv ID，便于 PDF 抓取与文件命名；
+    - 其次使用 DOI；
+    - 再回退到已有上游 source id。
+    """
+
+    external_ids = paper.get("externalIds") or {}
+    arxiv_id = (
+        external_ids.get("ArXiv")
+        or paper.get("arxiv_id")
+        or (paper.get("id") if str(paper.get("source", "")).lower() == "arxiv" else "")
+    )
+    if str(arxiv_id or "").strip():
+        return _normalize_arxiv_identifier(str(arxiv_id)), "arxiv"
+
+    doi = str(paper.get("doi") or external_ids.get("DOI") or "").strip()
+    if doi:
+        return doi.replace("https://doi.org/", "").replace("http://doi.org/", ""), "doi"
+
+    raw_id = str(paper.get("id") or paper.get("paperId") or "").strip()
+    if raw_id:
+        return raw_id, "source_id"
+
+    title = str(paper.get("title", "")).strip()
+    return title or "unknown-paper", "title"
+
+
+def _ensure_provenance(paper: dict[str, Any], *, canonical_id: str, id_source: str) -> dict[str, Any]:
+    """补齐 provenance，保证后续真实性审计有最小可追溯信息。"""
+
+    provenance = paper.get("provenance")
+    if not isinstance(provenance, dict):
+        provenance = {}
+
+    # 这里补的是最小追溯骨架；如果上游搜索工具已经写了更详细 provenance，就保留。
+    provenance.setdefault("source_tool", str(paper.get("source", "")).strip())
+    provenance.setdefault("source_id", str(paper.get("id") or paper.get("paperId") or "").strip())
+    provenance.setdefault("source_url", str(paper.get("url", "")).strip())
+    provenance.setdefault("canonical_id", canonical_id)
+    provenance.setdefault("id_source", id_source)
+    provenance.setdefault("fetched_at", _now_iso())
+    return provenance
+
+
 def _transform_to_papers_raw(paper: dict[str, Any]) -> dict[str, Any]:
     """将各种格式的论文数据转换为 papers_raw schema。
 
@@ -79,13 +149,8 @@ def _transform_to_papers_raw(paper: dict[str, Any]) -> dict[str, Any]:
     - arXiv: authors=[{name: "..."}], citationCount=0
     - OpenAlex: authors=["..."], citation_count
     """
-    # 提取 id
-    paper_id = (
-        paper.get("id")
-        or paper.get("paperId")
-        or paper.get("externalIds", {}).get("ArXiv")
-        or ""
-    )
+    # 统一主 ID，避免同一篇论文在不同来源下反复变换标识。
+    paper_id, id_source = _select_preferred_paper_id(paper)
 
     # 提取 source
     source = paper.get("source", "unknown")
@@ -114,9 +179,12 @@ def _transform_to_papers_raw(paper: dict[str, Any]) -> dict[str, Any]:
 
     # 提取 externalIds
     external_ids = paper.get("externalIds") or {}
+    provenance = _ensure_provenance(paper, canonical_id=paper_id, id_source=id_source)
 
     return {
         "id": paper_id,
+        "canonical_id": paper_id,
+        "preferred_id_source": id_source,
         "source": source,
         "title": paper.get("title", "Unknown"),
         "authors": authors,
@@ -127,6 +195,7 @@ def _transform_to_papers_raw(paper: dict[str, Any]) -> dict[str, Any]:
         "doi": doi,
         "url": url,
         "externalIds": external_ids,
+        "provenance": provenance,
     }
 
 
@@ -512,6 +581,9 @@ class SavePapersDedupTool(Tool):
             for i, paper in enumerate(params.papers):
                 try:
                     transformed = _transform_to_papers_raw(paper)
+                    for key, value in paper.items():
+                        if key not in transformed:
+                            transformed[key] = value
                     # papers_dedup 需要额外的字段
                     transformed["relevance_score"] = paper.get("relevance_score", 0.0)
                     transformed["why_relevant"] = paper.get("why_relevant", "")

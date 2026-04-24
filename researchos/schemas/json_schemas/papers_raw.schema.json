@@ -9,6 +9,12 @@
       "type": "string",
       "minLength": 1
     },
+    "canonical_id": {
+      "type": "string"
+    },
+    "preferred_id_source": {
+      "type": "string"
+    },
     "title": {
       "type": "string",
       "minLength": 1
@@ -44,6 +50,9 @@
       ]
     },
     "externalIds": {
+      "type": "object"
+    },
+    "provenance": {
       "type": "object"
     }
   },

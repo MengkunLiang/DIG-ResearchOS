@@ -106,12 +106,14 @@ researchos init-workspace --workspace ./workspace/demo --project-id demo-project
 - Conda
 - Optional: Docker (for experiment execution and TeX compilation)
 - Optional: Real LLM provider API key
-- Optional: `pdfplumber` for `extract_paper_sections`
+- Included in base requirements: `pdfplumber` for `extract_paper_sections`
+- Optional: `PyMuPDF` for richer seed PDF metadata extraction
 
 This repository does not depend on any author-specific absolute paths. Shared environment files:
 
 - [environment.yml](./environment.yml)
 - [requirements.txt](./requirements.txt)
+- [requirements-optional-pdf.txt](./requirements-optional-pdf.txt)
 - [requirements-dev.txt](./requirements-dev.txt)
 - [requirements-llm.txt](./requirements-llm.txt)
 - [pyproject.toml](./pyproject.toml)

@@ -16,11 +16,13 @@ from .errors import BudgetExceeded, LLMProviderError, ToolAccessDenied, ToolErro
 from .llm_client import LLMClient, ModelBinding
 from .logger import get_logger
 from .message import Message, Role, ToolCall, is_empty_assistant
-from .trace import TraceWriter
+from .t2_recovery import finalize_t2_outputs
+from .trace import NullTraceWriter, TraceWriter
 from ..tools.base import Tool, ToolResult
 from ..tools.human_gate import HumanInterface
 from ..tools.paper_save_tools import SavePapersRawTool
 from ..tools.registry import ToolBuildContext, ToolRegistry
+from .agent_params import get_global_timeout, get_retry_policy
 
 if TYPE_CHECKING:
     from ..tools.workspace_policy import WorkspaceAccessPolicy
@@ -67,6 +69,8 @@ class AgentRunner:
         self.runtime_settings = runtime_settings or RuntimeSettings()
         self.workspace_policy_factory = workspace_policy_factory or self._default_policy_factory
         self.log = get_logger(f"runner.{agent.spec.name}")
+        self.global_timeout = get_global_timeout()
+        self.retry_policy = get_retry_policy()
 
     @staticmethod
     def _default_policy_factory(
@@ -84,20 +88,28 @@ class AgentRunner:
         """执行一次完整 agent run。"""
         started = time.time()
         eff = resolve_effective_config(self.agent.spec, ctx)
+        max_agent_runtime = int(self.global_timeout.get("max_agent_runtime") or 0)
+        effective_wall_seconds = eff.max_wall_seconds
+        if max_agent_runtime > 0:
+            effective_wall_seconds = min(effective_wall_seconds, max_agent_runtime)
         budget = BudgetTracker(
             max_steps=eff.max_steps,
             max_tokens=eff.max_tokens,
-            max_wall_seconds=eff.max_wall_seconds,
+            max_wall_seconds=effective_wall_seconds,
         )
-        trace_file = self.runtime_settings.traces_dir(ctx.workspace_dir) / f"{ctx.run_id}.jsonl"
-        trace = TraceWriter(trace_file)
-        trace.write_run_start(
-            run_id=ctx.run_id,
-            agent_name=self.agent.spec.name,
-            project_id=ctx.project_id,
-            task_id=ctx.task_id,
-            workspace_dir=ctx.workspace_dir,
-        )
+        trace_file: Path | None = None
+        if self.runtime_settings.debug.enable_trace:
+            trace_file = self.runtime_settings.traces_dir(ctx.workspace_dir) / f"{ctx.run_id}.jsonl"
+            trace = TraceWriter(trace_file)
+            trace.write_run_start(
+                run_id=ctx.run_id,
+                agent_name=self.agent.spec.name,
+                project_id=ctx.project_id,
+                task_id=ctx.task_id,
+                workspace_dir=ctx.workspace_dir,
+            )
+        else:
+            trace = NullTraceWriter()
 
 
         # 输出初始化信息
@@ -167,6 +179,9 @@ class AgentRunner:
                         model_override=eff.llm_model_override,
                         endpoint_override=eff.llm_endpoint_override,
                         max_context_override=eff.llm_max_context_override,
+                        timeout=int(self.global_timeout.get("llm_call") or 120),
+                        max_retries_per_model=int(self.retry_policy.get("llm_retries") or 2),
+                        retry_base_delay=float(self.retry_policy.get("llm_retry_delay") or 2),
                     )
                 except LLMProviderError as exc:
                     stop_reason = AgentResult.STOP_ERROR
@@ -281,6 +296,11 @@ class AgentRunner:
             error_msg = f"Unexpected: {exc!r}"
             self.log.exception("agent_runner_crashed")
         finally:
+            stop_reason, error_msg = await self._maybe_finalize_t2_outputs(
+                ctx=ctx,
+                stop_reason=stop_reason,
+                error_msg=error_msg,
+            )
             result = self._build_result(
                 ctx=ctx,
                 budget=budget,
@@ -299,6 +319,48 @@ class AgentRunner:
                     self.log.exception("post_hook_failed")
             trace.close(result)
         return result
+
+    async def _maybe_finalize_t2_outputs(
+        self,
+        *,
+        ctx: ExecutionContext,
+        stop_reason: str,
+        error_msg: str | None,
+    ) -> tuple[str, str | None]:
+        """当 T2 中途失败但 raw 已落盘时，尝试代码化补齐其余输出。"""
+
+        if ctx.task_id != "T2":
+            return stop_reason, error_msg
+        if stop_reason in {AgentResult.STOP_INTERRUPTED, AgentResult.STOP_HUMAN_REJECT}:
+            return stop_reason, error_msg
+
+        needs_recovery = stop_reason != AgentResult.STOP_FINISHED or any(
+            not path.exists()
+            for name, path in ctx.outputs_expected.items()
+            if name != "papers_raw"
+        )
+        if not needs_recovery:
+            return stop_reason, error_msg
+
+        raw_path = ctx.workspace_dir / "literature" / "papers_raw.jsonl"
+        if not raw_path.exists():
+            return stop_reason, error_msg
+
+        print("[Agent] T2 检测到未完成输出，尝试基于 papers_raw 自动补全...", flush=True)
+        recovery = await finalize_t2_outputs(ctx.workspace_dir)
+        if not recovery.get("ok"):
+            reason = recovery.get("reason") or "unknown"
+            self.log.warning("t2_finalize_failed", reason=reason, recovery=recovery)
+            return stop_reason, error_msg
+
+        ok, err = self.agent.validate_outputs(ctx)
+        if ok:
+            print("[Agent] T2 自动补全成功，已恢复 dedup/search_log/missing_areas", flush=True)
+            self.log.info("t2_finalize_succeeded", recovery=recovery)
+            return AgentResult.STOP_FINISHED, None
+
+        self.log.warning("t2_finalize_validation_failed", error=err, recovery=recovery)
+        return stop_reason, error_msg
 
     async def _execute_one_tool_call(
         self,
@@ -355,16 +417,18 @@ class AgentRunner:
             )
 
         try:
+            max_tool_timeout = float(self.global_timeout.get("max_tool_call") or tool.timeout_seconds)
+            tool_timeout = min(tool.timeout_seconds, max_tool_timeout)
             # 工具自身可有细粒度超时，但 runtime 仍统一包一层 wait_for。
             result: ToolResult = await asyncio.wait_for(
                 tool.execute(**model_dump(parsed)),
-                timeout=tool.timeout_seconds,
+                timeout=tool_timeout,
             )
         except asyncio.TimeoutError:
             return Message.tool(
                 tool_call_id=tc.id,
                 name=tc.name,
-                content=f"Tool timed out after {tool.timeout_seconds}s",
+                content=f"Tool timed out after {tool_timeout}s",
                 is_error=True,
                 step=step,
                 duration_ms=int((time.time() - started) * 1000),

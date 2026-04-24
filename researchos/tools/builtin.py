@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 
+from ..runtime.config import RuntimeSettings
 from .ask_human import AskHumanTool
 from .bash_run import BashRunTool
 from .clone_repo import CloneRepoTool
@@ -26,7 +27,7 @@ from .registry import ToolRegistry
 from .search_papers import FetchPaperMetadataTool, SearchPapersTool
 from .seed_paper_processor import ProcessSeedPaperTool
 from .upload_seed_materials import UploadSeedCodeTool, UploadSeedDataTool, UploadSeedPdfTool
-from .web_fetch import WebFetchTool
+from .web_fetch import WebFetchAllowlist, WebFetchTool
 from .paper_utils_tool import (
     DeduplicatePapersTool,
     ScorePapersTool,
@@ -39,6 +40,9 @@ from .paper_enrichment_tool import (
     EnrichPapersTool,
     DetectDuplicateQueriesTool,
     AnalyzeDedupRateTool,
+    BuildAccessAuditTool,
+    BuildDeepReadQueueTool,
+    BuildVerifiedPapersTool,
 )
 from .paper_save_tools import (
     AppendPapersRawTool,
@@ -52,8 +56,12 @@ from .openalex_api import OpenAlexSearchTool, OpenAlexGetWorkTool
 from .crossref_api import CrossRefSearchTool, CrossRefGetWorkTool
 
 
-def register_builtin_tools(registry: ToolRegistry) -> None:
+def register_builtin_tools(
+    registry: ToolRegistry,
+    runtime_settings: RuntimeSettings | None = None,
+) -> None:
     """注册 runtime 默认内置工具。"""
+    runtime_settings = runtime_settings or RuntimeSettings()
     registry.register("read_file", lambda ctx: ReadFileTool(ctx.policy))
     registry.register("write_file", lambda ctx: WriteFileTool(ctx.policy))
     registry.register("write_structured_file", lambda ctx: WriteStructuredFileTool(ctx.policy))
@@ -65,7 +73,12 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
     registry.register("bash_run", lambda ctx: BashRunTool(ctx.policy, skill_dir=ctx.skill_dir))
     registry.register("grep_search", lambda ctx: GrepSearchTool(ctx.policy))
     registry.register("glob_files", lambda ctx: GlobFilesTool(ctx.policy))
-    registry.register("web_fetch", lambda ctx: WebFetchTool())
+    registry.register(
+        "web_fetch",
+        lambda ctx: WebFetchTool(
+            allowlist=WebFetchAllowlist.from_runtime_settings(runtime_settings),
+        ),
+    )
     registry.register("clone_repo", lambda ctx: CloneRepoTool(ctx.policy))
     # Reader / Reviewer 等后续 agent 需要按 section 粒度读取 PDF；
     # 这里直接放进 builtin，避免到 agent 落地时还要回头补 runtime 注册链。
@@ -114,6 +127,9 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
     registry.register("enrich_papers", lambda ctx: EnrichPapersTool())
     registry.register("detect_duplicate_queries", lambda ctx: DetectDuplicateQueriesTool())
     registry.register("analyze_dedup_rate", lambda ctx: AnalyzeDedupRateTool())
+    registry.register("build_verified_papers", lambda ctx: BuildVerifiedPapersTool(ctx.policy))
+    registry.register("build_access_audit", lambda ctx: BuildAccessAuditTool(ctx.policy))
+    registry.register("build_deep_read_queue", lambda ctx: BuildDeepReadQueueTool(ctx.policy))
     # Semantic Scholar 工具（直接 API 调用，不依赖 MCP）
     registry.register("semantic_scholar_search", lambda ctx: SemanticScholarSearchTool())
     registry.register("semantic_scholar_get_paper", lambda ctx: SemanticScholarGetPaperTool())

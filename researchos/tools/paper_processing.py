@@ -68,6 +68,16 @@ COMMON_SECTION_HEADERS = {
     }
 )
 
+FALLBACK_SECTION_PATTERNS: dict[str, list[str]] = {
+    "abstract": [r"abstract"],
+    "introduction": [r"introduction", r"intro"],
+    "related work": [r"related\s+work", r"prior\s+work", r"literature\s+review"],
+    "method": [r"method", r"methods", r"methodology", r"approach", r"materials\s+and\s+methods"],
+    "results": [r"results?", r"findings", r"evaluation", r"experiments?", r"experimental\s+results"],
+    "discussion": [r"discussion", r"analysis"],
+    "conclusion": [r"conclusions?", r"future\s+work", r"concluding\s+remarks"],
+}
+
 
 class ExtractSectionsParams(BaseModel):
     """`extract_paper_sections` 的参数定义。"""
@@ -126,11 +136,11 @@ class ExtractSectionsTool(Tool):
             )
 
         try:
-            sections_out = self._extract(abs_path, params.sections)
+            sections_out, quality = self._extract(abs_path, params.sections)
         except ModuleNotFoundError:
             return ToolResult(
                 ok=False,
-                content="缺少 pdfplumber 依赖，无法解析 PDF。",
+                content="缺少 pdfplumber 依赖，无法解析 PDF。请安装 requirements.txt 中的依赖后重试。",
                 error="dependency_missing",
             )
         except Exception as exc:  # pragma: no cover - 具体异常由 ToolRuntimeError 包装
@@ -140,16 +150,26 @@ class ExtractSectionsTool(Tool):
             return ToolResult(
                 ok=True,
                 content="未识别到符合条件的 section。",
-                data={"sections": {}, "pdf": params.pdf_path},
+                data={"sections": {}, "pdf": params.pdf_path, "quality": quality},
+            )
+
+        summary_line = ""
+        if quality["recommend_full_text_fallback"]:
+            summary_line = (
+                "section 质量一般，建议回退到 extract_pdf_text 再做阅读。"
             )
 
         return ToolResult(
             ok=True,
-            content=self._format_sections(sections_out),
-            data={"sections": sections_out, "pdf": params.pdf_path},
+            content=(
+                f"{summary_line}\n\n{self._format_sections(sections_out)}"
+                if summary_line
+                else self._format_sections(sections_out)
+            ),
+            data={"sections": sections_out, "pdf": params.pdf_path, "quality": quality},
         )
 
-    def _extract(self, pdf_path: Path, wanted: list[str] | None) -> dict[str, str]:
+    def _extract(self, pdf_path: Path, wanted: list[str] | None) -> tuple[dict[str, str], dict[str, Any]]:
         """读取 PDF 并按 section 分桶聚合文本。
 
         实现思路：
@@ -162,10 +182,11 @@ class ExtractSectionsTool(Tool):
         这样不会丢失标题页、摘要前的前置信息。
         """
 
+        raw_lines = self._iter_pdf_lines(pdf_path)
         sections: dict[str, list[str]] = {}
         current_section = "preamble"
 
-        for raw_line in self._iter_pdf_lines(pdf_path):
+        for raw_line in raw_lines:
             stripped = raw_line.strip()
             if not stripped:
                 # 空行保留为段落分隔符，但不参与 header 判断。
@@ -186,13 +207,24 @@ class ExtractSectionsTool(Tool):
             joined_text = self._join_section_lines(lines)
             if joined_text:
                 joined[name] = joined_text
+        fallback_used = False
         if wanted:
-            return {
+            filtered = {
                 name: text
                 for name, text in joined.items()
                 if self._matches_wanted_section(name, wanted)
             }
-        return joined
+            if self._needs_fallback(filtered, wanted):
+                fallback = self._extract_from_full_text(raw_lines, wanted)
+                filtered = {**fallback, **filtered} if fallback else filtered
+                fallback_used = bool(fallback)
+            return filtered, self._build_quality_report(filtered, wanted, fallback_used)
+
+        if self._needs_fallback(joined, None):
+            fallback = self._extract_from_full_text(raw_lines, None)
+            joined = {**fallback, **joined} if fallback else joined
+            fallback_used = bool(fallback)
+        return joined, self._build_quality_report(joined, wanted, fallback_used)
 
     def _iter_pdf_lines(self, pdf_path: Path) -> list[str]:
         """借助 pdfplumber 抽取逐行文本。
@@ -253,10 +285,17 @@ class ExtractSectionsTool(Tool):
         if token_count > 8:
             return False
 
+        if not re.search(r"[a-zA-Z]{3,}", normalized):
+            return False
+
         has_numbering_prefix = bool(
             re.match(r"^(?:\d+(?:\.\d+)*|[IVXLCM]+)[\.\)]?\s+\S", line, flags=re.IGNORECASE)
         )
-        if has_numbering_prefix:
+        if has_numbering_prefix and (
+            normalized in COMMON_SECTION_HEADERS
+            or any(token in COMMON_SECTION_HEADERS for token in normalized.split())
+            or token_count <= 4
+        ):
             return True
 
         # 全大写短行是 PDF 文本中最常见的标题模式之一。
@@ -346,6 +385,118 @@ class ExtractSectionsTool(Tool):
                 )
             blocks.append("\n".join(block_lines).strip())
         return "\n\n---\n\n".join(blocks)
+
+    @classmethod
+    def _build_quality_report(
+        cls,
+        sections: dict[str, str],
+        wanted: list[str] | None,
+        fallback_used: bool,
+    ) -> dict[str, Any]:
+        suspicious_names = [
+            name
+            for name in sections
+            if name != "preamble"
+            and (
+                len(cls._normalize_section_name(name)) < 3
+                or not re.search(r"[a-zA-Z]{3,}", cls._normalize_section_name(name))
+            )
+        ]
+        matched_wanted = []
+        if wanted:
+            matched_wanted = [
+                name for name in sections if cls._matches_wanted_section(name, wanted)
+            ]
+
+        recommend_full_text_fallback = bool(
+            suspicious_names
+            or (wanted and len(set(matched_wanted)) < min(3, len(wanted)))
+            or any(len(text) < 200 for text in sections.values())
+        )
+
+        return {
+            "fallback_used": fallback_used,
+            "suspicious_section_names": suspicious_names,
+            "matched_wanted_count": len(set(matched_wanted)) if wanted else len(sections),
+            "section_count": len(sections),
+            "recommend_full_text_fallback": recommend_full_text_fallback,
+        }
+
+    @classmethod
+    def _needs_fallback(cls, sections: dict[str, str], wanted: list[str] | None) -> bool:
+        if not sections:
+            return True
+        noisy_names = {
+            name for name in sections
+            if name != "preamble" and not re.search(r"[a-zA-Z]{3,}", cls._normalize_section_name(name))
+        }
+        if noisy_names:
+            return True
+        if wanted:
+            matched = {
+                name for name in sections
+                if cls._matches_wanted_section(name, wanted)
+            }
+            return len(matched) < min(2, len(wanted))
+        non_preamble = [name for name in sections if name != "preamble"]
+        return len(non_preamble) < 2
+
+    @classmethod
+    def _extract_from_full_text(
+        cls,
+        lines: list[str],
+        wanted: list[str] | None,
+    ) -> dict[str, str]:
+        text = "\n".join(lines)
+        if not text.strip():
+            return {}
+
+        target_names = list(FALLBACK_SECTION_PATTERNS.keys())
+        if wanted:
+            normalized_wanted = [cls._normalize_section_name(item) for item in wanted]
+            selected: list[str] = []
+            for canonical in target_names:
+                variants = cls._section_variants(canonical)
+                if any(any(w in variant or variant in w for variant in variants) for w in normalized_wanted if w):
+                    selected.append(canonical)
+            target_names = selected or target_names
+
+        ordered_matches: list[tuple[int, int, str]] = []
+        search_pos = 0
+        for canonical in target_names:
+            best_match: tuple[int, int, str] | None = None
+            for pattern in FALLBACK_SECTION_PATTERNS[canonical]:
+                regex = re.compile(
+                    rf"(?is)(?<![A-Za-z])(?:section\s+)?(?:\d+(?:\.\d+)*|[IVXLCM]+)?[\.\)]?\s*({pattern})(?![A-Za-z])"
+                )
+                match = regex.search(text, pos=search_pos)
+                if not match:
+                    continue
+                candidate = (match.start(), match.end(), canonical)
+                if best_match is None or candidate[0] < best_match[0]:
+                    best_match = candidate
+            if best_match is None:
+                continue
+            ordered_matches.append(best_match)
+            search_pos = best_match[1]
+
+        if not ordered_matches:
+            return {}
+
+        sections: dict[str, str] = {}
+        for idx, (start, end, canonical) in enumerate(ordered_matches):
+            next_start = ordered_matches[idx + 1][0] if idx + 1 < len(ordered_matches) else len(text)
+            body = text[end:next_start].strip(" \n:-")
+            if not body:
+                continue
+            sections[canonical] = body
+
+        if wanted:
+            return {
+                name: value for name, value in sections.items()
+                if cls._matches_wanted_section(name, wanted)
+            }
+        return sections
 
 
 async def extract_paper_sections(

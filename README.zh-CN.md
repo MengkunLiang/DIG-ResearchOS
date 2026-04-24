@@ -106,12 +106,14 @@ researchos init-workspace --workspace ./workspace/demo --project-id demo-project
 - Conda
 - 可选：Docker（用于实验执行和 TeX 编译）
 - 可选：真实 LLM provider 的 API key
-- 可选：`pdfplumber`，用于 `extract_paper_sections`
+- 基础依赖已包含：`pdfplumber`，用于 `extract_paper_sections`
+- 可选：`PyMuPDF`，用于更丰富的 seed PDF 元数据提取
 
 本仓库不再依赖任何作者本机绝对路径。共享环境以仓库内这些文件为准：
 
 - [environment.yml](./environment.yml)
 - [requirements.txt](./requirements.txt)
+- [requirements-optional-pdf.txt](./requirements-optional-pdf.txt)
 - [requirements-dev.txt](./requirements-dev.txt)
 - [requirements-llm.txt](./requirements-llm.txt)
 - [pyproject.toml](./pyproject.toml)

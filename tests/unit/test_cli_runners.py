@@ -8,6 +8,7 @@ import pytest
 from researchos.cli import PreparedRuntime, main
 from researchos.cli_runners import CompletePipelineRunner, SingleTaskRunner
 from researchos.orchestration.state_machine import StateMachine
+from researchos.schemas.state import StateYaml, TaskHistoryEntry
 from researchos.testing.mocks import (
     FakeLLMMessage,
     FakeRawCompletion,
@@ -213,3 +214,28 @@ def test_cli_trace_renders_human_readable_output(tmp_path: Path, capsys):
     assert exit_code == 0
     assert "RUN START" in captured.out
     assert "RUN END" in captured.out
+
+
+def test_single_task_runner_injects_resume_extra_from_failed_history(tmp_workspace: Path):
+    runner = SingleTaskRunner(
+        workspace=tmp_workspace,
+        task_id="T3",
+        llm_client=_hello_llm(),
+        tool_registry=_registry(),
+    )
+    state = StateYaml(project_id="demo-project", current_task="T3")
+    state.history.append(
+        TaskHistoryEntry(
+            task="T3",
+            run_id="T3_single_prev",
+            status="FAILED",
+            started_at="2026-01-01T00:00:00Z",
+        )
+    )
+
+    extra: dict[str, object] = {}
+    runner._inject_resume_extra(extra, state)
+
+    assert extra["is_resume"] is True
+    assert extra["resumed_from_run_id"] == "T3_single_prev"
+    assert extra["resume_reason"] == "retry_after_failure"

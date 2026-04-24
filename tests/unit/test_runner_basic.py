@@ -20,6 +20,16 @@ class MinimalAgent(Agent):
         return "echo then finish"
 
 
+class RecordingLLMClient(MockLLMClient):
+    def __init__(self, responses):
+        super().__init__(responses=responses)
+        self.chat_kwargs: list[dict] = []
+
+    async def chat(self, **kwargs):
+        self.chat_kwargs.append(kwargs)
+        return await super().chat(**kwargs)
+
+
 @pytest.fixture
 def registry():
     registry = ToolRegistry()
@@ -88,3 +98,36 @@ async def test_tool_param_validation_fails_gracefully(tmp_workspace, registry):
     result = await runner.run(ctx)
     assert result.ok
 
+
+@pytest.mark.asyncio
+async def test_runner_passes_global_llm_timeout_and_retry_settings(tmp_workspace, registry, monkeypatch):
+    monkeypatch.setattr(
+        "researchos.runtime.orchestrator.get_global_timeout",
+        lambda: {"llm_call": 77, "max_agent_runtime": 999, "max_tool_call": 30},
+    )
+    monkeypatch.setattr(
+        "researchos.runtime.orchestrator.get_retry_policy",
+        lambda: {"llm_retries": 4, "llm_retry_delay": 1.25},
+    )
+
+    llm = RecordingLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(tool_calls=[FakeToolCall(name="echo", arguments={"text": "hi"}, id="tc1")])
+            ),
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="finish_task", arguments={"summary": "done"}, id="tc2")]
+                )
+            ),
+        ]
+    )
+    ctx = ExecutionContext(workspace_dir=tmp_workspace, project_id="p1", task_id="T0", run_id="r_cfg")
+    runner = AgentRunner(MinimalAgent(), registry, llm, MockHumanInterface())
+    result = await runner.run(ctx)
+
+    assert result.ok
+    assert llm.chat_kwargs
+    assert all(item["timeout"] == 77 for item in llm.chat_kwargs)
+    assert all(item["max_retries_per_model"] == 4 for item in llm.chat_kwargs)
+    assert all(item["retry_base_delay"] == 1.25 for item in llm.chat_kwargs)

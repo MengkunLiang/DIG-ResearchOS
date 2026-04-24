@@ -6,7 +6,6 @@ from __future__ import annotations
 "参数解析 + 启动检查 + ANSI 控制字符"混杂在一起的代码。
 """
 
-import os
 from pathlib import Path
 import sys
 import time
@@ -94,17 +93,18 @@ def show_startup_banner(
     *,
     stream: TextIO | None = None,
     no_banner: bool = False,
+    default_no_banner: bool = False,
     sleep_seconds: float = 0.06,
 ) -> None:
     """显示启动动画。
 
     行为约定：
-    - 若 `--no-banner` 或环境变量 `RESEARCHOS_NO_BANNER=1`，则完全静默；
+    - 若 `--no-banner` 或 runtime 配置默认关闭 banner，则完全静默；
     - 若不是 TTY，则退化为只打印最终静态 banner，避免 CI / pipe 中出现一串动画残影；
     - 若是 TTY，则按帧覆盖刷新，形成"逐步堆出 DIG" 的启动效果。
     """
 
-    if no_banner or os.getenv("RESEARCHOS_NO_BANNER") == "1":
+    if no_banner or default_no_banner:
         return
 
     target = stream or sys.stdout

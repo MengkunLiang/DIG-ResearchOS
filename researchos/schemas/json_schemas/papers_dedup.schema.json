@@ -15,6 +15,14 @@
       "type": "string",
       "description": "Data source (arxiv, semantic_scholar, crossref, europepmc, pubmed, manual, etc.)"
     },
+    "canonical_id": {
+      "type": "string",
+      "description": "Canonical paper identifier used across downstream stages"
+    },
+    "preferred_id_source": {
+      "type": "string",
+      "description": "Which identifier family won canonicalization (arxiv, doi, source_id, title)"
+    },
     "title": {
       "type": "string",
       "description": "Paper title",
@@ -71,6 +79,14 @@
     "doi": {
       "type": "string",
       "description": "DOI (optional)"
+    },
+    "provenance": {
+      "type": "object",
+      "description": "Minimal provenance used for audit and deterministic verification"
+    },
+    "verification_status": {
+      "type": "string",
+      "description": "Optional downstream verification status"
     }
   },
   "additionalProperties": true

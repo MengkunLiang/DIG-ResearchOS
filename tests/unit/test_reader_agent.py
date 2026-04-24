@@ -18,6 +18,57 @@ from researchos.agents.reader import ReaderAgent
 from researchos.runtime.agent import ExecutionContext
 
 
+def _structured_note(paper_id: str, *, abstract_only: bool = False) -> str:
+    status = "[ABSTRACT-ONLY]" if abstract_only else "[FULL-TEXT]"
+    verification = "metadata_verified (confidence: 0.95)"
+    evidence_line = "- N/A for abstract-only note\n" if abstract_only else "- Accuracy: 88.1 [Evidence: Results section]\n"
+    return f"""# {paper_id}
+
+- **ID**: {paper_id}
+- **Authors**: A, B
+- **Venue**: TestConf (2025)
+- **DOI/arXiv**: arxiv:2501.00001
+- **Citations**: 10
+- **Verification**: {verification}
+- **Status**: {status}
+
+## 1. Problem & Motivation
+problem
+
+## 2. Method Overview
+method
+
+## 3. Key Results
+{evidence_line}
+
+## 4. Claims vs Evidence
+| Claim | Evidence | Strength |
+|-------|----------|----------|
+| test | test | Strong |
+
+## 5. Limitations
+- limit
+
+## 6. Relevance to Our Research
+- relevant
+
+## 7. Technical Details Worth Noting
+- detail
+
+## 8. Strengths
+- strong
+
+## 9. Weaknesses / Gaps
+- weak
+
+## 10. Key Quotes
+> "quote"
+
+## 11. My Questions
+- question
+"""
+
+
 @pytest.fixture
 def temp_workspace(tmp_path):
     """创建临时workspace。"""
@@ -75,6 +126,31 @@ def test_reader_system_prompt_read_mode(reader_agent, temp_workspace):
     assert "paper_notes" in prompt
 
 
+def test_reader_system_prompt_read_mode_includes_seed_priority(reader_agent, temp_workspace):
+    """测试read模式会把 seed papers 标成最高优先级。"""
+    (temp_workspace / "project.yaml").write_text("direction: Test research direction\n")
+    (temp_workspace / "literature" / "papers_dedup.jsonl").write_text(
+        '{"id": "paper1", "title": "Seed Paper A"}\n{"id": "paper2", "title": "Other Paper"}\n'
+    )
+    (temp_workspace / "user_seeds").mkdir(exist_ok=True)
+    (temp_workspace / "user_seeds" / "seed_papers.jsonl").write_text(
+        '{"title": "Seed Paper A", "role": "anchor"}\n{"title": "Seed Paper Missing", "role": "anchor"}\n'
+    )
+
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T3",
+        run_id="test-run-1",
+        mode="read",
+    )
+
+    prompt = reader_agent.system_prompt(ctx)
+    assert "最高优先级必读对象" in prompt
+    assert "Seed Paper A" in prompt
+    assert "尚未在 `papers_dedup.jsonl` 中匹配到" in prompt
+
+
 def test_reader_system_prompt_synthesize_mode(reader_agent, temp_workspace):
     """测试synthesize模式的system prompt生成。"""
     # 创建project.yaml
@@ -115,6 +191,26 @@ def test_reader_initial_user_message_read_mode(reader_agent, temp_workspace):
     assert "papers_dedup.jsonl" in msg
 
 
+def test_reader_initial_user_message_read_mode_resume(reader_agent, temp_workspace):
+    """测试read模式在已有进度时提示继续执行。"""
+    (temp_workspace / "literature" / "paper_notes" / "done_paper.md").write_text("# done")
+
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T3",
+        run_id="test-run-1",
+        mode="read",
+        extra={"is_resume": True, "resume_reason": "interrupted"},
+    )
+
+    msg = reader_agent.initial_user_message(ctx)
+    assert "继续T3" in msg
+    assert "只处理尚未完成的论文" in msg
+    assert "补齐已有笔记缺失的表格/Bib条目" in msg
+    assert "seed papers 必须最高优先级" in msg
+
+
 def test_reader_initial_user_message_synthesize_mode(reader_agent, temp_workspace):
     """测试synthesize模式的初始用户消息。"""
     ctx = ExecutionContext(
@@ -132,10 +228,19 @@ def test_reader_initial_user_message_synthesize_mode(reader_agent, temp_workspac
 
 def test_validate_outputs_read_mode_success(reader_agent, temp_workspace):
     """测试read模式输出校验（成功场景）。"""
-    # 创建paper_notes（至少15篇）
+    # 创建 deep_read_queue 和对应笔记
+    queue_path = temp_workspace / "literature" / "deep_read_queue.jsonl"
+    queue_path.write_text(
+        "\n".join(
+            f'{{"paper_id": "paper{i}", "normalized_id": "paper{i}", "title": "Paper {i}", "relevance_score": 0.8, "access_score_estimate": 0.7, "access_score": 0.7, "evidence_level": "PARTIAL_TEXT", "seed_priority": false, "queue_rank": {i+1}, "read_priority": 0.8, "target_bucket": "target"}}'
+            for i in range(18)
+        )
+        + "\n"
+    )
+
     notes_dir = temp_workspace / "literature" / "paper_notes"
-    for i in range(20):
-        (notes_dir / f"note{i}.md").write_text(f"# Paper {i}")
+    for i in range(18):
+        (notes_dir / f"paper{i}.md").write_text(_structured_note(f"paper{i}"))
 
     # 创建comparison_table.csv
     ct_path = temp_workspace / "literature" / "comparison_table.csv"
@@ -159,10 +264,19 @@ def test_validate_outputs_read_mode_success(reader_agent, temp_workspace):
 
 def test_validate_outputs_read_mode_missing_notes(reader_agent, temp_workspace):
     """测试read模式输出校验（缺少笔记）。"""
-    # 只创建5篇笔记（少于15篇）
+    queue_path = temp_workspace / "literature" / "deep_read_queue.jsonl"
+    queue_path.write_text(
+        "\n".join(
+            f'{{"paper_id": "paper{i}", "normalized_id": "paper{i}", "title": "Paper {i}", "relevance_score": 0.8, "access_score_estimate": 0.7, "access_score": 0.7, "evidence_level": "PARTIAL_TEXT", "seed_priority": false, "queue_rank": {i+1}, "read_priority": 0.8, "target_bucket": "target"}}'
+            for i in range(18)
+        )
+        + "\n"
+    )
+
+    # 只创建5篇笔记（少于 deep_read_min）
     notes_dir = temp_workspace / "literature" / "paper_notes"
     for i in range(5):
-        (notes_dir / f"note{i}.md").write_text(f"# Paper {i}")
+        (notes_dir / f"paper{i}.md").write_text(_structured_note(f"paper{i}"))
 
     # 创建其他必需文件
     ct_path = temp_workspace / "literature" / "comparison_table.csv"
@@ -181,7 +295,70 @@ def test_validate_outputs_read_mode_missing_notes(reader_agent, temp_workspace):
 
     ok, err = reader_agent.validate_outputs(ctx)
     assert not ok
-    assert "15篇" in err or "paper_notes" in err
+    assert "deep_read_queue" in err or "至少需要完成" in err
+
+
+def test_validate_outputs_read_mode_requires_seed_queue_coverage(reader_agent, temp_workspace):
+    """测试read模式输出校验会要求队列中的 seed paper 优先完成。"""
+    queue_path = temp_workspace / "literature" / "deep_read_queue.jsonl"
+    queue_path.write_text(
+        "\n".join(
+            [
+                '{"paper_id": "seed_paper", "normalized_id": "seed_paper", "title": "Seed Paper", "relevance_score": 0.95, "access_score_estimate": 0.9, "access_score": 1.0, "evidence_level": "FULL_TEXT", "seed_priority": true, "queue_rank": 1, "read_priority": 100.9, "target_bucket": "seed"}',
+            ]
+            + [
+                f'{{"paper_id": "paper{i}", "normalized_id": "paper{i}", "title": "Paper {i}", "relevance_score": 0.8, "access_score_estimate": 0.7, "access_score": 0.7, "evidence_level": "PARTIAL_TEXT", "seed_priority": false, "queue_rank": {i+2}, "read_priority": 0.8, "target_bucket": "target"}}'
+                for i in range(17)
+            ]
+        )
+        + "\n"
+    )
+
+    notes_dir = temp_workspace / "literature" / "paper_notes"
+    for i in range(17):
+        (notes_dir / f"paper{i}.md").write_text(_structured_note(f"paper{i}"))
+    (notes_dir / "overflow_note.md").write_text(_structured_note("overflow_note"))
+
+    ct_path = temp_workspace / "literature" / "comparison_table.csv"
+    ct_path.write_text("id,title,year\ntest1,Test Paper,2023\n")
+    bib_path = temp_workspace / "literature" / "related_work.bib"
+    bib_path.write_text("@article{test2023,\n  title={Test},\n  year={2023}\n}\n")
+
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T3",
+        run_id="test-run-1",
+        mode="read",
+    )
+
+    ok, err = reader_agent.validate_outputs(ctx)
+    assert not ok
+    assert "seed papers" in err
+
+
+def test_reader_system_prompt_read_mode_includes_resume_progress(reader_agent, temp_workspace):
+    """测试read模式prompt会暴露已有进度，指导断点续跑。"""
+    (temp_workspace / "project.yaml").write_text("direction: Test research direction\n")
+    (temp_workspace / "literature" / "papers_dedup.jsonl").write_text(
+        '{"id": "paper1", "title": "Test Paper 1"}\n{"id": "paper2", "title": "Test Paper 2"}\n'
+    )
+    (temp_workspace / "literature" / "paper_notes" / "paper1.md").write_text("# Paper 1")
+
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T3",
+        run_id="test-run-1",
+        mode="read",
+        extra={"is_resume": True, "resumed_from_run_id": "t3-run-001", "resume_reason": "interrupted"},
+    )
+
+    prompt = reader_agent.system_prompt(ctx)
+    assert "当前已有进度" in prompt
+    assert "已有 1 篇笔记" in prompt
+    assert "先做账目对齐" in prompt
+    assert "只补未完成论文" in prompt
 
 
 def test_validate_outputs_synthesize_mode_success(reader_agent, temp_workspace):
