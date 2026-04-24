@@ -506,7 +506,7 @@ write_file(
 
 **🚨 重要：使用 generate_search_log 工具生成日志 🚨**
 
-不要手动编写 search_log.md，使用 `generate_search_log` 工具：
+不要手动编写 search_log.md，使用 `generate_search_log` 工具。工具会**直接写入** `literature/search_log.md`，无需额外调用 write_file：
 ```
 generate_search_log(
     raw_count=实际原始结果数量,
@@ -694,7 +694,7 @@ if len(final_papers) > 120:
 save_papers_dedup(papers=final_papers)
 log_scout_progress(action="write", detail="papers_dedup.jsonl", count=len(final_papers))
 
-# Step 7: 生成日志
+# Step 7: 生成日志（工具会直接写入 literature/search_log.md）
 raw_total = sum(query_results.values())
 log_result = generate_search_log(
     raw_count=raw_total,
@@ -702,7 +702,7 @@ log_result = generate_search_log(
     queries=queries,
     query_results=query_results
 )
-write_file("literature/search_log.md", log_result["data"]["log"])
+# 不需要额外调用 write_file，generate_search_log 会自动写入文件
 
 # Step 8: 手动分析缺口
 # 分析 final_papers，写入 missing_areas.md
