@@ -235,26 +235,22 @@ detect_duplicate_queries(
    # ... 继续添加其他结果
    ```
 
-   **步骤 3：原始结果由运行时自动保存**
-   - 对于成功的搜索工具调用，运行时会自动把 `result.data.papers` 追加到 `literature/papers_raw.jsonl`
-   - 自动保存时会完成格式转换、基础校验和按 `id` 去重追加
-   - **不要**先用 `write_file` 创建空的 `papers_raw.jsonl`
-   - **不要**手动维护 raw 文件，除非你在做修复或重建
-
-**步骤 4：如需手动修复 raw 文件，再使用保存工具**
-
-   通常不需要手动保存 `papers_raw.jsonl`。只有在做修复、重建或处理非标准论文列表时，才使用：
+   **步骤 3：流式保存原始结果**
    ```
-   save_papers_raw(papers=all_papers, append=True)
-   ```
-
-   如果你确实要走“两步式”手动流程，也可以使用：
-   ```
+   # 每完成一次检索，立即保存原始数据
    append_papers_raw(papers=result.data.papers)
+   ```
+   - `append_papers_raw` 会直接将论文追加到 `literature/papers_raw.jsonl`（不转换格式）
+   - 不要先用 `write_file` 创建空文件
+
+   **步骤 4：批量处理和验证（所有检索完成后）**
+   ```
+   # 在完成所有检索后，一次性转换格式并验证 schema
    process_papers_raw()
    ```
+   - `process_papers_raw` 会读取原始数据、转换格式、验证 schema
 
-   **步骤 4：去重**
+   **步骤 5：去重**
    ```
    # 将合并后的论文列表传递给去重工具
    dedup_result = deduplicate_papers(
@@ -265,7 +261,7 @@ detect_duplicate_queries(
    # dedup_result.data.papers 包含去重后的论文列表
    ```
 
-   **步骤 5：评分和筛选**
+   **步骤 6：评分和筛选**
    ```
    # 使用去重后的论文列表进行评分
    score_result = score_papers(
@@ -275,7 +271,7 @@ detect_duplicate_queries(
    # score_result.data.papers 包含评分后的论文列表
    ```
 
-   **步骤 6：保存最终结果**
+   **步骤 7：保存最终结果**
    ```
    # 使用 save_papers_dedup 工具保存去重和评分后的论文（自动处理格式转换和 schema 验证）
    save_papers_dedup(
@@ -347,18 +343,21 @@ filter_by_domain(papers=[论文列表], target_domain="cs")
 
 **⚠️ 重要：必须先保存 papers_raw.jsonl，再进行去重！**
 
-#### 5.1 保存原始检索结果（第一步）
+#### 5.1 保存原始检索结果（流式追加）
 
-**🚨 重要：默认不需要你手动写 raw 文件 🚨**
+**🚨 每完成一次检索，立即保存原始数据 🚨**
 
-- 运行时会在每次成功检索后自动把 `data.papers` 追加到 `literature/papers_raw.jsonl`
-- 你不需要用 `write_file` 初始化 raw 文件
-- 你也不需要在每次检索后再额外调用保存工具
-
-只有在需要修复、重建或处理非标准列表时，才手动调用：
+使用 `append_papers_raw` 工具将论文追加到 `literature/papers_raw.jsonl`：
 ```
-save_papers_raw(papers=all_papers, append=True)
+append_papers_raw(papers=result.data.papers)
 ```
+
+**在所有检索完成后，使用 `process_papers_raw` 进行格式转换和验证：**
+```
+process_papers_raw()
+```
+
+不要先用 `write_file` 初始化 raw 文件。
 
 #### 5.2 保存去重后的论文池（第二步）
 
@@ -643,36 +642,38 @@ queries = queries_result["data"]["queries"]
 # 记录检索式扩展结果
 log_scout_progress(action="queries", queries=queries)
 
-# Step 2: 跨源检索
-all_papers = []
-query_results = {}
+# Step 2: 跨源检索（流式保存）
 for query in queries:
     # 记录开始检索
     log_scout_progress(action="search", query=query, source="multi_source")
     result = multi_source_search(query=query, max_results=30)
     papers = result["data"]["papers"]
-    all_papers.extend(papers)
     query_results[query] = len(papers)
+    # 立即保存原始数据
+    append_papers_raw(papers=papers)
     # 记录检索结果
     log_scout_progress(action="search_result", query=query, count=len(papers), source="multi_source")
 
-# 写入原始结果
-save_papers_raw(papers=all_papers)
-log_scout_progress(action="write", detail="papers_raw.jsonl", count=len(all_papers))
+# 所有检索完成后，批量处理和验证
+process_papers_raw()
+log_scout_progress(action="write", detail="papers_raw.jsonl (processed)", count=sum(query_results.values()))
 
-# Step 3: 领域过滤（可选）
-filtered_result = filter_by_domain(papers=all_papers, target_domain="cs")
-filtered_papers = filtered_result["data"]["papers"]
+# Step 3: 领域过滤（可选，从处理后的 raw 文件读取）
+# 读取 process_papers_raw 处理后的数据
+# papers_raw.jsonl 现在包含转换和验证后的标准化论文数据
+# 注意：这里需要读取文件获取论文列表，或直接使用工具链处理
 
 # Step 4: 去重
+# 从 papers_raw.jsonl 读取所有论文进行去重
+# 或者直接在 dedup_papers 中使用你已有的论文列表
 dedup_result = deduplicate_papers(
-    papers=filtered_papers,
+    papers=papers_from_raw,  # 需要从 papers_raw.jsonl 读取
     doi_dedup=True,
     title_threshold=0.95
 )
 dedup_papers = dedup_result["data"]["papers"]
 # 记录去重结果
-log_scout_progress(action="dedup", before=len(filtered_papers), after=len(dedup_papers))
+log_scout_progress(action="dedup", before=sum(query_results.values()), after=len(dedup_papers))
 
 # Step 5: 评分
 scored_result = score_papers(
@@ -694,8 +695,9 @@ save_papers_dedup(papers=final_papers)
 log_scout_progress(action="write", detail="papers_dedup.jsonl", count=len(final_papers))
 
 # Step 7: 生成日志
+raw_total = sum(query_results.values())
 log_result = generate_search_log(
-    raw_count=len(all_papers),
+    raw_count=raw_total,
     dedup_count=len(final_papers),
     queries=queries,
     query_results=query_results
@@ -706,7 +708,7 @@ write_file("literature/search_log.md", log_result["data"]["log"])
 # 分析 final_papers，写入 missing_areas.md
 
 # Step 9: 完成任务
-finish_task(summary=f"检索完成：{len(all_papers)} 篇原始结果 → {len(final_papers)} 篇去重后论文")
+finish_task(summary=f"检索完成：{raw_total} 篇原始结果 → {len(final_papers)} 篇去重后论文")
 ```
 
 ## 注意事项
