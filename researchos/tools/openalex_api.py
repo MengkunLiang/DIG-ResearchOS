@@ -141,10 +141,18 @@ class OpenAlexSearchTool(Tool):
                 authors = paper["authors"][:3]
                 year = paper["year"]
                 citations = paper["citation_count"]
+                abstract = paper.get("abstract", "") or ""
+                venue = paper.get("venue", "")
 
-                content_lines.append(f"{i}. {title}")
-                content_lines.append(f"   作者: {', '.join(authors)}")
-                content_lines.append(f"   年份: {year} | 引用数: {citations}")
+                # 摘要截断到 300 字符
+                if len(abstract) > 300:
+                    abstract = abstract[:300] + "..."
+
+                content_lines.append(
+                    f"{i}. {title}\n"
+                    f"   作者: {', '.join(authors)}, 年份: {year}, 发表于: {venue}, 引用: {citations}\n"
+                    f"   摘要: {abstract or '无'}"
+                )
                 content_lines.append("")
 
             return ToolResult(

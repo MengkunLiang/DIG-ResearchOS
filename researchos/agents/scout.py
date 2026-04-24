@@ -58,6 +58,8 @@ class ScoutAgent(Agent):
                         "read_file",
                         "write_file",
                         "write_structured_file",
+                        "save_papers_raw",
+                        "save_papers_dedup",
                         "multi_source_search",
                         "search_papers",
                         "fetch_paper_metadata",

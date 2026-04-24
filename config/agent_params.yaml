@@ -96,7 +96,7 @@ agents:
       tier: medium
       temperature: 0.5
       # profile: mixed
-    max_steps: 50
+    max_steps: 500
     max_tokens_total: 1500000
     max_wall_seconds: 6000
     max_validation_retries: 3

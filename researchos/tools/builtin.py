@@ -39,6 +39,7 @@ from .paper_enrichment_tool import (
     DetectDuplicateQueriesTool,
     AnalyzeDedupRateTool,
 )
+from .paper_save_tools import SavePapersRawTool, SavePapersDedupTool
 from .semantic_scholar import SemanticScholarSearchTool, SemanticScholarGetPaperTool
 from .arxiv_api import ArxivSearchTool
 from .openalex_api import OpenAlexSearchTool, OpenAlexGetWorkTool
@@ -119,3 +120,11 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
     registry.register("crossref_get_work", lambda ctx: CrossRefGetWorkTool())
     # Scout Agent 进度日志工具（工具层追加，无需用户手动调用）
     registry.register("log_scout_progress", lambda ctx: LogScoutProgressTool(workspace_dir=str(ctx.policy.workspace_dir)))
+    # 论文数据保存工具
+    # 流式写入：LLM 检索到论文后立即追加原始数据（不转换）
+    registry.register("append_papers_raw", lambda ctx: AppendPapersRawTool(ctx.policy))
+    # 批量处理：LLM 完成所有检索后一次性转换和验证
+    registry.register("process_papers_raw", lambda ctx: ProcessPapersRawTool(ctx.policy))
+    # 兼容旧接口（保留）
+    registry.register("save_papers_raw", lambda ctx: SavePapersRawTool(ctx.policy))
+    registry.register("save_papers_dedup", lambda ctx: SavePapersDedupTool(ctx.policy))

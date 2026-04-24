@@ -149,7 +149,7 @@ class SearchPapersTool(Tool):
             "id": item.get("paperId") or external_ids.get("CorpusId") or item.get("title"),
             "source": "semantic_scholar",
             "title": item.get("title", ""),
-            "authors": [{"name": author.get("name", "")} for author in item.get("authors", [])],
+            "authors": [author.get("name", "") for author in item.get("authors", [])],
             "year": item.get("year"),
             "abstract": item.get("abstract", ""),
             "venue": item.get("venue", ""),
@@ -165,7 +165,7 @@ class SearchPapersTool(Tool):
             return unescape(" ".join(value.split()))
 
         authors = [
-            {"name": author.findtext("atom:name", default="", namespaces=ns)}
+            author.findtext("atom:name", default="", namespaces=ns)
             for author in entry.findall("atom:author", ns)
         ]
         published = text("atom:published")
@@ -193,13 +193,22 @@ class SearchPapersTool(Tool):
             return "未检索到论文结果。"
         lines: list[str] = []
         for index, paper in enumerate(papers, start=1):
-            authors = ", ".join(author.get("name", "") for author in paper.get("authors", [])[:3])
+            authors = ", ".join(str(author) for author in paper.get("authors", [])[:3])
             if len(paper.get("authors", [])) > 3:
                 authors += " et al."
+            title = paper.get("title", "?")
+            year = paper.get("year", "?")
+            source = paper.get("source", "?")
+            citations = paper.get("citationCount", 0)
+            abstract = paper.get("abstract", "")
+            # 摘要截断到 300 字符，避免输出过长
+            if abstract and len(abstract) > 300:
+                abstract = abstract[:300] + "..."
+            venue = paper.get("venue", "")
             lines.append(
-                f"[{index}] {paper.get('title', '?')} "
-                f"({authors or 'Unknown'}, {paper.get('year', '?')}) "
-                f"- {paper.get('source', '?')}, citations={paper.get('citationCount', 0)}"
+                f"[{index}] {title}\n"
+                f"    作者: {authors}, 年份: {year}, 出版地: {venue}, 引用: {citations}, 来源: {source}\n"
+                f"    摘要: {abstract or '无'}"
             )
         return "\n".join(lines)
 

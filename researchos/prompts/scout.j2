@@ -213,16 +213,37 @@ detect_duplicate_queries(
    # ... 继续添加其他结果
    ```
 
-   **步骤 3：保存原始结果**
+   **步骤 3：保存原始结果（流式追加，不等待）**
    ```
-   # 使用 write_structured_file 保存所有原始论文
-   write_structured_file(
-       path="literature/papers_raw.jsonl",
-       schema_name="papers_raw",
-       format="jsonl",
-       data=all_papers  # 传递合并后的论文列表
+   # 每次检索后立即追加到 papers_raw.jsonl（不做格式转换，速度更快）
+   append_papers_raw(
+       papers=result.data.papers  # 传递当前检索结果的论文列表
    )
    ```
+
+   **⚠️ 重要**：不要等所有检索完成后再保存，而是每次检索后立即追加！
+   这样可以：
+   - 节省 token（不需要 LLM 处理数据格式）
+   - 更安全（每次只追加几篇论文，不会超时）
+   - 更简单（LLM 只需调用工具，不需要手动构造 JSON）
+
+**步骤 4：批量处理原始数据（一次转换 + 验证）**
+
+   在所有检索完成后，调用 `process_papers_raw` 批量处理：
+   ```
+   # 读取所有原始数据，转换格式，验证 schema
+   process_papers_raw()
+   ```
+
+   **工具会自动**：
+   - 读取 literature/papers_raw.jsonl 中所有原始数据
+   - 批量转换数据格式（标准化 authors、citation_count 等）
+   - Schema 验证所有数据
+   - 覆盖写入 literature/papers_raw.jsonl
+
+   **为什么分两步？**
+   - 第1步（append_papers_raw）：LLM 专注检索，立即保存原始数据
+   - 第2步（process_papers_raw）：工具批量处理转换和验证，确保数据质量
 
    **步骤 4：去重**
    ```
@@ -247,12 +268,9 @@ detect_duplicate_queries(
 
    **步骤 6：保存最终结果**
    ```
-   # 保存去重和评分后的论文
-   write_structured_file(
-       path="literature/papers_dedup.jsonl",
-       schema_name="papers_dedup",
-       format="jsonl",
-       data=score_result.data.papers  # 传递最终的论文列表
+   # 使用 save_papers_dedup 工具保存去重和评分后的论文（自动处理格式转换和 schema 验证）
+   save_papers_dedup(
+       papers=score_result.data.papers  # 传递最终的论文列表
    )
    ```
 
@@ -322,19 +340,23 @@ filter_by_domain(papers=[论文列表], target_domain="cs")
 
 #### 5.1 保存原始检索结果（第一步）
 
-**在调用 deduplicate_papers 之前，必须先保存原始结果！**
+**🚨 重要：使用流式追加，不要等所有检索完成！**
 
-使用 `write_structured_file` 工具：
+在每次检索后立即追加原始数据：
 ```
-write_structured_file(
-    path="literature/papers_raw.jsonl",
-    schema_name="papers_raw",
-    format="jsonl",
-    data=all_papers  # 传递合并后的所有原始论文列表
+# 每次检索后立即追加（不转换，不验证）
+append_papers_raw(
+    papers=result.data.papers  # 传递当前检索结果的论文列表
 )
 ```
 
-如果 `write_structured_file` 不可用，降级使用 `write_file`。
+**所有检索完成后，批量处理和验证**：
+```
+# 一次性转换格式 + 验证 schema
+process_papers_raw()
+```
+
+如果 `append_papers_raw` 或 `process_papers_raw` 不可用，降级使用 `save_papers_raw`。
 
 #### 5.2 保存去重后的论文池（第二步）
 
@@ -362,12 +384,10 @@ enrich_papers(papers=scored_papers, keywords={{ project.get('keywords', []) }})
 
 **Step 5.2.2: 保存最终论文池**
 
+使用 `save_papers_dedup` 工具（自动处理格式转换和 schema 验证）：
 ```
-write_structured_file(
-    path="literature/papers_dedup.jsonl",
-    schema_name="papers_dedup",
-    format="jsonl",
-    data=enriched_papers  # 传递增强后的论文列表
+save_papers_dedup(
+    papers=enriched_papers  # 传递增强后的论文列表
 )
 ```
 
@@ -635,7 +655,7 @@ for query in queries:
     log_scout_progress(action="search_result", query=query, count=len(papers), source="multi_source")
 
 # 写入原始结果
-write_file("literature/papers_raw.jsonl", jsonl_format(all_papers))
+save_papers_raw(papers=all_papers)
 log_scout_progress(action="write", detail="papers_raw.jsonl", count=len(all_papers))
 
 # Step 3: 领域过滤（可选）
@@ -668,7 +688,7 @@ if len(final_papers) > 120:
     final_papers = final_papers[:80]
 
 # 写入去重后结果
-write_file("literature/papers_dedup.jsonl", jsonl_format(final_papers))
+save_papers_dedup(papers=final_papers)
 log_scout_progress(action="write", detail="papers_dedup.jsonl", count=len(final_papers))
 
 # Step 7: 生成日志
