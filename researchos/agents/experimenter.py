@@ -47,11 +47,11 @@ import json
 import re
 from pathlib import Path
 
-import structlog
 import yaml
 
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
+from ..runtime.logger import get_logger
 from ..runtime.prompts import render_prompt
 from ..schemas.validator import validate_record
 from ._common import (
@@ -63,7 +63,7 @@ from ._common import (
     validate_files_exist,
 )
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 # ══════════════════════════════════════════════════════
@@ -354,11 +354,21 @@ class ExperimenterAgent(Agent):
             except Exception:
                 pilot_results = {}
 
-        # 读取新颖性报告（full 模式可能需要）
+        # 读取新颖性报告和必须补充的基线（full 模式可能需要）
         novelty_report = ""
-        novelty_report_path = ws / "ideation" / "novelty_report.md"
-        if mode == "full" and novelty_report_path.exists():
-            novelty_report = read_text_file(novelty_report_path, default="")[:1000]
+        must_add_baselines = ""
+        if mode == "full":
+            for novelty_report_path in (
+                ws / "novelty" / "novelty_report.md",
+                ws / "ideation" / "novelty_report.md",
+            ):
+                if novelty_report_path.exists():
+                    novelty_report = read_text_file(novelty_report_path, default="")[:1000]
+                    break
+            must_add_baselines = read_text_file(
+                ws / "novelty" / "must_add_baselines.md",
+                default="",
+            )[:1500]
 
         # 读取 seed_ensemble 配置（§2.5）
         seed_ensemble = project.get("seed_ensemble", {
@@ -383,6 +393,7 @@ class ExperimenterAgent(Agent):
             experiment_count=len(exp_plan.get("experiments", [])),
             pilot_results=pilot_results,
             novelty_report_preview=novelty_report,
+            must_add_baselines_preview=must_add_baselines,
             budget_hint=budget_hint,
             seed_ensemble=seed_ensemble,
         )

@@ -63,6 +63,11 @@ class ReaderAgent(Agent):
             context_vars["note_count"] = note_count
             missing_areas_path = ctx.workspace_dir / "literature" / "missing_areas.md"
             context_vars["missing_areas"] = read_text_file(missing_areas_path, default="")
+            comparison_table_path = ctx.workspace_dir / "literature" / "comparison_table.csv"
+            context_vars["comparison_table_preview"] = read_text_file(
+                comparison_table_path,
+                default="",
+            )[:1200]
 
         return render_prompt(self.spec.prompt_template, ctx, **context_vars)
 

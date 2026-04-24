@@ -130,7 +130,7 @@ class CompletePipelineRunner:
     def _build_runner(self, node, ctx):
         """根据 node 类型构造 AgentRunner。"""
         if node.agent is not None:
-            agent = get_agent_by_id(node.agent)
+            agent = get_agent_by_id(node.agent, mode=node.mode)
         elif node.skill is not None:
             skill = resolve_skill(node.skill, self.skill_roots)
             ctx.extra.setdefault("skill_dir", str(skill.skill_dir))

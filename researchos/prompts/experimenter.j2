@@ -132,8 +132,8 @@ exp_h1_ablation3,H1,replace_with_baseline,accuracy,0.83,0.87,-0.04
 ## 当前上下文
 
 **项目信息**：
-- 研究方向：{{ project.research_direction }}
-- 研究领域：{{ project.domain }}
+- 研究方向：{{ project.get('research_direction', project.get('direction', '未指定')) }}
+- 研究领域：{{ project.get('domain', '未指定') }}
 - 实验数量：{{ experiment_count }}
 
 **实验计划概览**：
@@ -145,6 +145,20 @@ exp_h1_ablation3,H1,replace_with_baseline,accuracy,0.83,0.87,-0.04
 ```
 {{ hypotheses_preview }}
 ```
+
+{% if novelty_report_preview %}
+**T6 新颖性报告摘要**：
+```
+{{ novelty_report_preview }}
+```
+{% endif %}
+
+{% if must_add_baselines_preview %}
+**T6 要求补充的基线**：
+```
+{{ must_add_baselines_preview }}
+```
+{% endif %}
 
 ## 输入说明
 

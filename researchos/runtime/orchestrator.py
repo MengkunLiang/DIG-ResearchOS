@@ -19,10 +19,23 @@ from .message import Message, Role, ToolCall, is_empty_assistant
 from .trace import TraceWriter
 from ..tools.base import Tool, ToolResult
 from ..tools.human_gate import HumanInterface
+from ..tools.paper_save_tools import SavePapersRawTool
 from ..tools.registry import ToolBuildContext, ToolRegistry
 
 if TYPE_CHECKING:
     from ..tools.workspace_policy import WorkspaceAccessPolicy
+
+
+T2_AUTO_PERSIST_SEARCH_TOOLS = frozenset(
+    {
+        "multi_source_search",
+        "search_papers",
+        "semantic_scholar_search",
+        "arxiv_search",
+        "openalex_search",
+        "crossref_search",
+    }
+)
 
 
 class AgentRunner:
@@ -214,7 +227,13 @@ class AgentRunner:
                 # 同一轮 assistant 发出的多个 tool call 可以并行执行，但回填顺序保持原顺序。
                 tool_msgs = await asyncio.gather(
                     *[
-                        self._execute_one_tool_call(tc, tool_map, step=budget.steps)
+                        self._execute_one_tool_call(
+                            tc,
+                            tool_map,
+                            ctx=ctx,
+                            policy=policy,
+                            step=budget.steps,
+                        )
                         for tc in assistant_msg.tool_calls
                     ]
                 )
@@ -286,6 +305,8 @@ class AgentRunner:
         tc: ToolCall,
         tool_map: dict[str, Tool],
         *,
+        ctx: ExecutionContext,
+        policy: "WorkspaceAccessPolicy",
         step: int,
     ) -> Message:
         started = time.time()
@@ -375,15 +396,64 @@ class AgentRunner:
                 duration_ms=int((time.time() - started) * 1000),
             )
 
+        auto_persist_metadata = await self._maybe_auto_persist_t2_search_result(
+            ctx=ctx,
+            policy=policy,
+            tool_name=tc.name,
+            result=result,
+        )
+        content = result.content
+        metadata = {"data": result.data, "error": result.error}
+        if auto_persist_metadata:
+            metadata["auto_persist_raw"] = auto_persist_metadata
+            suffix = auto_persist_metadata.get("content_suffix")
+            if suffix:
+                content = f"{content}\n\n{suffix}" if content else suffix
+
         return Message.tool(
             tool_call_id=tc.id,
             name=tc.name,
-            content=result.content,
+            content=content,
             is_error=not result.ok,
             step=step,
             duration_ms=int((time.time() - started) * 1000),
-            metadata={"data": result.data, "error": result.error},
+            metadata=metadata,
         )
+
+    async def _maybe_auto_persist_t2_search_result(
+        self,
+        *,
+        ctx: ExecutionContext,
+        policy: "WorkspaceAccessPolicy",
+        tool_name: str,
+        result: ToolResult,
+    ) -> dict[str, object] | None:
+        """T2 中的检索结果自动落盘到 papers_raw.jsonl。"""
+        if ctx.task_id != "T2" or tool_name not in T2_AUTO_PERSIST_SEARCH_TOOLS or not result.ok:
+            return None
+
+        papers = result.data.get("papers")
+        if not isinstance(papers, list) or not papers:
+            return None
+
+        save_tool = SavePapersRawTool(policy)
+        save_result = await save_tool.execute(papers=papers, append=True)
+        if not save_result.ok:
+            return {
+                "ok": False,
+                "error": save_result.error,
+                "content_suffix": f"[Runtime] 自动保存 papers_raw 失败: {save_result.content}",
+            }
+
+        persisted_count = save_result.data.get("count", len(papers))
+        return {
+            "ok": True,
+            "count": persisted_count,
+            "mode": save_result.data.get("mode", "append"),
+            "content_suffix": (
+                f"[Runtime] 已自动追加 {persisted_count} 篇到 literature/papers_raw.jsonl"
+            ),
+        }
 
     def _parse_llm_response(self, resp: object, *, step: int) -> Message:
         choice = resp.raw.choices[0].message

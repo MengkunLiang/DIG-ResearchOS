@@ -2,6 +2,8 @@ from __future__ import annotations
 
 """ResearchOS 当前可用 agent 的注册中心。"""
 
+from typing import Any
+
 from .hello import HelloAgent
 from .pi import PIAgent
 from .scout import ScoutAgent
@@ -47,14 +49,28 @@ TASK_TO_AGENT_MAP = {
     "T6": NoveltyAgent,  # 新颖性验证
     "T7": ExperimenterAgent,  # 完整实验
     "T8-WRITE": WriterAgent,  # 论文写作
+    "T8-DRAFT": WriterAgent,  # 论文初稿
     "T8-REVIEW": ReviewerAgent,  # 论文审稿
+    "T8-REVIEW-1": ReviewerAgent,  # 第1轮审稿
+    "T8-REVIEW-2": ReviewerAgent,  # 第2轮审稿
+    "T8-REVISE-1": WriterAgent,  # 第1轮修订
+    "T8-REVISE-2": WriterAgent,  # 第2轮修订
     "T9": SubmissionAgent,  # 投稿准备
 }
 
 
-def get_agent_by_id(agent_id: str):
+def _instantiate_agent(agent_cls: type[Any], *, mode: str | None = None):
+    if mode is not None:
+        try:
+            return agent_cls(mode=mode)
+        except TypeError:
+            pass
+    return agent_cls()
+
+
+def get_agent_by_id(agent_id: str, *, mode: str | None = None):
     """按 registry id 构造一个 agent 实例。"""
     agent_cls = AGENT_REGISTRY.get(agent_id)
     if agent_cls is None:
         raise KeyError(f"Unknown agent id: {agent_id}")
-    return agent_cls()
+    return _instantiate_agent(agent_cls, mode=mode)

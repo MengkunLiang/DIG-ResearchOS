@@ -25,10 +25,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import structlog
-
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
+from ..runtime.logger import get_logger
 from ..runtime.prompts import render_prompt
 from ._common import (
     load_project,
@@ -36,7 +35,7 @@ from ._common import (
     validate_files_exist,
 )
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 class NoveltyAgent(Agent):

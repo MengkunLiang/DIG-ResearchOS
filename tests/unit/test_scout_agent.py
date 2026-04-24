@@ -72,6 +72,8 @@ def test_scout_agent_spec(scout_agent):
     assert spec.temperature == 0.5
     assert "search_papers" in spec.tool_names
     assert "fetch_paper_metadata" in spec.tool_names
+    assert "save_papers_dedup" in spec.tool_names
+    assert "filter_by_domain" in spec.tool_names
     # MCP工具已移除，等MCP配置完成后再启用
     # assert "mcp_semantic_scholar_search" in spec.tool_names
     # assert "mcp_arxiv_search" in spec.tool_names
@@ -112,6 +114,42 @@ def test_scout_system_prompt_with_seed_papers(scout_agent, execution_context):
     prompt = scout_agent.system_prompt(execution_context)
     assert "2 篇" in prompt
     assert "Discrete Diffusion Models" in prompt
+
+
+def test_scout_system_prompt_includes_seed_ideas(scout_agent, execution_context):
+    """测试 seed_ideas 会进入 T2 prompt。"""
+    ideas_path = execution_context.workspace_dir / "user_seeds" / "seed_ideas.md"
+    ideas_path.write_text(
+        "研究如何从因果效应角度改进 AI agent memory retrieval，而不是只看 semantic 相似性。",
+        encoding="utf-8",
+    )
+
+    prompt = scout_agent.system_prompt(execution_context)
+    assert "用户种子想法" in prompt
+    assert "因果效应角度改进 AI agent memory retrieval" in prompt
+
+
+def test_scout_system_prompt_includes_external_resources(scout_agent, execution_context):
+    """测试 seed_external_resources 会进入 T2 prompt。"""
+    resources_path = execution_context.workspace_dir / "user_seeds" / "seed_external_resources.jsonl"
+    resources_path.write_text(
+        json.dumps(
+            {
+                "type": "dataset",
+                "name": "AgentMemoryBench",
+                "source": "huggingface:org/agent-memory-bench",
+                "notes": "memory retrieval benchmark",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    prompt = scout_agent.system_prompt(execution_context)
+    assert "用户提供的外部资源" in prompt
+    assert "AgentMemoryBench" in prompt
+    assert "huggingface:org/agent-memory-bench" in prompt
 
 
 def test_scout_initial_user_message(scout_agent, execution_context):

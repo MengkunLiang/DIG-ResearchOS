@@ -38,6 +38,23 @@
 {{ seed_constraints }}
 {% endif %}
 
+{% if has_seed_ideas %}
+## 用户种子想法
+{{ seed_ideas }}
+{% endif %}
+
+{% if has_external_resources %}
+## 用户提供的外部资源（{{ external_resource_count }} 项）
+{% for r in external_resources %}
+- [{{ r.type or 'other' }}] {{ r.name or '未命名资源' }}
+  来源: {{ r.source or '未提供' }}
+  {% if r.notes %}说明: {{ r.notes }}{% endif %}
+{% endfor %}
+{% if external_resource_count > 10 %}
+（还有 {{ external_resource_count - 10 }} 项，请按需用 read_file 读取完整 user_seeds/seed_external_resources.jsonl）
+{% endif %}
+{% endif %}
+
 ## 你的任务（5步流程）
 
 ### Step 1: 读取项目配置和扩展检索式
@@ -47,6 +64,11 @@
   expand_queries(seed_papers=[], topic="研究方向", max_queries=10)
   ```
   注意：即使没有种子论文，也可以传空列表 `seed_papers=[]`
+
+**种子信息使用要求**：
+- 如果 `seed_ideas.md` 非空，必须把其中的核心机制或问题表述吸收到检索式设计中
+- 如果 `seed_external_resources.jsonl` 非空，必须优先把其中出现的数据集、baseline repo、tool、pretrained model 名称作为检索锚点或补充关键词
+- 不要逐字照抄种子想法，而是把它转成更适合学术检索的 query
 
 **🚨 Step 1.5: 检测检索式重复度（新增）🚨**
 
@@ -213,37 +235,24 @@ detect_duplicate_queries(
    # ... 继续添加其他结果
    ```
 
-   **步骤 3：保存原始结果（流式追加，不等待）**
+   **步骤 3：原始结果由运行时自动保存**
+   - 对于成功的搜索工具调用，运行时会自动把 `result.data.papers` 追加到 `literature/papers_raw.jsonl`
+   - 自动保存时会完成格式转换、基础校验和按 `id` 去重追加
+   - **不要**先用 `write_file` 创建空的 `papers_raw.jsonl`
+   - **不要**手动维护 raw 文件，除非你在做修复或重建
+
+**步骤 4：如需手动修复 raw 文件，再使用保存工具**
+
+   通常不需要手动保存 `papers_raw.jsonl`。只有在做修复、重建或处理非标准论文列表时，才使用：
    ```
-   # 每次检索后立即追加到 papers_raw.jsonl（不做格式转换，速度更快）
-   append_papers_raw(
-       papers=result.data.papers  # 传递当前检索结果的论文列表
-   )
+   save_papers_raw(papers=all_papers, append=True)
    ```
 
-   **⚠️ 重要**：不要等所有检索完成后再保存，而是每次检索后立即追加！
-   这样可以：
-   - 节省 token（不需要 LLM 处理数据格式）
-   - 更安全（每次只追加几篇论文，不会超时）
-   - 更简单（LLM 只需调用工具，不需要手动构造 JSON）
-
-**步骤 4：批量处理原始数据（一次转换 + 验证）**
-
-   在所有检索完成后，调用 `process_papers_raw` 批量处理：
+   如果你确实要走“两步式”手动流程，也可以使用：
    ```
-   # 读取所有原始数据，转换格式，验证 schema
+   append_papers_raw(papers=result.data.papers)
    process_papers_raw()
    ```
-
-   **工具会自动**：
-   - 读取 literature/papers_raw.jsonl 中所有原始数据
-   - 批量转换数据格式（标准化 authors、citation_count 等）
-   - Schema 验证所有数据
-   - 覆盖写入 literature/papers_raw.jsonl
-
-   **为什么分两步？**
-   - 第1步（append_papers_raw）：LLM 专注检索，立即保存原始数据
-   - 第2步（process_papers_raw）：工具批量处理转换和验证，确保数据质量
 
    **步骤 4：去重**
    ```
@@ -340,23 +349,16 @@ filter_by_domain(papers=[论文列表], target_domain="cs")
 
 #### 5.1 保存原始检索结果（第一步）
 
-**🚨 重要：使用流式追加，不要等所有检索完成！**
+**🚨 重要：默认不需要你手动写 raw 文件 🚨**
 
-在每次检索后立即追加原始数据：
-```
-# 每次检索后立即追加（不转换，不验证）
-append_papers_raw(
-    papers=result.data.papers  # 传递当前检索结果的论文列表
-)
-```
+- 运行时会在每次成功检索后自动把 `data.papers` 追加到 `literature/papers_raw.jsonl`
+- 你不需要用 `write_file` 初始化 raw 文件
+- 你也不需要在每次检索后再额外调用保存工具
 
-**所有检索完成后，批量处理和验证**：
+只有在需要修复、重建或处理非标准列表时，才手动调用：
 ```
-# 一次性转换格式 + 验证 schema
-process_papers_raw()
+save_papers_raw(papers=all_papers, append=True)
 ```
-
-如果 `append_papers_raw` 或 `process_papers_raw` 不可用，降级使用 `save_papers_raw`。
 
 #### 5.2 保存去重后的论文池（第二步）
 

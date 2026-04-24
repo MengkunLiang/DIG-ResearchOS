@@ -16,6 +16,11 @@ class MockExecutionContext:
         self.workspace_dir = workspace_dir
         self.agent_name = "experimenter"
         self.task_id = "T5" if mode == "pilot" else "T7"
+        self.project_id = "test-project"
+        self.run_id = "run-test"
+        self.inputs = {}
+        self.outputs_expected = {}
+        self.extra = {}
 
 
 @pytest.fixture
@@ -50,6 +55,15 @@ def test_experimenter_agent_initialization():
     assert "experiments/" in agent.spec.allowed_write_prefixes
 
 
+def test_experimenter_agent_mode_specific_spec():
+    """测试 mode 会触发 YAML 中的分模式配置。"""
+    pilot_agent = ExperimenterAgent(mode="pilot")
+    full_agent = ExperimenterAgent(mode="full")
+
+    assert pilot_agent.spec.max_steps == 100
+    assert full_agent.spec.max_steps == 150
+
+
 def test_pilot_mode_initial_message(temp_workspace):
     """测试 pilot 模式的初始消息"""
     agent = ExperimenterAgent()
@@ -73,6 +87,26 @@ def test_full_mode_initial_message(temp_workspace):
     assert "ablation" in msg
     assert "seed ensemble" in msg
     assert "results_summary.json" in msg
+
+
+def test_full_mode_system_prompt_reads_novelty_outputs_from_novelty_dir(temp_workspace):
+    """T7 应该读取 T6 产出的 novelty 目录。"""
+    agent = ExperimenterAgent(mode="full")
+    ctx = MockExecutionContext("full", temp_workspace)
+    (temp_workspace / "novelty").mkdir(exist_ok=True)
+    (temp_workspace / "novelty" / "novelty_report.md").write_text(
+        "# Novelty Report\n\nUse baseline A and B.\n",
+        encoding="utf-8",
+    )
+    (temp_workspace / "novelty" / "must_add_baselines.md").write_text(
+        "- Baseline A\n- Baseline B\n",
+        encoding="utf-8",
+    )
+
+    prompt = agent.system_prompt(ctx)
+
+    assert "Use baseline A and B." in prompt
+    assert "Baseline A" in prompt
 
 
 def test_pilot_mode_validate_outputs_missing_files(temp_workspace):

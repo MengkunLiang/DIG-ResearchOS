@@ -156,6 +156,10 @@ class StateMachine:
         # 3. runtime 自动注入的 resume / iteration 标志
         extra = dict(state.task_context)
         extra.update(node.extra or {})
+        if node.mode is not None:
+            extra.setdefault("phase", node.mode)
+        if node.round is not None:
+            extra.setdefault("round", node.round)
 
         # P0-9 修复: 设置 skill_dir（如果是 skill 节点）
         if node.skill:
@@ -656,4 +660,3 @@ class StateMachine:
         # 使用 sort_keys 确保字典顺序一致
         normalized = json.dumps(params, sort_keys=True, default=str)
         return str(hash(normalized))
-

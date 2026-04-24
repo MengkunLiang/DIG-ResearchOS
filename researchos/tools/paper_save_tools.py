@@ -371,7 +371,7 @@ class SavePapersRawTool(Tool):
     description = (
         "保存论文列表到 literature/papers_raw.jsonl。"
         "自动处理格式转换和 schema 验证。"
-        "接收搜索工具返回的 papers 数据。",
+        "接收搜索工具返回的 papers 数据。"
     )
     parameters_schema = SavePapersRawParams
     timeout_seconds = 30.0

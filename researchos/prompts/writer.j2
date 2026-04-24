@@ -34,6 +34,11 @@ project:
 ### 研究假设
 {{ hypotheses_preview[:2000] }}
 
+{% if novelty_report_preview %}
+### 新颖性验证摘要
+{{ novelty_report_preview[:1200] }}
+{% endif %}
+
 {% elif phase == "draft" %}
 ### 任务：生成论文初稿
 
@@ -44,6 +49,9 @@ project:
 2. **所有引用必须存在于 related_work.bib**，不得引用不存在的文献
 3. **遵循目标会议 {{ target_venue }} 的格式要求**
 4. **保持匿名化**：不包含任何作者信息
+
+### 论文大纲
+{{ outline_preview[:2500] }}
 
 ### 实验结果（必须使用这些数字）
 ```json
@@ -62,6 +70,11 @@ project:
 ```
 {{ related_work_preview[:3000] }}
 ```
+
+{% if novelty_report_preview %}
+### 新颖性验证摘要
+{{ novelty_report_preview[:1200] }}
+{% endif %}
 
 ### LaTeX结构要求
 ```latex
@@ -118,10 +131,16 @@ project:
 
 请根据审稿意见，修订 drafts/paper.tex。
 
+### 审稿意见
+{{ review_report_preview[:2500] }}
+
 {% elif phase == "final" %}
 ### 任务：生成最终版
 
 请根据用户的修正意见，生成最终版 drafts/paper.tex。
+
+### 用户修订意见
+{{ user_corrections_preview[:2000] }}
 
 {% endif %}
 

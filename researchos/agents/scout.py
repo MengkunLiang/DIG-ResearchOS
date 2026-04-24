@@ -24,6 +24,7 @@ from __future__ import annotations
 """
 
 from pathlib import Path
+import json
 
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
@@ -58,6 +59,8 @@ class ScoutAgent(Agent):
                         "read_file",
                         "write_file",
                         "write_structured_file",
+                        "append_papers_raw",
+                        "process_papers_raw",
                         "save_papers_raw",
                         "save_papers_dedup",
                         "multi_source_search",
@@ -67,6 +70,7 @@ class ScoutAgent(Agent):
                         "deduplicate_papers",
                         "score_papers",
                         "expand_queries",
+                        "filter_by_domain",
                         "generate_search_log",
                         "enrich_papers",
                         "detect_duplicate_queries",
@@ -117,6 +121,14 @@ class ScoutAgent(Agent):
         else:
             seed_constraints = read_text_file(seed_constraints_old, default="")
 
+        seed_ideas = read_text_file(
+            ctx.workspace_dir / "user_seeds" / "seed_ideas.md",
+            default="",
+        )
+        external_resources = _load_external_resources(
+            ctx.workspace_dir / "user_seeds" / "seed_external_resources.jsonl"
+        )
+
         return render_prompt(
             self.spec.prompt_template,
             ctx,
@@ -124,13 +136,20 @@ class ScoutAgent(Agent):
             seed_paper_count=len(seed_papers),
             seed_papers=seed_papers[:10],  # 只传前10篇避免context过大
             seed_constraints=seed_constraints[:1000],  # 限制长度
+            seed_ideas=seed_ideas[:2000],
+            has_seed_ideas=bool(seed_ideas.strip()),
+            external_resources=external_resources[:10],
+            external_resource_count=len(external_resources),
+            has_external_resources=bool(external_resources),
         )
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
         """初始用户消息，简短指令。"""
         return (
             "请按 system prompt 执行 T2 文献普查。"
-            "研究方向已写入 project.yaml。如有用户种子论文会在 user_seeds/seed_papers.jsonl 里。"
+            "研究方向已写入 project.yaml。"
+            "如有用户种子论文会在 user_seeds/seed_papers.jsonl 里，"
+            "也请参考 seed_ideas.md 和 seed_external_resources.jsonl。"
             "目标产出 15-120 篇去重后论文，写入 literature/papers_dedup.jsonl。"
         )
 
@@ -172,3 +191,29 @@ class ScoutAgent(Agent):
                 )
 
         return True, None
+
+
+def _load_external_resources(path: Path) -> list[dict[str, str]]:
+    """读取外部资源清单，忽略非法行。"""
+    if not path.exists():
+        return []
+
+    resources: list[dict[str, str]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            resource = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(resource, dict):
+            continue
+        resources.append(
+            {
+                "type": str(resource.get("type", "")).strip(),
+                "name": str(resource.get("name", "")).strip(),
+                "source": str(resource.get("source", "")).strip(),
+                "notes": str(resource.get("notes", "")).strip(),
+            }
+        )
+    return resources

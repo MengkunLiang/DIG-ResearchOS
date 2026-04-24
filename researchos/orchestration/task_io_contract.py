@@ -38,6 +38,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "seed_papers": "user_seeds/seed_papers.jsonl",
             "seed_constraints": "user_seeds/seed_constraints.md",
             "seed_ideas": "user_seeds/seed_ideas.md",
+            "seed_external_resources": "user_seeds/seed_external_resources.jsonl",
         },
         "outputs": {
             "papers_raw": "literature/papers_raw.jsonl",
@@ -97,6 +98,19 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "exp_plan": "exp_plan",
         },
     },
+    "T4.5": {
+        "inputs": {
+            "project": "project.yaml",
+            "hypotheses": "ideation/hypotheses.md",
+            "synthesis": "literature/synthesis.md",
+            "comparison_table": "literature/comparison_table.csv",
+        },
+        "outputs": {
+            "novelty_audit": "ideation/novelty_audit.md",
+        },
+        "required_inputs": ["project", "hypotheses", "synthesis"],
+        "schemas": {},
+    },
     "T5": {
         "inputs": {
             "project": "project.yaml",
@@ -118,24 +132,35 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
     },
     "T6": {
         "inputs": {
+            "project": "project.yaml",
             "hypotheses": "ideation/hypotheses.md",
             "exp_plan": "ideation/exp_plan.yaml",
             "pilot_results": "pilot/pilot_results.json",
             "motivation_validation": "pilot/motivation_validation.md",
             "comparison_table": "literature/comparison_table.csv",
+            "synthesis": "literature/synthesis.md",
         },
         "outputs": {
             "novelty_report": "novelty/novelty_report.md",
             "collision_cases": "novelty/collision_cases.md",
             "must_add_baselines": "novelty/must_add_baselines.md",
         },
-        "required_inputs": ["hypotheses", "exp_plan", "pilot_results"],
+        "required_inputs": [
+            "project",
+            "hypotheses",
+            "exp_plan",
+            "pilot_results",
+            "motivation_validation",
+            "synthesis",
+        ],
         "schemas": {},
     },
     "T7": {
         "inputs": {
             "project": "project.yaml",
+            "hypotheses": "ideation/hypotheses.md",
             "exp_plan": "ideation/exp_plan.yaml",
+            "pilot_results": "pilot/pilot_results.json",
             "pilot_code": "pilot/pilot_code",
             "novelty_report": "novelty/novelty_report.md",
             "must_add_baselines": "novelty/must_add_baselines.md",
@@ -147,7 +172,15 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "iteration_log": "experiments/iteration_log.md",
             "ablations": "experiments/ablations.csv",
         },
-        "required_inputs": ["project", "exp_plan"],
+        "required_inputs": [
+            "project",
+            "hypotheses",
+            "exp_plan",
+            "pilot_results",
+            "pilot_code",
+            "novelty_report",
+            "must_add_baselines",
+        ],
         "schemas": {
             "results_summary": "results_summary",
         },
@@ -188,8 +221,88 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         ],
         "schemas": {},
     },
+    "T8-WRITE": {
+        "inputs": {
+            "project": "project.yaml",
+            "results_summary": "experiments/results_summary.json",
+            "synthesis": "literature/synthesis.md",
+            "related_work_bib": "literature/related_work.bib",
+            "hypotheses": "ideation/hypotheses.md",
+        },
+        "outputs": {
+            "outline": "drafts/outline.md",
+        },
+        "required_inputs": [
+            "project",
+            "results_summary",
+            "synthesis",
+            "related_work_bib",
+            "hypotheses",
+        ],
+        "schemas": {},
+    },
+    "T8-DRAFT": {
+        "inputs": {
+            "project": "project.yaml",
+            "results_summary": "experiments/results_summary.json",
+            "outline": "drafts/outline.md",
+        },
+        "outputs": {
+            "paper": "drafts/paper.tex",
+        },
+        "required_inputs": ["project", "results_summary", "outline"],
+        "schemas": {},
+    },
+    "T8-REVIEW-1": {
+        "inputs": {
+            "project": "project.yaml",
+            "paper": "drafts/paper.tex",
+            "results_summary": "experiments/results_summary.json",
+        },
+        "outputs": {
+            "review_report": "drafts/review_rounds/round_1.md",
+        },
+        "required_inputs": ["project", "paper", "results_summary"],
+        "schemas": {},
+    },
+    "T8-REVISE-1": {
+        "inputs": {
+            "project": "project.yaml",
+            "paper": "drafts/paper.tex",
+            "review_report": "drafts/review_rounds/round_1.md",
+        },
+        "outputs": {
+            "paper": "drafts/paper.tex",
+        },
+        "required_inputs": ["project", "paper", "review_report"],
+        "schemas": {},
+    },
+    "T8-REVIEW-2": {
+        "inputs": {
+            "project": "project.yaml",
+            "paper": "drafts/paper.tex",
+        },
+        "outputs": {
+            "review_report": "drafts/review_rounds/round_2.md",
+        },
+        "required_inputs": ["project", "paper"],
+        "schemas": {},
+    },
+    "T8-REVISE-2": {
+        "inputs": {
+            "project": "project.yaml",
+            "paper": "drafts/paper.tex",
+            "review_report": "drafts/review_rounds/round_2.md",
+        },
+        "outputs": {
+            "paper": "drafts/paper.tex",
+        },
+        "required_inputs": ["project", "paper", "review_report"],
+        "schemas": {},
+    },
     "T9": {
         "inputs": {
+            "project": "project.yaml",
             "paper": "drafts/paper.tex",
             "related_work_bib": "literature/related_work.bib",
         },
@@ -197,7 +310,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "bundle_dir": "submission/bundle",
             "migration_report": "submission/migration_report.md",
         },
-        "required_inputs": ["paper", "related_work_bib"],
+        "required_inputs": ["project", "paper", "related_work_bib"],
     },
 }
 

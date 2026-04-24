@@ -55,9 +55,9 @@ agents:
       tier: heavy
       temperature: 0.3
       # profile: siliconflow_only
-    max_steps: 30
-    max_tokens_total: 100000
-    max_wall_seconds: 300
+    max_steps: 40
+    max_tokens_total: 1000000
+    max_wall_seconds: 3000
     max_validation_retries: 3
     tool_names:
       - read_file
@@ -97,13 +97,17 @@ agents:
       temperature: 0.5
       # profile: mixed
     max_steps: 500
-    max_tokens_total: 1500000
+    max_tokens_total: 50000000
     max_wall_seconds: 6000
     max_validation_retries: 3
     tool_names:
       - read_file
       - write_file
       - write_structured_file
+      - append_papers_raw
+      - process_papers_raw
+      - save_papers_raw
+      - save_papers_dedup
       - multi_source_search
       - search_papers
       - fetch_paper_metadata
@@ -111,6 +115,7 @@ agents:
       - deduplicate_papers
       - score_papers
       - expand_queries
+      - filter_by_domain
       - generate_search_log
       - enrich_papers
       - detect_duplicate_queries
@@ -122,6 +127,7 @@ agents:
       - openalex_get_work
       - crossref_search
       - crossref_get_work
+      - log_scout_progress
     allowed_read_prefixes:
       - ""
       - user_seeds/

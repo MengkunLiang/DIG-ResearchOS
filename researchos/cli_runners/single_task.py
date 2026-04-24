@@ -10,7 +10,8 @@ from pathlib import Path
 
 import yaml
 
-from ..agents.registry import TASK_TO_AGENT_MAP
+from ..agents.registry import TASK_TO_AGENT_MAP, get_agent_by_id
+from ..orchestration.state_machine import StateMachine
 from ..orchestration.task_io_contract import get_task_io, resolve_inputs, resolve_outputs
 from ..runtime.agent import ExecutionContext, LLMConfigOverride
 from ..runtime.config import RuntimeSettings
@@ -25,6 +26,7 @@ from ..tools.registry import ToolRegistry
 
 
 _LOG = get_logger("single_task")
+_DEFAULT_STATE_MACHINE_PATH = Path(__file__).resolve().parents[2] / "config" / "state_machine.yaml"
 
 
 def _now_iso() -> str:
@@ -79,14 +81,14 @@ class SingleTaskRunner:
             return 3
 
         print(f"[进度] 加载 Agent: {self.task_id}", flush=True)
-        agent_cls = TASK_TO_AGENT_MAP.get(self.task_id)
-        if agent_cls is None:
+        task_node = self._load_task_node()
+        agent = self._build_agent(task_node)
+        if agent is None:
             print(f"Unknown or unimplemented task: {self.task_id}")
             return 4
-        agent = agent_cls()
 
         # 为 T1 准备 extra 参数（从 project.yaml 读取 topic）
-        extra = {}
+        extra = self._build_task_extra(task_node)
         if self.task_id == "T1":
             project_path = self.workspace / "project.yaml"
             if project_path.exists():
@@ -106,6 +108,7 @@ class SingleTaskRunner:
             run_id=f"{self.task_id}_single_{uuid.uuid4().hex[:8]}",
             inputs=resolve_inputs(self.workspace, self.task_id),
             outputs_expected=resolve_outputs(self.workspace, self.task_id),
+            mode=task_node.mode if task_node is not None else None,
             extra=extra,
         )
         if self.override_profile:
@@ -170,6 +173,38 @@ class SingleTaskRunner:
             else:
                 shutil.copy2(src, dst)
             print(f"copied: {rel_path}")
+
+    def _load_task_node(self):
+        if not _DEFAULT_STATE_MACHINE_PATH.exists():
+            return None
+        try:
+            state_machine = StateMachine(_DEFAULT_STATE_MACHINE_PATH)
+        except Exception:
+            return None
+        return state_machine.nodes.get(self.task_id)
+
+    def _build_agent(self, task_node):
+        if task_node is not None and task_node.agent is not None:
+            return get_agent_by_id(task_node.agent, mode=task_node.mode)
+
+        agent_cls = TASK_TO_AGENT_MAP.get(self.task_id)
+        if agent_cls is None:
+            return None
+        if task_node is not None and task_node.mode is not None:
+            try:
+                return agent_cls(mode=task_node.mode)
+            except TypeError:
+                pass
+        return agent_cls()
+
+    @staticmethod
+    def _build_task_extra(task_node) -> dict[str, object]:
+        extra = dict(task_node.extra or {}) if task_node is not None else {}
+        if task_node is not None and task_node.mode is not None:
+            extra.setdefault("phase", task_node.mode)
+        if task_node is not None and task_node.round is not None:
+            extra.setdefault("round", task_node.round)
+        return extra
 
     def _load_or_fake_project_id(self) -> str:
         """尽量从 project.yaml 读 project_id，没有则生成一个临时值。"""

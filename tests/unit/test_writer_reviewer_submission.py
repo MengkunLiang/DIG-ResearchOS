@@ -81,6 +81,17 @@ def test_writer_draft_phase_initial_message(temp_workspace):
     assert "results_summary.json" in msg
 
 
+def test_writer_uses_ctx_mode_when_phase_extra_missing(temp_workspace):
+    """状态机只传 mode 时，Writer 也应进入对应 phase。"""
+    agent = WriterAgent(mode="outline")
+    ctx = MockExecutionContext("outline", temp_workspace, {})
+    ctx.extra = {}
+    msg = agent.initial_user_message(ctx)
+
+    assert "Phase 1" in msg
+    assert "outline.md" in msg
+
+
 def test_writer_validate_outputs_outline_success(temp_workspace):
     """测试 outline 模式验证成功"""
     agent = WriterAgent()

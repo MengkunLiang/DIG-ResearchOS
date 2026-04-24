@@ -18,10 +18,11 @@ from ._common import load_project, read_text_file
 class WriterAgent(Agent):
     """论文写作Agent，支持大纲生成、初稿、自查和修订。"""
 
-    def __init__(self):
+    def __init__(self, mode: str | None = None):
         super().__init__(
             build_agent_spec(
                 "writer",
+                mode=mode,
                 defaults={
                     "model_tier": "heavy",
                     "tool_names": [
@@ -46,6 +47,18 @@ class WriterAgent(Agent):
                 },
             )
         )
+        self._mode = mode
+
+    def _phase(self, ctx: ExecutionContext) -> str:
+        if ctx.mode:
+            return ctx.mode
+        if ctx.extra:
+            phase = ctx.extra.get("phase")
+            if isinstance(phase, str) and phase:
+                return phase
+        if self._mode:
+            return self._mode
+        return "draft"
 
     def system_prompt(self, ctx: ExecutionContext) -> str:
         """渲染system prompt，传入项目配置、实验结果和文献资料。"""
@@ -59,10 +72,18 @@ class WriterAgent(Agent):
         synthesis = read_text_file(ws / "literature" / "synthesis.md", default="")
         related_work = read_text_file(ws / "literature" / "related_work.bib", default="")
         hypotheses = read_text_file(ws / "ideation" / "hypotheses.md", default="")
+        novelty_report = read_text_file(ws / "novelty" / "novelty_report.md", default="")
         ablations = read_text_file(ws / "experiments" / "ablations.csv", default="")
 
         # 根据phase选择不同的prompt策略
-        phase = ctx.extra.get("phase", "draft") if ctx.extra else "draft"
+        phase = self._phase(ctx)
+        outline = read_text_file(ws / "drafts" / "outline.md", default="")
+        round_num = ctx.extra.get("round", 1) if ctx.extra else 1
+        review_report = read_text_file(
+            ws / "drafts" / "review_rounds" / f"round_{round_num}.md",
+            default="",
+        )
+        user_corrections = read_text_file(ws / "drafts" / "user_corrections.md", default="")
 
         return render_prompt(
             self.spec.prompt_template,
@@ -72,7 +93,11 @@ class WriterAgent(Agent):
             synthesis_preview=synthesis[:6000],
             related_work_preview=related_work[:4000],
             hypotheses_preview=hypotheses[:3000],
+            novelty_report_preview=novelty_report[:2000],
             ablations_preview=ablations[:2000],
+            outline_preview=outline[:3000],
+            review_report_preview=review_report[:3000],
+            user_corrections_preview=user_corrections[:2000],
             phase=phase,
             target_venue=project.get("target_venue", "neurips"),
             temperature=self.spec.temperature,
@@ -80,7 +105,7 @@ class WriterAgent(Agent):
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
         """根据phase生成初始用户消息。"""
-        phase = ctx.extra.get("phase", "draft") if ctx.extra else "draft"
+        phase = self._phase(ctx)
 
         if phase == "outline":
             return (
@@ -121,7 +146,7 @@ class WriterAgent(Agent):
     def validate_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:
         """校验输出文件。"""
         ws = ctx.workspace_dir
-        phase = ctx.extra.get("phase", "draft") if ctx.extra else "draft"
+        phase = self._phase(ctx)
 
         if phase == "outline":
             outline = read_text_file(ws / "drafts" / "outline.md", default="")

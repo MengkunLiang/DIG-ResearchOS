@@ -31,6 +31,7 @@ from .paper_utils_tool import (
     DeduplicatePapersTool,
     ScorePapersTool,
     ExpandQueriesTool,
+    FilterByDomainTool,
     GenerateSearchLogTool,
     LogScoutProgressTool,
 )
@@ -39,7 +40,12 @@ from .paper_enrichment_tool import (
     DetectDuplicateQueriesTool,
     AnalyzeDedupRateTool,
 )
-from .paper_save_tools import SavePapersRawTool, SavePapersDedupTool
+from .paper_save_tools import (
+    AppendPapersRawTool,
+    ProcessPapersRawTool,
+    SavePapersRawTool,
+    SavePapersDedupTool,
+)
 from .semantic_scholar import SemanticScholarSearchTool, SemanticScholarGetPaperTool
 from .arxiv_api import ArxivSearchTool
 from .openalex_api import OpenAlexSearchTool, OpenAlexGetWorkTool
@@ -102,6 +108,7 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
     registry.register("deduplicate_papers", lambda ctx: DeduplicatePapersTool())
     registry.register("score_papers", lambda ctx: ScorePapersTool())
     registry.register("expand_queries", lambda ctx: ExpandQueriesTool())
+    registry.register("filter_by_domain", lambda ctx: FilterByDomainTool())
     registry.register("generate_search_log", lambda ctx: GenerateSearchLogTool(workspace_dir=str(ctx.policy.workspace_dir)))
     # 论文数据增强工具
     registry.register("enrich_papers", lambda ctx: EnrichPapersTool())
@@ -119,7 +126,10 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
     registry.register("crossref_search", lambda ctx: CrossRefSearchTool())
     registry.register("crossref_get_work", lambda ctx: CrossRefGetWorkTool())
     # Scout Agent 进度日志工具（工具层追加，无需用户手动调用）
-    registry.register("log_scout_progress", lambda ctx: LogScoutProgressTool(workspace_dir=str(ctx.policy.workspace_dir)))
+    registry.register(
+        "log_scout_progress",
+        lambda ctx: _build_log_scout_progress_tool(str(ctx.policy.workspace_dir)),
+    )
     # 论文数据保存工具
     # 流式写入：LLM 检索到论文后立即追加原始数据（不转换）
     registry.register("append_papers_raw", lambda ctx: AppendPapersRawTool(ctx.policy))
@@ -128,3 +138,9 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
     # 兼容旧接口（保留）
     registry.register("save_papers_raw", lambda ctx: SavePapersRawTool(ctx.policy))
     registry.register("save_papers_dedup", lambda ctx: SavePapersDedupTool(ctx.policy))
+
+
+def _build_log_scout_progress_tool(workspace_dir: str) -> LogScoutProgressTool:
+    tool = LogScoutProgressTool()
+    tool.set_workspace_dir(workspace_dir)
+    return tool

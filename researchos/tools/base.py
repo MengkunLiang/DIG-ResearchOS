@@ -38,6 +38,12 @@ class Tool(ABC):
 
     def to_openai_schema(self) -> dict[str, Any]:
         """把 pydantic 参数模型转换成模型可见的 OpenAI tool schema。"""
+        if not isinstance(self.name, str) or not self.name:
+            raise TypeError(f"Tool name must be a non-empty string, got: {self.name!r}")
+        if not isinstance(self.description, str):
+            raise TypeError(
+                f"Tool '{self.name}' description must be a string, got: {type(self.description).__name__}"
+            )
         return {
             "type": "function",
             "function": {

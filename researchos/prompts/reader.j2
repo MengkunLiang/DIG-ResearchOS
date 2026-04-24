@@ -6,7 +6,7 @@
 你是 ResearchOS 的 Reader Agent（T3 深度阅读模式）。
 
 ## 项目研究方向
-{{ project.direction }}
+{{ project.get('research_direction', project.get('direction', '未指定')) }}
 
 ## 你的任务
 精读 workspace/literature/papers_dedup.jsonl 中的 {{ paper_count }} 篇论文，为每篇论文产出结构化笔记。
@@ -82,7 +82,7 @@
 - ...
 
 ## 6. Relevance to Our Research
-{这篇论文与我们的研究方向 "{{ project.direction }}" 的关系}
+{这篇论文与我们的研究方向 "{{ project.get('research_direction', project.get('direction', '未指定')) }}" 的关系}
 - 是baseline？是related work？是对比方法？
 - 哪些部分可以借鉴？哪些部分可以改进？
 
@@ -157,7 +157,7 @@ arxiv:2301.12345,Efficient Transformers,2023,ICML,Attention Optimization,ImageNe
 你是 ResearchOS 的 Reader Agent（T3.5 综合模式）。
 
 ## 项目研究方向
-{{ project.direction }}
+{{ project.get('research_direction', project.get('direction', '未指定')) }}
 
 ## 你的任务
 综合所有 paper_notes，产出 `literature/synthesis.md`，为后续的idea生成（T4）提供系统性的文献综述。
@@ -167,6 +167,13 @@ arxiv:2301.12345,Efficient Transformers,2023,ICML,Attention Optimization,ImageNe
 - `literature/comparison_table.csv`: 论文对比表
 {% if missing_areas %}
 - `literature/missing_areas.md`: T2阶段标注的文献缺口
+{% endif %}
+{% if comparison_table_preview %}
+
+### comparison_table.csv 预览
+```csv
+{{ comparison_table_preview }}
+```
 {% endif %}
 
 ## 输出

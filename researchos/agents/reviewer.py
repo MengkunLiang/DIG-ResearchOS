@@ -46,6 +46,14 @@ class ReviewerAgent(Agent):
             )
         )
 
+    @staticmethod
+    def _round(ctx: ExecutionContext) -> int:
+        if ctx.extra:
+            round_num = ctx.extra.get("round")
+            if isinstance(round_num, int):
+                return round_num
+        return 1
+
     def system_prompt(self, ctx: ExecutionContext) -> str:
         """渲染system prompt。"""
         project = load_project(ctx)
@@ -57,7 +65,7 @@ class ReviewerAgent(Agent):
         )
         related_work = read_text_file(ws / "literature" / "related_work.bib", default="")
 
-        round_num = ctx.extra.get("round", 1) if ctx.extra else 1
+        round_num = self._round(ctx)
 
         return render_prompt(
             self.spec.prompt_template,
@@ -72,7 +80,7 @@ class ReviewerAgent(Agent):
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
         """生成审稿任务消息。"""
-        round_num = ctx.extra.get("round", 1) if ctx.extra else 1
+        round_num = self._round(ctx)
         return (
             f"请执行 T8 Reviewer 第{round_num}轮审稿。\n\n"
             f"读取 drafts/paper.tex，生成 drafts/review_rounds/round_{round_num}.md。"
@@ -82,7 +90,7 @@ class ReviewerAgent(Agent):
     def validate_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:
         """校验审稿报告。"""
         ws = ctx.workspace_dir
-        round_num = ctx.extra.get("round", 1) if ctx.extra else 1
+        round_num = self._round(ctx)
 
         report_path = ws / "drafts" / "review_rounds" / f"round_{round_num}.md"
         report = read_text_file(report_path, default="")

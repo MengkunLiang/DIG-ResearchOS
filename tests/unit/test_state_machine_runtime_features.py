@@ -47,6 +47,31 @@ def test_build_execution_context_sets_resume_and_iteration(tmp_workspace):
     assert ctx.extra["iteration_count"] == 2
 
 
+def test_build_execution_context_propagates_mode_phase_and_round(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T8-REVISE-2
+        states:
+          T8-REVISE-2:
+            agent: writer
+            mode: revise
+            round: 2
+            outputs:
+              paper: drafts/paper.tex
+        """,
+    )
+    sm = StateMachine(config)
+    state = sm.create_initial_state("p1")
+
+    ctx = sm.build_execution_context(tmp_workspace, state)
+
+    assert ctx.mode == "revise"
+    assert ctx.extra["phase"] == "revise"
+    assert ctx.extra["round"] == 2
+
+
 def test_advance_enters_gate_and_resolve_branch_increments_iteration(tmp_workspace):
     config = tmp_workspace / "fsm.yaml"
     gates = tmp_workspace / "gates.yaml"

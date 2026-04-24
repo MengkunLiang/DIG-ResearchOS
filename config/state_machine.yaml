@@ -76,6 +76,7 @@ states:
       seed_papers: user_seeds/seed_papers.jsonl        # 种子论文（可选）
       seed_constraints: user_seeds/seed_constraints.md # 种子约束（可选）
       seed_ideas: user_seeds/seed_ideas.md             # 种子想法（可选）
+      seed_external_resources: user_seeds/seed_external_resources.jsonl  # 外部资源（可选）
     outputs:
       papers_raw: literature/papers_raw.jsonl           # 原始检索结果
       papers_dedup: literature/papers_dedup.jsonl      # 去重后的论文列表
@@ -181,11 +182,13 @@ states:
   T6:
     agent: novelty
     inputs:
+      project: project.yaml
       hypotheses: ideation/hypotheses.md               # 研究假设
       exp_plan: ideation/exp_plan.yaml               # 实验计划
       pilot_results: pilot/pilot_results.json       # 试点结果
       motivation_validation: pilot/motivation_validation.md  # 动机验证
       comparison_table: literature/comparison_table.csv # 方法对比表
+      synthesis: literature/synthesis.md             # 文献综述
     outputs:
       novelty_report: novelty/novelty_report.md        # 新颖性报告
       collision_cases: novelty/collision_cases.md     # 潜在撞车案例（如有）
@@ -212,7 +215,9 @@ states:
     mode: full
     inputs:
       project: project.yaml                           # 项目配置
+      hypotheses: ideation/hypotheses.md             # 研究假设
       exp_plan: ideation/exp_plan.yaml               # 实验计划
+      pilot_results: pilot/pilot_results.json        # 试点结果
       pilot_code: pilot/pilot_code                   # 试点代码
       novelty_report: novelty/novelty_report.md      # 新颖性报告
       must_add_baselines: novelty/must_add_baselines.md # 必须补充的基线
@@ -235,7 +240,7 @@ states:
       project: project.yaml                             # 输入：项目配置
       results_summary: experiments/results_summary.json # 输入：实验结果
       synthesis: literature/synthesis.md                # 输入：文献综述
-      related_work: literature/related_work.bib         # 输入：引用库
+      related_work_bib: literature/related_work.bib     # 输入：引用库
       hypotheses: ideation/hypotheses.md                # 输入：研究假设
     outputs:
       outline: drafts/outline.md                       # 论文大纲
@@ -324,6 +329,7 @@ states:
   T9:
     agent: submission
     inputs:
+      project: project.yaml                         # 项目配置
       paper: drafts/paper.tex                         # 论文草稿
       related_work_bib: literature/related_work.bib    # 引用库
     outputs:
