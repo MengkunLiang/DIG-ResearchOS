@@ -340,3 +340,68 @@ def test_validate_evaluate_outputs_missing_options(pi_agent, temp_workspace):
 
     assert not ok
     assert "Option" in err or "建议" in err
+
+
+def test_validate_init_outputs_seed_ensemble_with_paper_info(pi_agent, temp_workspace):
+    """测试 init 模式 seed_ensemble 包含论文信息的情况（应该失败）。"""
+    # 创建包含论文信息的 seed_ensemble（错误情况）
+    # 这种情况下 schema 验证会先失败（缺少 tier1_seeds），或者自定义验证检测到论文信息
+    project_data = {
+        "project_id": "test-project",
+        "research_direction": "Test research direction",
+        "keywords": ["test"],
+        "created_at": datetime.now().isoformat(),
+        "seed_ensemble": {
+            "source": "arxiv",
+            "title": "Some Paper",
+            "authors": ["Author A"]
+        }
+    }
+
+    project_path = temp_workspace / "project.yaml"
+    project_path.write_text(yaml.dump(project_data, allow_unicode=True), encoding="utf-8")
+
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test-project",
+        task_id="T1",
+        run_id="test-run-1",
+        mode="init",
+        outputs_expected={"project": project_path},
+    )
+
+    ok, err = pi_agent.validate_outputs(ctx)
+    # 验证应该失败，因为 seed_ensemble 格式错误
+    assert not ok
+    # 错误可能是 schema 验证（缺少 tier1_seeds）或自定义验证（检测到论文信息）
+    assert "tier1_seeds" in err or "论文信息" in err or "paper" in err.lower()
+
+
+def test_validate_init_outputs_seed_ensemble_valid(pi_agent, temp_workspace):
+    """测试 init 模式 seed_ensemble 格式正确的情况（应该成功）。"""
+    project_data = {
+        "project_id": "test-project",
+        "research_direction": "Test research direction",
+        "keywords": ["test"],
+        "created_at": datetime.now().isoformat(),
+        "seed_ensemble": {
+            "tier1_seeds": [42, 123, 456],
+            "tier2_seeds": [789],
+            "tier3_seeds": [999]
+        }
+    }
+
+    project_path = temp_workspace / "project.yaml"
+    project_path.write_text(yaml.dump(project_data, allow_unicode=True), encoding="utf-8")
+
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test-project",
+        task_id="T1",
+        run_id="test-run-1",
+        mode="init",
+        outputs_expected={"project": project_path},
+    )
+
+    ok, err = pi_agent.validate_outputs(ctx)
+    assert ok, f"Validation should pass: {err}"

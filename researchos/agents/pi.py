@@ -153,6 +153,11 @@ class PIAgent(Agent):
         if not ok:
             return False, f"project.yaml不符合schema: {err}"
 
+        # 校验 seed_ensemble 格式
+        ok, err = self._validate_seed_ensemble(project_data)
+        if not ok:
+            return False, err
+
         # 2. Ethical screening (§8.1)
         ok, err = self._check_ethical_concerns(project_data)
         if not ok:
@@ -210,6 +215,42 @@ class PIAgent(Agent):
         if concerns:
             concern_str = ", ".join([f"{cat}:{word}" for cat, word in concerns])
             return False, f"检测到敏感研究方向: {concern_str}。请确认研究目的符合伦理规范。"
+
+        return True, None
+
+    def _validate_seed_ensemble(self, project_data: dict) -> tuple[bool, str | None]:
+        """验证 seed_ensemble 格式是否正确。
+
+        seed_ensemble 应该只包含随机种子（整数数组），
+        不应该包含论文信息（title, authors, source, doi 等）。
+
+        注意：如果 seed_ensemble 不存在，会使用默认值（schema default），
+        所以这里只检查存在且格式错误的情况。
+        """
+        seed_ensemble = project_data.get("seed_ensemble")
+
+        # 如果 seed_ensemble 不存在，使用默认值，不报错
+        if not seed_ensemble:
+            return True, None
+
+        if not isinstance(seed_ensemble, dict):
+            return False, f"seed_ensemble 必须是对象，实际类型: {type(seed_ensemble).__name__}"
+
+        # 检查是否包含论文相关字段（不应该有）
+        paper_fields = ["title", "authors", "source", "doi", "arxiv_id", "url", "year", "abstract", "venue", "papers"]
+        found_paper_fields = [f for f in paper_fields if f in seed_ensemble]
+        if found_paper_fields:
+            return False, f"seed_ensemble 不应包含论文信息，发现字段: {found_paper_fields}。论文信息应写入 seed_papers.jsonl。"
+
+        # 如果有 tier 字段，检查格式
+        if "tier1_seeds" in seed_ensemble or "tier2_seeds" in seed_ensemble or "tier3_seeds" in seed_ensemble:
+            required_fields = ["tier1_seeds", "tier2_seeds", "tier3_seeds"]
+            for field in required_fields:
+                if field in seed_ensemble:
+                    if not isinstance(seed_ensemble[field], list):
+                        return False, f"seed_ensemble.{field} 必须是数组，实际类型: {type(seed_ensemble[field]).__name__}"
+                    if not all(isinstance(x, int) for x in seed_ensemble[field]):
+                        return False, f"seed_ensemble.{field} 必须是整数数组"
 
         return True, None
 

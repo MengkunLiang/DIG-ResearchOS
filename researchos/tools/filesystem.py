@@ -128,6 +128,38 @@ class WriteFileTool(Tool):
                 fixed = True
                 _LOG.info("auto_fix_project_yaml", field="seed_ensemble", reason="missing")
 
+            # 修正 3.5: seed_ensemble 包含论文信息（而非随机种子）
+            # 检测：seed_ensemble 是对象，但没有 tier1_seeds/tier2_seeds/tier3_seeds 字段
+            # 或者包含论文相关字段（title, authors, source, doi 等）
+            seed_ensemble = data.get("seed_ensemble")
+            if isinstance(seed_ensemble, dict):
+                has_seed_fields = (
+                    "tier1_seeds" in seed_ensemble or
+                    "tier2_seeds" in seed_ensemble or
+                    "tier3_seeds" in seed_ensemble
+                )
+                has_paper_fields = (
+                    "title" in seed_ensemble or
+                    "authors" in seed_ensemble or
+                    "source" in seed_ensemble or
+                    "doi" in seed_ensemble or
+                    "arxiv_id" in seed_ensemble or
+                    "url" in seed_ensemble or
+                    "year" in seed_ensemble or
+                    "abstract" in seed_ensemble or
+                    "venue" in seed_ensemble or
+                    "papers" in seed_ensemble
+                )
+                if not has_seed_fields or has_paper_fields:
+                    data["seed_ensemble"] = {
+                        "tier1_seeds": [42, 123, 456],
+                        "tier2_seeds": [789],
+                        "tier3_seeds": [999]
+                    }
+                    fixed = True
+                    reason = "paper_fields" if has_paper_fields else "missing_seed_fields"
+                    _LOG.info("auto_fix_project_yaml", field="seed_ensemble", reason=reason)
+
             # 修正 4: created_at 格式错误
             if "created_at" in data:
                 created_at = data["created_at"]

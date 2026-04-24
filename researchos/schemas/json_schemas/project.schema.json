@@ -71,6 +71,7 @@
     "seed_ensemble": {
       "type": "object",
       "description": "Seed ensemble configuration for experiments",
+      "required": ["tier1_seeds", "tier2_seeds", "tier3_seeds"],
       "properties": {
         "tier1_seeds": {
           "type": "array",
