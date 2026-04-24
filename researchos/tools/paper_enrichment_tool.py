@@ -20,6 +20,10 @@ class EnrichPapersParams(BaseModel):
         ...,
         description="原始论文列表",
     )
+    keywords: list[str] | None = Field(
+        None,
+        description="关键词列表（可选，用于生成更具体的 why_relevant）",
+    )
 
 
 class EnrichPapersTool(Tool):
@@ -27,7 +31,7 @@ class EnrichPapersTool(Tool):
 
     功能：
     - 自动推断 source_type（根据 venue）
-    - 自动生成 why_relevant（基于 relevance_score）
+    - 自动生成 why_relevant（基于 relevance_score 和关键词匹配）
     - 转换 authors 格式（对象数组 -> 字符串数组）
     - 补充缺失的必需字段
     - 标记数据质量问题
@@ -44,6 +48,7 @@ class EnrichPapersTool(Tool):
 
     async def execute(self, **kwargs) -> ToolResult:
         papers = kwargs["papers"]
+        keywords = kwargs.get("keywords")
 
         if not papers:
             return ToolResult(
@@ -53,7 +58,7 @@ class EnrichPapersTool(Tool):
             )
 
         try:
-            enriched = enrich_papers(papers)
+            enriched = enrich_papers(papers, keywords=keywords)
 
             # 统计数据质量
             missing_abstract_count = sum(1 for p in enriched if p.get("_missing_abstract"))
@@ -63,7 +68,7 @@ class EnrichPapersTool(Tool):
                 "",
                 "增强内容：",
                 "- 自动推断 source_type（根据 venue）",
-                "- 自动生成 why_relevant（基于 relevance_score）",
+                "- 自动生成 why_relevant（基于 relevance_score 和关键词匹配）",
                 "- 转换 authors 格式（对象数组 -> 字符串数组）",
                 "- 补充缺失的必需字段",
             ]

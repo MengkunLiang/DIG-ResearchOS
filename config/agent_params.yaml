@@ -98,7 +98,7 @@ agents:
       # profile: mixed
     max_steps: 50
     max_tokens_total: 1500000
-    max_wall_seconds: 600
+    max_wall_seconds: 6000
     max_validation_retries: 3
     tool_names:
       - read_file

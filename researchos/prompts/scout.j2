@@ -342,15 +342,15 @@ write_structured_file(
 
 **Step 5.2.1: 数据增强（新增，必需）**
 
-使用 `enrich_papers` 工具自动补充缺失字段：
+使用 `enrich_papers` 工具自动补充缺失字段，**记得传入关键词列表**：
 
 ```
-enrich_papers(papers=scored_papers)
+enrich_papers(papers=scored_papers, keywords={{ project.get('keywords', []) }})
 ```
 
 **工具会自动**：
 - 推断 source_type（根据 venue）
-- 生成 why_relevant（基于 relevance_score）
+- 生成 why_relevant（基于 relevance_score 和关键词匹配）
 - 转换 authors 格式（对象数组 → 字符串数组）
 - 补充缺失的必需字段
 - 标记数据质量问题（如缺少摘要）

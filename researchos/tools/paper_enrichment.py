@@ -8,18 +8,22 @@ from __future__ import annotations
 from typing import Any
 
 
-def enrich_papers(papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def enrich_papers(
+    papers: list[dict[str, Any]],
+    keywords: list[str] | None = None,
+) -> list[dict[str, Any]]:
     """增强论文数据，自动补充缺失字段。
 
     功能：
     1. 自动推断 source_type（根据 venue）
-    2. 自动生成 why_relevant（基于 relevance_score）
+    2. 自动生成 why_relevant（基于 relevance_score 和关键词匹配）
     3. 转换 authors 格式（对象数组 -> 字符串数组）
     4. 补充缺失的必需字段（使用默认值）
     5. 标记数据质量（是否缺少 abstract）
 
     Args:
         papers: 原始论文列表
+        keywords: 关键词列表（可选，用于生成更具体的 why_relevant）
 
     Returns:
         增强后的论文列表
@@ -52,7 +56,32 @@ def enrich_papers(papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # 3. 自动生成 why_relevant
         if "why_relevant" not in paper:
             score = paper.get("relevance_score", 0.5)
-            if score >= 0.8:
+            title = paper.get("title", "").lower()
+            abstract = paper.get("abstract", "").lower()
+
+            # 分析关键词匹配情况
+            matched = []
+            if keywords:
+                for kw in keywords:
+                    kw_lower = kw.lower()
+                    if kw_lower in title:
+                        matched.append(f"标题包含「{kw}」")
+                    if kw_lower in abstract:
+                        matched.append(f"摘要包含「{kw}」")
+            else:
+                # 默认关键词匹配分析
+                common_kws = ["agent", "memory", "retrieval", "llm", "transformer", "attention"]
+                for kw in common_kws:
+                    if kw in title:
+                        matched.append(f"标题包含「{kw}」")
+                    if kw in abstract:
+                        matched.append(f"摘要包含「{kw}」")
+
+            if matched:
+                # 有具体匹配时，使用具体的匹配原因
+                reason = "；".join(matched[:3])  # 最多保留3个原因
+                paper["why_relevant"] = reason
+            elif score >= 0.8:
                 paper["why_relevant"] = "高度相关：标题和摘要与研究方向高度匹配"
             elif score >= 0.6:
                 paper["why_relevant"] = "相关：部分内容与研究方向相关"
