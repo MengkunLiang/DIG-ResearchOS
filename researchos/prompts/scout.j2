@@ -572,7 +572,23 @@ write_file(
    - 日志：使用 `generate_search_log` 工具，不要手动编写
    - 检索式扩展：使用 `expand_queries` 工具（如果有种子论文）
 
-4. **数据质量检查**
+4. **进度日志记录（重要）**:
+   - 使用 `log_scout_progress` 工具记录每一步的中间进度
+   - 此工具自动追加到 `literature/temp/scout_progress.md`，用户可随时查看
+   - 主要调用时机：
+     - `expand_queries` 后：记录生成的检索式
+     - `multi_source_search` 后：记录每次检索的结果数量
+     - `deduplicate_papers` 后：记录去重前后的数量
+     - `score_papers` 后：记录评分完成
+     - 写入文件后：记录写入的文件和数量
+   - 示例调用：
+     ```
+     log_scout_progress(action="queries", queries=["query1", "query2"])
+     log_scout_progress(action="search_result", query="attention mechanism", count=25, source="arxiv")
+     log_scout_progress(action="dedup", before=150, after=120)
+     ```
+
+5. **数据质量检查**
    - 每篇论文必须有真实的 title（不能是"Agent Memory Retrieval Paper 1"这种模式）
    - 每篇论文必须有真实的 authors（不能是["Author A", "Author B"]这种占位符）
    - 如果发现数据看起来是编造的，停止任务并报告问题
@@ -602,17 +618,25 @@ queries_result = expand_queries(
 )
 queries = queries_result["data"]["queries"]
 
+# 记录检索式扩展结果
+log_scout_progress(action="queries", queries=queries)
+
 # Step 2: 跨源检索
 all_papers = []
 query_results = {}
 for query in queries:
+    # 记录开始检索
+    log_scout_progress(action="search", query=query, source="multi_source")
     result = multi_source_search(query=query, max_results=30)
     papers = result["data"]["papers"]
     all_papers.extend(papers)
     query_results[query] = len(papers)
+    # 记录检索结果
+    log_scout_progress(action="search_result", query=query, count=len(papers), source="multi_source")
 
 # 写入原始结果
 write_file("literature/papers_raw.jsonl", jsonl_format(all_papers))
+log_scout_progress(action="write", detail="papers_raw.jsonl", count=len(all_papers))
 
 # Step 3: 领域过滤（可选）
 filtered_result = filter_by_domain(papers=all_papers, target_domain="cs")
@@ -625,6 +649,8 @@ dedup_result = deduplicate_papers(
     title_threshold=0.95
 )
 dedup_papers = dedup_result["data"]["papers"]
+# 记录去重结果
+log_scout_progress(action="dedup", before=len(filtered_papers), after=len(dedup_papers))
 
 # Step 5: 评分
 scored_result = score_papers(
@@ -632,6 +658,8 @@ scored_result = score_papers(
     keywords=["agent", "memory", "retrieval", "LLM"]
 )
 scored_papers = scored_result["data"]["papers"]
+# 记录评分结果
+log_scout_progress(action="score", count=len(scored_papers))
 
 # Step 6: 筛选和排序
 sorted_papers = sorted(scored_papers, key=lambda x: x["relevance_score"], reverse=True)
@@ -641,6 +669,7 @@ if len(final_papers) > 120:
 
 # 写入去重后结果
 write_file("literature/papers_dedup.jsonl", jsonl_format(final_papers))
+log_scout_progress(action="write", detail="papers_dedup.jsonl", count=len(final_papers))
 
 # Step 7: 生成日志
 log_result = generate_search_log(

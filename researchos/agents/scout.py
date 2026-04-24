@@ -76,6 +76,7 @@ class ScoutAgent(Agent):
                         "openalex_get_work",
                         "crossref_search",
                         "crossref_get_work",
+                        "log_scout_progress",
                     ],
                     "max_steps": 50,
                     "max_tokens_total": 150_000,
@@ -83,7 +84,7 @@ class ScoutAgent(Agent):
                     "max_validation_retries": 3,
                     "temperature": 0.5,
                     "allowed_read_prefixes": ["", "user_seeds/", "seeds/"],
-                    "allowed_write_prefixes": ["literature/"],
+                    "allowed_write_prefixes": ["literature/", "literature/temp/"],
                     "prompt_template": "scout.j2",
                     "structured_outputs": {
                         "literature/papers_dedup.jsonl": "papers_dedup",

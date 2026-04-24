@@ -32,6 +32,7 @@ from .paper_utils_tool import (
     ScorePapersTool,
     ExpandQueriesTool,
     GenerateSearchLogTool,
+    LogScoutProgressTool,
 )
 from .paper_enrichment_tool import (
     EnrichPapersTool,
@@ -116,3 +117,5 @@ def register_builtin_tools(registry: ToolRegistry) -> None:
     # CrossRef 工具（DOI 元数据）
     registry.register("crossref_search", lambda ctx: CrossRefSearchTool())
     registry.register("crossref_get_work", lambda ctx: CrossRefGetWorkTool())
+    # Scout Agent 进度日志工具（工具层追加，无需用户手动调用）
+    registry.register("log_scout_progress", lambda ctx: LogScoutProgressTool(workspace_dir=str(ctx.policy.workspace_dir)))

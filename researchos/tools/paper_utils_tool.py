@@ -18,6 +18,7 @@ from .paper_utils import (
     filter_by_domain,
     generate_search_log,
 )
+from .scout_progress import ScoutProgressLogger
 
 
 class DeduplicatePapersParams(BaseModel):
@@ -164,5 +165,76 @@ class GenerateSearchLogTool(Tool):
                 content="检索日志生成完成",
                 data={"log": result},
             )
+        except Exception as e:
+            return ToolResult(ok=False, content="", error=str(e))
+
+
+class LogScoutProgressParams(BaseModel):
+    action: str = Field(..., description="操作类型: init|queries|search|search_result|dedup|score|write|finish")
+    detail: str = Field(..., description="操作详情")
+    query: str | None = Field(None, description="检索式（search 时使用）")
+    count: int | None = Field(None, description="论文数量")
+    source: str | None = Field(None, description="数据源（search 时使用）")
+    before: int | None = Field(None, description="去重前数量（dedup 时使用）")
+    after: int | None = Field(None, description="去重后数量（dedup 时使用）")
+    topic: str | None = Field(None, description="研究主题（init 时使用）")
+    queries: list[str] | None = Field(None, description="检索式列表（queries 时使用）")
+
+
+class LogScoutProgressTool(Tool):
+    """Scout Agent 进度日志工具。
+
+    此工具自动记录 Scout Agent 的中间执行进度。
+    工具层追加日志到 `literature/temp/scout_progress.md`，无需用户手动调用。
+    """
+
+    name = "log_scout_progress"
+    description = (
+        "记录 Scout Agent 执行进度到日志文件。工具层追加，用户可随时查看。"
+        "此工具不会影响核心逻辑，仅用于进度可视化。"
+    )
+    parameters_schema = LogScoutProgressParams
+    workspace_dir: str | None = None
+
+    def set_workspace_dir(self, workspace_dir: str | None) -> None:
+        """由 runtime 在工具初始化时注入 workspace_dir。"""
+        self.workspace_dir = workspace_dir
+
+    async def execute(self, **kwargs: Any) -> ToolResult:
+        params = LogScoutProgressParams(**kwargs)
+        if not self.workspace_dir:
+            return ToolResult(ok=False, content="未设置 workspace_dir", error="no_workspace")
+        try:
+            logger = ScoutProgressLogger(Path(self.workspace_dir))
+            action = params.action
+            if action == "init":
+                logger.log_init(params.count, params.topic)
+            elif action == "queries":
+                if params.queries:
+                    logger.log_queries_expanded(params.queries)
+                else:
+                    return ToolResult(ok=False, content="queries 参数缺失", error="missing_param")
+            elif action == "search":
+                logger.log_search_start(params.query or "", params.source)
+            elif action == "search_result":
+                logger.log_search_result(
+                    params.query or "",
+                    params.count or 0,
+                    params.source or "",
+                )
+            elif action == "search_error":
+                logger.log_search_error(params.query or "", params.detail)
+            elif action == "dedup":
+                logger.log_dedup(params.before or 0, params.after or 0)
+            elif action == "score":
+                logger.log_score(params.count or 0)
+            elif action == "write":
+                logger.log_write_file(params.detail, params.count)
+            elif action == "finish":
+                logger.log_finish(params.count or 0, params.after or 0)
+            else:
+                logger.log_step(action, params.detail)
+            content = logger.read_progress() or ""
+            return ToolResult(ok=True, content=f"进度已记录，当前日志：\n{content[-500:]}")
         except Exception as e:
             return ToolResult(ok=False, content="", error=str(e))

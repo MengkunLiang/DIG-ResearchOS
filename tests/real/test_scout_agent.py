@@ -203,3 +203,66 @@ class TestScoutAgentDedupLogic:
 
         assert len(unique_papers) == 2
         assert len(unique_papers) < len(papers)
+
+
+class TestScoutProgressLogger:
+    """Scout Agent 进度日志工具测试。"""
+
+    def test_scout_progress_logger_init(self, standard_workspace: Path):
+        """测试 ScoutProgressLogger 初始化。"""
+        from researchos.tools.scout_progress import ScoutProgressLogger
+
+        logger = ScoutProgressLogger(standard_workspace)
+        assert logger.workspace_dir == standard_workspace
+        assert logger.log_file == standard_workspace / "literature" / "temp" / "scout_progress.md"
+
+    def test_scout_progress_logger_log_step(self, standard_workspace: Path):
+        """测试记录步骤。"""
+        from researchos.tools.scout_progress import ScoutProgressLogger
+
+        logger = ScoutProgressLogger(standard_workspace)
+        logger.log_step("test_step", "测试详情")
+
+        progress = logger.read_progress()
+        assert progress is not None
+        assert "test_step" in progress
+        assert "测试详情" in progress
+
+    def test_scout_progress_logger_log_search_result(self, standard_workspace: Path):
+        """测试记录检索结果。"""
+        from researchos.tools.scout_progress import ScoutProgressLogger
+
+        logger = ScoutProgressLogger(standard_workspace)
+        logger.log_search_result("attention mechanism", 25, "arxiv")
+
+        progress = logger.read_progress()
+        assert progress is not None
+        assert "search_result" in progress
+        assert "attention mechanism" in progress
+        assert "25" in progress
+        assert "arxiv" in progress
+
+    def test_scout_progress_logger_log_dedup(self, standard_workspace: Path):
+        """测试记录去重。"""
+        from researchos.tools.scout_progress import ScoutProgressLogger
+
+        logger = ScoutProgressLogger(standard_workspace)
+        logger.log_dedup(before=150, after=120)
+
+        progress = logger.read_progress()
+        assert progress is not None
+        assert "dedup" in progress
+        assert "150" in progress
+        assert "120" in progress
+
+    def test_log_scout_progress_tool_registered(self):
+        """测试 log_scout_progress 工具已注册。"""
+        from researchos.tools.registry import ToolRegistry
+
+        registry = ToolRegistry()
+        from researchos.tools.builtin import register_builtin_tools
+
+        register_builtin_tools(registry)
+
+        # 检查工具是否在注册表中
+        assert registry.has("log_scout_progress")
