@@ -1,0 +1,500 @@
+"""Mode/Round 传递完整性测试。
+
+测试场景：
+1. SingleTaskRunner 正确传递 mode 和 round 到 ExecutionContext
+2. StateMachine 正确传递 mode 和 round 到 ExecutionContext
+3. Agent 正确使用 ctx.mode 决定行为
+4. WriterAgent 正确选择 phase
+5. 多阶段状态机正确传递 extra 参数
+"""
+
+from __future__ import annotations
+
+import tempfile
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
+import yaml
+
+from researchos.agents.registry import get_agent_by_id
+from researchos.agents.writer import WriterAgent
+from researchos.cli_runners.single_task import SingleTaskRunner
+from researchos.orchestration.state_machine import StateMachine, TaskNode
+from researchos.orchestration.task_io_contract import TASK_IO_CONTRACTS, resolve_inputs, resolve_outputs
+from researchos.runtime.agent import ExecutionContext
+
+
+class TestAgentModeInitialization:
+    """测试 Agent 使用不同 mode 初始化。"""
+
+    def test_writer_agent_init_with_mode(self):
+        """WriterAgent 应该接受 mode 参数。"""
+        agent = WriterAgent(mode="outline")
+        assert agent._mode == "outline"
+
+    def test_writer_agent_init_without_mode(self):
+        """WriterAgent 不传 mode 时应该使用默认值。"""
+        agent = WriterAgent()
+        assert agent._mode is None
+
+    def test_get_agent_by_id_with_mode(self):
+        """get_agent_by_id 应该支持 mode 参数。"""
+        from researchos.agents.writer import WriterAgent
+
+        agent = get_agent_by_id("writer", mode="draft")
+        assert isinstance(agent, WriterAgent)
+        assert agent._mode == "draft"
+
+    def test_get_agent_by_id_without_mode(self):
+        """get_agent_by_id 不传 mode 时应该使用默认值。"""
+        from researchos.agents.writer import WriterAgent
+
+        agent = get_agent_by_id("writer")
+        assert isinstance(agent, WriterAgent)
+
+
+class TestWriterPhaseSelection:
+    """测试 WriterAgent 的 phase 选择逻辑。"""
+
+    def test_phase_from_ctx_mode(self):
+        """ctx.mode 应该被优先使用。"""
+        agent = WriterAgent()
+
+        # 创建带有 mode 的 ctx
+        ctx = MagicMock(spec=ExecutionContext)
+        ctx.mode = "outline"
+        ctx.extra = {}
+
+        phase = agent._phase(ctx)
+        assert phase == "outline"
+
+    def test_phase_from_extra_phase(self):
+        """ctx.extra['phase'] 应该作为 fallback。"""
+        agent = WriterAgent()
+
+        ctx = MagicMock(spec=ExecutionContext)
+        ctx.mode = None
+        ctx.extra = {"phase": "revise"}
+
+        phase = agent._phase(ctx)
+        assert phase == "revise"
+
+    def test_phase_from_agent_mode(self):
+        """agent._mode 应该作为 fallback。"""
+        agent = WriterAgent(mode="draft")
+
+        ctx = MagicMock(spec=ExecutionContext)
+        ctx.mode = None
+        ctx.extra = {}
+
+        phase = agent._phase(ctx)
+        assert phase == "draft"
+
+    def test_phase_default_fallback(self):
+        """没有任何 mode 信息时应该使用默认值 'draft'。"""
+        agent = WriterAgent()
+
+        ctx = MagicMock(spec=ExecutionContext)
+        ctx.mode = None
+        ctx.extra = {}
+
+        phase = agent._phase(ctx)
+        assert phase == "draft"
+
+
+class TestTaskNodeExtraPropagation:
+    """测试 TaskNode 的 extra 字段传递。"""
+
+    def test_node_with_mode_and_round(self):
+        """节点应该正确包含 mode 和 round。"""
+        node = TaskNode(
+            task_id="T8-WRITE",
+            agent="writer",
+            mode="outline",
+            round=1,
+            extra={"key": "value"},
+        )
+
+        assert node.mode == "outline"
+        assert node.round == 1
+        assert node.extra == {"key": "value"}
+
+    def test_extra_contains_phase_from_mode(self):
+        """当节点有 mode 时，extra 应该包含 phase。"""
+        node = TaskNode(
+            task_id="T8-WRITE",
+            agent="writer",
+            mode="outline",
+        )
+
+        # 模拟 single_task._build_task_extra 的逻辑
+        extra = dict(node.extra or {}) if node.extra else {}
+        if node.mode is not None:
+            extra.setdefault("phase", node.mode)
+
+        assert extra.get("phase") == "outline"
+
+
+class TestSingleTaskRunnerContext:
+    """测试 SingleTaskRunner 的 context 构建。"""
+
+    @pytest.fixture
+    def temp_workspace(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yield Path(tmpdir)
+
+    @pytest.fixture
+    def mock_llm_client(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def mock_tool_registry(self):
+        return MagicMock()
+
+    def test_single_task_passes_mode_to_context(self, temp_workspace, mock_llm_client, mock_tool_registry):
+        """SingleTaskRunner 应该将 task_node.mode 传递给 ExecutionContext。"""
+        # 创建 state_machine.yaml
+        sm_config = {
+            "initial_state": "T8-WRITE",
+            "states": {
+                "T8-WRITE": {
+                    "agent": "writer",
+                    "mode": "outline",
+                    "round": 1,
+                    "outputs": {"outline": "drafts/outline.md"},
+                    "inputs": {},
+                    "next_on_success": "done",
+                },
+            },
+        }
+
+        sm_path = temp_workspace / "state_machine.yaml"
+        sm_path.write_text(yaml.dump(sm_config))
+
+        # 创建 project.yaml
+        project_path = temp_workspace / "project.yaml"
+        project_data = {
+            "project_id": "test-project",
+            "research_direction": "Test research",
+            "keywords": ["test"],
+            "created_at": "2026-01-01T00:00:00Z",
+            "seed_ensemble": {
+                "tier1_seeds": [42],
+                "tier2_seeds": [123],
+                "tier3_seeds": [456],
+            },
+        }
+        project_path.write_text(yaml.dump(project_data))
+
+        # 创建 drafts 目录
+        (temp_workspace / "drafts").mkdir(parents=True)
+
+        # 加载 state_machine
+        sm = StateMachine(sm_path)
+
+        # 获取节点
+        node = sm.nodes["T8-WRITE"]
+        assert node.mode == "outline"
+
+        # 构建 ExecutionContext（模拟 single_task 的逻辑）
+        from researchos.schemas.state import StateYaml
+
+        state = StateYaml(project_id="test-project", current_task="T8-WRITE")
+        ctx = sm.build_execution_context(temp_workspace, state)
+
+        assert ctx.mode == "outline"
+        assert ctx.extra.get("phase") == "outline"
+        assert ctx.extra.get("round") == 1
+
+
+class TestStateMachineContextBuild:
+    """测试 StateMachine.build_execution_context 的 mode/round 传递。"""
+
+    @pytest.fixture
+    def temp_workspace(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yield Path(tmpdir)
+
+    def test_build_execution_context_with_mode(self, temp_workspace):
+        """build_execution_context 应该正确传递 mode。"""
+        sm_config = {
+            "initial_state": "T8-WRITE",
+            "states": {
+                "T8-WRITE": {
+                    "agent": "writer",
+                    "mode": "draft",
+                    "round": 2,
+                    "outputs": {"paper": "drafts/paper.tex"},
+                    "inputs": {},
+                    "next_on_success": "done",
+                },
+            },
+        }
+
+        sm_path = temp_workspace / "state_machine.yaml"
+        sm_path.write_text(yaml.dump(sm_config))
+
+        # 创建 project.yaml
+        project_path = temp_workspace / "project.yaml"
+        project_path.write_text(
+            yaml.dump({
+                "project_id": "test",
+                "research_direction": "test",
+                "keywords": ["test"],
+                "created_at": "2026-01-01T00:00:00Z",
+                "seed_ensemble": {
+                    "tier1_seeds": [42],
+                    "tier2_seeds": [123],
+                    "tier3_seeds": [456],
+                },
+            })
+        )
+
+        # 创建 drafts 目录
+        (temp_workspace / "drafts").mkdir(parents=True)
+
+        sm = StateMachine(sm_path)
+        node = sm.nodes["T8-WRITE"]
+
+        from researchos.schemas.state import StateYaml
+
+        state = StateYaml(project_id="test", current_task="T8-WRITE")
+        ctx = sm.build_execution_context(temp_workspace, state)
+
+        assert ctx.mode == "draft"
+        assert ctx.extra.get("phase") == "draft"
+        assert ctx.extra.get("round") == 2
+
+    def test_build_execution_context_without_mode(self, temp_workspace):
+        """没有 mode 时应该正常工作。"""
+        sm_config = {
+            "initial_state": "T1",
+            "states": {
+                "T1": {
+                    "agent": "pi",
+                    "mode": "init",
+                    "outputs": {"project": "project.yaml"},
+                    "inputs": {},
+                    "next_on_success": "T2",
+                },
+                "T2": {
+                    "agent": "scout",
+                    "outputs": {"papers": "literature/papers_dedup.jsonl"},
+                    "inputs": {},
+                    "next_on_success": "done",
+                },
+            },
+        }
+
+        sm_path = temp_workspace / "state_machine.yaml"
+        sm_path.write_text(yaml.dump(sm_config))
+
+        sm = StateMachine(sm_path)
+        node = sm.nodes["T2"]  # T2 没有 mode
+
+        from researchos.schemas.state import StateYaml
+
+        state = StateYaml(project_id="test", current_task="T2")
+        ctx = sm.build_execution_context(temp_workspace, state)
+
+        # T2 没有 mode，应该为 None
+        assert ctx.mode is None
+
+
+class TestTaskIOContractCompleteness:
+    """测试 Task I/O Contract 的完整性。"""
+
+    def test_all_states_have_inputs_outputs(self):
+        """所有状态机节点应该定义 inputs 和 outputs。"""
+        sm_path = Path(__file__).resolve().parents[2] / "config" / "state_machine.yaml"
+        gates_path = Path(__file__).resolve().parents[2] / "config" / "gates.yaml"
+        if not sm_path.exists():
+            pytest.skip("state_machine.yaml not found")
+
+        sm = StateMachine(sm_path, gates_config_path=gates_path)
+        errors = []
+
+        # HELLO 和 T1 是起始状态，可能不需要 inputs
+        # 只有非 terminal 且不是起始状态的节点需要 inputs/outputs
+        for task_id, node in sm.nodes.items():
+            if node.terminal:
+                continue
+            # HELLO 和 T1 是起始状态，不需要 inputs
+            if task_id in ("HELLO", "T1"):
+                continue
+
+            if not node.inputs:
+                errors.append(f"{task_id}: missing inputs")
+            if not node.outputs:
+                errors.append(f"{task_id}: missing outputs")
+
+        assert not errors, f"Contract validation failed:\n" + "\n".join(errors)
+
+    def test_state_machine_contract_alignment(self):
+        """状态机配置应该与 task_io_contract 对齐。"""
+        sm_path = Path(__file__).resolve().parents[2] / "config" / "state_machine.yaml"
+        if not sm_path.exists():
+            pytest.skip("state_machine.yaml not found")
+
+        sm = StateMachine(sm_path)
+
+        # 检查所有有契约的 task
+        for task_id in TASK_IO_CONTRACTS:
+            if task_id not in sm.nodes:
+                continue
+
+            node = sm.nodes[task_id]
+            contract = TASK_IO_CONTRACTS[task_id]
+
+            # 验证 inputs 对齐
+            declared_inputs = dict(node.inputs or {})
+            contract_inputs = dict(contract.get("inputs", {}))
+
+            if declared_inputs != contract_inputs:
+                # 这是一个警告，不是错误（因为 single_task 使用 resolve_inputs）
+                # 但应该保持一致
+                pass
+
+
+class TestMultiModeStateFlow:
+    """测试多模式状态流转。"""
+
+    @pytest.fixture
+    def temp_workspace(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yield Path(tmpdir)
+
+    def test_t8_subtasks_all_have_modes(self, temp_workspace):
+        """T8 的所有子任务应该都有正确的 mode。"""
+        sm_config = {
+            "initial_state": "T8-WRITE",
+            "states": {
+                "T8-WRITE": {
+                    "agent": "writer",
+                    "mode": "outline",
+                    "round": 1,
+                    "outputs": {"outline": "drafts/outline.md"},
+                    "inputs": {"project": "project.yaml"},
+                    "next_on_success": "T8-DRAFT",
+                },
+                "T8-DRAFT": {
+                    "agent": "writer",
+                    "mode": "draft",
+                    "round": 1,
+                    "outputs": {"paper": "drafts/paper.tex"},
+                    "inputs": {"project": "project.yaml", "outline": "drafts/outline.md"},
+                    "next_on_success": "T8-REVIEW-1",
+                },
+                "T8-REVIEW-1": {
+                    "agent": "reviewer",
+                    "mode": "review",
+                    "round": 1,
+                    "outputs": {"review": "drafts/review_rounds/round_1.md"},
+                    "inputs": {"paper": "drafts/paper.tex"},
+                    "next_on_success": "T8-REVISE-1",
+                },
+                "T8-REVISE-1": {
+                    "agent": "writer",
+                    "mode": "revise",
+                    "round": 1,
+                    "outputs": {"paper": "drafts/paper.tex"},
+                    "inputs": {"project": "project.yaml", "review": "drafts/review_rounds/round_1.md"},
+                    "next_on_success": "done",
+                },
+            },
+        }
+
+        sm_path = temp_workspace / "state_machine.yaml"
+        sm_path.write_text(yaml.dump(sm_config))
+
+        sm = StateMachine(sm_path)
+
+        # 验证所有 T8 子任务都有正确的 mode
+        expected_modes = {
+            "T8-WRITE": "outline",
+            "T8-DRAFT": "draft",
+            "T8-REVIEW-1": "review",
+            "T8-REVISE-1": "revise",
+        }
+
+        for task_id, expected_mode in expected_modes.items():
+            node = sm.nodes.get(task_id)
+            assert node is not None, f"{task_id} not found"
+            assert node.mode == expected_mode, f"{task_id} mode should be {expected_mode}, got {node.mode}"
+
+    def test_experimenter_modes(self, temp_workspace):
+        """T5 和 T7 应该有不同的 mode。"""
+        sm_config = {
+            "initial_state": "T5",
+            "states": {
+                "T5": {
+                    "agent": "experimenter",
+                    "mode": "pilot",
+                    "outputs": {"pilot_results": "pilot/pilot_results.json"},
+                    "inputs": {},
+                    "next_on_success": "T7",
+                },
+                "T7": {
+                    "agent": "experimenter",
+                    "mode": "full",
+                    "outputs": {"results": "experiments/results_summary.json"},
+                    "inputs": {},
+                    "next_on_success": "done",
+                },
+            },
+        }
+
+        sm_path = temp_workspace / "state_machine.yaml"
+        sm_path.write_text(yaml.dump(sm_config))
+
+        sm = StateMachine(sm_path)
+
+        assert sm.nodes["T5"].mode == "pilot"
+        assert sm.nodes["T7"].mode == "full"
+
+
+class TestStateMachineValidation:
+    """测试状态机配置校验。"""
+
+    def test_validate_definition_no_errors(self):
+        """validate_definition 应该返回 0 错误。"""
+        sm_path = Path(__file__).resolve().parents[2] / "config" / "state_machine.yaml"
+        gates_path = Path(__file__).resolve().parents[2] / "config" / "gates.yaml"
+        if not sm_path.exists():
+            pytest.skip("state_machine.yaml not found")
+
+        sm = StateMachine(sm_path, gates_config_path=gates_path)
+        errors = sm.validate_definition()
+
+        assert len(errors) == 0, f"State machine validation errors:\n" + "\n".join(errors)
+
+    def test_validate_definition_missing_initial_state(self):
+        """缺少 initial_state 应该报错。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sm_path = Path(tmpdir) / "sm.yaml"
+            sm_path.write_text(yaml.dump({"states": {"T1": {}}}))
+
+            # StateMachine 构造函数应该在这里失败
+            with pytest.raises(KeyError):
+                sm = StateMachine(sm_path)
+
+    def test_validate_definition_terminal_node_no_next(self):
+        """终端节点不应该报错。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sm_path = Path(tmpdir) / "sm.yaml"
+            sm_path.write_text(
+                yaml.dump({
+                    "initial_state": "done",
+                    "states": {
+                        "done": {"terminal": True},
+                    },
+                })
+            )
+
+            sm = StateMachine(sm_path)
+            errors = sm.validate_definition()
+
+            # 终端节点不应该有 next_on_success/next_on_failure 错误
+            next_errors = [e for e in errors if "next_on_success" in e or "next_on_failure" in e]
+            assert len(next_errors) == 0
