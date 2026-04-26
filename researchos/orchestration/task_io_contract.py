@@ -65,6 +65,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "papers_dedup": "literature/papers_dedup.jsonl",
             "papers_verified": "literature/papers_verified.jsonl",
             "deep_read_queue": "literature/deep_read_queue.jsonl",
+            "deep_read_queue_pending": "literature/deep_read_queue_pending.jsonl",
             "access_audit": "literature/access_audit.md",
             "missing_areas": "literature/missing_areas.md",
         },

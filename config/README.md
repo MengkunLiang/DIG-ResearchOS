@@ -104,7 +104,7 @@ logging:
 |------|------------|------|------|
 | Agent | `model_tier` | 只声明任务需要 `heavy` / `medium` / `light` 哪一档 | `HelloAgent -> medium`，`IdeationAgent -> heavy` |
 | state_machine | `states.<task>.llm.profile` | 给某个 task 单独指定用哪套路由 | `HELLO -> hello_fast`，`T4 -> ideation_deep` |
-| model_routing | `profiles.<profile>.<tier>` | 把某个 profile 下的 tier 映射到具体模型 | `ideation_deep.heavy -> Pro/deepseek-ai/DeepSeek-V3.2` |
+| model_routing | `profiles.<profile>.<tier>` | 把某个 profile 下的 tier 映射到具体模型 | `ideation_deep.heavy -> deepseek-ai/DeepSeek-V4-Flash` |
 | endpoint | `endpoints.<name>` | 决定最终 provider / API key / base URL | `siliconflow -> provider=openai` |
 
 默认链路：
@@ -223,7 +223,7 @@ agents:
 
   ideation:
     llm:
-      model: "Pro/deepseek-ai/DeepSeek-V3.2"
+      model: "deepseek-ai/DeepSeek-V4-Flash"
       endpoint: siliconflow
       max_context: 128000
       temperature: 0.75

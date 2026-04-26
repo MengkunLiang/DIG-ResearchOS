@@ -51,3 +51,16 @@ class BudgetTracker:
             "elapsed_s": round(self.elapsed_seconds(), 3),
         }
 
+    def extend_limit(self, dimension: str, delta: int | float) -> None:
+        """动态增加某个预算上限。"""
+
+        if dimension == "steps":
+            self.max_steps += int(delta)
+            return
+        if dimension == "tokens":
+            self.max_tokens += int(delta)
+            return
+        if dimension == "wall_seconds":
+            self.max_wall_seconds += int(delta)
+            return
+        raise ValueError(f"unknown budget dimension: {dimension}")

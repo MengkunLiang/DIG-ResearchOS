@@ -227,6 +227,13 @@ def get_retry_policy() -> dict[str, Any]:
     return config.get("retry_policy", {})
 
 
+def get_budget_escalation_policy() -> dict[str, Any]:
+    """获取预算触顶时的人类确认扩限策略。"""
+
+    config = load_agent_params()
+    return config.get("budget_escalation", {})
+
+
 def get_docker_config() -> dict[str, Any]:
     """获取 Docker 配置。"""
 

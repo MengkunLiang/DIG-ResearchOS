@@ -62,7 +62,7 @@ profiles:
   default:
     medium:
       primary:
-        model: Pro/deepseek-ai/DeepSeek-V3.2
+        model: deepseek-ai/DeepSeek-V4-Flash
         endpoint: relay
         max_context: 128000
 """.strip(),
@@ -72,7 +72,7 @@ profiles:
     client = LLMClient(routing)
     binding, endpoint = client.resolve(profile=None, tier="medium", model_override=None)[0]
 
-    assert binding.qualified(endpoint) == "openai/Pro/deepseek-ai/DeepSeek-V3.2"
+    assert binding.qualified(endpoint) == "openai/deepseek-ai/DeepSeek-V4-Flash"
 
 
 def test_profile_can_mix_providers_per_tier_and_fallback(tmp_path):
@@ -94,7 +94,7 @@ profiles:
   mixed:
     heavy:
       primary:
-        model: Pro/deepseek-ai/DeepSeek-V3.2
+        model: deepseek-ai/DeepSeek-V4-Flash
         endpoint: siliconflow
         max_context: 128000
       fallback:
@@ -115,7 +115,7 @@ profiles:
     medium = client.resolve(profile="mixed", tier="medium", model_override=None)
 
     assert [(binding.qualified(endpoint), endpoint.name) for binding, endpoint in heavy] == [
-        ("openai/Pro/deepseek-ai/DeepSeek-V3.2", "siliconflow"),
+        ("openai/deepseek-ai/DeepSeek-V4-Flash", "siliconflow"),
         ("anthropic/claude-3-5-sonnet-20241022", "anthropic_main"),
     ]
     assert [(binding.qualified(endpoint), endpoint.name) for binding, endpoint in medium] == [

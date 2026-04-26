@@ -72,6 +72,8 @@ class ReaderAgent(Agent):
             "probe_pool": 45,
             "queue_count": 0,
             "queue_preview": [],
+            "resume_queue_path": "",
+            "resume_queue_count": 0,
             "resume_mode": bool(ctx.extra.get("is_resume")),
             "resume_reason": str(ctx.extra.get("resume_reason", "")),
         }
@@ -83,6 +85,8 @@ class ReaderAgent(Agent):
             verified_papers = load_jsonl(verified_path) if verified_path.exists() else []
             queue_path = ctx.workspace_dir / "literature" / "deep_read_queue.jsonl"
             queue_papers = load_jsonl(queue_path) if queue_path.exists() else []
+            pending_queue_path = ctx.workspace_dir / "literature" / "deep_read_queue_pending.jsonl"
+            pending_queue_papers = load_jsonl(pending_queue_path) if pending_queue_path.exists() else []
             seed_path = ctx.workspace_dir / "user_seeds" / "seed_papers.jsonl"
             seed_papers = load_jsonl(seed_path) if seed_path.exists() else []
             mode_params = get_agent_mode_params("reader", "read")
@@ -121,10 +125,14 @@ class ReaderAgent(Agent):
             context_vars["deep_read_target"] = int(mode_params.get("deep_read_target", 24))
             context_vars["deep_read_max"] = int(mode_params.get("deep_read_max", 30))
             context_vars["probe_pool"] = int(mode_params.get("probe_pool", 45))
-            context_vars["queue_count"] = len(queue_papers)
-            context_vars["queue_preview"] = queue_papers[:10]
-            queue_base_count = len(queue_papers) if queue_papers else len(dedup_papers)
-            context_vars["remaining_paper_count"] = max(0, queue_base_count - len(existing_notes))
+            # pending queue 是恢复运行时真正还需要处理的工作清单；只要文件存在，就优先信任它。
+            active_queue = pending_queue_papers if pending_queue_path.exists() else queue_papers
+            context_vars["queue_count"] = len(active_queue)
+            context_vars["queue_preview"] = active_queue[:10]
+            context_vars["resume_queue_path"] = str(ctx.extra.get("resume_queue_path", "")).strip()
+            context_vars["resume_queue_count"] = int(ctx.extra.get("resume_queue_count", len(active_queue)) or 0)
+            queue_base_count = len(active_queue) if active_queue else len(dedup_papers)
+            context_vars["remaining_paper_count"] = queue_base_count if active_queue else max(0, queue_base_count - len(existing_notes))
             context_vars["seed_paper_count"] = len(seed_papers)
             context_vars["seed_priority_titles"] = seed_titles[:10]
             context_vars["seed_papers_in_dedup_count"] = seed_in_dedup_count
@@ -153,7 +161,8 @@ class ReaderAgent(Agent):
                 return (
                     "请继续T3深度阅读流程。先扫描literature/paper_notes/、comparison_table.csv和"
                     "related_work.bib中的现有进度，先补齐已有笔记缺失的表格/Bib条目，再只处理"
-                    "尚未完成的论文。用户提供的 seed papers 必须最高优先级；如果它们已在"
+                    "尚未完成的论文。若存在 literature/deep_read_queue_pending.jsonl，"
+                    "优先按这个剩余队列执行。用户提供的 seed papers 必须最高优先级；如果它们已在"
                     "deep_read_queue、papers_verified 或 papers_dedup 里，必须先读；如果缺失，也要明确记录这个缺口。"
                 )
             return (

@@ -16,6 +16,20 @@
 
 **当前模式**: {{ mode | upper }}
 
+{% if resume_state.resume_mode %}
+## 当前已有进度
+- 恢复状态文件：`{{ resume_state.resume_state_path }}`
+- 已有输出：`{{ resume_state.resume_existing_outputs | join('`, `') if resume_state.resume_existing_outputs else '无' }}`
+- 待补输出：`{{ resume_state.resume_missing_outputs | join('`, `') if resume_state.resume_missing_outputs else '无' }}`
+{% if resume_state.resume_has_existing_code %}
+- 已有代码文件（前 {{ resume_state.resume_existing_code_files | length }} 个）：
+  `{{ resume_state.resume_existing_code_files | join('`, `') }}`
+{% endif %}
+{% if resume_state.resume_reason %}
+- 恢复原因：`{{ resume_state.resume_reason }}`
+{% endif %}
+{% endif %}
+
 {% if mode == "pilot" %}
 ## T5 Pilot 模式核心要求
 
@@ -61,6 +75,14 @@
 - 建议 100 步内完成
 - 2 小时内完成
 - 400K tokens 内完成
+
+{% if resume_state.resume_mode %}
+### 8. 恢复运行要求
+- 如果 `pilot/pilot_code/` 已存在，默认视为上一轮已经完成代码生成，优先复用而不是重写
+- 如果 `pilot_plan.yaml` 已存在，默认视为计划已完成，只在明显缺失关键字段时才修补
+- 如果 `pilot_results.json` 或 `motivation_validation.md` 缺失，优先补这些缺口
+- 不要删除已有 `pilot_code`、`docker_digests.txt`、`smoke_test_passed.marker`
+{% endif %}
 
 {% elif mode == "full" %}
 ## T7 Full 模式核心要求
@@ -126,6 +148,13 @@ exp_h1_ablation3,H1,replace_with_baseline,accuracy,0.83,0.87,-0.04
 - 最多 150 步
 - 4 小时内完成
 - 600K tokens 内完成
+
+{% if resume_state.resume_mode %}
+### 8. 恢复运行要求
+- 优先复用 `experiments/code/`、`experiments/runs/` 和已有中间结果
+- 如果 `results_summary.json`、`iteration_log.md`、`ablations.csv` 缺失，优先补这些总结性产物
+- 不要删除已有 run 目录，也不要把完整实验从零重跑，除非现有结果明显损坏
+{% endif %}
 
 {% endif %}
 

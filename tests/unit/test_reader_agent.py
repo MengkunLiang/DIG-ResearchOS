@@ -194,6 +194,9 @@ def test_reader_initial_user_message_read_mode(reader_agent, temp_workspace):
 def test_reader_initial_user_message_read_mode_resume(reader_agent, temp_workspace):
     """测试read模式在已有进度时提示继续执行。"""
     (temp_workspace / "literature" / "paper_notes" / "done_paper.md").write_text("# done")
+    (temp_workspace / "literature" / "deep_read_queue_pending.jsonl").write_text(
+        '{"paper_id": "paper2", "normalized_id": "paper2", "queue_rank": 1}\n'
+    )
 
     ctx = ExecutionContext(
         workspace_dir=temp_workspace,
@@ -207,6 +210,7 @@ def test_reader_initial_user_message_read_mode_resume(reader_agent, temp_workspa
     msg = reader_agent.initial_user_message(ctx)
     assert "继续T3" in msg
     assert "只处理尚未完成的论文" in msg
+    assert "deep_read_queue_pending.jsonl" in msg
     assert "补齐已有笔记缺失的表格/Bib条目" in msg
     assert "seed papers 必须最高优先级" in msg
 
@@ -344,6 +348,9 @@ def test_reader_system_prompt_read_mode_includes_resume_progress(reader_agent, t
         '{"id": "paper1", "title": "Test Paper 1"}\n{"id": "paper2", "title": "Test Paper 2"}\n'
     )
     (temp_workspace / "literature" / "paper_notes" / "paper1.md").write_text("# Paper 1")
+    (temp_workspace / "literature" / "deep_read_queue_pending.jsonl").write_text(
+        '{"paper_id": "paper2", "normalized_id": "paper2", "queue_rank": 1, "title": "Test Paper 2"}\n'
+    )
 
     ctx = ExecutionContext(
         workspace_dir=temp_workspace,
@@ -357,6 +364,7 @@ def test_reader_system_prompt_read_mode_includes_resume_progress(reader_agent, t
     prompt = reader_agent.system_prompt(ctx)
     assert "当前已有进度" in prompt
     assert "已有 1 篇笔记" in prompt
+    assert "deep_read_queue_pending.jsonl" in prompt
     assert "先做账目对齐" in prompt
     assert "只补未完成论文" in prompt
 

@@ -383,6 +383,16 @@ class ExperimenterAgent(Agent):
         else:
             budget_hint = "最多 150 步，4 小时，600K tokens"
 
+        resume_state = {
+            "resume_mode": bool(ctx.extra.get("resume_mode")),
+            "resume_state_path": str(ctx.extra.get("resume_state_path", "")),
+            "resume_existing_outputs": list(ctx.extra.get("resume_existing_outputs", [])),
+            "resume_missing_outputs": list(ctx.extra.get("resume_missing_outputs", [])),
+            "resume_existing_code_files": list(ctx.extra.get("resume_existing_code_files", [])),
+            "resume_has_existing_code": bool(ctx.extra.get("resume_has_existing_code")),
+            "resume_reason": str(ctx.extra.get("resume_reason", "")),
+        }
+
         # 注意: mode 由 render_prompt 内部通过 ctx.mode 传入，此处不再重复传递
         return render_prompt(
             self.spec.prompt_template,
@@ -396,6 +406,7 @@ class ExperimenterAgent(Agent):
             must_add_baselines_preview=must_add_baselines,
             budget_hint=budget_hint,
             seed_ensemble=seed_ensemble,
+            resume_state=resume_state,
         )
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
@@ -403,6 +414,13 @@ class ExperimenterAgent(Agent):
         mode = ctx.mode or "full"
 
         if mode == "pilot":
+            if ctx.extra.get("resume_mode"):
+                return (
+                    "请继续 T5 Pilot 实验任务。\n"
+                    "先检查 pilot/ 下已有代码和已有输出，只补尚未完成的产物；"
+                    "如果 pilot/pilot_code 已存在，默认复用并继续执行 smoke test/实验/结果整理，"
+                    "不要无谓重写全部代码。"
+                )
             return (
                 "请按 system prompt 执行 T5 Pilot 实验任务。\n"
                 "实验计划在 ideation/exp_plan.yaml 中。\n"
@@ -411,6 +429,12 @@ class ExperimenterAgent(Agent):
                 "pilot/motivation_validation.md（必须包含 PASS/REVISE/FAIL 判定）。"
             )
         else:
+            if ctx.extra.get("resume_mode"):
+                return (
+                    "请继续 T7 Full 实验任务。\n"
+                    "优先复用 experiments/ 下已有代码、运行目录和中间结果，只补剩余的 summary / ablation / log 产物，"
+                    "不要从头重建整个实验目录。"
+                )
             return (
                 "请按 system prompt 执行 T7 Full 实验任务。\n"
                 "实验计划在 ideation/exp_plan.yaml 中。\n"

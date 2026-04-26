@@ -17,6 +17,9 @@
 - `literature/comparison_table.csv` 当前约有 {{ existing_comparison_row_count }} 条论文记录
 - `literature/related_work.bib` 当前约有 {{ existing_bib_entry_count }} 条 BibTeX 条目
 - 预计还需补充约 {{ remaining_paper_count }} 篇论文
+{% if resume_queue_path %}
+- 已自动生成恢复队列：`{{ resume_queue_path }}`，当前剩余 {{ resume_queue_count }} 篇
+{% endif %}
 {% if extra.get("resumed_from_run_id") %}
 - 本次运行来源于之前的中断/失败 run：`{{ extra.get("resumed_from_run_id") }}`
 {% endif %}
@@ -35,6 +38,7 @@
 - `literature/papers_verified.jsonl`: 已通过 metadata verification 的论文池，优先级高于 `papers_dedup`
 {% endif %}
 {% if queue_count > 0 %}
+- `literature/deep_read_queue_pending.jsonl`: 基于已有 `paper_notes` 自动裁剪后的剩余队列；恢复运行时优先使用
 - `literature/deep_read_queue.jsonl`: T2 预先生成的精读队列，T3 应优先按该队列执行
 {% endif %}
 - `literature/access_audit.md`: T2 生成的可读性审计，帮助判断哪些论文值得硬读
@@ -58,6 +62,9 @@
 - 当前 deep-read 队列共有 {{ queue_count }} 篇
 - 本轮目标：至少完成 {{ deep_read_min }} 篇，理想目标 {{ deep_read_target }} 篇，最多深读 {{ deep_read_max }} 篇
 - 该队列是 probe_pool={{ probe_pool }} 的候选集合，允许个别论文因为 PDF/正文不可得而失败
+{% if resume_queue_path %}
+- 当前展示的是“剩余未完成论文”队列，不包含已经写过 note 的论文
+{% endif %}
 {% if queue_preview %}
 - 队列前 {{ queue_preview|length }} 项预览：
 {% for item in queue_preview %}
@@ -91,7 +98,7 @@
 - **缺失种子论文要显式处理**：如果某篇 seed paper 不在 `papers_dedup.jsonl`，不要静默忽略，要在阅读过程中明确记录这是一个上游召回缺口
 {% endif %}
 {% if queue_count > 0 %}
-- **优先按队列执行**：如果 `deep_read_queue.jsonl` 存在，先按 `queue_rank` 从前到后处理，不要自行改成全量扫 dedup 池
+- **优先按剩余队列执行**：如果 `deep_read_queue_pending.jsonl` 存在，先按它的 `queue_rank` 从前到后处理；否则回退到 `deep_read_queue.jsonl`
 - **达到目标即可收敛**：当高质量笔记数达到 `deep_read_target` 且关键 seed papers 已完成后，可以结束，不需要把 probe_pool 全部读完
 {% endif %}
 - **verified 优先于 dedup**：如果 `papers_verified.jsonl` 存在，把它视为可信论文池；`papers_dedup.jsonl` 只作为回退，不应优先消费
@@ -109,7 +116,7 @@
 ### 单篇论文处理流程
 1. 先用 `list_files` 盘点 `literature/paper_notes/` 中已有的 `.md` 文件，并把文件名 stem 视作已完成的规范化ID
 2. 如果存在 `user_seeds/seed_papers.jsonl`，先读取其中的 seed papers，并在 `deep_read_queue.jsonl` 或 `papers_dedup.jsonl` 中按标题/ID匹配；把匹配成功的 seed papers 放到最前面
-3. 如果存在 `deep_read_queue.jsonl`，优先使用它作为工作清单；否则先回退到 `papers_verified.jsonl`，再回退到 `papers_dedup.jsonl`
+3. 如果存在 `deep_read_queue_pending.jsonl`，优先使用它作为工作清单；否则回退到 `deep_read_queue.jsonl`；如果两者都不存在，再回退到 `papers_verified.jsonl`，最后才回退到 `papers_dedup.jsonl`
 4. 检查 `comparison_table.csv` 与 `related_work.bib` 是否落后于已有笔记；如果缺少某些已有论文的记录，先从已有 note 中提取必要信息并补齐
 5. 读取当前待处理论文的 metadata；如果其规范化ID已完成，则跳过这篇，继续下一篇
 6. 尝试获取全文：

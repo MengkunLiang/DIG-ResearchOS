@@ -100,6 +100,7 @@ states:
       project: project.yaml                             # 输入：项目配置
       papers_dedup: literature/papers_dedup.jsonl       # 输入：去重论文列表
       papers_verified: literature/papers_verified.jsonl # 输入：已核验论文列表（优先）
+      deep_read_queue_pending: literature/deep_read_queue_pending.jsonl # 输入：恢复运行时的剩余精读队列（优先）
       deep_read_queue: literature/deep_read_queue.jsonl # 输入：精读队列（优先）
       access_audit: literature/access_audit.md          # 输入：可读性审计
       missing_areas: literature/missing_areas.md        # 输入：研究空白

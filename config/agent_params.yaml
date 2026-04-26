@@ -21,17 +21,28 @@
 # 4. max_tokens_total
 #    - 这里使用普通整数写法，例如 100000
 #    - 之前的 100_000 只是可读性写法，语义完全相同；现在统一成普通整数，避免阅读困惑
+#
+# 实际覆盖优先级（从高到低）：
+# 1. state_machine.yaml 中某个 task 的 llm / budget 临时覆盖
+# 2. 本文件对应 agent 的配置
+# 3. Python 代码里的 defaults
+#
+# 建议把这份文件理解为“Agent 级默认值”：
+# - 想让整个 reader 永久换模型，就改 `agents.reader.llm`
+# - 想只让某次 T3 临时换模型，就去改 state_machine.yaml 里的 T3.llm
+# - 想统一改重试/超时/预算，就看文件末尾的 global_* / retry_policy
 
 agents:
   hello:
     llm:
       # model + endpoint 是当前主入口；tier 仅作为回退保留
-      model: "openrouter/openai/gpt-4o-mini"
-      endpoint: openrouter_main
+      model: "deepseek-ai/DeepSeek-V4-Flash"
+      endpoint: siliconflow
       max_context: 128000
       tier: medium
       temperature: 0.3
       # profile: hello_fast
+      # 如果把 model/endpoint 删掉，仅保留 profile+tier，就会回到 profile 路由模式。
     max_steps: 5
     max_tokens_total: 10000
     max_wall_seconds: 60
@@ -49,12 +60,11 @@ agents:
 
   pi:
     llm:
-      model: "Pro/deepseek-ai/DeepSeek-V3.2"
-      endpoint: siliconflow
+      # 改为走 profile，让 SiliconFlow 主模型失败时也能 fallback 到 MiniMax。
+      profile: siliconflow_only
       max_context: 128000
       tier: heavy
       temperature: 0.3
-      # profile: siliconflow_only
     max_steps: 40
     max_tokens_total: 1000000
     max_wall_seconds: 3000
@@ -79,6 +89,7 @@ agents:
       - evaluation/
     prompt_template: pi.j2
     structured_outputs:
+      # structured_outputs 主要用于 runtime 校验“这些关键文件应当产出什么 schema”。
       project.yaml: project
     modes:
       init:
@@ -90,6 +101,8 @@ agents:
 
   scout:
     llm:
+      # Scout 直接用 profile，而不是绑死某个 model+endpoint。
+      # 这样可以在 model_routing.yaml 里集中维护 fallback。
       profile: scout_resilient
       max_context: 128000
       tier: medium
@@ -141,18 +154,18 @@ agents:
       literature/papers_verified.jsonl: papers_verified
       literature/papers_raw.jsonl: papers_raw
     expected_outputs:
+      # 这里只是“产出预期”，不是唯一校验来源；真正的 artifact 校验还会结合 schema 和 runtime validator。
       papers_raw_min: 30
       papers_dedup_min: 15
       papers_dedup_max: 120
 
   reader:
     llm:
-      model: "Pro/deepseek-ai/DeepSeek-V3.2"
-      endpoint: siliconflow
+      # Reader 改为 profile 模式，确保 T3/T3.5 也有同 provider fallback。
+      profile: siliconflow_only
       max_context: 128000
       tier: medium
       temperature: 0.5
-      # profile: mixed
     max_steps: 200
     max_tokens_total: 600000
     max_wall_seconds: 5000
@@ -176,6 +189,7 @@ agents:
     modes:
       read:
         description: 深度阅读
+        # read 模式预算通常要显著高于普通 agent，因为它会多轮处理论文。
         max_steps: 200
         max_tokens_total: 20000000
         expected_notes_ratio: 0.8
@@ -184,6 +198,7 @@ agents:
         deep_read_max: 30
         probe_pool: 45
         expected_outputs:
+          # 这些开关更多是“最低完成标准”，不是说超过这个数就一定完成得好。
           paper_notes_min: 10
           comparison_table_required: true
           related_work_bib_required: true
@@ -202,12 +217,11 @@ agents:
 
   ideation:
     llm:
-      model: "Pro/deepseek-ai/DeepSeek-V3.2"
-      endpoint: siliconflow
+      # Ideation 直接走专用 profile：先 DeepSeek，再 MiniMax，最后 OpenRouter。
+      profile: ideation_deep
       max_context: 128000
       tier: heavy
       temperature: 0.75
-      # profile: ideation_deep
     max_steps: 150
     max_tokens_total: 500000
     max_wall_seconds: 1200
@@ -232,6 +246,7 @@ agents:
       hypothesis_count: 3
       risk_count: 3
     gates:
+      # gate id 会在状态机/人机交互里引用，改名时要同步检查调用方。
       - id: gate1
         description: 选择研究方向
         type: user_select
@@ -241,12 +256,11 @@ agents:
 
   novelty_auditor:
     llm:
-      model: "Pro/deepseek-ai/DeepSeek-V3.2"
-      endpoint: siliconflow
+      # novelty_auditor 也走 SiliconFlow profile，避免 T4.5 只有单一候选。
+      profile: siliconflow_only
       max_context: 128000
       tier: heavy
       temperature: 0.3
-      # profile: audit_safe
     max_steps: 100
     max_tokens_total: 600000
     max_wall_seconds: 800
@@ -273,12 +287,12 @@ agents:
 
   novelty:
     llm:
-      model: "openrouter/openai/gpt-4o-mini"
-      endpoint: openrouter_main
+      # T6 之前没有 fallback，就是因为这里写死了 model+endpoint。
+      # 改成 profile 后，会先走 DeepSeek，再 fallback 到 MiniMax。
+      profile: siliconflow_only
       max_context: 128000
       tier: medium
       temperature: 0.3
-      # profile: mixed
     max_steps: 100
     max_tokens_total: 600000
     max_wall_seconds: 800
@@ -301,14 +315,13 @@ agents:
 
   experimenter:
     llm:
-      model: "Pro/deepseek-ai/DeepSeek-V3.2"
-      endpoint: siliconflow
+      # T5/T7 也改成 profile，长任务更需要 fallback。
+      profile: siliconflow_only
       max_context: 128000
       tier: medium
       temperature: 0.3
-      # profile: mixed
-    max_steps: 150
-    max_tokens_total: 600000
+    max_steps: 200
+    max_tokens_total: 60000000
     max_wall_seconds: 14400
     max_validation_retries: 10
     tool_names:
@@ -338,7 +351,7 @@ agents:
       pilot:
         description: 试点实验
         max_steps: 100
-        max_tokens_total: 500000
+        max_tokens_total: 1000000
         max_wall_seconds: 7200
         max_validation_retries: 2
         docker_required: true
@@ -349,7 +362,7 @@ agents:
       full:
         description: 完整实验
         max_steps: 150
-        max_tokens_total: 800000
+        max_tokens_total: 3000000
         max_wall_seconds: 14400
         max_validation_retries: 2
         docker_required: true
@@ -361,12 +374,11 @@ agents:
 
   writer:
     llm:
-      model: "openrouter/openai/gpt-4o"
-      endpoint: openrouter_main
+      # 写作阶段默认仍先走 SiliconFlow，但保留 MiniMax fallback。
+      profile: siliconflow_only
       max_context: 128000
       tier: heavy
       temperature: 0.7
-      # profile: ideation_deep
     max_steps: 150
     max_tokens_total: 1000000
     max_wall_seconds: 2400
@@ -401,12 +413,11 @@ agents:
 
   reviewer:
     llm:
-      model: "openrouter/openai/gpt-4o"
-      endpoint: openrouter_main
+      # 审稿也改成 profile，避免只剩单模型重试。
+      profile: siliconflow_only
       max_context: 128000
       tier: heavy
       temperature: 0.3
-      # profile: audit_safe
     max_steps: 80
     max_tokens_total: 600000
     max_wall_seconds: 1200
@@ -431,12 +442,11 @@ agents:
 
   submission:
     llm:
-      model: "openrouter/openai/gpt-4o-mini"
-      endpoint: openrouter_main
+      # 投稿整理阶段同样保留 MiniMax fallback。
+      profile: siliconflow_only
       max_context: 128000
       tier: medium
       temperature: 0.3
-      # profile: mixed
     max_steps: 100
     max_tokens_total: 500000
     max_wall_seconds: 600
@@ -495,15 +505,33 @@ docker:
     memory_limit: 16g
 
 retry_policy:
-  llm_retries: 1
+  llm_retries: 10
   llm_retry_delay: 1
-  tool_retries: 3
+  tool_retries: 5
   tool_retry_delay: 1
   validation_retries: 3
   no_retry_errors:
     - AuthenticationError
     - PermissionDenied
     - BudgetExceeded
+
+# 预算触顶时的人工扩限策略。
+# 典型用途：T5/T7 这类长任务已经写出代码/中间产物，不希望因为 token 或 wall time 上限
+# 直接中断丢掉上下文，而是先询问一次“是否增加预算继续跑”。
+budget_escalation:
+  enabled: true
+  tasks:
+    - T5
+    - T7
+  # 同一 run 最多允许扩限多少次。
+  # - 设为 null：不设上限；每次触顶都继续弹 gate 询问
+  # - 设为正整数：达到次数后不再询问，直接按预算超限停止
+  # - 设为负数：等同于 null
+  max_extensions_per_run: null
+  # 各维度默认扩限比例；实际扩大量还会受 runtime 中的最小增量约束。
+  steps_increase_ratio: 0.25
+  token_increase_ratio: 0.5
+  wall_seconds_increase_ratio: 0.5
 
 logging:
   level: INFO

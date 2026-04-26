@@ -22,7 +22,7 @@ from ..tools.base import Tool, ToolResult
 from ..tools.human_gate import HumanInterface
 from ..tools.paper_save_tools import SavePapersRawTool
 from ..tools.registry import ToolBuildContext, ToolRegistry
-from .agent_params import get_global_timeout, get_retry_policy
+from .agent_params import get_budget_escalation_policy, get_global_timeout, get_retry_policy
 
 if TYPE_CHECKING:
     from ..tools.workspace_policy import WorkspaceAccessPolicy
@@ -71,6 +71,7 @@ class AgentRunner:
         self.log = get_logger(f"runner.{agent.spec.name}")
         self.global_timeout = get_global_timeout()
         self.retry_policy = get_retry_policy()
+        self.budget_escalation_policy = get_budget_escalation_policy()
 
     @staticmethod
     def _default_policy_factory(
@@ -145,6 +146,7 @@ class AgentRunner:
         empty_count = 0
         nudge_count = 0
         validation_fails = 0
+        budget_extensions_used = 0
 
         # Pre-hooks在try块之前执行，失败时直接抛异常阻止运行
         for hook in self.agent.spec.pre_hooks:
@@ -157,10 +159,18 @@ class AgentRunner:
 
                 # 每5步输出一次进度
                 if budget.steps % 5 == 1 or budget.steps == 1:
-                    print(f"[Agent] 步骤 {budget.steps}/{eff.max_steps} | Token: {budget.tokens_in + budget.tokens_out} | 成本: ${budget.cost_usd:.4f}", flush=True)
+                    print(f"[Agent] 步骤 {budget.steps}/{budget.max_steps} | Token: {budget.tokens_in + budget.tokens_out} | 成本: ${budget.cost_usd:.4f}", flush=True)
                 try:
                     budget.check()
                 except BudgetExceeded as exc:
+                    extended, budget_extensions_used = await self._maybe_offer_budget_extension(
+                        ctx=ctx,
+                        budget=budget,
+                        exc=exc,
+                        used_extensions=budget_extensions_used,
+                    )
+                    if extended:
+                        continue
                     stop_reason = AgentResult.STOP_BUDGET
                     error_msg = str(exc)
                     break
@@ -282,7 +292,7 @@ class AgentRunner:
                     messages.append(feedback)
                     trace.write_message(feedback)
 
-                if budget.steps >= eff.max_steps:
+                if budget.steps >= budget.max_steps:
                     stop_reason = AgentResult.STOP_MAX_STEPS
                     error_msg = "Reached maximum allowed steps"
                     break
@@ -641,3 +651,103 @@ class AgentRunner:
             llm_model_used=last_model_used,
             llm_endpoint_used=last_endpoint_used,
         )
+
+    async def _maybe_offer_budget_extension(
+        self,
+        *,
+        ctx: ExecutionContext,
+        budget: BudgetTracker,
+        exc: BudgetExceeded,
+        used_extensions: int,
+    ) -> tuple[bool, int]:
+        """在预算触顶时给长任务一个人工扩限机会。"""
+
+        policy = self.budget_escalation_policy or {}
+        if not policy.get("enabled", False):
+            return False, used_extensions
+
+        enabled_tasks = set(policy.get("tasks") or [])
+        if enabled_tasks and ctx.task_id not in enabled_tasks:
+            return False, used_extensions
+
+        raw_max_extensions = policy.get("max_extensions_per_run")
+        # `null` / 缺省 / 负数 表示“不设上限”，但每次都仍然要经过人工 gate 确认。
+        if raw_max_extensions is None:
+            max_extensions = None
+        else:
+            max_extensions = int(raw_max_extensions)
+            if max_extensions < 0:
+                max_extensions = None
+        if max_extensions is not None and used_extensions >= max_extensions:
+            return False, used_extensions
+
+        steps_ratio = float(policy.get("steps_increase_ratio", 0.25) or 0.25)
+        token_ratio = float(policy.get("token_increase_ratio", 0.5) or 0.5)
+        wall_ratio = float(policy.get("wall_seconds_increase_ratio", 0.5) or 0.5)
+
+        if exc.dimension == "steps":
+            delta = max(20, int(budget.max_steps * steps_ratio))
+        elif exc.dimension == "tokens":
+            delta = max(100000, int(budget.max_tokens * token_ratio))
+        elif exc.dimension == "wall_seconds":
+            delta = max(600, int(budget.max_wall_seconds * wall_ratio))
+        else:
+            return False, used_extensions
+
+        unit = {
+            "steps": "steps",
+            "tokens": "tokens",
+            "wall_seconds": "seconds",
+        }[exc.dimension]
+        snapshot = budget.snapshot()
+        # 把当前已落盘的关键输出一起展示出来，方便用户判断“现在停会损失什么”。
+        existing_outputs = [
+            str(path.relative_to(ctx.workspace_dir))
+            for path in ctx.outputs_expected.values()
+            if path.exists()
+        ]
+        result = await self.human.present_gate(
+            gate_id="runtime_budget_extension",
+            presentation={
+                "_title": "预算上限已触发",
+                "_description": "当前任务已达到预算上限。你可以选择扩限后继续，或停止本次运行。",
+                "task_id": ctx.task_id,
+                "run_id": ctx.run_id,
+                "extensions_used": used_extensions,
+                "dimension": exc.dimension,
+                "used": exc.used,
+                "limit": exc.limit,
+                "current_budget": snapshot,
+                "existing_outputs": existing_outputs,
+                "suggested_extension": {
+                    "dimension": exc.dimension,
+                    "delta": delta,
+                    "new_limit": int(exc.limit + delta),
+                    "unit": unit,
+                },
+            },
+            options=[
+                {
+                    "id": "extend",
+                    "label": f"继续，并增加 {delta} {unit}",
+                },
+                {
+                    "id": "stop",
+                    "label": "停止本次运行",
+                },
+            ],
+        )
+        if (result or {}).get("option_id") != "extend":
+            return False, used_extensions
+
+        # 只扩当前触顶维度，避免一次确认后无节制地放大全部预算。
+        budget.extend_limit(exc.dimension, delta)
+        self.log.info(
+            "budget_extended",
+            task_id=ctx.task_id,
+            dimension=exc.dimension,
+            delta=delta,
+            old_limit=exc.limit,
+            new_limit=exc.limit + delta,
+        )
+        return True, used_extensions + 1

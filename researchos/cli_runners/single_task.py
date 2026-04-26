@@ -15,9 +15,11 @@ from ..orchestration.state_machine import StateMachine
 from ..orchestration.task_io_contract import get_task_io, resolve_inputs, resolve_outputs
 from ..runtime.agent import ExecutionContext, LLMConfigOverride
 from ..runtime.config import RuntimeSettings
+from ..runtime.experiment_recovery import prepare_experiment_resume_artifacts
 from ..runtime.llm_client import LLMClient
 from ..runtime.logger import get_logger
 from ..runtime.orchestrator import AgentRunner
+from ..runtime.t3_recovery import prepare_t3_resume_artifacts
 from ..runtime.workspace import initialize_workspace
 from ..schemas.state import StateYaml, TaskHistoryEntry
 from ..schemas.validator import register_builtin_task_checkers, validate_prerequisites, validate_task_artifacts
@@ -94,6 +96,42 @@ class SingleTaskRunner:
         # 中重跑失败/中断过的任务时，自动把“恢复运行”语义透传给 Agent。
         extra = self._build_task_extra(task_node)
         self._inject_resume_extra(extra, state)
+        if self.task_id == "T3":
+            # T3 续跑不能只靠 prompt 提示；这里提前裁剪“剩余待读队列”。
+            recovery_info = prepare_t3_resume_artifacts(self.workspace)
+            extra.update(recovery_info)
+            if recovery_info.get("resume_queue_count") is not None:
+                print(
+                    "[进度] T3 恢复队列已准备："
+                    f"{recovery_info.get('resume_queue_count', 0)} 篇待处理，"
+                    f"已完成 {recovery_info.get('existing_note_count', 0)} 篇，"
+                    f"来源={recovery_info.get('resume_queue_source', 'unknown')}",
+                    flush=True,
+                )
+        if self.task_id == "T5":
+            # T5 常见中断点是“代码已经写好，但结果/验证文件还没全部补完”；
+            # 这里提前把已有代码和剩余产物显式暴露给 Agent。
+            recovery_info = prepare_experiment_resume_artifacts(self.workspace, mode="pilot")
+            extra.update(recovery_info)
+            extra["resume_mode"] = bool(extra.get("resume_mode") or extra.get("is_resume") or recovery_info.get("resume_mode"))
+            if recovery_info.get("resume_mode"):
+                print(
+                    "[进度] T5 恢复状态已准备："
+                    f"已有输出 {recovery_info.get('resume_existing_outputs', [])}，"
+                    f"待补 {recovery_info.get('resume_missing_outputs', [])}",
+                    flush=True,
+                )
+        if self.task_id == "T7":
+            recovery_info = prepare_experiment_resume_artifacts(self.workspace, mode="full")
+            extra.update(recovery_info)
+            extra["resume_mode"] = bool(extra.get("resume_mode") or extra.get("is_resume") or recovery_info.get("resume_mode"))
+            if recovery_info.get("resume_mode"):
+                print(
+                    "[进度] T7 恢复状态已准备："
+                    f"已有输出 {recovery_info.get('resume_existing_outputs', [])}，"
+                    f"待补 {recovery_info.get('resume_missing_outputs', [])}",
+                    flush=True,
+                )
         if self.task_id == "T1":
             project_path = self.workspace / "project.yaml"
             if project_path.exists():

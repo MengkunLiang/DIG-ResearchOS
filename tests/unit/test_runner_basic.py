@@ -1,6 +1,6 @@
 import pytest
 
-from researchos.runtime.agent import Agent, AgentResult, AgentSpec, ExecutionContext
+from researchos.runtime.agent import Agent, AgentResult, AgentSpec, BudgetOverride, ExecutionContext
 from researchos.runtime.orchestrator import AgentRunner
 from researchos.testing.mocks import FakeLLMMessage, FakeRawCompletion, FakeToolCall, MockHumanInterface, MockLLMClient
 from researchos.tools.builtin import register_builtin_tools
@@ -131,3 +131,69 @@ async def test_runner_passes_global_llm_timeout_and_retry_settings(tmp_workspace
     assert all(item["timeout"] == 77 for item in llm.chat_kwargs)
     assert all(item["max_retries_per_model"] == 4 for item in llm.chat_kwargs)
     assert all(item["retry_base_delay"] == 1.25 for item in llm.chat_kwargs)
+
+
+@pytest.mark.asyncio
+async def test_budget_extension_gate_allows_t5_to_continue(tmp_workspace, registry):
+    llm = MockLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(tool_calls=[FakeToolCall(name="echo", arguments={"text": "hi"}, id="tc1")])
+            ),
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="finish_task", arguments={"summary": "done"}, id="tc2")]
+                )
+            ),
+        ]
+    )
+    ctx = ExecutionContext(
+        workspace_dir=tmp_workspace,
+        project_id="p1",
+        task_id="T5",
+        run_id="r_budget_extend",
+        budget_override=BudgetOverride(max_steps=0),
+    )
+    human = MockHumanInterface(gate_choices=[{"option_id": "extend", "captured": {}}])
+    runner = AgentRunner(MinimalAgent(), registry, llm, human)
+    runner.budget_escalation_policy = {
+        "enabled": True,
+        "tasks": ["T5"],
+        "max_extensions_per_run": 1,
+        "steps_increase_ratio": 1.0,
+        "token_increase_ratio": 0.5,
+        "wall_seconds_increase_ratio": 0.5,
+    }
+
+    result = await runner.run(ctx)
+
+    assert result.ok
+    assert any(call[0] == "gate" for call in human.calls)
+
+
+@pytest.mark.asyncio
+async def test_budget_extension_gate_can_stop_run(tmp_workspace, registry):
+    llm = MockLLMClient(responses=[])
+    ctx = ExecutionContext(
+        workspace_dir=tmp_workspace,
+        project_id="p1",
+        task_id="T5",
+        run_id="r_budget_stop",
+        budget_override=BudgetOverride(max_steps=0),
+    )
+    human = MockHumanInterface(gate_choices=[{"option_id": "stop", "captured": {}}])
+    runner = AgentRunner(MinimalAgent(), registry, llm, human)
+    runner.budget_escalation_policy = {
+        "enabled": True,
+        "tasks": ["T5"],
+        "max_extensions_per_run": 1,
+        "steps_increase_ratio": 1.0,
+        "token_increase_ratio": 0.5,
+        "wall_seconds_increase_ratio": 0.5,
+    }
+
+    result = await runner.run(ctx)
+
+    assert not result.ok
+    assert result.stop_reason == AgentResult.STOP_BUDGET
+    assert any(call[0] == "gate" for call in human.calls)

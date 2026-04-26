@@ -24,6 +24,9 @@ python scripts/real_debug_t1_t2.py --all
 
 # 测试所有 Agent
 python scripts/test_all_agents_real_api.py
+
+# 单独验证当前 LLM 路由 / 模型
+python scripts/validate_llm_model.py --profile default --tier medium
 ```
 
 ---
@@ -139,6 +142,36 @@ python scripts/real_debug_t1_t2.py --all \
 - `--run-t1`: 运行 T1
 - `--run-t2`: 运行 T2
 - `--all`: 运行 T1 和 T2
+
+---
+
+### validate_llm_model.py - LLM 路由/模型验证
+
+**用途**: 在不运行完整 pipeline 的情况下，单独验证当前 `profile/tier/model/endpoint` 是否可用、是否超时、fallback 是否生效。
+
+**用法**:
+```bash
+# 验证当前默认 medium 链路
+python scripts/validate_llm_model.py --profile default --tier medium
+
+# 强制验证某个模型和 endpoint
+python scripts/validate_llm_model.py \
+  --profile default \
+  --tier medium \
+  --model deepseek-ai/DeepSeek-V4-Flash \
+  --endpoint siliconflow \
+  --attempts 5 \
+  --timeout 45
+
+# 只做 endpoint 连通性自检
+python scripts/validate_llm_model.py --profile scout_resilient --tier medium --selftest-only
+```
+
+**输出内容**:
+- candidate chain：当前会尝试的模型候选链
+- endpoint selftest：最小连通性检查
+- chat validation：真实 chat 调用的成功率、延迟、错误明细
+- 可选 JSON 报告：`--json-out /tmp/llm-check.json`
 
 ---
 

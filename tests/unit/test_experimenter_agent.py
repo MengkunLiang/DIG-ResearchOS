@@ -66,8 +66,8 @@ def test_experimenter_agent_spec(experimenter_agent):
 
     assert spec.name == "experimenter"
     assert spec.model_tier == "medium"
-    assert spec.max_steps == 150
-    assert spec.max_tokens_total == 600_000
+    assert spec.max_steps == 200
+    assert spec.max_tokens_total == 60_000_000
     assert spec.max_wall_seconds == 14400
     assert spec.temperature == 0.3
     assert spec.prompt_template == "experimenter.j2"
@@ -131,6 +131,46 @@ def test_experimenter_initial_user_message(experimenter_agent, mock_workspace):
     assert "实验任务" in message  # full mode says "实验任务"
     assert "exp_plan.yaml" in message
     assert "results_summary.json" in message
+
+
+def test_experimenter_initial_user_message_resume_pilot(experimenter_agent, mock_workspace):
+    ctx = ExecutionContext(
+        workspace_dir=mock_workspace,
+        project_id="test_project",
+        task_id="T5",
+        run_id="test_run_resume",
+        mode="pilot",
+        extra={"resume_mode": True},
+    )
+
+    message = experimenter_agent.initial_user_message(ctx)
+    assert "继续 T5 Pilot" in message
+    assert "pilot/pilot_code" in message
+
+
+def test_experimenter_system_prompt_resume_state(experimenter_agent, mock_workspace):
+    ctx = ExecutionContext(
+        workspace_dir=mock_workspace,
+        project_id="test_project",
+        task_id="T5",
+        run_id="test_run_resume",
+        mode="pilot",
+        extra={
+            "resume_mode": True,
+            "resume_state_path": "pilot/pilot_resume_state.json",
+            "resume_existing_outputs": ["pilot_plan"],
+            "resume_missing_outputs": ["pilot_results", "motivation_validation"],
+            "resume_existing_code_files": ["pilot/pilot_code/run_pilot.py"],
+            "resume_has_existing_code": True,
+            "resume_reason": "retry_after_failure",
+        },
+    )
+
+    prompt = experimenter_agent.system_prompt(ctx)
+    assert "当前已有进度" in prompt
+    assert "pilot/pilot_resume_state.json" in prompt
+    assert "已有代码文件" in prompt
+    assert "恢复运行要求" in prompt
 
 
 def test_validate_outputs_success(experimenter_agent, mock_workspace):

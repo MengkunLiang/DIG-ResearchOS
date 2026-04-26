@@ -1,5 +1,8 @@
 # ResearchOS Gates 配置文件
 # Gates 用于在 Agent 状态转换时进行条件检查和验证
+# 可以把它理解为“任务完成前的额外门禁规则”：
+# - state_machine 决定流程怎么走
+# - gates 决定“即使 agent 说自己完成了，系统还要不要再拦一下”
 #
 # 配置格式：
 # gates:
@@ -28,6 +31,7 @@
 # 如需启用 Gate，请参考上述示例添加配置
 gates:
   # 预算门控：限制单次运行的最大成本
+  # 典型场景：不希望某次真实 API 调试失控烧钱。
   budget_gate:
     type: budget_check
     config:
@@ -35,6 +39,7 @@ gates:
       warn_threshold: 0.8
 
   # 质量门控：验证输出基本质量
+  # 适合对 markdown / json / 长文本产物做最小质量拦截。
   quality_gate:
     type: output_validation
     config:
@@ -43,12 +48,15 @@ gates:
         - content
 
   # 新颖性门控：验证假设的新颖性评分
+  # 这里假设上游已经产出了 novelty score；Gate 本身不负责生成该分数。
   novelty_gate:
     type: novelty_check
     config:
       min_novelty_score: 0.6
 
   # 投稿匿名化门控：检查论文匿名化完整性
+  # forbidden_patterns 是逻辑标签，不一定是简单字符串匹配；
+  # 实际检查逻辑取决于对应 Gate 实现。
   submission_gate:
     type: anonymization_check
     config:
