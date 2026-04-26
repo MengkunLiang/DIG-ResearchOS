@@ -287,3 +287,69 @@ async def test_llm_client_chat_uses_configurable_retry_delay(tmp_path, monkeypat
         )
 
     assert delays == [0.25]
+
+
+@pytest.mark.asyncio
+async def test_llm_client_chat_tries_fallback_before_repeating_primary(tmp_path, monkeypatch):
+    routing = tmp_path / "model_routing.yaml"
+    routing.write_text(
+        """
+default_profile: default
+
+endpoints:
+  siliconflow:
+    provider: openai
+    api_key_env: TEST_API_KEY
+    api_base_env: TEST_API_BASE
+
+profiles:
+  default:
+    medium:
+      primary:
+        model: deepseek-ai/DeepSeek-V4-Flash
+        endpoint: siliconflow
+        max_context: 128000
+      fallback:
+        - model: Pro/MiniMaxAI/MiniMax-M2.5
+          endpoint: siliconflow
+          max_context: 128000
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TEST_API_KEY", "secret")
+
+    calls: list[str] = []
+
+    async def fake_acompletion(**kwargs):
+        calls.append(kwargs["model"])
+        if kwargs["model"] == "openai/deepseek-ai/DeepSeek-V4-Flash":
+            raise TimeoutError("primary timeout")
+        return _FakeResponse()
+
+    monkeypatch.setattr(
+        "researchos.runtime.llm_client.litellm",
+        types.SimpleNamespace(acompletion=fake_acompletion, token_counter=lambda **_: 12),
+    )
+
+    client = LLMClient(routing)
+
+    async def noop_wait(*args, **kwargs):
+        return None
+
+    client.rate_limiter.wait = noop_wait
+
+    response = await client.chat(
+        messages=[{"role": "user", "content": "ping"}],
+        tools=None,
+        temperature=0.0,
+        tier="medium",
+        timeout=1,
+        max_retries_per_model=3,
+        retry_base_delay=0.25,
+    )
+
+    assert response.model_used == "openai/Pro/MiniMaxAI/MiniMax-M2.5"
+    assert calls[:2] == [
+        "openai/deepseek-ai/DeepSeek-V4-Flash",
+        "openai/Pro/MiniMaxAI/MiniMax-M2.5",
+    ]

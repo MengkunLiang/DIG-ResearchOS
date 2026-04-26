@@ -439,8 +439,8 @@ class LLMClient:
         """执行一次模型调用。
 
         注意这里有两层保护：
-        - 对同一个候选模型做重试；
-        - 当前候选彻底失败后，才会切换到 fallback 模型。
+        - 每一轮会把 primary/fallback 候选都试一遍，避免第一个 provider 忙时长时间卡死；
+        - 如果这一整轮候选都失败，才进入下一轮重试。
         """
         if litellm is None:
             raise LLMProviderError("litellm is not installed")
@@ -453,9 +453,9 @@ class LLMClient:
             endpoint_override=endpoint_override,
             max_context_override=max_context_override,
         )
-        for binding, endpoint in candidates:
-            qualified = binding.qualified(endpoint)
-            for attempt in range(max_retries_per_model):
+        for attempt in range(max_retries_per_model):
+            for binding, endpoint in candidates:
+                qualified = binding.qualified(endpoint)
                 started = time.time()
                 try:
                     # 先做本地限流，避免一撞 provider rate limit 就误触 fallback。
@@ -490,8 +490,8 @@ class LLMClient:
                     )
                 except Exception as exc:
                     errors.append(f"{qualified}@{endpoint.name} attempt {attempt + 1}: {exc!r}")
-                    if attempt < max_retries_per_model - 1:
-                        await asyncio.sleep(min(retry_base_delay * (2**attempt), 8))
+            if attempt < max_retries_per_model - 1:
+                await asyncio.sleep(min(retry_base_delay * (2**attempt), 8))
         raise LLMProviderError(
             f"All candidates failed (profile={profile or self.default_profile_name}, "
             f"tier={tier}). Errors: {errors}"
