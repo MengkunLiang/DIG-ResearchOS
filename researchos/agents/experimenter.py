@@ -59,6 +59,7 @@ from ._common import (
     generate_manifest,
     generate_research_log,
     load_project,
+    prepend_resume_prefix,
     read_text_file,
     validate_files_exist,
 )
@@ -415,33 +416,45 @@ class ExperimenterAgent(Agent):
 
         if mode == "pilot":
             if ctx.extra.get("resume_mode"):
-                return (
+                return prepend_resume_prefix(
+                    ctx,
+                    (
                     "请继续 T5 Pilot 实验任务。\n"
                     "先检查 pilot/ 下已有代码和已有输出，只补尚未完成的产物；"
                     "如果 pilot/pilot_code 已存在，默认复用并继续执行 smoke test/实验/结果整理，"
                     "不要无谓重写全部代码。"
+                    ),
                 )
-            return (
+            return prepend_resume_prefix(
+                ctx,
+                (
                 "请按 system prompt 执行 T5 Pilot 实验任务。\n"
                 "实验计划在 ideation/exp_plan.yaml 中。\n"
                 "请执行小规模试点实验（5-10% 数据），强制执行 smoke test，"
                 "使用固定 seed=42，生成 pilot/pilot_results.json 和 "
                 "pilot/motivation_validation.md（必须包含 PASS/REVISE/FAIL 判定）。"
+                ),
             )
         else:
             if ctx.extra.get("resume_mode"):
-                return (
+                return prepend_resume_prefix(
+                    ctx,
+                    (
                     "请继续 T7 Full 实验任务。\n"
                     "优先复用 experiments/ 下已有代码、运行目录和中间结果，只补剩余的 summary / ablation / log 产物，"
                     "不要从头重建整个实验目录。"
+                    ),
                 )
-            return (
+            return prepend_resume_prefix(
+                ctx,
+                (
                 "请按 system prompt 执行 T7 Full 实验任务。\n"
                 "实验计划在 ideation/exp_plan.yaml 中。\n"
                 "请执行完整实验，包含至少 3 条 ablation 实验，"
                 "使用 seed ensemble（headline: 3 seeds, final_method: 2 seeds），"
                 "生成 experiments/results_summary.json、experiments/ablations.csv 和 "
                 "experiments/iteration_log.md。"
+                ),
             )
 
     def validate_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:

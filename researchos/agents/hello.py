@@ -3,6 +3,7 @@ from __future__ import annotations
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
+from ._common import prepend_resume_prefix
 
 
 class HelloAgent(Agent):
@@ -29,7 +30,7 @@ class HelloAgent(Agent):
         return render_prompt(self.spec.prompt_template, ctx)
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
-        return "请按 system prompt 的要求完成任务。"
+        return prepend_resume_prefix(ctx, "请按 system prompt 的要求完成任务。")
 
     def validate_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:
         ok, err = super().validate_outputs(ctx)

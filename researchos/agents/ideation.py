@@ -17,6 +17,7 @@ from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
 from ..schemas.validator import validate_record
 from ._common import (
+    prepend_resume_prefix,
     load_project,
     read_text_file,
     validate_files_exist,
@@ -78,9 +79,12 @@ class IdeationAgent(Agent):
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
         """初始用户消息。"""
-        return (
+        return prepend_resume_prefix(
+            ctx,
+            (
             "请执行 T4 假设生成。基于 synthesis.md 和 seed_ideas.md，"
             "通过两轮 Gate 与用户确认，产出 hypotheses.md + exp_plan.yaml + risks.md。"
+            ),
         )
 
     def validate_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:

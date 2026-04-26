@@ -26,6 +26,7 @@ from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
 from ._common import (
+    prepend_resume_prefix,
     load_project,
     read_text_file,
     validate_files_exist,
@@ -87,10 +88,13 @@ class NoveltyAuditorAgent(Agent):
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
         """初始用户消息。"""
-        return (
+        return prepend_resume_prefix(
+            ctx,
+            (
             "请执行 T4.5 新颖性审计。读取 ideation/hypotheses.md 和 literature/synthesis.md，"
             "对每个假设进行新颖性审计，搜索近期相关工作，判断新颖性等级，"
             "产出 ideation/novelty_audit.md 和 ideation/collision_cases.md（如有撞车风险）。"
+            ),
         )
 
     def validate_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:

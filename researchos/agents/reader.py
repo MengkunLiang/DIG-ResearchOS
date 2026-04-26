@@ -13,7 +13,13 @@ from pathlib import Path
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec, get_agent_mode_params
 from ..runtime.prompts import render_prompt
-from ._common import load_project, load_jsonl, normalize_text_key, read_text_file
+from ._common import (
+    load_project,
+    load_jsonl,
+    normalize_text_key,
+    prepend_resume_prefix,
+    read_text_file,
+)
 
 
 class ReaderAgent(Agent):
@@ -158,23 +164,32 @@ class ReaderAgent(Agent):
             notes_dir = ctx.workspace_dir / "literature" / "paper_notes"
             existing_note_count = len(list(notes_dir.glob("*.md"))) if notes_dir.exists() else 0
             if existing_note_count > 0 or ctx.extra.get("is_resume"):
-                return (
+                return prepend_resume_prefix(
+                    ctx,
+                    (
                     "请继续T3深度阅读流程。先扫描literature/paper_notes/、comparison_table.csv和"
                     "related_work.bib中的现有进度，先补齐已有笔记缺失的表格/Bib条目，再只处理"
                     "尚未完成的论文。若存在 literature/deep_read_queue_pending.jsonl，"
                     "优先按这个剩余队列执行。用户提供的 seed papers 必须最高优先级；如果它们已在"
                     "deep_read_queue、papers_verified 或 papers_dedup 里，必须先读；如果缺失，也要明确记录这个缺口。"
+                    ),
                 )
-            return (
+            return prepend_resume_prefix(
+                ctx,
+                (
                 "请开始T3深度阅读流程。优先按 literature/deep_read_queue.jsonl 执行；如果该文件不存在，"
                 "先回退到 literature/papers_verified.jsonl，再回退到 literature/papers_dedup.jsonl。"
                 "为每篇产出paper_notes/{id}.md，同时累积comparison_table.csv和related_work.bib。"
                 "用户提供的 seed papers 必须最高优先级。"
+                ),
             )
-        return (
+        return prepend_resume_prefix(
+            ctx,
+            (
             "请开始T3.5综合流程。综合literature/paper_notes/目录下的所有笔记，"
             "产出literature/synthesis.md，包含5个必需章节：方法家族分类、共同假设、"
             "性能-效率前沿、技术趋势、可操作研究问题。"
+            ),
         )
 
     def validate_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:

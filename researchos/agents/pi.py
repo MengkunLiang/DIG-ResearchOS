@@ -16,11 +16,7 @@ import yaml
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
-from ._common import (
-    load_project,
-    read_text_file,
-    validate_files_exist,
-)
+from ._common import prepend_resume_prefix, read_text_file
 from ..schemas.validator import validate_record
 
 
@@ -100,7 +96,9 @@ class PIAgent(Agent):
         if mode == "init":
             # 不要在这里透露 user_topic，让 Agent 从第1轮对话开始询问
             # user_topic 会在 system prompt 中提供作为背景信息
-            return (
+            return prepend_resume_prefix(
+                ctx,
+                (
                 f"请开始T1项目初始化流程。\n\n"
                 f"请严格按照system prompt中的三轮对话流程执行：\n"
                 f"- 第1轮：明确研究边界与约束\n"
@@ -109,16 +107,20 @@ class PIAgent(Agent):
                 f"- 第3轮：确认并生成所有文件\n\n"
                 f"重要：必须严格按照 prompt 中的 project.yaml 格式要求生成文件，"
                 f"包含所有必需字段（project_id, research_direction, keywords, constraints, created_at, seed_ensemble）。"
+                ),
             )
         elif mode == "evaluate":
-            return (
+            return prepend_resume_prefix(
+                ctx,
+                (
                 "请开始T7.5实验评估流程。\n\n"
                 "请读取experiments/results_summary.json、experiments/iteration_log.md "
                 "和ideation/exp_plan.yaml，评估实验结果，判断Situation (A/B/C/D)，"
                 "并给出后续Options建议。"
+                ),
             )
         else:
-            return f"未知模式: {mode}"
+            return prepend_resume_prefix(ctx, f"未知模式: {mode}")
 
     def validate_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:
         """校验输出文件。"""
@@ -297,4 +299,3 @@ class PIAgent(Agent):
 
         except Exception as e:
             return False, f"seed_external_resources.jsonl验证失败: {e}"
-

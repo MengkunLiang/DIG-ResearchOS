@@ -41,6 +41,7 @@ from ..tools.paper_utils import (
 from ._common import (
     load_project,
     load_jsonl,
+    prepend_resume_prefix,
     validate_files_exist,
     validate_jsonl_schema,
     read_text_file,
@@ -149,13 +150,16 @@ class ScoutAgent(Agent):
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
         """初始用户消息，简短指令。"""
-        return (
+        return prepend_resume_prefix(
+            ctx,
+            (
             "请按 system prompt 执行 T2 文献普查。"
             "研究方向已写入 project.yaml。"
             "如有用户种子论文会在 user_seeds/seed_papers.jsonl 里，"
             "也请参考 seed_ideas.md 和 seed_external_resources.jsonl。"
             "目标产出 15-120 篇去重后论文，先完成 metadata verification，"
             "再额外生成 literature/deep_read_queue.jsonl。"
+            ),
         )
 
     def validate_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:

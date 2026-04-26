@@ -72,6 +72,33 @@ def test_build_execution_context_propagates_mode_phase_and_round(tmp_workspace):
     assert ctx.extra["round"] == 2
 
 
+def test_build_execution_context_injects_generic_recovery_snapshot(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T6
+        states:
+          T6:
+            agent: novelty
+            outputs:
+              novelty_report: novelty/novelty_report.md
+              collision_cases: novelty/collision_cases.md
+              must_add_baselines: novelty/must_add_baselines.md
+        """,
+    )
+    (tmp_workspace / "novelty").mkdir(parents=True)
+    (tmp_workspace / "novelty" / "novelty_report.md").write_text("# report\n", encoding="utf-8")
+    sm = StateMachine(config)
+    state = sm.create_initial_state("p1")
+
+    ctx = sm.build_execution_context(tmp_workspace, state)
+
+    assert ctx.extra["resume_mode"] is True
+    assert "novelty_report" in ctx.extra["resume_existing_outputs"]
+    assert "must_add_baselines" in ctx.extra["resume_missing_outputs"]
+
+
 def test_advance_enters_gate_and_resolve_branch_increments_iteration(tmp_workspace):
     config = tmp_workspace / "fsm.yaml"
     gates = tmp_workspace / "gates.yaml"

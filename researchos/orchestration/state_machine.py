@@ -24,6 +24,7 @@ from ..runtime.agent import (
     LLMConfigOverride,
     ToolPolicyOverride,
 )
+from ..runtime.task_recovery import prepare_task_resume_artifacts
 from ..schemas.state import BudgetCumulative, GateState, StateYaml, TaskHistoryEntry
 from .gate_presenter import build_presentation
 from .task_io_contract import get_task_io
@@ -215,6 +216,15 @@ class StateMachine:
             # 保留旧字段以兼容现有代码
             extra["is_resume"] = True
             extra["resumed_from"] = resumed_from
+
+        # 所有 task 都统一生成恢复快照，让 pipeline resume 与单任务续跑共享同一语义。
+        recovery_info = prepare_task_resume_artifacts(
+            workspace_dir,
+            task_id=node.task_id,
+            outputs_expected=outputs,
+            base_extra=extra,
+        )
+        extra.update(recovery_info)
 
         ctx = ExecutionContext(
             workspace_dir=workspace_dir,

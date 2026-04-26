@@ -12,7 +12,7 @@ from pathlib import Path
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
-from ._common import load_project, read_text_file
+from ._common import load_project, prepend_resume_prefix, read_text_file
 
 
 class ReviewerAgent(Agent):
@@ -81,10 +81,13 @@ class ReviewerAgent(Agent):
     def initial_user_message(self, ctx: ExecutionContext) -> str:
         """生成审稿任务消息。"""
         round_num = self._round(ctx)
-        return (
+        return prepend_resume_prefix(
+            ctx,
+            (
             f"请执行 T8 Reviewer 第{round_num}轮审稿。\n\n"
             f"读取 drafts/paper.tex，生成 drafts/review_rounds/round_{round_num}.md。"
             "从内容完整性、技术准确性、写作质量、学术规范四个维度审查。"
+            ),
         )
 
     def validate_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:

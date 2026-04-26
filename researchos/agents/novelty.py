@@ -30,6 +30,7 @@ from ..runtime.agent_params import build_agent_spec
 from ..runtime.logger import get_logger
 from ..runtime.prompts import render_prompt
 from ._common import (
+    prepend_resume_prefix,
     load_project,
     read_text_file,
     validate_files_exist,
@@ -110,12 +111,15 @@ class NoveltyAgent(Agent):
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
         """初始用户消息。"""
-        return (
+        return prepend_resume_prefix(
+            ctx,
+            (
             "请执行 T6 新颖性验证任务。\n"
             "基于 T5 Pilot 实验结果和 T4 假设，检查每个假设的创新性，"
             "搜索近期相关工作，识别潜在撞车风险，补充必须的基线方法。\n"
             "产出 novelty/novelty_report.md、novelty/collision_cases.md（如有）和 "
             "novelty/must_add_baselines.md。"
+            ),
         )
 
     def _extract_mechanism_keywords(self, hypothesis: dict) -> list[str]:

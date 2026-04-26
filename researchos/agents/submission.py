@@ -13,7 +13,7 @@ from pathlib import Path
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
-from ._common import load_project, read_text_file
+from ._common import load_project, prepend_resume_prefix, read_text_file
 
 
 def check_anonymization(ctx: ExecutionContext) -> tuple[bool, str | None]:
@@ -94,10 +94,13 @@ class SubmissionAgent(Agent):
         project = load_project(ctx)
         target_venue = project.get("target_venue", "neurips")
 
-        return (
+        return prepend_resume_prefix(
+            ctx,
+            (
             f"请执行 T9 Submission Agent。\n\n"
             f"将 drafts/paper.tex 迁移到 {target_venue} 会议格式，"
             "执行匿名化检查，验证LaTeX编译，生成投稿包。"
+            ),
         )
 
     def validate_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:

@@ -12,7 +12,7 @@ from pathlib import Path
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
-from ._common import load_project, read_text_file
+from ._common import load_project, prepend_resume_prefix, read_text_file
 
 
 class WriterAgent(Agent):
@@ -108,40 +108,55 @@ class WriterAgent(Agent):
         phase = self._phase(ctx)
 
         if phase == "outline":
-            return (
+            return prepend_resume_prefix(
+                ctx,
+                (
                 "请执行 T8 Writer Phase 1: 生成论文大纲。\n\n"
                 "基于实验结果和文献综述，生成 drafts/outline.md。"
                 "大纲应包含：标题候选、Abstract要点、Introduction结构、"
                 "Related Work分类、Method结构、Experiments结构、Conclusion要点。"
+                ),
             )
         elif phase == "draft":
-            return (
+            return prepend_resume_prefix(
+                ctx,
+                (
                 "请执行 T8 Writer Phase 2: 生成论文初稿。\n\n"
                 "基于 drafts/outline.md，生成 drafts/paper.tex。"
                 "**重要**: 所有实验数字必须来自 experiments/results_summary.json，"
                 "所有引用必须存在于 literature/related_work.bib。"
+                ),
             )
         elif phase == "self_check":
-            return (
+            return prepend_resume_prefix(
+                ctx,
+                (
                 "请执行 T8 Writer Phase 3: 论文自查。\n\n"
                 "读取 drafts/paper.tex，生成 drafts/self_check.md。"
                 "检查内容完整性、数字准确性、引用完整性、格式规范。"
+                ),
             )
         elif phase == "revise":
             round_num = ctx.extra.get("round", 1) if ctx.extra else 1
-            return (
+            return prepend_resume_prefix(
+                ctx,
+                (
                 f"请执行 T8 Writer Phase 4: 修订论文（第{round_num}轮）。\n\n"
                 f"根据 drafts/review_rounds/round_{round_num}.md 的审稿意见，"
                 "修订 drafts/paper.tex。"
+                ),
             )
         elif phase == "final":
-            return (
+            return prepend_resume_prefix(
+                ctx,
+                (
                 "请执行 T8 Writer Phase 5: 生成最终版。\n\n"
                 "根据 drafts/user_corrections.md 的用户标注，"
                 "生成最终版 drafts/paper.tex。"
+                ),
             )
         else:
-            return f"请执行 T8 Writer（phase={phase}）。"
+            return prepend_resume_prefix(ctx, f"请执行 T8 Writer（phase={phase}）。")
 
     def validate_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:
         """校验输出文件。"""

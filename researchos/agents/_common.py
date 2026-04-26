@@ -176,6 +176,61 @@ def write_text_file(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def build_resume_prefix(ctx: "ExecutionContext") -> str:
+    """为所有 Agent 生成统一的恢复提示前缀。
+
+    设计原则：
+    - 先让 Agent 看到“已有内容不要浪费”；
+    - 再告诉它“还缺哪些声明产物”；
+    - 最后明确要求增量补全，而不是默认整份重写。
+    """
+
+    if not ctx.extra.get("resume_mode"):
+        return ""
+
+    existing_outputs = list(ctx.extra.get("resume_existing_outputs", []))
+    missing_outputs = list(ctx.extra.get("resume_missing_outputs", []))
+    existing_artifacts = list(ctx.extra.get("resume_existing_artifacts", []))
+    resume_state_path = str(ctx.extra.get("resume_state_path", "")).strip()
+    resume_reason = str(ctx.extra.get("resume_reason", "")).strip()
+
+    lines = [
+        "[恢复运行] 这是一次续跑。必须先读取已有产物，在现有内容基础上增量完成，不要忽略之前已经做出的结果。",
+    ]
+    if resume_state_path:
+        lines.append(f"- 恢复状态文件：`{resume_state_path}`")
+    if resume_reason:
+        lines.append(f"- 恢复原因：`{resume_reason}`")
+    if existing_outputs:
+        lines.append(f"- 已有输出：`{'`, `'.join(existing_outputs)}`")
+    if missing_outputs:
+        lines.append(f"- 待补输出：`{'`, `'.join(missing_outputs)}`")
+    if existing_artifacts:
+        lines.append(
+            "- 已存在的可复用文件（节选）：`"
+            + "`, `".join(existing_artifacts[:8])
+            + "`"
+        )
+
+    lines.extend(
+        [
+            "- 先检查已有文件内容是否可复用；只有现有内容明显损坏、为空或与当前任务冲突时，才允许重写。",
+            "- 对已存在且内容合理的文件，优先补充、修订或续写，不要为了“重来一遍”而覆盖已有工作。",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def prepend_resume_prefix(ctx: "ExecutionContext", message: str) -> str:
+    """把通用恢复提示拼到 Agent 的初始用户消息前面。"""
+
+    prefix = build_resume_prefix(ctx)
+    if not prefix:
+        return message
+    return prefix + "\n" + message
+
+
 # ══════════════════════════════════════════════════════
 # 5. Findings.md 模式（Token 优化）
 # ══════════════════════════════════════════════════════

@@ -119,6 +119,30 @@ def test_novelty_initial_user_message(novelty_agent, temp_workspace):
     assert "pilot" in msg.lower() or "Pilot" in msg
 
 
+def test_novelty_initial_user_message_resume_mode(novelty_agent, temp_workspace):
+    """恢复运行时，应明确要求复用已有内容并只补缺口。"""
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T6",
+        run_id="test-run-resume",
+        mode=None,
+        extra={
+            "resume_mode": True,
+            "resume_state_path": "_runtime/resume/t6_resume_state.json",
+            "resume_reason": "retry_after_failure",
+            "resume_existing_outputs": ["novelty_report", "collision_cases"],
+            "resume_missing_outputs": ["must_add_baselines"],
+            "resume_existing_artifacts": ["novelty/novelty_report.md"],
+        },
+    )
+
+    msg = novelty_agent.initial_user_message(ctx)
+    assert "恢复运行" in msg
+    assert "must_add_baselines" in msg
+    assert "不要" in msg
+
+
 def test_validate_outputs_success(novelty_agent, temp_workspace):
     """测试输出校验（成功场景）。"""
     # 创建project.yaml
