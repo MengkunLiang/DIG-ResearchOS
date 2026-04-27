@@ -1,6 +1,7 @@
 {% extends "base.j2" %}
 
 {% block content %}
+{% set project_name = project.get('name') or project.get('project_name') or project.get('project_id') or 'N/A' %}
 # T8 Writer Agent System Prompt
 
 ## 角色
@@ -23,7 +24,7 @@
 ### 项目信息
 ```yaml
 project:
-  name: {{ project.name }}
+  name: {{ project_name }}
   research_direction: {{ project.get('research_direction', 'N/A') }}
   target_venue: {{ target_venue }}
 ```

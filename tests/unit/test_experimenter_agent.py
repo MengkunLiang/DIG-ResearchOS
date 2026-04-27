@@ -290,6 +290,74 @@ exp_h1_ablation3,H1,replace_with_baseline,accuracy,0.81,0.85,-0.04
     assert ok, f"校验失败: {err}"
 
 
+def test_validate_outputs_accepts_legacy_seeds_field(experimenter_agent, mock_workspace):
+    """兼容旧版 results_summary：使用 seeds 数组而不是 seed_runs。"""
+
+    ctx = ExecutionContext(
+        workspace_dir=mock_workspace,
+        project_id="test_project",
+        task_id="T7",
+        run_id="test_run_legacy_seeds",
+        mode="full",
+        extra={},
+    )
+
+    experiments_dir = mock_workspace / "experiments"
+    experiments_dir.mkdir()
+
+    results_data = {
+        "exp_plan_ref": "ideation/exp_plan.yaml",
+        "total_experiments": 2,
+        "completed": 2,
+        "failed": 0,
+        "experiments": [
+            {
+                "experiment_id": "full_exp1_synthetic",
+                "name": "SyntheticDataValidation",
+                "hypothesis_ref": "H2",
+                "tier": "headline",
+                "status": "DONE",
+                "metrics": {"acc": 0.8},
+                "seeds": [42, 43, 44],
+                "quality_status": "ok",
+            },
+            {
+                "experiment_id": "full_exp3_scale",
+                "name": "MemoryScaleEffect",
+                "hypothesis_ref": "H3",
+                "tier": "final_method",
+                "status": "DONE",
+                "metrics": {"acc": 0.82},
+                "seeds": [42, 43],
+                "quality_status": "ok",
+            },
+        ],
+    }
+    (experiments_dir / "results_summary.json").write_text(
+        json.dumps(results_data, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    (experiments_dir / "ablations.csv").write_text(
+        "experiment_id,hypothesis_ref,ablation_type,metric,value,baseline_value,delta\n"
+        "a,H1,x,acc,0.8,0.82,-0.02\n"
+        "b,H1,y,acc,0.79,0.82,-0.03\n"
+        "c,H2,z,acc,0.78,0.82,-0.04\n",
+        encoding="utf-8",
+    )
+    (experiments_dir / "docker_digests.txt").write_text(
+        "pytorch/pytorch:2.0.0-cuda11.7-cudnn8-runtime@sha256:abc123\n",
+        encoding="utf-8",
+    )
+    (experiments_dir / "seed_ensemble_summary.json").write_text(
+        json.dumps({"headline_experiments": [{"experiment_id": "full_exp1_synthetic"}]}),
+        encoding="utf-8",
+    )
+    (experiments_dir / "iteration_diversity_check.md").write_text("# check\n\nok\n", encoding="utf-8")
+    (experiments_dir / "iteration_log.md").write_text("# 实验日志\n\n" + ("x" * 200), encoding="utf-8")
+
+    ok, err = experimenter_agent.validate_outputs(ctx)
+    assert ok, f"校验失败: {err}"
+
+
 def test_validate_outputs_missing_results(experimenter_agent, mock_workspace):
     """测试输出校验（缺少results_summary.json）。"""
     ctx = ExecutionContext(

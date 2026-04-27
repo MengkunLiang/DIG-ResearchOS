@@ -401,16 +401,16 @@ agents:
     modes:
       outline:
         description: 生成大纲
-        max_steps: 30
-        max_tokens_total: 100000
+        max_steps: 300
+        max_tokens_total: 1000000
       draft:
         description: 生成初稿
-        max_steps: 50
-        max_tokens_total: 250000
+        max_steps: 500
+        max_tokens_total: 2500000
       revise:
         description: 修订
-        max_steps: 30
-        max_tokens_total: 150000
+        max_steps: 300
+        max_tokens_total: 1500000
     latex_required: true
 
   reviewer:
@@ -420,8 +420,8 @@ agents:
       max_context: 128000
       tier: heavy
       temperature: 0.3
-    max_steps: 80
-    max_tokens_total: 600000
+    max_steps: 200
+    max_tokens_total: 6000000
     max_wall_seconds: 1200
     max_validation_retries: 10
     tool_names:
@@ -449,8 +449,8 @@ agents:
       max_context: 128000
       tier: medium
       temperature: 0.3
-    max_steps: 100
-    max_tokens_total: 500000
+    max_steps: 300
+    max_tokens_total: 5000000
     max_wall_seconds: 600
     max_validation_retries: 10
     tool_names:

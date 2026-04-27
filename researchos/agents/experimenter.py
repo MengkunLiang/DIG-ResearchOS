@@ -634,25 +634,35 @@ class ExperimenterAgent(Agent):
             # 为什么需要：多 seed 平均可以减少随机性影响，提高结果可靠性
             # 检查逻辑：headline 实验至少 3 个 seed，final_method 实验至少 2 个 seed
             # 失败影响：结果可能受随机性影响，不够可靠
+            def _seed_count(exp: dict) -> int:
+                """兼容两种结果格式：`seed_runs`（新）与 `seeds`（旧/简化）。"""
+
+                seed_runs = exp.get("seed_runs")
+                if isinstance(seed_runs, list) and seed_runs:
+                    return len(seed_runs)
+                seeds = exp.get("seeds")
+                if isinstance(seeds, list):
+                    return len(seeds)
+                return 0
 
             # 检查 headline 实验（必须 3 个 seed）
             headline_exps = [e for e in experiments if e.get("tier") == "headline"]
             for exp in headline_exps:
-                seed_runs = exp.get("seed_runs", [])
-                if len(seed_runs) < 3:
+                seed_count = _seed_count(exp)
+                if seed_count < 3:
                     return False, (
                         f"headline 实验 {exp.get('experiment_id', 'unknown')} 必须至少 3 个 seed，"
-                        f"当前 {len(seed_runs)} 个（§3.3）"
+                        f"当前 {seed_count} 个（§3.3）"
                     )
 
             # 检查 final_method 实验（必须 2 个 seed）
             final_exps = [e for e in experiments if e.get("tier") == "final_method"]
             for exp in final_exps:
-                seed_runs = exp.get("seed_runs", [])
-                if len(seed_runs) < 2:
+                seed_count = _seed_count(exp)
+                if seed_count < 2:
                     return False, (
                         f"final_method 实验 {exp.get('experiment_id', 'unknown')} 必须至少 2 个 seed，"
-                        f"当前 {len(seed_runs)} 个（§3.3）"
+                        f"当前 {seed_count} 个（§3.3）"
                     )
 
             # 5. 迭代多样性检查（§5.1 - 鲁棒性要求）
