@@ -309,6 +309,8 @@ agents:
       - ideation/
       - literature/
       - pilot/
+      # T6 需要读取自己上次已生成的 novelty 草稿，才能真正续跑而不是盲目重写。
+      - novelty/
     allowed_write_prefixes:
       - novelty/
     prompt_template: novelty.j2
