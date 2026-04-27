@@ -353,3 +353,45 @@ profiles:
         "openai/deepseek-ai/DeepSeek-V4-Flash",
         "openai/Pro/MiniMaxAI/MiniMax-M2.5",
     ]
+
+
+def test_resolve_keeps_fallback_chain_when_only_max_context_is_overridden(tmp_path):
+    routing = tmp_path / "model_routing.yaml"
+    routing.write_text(
+        """
+default_profile: default
+
+endpoints:
+  siliconflow:
+    provider: openai
+    api_key_env: TEST_API_KEY
+
+profiles:
+  default:
+    medium:
+      primary:
+        model: deepseek-ai/DeepSeek-V4-Flash
+        endpoint: siliconflow
+        max_context: 64000
+      fallback:
+        - model: Pro/MiniMaxAI/MiniMax-M2.5
+          endpoint: siliconflow
+          max_context: 64000
+""".strip(),
+        encoding="utf-8",
+    )
+
+    client = LLMClient(routing)
+    resolved = client.resolve(
+        profile="default",
+        tier="medium",
+        model_override=None,
+        endpoint_override=None,
+        max_context_override=128000,
+    )
+
+    assert [binding.model for binding, _ in resolved] == [
+        "deepseek-ai/DeepSeek-V4-Flash",
+        "Pro/MiniMaxAI/MiniMax-M2.5",
+    ]
+    assert [binding.max_context for binding, _ in resolved] == [128000, 128000]

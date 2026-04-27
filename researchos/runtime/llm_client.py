@@ -294,7 +294,11 @@ class LLMClient:
         - 第一个是 primary；
         - 后续是 fallback。
         """
-        if model_override is not None or endpoint_override is not None or max_context_override is not None:
+        # 只有“改模型”或“改 endpoint”时，才需要把候选链压缩成单条绑定。
+        # 单独覆盖 max_context 时，fallback 仍然应该保留；否则像 experimenter
+        # 这类在 YAML 里显式设置 llm.max_context 的 agent，会被错误地降成
+        # “只有 primary、没有 fallback”的单模型调用。
+        if model_override is not None or endpoint_override is not None:
             binding, endpoint = self._resolve_override_binding(
                 profile=profile,
                 tier=tier,
@@ -312,6 +316,19 @@ class LLMClient:
             raise ConfigurationError(f"Profile '{profile_name}' has no tier '{tier}'")
         out = [(tier_cfg.primary, self.endpoints[tier_cfg.primary.endpoint])]
         out.extend((binding, self.endpoints[binding.endpoint]) for binding in tier_cfg.fallback)
+        if max_context_override is not None:
+            # 这里需要给整条候选链统一套用上下文上限，而不是只保留 primary。
+            out = [
+                (
+                    ModelBinding(
+                        model=binding.model,
+                        endpoint=binding.endpoint,
+                        max_context=int(max_context_override),
+                    ),
+                    endpoint,
+                )
+                for binding, endpoint in out
+            ]
         return out
 
     def _resolve_override_binding(

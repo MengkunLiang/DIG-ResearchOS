@@ -363,10 +363,10 @@ agents:
           motivation_validation_required: true
       full:
         description: 完整实验
-        max_steps: 150
-        max_tokens_total: 3000000
+        max_steps: 500
+        max_tokens_total: 30000000
         max_wall_seconds: 14400
-        max_validation_retries: 2
+        max_validation_retries: 5
         docker_required: true
         gpu_required: true
         expected_outputs:
