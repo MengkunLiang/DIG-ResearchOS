@@ -195,6 +195,7 @@ states:
       exp_plan: ideation/exp_plan.yaml               # 实验计划
       pilot_results: pilot/pilot_results.json       # 试点结果
       motivation_validation: pilot/motivation_validation.md  # 动机验证
+      novelty_audit: ideation/novelty_audit.md      # T4.5 新颖性预审结果
       comparison_table: literature/comparison_table.csv # 方法对比表
       synthesis: literature/synthesis.md             # 文献综述
     outputs:

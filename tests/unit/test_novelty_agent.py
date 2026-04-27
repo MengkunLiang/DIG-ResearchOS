@@ -56,6 +56,7 @@ def test_novelty_agent_spec(novelty_agent):
     assert "ideation/" in spec.allowed_read_prefixes
     assert "literature/" in spec.allowed_read_prefixes
     assert "pilot/" in spec.allowed_read_prefixes
+    assert "novelty/" in spec.allowed_read_prefixes
     assert "novelty/" in spec.allowed_write_prefixes
     assert spec.max_steps == 100
     assert spec.max_tokens_total == 600_000
@@ -89,6 +90,18 @@ def test_novelty_system_prompt(novelty_agent, temp_workspace):
 """
     hyp_path.write_text(hyp_content)
 
+    # 创建 T4.5 审计结果，T6 应该把它作为增量复核的主参考之一
+    audit_path = temp_workspace / "ideation" / "novelty_audit.md"
+    audit_path.write_text(
+        """# 新颖性审计报告
+
+## H1
+原始新颖性等级: Level 1
+原始风险: Medium Overlap
+""",
+        encoding="utf-8",
+    )
+
     ctx = ExecutionContext(
         workspace_dir=temp_workspace,
         project_id="test_project",
@@ -102,6 +115,7 @@ def test_novelty_system_prompt(novelty_agent, temp_workspace):
     assert "Test research direction" in prompt
     assert "H1" in prompt
     assert "H2" in prompt
+    assert "原始新颖性等级" in prompt
 
 
 def test_novelty_initial_user_message(novelty_agent, temp_workspace):

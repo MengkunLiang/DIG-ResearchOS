@@ -321,6 +321,16 @@ class TestTaskIOContractConsistency:
             "T6 must_add_baselines path should match T7 input path"
         )
 
+    def test_t6_inputs_include_t45_novelty_audit(self):
+        """T6 应显式读取 T4.5 的审计结果，而不是从零重跑一遍。"""
+        from researchos.orchestration.task_io_contract import get_task_io
+
+        t6_contract = get_task_io("T6")
+        inputs = t6_contract.get("inputs", {})
+
+        assert "novelty_audit" in inputs, "T6 should include novelty_audit input"
+        assert inputs["novelty_audit"] == "ideation/novelty_audit.md"
+
 
 class TestStateMachineModePropagation:
     """测试状态机的 mode 传递到 Experimenter。"""

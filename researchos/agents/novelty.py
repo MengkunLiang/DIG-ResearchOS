@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import re
 from pathlib import Path
 
@@ -61,7 +62,8 @@ class NoveltyAgent(Agent):
                     "max_wall_seconds": 600,
                     "max_validation_retries": 3,
                     "temperature": 0.3,
-                    "allowed_read_prefixes": ["", "ideation/", "literature/", "pilot/"],
+                    # T6 在恢复运行时需要读取 novelty/ 下已有草稿，否则只能“会写不会读”。
+                    "allowed_read_prefixes": ["", "ideation/", "literature/", "pilot/", "novelty/"],
                     "allowed_write_prefixes": ["novelty/"],
                     "prompt_template": "novelty.j2",
                 },
@@ -85,6 +87,10 @@ class NoveltyAgent(Agent):
         # 读取 Motivation Validation
         motivation = read_text_file(ws / "pilot" / "motivation_validation.md", default="")
 
+        # 读取 T4.5 审计结果。T6 的职责不是从零重跑一遍 novelty audit，
+        # 而是在已有审计基础上，结合 Pilot 证据做增量复核和补充 baseline。
+        novelty_audit = read_text_file(ws / "ideation" / "novelty_audit.md", default="")
+
         # 读取对比表
         comparison_table = read_text_file(ws / "literature" / "comparison_table.csv", default="")
 
@@ -93,6 +99,7 @@ class NoveltyAgent(Agent):
 
         # 提取假设 anchor
         anchors = re.findall(r"^#+\s*(H\d+)", hypotheses, re.MULTILINE)
+        recent_year_from = max(datetime.now().year - 1, 2000)
 
         return render_prompt(
             self.spec.prompt_template,
@@ -102,10 +109,12 @@ class NoveltyAgent(Agent):
             exp_plan_preview=exp_plan[:2000],
             pilot_results_preview=pilot_results[:2000],
             motivation_preview=motivation[:1500],
+            novelty_audit_preview=novelty_audit[:2500],
             comparison_table_preview=comparison_table[:1000],
             synthesis_preview=synthesis[:2000],
             hypothesis_count=len(anchors),
             hypothesis_anchors=anchors,
+            recent_year_from=recent_year_from,
             temperature=self.spec.temperature,
         )
 
@@ -115,8 +124,8 @@ class NoveltyAgent(Agent):
             ctx,
             (
             "请执行 T6 新颖性验证任务。\n"
-            "基于 T5 Pilot 实验结果和 T4 假设，检查每个假设的创新性，"
-            "搜索近期相关工作，识别潜在撞车风险，补充必须的基线方法。\n"
+            "先以 T4.5 的 novelty_audit.md 为主参考，再结合 T5 Pilot 实验结果，"
+            "更新高风险假设的新颖性判断，只做必要的增量搜索，识别潜在撞车风险并补充必须的基线方法。\n"
             "产出 novelty/novelty_report.md、novelty/collision_cases.md（如有）和 "
             "novelty/must_add_baselines.md。"
             ),
