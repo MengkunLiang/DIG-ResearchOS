@@ -3,6 +3,7 @@ from __future__ import annotations
 """AgentRunner 主循环。"""
 
 import asyncio
+import inspect
 import json
 from pathlib import Path
 import time
@@ -38,6 +39,10 @@ T2_AUTO_PERSIST_SEARCH_TOOLS = frozenset(
         "crossref_search",
     }
 )
+
+
+class HookExecutionError(RuntimeError):
+    """hook 执行失败时使用的统一异常。"""
 
 
 class AgentRunner:
@@ -148,11 +153,11 @@ class AgentRunner:
         validation_fails = 0
         budget_extensions_used = 0
 
-        # Pre-hooks在try块之前执行，失败时直接抛异常阻止运行
-        for hook in self.agent.spec.pre_hooks:
-            await hook(ctx)
-
         try:
+            # pre-hook 允许是同步或异步 callable；若返回 (ok, err) 且 ok=False，
+            # 这里会统一转换成可读错误，而不是让 CLI 因 await 非协程直接崩溃。
+            for hook in self.agent.spec.pre_hooks:
+                await self._run_pre_hook(hook, ctx)
             while True:
                 # 每进入一轮 while，就代表一次“agent step”。
                 budget.tick_step()
@@ -301,6 +306,9 @@ class AgentRunner:
             stop_reason = AgentResult.STOP_INTERRUPTED
             error_msg = "Cancelled"
             raise
+        except HookExecutionError as exc:
+            stop_reason = AgentResult.STOP_ERROR
+            error_msg = str(exc)
         except Exception as exc:  # pragma: no cover - safety net
             stop_reason = AgentResult.STOP_ERROR
             error_msg = f"Unexpected: {exc!r}"
@@ -324,11 +332,32 @@ class AgentRunner:
             )
             for hook in self.agent.spec.post_hooks:
                 try:
-                    await hook(ctx, result)
+                    await self._run_post_hook(hook, ctx, result)
                 except Exception:  # pragma: no cover - logging path
                     self.log.exception("post_hook_failed")
             trace.close(result)
         return result
+
+    async def _run_pre_hook(self, hook, ctx: ExecutionContext) -> None:
+        """兼容同步/异步 pre-hook，并解释常见返回值。"""
+        result = hook(ctx)
+        if inspect.isawaitable(result):
+            result = await result
+
+        if isinstance(result, tuple) and len(result) == 2:
+            ok, message = result
+            if not ok:
+                raise HookExecutionError(str(message or f"Pre-hook failed: {hook.__name__}"))
+            return
+
+        if result is False:
+            raise HookExecutionError(f"Pre-hook failed: {hook.__name__}")
+
+    async def _run_post_hook(self, hook, ctx: ExecutionContext, result: AgentResult) -> None:
+        """兼容同步/异步 post-hook。"""
+        outcome = hook(ctx, result)
+        if inspect.isawaitable(outcome):
+            await outcome
 
     async def _maybe_finalize_t2_outputs(
         self,

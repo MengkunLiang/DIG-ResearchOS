@@ -236,7 +236,31 @@ states:
       configs_dir: experiments/configs                  # 配置目录
       iteration_log: experiments/iteration_log.md     # 迭代日志
       ablations: experiments/ablations.csv            # 消融实验结果
-    next_on_success: T8-WRITE
+    next_on_success: T7.5
+    next_on_failure: failed
+
+  # T7.5 状态：PI 评估（Experiment Evaluation）
+  # 用途：在完整实验和论文写作之间增加一层 PI 评估与人工确认
+  # Agent：pi（evaluate 模式）
+  T7.5:
+    agent: pi
+    mode: evaluate
+    inputs:
+      results_summary: experiments/results_summary.json
+      iteration_log: experiments/iteration_log.md
+      exp_plan: ideation/exp_plan.yaml
+    outputs:
+      evaluation_decision: evaluation/evaluation_decision.md
+    llm:
+      profile: default
+      tier: heavy
+      temperature: 0.2
+    budget:
+      max_tokens: 80000
+    gate:
+      type: t75_human_review_gate
+    # 正常情况下 gate 会先拦截；保留 parse 目标作为兜底和“按 PI 推荐推进”的统一语义。
+    next_on_success: __parse_from_output__
     next_on_failure: failed
 
   # T8-WRITE 状态：论文写作（Paper Writing）

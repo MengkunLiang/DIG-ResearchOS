@@ -188,6 +188,11 @@ class PIAgent(Agent):
         if not any(keyword in content for keyword in ["Option", "next_task", "建议"]):
             return False, "evaluation_decision.md必须包含后续Options建议"
 
+        # T7.5 后续会把 human gate 的“按 PI 推荐推进”绑定到这里的 next_task。
+        # 因此评估报告必须显式给出至少一个 next_task，避免状态机无法解析推荐路径。
+        if "next_task" not in content:
+            return False, "evaluation_decision.md必须包含至少一个 next_task 字段"
+
         return True, None
 
     def _check_ethical_concerns(self, project_data: dict) -> tuple[bool, str | None]:

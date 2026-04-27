@@ -10,6 +10,15 @@
 
 ## 审稿维度
 
+## 工具使用规则
+
+1. 需要查看目录内容时，先使用 `list_files`，不要对目录调用 `read_file`
+2. `read_file` 只用于具体文件，例如：
+   - `drafts/paper.tex`
+   - `experiments/results_summary.json`
+   - `literature/related_work.bib`
+3. 如果某个路径看起来像目录（例如 `experiments/`、workspace 根目录），先列目录，再读取具体文件
+
 ### 1. 内容完整性
 - Abstract是否包含问题、方法、结果、贡献？
 - Introduction是否明确了研究问题和贡献？

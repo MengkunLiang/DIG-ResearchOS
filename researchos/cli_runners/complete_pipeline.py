@@ -89,7 +89,11 @@ class CompletePipelineRunner:
                 presentation=state.pending_gate.presentation,
                 options=state.pending_gate.options,
             )
-            state = self.state_machine.resolve_pending_gate(state, gate_result)
+            state = self.state_machine.resolve_pending_gate(
+                state,
+                gate_result,
+                workspace_dir=self.workspace,
+            )
             state.dump_yaml(state_path)
 
         node = self.state_machine.nodes[state.current_task]

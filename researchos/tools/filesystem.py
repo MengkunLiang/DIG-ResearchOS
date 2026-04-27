@@ -37,6 +37,15 @@ class ReadFileTool(Tool):
             return ToolResult(ok=False, content=str(exc), error="access_denied")
         except FileNotFoundError:
             return ToolResult(ok=False, content=f"File not found: {path}", error="not_found")
+        except IsADirectoryError:
+            return ToolResult(
+                ok=False,
+                content=(
+                    f"Path is a directory, not a file: {path}. "
+                    "Use list_files on the directory first, then read_file on a concrete file."
+                ),
+                error="is_directory",
+            )
         except UnicodeDecodeError:
             return ToolResult(ok=False, content=f"File is not UTF-8 text: {path}", error="not_text")
 
@@ -293,4 +302,3 @@ class ListFilesTool(Tool):
             return ToolResult(ok=True, content="\n".join(items), data={"items": items})
         except ToolAccessDenied as exc:
             return ToolResult(ok=False, content=str(exc), error="access_denied")
-

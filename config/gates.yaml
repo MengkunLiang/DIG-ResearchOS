@@ -67,3 +67,36 @@ gates:
         - acknowledgments_section
         - author_name
         - institution_identifiable
+
+  # T7.5 评估后的人类确认门：
+  # 先展示 PI 生成的 evaluation_decision.md，再由人决定是否启动写论文、
+  # 继续补实验，或回到更上游重构假设。
+  t75_human_review_gate:
+    title: "T7.5 评估确认"
+    description: "PI 已完成实验评估。请结合评估报告确认下一步。"
+    presentation:
+      evaluation_decision:
+        from_file: evaluation/evaluation_decision.md
+        max_chars: 5000
+      recommended_next_task:
+        from_file_regex:
+          path: evaluation/evaluation_decision.md
+          pattern: "next_task:\\s*([A-Za-z0-9_.-]+)"
+          group: 1
+          default: "T8-WRITE"
+    options:
+      - id: follow_recommendation
+        label: "按 PI 推荐推进"
+        next: "__parse_from_output__"
+      - id: go_write
+        label: "直接启动写作"
+        next: T8-WRITE
+      - id: rerun_t7
+        label: "回到 T7 补实验"
+        next: T7
+      - id: rethink_t4
+        label: "回到 T4 重构假设"
+        next: T4
+      - id: stop_project
+        label: "结束当前项目"
+        next: done

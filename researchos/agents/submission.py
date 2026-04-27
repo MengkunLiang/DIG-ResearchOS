@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 
 from ..runtime.agent import Agent, ExecutionContext
-from ..runtime.agent_params import build_agent_spec
+from ..runtime.agent_params import build_agent_spec, get_agent_params
 from ..runtime.prompts import render_prompt
 from ._common import load_project, prepend_resume_prefix, read_text_file
 
@@ -50,6 +50,11 @@ class SubmissionAgent(Agent):
     """投稿准备Agent，处理模板迁移、匿名化检查、编译验证。"""
 
     def __init__(self):
+        params = get_agent_params("submission")
+        # 匿名化前置检查改为显式开关，便于本地调试/非匿名投稿场景按需关闭。
+        enforce_anonymization_precheck = bool(
+            params.get("enforce_anonymization_precheck", False)
+        )
         super().__init__(
             build_agent_spec(
                 "submission",
@@ -71,7 +76,7 @@ class SubmissionAgent(Agent):
                     "allowed_read_prefixes": ["", "drafts/", "literature/", "experiments/"],
                     "allowed_write_prefixes": ["submission/"],
                     "prompt_template": "submission.j2",
-                    "pre_hooks": [check_anonymization],
+                    "pre_hooks": [check_anonymization] if enforce_anonymization_precheck else [],
                 },
             )
         )

@@ -28,3 +28,28 @@ def test_gate_presenter_builds_file_dir_state_and_literal(tmp_workspace):
     assert len(presentation["bundle"]) == 1
     assert presentation["cost"] == 1.23
     assert presentation["hint"] == "go"
+
+
+def test_gate_presenter_supports_regex_extraction_from_file(tmp_workspace):
+    (tmp_workspace / "evaluation").mkdir()
+    (tmp_workspace / "evaluation" / "evaluation_decision.md").write_text(
+        "## Option 1\nnext_task: T7\n",
+        encoding="utf-8",
+    )
+
+    gate_spec = {
+        "presentation": {
+            "recommended_next_task": {
+                "from_file_regex": {
+                    "path": "evaluation/evaluation_decision.md",
+                    "pattern": r"next_task:\s*([A-Za-z0-9_.-]+)",
+                    "group": 1,
+                    "default": "T8-WRITE",
+                }
+            }
+        }
+    }
+
+    presentation = build_presentation(gate_spec, {}, tmp_workspace)
+
+    assert presentation["recommended_next_task"] == "T7"

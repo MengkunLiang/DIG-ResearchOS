@@ -26,6 +26,7 @@ class ReviewerAgent(Agent):
                     "model_tier": "heavy",
                     "tool_names": [
                         "read_file",
+                        "list_files",
                         "write_file",
                         "finish_task",
                     ],

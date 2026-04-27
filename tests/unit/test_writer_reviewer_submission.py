@@ -236,6 +236,7 @@ def test_reviewer_agent_initialization():
     assert agent.spec.max_steps == params["max_steps"]
     assert agent.spec.max_tokens_total == params["max_tokens_total"]
     assert "read_file" in agent.spec.tool_names
+    assert "list_files" in agent.spec.tool_names
     assert "drafts/review_rounds/" in agent.spec.allowed_write_prefixes
 
 
@@ -342,9 +343,9 @@ def test_submission_agent_initialization():
     assert agent.spec.max_tokens_total == params["max_tokens_total"]
     assert "docker_exec" in agent.spec.tool_names
     assert "submission/" in agent.spec.allowed_write_prefixes
-    # 检查 pre_hooks 包含 check_anonymization 函数
+    # 默认关闭匿名化前置检查，避免本地调试或非匿名投稿流程被直接拦截。
     hook_names = [h.__name__ if callable(h) else str(h) for h in agent.spec.pre_hooks]
-    assert "check_anonymization" in hook_names
+    assert "check_anonymization" not in hook_names
 
 
 def test_submission_initial_message(temp_workspace):

@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 import uuid
 from typing import Any
 
@@ -336,18 +337,30 @@ class StateMachine:
             state.status = "WAITING_HUMAN"
             return state
 
-        return self._transition_to_next(state, node.next_on_success)
+        return self._transition_to_next(state, node.next_on_success, workspace_dir=workspace_dir)
 
-    def resolve_pending_gate(self, state: StateYaml, gate_result: dict[str, Any]) -> StateYaml:
+    def resolve_pending_gate(
+        self,
+        state: StateYaml,
+        gate_result: dict[str, Any],
+        *,
+        workspace_dir: Path | None = None,
+    ) -> StateYaml:
         """处理一个已挂起 gate 的用户选择。"""
         if state.pending_gate is None:
             raise ValueError("No pending gate to resolve")
         node = self.nodes[state.current_task]
-        next_task = self._resolve_branch(node, gate_result, state)
+        next_task = self._resolve_branch(node, gate_result, state, workspace_dir=workspace_dir)
         state.pending_gate = None
-        return self._transition_to_next(state, next_task)
+        return self._transition_to_next(state, next_task, workspace_dir=workspace_dir)
 
-    def _transition_to_next(self, state: StateYaml, next_task: str | None) -> StateYaml:
+    def _transition_to_next(
+        self,
+        state: StateYaml,
+        next_task: str | None,
+        *,
+        workspace_dir: Path | None = None,
+    ) -> StateYaml:
         """统一处理正常 next / terminal next / 特殊占位 next。"""
         if next_task is None or next_task == "__terminal__":
             state.status = "COMPLETED"
@@ -355,6 +368,12 @@ class StateMachine:
         if next_task == "__fail__":
             state.status = "FAILED"
             return state
+
+        next_task = self._resolve_special_target(
+            current_task=state.current_task,
+            next_task=next_task,
+            workspace_dir=workspace_dir,
+        )
 
         target = self.nodes[next_task]
         state.current_task = next_task
@@ -375,7 +394,14 @@ class StateMachine:
             raise KeyError(f"Gate '{gate_id}' not found in gates config")
         return gate
 
-    def _resolve_branch(self, node: TaskNode, gate_result: dict[str, Any], state: StateYaml) -> str:
+    def _resolve_branch(
+        self,
+        node: TaskNode,
+        gate_result: dict[str, Any],
+        state: StateYaml,
+        *,
+        workspace_dir: Path | None = None,
+    ) -> str:
         """根据 gate 选择计算下一跳。
 
         支持两类配置：
@@ -400,6 +426,12 @@ class StateMachine:
         if next_state is None:
             raise KeyError(f"Gate option '{option_id}' has no branch mapping")
 
+        next_state = self._resolve_special_target(
+            current_task=state.current_task,
+            next_task=next_state,
+            workspace_dir=workspace_dir,
+        )
+
         # 如果 next_state 指向一个之前成功跑过的 task，则记为一次“正常迭代”。
         if next_state in self.nodes and self._is_iteration(next_state, state):
             state.iteration_count[next_state] = state.iteration_count.get(next_state, 0) + 1
@@ -410,6 +442,49 @@ class StateMachine:
                 if "ITER_LIMIT_GATE" in self.nodes:
                     return "ITER_LIMIT_GATE"
         return next_state
+
+    def _resolve_special_target(
+        self,
+        *,
+        current_task: str,
+        next_task: str,
+        workspace_dir: Path | None,
+    ) -> str:
+        """解析状态机里的特殊占位目标。"""
+        if next_task != "__parse_from_output__":
+            return next_task
+        if workspace_dir is None:
+            raise ValueError("workspace_dir is required for __parse_from_output__ targets")
+
+        if current_task == "T7.5":
+            return self._parse_t75_decision(workspace_dir)
+
+        raise ValueError(f"Unsupported __parse_from_output__ task: {current_task}")
+
+    def _parse_t75_decision(self, workspace_dir: Path) -> str:
+        """T7.5 完成后，解析 evaluation_decision.md 的推荐下一步。"""
+
+        decision_path = workspace_dir / "evaluation" / "evaluation_decision.md"
+        if not decision_path.exists():
+            return "T8-WRITE"
+
+        text = decision_path.read_text(encoding="utf-8", errors="replace")
+        match = re.search(r"next_task:\s*([A-Za-z0-9_.-]+)", text, re.DOTALL)
+        if match is None:
+            return "T8-WRITE"
+
+        raw_target = match.group(1).strip()
+        aliases = {
+            "T8": "T8-WRITE",
+            "terminate": "done",
+            "terminal": "done",
+            "stop": "done",
+            "end": "done",
+        }
+        target = aliases.get(raw_target, raw_target)
+        if target not in self.nodes:
+            return "T8-WRITE"
+        return target
 
     @staticmethod
     def _find_option(gate_spec: dict[str, Any], option_id: str | None) -> dict[str, Any] | None:
@@ -471,7 +546,7 @@ class StateMachine:
     ) -> None:
         if target is None:
             return
-        if target in {"__terminal__", "__fail__"}:
+        if target in {"__terminal__", "__fail__", "__parse_from_output__"}:
             return
         if target not in self.nodes:
             errors.append(f"{task_id}: {field_name} points to unknown node '{target}'")

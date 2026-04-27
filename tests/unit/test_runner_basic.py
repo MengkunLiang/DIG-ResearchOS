@@ -20,6 +20,27 @@ class MinimalAgent(Agent):
         return "echo then finish"
 
 
+class SyncPreHookAgent(Agent):
+    def __init__(self):
+        def sync_pre_hook(_ctx):
+            return False, "pre-hook blocked run"
+
+        super().__init__(
+            AgentSpec(
+                name="sync-prehook-test",
+                model_tier="medium",
+                tool_names=["finish_task"],
+                pre_hooks=[sync_pre_hook],
+            )
+        )
+
+    def system_prompt(self, ctx):
+        return "You are a test agent."
+
+    def initial_user_message(self, ctx):
+        return "finish"
+
+
 class RecordingLLMClient(MockLLMClient):
     def __init__(self, responses):
         super().__init__(responses=responses)
@@ -197,3 +218,21 @@ async def test_budget_extension_gate_can_stop_run(tmp_workspace, registry):
     assert not result.ok
     assert result.stop_reason == AgentResult.STOP_BUDGET
     assert any(call[0] == "gate" for call in human.calls)
+
+
+@pytest.mark.asyncio
+async def test_sync_pre_hook_failure_is_reported_cleanly(tmp_workspace, registry):
+    llm = MockLLMClient(responses=[])
+    ctx = ExecutionContext(
+        workspace_dir=tmp_workspace,
+        project_id="p1",
+        task_id="T9",
+        run_id="r_sync_hook",
+    )
+    runner = AgentRunner(SyncPreHookAgent(), registry, llm, MockHumanInterface())
+
+    result = await runner.run(ctx)
+
+    assert not result.ok
+    assert result.stop_reason == AgentResult.STOP_ERROR
+    assert result.error == "pre-hook blocked run"

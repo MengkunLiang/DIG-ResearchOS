@@ -209,6 +209,79 @@ def test_gate_option_extra_flows_into_task_context(tmp_workspace):
     assert state.task_context["chosen_direction"] == 2
 
 
+def test_t75_gate_can_follow_recommended_next_task_from_output(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    gates = tmp_workspace / "gates.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T7.5
+        states:
+          T7.5:
+            agent: pi
+            mode: evaluate
+            inputs:
+              results_summary: experiments/results_summary.json
+              iteration_log: experiments/iteration_log.md
+              exp_plan: ideation/exp_plan.yaml
+            outputs:
+              evaluation_decision: evaluation/evaluation_decision.md
+            gate: t75_gate
+            next_on_success: __parse_from_output__
+          T7:
+            agent: experimenter
+          T8-WRITE:
+            agent: writer
+          done:
+            terminal: true
+          failed:
+            terminal: true
+        """,
+    )
+    _write_yaml(
+        gates,
+        """
+        gates:
+          t75_gate:
+            options:
+              - id: follow_recommendation
+                label: Follow
+                next: __parse_from_output__
+        """,
+    )
+    (tmp_workspace / "evaluation").mkdir()
+    (tmp_workspace / "evaluation" / "evaluation_decision.md").write_text(
+        "# T7.5\n\n## Option 1\nnext_task: T8-WRITE\n",
+        encoding="utf-8",
+    )
+
+    sm = StateMachine(config, gates)
+    state = sm.create_initial_state("p1")
+    state = sm.start_task(state, "run_1")
+    result = AgentResult(
+        ok=True,
+        message="done",
+        outputs_produced={},
+        steps_used=1,
+        tokens_in=1,
+        tokens_out=1,
+        cost_usd=0.0,
+        duration_seconds=0.1,
+        stop_reason=AgentResult.STOP_FINISHED,
+    )
+
+    state = sm.advance(state, result, workspace_dir=tmp_workspace)
+    assert state.status == "WAITING_HUMAN"
+
+    state = sm.resolve_pending_gate(
+        state,
+        {"option_id": "follow_recommendation", "captured": {}},
+        workspace_dir=tmp_workspace,
+    )
+    assert state.current_task == "T8-WRITE"
+    assert state.status == "RUNNING"
+
+
 def test_mark_interrupted_updates_state(tmp_workspace):
     config = tmp_workspace / "fsm.yaml"
     _write_yaml(

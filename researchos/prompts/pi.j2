@@ -148,7 +148,14 @@ seed_ensemble:
 - Situation 判定
 - 核心指标评估
 - 后续 Options 建议
+- 每个 Option 对应的 `next_task`
 - 风险分析
+
+`next_task` 必须使用当前状态机里的真实节点名，例如：
+- 推进写作：`T8-WRITE`
+- 回到完整实验：`T7`
+- 回到假设生成：`T4`
+- 结束项目：`done`
 
 ### Step 4: 调用 finish_task
 

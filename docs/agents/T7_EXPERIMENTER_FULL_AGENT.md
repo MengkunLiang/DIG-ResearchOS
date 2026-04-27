@@ -470,7 +470,7 @@ estimated_cost = gpu_hours * GPU_PRICES.get(gpu_type, 3.0)
 ## 与其他Agent的交互
 
 - **依赖**: T4 Ideation Agent（需要exp_plan.yaml）和 T6 Novelty Agent（需要novelt_report.md和must_add_baselines.md）
-- **被依赖**: T7.5 PI Agent（使用results_summary.json进行评估）
+- **下游主链**: T7 完成后默认进入 `T7.5`（PI evaluate），由 `evaluation/evaluation_decision.md` + human gate 决定是去 `T8-WRITE`、回 `T7`、回 `T4` 还是结束项目
 
 ## 已知限制和注意事项
 

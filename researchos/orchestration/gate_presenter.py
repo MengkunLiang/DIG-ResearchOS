@@ -62,6 +62,25 @@ def _resolve_rule(
         if limit is not None and len(text) > int(limit):
             return text[: int(limit)] + f"\n\n[... truncated from {len(text)} chars]"
         return text
+    if "from_file_regex" in rule:
+        spec = rule["from_file_regex"] or {}
+        path = workspace / str(spec.get("path", ""))
+        if not path.exists():
+            return spec.get("default", f"[file not found: {spec.get('path', '')}]")
+        import re
+
+        text = path.read_text(encoding="utf-8", errors="replace")
+        pattern = spec.get("pattern")
+        if not pattern:
+            return spec.get("default")
+        match = re.search(str(pattern), text, re.DOTALL | re.IGNORECASE)
+        if match is None:
+            return spec.get("default")
+        group = int(spec.get("group", 1))
+        try:
+            return match.group(group).strip()
+        except IndexError:
+            return spec.get("default")
     if "from_dir" in rule:
         dir_path = workspace / str(rule["from_dir"])
         if not dir_path.is_dir():

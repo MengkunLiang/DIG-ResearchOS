@@ -259,6 +259,7 @@ def test_validate_evaluate_outputs_success(pi_agent, temp_workspace):
 ## 后续Options
 
 ### Option 1: 推进T8写作
+next_task: T8-WRITE
 建议直接进入论文写作阶段。
 """
 
@@ -340,6 +341,39 @@ def test_validate_evaluate_outputs_missing_options(pi_agent, temp_workspace):
 
     assert not ok
     assert "Option" in err or "建议" in err
+
+
+def test_validate_evaluate_outputs_missing_next_task(pi_agent, temp_workspace):
+    """测试evaluate模式缺少 next_task 的情况。"""
+    eval_dir = temp_workspace / "evaluation"
+    eval_dir.mkdir()
+
+    decision_content = """
+# 实验评估报告
+
+## Situation: B (部分成功)
+
+## 后续Options
+
+### Option 1: 回到实验
+建议继续补实验。
+"""
+
+    (eval_dir / "evaluation_decision.md").write_text(decision_content, encoding="utf-8")
+
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test-project",
+        task_id="T7.5",
+        run_id="test-run-2",
+        mode="evaluate",
+        outputs_expected={"decision": eval_dir / "evaluation_decision.md"},
+    )
+
+    ok, err = pi_agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "next_task" in err
 
 
 def test_validate_init_outputs_seed_ensemble_with_paper_info(pi_agent, temp_workspace):
