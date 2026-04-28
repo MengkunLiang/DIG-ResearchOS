@@ -120,7 +120,7 @@ python3 -m researchos.cli
 使用方式：
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 bash infra/docker/build.sh
 ```
 
@@ -143,7 +143,7 @@ bash infra/docker/build.sh dev
 使用方式：
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 bash infra/docker/run.sh <command> [args...]
 ```
 
@@ -151,9 +151,9 @@ bash infra/docker/run.sh <command> [args...]
 
 ```bash
 bash infra/docker/run.sh selftest
-bash infra/docker/run.sh init-workspace --workspace /workspace
-bash infra/docker/run.sh run-task T3 --workspace /workspace
-bash infra/docker/run.sh run --workspace /workspace
+bash infra/docker/run.sh init-workspace --workspace /workspace/local-test2
+bash infra/docker/run.sh run-task T3 --workspace /workspace/local-test2
+bash infra/docker/run.sh run --workspace /workspace/local-test2
 bash infra/docker/run.sh bash
 ```
 
@@ -192,7 +192,7 @@ bash infra/docker/run.sh bash
 ### 5.1 标准构建
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 bash infra/docker/build.sh
 ```
 
@@ -253,32 +253,32 @@ docker images | grep researchos
 ### 6.1 最小运行
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 bash infra/docker/run.sh --help
 ```
 
 ### 6.2 初始化 workspace
 
 ```bash
-bash infra/docker/run.sh init-workspace --workspace /workspace --project-id demo --topic "demo topic"
+bash infra/docker/run.sh init-workspace --workspace /workspace/local-test2 --project-id local-test2 --topic "demo topic"
 ```
 
 注意：
 
-- 这里的 `/workspace` 是容器内路径
+- 这里的 `/workspace/local-test2` 是容器内路径
 - 实际落盘会回写到宿主机映射目录
 
 ### 6.3 跑完整流水线
 
 ```bash
-bash infra/docker/run.sh run --workspace /workspace
+bash infra/docker/run.sh run --workspace /workspace/local-test2
 ```
 
 ### 6.4 跑单阶段
 
 ```bash
-bash infra/docker/run.sh run-task T2 --workspace /workspace
-bash infra/docker/run.sh run-task T9 --workspace /workspace
+bash infra/docker/run.sh run-task T2 --workspace /workspace/local-test2
+bash infra/docker/run.sh run-task T9 --workspace /workspace/local-test2
 ```
 
 ### 6.5 手动 `docker run`（不用 `run.sh`）
@@ -288,9 +288,9 @@ bash infra/docker/run.sh run-task T9 --workspace /workspace
 初始化 workspace：
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 docker run --rm -it \
-  -v /home/liangmengkun/ResearchOS/workspace:/workspace \
+  -v ./workspace:/workspace \
   researchos/system:latest \
   init-workspace --workspace /workspace/local-test2 --project-id local-test2 --topic "agent memory retrieval"
 ```
@@ -298,9 +298,9 @@ docker run --rm -it \
 跑完整 pipeline：
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 docker run --rm -it \
-  -v /home/liangmengkun/ResearchOS/workspace:/workspace \
+  -v ./workspace:/workspace \
   -e SILICONFLOW_API_KEY="$SILICONFLOW_API_KEY" \
   -e OPENROUTER_API_KEY="$OPENROUTER_API_KEY" \
   -e OPENAI_API_KEY="$OPENAI_API_KEY" \
@@ -312,9 +312,9 @@ docker run --rm -it \
 单 task 调试：
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 docker run --rm -it \
-  -v /home/liangmengkun/ResearchOS/workspace:/workspace \
+  -v ./workspace:/workspace \
   -e SILICONFLOW_API_KEY="$SILICONFLOW_API_KEY" \
   researchos/system:latest \
   run-task T3 --workspace /workspace/local-test2
@@ -343,7 +343,7 @@ bash infra/docker/run.sh bash
 宿主机：
 
 ```text
-/home/liangmengkun/ResearchOS/workspace
+./workspace
 ```
 
 容器内：
@@ -355,7 +355,7 @@ bash infra/docker/run.sh bash
 ### 7.2 这意味着什么
 
 - 在容器内写入 `/workspace/local-test2/...`
-- 等价于在宿主机写入 `.../ResearchOS/workspace/local-test2/...`
+- 等价于在宿主机写入 `./workspace/local-test2/...`
 
 所以：
 
@@ -367,7 +367,7 @@ bash infra/docker/run.sh bash
 
 最常见的误解是：
 
-- 宿主机上你看到的是 `/home/liangmengkun/ResearchOS/workspace/local-test2`
+- 宿主机上你看到的是 `./workspace/local-test2`
 - 容器里 agent 看到的是 `/workspace/local-test2`
 
 这两个路径指向的是同一份数据。
@@ -544,13 +544,13 @@ cp .env.example .env
 ResearchOS 自己的主日志仍然在 workspace 里：
 
 ```bash
-tail -f /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
+tail -f ./workspace/local-test2/_runtime/logs/researchos.log
 ```
 
 trace 文件也仍然在 workspace 里：
 
 ```bash
-ls /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/traces
+ls ./workspace/local-test2/_runtime/traces
 ```
 
 如果你要看容器标准输出，可以直接观察当前终端，或者不用 `--rm` 时再配合 `docker logs`。
@@ -640,7 +640,7 @@ tail -n 80 main.log
 例如你挂载的是：
 
 ```bash
--v /home/liangmengkun/ResearchOS/workspace:/workspace
+-v ./workspace:/workspace
 ```
 
 那容器里正确路径就是：
@@ -684,14 +684,14 @@ tail -n 80 main.log
 ### 构建
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 bash infra/docker/build.sh
 ```
 
 ### 初始化项目
 
 ```bash
-bash infra/docker/run.sh init-workspace --workspace /workspace --project-id demo --topic "agent memory retrieval"
+bash infra/docker/run.sh init-workspace --workspace /workspace/local-test2 --project-id local-test2 --topic "agent memory retrieval"
 ```
 
 ### 全链运行
@@ -717,20 +717,20 @@ bash infra/docker/run.sh run-task T9 --workspace /workspace/local-test2
 ### 跑完整流水线
 
 ```bash
-bash infra/docker/run.sh run --workspace /workspace
+bash infra/docker/run.sh run --workspace /workspace/local-test2
 ```
 
 ### 续跑
 
 ```bash
-bash infra/docker/run.sh resume --workspace /workspace
+bash infra/docker/run.sh resume --workspace /workspace/local-test2
 ```
 
 ### 单阶段调试
 
 ```bash
-bash infra/docker/run.sh run-task T3 --workspace /workspace
-bash infra/docker/run.sh run-task T9 --workspace /workspace
+bash infra/docker/run.sh run-task T3 --workspace /workspace/local-test2
+bash infra/docker/run.sh run-task T9 --workspace /workspace/local-test2
 ```
 
 ### 容器内排查 LaTeX

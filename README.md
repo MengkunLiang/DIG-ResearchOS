@@ -162,7 +162,7 @@ Then run commands through the wrapper:
 
 ```bash
 bash infra/docker/run.sh selftest
-bash infra/docker/run.sh run-task T9 --workspace /workspace
+bash infra/docker/run.sh run-task T9 --workspace /workspace/local-test2
 ```
 
 See [docs/docker.md](./docs/docker.md) for full details.
@@ -215,27 +215,27 @@ python -m researchos.cli selftest
 
 ```bash
 python -m researchos.cli init-workspace \
-  --workspace ./workspace/demo \
-  --project-id demo \
+  --workspace ./workspace/local-test2 \
+  --project-id local-test2 \
   --topic "memory systems for llm agents"
 ```
 
 ### 4. Run a smoke task
 
 ```bash
-python -m researchos.cli run-task HELLO --workspace ./workspace/demo
+python -m researchos.cli run-task HELLO --workspace ./workspace/local-test2
 ```
 
 ### 5. Run the full pipeline
 
 ```bash
-python -m researchos.cli run --workspace ./workspace/demo
+python -m researchos.cli run --workspace ./workspace/local-test2
 ```
 
 ### 6. Resume an interrupted pipeline
 
 ```bash
-python -m researchos.cli resume --workspace ./workspace/demo
+python -m researchos.cli resume --workspace ./workspace/local-test2
 ```
 
 ## Typical Usage Patterns
@@ -246,17 +246,17 @@ Best when you want the complete workflow, including gates and transitions.
 
 ```bash
 python -m researchos.cli init-workspace \
-  --workspace ./workspace/project-a \
-  --project-id project-a \
+  --workspace ./workspace/local-test2 \
+  --project-id local-test2 \
   --topic "reflective memory for long-horizon llm agents"
 
-python -m researchos.cli run --workspace ./workspace/project-a
+python -m researchos.cli run --workspace ./workspace/local-test2
 ```
 
 If the run pauses or stops due to a gate, budget expansion decision, or intentional interruption:
 
 ```bash
-python -m researchos.cli resume --workspace ./workspace/project-a
+python -m researchos.cli resume --workspace ./workspace/local-test2
 ```
 
 ### Single-agent debugging
@@ -277,6 +277,12 @@ python -m researchos.cli run-task T8-WRITE \
   --from ./workspace/local-test2
 ```
 
+Notes:
+
+- `run` and `resume` advance the full state machine
+- `run-task` only executes one stage
+- but if you re-run `run-task` on the same workspace, many stages now continue from existing artifacts instead of starting from an empty slate
+
 ### Inspect status and trace
 
 ```bash
@@ -292,7 +298,7 @@ ResearchOS supports standalone skills through `SKILL.md`.
 Current commands:
 
 ```bash
-python -m researchos.cli list-skills --skills-root /absolute/path/to/ResearchOS/skills
+python -m researchos.cli list-skills --skills-root ./skills
 python -m researchos.cli run-skill deepxiv "summarize recent memory papers for llm agents"
 ```
 

@@ -170,7 +170,7 @@ bash infra/docker/build.sh
 
 ```bash
 bash infra/docker/run.sh selftest
-bash infra/docker/run.sh run-task T9 --workspace /workspace
+bash infra/docker/run.sh run-task T9 --workspace /workspace/local-test2
 ```
 
 完整说明见 [docs/docker.md](./docs/docker.md)。
@@ -223,27 +223,27 @@ python -m researchos.cli selftest
 
 ```bash
 python -m researchos.cli init-workspace \
-  --workspace ./workspace/demo \
-  --project-id demo \
+  --workspace ./workspace/local-test2 \
+  --project-id local-test2 \
   --topic "memory systems for llm agents"
 ```
 
 ### 4. 跑一个最小 smoke task
 
 ```bash
-python -m researchos.cli run-task HELLO --workspace ./workspace/demo
+python -m researchos.cli run-task HELLO --workspace ./workspace/local-test2
 ```
 
 ### 5. 跑完整流水线
 
 ```bash
-python -m researchos.cli run --workspace ./workspace/demo
+python -m researchos.cli run --workspace ./workspace/local-test2
 ```
 
 ### 6. 恢复中断任务
 
 ```bash
-python -m researchos.cli resume --workspace ./workspace/demo
+python -m researchos.cli resume --workspace ./workspace/local-test2
 ```
 
 ## 常见使用方式
@@ -254,17 +254,17 @@ python -m researchos.cli resume --workspace ./workspace/demo
 
 ```bash
 python -m researchos.cli init-workspace \
-  --workspace ./workspace/project-a \
-  --project-id project-a \
+  --workspace ./workspace/local-test2 \
+  --project-id local-test2 \
   --topic "reflective memory for long-horizon llm agents"
 
-python -m researchos.cli run --workspace ./workspace/project-a
+python -m researchos.cli run --workspace ./workspace/local-test2
 ```
 
 如果过程中因为 gate、预算扩限或人工中断暂停：
 
 ```bash
-python -m researchos.cli resume --workspace ./workspace/project-a
+python -m researchos.cli resume --workspace ./workspace/local-test2
 ```
 
 ### 场景 2：单独调某个阶段
@@ -285,6 +285,12 @@ python -m researchos.cli run-task T8-WRITE \
   --from ./workspace/local-test2
 ```
 
+说明：
+
+- `run/resume` 用来推进完整状态机
+- `run-task` 只跑当前阶段
+- 但在同一个 workspace 上重跑 `run-task` 时，很多阶段会优先基于已有 artifact 继续
+
 ### 场景 3：查看状态和 trace
 
 ```bash
@@ -300,7 +306,7 @@ ResearchOS 现在支持独立 skill 运行，基于 `SKILL.md`。
 常用命令：
 
 ```bash
-python -m researchos.cli list-skills --skills-root /绝对路径/ResearchOS/skills
+python -m researchos.cli list-skills --skills-root ./skills
 python -m researchos.cli run-skill deepxiv "summarize recent memory papers for llm agents"
 ```
 

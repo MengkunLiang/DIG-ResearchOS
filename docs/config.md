@@ -695,11 +695,31 @@ cp .env.example .env
 
 - `state_machine.yaml` 中该任务的 `llm`
 
+例子：
+
+```yaml
+T6:
+  llm:
+    profile: siliconflow_only
+    tier: heavy
+```
+
 ### 12.2 想让整个 agent 默认换模型
 
 优先改：
 
 - `agent_params.yaml`
+
+例子：
+
+```yaml
+agents:
+  novelty:
+    llm:
+      profile: siliconflow_only
+      tier: medium
+      temperature: 0.3
+```
 
 ### 12.3 想让一整类任务都有 fallback
 
@@ -707,17 +727,53 @@ cp .env.example .env
 
 - `model_routing.yaml` 的 profile
 
+例子：
+
+```yaml
+profiles:
+  siliconflow_only:
+    medium:
+      primary:
+        model: deepseek-ai/DeepSeek-V4-Flash
+        endpoint: siliconflow
+      fallback:
+        - model: Pro/MiniMaxAI/MiniMax-M2.5
+          endpoint: siliconflow
+```
+
 ### 12.4 想关掉横幅或开关 trace
 
 改：
 
 - `runtime.yaml`
 
+例子：
+
+```yaml
+ui:
+  no_banner: true
+
+debug:
+  enable_trace: true
+```
+
 ### 12.5 想限制 tool 读写范围
 
 改：
 
 - `agent_params.yaml` 中对应 agent 的 `allowed_*_prefixes`
+
+例子：
+
+```yaml
+agents:
+  reviewer:
+    allowed_read_prefixes:
+      - drafts/
+      - experiments/
+    allowed_write_prefixes:
+      - drafts/review_rounds/
+```
 
 ### 12.6 想让 T9 更严格
 
@@ -726,6 +782,17 @@ cp .env.example .env
 - `submission` 的 agent params
 - `submission.py` validator
 - `submission.j2`
+
+例子：
+
+```yaml
+agents:
+  submission:
+    max_steps: 300
+    max_validation_retries: 10
+    enforce_anonymization_precheck: true
+    max_compile_attempts: 4
+```
 
 ---
 

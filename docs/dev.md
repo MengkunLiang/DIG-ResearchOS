@@ -67,7 +67,7 @@ researchos run-task T3
 如果你沿用当前维护环境，可直接：
 
 ```bash
-conda activate /home/liangmengkun/.conda/envs/researchos
+conda activate researchos
 ```
 
 如果你是新机器，推荐自己创建一个独立环境：
@@ -82,7 +82,7 @@ conda activate researchos
 最常用的开发安装方式：
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 pip install -r requirements.txt
 pip install -r requirements-dev.txt
 pip install -e .
@@ -134,7 +134,7 @@ RESEARCHER_EMAIL=your@email
 ### 3.1 配置校验
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 python -m researchos.cli validate-config
 ```
 
@@ -294,7 +294,7 @@ python -m researchos.cli trace T7_single_xxxxxxxx --workspace ./workspace/demo -
 技能运行时调试：
 
 ```bash
-python -m researchos.cli list-skills --skills-root /home/liangmengkun/ResearchOS/skills
+python -m researchos.cli list-skills --skills-root ./skills
 python -m researchos.cli run-skill paper-compile "compile the paper in ./workspace/local-test2/drafts"
 ```
 
@@ -519,7 +519,7 @@ ResearchOS 当前支持：
 ### 9.2 如何验证 skill runtime
 
 ```bash
-python -m researchos.cli list-skills --skills-root /home/liangmengkun/ResearchOS/skills
+python -m researchos.cli list-skills --skills-root ./skills
 ```
 
 再用某个具体 skill：
@@ -577,7 +577,7 @@ python -m researchos.cli run-skill deepxiv "summarize recent papers about memory
 基本命令：
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 bash infra/docker/build.sh
 bash infra/docker/run.sh selftest
 bash infra/docker/run.sh run-task T9 --workspace /workspace
@@ -597,7 +597,7 @@ bash infra/docker/run.sh run-task T9 --workspace /workspace
 ### 12.1 跑单个测试文件
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 python -m pytest tests/unit/test_writer_reviewer_submission.py -q
 ```
 
@@ -618,7 +618,7 @@ python -m pytest tests/unit/test_state_machine_runtime_features.py -q
 
 ```bash
 python -m pytest tests/unit/test_list_skills.py tests/unit/test_skills_runtime.py tests/unit/test_skill_tool_discovery.py -q
-python -m researchos.cli list-skills --skills-root /home/liangmengkun/ResearchOS/skills
+python -m researchos.cli list-skills --skills-root ./skills
 ```
 
 ---
@@ -630,7 +630,7 @@ python -m researchos.cli list-skills --skills-root /home/liangmengkun/ResearchOS
 优先用：
 
 ```bash
-PYTHONPATH=/home/liangmengkun/ResearchOS python -m researchos.cli ...
+PYTHONPATH=. python -m researchos.cli ...
 ```
 
 然后重新：
@@ -687,6 +687,6 @@ pip install -e .
 
 如果你在本地维护当前仓库，建议再结合：
 
-- [/home/liangmengkun/tmp/researchos-local-debug-guide.md](/home/liangmengkun/tmp/researchos-local-debug-guide.md)
+- [../tmp/researchos-local-debug-guide.md](../tmp/researchos-local-debug-guide.md)
 
 一起使用。

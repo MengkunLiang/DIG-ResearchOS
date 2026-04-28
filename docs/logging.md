@@ -13,19 +13,41 @@
 
 假设你的 workspace 是：
 
-- `/home/liangmengkun/ResearchOS/workspace/local-test2`
+- `./workspace/local-test2`
 
 那么最重要的两个位置是：
 
 - 日志：
-  - `/home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log`
+  - `./workspace/local-test2/_runtime/logs/researchos.log`
 - Trace：
-  - `/home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/traces/*.jsonl`
+  - `./workspace/local-test2/_runtime/traces/*.jsonl`
 
 简单理解：
 
 - `researchos.log` 适合看整体运行过程和错误摘要
 - `trace/*.jsonl` 适合看某一次 run 的逐步细节
+
+### 1.1 `run_id` 一般长什么样
+
+你在 trace、状态和日志里会看到类似：
+
+- `T3_single_678acc5c`
+- `T7_single_0b0655e0`
+- `T8-REVIEW-1_single_0b0655e0`
+
+大致可以这样读：
+
+- 前缀：task 名
+- `single`：单任务 runner
+- 后缀：本次运行的短 ID
+
+如果是完整 pipeline，run_id 的命名会不同，但同样可以在：
+
+- `_runtime/traces/`
+- `researchos status`
+- `researchos trace <run_id> ...`
+
+之间互相对上。
 
 ---
 
@@ -74,7 +96,7 @@
 先看：
 
 ```bash
-tail -n 80 /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
+tail -n 80 ./workspace/local-test2/_runtime/logs/researchos.log
 ```
 
 如果看到：
@@ -106,48 +128,48 @@ tail -n 80 /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/res
 ### 4.1 实时看日志
 
 ```bash
-tail -f /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
+tail -f ./workspace/local-test2/_runtime/logs/researchos.log
 ```
 
 ### 4.2 只看最近 100 行
 
 ```bash
-tail -n 100 /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
+tail -n 100 ./workspace/local-test2/_runtime/logs/researchos.log
 ```
 
 ### 4.3 看错误和警告
 
 ```bash
 grep -nE "ERROR|WARNING|tool_crashed|Validation failed|Budget exceeded|LLM failed" \
-  /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
+  ./workspace/local-test2/_runtime/logs/researchos.log
 ```
 
 ### 4.4 看某个 task 的相关日志
 
 ```bash
-grep -n "T7" /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
-grep -n "T9" /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
+grep -n "T7" ./workspace/local-test2/_runtime/logs/researchos.log
+grep -n "T9" ./workspace/local-test2/_runtime/logs/researchos.log
 ```
 
 ### 4.5 看 trace（人类可读）
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 researchos trace T7_single_12345678 --workspace ./workspace/local-test2
 ```
 
 ### 4.6 看 trace（原始 JSONL）
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 researchos trace T7_single_12345678 --workspace ./workspace/local-test2 --raw
 ```
 
 ### 4.7 直接 grep trace
 
 ```bash
-grep -n "tool_crashed" /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/traces/T8-REVIEW-1_single_0b0655e0.jsonl
-grep -n "\"tool_name\"" /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/traces/T3_single_678acc5c.jsonl
+grep -n "tool_crashed" ./workspace/local-test2/_runtime/traces/T8-REVIEW-1_single_0b0655e0.jsonl
+grep -n "\"tool_name\"" ./workspace/local-test2/_runtime/traces/T3_single_678acc5c.jsonl
 ```
 
 ---
@@ -159,10 +181,10 @@ grep -n "\"tool_name\"" /home/liangmengkun/ResearchOS/workspace/local-test2/_run
 典型会出现：
 
 ```text
-[startup] workspace=/home/liangmengkun/ResearchOS/workspace/local-test2
-[startup] state_machine=/home/liangmengkun/ResearchOS/config/state_machine.yaml
-[startup] gates=/home/liangmengkun/ResearchOS/config/gates.yaml
-[startup] model_routing=/home/liangmengkun/ResearchOS/config/model_routing.yaml
+[startup] workspace=./workspace/local-test2
+[startup] state_machine=./config/state_machine.yaml
+[startup] gates=./config/gates.yaml
+[startup] model_routing=./config/model_routing.yaml
 [startup] mcp_servers=2 mcp_tools=0
 ```
 
@@ -239,8 +261,8 @@ error: Budget exceeded on wall_seconds: 922/800
 先看：
 
 ```bash
-grep -n "T2" /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
-ls /home/liangmengkun/ResearchOS/workspace/local-test2/literature
+grep -n "T2" ./workspace/local-test2/_runtime/logs/researchos.log
+ls ./workspace/local-test2/literature
 ```
 
 再看：
@@ -263,8 +285,8 @@ ls /home/liangmengkun/ResearchOS/workspace/local-test2/literature
 先看：
 
 ```bash
-ls /home/liangmengkun/ResearchOS/workspace/local-test2/literature/paper_notes
-ls /home/liangmengkun/ResearchOS/workspace/local-test2/literature/deep_read_queue_pending.jsonl
+ls ./workspace/local-test2/literature/paper_notes
+ls ./workspace/local-test2/literature/deep_read_queue_pending.jsonl
 ```
 
 再看日志里有没有：
@@ -279,9 +301,9 @@ ls /home/liangmengkun/ResearchOS/workspace/local-test2/literature/deep_read_queu
 先看：
 
 ```bash
-tail -n 120 /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
-cat /home/liangmengkun/ResearchOS/workspace/local-test2/experiments/results_summary.json
-cat /home/liangmengkun/ResearchOS/workspace/local-test2/experiments/ablations.csv
+tail -n 120 ./workspace/local-test2/_runtime/logs/researchos.log
+cat ./workspace/local-test2/experiments/results_summary.json
+cat ./workspace/local-test2/experiments/ablations.csv
 ```
 
 常见问题：
@@ -311,9 +333,9 @@ cat /home/liangmengkun/ResearchOS/workspace/local-test2/experiments/ablations.cs
 先看：
 
 ```bash
-ls /home/liangmengkun/ResearchOS/workspace/local-test2/submission/bundle
-tail -n 200 /home/liangmengkun/ResearchOS/workspace/local-test2/submission/bundle/main.log
-cat /home/liangmengkun/ResearchOS/workspace/local-test2/submission/migration_report.md
+ls ./workspace/local-test2/submission/bundle
+tail -n 200 ./workspace/local-test2/submission/bundle/main.log
+cat ./workspace/local-test2/submission/migration_report.md
 ```
 
 判断重点：
@@ -330,20 +352,20 @@ cat /home/liangmengkun/ResearchOS/workspace/local-test2/submission/migration_rep
 
 例如：
 
-- 容器内：`/workspace/_runtime/logs/researchos.log`
-- 宿主机：`/home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log`
+- 容器内：`/workspace/local-test2/_runtime/logs/researchos.log`
+- 宿主机：`./workspace/local-test2/_runtime/logs/researchos.log`
 
 因此最简单的方式通常还是在宿主机直接看：
 
 ```bash
-tail -f /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
+tail -f ./workspace/local-test2/_runtime/logs/researchos.log
 ```
 
 如果你确实要进容器：
 
 ```bash
 docker exec -it <container-id> bash
-tail -f /workspace/_runtime/logs/researchos.log
+tail -f /workspace/local-test2/_runtime/logs/researchos.log
 ```
 
 ---
@@ -405,37 +427,37 @@ error: Validation failed 5 times. Last reason: ...
 实时看本地项目日志：
 
 ```bash
-tail -f /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
+tail -f ./workspace/local-test2/_runtime/logs/researchos.log
 ```
 
 查最近一次 T9 的错误：
 
 ```bash
-grep -n "T9" /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log | tail -n 30
+grep -n "T9" ./workspace/local-test2/_runtime/logs/researchos.log | tail -n 30
 ```
 
 查所有 tool crash：
 
 ```bash
-grep -n "tool_crashed" /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
+grep -n "tool_crashed" ./workspace/local-test2/_runtime/logs/researchos.log
 ```
 
 查所有预算问题：
 
 ```bash
-grep -n "Budget exceeded" /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
+grep -n "Budget exceeded" ./workspace/local-test2/_runtime/logs/researchos.log
 ```
 
 查所有 validator 失败：
 
 ```bash
-grep -n "Validation failed" /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
+grep -n "Validation failed" ./workspace/local-test2/_runtime/logs/researchos.log
 ```
 
 查所有 LLM 失败：
 
 ```bash
-grep -n "LLM failed" /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
+grep -n "LLM failed" ./workspace/local-test2/_runtime/logs/researchos.log
 ```
 
 ---

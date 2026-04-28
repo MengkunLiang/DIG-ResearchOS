@@ -145,6 +145,40 @@ CLI
 - 不执行 skill
 - 只做发现和展示
 
+### 3.6 一组真实命令例子
+
+完整跑一个 workspace：
+
+```bash
+cd ResearchOS
+PYTHONPATH=. python -m researchos.cli run \
+  --workspace ./workspace/local-test2
+```
+
+恢复一个已经暂停的 workspace：
+
+```bash
+cd ResearchOS
+PYTHONPATH=. python -m researchos.cli resume \
+  --workspace ./workspace/local-test2
+```
+
+只调一个任务：
+
+```bash
+cd ResearchOS
+PYTHONPATH=. python -m researchos.cli run-task T3 \
+  --workspace ./workspace/local-test2
+```
+
+只调一个 skill：
+
+```bash
+cd ResearchOS
+PYTHONPATH=. python -m researchos.cli run-skill deepxiv \
+  "summarize recent memory papers for llm agents"
+```
+
 ---
 
 ## 4. Workspace 与目录模型

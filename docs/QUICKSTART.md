@@ -35,7 +35,7 @@ ResearchOS 当前有两种主用法：
 ### 2.1 安装
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 
 conda create -n researchos python=3.11 -y
 conda activate researchos
@@ -54,7 +54,7 @@ pip install -r requirements-optional-pdf.txt
 ### 2.2 配置 `.env`
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 cp .env.example .env
 ```
 
@@ -71,7 +71,7 @@ RESEARCHER_EMAIL=your@email.com
 ### 2.3 校验配置
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 python -m researchos.cli validate-config
 ```
 
@@ -84,7 +84,7 @@ ok: true
 ### 2.4 跑 provider 自检
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 python -m researchos.cli selftest
 ```
 
@@ -97,7 +97,7 @@ python -m researchos.cli selftest
 ### 2.5 创建一个 workspace
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 python -m researchos.cli init-workspace \
   --workspace ./workspace/local-test2 \
   --project-id local-test2 \
@@ -107,7 +107,7 @@ python -m researchos.cli init-workspace \
 ### 2.6 先跑最小 smoke test
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 python -m researchos.cli run-task HELLO --workspace ./workspace/local-test2
 ```
 
@@ -118,14 +118,14 @@ python -m researchos.cli run-task HELLO --workspace ./workspace/local-test2
 ### 2.7 从头跑完整 pipeline
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 python -m researchos.cli run --workspace ./workspace/local-test2
 ```
 
 ### 2.8 恢复中断的 pipeline
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 python -m researchos.cli resume --workspace ./workspace/local-test2
 ```
 
@@ -136,23 +136,23 @@ python -m researchos.cli resume --workspace ./workspace/local-test2
 ### 3.1 构建镜像
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 bash infra/docker/build.sh
 ```
 
 ### 3.2 运行自检
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 bash infra/docker/run.sh selftest
 ```
 
 ### 3.3 初始化容器内 workspace
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 bash infra/docker/run.sh init-workspace \
-  --workspace /workspace \
+  --workspace /workspace/local-test2 \
   --project-id local-test2 \
   --topic "memory systems for llm agents"
 ```
@@ -160,23 +160,32 @@ bash infra/docker/run.sh init-workspace \
 ### 3.4 在 Docker 中跑完整 pipeline
 
 ```bash
-cd /home/liangmengkun/ResearchOS
-bash infra/docker/run.sh run --workspace /workspace
+cd ResearchOS
+bash infra/docker/run.sh run --workspace /workspace/local-test2
 ```
 
 ### 3.5 在 Docker 中恢复
 
 ```bash
-cd /home/liangmengkun/ResearchOS
-bash infra/docker/run.sh resume --workspace /workspace
+cd ResearchOS
+bash infra/docker/run.sh resume --workspace /workspace/local-test2
 ```
 
 ### 3.6 在 Docker 中单独调 T9
 
 ```bash
-cd /home/liangmengkun/ResearchOS
-bash infra/docker/run.sh run-task T9 --workspace /workspace
+cd ResearchOS
+bash infra/docker/run.sh run-task T9 --workspace /workspace/local-test2
 ```
+
+### 3.7 一定要记住路径映射
+
+Docker 模式下：
+
+- 宿主机路径：`./workspace/local-test2`
+- 容器内路径：`/workspace/local-test2`
+
+它们指向的是同一份 workspace。
 
 ---
 
@@ -212,6 +221,8 @@ researchos run-task T7.5 --workspace ./workspace/local-test2
 researchos run-task T9 --workspace ./workspace/local-test2
 ```
 
+如果这些 task 已经在同一个 workspace 里落过产物，再次运行时通常会优先基于已有 artifact 继续，而不是无条件从空白开始。
+
 ### 4.5 从其他 workspace 复制前置产物
 
 ```bash
@@ -242,7 +253,7 @@ researchos validate --workspace ./workspace/local-test2 --task T7
 ### 4.9 列出 skills
 
 ```bash
-researchos list-skills --skills-root /home/liangmengkun/ResearchOS/skills
+researchos list-skills --skills-root ./skills
 ```
 
 ### 4.10 运行 skill
@@ -305,7 +316,7 @@ researchos run-skill deepxiv "summarize recent memory papers for llm agents"
 ### 起手式 A：我只是想确认系统能跑
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 python -m researchos.cli validate-config
 python -m researchos.cli selftest
 python -m researchos.cli run-task HELLO --workspace ./workspace/local-test2
@@ -314,14 +325,14 @@ python -m researchos.cli run-task HELLO --workspace ./workspace/local-test2
 ### 起手式 B：我想调某个阶段
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 python -m researchos.cli run-task T3 --workspace ./workspace/local-test2
 ```
 
 ### 起手式 C：我想继续之前中断的项目
 
 ```bash
-cd /home/liangmengkun/ResearchOS
+cd ResearchOS
 python -m researchos.cli resume --workspace ./workspace/local-test2
 ```
 
@@ -334,7 +345,7 @@ python -m researchos.cli resume --workspace ./workspace/local-test2
 通常是环境错配。优先用：
 
 ```bash
-PYTHONPATH=/home/liangmengkun/ResearchOS python -m researchos.cli ...
+PYTHONPATH=. python -m researchos.cli ...
 ```
 
 并重新：
@@ -350,6 +361,15 @@ pip install -e .
 1. 用的是不是同一个 workspace
 2. 中断前关键 artifact 有没有真的落盘
 3. 对应 task 有没有恢复逻辑
+
+最稳的判断方式是直接看这些目录和文件是否还在：
+
+- `literature/paper_notes/`
+- `pilot/`
+- `experiments/`
+- `drafts/`
+- `submission/`
+- `_runtime/resume/`
 
 ### 7.3 为什么 `run-task` 不能自动接着跑到下一个阶段？
 
