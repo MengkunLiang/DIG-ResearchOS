@@ -261,7 +261,7 @@ agents:
       max_context: 128000
       tier: heavy
       temperature: 0.3
-    max_steps: 100
+    max_steps: 1000
     max_tokens_total: 600000
     max_wall_seconds: 800
     max_validation_retries: 10
@@ -290,12 +290,12 @@ agents:
       # T6 之前没有 fallback，就是因为这里写死了 model+endpoint。
       # 改成 profile 后，会先走 DeepSeek，再 fallback 到 MiniMax。
       profile: siliconflow_only
-      max_context: 128000
+      max_context: 1280000
       tier: medium
       temperature: 0.3
-    max_steps: 100
+    max_steps: 1000
     max_tokens_total: 600000
-    max_wall_seconds: 800
+    max_wall_seconds: 8000
     max_validation_retries: 10
     tool_names:
       - read_file
@@ -322,7 +322,7 @@ agents:
       max_context: 128000
       tier: medium
       temperature: 0.3
-    max_steps: 200
+    max_steps: 2000
     max_tokens_total: 60000000
     max_wall_seconds: 14400
     max_validation_retries: 10
@@ -352,7 +352,7 @@ agents:
     modes:
       pilot:
         description: 试点实验
-        max_steps: 100
+        max_steps: 1000
         max_tokens_total: 1000000
         max_wall_seconds: 7200
         max_validation_retries: 2
@@ -363,7 +363,7 @@ agents:
           motivation_validation_required: true
       full:
         description: 完整实验
-        max_steps: 500
+        max_steps: 5000
         max_tokens_total: 30000000
         max_wall_seconds: 14400
         max_validation_retries: 5
@@ -378,12 +378,12 @@ agents:
     llm:
       # 写作阶段默认仍先走 SiliconFlow，但保留 MiniMax fallback。
       profile: siliconflow_only
-      max_context: 128000
+      max_context: 1280000
       tier: heavy
       temperature: 0.7
-    max_steps: 150
+    max_steps: 1500
     max_tokens_total: 1000000
-    max_wall_seconds: 2400
+    max_wall_seconds: 24000
     max_validation_retries: 3
     tool_names:
       - read_file
@@ -422,7 +422,7 @@ agents:
       temperature: 0.3
     max_steps: 200
     max_tokens_total: 6000000
-    max_wall_seconds: 1200
+    max_wall_seconds: 12000
     max_validation_retries: 10
     tool_names:
       - read_file
@@ -450,9 +450,9 @@ agents:
       max_context: 128000
       tier: medium
       temperature: 0.3
-    max_steps: 300
+    max_steps: 3000
     max_tokens_total: 5000000
-    max_wall_seconds: 600
+    max_wall_seconds: 8000
     max_validation_retries: 10
     tool_names:
       - read_file
