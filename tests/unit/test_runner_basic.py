@@ -121,6 +121,39 @@ async def test_tool_param_validation_fails_gracefully(tmp_workspace, registry):
 
 
 @pytest.mark.asyncio
+async def test_runner_recovers_textual_dsml_tool_calls(tmp_workspace, registry):
+    llm = MockLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    content=(
+                        "我先调用 echo。\n"
+                        "<｜DSML｜invoke name=\"echo\">"
+                        "<｜DSML｜parameter name=\"text\">hi</｜DSML｜parameter>"
+                        "</｜DSML｜invoke>"
+                    )
+                )
+            ),
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    content=(
+                        "任务完成。\n"
+                        "<｜DSML｜invoke name=\"finish_task\">"
+                        "<｜DSML｜parameter name=\"summary\">done</｜DSML｜parameter>"
+                        "</｜DSML｜invoke>"
+                    )
+                )
+            ),
+        ]
+    )
+    ctx = ExecutionContext(workspace_dir=tmp_workspace, project_id="p1", task_id="T0", run_id="r_dsml")
+    runner = AgentRunner(MinimalAgent(), registry, llm, MockHumanInterface())
+    result = await runner.run(ctx)
+    assert result.ok
+    assert result.stop_reason == AgentResult.STOP_FINISHED
+
+
+@pytest.mark.asyncio
 async def test_runner_passes_global_llm_timeout_and_retry_settings(tmp_workspace, registry, monkeypatch):
     monkeypatch.setattr(
         "researchos.runtime.orchestrator.get_global_timeout",

@@ -6,6 +6,7 @@ import asyncio
 import inspect
 import json
 from pathlib import Path
+import re
 import time
 from typing import TYPE_CHECKING, Callable
 
@@ -574,7 +575,60 @@ class AgentRunner:
             tool_calls.append(
                 ToolCall(id=tool_call.id, name=tool_call.function.name, arguments=arguments)
             )
+        # 某些 OpenAI-compatible provider 会把工具调用吐成文本片段而不是原生 tool_calls。
+        # 这里做一次兜底解析，尽量把 DSML 风格的伪调用恢复成真实 ToolCall。
+        if not tool_calls and content:
+            recovered_content, recovered_calls = self._recover_textual_tool_calls(content)
+            if recovered_calls:
+                content = recovered_content
+                tool_calls = recovered_calls
         return Message.assistant(content=content, tool_calls=tool_calls, step=step)
+
+    def _recover_textual_tool_calls(self, content: str) -> tuple[str | None, list[ToolCall]]:
+        """从文本中恢复 DSML 风格的伪工具调用。"""
+        invoke_re = re.compile(
+            r"<[^>\n]*invoke\s+name=\"(?P<name>[^\"]+)\"[^>]*>(?P<body>.*?)</[^>\n]*invoke>",
+            re.DOTALL,
+        )
+        param_re = re.compile(
+            r"<[^>\n]*parameter\s+name=\"(?P<name>[^\"]+)\"[^>]*>(?P<value>.*?)</[^>\n]*parameter>",
+            re.DOTALL,
+        )
+
+        tool_calls: list[ToolCall] = []
+        for match in invoke_re.finditer(content):
+            arguments: dict[str, object] = {}
+            for param_match in param_re.finditer(match.group("body")):
+                key = param_match.group("name").strip()
+                value = self._coerce_textual_tool_value(param_match.group("value"))
+                arguments[key] = value
+            tool_calls.append(ToolCall.create(match.group("name").strip(), arguments))
+
+        if not tool_calls:
+            return content, []
+
+        cleaned = invoke_re.sub("", content)
+        cleaned = re.sub(r"<[^>\n]*tool_calls[^>]*>|</[^>\n]*tool_calls>", "", cleaned)
+        cleaned = re.sub(r"<[^>\n]*minimax:tool_call[^>]*>|</[^>\n]*minimax:tool_call>", "", cleaned)
+        cleaned = cleaned.strip() or None
+        return cleaned, tool_calls
+
+    def _coerce_textual_tool_value(self, raw_value: str) -> object:
+        """尽量把文本参数恢复成工具 schema 更容易接受的类型。"""
+        value = raw_value.strip()
+        if not value:
+            return ""
+        if value.startswith("{") or value.startswith("["):
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                return value
+        lowered = value.lower()
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+        return value
 
     def _maybe_truncate(self, messages: list[Message], binding: ModelBinding) -> list[Message]:
         """按 message group 粒度做上下文裁剪。"""
