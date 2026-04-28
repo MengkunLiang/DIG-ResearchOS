@@ -21,16 +21,16 @@
 #     terminal: true             # 是否为终止状态（可选）
 #
 # 当前支持的工作流：
-# 1. HELLO - 调试用的简单 workflow
-# 2. T1-T4 - 研究前期完整 workflow（项目初始化 → 文献检索 → 深度阅读 → 文献综合 → 假设生成）
+# 1. HELLO - 调试用的最小 runtime smoke task（只建议 run-task 显式调用）
+# 2. T1-T9 - 正式研究 workflow
 #
 # 使用方式：
-# - 调试：initial_state: HELLO
+# - 调试 HELLO：`researchos run-task HELLO --workspace ...`
 # - 完整流程：initial_state: T1
 
 # 初始状态配置
-# 可选值：HELLO（调试）, T1（完整研究流程）
-initial_state: HELLO
+# 正式主流程必须从 T1 开始，不能把 HELLO 挂在默认主链入口。
+initial_state: T1
 
 states:
   # ========================================
@@ -50,7 +50,7 @@ states:
     next_on_failure: failed      # 失败后进入 failed 状态
 
   # ========================================
-  # T1-T4 完整研究 Workflow
+  # T1-T9 正式研究 Workflow
   # ========================================
 
   # T1 状态：项目初始化（Project Initialization）
