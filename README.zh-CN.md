@@ -219,6 +219,8 @@ python -m researchos.cli validate-config
 python -m researchos.cli selftest
 ```
 
+现在这条命令除了检查 provider 连通性，也会检查关键 PDF 解析依赖是否就绪。
+
 ### 3. 初始化 workspace
 
 ```bash

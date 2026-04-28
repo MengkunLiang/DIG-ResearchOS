@@ -154,6 +154,16 @@ def build_deep_read_queue(
     seed_path = workspace_dir / "user_seeds" / "seed_papers.jsonl"
     seed_papers = load_jsonl(seed_path) if seed_path.exists() else []
     local_pdf_dir = workspace_dir / "literature" / "pdfs"
+    verified_path = workspace_dir / "literature" / "papers_verified.jsonl"
+    verified_records = load_jsonl(verified_path) if verified_path.exists() else []
+
+    # 一旦 workspace 里已经存在 papers_verified，就必须优先把它当作权威池。
+    # 这样即使上层 agent 误把 papers_dedup 传进来，也不会把未核验论文混进 T3 队列。
+    authoritative_records = _prefer_verified_records(
+        candidate_records=papers,
+        verified_records=verified_records,
+    )
+    has_verified_pool = bool(verified_records)
 
     seed_keys: set[str] = set()
     seed_titles: list[str] = []
@@ -164,8 +174,12 @@ def build_deep_read_queue(
             seed_titles.append(str(seed.get("title", "")).strip())
 
     ranked_records: list[dict[str, Any]] = []
-    for paper in papers:
+    for paper in authoritative_records:
         verification_status = str(paper.get("verification_status", "retrieved")).strip() or "retrieved"
+        # 如果已经有 verified 池，deep-read queue 就只接受 verified 成员。
+        # 否则 agent 很容易把 dedup 池里尚未核验的 retrieved 样本塞进来，最终又被 validator 拦住。
+        if has_verified_pool and verification_status not in {"metadata_verified", "pdf_verified"}:
+            continue
         # 失败样本不应继续进入 deep-read 队列，避免把 T3 预算浪费在坏样本上。
         if verification_status == "failed_verification":
             continue
@@ -240,6 +254,7 @@ def build_deep_read_queue(
         "deep_read_target": deep_read_target,
         "deep_read_max": deep_read_max,
         "probe_pool": probe_pool,
+        "source_pool": "papers_verified" if has_verified_pool else "caller_supplied_records",
         "queue_count": len(queue_records),
         "seed_total": len(seed_papers),
         "seed_titles": seed_titles[:20],
@@ -256,6 +271,48 @@ def build_deep_read_queue(
         ),
     }
     return queue_records, metadata
+
+
+def _prefer_verified_records(
+    *,
+    candidate_records: list[dict[str, Any]],
+    verified_records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """优先把候选池收敛到 workspace 内已核验过的论文记录。
+
+    设计原因：
+    - 上层 agent 可能把 papers_dedup 整池传进 build_deep_read_queue；
+    - 但当前系统语义要求 T3 队列建立在 papers_verified 之上；
+    - 因此这里要在工具层做一次“以 verified 为准”的硬约束，而不是只靠 prompt。
+    """
+
+    if not verified_records:
+        return candidate_records
+
+    verified_by_key: dict[str, dict[str, Any]] = {}
+    for record in verified_records:
+        for key in _paper_match_keys(record):
+            verified_by_key.setdefault(key, record)
+
+    matched_records: list[dict[str, Any]] = []
+    seen_ids: set[int] = set()
+    for paper in candidate_records:
+        matched = None
+        for key in _paper_match_keys(paper):
+            matched = verified_by_key.get(key)
+            if matched is not None:
+                break
+        if matched is None:
+            continue
+        matched_identity = id(matched)
+        if matched_identity in seen_ids:
+            continue
+        seen_ids.add(matched_identity)
+        matched_records.append(matched)
+
+    # 如果上层传入的候选集完全对不上，直接回退到完整 verified 池，
+    # 避免因为调用参数不理想而意外生成空队列。
+    return matched_records or verified_records
 
 
 def build_access_audit(

@@ -211,6 +211,8 @@ python -m researchos.cli validate-config
 python -m researchos.cli selftest
 ```
 
+This command now checks both provider connectivity and critical PDF-processing dependencies.
+
 ### 3. Initialize a workspace
 
 ```bash

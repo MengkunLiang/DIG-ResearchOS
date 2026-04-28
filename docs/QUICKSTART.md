@@ -93,6 +93,7 @@ python -m researchos.cli selftest
 - SiliconFlow 是否可用
 - OpenRouter / OpenAI 是否可用
 - latency 是否异常高
+- `pdfplumber` 这类关键 PDF 解析依赖是否就绪（影响 T3 / T9）
 
 ### 2.5 创建一个 workspace
 

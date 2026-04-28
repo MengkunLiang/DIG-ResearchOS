@@ -13,6 +13,7 @@ import argparse
 import asyncio
 from dataclasses import dataclass
 import importlib
+import importlib.util
 import os
 from pathlib import Path
 import shutil
@@ -402,11 +403,50 @@ async def _maybe_run_selftest(args: argparse.Namespace, llm_client: LLMClient) -
     should_selftest = should_selftest or getattr(args, "startup_selftest", False)
     if not should_selftest:
         return
-    results = await llm_client.selftest()
-    failed = {name: item for name, item in results.items() if not item.get("ok")}
-    print(yaml.safe_dump({"startup_selftest": results}, allow_unicode=True, sort_keys=False))
+    llm_results = await llm_client.selftest()
+    dependency_results = _dependency_selftest()
+    failed = {name: item for name, item in llm_results.items() if not item.get("ok")}
+    print(
+        yaml.safe_dump(
+            {
+                "startup_selftest": {
+                    "llm": llm_results,
+                    "dependencies": dependency_results,
+                }
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        )
+    )
+    if any(not item.get("ok") for item in dependency_results.values()):
+        print(
+            "[startup-warning] PDF/文献处理依赖不完整；T3/T9 可能在运行中失败。"
+            " 建议先执行 `researchos selftest` 检查并补齐依赖。",
+            file=sys.stderr,
+        )
     if failed:
         raise SystemExit("LLM startup selftest failed")
+
+
+def _dependency_selftest() -> dict[str, dict[str, Any]]:
+    """检查本地关键运行依赖。
+
+    设计目标：
+    - 把“跑到 T3/T9 才发现 pdfplumber 缺失”这种问题前移到启动阶段；
+    - 既能在 `selftest` 命令里作为硬失败，也能在 startup selftest 里作为早期警告。
+    """
+
+    def _spec_ok(module_name: str) -> bool:
+        return importlib.util.find_spec(module_name) is not None
+
+    return {
+        "pdf_processing": {
+            "ok": _spec_ok("pdfplumber"),
+            "required_for": ["T3", "T9", "extract_paper_sections", "extract_pdf_text"],
+            "module": "pdfplumber",
+            "hint": "pip install -r requirements.txt",
+        }
+    }
 
 
 def _emit_startup_ui(
@@ -631,9 +671,21 @@ async def selftest_command(args: argparse.Namespace) -> int:
         show_summary=False,
     )
     client = LLMClient(Path(args.model_routing).resolve())
-    results = await client.selftest(args.profile or None)
-    print(yaml.safe_dump(results, allow_unicode=True, sort_keys=False))
-    return 0 if all(item.get("ok") for item in results.values()) else 1
+    llm_results = await client.selftest(args.profile or None)
+    dependency_results = _dependency_selftest()
+    print(
+        yaml.safe_dump(
+            {
+                "llm": llm_results,
+                "dependencies": dependency_results,
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        )
+    )
+    llm_ok = all(item.get("ok") for item in llm_results.values())
+    deps_ok = all(item.get("ok") for item in dependency_results.values())
+    return 0 if (llm_ok and deps_ok) else 1
 
 
 def init_workspace_command(args: argparse.Namespace) -> int:
