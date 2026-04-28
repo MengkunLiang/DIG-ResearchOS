@@ -1,5 +1,11 @@
 # ResearchOS Configuration Guide
 
+本文件现在是 **唯一的配置总览主文档**。
+
+它已经整合并取代了旧的拆分配置文档。
+
+如果你之前看过旧版本配置说明，现在请以本文件为准。
+
 本文档详细说明 ResearchOS 当前所有关键配置入口：
 
 - `config/*.yaml`

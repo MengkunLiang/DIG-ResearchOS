@@ -1,432 +1,372 @@
-# ResearchOS 快速入门指南
+# ResearchOS Quick Start
 
-> **版本**: v2.0
-> **更新日期**: 2026-04-23
+这份文档只做一件事：**让你尽快把系统跑起来，并且知道下一步该看什么。**
 
----
+如果你需要更详细的说明：
 
-## 一、环境准备
-
-### 1.1 系统要求
-
-**Docker 模式（推荐）**:
-- Docker 20.10+
-- （可选）nvidia-docker2（GPU 支持）
-- 至少 20GB 磁盘空间
-- 统一镜像：`researchos/system:latest`（支持实验和 TeX 编译）
-
-**宿主机模式（开发调试）**:
-- Python 3.11
-- Conda
-- OpenAI API Key
-
-### 1.2 选择运行模式
-
-ResearchOS 支持两种运行模式：
-
-| 模式 | 适用场景 | 优点 | 缺点 |
-|------|---------|------|------|
-| Docker | 生产部署、论文复现、快速体验 | 零配置、完全可复现 | 需要 Docker |
-| 宿主机 | 开发调试、修改代码 | 直接调试、快速迭代 | 需要配置环境 |
+- 系统流程总览： [agent_pipeline.md](./agent_pipeline.md)
+- Runtime 机制： [runtime.md](./runtime.md)
+- 配置说明： [config.md](./config.md)
+- Docker： [docker.md](./docker.md)
+- 开发者调试： [dev.md](./dev.md)
 
 ---
 
-## 二、Docker 模式快速开始（推荐）
+## 1. 先决定你要哪种运行方式
 
-### 2.1 构建镜像
+ResearchOS 当前有两种主用法：
+
+| 模式 | 适用场景 | 典型命令 |
+| --- | --- | --- |
+| 宿主机模式 | 本地开发、单阶段调试、改 prompt / 改 validator | `python -m researchos.cli ...` |
+| Docker 模式 | T5/T7 实验、T9 编译、环境隔离与复现 | `bash infra/docker/run.sh ...` |
+
+如果你现在的目标是：
+
+- “先把系统理解清楚、单独调某个 task”  
+  优先选宿主机模式
+- “尽量减少环境干扰、尤其是实验和 LaTeX 编译”  
+  优先选 Docker 模式
+
+---
+
+## 2. 宿主机模式：最快上手
+
+### 2.1 安装
 
 ```bash
-# 克隆仓库
-git clone https://github.com/MengkunLiang/DIG-ResearchOS.git
-cd DIG-ResearchOS
+cd /home/liangmengkun/ResearchOS
 
-# 构建 Docker 镜像
+conda create -n researchos python=3.11 -y
+conda activate researchos
+
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+pip install -e .
+```
+
+如果你还需要额外 PDF 处理能力：
+
+```bash
+pip install -r requirements-optional-pdf.txt
+```
+
+### 2.2 配置 `.env`
+
+```bash
+cd /home/liangmengkun/ResearchOS
+cp .env.example .env
+```
+
+至少建议补这些：
+
+```bash
+SILICONFLOW_API_KEY=...
+OPENROUTER_API_KEY=...
+OPENAI_API_KEY=...
+S2_API_KEY=...
+RESEARCHER_EMAIL=your@email.com
+```
+
+### 2.3 校验配置
+
+```bash
+cd /home/liangmengkun/ResearchOS
+python -m researchos.cli validate-config
+```
+
+预期输出里应包含：
+
+```text
+ok: true
+```
+
+### 2.4 跑 provider 自检
+
+```bash
+cd /home/liangmengkun/ResearchOS
+python -m researchos.cli selftest
+```
+
+看点：
+
+- SiliconFlow 是否可用
+- OpenRouter / OpenAI 是否可用
+- latency 是否异常高
+
+### 2.5 创建一个 workspace
+
+```bash
+cd /home/liangmengkun/ResearchOS
+python -m researchos.cli init-workspace \
+  --workspace ./workspace/local-test2 \
+  --project-id local-test2 \
+  --topic "memory systems for llm agents"
+```
+
+### 2.6 先跑最小 smoke test
+
+```bash
+cd /home/liangmengkun/ResearchOS
+python -m researchos.cli run-task HELLO --workspace ./workspace/local-test2
+```
+
+成功后应看到：
+
+- `workspace/local-test2/hello.txt`
+
+### 2.7 从头跑完整 pipeline
+
+```bash
+cd /home/liangmengkun/ResearchOS
+python -m researchos.cli run --workspace ./workspace/local-test2
+```
+
+### 2.8 恢复中断的 pipeline
+
+```bash
+cd /home/liangmengkun/ResearchOS
+python -m researchos.cli resume --workspace ./workspace/local-test2
+```
+
+---
+
+## 3. Docker 模式：更稳定的运行方式
+
+### 3.1 构建镜像
+
+```bash
+cd /home/liangmengkun/ResearchOS
 bash infra/docker/build.sh
 ```
 
-### 2.2 设置环境变量
+### 3.2 运行自检
 
 ```bash
-# 设置 API Key
-export OPENAI_API_KEY="your-api-key"
-export OPENAI_BASE_URL="https://api.openai.com/v1"
+cd /home/liangmengkun/ResearchOS
+bash infra/docker/run.sh selftest
 ```
 
-### 2.3 初始化 Workspace
+### 3.3 初始化容器内 workspace
 
 ```bash
-# 创建 workspace 目录
-mkdir -p workspace
-
-# 初始化 workspace
-bash infra/docker/run.sh init-workspace --workspace /workspace
+cd /home/liangmengkun/ResearchOS
+bash infra/docker/run.sh init-workspace \
+  --workspace /workspace \
+  --project-id local-test2 \
+  --topic "memory systems for llm agents"
 ```
 
-### 2.4 运行任务
+### 3.4 在 Docker 中跑完整 pipeline
 
 ```bash
-# 运行 Mock 模式测试（不需要 API Key）
-bash infra/docker/run.sh run-task --workspace /workspace --task hello --mock
-
-# 运行完整 pipeline
+cd /home/liangmengkun/ResearchOS
 bash infra/docker/run.sh run --workspace /workspace
-
-# 运行单个任务
-bash infra/docker/run.sh run-task --workspace /workspace --task T1
-
-# GPU 验证（如果有 GPU）
-bash infra/docker/run.sh bash -c "python -c 'import torch; print(f\"CUDA available: {torch.cuda.is_available()}\"); print(f\"CUDA version: {torch.version.cuda}\")'"
 ```
 
-**GPU 支持说明**:
-- 基础镜像：`nvidia/cuda:12.4.0-runtime-ubuntu22.04`
-- PyTorch 版本：2.6.0+cu124
-- 自动检测：`run.sh` 会自动检测 GPU 并添加 `--gpus all` 标志
-- 要求：宿主机需要安装 nvidia-docker2
-
-### 2.5 查看日志
+### 3.5 在 Docker 中恢复
 
 ```bash
-# 实时查看日志
-tail -f workspace/_runtime/logs/researchos.log
+cd /home/liangmengkun/ResearchOS
+bash infra/docker/run.sh resume --workspace /workspace
+```
 
-# 查看最近 100 行
-tail -n 100 workspace/_runtime/logs/researchos.log
+### 3.6 在 Docker 中单独调 T9
 
-# 搜索错误
-grep "ERROR" workspace/_runtime/logs/researchos.log
+```bash
+cd /home/liangmengkun/ResearchOS
+bash infra/docker/run.sh run-task T9 --workspace /workspace
 ```
 
 ---
 
-## 三、宿主机模式快速开始（开发调试）
+## 4. 最常用命令，一次看全
 
-### 3.1 安装依赖
+### 4.1 初始化 workspace
 
 ```bash
-# 克隆仓库
-git clone https://github.com/MengkunLiang/DIG-ResearchOS.git
-cd DIG-ResearchOS
-
-# 创建并激活 conda 环境
-conda env create -f environment.yml
-conda activate researchos
-
-# 安装 ResearchOS
-pip install -e '.[dev]'
+researchos init-workspace \
+  --workspace ./workspace/local-test2 \
+  --project-id local-test2 \
+  --topic "reflective memory for llm agents"
 ```
 
-### 3.2 设置环境变量
+### 4.2 运行完整链路
 
 ```bash
-# 创建 .env 文件
-cat > .env <<EOF
-OPENAI_API_KEY=your-api-key
-OPENAI_BASE_URL=https://api.openai.com/v1
-EOF
+researchos run --workspace ./workspace/local-test2
 ```
 
-### 3.3 初始化 Workspace
+### 4.3 恢复完整链路
 
 ```bash
-# 初始化 workspace
-python -m researchos.cli init-workspace --workspace ./workspace/demo
-
-# 或使用便捷命令
-researchos init-workspace --workspace ./workspace/demo
+researchos resume --workspace ./workspace/local-test2
 ```
 
-### 3.4 运行任务
+### 4.4 单独跑一个阶段
 
 ```bash
-# 运行 Mock 模式测试
-python -m researchos.cli run-task --workspace ./workspace/demo --task hello --mock
+researchos run-task T2 --workspace ./workspace/local-test2
+researchos run-task T3 --workspace ./workspace/local-test2
+researchos run-task T7.5 --workspace ./workspace/local-test2
+researchos run-task T9 --workspace ./workspace/local-test2
+```
 
-# 运行完整 pipeline
-python -m researchos.cli run --workspace ./workspace/demo
+### 4.5 从其他 workspace 复制前置产物
 
-# 运行单个任务
-python -m researchos.cli run-task --workspace ./workspace/demo --task T1
+```bash
+researchos run-task T8-WRITE \
+  --workspace ./workspace/scratch-write \
+  --from ./workspace/local-test2
+```
+
+### 4.6 查看状态
+
+```bash
+researchos status --workspace ./workspace/local-test2
+```
+
+### 4.7 查看 trace
+
+```bash
+researchos trace T7_single_12345678 --workspace ./workspace/local-test2
+researchos trace T7_single_12345678 --workspace ./workspace/local-test2 --raw
+```
+
+### 4.8 校验某阶段产物
+
+```bash
+researchos validate --workspace ./workspace/local-test2 --task T7
+```
+
+### 4.9 列出 skills
+
+```bash
+researchos list-skills --skills-root /home/liangmengkun/ResearchOS/skills
+```
+
+### 4.10 运行 skill
+
+```bash
+researchos run-skill deepxiv "summarize recent memory papers for llm agents"
 ```
 
 ---
 
-## 四、项目结构
+## 5. 第一次跑时，你应该看哪些文件
 
+### 5.1 总状态
+
+先看：
+
+- `workspace/local-test2/state.yaml`
+- `workspace/local-test2/_runtime/logs/researchos.log`
+
+### 5.2 如果 T2 已经跑了
+
+看：
+
+- `workspace/local-test2/literature/papers_raw.jsonl`
+- `workspace/local-test2/literature/papers_dedup.jsonl`
+- `workspace/local-test2/literature/papers_verified.jsonl`
+- `workspace/local-test2/literature/deep_read_queue.jsonl`
+- `workspace/local-test2/literature/access_audit.md`
+
+### 5.3 如果 T3 已经跑了
+
+看：
+
+- `workspace/local-test2/literature/paper_notes/`
+- `workspace/local-test2/literature/comparison_table.csv`
+- `workspace/local-test2/literature/related_work.bib`
+
+### 5.4 如果 T5/T7 已经跑了
+
+看：
+
+- `workspace/local-test2/pilot/`
+- `workspace/local-test2/experiments/results_summary.json`
+- `workspace/local-test2/experiments/iteration_log.md`
+- `workspace/local-test2/experiments/ablations.csv`
+
+### 5.5 如果 T8/T9 已经跑了
+
+看：
+
+- `workspace/local-test2/drafts/paper.tex`
+- `workspace/local-test2/drafts/review_rounds/`
+- `workspace/local-test2/submission/bundle/`
+- `workspace/local-test2/submission/migration_report.md`
+
+---
+
+## 6. 三个最实用的起手式
+
+### 起手式 A：我只是想确认系统能跑
+
+```bash
+cd /home/liangmengkun/ResearchOS
+python -m researchos.cli validate-config
+python -m researchos.cli selftest
+python -m researchos.cli run-task HELLO --workspace ./workspace/local-test2
 ```
-workspace/
-├── project.yaml              # 项目配置
-├── _runtime/                 # 运行时数据
-│   ├── traces/              # 执行跟踪
-│   ├── logs/                # 日志
-│   └── state.yaml           # 状态机状态
-├── user_seeds/              # 用户输入
-│   ├── seed_papers.jsonl    # 种子论文
-│   ├── seed_ideas.md        # 初始想法
-│   ├── seed_constraints.md  # 研究约束
-│   └── seed_external_resources.jsonl  # 外部资源
-├── literature/              # 文献数据（T2-T3）
-│   ├── papers_raw.jsonl
-│   ├── papers_dedup.jsonl
-│   ├── paper_notes/
-│   ├── comparison_table.csv
-│   └── synthesis.md
-├── ideation/                # 假设生成（T4-T4.5）
-│   ├── hypotheses.md
-│   ├── exp_plan.yaml
-│   ├── risks.md
-│   └── novelty_audit.md
-├── pilot/                   # 试点实验（T5）
-│   ├── pilot_results.json
-│   ├── motivation_validation.md
-│   └── docker_digests.txt
-├── novelty/                 # 新颖性验证（T6）
-│   ├── novelty_report.md
-│   ├── collision_cases.md
-│   └── must_add_baselines.md
-├── experiments/             # 完整实验（T7）
-│   ├── results_summary.json
-│   ├── iteration_log.md
-│   ├── ablations.csv
-│   └── docker_digests.txt
-├── evaluation/              # 评估（T7.5）
-│   └── evaluation_decision.md
-├── drafts/                  # 论文草稿（T8）
-│   ├── outline.md
-│   ├── paper.tex
-│   ├── self_check.md
-│   └── review_rounds/
-└── submission/              # 投稿准备（T9）
-    ├── bundle/
-    ├── migration_report.md
-    └── bundle.zip
+
+### 起手式 B：我想调某个阶段
+
+```bash
+cd /home/liangmengkun/ResearchOS
+python -m researchos.cli run-task T3 --workspace ./workspace/local-test2
+```
+
+### 起手式 C：我想继续之前中断的项目
+
+```bash
+cd /home/liangmengkun/ResearchOS
+python -m researchos.cli resume --workspace ./workspace/local-test2
 ```
 
 ---
 
-## 五、常用命令
+## 7. 常见问题
 
-### 5.1 Docker 模式
+### 7.1 为什么 `researchos` 和 `python -m researchos.cli` 表现不一致？
+
+通常是环境错配。优先用：
 
 ```bash
-# 显示帮助
-bash infra/docker/run.sh --help
-
-# 初始化 workspace
-bash infra/docker/run.sh init-workspace --workspace /workspace
-
-# 运行完整 pipeline
-bash infra/docker/run.sh run --workspace /workspace
-
-# 运行单个任务
-bash infra/docker/run.sh run-task --workspace /workspace --task <task-name>
-
-# 查看状态
-bash infra/docker/run.sh status --workspace /workspace
-
-# 查看 trace
-bash infra/docker/run.sh trace --workspace /workspace --run-id <run-id>
-
-# 进入容器 shell
-docker run --rm -it \
-  -v $(pwd)/workspace:/workspace \
-  --entrypoint bash \
-  researchos/system:latest
+PYTHONPATH=/home/liangmengkun/ResearchOS python -m researchos.cli ...
 ```
 
-### 5.2 宿主机模式
+并重新：
 
 ```bash
-# 显示帮助
-researchos --help
+pip install -e .
+```
 
-# 初始化 workspace
-researchos init-workspace --workspace ./workspace/demo
+### 7.2 为什么中断后看起来“从头开始”？
 
-# 运行完整 pipeline
-researchos run --workspace ./workspace/demo
+先确认三件事：
 
-# 运行单个任务
-researchos run-task --workspace ./workspace/demo --task <task-name>
+1. 用的是不是同一个 workspace
+2. 中断前关键 artifact 有没有真的落盘
+3. 对应 task 有没有恢复逻辑
 
-# 查看状态
-researchos status --workspace ./workspace/demo
+### 7.3 为什么 `run-task` 不能自动接着跑到下一个阶段？
 
-# 查看 trace
-researchos trace --workspace ./workspace/demo --run-id <run-id>
+因为 `run-task` 的语义就是“只跑当前这个 task”。  
+想测完整状态机，应该用：
 
-# 运行自检
-researchos selftest
+```bash
+researchos run --workspace ./workspace/local-test2
+researchos resume --workspace ./workspace/local-test2
 ```
 
 ---
 
-## 六、工作流程
+## 8. 接下来该读什么
 
-ResearchOS 的完整工作流程包含以下阶段（所有 Agent 已实现）：
-
-```
-HELLO (Hello Agent)
-  ↓ 系统测试
-T1 (PI Agent - init)
-  ↓ 项目配置、种子数据
-T2 (Scout Agent)
-  ↓ 论文检索、去重
-T3 (Reader Agent - read)
-  ↓ 论文笔记
-T3.5 (Reader Agent - synthesize)
-  ↓ 文献综述
-T4 (Ideation Agent)
-  ↓ 研究假设、实验计划
-T4.5 (NoveltyAuditor Agent)
-  ↓ 新颖性预审
-T5 (Experimenter Agent - pilot)
-  ↓ 试点实验结果
-T6 (Novelty Agent)
-  ↓ 新颖性最终验证
-T7 (Experimenter Agent - full)
-  ↓ 完整实验结果
-T7.5 (PI Agent - evaluate)
-  ↓ 评估决策
-T8 (Writer + Reviewer Agents)
-  ↓ 论文草稿
-T9 (Submission Agent)
-  ↓ 投稿包
-```
-
-**已实现的 Agent**（11 个）:
-- HelloAgent - 系统测试
-- PIAgent - 项目初始化和评估
-- ScoutAgent - 文献检索
-- ReaderAgent - 文献阅读和综述
-- IdeationAgent - 假设生成
-- NoveltyAuditorAgent - 新颖性预审
-- ExperimenterAgent - 实验执行（pilot/full 模式）
-- NoveltyAgent - 新颖性验证
-- WriterAgent - 论文撰写
-- ReviewerAgent - 论文审查
-- SubmissionAgent - 投稿准备
-
-**测试状态**:
-- 449 个测试全部通过
-- tests/real/：113 个真实测试
-- tests/unit/：单元测试
-- tests/integration/：集成测试（已删除旧文件）
-
----
-
-## 七、配置说明
-
-### 7.1 环境变量
-
-| 变量 | 必需 | 说明 |
-|------|------|------|
-| `OPENAI_API_KEY` | ✅ | OpenAI API Key |
-| `OPENAI_BASE_URL` | ❌ | OpenAI API Base URL（默认：https://api.openai.com/v1）|
-
-### 7.2 配置文件
-
-| 文件 | 位置 | 说明 |
-|------|------|------|
-| `runtime.yaml` | `config/` | Runtime 核心配置 |
-| `model_routing.yaml` | `config/` | 模型路由配置 |
-| `state_machine.yaml` | `config/` | 状态机定义 |
-| `mcp.yaml` | `config/` | MCP 工具配置（可选）|
-| `gates.yaml` | `config/` | Gate 配置（可选）|
-
-详细配置说明请参考 [配置文档](configuration.md)。
-
----
-
-## 八、故障排查
-
-### 8.1 Docker 模式常见问题
-
-**问题 1：镜像构建失败**
-```bash
-# 检查 Docker 是否安装
-docker --version
-
-# 检查磁盘空间
-df -h
-
-# 清理 Docker 缓存
-docker system prune -a
-```
-
-**问题 2：容器无法访问 GPU**
-```bash
-# 检查 nvidia-docker2
-docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi
-
-# 重新安装 nvidia-docker2
-sudo apt-get install nvidia-docker2
-sudo systemctl restart docker
-```
-
-**问题 3：环境变量未生效**
-```bash
-# 检查环境变量
-docker run --rm -it \
-  -e OPENAI_API_KEY=$OPENAI_API_KEY \
-  researchos/system:latest \
-  bash -c "echo \$OPENAI_API_KEY"
-```
-
-### 8.2 宿主机模式常见问题
-
-**问题 1：依赖安装失败**
-```bash
-# 更新 conda
-conda update conda
-
-# 重新创建环境
-conda env remove -n researchos
-conda env create -f environment.yml
-```
-
-**问题 2：API 调用失败**
-```bash
-# 检查环境变量
-echo $OPENAI_API_KEY
-
-# 测试 API 连接
-curl -H "Authorization: Bearer $OPENAI_API_KEY" \
-     $OPENAI_BASE_URL/models
-```
-
-**问题 3：日志文件不存在**
-```bash
-# 初始化 workspace
-researchos init-workspace --workspace ./workspace/demo
-
-# 检查日志目录
-ls -la workspace/demo/_runtime/logs/
-```
-
-更多故障排查信息请参考 [故障排查指南](TROUBLESHOOTING.md)。
-
----
-
-## 九、下一步
-
-- 阅读 [Docker 使用指南](docker-usage.md) - 了解 Docker 模式的详细用法
-- 阅读 [配置文档](configuration.md) - 了解如何自定义配置
-- 阅读 [Agent 文档](agents/README.md) - 了解各个 Agent 的功能
-- 阅读 [开发者手册](dev.md) - 了解如何本地调试、扩展和维护系统
-
----
-
-## 十、获取帮助
-
-如有问题，请：
-
-1. 查看本文档的"故障排查"部分
-2. 查看 [故障排查指南](TROUBLESHOOTING.md)
-3. 查看日志文件：`workspace/_runtime/logs/researchos.log`
-4. 提交 Issue：https://github.com/MengkunLiang/DIG-ResearchOS/issues
-
----
-
-**维护者**: ResearchOS 开发团队  
-**最后更新**: 2026-04-21
+- 想知道每个 Agent 的输入输出和内部逻辑： [agent_pipeline.md](./agent_pipeline.md)
+- 想知道 runtime、tool、MCP、skills 怎么接： [runtime.md](./runtime.md)
+- 想知道所有配置项： [config.md](./config.md)
+- 想做本地开发和调试： [dev.md](./dev.md)
+- 想看日志和 trace： [logging.md](./logging.md)

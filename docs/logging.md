@@ -1,538 +1,463 @@
-# ResearchOS 日志系统
+# ResearchOS Logging and Trace Guide
 
-> **版本**: v1.0
-> **更新日期**: 2026-04-23
+这份文档专门回答两类问题：
 
-本文档介绍 ResearchOS 的日志系统，包括日志位置、查看方法、配置选项和调试技巧。
+- 日志到底在哪看
+- 出问题时应该先看 stdout、log 还是 trace
 
-## 目录
-
-- [日志位置](#日志位置)
-- [日志级别](#日志级别)
-- [查看日志](#查看日志)
-- [Docker 模式下的日志](#docker-模式下的日志)
-- [日志配置](#日志配置)
-- [调试技巧](#调试技巧)
-- [常见问题](#常见问题)
+对于 ResearchOS 来说，**真正有价值的调试信息通常不只在终端输出里，而在 workspace 的 `_runtime/` 目录里。**
 
 ---
 
-## 日志位置
+## 1. 先记住两个位置
 
-### 宿主机模式
+假设你的 workspace 是：
 
-所有运行时日志存储在 workspace 的 `_runtime/logs/` 目录下：
+- `/home/liangmengkun/ResearchOS/workspace/local-test2`
 
-```
-workspace/
-└── _runtime/
-    └── logs/
-        └── researchos.log    # 主日志文件
-```
+那么最重要的两个位置是：
 
-### Docker 模式
+- 日志：
+  - `/home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log`
+- Trace：
+  - `/home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/traces/*.jsonl`
 
-Docker 模式下，日志同样存储在 `workspace/_runtime/logs/` 目录。由于 workspace 通过 `-v` 挂载到容器内，日志文件会持久化到宿主机。
+简单理解：
 
-**容器内路径**：`/workspace/_runtime/logs/researchos.log`  
-**宿主机路径**：`$(pwd)/workspace/_runtime/logs/researchos.log`
+- `researchos.log` 适合看整体运行过程和错误摘要
+- `trace/*.jsonl` 适合看某一次 run 的逐步细节
 
 ---
 
-## 日志级别
+## 2. 日志和 trace 的区别
 
-ResearchOS 支持以下日志级别（按严重程度递增）：
+### 2.1 `researchos.log`
 
-| 级别 | 说明 | 用途 |
-|------|------|------|
-| `DEBUG` | 调试信息 | 详细的执行流程、变量值、中间状态 |
-| `INFO` | 一般信息 | 正常的操作流程、关键步骤完成 |
-| `WARNING` | 警告信息 | 潜在问题、降级行为、配置建议 |
-| `ERROR` | 错误信息 | 执行失败、异常捕获、需要人工介入 |
+它记录的是：
 
-### 默认级别
+- startup summary
+- environment warnings
+- agent 启动/结束
+- tool crash
+- runtime error
+- validator failure
+- gate / resume / budget 相关信息
 
-- 生产运行：`INFO`
-- 开发调试：`DEBUG`
+它更像“系统运行日志”。
 
----
+### 2.2 `trace/*.jsonl`
 
-## 查看日志
+它记录的是某一个 run 的详细流水：
 
-### 实时查看（宿主机模式）
+- step 编号
+- LLM 请求与响应
+- tool call
+- tool result
+- finish_task
+- validate retry
 
-```bash
-# 实时跟踪日志输出
-tail -f workspace/_runtime/logs/researchos.log
-
-# 只显示最近 50 行
-tail -n 50 workspace/_runtime/logs/researchos.log
-
-# 实时查看并高亮错误
-tail -f workspace/_runtime/logs/researchos.log | grep --color=auto -E 'ERROR|WARNING|$'
-```
-
-### 查看历史日志
-
-```bash
-# 查看完整日志
-cat workspace/_runtime/logs/researchos.log
-
-# 使用 less 分页查看
-less workspace/_runtime/logs/researchos.log
-
-# 搜索特定内容
-grep "agent_start" workspace/_runtime/logs/researchos.log
-
-# 查看最近 100 行
-tail -n 100 workspace/_runtime/logs/researchos.log
-```
-
-### 过滤特定事件
-
-```bash
-# 查看所有 Agent 启动事件
-grep "agent_start" workspace/_runtime/logs/researchos.log
-
-# 查看所有错误
-grep "ERROR" workspace/_runtime/logs/researchos.log
-
-# 查看特定 Agent 的日志
-grep "scout" workspace/_runtime/logs/researchos.log
-
-# 查看 LLM 调用
-grep "llm_request" workspace/_runtime/logs/researchos.log
-```
-
-### 分析日志统计
-
-```bash
-# 统计各级别日志数量
-grep -c "INFO" workspace/_runtime/logs/researchos.log
-grep -c "WARNING" workspace/_runtime/logs/researchos.log
-grep -c "ERROR" workspace/_runtime/logs/researchos.log
-
-# 统计 Agent 执行次数
-grep -c "agent_start" workspace/_runtime/logs/researchos.log
-
-# 查看最常见的错误
-grep "ERROR" workspace/_runtime/logs/researchos.log | sort | uniq -c | sort -rn
-```
+它更像“单次执行录像”。
 
 ---
 
-## Docker 模式下的日志
+## 3. 什么时候先看哪个
 
-### 查看容器内日志
+推荐顺序：
 
-**方法 1：通过宿主机挂载目录**
+1. 先看 CLI 最后的错误摘要
+2. 再看 `researchos.log`
+3. 再看对应 `trace`
+4. 最后看 workspace 产物是否真的落盘
 
-由于 workspace 挂载到宿主机，可以直接在宿主机查看：
+### 3.1 例子：任务直接崩溃
+
+先看：
 
 ```bash
-# 宿主机上实时查看
-tail -f workspace/_runtime/logs/researchos.log
+tail -n 80 /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
 ```
 
-**方法 2：进入容器查看**
+如果看到：
+
+- `tool_crashed`
+- `Validation failed`
+- `Budget exceeded`
+- `LLM failed`
+
+就知道该往哪条线继续查。
+
+### 3.2 例子：看起来“跑过了”，但结果不对
+
+优先看：
+
+- `trace/<run_id>.jsonl`
+- 对应 artifact 文件
+
+因为这类问题往往是：
+
+- tool 用错了
+- 写进了错误文件
+- validator 规则和产物结构不一致
+
+---
+
+## 4. 最常用的查看命令
+
+### 4.1 实时看日志
 
 ```bash
-# 启动容器并进入 shell
-docker run --rm -it \
-  -v $(pwd)/workspace:/workspace \
-  --entrypoint bash \
-  researchos/system:latest
+tail -f /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
+```
 
-# 容器内查看日志
+### 4.2 只看最近 100 行
+
+```bash
+tail -n 100 /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
+```
+
+### 4.3 看错误和警告
+
+```bash
+grep -nE "ERROR|WARNING|tool_crashed|Validation failed|Budget exceeded|LLM failed" \
+  /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
+```
+
+### 4.4 看某个 task 的相关日志
+
+```bash
+grep -n "T7" /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
+grep -n "T9" /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
+```
+
+### 4.5 看 trace（人类可读）
+
+```bash
+cd /home/liangmengkun/ResearchOS
+researchos trace T7_single_12345678 --workspace ./workspace/local-test2
+```
+
+### 4.6 看 trace（原始 JSONL）
+
+```bash
+cd /home/liangmengkun/ResearchOS
+researchos trace T7_single_12345678 --workspace ./workspace/local-test2 --raw
+```
+
+### 4.7 直接 grep trace
+
+```bash
+grep -n "tool_crashed" /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/traces/T8-REVIEW-1_single_0b0655e0.jsonl
+grep -n "\"tool_name\"" /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/traces/T3_single_678acc5c.jsonl
+```
+
+---
+
+## 5. 你会在日志里看到什么
+
+### 5.1 startup summary
+
+典型会出现：
+
+```text
+[startup] workspace=/home/liangmengkun/ResearchOS/workspace/local-test2
+[startup] state_machine=/home/liangmengkun/ResearchOS/config/state_machine.yaml
+[startup] gates=/home/liangmengkun/ResearchOS/config/gates.yaml
+[startup] model_routing=/home/liangmengkun/ResearchOS/config/model_routing.yaml
+[startup] mcp_servers=2 mcp_tools=0
+```
+
+它很有用，因为能帮你确认：
+
+- 当前用的是哪个 workspace
+- 当前读的是哪套配置
+- MCP 是否加载
+
+### 5.2 LLM 路由信息
+
+你会看到类似：
+
+```text
+LiteLLM completion() model= deepseek-ai/DeepSeek-V4-Flash; provider = openai
+```
+
+这是 provider/路由级日志，不一定表示错误。
+
+真正需要关注的是：
+
+- 是否 fallback 了
+- 是否连续 timeout
+- 是否 provider 忙
+
+### 5.3 tool crash
+
+典型形式：
+
+```text
+{"tool": "read_file", "event": "tool_crashed", ...}
+```
+
+这通常说明：
+
+- tool 收到不合法输入
+- tool 本身抛异常
+- agent 用错了工具
+
+### 5.4 validator failure
+
+典型形式：
+
+```text
+Validation failed 5 times. Last reason: ...
+```
+
+这类问题要看两边：
+
+- agent 实际写了什么
+- validator 期望什么
+
+### 5.5 budget exceeded
+
+典型形式：
+
+```text
+stop_reason: budget
+error: Budget exceeded on wall_seconds: 922/800
+```
+
+这时需要判断：
+
+- 当前 task 是否启用了预算扩限 gate
+- 是否应该直接 `resume`
+- 是否需要调小 prompt 或减少搜索/工具调用
+
+---
+
+## 6. 常见排障路径
+
+## 6.1 T2 检索结果不对
+
+先看：
+
+```bash
+grep -n "T2" /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
+ls /home/liangmengkun/ResearchOS/workspace/local-test2/literature
+```
+
+再看：
+
+- `papers_raw.jsonl`
+- `papers_dedup.jsonl`
+- `papers_verified.jsonl`
+- `deep_read_queue.jsonl`
+- `access_audit.md`
+
+判断重点：
+
+- raw 有没有写
+- dedup 数量是否异常
+- verification 是否全失败
+- queue 是否没保 seed papers
+
+## 6.2 T3 没有续跑
+
+先看：
+
+```bash
+ls /home/liangmengkun/ResearchOS/workspace/local-test2/literature/paper_notes
+ls /home/liangmengkun/ResearchOS/workspace/local-test2/literature/deep_read_queue_pending.jsonl
+```
+
+再看日志里有没有：
+
+- 恢复模式提示
+- queue pending 生成
+
+如果已有 note 但没生成 pending queue，说明恢复逻辑可能没生效。
+
+## 6.3 T7 校验失败
+
+先看：
+
+```bash
+tail -n 120 /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
+cat /home/liangmengkun/ResearchOS/workspace/local-test2/experiments/results_summary.json
+cat /home/liangmengkun/ResearchOS/workspace/local-test2/experiments/ablations.csv
+```
+
+常见问题：
+
+- headline 实验 seed 数不够
+- ablation 数不够
+- 结果结构和 validator 预期不一致
+
+## 6.4 T8 reviewer 读目录报错
+
+现在应该优先用：
+
+- `list_files` 查看目录
+- `read_file` 读取具体文件
+
+如果日志里再出现：
+
+- `IsADirectoryError`
+
+通常是：
+
+- agent 仍在错误地用 `read_file` 读目录
+- prompt / tool set / tool choice 还需继续调
+
+## 6.5 T9 编译失败
+
+先看：
+
+```bash
+ls /home/liangmengkun/ResearchOS/workspace/local-test2/submission/bundle
+tail -n 200 /home/liangmengkun/ResearchOS/workspace/local-test2/submission/bundle/main.log
+cat /home/liangmengkun/ResearchOS/workspace/local-test2/submission/migration_report.md
+```
+
+判断重点：
+
+- 有没有 `main.pdf`
+- 编译有没有真的重试修复
+- `migration_report.md` 是否明确写了“编译状态: 成功”
+
+---
+
+## 7. Docker 模式下怎么看日志
+
+即使在 Docker 模式下，日志也还是落在挂载出来的 workspace。
+
+例如：
+
+- 容器内：`/workspace/_runtime/logs/researchos.log`
+- 宿主机：`/home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log`
+
+因此最简单的方式通常还是在宿主机直接看：
+
+```bash
+tail -f /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
+```
+
+如果你确实要进容器：
+
+```bash
+docker exec -it <container-id> bash
 tail -f /workspace/_runtime/logs/researchos.log
 ```
 
-**方法 3：使用 docker exec**
+---
+
+## 8. 日志级别和输出格式
+
+当前 runtime 的日志行为主要受：
+
+- `config/runtime.yaml`
+  - `logging.level`
+  - `logging.json`
+
+影响。
+
+推荐：
+
+- 本地开发：
+  - `level: DEBUG`
+  - `json: false`
+- 日常运行：
+  - `level: INFO`
+  - `json: true`
+
+如果想临时调高 CLI 日志级别：
 
 ```bash
-# 找到运行中的容器 ID
-docker ps
-
-# 在运行中的容器内执行命令
-docker exec -it <container-id> tail -f /workspace/_runtime/logs/researchos.log
-```
-
-### 容器标准输出
-
-除了日志文件，ResearchOS 也会将日志输出到标准输出（stdout）。可以通过 `docker logs` 查看：
-
-```bash
-# 查看容器标准输出
-docker logs <container-id>
-
-# 实时跟踪
-docker logs -f <container-id>
-
-# 查看最近 100 行
-docker logs --tail 100 <container-id>
-```
-
-### 日志持久化
-
-**重要**：确保 workspace 目录已挂载，否则容器退出后日志会丢失。
-
-```bash
-# 正确：挂载 workspace（日志持久化）
-docker run --rm -it \
-  -v $(pwd)/workspace:/workspace \
-  researchos/system:latest \
-  run --workspace /workspace
-
-# 错误：不挂载 workspace（日志会丢失）
-docker run --rm -it \
-  researchos/system:latest \
-  run --workspace /workspace
+researchos run-task T3 --workspace ./workspace/local-test2 --log-level DEBUG
 ```
 
 ---
 
-## 日志配置
+## 9. 日志、trace、artifact 三者怎么配合看
 
-### 命令行参数
+最有效的顺序是：
 
-所有 CLI 命令都支持 `--log-level` 参数：
+1. `stdout/stderr`
+2. `researchos.log`
+3. `trace/*.jsonl`
+4. 实际输出文件
+
+举个例子：
+
+如果终端最后提示：
+
+```text
+error: Validation failed 5 times. Last reason: ...
+```
+
+你下一步应该是：
+
+1. 看 `researchos.log` 里最后一次 validator reason
+2. 看该 run 的 trace 里 `finish_task` 前到底写了哪些文件
+3. 打开对应 artifact，看内容是否真的满足 validator 规则
+
+---
+
+## 10. 一组非常实用的命令
+
+实时看本地项目日志：
 
 ```bash
-# 使用 DEBUG 级别（详细日志）
-python -m researchos.cli run --workspace workspace --log-level DEBUG
-
-# 使用 WARNING 级别（只记录警告和错误）
-python -m researchos.cli run --workspace workspace --log-level WARNING
-
-# Docker 模式
-docker run --rm -it \
-  -v $(pwd)/workspace:/workspace \
-  researchos/system:latest \
-  run --workspace /workspace --log-level DEBUG
+tail -f /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
 ```
 
-### 日志格式
-
-ResearchOS 使用结构化日志（structured logging），基于 `structlog` 库。
-
-**JSON 格式（默认）**：
-
-```json
-{"event": "agent_start", "agent": "scout", "task": "T2", "timestamp": "2024-04-20T10:30:00.123456Z", "level": "info"}
-```
-
-**控制台格式（开发模式）**：
-
-```
-2024-04-20 10:30:00 [info] agent_start agent=scout task=T2
-```
-
-### 环境变量
-
-可以通过环境变量配置日志行为：
+查最近一次 T9 的错误：
 
 ```bash
-# 设置日志级别
-export RESEARCHOS_LOG_LEVEL=DEBUG
+grep -n "T9" /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log | tail -n 30
+```
 
-# 禁用 JSON 格式（使用控制台格式）
-export RESEARCHOS_LOG_JSON=false
+查所有 tool crash：
+
+```bash
+grep -n "tool_crashed" /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
+```
+
+查所有预算问题：
+
+```bash
+grep -n "Budget exceeded" /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
+```
+
+查所有 validator 失败：
+
+```bash
+grep -n "Validation failed" /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
+```
+
+查所有 LLM 失败：
+
+```bash
+grep -n "LLM failed" /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
 ```
 
 ---
 
-## 调试技巧
+## 11. 最后怎么理解这套日志系统
 
-### 1. 追踪 Agent 执行流程
+ResearchOS 的日志系统不是“可有可无的附属品”，而是恢复、排障、验证这条链路的一部分。
 
-```bash
-# 查看所有 Agent 的启动和完成
-grep -E "agent_start|agent_done" workspace/_runtime/logs/researchos.log
+最实用的经验是：
 
-# 查看特定 Agent 的完整执行
-grep "scout" workspace/_runtime/logs/researchos.log | less
-```
+- 不要只看终端最后一屏
+- 不要只看 log，不看 artifact
+- 不要只看 artifact，不看 trace
 
-### 2. 诊断 LLM 调用问题
+真正有效的是三者结合：
 
-```bash
-# 查看所有 LLM 请求
-grep "llm_request" workspace/_runtime/logs/researchos.log
+- log 看整体
+- trace 看细节
+- artifact 看事实
 
-# 查看 LLM 错误
-grep -E "llm_request.*ERROR|llm_error" workspace/_runtime/logs/researchos.log
+接下来如果你要继续排障，建议顺着读：
 
-# 统计 LLM 调用次数
-grep -c "llm_request" workspace/_runtime/logs/researchos.log
-```
-
-### 3. 检查工具执行
-
-```bash
-# 查看所有工具调用
-grep "tool_call" workspace/_runtime/logs/researchos.log
-
-# 查看 docker_exec 执行
-grep "docker_exec" workspace/_runtime/logs/researchos.log
-
-# 查看 LaTeX 编译
-grep "latex_compile" workspace/_runtime/logs/researchos.log
-```
-
-### 4. 分析性能瓶颈
-
-```bash
-# 查看耗时较长的操作
-grep "duration" workspace/_runtime/logs/researchos.log | sort -t: -k2 -n
-
-# 查看超时事件
-grep "timeout" workspace/_runtime/logs/researchos.log
-```
-
-### 5. 调试预算和限流
-
-```bash
-# 查看预算警告
-grep "budget_warning" workspace/_runtime/logs/researchos.log
-
-# 查看限流事件
-grep "rate_limit" workspace/_runtime/logs/researchos.log
-```
-
-### 6. 使用 jq 解析 JSON 日志
-
-如果日志是 JSON 格式，可以使用 `jq` 进行高级查询：
-
-```bash
-# 安装 jq（如果未安装）
-sudo apt-get install jq  # Ubuntu/Debian
-brew install jq          # macOS
-
-# 提取所有错误事件
-cat workspace/_runtime/logs/researchos.log | jq 'select(.level == "error")'
-
-# 统计各 Agent 的调用次数
-cat workspace/_runtime/logs/researchos.log | jq -r '.agent' | sort | uniq -c
-
-# 查看特定时间范围的日志
-cat workspace/_runtime/logs/researchos.log | jq 'select(.timestamp >= "2024-04-20T10:00:00")'
-
-# 提取 LLM 请求的 token 使用
-cat workspace/_runtime/logs/researchos.log | jq 'select(.event == "llm_request") | {agent, tokens}'
-```
-
-### 7. 实时监控关键事件
-
-```bash
-# 监控错误和警告
-tail -f workspace/_runtime/logs/researchos.log | grep --color=auto -E 'ERROR|WARNING'
-
-# 监控 Agent 状态变化
-tail -f workspace/_runtime/logs/researchos.log | grep --color=auto -E 'agent_start|agent_done'
-
-# 监控预算使用
-tail -f workspace/_runtime/logs/researchos.log | grep --color=auto 'budget'
-```
-
----
-
-## 常见问题
-
-### Q1: 日志文件不存在
-
-**症状**：`workspace/_runtime/logs/researchos.log` 文件不存在
-
-**原因**：
-- Workspace 未初始化
-- 首次运行尚未创建日志文件
-
-**解决方法**：
-```bash
-# 初始化 workspace
-python -m researchos.cli init-workspace --workspace workspace
-
-# 或者运行任意命令，日志文件会自动创建
-python -m researchos.cli status --workspace workspace
-```
-
-### Q2: 日志文件过大
-
-**症状**：`researchos.log` 文件占用大量磁盘空间
-
-**原因**：
-- 长时间运行积累了大量日志
-- DEBUG 级别产生过多日志
-
-**解决方法**：
-```bash
-# 清空日志文件（保留文件）
-> workspace/_runtime/logs/researchos.log
-
-# 或者删除并重新创建
-rm workspace/_runtime/logs/researchos.log
-
-# 使用更高的日志级别
-python -m researchos.cli run --workspace workspace --log-level WARNING
-```
-
-### Q3: Docker 容器内看不到日志
-
-**症状**：容器内 `/workspace/_runtime/logs/` 目录为空
-
-**原因**：
-- Workspace 未正确挂载
-- 日志目录未创建
-
-**解决方法**：
-```bash
-# 确保挂载 workspace
-docker run --rm -it \
-  -v $(pwd)/workspace:/workspace \
-  researchos/system:latest \
-  run --workspace /workspace
-
-# 检查挂载是否成功
-docker run --rm -it \
-  -v $(pwd)/workspace:/workspace \
-  --entrypoint bash \
-  researchos/system:latest \
-  -c "ls -la /workspace/_runtime/logs/"
-```
-
-### Q4: 日志格式难以阅读
-
-**症状**：JSON 格式日志不便于人工阅读
-
-**解决方法**：
-```bash
-# 方法 1：使用 jq 格式化
-cat workspace/_runtime/logs/researchos.log | jq '.'
-
-# 方法 2：使用 Python 格式化
-python -m json.tool < workspace/_runtime/logs/researchos.log
-
-# 方法 3：禁用 JSON 格式（需要修改代码或配置）
-# 在 cli.py 中调用 configure_logging(json_logs=False)
-```
-
-### Q5: 日志中缺少关键信息
-
-**症状**：日志级别过高，缺少调试信息
-
-**解决方法**：
-```bash
-# 使用 DEBUG 级别重新运行
-python -m researchos.cli run --workspace workspace --log-level DEBUG
-
-# 或者设置环境变量
-export RESEARCHOS_LOG_LEVEL=DEBUG
-python -m researchos.cli run --workspace workspace
-```
-
-### Q6: 容器退出后日志丢失
-
-**症状**：容器停止后无法查看日志
-
-**原因**：
-- Workspace 未挂载
-- 使用了 `--rm` 标志但未挂载日志目录
-
-**解决方法**：
-```bash
-# 确保挂载 workspace（推荐）
-docker run --rm -it \
-  -v $(pwd)/workspace:/workspace \
-  researchos/system:latest \
-  run --workspace /workspace
-
-# 或者不使用 --rm，容器退出后仍可查看
-docker run -it \
-  -v $(pwd)/workspace:/workspace \
-  researchos/system:latest \
-  run --workspace /workspace
-
-# 事后查看容器日志
-docker logs <container-id>
-```
-
----
-
-## 日志轮转（未实现）
-
-当前版本的 ResearchOS 不支持自动日志轮转。如果需要管理日志文件大小，可以：
-
-1. **手动清理**：定期删除或归档旧日志
-2. **使用外部工具**：如 `logrotate`（Linux）
-3. **脚本自动化**：编写清理脚本
-
-**示例清理脚本**：
-
-```bash
-#!/bin/bash
-# 归档并压缩旧日志
-
-LOG_FILE="workspace/_runtime/logs/researchos.log"
-ARCHIVE_DIR="workspace/_runtime/logs/archive"
-
-mkdir -p "$ARCHIVE_DIR"
-
-if [ -f "$LOG_FILE" ]; then
-    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-    gzip -c "$LOG_FILE" > "$ARCHIVE_DIR/researchos_$TIMESTAMP.log.gz"
-    > "$LOG_FILE"  # 清空当前日志
-    echo "日志已归档到 $ARCHIVE_DIR/researchos_$TIMESTAMP.log.gz"
-fi
-```
-
----
-
-## 最佳实践
-
-### 1. 开发调试时使用 DEBUG 级别
-
-```bash
-python -m researchos.cli run --workspace workspace --log-level DEBUG
-```
-
-### 2. 生产运行时使用 INFO 级别
-
-```bash
-python -m researchos.cli run --workspace workspace --log-level INFO
-```
-
-### 3. 定期检查日志文件大小
-
-```bash
-du -h workspace/_runtime/logs/researchos.log
-```
-
-### 4. 使用 tail -f 实时监控
-
-```bash
-tail -f workspace/_runtime/logs/researchos.log | grep --color=auto -E 'ERROR|WARNING|$'
-```
-
-### 5. 结合 trace 命令诊断问题
-
-```bash
-# 查看执行跟踪
-python -m researchos.cli trace --workspace workspace --run-id <run-id>
-
-# 结合日志分析
-grep "<run-id>" workspace/_runtime/logs/researchos.log
-```
-
----
-
-## 相关文档
-
-- [Docker 使用指南](docker-usage.md)
-- [Runtime 开发规范](/home/liangmengkun/reference_materials/ResearchOS_Runtime_Dev_Spec.md)
-- [故障排查指南](docker-usage.md#故障排查)
-
----
-
-## 反馈与支持
-
-如有问题，请提交 Issue 到 GitHub 仓库：
-https://github.com/MengkunLiang/DIG-ResearchOS/issues
+- [dev.md](./dev.md)
+- [agent_pipeline.md](./agent_pipeline.md)
+- [runtime.md](./runtime.md)

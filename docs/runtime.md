@@ -681,11 +681,80 @@ ResearchOS 当前的校验不是一层，而是多层：
 - T7 看 results_summary / ablations / seed ensemble
 - T9 看 `main.pdf` + `编译状态: 成功`
 
+这些校验不是装饰性的。
+
+实际行为是：
+
+- agent 调用 `finish_task`
+- runtime 不会立刻宣布成功
+- 先执行 `validate_outputs()`
+- 校验失败时，runtime 会把失败原因回灌给 agent
+- agent 继续修补，直到成功或达到重试/预算上限
+
+这也是为什么你会在日志里看到：
+
+- `Agent 请求完成任务，开始校验输出`
+- `输出校验失败`
+- 然后 agent 继续工作
+
 ### 12.4 Runtime artifact 校验
 
 runner 或 single-task 在 agent 成功后还会用 task contract 做一轮额外验证。
 
 这可以拦住“agent 说自己完成了，但关键文件没写齐”的情况。
+
+### 12.5 Handoff 校验
+
+除了单个 task 的输出校验，ResearchOS 还隐含地做上游到下游的 handoff 校验。
+
+典型例子：
+
+- `T3 -> T3.5`
+  - 必须有 `paper_notes/`、`comparison_table.csv`
+- `T4 -> T4.5`
+  - 必须有 `hypotheses.md`、`exp_plan.yaml`
+- `T5 -> T6`
+  - 必须有 pilot 结果
+- `T7 -> T7.5`
+  - 必须有 `experiments/results_summary.json`
+- `T7.5 -> T8`
+  - 必须先产出 `evaluation/evaluation_decision.md`
+
+这些规则一部分来自：
+
+- `config/state_machine.yaml`
+- `researchos/orchestration/task_io_contract.py`
+- 各 agent 的 `validate_outputs()`
+
+### 12.6 Integrity Gate / Human Gate
+
+ResearchOS 不只有“文件存在性校验”，还有两类更高层的 gate：
+
+1. 机器 gate
+   - 例如 `T7.5` 解析 `evaluation_decision.md`
+   - 例如 budget extension gate
+   - 例如 `T6` / `T7.5` 这类决策型节点
+
+2. human gate
+   - 例如 `T7.5 -> T8` 之间的人类确认
+   - 当系统需要问“是否继续写论文 / 是否扩预算 / 是否按 PI 建议推进”时触发
+
+### 12.7 Failure Mode 校验
+
+实验相关 agent 还会带研究质量层面的检查，而不是只看文件有没有写出来。
+
+典型包括：
+
+- seed ensemble 是否达标
+- ablation 数量是否足够
+- 结果是否明显缺乏多样性
+- silent failure 风险
+  - `nan`
+  - `inf`
+  - OOM
+  - 不收敛
+
+因此，ResearchOS 的 `validate_outputs()` 实际上经常承担了“质量门控”的作用，而不只是“格式检查”。
 
 ---
 

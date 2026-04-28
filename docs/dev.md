@@ -200,6 +200,11 @@ python -m researchos.cli init-workspace \
   --topic "memory systems for llm agents"
 ```
 
+典型 case：
+
+- 新建一个最小调试工程 `./workspace/demo`
+- 后续先跑 `HELLO`、再跑 `T1`
+
 ### 4.2 `run`
 
 从当前状态推进完整 pipeline。
@@ -208,6 +213,11 @@ python -m researchos.cli init-workspace \
 python -m researchos.cli run --workspace ./workspace/demo
 ```
 
+典型 case：
+
+- 你已经准备好 `project.yaml` 和必要 seeds
+- 想让系统从当前状态一路往下推进，而不是手工一个个敲 task
+
 ### 4.3 `resume`
 
 恢复一个被 gate 暂停、预算中断或人工中断后的 workspace。
@@ -215,6 +225,12 @@ python -m researchos.cli run --workspace ./workspace/demo
 ```bash
 python -m researchos.cli resume --workspace ./workspace/demo
 ```
+
+典型 case：
+
+- `T7.5` 已经生成 `evaluation/evaluation_decision.md`，现在要继续
+- `T9` 编译前半段已经写出 bundle，想继续收敛
+- provider 超时后，你想基于现有产物接着跑
 
 ### 4.4 `run-task`
 
@@ -226,6 +242,12 @@ python -m researchos.cli run-task T7.5 --workspace ./workspace/demo
 python -m researchos.cli run-task T9 --workspace ./workspace/demo
 ```
 
+典型 case：
+
+- `T3`：调 PDF 获取、section 提取、续跑逻辑
+- `T7.5`：调 PI evaluate 和 `next_task`
+- `T9`：调投稿包编译、修复与验收
+
 ### 4.5 `validate`
 
 校验某个 workspace 当前产物是否符合约定。
@@ -234,6 +256,11 @@ python -m researchos.cli run-task T9 --workspace ./workspace/demo
 python -m researchos.cli validate --workspace ./workspace/demo --task T7
 ```
 
+典型 case：
+
+- 你怀疑 `T7` 结果已经写出来了，但状态机仍说失败
+- 想单独验证 `results_summary.json`、`ablations.csv` 和相关输出是否满足规则
+
 ### 4.6 `status`
 
 看当前状态机状态。
@@ -241,6 +268,11 @@ python -m researchos.cli validate --workspace ./workspace/demo --task T7
 ```bash
 python -m researchos.cli status --workspace ./workspace/demo
 ```
+
+典型 case：
+
+- 想确认现在停在 `T6` 还是 `T7.5`
+- 想看是否存在 `pending_gate`
 
 ### 4.7 `trace`
 
@@ -251,6 +283,12 @@ python -m researchos.cli trace T7_single_xxxxxxxx --workspace ./workspace/demo
 python -m researchos.cli trace T7_single_xxxxxxxx --workspace ./workspace/demo --raw
 ```
 
+典型 case：
+
+- 想确认 agent 到底调用了哪些 tool
+- 想看 validator 为什么失败
+- 想复盘某次 run 的逐步行为
+
 ### 4.8 `list-skills` / `run-skill`
 
 技能运行时调试：
@@ -259,6 +297,11 @@ python -m researchos.cli trace T7_single_xxxxxxxx --workspace ./workspace/demo -
 python -m researchos.cli list-skills --skills-root /home/liangmengkun/ResearchOS/skills
 python -m researchos.cli run-skill paper-compile "compile the paper in ./workspace/local-test2/drafts"
 ```
+
+典型 case：
+
+- 验证 `SKILL.md` 是否被发现
+- 验证 paper 相关 skill 当前能否真实执行
 
 ---
 
@@ -640,7 +683,7 @@ pip install -e .
 3. [docs/runtime.md](./runtime.md)
 4. [docs/config.md](./config.md)
 5. [docs/docker.md](./docker.md)
-6. [docs/agents/README.md](./agents/README.md)
+6. [docs/logging.md](./logging.md)
 
 如果你在本地维护当前仓库，建议再结合：
 

@@ -374,7 +374,7 @@ Start here depending on your role:
 - Docker: [docs/docker.md](./docs/docker.md)
 - Configuration: [docs/config.md](./docs/config.md)
 - Developer guide: [docs/dev.md](./docs/dev.md)
-- Per-agent reference: [docs/agents/README.md](./docs/agents/README.md)
+- Full workflow and per-agent details: [docs/agent_pipeline.md](./docs/agent_pipeline.md)
 
 ## Current Implementation Status
 
@@ -440,6 +440,6 @@ Check repository-local files such as:
 
 - `CLAUDE.md`
 - `config/README.md`
-- `docs/agents/*.md`
+- `docs/agent_pipeline.md`
 
 for repository-specific conventions and implementation details.

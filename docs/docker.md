@@ -1,5 +1,11 @@
 # ResearchOS Docker Guide
 
+本文档是 ResearchOS 当前唯一的 Docker 主文档。
+
+之前分散在旧 Docker 使用说明和 Docker 测试报告中的有效信息已经并入本文档。
+
+如果你之前看过旧文档，现在请以本文档为准。
+
 本文档详细说明 ResearchOS 当前 Docker 方案的目标、使用方法、注意事项和常见问题。
 
 当前仓库的 Docker 方案不是“可选附属品”，而是正式支持的运行模式之一，尤其适合：
@@ -164,6 +170,21 @@ bash infra/docker/run.sh bash
 - 固定化服务定义
 - 长期环境维护
 
+### 4.4 什么时候优先用 Docker
+
+推荐优先使用 Docker 的场景：
+
+- 你要跑 `T5` / `T7`，而且实验依赖较重
+- 你要跑 `T9`，需要稳定的 LaTeX 编译环境
+- 你在多台机器上切换，希望环境一致
+- 你希望把宿主机 Python 环境和 ResearchOS 运行环境隔离
+
+不一定非要用 Docker 的场景：
+
+- 你只是在本地调试 `T1` / `T2` / `T3`
+- 你只是在看日志、改 prompt、读文档
+- 你暂时不需要 GPU 或 LaTeX
+
 ---
 
 ## 5. 构建镜像
@@ -260,7 +281,46 @@ bash infra/docker/run.sh run-task T2 --workspace /workspace
 bash infra/docker/run.sh run-task T9 --workspace /workspace
 ```
 
-### 6.5 交互式进入容器
+### 6.5 手动 `docker run`（不用 `run.sh`）
+
+如果你想完全显式地控制挂载和环境变量，也可以直接用 `docker run`。
+
+初始化 workspace：
+
+```bash
+cd /home/liangmengkun/ResearchOS
+docker run --rm -it \
+  -v /home/liangmengkun/ResearchOS/workspace:/workspace \
+  researchos/system:latest \
+  init-workspace --workspace /workspace/local-test2 --project-id local-test2 --topic "agent memory retrieval"
+```
+
+跑完整 pipeline：
+
+```bash
+cd /home/liangmengkun/ResearchOS
+docker run --rm -it \
+  -v /home/liangmengkun/ResearchOS/workspace:/workspace \
+  -e SILICONFLOW_API_KEY="$SILICONFLOW_API_KEY" \
+  -e OPENROUTER_API_KEY="$OPENROUTER_API_KEY" \
+  -e OPENAI_API_KEY="$OPENAI_API_KEY" \
+  -e S2_API_KEY="$S2_API_KEY" \
+  researchos/system:latest \
+  run --workspace /workspace/local-test2
+```
+
+单 task 调试：
+
+```bash
+cd /home/liangmengkun/ResearchOS
+docker run --rm -it \
+  -v /home/liangmengkun/ResearchOS/workspace:/workspace \
+  -e SILICONFLOW_API_KEY="$SILICONFLOW_API_KEY" \
+  researchos/system:latest \
+  run-task T3 --workspace /workspace/local-test2
+```
+
+### 6.6 交互式进入容器
 
 ```bash
 bash infra/docker/run.sh bash
@@ -302,6 +362,22 @@ bash infra/docker/run.sh bash
 - 容器退出后产物保留
 - 本地 IDE 里能直接打开同一套文件
 - 单任务续跑和 pipeline resume 仍然可用
+
+### 7.3 最常见的路径误解
+
+最常见的误解是：
+
+- 宿主机上你看到的是 `/home/liangmengkun/ResearchOS/workspace/local-test2`
+- 容器里 agent 看到的是 `/workspace/local-test2`
+
+这两个路径指向的是同一份数据。
+
+所以：
+
+- 在容器里写 `paper_notes/*.md`
+- 宿主机 IDE 里会立刻看到更新
+
+这不是复制，而是挂载。
 
 ---
 
@@ -413,11 +489,77 @@ cp .env.example .env
 - `S2_API_KEY`
 - `RESEARCHER_EMAIL`
 
+### 11.1 这些变量分别干什么
+
+| 变量 | 用途 |
+| --- | --- |
+| `SILICONFLOW_API_KEY` | 当前默认主路由 provider 之一，很多 agent 直接依赖它 |
+| `SILICONFLOW_BASE_URL` | SiliconFlow OpenAI-compatible endpoint |
+| `OPENROUTER_API_KEY` | OpenRouter fallback |
+| `OPENAI_API_KEY` / `OPENAI_BASE_URL` | OpenAI 或兼容 provider |
+| `ANTHROPIC_API_KEY` | Anthropic provider |
+| `S2_API_KEY` | Semantic Scholar 检索增强 |
+| `RESEARCHER_EMAIL` | OpenAlex / arXiv 等抓取时的联系标识 |
+| `GITHUB_TOKEN` | 部分 MCP / GitHub 集成需要 |
+
+### 11.2 Docker 里变量如何生效
+
+典型链路是：
+
+1. 你在宿主机根目录放 `.env`
+2. `infra/docker/run.sh` 读取 `.env`
+3. 脚本把变量透传给 `docker run`
+4. 容器内 `researchos.cli` 和 runtime 再读取这些变量
+
+所以如果 Docker 里报“缺少 API key”，排查顺序通常是：
+
+1. `.env` 有没有填
+2. 变量名有没有拼错
+3. `run.sh` 是否从项目根目录执行
+4. 你是否手动 `docker run` 却忘了 `-e ...`
+
 ---
 
-## 12. 常见问题与排查
+## 12. 数据持久化、日志和追踪
 
-### 12.1 `镜像不存在`
+### 12.1 哪些文件会持久化
+
+只要写在挂载的 workspace 里，就会持久化到宿主机：
+
+- `literature/`
+- `ideation/`
+- `pilot/`
+- `experiments/`
+- `drafts/`
+- `submission/`
+- `_runtime/logs/`
+- `_runtime/traces/`
+
+### 12.2 哪些文件不会保留
+
+容器内部但不在挂载目录里的临时文件，容器退出后就会消失。
+
+### 12.3 Docker 模式下怎么看日志
+
+ResearchOS 自己的主日志仍然在 workspace 里：
+
+```bash
+tail -f /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/logs/researchos.log
+```
+
+trace 文件也仍然在 workspace 里：
+
+```bash
+ls /home/liangmengkun/ResearchOS/workspace/local-test2/_runtime/traces
+```
+
+如果你要看容器标准输出，可以直接观察当前终端，或者不用 `--rm` 时再配合 `docker logs`。
+
+---
+
+## 13. 常见问题与排查
+
+### 13.1 `镜像不存在`
 
 表现：
 
@@ -431,7 +573,7 @@ cp .env.example .env
 bash infra/docker/build.sh
 ```
 
-### 12.2 `未检测到 LLM API 密钥`
+### 13.2 `未检测到 LLM API 密钥`
 
 表现：
 
@@ -448,7 +590,7 @@ bash infra/docker/build.sh
 
 - 在 `.env` 中填写至少一个 provider 的 API key
 
-### 12.3 GPU 不可用
+### 13.3 GPU 不可用
 
 表现：
 
@@ -462,7 +604,7 @@ bash infra/docker/build.sh
 3. `nvidia-container-toolkit`
 4. 是否处于 LXC / 嵌套虚拟化
 
-### 12.4 T9 编译失败
+### 13.4 T9 编译失败
 
 不要先怀疑 Docker 本身。
 
@@ -473,7 +615,41 @@ bash infra/docker/build.sh
 - BibTeX 问题
 - venue 样式与原文冲突
 
-### 12.5 容器里路径和宿主机路径不一致
+推荐在容器里直接定位：
+
+```bash
+bash infra/docker/run.sh bash
+cd /workspace/local-test2/submission/bundle
+latexmk -pdf -interaction=nonstopmode -halt-on-error main.tex
+tail -n 80 main.log
+```
+
+### 13.5 `run.sh` 能跑，但手动 `docker run` 失败
+
+最常见原因：
+
+- 你忘了挂载 `-v ...:/workspace`
+- 你忘了传 `-e API_KEY=...`
+- 你把宿主机路径写成了容器内路径
+- 你在容器里用了宿主机路径
+
+### 13.6 明明宿主机文件存在，容器里看不到
+
+通常是挂载目录不对。
+
+例如你挂载的是：
+
+```bash
+-v /home/liangmengkun/ResearchOS/workspace:/workspace
+```
+
+那容器里正确路径就是：
+
+```bash
+/workspace/local-test2
+```
+
+### 13.7 容器里路径和宿主机路径不一致
 
 记住：
 
@@ -484,16 +660,16 @@ bash infra/docker/build.sh
 
 ---
 
-## 13. 推荐使用模式
+## 14. 推荐使用模式
 
-### 13.1 使用者
+### 14.1 使用者
 
 推荐：
 
 - 平时本地阅读与检查：宿主机模式
 - 正式实验与打包：Docker 模式
 
-### 13.2 开发者
+### 14.2 开发者
 
 推荐：
 
@@ -503,7 +679,7 @@ bash infra/docker/build.sh
 
 ---
 
-## 14. 一组推荐命令
+## 15. 一组推荐命令
 
 ### 构建
 
@@ -516,6 +692,26 @@ bash infra/docker/build.sh
 
 ```bash
 bash infra/docker/run.sh init-workspace --workspace /workspace --project-id demo --topic "agent memory retrieval"
+```
+
+### 全链运行
+
+```bash
+bash infra/docker/run.sh run --workspace /workspace/local-test2
+```
+
+### 从中断点恢复
+
+```bash
+bash infra/docker/run.sh resume --workspace /workspace/local-test2
+```
+
+### 单任务恢复式调试
+
+```bash
+bash infra/docker/run.sh run-task T3 --workspace /workspace/local-test2
+bash infra/docker/run.sh run-task T7 --workspace /workspace/local-test2
+bash infra/docker/run.sh run-task T9 --workspace /workspace/local-test2
 ```
 
 ### 跑完整流水线
@@ -547,7 +743,7 @@ latexmk -pdf -interaction=nonstopmode -halt-on-error main.tex
 
 ---
 
-## 15. 相关文档
+## 16. 相关文档
 
 - [docs/runtime.md](./runtime.md)
 - [docs/agent_pipeline.md](./agent_pipeline.md)
