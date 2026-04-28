@@ -1,416 +1,445 @@
-# ResearchOS Runtime
+# ResearchOS
 
-## Project Overview
+ResearchOS is an artifact-first research runtime for taking a project from idea to literature review, hypothesis generation, experimentation, paper drafting, review, and submission packaging.
 
-ResearchOS prioritizes **runtime infrastructure** over a fully completed T1-T9 research agent product at this stage.
+It is not a single “chat agent”. It is a staged system built from:
 
-Core capabilities already in place:
+- a state machine
+- task-specific agents
+- a tool runtime
+- workspace-based artifacts
+- validation, resume, gates, and tracing
 
-- `AgentRunner` main loop: message protocol, LLM calls, tool execution, finish validation, budget, trace.
-- `StateMachine` orchestration layer: `state.yaml`, gates, resume, iteration, task override.
-- `ToolRegistry` and workspace permissions: tool factory registration, task-specific tool instances, read/write boundary control.
-- `cli_runners`: supports both complete pipeline mode and single task debug mode.
-- `skills` runtime: supports `SKILL.md`, skill tool auto-discovery, standalone skill execution.
-- Key runtime tools: `search_papers`, `fetch_paper_metadata`, `docker_exec`, `latex_compile`, `extract_paper_sections`, `MCPTool` adapter.
-- Testing infrastructure: `MockLLMClient`, `MockHumanInterface`, runtime test doubles, pytest fixtures.
+If you want the shortest mental model:
 
-### Implemented Agents
+```text
+idea
+ -> literature scouting
+ -> deep reading
+ -> synthesis
+ -> hypothesis generation
+ -> novelty audit
+ -> pilot experiment
+ -> full experiment
+ -> PI evaluation
+ -> writing / review / revision
+ -> submission bundle
+```
 
-- `HelloAgent`: debug agent
-- `PIAgent` (T1/T7.5): project initialization and evaluation, supports init and evaluate modes
-- `ScoutAgent` (T2): literature retrieval, multi-source paper search
-- `ReaderAgent` (T3/T3.5): deep reading and literature synthesis, supports read and synthesize modes
-- `IdeationAgent` (T4): hypothesis generation via two-round Gate interaction
-- `NoveltyAuditorAgent` (T4.5): novelty audit, evaluates hypothesis novelty and feasibility
-- `ExperimenterAgent` (T5/T7): experiment execution, T5 is pilot, T7 is full mode
-- `NoveltyAgent` (T6): final novelty verification based on pilot results
-- `WriterAgent` (T8-WRITE/T8-DRAFT/T8-REVISE-*): paper writing, supports outline, draft, revision phases
-- `ReviewerAgent` (T8-REVIEW-*): paper review, supports multiple review rounds
-- `SubmissionAgent` (T9): submission preparation, handles template migration, anonymization, compile verification
+## What ResearchOS Can Do
 
-See [researchos/agents/registry.py](./researchos/agents/registry.py).
+Current implemented workflow:
 
-### LLM Routing Support
+```text
+T1
+ -> T2
+ -> T3
+ -> T3.5
+ -> T4
+ -> T4.5
+ -> T5
+ -> T6
+ -> T7
+ -> T7.5
+ -> human gate
+ -> T8-WRITE
+ -> T8-DRAFT
+ -> T8-REVIEW-1
+ -> T8-REVISE-1
+ -> T8-REVIEW-2
+ -> T8-REVISE-2
+ -> T9
+ -> done
+```
 
-Multi-provider support: SiliconFlow, OpenRouter, OpenAI, Anthropic
+Key runtime features already wired:
 
-- Config file: `config/model_routing.yaml`
-- Default: SiliconFlow DeepSeek
-- API keys configurable via environment variables
+- full pipeline execution via `run` / `resume`
+- single-task debugging via `run-task`
+- task resume / recovery for interrupted stages
+- LLM routing with profile, tier, fallback, retries, and provider selftest
+- artifact validation after each task
+- human gates in the state machine
+- skill discovery and `run-skill`
+- MCP server loading and tool registration
+- Docker-based experiment / LaTeX execution support
+- trace and log recording under each workspace
 
-### Robustness Enhancements
+## Core Concepts
 
-Based on `ResearchOS_Agent_Dev_Spec_Addendum_Robustness.md`, the following enhancements are implemented:
+### Workspace-first
 
-1. **T4 Hypothesis Pre-mortem (§4.1)**: Counter-intuitive verification between Gate1 and Gate2
-2. **Runtime Budget Drift Warning (§7.1)**: Budget drift warning (70%/90% thresholds)
-3. **T1 Ethical Screening (§8.1)**: Sensitive direction interception
-4. **T1 External Resources Management (§10.1-10.2)**: External resource management
-5. **Iteration Deadlock Detection (Phase 2.3)**: Prevents infinite loops
+Every project runs inside a workspace. The workspace is the source of truth.
 
-All features have corresponding unit tests in `tests/unit/test_robustness_enhancements.py`.
+Typical directories:
 
-## 5-Minute Quick Start
+- `user_seeds/`
+- `literature/`
+- `ideation/`
+- `pilot/`
+- `novelty/`
+- `experiments/`
+- `evaluation/`
+- `drafts/`
+- `submission/`
+- `_runtime/`
 
-All commands are executed from the **repository root** by default.
+### Full pipeline vs single task
 
-### Path A: Docker Mode (Recommended)
+There are two important ways to run the system:
 
-**Use case**: Production deployment, paper reproduction, quick demo
+- `run` / `resume`
+  This advances the full state machine, handles gates, and moves across tasks.
+- `run-task`
+  This runs exactly one task for debugging and does not advance the workflow.
 
-Docker mode uses **unified image** that supports:
-- T5/T7 experiment execution
-- T9 TeX compilation and PDF generation
+### Agents do not “remember” progress
+
+Progress is recovered from artifacts on disk, not from hidden chat memory.
+
+That is why resume and interruption recovery work best when the relevant outputs have already been written to the workspace.
+
+## Repository Map
+
+| Path | Purpose |
+| --- | --- |
+| `researchos/agents/` | task-specific agents |
+| `researchos/runtime/` | runner, config, LLM client, trace, logging |
+| `researchos/orchestration/` | state machine, gates, task I/O contract |
+| `researchos/tools/` | builtin tools, MCP adapter, filesystem, paper tools |
+| `researchos/skills/` | skill loader, aliases, runner |
+| `config/` | state machine, model routing, agent params, runtime config |
+| `docs/` | detailed system documentation |
+| `infra/docker/` | Docker build and run scripts |
+| `tests/` | unit and real-environment tests |
+| `workspace/` | default local workspaces |
+
+## Installation
+
+### Option A: Host installation
+
+Recommended for development and debugging.
 
 ```bash
-# 1. Build image
-cd /home/liangmengkun/ResearchOS
+git clone <your-repo-url> ResearchOS
+cd ResearchOS
+
+conda create -n researchos python=3.11 -y
+conda activate researchos
+
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+pip install -e .
+```
+
+Optional PDF extras:
+
+```bash
+pip install -r requirements-optional-pdf.txt
+```
+
+If `researchos` is not found or behaves differently from the current source tree, use:
+
+```bash
+PYTHONPATH=/absolute/path/to/ResearchOS python -m researchos.cli ...
+```
+
+### Option B: Docker installation
+
+Recommended for:
+
+- reproducible execution
+- T5 / T7 experiments
+- T9 LaTeX compilation
+- avoiding host dependency drift
+
+```bash
+cd ResearchOS
 bash infra/docker/build.sh
-
-# 2. Set environment variables
-export OPENAI_API_KEY="your-api-key"
-export OPENAI_BASE_URL="https://api.example.com"
-
-# 3. Initialize workspace
-bash infra/docker/run.sh init-workspace --workspace /workspace
-
-# 4. Run tasks
-bash infra/docker/run.sh run-task T1 --workspace /workspace --topic "your research topic"
 ```
 
-**Documentation**: [Docker Usage Guide](docs/docker-usage.md)
-
-### Path B: Host Mode (Development/Debug)
-
-**Use case**: Development, code modification
+Then run commands through the wrapper:
 
 ```bash
-cd /home/liangmengkun/ResearchOS
-conda activate researchos
-pip install -e '.[dev]'
-python scripts/debug_hello_agent.py --mock --workspace ./workspace/demo_hello
+bash infra/docker/run.sh selftest
+bash infra/docker/run.sh run-task T9 --workspace /workspace
 ```
 
-### Path C: Initialize Standard Workspace
+See [docs/docker.md](./docs/docker.md) for full details.
+
+## Environment Variables
+
+Copy the template first:
 
 ```bash
-cd /home/liangmengkun/ResearchOS
-conda activate researchos
-researchos init-workspace --workspace ./workspace/demo --project-id demo-project --topic "runtime smoke test"
+cp .env.example .env
 ```
 
-## Environment Requirements
+The most commonly used variables are:
 
-- Linux or compatible Unix-like environment
-- Python 3.11
-- Conda
-- Optional: Docker (for experiment execution and TeX compilation)
-- Optional: Real LLM provider API key
-- Included in base requirements: `pdfplumber` for `extract_paper_sections`
-- Optional: `PyMuPDF` for richer seed PDF metadata extraction
+| Variable | Purpose |
+| --- | --- |
+| `SILICONFLOW_API_KEY` | SiliconFlow models |
+| `SILICONFLOW_BASE_URL` | SiliconFlow-compatible base URL override |
+| `OPENROUTER_API_KEY` | OpenRouter fallback/provider routing |
+| `OPENAI_API_KEY` | OpenAI official or compatible endpoint |
+| `OPENAI_BASE_URL` | OpenAI-compatible custom base URL |
+| `ANTHROPIC_API_KEY` | Anthropic provider |
+| `S2_API_KEY` | Semantic Scholar API |
+| `RESEARCHER_EMAIL` | email identity for paper APIs |
+| `GITHUB_TOKEN` | optional, for MCP / GitHub integrations |
 
-This repository does not depend on any author-specific absolute paths. Shared environment files:
+Important rule:
 
-- [environment.yml](./environment.yml)
-- [requirements.txt](./requirements.txt)
-- [requirements-optional-pdf.txt](./requirements-optional-pdf.txt)
-- [requirements-dev.txt](./requirements-dev.txt)
-- [requirements-llm.txt](./requirements-llm.txt)
-- [pyproject.toml](./pyproject.toml)
+- secrets belong in `.env`
+- runtime behavior belongs in `config/*.yaml`
 
-## Docker Usage
+See [docs/config.md](./docs/config.md) for the full configuration model.
 
-### Unified Image Concept
+## Quick Start
 
-ResearchOS uses **unified image** `researchos/system:latest`:
-
-- **Image size**: 9.08GB
-- **Contains**:
-  - Python 3.11
-  - ML dependencies (PyTorch, CUDA 12.4)
-  - LaTeX environment (for T9 paper compilation)
-  - MCP support
-- **Purpose**: One image supports both T5/T7 experiment execution and T9 TeX compilation
-
-### Build Image
+### 1. Validate configuration
 
 ```bash
-cd /home/liangmengkun/ResearchOS
-bash infra/docker/build.sh
+cd ResearchOS
+python -m researchos.cli validate-config
 ```
 
-### Run Commands
+### 2. Run startup selftest
 
 ```bash
-# Basic run
-bash infra/docker/run.sh [command]
-
-# Example: initialize workspace
-bash infra/docker/run.sh init-workspace --workspace /workspace
-
-# Example: run T1
-bash infra/docker/run.sh run-task T1 --workspace /workspace --topic "your topic"
-
-# Example: full pipeline
-bash infra/docker/run.sh run --workspace /workspace
+python -m researchos.cli selftest
 ```
 
-### File Persistence
-
-The `/workspace` directory inside Docker container mounts to host, ensuring results persist:
-
-- All agent output files saved in workspace
-- Trace and log files in workspace's `_runtime/` subdirectory
-- Files remain after container exits
-
-## Configuration
-
-### Key Configuration Files
-
-| File | Purpose | Active |
-| --- | --- | --- |
-| [config/model_routing.yaml](./config/model_routing.yaml) | endpoint, profile, model routing, context/truncation, rate limit | Yes |
-| [config/state_machine.yaml](./config/state_machine.yaml) | workflow nodes, agents, I/O, success/failure transitions | Yes |
-| [config/gates.yaml](./config/gates.yaml) | gate options and display content | Yes |
-| [config/runtime.yaml](./config/runtime.yaml) | runtime shared defaults | Yes |
-| [config/agent_params.yaml](./config/agent_params.yaml) | Agent params (model_tier, budget, timeout) | Reference |
-| [config/mcp.example.yaml](./config/mcp.example.yaml) | MCP server config template | Template |
-
-### Agent Parameters
-
-[config/agent_params.yaml](./config/agent_params.yaml) centralizes all agent parameters:
-
-- **Model selection**: model_tier (heavy/medium/light)
-- **Budget limits**: max_steps, timeout, budget_hint
-- **Output expectations**: expected_outputs, expected_sections
-- **Docker/GPU requirements**: docker_required, gpu_required
-- **Retry policy**: retry_policy
-
-See [config/agent_params.yaml](./config/agent_params.yaml) for details.
-
-### Environment Variables
-
-- Copy [`.env.example`](./.env.example) to `.env` and fill in your variables.
-- Variable names follow [config/model_routing.yaml](./config/model_routing.yaml).
-- `search_papers` / `fetch_paper_metadata` can use `S2_API_KEY`.
-
-## Repository Structure
-
-```
-ResearchOS/
-|-- config/                 # Config: state machine / gates / model routing / runtime / MCP templates
-|-- docs/                   # Detailed documentation
-|-- infra/                  # Infrastructure
-|   |-- docker/             # Docker build and run scripts
-|-- researchos/
-|   |-- agents/             # Agent classes and registry
-|   |-- cli_runners/        # Complete pipeline / single task modes
-|   |-- orchestration/      # state machine / gate presenter / task I/O contract
-|   |-- prompts/            # Agent prompt templates
-|   |-- runtime/            # AgentRunner, LLMClient, trace, logger, workspace helper
-|   |-- schemas/            # state schema, artifact validator
-|   |-- skills/             # skill loader / skill runner / tool aliases
-|   |-- testing/            # MockLLMClient, MockHumanInterface, fixtures
-|   `-- tools/              # builtin tools, MCP adapter, paper processing
-|-- scripts/                # Debug scripts and dev utilities
-|-- tests/
-|   |-- unit/               # Unit tests (336)
-|   |-- integration/        # Integration tests (removed, empty)
-|   |-- e2e/                # E2E tests (removed, empty)
-|   `-- real/              # Real tests (113)
-|-- workspace/              # Default workspace directory
-|-- environment.yml
-|-- requirements.txt
-|-- requirements-dev.txt
-|-- requirements-llm.txt
-`-- pyproject.toml
-```
-
-## Running
-
-Two invocation styles after installation:
-
-- `researchos ...`
-- `python -m researchos.cli ...`
-
-### 1. Initialize Workspace
+### 3. Initialize a workspace
 
 ```bash
-cd /home/liangmengkun/ResearchOS
-conda activate researchos
-researchos init-workspace --workspace ./workspace/demo --project-id demo-project --topic "test topic"
+python -m researchos.cli init-workspace \
+  --workspace ./workspace/demo \
+  --project-id demo \
+  --topic "memory systems for llm agents"
 ```
 
-### 2. Full Pipeline Mode
+### 4. Run a smoke task
 
 ```bash
-researchos run --workspace ./workspace/demo
+python -m researchos.cli run-task HELLO --workspace ./workspace/demo
 ```
 
-### 3. Resume Paused Pipeline
+### 5. Run the full pipeline
 
 ```bash
-researchos resume --workspace ./workspace/demo
+python -m researchos.cli run --workspace ./workspace/demo
 ```
 
-### 4. Single Task Debug Mode
+### 6. Resume an interrupted pipeline
 
 ```bash
-researchos run-task HELLO --workspace ./workspace/demo
+python -m researchos.cli resume --workspace ./workspace/demo
 ```
 
-Available tasks: `HELLO`, `T1`, `T1.5`, `T2`, `T3`, `T3.5`, `T4`, `T4.5`, `T5`, `T6`, `T7`, `T8-WRITE`, `T8-DRAFT`, `T8-REVIEW-1`, `T8-REVISE-1`, `T8-REVIEW-2`, `T8-REVISE-2`, `T9`.
+## Typical Usage Patterns
 
-### 5. Agent Usage Examples
+### Full project run
 
-#### T1 PI Agent
+Best when you want the complete workflow, including gates and transitions.
 
 ```bash
-researchos run-task T1 --workspace ./workspace/my-research --topic "discrete diffusion language models"
+python -m researchos.cli init-workspace \
+  --workspace ./workspace/project-a \
+  --project-id project-a \
+  --topic "reflective memory for long-horizon llm agents"
+
+python -m researchos.cli run --workspace ./workspace/project-a
 ```
 
-#### T2 Scout Agent
+If the run pauses or stops due to a gate, budget expansion decision, or intentional interruption:
 
 ```bash
-researchos run-task T2 --workspace ./workspace/my-research
+python -m researchos.cli resume --workspace ./workspace/project-a
 ```
 
-#### T3/T3.5 Reader Agent
+### Single-agent debugging
+
+Best when you are fixing or testing one stage.
 
 ```bash
-researchos run-task T3 --workspace ./workspace/my-research
-researchos run-task T3.5 --workspace ./workspace/my-research
+python -m researchos.cli run-task T3 --workspace ./workspace/local-test2
+python -m researchos.cli run-task T7.5 --workspace ./workspace/local-test2
+python -m researchos.cli run-task T9 --workspace ./workspace/local-test2
 ```
 
-#### T4 Ideation Agent
+You can also copy upstream artifacts from another workspace:
 
 ```bash
-researchos run-task T4 --workspace ./workspace/my-research
+python -m researchos.cli run-task T8-WRITE \
+  --workspace ./workspace/scratch \
+  --from ./workspace/local-test2
 ```
 
-Note: T4 requires human interaction (two-round Gate).
-
-#### T5/T7 Experimenter Agent
+### Inspect status and trace
 
 ```bash
-# T5: pilot experiment
-researchos run-task T5 --workspace ./workspace/my-research
-
-# T7: full experiment
-researchos run-task T7 --workspace ./workspace/my-research
+python -m researchos.cli status --workspace ./workspace/local-test2
+python -m researchos.cli trace T7_single_xxxxxxxx --workspace ./workspace/local-test2
+python -m researchos.cli validate --workspace ./workspace/local-test2 --task T7
 ```
 
-Note: requires Docker and possibly GPU.
+## Skills
 
-#### T9 Submission Agent
+ResearchOS supports standalone skills through `SKILL.md`.
+
+Current commands:
 
 ```bash
-researchos run-task T9 --workspace ./workspace/my-research
+python -m researchos.cli list-skills --skills-root /absolute/path/to/ResearchOS/skills
+python -m researchos.cli run-skill deepxiv "summarize recent memory papers for llm agents"
 ```
 
-Note: requires Docker (for TeX compilation).
+Current repository skills include paper-related examples such as:
 
-### 6. Status, Trace, Artifact Validation
+- `paper-compile`
+- `paper-write`
+- `deepxiv`
+
+Notes:
+
+- skill discovery now reads `SKILL.md` frontmatter
+- tool aliases like `Bash(*)`, `Glob(*)`, and `Grep(*)` are translated into runtime tools
+- some advanced Claude-style tools may degrade if they are not registered in the current runtime
+
+Skill details are explained in [docs/runtime.md](./docs/runtime.md) and [docs/dev.md](./docs/dev.md).
+
+## MCP
+
+ResearchOS can load MCP server definitions and expose their tools to agents.
+
+Main files:
+
+- `config/mcp.example.yaml`
+- `config/mcp.yaml`
+
+At startup, the CLI summary reports how many MCP servers and MCP tools were loaded.
+
+See [docs/runtime.md](./docs/runtime.md) and [docs/config.md](./docs/config.md) for details.
+
+## Budget, Fallback, Resume, and Human Gates
+
+These are some of the most important runtime behaviors.
+
+### Budget handling
+
+Agents run under per-task budgets:
+
+- max steps
+- token budget
+- wall-clock budget
+
+If a task hits its budget, the runtime can present a gate asking whether to extend the budget and continue.
+
+### LLM fallback
+
+Profiles in `config/model_routing.yaml` can define fallback candidates.
+
+Typical behavior:
+
+- try primary model
+- if it fails, try fallback model
+- only then start another retry round
+
+### Resume
+
+Many stages now support task-specific recovery. For example:
+
+- T3 rebuilds a pending deep-read queue from existing notes
+- T5 / T7 rebuild resume state from existing experiment artifacts
+- T7.5 / T8 / T9 reuse existing outputs instead of pretending they do not exist
+
+### Human gates
+
+Human confirmation can appear in the state machine. Current important examples include:
+
+- T7.5 evaluation decision
+- post-evaluation branch choice
+- submission / final decision points
+
+These only fully participate when using `run` / `resume`, not when using isolated `run-task`.
+
+## Documentation Map
+
+Start here depending on your role:
+
+- Workflow overview: [docs/agent_pipeline.md](./docs/agent_pipeline.md)
+- Runtime internals: [docs/runtime.md](./docs/runtime.md)
+- Docker: [docs/docker.md](./docs/docker.md)
+- Configuration: [docs/config.md](./docs/config.md)
+- Developer guide: [docs/dev.md](./docs/dev.md)
+- Per-agent reference: [docs/agents/README.md](./docs/agents/README.md)
+
+## Current Implementation Status
+
+The current codebase is usable, but it is still an evolving research runtime.
+
+Practical expectations:
+
+- the pipeline is runnable
+- resume and artifact recovery are implemented for major stages
+- T9 now behaves as a compile-and-repair submission stage
+- provider instability can still affect long runs
+- some config fields are fully wired, while others are declarative or partially wired
+- some skills may degrade if they depend on tools that are not registered in the current runtime
+
+## Common Questions
+
+### Why do I see different behavior between `researchos` and `python -m researchos.cli`?
+
+Usually because the installed console script is not bound to the same interpreter or source tree as your current shell.
+
+Use:
 
 ```bash
-researchos status --workspace ./workspace/demo
-researchos trace hello_debug_run --workspace ./workspace/demo
-researchos validate --workspace ./workspace/demo --task HELLO
-researchos validate-config
+PYTHONPATH=/absolute/path/to/ResearchOS python -m researchos.cli ...
 ```
 
-## Testing
-
-### Full Test Suite
+or reinstall:
 
 ```bash
-cd /home/liangmengkun/ResearchOS
-conda activate researchos
-python -m pytest -q
+pip install -e .
 ```
 
-### Targeted Tests
+### Why does a task start from scratch after interruption?
 
-```bash
-# Unit tests (336)
-python -m pytest -q tests/unit/
+Most often:
 
-# Real tests (113)
-python -m pytest -q tests/real/
+- you changed workspaces
+- the relevant artifacts were never written before interruption
+- the task has recovery logic, but the expected files are missing or malformed
 
-# Specific files
-python -m pytest -q tests/unit/test_cli_runners.py
-```
+### Why does `run-task` behave differently from `run`?
 
-### Bytecode Compilation Check
+Because `run-task` only executes one stage and does not advance the full state machine.
 
-```bash
-python -m compileall researchos scripts
-```
+Use `run` or `resume` when you need:
 
-## Debugging & Troubleshooting
+- gate handling
+- automatic next-task transitions
+- the full T7 -> T7.5 -> human gate -> T8 chain
 
-Recommended order:
+### Where should I debug first?
 
-1. `researchos selftest`
-2. `python scripts/debug_hello_agent.py --mock --workspace ...`
-3. `researchos run-task HELLO --workspace ...`
-4. `researchos trace <run_id> --workspace ...`
-5. `researchos validate --workspace ... --task ...`
-6. `researchos validate-config`
-7. `python -m pytest -q`
-8. `python -m compileall researchos scripts`
+Look in this order:
 
-Key locations for troubleshooting:
+1. CLI error summary
+2. `workspace/<name>/_runtime/logs/researchos.log`
+3. `workspace/<name>/_runtime/traces/*.jsonl`
+4. the actual task artifacts in the workspace
 
-- `workspace/state.yaml`
-- `workspace/<runtime_dir>/traces/*.jsonl`
-- `workspace/<runtime_dir>/logs/researchos.log`
-- `project.yaml`
+## License and Project-Specific Notes
 
-## Known Limitations
+Check repository-local files such as:
 
-- Default [config/state_machine.yaml](./config/state_machine.yaml) has `initial_state: HELLO`, change to `T1` for full flow.
-- Docker experiments (T5/T7) and TeX compilation (T9) require GPU environment.
-- MCP runtime interface ready but no default `config/mcp.yaml` and connector provided.
-- `extract_paper_sections` integrated but requires `pdfplumber` which is not installed by default.
-- No formal `new-agent` scaffold command; new agents require manual file modifications.
+- `CLAUDE.md`
+- `config/README.md`
+- `docs/agents/*.md`
 
-## Test Statistics
-
-**Total tests: 449**
-
-| Type | Directory | Count |
-|------|-----------|-------|
-| Unit tests | `tests/unit/` | 336 |
-| Real tests | `tests/real/` | 113 |
-| Integration tests | `tests/integration/` | Removed (was empty) |
-| E2E tests | `tests/e2e/` | Removed (was empty) |
-
-All tests pass.
-
-## Next Steps
-
-- Enable full T1-T9 workflow (change `initial_state` from `HELLO` to `T1`)
-- E2E test critical agents (T4/T5/T8) with real LLM
-- Provide built-in MCP connector or recommended connector package
-- Continue improving `config/runtime.yaml` as runtime configuration center
-
-## Documentation
-
-- [Quick Start Guide](docs/QUICKSTART.md) - Get started in 5 minutes
-- [Docker Usage Guide](docs/docker-usage.md) - Detailed Docker mode usage
-- [Configuration Guide](docs/configuration.md) - Configuration file reference
-- [Agent Documentation](docs/agents/README.md) - Agent implementation details
-
-## Contact
-
-- GitHub Issues: https://github.com/MengkunLiang/DIG-ResearchOS/issues
-- Documentation: [docs/](docs/)
-
----
-
-**Maintainer**: ResearchOS Development Team  
-**Last Updated**: 2026-04-23
-
-For Chinese documentation, see [README.zh-CN.md](./README.zh-CN.md).
+for repository-specific conventions and implementation details.

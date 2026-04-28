@@ -27,6 +27,16 @@ def test_translate_tool_names_supports_alias_runtime_and_mcp():
     assert any("Task" in warning for warning in warnings)
 
 
+def test_translate_tool_names_supports_parenthesized_claude_aliases():
+    translated, warnings = translate_tool_names(
+        ["Bash(*)", "Glob(*)", "Grep(*)", "Write"],
+        available_tools={"bash_run", "glob_files", "grep_search", "write_file"},
+    )
+
+    assert translated == ["bash_run", "glob_files", "grep_search", "write_file"]
+    assert warnings == []
+
+
 def test_discover_skill_and_build_agent(tmp_path):
     skill_dir = tmp_path / "hello-skill"
     skill_dir.mkdir()

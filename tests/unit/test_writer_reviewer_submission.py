@@ -369,6 +369,8 @@ def test_submission_validate_outputs_success(temp_workspace):
     bundle_dir.mkdir(parents=True, exist_ok=True)
     (bundle_dir / "main.tex").write_text(r"\documentclass{article}\begin{document}\end{document}")
     (bundle_dir / "references.bib").write_text("@article{test,}")
+    (bundle_dir / "main.pdf").write_text("%PDF-1.4 mock pdf")
+    (bundle_dir / "main.log").write_text("This is a clean compile log.")
 
     # 创建迁移报告
     report_content = """# 投稿迁移报告
@@ -424,6 +426,107 @@ def test_submission_validate_outputs_missing_main_tex(temp_workspace):
     assert "main.tex" in err
 
 
+def test_submission_validate_outputs_missing_pdf(temp_workspace):
+    """测试投稿包缺少编译产出的 PDF。"""
+    agent = SubmissionAgent()
+    ctx = MockExecutionContext("submission", temp_workspace)
+
+    bundle_dir = temp_workspace / "submission" / "bundle"
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    (bundle_dir / "main.tex").write_text(r"\documentclass{article}\begin{document}\end{document}")
+    (bundle_dir / "references.bib").write_text("@article{test,}")
+
+    report_content = """# 投稿迁移报告
+
+生成时间: 2024-01-26 15:30:00
+目标会议: neurips2026
+
+## 迁移摘要
+
+- 迁移状态: 成功
+- 编译状态: 成功
+- 匿名化检查: 通过
+"""
+    (temp_workspace / "submission" / "migration_report.md").write_text(report_content)
+
+    ok, err = agent.validate_outputs(ctx)
+    assert not ok
+    assert "main.pdf" in err
+
+
+def test_submission_validate_outputs_compile_not_marked_success(temp_workspace):
+    """测试报告未明确声明编译成功时应失败。"""
+    agent = SubmissionAgent()
+    ctx = MockExecutionContext("submission", temp_workspace)
+
+    bundle_dir = temp_workspace / "submission" / "bundle"
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    (bundle_dir / "main.tex").write_text(r"\documentclass{article}\begin{document}\end{document}")
+    (bundle_dir / "references.bib").write_text("@article{test,}")
+    (bundle_dir / "main.pdf").write_text("%PDF-1.4 mock pdf")
+
+    report_content = """# 投稿迁移报告
+
+生成时间: 2024-01-26 15:30:00
+目标会议: neurips2026
+
+## 迁移摘要
+
+- 迁移状态: 部分成功
+- 编译状态: 失败
+- 匿名化检查: 通过
+
+## 模板迁移
+
+已完成基础迁移。
+"""
+    (temp_workspace / "submission" / "migration_report.md").write_text(report_content)
+
+    ok, err = agent.validate_outputs(ctx)
+    assert not ok
+    assert "编译状态" in err
+
+
+def test_submission_validate_outputs_fatal_log_detected(temp_workspace):
+    """测试日志仍有 fatal error 时不能通过。"""
+    agent = SubmissionAgent()
+    ctx = MockExecutionContext("submission", temp_workspace)
+
+    bundle_dir = temp_workspace / "submission" / "bundle"
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    (bundle_dir / "main.tex").write_text(r"\documentclass{article}\begin{document}\end{document}")
+    (bundle_dir / "references.bib").write_text("@article{test,}")
+    (bundle_dir / "main.pdf").write_text("%PDF-1.4 mock pdf")
+    (bundle_dir / "main.log").write_text("! Emergency stop.\nFatal error occurred")
+
+    report_content = """# 投稿迁移报告
+
+生成时间: 2024-01-26 15:30:00
+目标会议: neurips2026
+
+## 迁移摘要
+
+- 迁移状态: 成功
+- 编译状态: 成功
+- 匿名化检查: 通过
+
+## 模板迁移
+
+已完成基础迁移。
+
+## 文件清单
+
+- main.tex
+- references.bib
+- main.pdf
+"""
+    (temp_workspace / "submission" / "migration_report.md").write_text(report_content)
+
+    ok, err = agent.validate_outputs(ctx)
+    assert not ok
+    assert "致命编译错误" in err
+
+
 def test_submission_validate_outputs_report_too_short(temp_workspace):
     """测试迁移报告内容过短"""
     agent = SubmissionAgent()
@@ -434,6 +537,7 @@ def test_submission_validate_outputs_report_too_short(temp_workspace):
     bundle_dir.mkdir(parents=True, exist_ok=True)
     (bundle_dir / "main.tex").write_text(r"\documentclass{article}\begin{document}\end{document}")
     (bundle_dir / "references.bib").write_text("@article{test,}")
+    (bundle_dir / "main.pdf").write_text("%PDF-1.4 mock pdf")
 
     # 创建过短的报告
     (temp_workspace / "submission" / "migration_report.md").write_text("Too short")

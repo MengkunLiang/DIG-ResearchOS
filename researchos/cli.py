@@ -56,7 +56,7 @@ from .schemas.validator import (
     validate_declared_outputs,
     validate_task_artifacts,
 )
-from .skills.loader import register_skill_tools, resolve_skill
+from .skills.loader import discover_skills_from_roots, register_skill_tools, resolve_skill
 from .skills.runner import run_skill
 from .tools.builtin import register_builtin_tools
 from .tools.human_gate import CLIHumanInterface, HumanInterface
@@ -756,48 +756,28 @@ def trace_command(args: argparse.Namespace) -> int:
 
 def list_skills_command(args: argparse.Namespace) -> int:
     """列出所有可用的 skills。"""
-    runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
     workspace_dir = Path(args.workspace).resolve()
+    skills_roots = _resolve_skill_roots(args, workspace_dir)
 
-    # 收集 skills 根目录
-    skills_roots = []
-    if args.skills_root:
-        skills_roots.extend([Path(p).resolve() for p in args.skills_root])
-    else:
-        # 使用默认 skills 目录
-        default_skills = Path(__file__).parent.parent / "skills"
-        if default_skills.exists():
-            skills_roots.append(default_skills)
-
-    # 扫描所有 skills
     all_skills = []
-    for skills_root in skills_roots:
-        if not skills_root.exists():
-            continue
+    try:
+        discovered = discover_skills_from_roots(skills_roots)
+    except Exception as e:
+        print(f"Failed to discover skills: {e}", file=sys.stderr)
+        return 1
 
-        for skill_dir in skills_root.iterdir():
-            if not skill_dir.is_dir():
-                continue
-
-            # 检查是否有 skill.yaml
-            skill_yaml = skill_dir / "skill.yaml"
-            if not skill_yaml.exists():
-                continue
-
-            try:
-                skill_config = yaml.safe_load(skill_yaml.read_text(encoding="utf-8"))
-                skill_info = {
-                    "name": skill_config.get("name", skill_dir.name),
-                    "description": skill_config.get("description", ""),
-                    "version": skill_config.get("version", "unknown"),
-                    "path": str(skill_dir),
-                    "tools": skill_config.get("tools", []),
-                    "agents": skill_config.get("agents", []),
-                }
-                all_skills.append(skill_info)
-            except Exception as e:
-                if args.verbose:
-                    print(f"Warning: Failed to load {skill_yaml}: {e}", file=sys.stderr)
+    for skill in discovered.values():
+        skill_info = {
+            "name": skill.name,
+            "description": skill.description,
+            "path": str(skill.skill_dir),
+            "tools": skill.allowed_tools,
+            "model_tier": skill.metadata.get("model_tier") or skill.metadata.get("tier", "medium"),
+            "llm_profile": skill.metadata.get("llm_profile"),
+            "max_steps": skill.metadata.get("max_steps"),
+            "max_tokens_total": skill.metadata.get("max_tokens_total"),
+        }
+        all_skills.append(skill_info)
 
     # 输出结果
     if not all_skills:

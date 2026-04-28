@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import yaml
@@ -21,36 +20,37 @@ def mock_skills_root(tmp_path: Path):
     # Skill 1: 完整配置
     skill1_dir = skills_root / "example-skill"
     skill1_dir.mkdir()
-    skill1_config = {
-        "name": "example-skill",
-        "description": "An example skill for testing",
-        "version": "1.0.0",
-        "tools": ["tool1", "tool2"],
-        "agents": ["agent1"],
-    }
-    (skill1_dir / "skill.yaml").write_text(
-        yaml.safe_dump(skill1_config), encoding="utf-8"
+    (skill1_dir / "SKILL.md").write_text(
+        """---
+name: example-skill
+description: An example skill for testing
+tools:
+  - tool1
+  - tool2
+tier: heavy
+max_steps: 42
+---
+Example skill body
+""",
+        encoding="utf-8",
     )
 
     # Skill 2: 最小配置
     skill2_dir = skills_root / "minimal-skill"
     skill2_dir.mkdir()
-    skill2_config = {
-        "name": "minimal-skill",
-        "description": "A minimal skill",
-    }
-    (skill2_dir / "skill.yaml").write_text(
-        yaml.safe_dump(skill2_config), encoding="utf-8"
+    (skill2_dir / "SKILL.md").write_text(
+        """---
+name: minimal-skill
+description: A minimal skill
+---
+Minimal body
+""",
+        encoding="utf-8",
     )
 
-    # Skill 3: 无效配置（缺少 skill.yaml）
+    # Skill 3: 无效配置（缺少 SKILL.md）
     skill3_dir = skills_root / "invalid-skill"
     skill3_dir.mkdir()
-
-    # Skill 4: 损坏的 YAML
-    skill4_dir = skills_root / "broken-skill"
-    skill4_dir.mkdir()
-    (skill4_dir / "skill.yaml").write_text("invalid: yaml: content:", encoding="utf-8")
 
     return skills_root
 
@@ -62,8 +62,7 @@ def test_list_skills_simple_mode(mock_skills_root: Path, capsys):
     args.skills_root = [str(mock_skills_root)]
     args.verbose = False
 
-    with patch("researchos.cli.load_runtime_settings"):
-        result = list_skills_command(args)
+    result = list_skills_command(args)
 
     assert result == 0
 
@@ -81,15 +80,14 @@ def test_list_skills_verbose_mode(mock_skills_root: Path, capsys):
     args.skills_root = [str(mock_skills_root)]
     args.verbose = True
 
-    with patch("researchos.cli.load_runtime_settings"):
-        result = list_skills_command(args)
+    result = list_skills_command(args)
 
     assert result == 0
 
     captured = capsys.readouterr()
     assert "skills:" in captured.out
     assert "example-skill" in captured.out
-    assert "version: 1.0.0" in captured.out
+    assert "model_tier: heavy" in captured.out
     assert "tools:" in captured.out
     assert "tool1" in captured.out
 
@@ -104,8 +102,7 @@ def test_list_skills_no_skills_found(tmp_path: Path, capsys):
     args.skills_root = [str(empty_dir)]
     args.verbose = False
 
-    with patch("researchos.cli.load_runtime_settings"):
-        result = list_skills_command(args)
+    result = list_skills_command(args)
 
     assert result == 0
 
@@ -120,8 +117,8 @@ def test_list_skills_multiple_roots(tmp_path: Path, capsys):
     root1.mkdir()
     skill1_dir = root1 / "skill1"
     skill1_dir.mkdir()
-    (skill1_dir / "skill.yaml").write_text(
-        yaml.safe_dump({"name": "skill1", "description": "Skill 1"}),
+    (skill1_dir / "SKILL.md").write_text(
+        "---\nname: skill1\ndescription: Skill 1\n---\nbody\n",
         encoding="utf-8",
     )
 
@@ -129,8 +126,8 @@ def test_list_skills_multiple_roots(tmp_path: Path, capsys):
     root2.mkdir()
     skill2_dir = root2 / "skill2"
     skill2_dir.mkdir()
-    (skill2_dir / "skill.yaml").write_text(
-        yaml.safe_dump({"name": "skill2", "description": "Skill 2"}),
+    (skill2_dir / "SKILL.md").write_text(
+        "---\nname: skill2\ndescription: Skill 2\n---\nbody\n",
         encoding="utf-8",
     )
 
@@ -139,8 +136,7 @@ def test_list_skills_multiple_roots(tmp_path: Path, capsys):
     args.skills_root = [str(root1), str(root2)]
     args.verbose = False
 
-    with patch("researchos.cli.load_runtime_settings"):
-        result = list_skills_command(args)
+    result = list_skills_command(args)
 
     assert result == 0
 
@@ -150,43 +146,44 @@ def test_list_skills_multiple_roots(tmp_path: Path, capsys):
     assert "skill2" in captured.out
 
 
-def test_list_skills_broken_yaml_warning(mock_skills_root: Path, capsys):
-    """测试损坏的 YAML 文件会产生警告（verbose 模式）。"""
+def test_list_skills_ignores_dirs_without_skill_md(mock_skills_root: Path, capsys):
+    """测试没有 SKILL.md 的目录会被忽略。"""
     args = MagicMock()
     args.workspace = "/tmp/test"
     args.skills_root = [str(mock_skills_root)]
     args.verbose = True
 
-    with patch("researchos.cli.load_runtime_settings"):
-        result = list_skills_command(args)
+    result = list_skills_command(args)
 
     assert result == 0
 
     captured = capsys.readouterr()
-    # 应该只列出有效的 skills
     assert "example-skill" in captured.out
     assert "minimal-skill" in captured.out
-    # broken-skill 不应该出现
-    assert "broken-skill" not in captured.out
+    assert "invalid-skill" not in captured.out
 
 
-def test_list_skills_default_skills_directory(tmp_path: Path, capsys):
-    """测试使用默认 skills 目录。"""
+def test_list_skills_default_skills_directory(tmp_path: Path, capsys, monkeypatch):
+    """测试默认会扫描 cwd/skills。"""
+    skills_root = tmp_path / "skills"
+    skills_root.mkdir()
+    skill_dir = skills_root / "cwd-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: cwd-skill\ndescription: From cwd\n---\nbody\n",
+        encoding="utf-8",
+    )
+
     args = MagicMock()
-    args.workspace = "/tmp/test"
-    args.skills_root = None  # 使用默认目录
+    args.workspace = str(tmp_path / "workspace")
+    Path(args.workspace).mkdir()
+    args.skills_root = None
     args.verbose = False
 
-    with patch("researchos.cli.load_runtime_settings"):
-        with patch("researchos.cli.Path") as mock_path:
-            # Mock 默认 skills 目录不存在
-            mock_default_skills = MagicMock()
-            mock_default_skills.exists.return_value = False
-            mock_path.return_value.parent.parent.__truediv__.return_value = mock_default_skills
-
-            result = list_skills_command(args)
+    monkeypatch.chdir(tmp_path)
+    result = list_skills_command(args)
 
     assert result == 0
 
     captured = capsys.readouterr()
-    assert "No skills found" in captured.out
+    assert "cwd-skill" in captured.out

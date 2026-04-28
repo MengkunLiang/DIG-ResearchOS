@@ -413,7 +413,7 @@ ls -la workspace/demo/_runtime/logs/
 - 阅读 [Docker 使用指南](docker-usage.md) - 了解 Docker 模式的详细用法
 - 阅读 [配置文档](configuration.md) - 了解如何自定义配置
 - 阅读 [Agent 文档](agents/README.md) - 了解各个 Agent 的功能
-- 阅读 [开发指南](AGENT_DEVELOPMENT_GUIDE.md) - 了解如何开发新的 Agent
+- 阅读 [开发者手册](dev.md) - 了解如何本地调试、扩展和维护系统
 
 ---
 

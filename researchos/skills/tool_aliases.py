@@ -14,6 +14,22 @@ CLAUDE_CODE_TOOL_ALIASES: dict[str, str | None] = {
 }
 
 
+def _normalize_tool_name(tool_name: str) -> str:
+    """归一化 skill 中的工具名写法。
+
+    兼容 Claude Code / 旧 skill 里常见的：
+    - `Bash(*)`
+    - `Glob(*)`
+    - `Grep(*)`
+    这些写法表达“该工具可带任意参数”，runtime 侧只需要识别基础工具名。
+    """
+
+    normalized = tool_name.strip()
+    if normalized.endswith("(*)"):
+        normalized = normalized[:-3]
+    return normalized
+
+
 def translate_tool_names(
     claude_tools: list[str],
     *,
@@ -22,6 +38,7 @@ def translate_tool_names(
     translated: list[str] = []
     warnings: list[str] = []
     for tool_name in claude_tools:
+        tool_name = _normalize_tool_name(tool_name)
         if tool_name in available_tools:
             translated.append(tool_name)
             continue

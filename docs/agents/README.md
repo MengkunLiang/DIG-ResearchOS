@@ -1,6 +1,14 @@
 # ResearchOS Agent 实现文档总览
 
-本目录包含ResearchOS系统中所有Agent的详细实现文档。每个Agent负责研究流程中的特定阶段，通过文件通信协作完成从idea到论文投稿的完整流程。
+本目录包含 ResearchOS 系统中各个 Agent 的实现说明。
+
+重要说明：
+
+- 这些文档更偏“单个 Agent 的设计与实现”
+- 当前真实主流程、真实状态名、恢复机制、预算 gate、T7.5 和 T8/T9 的最新行为，请优先以 [docs/agent_pipeline.md](../agent_pipeline.md) 为准
+- 特别是写作阶段，当前真实节点名是 `T8-WRITE`、`T8-DRAFT`、`T8-REVIEW-1`、`T8-REVISE-1`、`T8-REVIEW-2`、`T8-REVISE-2`，不是单一的 `T8-REVIEW`
+
+每个 Agent 负责研究流程中的特定阶段，通过文件通信协作完成从 idea 到论文投稿的完整流程。
 
 ## Agent列表
 

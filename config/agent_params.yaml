@@ -472,6 +472,9 @@ agents:
     # 匿名化前置检查默认关闭，便于本地调试或非匿名投稿场景直接产出投稿包。
     # 如果要恢复“运行前先拦截邮箱/URL/GitHub”等检查，可改回 true。
     enforce_anonymization_precheck: false
+    # T9 在编译失败时允许的“诊断-修复-重试”上限。
+    # 这个值会注入 prompt，用来防止 submission 阶段无限循环编译。
+    max_compile_attempts: 4
     docker_required: true
     expected_outputs:
       bundle_required: true

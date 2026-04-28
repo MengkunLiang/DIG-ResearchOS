@@ -666,9 +666,10 @@ fi
 
 ## 进一步阅读
 
-- [配置管理详细指南](../docs/configuration.md)
-- [Docker 使用指南](../docs/docker-usage.md)
-- [Agent 开发指南](../docs/AGENT_DEVELOPMENT_GUIDE.md)
+- [配置总览与参数说明](../docs/config.md)
+- [Docker 使用指南](../docs/docker.md)
+- [Runtime 机制说明](../docs/runtime.md)
+- [开发者手册](../docs/dev.md)
 - [README 中文版](../README.zh-CN.md)
 
 ## 获取帮助
@@ -676,6 +677,6 @@ fi
 如果遇到配置问题：
 
 1. 查看本文档的"故障排查"部分
-2. 查看详细的配置文档：`docs/configuration.md`
+2. 查看详细的配置文档：`docs/config.md`
 3. 查看日志文件：`workspace/_runtime/logs/`
 4. 提交 Issue：https://github.com/MengkunLiang/DIG-ResearchOS/issues

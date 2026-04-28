@@ -562,6 +562,12 @@ pytest tests/integration/test_writer_reviewer_e2e.py -v
 
 ## 使用示例
 
+说明：
+
+- 以下示例用于说明 Writer / Reviewer 的调用方式
+- 当前真实状态机中的审稿节点名是 `T8-REVIEW-1` 和 `T8-REVIEW-2`
+- 如果你在本地调试，应优先参考 [docs/agent_pipeline.md](../agent_pipeline.md) 中的当前流程
+
 ```python
 from researchos.agents.writer import WriterAgent
 from researchos.agents.reviewer import ReviewerAgent
@@ -584,7 +590,7 @@ result = await writer.run(ctx)
 reviewer = ReviewerAgent()
 ctx_review = ExecutionContext(
     workspace_dir=Path("/path/to/workspace"),
-    task_id="T8-REVIEW",
+    task_id="T8-REVIEW-1",
     extra={"round": 1}
 )
 result = await reviewer.run(ctx_review)
