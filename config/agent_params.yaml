@@ -144,6 +144,7 @@ agents:
       - log_scout_progress
     allowed_read_prefixes:
       - ""
+      - literature/
       - user_seeds/
       - seeds/
     allowed_write_prefixes:

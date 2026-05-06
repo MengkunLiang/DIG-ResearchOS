@@ -93,7 +93,7 @@ class ScoutAgent(Agent):
                     "max_wall_seconds": 600,
                     "max_validation_retries": 3,
                     "temperature": 0.5,
-                    "allowed_read_prefixes": ["", "user_seeds/", "seeds/"],
+                    "allowed_read_prefixes": ["", "literature/", "user_seeds/", "seeds/"],
                     "allowed_write_prefixes": ["literature/", "literature/temp/"],
                     "prompt_template": "scout.j2",
                     "structured_outputs": {
