@@ -16,6 +16,17 @@ _LOG = get_logger("filesystem")
 
 class ReadFileParams(BaseModel):
     path: str = Field(..., description="相对 workspace 的路径")
+    offset: int = Field(
+        default=0,
+        ge=0,
+        description="从第几个字符开始读取；用于分页读取大文件",
+    )
+    max_chars: int = Field(
+        default=50_000,
+        ge=1,
+        le=200_000,
+        description="最多返回多少字符，防止大文件挤爆模型上下文",
+    )
 
 
 class ReadFileTool(Tool):
@@ -29,10 +40,32 @@ class ReadFileTool(Tool):
 
     async def execute(self, **kwargs) -> ToolResult:
         path = kwargs["path"]
+        offset = int(kwargs.get("offset") or 0)
+        max_chars = int(kwargs.get("max_chars") or 50_000)
         try:
             abs_path = self.policy.resolve_read(path)
-            content = abs_path.read_text(encoding="utf-8")
-            return ToolResult(ok=True, content=content, data={"path": path, "size": len(content)})
+            full_content = abs_path.read_text(encoding="utf-8")
+            size = len(full_content)
+            content = full_content[offset : offset + max_chars]
+            truncated = offset > 0 or offset + max_chars < size
+            if truncated:
+                content = (
+                    f"[Runtime] 文件较大或请求了分页读取；仅返回字符区间 "
+                    f"{offset}:{min(offset + max_chars, size)} / {size}。"
+                    "如需继续读取，请再次调用 read_file 并设置 offset。\n\n"
+                    + content
+                )
+            return ToolResult(
+                ok=True,
+                content=content,
+                data={
+                    "path": path,
+                    "size": size,
+                    "offset": offset,
+                    "returned_chars": len(content),
+                    "truncated": truncated,
+                },
+            )
         except ToolAccessDenied as exc:
             return ToolResult(ok=False, content=str(exc), error="access_denied")
         except FileNotFoundError:

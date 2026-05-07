@@ -159,7 +159,13 @@ class AgentRunner:
             # 这里会统一转换成可读错误，而不是让 CLI 因 await 非协程直接崩溃。
             for hook in self.agent.spec.pre_hooks:
                 await self._run_pre_hook(hook, ctx)
-            while True:
+
+            t2_pre_finalized = await self._maybe_finalize_t2_before_llm(ctx)
+            if t2_pre_finalized:
+                stop_reason = AgentResult.STOP_FINISHED
+                error_msg = None
+
+            while not t2_pre_finalized:
                 # 每进入一轮 while，就代表一次“agent step”。
                 budget.tick_step()
 
@@ -395,12 +401,50 @@ class AgentRunner:
 
         ok, err = self.agent.validate_outputs(ctx)
         if ok:
-            print("[Agent] T2 自动补全成功，已恢复 dedup/search_log/missing_areas", flush=True)
+            print("[Agent] T2 自动补全成功，已恢复完整 T2 产物", flush=True)
             self.log.info("t2_finalize_succeeded", recovery=recovery)
             return AgentResult.STOP_FINISHED, None
 
         self.log.warning("t2_finalize_validation_failed", error=err, recovery=recovery)
         return stop_reason, error_msg
+
+    async def _maybe_finalize_t2_before_llm(self, ctx: ExecutionContext) -> bool:
+        """T2 续跑时，如果 raw 已存在，优先用确定性路径补齐产物。
+
+        这避免模型在 `papers_raw.jsonl` 这种大文件和恢复状态之间反复读取，
+        也让中断后的 T2 可以稳定从 raw 收敛到完整的 8 个 T2 输出。
+        """
+
+        if ctx.task_id != "T2":
+            return False
+
+        raw_path = ctx.workspace_dir / "literature" / "papers_raw.jsonl"
+        if not raw_path.exists() or raw_path.stat().st_size <= 0:
+            return False
+
+        needs_recovery = any(
+            not path.exists()
+            for name, path in ctx.outputs_expected.items()
+            if name != "papers_raw"
+        )
+        if not needs_recovery:
+            ok, _err = self.agent.validate_outputs(ctx)
+            return ok
+
+        print("[Agent] T2 检测到已有 papers_raw，先执行确定性收尾...", flush=True)
+        recovery = await finalize_t2_outputs(ctx.workspace_dir)
+        if not recovery.get("ok"):
+            self.log.warning("t2_prefinalize_failed", recovery=recovery)
+            return False
+
+        ok, err = self.agent.validate_outputs(ctx)
+        if not ok:
+            self.log.warning("t2_prefinalize_validation_failed", error=err, recovery=recovery)
+            return False
+
+        print("[Agent] T2 确定性收尾成功，跳过 LLM 续跑", flush=True)
+        self.log.info("t2_prefinalize_succeeded", recovery=recovery)
+        return True
 
     async def _execute_one_tool_call(
         self,

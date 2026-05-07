@@ -78,6 +78,7 @@ class ScoutAgent(Agent):
                         "detect_duplicate_queries",
                         "analyze_dedup_rate",
                         "build_verified_papers",
+                        "build_access_audit",
                         "build_deep_read_queue",
                         "semantic_scholar_search",
                         "semantic_scholar_get_paper",
@@ -93,7 +94,13 @@ class ScoutAgent(Agent):
                     "max_wall_seconds": 600,
                     "max_validation_retries": 3,
                     "temperature": 0.5,
-                    "allowed_read_prefixes": ["", "literature/", "user_seeds/", "seeds/"],
+                    "allowed_read_prefixes": [
+                        "",
+                        "literature/",
+                        "user_seeds/",
+                        "seeds/",
+                        "_runtime/resume/",
+                    ],
                     "allowed_write_prefixes": ["literature/", "literature/temp/"],
                     "prompt_template": "scout.j2",
                     "structured_outputs": {

@@ -494,6 +494,9 @@ class LLMClient:
                         litellm.acompletion(**kwargs),
                         timeout=max(float(timeout), 0.001),
                     )
+                    choices = getattr(raw, "choices", None)
+                    if not choices:
+                        raise RuntimeError("LLM provider returned an empty choices list")
                     usage = getattr(raw, "usage", None)
                     hidden = getattr(raw, "_hidden_params", {}) or {}
                     return LLMResponse(

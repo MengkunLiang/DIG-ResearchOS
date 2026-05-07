@@ -175,12 +175,13 @@ class SingleTaskRunner:
             self.task_id,
             declared_outputs=io_spec["outputs"],
         )
-        if result.ok and not ok:
+        if not ok:
             print(f"[进度] 输出校验失败: {'; '.join(errors)}", flush=True)
-            result.ok = False
-            result.stop_reason = result.STOP_ERROR
-            result.error = "Runtime artifact validation failed: " + "; ".join(errors)
-            result.message = result.error
+            if result.ok:
+                result.ok = False
+                result.stop_reason = result.STOP_ERROR
+                result.error = "Runtime artifact validation failed: " + "; ".join(errors)
+                result.message = result.error
         else:
             print(f"[进度] 输出校验通过", flush=True)
 
