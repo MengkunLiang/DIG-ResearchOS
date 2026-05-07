@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import html
 from pathlib import Path
 from typing import Any
 
@@ -78,6 +79,32 @@ def _normalize_year(year: Any) -> int | None:
     return None
 
 
+def _infer_source(paper: dict[str, Any]) -> str:
+    """Infer a stable source label when an upstream API omits `source`."""
+
+    source = str(paper.get("source") or "").strip()
+    if source and source != "unknown":
+        return source
+
+    external_ids = paper.get("externalIds") or {}
+    provenance = paper.get("provenance") if isinstance(paper.get("provenance"), dict) else {}
+    provenance_source = str(provenance.get("source_tool") or "").strip()
+    if provenance_source and provenance_source != "unknown":
+        return provenance_source
+    url = str(paper.get("url") or provenance.get("source_url") or "").lower()
+    raw_id = str(paper.get("id") or paper.get("paperId") or provenance.get("source_id") or "")
+
+    if paper.get("paperId") or "semanticscholar.org" in url:
+        return "semantic_scholar"
+    if external_ids.get("ArXiv") or str(raw_id).lower().startswith("arxiv:"):
+        return "arxiv"
+    if "openalex.org" in url or str(raw_id).startswith("https://openalex.org/"):
+        return "openalex"
+    if str(paper.get("doi") or external_ids.get("DOI") or "").startswith("10.1287/"):
+        return "informs_crossref"
+    return source or "unknown"
+
+
 def _normalize_arxiv_identifier(value: str) -> str:
     """把各种 arXiv 表示统一成 `arxiv:<id>`。"""
 
@@ -124,7 +151,13 @@ def _select_preferred_paper_id(paper: dict[str, Any]) -> tuple[str, str]:
     return title or "unknown-paper", "title"
 
 
-def _ensure_provenance(paper: dict[str, Any], *, canonical_id: str, id_source: str) -> dict[str, Any]:
+def _ensure_provenance(
+    paper: dict[str, Any],
+    *,
+    canonical_id: str,
+    id_source: str,
+    source_tool: str,
+) -> dict[str, Any]:
     """补齐 provenance，保证后续真实性审计有最小可追溯信息。"""
 
     provenance = paper.get("provenance")
@@ -132,7 +165,8 @@ def _ensure_provenance(paper: dict[str, Any], *, canonical_id: str, id_source: s
         provenance = {}
 
     # 这里补的是最小追溯骨架；如果上游搜索工具已经写了更详细 provenance，就保留。
-    provenance.setdefault("source_tool", str(paper.get("source", "")).strip())
+    if not str(provenance.get("source_tool") or "").strip():
+        provenance["source_tool"] = source_tool
     provenance.setdefault("source_id", str(paper.get("id") or paper.get("paperId") or "").strip())
     provenance.setdefault("source_url", str(paper.get("url", "")).strip())
     provenance.setdefault("canonical_id", canonical_id)
@@ -153,7 +187,7 @@ def _transform_to_papers_raw(paper: dict[str, Any]) -> dict[str, Any]:
     paper_id, id_source = _select_preferred_paper_id(paper)
 
     # 提取 source
-    source = paper.get("source", "unknown")
+    source = _infer_source(paper)
 
     # 标准化 authors
     authors = _normalize_authors(paper.get("authors", []))
@@ -179,18 +213,23 @@ def _transform_to_papers_raw(paper: dict[str, Any]) -> dict[str, Any]:
 
     # 提取 externalIds
     external_ids = paper.get("externalIds") or {}
-    provenance = _ensure_provenance(paper, canonical_id=paper_id, id_source=id_source)
+    provenance = _ensure_provenance(
+        paper,
+        canonical_id=paper_id,
+        id_source=id_source,
+        source_tool=source,
+    )
 
     return {
         "id": paper_id,
         "canonical_id": paper_id,
         "preferred_id_source": id_source,
         "source": source,
-        "title": paper.get("title", "Unknown"),
+        "title": html.unescape(str(paper.get("title", "Unknown"))),
         "authors": authors,
         "year": year,
         "abstract": abstract,
-        "venue": paper.get("venue", ""),
+        "venue": html.unescape(str(paper.get("venue", ""))),
         "citation_count": citation_count,
         "doi": doi,
         "url": url,

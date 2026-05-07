@@ -7,6 +7,7 @@ their results to `literature/papers_raw.jsonl` without special cases.
 
 from __future__ import annotations
 
+import html
 import os
 import re
 from typing import Any
@@ -19,10 +20,10 @@ from .base import Tool, ToolResult
 
 def _first(items: Any, default: str = "") -> str:
     if isinstance(items, list) and items:
-        return str(items[0] or default)
+        return html.unescape(str(items[0] or default))
     if isinstance(items, str):
-        return items
-    return default
+        return html.unescape(items)
+    return html.unescape(default)
 
 
 def _clean_abstract(value: Any) -> str:
@@ -30,7 +31,7 @@ def _clean_abstract(value: Any) -> str:
     if not text:
         return ""
     text = re.sub(r"<[^>]+>", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
+    return html.unescape(re.sub(r"\s+", " ", text).strip())
 
 
 def _parse_int(value: Any, default: int = 0) -> int:
@@ -195,7 +196,7 @@ class ElsevierScopusSearchTool(Tool):
         doi = str(entry.get("prism:doi") or "").strip()
         scopus_identifier = str(entry.get("dc:identifier") or "").strip()
         eid = str(entry.get("eid") or "").strip()
-        title = str(entry.get("dc:title") or "").strip()
+        title = html.unescape(str(entry.get("dc:title") or "").strip())
         cover_date = str(entry.get("prism:coverDate") or "")
         year = _parse_int(cover_date[:4], default=0) or None
         url = (
@@ -215,7 +216,7 @@ class ElsevierScopusSearchTool(Tool):
             "authors": authors,
             "year": year or 2024,
             "abstract": "",
-            "venue": str(entry.get("prism:publicationName") or "").strip() or "Unknown",
+            "venue": html.unescape(str(entry.get("prism:publicationName") or "").strip()) or "Unknown",
             "url": url,
             "citation_count": _parse_int(entry.get("citedby-count"), default=0),
             "doi": doi,

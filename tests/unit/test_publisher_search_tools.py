@@ -47,7 +47,7 @@ def test_informs_search_normalizes_crossref_item():
             "title": ["An INFORMS Paper"],
             "author": [{"given": "Ada", "family": "Lovelace"}],
             "published-online": {"date-parts": [[2025, 4, 1]]},
-            "container-title": ["Management Science"],
+            "container-title": ["Manufacturing &amp; Service Operations Management"],
             "is-referenced-by-count": "11",
             "URL": "https://doi.org/10.1287/mnsc.2025.1234",
             "abstract": "<jats:p>Queueing and optimization.</jats:p>",
@@ -60,7 +60,7 @@ def test_informs_search_normalizes_crossref_item():
     assert paper["title"] == "An INFORMS Paper"
     assert paper["authors"] == ["Ada Lovelace"]
     assert paper["year"] == 2025
-    assert paper["venue"] == "Management Science"
+    assert paper["venue"] == "Manufacturing & Service Operations Management"
     assert paper["citation_count"] == 11
     assert paper["externalIds"] == {
         "DOI": "10.1287/mnsc.2025.1234",
