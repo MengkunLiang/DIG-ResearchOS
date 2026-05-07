@@ -67,3 +67,38 @@ def test_informs_search_normalizes_crossref_item():
         "CrossrefPrefix": "10.1287",
     }
     assert paper["abstract"] == "Queueing and optimization."
+
+
+@pytest.mark.asyncio
+async def test_informs_search_filters_to_journal_articles_by_default(monkeypatch):
+    captured = {}
+
+    class _FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"message": {"items": [], "total-results": 0}}
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, params=None, headers=None):
+            captured["params"] = params or {}
+            return _FakeResponse()
+
+    monkeypatch.setattr("researchos.tools.publisher_search.httpx.AsyncClient", _FakeClient)
+
+    tool = InformsSearchTool(email="researcher@example.com")
+    result = await tool.execute(query="supply chain optimization", rows=5)
+
+    assert result.ok
+    assert "prefix:10.1287" in captured["params"]["filter"]
+    assert "type:journal-article" in captured["params"]["filter"]

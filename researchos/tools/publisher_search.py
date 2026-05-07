@@ -90,6 +90,10 @@ class InformsSearchParams(BaseModel):
     year_from: int | None = Field(default=None, description="起始发表年份，例如 2020")
     year_to: int | None = Field(default=None, description="结束发表年份，例如 2026")
     sort: str = Field(default="relevance", description="Crossref 排序方式")
+    journal_only: bool = Field(
+        default=True,
+        description="是否只返回 Crossref type=journal-article，默认过滤掉新闻、杂志、教学案例等非期刊论文记录",
+    )
 
 
 class ElsevierScopusSearchTool(Tool):
@@ -240,6 +244,8 @@ class InformsSearchTool(Tool):
     async def execute(self, **kwargs: Any) -> ToolResult:
         params = InformsSearchParams(**kwargs)
         filters = ["prefix:10.1287"]
+        if params.journal_only:
+            filters.append("type:journal-article")
         if params.year_from:
             filters.append(f"from-pub-date:{params.year_from}-01-01")
         if params.year_to:

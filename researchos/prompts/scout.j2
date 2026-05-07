@@ -143,8 +143,8 @@ detect_duplicate_queries(
   - 如果未配置 key，工具会明确返回缺失配置，此时继续使用 OpenAlex/Crossref 等来源
 
 - `informs_search`: INFORMS PubsOnline 元数据搜索
-  - 参数: query, rows（默认10）, year_from, year_to
-  - 通过 Crossref DOI prefix `10.1287` 检索 INFORMS 论文元数据
+  - 参数: query, rows（默认10）, year_from, year_to, journal_only（默认true）
+  - 通过 Crossref DOI prefix `10.1287` 检索 INFORMS 论文元数据，默认只保留 journal-article
   - 适合 operations research、management science、OR/MS、supply chain、queueing、optimization 等主题
 
 **检索策略（重要）**：
