@@ -23,6 +23,15 @@
 - ❌ 忘记生成 missing_areas.md（这是必需文件，不能省略）
 - ❌ 使用 write_structured_file 生成 missing_areas.md（应该用 write_file）
 
+## Runtime 确定性收尾规则
+
+T2 的后半段现在由 runtime 确定性处理：
+
+- 你的主要职责是设计检索式、调用检索工具，并让检索结果自动/流式进入 `literature/papers_raw.jsonl`。
+- 当 raw 结果达到运行时阈值后，runtime 会自动执行 `papers_raw -> papers_dedup -> papers_verified -> deep_read_queue -> access_audit -> search_log -> missing_areas`。
+- **不要读取完整 `literature/papers_raw.jsonl`，不要把大型 JSONL 手动拼成 `papers=[...]` 再传给去重/评分工具。**
+- 如果 raw 数量仍不足，请继续检索；如果 raw 已足够，只需等待 runtime 收尾，不要反复 `read_file(papers_raw.jsonl)`。
+
 ---
 
 ## 项目信息
@@ -260,40 +269,17 @@ detect_duplicate_queries(
    ```
    - `process_papers_raw` 会读取原始数据、转换格式、验证 schema
 
-   **步骤 5：去重**
-   ```
-   # 将合并后的论文列表传递给去重工具
-   dedup_result = deduplicate_papers(
-       papers=all_papers,  # ✅ 正确：传递实际的论文列表
-       doi_dedup=true,
-       title_threshold=0.95
-   )
-   # dedup_result.data.papers 包含去重后的论文列表
-   ```
-
-   **步骤 6：评分和筛选**
-   ```
-   # 使用去重后的论文列表进行评分
-   score_result = score_papers(
-       papers=dedup_result.data.papers,  # ✅ 正确：使用去重后的列表
-       keywords=["关键词1", "关键词2", ...]
-   )
-   # score_result.data.papers 包含评分后的论文列表
-   ```
-
-   **步骤 7：保存最终结果**
-   ```
-   # 使用 save_papers_dedup 工具保存去重和评分后的论文（自动处理格式转换和 schema 验证）
-   save_papers_dedup(
-       papers=score_result.data.papers  # 传递最终的论文列表
-   )
-   ```
+   **步骤 5：等待 runtime 收尾**
+   - 不要读取完整 `papers_raw.jsonl`。
+   - 不要用 LLM 手动解析 JSONL。
+   - runtime 会在 raw 达到阈值后自动完成去重、评分、enrich、metadata verification、queue、audit、日志和缺口分析。
 
    **❌ 常见错误**：
    - 错误 1：调用工具但不保存返回结果
    - 错误 2：只使用 content 文本，忽略 data.papers
    - 错误 3：传递空列表 `papers=[]` 给去重/评分工具
    - 错误 4：没有合并多次检索的结果
+   - 错误 5：反复读取大型 `papers_raw.jsonl`，导致上下文膨胀和超时
 
 ### Step 3: 领域过滤（可选但推荐）
 
@@ -732,57 +718,9 @@ for query in queries:
 process_papers_raw()
 log_scout_progress(action="write", detail="papers_raw.jsonl (processed)", count=sum(query_results.values()))
 
-# Step 3: 领域过滤（可选，从处理后的 raw 文件读取）
-# 读取 process_papers_raw 处理后的数据
-# papers_raw.jsonl 现在包含转换和验证后的标准化论文数据
-# 注意：这里需要读取文件获取论文列表，或直接使用工具链处理
-
-# Step 4: 去重
-# 从 papers_raw.jsonl 读取所有论文进行去重
-# 或者直接在 dedup_papers 中使用你已有的论文列表
-dedup_result = deduplicate_papers(
-    papers=papers_from_raw,  # 需要从 papers_raw.jsonl 读取
-    doi_dedup=True,
-    title_threshold=0.95
-)
-dedup_papers = dedup_result["data"]["papers"]
-# 记录去重结果
-log_scout_progress(action="dedup", before=sum(query_results.values()), after=len(dedup_papers))
-
-# Step 5: 评分
-scored_result = score_papers(
-    papers=dedup_papers,
-    keywords=["agent", "memory", "retrieval", "LLM"]
-)
-scored_papers = scored_result["data"]["papers"]
-# 记录评分结果
-log_scout_progress(action="score", count=len(scored_papers))
-
-# Step 6: 筛选和排序
-sorted_papers = sorted(scored_papers, key=lambda x: x["relevance_score"], reverse=True)
-final_papers = [p for p in sorted_papers if p["relevance_score"] >= 0.5]
-if len(final_papers) > 120:
-    final_papers = final_papers[:80]
-
-# 写入去重后结果
-save_papers_dedup(papers=final_papers)
-log_scout_progress(action="write", detail="papers_dedup.jsonl", count=len(final_papers))
-
-# Step 7: 生成日志（工具会直接写入 literature/search_log.md）
-raw_total = sum(query_results.values())
-log_result = generate_search_log(
-    raw_count=raw_total,
-    dedup_count=len(final_papers),
-    queries=queries,
-    query_results=query_results
-)
-# 不需要额外调用 write_file，generate_search_log 会自动写入文件
-
-# Step 8: 手动分析缺口
-# 分析 final_papers，写入 missing_areas.md
-
-# Step 9: 完成任务
-finish_task(summary=f"检索完成：{raw_total} 篇原始结果 → {len(final_papers)} 篇去重后论文")
+# Step 3: 不要手动读取大型 papers_raw.jsonl
+# raw 达标后 runtime 会自动执行确定性收尾并结束任务。
+# 如果 runtime 没有结束，通常说明 raw 数量不足，请继续检索更好的 query。
 ```
 
 ## 注意事项

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import json
+import re
 
 
 class HumanInterface(ABC):
@@ -82,10 +83,44 @@ class CLIHumanInterface(HumanInterface):
                 print(json.dumps(value, indent=2, ensure_ascii=False))
         for idx, option in enumerate(options, start=1):
             print(f"[{idx}] {option['label']}")
-        answer = int(input("请选择: ").strip()) - 1
-        selected = options[answer]
+        selected = None
+        while selected is None:
+            try:
+                raw_answer = input("请选择: ").strip()
+            except EOFError:
+                # 非交互环境触发 gate 时，默认选择 stop，避免运行时异常崩溃。
+                raw_answer = ""
+            answer = self._parse_option_index(raw_answer, len(options))
+            if answer is None:
+                if not raw_answer:
+                    selected = next(
+                        (option for option in options if (option.get("id") or option.get("key")) == "stop"),
+                        options[-1],
+                    )
+                    break
+                print(f"无效选择: {raw_answer!r}。请输入 1-{len(options)}。")
+                continue
+            selected = options[answer]
         captured: dict[str, str] = {}
         for field_name in selected.get("collect_input", []):
             captured[field_name] = input(f"{field_name}: ").strip()
         option_id = selected.get("id") or selected.get("key")
         return {"option_id": option_id, "captured": captured}
+
+    @staticmethod
+    def _parse_option_index(raw_answer: str, option_count: int) -> int | None:
+        """解析 CLI gate 选择。
+
+        某些终端会把快捷键或 ANSI 控制字符混进 input，例如 `\x1ba\x1ba1`。
+        这里只提取数字，避免预算 gate 因输入噪声直接崩溃。
+        """
+
+        cleaned = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", raw_answer)
+        cleaned = cleaned.replace("\x1b", "")
+        match = re.search(r"\d+", cleaned)
+        if not match:
+            return None
+        idx = int(match.group(0)) - 1
+        if idx < 0 or idx >= option_count:
+            return None
+        return idx

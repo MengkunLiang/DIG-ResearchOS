@@ -181,6 +181,7 @@ class AgentResult:
     llm_tier: str | None = None
     llm_model_used: str | None = None
     llm_endpoint_used: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     STOP_FINISHED = "finished"
     STOP_MAX_STEPS = "max_steps"

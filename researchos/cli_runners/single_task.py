@@ -334,6 +334,7 @@ class SingleTaskRunner:
         history.llm_tier = result.llm_tier
         history.llm_model = result.llm_model_used
         history.llm_endpoint = result.llm_endpoint_used
+        history.completion_mode = (result.metadata or {}).get("completion_mode")
         history.error = result.error
         history.status = "DONE" if result.ok else "FAILED"
 
@@ -352,6 +353,8 @@ class SingleTaskRunner:
         print(f"tokens: {result.tokens_in} in / {result.tokens_out} out")
         print(f"cost: ${result.cost_usd:.4f}")
         print(f"duration: {result.duration_seconds:.1f}s")
+        if (result.metadata or {}).get("completion_mode"):
+            print(f"completion_mode: {result.metadata['completion_mode']}")
         print(f"outputs: {list(result.outputs_produced.keys())}")
         if result.error:
             print(f"error: {result.error}")

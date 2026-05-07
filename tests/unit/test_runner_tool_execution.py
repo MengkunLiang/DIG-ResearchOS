@@ -125,6 +125,34 @@ class RecoverySearchTool(Tool):
         return ToolResult(ok=True, content="found 12 papers", data={"papers": papers})
 
 
+class LargeRecoverySearchTool(Tool):
+    name = "arxiv_search"
+    description = "search with enough papers for normal T2 deterministic finalization"
+    parameters_schema = SearchParams
+
+    async def execute(self, **kwargs):
+        papers = []
+        for i in range(120):
+            papers.append(
+                {
+                    "id": f"2502.{i:05d}",
+                    "source": "arxiv",
+                    "title": f"LLM Agent Long Term Memory Retrieval Framework {i}",
+                    "authors": ["Test Author"],
+                    "year": 2025,
+                    "abstract": (
+                        "LLM agent long-term memory retrieval, hierarchical memory, "
+                        "compression, consistency, and evaluation for task-oriented agents."
+                    ),
+                    "venue": "arXiv",
+                    "url": f"https://arxiv.org/abs/2502.{i:05d}",
+                    "citation_count": i,
+                    "doi": "",
+                }
+            )
+        return ToolResult(ok=True, content="found 120 papers", data={"papers": papers})
+
+
 class T2RecoveryAgent(Agent):
     def __init__(self):
         super().__init__(
@@ -298,3 +326,75 @@ async def test_t2_failed_run_can_finalize_outputs_from_raw(tmp_workspace):
     assert (tmp_workspace / "literature" / "papers_dedup.jsonl").exists()
     assert (tmp_workspace / "literature" / "search_log.md").exists()
     assert (tmp_workspace / "literature" / "missing_areas.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_t2_auto_finalizes_from_raw_without_second_llm_turn(tmp_workspace):
+    (tmp_workspace / "project.yaml").write_text(
+        json.dumps(
+            {
+                "project_id": "p1",
+                "research_direction": "LLM Agent long-term memory retrieval framework",
+                "keywords": [
+                    "LLM Agent",
+                    "long-term memory",
+                    "memory retrieval",
+                    "hierarchical memory",
+                    "memory compression",
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    registry = ToolRegistry()
+    registry.register("arxiv_search", lambda ctx: LargeRecoverySearchTool())
+
+    llm = MockLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[
+                        FakeToolCall(
+                            name="arxiv_search",
+                            arguments={"query": "LLM agent memory retrieval"},
+                            id="tc1",
+                        )
+                    ]
+                )
+            )
+        ]
+    )
+
+    runner = AgentRunner(
+        T2RecoveryAgent(),
+        registry,
+        llm,
+        MockHumanInterface(),
+    )
+    result = await runner.run(
+        ExecutionContext(
+            workspace_dir=tmp_workspace,
+            project_id="p1",
+            task_id="T2",
+            run_id="T2_single_auto_finalize",
+            outputs_expected={
+                "papers_raw": tmp_workspace / "literature" / "papers_raw.jsonl",
+                "papers_dedup": tmp_workspace / "literature" / "papers_dedup.jsonl",
+                "papers_verified": tmp_workspace / "literature" / "papers_verified.jsonl",
+                "verification_failures": tmp_workspace / "literature" / "verification_failures.jsonl",
+                "deep_read_queue": tmp_workspace / "literature" / "deep_read_queue.jsonl",
+                "access_audit": tmp_workspace / "literature" / "access_audit.md",
+                "search_log": tmp_workspace / "literature" / "search_log.md",
+                "missing_areas": tmp_workspace / "literature" / "missing_areas.md",
+            },
+        )
+    )
+
+    assert result.ok
+    assert result.metadata["completion_mode"] == "t2_deterministic"
+    assert result.steps_used == 1
+    assert llm.call_count == 1
+    assert (tmp_workspace / "literature" / "papers_verified.jsonl").exists()
+    assert (tmp_workspace / "literature" / "deep_read_queue.jsonl").exists()

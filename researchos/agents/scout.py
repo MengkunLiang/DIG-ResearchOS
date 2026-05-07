@@ -164,8 +164,8 @@ class ScoutAgent(Agent):
             "研究方向已写入 project.yaml。"
             "如有用户种子论文会在 user_seeds/seed_papers.jsonl 里，"
             "也请参考 seed_ideas.md 和 seed_external_resources.jsonl。"
-            "目标产出 15-120 篇去重后论文，先完成 metadata verification，"
-            "再额外生成 literature/deep_read_queue.jsonl。"
+            "你负责完成高质量多源检索并让 raw 结果落盘；"
+            "raw 达标后 runtime 会自动完成去重、metadata verification 和 deep_read_queue。"
             ),
         )
 

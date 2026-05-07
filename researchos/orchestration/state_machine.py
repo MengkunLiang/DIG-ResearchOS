@@ -291,6 +291,7 @@ class StateMachine:
         history.llm_tier = result.llm_tier
         history.llm_model = result.llm_model_used
         history.llm_endpoint = result.llm_endpoint_used
+        history.completion_mode = (result.metadata or {}).get("completion_mode")
         history.error = result.error
         history.status = "DONE" if result.ok else "FAILED"
 

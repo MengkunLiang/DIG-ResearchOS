@@ -40,6 +40,14 @@ T2_AUTO_PERSIST_SEARCH_TOOLS = frozenset(
         "crossref_search",
     }
 )
+T2_AUTO_FINALIZE_TRIGGER_TOOLS = T2_AUTO_PERSIST_SEARCH_TOOLS | frozenset(
+    {
+        "append_papers_raw",
+        "process_papers_raw",
+        "save_papers_raw",
+    }
+)
+T2_AUTO_FINALIZE_MIN_RAW = 100
 
 
 class HookExecutionError(RuntimeError):
@@ -282,6 +290,23 @@ class AgentRunner:
                     if tool_call.name == "finish_task" and not tool_msg.metadata.get("is_error"):
                         finish_requested = True
 
+                t2_finalized = await self._maybe_finalize_t2_after_tool_batch(
+                    ctx=ctx,
+                    tool_calls=assistant_msg.tool_calls,
+                    tool_msgs=tool_msgs,
+                )
+                if t2_finalized:
+                    note = Message.user(
+                        "[Runtime] T2 已基于已落盘的 papers_raw.jsonl 完成确定性收尾，"
+                        "后续去重、验证、精读队列和审计文件由 runtime 生成。",
+                        step=budget.steps,
+                    )
+                    messages.append(note)
+                    trace.write_message(note)
+                    stop_reason = AgentResult.STOP_FINISHED
+                    error_msg = None
+                    break
+
                 if finish_requested:
                     # finish_task 只是“请求结束”而不是直接结束。
                     # 真正能否成功结束，仍以 validate_outputs 为准。
@@ -388,24 +413,16 @@ class AgentRunner:
         if not needs_recovery:
             return stop_reason, error_msg
 
-        raw_path = ctx.workspace_dir / "literature" / "papers_raw.jsonl"
-        if not raw_path.exists():
-            return stop_reason, error_msg
-
-        print("[Agent] T2 检测到未完成输出，尝试基于 papers_raw 自动补全...", flush=True)
-        recovery = await finalize_t2_outputs(ctx.workspace_dir)
-        if not recovery.get("ok"):
-            reason = recovery.get("reason") or "unknown"
-            self.log.warning("t2_finalize_failed", reason=reason, recovery=recovery)
-            return stop_reason, error_msg
-
-        ok, err = self.agent.validate_outputs(ctx)
-        if ok:
-            print("[Agent] T2 自动补全成功，已恢复完整 T2 产物", flush=True)
-            self.log.info("t2_finalize_succeeded", recovery=recovery)
+        finalized = await self._finalize_t2_from_raw(
+            ctx,
+            mode="t2_recovery",
+            min_raw_count=1,
+            start_message="[Agent] T2 检测到未完成输出，尝试基于 papers_raw 自动补全...",
+            success_message="[Agent] T2 自动补全成功，已恢复完整 T2 产物",
+        )
+        if finalized:
             return AgentResult.STOP_FINISHED, None
 
-        self.log.warning("t2_finalize_validation_failed", error=err, recovery=recovery)
         return stop_reason, error_msg
 
     async def _maybe_finalize_t2_before_llm(self, ctx: ExecutionContext) -> bool:
@@ -418,33 +435,136 @@ class AgentRunner:
         if ctx.task_id != "T2":
             return False
 
-        raw_path = ctx.workspace_dir / "literature" / "papers_raw.jsonl"
-        if not raw_path.exists() or raw_path.stat().st_size <= 0:
+        return await self._finalize_t2_from_raw(
+            ctx,
+            mode="t2_resume_prefinalize",
+            min_raw_count=1,
+            start_message="[Agent] T2 检测到已有 papers_raw，先执行确定性收尾...",
+            success_message="[Agent] T2 确定性收尾成功，跳过 LLM 续跑",
+        )
+
+    async def _maybe_finalize_t2_after_tool_batch(
+        self,
+        *,
+        ctx: ExecutionContext,
+        tool_calls: list[ToolCall],
+        tool_msgs: list[Message],
+    ) -> bool:
+        """T2 冷启动正常路径：raw 达标后直接由 runtime 收尾。
+
+        这条路径避免 LLM 读取并手动解析 `papers_raw.jsonl`。检索工具负责拿到
+        raw，runtime 负责 raw -> dedup -> verified -> queue -> audit 的确定性处理。
+        """
+
+        if ctx.task_id != "T2":
             return False
 
-        needs_recovery = any(
+        triggered = any(
+            tool_call.name in T2_AUTO_FINALIZE_TRIGGER_TOOLS
+            and not tool_msg.metadata.get("is_error")
+            for tool_call, tool_msg in zip(tool_calls, tool_msgs)
+        )
+        if not triggered:
+            return False
+
+        return await self._finalize_t2_from_raw(
+            ctx,
+            mode="t2_deterministic",
+            min_raw_count=self._t2_auto_finalize_min_raw(ctx),
+            start_message="[Agent] T2 raw 已达到收尾阈值，执行确定性收尾...",
+            success_message="[Agent] T2 确定性收尾成功，任务完成",
+        )
+
+    async def _finalize_t2_from_raw(
+        self,
+        ctx: ExecutionContext,
+        *,
+        mode: str,
+        min_raw_count: int,
+        start_message: str,
+        success_message: str,
+    ) -> bool:
+        if ctx.task_id != "T2":
+            return False
+
+        raw_path = ctx.workspace_dir / "literature" / "papers_raw.jsonl"
+        raw_count = self._count_jsonl_records(raw_path)
+        if raw_count < min_raw_count:
+            return False
+
+        needs_finalize = any(
             not path.exists()
             for name, path in ctx.outputs_expected.items()
             if name != "papers_raw"
         )
-        if not needs_recovery:
+        if not needs_finalize:
             ok, _err = self.agent.validate_outputs(ctx)
-            return ok
+            if ok:
+                self._record_runtime_completion(ctx, mode, {"raw_count": raw_count})
+                return True
+            needs_finalize = True
 
-        print("[Agent] T2 检测到已有 papers_raw，先执行确定性收尾...", flush=True)
+        if not needs_finalize:
+            return False
+
+        print(start_message, flush=True)
         recovery = await finalize_t2_outputs(ctx.workspace_dir)
         if not recovery.get("ok"):
-            self.log.warning("t2_prefinalize_failed", recovery=recovery)
+            reason = recovery.get("reason") or "unknown"
+            self.log.warning(f"{mode}_failed", reason=reason, recovery=recovery)
             return False
 
         ok, err = self.agent.validate_outputs(ctx)
         if not ok:
-            self.log.warning("t2_prefinalize_validation_failed", error=err, recovery=recovery)
+            self.log.warning(f"{mode}_validation_failed", error=err, recovery=recovery)
             return False
 
-        print("[Agent] T2 确定性收尾成功，跳过 LLM 续跑", flush=True)
-        self.log.info("t2_prefinalize_succeeded", recovery=recovery)
+        print(success_message, flush=True)
+        self._record_runtime_completion(ctx, mode, recovery)
+        self.log.info(f"{mode}_succeeded", recovery=recovery)
         return True
+
+    def _record_runtime_completion(
+        self,
+        ctx: ExecutionContext,
+        mode: str,
+        details: dict[str, object],
+    ) -> None:
+        ctx.extra["completion_mode"] = mode
+        actions = ctx.extra.setdefault("runtime_actions", [])
+        if isinstance(actions, list):
+            actions.append(
+                {
+                    "type": "t2_finalize_from_raw",
+                    "mode": mode,
+                    "raw_count": details.get("raw_count"),
+                    "dedup_count": details.get("dedup_count"),
+                    "trace_count": details.get("trace_count"),
+                }
+            )
+
+    @staticmethod
+    def _count_jsonl_records(path: Path) -> int:
+        if not path.exists() or path.stat().st_size <= 0:
+            return 0
+        count = 0
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    if line.strip():
+                        count += 1
+        except OSError:
+            return 0
+        return count
+
+    @staticmethod
+    def _t2_auto_finalize_min_raw(ctx: ExecutionContext) -> int:
+        raw_value = ctx.extra.get("t2_auto_finalize_min_raw", T2_AUTO_FINALIZE_MIN_RAW)
+        try:
+            value = int(raw_value)
+        except (TypeError, ValueError):
+            return T2_AUTO_FINALIZE_MIN_RAW
+        return max(10, value)
 
     async def _execute_one_tool_call(
         self,
@@ -753,6 +873,11 @@ class AgentRunner:
     ) -> AgentResult:
         outputs = {name: path for name, path in ctx.outputs_expected.items() if path.exists()}
         ok = stop_reason == AgentResult.STOP_FINISHED
+        metadata: dict[str, object] = {}
+        if ctx.extra.get("completion_mode"):
+            metadata["completion_mode"] = ctx.extra.get("completion_mode")
+        if isinstance(ctx.extra.get("runtime_actions"), list):
+            metadata["runtime_actions"] = ctx.extra.get("runtime_actions")
         message = {
             AgentResult.STOP_FINISHED: "Agent 成功完成",
             AgentResult.STOP_MAX_STEPS: "达到最大步数",
@@ -761,6 +886,12 @@ class AgentRunner:
             AgentResult.STOP_INTERRUPTED: "被中断",
             AgentResult.STOP_HUMAN_REJECT: "被用户拒绝",
         }[stop_reason]
+        if ok and metadata.get("completion_mode") == "t2_deterministic":
+            message = "Agent 成功完成（T2 runtime 确定性收尾）"
+        elif ok and metadata.get("completion_mode") == "t2_recovery":
+            message = "Agent 成功完成（T2 recovery 自动补全）"
+        elif ok and metadata.get("completion_mode") == "t2_resume_prefinalize":
+            message = "Agent 成功完成（T2 resume 确定性收尾）"
         return AgentResult(
             ok=ok,
             message=message,
@@ -777,6 +908,7 @@ class AgentRunner:
             llm_tier=eff.llm_tier,
             llm_model_used=last_model_used,
             llm_endpoint_used=last_endpoint_used,
+            metadata=metadata,
         )
 
     async def _maybe_offer_budget_extension(

@@ -36,6 +36,7 @@ class TaskHistoryEntry(BaseModel):
     llm_tier: str | None = None
     llm_model: str | None = None
     llm_endpoint: str | None = None
+    completion_mode: str | None = None
     error: str | None = None
 
 

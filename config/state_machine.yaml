@@ -71,6 +71,10 @@ states:
   # Agent：scout（文献侦察员）
   T2:
     agent: scout
+    extra:
+      # raw 达到该数量后由 runtime 自动执行 raw -> dedup/verified/queue/audit。
+      # 这样避免 Scout LLM 读取并手动解析大型 papers_raw.jsonl。
+      t2_auto_finalize_min_raw: 100
     inputs:
       project: project.yaml                            # 项目配置
       seed_papers: user_seeds/seed_papers.jsonl        # 种子论文（可选）
