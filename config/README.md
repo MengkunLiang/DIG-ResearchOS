@@ -356,9 +356,13 @@ initial_state: T3
 2. **semantic_scholar** - Semantic Scholar 学术搜索
    - 依赖：Python, `semantic_scholar_mcp` 包
    - 需要 API Key（`S2_API_KEY`）
+
+3. **T2 内置出版社检索工具**
+   - `elsevier_scopus_search`: 通过 Elsevier Scopus Search API 检索，需 `ELSEVIER_API_KEY`，机构授权可加 `ELSEVIER_INSTTOKEN`
+   - `informs_search`: 通过 Crossref DOI prefix `10.1287` 检索 INFORMS 论文元数据，建议配置 `RESEARCHER_EMAIL`
    - 可选
 
-3. **github** - GitHub 仓库和代码搜索
+4. **github** - GitHub 仓库和代码搜索
    - 依赖：Node.js, npx
    - 需要 Personal Access Token（`GITHUB_TOKEN`）
    - 可选

@@ -137,6 +137,16 @@ detect_duplicate_queries(
   - 参数: query, rows（默认10）
   - DOI 元数据的权威来源
 
+- `elsevier_scopus_search`: Elsevier Scopus 文摘与引文数据库搜索
+  - 参数: query, count（默认10，最多25）, year_from, year_to, sort
+  - 需要环境变量 `ELSEVIER_API_KEY`；如有机构授权，可配置 `ELSEVIER_INSTTOKEN`
+  - 如果未配置 key，工具会明确返回缺失配置，此时继续使用 OpenAlex/Crossref 等来源
+
+- `informs_search`: INFORMS PubsOnline 元数据搜索
+  - 参数: query, rows（默认10）, year_from, year_to
+  - 通过 Crossref DOI prefix `10.1287` 检索 INFORMS 论文元数据
+  - 适合 operations research、management science、OR/MS、supply chain、queueing、optimization 等主题
+
 **检索策略（重要）**：
 1. **推荐策略：直接 API 工具 + multi_source_search 组合**
    - 优先使用直接 API 工具（更可靠，错误处理更好）：
@@ -144,6 +154,8 @@ detect_duplicate_queries(
      - `crossref_search`: DOI 元数据最权威
      - `arxiv_search`: 预印本（最新研究）
      - `semantic_scholar_search`: 引用数据最完整（需要 API key）
+     - `elsevier_scopus_search`: Elsevier/Scopus 覆盖，适合补充出版社与引文库记录（需要 API key）
+     - `informs_search`: INFORMS 期刊记录，适合 OR/MS 和管理科学方向
 
    - 每条检索式调用多个工具：
      ```
@@ -159,11 +171,20 @@ detect_duplicate_queries(
      # arXiv（最新预印本）
      result3 = arxiv_search(query=query, max_results=10)
 
+     # Elsevier Scopus（如已配置 ELSEVIER_API_KEY）
+     result4 = elsevier_scopus_search(query=query, count=10)
+
      # 合并结果
      all_papers.extend(result1.data.papers)
      all_papers.extend(result2.data.papers)
      all_papers.extend(result3.data.papers)
+     if result4.ok:
+         all_papers.extend(result4.data.papers)
      ```
+
+   - 如果研究主题属于 OR/MS、management science、operations、optimization、queueing、
+     supply chain、pricing、inventory、revenue management 等方向，必须额外调用：
+     `informs_search(query=query, rows=20)`
 
 2. **备选策略：使用 multi_source_search**
    - 如果直接 API 工具失败，可以使用 multi_source_search
@@ -531,9 +552,9 @@ write_file(
 
 **必需字段**：
 - `id`: 论文唯一标识（如"s2:abc123"或"arxiv:2401.00001"）
-- `source`: 数据源（"semantic_scholar"、"arxiv"、"crossref"、"europepmc"等）
+- `source`: 数据源（"semantic_scholar"、"arxiv"、"crossref"、"openalex"、"elsevier_scopus"、"informs_crossref"、"europepmc"等）
 - `title`: 论文标题
-- `authors`: 作者列表，每个作者是对象格式 `[{"name": "..."}]`
+- `authors`: 作者列表，可为字符串列表 `["Ada", "Bob"]` 或对象列表 `[{"name": "..."}]`
 - `year`: 发表年份（整数）
 - `abstract`: 摘要（字符串，如无则为空字符串""）
 - `venue`: 发表会议/期刊

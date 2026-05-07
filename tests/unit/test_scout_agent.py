@@ -80,6 +80,8 @@ def test_scout_agent_spec(scout_agent):
     assert "filter_by_domain" in spec.tool_names
     assert "build_verified_papers" in spec.tool_names
     assert "build_deep_read_queue" in spec.tool_names
+    assert "elsevier_scopus_search" in spec.tool_names
+    assert "informs_search" in spec.tool_names
     # MCP工具已移除，等MCP配置完成后再启用
     # assert "mcp_semantic_scholar_search" in spec.tool_names
     # assert "mcp_arxiv_search" in spec.tool_names

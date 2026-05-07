@@ -194,6 +194,8 @@ cp .env.example .env
 | `OPENAI_BASE_URL` | OpenAI 兼容基地址 |
 | `ANTHROPIC_API_KEY` | Anthropic provider |
 | `S2_API_KEY` | Semantic Scholar |
+| `ELSEVIER_API_KEY` | Elsevier Scopus 搜索 |
+| `ELSEVIER_INSTTOKEN` | Elsevier 机构授权令牌，可选 |
 | `RESEARCHER_EMAIL` | 文献 API 身份邮箱 |
 | `GITHUB_TOKEN` | 可选，MCP / GitHub 相关能力 |
 

@@ -54,6 +54,7 @@ from .semantic_scholar import SemanticScholarSearchTool, SemanticScholarGetPaper
 from .arxiv_api import ArxivSearchTool
 from .openalex_api import OpenAlexSearchTool, OpenAlexGetWorkTool
 from .crossref_api import CrossRefSearchTool, CrossRefGetWorkTool
+from .publisher_search import ElsevierScopusSearchTool, InformsSearchTool
 
 
 def register_builtin_tools(
@@ -141,6 +142,12 @@ def register_builtin_tools(
     # CrossRef 工具（DOI 元数据）
     registry.register("crossref_search", lambda ctx: CrossRefSearchTool())
     registry.register("crossref_get_work", lambda ctx: CrossRefGetWorkTool())
+    # Publisher-specific literature databases.
+    registry.register("elsevier_scopus_search", lambda ctx: ElsevierScopusSearchTool())
+    registry.register(
+        "informs_search",
+        lambda _ctx: InformsSearchTool(os.environ.get("RESEARCHER_EMAIL")),
+    )
     # Scout Agent 进度日志工具（工具层追加，无需用户手动调用）
     registry.register(
         "log_scout_progress",

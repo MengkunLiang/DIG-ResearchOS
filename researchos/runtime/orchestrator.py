@@ -38,6 +38,8 @@ T2_AUTO_PERSIST_SEARCH_TOOLS = frozenset(
         "arxiv_search",
         "openalex_search",
         "crossref_search",
+        "elsevier_scopus_search",
+        "informs_search",
     }
 )
 T2_AUTO_FINALIZE_TRIGGER_TOOLS = T2_AUTO_PERSIST_SEARCH_TOOLS | frozenset(

@@ -32,6 +32,8 @@ SEARCH_TOOL_NAMES = frozenset(
         "arxiv_search",
         "openalex_search",
         "crossref_search",
+        "elsevier_scopus_search",
+        "informs_search",
     }
 )
 

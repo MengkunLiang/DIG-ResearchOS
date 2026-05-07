@@ -87,6 +87,8 @@ class ScoutAgent(Agent):
                         "openalex_get_work",
                         "crossref_search",
                         "crossref_get_work",
+                        "elsevier_scopus_search",
+                        "informs_search",
                         "log_scout_progress",
                     ],
                     "max_steps": 50,
