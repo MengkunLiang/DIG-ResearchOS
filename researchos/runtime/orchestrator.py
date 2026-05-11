@@ -180,11 +180,15 @@ class AgentRunner:
                 await self._run_pre_hook(hook, ctx)
 
             t2_pre_finalized = await self._maybe_finalize_t2_before_llm(ctx)
-            if t2_pre_finalized:
+            t4_pre_finalized = False
+            if not t2_pre_finalized:
+                t4_pre_finalized = await self._maybe_finalize_t4_before_llm(ctx)
+            deterministic_pre_finalized = t2_pre_finalized or t4_pre_finalized
+            if deterministic_pre_finalized:
                 stop_reason = AgentResult.STOP_FINISHED
                 error_msg = None
 
-            while not t2_pre_finalized:
+            while not deterministic_pre_finalized:
                 # 每进入一轮 while，就代表一次“agent step”。
                 budget.tick_step()
 
@@ -288,6 +292,7 @@ class AgentRunner:
                             tool_map,
                             ctx=ctx,
                             policy=policy,
+                            budget=budget,
                             step=budget.steps,
                             tool_failure_cache=tool_failure_cache,
                         )
@@ -473,6 +478,44 @@ class AgentRunner:
             success_message="[Agent] T2 确定性收尾成功，跳过 LLM 续跑",
         )
 
+    async def _maybe_finalize_t4_before_llm(self, ctx: ExecutionContext) -> bool:
+        """T4 续跑时，已有三件套可通过校验则直接完成。
+
+        T4 的核心产物都是 workspace artifact。若它们已经存在并满足
+        IdeationAgent.validate_outputs 的 schema、anchor、风险和预算约束，
+        runtime 不再把“是否复用旧产物”交给 LLM 判断。
+        """
+
+        if ctx.task_id != "T4":
+            return False
+
+        expected_paths = [
+            ctx.workspace_dir / "ideation" / "hypotheses.md",
+            ctx.workspace_dir / "ideation" / "exp_plan.yaml",
+            ctx.workspace_dir / "ideation" / "risks.md",
+        ]
+        if any(not path.exists() or path.stat().st_size <= 0 for path in expected_paths):
+            return False
+
+        ok, err = self.agent.validate_outputs(ctx)
+        if not ok:
+            self.log.info("t4_resume_prefinalize_skipped", reason=err)
+            return False
+
+        print("[Agent] T4 检测到已有 ideation 三件套且校验通过，跳过 LLM 续跑", flush=True)
+        self._record_runtime_completion(
+            ctx,
+            "t4_resume_prefinalize",
+            {
+                "outputs": [
+                    str(path.relative_to(ctx.workspace_dir))
+                    for path in expected_paths
+                ],
+            },
+            action_type="t4_resume_prefinalize",
+        )
+        return True
+
     async def _maybe_finalize_t2_after_tool_batch(
         self,
         *,
@@ -559,17 +602,20 @@ class AgentRunner:
         ctx: ExecutionContext,
         mode: str,
         details: dict[str, object],
+        *,
+        action_type: str = "t2_finalize_from_raw",
     ) -> None:
         ctx.extra["completion_mode"] = mode
         actions = ctx.extra.setdefault("runtime_actions", [])
         if isinstance(actions, list):
             actions.append(
                 {
-                    "type": "t2_finalize_from_raw",
+                    "type": action_type,
                     "mode": mode,
                     "raw_count": details.get("raw_count"),
                     "dedup_count": details.get("dedup_count"),
                     "trace_count": details.get("trace_count"),
+                    "outputs": details.get("outputs"),
                 }
             )
 
@@ -604,6 +650,7 @@ class AgentRunner:
         ctx: ExecutionContext,
         policy: "WorkspaceAccessPolicy",
         step: int,
+        budget: BudgetTracker | None = None,
         tool_failure_cache: dict[tuple[str, str], Message] | None = None,
     ) -> Message:
         started = time.time()
@@ -620,6 +667,7 @@ class AgentRunner:
 
         if tool.requires_human_approval:
             # 高风险工具先经过 HumanInterface 审批。
+            human_started = time.time()
             try:
                 approved = await self.human.ask_approval(tool_name=tc.name, arguments=tc.arguments)
             except Exception as exc:
@@ -630,6 +678,9 @@ class AgentRunner:
                     is_error=True,
                     step=step,
                 )
+            finally:
+                if budget is not None:
+                    budget.exclude_wall_time(time.time() - human_started)
             if not approved:
                 return Message.tool(
                     tool_call_id=tc.id,
@@ -678,10 +729,15 @@ class AgentRunner:
             max_tool_timeout = float(self.global_timeout.get("max_tool_call") or tool.timeout_seconds)
             tool_timeout = min(tool.timeout_seconds, max_tool_timeout)
             # 工具自身可有细粒度超时，但 runtime 仍统一包一层 wait_for。
-            result: ToolResult = await asyncio.wait_for(
-                tool.execute(**model_dump(parsed)),
-                timeout=tool_timeout,
-            )
+            tool_execute_started = time.time()
+            try:
+                result: ToolResult = await asyncio.wait_for(
+                    tool.execute(**model_dump(parsed)),
+                    timeout=tool_timeout,
+                )
+            finally:
+                if budget is not None and tc.name == "ask_human":
+                    budget.exclude_wall_time(time.time() - tool_execute_started)
         except asyncio.TimeoutError:
             tool_msg = Message.tool(
                 tool_call_id=tc.id,
@@ -997,6 +1053,8 @@ class AgentRunner:
             message = "Agent 成功完成（T2 recovery 自动补全）"
         elif ok and metadata.get("completion_mode") == "t2_resume_prefinalize":
             message = "Agent 成功完成（T2 resume 确定性收尾）"
+        elif ok and metadata.get("completion_mode") == "t4_resume_prefinalize":
+            message = "Agent 成功完成（T4 resume 确定性收尾）"
         return AgentResult(
             ok=ok,
             message=message,
@@ -1070,37 +1128,41 @@ class AgentRunner:
             for path in ctx.outputs_expected.values()
             if path.exists()
         ]
-        result = await self.human.present_gate(
-            gate_id="runtime_budget_extension",
-            presentation={
-                "_title": "预算上限已触发",
-                "_description": "当前任务已达到预算上限。你可以选择扩限后继续，或停止本次运行。",
-                "task_id": ctx.task_id,
-                "run_id": ctx.run_id,
-                "extensions_used": used_extensions,
-                "dimension": exc.dimension,
-                "used": exc.used,
-                "limit": exc.limit,
-                "current_budget": snapshot,
-                "existing_outputs": existing_outputs,
-                "suggested_extension": {
+        human_started = time.time()
+        try:
+            result = await self.human.present_gate(
+                gate_id="runtime_budget_extension",
+                presentation={
+                    "_title": "预算上限已触发",
+                    "_description": "当前任务已达到预算上限。你可以选择扩限后继续，或停止本次运行。",
+                    "task_id": ctx.task_id,
+                    "run_id": ctx.run_id,
+                    "extensions_used": used_extensions,
                     "dimension": exc.dimension,
-                    "delta": delta,
-                    "new_limit": int(exc.limit + delta),
-                    "unit": unit,
+                    "used": exc.used,
+                    "limit": exc.limit,
+                    "current_budget": snapshot,
+                    "existing_outputs": existing_outputs,
+                    "suggested_extension": {
+                        "dimension": exc.dimension,
+                        "delta": delta,
+                        "new_limit": int(exc.limit + delta),
+                        "unit": unit,
+                    },
                 },
-            },
-            options=[
-                {
-                    "id": "extend",
-                    "label": f"继续，并增加 {delta} {unit}",
-                },
-                {
-                    "id": "stop",
-                    "label": "停止本次运行",
-                },
-            ],
-        )
+                options=[
+                    {
+                        "id": "extend",
+                        "label": f"继续，并增加 {delta} {unit}",
+                    },
+                    {
+                        "id": "stop",
+                        "label": "停止本次运行",
+                    },
+                ],
+            )
+        finally:
+            budget.exclude_wall_time(time.time() - human_started)
         if (result or {}).get("option_id") != "extend":
             return False, used_extensions
 

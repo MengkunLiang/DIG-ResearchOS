@@ -46,7 +46,13 @@ class IdeationAgent(Agent):
                     "max_wall_seconds": 600,
                     "max_validation_retries": 3,
                     "temperature": 0.75,
-                    "allowed_read_prefixes": ["", "literature/", "user_seeds/"],
+                    "allowed_read_prefixes": [
+                        "",
+                        "literature/",
+                        "user_seeds/",
+                        "ideation/",
+                        "_runtime/resume/",
+                    ],
                     "allowed_write_prefixes": ["ideation/"],
                     "prompt_template": "ideation.j2",
                     "structured_outputs": {
@@ -134,9 +140,31 @@ class IdeationAgent(Agent):
 
         project = load_project(ctx)
         max_budget = project.get("constraints", {}).get("max_budget_usd", 100.0)
+        total_estimated_cost = 0.0
         for exp in experiments:
-            gpu_hours = exp.get("compute_estimate", {}).get("gpu_hours", 0)
-            if gpu_hours * 3.0 > max_budget * 0.85:
+            estimate = exp.get("compute_estimate", {}) or {}
+            gpu_hours = float(estimate.get("gpu_hours", 0) or 0)
+            estimated_cost = estimate.get("estimated_cost_usd")
+            exp_cost = float(estimated_cost) if estimated_cost is not None else gpu_hours * 3.0
+            total_estimated_cost += exp_cost
+            if exp_cost > max_budget * 0.85:
                 return False, f"实验'{exp.get('name', '?')}'成本超预算85%"
+
+        declared_total = plan_data.get("total_estimated_cost_usd")
+        if declared_total is not None and float(declared_total) > max_budget:
+            return False, (
+                f"exp_plan.yaml 声明总成本 ${float(declared_total):.2f} "
+                f"超过项目预算 ${float(max_budget):.2f}"
+            )
+
+        if total_estimated_cost > max_budget:
+            return False, (
+                f"实验总成本 ${total_estimated_cost:.2f} "
+                f"超过项目预算 ${float(max_budget):.2f}"
+            )
+
+        budget_check = plan_data.get("budget_check") or {}
+        if isinstance(budget_check, dict) and budget_check.get("over_budget") is True:
+            return False, "exp_plan.yaml budget_check.over_budget=true，不能判定为完成"
 
         return True, None

@@ -243,6 +243,8 @@ agents:
       - ""
       - literature/
       - user_seeds/
+      - ideation/
+      - _runtime/resume/
     allowed_write_prefixes:
       - ideation/
     prompt_template: ideation.j2

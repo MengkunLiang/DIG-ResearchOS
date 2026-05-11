@@ -15,6 +15,17 @@ def test_budget_tracker_limits():
         assert exc.dimension == "tokens"
 
 
+def test_budget_tracker_can_exclude_human_wait_time():
+    budget = BudgetTracker(max_steps=10, max_tokens=100, max_wall_seconds=10)
+    budget.started_at -= 100
+    budget.exclude_wall_time(95)
+
+    budget.check()
+    snapshot = budget.snapshot()
+    assert snapshot["elapsed_s"] < 10
+    assert snapshot["excluded_wall_s"] >= 95
+
+
 def test_message_and_toolcall_openai_contract():
     tool_call = ToolCall.create("echo", {"text": "hi"})
     message = Message.assistant(tool_calls=[tool_call], step=1)
@@ -26,4 +37,3 @@ def test_message_and_toolcall_openai_contract():
 def test_empty_assistant_detection():
     assert is_empty_assistant(Message.assistant())
     assert not is_empty_assistant(Message.assistant(content="hello"))
-

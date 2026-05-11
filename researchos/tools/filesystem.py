@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from pathlib import Path
+from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field
@@ -12,6 +14,9 @@ from ..runtime.errors import ToolAccessDenied, ToolRuntimeError
 from ..runtime.logger import get_logger
 
 _LOG = get_logger("filesystem")
+STRUCTURED_ONLY_WRITE_PATHS = {
+    "ideation/exp_plan.yaml": "exp_plan",
+}
 
 
 class ReadFileParams(BaseModel):
@@ -85,7 +90,13 @@ class ReadFileTool(Tool):
 
 class WriteFileParams(BaseModel):
     path: str = Field(..., description="相对 workspace 的路径")
-    content: str = Field(..., description="要写入的文本内容")
+    content: str | dict[str, Any] | list[Any] = Field(
+        ...,
+        description=(
+            "要写入的文本内容；写 .json/.jsonl/.yaml/.yml 时也可以传 JSON 对象或数组，"
+            "工具会自动序列化"
+        ),
+    )
 
 
 class WriteFileTool(Tool):
@@ -100,6 +111,21 @@ class WriteFileTool(Tool):
     async def execute(self, **kwargs) -> ToolResult:
         path = kwargs["path"]
         content = kwargs["content"]
+        normalized_path = path.strip().lstrip("./")
+        if normalized_path in STRUCTURED_ONLY_WRITE_PATHS:
+            schema_name = STRUCTURED_ONLY_WRITE_PATHS[normalized_path]
+            return ToolResult(
+                ok=False,
+                content=(
+                    f"{normalized_path} 是结构化产物，不能用 write_file 写入。"
+                    f"请改用 write_structured_file(path='{normalized_path}', "
+                    f"schema_name='{schema_name}', format='yaml', data=...)。"
+                ),
+                error="structured_output_requires_write_structured_file",
+            )
+        content, conversion_error = self._coerce_content(content, normalized_path)
+        if conversion_error:
+            return ToolResult(ok=False, content=conversion_error, error="invalid_content_type")
         try:
             abs_path = self.policy.resolve_write(path)
 
@@ -117,6 +143,31 @@ class WriteFileTool(Tool):
             return ToolResult(ok=False, content=str(exc), error="access_denied")
         except OSError as exc:
             raise ToolRuntimeError("write_file", exc) from exc
+
+    def _coerce_content(
+        self,
+        content: str | dict[str, Any] | list[Any],
+        normalized_path: str,
+    ) -> tuple[str, str | None]:
+        """允许 LLM 对 JSON/YAML 文件传对象，避免在参数校验阶段反复失败。"""
+
+        if isinstance(content, str):
+            return content, None
+
+        suffix = Path(normalized_path).suffix.lower()
+        if suffix == ".json":
+            return json.dumps(content, ensure_ascii=False, indent=2) + "\n", None
+        if suffix == ".jsonl":
+            if isinstance(content, list):
+                return "\n".join(json.dumps(item, ensure_ascii=False) for item in content) + "\n", None
+            return json.dumps(content, ensure_ascii=False) + "\n", None
+        if suffix in {".yaml", ".yml"}:
+            return yaml.safe_dump(content, allow_unicode=True, sort_keys=False), None
+
+        return "", (
+            "write_file 的 content 只有在写 .json/.jsonl/.yaml/.yml 时可以是对象或数组；"
+            "其他文件请传入字符串内容。"
+        )
 
     def _fix_project_yaml(self, content: str, path: str) -> str:
         """自动修正 project.yaml 的常见格式错误。

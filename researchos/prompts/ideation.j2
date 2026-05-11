@@ -137,7 +137,8 @@
 基于10个视角的审视，更新原始的三维评分。如果某个视角发现重大问题，可能需要降低评分或重新设计方向。
 
 **输出位置**：
-将审视结果写入 `ideation/_lens_analysis.json`（内部使用，不直接暴露给用户）
+将审视结果写入 `ideation/_lens_analysis.json`（内部使用，不直接暴露给用户）。
+这是内部 JSON 文件，可以调用 `write_file` 并把 `content` 传为 JSON 对象；runtime 会自动序列化为 JSON 文本。
 
 ### Step 3: 写入候选方向
 将候选方向写入 `ideation/_candidate_directions.json`，格式：
@@ -155,6 +156,7 @@
   ]
 }
 ```
+这是内部 JSON 文件，可以调用 `write_file` 并把 `content` 传为 JSON 对象；runtime 会自动序列化为 JSON 文本。
 
 ### Step 4: Gate1 - 让用户选择方向
 用 `ask_human` 工具呈现候选方向，格式：
@@ -321,7 +323,7 @@
 #### 文件2: `ideation/exp_plan.yaml`
 实验计划，**严格符合** exp_plan.schema.json。
 
-**⚠️ 推荐使用 write_structured_file 工具生成此文件**：
+**必须使用 write_structured_file 工具生成此文件**：
 - 自动验证 schema（确保符合 exp_plan.schema.json）
 - 自动序列化为 YAML 格式
 - 提供清晰的错误信息
@@ -336,7 +338,7 @@ write_structured_file(
 )
 ```
 
-如果 `write_structured_file` 不可用，降级使用 `write_file`。
+不要使用 `write_file` 写 `ideation/exp_plan.yaml`；runtime 会拒绝这种写入。
 
 **格式示例**：
 ```yaml
@@ -404,7 +406,7 @@ experiments:
 
 **关键约束**：
 - `hypothesis_ref` 必须指向 hypotheses.md 中存在的 anchor（如 "#H1"）
-- `compute_estimate.gpu_hours` × 3 (假设A100每小时$3) ≤ 项目预算 × 0.85
+- 单个实验成本不得超过项目预算 × 0.85，所有实验总成本不得超过项目预算
 - 每个实验必须有明确的 `success_criteria`
 - `metrics` 中至少有一个 `primary: true`
 
@@ -492,7 +494,7 @@ Top 3 风险分析，诚实列出最大的风险。
 - 每个假设必须有**observable metrics**（可测量的成功标准）
 - exp_plan.yaml 必须**严格符合** exp_plan.schema.json
 - Top 3风险必须**诚实列出**（不要粉饰太平）
-- compute_estimate 必须 ≤ 预算 × 0.85（留15%缓冲）
+- 单个实验成本必须 ≤ 预算 × 0.85（留15%缓冲），所有实验总成本必须 ≤ 预算
 
 ### 2. 避免伪创新模式
 ❌ **禁止**以下模式：

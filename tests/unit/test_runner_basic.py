@@ -1,5 +1,7 @@
 import pytest
+import yaml
 
+from researchos.agents.ideation import IdeationAgent
 from researchos.runtime.agent import Agent, AgentResult, AgentSpec, BudgetOverride, ExecutionContext
 from researchos.runtime.orchestrator import AgentRunner
 from researchos.testing.mocks import FakeLLMMessage, FakeRawCompletion, FakeToolCall, MockHumanInterface, MockLLMClient
@@ -49,6 +51,56 @@ class RecordingLLMClient(MockLLMClient):
     async def chat(self, **kwargs):
         self.chat_kwargs.append(kwargs)
         return await super().chat(**kwargs)
+
+
+def write_valid_t4_artifacts(workspace):
+    (workspace / "project.yaml").write_text(
+        yaml.dump({"research_direction": "Test", "constraints": {"max_budget_usd": 1000}})
+    )
+    ideation_dir = workspace / "ideation"
+    ideation_dir.mkdir(exist_ok=True)
+    (ideation_dir / "hypotheses.md").write_text(
+        "# 研究假设\n\n## H1: 假设1\n\n"
+        + "这是一个可验证的研究假设，包含明确指标、背景、预期结果和风险。" * 40
+    )
+    (ideation_dir / "exp_plan.yaml").write_text(
+        yaml.dump(
+            {
+                "goal": "验证假设H1",
+                "total_estimated_cost_usd": 30.0,
+                "budget_check": {"over_budget": False},
+                "experiments": [
+                    {
+                        "id": "exp1",
+                        "name": "Budgeted Experiment",
+                        "title": "预算内实验",
+                        "hypothesis_ref": "#H1",
+                        "datasets": [{"name": "test", "split": "val", "size": 1000}],
+                        "baselines": [{"name": "baseline1", "source": "paper", "why": "standard"}],
+                        "our_method": {
+                            "name": "OurMethod",
+                            "description": "Our approach",
+                            "key_difference": "Different",
+                        },
+                        "metrics": [{"name": "accuracy", "primary": True, "target": 0.8}],
+                        "success_criteria": [
+                            {"metric": "accuracy", "threshold": 0.8, "comparison": ">="}
+                        ],
+                        "steps": [{"step": 1, "action": "Run", "details": "Run experiment"}],
+                        "compute_estimate": {
+                            "gpu_hours": 10,
+                            "gpu_type": "A100",
+                            "estimated_cost_usd": 30,
+                        },
+                        "expected_duration_days": 2,
+                    }
+                ],
+            }
+        )
+    )
+    (ideation_dir / "risks.md").write_text(
+        "# Top 3 风险\n\n## 风险1\n内容\n## 风险2\n内容\n## 风险3\n内容\n"
+    )
 
 
 @pytest.fixture
@@ -251,6 +303,30 @@ async def test_budget_extension_gate_can_stop_run(tmp_workspace, registry):
     assert not result.ok
     assert result.stop_reason == AgentResult.STOP_BUDGET
     assert any(call[0] == "gate" for call in human.calls)
+
+
+@pytest.mark.asyncio
+async def test_t4_resume_prefinalize_skips_llm_when_artifacts_validate(tmp_workspace, registry):
+    write_valid_t4_artifacts(tmp_workspace)
+    llm = MockLLMClient(responses=[])
+    ctx = ExecutionContext(
+        workspace_dir=tmp_workspace,
+        project_id="p1",
+        task_id="T4",
+        run_id="r_t4_resume_prefinalize",
+        outputs_expected={
+            "hypotheses": tmp_workspace / "ideation" / "hypotheses.md",
+            "exp_plan": tmp_workspace / "ideation" / "exp_plan.yaml",
+            "risks": tmp_workspace / "ideation" / "risks.md",
+        },
+    )
+    runner = AgentRunner(IdeationAgent(), registry, llm, MockHumanInterface())
+
+    result = await runner.run(ctx)
+
+    assert result.ok
+    assert result.metadata["completion_mode"] == "t4_resume_prefinalize"
+    assert llm.call_count == 0
 
 
 @pytest.mark.asyncio

@@ -16,6 +16,7 @@ class BudgetTracker:
     tokens_out: int = 0
     cost_usd: float = 0.0
     started_at: float = field(default_factory=time.time)
+    excluded_wall_seconds: float = 0.0
 
     def tick_step(self) -> None:
         self.steps += 1
@@ -26,7 +27,13 @@ class BudgetTracker:
         self.cost_usd += cost
 
     def elapsed_seconds(self) -> float:
-        return time.time() - self.started_at
+        return max(0.0, time.time() - self.started_at - self.excluded_wall_seconds)
+
+    def exclude_wall_time(self, seconds: float) -> None:
+        """从 active runtime wall budget 中扣除非 agent 主动工作的等待时间。"""
+
+        if seconds > 0:
+            self.excluded_wall_seconds += seconds
 
     def total_tokens(self) -> int:
         return self.tokens_in + self.tokens_out
@@ -49,6 +56,7 @@ class BudgetTracker:
             "tokens_total": self.total_tokens(),
             "cost_usd": round(self.cost_usd, 6),
             "elapsed_s": round(self.elapsed_seconds(), 3),
+            "excluded_wall_s": round(self.excluded_wall_seconds, 3),
         }
 
     def extend_limit(self, dimension: str, delta: int | float) -> None:

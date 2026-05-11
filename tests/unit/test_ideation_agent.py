@@ -43,13 +43,15 @@ def test_ideation_agent_spec(ideation_agent):
     spec = ideation_agent.spec
     assert spec.name == "ideation"
     assert spec.model_tier == "heavy"
-    assert spec.llm_profile is None  # 使用默认profile
+    assert spec.llm_profile == "ideation_deep"
     assert "read_file" in spec.tool_names
     assert "write_file" in spec.tool_names
     assert "ask_human" in spec.tool_names
     assert "finish_task" in spec.tool_names
     assert spec.temperature == 0.75
     assert "literature/" in spec.allowed_read_prefixes
+    assert "ideation/" in spec.allowed_read_prefixes
+    assert "_runtime/resume/" in spec.allowed_read_prefixes
     assert "ideation/" in spec.allowed_write_prefixes
 
 
@@ -343,3 +345,63 @@ def test_validate_outputs_budget_exceeded(ideation_agent, temp_workspace):
     ok, err = ideation_agent.validate_outputs(ctx)
     assert not ok
     assert "预算" in err or "成本" in err or "budget" in err.lower()
+
+
+def test_validate_outputs_total_budget_exceeded_even_when_single_experiments_fit(
+    ideation_agent,
+    temp_workspace,
+):
+    """总预算必须校验，不能只看单个实验是否低于85%。"""
+    (temp_workspace / "project.yaml").write_text(
+        yaml.dump({"research_direction": "Test", "constraints": {"max_budget_usd": 100}})
+    )
+    (temp_workspace / "ideation" / "hypotheses.md").write_text(
+        "# 研究假设\n\n## H1: 假设1\n\n" + "内容" * 260
+    )
+    plan_data = {
+        "goal": "验证假设H1",
+        "total_estimated_cost_usd": 108.0,
+        "budget_check": {"over_budget": True},
+        "experiments": [
+            {
+                "id": f"exp{i}",
+                "name": f"Experiment {i}",
+                "title": f"实验{i}",
+                "hypothesis_ref": "#H1",
+                "datasets": [{"name": "test", "split": "val", "size": 1000}],
+                "baselines": [{"name": "baseline1", "source": "paper", "why": "standard"}],
+                "our_method": {
+                    "name": "OurMethod",
+                    "description": "Our approach",
+                    "key_difference": "Different",
+                },
+                "metrics": [{"name": "accuracy", "primary": True, "target": 0.8}],
+                "success_criteria": [
+                    {"metric": "accuracy", "threshold": 0.8, "comparison": ">="}
+                ],
+                "steps": [{"step": 1, "action": "Run", "details": "Run experiment"}],
+                "compute_estimate": {
+                    "gpu_hours": 10,
+                    "gpu_type": "A100",
+                    "estimated_cost_usd": cost,
+                },
+                "expected_duration_days": 2,
+            }
+            for i, cost in enumerate([30, 24, 18, 36], start=1)
+        ],
+    }
+    (temp_workspace / "ideation" / "exp_plan.yaml").write_text(yaml.dump(plan_data))
+    (temp_workspace / "ideation" / "risks.md").write_text(
+        "## 风险1\n内容\n## 风险2\n内容\n## 风险3\n内容\n"
+    )
+
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T4",
+        run_id="test-run-total-budget",
+    )
+
+    ok, err = ideation_agent.validate_outputs(ctx)
+    assert not ok
+    assert "总成本" in err or "over_budget" in err
