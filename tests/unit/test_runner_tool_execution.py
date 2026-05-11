@@ -27,6 +27,33 @@ class SlowTool(Tool):
         return ToolResult(ok=True, content=kwargs["value"])
 
 
+class DockerParams(BaseModel):
+    command: str
+
+
+class SuccessfulDockerTool(Tool):
+    name = "docker_exec"
+    description = "fake docker"
+    parameters_schema = DockerParams
+
+    async def execute(self, **kwargs):
+        return ToolResult(ok=True, content=f"ran {kwargs['command']}")
+
+
+class WriteParams(BaseModel):
+    path: str
+    content: str
+
+
+class SuccessfulWriteTool(Tool):
+    name = "write_file"
+    description = "fake write"
+    parameters_schema = WriteParams
+
+    async def execute(self, **kwargs):
+        return ToolResult(ok=True, content=f"wrote {kwargs['path']}")
+
+
 class MinimalAgent(Agent):
     def __init__(self):
         super().__init__(AgentSpec(name="parallel", model_tier="medium", tool_names=["slow", "finish_task"]))
@@ -304,6 +331,65 @@ async def test_fetch_pdf_failures_are_cached_within_run(tmp_workspace):
     assert second.metadata["error"] == "cached_failure"
     assert "already failed in this run" in (second.content or "")
     assert tool.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_runner_records_t5_reproducibility_metadata(tmp_workspace):
+    runner = AgentRunner(
+        MinimalAgent(),
+        ToolRegistry(),
+        MockLLMClient([]),
+        MockHumanInterface(),
+    )
+    ctx = ExecutionContext(
+        workspace_dir=tmp_workspace,
+        project_id="p1",
+        task_id="T5",
+        run_id="r-meta",
+        mode="pilot",
+        extra={},
+    )
+    policy = WorkspaceAccessPolicy(tmp_workspace, [""], [""])
+    tools = {
+        "docker_exec": SuccessfulDockerTool(),
+        "write_file": SuccessfulWriteTool(),
+    }
+
+    await runner._execute_one_tool_call(
+        ToolCall.create("docker_exec", {"command": "python run_pilot.py --smoke_test"}),
+        tools,
+        ctx=ctx,
+        policy=policy,
+        step=1,
+        tool_failure_cache={},
+    )
+    await runner._execute_one_tool_call(
+        ToolCall.create(
+            "write_file",
+            {"path": "pilot/pilot_code/run_pilot.py", "content": "print('v1')"},
+        ),
+        tools,
+        ctx=ctx,
+        policy=policy,
+        step=2,
+        tool_failure_cache={},
+    )
+    await runner._execute_one_tool_call(
+        ToolCall.create(
+            "write_file",
+            {"path": "pilot/pilot_code/run_pilot.py", "content": "print('v2')"},
+        ),
+        tools,
+        ctx=ctx,
+        policy=policy,
+        step=3,
+        tool_failure_cache={},
+    )
+
+    assert ctx.extra["docker_exec_call_count"] == 1
+    assert ctx.extra["docker_exec_success_count"] == 1
+    assert ctx.extra["pilot_code_write_count"] == 2
+    assert ctx.extra["artifact_write_counts"]["pilot/pilot_code/run_pilot.py"] == 2
 
 
 @pytest.mark.asyncio

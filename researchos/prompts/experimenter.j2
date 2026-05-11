@@ -70,6 +70,8 @@
 
 ### 6. Docker Digest（§8.2）
 记录使用的 Docker 镜像 digest 到 pilot/docker_digests.txt
+必须至少成功调用一次 `docker_exec` 来运行 smoke test 或正式 pilot 实验；不能只用 `bash_run` 在本地 Python 环境运行。
+`pilot/docker_digests.txt` 必须包含真实 digest（`sha256:` 或 `@sha256`），不能写 “local build / no remote digest / 未使用 Docker” 这类占位说明。
 
 ### 7. 预算限制
 - 建议 100 步内完成
@@ -272,6 +274,61 @@ result = docker_exec(
 
 > 详细收集协议见: `docs/protocols/EXPERIMENT_PROTOCOL.md` §执行流程 Step 4
 
+{% if mode == "pilot" %}
+### Step 5: 生成 pilot_plan 与 pilot_results
+
+先用 `write_structured_file` 生成 `pilot/pilot_plan.yaml`：
+```
+write_structured_file(
+    path="pilot/pilot_plan.yaml",
+    schema_name="pilot_plan",
+    format="yaml",
+    data={试点计划对象}
+)
+```
+
+再用 `write_structured_file` 生成 `pilot/pilot_results.json`：
+```
+write_structured_file(
+    path="pilot/pilot_results.json",
+    schema_name="pilot_results",
+    format="json",
+    data={试点结果对象}
+)
+```
+
+不要使用 `results_summary` schema 写 `pilot/pilot_results.json`。
+
+### Step 6: 生成 motivation_validation.md
+
+记录每个假设的真实试点结果，并给出 PASS/REVISE/FAIL 判定。
+
+### Step 7: 生成 experiment_audit.json
+
+如果你重写 `pilot/pilot_code/run_pilot.py` 超过一次，必须生成 `pilot/experiment_audit.json`，记录每次改动：
+```json
+{
+  "code_revisions": [
+    {
+      "revision": 1,
+      "reason_type": "initial_implementation",
+      "reason": "首次实现实验协议",
+      "changed_files": ["pilot/pilot_code/run_pilot.py"]
+    },
+    {
+      "revision": 2,
+      "reason_type": "bug_fix",
+      "reason": "修复 smoke test 的路径错误，不改变指标目标",
+      "changed_files": ["pilot/pilot_code/run_pilot.py"]
+    }
+  ]
+}
+```
+
+允许的 reason_type 包括：`initial_implementation`、`bug_fix`、`protocol_compliance`、`dependency_fix`、`runtime_error_fix`。
+禁止为了让结果符合假设而修改代码、数据生成或指标计算。不要使用 `outcome_hacking`、`make_results_match_hypothesis`、`result_chasing` 这类结果导向式改写。
+
+{% else %}
 ### Step 5: 生成results_summary.json
 
 **⚠️ 推荐使用 write_structured_file 工具生成此文件**：
@@ -300,6 +357,7 @@ write_structured_file(
 记录实验迭代过程到 `experiments/iteration_log.md`。
 
 > 详细格式见: `docs/protocols/EXPERIMENT_PROTOCOL.md` §输出格式
+{% endif %}
 
 ## 实验执行策略
 
@@ -521,6 +579,8 @@ experiments:
 试点结果：
 ```json
 {
+  "total_experiments": 1,
+  "successful": 1,
   "experiments": [
     {
       "experiment_id": "pilot_h1",
@@ -536,6 +596,8 @@ experiments:
   ]
 }
 ```
+
+必须用 `schema_name="pilot_results"` 写入。
 
 ### pilot/motivation_validation.md
 
@@ -647,11 +709,13 @@ Seed ensemble 汇总：
 当满足以下条件时调用 `finish_task`：
 {% if mode == "pilot" %}
 1. 所有试点实验都已执行（成功或失败）
-2. `pilot/pilot_results.json` 已生成且格式正确
-3. `pilot/motivation_validation.md` 已生成且包含明确判定（PASS/REVISE/FAIL）
-4. `pilot/smoke_test_passed.marker` 文件已创建
-5. `pilot/docker_digests.txt` 已记录
-6. 至少有1个实验成功完成
+2. `pilot/pilot_plan.yaml` 已生成且符合 `pilot_plan` schema
+3. `pilot/pilot_results.json` 已生成且符合 `pilot_results` schema；每个实验都记录 `seed: 42`
+4. `pilot/motivation_validation.md` 已生成且包含明确判定（PASS/REVISE/FAIL）
+5. `pilot/smoke_test_passed.marker` 文件已创建
+6. 至少一次 `docker_exec` 成功执行，且 `pilot/docker_digests.txt` 记录真实 sha256 digest
+7. 如果多次重写 pilot 代码，`pilot/experiment_audit.json` 已记录非结果导向的修改原因
+8. 至少有1个实验成功完成
 {% else %}
 1. 所有实验都已执行（成功或失败）
 2. `experiments/results_summary.json` 已生成且格式正确
@@ -668,6 +732,7 @@ Seed ensemble 汇总：
 你可以使用以下工具：
 - `read_file`: 读取文件
 - `write_file`: 写入文件
+- `write_structured_file`: 写入并校验结构化 YAML/JSON 产物
 - `list_files`: 列出目录内容
 - `bash_run`: 执行bash命令
 - `docker_exec`: 在Docker容器中执行命令
@@ -681,13 +746,15 @@ Seed ensemble 汇总：
 2. 解析实验列表
 3. 为每个假设创建试点实验：
    a. 创建 pilot/pilot_code/run_pilot.py（支持 --smoke_test 和 --seed）
-   b. 运行 smoke test：python run_pilot.py --smoke_test
+   b. 用 docker_exec 运行 smoke test：python run_pilot.py --smoke_test
    c. 创建 pilot/smoke_test_passed.marker
-   d. 运行试点实验：python run_pilot.py --seed 42 --data_fraction 0.1
-   e. 收集结果到 pilot/pilot_results.json
-4. 分析试点结果，生成 pilot/motivation_validation.md（包含 PASS/REVISE/FAIL 判定）
-5. 记录 Docker digest 到 pilot/docker_digests.txt
-6. finish_task
+   d. 用 docker_exec 运行试点实验：python run_pilot.py --seed 42 --data_fraction 0.1
+   e. 使用 write_structured_file(schema_name="pilot_results") 收集结果到 pilot/pilot_results.json
+4. 使用 write_structured_file(schema_name="pilot_plan") 生成 pilot/pilot_plan.yaml
+5. 分析试点结果，生成 pilot/motivation_validation.md（包含 PASS/REVISE/FAIL 判定）
+6. 记录真实 Docker digest 到 pilot/docker_digests.txt
+7. 如有多次代码改写，生成 pilot/experiment_audit.json
+8. finish_task
 ```
 {% else %}
 ```

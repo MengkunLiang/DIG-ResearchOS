@@ -1,21 +1,47 @@
 {
   "type": "object",
   "properties": {
-    "status": {
+    "seed": {
+      "type": "integer"
+    },
+    "experiments": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "experiment_id": {"type": "string", "minLength": 1},
+          "hypothesis_ref": {"type": "string"},
+          "status": {"type": "string", "enum": ["DONE", "FAILED", "TIMEOUT", "SKIPPED"]},
+          "seed": {"type": "integer", "enum": [42]},
+          "metrics": {"type": "object"},
+          "duration_seconds": {"type": "number", "minimum": 0},
+          "smoke_test_passed": {"type": "boolean"},
+          "error": {"type": ["string", "null"]}
+        },
+        "required": [
+          "experiment_id",
+          "status",
+          "seed",
+          "metrics",
+          "duration_seconds",
+          "smoke_test_passed"
+        ],
+        "additionalProperties": true
+      }
+    },
+    "total_experiments": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "successful": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "timestamp": {
       "type": "string"
-    },
-    "summary": {
-      "type": "string"
-    },
-    "metrics": {
-      "type": "object"
-    },
-    "findings": {
-      "type": "array"
-    },
-    "artifacts": {
-      "type": "array"
     }
   },
+  "required": ["experiments"],
   "additionalProperties": true
 }

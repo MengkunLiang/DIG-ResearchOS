@@ -54,6 +54,7 @@ from ..runtime.agent_params import build_agent_spec
 from ..runtime.logger import get_logger
 from ..runtime.prompts import render_prompt
 from ..schemas.validator import validate_record
+from ..schemas.validator import validate_task_artifacts
 from ._common import (
     generate_findings_summary,
     generate_manifest,
@@ -122,6 +123,51 @@ def run_integrity_gate(ctx: ExecutionContext) -> tuple[bool, str | None]:
 
     if issues:
         return False, f"Integrity Gate 失败: {issues}"
+    return True, None
+
+
+def run_experimenter_preflight(ctx: ExecutionContext) -> tuple[bool, str | None]:
+    """在进入 LLM 前做 T5 输入契约检查，避免拿明显非法计划跑实验。"""
+
+    if ctx.task_id != "T5":
+        return True, None
+
+    ok, err = run_integrity_gate(ctx)
+    if not ok:
+        return False, err
+
+    ws = ctx.workspace_dir
+    project = load_project(ctx)
+    max_budget = float(project.get("constraints", {}).get("max_budget_usd", 100.0) or 100.0)
+    exp_plan_path = ws / "ideation" / "exp_plan.yaml"
+    try:
+        plan = yaml.safe_load(exp_plan_path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:
+        return False, f"T5 preflight 无法读取 exp_plan.yaml: {exc}"
+
+    budget_check = plan.get("budget_check") or {}
+    if isinstance(budget_check, dict) and budget_check.get("over_budget") is True:
+        return False, "T5 preflight 失败：exp_plan.yaml budget_check.over_budget=true"
+
+    declared_total = plan.get("total_estimated_cost_usd")
+    if declared_total is not None and float(declared_total) > max_budget:
+        return False, (
+            f"T5 preflight 失败：实验计划总成本 ${float(declared_total):.2f} "
+            f"超过项目预算 ${max_budget:.2f}"
+        )
+
+    total_from_experiments = 0.0
+    for exp in plan.get("experiments", []) or []:
+        estimate = exp.get("compute_estimate", {}) or {}
+        cost = estimate.get("estimated_cost_usd")
+        gpu_hours = float(estimate.get("gpu_hours", 0) or 0)
+        total_from_experiments += float(cost) if cost is not None else gpu_hours * 3.0
+    if total_from_experiments > max_budget:
+        return False, (
+            f"T5 preflight 失败：实验计划逐项成本总和 ${total_from_experiments:.2f} "
+            f"超过项目预算 ${max_budget:.2f}"
+        )
+
     return True, None
 
 
@@ -314,6 +360,7 @@ class ExperimenterAgent(Agent):
                     "allowed_read_prefixes": ["", "ideation/", "experiments/", "pilot/", "literature/"],
                     "allowed_write_prefixes": ["experiments/", "pilot/"],
                     "prompt_template": "experimenter.j2",
+                    "pre_hooks": [run_experimenter_preflight],
                     "structured_outputs": {
                         "experiments/results_summary.json": "results_summary",
                         "pilot/pilot_results.json": "pilot_results",
@@ -431,7 +478,7 @@ class ExperimenterAgent(Agent):
                 "请按 system prompt 执行 T5 Pilot 实验任务。\n"
                 "实验计划在 ideation/exp_plan.yaml 中。\n"
                 "请执行小规模试点实验（5-10% 数据），强制执行 smoke test，"
-                "使用固定 seed=42，生成 pilot/pilot_results.json 和 "
+                "使用固定 seed=42，生成 pilot/pilot_plan.yaml、pilot/pilot_results.json 和 "
                 "pilot/motivation_validation.md（必须包含 PASS/REVISE/FAIL 判定）。"
                 ),
             )
@@ -468,6 +515,9 @@ class ExperimenterAgent(Agent):
         """
         mode = ctx.mode or "full"
         ws = ctx.workspace_dir
+        ok, err = super().validate_outputs(ctx)
+        if not ok:
+            return False, err
 
         if mode == "pilot":
             # ═══════════════════════════════════════════════════════
@@ -484,6 +534,7 @@ class ExperimenterAgent(Agent):
 
             # 1. 基本文件存在性检查
             required_files = [
+                "pilot/pilot_plan.yaml",
                 "pilot/pilot_results.json",
                 "pilot/motivation_validation.md",
                 "pilot/pilot_code/run_pilot.py",
@@ -517,8 +568,14 @@ class ExperimenterAgent(Agent):
             except Exception as e:
                 return False, f"pilot/pilot_results.json 解析失败: {e}"
 
-            if results.get("seed") != 42:
-                return False, "pilot 模式必须使用固定 seed=42（§3.3）"
+            seed_ok, seed_err = self._validate_pilot_seed(results)
+            if not seed_ok:
+                return False, seed_err
+
+            if ctx.task_id == "T5":
+                ok, err = validate_task_artifacts(ctx.task_id, ws)
+                if not ok:
+                    return False, err
 
             # 5. Docker digest 检查（§8.2 - 复现保证）
             # 为什么需要：记录 Docker 镜像的精确版本，确保环境可复现
@@ -527,6 +584,17 @@ class ExperimenterAgent(Agent):
             digest_file = ws / "pilot" / "docker_digests.txt"
             if not digest_file.exists():
                 return False, "缺少 pilot/docker_digests.txt（§8.2）"
+            digest_text = read_text_file(digest_file)
+            if not self._has_reproducible_docker_evidence(digest_text):
+                return False, "pilot/docker_digests.txt 必须记录真实 Docker 镜像 digest（包含 sha256，不能是本地占位说明）"
+            docker_success_count = ctx.extra.get("docker_exec_success_count")
+            if docker_success_count is not None and int(docker_success_count or 0) < 1:
+                return False, "T5 要求至少一次成功的 docker_exec 执行，不能只用 bash_run 本地运行"
+
+            code_write_count = int(ctx.extra.get("pilot_code_write_count", 0) or 0)
+            audit_ok, audit_err = self._validate_experiment_audit(ws, required=code_write_count > 1)
+            if not audit_ok:
+                return False, audit_err
 
             # 6. 代码参数检查
             # 为什么需要：确保生成的代码支持必需的参数（--smoke_test, --seed）
@@ -548,6 +616,8 @@ class ExperimenterAgent(Agent):
                 artifacts=[
                     {"path": "pilot_results.json", "type": "json"},
                     {"path": "motivation_validation.md", "type": "markdown"},
+                    {"path": "pilot_plan.yaml", "type": "yaml"},
+                    {"path": "experiment_audit.json", "type": "json"},
                     {"path": "smoke_test_passed.marker", "type": "marker"},
                     {"path": "docker_digests.txt", "type": "text"},
                 ],
@@ -722,3 +792,60 @@ class ExperimenterAgent(Agent):
             )
 
             return True, None
+
+    @staticmethod
+    def _validate_pilot_seed(results: dict) -> tuple[bool, str | None]:
+        """兼容顶层 seed 和逐实验 seed，但必须全为 42。"""
+
+        top_seed = results.get("seed")
+        if top_seed is not None and top_seed != 42:
+            return False, "pilot 模式必须使用固定 seed=42（顶层 seed 不是 42）"
+
+        experiments = results.get("experiments", [])
+        if isinstance(experiments, list) and experiments:
+            missing_or_wrong = [
+                exp.get("experiment_id", f"#{idx + 1}")
+                for idx, exp in enumerate(experiments)
+                if exp.get("seed") != 42
+            ]
+            if missing_or_wrong:
+                return False, (
+                    "pilot 模式每个实验都必须记录 seed=42，异常实验: "
+                    + ", ".join(str(item) for item in missing_or_wrong[:5])
+                )
+            return True, None
+
+        if top_seed == 42:
+            return True, None
+        return False, "pilot_results.json 必须包含顶层 seed=42 或每个实验的 seed=42"
+
+    @staticmethod
+    def _has_reproducible_docker_evidence(digest_text: str) -> bool:
+        lowered = digest_text.lower()
+        if any(marker in lowered for marker in ["local build", "no remote digest", "未使用", "not used"]):
+            return False
+        return "sha256:" in lowered or "@sha256" in lowered
+
+    @staticmethod
+    def _validate_experiment_audit(ws: Path, *, required: bool) -> tuple[bool, str | None]:
+        audit_path = ws / "pilot" / "experiment_audit.json"
+        if not audit_path.exists():
+            if required:
+                return False, "多次重写 pilot 代码后必须生成 pilot/experiment_audit.json，说明每次修改原因"
+            return True, None
+        try:
+            audit = json.loads(audit_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return False, f"pilot/experiment_audit.json 解析失败: {exc}"
+
+        revisions = audit.get("code_revisions", [])
+        if not isinstance(revisions, list) or not revisions:
+            return False, "pilot/experiment_audit.json 必须包含非空 code_revisions"
+        forbidden = {"outcome_hacking", "make_results_match_hypothesis", "result_chasing"}
+        for idx, revision in enumerate(revisions, start=1):
+            reason_type = str(revision.get("reason_type", "")).strip()
+            if not reason_type:
+                return False, f"experiment_audit 第 {idx} 条缺少 reason_type"
+            if reason_type in forbidden:
+                return False, f"experiment_audit 第 {idx} 条显示结果导向式改写: {reason_type}"
+        return True, None

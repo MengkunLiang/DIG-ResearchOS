@@ -48,8 +48,8 @@ def test_experimenter_agent_initialization():
     """测试 ExperimenterAgent 初始化"""
     agent = ExperimenterAgent()
     assert agent.spec.name == "experimenter"
-    assert agent.spec.max_steps == 150
-    assert agent.spec.max_tokens_total == 600_000
+    assert agent.spec.max_steps == 2000
+    assert agent.spec.max_tokens_total == 60_000_000
     assert "append_file" in agent.spec.tool_names
     assert "pilot/" in agent.spec.allowed_write_prefixes
     assert "experiments/" in agent.spec.allowed_write_prefixes
@@ -60,8 +60,8 @@ def test_experimenter_agent_mode_specific_spec():
     pilot_agent = ExperimenterAgent(mode="pilot")
     full_agent = ExperimenterAgent(mode="full")
 
-    assert pilot_agent.spec.max_steps == 100
-    assert full_agent.spec.max_steps == 150
+    assert pilot_agent.spec.max_steps == 1000
+    assert full_agent.spec.max_steps == 5000
 
 
 def test_pilot_mode_initial_message(temp_workspace):
@@ -126,8 +126,31 @@ def test_pilot_mode_validate_outputs_success(temp_workspace):
 
     # 创建所有必需文件
     (temp_workspace / "pilot" / "pilot_code").mkdir()
+    (temp_workspace / "pilot" / "pilot_plan.yaml").write_text(
+        """
+experiments:
+  - name: pilot_h1
+    hypothesis_ref: H1
+    data_fraction: 0.1
+    seed: 42
+    smoke_test_required: true
+"""
+    )
     (temp_workspace / "pilot" / "pilot_results.json").write_text(
-        json.dumps({"seed": 42, "accuracy": 0.85})
+        json.dumps(
+            {
+                "experiments": [
+                    {
+                        "experiment_id": "pilot_h1",
+                        "status": "DONE",
+                        "seed": 42,
+                        "metrics": {"accuracy": 0.85},
+                        "duration_seconds": 1,
+                        "smoke_test_passed": True,
+                    }
+                ]
+            }
+        )
     )
     (temp_workspace / "pilot" / "motivation_validation.md").write_text(
         "## 判定\n\nPASS - 实验验证了假设"
@@ -136,7 +159,7 @@ def test_pilot_mode_validate_outputs_success(temp_workspace):
         "import argparse\nparser.add_argument('--smoke_test')\nparser.add_argument('--seed')"
     )
     (temp_workspace / "pilot" / "smoke_test_passed.marker").write_text("passed")
-    (temp_workspace / "pilot" / "docker_digests.txt").write_text("sha256:abc123")
+    (temp_workspace / "pilot" / "docker_digests.txt").write_text("researchos/system@sha256:abc123")
 
     ok, err = agent.validate_outputs(ctx)
     assert ok
@@ -150,13 +173,36 @@ def test_pilot_mode_validate_outputs_wrong_seed(temp_workspace):
 
     # 创建文件但使用错误的 seed
     (temp_workspace / "pilot" / "pilot_code").mkdir()
+    (temp_workspace / "pilot" / "pilot_plan.yaml").write_text(
+        """
+experiments:
+  - name: pilot_h1
+    hypothesis_ref: H1
+    data_fraction: 0.1
+    seed: 42
+    smoke_test_required: true
+"""
+    )
     (temp_workspace / "pilot" / "pilot_results.json").write_text(
-        json.dumps({"seed": 123, "accuracy": 0.85})  # 错误的 seed
+        json.dumps(
+            {
+                "experiments": [
+                    {
+                        "experiment_id": "pilot_h1",
+                        "status": "DONE",
+                        "seed": 123,
+                        "metrics": {"accuracy": 0.85},
+                        "duration_seconds": 1,
+                        "smoke_test_passed": True,
+                    }
+                ]
+            }
+        )
     )
     (temp_workspace / "pilot" / "motivation_validation.md").write_text("PASS")
     (temp_workspace / "pilot" / "pilot_code" / "run_pilot.py").write_text("test")
     (temp_workspace / "pilot" / "smoke_test_passed.marker").write_text("passed")
-    (temp_workspace / "pilot" / "docker_digests.txt").write_text("sha256:abc123")
+    (temp_workspace / "pilot" / "docker_digests.txt").write_text("researchos/system@sha256:abc123")
 
     ok, err = agent.validate_outputs(ctx)
     assert not ok
@@ -170,12 +216,35 @@ def test_pilot_mode_validate_outputs_missing_smoke_test(temp_workspace):
 
     # 创建文件但缺少 smoke_test_passed.marker
     (temp_workspace / "pilot" / "pilot_code").mkdir()
+    (temp_workspace / "pilot" / "pilot_plan.yaml").write_text(
+        """
+experiments:
+  - name: pilot_h1
+    hypothesis_ref: H1
+    data_fraction: 0.1
+    seed: 42
+    smoke_test_required: true
+"""
+    )
     (temp_workspace / "pilot" / "pilot_results.json").write_text(
-        json.dumps({"seed": 42, "accuracy": 0.85})
+        json.dumps(
+            {
+                "experiments": [
+                    {
+                        "experiment_id": "pilot_h1",
+                        "status": "DONE",
+                        "seed": 42,
+                        "metrics": {"accuracy": 0.85},
+                        "duration_seconds": 1,
+                        "smoke_test_passed": True,
+                    }
+                ]
+            }
+        )
     )
     (temp_workspace / "pilot" / "motivation_validation.md").write_text("PASS")
     (temp_workspace / "pilot" / "pilot_code" / "run_pilot.py").write_text("test")
-    (temp_workspace / "pilot" / "docker_digests.txt").write_text("sha256:abc123")
+    (temp_workspace / "pilot" / "docker_digests.txt").write_text("researchos/system@sha256:abc123")
     # 缺少 smoke_test_passed.marker
 
     ok, err = agent.validate_outputs(ctx)

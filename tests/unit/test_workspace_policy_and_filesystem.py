@@ -28,6 +28,23 @@ async def test_write_file_rejects_structured_exp_plan(tmp_workspace):
 
 
 @pytest.mark.asyncio
+async def test_write_file_rejects_structured_pilot_outputs(tmp_workspace):
+    policy = WorkspaceAccessPolicy(tmp_workspace, [""], ["pilot/"])
+    tool = WriteFileTool(policy)
+
+    plan_result = await tool.execute(path="pilot/pilot_plan.yaml", content="experiments: []\n")
+    results_result = await tool.execute(path="pilot/pilot_results.json", content={"experiments": []})
+
+    assert not plan_result.ok
+    assert plan_result.error == "structured_output_requires_write_structured_file"
+    assert "schema_name='pilot_plan'" in plan_result.content
+    assert not results_result.ok
+    assert results_result.error == "structured_output_requires_write_structured_file"
+    assert "schema_name='pilot_results'" in results_result.content
+    assert "format='json'" in results_result.content
+
+
+@pytest.mark.asyncio
 async def test_write_file_serializes_json_object_content(tmp_workspace):
     policy = WorkspaceAccessPolicy(tmp_workspace, [""], ["ideation/"])
     tool = WriteFileTool(policy)

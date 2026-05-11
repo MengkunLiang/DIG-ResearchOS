@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from researchos.agents.experimenter import ExperimenterAgent
+from researchos.agents.experimenter import ExperimenterAgent, run_experimenter_preflight
 from researchos.runtime.agent import ExecutionContext
 
 
@@ -77,6 +77,72 @@ def pilot_workspace(tmp_path: Path):
     return tmp_path
 
 
+def write_pilot_plan(pilot_dir: Path) -> None:
+    (pilot_dir / "pilot_plan.yaml").write_text(
+        yaml.dump(
+            {
+                "goal": "Pilot validation",
+                "experiments": [
+                    {
+                        "name": "pilot_h1",
+                        "hypothesis_ref": "H1",
+                        "dataset": "test_dataset",
+                        "data_fraction": 0.1,
+                        "seed": 42,
+                        "smoke_test_required": True,
+                    }
+                ],
+            },
+            allow_unicode=True,
+        ),
+        encoding="utf-8",
+    )
+
+
+def write_pilot_code(pilot_dir: Path) -> None:
+    pilot_code_dir = pilot_dir / "pilot_code"
+    pilot_code_dir.mkdir(exist_ok=True)
+    (pilot_code_dir / "run_pilot.py").write_text(
+        "import argparse\nparser.add_argument('--smoke_test')\nparser.add_argument('--seed')",
+        encoding="utf-8",
+    )
+
+
+def write_pilot_results(pilot_dir: Path, *, seed: int = 42) -> None:
+    pilot_results = {
+        "total_experiments": 1,
+        "successful": 1,
+        "experiments": [
+            {
+                "experiment_id": "pilot_h1",
+                "hypothesis_ref": "H1",
+                "status": "DONE",
+                "seed": seed,
+                "metrics": {"accuracy": 0.75},
+                "duration_seconds": 300,
+                "smoke_test_passed": True,
+            }
+        ],
+    }
+    (pilot_dir / "pilot_results.json").write_text(
+        json.dumps(pilot_results, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def write_pilot_common_outputs(pilot_dir: Path, *, include_smoke: bool = True) -> None:
+    (pilot_dir / "motivation_validation.md").write_text(
+        "## 判定：PASS\n\n### 理由\n- H1: 初步结果通过\n\n### 建议\n- 继续 full 实验",
+        encoding="utf-8",
+    )
+    if include_smoke:
+        (pilot_dir / "smoke_test_passed.marker").write_text("smoke_test: PASS", encoding="utf-8")
+    (pilot_dir / "docker_digests.txt").write_text(
+        "researchos/system@sha256:abc123",
+        encoding="utf-8",
+    )
+
+
 def test_pilot_mode_spec(experimenter_agent):
     """测试 pilot 模式的 AgentSpec 配置。
 
@@ -91,14 +157,15 @@ def test_pilot_mode_spec(experimenter_agent):
     assert spec.model_tier == "medium"
 
     # Pilot 模式应该使用相同的 spec，但在 system_prompt 中说明更严格的限制
-    assert spec.max_steps == 150  # full 模式上限
-    assert spec.max_tokens_total == 600_000
+    assert spec.max_steps == 2000  # 来自 config/agent_params.yaml 的 experimenter 默认上限
+    assert spec.max_tokens_total == 60_000_000
     assert spec.max_wall_seconds == 14400
 
     # 检查工具（pilot 模式需要的工具）
     expected_tools = [
         "read_file",
         "write_file",
+        "write_structured_file",
         "list_files",
         "append_file",
         "bash_run",
@@ -159,24 +226,8 @@ def test_pilot_validate_outputs_success(experimenter_agent, pilot_workspace):
     pilot_code_dir = pilot_dir / "pilot_code"
     pilot_code_dir.mkdir()
 
-    # 创建必需的输出文件
-
-    # 1. pilot_results.json（包含 seed=42）
-    pilot_results = {
-        "seed": 42,
-        "experiments": [
-            {
-                "experiment_id": "pilot_h1",
-                "status": "DONE",
-                "metrics": {"accuracy": 0.75},
-                "duration_seconds": 300,
-            }
-        ],
-    }
-    (pilot_dir / "pilot_results.json").write_text(
-        json.dumps(pilot_results, ensure_ascii=False, indent=2),
-        encoding="utf-8"
-    )
+    write_pilot_plan(pilot_dir)
+    write_pilot_results(pilot_dir)
 
     # 2. motivation_validation.md（包含判定）
     motivation_validation = """## 判定：PASS
@@ -192,23 +243,8 @@ def test_pilot_validate_outputs_success(experimenter_agent, pilot_workspace):
         encoding="utf-8"
     )
 
-    # 3. pilot_code/run_pilot.py
-    (pilot_code_dir / "run_pilot.py").write_text(
-        "# Pilot experiment code\nprint('Hello')",
-        encoding="utf-8"
-    )
-
-    # 4. smoke_test_passed.marker
-    (pilot_dir / "smoke_test_passed.marker").write_text(
-        "smoke_test: PASS",
-        encoding="utf-8"
-    )
-
-    # 5. docker_digests.txt
-    (pilot_dir / "docker_digests.txt").write_text(
-        "researchos/system@sha256:abc123",
-        encoding="utf-8"
-    )
+    write_pilot_code(pilot_dir)
+    write_pilot_common_outputs(pilot_dir)
 
     # 执行校验
     ctx = ExecutionContext(
@@ -225,6 +261,39 @@ def test_pilot_validate_outputs_success(experimenter_agent, pilot_workspace):
     assert err is None
 
 
+def test_t5_preflight_rejects_over_budget_plan(pilot_workspace):
+    exp_plan_path = pilot_workspace / "ideation" / "exp_plan.yaml"
+    exp_plan_path.write_text(
+        yaml.dump(
+            {
+                "total_estimated_cost_usd": 108.0,
+                "budget_check": {"over_budget": True},
+                "experiments": [
+                    {
+                        "name": "over_budget",
+                        "hypothesis_ref": "H1",
+                        "compute_estimate": {"estimated_cost_usd": 108.0},
+                    }
+                ],
+            },
+            allow_unicode=True,
+        ),
+        encoding="utf-8",
+    )
+    ctx = ExecutionContext(
+        workspace_dir=pilot_workspace,
+        project_id="test_project",
+        task_id="T5",
+        run_id="test_run_preflight",
+        mode="pilot",
+    )
+
+    ok, err = run_experimenter_preflight(ctx)
+
+    assert not ok
+    assert "over_budget" in err or "超过项目预算" in err
+
+
 def test_pilot_validate_outputs_missing_smoke_test(experimenter_agent, pilot_workspace):
     """测试 pilot 模式输出校验 - 缺少 smoke test marker。
 
@@ -236,33 +305,10 @@ def test_pilot_validate_outputs_missing_smoke_test(experimenter_agent, pilot_wor
     pilot_dir = pilot_workspace / "pilot"
     pilot_dir.mkdir()
 
-    pilot_code_dir = pilot_dir / "pilot_code"
-    pilot_code_dir.mkdir()
-
-    # 创建其他必需文件，但不创建 smoke_test_passed.marker
-    pilot_results = {
-        "seed": 42,
-        "experiments": [{"experiment_id": "pilot_h1", "status": "DONE"}],
-    }
-    (pilot_dir / "pilot_results.json").write_text(
-        json.dumps(pilot_results),
-        encoding="utf-8"
-    )
-
-    (pilot_dir / "motivation_validation.md").write_text(
-        "## 判定：PASS\n\n理由：测试通过",
-        encoding="utf-8"
-    )
-
-    (pilot_code_dir / "run_pilot.py").write_text(
-        "# Code",
-        encoding="utf-8"
-    )
-
-    (pilot_dir / "docker_digests.txt").write_text(
-        "digest",
-        encoding="utf-8"
-    )
+    write_pilot_plan(pilot_dir)
+    write_pilot_results(pilot_dir)
+    write_pilot_code(pilot_dir)
+    write_pilot_common_outputs(pilot_dir, include_smoke=False)
 
     # 执行校验
     ctx = ExecutionContext(
@@ -292,27 +338,28 @@ def test_pilot_validate_outputs_wrong_seed(experimenter_agent, pilot_workspace):
     pilot_dir = pilot_workspace / "pilot"
     pilot_dir.mkdir()
 
-    pilot_code_dir = pilot_dir / "pilot_code"
-    pilot_code_dir.mkdir()
-
-    # 创建必需文件，但 seed 不是 42
-    pilot_results = {
-        "seed": 123,  # 错误的 seed
-        "experiments": [{"experiment_id": "pilot_h1", "status": "DONE"}],
-    }
+    write_pilot_plan(pilot_dir)
     (pilot_dir / "pilot_results.json").write_text(
-        json.dumps(pilot_results),
-        encoding="utf-8"
+        json.dumps(
+            {
+                "total_experiments": 1,
+                "successful": 1,
+                "experiments": [
+                    {
+                        "experiment_id": "pilot_h1",
+                        "status": "DONE",
+                        "seed": 123,
+                        "metrics": {"accuracy": 0.75},
+                        "duration_seconds": 300,
+                        "smoke_test_passed": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
     )
-
-    (pilot_dir / "motivation_validation.md").write_text(
-        "## 判定：PASS\n\n理由：测试通过",
-        encoding="utf-8"
-    )
-
-    (pilot_code_dir / "run_pilot.py").write_text("# Code", encoding="utf-8")
-    (pilot_dir / "smoke_test_passed.marker").write_text("PASS", encoding="utf-8")
-    (pilot_dir / "docker_digests.txt").write_text("digest", encoding="utf-8")
+    write_pilot_code(pilot_dir)
+    write_pilot_common_outputs(pilot_dir)
 
     # 执行校验
     ctx = ExecutionContext(
@@ -332,6 +379,57 @@ def test_pilot_validate_outputs_wrong_seed(experimenter_agent, pilot_workspace):
     assert "42" in err, f"错误消息应该提到 seed=42，实际消息: {err}"
 
 
+def test_pilot_validate_outputs_rejects_local_docker_placeholder(experimenter_agent, pilot_workspace):
+    pilot_dir = pilot_workspace / "pilot"
+    pilot_dir.mkdir()
+    write_pilot_plan(pilot_dir)
+    write_pilot_results(pilot_dir)
+    write_pilot_code(pilot_dir)
+    write_pilot_common_outputs(pilot_dir)
+    (pilot_dir / "docker_digests.txt").write_text(
+        "local build only; no remote digest",
+        encoding="utf-8",
+    )
+    ctx = ExecutionContext(
+        workspace_dir=pilot_workspace,
+        project_id="test_project",
+        task_id="T5",
+        run_id="test_run_docker",
+        mode="pilot",
+        extra={"docker_exec_success_count": 1},
+    )
+
+    ok, err = experimenter_agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "真实 Docker 镜像 digest" in err
+
+
+def test_pilot_validate_outputs_requires_audit_after_multiple_code_rewrites(
+    experimenter_agent,
+    pilot_workspace,
+):
+    pilot_dir = pilot_workspace / "pilot"
+    pilot_dir.mkdir()
+    write_pilot_plan(pilot_dir)
+    write_pilot_results(pilot_dir)
+    write_pilot_code(pilot_dir)
+    write_pilot_common_outputs(pilot_dir)
+    ctx = ExecutionContext(
+        workspace_dir=pilot_workspace,
+        project_id="test_project",
+        task_id="T5",
+        run_id="test_run_audit",
+        mode="pilot",
+        extra={"docker_exec_success_count": 1, "pilot_code_write_count": 2},
+    )
+
+    ok, err = experimenter_agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "experiment_audit.json" in err
+
+
 def test_pilot_validate_outputs_missing_verdict(experimenter_agent, pilot_workspace):
     """测试 pilot 模式输出校验 - 缺少判定。
 
@@ -343,18 +441,8 @@ def test_pilot_validate_outputs_missing_verdict(experimenter_agent, pilot_worksp
     pilot_dir = pilot_workspace / "pilot"
     pilot_dir.mkdir()
 
-    pilot_code_dir = pilot_dir / "pilot_code"
-    pilot_code_dir.mkdir()
-
-    # 创建必需文件
-    pilot_results = {
-        "seed": 42,
-        "experiments": [{"experiment_id": "pilot_h1", "status": "DONE"}],
-    }
-    (pilot_dir / "pilot_results.json").write_text(
-        json.dumps(pilot_results),
-        encoding="utf-8"
-    )
+    write_pilot_plan(pilot_dir)
+    write_pilot_results(pilot_dir)
 
     # motivation_validation.md 不包含判定
     (pilot_dir / "motivation_validation.md").write_text(
@@ -362,9 +450,9 @@ def test_pilot_validate_outputs_missing_verdict(experimenter_agent, pilot_worksp
         encoding="utf-8"
     )
 
-    (pilot_code_dir / "run_pilot.py").write_text("# Code", encoding="utf-8")
+    write_pilot_code(pilot_dir)
     (pilot_dir / "smoke_test_passed.marker").write_text("PASS", encoding="utf-8")
-    (pilot_dir / "docker_digests.txt").write_text("digest", encoding="utf-8")
+    (pilot_dir / "docker_digests.txt").write_text("researchos/system@sha256:abc123", encoding="utf-8")
 
     # 执行校验
     ctx = ExecutionContext(

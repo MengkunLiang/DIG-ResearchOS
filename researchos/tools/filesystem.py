@@ -16,6 +16,8 @@ from ..runtime.logger import get_logger
 _LOG = get_logger("filesystem")
 STRUCTURED_ONLY_WRITE_PATHS = {
     "ideation/exp_plan.yaml": "exp_plan",
+    "pilot/pilot_plan.yaml": "pilot_plan",
+    "pilot/pilot_results.json": "pilot_results",
 }
 
 
@@ -114,12 +116,13 @@ class WriteFileTool(Tool):
         normalized_path = path.strip().lstrip("./")
         if normalized_path in STRUCTURED_ONLY_WRITE_PATHS:
             schema_name = STRUCTURED_ONLY_WRITE_PATHS[normalized_path]
+            output_format = "json" if normalized_path.endswith(".json") else "yaml"
             return ToolResult(
                 ok=False,
                 content=(
                     f"{normalized_path} 是结构化产物，不能用 write_file 写入。"
                     f"请改用 write_structured_file(path='{normalized_path}', "
-                    f"schema_name='{schema_name}', format='yaml', data=...)。"
+                    f"schema_name='{schema_name}', format='{output_format}', data=...)。"
                 ),
                 error="structured_output_requires_write_structured_file",
             )

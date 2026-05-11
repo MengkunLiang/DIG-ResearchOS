@@ -804,7 +804,36 @@ class AgentRunner:
         )
         if not result.ok:
             self._remember_tool_failure(failure_cache_key, tool_msg, tool_failure_cache)
+        self._record_tool_side_effect_metadata(ctx, tc.name, model_dump(parsed), result)
         return tool_msg
+
+    @staticmethod
+    def _record_tool_side_effect_metadata(
+        ctx: ExecutionContext,
+        tool_name: str,
+        arguments: dict[str, object],
+        result: ToolResult,
+    ) -> None:
+        """记录 validator 需要的运行期证据，例如 Docker 使用和代码重写次数。"""
+
+        if tool_name == "docker_exec":
+            ctx.extra["docker_exec_call_count"] = int(ctx.extra.get("docker_exec_call_count", 0) or 0) + 1
+            if result.ok:
+                ctx.extra["docker_exec_success_count"] = int(ctx.extra.get("docker_exec_success_count", 0) or 0) + 1
+            return
+
+        if tool_name not in {"write_file", "write_structured_file"} or not result.ok:
+            return
+
+        raw_path = arguments.get("path")
+        if not isinstance(raw_path, str):
+            return
+        normalized_path = raw_path.strip().lstrip("./")
+        counts = ctx.extra.setdefault("artifact_write_counts", {})
+        if isinstance(counts, dict):
+            counts[normalized_path] = int(counts.get(normalized_path, 0) or 0) + 1
+        if ctx.task_id == "T5" and normalized_path == "pilot/pilot_code/run_pilot.py":
+            ctx.extra["pilot_code_write_count"] = int(ctx.extra.get("pilot_code_write_count", 0) or 0) + 1
 
     @staticmethod
     def _tool_failure_cache_key(tool_name: str, arguments: dict[str, object]) -> tuple[str, str] | None:
