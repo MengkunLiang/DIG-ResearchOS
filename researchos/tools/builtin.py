@@ -23,6 +23,7 @@ from .latex_compile import LatexCompileTool
 from .multi_source_search import MultiSourceSearchTool
 from .paper_processing import ExtractSectionsTool
 from .paper_fetch import AppendFileTool, FetchPaperPdfTool, ExtractPdfTextTool
+from .paper_lookup import LookupPaperRecordTool
 from .registry import ToolRegistry
 from .search_papers import FetchPaperMetadataTool, SearchPapersTool
 from .seed_paper_processor import ProcessSeedPaperTool
@@ -86,6 +87,7 @@ def register_builtin_tools(
     registry.register("extract_paper_sections", lambda ctx: ExtractSectionsTool(ctx.policy))
     registry.register("fetch_paper_pdf", lambda ctx: FetchPaperPdfTool(ctx.policy))
     registry.register("extract_pdf_text", lambda ctx: ExtractPdfTextTool(ctx.policy))
+    registry.register("lookup_paper_record", lambda ctx: LookupPaperRecordTool(ctx.policy))
     registry.register(
         "multi_source_search",
         lambda _ctx: MultiSourceSearchTool(os.environ.get("RESEARCHER_EMAIL")),

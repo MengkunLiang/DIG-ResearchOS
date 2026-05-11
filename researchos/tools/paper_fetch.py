@@ -104,7 +104,15 @@ class FetchPaperPdfTool(Tool):
             )
 
         try:
-            async with httpx_mod.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+            timeout = httpx_mod.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)
+            headers = {
+                "User-Agent": (
+                    "ResearchOS/0.1 "
+                    "(mailto:%s)" % os.environ.get("RESEARCHER_EMAIL", "researcher@example.com")
+                ),
+                "Accept": "application/pdf,text/html;q=0.8,*/*;q=0.5",
+            }
+            async with httpx_mod.AsyncClient(timeout=timeout, follow_redirects=True, headers=headers) as client:
                 pdf_candidates = await self._resolve_pdf_candidates(client, params.paper_id)
                 if not pdf_candidates:
                     return ToolResult(
@@ -113,31 +121,65 @@ class FetchPaperPdfTool(Tool):
                         error="unsupported_id",
                     )
 
-                last_error = None
                 response = None
                 pdf_url = None
+                candidate_errors: list[dict[str, Any]] = []
                 for candidate in pdf_candidates:
                     try:
                         response = await client.get(candidate)
-                        response.raise_for_status()
-                        if not self._looks_like_pdf(response, candidate):
-                            last_error = f"URL did not return a PDF: {candidate}"
-                            continue
-                        abs_path.write_bytes(response.content)
-                        pdf_url = candidate
-                        break
-                    except Exception as exc:  # pragma: no cover - 具体分支由 ToolResult 兜底
-                        last_error = str(exc)
+                    except httpx_mod.TimeoutException as exc:
+                        candidate_errors.append(
+                            {"url": candidate, "error": "timeout", "detail": str(exc)}
+                        )
+                        continue
+                    except Exception as exc:  # pragma: no cover - 具体网络异常由 ToolResult 兜底
+                        candidate_errors.append(
+                            {"url": candidate, "error": type(exc).__name__, "detail": str(exc)}
+                        )
                         continue
 
+                    try:
+                        response.raise_for_status()
+                    except Exception as exc:  # pragma: no cover - 状态码分支由 ToolResult 兜底
+                        status_code = getattr(response, "status_code", None)
+                        candidate_errors.append(
+                            {
+                                "url": candidate,
+                                "error": f"http_{status_code}" if status_code else "http_error",
+                                "detail": str(exc),
+                            }
+                        )
+                        continue
+
+                    if not self._looks_like_pdf(response, candidate):
+                        candidate_errors.append(
+                            {
+                                "url": candidate,
+                                "error": "not_pdf",
+                                "status_code": getattr(response, "status_code", None),
+                                "content_type": response.headers.get("content-type", ""),
+                            }
+                        )
+                        continue
+                    abs_path.write_bytes(response.content)
+                    pdf_url = candidate
+                    break
+
                 if response is None or pdf_url is None:
+                    error_summary = self._format_candidate_errors(candidate_errors)
                     return ToolResult(
                         ok=False,
                         content=(
                             f"Failed to download PDF for {params.paper_id}. "
-                            f"Tried {len(pdf_candidates)} candidate URLs. Last error: {last_error}"
+                            f"Tried {len(pdf_candidates)} candidate URLs. {error_summary}"
                         ),
                         error="download_failed",
+                        data={
+                            "paper_id": params.paper_id,
+                            "path": params.save_path,
+                            "candidates_tried": pdf_candidates,
+                            "candidate_errors": candidate_errors,
+                        },
                     )
 
             return ToolResult(
@@ -272,10 +314,24 @@ class FetchPaperPdfTool(Tool):
         content_type = response.headers.get("content-type", "").lower()
         if "application/pdf" in content_type:
             return True
-        if url.lower().endswith(".pdf"):
-            return True
         content = response.content[:5]
-        return content.startswith(b"%PDF-")
+        if content.startswith(b"%PDF-"):
+            return True
+        if url.lower().endswith(".pdf") and not content_type:
+            return True
+        return False
+
+    @staticmethod
+    def _format_candidate_errors(candidate_errors: list[dict[str, Any]]) -> str:
+        if not candidate_errors:
+            return "No candidate errors were captured."
+        snippets = []
+        for item in candidate_errors[-3:]:
+            error = item.get("error") or "unknown"
+            url = item.get("url") or ""
+            detail = item.get("detail") or item.get("content_type") or ""
+            snippets.append(f"{error} at {url}: {detail}".strip())
+        return "Recent errors: " + " | ".join(snippets)
 
     @staticmethod
     def _dedupe_candidates(candidates: list[str]) -> list[str]:

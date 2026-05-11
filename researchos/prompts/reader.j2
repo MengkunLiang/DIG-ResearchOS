@@ -105,6 +105,8 @@
 - **一次处理1篇**，完成一篇再处理下一篇
 - 不要并行处理多篇论文，避免context混淆
 - 每篇读完立即写note，不要累积在context中
+- **禁止整池读取 metadata**：处理单篇论文时，用 `lookup_paper_record(paper_id=..., title=...)`
+  查单条记录；不要用 `read_file` 分页读取整份 `papers_verified.jsonl` / `papers_dedup.jsonl`
 {% if resume_mode or existing_note_count > 0 %}
 - **恢复运行优先**：先扫描 `literature/paper_notes/` 现有文件，建立“已完成论文ID集合”
 - **先做账目对齐**：如果已有笔记对应的 `comparison_table.csv` 行或 `related_work.bib` 条目缺失，先补齐这些缺口
@@ -118,7 +120,7 @@
 2. 如果存在 `user_seeds/seed_papers.jsonl`，先读取其中的 seed papers，并在 `deep_read_queue.jsonl` 或 `papers_dedup.jsonl` 中按标题/ID匹配；把匹配成功的 seed papers 放到最前面
 3. 如果存在 `deep_read_queue_pending.jsonl`，优先使用它作为工作清单；否则回退到 `deep_read_queue.jsonl`；如果两者都不存在，再回退到 `papers_verified.jsonl`，最后才回退到 `papers_dedup.jsonl`
 4. 检查 `comparison_table.csv` 与 `related_work.bib` 是否落后于已有笔记；如果缺少某些已有论文的记录，先从已有 note 中提取必要信息并补齐
-5. 读取当前待处理论文的 metadata；如果其规范化ID已完成，则跳过这篇，继续下一篇
+5. 用 `lookup_paper_record` 读取当前待处理论文的 metadata；如果其规范化ID已完成，则跳过这篇，继续下一篇
 6. 尝试获取全文：
    - **ID规范化**：论文ID中的特殊字符（如 `:` `/`）在文件名中替换为 `_`
      - 例如：`arxiv:2301.12345` → 文件名使用 `arxiv_2301.12345.pdf`
@@ -233,16 +235,17 @@ arxiv:2301.12345,Efficient Transformers,2023,ICML,Attention Optimization,ImageNe
 
 1. **禁止编造数据**：如果PDF读不到，只基于abstract写笔记，并在Status字段标注 **[ABSTRACT-ONLY]**
 2. **verified 论文优先**：如果 `papers_verified.jsonl` 存在，优先从 verified 池和 queue 里读取；不要默认消费未核验 dedup 论文
-3. **优先 section 级阅读**：调用 `extract_paper_sections` 时必须传 `sections=["abstract","introduction","related work","method","results","discussion","conclusion","limitations"]`
-4. **全文回退必须小范围**：section 脏时不要默认全文回退；只有笔记无法成立时才调用 `extract_pdf_text(max_chars<=8000)` 获取补充证据
-5. **数字必须具体**：不能写"显著提升"、"大幅改进"，必须写具体数值
-6. **数字必须有证据锚点**：所有正文级数字至少带一个 `Evidence: section/page` 标记；没有证据就不要写成确定性结果
-7. **每篇读完立即写note**：写完 note 后只保留这篇论文的 ID/状态/一行表格信息，不要在回复中复述大段论文内容，避免token爆炸
-8. **容错处理**：如果个别论文处理失败（PDF损坏、格式异常等），记录错误但继续处理下一篇
-9. **ID规范化**：论文ID中的特殊字符（如 `:` `/`）在文件名中替换为 `_`
-10. **恢复时禁止覆盖**：如果已存在同名 `paper_notes/{normalized_id}.md`，视为该论文已完成，不要重写
-11. **恢复时禁止重复追加**：已有论文不要再次写入 comparison_table / BibTeX，避免重复行和重复引用
-12. **种子论文必须优先**：在同等情况下，seed papers 优先于普通高分论文；如果 seed paper 没进入 dedup，必须把它视为上游召回问题而不是直接忽略
+3. **单篇 metadata 查询**：需要论文详情时调用 `lookup_paper_record`；除非 queue 文件不存在且没有其他选择，不要读取完整 `papers_verified.jsonl` 或 `papers_dedup.jsonl`
+4. **优先 section 级阅读**：调用 `extract_paper_sections` 时必须传 `sections=["abstract","introduction","related work","method","results","discussion","conclusion","limitations"]`
+5. **全文回退必须小范围**：section 脏时不要默认全文回退；只有笔记无法成立时才调用 `extract_pdf_text(max_chars<=8000)` 获取补充证据
+6. **数字必须具体**：不能写"显著提升"、"大幅改进"，必须写具体数值
+7. **数字必须有证据锚点**：所有正文级数字至少带一个 `Evidence: section/page` 标记；没有证据就不要写成确定性结果
+8. **每篇读完立即写note**：写完 note 后只保留这篇论文的 ID/状态/一行表格信息，不要在回复中复述大段论文内容，避免token爆炸
+9. **容错处理**：如果个别论文处理失败（PDF损坏、格式异常等），记录错误但继续处理下一篇
+10. **ID规范化**：论文ID中的特殊字符（如 `:` `/`）在文件名中替换为 `_`
+11. **恢复时禁止覆盖**：如果已存在同名 `paper_notes/{normalized_id}.md`，视为该论文已完成，不要重写
+12. **恢复时禁止重复追加**：已有论文不要再次写入 comparison_table / BibTeX，避免重复行和重复引用
+13. **种子论文必须优先**：在同等情况下，seed papers 优先于普通高分论文；如果 seed paper 没进入 dedup，必须把它视为上游召回问题而不是直接忽略
 
 ## 完成标准
 

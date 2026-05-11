@@ -101,6 +101,39 @@ async def test_fetch_paper_pdf_downloads_from_openalex_oa_location(monkeypatch, 
     assert result.data["url"] == "https://example.org/paper.pdf"
 
 
+@pytest.mark.asyncio
+async def test_fetch_paper_pdf_reports_candidate_failures(monkeypatch, tmp_path: Path):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    policy = WorkspaceAccessPolicy(workspace, [""], [""])
+    tool = FetchPaperPdfTool(policy)
+
+    responses = {
+        "https://arxiv.org/pdf/2401.12345.pdf": _FakeResponse(
+            content=b"<html>not pdf</html>",
+            headers={"content-type": "text/html"},
+        ),
+        "https://export.arxiv.org/pdf/2401.12345.pdf": _FakeResponse(status_code=403),
+    }
+
+    import researchos.tools.paper_fetch as paper_fetch
+
+    monkeypatch.setattr(
+        paper_fetch.httpx,
+        "AsyncClient",
+        lambda *args, **kwargs: _FakeAsyncClient(responses, *args, **kwargs),
+    )
+
+    result = await tool.execute(paper_id="arxiv:2401.12345", save_path="paper.pdf")
+
+    assert not result.ok
+    assert result.error == "download_failed"
+    assert not (workspace / "paper.pdf").exists()
+    errors = [item["error"] for item in result.data["candidate_errors"]]
+    assert errors == ["not_pdf", "http_403"]
+    assert "Recent errors" in result.content
+
+
 def test_url_to_pdf_candidates_converts_arxiv_abs_link():
     candidates = FetchPaperPdfTool._url_to_pdf_candidates("https://arxiv.org/abs/2401.12345")
     assert "https://arxiv.org/abs/2401.12345" in candidates

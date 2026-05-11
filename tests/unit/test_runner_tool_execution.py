@@ -5,10 +5,12 @@ import pytest
 from pydantic import BaseModel
 
 from researchos.runtime.agent import Agent, AgentSpec, ExecutionContext
+from researchos.runtime.message import ToolCall
 from researchos.runtime.orchestrator import AgentRunner
 from researchos.testing.mocks import FakeLLMMessage, FakeRawCompletion, FakeToolCall, MockHumanInterface, MockLLMClient
 from researchos.tools.base import Tool, ToolResult
 from researchos.tools.registry import ToolRegistry
+from researchos.tools.workspace_policy import WorkspaceAccessPolicy
 
 
 class Params(BaseModel):
@@ -38,6 +40,22 @@ class MinimalAgent(Agent):
 
 class SearchParams(BaseModel):
     query: str
+
+
+class FetchParams(BaseModel):
+    paper_id: str
+    save_path: str
+
+
+class FailingFetchTool(Tool):
+    name = "fetch_paper_pdf"
+    description = "always fails"
+    parameters_schema = FetchParams
+    calls = 0
+
+    async def execute(self, **kwargs):
+        self.calls += 1
+        return ToolResult(ok=False, content=f"download failed for {kwargs['paper_id']}", error="download_failed")
 
 
 class SearchTool(Tool):
@@ -131,18 +149,49 @@ class LargeRecoverySearchTool(Tool):
     parameters_schema = SearchParams
 
     async def execute(self, **kwargs):
+        methods = [
+            "hierarchical indexing",
+            "causal routing",
+            "episodic replay",
+            "memory compression",
+            "retrieval auditing",
+            "long-context distillation",
+            "graph memory",
+            "tool trace grounding",
+            "preference-aware recall",
+            "stateful planning",
+        ]
+        settings = [
+            "software engineering agents",
+            "scientific discovery agents",
+            "personal assistant workflows",
+            "multi-step reasoning tasks",
+            "interactive benchmark suites",
+            "knowledge-intensive planning",
+            "autonomous web navigation",
+            "long-horizon task solving",
+            "human feedback loops",
+            "policy constrained tools",
+            "document analysis systems",
+            "collaborative research assistants",
+        ]
         papers = []
         for i in range(120):
+            method = methods[i % len(methods)]
+            setting = settings[i % len(settings)]
             papers.append(
                 {
                     "id": f"2502.{i:05d}",
                     "source": "arxiv",
-                    "title": f"LLM Agent Long Term Memory Retrieval Framework {i}",
+                    "title": (
+                        "LLM Agent Long Term Memory Retrieval with "
+                        f"{method.title()} for {setting.title()}"
+                    ),
                     "authors": ["Test Author"],
                     "year": 2025,
                     "abstract": (
-                        "LLM agent long-term memory retrieval, hierarchical memory, "
-                        "compression, consistency, and evaluation for task-oriented agents."
+                        f"LLM agent long-term memory retrieval using {method} in {setting}, "
+                        "with hierarchical memory, compression, consistency, and evaluation."
                     ),
                     "venue": "arXiv",
                     "url": f"https://arxiv.org/abs/2502.{i:05d}",
@@ -219,6 +268,42 @@ async def test_multiple_tool_calls_keep_order(tmp_workspace):
     trace = (tmp_workspace / "_runtime" / "traces" / "r4.jsonl").read_text(encoding="utf-8")
     assert "tc1" in trace
     assert "tc2" in trace
+
+
+@pytest.mark.asyncio
+async def test_fetch_pdf_failures_are_cached_within_run(tmp_workspace):
+    tool = FailingFetchTool()
+    runner = AgentRunner(
+        MinimalAgent(),
+        ToolRegistry(),
+        MockLLMClient([]),
+        MockHumanInterface(),
+    )
+    policy = WorkspaceAccessPolicy(tmp_workspace, [""], [""])
+    cache = {}
+    args = {"paper_id": "arxiv:2604.08224", "save_path": "literature/pdfs/arxiv_2604.08224.pdf"}
+
+    first = await runner._execute_one_tool_call(
+        ToolCall.create("fetch_paper_pdf", args),
+        {"fetch_paper_pdf": tool},
+        ctx=ExecutionContext(workspace_dir=tmp_workspace, project_id="p1", task_id="T3", run_id="r-cache"),
+        policy=policy,
+        step=1,
+        tool_failure_cache=cache,
+    )
+    second = await runner._execute_one_tool_call(
+        ToolCall.create("fetch_paper_pdf", args),
+        {"fetch_paper_pdf": tool},
+        ctx=ExecutionContext(workspace_dir=tmp_workspace, project_id="p1", task_id="T3", run_id="r-cache"),
+        policy=policy,
+        step=2,
+        tool_failure_cache=cache,
+    )
+
+    assert first.metadata["is_error"] is True
+    assert second.metadata["error"] == "cached_failure"
+    assert "already failed in this run" in (second.content or "")
+    assert tool.calls == 1
 
 
 @pytest.mark.asyncio

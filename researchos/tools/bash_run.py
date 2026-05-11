@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 import os
 from pathlib import Path
+import signal
 
 from pydantic import BaseModel, Field
 
@@ -75,15 +77,38 @@ class BashRunTool(Tool):
                 env=merged_env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,
             )
         except OSError as exc:
             raise ToolRuntimeError(self.name, exc) from exc
 
+        communicate_task = asyncio.create_task(proc.communicate())
+        timed_out = False
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_seconds)
+            stdout, stderr = await asyncio.wait_for(
+                asyncio.shield(communicate_task),
+                timeout=timeout_seconds,
+            )
         except asyncio.TimeoutError:
-            proc.kill()
-            await proc.communicate()
+            if proc.returncode is not None:
+                # The process finished at the timeout boundary; give asyncio a
+                # short grace period to drain the already-closed pipes.
+                try:
+                    stdout, stderr = await asyncio.wait_for(communicate_task, timeout=1)
+                except asyncio.TimeoutError:
+                    stdout, stderr = b"", b""
+            else:
+                with suppress(ProcessLookupError):
+                    os.killpg(proc.pid, signal.SIGKILL)
+                try:
+                    stdout, stderr = await asyncio.wait_for(communicate_task, timeout=2)
+                except asyncio.TimeoutError:
+                    communicate_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await communicate_task
+                    stdout, stderr = b"", b""
+                timed_out = True
+        if timed_out:
             return ToolResult(
                 ok=False,
                 content=f"Command timed out after {timeout_seconds}s",

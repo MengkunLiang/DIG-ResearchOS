@@ -170,7 +170,7 @@ def test_builtin_registry_registers_extended_tools(tmp_workspace: Path):
     registry = ToolRegistry()
     register_builtin_tools(registry, RuntimeSettings())
     built = registry.build(
-        ["bash_run", "grep_search", "glob_files", "web_fetch", "extract_paper_sections"],
+        ["bash_run", "grep_search", "glob_files", "web_fetch", "extract_paper_sections", "lookup_paper_record"],
         ToolBuildContext(policy=policy, human=MockHumanInterface()),
     )
 
@@ -179,5 +179,6 @@ def test_builtin_registry_registers_extended_tools(tmp_workspace: Path):
         "extract_paper_sections",
         "glob_files",
         "grep_search",
+        "lookup_paper_record",
         "web_fetch",
     ]

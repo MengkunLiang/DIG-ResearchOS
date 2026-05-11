@@ -19,6 +19,7 @@ from .llm_client import LLMClient, ModelBinding
 from .logger import get_logger
 from .message import Message, Role, ToolCall, is_empty_assistant
 from .t2_recovery import finalize_t2_outputs
+from .t3_recovery import prepare_t3_resume_artifacts
 from .trace import NullTraceWriter, TraceWriter
 from ..tools.base import Tool, ToolResult
 from ..tools.human_gate import HumanInterface
@@ -50,6 +51,7 @@ T2_AUTO_FINALIZE_TRIGGER_TOOLS = T2_AUTO_PERSIST_SEARCH_TOOLS | frozenset(
     }
 )
 T2_AUTO_FINALIZE_MIN_RAW = 100
+TOOL_FAILURE_CACHE_NAMES = frozenset({"fetch_paper_pdf"})
 TOOL_CONTEXT_CONTENT_LIMITS = {
     # PDF 文本工具是 T3 上下文膨胀的主要来源。工具自身也有上限，这里再加
     # runtime 兜底，防止未来工具改动或异常 PDF 解析再次把长文本塞进模型。
@@ -169,6 +171,7 @@ class AgentRunner:
         nudge_count = 0
         validation_fails = 0
         budget_extensions_used = 0
+        tool_failure_cache: dict[tuple[str, str], Message] = {}
 
         try:
             # pre-hook 允许是同步或异步 callable；若返回 (ok, err) 且 ok=False，
@@ -286,6 +289,7 @@ class AgentRunner:
                             ctx=ctx,
                             policy=policy,
                             step=budget.steps,
+                            tool_failure_cache=tool_failure_cache,
                         )
                         for tc in assistant_msg.tool_calls
                     ]
@@ -359,6 +363,7 @@ class AgentRunner:
                 stop_reason=stop_reason,
                 error_msg=error_msg,
             )
+            self._maybe_refresh_t3_resume_artifacts(ctx, stop_reason)
             result = self._build_result(
                 ctx=ctx,
                 budget=budget,
@@ -432,6 +437,23 @@ class AgentRunner:
             return AgentResult.STOP_FINISHED, None
 
         return stop_reason, error_msg
+
+    def _maybe_refresh_t3_resume_artifacts(self, ctx: ExecutionContext, stop_reason: str) -> None:
+        """T3 成功后刷新 pending queue 快照，避免下次/人工查看仍显示旧进度。"""
+
+        if ctx.task_id != "T3" or stop_reason != AgentResult.STOP_FINISHED:
+            return
+        try:
+            recovery = prepare_t3_resume_artifacts(ctx.workspace_dir)
+            ctx.extra.update(
+                {
+                    "resume_queue_path": recovery.get("resume_queue_path"),
+                    "resume_queue_count": recovery.get("resume_queue_count"),
+                    "existing_note_count": recovery.get("existing_note_count"),
+                }
+            )
+        except Exception:  # pragma: no cover - refresh failure should not fail a completed T3
+            self.log.exception("t3_resume_artifact_refresh_failed")
 
     async def _maybe_finalize_t2_before_llm(self, ctx: ExecutionContext) -> bool:
         """T2 续跑时，如果 raw 已存在，优先用确定性路径补齐产物。
@@ -582,6 +604,7 @@ class AgentRunner:
         ctx: ExecutionContext,
         policy: "WorkspaceAccessPolicy",
         step: int,
+        tool_failure_cache: dict[tuple[str, str], Message] | None = None,
     ) -> Message:
         started = time.time()
         tool = tool_map.get(tc.name)
@@ -628,6 +651,29 @@ class AgentRunner:
                 step=step,
             )
 
+        failure_cache_key = self._tool_failure_cache_key(tc.name, model_dump(parsed))
+        if failure_cache_key and tool_failure_cache is not None and failure_cache_key in tool_failure_cache:
+            cached = tool_failure_cache[failure_cache_key]
+            return Message.tool(
+                tool_call_id=tc.id,
+                name=tc.name,
+                content=(
+                    "Skipped tool call because the same request already failed in this run.\n\n"
+                    + (cached.content or "")
+                ),
+                is_error=True,
+                step=step,
+                duration_ms=int((time.time() - started) * 1000),
+                metadata={
+                    "data": {
+                        "cached_failure": True,
+                        "cache_key": failure_cache_key[1],
+                        "original_step": cached.step,
+                    },
+                    "error": "cached_failure",
+                },
+            )
+
         try:
             max_tool_timeout = float(self.global_timeout.get("max_tool_call") or tool.timeout_seconds)
             tool_timeout = min(tool.timeout_seconds, max_tool_timeout)
@@ -637,7 +683,7 @@ class AgentRunner:
                 timeout=tool_timeout,
             )
         except asyncio.TimeoutError:
-            return Message.tool(
+            tool_msg = Message.tool(
                 tool_call_id=tc.id,
                 name=tc.name,
                 content=f"Tool timed out after {tool_timeout}s",
@@ -645,6 +691,8 @@ class AgentRunner:
                 step=step,
                 duration_ms=int((time.time() - started) * 1000),
             )
+            self._remember_tool_failure(failure_cache_key, tool_msg, tool_failure_cache)
+            return tool_msg
         except ToolAccessDenied as exc:
             return Message.tool(
                 tool_call_id=tc.id,
@@ -689,7 +737,7 @@ class AgentRunner:
             if suffix:
                 content = f"{content}\n\n{suffix}" if content else suffix
 
-        return Message.tool(
+        tool_msg = Message.tool(
             tool_call_id=tc.id,
             name=tc.name,
             content=content,
@@ -698,6 +746,31 @@ class AgentRunner:
             duration_ms=int((time.time() - started) * 1000),
             metadata=metadata,
         )
+        if not result.ok:
+            self._remember_tool_failure(failure_cache_key, tool_msg, tool_failure_cache)
+        return tool_msg
+
+    @staticmethod
+    def _tool_failure_cache_key(tool_name: str, arguments: dict[str, object]) -> tuple[str, str] | None:
+        if tool_name not in TOOL_FAILURE_CACHE_NAMES:
+            return None
+        if tool_name == "fetch_paper_pdf":
+            paper_id = str(arguments.get("paper_id") or "").strip().casefold()
+            save_path = str(arguments.get("save_path") or "").strip().casefold()
+            if paper_id:
+                return (tool_name, f"paper_id:{paper_id}")
+            if save_path:
+                return (tool_name, f"save_path:{save_path}")
+        return None
+
+    @staticmethod
+    def _remember_tool_failure(
+        key: tuple[str, str] | None,
+        message: Message,
+        cache: dict[tuple[str, str], Message] | None,
+    ) -> None:
+        if key is not None and cache is not None:
+            cache[key] = message
 
     @staticmethod
     def _cap_tool_content_for_context(

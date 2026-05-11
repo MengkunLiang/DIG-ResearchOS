@@ -37,6 +37,7 @@ class ReaderAgent(Agent):
                         "write_file",
                         "append_file",
                         "list_files",
+                        "lookup_paper_record",
                         "fetch_paper_pdf",
                         "extract_paper_sections",
                         "extract_pdf_text",

@@ -95,6 +95,7 @@ def test_reader_agent_spec(reader_agent):
     assert spec.model_tier == "medium"
     assert "read_file" in spec.tool_names
     assert "write_file" in spec.tool_names
+    assert "lookup_paper_record" in spec.tool_names
     assert "fetch_paper_pdf" in spec.tool_names
     assert "extract_pdf_text" in spec.tool_names
     assert spec.temperature == 0.5
