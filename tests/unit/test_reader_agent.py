@@ -99,6 +99,7 @@ def test_reader_agent_spec(reader_agent):
     assert "extract_pdf_text" in spec.tool_names
     assert spec.temperature == 0.5
     assert "literature/" in spec.allowed_read_prefixes
+    assert "_runtime/resume/" in spec.allowed_read_prefixes
     assert "literature/" in spec.allowed_write_prefixes
 
 

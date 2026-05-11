@@ -9,25 +9,45 @@ from __future__ import annotations
 1. 只能读取 workspace 内相对路径指向的 PDF；
 2. 运行时延迟导入 `pdfplumber`，避免把测试建立在真实 PDF 重依赖之上；
 3. section 识别采用“足够稳妥”的启发式，而不是试图做完整版版面分析；
-4. 返回给 LLM 的 `content` 做截断和格式化，`data.sections` 保留结构化 section 文本。
+4. 返回给 LLM 的 `content` 做总量截断和格式化，`data.sections` 也只保留有界预览，
+   避免 trace / 后续上下文被整篇 PDF 正文撑爆。
 """
 
 import importlib
+import json
 import re
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from ..runtime.errors import ToolAccessDenied, ToolRuntimeError
 from .base import Tool, ToolResult
 from .workspace_policy import WorkspaceAccessPolicy
 
 
-# section 输出给 LLM 时，每个 section 最多暴露多少字符。
-# 这里控制的是 `ToolResult.content`，结构化的 `data["sections"]` 仍保留完整文本，
-# 方便后续 agent 做二次裁剪或写入 artifact。
-MAX_CONTENT_CHARS_PER_SECTION = 3000
+# T3 Reader 默认只需要这些核心章节。不要在 sections=None 时把 references /
+# appendix 等长尾内容全部返回，否则多篇论文精读会稳定触发上下文爆炸。
+DEFAULT_TARGET_SECTIONS = [
+    "abstract",
+    "introduction",
+    "related work",
+    "method",
+    "results",
+    "discussion",
+    "conclusion",
+    "limitations",
+]
+
+# section 输出给 LLM 时的硬上限。单 section 和总量都要限制；只限制单 section
+# 不够，因为 PDF 解析器可能把一篇论文切成几十个 section。
+MAX_CONTENT_CHARS_PER_SECTION = 2500
+MAX_CONTENT_CHARS_TOTAL = 12000
+
+# `ToolResult.data` 会进入 trace metadata。它虽然不直接发送给 LLM，但体积过大
+# 会拖慢 trace 读写与问题排查，因此也只保存预览和长度信息。
+MAX_DATA_CHARS_PER_SECTION = 3000
+MAX_DATA_CHARS_TOTAL = 18000
 
 # section 标题常见别名。这里不是为了“强制规范化”为某一个固定标签，
 # 而是为了让 wanted sections 过滤更稳一些，例如用户要求 `method` 时，
@@ -87,9 +107,32 @@ class ExtractSectionsParams(BaseModel):
         None,
         description=(
             "要抽取的 section 名，如 ['introduction', 'method', 'results']。"
-            "传 None 时返回所有识别到的 section。"
+            "传 None 时使用 Reader 默认核心章节，不返回整篇论文所有 section。"
         ),
     )
+
+    @field_validator("sections", mode="before")
+    @classmethod
+    def _coerce_sections(cls, value: object) -> object:
+        """兼容模型把 JSON array 当字符串传进来的常见错误。"""
+
+        if value is None:
+            return None
+        if isinstance(value, list):
+            return value
+        if isinstance(value, str):
+            raw = value.strip()
+            if not raw:
+                return None
+            if raw.startswith("["):
+                try:
+                    parsed = json.loads(raw)
+                except json.JSONDecodeError:
+                    parsed = None
+                if isinstance(parsed, list):
+                    return [str(item).strip() for item in parsed if str(item).strip()]
+            return [part.strip() for part in re.split(r"[,;/\n]+", raw) if part.strip()]
+        return value
 
 
 class ExtractSectionsTool(Tool):
@@ -136,7 +179,10 @@ class ExtractSectionsTool(Tool):
             )
 
         try:
-            sections_out, quality = self._extract(abs_path, params.sections)
+            wanted_sections = params.sections or list(DEFAULT_TARGET_SECTIONS)
+            sections_out, quality = self._extract(abs_path, wanted_sections)
+            quality["default_sections_used"] = params.sections is None
+            quality["requested_sections"] = wanted_sections
         except ModuleNotFoundError:
             return ToolResult(
                 ok=False,
@@ -156,7 +202,8 @@ class ExtractSectionsTool(Tool):
         summary_line = ""
         if quality["recommend_full_text_fallback"]:
             summary_line = (
-                "section 质量一般，建议回退到 extract_pdf_text 再做阅读。"
+                "section 质量一般；请优先基于已返回的有界章节与 metadata 生成保守笔记。"
+                "只有缺少关键信息时，才用 extract_pdf_text 并设置较小 max_chars。"
             )
 
         return ToolResult(
@@ -166,7 +213,12 @@ class ExtractSectionsTool(Tool):
                 if summary_line
                 else self._format_sections(sections_out)
             ),
-            data={"sections": sections_out, "pdf": params.pdf_path, "quality": quality},
+            data={
+                "sections": self._preview_sections_for_data(sections_out),
+                "section_lengths": {name: len(text) for name, text in sections_out.items()},
+                "pdf": params.pdf_path,
+                "quality": quality,
+            },
         )
 
     def _extract(self, pdf_path: Path, wanted: list[str] | None) -> tuple[dict[str, str], dict[str, Any]]:
@@ -218,6 +270,9 @@ class ExtractSectionsTool(Tool):
                 fallback = self._extract_from_full_text(raw_lines, wanted)
                 filtered = {**fallback, **filtered} if fallback else filtered
                 fallback_used = bool(fallback)
+            if not filtered and joined:
+                filtered = self._fallback_preview_sections(joined)
+                fallback_used = True
             return filtered, self._build_quality_report(filtered, wanted, fallback_used)
 
         if self._needs_fallback(joined, None):
@@ -370,21 +425,67 @@ class ExtractSectionsTool(Tool):
         """把 section 字典格式化成适合直接回给 LLM 的文本。"""
 
         blocks: list[str] = []
+        remaining = MAX_CONTENT_CHARS_TOTAL
+        omitted_count = 0
         for name, text in sections.items():
-            clipped = text[:MAX_CONTENT_CHARS_PER_SECTION]
+            if remaining <= 0:
+                omitted_count += 1
+                continue
+            section_limit = min(MAX_CONTENT_CHARS_PER_SECTION, remaining)
+            clipped = text[:section_limit]
             block_lines = [f"## {name}", "", clipped]
-            if len(text) > MAX_CONTENT_CHARS_PER_SECTION:
+            if len(text) > section_limit:
                 block_lines.extend(
                     [
                         "",
                         (
                             f"[... truncated, full length: {len(text)} chars, "
-                            f"shown: {MAX_CONTENT_CHARS_PER_SECTION}]"
+                            f"shown: {section_limit}]"
                         ),
                     ]
                 )
-            blocks.append("\n".join(block_lines).strip())
+            block = "\n".join(block_lines).strip()
+            blocks.append(block)
+            remaining -= len(clipped)
+        if omitted_count:
+            blocks.append(f"[Runtime] Omitted {omitted_count} additional sections due to output cap.")
         return "\n\n---\n\n".join(blocks)
+
+    @staticmethod
+    def _preview_sections_for_data(sections: dict[str, str]) -> dict[str, str]:
+        """给 trace metadata 使用的有界 section 预览。"""
+
+        preview: dict[str, str] = {}
+        remaining = MAX_DATA_CHARS_TOTAL
+        for name, text in sections.items():
+            if remaining <= 0:
+                break
+            limit = min(MAX_DATA_CHARS_PER_SECTION, remaining)
+            clipped = text[:limit]
+            if len(text) > limit:
+                clipped += (
+                    f"\n\n[... truncated for trace metadata, full length: {len(text)} chars]"
+                )
+            preview[name] = clipped
+            remaining -= len(clipped)
+        omitted_count = len(sections) - len(preview)
+        if omitted_count > 0:
+            preview["_omitted"] = f"{omitted_count} sections omitted due to trace metadata cap"
+        return preview
+
+    @staticmethod
+    def _fallback_preview_sections(sections: dict[str, str]) -> dict[str, str]:
+        """没有命中目标章节时，返回前几个非 references 的 section 作为保守预览。"""
+
+        out: dict[str, str] = {}
+        excluded = {"references", "bibliography", "acknowledgments", "acknowledgements"}
+        for name, text in sections.items():
+            if name in excluded:
+                continue
+            out[name] = text
+            if len(out) >= 4:
+                break
+        return out
 
     @classmethod
     def _build_quality_report(

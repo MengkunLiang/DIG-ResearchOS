@@ -292,6 +292,19 @@ class FetchPaperPdfTool(Tool):
 
 class ExtractPdfTextParams(BaseModel):
     pdf_path: str = Field(..., description="相对 workspace 的 PDF 路径")
+    max_chars: int = Field(
+        default=12000,
+        ge=1000,
+        le=50000,
+        description="最多返回多少字符；T3 默认只应小范围回退全文，避免撑爆上下文",
+    )
+    start_page: int = Field(default=1, ge=1, description="从第几页开始提取，1-based")
+    max_pages: int | None = Field(
+        default=None,
+        ge=1,
+        le=20,
+        description="最多读取多少页；不传则读取全文后再按 max_chars 截断",
+    )
 
 
 class ExtractPdfTextTool(Tool):
@@ -332,30 +345,38 @@ class ExtractPdfTextTool(Tool):
             import importlib
             pdfplumber = importlib.import_module("pdfplumber")
 
-            # 提取全文
             text_parts = []
             with pdfplumber.open(abs_path) as pdf:
                 for page_num, page in enumerate(pdf.pages, start=1):
+                    if page_num < params.start_page:
+                        continue
+                    if params.max_pages is not None and page_num >= params.start_page + params.max_pages:
+                        break
                     page_text = page.extract_text() or ""
                     if page_text.strip():
                         text_parts.append(f"--- Page {page_num} ---\n{page_text}")
 
             full_text = "\n\n".join(text_parts)
 
-            # 限制返回给LLM的文本长度
-            MAX_CHARS = 50000
-            content_preview = full_text[:MAX_CHARS]
-            if len(full_text) > MAX_CHARS:
-                content_preview += f"\n\n[... truncated, full length: {len(full_text)} chars]"
+            content_preview = full_text[: params.max_chars]
+            if len(full_text) > params.max_chars:
+                content_preview += (
+                    f"\n\n[... truncated, full length: {len(full_text)} chars, "
+                    f"shown: {params.max_chars}]"
+                )
 
             return ToolResult(
                 ok=True,
                 content=content_preview,
                 data={
                     "pdf": params.pdf_path,
-                    "full_text": full_text,
+                    "text_preview": content_preview,
                     "length": len(full_text),
                     "pages": len(text_parts),
+                    "start_page": params.start_page,
+                    "max_pages": params.max_pages,
+                    "max_chars": params.max_chars,
+                    "truncated": len(full_text) > params.max_chars,
                 },
             )
         except ModuleNotFoundError:

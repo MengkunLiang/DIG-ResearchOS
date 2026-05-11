@@ -50,6 +50,12 @@ T2_AUTO_FINALIZE_TRIGGER_TOOLS = T2_AUTO_PERSIST_SEARCH_TOOLS | frozenset(
     }
 )
 T2_AUTO_FINALIZE_MIN_RAW = 100
+TOOL_CONTEXT_CONTENT_LIMITS = {
+    # PDF 文本工具是 T3 上下文膨胀的主要来源。工具自身也有上限，这里再加
+    # runtime 兜底，防止未来工具改动或异常 PDF 解析再次把长文本塞进模型。
+    "extract_paper_sections": 12000,
+    "extract_pdf_text": 10000,
+}
 
 
 class HookExecutionError(RuntimeError):
@@ -674,6 +680,9 @@ class AgentRunner:
         )
         content = result.content
         metadata = {"data": result.data, "error": result.error}
+        content, cap_metadata = self._cap_tool_content_for_context(tc.name, content)
+        if cap_metadata:
+            metadata["context_cap"] = cap_metadata
         if auto_persist_metadata:
             metadata["auto_persist_raw"] = auto_persist_metadata
             suffix = auto_persist_metadata.get("content_suffix")
@@ -689,6 +698,27 @@ class AgentRunner:
             duration_ms=int((time.time() - started) * 1000),
             metadata=metadata,
         )
+
+    @staticmethod
+    def _cap_tool_content_for_context(
+        tool_name: str,
+        content: str,
+    ) -> tuple[str, dict[str, object] | None]:
+        """限制高风险工具返回给下一轮 LLM 的文本量。"""
+
+        limit = TOOL_CONTEXT_CONTENT_LIMITS.get(tool_name)
+        if limit is None or len(content) <= limit:
+            return content, None
+        capped = (
+            content[:limit]
+            + f"\n\n[Runtime] Tool output truncated before LLM context: "
+            f"{limit}/{len(content)} chars shown. Use narrower parameters if more detail is needed."
+        )
+        return capped, {
+            "original_chars": len(content),
+            "shown_chars": limit,
+            "reason": "tool_context_content_limit",
+        }
 
     async def _maybe_auto_persist_t2_search_result(
         self,

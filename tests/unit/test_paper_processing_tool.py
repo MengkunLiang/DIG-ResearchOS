@@ -131,6 +131,79 @@ async def test_extract_sections_filters_requested_sections_via_helper(
 
 
 @pytest.mark.asyncio
+async def test_extract_sections_accepts_json_string_sections(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_workspace: Path,
+):
+    pdf_path = tmp_workspace / "papers" / "string_sections.pdf"
+    pdf_path.parent.mkdir(parents=True)
+    pdf_path.write_bytes(b"%PDF-1.4 fake")
+
+    policy = WorkspaceAccessPolicy(tmp_workspace, ["papers/"], [""])
+    monkeypatch.setattr(
+        ExtractSectionsTool,
+        "_iter_pdf_lines",
+        lambda self, _path: [
+            "1 Introduction",
+            "Intro text.",
+            "2 Method",
+            "Method text.",
+            "3 Results",
+            "Result text.",
+        ],
+    )
+
+    result = await ExtractSectionsTool(policy).execute(
+        pdf_path="papers/string_sections.pdf",
+        sections='["method", "results"]',
+    )
+
+    assert result.ok
+    assert set(result.data["sections"]) == {"method", "results"}
+    assert "Parameter validation error" not in result.content
+    assert "introduction" not in result.data["sections"]
+
+
+@pytest.mark.asyncio
+async def test_extract_sections_defaults_to_core_sections_and_excludes_references(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_workspace: Path,
+):
+    pdf_path = tmp_workspace / "papers" / "bounded.pdf"
+    pdf_path.parent.mkdir(parents=True)
+    pdf_path.write_bytes(b"%PDF-1.4 fake")
+
+    long_text = "x" * 6000
+    monkeypatch.setattr(
+        ExtractSectionsTool,
+        "_iter_pdf_lines",
+        lambda self, _path: [
+            "Abstract",
+            long_text,
+            "1 Introduction",
+            long_text,
+            "2 Method",
+            long_text,
+            "3 Results",
+            long_text,
+            "4 Conclusion",
+            long_text,
+            "References",
+            "reference " * 5000,
+        ],
+    )
+
+    policy = WorkspaceAccessPolicy(tmp_workspace, ["papers/"], [""])
+    result = await ExtractSectionsTool(policy).execute(pdf_path="papers/bounded.pdf")
+
+    assert result.ok
+    assert "references" not in result.data["sections"]
+    assert "reference reference reference" not in result.content
+    assert len(result.content) < 14_000
+    assert all(len(text) < 3_200 for text in result.data["sections"].values())
+
+
+@pytest.mark.asyncio
 async def test_extract_sections_returns_dependency_missing_when_pdfplumber_unavailable(
     monkeypatch: pytest.MonkeyPatch,
     tmp_workspace: Path,

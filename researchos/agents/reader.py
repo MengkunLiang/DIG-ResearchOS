@@ -47,7 +47,7 @@ class ReaderAgent(Agent):
                     "max_wall_seconds": 1200,
                     "max_validation_retries": 3,
                     "temperature": 0.5,
-                    "allowed_read_prefixes": ["", "literature/", "user_seeds/"],
+                    "allowed_read_prefixes": ["", "literature/", "user_seeds/", "_runtime/resume/"],
                     "allowed_write_prefixes": ["literature/"],
                     "prompt_template": "reader.j2",
                 },

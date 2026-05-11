@@ -27,3 +27,17 @@ def test_truncation_keeps_system_and_note(tmp_workspace):
     assert truncated[0].role.value == "system"
     assert any("已省略较早的" in (msg.content or "") for msg in truncated if msg.role.value == "user")
 
+
+def test_pdf_tool_content_is_capped_before_context():
+    content, metadata = AgentRunner._cap_tool_content_for_context(
+        "extract_pdf_text",
+        "x" * 20_000,
+    )
+
+    assert len(content) < 11_000
+    assert "Tool output truncated" in content
+    assert metadata == {
+        "original_chars": 20_000,
+        "shown_chars": 10_000,
+        "reason": "tool_context_content_limit",
+    }

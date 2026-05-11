@@ -187,6 +187,7 @@ agents:
       - ""
       - literature/
       - user_seeds/
+      - _runtime/resume/
     allowed_write_prefixes:
       - literature/
     prompt_template: reader.j2

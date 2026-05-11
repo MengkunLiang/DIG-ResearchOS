@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+import inspect
 import os
 from pathlib import Path
 import time
@@ -512,10 +513,26 @@ class LLMClient:
                     errors.append(f"{qualified}@{endpoint.name} attempt {attempt + 1}: {exc!r}")
             if attempt < max_retries_per_model - 1:
                 await asyncio.sleep(min(retry_base_delay * (2**attempt), 8))
+        await self._close_litellm_async_clients_after_failure()
         raise LLMProviderError(
             f"All candidates failed (profile={profile or self.default_profile_name}, "
             f"tier={tier}). Errors: {errors}"
         )
+
+    async def _close_litellm_async_clients_after_failure(self) -> None:
+        """清理 LiteLLM 失败调用遗留的 aiohttp session。"""
+
+        if litellm is None:
+            return
+        closer = getattr(litellm, "close_litellm_async_clients", None)
+        if closer is None:
+            return
+        try:
+            maybe_awaitable = closer()
+            if inspect.isawaitable(maybe_awaitable):
+                await maybe_awaitable
+        except Exception as exc:  # pragma: no cover - cleanup failure should not mask LLM error
+            _log.warning("litellm_async_client_cleanup_failed", error=repr(exc))
 
     def count_tokens(self, messages: list[dict[str, Any]], binding: ModelBinding) -> int:
         """尽量准确地估算 token；若 provider 不支持，则退化到字符近似。"""

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 
 import pytest
 
-from researchos.tools.paper_fetch import FetchPaperPdfTool
+from researchos.tools.paper_fetch import ExtractPdfTextTool, FetchPaperPdfTool
 from researchos.tools.workspace_policy import WorkspaceAccessPolicy
 
 
@@ -41,6 +43,25 @@ class _FakeAsyncClient:
         if url in self.responses:
             return self.responses[url]
         raise RuntimeError(f"Unexpected URL: {url}")
+
+
+class _FakePage:
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    def extract_text(self) -> str:
+        return self._text
+
+
+class _FakePDF:
+    def __init__(self, pages: list[str]) -> None:
+        self.pages = [_FakePage(text) for text in pages]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
 
 
 @pytest.mark.asyncio
@@ -84,3 +105,26 @@ def test_url_to_pdf_candidates_converts_arxiv_abs_link():
     candidates = FetchPaperPdfTool._url_to_pdf_candidates("https://arxiv.org/abs/2401.12345")
     assert "https://arxiv.org/abs/2401.12345" in candidates
     assert "https://arxiv.org/pdf/2401.12345.pdf" in candidates
+
+
+@pytest.mark.asyncio
+async def test_extract_pdf_text_uses_small_default_preview(monkeypatch, tmp_path: Path):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    pdf_path = workspace / "paper.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4 fake")
+
+    def fake_open(path: Path) -> _FakePDF:
+        assert path == pdf_path
+        return _FakePDF(["a" * 8000, "b" * 8000])
+
+    monkeypatch.setitem(sys.modules, "pdfplumber", SimpleNamespace(open=fake_open))
+
+    policy = WorkspaceAccessPolicy(workspace, [""], [""])
+    result = await ExtractPdfTextTool(policy).execute(pdf_path="paper.pdf")
+
+    assert result.ok
+    assert len(result.content) < 13_000
+    assert result.data["truncated"] is True
+    assert "full_text" not in result.data
+    assert "text_preview" in result.data

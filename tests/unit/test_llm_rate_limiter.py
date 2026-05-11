@@ -13,6 +13,7 @@ class _FakeUsage:
 
 
 class _FakeResponse:
+    choices = [object()]
     usage = _FakeUsage()
     _hidden_params = {"response_cost": 0.02}
 
@@ -227,9 +228,19 @@ async def test_llm_client_chat_enforces_runtime_hard_timeout(tmp_path, monkeypat
         await asyncio.sleep(0.05)
         return _FakeResponse()
 
+    cleanup_calls = 0
+
+    async def fake_close_clients():
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+
     monkeypatch.setattr(
         "researchos.runtime.llm_client.litellm",
-        types.SimpleNamespace(acompletion=slow_acompletion, token_counter=lambda **_: 12),
+        types.SimpleNamespace(
+            acompletion=slow_acompletion,
+            token_counter=lambda **_: 12,
+            close_litellm_async_clients=fake_close_clients,
+        ),
     )
 
     client = LLMClient(routing)
@@ -248,6 +259,7 @@ async def test_llm_client_chat_enforces_runtime_hard_timeout(tmp_path, monkeypat
         )
 
     assert "TimeoutError" in str(exc_info.value)
+    assert cleanup_calls == 1
 
 
 @pytest.mark.asyncio
