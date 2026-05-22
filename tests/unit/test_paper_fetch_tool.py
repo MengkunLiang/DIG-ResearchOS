@@ -141,7 +141,7 @@ def test_url_to_pdf_candidates_converts_arxiv_abs_link():
 
 
 @pytest.mark.asyncio
-async def test_extract_pdf_text_uses_small_default_preview(monkeypatch, tmp_path: Path):
+async def test_extract_pdf_text_uses_fuller_default_preview(monkeypatch, tmp_path: Path):
     workspace = tmp_path / "ws"
     workspace.mkdir()
     pdf_path = workspace / "paper.pdf"
@@ -157,7 +157,8 @@ async def test_extract_pdf_text_uses_small_default_preview(monkeypatch, tmp_path
     result = await ExtractPdfTextTool(policy).execute(pdf_path="paper.pdf")
 
     assert result.ok
-    assert len(result.content) < 13_000
-    assert result.data["truncated"] is True
+    assert len(result.content) > 16_000
+    assert result.data["max_chars"] == 50_000
+    assert result.data["truncated"] is False
     assert "full_text" not in result.data
     assert "text_preview" in result.data

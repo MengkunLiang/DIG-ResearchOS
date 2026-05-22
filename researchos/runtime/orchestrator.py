@@ -56,7 +56,7 @@ TOOL_CONTEXT_CONTENT_LIMITS = {
     # PDF 文本工具是 T3 上下文膨胀的主要来源。工具自身也有上限，这里再加
     # runtime 兜底，防止未来工具改动或异常 PDF 解析再次把长文本塞进模型。
     "extract_paper_sections": 12000,
-    "extract_pdf_text": 10000,
+    "extract_pdf_text": 50000,
 }
 
 

@@ -126,11 +126,10 @@
      - 例如：`arxiv:2301.12345` → 文件名使用 `arxiv_2301.12345.pdf`
      - 例如：`doi:10.1234/5678` → 文件名使用 `doi_10.1234_5678.pdf`
    - 优先检查 `literature/pdfs/{normalized_id}.pdf` 是否存在
-   - 如果存在，优先使用 `extract_paper_sections` 抽取核心章节，参数必须传真实 JSON 数组：
-     `sections=["abstract","introduction","related work","method","results","discussion","conclusion","limitations"]`
-   - 不要省略 `sections` 参数；不要为了“更完整”读取 references / appendix 等长尾内容
-   - 如果 section 返回里出现质量告警、可疑 section 名、命中 section 太少，先基于已返回的有界章节和 metadata 写保守笔记
-   - 只有缺少关键实验数字、无法形成笔记时，才小范围调用 `extract_pdf_text`，并设置 `max_chars<=8000`；不要把整篇 PDF 全文灌进上下文
+   - 如果存在，优先使用 `extract_pdf_text` 阅读全文；长论文按页/字符分块读取，直到覆盖完整论文或已足以形成高质量笔记
+   - 推荐分块方式：`extract_pdf_text(pdf_path=..., start_page=1, max_pages=5-10, max_chars=50000)`，然后按 `start_page` 继续读取后续页面
+   - 如果需要快速定位 abstract/method/results 等位置，可以辅助调用 `extract_paper_sections`，但不要把它作为默认阅读路径
+   - 如果全文无法获取或 PDF 解析失败，再基于 abstract 和 metadata 写保守笔记，并在 Status 中明确标注
    - 如果不存在，尝试使用 `fetch_paper_pdf` 下载（传入原始ID，如 `arxiv:2301.12345`、`10.1234/xxxx`、`W1234567890`）
      - `fetch_paper_pdf` 优先支持 arXiv，同时也会尝试从 OpenAlex 的开放获取位置、DOI 跳转链接里寻找 PDF
      - 对于闭源或无开放获取副本的论文，下载仍可能失败
@@ -236,8 +235,8 @@ arxiv:2301.12345,Efficient Transformers,2023,ICML,Attention Optimization,ImageNe
 1. **禁止编造数据**：如果PDF读不到，只基于abstract写笔记，并在Status字段标注 **[ABSTRACT-ONLY]**
 2. **verified 论文优先**：如果 `papers_verified.jsonl` 存在，优先从 verified 池和 queue 里读取；不要默认消费未核验 dedup 论文
 3. **单篇 metadata 查询**：需要论文详情时调用 `lookup_paper_record`；除非 queue 文件不存在且没有其他选择，不要读取完整 `papers_verified.jsonl` 或 `papers_dedup.jsonl`
-4. **优先 section 级阅读**：调用 `extract_paper_sections` 时必须传 `sections=["abstract","introduction","related work","method","results","discussion","conclusion","limitations"]`
-5. **全文回退必须小范围**：section 脏时不要默认全文回退；只有笔记无法成立时才调用 `extract_pdf_text(max_chars<=8000)` 获取补充证据
+4. **优先全文阅读**：PDF 可用时默认调用 `extract_pdf_text`，按页/字符分块覆盖完整论文；不要只读核心章节就结束
+5. **section 只作辅助定位**：`extract_paper_sections` 可用于快速找方法、实验、结论等位置，但最终笔记应基于全文或明确标注为部分阅读
 6. **数字必须具体**：不能写"显著提升"、"大幅改进"，必须写具体数值
 7. **数字必须有证据锚点**：所有正文级数字至少带一个 `Evidence: section/page` 标记；没有证据就不要写成确定性结果
 8. **每篇读完立即写note**：写完 note 后只保留这篇论文的 ID/状态/一行表格信息，不要在回复中复述大段论文内容，避免token爆炸

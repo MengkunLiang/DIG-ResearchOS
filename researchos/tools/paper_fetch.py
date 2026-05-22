@@ -349,16 +349,16 @@ class FetchPaperPdfTool(Tool):
 class ExtractPdfTextParams(BaseModel):
     pdf_path: str = Field(..., description="相对 workspace 的 PDF 路径")
     max_chars: int = Field(
-        default=12000,
+        default=50_000,
         ge=1000,
-        le=50000,
-        description="最多返回多少字符；T3 默认只应小范围回退全文，避免撑爆上下文",
+        le=300_000,
+        description="最多返回多少字符；T3 可用于全文或分块阅读 PDF",
     )
     start_page: int = Field(default=1, ge=1, description="从第几页开始提取，1-based")
     max_pages: int | None = Field(
         default=None,
         ge=1,
-        le=20,
+        le=100,
         description="最多读取多少页；不传则读取全文后再按 max_chars 截断",
     )
 
