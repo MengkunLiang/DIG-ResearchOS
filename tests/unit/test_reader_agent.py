@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from researchos.agents.reader import ReaderAgent
+from researchos.agents.reader import ReaderAgent, _validate_note_structure
 from researchos.runtime.agent import ExecutionContext
 
 
@@ -265,6 +265,40 @@ def test_validate_outputs_read_mode_success(reader_agent, temp_workspace):
     )
 
     ok, err = reader_agent.validate_outputs(ctx)
+    assert ok, f"Validation failed: {err}"
+
+
+def test_validate_note_structure_rejects_numeric_key_results_without_evidence(tmp_path):
+    """Key Results 里出现数字时，必须用统一的 [Evidence: ...] 格式标注来源。"""
+    note_path = tmp_path / "bad_note.md"
+    note_path.write_text(
+        _structured_note("bad_note").replace(
+            "- Accuracy: 88.1 [Evidence: Results section]",
+            "- Accuracy: 88.1 from the results section",
+        ),
+        encoding="utf-8",
+    )
+
+    ok, err = _validate_note_structure(note_path)
+
+    assert not ok
+    assert "Key Results" in err
+    assert "[Evidence: ...]" in err
+
+
+def test_validate_note_structure_allows_non_numeric_dataset_names_without_evidence(tmp_path):
+    """AI2-THOR、3D 这类标识符不应被误判为指标数字。"""
+    note_path = tmp_path / "dataset_note.md"
+    note_path.write_text(
+        _structured_note("dataset_note").replace(
+            "- Accuracy: 88.1 [Evidence: Results section]",
+            "- Dataset: AI2-THOR\n- Representation: 3D scene graph\n- Accuracy: 88.1 [Evidence: Results section]",
+        ),
+        encoding="utf-8",
+    )
+
+    ok, err = _validate_note_structure(note_path)
+
     assert ok, f"Validation failed: {err}"
 
 

@@ -366,10 +366,59 @@ def _validate_note_structure(note_path: Path) -> tuple[bool, str | None]:
         if marker not in content:
             return False, f"{note_path.name} 缺少必要结构: {marker}"
 
+    ok, err = _validate_key_results_evidence(note_path, content)
+    if not ok:
+        return False, err
+
     # 旧格式 note 允许没有 Verification 字段；但全文类 note 至少要有证据锚点痕迹。
     status_text = content.partition("- **Status**:")[2].splitlines()[0] if "- **Status**:" in content else ""
     is_abstract_only = "ABSTRACT-ONLY" in status_text
     if not is_abstract_only and "Evidence Source" not in content and "| Claim | Evidence | Strength |" not in content:
         return False, f"{note_path.name} 缺少 evidence 锚点，无法支撑全文类结论"
+
+    return True, None
+
+
+def _validate_key_results_evidence(note_path: Path, content: str) -> tuple[bool, str | None]:
+    """要求 Key Results 中的数字结果在同一行带 `[Evidence: ...]`。"""
+
+    import re
+
+    section_match = re.search(
+        r"(?ms)^## 3\. Key Results\s*(?P<section>.*?)^## 4\. Claims vs Evidence",
+        content,
+    )
+    if section_match is None:
+        # 结构缺失会由上层 marker 校验兜底；这里不重复报错。
+        return True, None
+
+    evidence_marker = re.compile(r"\[\s*Evidence\s*:\s*[^\]]+\]")
+    # 识别独立数字、百分比、小数、倍数等，避开 AI2-THOR / 3D 这类标识符。
+    numeric_value = re.compile(r"(?<![A-Za-z])\d+(?:\.\d+)?(?:%|x|×)?(?![A-Za-z])")
+
+    in_fence = False
+    section_start_line = content[: section_match.start("section")].count("\n") + 1
+    for offset, raw_line in enumerate(section_match.group("section").splitlines(), start=1):
+        stripped = raw_line.strip()
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence or not stripped:
+            continue
+        if stripped.startswith("|---") or stripped.startswith("|==="):
+            continue
+
+        line_without_list_marker = re.sub(r"^\s*(?:[-*+]\s*)?(?:\d+[\.)]\s*)?", "", raw_line)
+        if not numeric_value.search(line_without_list_marker):
+            continue
+        if evidence_marker.search(raw_line):
+            continue
+
+        line_no = section_start_line + offset - 1
+        preview = stripped[:120]
+        return (
+            False,
+            f"{note_path.name} 的 Key Results 第 {line_no} 行含数字但缺少 `[Evidence: ...]`: {preview}",
+        )
 
     return True, None

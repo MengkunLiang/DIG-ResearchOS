@@ -149,6 +149,13 @@ def validate_task_artifacts(
             if not ok:
                 errors.append(f"Schema验证失败 {output_name}: {err}")
 
+    if not errors:
+        checker = get_task_checker(task_id)
+        if checker is not None:
+            ok, err = checker(workspace_dir)
+            if not ok:
+                errors.append(f"Task checker failed for {task_id}: {err}")
+
     if errors:
         return False, "; ".join(errors)
 
@@ -357,11 +364,28 @@ def register_builtin_task_checkers():
             return False, "hello.txt does not contain 'Hello'"
         return True, None
 
+    def check_t3(workspace_dir: Path) -> tuple[bool, str | None]:
+        """T3 note checker：复用 Reader 的单篇笔记结构和证据锚点规则。"""
+        notes_dir = workspace_dir / "literature" / "paper_notes"
+        if not notes_dir.exists():
+            return False, "literature/paper_notes not found"
+        note_files = sorted(notes_dir.glob("*.md"))
+        if not note_files:
+            return False, "literature/paper_notes has no markdown notes"
+
+        from ..agents.reader import _validate_note_structure
+
+        for note_path in note_files:
+            ok, err = _validate_note_structure(note_path)
+            if not ok:
+                return False, err
+        return True, None
+
     register_task_checker("HELLO", check_hello)
+    register_task_checker("T3", check_t3)
 
     # TODO: 为T1-T9添加更多checker
 
 
 # 启动时自动注册
 register_builtin_task_checkers()
-
