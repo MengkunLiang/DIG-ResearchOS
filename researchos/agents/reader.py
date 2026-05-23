@@ -395,6 +395,12 @@ def _validate_key_results_evidence(note_path: Path, content: str) -> tuple[bool,
     evidence_marker = re.compile(r"\[\s*Evidence\s*:\s*[^\]]+\]")
     # 识别独立数字、百分比、小数、倍数等，避开 AI2-THOR / 3D 这类标识符。
     numeric_value = re.compile(r"(?<![A-Za-z])\d+(?:\.\d+)?(?:%|x|×)?(?![A-Za-z])")
+    model_version = re.compile(
+        r"\b(?:GPT|Claude|Sonnet|Haiku|Opus|Qwen|Llama|Mistral|Gemini|"
+        r"DeepSeek|GLM|Mixtral|Phi|BERT|RoBERTa|T5)"
+        r"(?:[-_\s]?[A-Za-z]+){0,2}[-_\s]*\d+(?:\.\d+)?(?:[-_.]?\w+)*",
+        re.IGNORECASE,
+    )
 
     in_fence = False
     section_start_line = content[: section_match.start("section")].count("\n") + 1
@@ -407,14 +413,15 @@ def _validate_key_results_evidence(note_path: Path, content: str) -> tuple[bool,
             continue
         if stripped.startswith("|---") or stripped.startswith("|==="):
             continue
-        if stripped.endswith(":"):
+        if stripped.endswith((':', '：')):
             # Treat metric group headings such as
             # "- **Efficiency (throughput with Llama-3.1-8b)**:" as labels,
             # not numeric results that need their own evidence marker.
             continue
 
         line_without_list_marker = re.sub(r"^\s*(?:[-*+]\s*)?(?:\d+[\.)]\s*)?", "", raw_line)
-        if not numeric_value.search(line_without_list_marker):
+        line_for_numeric_check = model_version.sub("", line_without_list_marker)
+        if not numeric_value.search(line_for_numeric_check):
             continue
         if evidence_marker.search(raw_line):
             continue
