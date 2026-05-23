@@ -150,6 +150,7 @@ states:
       hypotheses: ideation/hypotheses.md                # 研究假设
       exp_plan: ideation/exp_plan.yaml                 # 实验计划
       risks: ideation/risks.md                        # 风险评估
+      idea_rationales: ideation/idea_rationales.json  # 每个 idea/假设的生成依据
     next_on_success: T4.5
     next_on_failure: T4  # 允许失败后重试
 

@@ -2,11 +2,12 @@
 
 基于文献综述生成研究假设和实验计划，通过两轮Gate确认。
 输入: synthesis.md, missing_areas.md, seed_ideas.md
-输出: hypotheses.md, exp_plan.yaml, risks.md
+输出: hypotheses.md, exp_plan.yaml, risks.md, idea_rationales.json
 """
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -57,6 +58,7 @@ class IdeationAgent(Agent):
                     "prompt_template": "ideation.j2",
                     "structured_outputs": {
                         "ideation/exp_plan.yaml": "exp_plan",
+                        "ideation/idea_rationales.json": "idea_rationales",
                     },
                 },
             )
@@ -89,7 +91,8 @@ class IdeationAgent(Agent):
             ctx,
             (
             "请执行 T4 假设生成。基于 synthesis.md 和 seed_ideas.md，"
-            "通过两轮 Gate 与用户确认，产出 hypotheses.md + exp_plan.yaml + risks.md。"
+            "通过两轮 Gate 与用户确认，产出 hypotheses.md + exp_plan.yaml + "
+            "risks.md + idea_rationales.json。"
             ),
         )
 
@@ -148,6 +151,45 @@ class IdeationAgent(Agent):
         risk_markers = risks_text.count("## 风险") + risks_text.count("## Risk")
         if risk_markers < 3:
             return False, f"risks.md 至少需要3条风险，当前{risk_markers}条"
+
+        rationales_path = ws / "ideation" / "idea_rationales.json"
+        if not rationales_path.exists():
+            return False, "缺少 ideation/idea_rationales.json，无法追踪每个idea的生成依据"
+        try:
+            rationale_data = json.loads(rationales_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            return False, f"idea_rationales.json 解析失败: {e}"
+        if not isinstance(rationale_data, dict):
+            return False, "idea_rationales.json 必须是JSON对象"
+        ok, err = validate_record(rationale_data, "idea_rationales")
+        if not ok:
+            return False, f"idea_rationales.json 不符合schema: {err}"
+
+        ideas = rationale_data.get("ideas", [])
+        if not isinstance(ideas, list) or not ideas:
+            return False, "idea_rationales.json 必须包含至少一条idea依据记录"
+        covered_refs: set[str] = set()
+        for i, idea in enumerate(ideas, start=1):
+            if not isinstance(idea, dict):
+                return False, f"idea_rationales.json 第{i}条idea必须是对象"
+            refs = idea.get("hypothesis_refs") or []
+            for ref in refs:
+                covered_refs.add(str(ref).lstrip("#").strip().upper())
+
+            basis = idea.get("basis") or {}
+            observations = basis.get("literature_observations") or []
+            if not observations:
+                return False, f"idea_rationales.json 第{i}条idea缺少literature_observations依据"
+            reasoning = str(idea.get("reasoning") or "").strip()
+            if len(reasoning) < 10:
+                return False, f"idea_rationales.json 第{i}条idea的reasoning过短"
+
+        missing_rationales = sorted(anchor_set - covered_refs)
+        if missing_rationales:
+            return False, (
+                "idea_rationales.json 必须覆盖 hypotheses.md 中的所有假设anchor，"
+                f"缺少: {missing_rationales}"
+            )
 
         project = load_project(ctx)
         max_budget = project.get("constraints", {}).get("max_budget_usd", 100.0)

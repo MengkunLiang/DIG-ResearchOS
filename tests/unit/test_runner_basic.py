@@ -1,3 +1,5 @@
+import json
+
 import pytest
 import yaml
 
@@ -100,6 +102,40 @@ def write_valid_t4_artifacts(workspace):
     )
     (ideation_dir / "risks.md").write_text(
         "# Top 3 风险\n\n## 风险1\n内容\n## 风险2\n内容\n## 风险3\n内容\n"
+    )
+    (ideation_dir / "idea_rationales.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "ideas": [
+                    {
+                        "idea_id": "D1",
+                        "hypothesis_refs": ["H1"],
+                        "title": "假设1依据",
+                        "idea_summary": "基于综述缺口提出预算内实验假设。",
+                        "basis": {
+                            "source_questions": ["Q1"],
+                            "literature_observations": [
+                                {
+                                    "claim": "现有方法在目标约束下存在缺口。",
+                                    "source": "synthesis.md: Q1 / [p1]",
+                                    "strength": "direct",
+                                }
+                            ],
+                            "missing_area_links": ["missing_areas.md: 需要验证"],
+                            "comparison_table_signals": [],
+                            "seed_idea_links": [],
+                            "lens_insights": ["resource: 可在预算内验证"],
+                        },
+                        "reasoning": "输入材料共同指向一个可验证且预算内的假设。",
+                        "confidence": "medium",
+                        "limitations": ["仍需新颖性审计"],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
     )
 
 

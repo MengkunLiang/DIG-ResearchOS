@@ -266,6 +266,36 @@ def test_validate_t4_artifacts_reports_bad_hypothesis_ref(tmp_path: Path):
         encoding="utf-8",
     )
     (workspace / "ideation" / "risks.md").write_text("risk\n", encoding="utf-8")
+    (workspace / "ideation" / "idea_rationales.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "ideas": [
+                    {
+                        "idea_id": "D1",
+                        "hypothesis_refs": ["H1"],
+                        "title": "First Hypothesis",
+                        "idea_summary": "Traceable idea for H1.",
+                        "basis": {
+                            "source_questions": ["Q1"],
+                            "literature_observations": [
+                                {
+                                    "claim": "The synthesis identifies a testable gap.",
+                                    "source": "synthesis.md: Q1 / [p1]",
+                                    "strength": "direct",
+                                }
+                            ],
+                        },
+                        "reasoning": "The observed gap supports H1 as a candidate hypothesis.",
+                        "confidence": "medium",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     ok, errors = validator.validate_task_artifacts(workspace, "T4")
 

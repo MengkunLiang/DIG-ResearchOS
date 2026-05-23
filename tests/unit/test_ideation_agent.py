@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -38,6 +39,46 @@ def ideation_agent():
     return IdeationAgent()
 
 
+def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) -> None:
+    """写入一份覆盖假设anchor的idea依据记录。"""
+    refs = refs or ["H1"]
+    (workspace / "ideation" / "idea_rationales.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "ideas": [
+                    {
+                        "idea_id": "D1",
+                        "hypothesis_refs": refs,
+                        "title": "测试假设依据",
+                        "idea_summary": "基于综述缺口提出一个可验证假设。",
+                        "basis": {
+                            "source_questions": ["Q1"],
+                            "literature_observations": [
+                                {
+                                    "claim": "现有方法在目标场景下存在明确短板。",
+                                    "source": "synthesis.md: Q1 / [p1]",
+                                    "strength": "direct",
+                                }
+                            ],
+                            "missing_area_links": ["missing_areas.md: 需要机制验证"],
+                            "comparison_table_signals": ["comparison_table.csv: 基线未覆盖该约束"],
+                            "seed_idea_links": [],
+                            "lens_insights": ["causal: 可用accuracy指标验证机制差异"],
+                        },
+                        "reasoning": "文献缺口和对比表共同指向该机制，因此形成可实验验证的假设。",
+                        "confidence": "medium",
+                        "limitations": ["仍需T4.5进行新颖性审计"],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_ideation_agent_spec(ideation_agent):
     """测试Ideation Agent的AgentSpec配置。"""
     spec = ideation_agent.spec
@@ -53,6 +94,7 @@ def test_ideation_agent_spec(ideation_agent):
     assert "ideation/" in spec.allowed_read_prefixes
     assert "_runtime/resume/" in spec.allowed_read_prefixes
     assert "ideation/" in spec.allowed_write_prefixes
+    assert spec.structured_outputs["ideation/idea_rationales.json"] == "idea_rationales"
 
 
 def test_ideation_system_prompt(ideation_agent, temp_workspace):
@@ -207,6 +249,7 @@ def test_validate_outputs_success(ideation_agent, temp_workspace):
 - **Kill Criteria**: 如果1周内无法复现
 """
     risks_path.write_text(risks_content)
+    write_valid_idea_rationales(temp_workspace, refs=["H1", "H2"])
 
     ctx = ExecutionContext(
         workspace_dir=temp_workspace,
@@ -218,6 +261,63 @@ def test_validate_outputs_success(ideation_agent, temp_workspace):
 
     ok, err = ideation_agent.validate_outputs(ctx)
     assert ok, f"Validation failed: {err}"
+
+
+def test_validate_outputs_missing_idea_rationales(ideation_agent, temp_workspace):
+    """测试输出校验（缺少idea依据记录）。"""
+    project_path = temp_workspace / "project.yaml"
+    project_path.write_text(yaml.dump({"research_direction": "Test", "constraints": {"max_budget_usd": 1000}}))
+
+    (temp_workspace / "ideation" / "hypotheses.md").write_text(
+        "# 研究假设\n\n## H1: 假设1\n\n" + "内容" * 260
+    )
+    (temp_workspace / "ideation" / "exp_plan.yaml").write_text(
+        yaml.dump(
+            {
+                "goal": "验证假设H1",
+                "experiments": [
+                    {
+                        "id": "exp1",
+                        "name": "Baseline",
+                        "title": "基线实验",
+                        "hypothesis_ref": "#H1",
+                        "datasets": [{"name": "test", "split": "val", "size": 1000}],
+                        "baselines": [{"name": "baseline1", "source": "paper", "why": "standard"}],
+                        "our_method": {
+                            "name": "OurMethod",
+                            "description": "Our approach",
+                            "key_difference": "Different",
+                        },
+                        "metrics": [{"name": "accuracy", "primary": True, "target": 0.8}],
+                        "success_criteria": [
+                            {"metric": "accuracy", "threshold": 0.8, "comparison": ">="}
+                        ],
+                        "steps": [{"step": 1, "action": "Run", "details": "Run experiment"}],
+                        "compute_estimate": {
+                            "gpu_hours": 10,
+                            "gpu_type": "A100",
+                            "estimated_cost_usd": 30,
+                        },
+                        "expected_duration_days": 2,
+                    }
+                ],
+            }
+        )
+    )
+    (temp_workspace / "ideation" / "risks.md").write_text(
+        "## 风险1\n内容\n## 风险2\n内容\n## 风险3\n内容\n"
+    )
+
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T4",
+        run_id="test-run-missing-rationales",
+    )
+
+    ok, err = ideation_agent.validate_outputs(ctx)
+    assert not ok
+    assert "idea_rationales.json" in err
 
 
 def test_validate_outputs_missing_hypothesis_anchor(ideation_agent, temp_workspace):
@@ -237,6 +337,7 @@ def test_validate_outputs_missing_hypothesis_anchor(ideation_agent, temp_workspa
 
     risks_path = temp_workspace / "ideation" / "risks.md"
     risks_path.write_text("## 风险1\n## 风险2\n## 风险3\n")
+    write_valid_idea_rationales(temp_workspace)
 
     ctx = ExecutionContext(
         workspace_dir=temp_workspace,
@@ -269,6 +370,7 @@ def test_validate_outputs_invalid_exp_plan(ideation_agent, temp_workspace):
     # 创建risks.md
     risks_path = temp_workspace / "ideation" / "risks.md"
     risks_path.write_text("## 风险1\n## 风险2\n## 风险3\n")
+    write_valid_idea_rationales(temp_workspace)
 
     ctx = ExecutionContext(
         workspace_dir=temp_workspace,
@@ -333,6 +435,7 @@ def test_validate_outputs_budget_exceeded(ideation_agent, temp_workspace):
     # 创建risks.md
     risks_path = temp_workspace / "ideation" / "risks.md"
     risks_path.write_text("## 风险1\n## 风险2\n## 风险3\n")
+    write_valid_idea_rationales(temp_workspace)
 
     ctx = ExecutionContext(
         workspace_dir=temp_workspace,
@@ -394,6 +497,7 @@ def test_validate_outputs_total_budget_exceeded_even_when_single_experiments_fit
     (temp_workspace / "ideation" / "risks.md").write_text(
         "## 风险1\n内容\n## 风险2\n内容\n## 风险3\n内容\n"
     )
+    write_valid_idea_rationales(temp_workspace)
 
     ctx = ExecutionContext(
         workspace_dir=temp_workspace,

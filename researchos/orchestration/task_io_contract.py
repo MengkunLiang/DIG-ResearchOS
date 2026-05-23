@@ -103,10 +103,12 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "hypotheses": "ideation/hypotheses.md",
             "exp_plan": "ideation/exp_plan.yaml",
             "risks": "ideation/risks.md",
+            "idea_rationales": "ideation/idea_rationales.json",
         },
         "required_inputs": ["project", "synthesis"],
         "schemas": {
             "exp_plan": "exp_plan",
+            "idea_rationales": "idea_rationales",
         },
     },
     "T4.5": {

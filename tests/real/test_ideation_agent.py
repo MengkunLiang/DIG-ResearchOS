@@ -5,11 +5,51 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
 from researchos.agents.ideation import IdeationAgent
+
+
+def _write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) -> None:
+    refs = refs or ["H1"]
+    (workspace / "ideation" / "idea_rationales.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "ideas": [
+                    {
+                        "idea_id": "D1",
+                        "hypothesis_refs": refs,
+                        "title": "Test rationale",
+                        "idea_summary": "A traceable idea generated from synthesis gaps.",
+                        "basis": {
+                            "source_questions": ["Q1"],
+                            "literature_observations": [
+                                {
+                                    "claim": "Prior methods leave a measurable gap.",
+                                    "source": "synthesis.md: Q1 / [p1]",
+                                    "strength": "direct",
+                                }
+                            ],
+                            "missing_area_links": ["missing_areas.md: mechanism gap"],
+                            "comparison_table_signals": [],
+                            "seed_idea_links": [],
+                            "lens_insights": ["causal: the mechanism is experimentally separable"],
+                        },
+                        "reasoning": "The synthesis gap points to a measurable mechanism hypothesis.",
+                        "confidence": "medium",
+                        "limitations": ["Needs novelty audit."],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
 
 class TestIdeationAgent:
@@ -206,6 +246,7 @@ class TestIdeationAgentValidateOutputs:
             "进度可能延迟。\n",
             encoding="utf-8",
         )
+        _write_valid_idea_rationales(standard_workspace)
 
         agent = IdeationAgent()
         ctx = ExecutionContext(

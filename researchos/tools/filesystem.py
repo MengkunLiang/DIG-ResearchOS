@@ -16,6 +16,7 @@ from ..runtime.logger import get_logger
 _LOG = get_logger("filesystem")
 STRUCTURED_ONLY_WRITE_PATHS = {
     "ideation/exp_plan.yaml": "exp_plan",
+    "ideation/idea_rationales.json": "idea_rationales",
     "pilot/pilot_plan.yaml": "pilot_plan",
     "pilot/pilot_results.json": "pilot_results",
 }

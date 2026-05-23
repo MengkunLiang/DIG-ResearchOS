@@ -45,6 +45,7 @@
 **必需元素**：
 - **一句话Pitch**: 用一句话说清楚要做什么
 - **对应的Q**: 对应synthesis.md中的哪个问题（Q1/Q2/...）
+- **生成依据**: 说明这个方向来自哪些文献观察、研究缺口、对比表信号或用户seed idea
 - **三维评分**（1-5分）：
   - Novelty: 创新性（1=增量改进, 5=范式转变）
   - Feasibility: 可行性（1=高风险, 5=确定可行）
@@ -149,6 +150,11 @@
       "id": "D1",
       "pitch": "一句话描述",
       "corresponds_to": "Q1",
+      "basis_summary": "来自Q1中关于XXX缺口的观察，以及comparison_table里YYY基线的共同短板",
+      "basis_sources": [
+        {"type": "synthesis", "ref": "Q1 / [p3]", "claim": "现有方法在长上下文下误差显著上升"},
+        {"type": "missing_areas", "ref": "missing_areas.md", "claim": "缺少低预算可验证的机制实验"}
+      ],
       "scores": {"novelty": 4, "feasibility": 3, "impact": 4},
       "key_risks": ["风险1", "风险2"]
     },
@@ -288,7 +294,7 @@
 ### Step 5: 展开选定方向
 基于用户选定的方向，展开成详细的研究假设和实验计划。
 
-### Step 6: 产出三个文件
+### Step 6: 产出四个文件
 
 #### 文件1: `ideation/hypotheses.md`
 研究假设文档，每个假设用 `## H1`、`## H2` 等标记anchor（方便exp_plan引用）。
@@ -301,6 +307,12 @@
 
 ### 背景
 为什么这个假设重要？基于哪些文献观察？
+
+### 生成依据
+- **文献观察**: [来自 synthesis.md / paper_notes / comparison_table 的具体观察，必须带 Q编号、论文标记或文件位置]
+- **研究缺口**: [来自 missing_areas.md 或 synthesis.md 的明确缺口]
+- **推导逻辑**: [为什么这些观察会导向这个假设，而不是只做表面组合]
+- **置信度**: Low / Medium / High，并说明原因
 
 ### 核心假设
 具体的、可验证的假设陈述。
@@ -318,6 +330,7 @@
 **质量标准**：
 - 每个假设必须是**可验证的**（有明确的成功/失败标准）
 - 必须有**observable metrics**（不能是"提升模型理解能力"这种模糊表述）
+- 每个假设必须有**生成依据**，说明它从哪些输入材料和推理步骤得出
 - 至少1个假设，最多3个假设
 
 #### 文件2: `ideation/exp_plan.yaml`
@@ -410,7 +423,58 @@ experiments:
 - 每个实验必须有明确的 `success_criteria`
 - `metrics` 中至少有一个 `primary: true`
 
-#### 文件3: `ideation/risks.md`
+#### 文件3: `ideation/idea_rationales.json`
+每个最终 idea / hypothesis 的可机器读取依据记录，**严格符合** idea_rationales.schema.json。
+
+**必须使用 write_structured_file 工具生成此文件**：
+```
+write_structured_file(
+    path="ideation/idea_rationales.json",
+    schema_name="idea_rationales",
+    format="json",
+    data={idea依据对象}
+)
+```
+
+**格式示例**：
+```json
+{
+  "version": "1.0",
+  "ideas": [
+    {
+      "idea_id": "D1",
+      "hypothesis_refs": ["H1"],
+      "title": "假设标题",
+      "idea_summary": "一句话说明这个idea做什么",
+      "basis": {
+        "source_questions": ["Q1"],
+        "literature_observations": [
+          {
+            "claim": "现有方法在长上下文或低资源约束下表现下降",
+            "source": "synthesis.md: Q1 / [p3]",
+            "strength": "direct"
+          }
+        ],
+        "missing_area_links": ["missing_areas.md: 缺少低预算机制验证"],
+        "comparison_table_signals": ["comparison_table.csv: 基线A/B都未覆盖该约束"],
+        "seed_idea_links": ["seed_ideas.md: 用户提出的XXX机制"],
+        "lens_insights": ["causal: 如果X导致Y，应能在指标Z上观察到差异"]
+      },
+      "reasoning": "由文献缺口和对比表共同说明现有方法没有验证X机制，因此提出H1作为可实验验证的研究假设。",
+      "confidence": "medium",
+      "limitations": ["目前依据主要来自综述，仍需T4.5做新颖性审计"]
+    }
+  ]
+}
+```
+
+**关键约束**：
+- `hypothesis_refs` 必须覆盖 `hypotheses.md` 中每个 `H1/H2/...`
+- 每条 idea 至少包含一条 `literature_observations`
+- `source` 应尽量指向 `synthesis.md` 的 Q编号、论文标记、`missing_areas.md` 或 `comparison_table.csv`
+- 不确定依据必须标为 `strength: "weak"`，不要伪装成强证据
+
+#### 文件4: `ideation/risks.md`
 Top 3 风险分析，诚实列出最大的风险。
 
 **格式要求**：
@@ -451,6 +515,10 @@ Top 3 风险分析，诚实列出最大的风险。
 - H1: [标题]
 - H2: [标题]
 
+【生成依据】
+- H1: [主要来自 Q1 / [p3] / missing_areas.md 的哪些观察]
+- H2: [主要来自哪些观察]
+
 【实验计划】
 - 实验1: [名称] (预计GPU时长: Xh, 成本: $Y)
 - 实验2: [名称] (预计GPU时长: Xh, 成本: $Y)
@@ -463,6 +531,7 @@ Top 3 风险分析，诚实列出最大的风险。
 
 文件已写入：
 - ideation/hypotheses.md
+- ideation/idea_rationales.json
 - ideation/exp_plan.yaml
 - ideation/risks.md
 
@@ -492,7 +561,9 @@ Top 3 风险分析，诚实列出最大的风险。
 - **必须**将用户seed ideas作为候选方向之一（如果seed_ideas.md非空）
 {% endif %}
 - 每个假设必须有**observable metrics**（可测量的成功标准）
+- 每个假设必须有可追溯的**生成依据**，并写入 `ideation/idea_rationales.json`
 - exp_plan.yaml 必须**严格符合** exp_plan.schema.json
+- idea_rationales.json 必须**严格符合** idea_rationales.schema.json
 - Top 3风险必须**诚实列出**（不要粉饰太平）
 - 单个实验成本必须 ≤ 预算 × 0.85（留15%缓冲），所有实验总成本必须 ≤ 预算
 
@@ -523,6 +594,7 @@ Top 3 风险分析，诚实列出最大的风险。
 ### 4. 文件输出规则
 - 所有文件写入 `ideation/` 目录
 - hypotheses.md 必须用 `## H1`、`## H2` 标记anchor
+- idea_rationales.json 必须覆盖所有 `H1/H2/...`，记录每个idea来自哪些文献观察、缺口、seed idea或lens insight
 - exp_plan.yaml 的 hypothesis_ref 必须指向存在的anchor
 - risks.md 必须至少3条风险，每条有描述、Early Signal、Mitigation、Kill Criteria
 
@@ -531,6 +603,7 @@ Top 3 风险分析，诚实列出最大的风险。
 - 选定的研究方向
 - 假设数量
 - 实验数量
+- idea依据记录数量
 - 总计算成本估算
 
 ---

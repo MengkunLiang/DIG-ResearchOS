@@ -283,6 +283,7 @@ states:
     outputs:
       hypotheses: ideation/hypotheses.md
       exp_plan: ideation/exp_plan.yaml
+      idea_rationales: ideation/idea_rationales.json
       risks: ideation/risks.md
     next_on_success: T4.5
     next_on_failure: T4

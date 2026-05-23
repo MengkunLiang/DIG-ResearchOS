@@ -250,6 +250,7 @@ agents:
     prompt_template: ideation.j2
     structured_outputs:
       ideation/exp_plan.yaml: exp_plan
+      ideation/idea_rationales.json: idea_rationales
     expected_outputs:
       hypothesis_count: 3
       risk_count: 3
