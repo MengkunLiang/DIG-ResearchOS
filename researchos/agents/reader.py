@@ -407,6 +407,11 @@ def _validate_key_results_evidence(note_path: Path, content: str) -> tuple[bool,
             continue
         if stripped.startswith("|---") or stripped.startswith("|==="):
             continue
+        if stripped.endswith(":"):
+            # Treat metric group headings such as
+            # "- **Efficiency (throughput with Llama-3.1-8b)**:" as labels,
+            # not numeric results that need their own evidence marker.
+            continue
 
         line_without_list_marker = re.sub(r"^\s*(?:[-*+]\s*)?(?:\d+[\.)]\s*)?", "", raw_line)
         if not numeric_value.search(line_without_list_marker):

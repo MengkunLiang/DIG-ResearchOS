@@ -292,7 +292,10 @@ def test_validate_note_structure_allows_non_numeric_dataset_names_without_eviden
     note_path.write_text(
         _structured_note("dataset_note").replace(
             "- Accuracy: 88.1 [Evidence: Results section]",
-            "- Dataset: AI2-THOR\n- Representation: 3D scene graph\n- Accuracy: 88.1 [Evidence: Results section]",
+            "- Dataset: AI2-THOR\n"
+            "- Representation: 3D scene graph\n"
+            "- **Efficiency (throughput with Llama-3.1-8b)**:\n"
+            "- Accuracy: 88.1 [Evidence: Results section]",
         ),
         encoding="utf-8",
     )
