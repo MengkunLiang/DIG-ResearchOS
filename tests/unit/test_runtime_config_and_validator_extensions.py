@@ -296,6 +296,189 @@ def test_validate_t4_artifacts_reports_bad_hypothesis_ref(tmp_path: Path):
         ),
         encoding="utf-8",
     )
+    (workspace / "ideation" / "idea_scorecard.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": "1.0",
+                "ideas": [
+                    {
+                        "idea": {
+                            "id": "D1",
+                            "title": "First Hypothesis",
+                            "pitch": "Traceable idea for H1.",
+                            "core_claim": "A measurable mechanism improves the task.",
+                            "target_problem": "The synthesis identifies a testable gap.",
+                        },
+                        "hypothesis_refs": ["H1"],
+                        "source": {
+                            "from_synthesis_section": "synthesis.md: Q1",
+                            "from_missing_area": "missing_areas.md: gap",
+                            "from_seed_idea": False,
+                            "supporting_papers": [
+                                {
+                                    "title": "Paper 1",
+                                    "claim_used": "The synthesis identifies a testable gap.",
+                                }
+                            ],
+                            "trigger_observation": "Existing methods leave the gap open.",
+                        },
+                        "selection_rationale": {
+                            "novelty_reason": "The mechanism is underexplored.",
+                            "feasibility_reason": "A small pilot is enough.",
+                            "impact_reason": "The problem matters.",
+                            "evaluability_reason": "Metrics are clear.",
+                            "paper_story": "Problem, method, and experiment align.",
+                        },
+                        "closest_baselines": [
+                            {
+                                "name": "Baseline",
+                                "similarity": "Same problem.",
+                                "difference": "Different mechanism.",
+                            }
+                        ],
+                        "scores": {
+                            "novelty": 4,
+                            "feasibility": 4,
+                            "impact": 4,
+                            "evaluability": 5,
+                            "differentiation": 3,
+                            "cost": 5,
+                            "paper_shapability": 4,
+                        },
+                        "decision": {
+                            "status": "selected",
+                            "selected_reason": ["clear story"],
+                            "selected_by": "user",
+                            "user_feedback": "select D1",
+                        },
+                        "risks": [
+                            {
+                                "risk": "No gain",
+                                "early_signal": "Pilot fails",
+                                "mitigation": "Run ablation",
+                                "kill_criteria": "No improvement",
+                            }
+                        ],
+                        "minimum_experiment": {
+                            "dataset": "small data",
+                            "baseline": "Baseline",
+                            "metric": ["accuracy"],
+                            "expected_signal": "improvement",
+                            "estimated_cost_usd": 5,
+                        },
+                    },
+                    {
+                        "idea": {
+                            "id": "D2",
+                            "title": "Rejected idea",
+                            "pitch": "Too close to prior work.",
+                            "core_claim": "A weak transfer may work.",
+                            "target_problem": "Weak gap.",
+                        },
+                        "hypothesis_refs": [],
+                        "source": {
+                            "from_synthesis_section": "synthesis.md: Q2",
+                            "from_missing_area": "missing_areas.md: weak gap",
+                            "from_seed_idea": False,
+                            "supporting_papers": [
+                                {
+                                    "title": "Paper 2",
+                                    "claim_used": "Prior work already covers it.",
+                                }
+                            ],
+                            "trigger_observation": "Direct transfer idea.",
+                        },
+                        "selection_rationale": {
+                            "novelty_reason": "Weak novelty.",
+                            "feasibility_reason": "Feasible.",
+                            "impact_reason": "Limited impact.",
+                            "evaluability_reason": "Metrics unclear.",
+                            "paper_story": "Story too thin.",
+                        },
+                        "closest_baselines": [
+                            {
+                                "name": "Paper 2",
+                                "similarity": "Very similar.",
+                                "difference": "Mostly scenario change.",
+                            }
+                        ],
+                        "scores": {
+                            "novelty": 2,
+                            "feasibility": 4,
+                            "impact": 2,
+                            "evaluability": 2,
+                            "differentiation": 2,
+                            "cost": 4,
+                            "paper_shapability": 2,
+                        },
+                        "decision": {
+                            "status": "rejected",
+                            "rejection_reason": ["too close to prior work"],
+                            "can_revisit_if": "Find a stronger mechanism.",
+                        },
+                        "risks": [
+                            {
+                                "risk": "Low novelty",
+                                "early_signal": "High overlap",
+                                "mitigation": "Find differentiation",
+                                "kill_criteria": "Only scenario change",
+                            }
+                        ],
+                        "minimum_experiment": {
+                            "dataset": "small data",
+                            "baseline": "Paper 2",
+                            "metric": ["accuracy"],
+                            "expected_signal": "large improvement",
+                            "estimated_cost_usd": 5,
+                        },
+                    },
+                ],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (workspace / "ideation" / "rejected_ideas.md").write_text(
+        "# Rejected / Deferred Ideas\n\n"
+        "## D2: Rejected idea\n\n"
+        "- **Status**: rejected\n"
+        "- **Why rejected**:\n"
+        "  - too close to prior work\n"
+        "- **Closest existing work**: Paper 2.\n"
+        "- **Missing evidence / metric**: stronger mechanism.\n"
+        "- **Can revisit if**: Find a stronger mechanism.\n"
+        "- **Cheap pilot that was not chosen**: small data is not enough.\n",
+        encoding="utf-8",
+    )
+    (workspace / "ideation" / "gate_decisions.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "decisions": [
+                    {
+                        "gate_id": "T4-DECIDE-1",
+                        "action": "select_direction",
+                        "selected_idea_ids": ["D1"],
+                        "rejected_idea_ids": ["D2"],
+                        "selected_by": "user",
+                        "rationale": ["D1 clearer", "D2 too close"],
+                    },
+                    {
+                        "gate_id": "T4-DECIDE-2",
+                        "action": "confirm_plan",
+                        "selected_idea_ids": ["D1"],
+                        "rejected_idea_ids": [],
+                        "selected_by": "user",
+                        "rationale": ["plan ok"],
+                    },
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     ok, errors = validator.validate_task_artifacts(workspace, "T4")
 

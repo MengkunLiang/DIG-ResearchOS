@@ -1,0 +1,77 @@
+{
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "string"
+    },
+    "decisions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "gate_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "decided_at": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "minLength": 1
+          },
+          "selected_idea_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rejected_idea_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "deferred_idea_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "selected_by": {
+            "type": "string",
+            "minLength": 1
+          },
+          "user_feedback": {
+            "type": "string"
+          },
+          "rationale": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "resulting_artifacts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "gate_id",
+          "action",
+          "selected_idea_ids",
+          "rejected_idea_ids",
+          "selected_by",
+          "rationale"
+        ],
+        "additionalProperties": true
+      }
+    }
+  },
+  "required": ["decisions"],
+  "additionalProperties": true
+}

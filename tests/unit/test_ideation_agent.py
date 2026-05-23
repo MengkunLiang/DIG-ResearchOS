@@ -40,8 +40,213 @@ def ideation_agent():
 
 
 def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) -> None:
-    """写入一份覆盖假设anchor的idea依据记录。"""
+    """写入覆盖假设anchor的idea依据与决策链记录。"""
     refs = refs or ["H1"]
+    scorecard = {
+        "version": "1.0",
+        "ideas": [
+            {
+                "idea": {
+                    "id": "D1",
+                    "title": "测试假设依据",
+                    "pitch": "基于综述缺口提出一个可验证假设。",
+                    "core_claim": "目标机制可以改善可观测指标。",
+                    "target_problem": "现有方法在目标场景下存在明确短板。",
+                },
+                "hypothesis_refs": refs,
+                "source": {
+                    "from_synthesis_section": "literature/synthesis.md: Q1",
+                    "from_missing_area": "missing_areas.md: 需要机制验证",
+                    "from_seed_idea": False,
+                    "derived_from_previous": None,
+                    "supporting_papers": [
+                        {
+                            "title": "Test Paper",
+                            "claim_used": "现有方法在目标约束下存在缺口。",
+                        }
+                    ],
+                    "trigger_observation": "对比表显示基线未覆盖该约束。",
+                },
+                "selection_rationale": {
+                    "novelty_reason": "现有工作没有系统验证该机制。",
+                    "feasibility_reason": "可以用小规模数据和基线先做验证。",
+                    "impact_reason": "该问题影响后续系统可靠性。",
+                    "evaluability_reason": "可以用accuracy和cost指标验证。",
+                    "paper_story": "问题、方法和实验链路清楚。",
+                },
+                "closest_baselines": [
+                    {
+                        "name": "baseline1",
+                        "similarity": "都处理同一目标任务。",
+                        "difference": "本idea强调机制验证和成本约束。",
+                    }
+                ],
+                "scores": {
+                    "novelty": 4,
+                    "feasibility": 4,
+                    "impact": 4,
+                    "evaluability": 5,
+                    "differentiation": 3,
+                    "cost": 5,
+                    "paper_shapability": 4,
+                },
+                "decision": {
+                    "status": "selected",
+                    "selected_reason": [
+                        "和研究问题最一致",
+                        "有清晰baseline和指标",
+                    ],
+                    "selected_by": "user",
+                    "user_feedback": "继续聚焦这个可验证方向。",
+                },
+                "risks": [
+                    {
+                        "risk": "机制收益不明显",
+                        "early_signal": "pilot指标接近baseline",
+                        "mitigation": "增加消融和错误分析",
+                        "kill_criteria": "若不优于简单baseline则停止",
+                    }
+                ],
+                "minimum_experiment": {
+                    "dataset": "test validation set",
+                    "baseline": "baseline1",
+                    "metric": ["accuracy", "cost"],
+                    "expected_signal": "同等成本下accuracy提升",
+                    "estimated_cost_usd": 10.0,
+                },
+            },
+            {
+                "idea": {
+                    "id": "D2",
+                    "title": "被淘汰方向",
+                    "pitch": "把已有方法直接迁移到新场景。",
+                    "core_claim": "简单迁移也许可以提升指标。",
+                    "target_problem": "另一个较弱的问题设定。",
+                },
+                "hypothesis_refs": [],
+                "source": {
+                    "from_synthesis_section": "literature/synthesis.md: Q2",
+                    "from_missing_area": "missing_areas.md: 评价指标不清楚",
+                    "from_seed_idea": False,
+                    "derived_from_previous": None,
+                    "supporting_papers": [
+                        {
+                            "title": "Nearby Paper",
+                            "claim_used": "已有方法已经覆盖主要机制。",
+                        }
+                    ],
+                    "trigger_observation": "该方向来自对一个弱缺口的直接外推。",
+                },
+                "selection_rationale": {
+                    "novelty_reason": "新颖性较弱。",
+                    "feasibility_reason": "实现可行但贡献有限。",
+                    "impact_reason": "影响范围较窄。",
+                    "evaluability_reason": "缺少稳定评价指标。",
+                    "paper_story": "论文故事更像工程迁移。",
+                },
+                "closest_baselines": [
+                    {
+                        "name": "Nearby Paper",
+                        "similarity": "机制和目标都很接近。",
+                        "difference": "差异主要是场景变化。",
+                    }
+                ],
+                "scores": {
+                    "novelty": 2,
+                    "feasibility": 4,
+                    "impact": 2,
+                    "evaluability": 2,
+                    "differentiation": 2,
+                    "cost": 4,
+                    "paper_shapability": 2,
+                },
+                "decision": {
+                    "status": "rejected",
+                    "rejection_reason": [
+                        "和已有工作太接近",
+                        "缺少清晰评价指标",
+                    ],
+                    "can_revisit_if": "如果找到更强的差异化机制和数据集，可以重访。",
+                },
+                "risks": [
+                    {
+                        "risk": "创新性不足",
+                        "early_signal": "T4.5发现高重叠工作",
+                        "mitigation": "重新寻找机制差异",
+                        "kill_criteria": "若差异只剩应用场景变化则放弃",
+                    }
+                ],
+                "minimum_experiment": {
+                    "dataset": "small proxy set",
+                    "baseline": "Nearby Paper",
+                    "metric": ["accuracy"],
+                    "expected_signal": "需要显著优于已有方法",
+                    "estimated_cost_usd": 8.0,
+                },
+            },
+        ],
+    }
+    (workspace / "ideation" / "idea_scorecard.yaml").write_text(
+        yaml.safe_dump(scorecard, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    (workspace / "ideation" / "rejected_ideas.md").write_text(
+        """# Rejected / Deferred Ideas
+
+## D2: 被淘汰方向
+
+- **Status**: rejected
+- **Why rejected**:
+  - 和已有工作太接近，差异主要是应用场景变化。
+  - 缺少清晰评价指标，难以形成完整论文故事。
+- **Closest existing work**: Nearby Paper，机制和目标都很接近。
+- **Missing evidence / metric**: 缺少稳定评价指标和强差异化机制。
+- **Can revisit if**: 如果找到更强的差异化机制和数据集，可以重访。
+- **Cheap pilot that was not chosen**: 小规模proxy set不足以证明新颖贡献。
+""",
+        encoding="utf-8",
+    )
+    (workspace / "ideation" / "gate_decisions.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "decisions": [
+                    {
+                        "gate_id": "T4-DECIDE-1",
+                        "action": "select_direction",
+                        "selected_idea_ids": ["D1"],
+                        "rejected_idea_ids": ["D2"],
+                        "deferred_idea_ids": [],
+                        "selected_by": "user",
+                        "user_feedback": "继续聚焦这个可验证方向。",
+                        "rationale": ["D1更可评估", "D2和已有工作太接近"],
+                        "resulting_artifacts": [
+                            "ideation/idea_scorecard.yaml",
+                            "ideation/rejected_ideas.md",
+                        ],
+                    },
+                    {
+                        "gate_id": "T4-DECIDE-2",
+                        "action": "confirm_plan",
+                        "selected_idea_ids": ["D1"],
+                        "rejected_idea_ids": [],
+                        "deferred_idea_ids": [],
+                        "selected_by": "user",
+                        "user_feedback": "确认计划。",
+                        "rationale": ["实验预算可控", "指标和baseline清楚"],
+                        "resulting_artifacts": [
+                            "ideation/hypotheses.md",
+                            "ideation/exp_plan.yaml",
+                            "ideation/risks.md",
+                        ],
+                    },
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     (workspace / "ideation" / "idea_rationales.json").write_text(
         json.dumps(
             {
@@ -95,6 +300,8 @@ def test_ideation_agent_spec(ideation_agent):
     assert "_runtime/resume/" in spec.allowed_read_prefixes
     assert "ideation/" in spec.allowed_write_prefixes
     assert spec.structured_outputs["ideation/idea_rationales.json"] == "idea_rationales"
+    assert spec.structured_outputs["ideation/idea_scorecard.yaml"] == "idea_scorecard"
+    assert spec.structured_outputs["ideation/gate_decisions.json"] == "gate_decisions"
 
 
 def test_ideation_system_prompt(ideation_agent, temp_workspace):
@@ -318,6 +525,65 @@ def test_validate_outputs_missing_idea_rationales(ideation_agent, temp_workspace
     ok, err = ideation_agent.validate_outputs(ctx)
     assert not ok
     assert "idea_rationales.json" in err
+
+
+def test_validate_outputs_missing_idea_scorecard(ideation_agent, temp_workspace):
+    """测试输出校验（缺少候选idea scorecard）。"""
+    (temp_workspace / "project.yaml").write_text(
+        yaml.dump({"research_direction": "Test", "constraints": {"max_budget_usd": 1000}})
+    )
+    (temp_workspace / "ideation" / "hypotheses.md").write_text(
+        "# 研究假设\n\n## H1: 假设1\n\n" + "内容" * 260
+    )
+    (temp_workspace / "ideation" / "exp_plan.yaml").write_text(
+        yaml.dump(
+            {
+                "goal": "验证假设H1",
+                "experiments": [
+                    {
+                        "id": "exp1",
+                        "name": "Baseline",
+                        "title": "基线实验",
+                        "hypothesis_ref": "#H1",
+                        "datasets": [{"name": "test", "split": "val", "size": 1000}],
+                        "baselines": [{"name": "baseline1", "source": "paper", "why": "standard"}],
+                        "our_method": {
+                            "name": "OurMethod",
+                            "description": "Our approach",
+                            "key_difference": "Different",
+                        },
+                        "metrics": [{"name": "accuracy", "primary": True, "target": 0.8}],
+                        "success_criteria": [
+                            {"metric": "accuracy", "threshold": 0.8, "comparison": ">="}
+                        ],
+                        "steps": [{"step": 1, "action": "Run", "details": "Run experiment"}],
+                        "compute_estimate": {
+                            "gpu_hours": 10,
+                            "gpu_type": "A100",
+                            "estimated_cost_usd": 30,
+                        },
+                        "expected_duration_days": 2,
+                    }
+                ],
+            }
+        )
+    )
+    (temp_workspace / "ideation" / "risks.md").write_text(
+        "## 风险1\n内容\n## 风险2\n内容\n## 风险3\n内容\n"
+    )
+    write_valid_idea_rationales(temp_workspace)
+    (temp_workspace / "ideation" / "idea_scorecard.yaml").unlink()
+
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T4",
+        run_id="test-run-missing-scorecard",
+    )
+
+    ok, err = ideation_agent.validate_outputs(ctx)
+    assert not ok
+    assert "idea_scorecard.yaml" in err
 
 
 def test_validate_outputs_missing_hypothesis_anchor(ideation_agent, temp_workspace):

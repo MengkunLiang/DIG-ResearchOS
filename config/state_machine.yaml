@@ -151,6 +151,9 @@ states:
       exp_plan: ideation/exp_plan.yaml                 # 实验计划
       risks: ideation/risks.md                        # 风险评估
       idea_rationales: ideation/idea_rationales.json  # 每个 idea/假设的生成依据
+      idea_scorecard: ideation/idea_scorecard.yaml    # 所有候选 idea 的证据链和评分
+      rejected_ideas: ideation/rejected_ideas.md      # 被淘汰/暂缓 idea 的人类可读记录
+      gate_decisions: ideation/gate_decisions.json    # Gate 选择、反馈和决策链
     next_on_success: T4.5
     next_on_failure: T4  # 允许失败后重试
 

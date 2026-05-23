@@ -46,11 +46,18 @@
 - **一句话Pitch**: 用一句话说清楚要做什么
 - **对应的Q**: 对应synthesis.md中的哪个问题（Q1/Q2/...）
 - **生成依据**: 说明这个方向来自哪些文献观察、研究缺口、对比表信号或用户seed idea
-- **三维评分**（1-5分）：
+- **核心内容**: 明确 `core_claim` 和 `target_problem`，说明到底想证明什么
+- **最接近已有工作**: 至少列出1-2个 closest baselines，并说明 similarity / difference
+- **七维评分**（1-5分）：
   - Novelty: 创新性（1=增量改进, 5=范式转变）
   - Feasibility: 可行性（1=高风险, 5=确定可行）
   - Impact: 影响力（1=小众, 5=领域突破）
-- **关键风险**: 最大的1-2个风险点
+  - Evaluability: 是否有清晰可跑的指标和数据
+  - Differentiation: 与最接近工作是否有清楚差异
+  - Cost: 低预算可验证程度（5=便宜）
+  - Paper shapability: 能否讲成一篇完整论文故事
+- **最低可行实验**: 每个方向都要有 cheap pilot（dataset / baseline / metric / expected signal / cost）
+- **关键风险和kill criteria**: 最大的1-2个风险点，以及什么时候停止
 
 **重要规则**：
 {% if has_seed_ideas %}
@@ -61,6 +68,7 @@
   - ❌ "+10% accuracy with 100× compute"
   - ❌ 纯数据集tricks（"在新数据集上测试XXX"）
 - 每个方向必须有observable metrics（可测量的成功标准）
+- 每个方向都要能进入 `idea_scorecard.yaml`：即使最后被淘汰，也要保留来源、评分、淘汰原因和可重访条件
 
 ### Step 2.5: Ideation Lenses 审视（多视角深度分析）
 
@@ -148,21 +156,65 @@
   "directions": [
     {
       "id": "D1",
+      "title": "方向标题",
       "pitch": "一句话描述",
+      "core_claim": "这个方向要证明的核心命题",
+      "target_problem": "这个方向解决的具体问题",
       "corresponds_to": "Q1",
       "basis_summary": "来自Q1中关于XXX缺口的观察，以及comparison_table里YYY基线的共同短板",
       "basis_sources": [
         {"type": "synthesis", "ref": "Q1 / [p3]", "claim": "现有方法在长上下文下误差显著上升"},
         {"type": "missing_areas", "ref": "missing_areas.md", "claim": "缺少低预算可验证的机制实验"}
       ],
-      "scores": {"novelty": 4, "feasibility": 3, "impact": 4},
-      "key_risks": ["风险1", "风险2"]
+      "closest_baselines": [
+        {"name": "BaselineA", "similarity": "都解决XXX", "difference": "本方向强调YYY"}
+      ],
+      "scores": {
+        "novelty": 4,
+        "feasibility": 3,
+        "impact": 4,
+        "evaluability": 5,
+        "differentiation": 3,
+        "cost": 4,
+        "paper_shapability": 4
+      },
+      "minimum_experiment": {
+        "dataset": "小规模可控任务",
+        "baseline": "最接近基线",
+        "metric": ["主要指标1", "成本指标"],
+        "expected_signal": "同等成本下主要指标提升X%",
+        "estimated_cost_usd": 10
+      },
+      "key_risks": [
+        {
+          "risk": "风险1",
+          "early_signal": "早期信号",
+          "mitigation": "缓解方案",
+          "kill_criteria": "停止条件"
+        }
+      ]
     },
     ...
   ]
 }
 ```
 这是内部 JSON 文件，可以调用 `write_file` 并把 `content` 传为 JSON 对象；runtime 会自动序列化为 JSON 文本。
+
+### Step 3.5: 初始化 idea scorecard
+根据候选方向写入 `ideation/idea_scorecard.yaml` 的初版。这个文件是T4最重要的证据链/决策链产物之一，必须记录所有候选idea，不只是最后选中的idea。
+
+初版中每个idea必须先填好：
+- `source`: 从哪里来，包括 synthesis section、missing area、seed idea、supporting papers、trigger observation
+- `idea`: 核心内容，包括 id、title、pitch、core_claim、target_problem
+- `selection_rationale`: 为什么它看起来值得做
+- `closest_baselines`: 最相近已有工作，以及 similarity / difference
+- `scores`: 七维评分
+- `risks`: risk、early_signal、mitigation、kill_criteria
+- `minimum_experiment`: cheap pilot
+
+Gate1 和 Gate2 后必须回写 `decision` 字段：
+- 选中：`status: selected`，写 `selected_reason`、`selected_by`、`user_feedback`
+- 淘汰/暂缓/合并：`status: rejected/deferred/merged`，写 `rejection_reason` 和 `can_revisit_if`
 
 ### Step 4: Gate1 - 让用户选择方向
 用 `ask_human` 工具呈现候选方向，格式：
@@ -172,7 +224,10 @@
 
 【方向1】一句话pitch
 - 对应问题: Q1
-- 评分: Novelty=4, Feasibility=3, Impact=4
+- 来源依据: synthesis Q1 / missing_areas / seed idea / supporting papers
+- 最接近工作: BaselineA（相似点 / 差异点）
+- 评分: Novelty=4, Feasibility=3, Impact=4, Evaluability=5, Differentiation=3, Cost=4, PaperShapability=4
+- 最低可行实验: dataset + baseline + metric + estimated_cost
 - 关键风险: ...
 
 【方向2】...
@@ -194,6 +249,10 @@
 - 如果用户提出新想法 → 回Step 3评估新方向，再次ask_human
 - 如果用户要求重新分析 → 回Step 2重新发散
 - 如果用户连续3次拒绝所有方向 → 写入异常消息到 `ideation/_gate1_failed.md` 并 finish_task
+- 每次Gate1后必须更新：
+  - `ideation/idea_scorecard.yaml` 中每个候选的 `decision`
+  - `ideation/rejected_ideas.md` 中被淘汰/暂缓/合并 idea 的可读原因
+  - `ideation/gate_decisions.json` 中 `T4-DECIDE-1` 的 selected / rejected / user_feedback / rationale
 
 ---
 
@@ -294,7 +353,7 @@
 ### Step 5: 展开选定方向
 基于用户选定的方向，展开成详细的研究假设和实验计划。
 
-### Step 6: 产出四个文件
+### Step 6: 产出七个文件
 
 #### 文件1: `ideation/hypotheses.md`
 研究假设文档，每个假设用 `## H1`、`## H2` 等标记anchor（方便exp_plan引用）。
@@ -423,7 +482,174 @@ experiments:
 - 每个实验必须有明确的 `success_criteria`
 - `metrics` 中至少有一个 `primary: true`
 
-#### 文件3: `ideation/idea_rationales.json`
+#### 文件3: `ideation/idea_scorecard.yaml`
+所有候选 idea 的证据链、评分链和决策链，**严格符合** idea_scorecard.schema.json。
+
+**必须使用 write_structured_file 工具生成此文件**：
+```
+write_structured_file(
+    path="ideation/idea_scorecard.yaml",
+    schema_name="idea_scorecard",
+    format="yaml",
+    data={全候选idea评分卡对象}
+)
+```
+
+**格式示例**：
+```yaml
+version: "1.0"
+ideas:
+  - idea:
+      id: "D1"
+      title: "分层长期记忆压缩机制"
+      pitch: "为 LLM Agent 设计一种把交互历史自动压缩成多层记忆的机制"
+      core_claim: "分层压缩比扁平向量检索更能保持长期对话一致性"
+      target_problem: "长期交互中记忆无限增长、冗余和冲突问题"
+    hypothesis_refs: ["H1"]
+    source:
+      from_synthesis_section: "literature/synthesis.md: Q1 长期记忆维护"
+      from_missing_area: "长期记忆压缩缺少稳定评估"
+      from_seed_idea: true
+      derived_from_previous: null
+      supporting_papers:
+        - title: "MemGPT"
+          claim_used: "上下文窗口有限，需要外部记忆管理"
+        - title: "MemoryBank"
+          claim_used: "长期用户记忆对对话一致性有帮助"
+      trigger_observation: "现有方法多关注记忆检索，较少关注分层压缩后的长期维护"
+    selection_rationale:
+      novelty_reason: "现有工作多做存储和检索，较少系统研究自动压缩和分层维护"
+      feasibility_reason: "可以先用小规模多轮对话任务验证，不需要大训练"
+      impact_reason: "长期记忆是 LLM Agent 落地的核心问题"
+      evaluability_reason: "可以用一致性、偏好保持、检索准确率、token成本等指标评估"
+      paper_story: "问题清楚：长期记忆膨胀；方法清楚：分层压缩；实验清楚：长期对话/任务型agent"
+    closest_baselines:
+      - name: "MemGPT"
+        similarity: "都关注超出上下文窗口的记忆管理"
+        difference: "MemGPT更像虚拟上下文管理，本idea关注多层记忆压缩和维护策略"
+    scores:
+      novelty: 4
+      feasibility: 4
+      impact: 4
+      evaluability: 5
+      differentiation: 3
+      cost: 5
+      paper_shapability: 4
+    decision:
+      status: "selected"
+      selected_reason:
+        - "和用户原始兴趣最一致"
+        - "可以在预算内做出初步实验"
+      selected_by: "user"
+      user_feedback: "聚焦长期记忆分层组织与自动压缩"
+    risks:
+      - risk: "压缩后丢失关键信息"
+        early_signal: "长期一致性指标下降"
+        mitigation: "增加重要性评分和冲突检测"
+        kill_criteria: "如果比简单摘要没有显著优势，则放弃"
+    minimum_experiment:
+      dataset: "小规模合成多轮对话任务"
+      baseline: "flat RAG memory / full summary memory"
+      metric: ["preference consistency", "retrieval precision", "token cost"]
+      expected_signal: "同等token成本下一致性提升10%以上"
+      estimated_cost_usd: 10
+
+  - idea:
+      id: "D2"
+      title: "另一个候选方向"
+      pitch: "..."
+      core_claim: "..."
+      target_problem: "..."
+    hypothesis_refs: []
+    source: { ... }
+    selection_rationale: { ... }
+    closest_baselines: [ ... ]
+    scores: {novelty: 2, feasibility: 3, impact: 3, evaluability: 2, differentiation: 2, cost: 4, paper_shapability: 2}
+    decision:
+      status: "rejected"
+      rejection_reason:
+        - "和已有工作太接近"
+        - "缺少清晰评价指标"
+      can_revisit_if: "如果后续找到更好的评估数据集，可以重新考虑"
+    risks: [ ... ]
+    minimum_experiment: { ... }
+```
+
+**关键约束**：
+- 必须记录所有 Gate1 候选 idea，不只是最终选中项
+- 至少一个 `decision.status=selected`
+- 至少一个 `decision.status=rejected/deferred/merged`
+- selected idea 的 `hypothesis_refs` 必须覆盖最终 `hypotheses.md` 中的所有 `H1/H2/...`
+- rejected/deferred/merged idea 必须有 `rejection_reason` 和 `can_revisit_if`
+
+#### 文件4: `ideation/rejected_ideas.md`
+人可读的淘汰/暂缓/合并记录。这个文件用于让用户和下一轮 agent 快速理解“为什么不要再走这条路”。
+
+**格式要求**：
+```markdown
+# Rejected / Deferred Ideas
+
+## D2: [idea标题]
+
+- **Status**: rejected / deferred / merged
+- **Why rejected**:
+  - [原因1：例如和已有工作太接近]
+  - [原因2：例如实验成本太高]
+- **Closest existing work**: [最相近工作及撞车点]
+- **Missing evidence / metric**: [缺少什么依据或评价]
+- **Can revisit if**: [什么条件下可重新考虑]
+- **Cheap pilot that was not chosen**: [最低实验为什么不够好]
+```
+
+#### 文件5: `ideation/gate_decisions.json`
+Gate 决策日志，**严格符合** gate_decisions.schema.json。必须记录 `T4-DECIDE-1` 和 `T4-DECIDE-2`。
+
+**必须使用 write_structured_file 工具生成此文件**：
+```
+write_structured_file(
+    path="ideation/gate_decisions.json",
+    schema_name="gate_decisions",
+    format="json",
+    data={Gate决策对象}
+)
+```
+
+**格式示例**：
+```json
+{
+  "version": "1.0",
+  "decisions": [
+    {
+      "gate_id": "T4-DECIDE-1",
+      "action": "select_direction",
+      "selected_idea_ids": ["D1"],
+      "rejected_idea_ids": ["D2", "D3"],
+      "deferred_idea_ids": [],
+      "selected_by": "user",
+      "user_feedback": "我更想聚焦长期记忆分层组织与自动压缩",
+      "rationale": [
+        "D1与用户原始兴趣最一致",
+        "D1有清晰baseline和指标",
+        "D2与已有工作过近"
+      ],
+      "resulting_artifacts": ["ideation/idea_scorecard.yaml", "ideation/rejected_ideas.md"]
+    },
+    {
+      "gate_id": "T4-DECIDE-2",
+      "action": "confirm_plan",
+      "selected_idea_ids": ["D1"],
+      "rejected_idea_ids": [],
+      "deferred_idea_ids": [],
+      "selected_by": "user",
+      "user_feedback": "确认实验计划",
+      "rationale": ["计划预算可控，指标和baseline清楚"],
+      "resulting_artifacts": ["ideation/hypotheses.md", "ideation/exp_plan.yaml", "ideation/risks.md"]
+    }
+  ]
+}
+```
+
+#### 文件6: `ideation/idea_rationales.json`
 每个最终 idea / hypothesis 的可机器读取依据记录，**严格符合** idea_rationales.schema.json。
 
 **必须使用 write_structured_file 工具生成此文件**：
@@ -474,7 +700,7 @@ write_structured_file(
 - `source` 应尽量指向 `synthesis.md` 的 Q编号、论文标记、`missing_areas.md` 或 `comparison_table.csv`
 - 不确定依据必须标为 `strength: "weak"`，不要伪装成强证据
 
-#### 文件4: `ideation/risks.md`
+#### 文件7: `ideation/risks.md`
 Top 3 风险分析，诚实列出最大的风险。
 
 **格式要求**：
@@ -531,8 +757,11 @@ Top 3 风险分析，诚实列出最大的风险。
 
 文件已写入：
 - ideation/hypotheses.md
-- ideation/idea_rationales.json
 - ideation/exp_plan.yaml
+- ideation/idea_scorecard.yaml
+- ideation/rejected_ideas.md
+- ideation/gate_decisions.json
+- ideation/idea_rationales.json
 - ideation/risks.md
 
 请选择：
@@ -551,6 +780,7 @@ Top 3 风险分析，诚实列出最大的风险。
 - 如果用户要求修改计划 → 修改 exp_plan.yaml → 回Step 7再次确认
 - 如果用户要求修改风险 → 修改 risks.md → 回Step 7再次确认
 - 如果用户要求换方向 → 回阶段A的Step 4（重新呈现候选方向）
+- 每次Gate2后必须更新 `ideation/gate_decisions.json` 中 `T4-DECIDE-2` 的 action / user_feedback / rationale / resulting_artifacts
 
 ---
 
@@ -562,8 +792,13 @@ Top 3 风险分析，诚实列出最大的风险。
 {% endif %}
 - 每个假设必须有**observable metrics**（可测量的成功标准）
 - 每个假设必须有可追溯的**生成依据**，并写入 `ideation/idea_rationales.json`
+- 每个候选idea必须写入 `ideation/idea_scorecard.yaml`，包括来源、核心内容、选择依据、closest baselines、七维评分、决策、风险和最低可行实验
+- 被淘汰/暂缓/合并的idea必须写入 `ideation/rejected_ideas.md`
+- 两轮Gate必须写入 `ideation/gate_decisions.json`
 - exp_plan.yaml 必须**严格符合** exp_plan.schema.json
+- idea_scorecard.yaml 必须**严格符合** idea_scorecard.schema.json
 - idea_rationales.json 必须**严格符合** idea_rationales.schema.json
+- gate_decisions.json 必须**严格符合** gate_decisions.schema.json
 - Top 3风险必须**诚实列出**（不要粉饰太平）
 - 单个实验成本必须 ≤ 预算 × 0.85（留15%缓冲），所有实验总成本必须 ≤ 预算
 
@@ -595,6 +830,9 @@ Top 3 风险分析，诚实列出最大的风险。
 - 所有文件写入 `ideation/` 目录
 - hypotheses.md 必须用 `## H1`、`## H2` 标记anchor
 - idea_rationales.json 必须覆盖所有 `H1/H2/...`，记录每个idea来自哪些文献观察、缺口、seed idea或lens insight
+- idea_scorecard.yaml 必须记录所有候选idea的“从哪里来、为什么值得做、最像谁、为什么不同、为什么选/淘汰、何时停止”
+- rejected_ideas.md 必须解释每个非选中idea为什么被pass，以及什么条件下可以重访
+- gate_decisions.json 必须记录 `T4-DECIDE-1` 和 `T4-DECIDE-2` 的用户反馈、selected/rejected idea ids 和决策理由
 - exp_plan.yaml 的 hypothesis_ref 必须指向存在的anchor
 - risks.md 必须至少3条风险，每条有描述、Early Signal、Mitigation、Kill Criteria
 
@@ -604,6 +842,7 @@ Top 3 风险分析，诚实列出最大的风险。
 - 假设数量
 - 实验数量
 - idea依据记录数量
+- scorecard候选数量、选中数量、淘汰/暂缓数量
 - 总计算成本估算
 
 ---

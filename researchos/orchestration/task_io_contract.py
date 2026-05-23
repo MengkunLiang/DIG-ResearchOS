@@ -104,11 +104,16 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "exp_plan": "ideation/exp_plan.yaml",
             "risks": "ideation/risks.md",
             "idea_rationales": "ideation/idea_rationales.json",
+            "idea_scorecard": "ideation/idea_scorecard.yaml",
+            "rejected_ideas": "ideation/rejected_ideas.md",
+            "gate_decisions": "ideation/gate_decisions.json",
         },
         "required_inputs": ["project", "synthesis"],
         "schemas": {
             "exp_plan": "exp_plan",
             "idea_rationales": "idea_rationales",
+            "idea_scorecard": "idea_scorecard",
+            "gate_decisions": "gate_decisions",
         },
     },
     "T4.5": {

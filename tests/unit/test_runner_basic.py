@@ -137,6 +137,192 @@ def write_valid_t4_artifacts(workspace):
             indent=2,
         )
     )
+    (ideation_dir / "idea_scorecard.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "version": "1.0",
+                "ideas": [
+                    {
+                        "idea": {
+                            "id": "D1",
+                            "title": "假设1依据",
+                            "pitch": "基于综述缺口提出预算内实验假设。",
+                            "core_claim": "目标机制可以改善可观测指标。",
+                            "target_problem": "现有方法在目标约束下存在缺口。",
+                        },
+                        "hypothesis_refs": ["H1"],
+                        "source": {
+                            "from_synthesis_section": "literature/synthesis.md: Q1",
+                            "from_missing_area": "missing_areas.md: 需要验证",
+                            "from_seed_idea": False,
+                            "derived_from_previous": None,
+                            "supporting_papers": [
+                                {
+                                    "title": "Test Paper",
+                                    "claim_used": "现有方法在目标约束下存在缺口。",
+                                }
+                            ],
+                            "trigger_observation": "输入材料共同指向该机制。",
+                        },
+                        "selection_rationale": {
+                            "novelty_reason": "现有工作没有系统验证该机制。",
+                            "feasibility_reason": "可以用小规模实验验证。",
+                            "impact_reason": "该问题影响系统可靠性。",
+                            "evaluability_reason": "指标和baseline清楚。",
+                            "paper_story": "问题、方法和实验链路清楚。",
+                        },
+                        "closest_baselines": [
+                            {
+                                "name": "baseline1",
+                                "similarity": "都处理目标任务。",
+                                "difference": "本idea强调机制验证。",
+                            }
+                        ],
+                        "scores": {
+                            "novelty": 4,
+                            "feasibility": 4,
+                            "impact": 4,
+                            "evaluability": 5,
+                            "differentiation": 3,
+                            "cost": 5,
+                            "paper_shapability": 4,
+                        },
+                        "decision": {
+                            "status": "selected",
+                            "selected_reason": ["预算内", "指标清楚"],
+                            "selected_by": "user",
+                            "user_feedback": "确认该方向。",
+                        },
+                        "risks": [
+                            {
+                                "risk": "机制收益不明显",
+                                "early_signal": "pilot接近baseline",
+                                "mitigation": "增加消融",
+                                "kill_criteria": "不优于baseline则停止",
+                            }
+                        ],
+                        "minimum_experiment": {
+                            "dataset": "test validation set",
+                            "baseline": "baseline1",
+                            "metric": ["accuracy", "cost"],
+                            "expected_signal": "同等成本下accuracy提升",
+                            "estimated_cost_usd": 10.0,
+                        },
+                    },
+                    {
+                        "idea": {
+                            "id": "D2",
+                            "title": "被淘汰方向",
+                            "pitch": "直接迁移已有方法。",
+                            "core_claim": "简单迁移可能提升指标。",
+                            "target_problem": "较弱问题设定。",
+                        },
+                        "hypothesis_refs": [],
+                        "source": {
+                            "from_synthesis_section": "literature/synthesis.md: Q2",
+                            "from_missing_area": "missing_areas.md: 指标不清",
+                            "from_seed_idea": False,
+                            "derived_from_previous": None,
+                            "supporting_papers": [
+                                {
+                                    "title": "Nearby Paper",
+                                    "claim_used": "已有方法覆盖主要机制。",
+                                }
+                            ],
+                            "trigger_observation": "弱缺口直接外推。",
+                        },
+                        "selection_rationale": {
+                            "novelty_reason": "新颖性弱。",
+                            "feasibility_reason": "可做但贡献有限。",
+                            "impact_reason": "影响范围窄。",
+                            "evaluability_reason": "评价指标不清。",
+                            "paper_story": "论文故事不足。",
+                        },
+                        "closest_baselines": [
+                            {
+                                "name": "Nearby Paper",
+                                "similarity": "机制和目标接近。",
+                                "difference": "差异主要是场景变化。",
+                            }
+                        ],
+                        "scores": {
+                            "novelty": 2,
+                            "feasibility": 4,
+                            "impact": 2,
+                            "evaluability": 2,
+                            "differentiation": 2,
+                            "cost": 4,
+                            "paper_shapability": 2,
+                        },
+                        "decision": {
+                            "status": "rejected",
+                            "rejection_reason": ["和已有工作太接近"],
+                            "can_revisit_if": "找到更强差异化机制。",
+                        },
+                        "risks": [
+                            {
+                                "risk": "创新性不足",
+                                "early_signal": "高重叠工作",
+                                "mitigation": "寻找机制差异",
+                                "kill_criteria": "只有场景变化则放弃",
+                            }
+                        ],
+                        "minimum_experiment": {
+                            "dataset": "small proxy set",
+                            "baseline": "Nearby Paper",
+                            "metric": ["accuracy"],
+                            "expected_signal": "需要显著优于已有方法",
+                            "estimated_cost_usd": 8.0,
+                        },
+                    },
+                ],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        )
+    )
+    (ideation_dir / "rejected_ideas.md").write_text(
+        "# Rejected / Deferred Ideas\n\n"
+        "## D2: 被淘汰方向\n\n"
+        "- **Status**: rejected\n"
+        "- **Why rejected**:\n"
+        "  - 和已有工作太接近。\n"
+        "- **Closest existing work**: Nearby Paper。\n"
+        "- **Missing evidence / metric**: 缺少强差异化机制。\n"
+        "- **Can revisit if**: 找到更强差异化机制。\n"
+        "- **Cheap pilot that was not chosen**: proxy实验不足以证明贡献。\n"
+    )
+    (ideation_dir / "gate_decisions.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "decisions": [
+                    {
+                        "gate_id": "T4-DECIDE-1",
+                        "action": "select_direction",
+                        "selected_idea_ids": ["D1"],
+                        "rejected_idea_ids": ["D2"],
+                        "deferred_idea_ids": [],
+                        "selected_by": "user",
+                        "user_feedback": "确认该方向。",
+                        "rationale": ["D1预算内且指标清楚", "D2和已有工作太接近"],
+                    },
+                    {
+                        "gate_id": "T4-DECIDE-2",
+                        "action": "confirm_plan",
+                        "selected_idea_ids": ["D1"],
+                        "rejected_idea_ids": [],
+                        "deferred_idea_ids": [],
+                        "selected_by": "user",
+                        "user_feedback": "确认计划。",
+                        "rationale": ["实验预算可控"],
+                    },
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
 
 
 @pytest.fixture

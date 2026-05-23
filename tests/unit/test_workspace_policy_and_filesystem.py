@@ -40,6 +40,24 @@ async def test_write_file_rejects_structured_idea_rationales(tmp_workspace):
 
 
 @pytest.mark.asyncio
+async def test_write_file_rejects_structured_idea_scorecard_and_gate_decisions(tmp_workspace):
+    policy = WorkspaceAccessPolicy(tmp_workspace, [""], ["ideation/"])
+    tool = WriteFileTool(policy)
+
+    scorecard = await tool.execute(path="ideation/idea_scorecard.yaml", content={"ideas": []})
+    gates = await tool.execute(path="ideation/gate_decisions.json", content={"decisions": []})
+
+    assert not scorecard.ok
+    assert scorecard.error == "structured_output_requires_write_structured_file"
+    assert "schema_name='idea_scorecard'" in scorecard.content
+    assert "format='yaml'" in scorecard.content
+    assert not gates.ok
+    assert gates.error == "structured_output_requires_write_structured_file"
+    assert "schema_name='gate_decisions'" in gates.content
+    assert "format='json'" in gates.content
+
+
+@pytest.mark.asyncio
 async def test_write_file_rejects_structured_pilot_outputs(tmp_workspace):
     policy = WorkspaceAccessPolicy(tmp_workspace, [""], ["pilot/"])
     tool = WriteFileTool(policy)

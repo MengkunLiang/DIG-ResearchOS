@@ -284,6 +284,9 @@ states:
       hypotheses: ideation/hypotheses.md
       exp_plan: ideation/exp_plan.yaml
       idea_rationales: ideation/idea_rationales.json
+      idea_scorecard: ideation/idea_scorecard.yaml
+      rejected_ideas: ideation/rejected_ideas.md
+      gate_decisions: ideation/gate_decisions.json
       risks: ideation/risks.md
     next_on_success: T4.5
     next_on_failure: T4

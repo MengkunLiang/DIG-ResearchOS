@@ -395,7 +395,7 @@ python -m researchos.cli run-task T8-WRITE \
 | `T2` | 候选池、verified 池、deep-read 队列都落盘 | `papers_dedup.jsonl`, `papers_verified.jsonl`, `deep_read_queue.jsonl`, `access_audit.md` |
 | `T3` | note/table/bib 同步增长且支持续跑 | `paper_notes/`, `comparison_table.csv`, `related_work.bib`, `deep_read_queue_pending.jsonl` |
 | `T3.5` | synthesis 结构完整 | `literature/synthesis.md` |
-| `T4` | hypotheses / exp_plan / idea_rationales / risks 成对齐 | `ideation/hypotheses.md`, `ideation/exp_plan.yaml`, `ideation/idea_rationales.json`, `ideation/risks.md` |
+| `T4` | hypotheses / exp_plan / idea scorecard / gate decisions / risks 成对齐 | `ideation/hypotheses.md`, `ideation/exp_plan.yaml`, `ideation/idea_scorecard.yaml`, `ideation/rejected_ideas.md`, `ideation/gate_decisions.json`, `ideation/idea_rationales.json`, `ideation/risks.md` |
 | `T4.5` | novelty audit 生成 | `ideation/novelty_audit.md` |
 | `T5` | pilot code 和结果完整 | `pilot/pilot_code/`, `pilot/pilot_results.json`, `pilot/motivation_validation.md` |
 | `T6` | novelty report / collision / baselines 三件套完整 | `novelty/novelty_report.md`, `collision_cases.md`, `must_add_baselines.md` |
