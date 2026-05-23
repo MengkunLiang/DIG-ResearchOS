@@ -227,8 +227,8 @@ agents:
       endpoint: siliconflow
       max_context: 128000
       temperature: 0.75
-    max_steps: 60
-    max_tokens_total: 200000
+    max_steps: 150
+    max_tokens_total: 2000000
 ```
 
 建议：

@@ -156,7 +156,7 @@ def test_validate_outputs_success(ideation_agent, temp_workspace):
                 "id": "exp1",
                 "name": "Baseline",
                 "title": "基线实验",
-                "hypothesis_ref": "#H1",
+                "hypothesis_ref": "#H1,#H2",
                 "datasets": [{"name": "test", "split": "val", "size": 1000}],
                 "baselines": [{"name": "baseline1", "source": "paper", "why": "standard"}],
                 "our_method": {

@@ -229,7 +229,7 @@ agents:
       tier: heavy
       temperature: 0.75
     max_steps: 150
-    max_tokens_total: 500000
+    max_tokens_total: 2000000
     max_wall_seconds: 1200
     max_validation_retries: 10
     tool_names:

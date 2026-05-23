@@ -324,9 +324,14 @@ class ReaderAgent(Agent):
         if len(content) < 2000:
             return False, f"synthesis.md过短({len(content)}字符)，可能没有认真综合"
 
-        # 检查是否有论文ID引用（至少应该引用一些论文）
+        # 检查是否有论文ID引用（至少应该引用一些论文）。
+        # 真实 paper_notes ID 可能包含点号、连字符或斜杠，如 [arxiv_2507.07957]。
         import re
-        paper_refs = re.findall(r'\[[\w_:]+\]', content)
+        paper_refs = re.findall(
+            r'\[(?:arxiv|doi|paper|10\.)[A-Za-z0-9_:.\/-]+\]',
+            content,
+            flags=re.IGNORECASE,
+        )
         if len(paper_refs) < 5:
             return False, f"synthesis.md中论文引用过少({len(paper_refs)}个)，应该引用更多paper_notes中的论文"
 

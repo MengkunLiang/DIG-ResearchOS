@@ -494,6 +494,47 @@ def test_validate_outputs_synthesize_mode_success(reader_agent, temp_workspace):
     assert ok, f"Validation failed: {err}"
 
 
+def test_validate_outputs_synthesize_mode_accepts_real_paper_ids(reader_agent, temp_workspace):
+    """测试synthesize模式接受真实paper_notes风格的带点号论文ID。"""
+    syn_path = temp_workspace / "literature" / "synthesis.md"
+    refs = (
+        "[arxiv_2507.07957] [arxiv_2604.07798] [10.2139_ssrn.6616122] "
+        "[10.5281_zenodo.19425474] [doi_10.1145/3626772.3657844]"
+    )
+    synthesis_content = f"""# 文献综述
+
+## 方法家族分类
+这些方法可以分为分层记忆、多智能体记忆和轻量化记忆三类，代表论文包括 {refs}。
+
+## 共同假设
+共同假设包括长期状态可外化、检索质量决定推理质量、以及压缩会带来信息损失。
+
+## 性能-效率前沿
+性能-效率前沿显示，高准确率系统通常需要更复杂的路由和更高的运行成本。
+
+## 技术趋势
+技术趋势包括分层化、轻量化、无状态企业部署和显式可审计记忆。
+
+## 可操作研究问题
+可操作研究问题包括如何统一分层记忆结构、如何控制跨会话记忆漂移、以及如何评估长期用户偏好。
+
+{refs}
+""" + "这是一段用于满足长度校验的综合分析。" * 160
+
+    syn_path.write_text(synthesis_content)
+
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T3.5",
+        run_id="test-run-1",
+        mode="synthesize",
+    )
+
+    ok, err = reader_agent.validate_outputs(ctx)
+    assert ok, f"Validation failed: {err}"
+
+
 def test_validate_outputs_synthesize_mode_missing_sections(reader_agent, temp_workspace):
     """测试synthesize模式输出校验（缺少章节）。"""
     # 创建synthesis.md，但缺少某些章节

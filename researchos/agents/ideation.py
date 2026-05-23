@@ -127,11 +127,22 @@ class IdeationAgent(Agent):
         # 检查hypothesis_ref引用
         for i, exp in enumerate(experiments):
             if "hypothesis_ref" in exp:
-                ref = exp["hypothesis_ref"].strip()
-                # 移除可能的 # 前缀，并转为大写
-                ref_normalized = ref.lstrip("#").strip().upper()
-                if ref_normalized not in anchor_set:
-                    return False, f"实验{i+1}的hypothesis_ref '{ref}' 不存在于hypotheses.md中（可用: {anchor_set}）"
+                raw_ref = exp["hypothesis_ref"]
+                if isinstance(raw_ref, (list, tuple)):
+                    refs = [str(ref).strip() for ref in raw_ref if str(ref).strip()]
+                else:
+                    refs = [
+                        ref.strip()
+                        for ref in re.split(r"[,;，、\s]+", str(raw_ref))
+                        if ref.strip()
+                    ]
+                if not refs:
+                    return False, f"实验{i+1}的hypothesis_ref 为空"
+                for ref in refs:
+                    # 移除可能的 # 前缀，并转为大写
+                    ref_normalized = ref.lstrip("#").strip().upper()
+                    if ref_normalized not in anchor_set:
+                        return False, f"实验{i+1}的hypothesis_ref '{ref}' 不存在于hypotheses.md中（可用: {anchor_set}）"
 
         risks_text = read_text_file(ws / "ideation" / "risks.md")
         risk_markers = risks_text.count("## 风险") + risks_text.count("## Risk")
