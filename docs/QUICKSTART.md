@@ -291,6 +291,13 @@ researchos run-skill deepxiv "summarize recent memory papers for llm agents"
 - `workspace/local-test2/literature/paper_notes/`
 - `workspace/local-test2/literature/comparison_table.csv`
 - `workspace/local-test2/literature/related_work.bib`
+- `workspace/local-test2/literature/deep_read_queue_pending.jsonl`
+
+每篇 `paper_notes/*.md` 还应该包含 `## 12. Reading Coverage`。如果 note 标为 `[FULL-TEXT]`，重点检查：
+
+- `Pages read` 是否覆盖完整页码，例如 `1-12 / 12`
+- `Truncation` 是否为 `none`
+- 如果 PDF 可得但只读了部分页，应标为 `[PARTIAL-TEXT]`，不能标为 `[FULL-TEXT]`
 
 ### 5.4 如果 T5/T7 已经跑了
 

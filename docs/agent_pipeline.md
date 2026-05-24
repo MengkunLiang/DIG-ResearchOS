@@ -907,7 +907,7 @@ researchos resume --workspace ./workspace/local-test2
 
 | 输出 key | 文件 | 含义 |
 | --- | --- | --- |
-| `paper_notes_dir` | `literature/paper_notes/` | 每篇论文一份结构化笔记 |
+| `paper_notes_dir` | `literature/paper_notes/` | 每篇论文一份结构化笔记；包含 `Reading Coverage` 阅读覆盖记录 |
 | `comparison_table` | `literature/comparison_table.csv` | 方法、指标、结论的横向对比表 |
 | `related_work_bib` | `literature/related_work.bib` | BibTeX 引用库 |
 
@@ -966,20 +966,49 @@ seed papers 是最高优先级，不是普通候选。
 对每篇论文，典型流程是：
 
 1. 看是否已有 note
-2. 若已有，优先跳过或只补 table/bib
+2. 若已有且结构、证据锚点、`Reading Coverage` 都合格，才跳过或只补 table/bib
 3. 若无本地 PDF，尝试 `fetch_paper_pdf`
-4. 先尝试 `extract_paper_sections`
-5. 如果 section 质量差，再回退到 `extract_pdf_text`
-6. 如果连全文都拿不到，再退化成 `ABSTRACT_ONLY`
+4. 只要本地存在 PDF 或下载成功，就用 `extract_pdf_text` 读到 `total_pages` 的最后一页
+5. 如果一次读取被 `max_chars` 或 runtime 截断，就缩小页码范围分块重读，直到覆盖 `1-total_pages`
+6. 如果 PDF 可得但只完成部分页面，note 必须标为 `[PARTIAL-TEXT]`
+7. 如果连全文都拿不到，再退化成 `[ABSTRACT-ONLY]`
 
-### 为什么不是永远直接读全文
+### T3 如何判定 FULL-TEXT
 
-因为 section 级提取有两个工程优势：
+`[FULL-TEXT]` 不是“拿到过 PDF”或“读了足够多内容”的意思。
 
-- token 更省
-- 噪声更少
+当前判定标准是：
 
-但如果 section 抽得脏，当前 Reader 已支持回退全文。
+- `extract_pdf_text` 的页码覆盖必须到最后一页
+- note 的 `## 12. Reading Coverage` 必须写清楚 `Pages read`，例如 `1-12 / 12`
+- `Truncation` 必须明确为 `none` / `无`
+- 若只读了 `1-8 / 20`，或者某个分块被截断，只能标为 `[PARTIAL-TEXT]`
+
+`extract_paper_sections` 仍然可以作为定位方法、实验、结论的辅助工具，但不能代替全文覆盖。
+
+### paper note 的 Reading Coverage
+
+每篇 note 现在必须包含：
+
+```markdown
+## 12. Reading Coverage
+- **PDF source**: literature/pdfs/{id}.pdf
+- **Pages read**: 1-12 / 12
+- **Extraction calls**: extract_pdf_text pages 1-8, 9-12
+- **Truncation**: none
+- **Status rationale**: All PDF pages were read without truncation.
+```
+
+如果没有 PDF：
+
+```markdown
+## 12. Reading Coverage
+- **PDF source**: not available
+- **Pages read**: 0 / unknown
+- **Extraction calls**: none
+- **Truncation**: none
+- **Status rationale**: PDF was not available; note is based on abstract and metadata.
+```
 
 ### T3 当前的恢复机制
 
@@ -987,8 +1016,9 @@ seed papers 是最高优先级，不是普通候选。
 
 核心行为：
 
-- 根据已有 `paper_notes/` 自动裁出 `deep_read_queue_pending.jsonl`
+- 根据已有且通过结构校验的 `paper_notes/` 自动裁出 `deep_read_queue_pending.jsonl`
 - 重新跑时优先读取 pending queue
+- 缺少 `Reading Coverage`、`[FULL-TEXT]` 页码不完整、或截断未说明为 `none` 的旧 note，不会被视为已完成
 - 不再默认把整个 `papers_dedup` 当作“必须重读”的任务池
 
 ### `comparison_table.csv` 有什么用
@@ -1012,6 +1042,8 @@ T8/T9 会直接消费它，而不是重新从 note 手工抽引用。
 
 - `paper_notes/` 存在
 - note 结构合理
+- 每篇 note 包含 `## 12. Reading Coverage`
+- `[FULL-TEXT]` note 必须记录完整页码覆盖和无截断
 - 如果 queue 存在，则至少完成 queue 中的 `deep_read_min`
 - queue 中 seed papers 必须覆盖
 - `comparison_table.csv` 存在

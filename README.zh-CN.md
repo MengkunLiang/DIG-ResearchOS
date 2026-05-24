@@ -60,6 +60,7 @@ T1
 - 多阶段断点恢复
 - artifact 校验
 - T4 假设生成会同时落盘 `ideation/idea_scorecard.yaml`、`ideation/rejected_ideas.md`、`ideation/gate_decisions.json` 和 `ideation/idea_rationales.json`，记录每个 idea 的证据链和决策链
+- T3 论文阅读会在每篇 `paper_notes/*.md` 中记录 `## 12. Reading Coverage`；PDF 可用时必须覆盖到最后一页，只有完整页码覆盖且无截断时才能标记 `[FULL-TEXT]`
 - LLM profile / tier / fallback / retry
 - human gate
 - skill 发现与 `run-skill`
@@ -381,7 +382,7 @@ ResearchOS 可以加载 MCP server 配置，并把 MCP tool 暴露给 agent。
 
 当前多个关键阶段都有恢复逻辑。例如：
 
-- T3 会基于已有 note 重建 pending deep-read queue
+- T3 会基于已有且结构合格的 note 重建 pending deep-read queue；缺少 `Reading Coverage` 或 `[FULL-TEXT]` 页码不完整的旧 note 会继续留在待处理队列中
 - T5 / T7 会基于已有实验产物重建 resume state
 - T7.5 / T8 / T9 会优先复用现有产物，而不是假装它们不存在
 

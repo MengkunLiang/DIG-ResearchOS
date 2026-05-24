@@ -359,7 +359,7 @@ Typical behavior:
 
 Many stages now support task-specific recovery. For example:
 
-- T3 rebuilds a pending deep-read queue from existing notes
+- T3 rebuilds a pending deep-read queue from structurally valid notes; stale notes without `Reading Coverage` remain pending
 - T5 / T7 rebuild resume state from existing experiment artifacts
 - T7.5 / T8 / T9 reuse existing outputs instead of pretending they do not exist
 

@@ -376,7 +376,7 @@ python -m researchos.cli run-task T8-WRITE \
 
 - `HELLO`：验证 runtime 最小闭环
 - `T2`：验证搜索、去重、verification 和队列生成
-- `T3`：验证 PDF 获取、section/full-text 回退、续跑
+- `T3`：验证 PDF 获取、全文覆盖、Reading Coverage 和续跑
 - `T5/T7`：验证实验恢复、预算 gate、Docker
 - `T7.5`：验证 PI 评估与 `next_task`
 - `T8-REVIEW-1/2`：验证 reviewer 逻辑
@@ -393,7 +393,7 @@ python -m researchos.cli run-task T8-WRITE \
 | `HELLO` | runtime 最小闭环 | `hello.txt` |
 | `T1` | `project.yaml` 合法且信息完整 | `project.yaml`, `state.yaml` |
 | `T2` | 候选池、verified 池、deep-read 队列都落盘 | `papers_dedup.jsonl`, `papers_verified.jsonl`, `deep_read_queue.jsonl`, `access_audit.md` |
-| `T3` | note/table/bib 同步增长且支持续跑 | `paper_notes/`, `comparison_table.csv`, `related_work.bib`, `deep_read_queue_pending.jsonl` |
+| `T3` | note/table/bib 同步增长、PDF 可用时全文覆盖、且支持续跑 | `paper_notes/`, `comparison_table.csv`, `related_work.bib`, `deep_read_queue_pending.jsonl` |
 | `T3.5` | synthesis 结构完整 | `literature/synthesis.md` |
 | `T4` | hypotheses / exp_plan / idea scorecard / gate decisions / risks 成对齐 | `ideation/hypotheses.md`, `ideation/exp_plan.yaml`, `ideation/idea_scorecard.yaml`, `ideation/rejected_ideas.md`, `ideation/gate_decisions.json`, `ideation/idea_rationales.json`, `ideation/risks.md` |
 | `T4.5` | novelty audit 生成 | `ideation/novelty_audit.md` |
@@ -416,8 +416,10 @@ python -m researchos.cli run-task T8-WRITE \
 
 ### 7.2 T3 重点看什么
 
-- 是否优先复用已有 `paper_notes`
+- 是否只复用结构合格的已有 `paper_notes`
 - 是否正确生成 `deep_read_queue_pending.jsonl`
+- PDF 可用的 note 是否包含 `## 12. Reading Coverage`
+- `[FULL-TEXT]` note 的 `Pages read` 是否类似 `1-N / N`，且 `Truncation` 为 `none`
 - `comparison_table.csv` 是否持续可追加
 - `related_work.bib` 是否没有粘连/损坏
 
