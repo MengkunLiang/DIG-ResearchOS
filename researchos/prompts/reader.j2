@@ -110,6 +110,7 @@
 {% if resume_mode or existing_note_count > 0 %}
 - **恢复运行优先**：先扫描 `literature/paper_notes/` 现有文件，建立“已完成论文ID集合”
 - **恢复时先修质量**：如果已有 note 的 `Key Results` 中存在包含数字但同一行没有 `[Evidence: ...]` 的结果，必须先修订该 note；这种 note 不能视为已完成
+- **恢复时先补阅读覆盖**：如果已有 note 缺少 `## 12. Reading Coverage`，或 `[FULL-TEXT]` note 没有记录完整页码覆盖与 `Truncation: none`，必须先修订；这种 note 不能视为已完成
 - **先做账目对齐**：如果已有笔记对应的 `comparison_table.csv` 行或 `related_work.bib` 条目缺失，先补齐这些缺口
 - **只补未完成论文**：如果某篇论文的规范化ID已经有对应 `.md` 笔记，则直接跳过，不要重写
 - **避免重复追加**：不要为已完成论文重复写入 `comparison_table.csv` 或 `related_work.bib`
@@ -127,9 +128,13 @@
      - 例如：`arxiv:2301.12345` → 文件名使用 `arxiv_2301.12345.pdf`
      - 例如：`doi:10.1234/5678` → 文件名使用 `doi_10.1234_5678.pdf`
    - 优先检查 `literature/pdfs/{normalized_id}.pdf` 是否存在
-   - 如果存在，优先使用 `extract_pdf_text` 阅读全文；长论文按页/字符分块读取，直到覆盖完整论文或已足以形成高质量笔记
-   - 推荐分块方式：`extract_pdf_text(pdf_path=..., start_page=1, max_pages=5-10, max_chars=50000)`，然后按 `start_page` 继续读取后续页面
+   - 如果存在，必须使用 `extract_pdf_text` 覆盖 PDF 的全部页面；不能只读前几页或“足以写笔记”的章节就停止
+   - `extract_pdf_text` 返回开头会包含 `total_pages`、`extracted_page_range`、`preview_truncated_by_max_chars`、`complete_pdf_read` 等覆盖信息
+   - 短论文可一次读取：`extract_pdf_text(pdf_path=..., start_page=1, max_pages=null, max_chars=50000)`；只有当 `complete_pdf_read=true` 且未被 runtime 截断时，才可标记 **[FULL-TEXT]**
+   - 长论文必须按页分块读取到最后一页：例如 `start_page=1, max_pages=8`，再根据 `total_pages` 和 `next_start_page` 继续读 `9, 17, ...`，直到覆盖 `1-total_pages`
+   - 如果任一分块出现 `preview_truncated_by_max_chars=true` 或 runtime 截断提示，必须缩小 `max_pages` 重读该范围；否则该范围不能算作已全文阅读
    - 如果需要快速定位 abstract/method/results 等位置，可以辅助调用 `extract_paper_sections`，但不要把它作为默认阅读路径
+   - 如果 PDF 可获取但只完成了部分页面或存在截断，Status 必须标为 **[PARTIAL-TEXT]**，并在 Reading Coverage 说明缺口
    - 如果全文无法获取或 PDF 解析失败，再基于 abstract 和 metadata 写保守笔记，并在 Status 中明确标注
    - 如果不存在，尝试使用 `fetch_paper_pdf` 下载（传入原始ID，如 `arxiv:2301.12345`、`10.1234/xxxx`、`W1234567890`）
      - `fetch_paper_pdf` 优先支持 arXiv，同时也会尝试从 OpenAlex 的开放获取位置、DOI 跳转链接里寻找 PDF
@@ -139,9 +144,9 @@
 8. 仅为这篇“新完成的论文”追加一行到 `literature/comparison_table.csv`
 9. 仅为这篇“新完成的论文”追加一条到 `literature/related_work.bib`
 
-## paper_note.md 模板（11项checklist）
+## paper_note.md 模板（12项checklist）
 
-每篇笔记必须包含以下11个部分：
+每篇笔记必须包含以下12个部分：
 
 ```markdown
 # {title}
@@ -204,6 +209,13 @@
 ## 11. My Questions
 {阅读时产生的疑问，传递给T3.5综合阶段}
 - ...
+
+## 12. Reading Coverage
+- **PDF source**: {PDF路径；如果没有PDF，写 not available}
+- **Pages read**: {例如 `1-12 / 12`；如果只读了部分，写 `1-8 / 20`；如果无PDF，写 `0 / unknown`}
+- **Extraction calls**: {列出用过的 extract_pdf_text 调用范围，例如 `1-8, 9-16, 17-20`}
+- **Truncation**: {FULL-TEXT 必须是 `none`；如果有工具或 runtime 截断，写具体范围}
+- **Status rationale**: {为什么是 FULL-TEXT / PARTIAL-TEXT / ABSTRACT-ONLY}
 ```
 
 ## comparison_table.csv 结构
@@ -238,16 +250,17 @@ arxiv:2301.12345,Efficient Transformers,2023,ICML,Attention Optimization,ImageNe
 1. **禁止编造数据**：如果PDF读不到，只基于abstract写笔记，并在Status字段标注 **[ABSTRACT-ONLY]**
 2. **verified 论文优先**：如果 `papers_verified.jsonl` 存在，优先从 verified 池和 queue 里读取；不要默认消费未核验 dedup 论文
 3. **单篇 metadata 查询**：需要论文详情时调用 `lookup_paper_record`；除非 queue 文件不存在且没有其他选择，不要读取完整 `papers_verified.jsonl` 或 `papers_dedup.jsonl`
-4. **优先全文阅读**：PDF 可用时默认调用 `extract_pdf_text`，按页/字符分块覆盖完整论文；不要只读核心章节就结束
-5. **section 只作辅助定位**：`extract_paper_sections` 可用于快速找方法、实验、结论等位置，但最终笔记应基于全文或明确标注为部分阅读
-6. **数字必须具体**：不能写"显著提升"、"大幅改进"，必须写具体数值
-7. **数字必须有证据锚点**：`Key Results` 中每一条包含数字的 bullet/表格行，必须在同一行包含精确格式 `[Evidence: ...]`；全文可写 `[Evidence: p.3]` / `[Evidence: Section 4.2]`，摘要笔记可写 `[Evidence: Abstract]`；没有证据就不要写成确定性数字
-8. **每篇读完立即写note**：写完 note 后只保留这篇论文的 ID/状态/一行表格信息，不要在回复中复述大段论文内容，避免token爆炸
-9. **容错处理**：如果个别论文处理失败（PDF损坏、格式异常等），记录错误但继续处理下一篇
-10. **ID规范化**：论文ID中的特殊字符（如 `:` `/`）在文件名中替换为 `_`
-11. **恢复时禁止覆盖合格笔记**：如果已存在同名 `paper_notes/{normalized_id}.md` 且结构完整、Key Results 数字均带 `[Evidence: ...]`，视为该论文已完成，不要重写；若证据格式不合格，应只修订该 note 的格式和证据锚点
-12. **恢复时禁止重复追加**：已有论文不要再次写入 comparison_table / BibTeX，避免重复行和重复引用
-13. **种子论文必须优先**：在同等情况下，seed papers 优先于普通高分论文；如果 seed paper 没进入 dedup，必须把它视为上游召回问题而不是直接忽略
+4. **PDF可用必须全文覆盖**：只要本地存在 PDF 或 `fetch_paper_pdf` 下载成功，就必须用 `extract_pdf_text` 读到 `total_pages` 的最后一页；不能只读前 8-10 页
+5. **FULL-TEXT判定要严格**：只有所有页面都读过且没有 `preview_truncated_by_max_chars=true` / runtime 截断时，Status 才能写 **[FULL-TEXT]**；否则写 **[PARTIAL-TEXT]**
+6. **section 只作辅助定位**：`extract_paper_sections` 可用于快速找方法、实验、结论等位置，但最终笔记应基于全文或明确标注为部分阅读
+7. **数字必须具体**：不能写"显著提升"、"大幅改进"，必须写具体数值
+8. **数字必须有证据锚点**：`Key Results` 中每一条包含数字的 bullet/表格行，必须在同一行包含精确格式 `[Evidence: ...]`；全文可写 `[Evidence: p.3]` / `[Evidence: Section 4.2]`，摘要笔记可写 `[Evidence: Abstract]`；没有证据就不要写成确定性数字
+9. **每篇读完立即写note**：写完 note 后只保留这篇论文的 ID/状态/一行表格信息，不要在回复中复述大段论文内容，避免token爆炸
+10. **容错处理**：如果个别论文处理失败（PDF损坏、格式异常等），记录错误但继续处理下一篇
+11. **ID规范化**：论文ID中的特殊字符（如 `:` `/`）在文件名中替换为 `_`
+12. **恢复时禁止覆盖合格笔记**：如果已存在同名 `paper_notes/{normalized_id}.md` 且结构完整、Key Results 数字均带 `[Evidence: ...]`、Reading Coverage 合格，视为该论文已完成，不要重写；若证据格式或阅读覆盖记录不合格，应只修订该 note 的格式和证据锚点
+13. **恢复时禁止重复追加**：已有论文不要再次写入 comparison_table / BibTeX，避免重复行和重复引用
+14. **种子论文必须优先**：在同等情况下，seed papers 优先于普通高分论文；如果 seed paper 没进入 dedup，必须把它视为上游召回问题而不是直接忽略
 
 ## 完成标准
 

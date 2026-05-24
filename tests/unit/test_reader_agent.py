@@ -22,6 +22,20 @@ def _structured_note(paper_id: str, *, abstract_only: bool = False) -> str:
     status = "[ABSTRACT-ONLY]" if abstract_only else "[FULL-TEXT]"
     verification = "metadata_verified (confidence: 0.95)"
     evidence_line = "- N/A for abstract-only note\n" if abstract_only else "- Accuracy: 88.1 [Evidence: Results section]\n"
+    if abstract_only:
+        coverage = """- **PDF source**: not available
+- **Pages read**: 0 / unknown
+- **Extraction calls**: none
+- **Truncation**: none
+- **Status rationale**: PDF was not available; note is based on abstract and metadata.
+"""
+    else:
+        coverage = f"""- **PDF source**: literature/pdfs/{paper_id}.pdf
+- **Pages read**: 1-10 / 10
+- **Extraction calls**: extract_pdf_text pages 1-10
+- **Truncation**: none
+- **Status rationale**: All PDF pages were read without truncation.
+"""
     return f"""# {paper_id}
 
 - **ID**: {paper_id}
@@ -66,6 +80,9 @@ method
 
 ## 11. My Questions
 - question
+
+## 12. Reading Coverage
+{coverage}
 """
 
 
@@ -126,6 +143,8 @@ def test_reader_system_prompt_read_mode(reader_agent, temp_workspace):
     assert "Reader Agent" in prompt
     assert "T3" in prompt or "深度阅读" in prompt
     assert "paper_notes" in prompt
+    assert "不能只读前几页" in prompt
+    assert "Reading Coverage" in prompt
 
 
 def test_reader_system_prompt_read_mode_includes_seed_priority(reader_agent, temp_workspace):
@@ -191,6 +210,7 @@ def test_reader_initial_user_message_read_mode(reader_agent, temp_workspace):
     msg = reader_agent.initial_user_message(ctx)
     assert "T3" in msg or "深度阅读" in msg
     assert "papers_dedup.jsonl" in msg
+    assert "全文读到最后一页" in msg
 
 
 def test_reader_initial_user_message_read_mode_resume(reader_agent, temp_workspace):
@@ -215,6 +235,7 @@ def test_reader_initial_user_message_read_mode_resume(reader_agent, temp_workspa
     assert "deep_read_queue_pending.jsonl" in msg
     assert "补齐已有笔记缺失的表格/Bib条目" in msg
     assert "seed papers 必须最高优先级" in msg
+    assert "覆盖到最后一页" in msg
 
 
 def test_reader_initial_user_message_synthesize_mode(reader_agent, temp_workspace):
@@ -304,6 +325,45 @@ def test_validate_note_structure_allows_non_numeric_dataset_names_without_eviden
     ok, err = _validate_note_structure(note_path)
 
     assert ok, f"Validation failed: {err}"
+
+
+def test_validate_note_structure_requires_reading_coverage(tmp_path):
+    """全文类 note 必须记录 PDF 阅读覆盖范围。"""
+    note_path = tmp_path / "missing_coverage.md"
+    note_path.write_text(
+        _structured_note("missing_coverage").replace(
+            "\n## 12. Reading Coverage\n"
+            "- **PDF source**: literature/pdfs/missing_coverage.pdf\n"
+            "- **Pages read**: 1-10 / 10\n"
+            "- **Extraction calls**: extract_pdf_text pages 1-10\n"
+            "- **Truncation**: none\n"
+            "- **Status rationale**: All PDF pages were read without truncation.\n",
+            "",
+        ),
+        encoding="utf-8",
+    )
+
+    ok, err = _validate_note_structure(note_path)
+
+    assert not ok
+    assert "Reading Coverage" in err
+
+
+def test_validate_note_structure_rejects_full_text_partial_page_coverage(tmp_path):
+    """FULL-TEXT 不能只读部分页码。"""
+    note_path = tmp_path / "partial_coverage.md"
+    note_path.write_text(
+        _structured_note("partial_coverage").replace(
+            "- **Pages read**: 1-10 / 10",
+            "- **Pages read**: 1-8 / 10",
+        ),
+        encoding="utf-8",
+    )
+
+    ok, err = _validate_note_structure(note_path)
+
+    assert not ok
+    assert "FULL-TEXT" in err
 
 
 def test_validate_outputs_read_mode_missing_notes(reader_agent, temp_workspace):
@@ -406,6 +466,7 @@ def test_reader_system_prompt_read_mode_includes_resume_progress(reader_agent, t
     assert "已有 1 篇笔记" in prompt
     assert "deep_read_queue_pending.jsonl" in prompt
     assert "先做账目对齐" in prompt
+    assert "恢复时先补阅读覆盖" in prompt
     assert "只补未完成论文" in prompt
 
 

@@ -102,6 +102,35 @@ async def test_fetch_paper_pdf_downloads_from_openalex_oa_location(monkeypatch, 
 
 
 @pytest.mark.asyncio
+async def test_fetch_paper_pdf_accepts_arxiv_doi_prefix(monkeypatch, tmp_path: Path):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    policy = WorkspaceAccessPolicy(workspace, [""], [""])
+    tool = FetchPaperPdfTool(policy)
+
+    responses = {
+        "https://arxiv.org/pdf/2303.12712.pdf": _FakeResponse(),
+    }
+
+    import researchos.tools.paper_fetch as paper_fetch
+
+    monkeypatch.setattr(
+        paper_fetch.httpx,
+        "AsyncClient",
+        lambda *args, **kwargs: _FakeAsyncClient(responses, *args, **kwargs),
+    )
+
+    result = await tool.execute(
+        paper_id="doi:10.48550/arXiv.2303.12712",
+        save_path="paper.pdf",
+    )
+
+    assert result.ok
+    assert result.data["url"] == "https://arxiv.org/pdf/2303.12712.pdf"
+    assert (workspace / "paper.pdf").exists()
+
+
+@pytest.mark.asyncio
 async def test_fetch_paper_pdf_reports_candidate_failures(monkeypatch, tmp_path: Path):
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -160,5 +189,10 @@ async def test_extract_pdf_text_uses_fuller_default_preview(monkeypatch, tmp_pat
     assert len(result.content) > 16_000
     assert result.data["max_chars"] == 50_000
     assert result.data["truncated"] is False
+    assert result.data["total_pages"] == 2
+    assert result.data["extracted_page_range"] == "1-2"
+    assert result.data["complete_pdf_read"] is True
+    assert "total_pages: 2" in result.content
+    assert "complete_pdf_read: true" in result.content
     assert "full_text" not in result.data
     assert "text_preview" in result.data

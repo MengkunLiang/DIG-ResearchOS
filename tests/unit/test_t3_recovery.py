@@ -29,12 +29,67 @@ def _write_jsonl(path: Path, records: list[dict]) -> None:
     )
 
 
+def _valid_note(paper_id: str) -> str:
+    return f"""# {paper_id}
+
+- **ID**: {paper_id}
+- **Authors**: A, B
+- **Venue**: TestConf (2025)
+- **DOI/arXiv**: arxiv:2501.00001
+- **Citations**: 10
+- **Verification**: metadata_verified (confidence: 0.95)
+- **Status**: [FULL-TEXT]
+
+## 1. Problem & Motivation
+problem
+
+## 2. Method Overview
+method
+
+## 3. Key Results
+- Accuracy: 88.1 [Evidence: Results section]
+
+## 4. Claims vs Evidence
+| Claim | Evidence | Strength |
+|-------|----------|----------|
+| test | test | Strong |
+
+## 5. Limitations
+- limit
+
+## 6. Relevance to Our Research
+- relevant
+
+## 7. Technical Details Worth Noting
+- detail
+
+## 8. Strengths
+- strong
+
+## 9. Weaknesses / Gaps
+- weak
+
+## 10. Key Quotes
+> "quote"
+
+## 11. My Questions
+- question
+
+## 12. Reading Coverage
+- **PDF source**: literature/pdfs/{paper_id}.pdf
+- **Pages read**: 1-10 / 10
+- **Extraction calls**: extract_pdf_text pages 1-10
+- **Truncation**: none
+- **Status rationale**: All PDF pages were read without truncation.
+"""
+
+
 def test_prepare_t3_resume_artifacts_builds_pending_queue_from_dedup(tmp_path: Path):
     workspace = tmp_path / "ws"
     literature = workspace / "literature"
     notes_dir = literature / "paper_notes"
     notes_dir.mkdir(parents=True)
-    (notes_dir / "paper1.md").write_text("# done", encoding="utf-8")
+    (notes_dir / "paper1.md").write_text(_valid_note("paper1"), encoding="utf-8")
 
     _write_jsonl(
         literature / "papers_dedup.jsonl",
@@ -81,7 +136,7 @@ def test_prepare_t3_resume_artifacts_filters_existing_queue(tmp_path: Path):
     literature = workspace / "literature"
     notes_dir = literature / "paper_notes"
     notes_dir.mkdir(parents=True)
-    (notes_dir / "seed_paper.md").write_text("# done", encoding="utf-8")
+    (notes_dir / "seed_paper.md").write_text(_valid_note("seed_paper"), encoding="utf-8")
 
     _write_jsonl(
         literature / "deep_read_queue.jsonl",
@@ -104,13 +159,39 @@ def test_prepare_t3_resume_artifacts_filters_existing_queue(tmp_path: Path):
     assert pending_records[0]["queue_rank"] == 1
 
 
+def test_prepare_t3_resume_artifacts_keeps_incomplete_notes_pending(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    literature = workspace / "literature"
+    notes_dir = literature / "paper_notes"
+    notes_dir.mkdir(parents=True)
+    (notes_dir / "paper1.md").write_text("# old incomplete note", encoding="utf-8")
+
+    _write_jsonl(
+        literature / "deep_read_queue.jsonl",
+        [
+            {"paper_id": "paper1", "normalized_id": "paper1", "queue_rank": 1, "title": "Paper 1"},
+            {"paper_id": "paper2", "normalized_id": "paper2", "queue_rank": 2, "title": "Paper 2"},
+        ],
+    )
+
+    info = prepare_t3_resume_artifacts(workspace)
+
+    pending_records = [
+        json.loads(line)
+        for line in (literature / "deep_read_queue_pending.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert info["resume_queue_count"] == 2
+    assert [item["paper_id"] for item in pending_records] == ["paper1", "paper2"]
+
+
 def test_runner_refreshes_t3_pending_meta_after_finished_run(tmp_path: Path):
     workspace = tmp_path / "ws"
     literature = workspace / "literature"
     notes_dir = literature / "paper_notes"
     notes_dir.mkdir(parents=True)
-    (notes_dir / "paper1.md").write_text("# done 1", encoding="utf-8")
-    (notes_dir / "paper2.md").write_text("# done 2", encoding="utf-8")
+    (notes_dir / "paper1.md").write_text(_valid_note("paper1"), encoding="utf-8")
+    (notes_dir / "paper2.md").write_text(_valid_note("paper2"), encoding="utf-8")
 
     _write_jsonl(
         literature / "deep_read_queue.jsonl",

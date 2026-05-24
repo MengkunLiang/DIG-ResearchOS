@@ -27,15 +27,27 @@ def _write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def _is_complete_note(note_path: Path) -> bool:
+    """只有通过 Reader 结构校验的 note 才能在恢复时视为已完成。"""
+
+    try:
+        from ..agents.reader import _validate_note_structure
+
+        ok, _ = _validate_note_structure(note_path)
+        return ok
+    except Exception:
+        return False
+
+
 def _note_keys(notes_dir: Path) -> set[str]:
-    """把已有 note 文件名转换成可比对的规范化 key。"""
+    """把已有且合格的 note 文件名转换成可比对的规范化 key。"""
 
     if not notes_dir.exists():
         return set()
     return {
         normalize_text_key(path.stem)
         for path in notes_dir.glob("*.md")
-        if path.is_file() and path.suffix == ".md"
+        if path.is_file() and path.suffix == ".md" and _is_complete_note(path)
     }
 
 

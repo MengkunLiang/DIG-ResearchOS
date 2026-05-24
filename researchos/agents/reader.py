@@ -173,6 +173,7 @@ class ReaderAgent(Agent):
                     "尚未完成的论文。若存在 literature/deep_read_queue_pending.jsonl，"
                     "优先按这个剩余队列执行。用户提供的 seed papers 必须最高优先级；如果它们已在"
                     "deep_read_queue、papers_verified 或 papers_dedup 里，必须先读；如果缺失，也要明确记录这个缺口。"
+                    "凡是能拿到PDF的论文，必须用extract_pdf_text覆盖到最后一页，并在Reading Coverage记录页码范围。"
                     ),
                 )
             return prepend_resume_prefix(
@@ -181,7 +182,8 @@ class ReaderAgent(Agent):
                 "请开始T3深度阅读流程。优先按 literature/deep_read_queue.jsonl 执行；如果该文件不存在，"
                 "先回退到 literature/papers_verified.jsonl，再回退到 literature/papers_dedup.jsonl。"
                 "为每篇产出paper_notes/{id}.md，同时累积comparison_table.csv和related_work.bib。"
-                "用户提供的 seed papers 必须最高优先级。"
+                "用户提供的 seed papers 必须最高优先级。凡是能拿到PDF的论文，必须全文读到最后一页，"
+                "不能只读前几页；如果只读到部分页面，Status必须写PARTIAL-TEXT。"
                 ),
             )
         return prepend_resume_prefix(
@@ -366,6 +368,7 @@ def _validate_note_structure(note_path: Path) -> tuple[bool, str | None]:
         "## 6. Relevance to Our Research",
         "## 10. Key Quotes",
         "## 11. My Questions",
+        "## 12. Reading Coverage",
     ]
     for marker in required_markers:
         if marker not in content:
@@ -381,7 +384,85 @@ def _validate_note_structure(note_path: Path) -> tuple[bool, str | None]:
     if not is_abstract_only and "Evidence Source" not in content and "| Claim | Evidence | Strength |" not in content:
         return False, f"{note_path.name} 缺少 evidence 锚点，无法支撑全文类结论"
 
+    ok, err = _validate_reading_coverage(note_path, content, status_text)
+    if not ok:
+        return False, err
+
     return True, None
+
+
+def _validate_reading_coverage(
+    note_path: Path,
+    content: str,
+    status_text: str,
+) -> tuple[bool, str | None]:
+    """校验 T3 note 是否记录了 PDF 阅读覆盖范围。"""
+
+    import re
+
+    section_match = re.search(
+        r"(?ms)^## 12\. Reading Coverage\s*(?P<section>.*?)(?=^##\s+\d+\.|\Z)",
+        content,
+    )
+    if section_match is None:
+        return False, f"{note_path.name} 缺少 Reading Coverage 章节"
+
+    section = section_match.group("section")
+    required_fields = [
+        "- **PDF source**:",
+        "- **Pages read**:",
+        "- **Extraction calls**:",
+        "- **Truncation**:",
+        "- **Status rationale**:",
+    ]
+    for field in required_fields:
+        if field not in section:
+            return False, f"{note_path.name} Reading Coverage 缺少字段: {field}"
+
+    pages_line = _extract_markdown_field(section, "Pages read")
+    truncation_line = _extract_markdown_field(section, "Truncation")
+    if not pages_line:
+        return False, f"{note_path.name} Reading Coverage 的 Pages read 不能为空"
+    if not truncation_line:
+        return False, f"{note_path.name} Reading Coverage 的 Truncation 不能为空"
+
+    if "FULL-TEXT" in status_text:
+        page_range = re.search(r"\b1\s*[-–]\s*(\d+)\s*/\s*(\d+)\b", pages_line)
+        says_complete = any(token in pages_line.lower() for token in ("all", "complete", "full"))
+        says_complete = says_complete or any(token in pages_line for token in ("全部", "完整", "全篇"))
+        if page_range is None and not says_complete:
+            return False, (
+                f"{note_path.name} 标记为 FULL-TEXT，但 Pages read 未说明完整页码覆盖，"
+                "应类似 `1-12 / 12`"
+            )
+        if page_range is not None and int(page_range.group(1)) != int(page_range.group(2)):
+            return False, (
+                f"{note_path.name} 标记为 FULL-TEXT，但 Pages read 不是完整覆盖: {pages_line}"
+            )
+
+        truncation_value = truncation_line.lower()
+        no_truncation = (
+            "none" in truncation_value
+            or "no" in truncation_value
+            or "无" in truncation_line
+            or "没有" in truncation_line
+        )
+        if not no_truncation:
+            return False, (
+                f"{note_path.name} 标记为 FULL-TEXT，但 Truncation 未明确为 none/无: {truncation_line}"
+            )
+
+    return True, None
+
+
+def _extract_markdown_field(section: str, field_name: str) -> str:
+    """从 `- **Field**: value` 形式的 markdown 字段中取 value。"""
+
+    import re
+
+    pattern = re.compile(rf"(?m)^-\s+\*\*{re.escape(field_name)}\*\*:\s*(?P<value>.*)$")
+    match = pattern.search(section)
+    return match.group("value").strip() if match else ""
 
 
 def _validate_key_results_evidence(note_path: Path, content: str) -> tuple[bool, str | None]:

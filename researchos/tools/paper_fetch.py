@@ -77,7 +77,7 @@ class FetchPaperPdfTool(Tool):
     """下载论文PDF到workspace。"""
 
     name = "fetch_paper_pdf"
-    description = "下载论文PDF到workspace。支持arXiv ID和部分DOI。"
+    description = "下载论文PDF到workspace。支持arXiv ID、doi:10...、裸DOI和部分开放获取DOI。"
     parameters_schema = FetchPaperPdfParams
     timeout_seconds = 120.0
 
@@ -210,6 +210,7 @@ class FetchPaperPdfTool(Tool):
 
         paper_id = paper_id.strip()
         candidates: list[str] = []
+        doi = self._normalize_doi(paper_id)
 
         # arXiv格式: arxiv:2301.12345 或 2301.12345
         if paper_id.startswith("arxiv:"):
@@ -219,9 +220,12 @@ class FetchPaperPdfTool(Tool):
             candidates.extend(self._arxiv_pdf_candidates(paper_id))
 
         # DOI / OpenAlex work id：优先从 OpenAlex 补开放获取位置
-        if paper_id.startswith("10."):
-            candidates.extend(await self._openalex_pdf_candidates(client, doi=paper_id))
-            candidates.extend(self._doi_fallback_candidates(paper_id))
+        if doi is not None:
+            arxiv_id_from_doi = self._arxiv_id_from_doi(doi)
+            if arxiv_id_from_doi:
+                candidates.extend(self._arxiv_pdf_candidates(arxiv_id_from_doi))
+            candidates.extend(await self._openalex_pdf_candidates(client, doi=doi))
+            candidates.extend(self._doi_fallback_candidates(doi))
         elif paper_id.startswith("W") and paper_id[1:].isdigit():
             candidates.extend(await self._openalex_pdf_candidates(client, openalex_id=paper_id))
 
@@ -242,6 +246,35 @@ class FetchPaperPdfTool(Tool):
             f"https://arxiv.org/pdf/{arxiv_id}.pdf",
             f"https://export.arxiv.org/pdf/{arxiv_id}.pdf",
         ]
+
+    @staticmethod
+    def _normalize_doi(paper_id: str) -> str | None:
+        """接受 doi:10...、https://doi.org/10... 和裸 DOI，统一返回裸 DOI。"""
+
+        normalized = paper_id.strip()
+        lower = normalized.lower()
+        if lower.startswith("doi:"):
+            normalized = normalized[4:].strip()
+            lower = normalized.lower()
+        if lower.startswith("https://doi.org/"):
+            normalized = normalized[len("https://doi.org/") :].strip()
+            lower = normalized.lower()
+        elif lower.startswith("http://doi.org/"):
+            normalized = normalized[len("http://doi.org/") :].strip()
+            lower = normalized.lower()
+        return normalized if lower.startswith("10.") else None
+
+    @staticmethod
+    def _arxiv_id_from_doi(doi: str) -> str | None:
+        """arXiv DOI（10.48550/arXiv.xxxx）可直接映射到 arXiv PDF。"""
+
+        normalized = doi.strip()
+        marker = "10.48550/arxiv."
+        lower = normalized.lower()
+        if not lower.startswith(marker):
+            return None
+        arxiv_id = normalized[len(marker) :].strip()
+        return arxiv_id or None
 
     @staticmethod
     def _doi_fallback_candidates(doi: str) -> list[str]:
@@ -367,7 +400,10 @@ class ExtractPdfTextTool(Tool):
     """提取PDF全文文本。"""
 
     name = "extract_pdf_text"
-    description = "提取PDF文件的全文文本内容"
+    description = (
+        "提取PDF文件文本。返回内容开头包含 total_pages、extracted_page_range、"
+        "preview_truncated_by_max_chars 等覆盖信息；T3 如要标记 FULL-TEXT，必须覆盖全部页面且无截断。"
+    )
     parameters_schema = ExtractPdfTextParams
     timeout_seconds = 60.0
 
@@ -402,37 +438,84 @@ class ExtractPdfTextTool(Tool):
             pdfplumber = importlib.import_module("pdfplumber")
 
             text_parts = []
+            visited_pages: list[int] = []
+            pages_with_text: list[int] = []
+            total_pages = 0
             with pdfplumber.open(abs_path) as pdf:
+                total_pages = len(pdf.pages)
                 for page_num, page in enumerate(pdf.pages, start=1):
                     if page_num < params.start_page:
                         continue
                     if params.max_pages is not None and page_num >= params.start_page + params.max_pages:
                         break
+                    visited_pages.append(page_num)
                     page_text = page.extract_text() or ""
                     if page_text.strip():
+                        pages_with_text.append(page_num)
                         text_parts.append(f"--- Page {page_num} ---\n{page_text}")
 
             full_text = "\n\n".join(text_parts)
 
             content_preview = full_text[: params.max_chars]
-            if len(full_text) > params.max_chars:
+            truncated = len(full_text) > params.max_chars
+            if truncated:
                 content_preview += (
                     f"\n\n[... truncated, full length: {len(full_text)} chars, "
                     f"shown: {params.max_chars}]"
                 )
 
+            start_page = visited_pages[0] if visited_pages else None
+            end_page = visited_pages[-1] if visited_pages else None
+            extracted_range = (
+                f"{start_page}-{end_page}" if start_page is not None and end_page is not None else "none"
+            )
+            covers_pdf_end = end_page is not None and end_page >= total_pages
+            covers_full_pdf = params.start_page == 1 and covers_pdf_end
+            complete_pdf_read = covers_full_pdf and not truncated and bool(pages_with_text)
+            next_start_page = (end_page + 1) if end_page is not None and end_page < total_pages else None
+            metadata_header = "\n".join(
+                [
+                    "[PDF extraction metadata]",
+                    f"- pdf: {params.pdf_path}",
+                    f"- total_pages: {total_pages}",
+                    f"- extracted_page_range: {extracted_range}",
+                    f"- pages_visited: {len(visited_pages)}",
+                    f"- pages_with_text: {len(pages_with_text)}",
+                    f"- requested_start_page: {params.start_page}",
+                    f"- requested_max_pages: {params.max_pages if params.max_pages is not None else 'FULL'}",
+                    f"- preview_truncated_by_max_chars: {str(truncated).lower()}",
+                    f"- covers_full_pdf: {str(covers_full_pdf).lower()}",
+                    f"- complete_pdf_read: {str(complete_pdf_read).lower()}",
+                    f"- next_start_page: {next_start_page if next_start_page is not None else 'none'}",
+                    (
+                        "- note: If preview_truncated_by_max_chars=true, re-read a narrower page range "
+                        "before marking the note FULL-TEXT."
+                    ),
+                ]
+            )
+            content = f"{metadata_header}\n\n{content_preview}" if content_preview else metadata_header
+
             return ToolResult(
                 ok=True,
-                content=content_preview,
+                content=content,
                 data={
                     "pdf": params.pdf_path,
                     "text_preview": content_preview,
                     "length": len(full_text),
                     "pages": len(text_parts),
+                    "total_pages": total_pages,
+                    "pages_visited": len(visited_pages),
+                    "pages_with_text": len(pages_with_text),
+                    "range_start_page": start_page,
+                    "end_page": end_page,
+                    "extracted_page_range": extracted_range,
+                    "covers_full_pdf": covers_full_pdf,
+                    "complete_pdf_read": complete_pdf_read,
+                    "next_start_page": next_start_page,
                     "start_page": params.start_page,
                     "max_pages": params.max_pages,
                     "max_chars": params.max_chars,
-                    "truncated": len(full_text) > params.max_chars,
+                    "truncated": truncated,
                 },
             )
         except ModuleNotFoundError:
