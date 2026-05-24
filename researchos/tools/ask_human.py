@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+import json
+import re
+
+from pydantic import BaseModel, Field, field_validator
 
 from .base import Tool, ToolResult
 from .human_gate import HumanInterface
@@ -9,6 +12,27 @@ from .human_gate import HumanInterface
 class AskHumanParams(BaseModel):
     question: str = Field(..., min_length=1, description="要问用户的问题")
     suggestions: list[str] | None = Field(None, description="可选参考建议")
+
+    @field_validator("suggestions", mode="before")
+    @classmethod
+    def _coerce_suggestions(cls, value: object) -> object:
+        """兼容模型把 suggestions JSON array 当字符串传入的情况。"""
+
+        if value is None or isinstance(value, list):
+            return value
+        if isinstance(value, str):
+            raw = value.strip()
+            if not raw:
+                return None
+            if raw.startswith("["):
+                try:
+                    parsed = json.loads(raw)
+                except json.JSONDecodeError:
+                    parsed = None
+                if isinstance(parsed, list):
+                    return [str(item).strip() for item in parsed if str(item).strip()]
+            return [part.strip() for part in re.split(r"[,;/\n]+", raw) if part.strip()]
+        return value
 
 
 class AskHumanTool(Tool):
@@ -30,4 +54,3 @@ class AskHumanTool(Tool):
             content=f"User answered: {answer}",
             data={"question": kwargs["question"], "answer": answer},
         )
-
