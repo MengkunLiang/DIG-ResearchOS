@@ -245,7 +245,7 @@ python -m researchos.cli run-task T9 --workspace ./workspace/demo
 
 典型 case：
 
-- `T3`：调 PDF 获取、section 提取、续跑逻辑
+- `T3`：调 PDF 获取、全文覆盖、Reading Coverage 和续跑逻辑
 - `T7.5`：调 PI evaluate 和 `next_task`
 - `T9`：调投稿包编译、修复与验收
 
@@ -397,11 +397,11 @@ python -m researchos.cli run-task T8-WRITE \
 | `T3.5` | synthesis 结构完整 | `literature/synthesis.md` |
 | `T4` | hypotheses / exp_plan / idea scorecard / gate decisions / risks 成对齐 | `ideation/hypotheses.md`, `ideation/exp_plan.yaml`, `ideation/idea_scorecard.yaml`, `ideation/rejected_ideas.md`, `ideation/gate_decisions.json`, `ideation/idea_rationales.json`, `ideation/risks.md` |
 | `T4.5` | novelty audit 生成 | `ideation/novelty_audit.md` |
-| `T5` | pilot code 和结果完整 | `pilot/pilot_code/`, `pilot/pilot_results.json`, `pilot/motivation_validation.md` |
-| `T6` | novelty report / collision / baselines 三件套完整 | `novelty/novelty_report.md`, `collision_cases.md`, `must_add_baselines.md` |
-| `T7` | summary / runs / configs / ablations / log 齐全 | `experiments/results_summary.json`, `runs/`, `configs/`, `ablations.csv`, `iteration_log.md` |
+| `T5` | pilot plan/code/results、动机判断、smoke marker 和环境摘要完整 | `pilot/pilot_plan.yaml`, `pilot/pilot_code/`, `pilot/pilot_results.json`, `pilot/motivation_validation.md`, `pilot/smoke_test_passed.marker`, `pilot/docker_digests.txt` |
+| `T6` | novelty report / collision / baselines 三件套完整 | `novelty/novelty_report.md`, `novelty/collision_cases.md`, `novelty/must_add_baselines.md` |
+| `T7` | summary / runs / configs / ablations / log / seed ensemble / diversity / 环境摘要齐全 | `experiments/results_summary.json`, `experiments/runs/`, `experiments/configs/`, `experiments/ablations.csv`, `experiments/iteration_log.md`, `experiments/seed_ensemble_summary.json`, `experiments/iteration_diversity_check.md`, `experiments/docker_digests.txt` |
 | `T7.5` | evaluation decision 能给出 `next_task` | `evaluation/evaluation_decision.md` |
-| `T8-WRITE` | 论文主稿初版生成 | `drafts/paper.tex`, `drafts/outline.md` |
+| `T8-WRITE` | 论文大纲生成 | `drafts/outline.md` |
 | `T8-DRAFT` | 初稿扩写完成 | `drafts/paper.tex` |
 | `T8-REVIEW-1/2` | 审稿意见生成 | `drafts/review_rounds/round_1.md`, `round_2.md` |
 | `T8-REVISE-1/2` | 主稿按审稿意见修订 | `drafts/paper.tex` |
