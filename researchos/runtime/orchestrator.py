@@ -19,13 +19,14 @@ from .llm_client import LLMClient, ModelBinding
 from .logger import get_logger
 from .message import Message, Role, ToolCall, is_empty_assistant
 from .t2_recovery import finalize_t2_outputs
+from .abstract_sweep import run_abstract_sweep
 from .t3_recovery import prepare_t3_resume_artifacts
 from .trace import NullTraceWriter, TraceWriter
 from ..tools.base import Tool, ToolResult
 from ..tools.human_gate import HumanInterface
 from ..tools.paper_save_tools import SavePapersRawTool
 from ..tools.registry import ToolBuildContext, ToolRegistry
-from .agent_params import get_budget_escalation_policy, get_global_timeout, get_retry_policy
+from .agent_params import get_agent_mode_params, get_budget_escalation_policy, get_global_timeout, get_retry_policy
 
 if TYPE_CHECKING:
     from ..tools.workspace_policy import WorkspaceAccessPolicy
@@ -181,12 +182,12 @@ class AgentRunner:
 
             t2_pre_finalized = await self._maybe_finalize_t2_before_llm(ctx)
             t4_pre_finalized = False
-            t35_pre_finalized = False
+            t35_prepared = False
             if not t2_pre_finalized:
-                t35_pre_finalized = await self._maybe_finalize_t35_before_llm(ctx, policy)
-            if not t2_pre_finalized and not t35_pre_finalized:
+                t35_prepared = await self._maybe_prepare_t35_before_llm(ctx, policy)
+            if not t2_pre_finalized:
                 t4_pre_finalized = await self._maybe_finalize_t4_before_llm(ctx)
-            deterministic_pre_finalized = t2_pre_finalized or t35_pre_finalized or t4_pre_finalized
+            deterministic_pre_finalized = t2_pre_finalized or t4_pre_finalized
             if deterministic_pre_finalized:
                 stop_reason = AgentResult.STOP_FINISHED
                 error_msg = None
@@ -387,6 +388,7 @@ class AgentRunner:
                 error_msg=error_msg,
             )
             self._maybe_refresh_t3_resume_artifacts(ctx, stop_reason)
+            self._maybe_run_t3_abstract_sweep(ctx, stop_reason)
             result = self._build_result(
                 ctx=ctx,
                 budget=budget,
@@ -478,6 +480,33 @@ class AgentRunner:
         except Exception:  # pragma: no cover - refresh failure should not fail a completed T3
             self.log.exception("t3_resume_artifact_refresh_failed")
 
+    def _maybe_run_t3_abstract_sweep(self, ctx: ExecutionContext, stop_reason: str) -> None:
+        """T3 deep read 成功后，自动运行 abstract sweep 补读。"""
+
+        if ctx.task_id != "T3" or stop_reason != AgentResult.STOP_FINISHED:
+            return
+
+        try:
+            mode_params = get_agent_mode_params("reader", "read")
+            sweep_config = mode_params.get("abstract_sweep", {})
+            if not sweep_config.get("enabled", False):
+                return
+
+            print("[Agent] T3 deep read 完成，开始 abstract sweep...", flush=True)
+            result = run_abstract_sweep(ctx.workspace_dir, sweep_config)
+            ctx.extra["abstract_sweep"] = result
+
+            if result.get("notes_generated", 0) > 0:
+                print(
+                    f"[Agent] Abstract sweep 完成：筛选 {result['candidates_found']} 篇候选，"
+                    f"生成 {result['notes_generated']} 篇 abstract note",
+                    flush=True,
+                )
+            else:
+                print("[Agent] Abstract sweep 无候选论文", flush=True)
+        except Exception:  # pragma: no cover - sweep failure should not fail a completed T3
+            self.log.exception("t3_abstract_sweep_failed")
+
     async def _maybe_finalize_t2_before_llm(self, ctx: ExecutionContext) -> bool:
         """T2 续跑时，如果 raw 已存在，优先用确定性路径补齐产物。
 
@@ -534,19 +563,22 @@ class AgentRunner:
         )
         return True
 
-    async def _maybe_finalize_t35_before_llm(
+    async def _maybe_prepare_t35_before_llm(
         self,
         ctx: ExecutionContext,
         policy: "WorkspaceAccessPolicy",
     ) -> bool:
-        """T3.5 can deterministically build a staged synthesis baseline.
+        """T3.5 may prebuild evidence scaffolding, but must not finish.
 
-        The LLM remains available for future refinement, but if the structured
-        tool output already satisfies Reader validation, the runtime can finish
-        without spending a broad one-shot prompt on synthesis generation.
+        Synthesis is a knowledge-heavy task. The tool can organize notes into a
+        workbench and outline, yet final section claims must come from the
+        Reader LLM after inspecting those artifacts.
         """
 
         if ctx.task_id != "T3.5":
+            return False
+        mode_params = get_agent_mode_params("reader", "synthesize")
+        if not bool(mode_params.get("prebuild_workbench_before_llm", False)):
             return False
         notes_dir = ctx.workspace_dir / "literature" / "paper_notes"
         if not notes_dir.exists() or not any(notes_dir.glob("*.md")):
@@ -556,28 +588,24 @@ class AgentRunner:
 
         print("[Agent] T3.5 先执行分阶段 synthesis workbench 生成...", flush=True)
         tool = BuildSynthesisWorkbenchTool(policy)
-        result = await tool.execute(write_final=True)
+        result = await tool.execute(write_final=False, render_draft=False)
         if not result.ok:
             self.log.warning("t35_workbench_failed", error=result.error, content=result.content)
             return False
 
-        ok, err = self.agent.validate_outputs(ctx)
-        if not ok:
-            self.log.info("t35_workbench_validation_skipped_llm", reason=err)
-            ctx.extra.setdefault("t35_workbench_error", err)
-            return False
-
-        print("[Agent] T3.5 分阶段 synthesis workbench 已通过校验，跳过一次性 LLM 综合", flush=True)
-        self._record_runtime_completion(
-            ctx,
-            "t35_workbench",
-            {
-                "outputs": list((result.data.get("outputs") or {}).values())
-                if isinstance(result.data.get("outputs"), dict)
-                else [],
-            },
-            action_type="t35_synthesis_workbench",
-        )
+        print("[Agent] T3.5 synthesis workbench 已生成；继续交给 LLM 审阅并写最终 synthesis.md", flush=True)
+        actions = ctx.extra.setdefault("runtime_actions", [])
+        if isinstance(actions, list):
+            actions.append(
+                {
+                    "type": "t35_synthesis_workbench_prepared",
+                    "mode": "t35_workbench_prepared",
+                    "outputs": list((result.data.get("outputs") or {}).values())
+                    if isinstance(result.data.get("outputs"), dict)
+                    else [],
+                }
+            )
+        ctx.extra["t35_workbench_prepared"] = True
         return True
 
     async def _maybe_finalize_t2_after_tool_batch(
@@ -1188,8 +1216,6 @@ class AgentRunner:
             message = "Agent 成功完成（T2 resume 确定性收尾）"
         elif ok and metadata.get("completion_mode") == "t4_resume_prefinalize":
             message = "Agent 成功完成（T4 resume 确定性收尾）"
-        elif ok and metadata.get("completion_mode") == "t35_workbench":
-            message = "Agent 成功完成（T3.5 synthesis workbench 确定性生成）"
         return AgentResult(
             ok=ok,
             message=message,

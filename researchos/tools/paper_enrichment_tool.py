@@ -39,16 +39,27 @@ class EnrichPapersParams(BaseModel):
         None,
         description="关键词列表（可选，用于生成更具体的 why_relevant）",
     )
+    domain_profile: dict[str, Any] | None = Field(
+        None,
+        description="LLM 归纳的领域 profile；工具只用于机械补全和 provenance，不替代领域判断。",
+    )
+    llm_annotations: dict[str, dict[str, Any]] | list[dict[str, Any]] | None = Field(
+        None,
+        description=(
+            "LLM 对论文的结构化标注。可覆盖 source_type、why_relevant、"
+            "method_family、domain_tags、evidence_level 等字段；没有标注时工具只做保守补齐。"
+        ),
+    )
 
 
 class EnrichPapersTool(Tool):
     """增强论文数据，自动补充缺失字段。
 
     功能：
-    - 自动推断 source_type（根据 venue）
-    - 自动生成 why_relevant（基于 relevance_score 和关键词匹配）
+    - 优先应用 LLM 提供的 source_type / why_relevant / method_family / domain_tags 等标注
+    - 对缺失字段做保守 schema 补全
     - 转换 authors 格式（对象数组 -> 字符串数组）
-    - 补充缺失的必需字段
+    - 补充缺失的必需字段，不替代 LLM 的学术判断
     - 标记数据质量问题
 
     使用场景：
@@ -57,13 +68,15 @@ class EnrichPapersTool(Tool):
     """
 
     name = "enrich_papers"
-    description = "增强论文数据，自动补充缺失字段（source_type、why_relevant 等）"
+    description = "增强论文数据并补齐 schema；学术判断优先来自 LLM annotation，工具只给保守 hint"
     parameters_schema = EnrichPapersParams
     timeout_seconds = 30.0
 
     async def execute(self, **kwargs) -> ToolResult:
         papers = kwargs["papers"]
         keywords = kwargs.get("keywords")
+        domain_profile = kwargs.get("domain_profile")
+        llm_annotations = kwargs.get("llm_annotations")
 
         if not papers:
             return ToolResult(
@@ -73,7 +86,12 @@ class EnrichPapersTool(Tool):
             )
 
         try:
-            enriched = enrich_papers(papers, keywords=keywords)
+            enriched = enrich_papers(
+                papers,
+                keywords=keywords,
+                domain_profile=domain_profile,
+                llm_annotations=llm_annotations,
+            )
 
             # 统计数据质量
             missing_abstract_count = sum(1 for p in enriched if p.get("_missing_abstract"))
@@ -82,8 +100,9 @@ class EnrichPapersTool(Tool):
                 f"✅ 成功增强 {len(enriched)} 篇论文的数据",
                 "",
                 "增强内容：",
-                "- 自动推断 source_type（根据 venue）",
-                "- 自动生成 why_relevant（基于 relevance_score 和关键词匹配）",
+                "- 优先应用 LLM annotation（如提供）",
+                "- 对缺失 source_type / why_relevant 做保守补全并标记需复核",
+                "- 生成 access_level_hint；不把 metadata 可读性伪装成 FULL/PARTIAL 证据",
                 "- 转换 authors 格式（对象数组 -> 字符串数组）",
                 "- 补充缺失的必需字段",
             ]
@@ -125,7 +144,7 @@ class DetectDuplicateQueriesTool(Tool):
     功能：
     - 计算检索式之间的相似度
     - 识别重复的检索式对
-    - 给出改进建议
+    - 给出结构化重复度 hint；是否重写 query 由 Scout LLM 判断
 
     使用场景：
     - 在执行检索之前调用
@@ -167,10 +186,9 @@ class DetectDuplicateQueriesTool(Tool):
                 content_lines.append("")
                 content_lines.append(f"⚠️ {result['warning']}")
                 content_lines.append("")
-                content_lines.append("建议：")
-                content_lines.append("- 使用不同的同义词和相关概念")
-                content_lines.append("- 从不同角度覆盖研究主题（理论、技术、应用）")
-                content_lines.append("- 包含上下游技术和相关领域")
+                content_lines.append("LLM 复核提示：")
+                content_lines.append("- 重新检查 domain_profile 是否覆盖了不同机制、任务、评估场景或相邻领域")
+                content_lines.append("- 只保留有明确语义差异的 query；不要为了数量硬凑同义句")
             else:
                 content_lines.append("")
                 content_lines.append("✅ 检索式多样性良好")
@@ -202,12 +220,11 @@ class AnalyzeDedupRateParams(BaseModel):
 
 
 class AnalyzeDedupRateTool(Tool):
-    """分析去重率，给出建议。
+    """分析去重率，给出覆盖 hint。
 
     功能：
     - 计算去重率
-    - 评估检索式质量
-    - 给出改进建议
+    - 给出 raw 覆盖是否可能过窄的机械提示
 
     使用场景：
     - 在去重之后调用
@@ -242,10 +259,9 @@ class AnalyzeDedupRateTool(Tool):
             elif result["status"] == "critical":
                 content_lines.append(f"❌ {result['message']}")
                 content_lines.append("")
-                content_lines.append("建议：")
-                content_lines.append("- 重新设计检索式，使用更多样化的关键词")
-                content_lines.append("- 从不同角度覆盖研究主题")
-                content_lines.append("- 避免检索式之间关键词重复")
+                content_lines.append("LLM 复核提示：")
+                content_lines.append("- 回到 domain_profile，判断是否遗漏了机制、任务、数据、baseline 或相邻领域角度")
+                content_lines.append("- 重新设计语义不同的 query，而不是机械替换同义词")
 
             return ToolResult(
                 ok=True,

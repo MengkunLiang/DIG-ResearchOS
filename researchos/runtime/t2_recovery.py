@@ -95,29 +95,28 @@ def _keyword_aliases(keyword: str) -> list[str]:
     return [alias for alias in aliases if alias]
 
 
-def _is_cs_project(project: dict[str, Any], keywords: list[str]) -> bool:
-    haystack = " ".join(keywords + [str(project.get("research_direction", ""))]).lower()
-    cs_signals = [
-        "agent",
-        "ai",
-        "llm",
-        "memory",
-        "retrieval",
-        "pytorch",
-        "reinforcement",
-        "language model",
-        "causal",
-    ]
-    return any(signal in haystack for signal in cs_signals)
+def _project_domain_profile(project: dict[str, Any]) -> dict[str, Any] | None:
+    """Return an explicit domain profile if the project provides one.
+
+    T2 recovery must not infer discipline-specific filters from hardcoded
+    keyword lists. If users or an upstream LLM want profile-driven filtering,
+    they can store it in project.yaml under ``domain_profile`` or
+    ``literature_domain_profile``.
+    """
+
+    for key in ("domain_profile", "literature_domain_profile"):
+        profile = project.get(key)
+        if isinstance(profile, dict):
+            return profile
+    return None
 
 
 def _select_final_papers(scored_papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    kept = [paper for paper in scored_papers if float(paper.get("relevance_score", 0.0)) >= 0.5]
-    if len(kept) > 120:
-        kept = kept[:80]
-    if len(kept) < 10:
-        kept = scored_papers[: min(len(scored_papers), 10)]
-    return kept
+    """Conservatively cap recovered papers without priority-score exclusion."""
+
+    if len(scored_papers) <= 120:
+        return scored_papers
+    return scored_papers[:120]
 
 
 def _normalize_match_key(value: Any) -> str:
@@ -359,14 +358,14 @@ def generate_missing_areas_report(
     covered_keywords = [kw for kw, count in keyword_counts.items() if count >= high_coverage_threshold]
     missing_keywords = [kw for kw, count in keyword_counts.items() if count < low_coverage_threshold]
 
-    structural_gaps: list[str] = []
-    strong_venue_count = source_counter.get("top_conference", 0) + source_counter.get("journal", 0)
+    retrieval_coverage_hints: list[str] = []
+    source_type_review_count = source_counter.get("unknown", 0)
     if total and recent_count < max(5, total // 4):
-        structural_gaps.append(f"{recent_label} 的最新论文占比偏低，近期进展覆盖可能不足。")
-    if total and strong_venue_count < max(5, total // 6):
-        structural_gaps.append("高质量 conference/journal 覆盖偏少，后续可补更强 venue 的代表作。")
+        retrieval_coverage_hints.append(f"{recent_label} 的最新论文占比偏低，近期进展覆盖可能不足。")
+    if total and source_type_review_count > total // 3:
+        retrieval_coverage_hints.append("source_type 需要 LLM 复核的论文比例偏高，后续应补充领域 venue/profile 判断。")
     if total and missing_abstract_count > total // 3:
-        structural_gaps.append("缺少摘要的论文比例偏高，T3 精读前建议补齐关键 metadata。")
+        retrieval_coverage_hints.append("缺少摘要的论文比例偏高，T3 精读前建议补齐关键 metadata。")
 
     lines = [
         "# 文献缺口分析",
@@ -380,8 +379,8 @@ def generate_missing_areas_report(
         f"- 研究方向: {research_direction}",
         f"- 去重后论文数: {total} 篇",
         f"- {recent_label} 最近论文: {recent_count} 篇",
-        f"- top conference / journal: {strong_venue_count} 篇",
-        f"- preprint / workshop / other: {max(0, total - strong_venue_count)} 篇",
+        f"- source_type 待 LLM 复核: {source_type_review_count} 篇",
+        "- 注：本文件只描述检索覆盖和 metadata 完整性，不宣称真实研究空白。",
         "",
         "## 覆盖较好的主题",
         "",
@@ -400,11 +399,87 @@ def generate_missing_areas_report(
     else:
         lines.append("- 当前项目关键词都至少获得了基础覆盖，但仍建议人工检查是否存在语义漏网项。")
 
-    lines.extend(["", "## 结构性空白", ""])
-    if structural_gaps:
-        lines.extend(f"- {item}" for item in structural_gaps)
+    lines.extend(["", "## Retrieval Coverage Hints", ""])
+    if retrieval_coverage_hints:
+        lines.extend(f"- {item}" for item in retrieval_coverage_hints)
     else:
-        lines.append("- 当前去重论文池在年份和来源分布上没有明显结构性缺口。")
+        lines.append("- 当前去重论文池在年份和 metadata 完整性上没有明显覆盖提示。")
+
+    # --- 检索覆盖提示（结构化，供 T3/T4 复核，不是研究缺口结论） ---
+    gap_entries: list[dict[str, str]] = []
+    gap_counter = 0
+
+    # 从低覆盖关键词生成补检/复核提示
+    for keyword in missing_keywords:
+        gap_counter += 1
+        count = keyword_counts[keyword]
+        gap_entries.append({
+            "id": f"提示 {gap_counter}",
+            "title": f"`{keyword}` 相关检索覆盖不足",
+            "what": f"在 {total} 篇去重论文中，仅 {count} 篇显式提及 `{keyword}`，远低于高覆盖阈值 {high_coverage_threshold}。",
+            "why": "这是检索覆盖提示，不等于真实研究缺口；需要 Reader/Ideation LLM 基于精读材料确认是否有科学问题。",
+            "direction": f"围绕 `{keyword}` 设计补检 query，或在 T3 精读时记录该主题是否实际出现。",
+            "difficulty": "Medium",
+        })
+
+    # 从结构性覆盖问题生成补检/复核提示
+    if total and recent_count < max(5, total // 4):
+        gap_counter += 1
+        gap_entries.append({
+            "id": f"提示 {gap_counter}",
+            "title": f"{recent_label} 最新论文覆盖不足",
+            "what": f"{recent_label} 论文仅 {recent_count} 篇（占比 {recent_count / max(1, total) * 100:.0f}%），最新进展覆盖可能不足。",
+            "why": "这是时间覆盖提示，不等于近期一定存在未覆盖突破。",
+            "direction": f"针对 {recent_label} 做一轮专题补检，或由 LLM 判断当前领域是否确实需要近期补搜。",
+            "difficulty": "Low",
+        })
+    if total and source_type_review_count > total // 3:
+        gap_counter += 1
+        gap_entries.append({
+            "id": f"提示 {gap_counter}",
+            "title": "source_type 复核不足",
+            "what": f"有 {source_type_review_count} 篇论文的 source_type 为 unknown 或需要 LLM 复核。",
+            "why": "source_type 属于领域 profile 判断，不能由 runtime 仅凭 venue 名称替代。",
+            "direction": "由 Scout/Reader LLM 基于 domain_profile 标注相关 venue/source_type，必要时补搜目标领域代表 venue。",
+            "difficulty": "Medium",
+        })
+    if total and missing_abstract_count > total // 3:
+        gap_counter += 1
+        gap_entries.append({
+            "id": f"提示 {gap_counter}",
+            "title": "摘要缺失论文比例偏高",
+            "what": f"有 {missing_abstract_count} 篇论文（占比 {missing_abstract_count / max(1, total) * 100:.0f}%）缺少摘要，无法进行内容级分析。",
+            "why": "缺少摘要的论文无法参与关键词覆盖分析和 abstract sweep，可能导致覆盖评估偏差。",
+            "direction": "对缺失摘要的关键论文手动补充 metadata，或在 T3 精读时优先处理这些论文。",
+            "difficulty": "Low",
+        })
+
+    # 从覆盖过度集中生成补检/复核提示
+    if covered_keywords and len(covered_keywords) >= 3:
+        # 检查覆盖是否过于集中在少数关键词
+        top_keyword = max(keyword_counts.items(), key=lambda x: x[1])
+        if top_keyword[1] > max(10, total // 3):
+            gap_counter += 1
+            gap_entries.append({
+                "id": f"提示 {gap_counter}",
+                "title": f"检索视角过于集中在 `{top_keyword[0]}`",
+                "what": f"`{top_keyword[0]}` 有 {top_keyword[1]} 篇论文，占论文池的 {top_keyword[1] / max(1, total) * 100:.0f}%，其余主题覆盖稀疏。",
+                "why": "检索视角过度集中可能导致 Reader 看到的证据范围较窄，但是否构成研究机会需要 LLM 判断。",
+                "direction": "让 LLM 基于 domain_profile 判断是否需要相邻领域、替代术语或不同评估场景的补检。",
+                "difficulty": "Low",
+            })
+
+    if gap_entries:
+        lines.extend(["", "## Retrieval Coverage Hints（不是研究缺口结论）", ""])
+        lines.append("> 以下提示由 runtime 基于关键词覆盖和分布特征自动生成，只能用于补检或让 T3/T4 复核；不能直接宣称领域空白。")
+        lines.append("")
+        for gap in gap_entries:
+            lines.append(f"### {gap['id']}: {gap['title']}")
+            lines.append(f"- **覆盖缺口**: {gap['what']}")
+            lines.append(f"- **为什么需要复核**: {gap['why']}")
+            lines.append(f"- **建议动作**: {gap['direction']}")
+            lines.append(f"- **难度**: {gap['difficulty']}")
+            lines.append("")
 
     lines.extend(["", "## 建议在 T3/T4 继续确认的问题", ""])
     follow_ups = []
@@ -412,8 +487,8 @@ def generate_missing_areas_report(
         follow_ups.append(f"优先围绕 {', '.join(f'`{item}`' for item in missing_keywords[:3])} 继续补检或在精读时标注缺口。")
     if recent_count < max(5, total // 4) and total:
         follow_ups.append(f"重点确认 {recent_label} 的最新工作，避免只依赖旧综述或早期系统。")
-    if strong_venue_count < max(5, total // 6) and total:
-        follow_ups.append("补充更强 venue 的代表论文，帮助后续 novelty 对比更扎实。")
+    if source_type_review_count > total // 3 and total:
+        follow_ups.append("让 LLM 基于 domain_profile 复核 source_type/venue，而不是依赖 runtime 自动判断。")
     if not follow_ups:
         follow_ups.append("按论文笔记进一步确认：哪些机制被反复验证，哪些只停留在概念或系统描述。")
     lines.extend(f"- {item}" for item in follow_ups)
@@ -445,12 +520,19 @@ async def finalize_t2_outputs(
 
     project = _load_project(workspace_dir)
     keywords = _normalize_keywords(project)
+    domain_profile = _project_domain_profile(project)
 
     dedup_papers = deduplicate_papers(raw_papers, doi_dedup=True, title_threshold=0.95)
-    if _is_cs_project(project, keywords):
-        dedup_papers = filter_by_domain(dedup_papers, target_domain="cs")
+    if domain_profile:
+        dedup_papers = filter_by_domain(
+            dedup_papers,
+            target_domain=str(domain_profile.get("target_domain") or domain_profile.get("domain") or "profile"),
+            domain_profile=domain_profile,
+        )
 
     scored_papers = score_papers(dedup_papers, keywords)
+    # Sort for deterministic queue priority only. `relevance_score` is a
+    # metadata priority hint and is not used as an exclusion threshold.
     scored_papers = sorted(
         scored_papers,
         key=lambda paper: (
@@ -462,7 +544,7 @@ async def finalize_t2_outputs(
     )
     final_papers = _select_final_papers(scored_papers)
     final_papers = _ensure_seed_papers(final_papers, scored_papers + raw_papers, workspace_dir)
-    enriched_papers = enrich_papers(final_papers, keywords)
+    enriched_papers = enrich_papers(final_papers, keywords, domain_profile=domain_profile)
 
     policy = WorkspaceAccessPolicy(
         workspace_dir=workspace_dir,

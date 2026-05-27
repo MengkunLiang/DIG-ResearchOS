@@ -20,6 +20,7 @@ from ._common import (
     prepend_resume_prefix,
     read_text_file,
 )
+from .guidance import load_agent_guidance
 
 
 class ReaderAgent(Agent):
@@ -152,6 +153,9 @@ class ReaderAgent(Agent):
             note_count = len(note_files)
             context_vars["note_count"] = note_count
             context_vars["note_id_preview"] = [path.stem for path in note_files[:30]]
+            abstract_dir = ctx.workspace_dir / "literature" / "paper_notes_abstract"
+            abstract_count = len(list(abstract_dir.glob("*.md"))) if abstract_dir.exists() else 0
+            context_vars["abstract_note_count"] = abstract_count
             missing_areas_path = ctx.workspace_dir / "literature" / "missing_areas.md"
             context_vars["missing_areas"] = read_text_file(missing_areas_path, default="")
             comparison_table_path = ctx.workspace_dir / "literature" / "comparison_table.csv"
@@ -159,6 +163,7 @@ class ReaderAgent(Agent):
                 comparison_table_path,
                 default="",
             )[:1200]
+            context_vars["agent_guidance"] = load_agent_guidance("literature-synthesis")
 
         return render_prompt(self.spec.prompt_template, ctx, **context_vars)
 
@@ -193,8 +198,9 @@ class ReaderAgent(Agent):
             ctx,
             (
             "请开始T3.5综合流程。综合literature/paper_notes/目录下的所有笔记，"
-            "先调用 build_synthesis_workbench 生成结构化证据、outline和draft，再审阅/修订"
-            "产出literature/synthesis.md，包含5个必需章节：方法家族分类、共同假设、"
+            "先用你的LLM能力分析方法家族、共同假设、趋势和问题，再调用 build_synthesis_workbench "
+            "生成结构化证据、outline和写作指导。工具产物不是最终结论；你必须审阅后亲自写出"
+            "literature/synthesis.md，包含5个必需章节：方法家族分类、共同假设、"
             "性能-效率前沿、技术趋势、可操作研究问题。"
             ),
         )
@@ -300,6 +306,14 @@ class ReaderAgent(Agent):
             return False, "缺少literature/related_work.bib"
         if "@" not in read_text_file(bib_path):
             return False, "related_work.bib似乎为空或格式不正确"
+
+        # 校验 abstract sweep notes（可选目录）
+        abstract_dir = ctx.workspace_dir / "literature" / "paper_notes_abstract"
+        if abstract_dir.exists():
+            for note_path in sorted(abstract_dir.glob("*.md")):
+                ok, err = _validate_abstract_note_structure(note_path)
+                if not ok:
+                    return False, f"[abstract sweep] {err}"
 
         return True, None
 
@@ -407,6 +421,7 @@ def _validate_note_structure(note_path: Path) -> tuple[bool, str | None]:
         "## 10. Key Quotes",
         "## 11. My Questions",
         "## 12. Reading Coverage",
+        "## 13. Mechanism Claim",
     ]
     for marker in required_markers:
         if marker not in content:
@@ -423,6 +438,10 @@ def _validate_note_structure(note_path: Path) -> tuple[bool, str | None]:
         return False, f"{note_path.name} 缺少 evidence 锚点，无法支撑全文类结论"
 
     ok, err = _validate_reading_coverage(note_path, content, status_text)
+    if not ok:
+        return False, err
+
+    ok, err = _validate_mechanism_claim(note_path, content)
     if not ok:
         return False, err
 
@@ -476,6 +495,72 @@ def _validate_reading_coverage(
             return False, (
                 f"{note_path.name} 标记为 FULL-TEXT，但 Truncation 未明确为 none/无: {truncation_line}"
             )
+
+    return True, None
+
+
+def _validate_mechanism_claim(note_path: Path, content: str) -> tuple[bool, str | None]:
+    """校验 §13 Mechanism Claim 存在且三个 bullet 非空。"""
+
+    import re
+
+    section_match = re.search(
+        r"(?ms)^## 13\. Mechanism Claim\s*(?P<section>.*?)(?=^##\s+\d+\.|\Z)",
+        content,
+    )
+    if section_match is None:
+        return False, f"{note_path.name} 缺少 ## 13. Mechanism Claim 章节"
+
+    section = section_match.group("section")
+    required_fields = [
+        "- **Stated mechanism**:",
+        "- **Evidence type**:",
+        "- **Supporting artifact**:",
+    ]
+    for field in required_fields:
+        if field not in section:
+            return False, f"{note_path.name} Mechanism Claim 缺少字段: {field}"
+
+    # 检查每个字段的 value 非空
+    for field_name in ("Stated mechanism", "Evidence type", "Supporting artifact"):
+        value = _extract_markdown_field(section, field_name)
+        if not value:
+            return False, f"{note_path.name} Mechanism Claim 的 {field_name} 不能为空"
+
+    return True, None
+
+
+def _validate_abstract_note_structure(note_path: Path) -> tuple[bool, str | None]:
+    """校验 abstract sweep note 的最小结构（精简版，无 §12）。"""
+
+    content = note_path.read_text(encoding="utf-8")
+    required_markers = [
+        "- **Status**:",
+        "## 1. Problem & Motivation",
+        "## 2. Method Summary",
+        "## 3. Key Claimed Results",
+        "## 13. Mechanism Claim",
+        "## Source",
+    ]
+    for marker in required_markers:
+        if marker not in content:
+            return False, f"{note_path.name} 缺少必要结构: {marker}"
+
+    # Status 必须是 ABSTRACT-ONLY
+    if "ABSTRACT-ONLY" not in content:
+        return False, f"{note_path.name} Status 必须标记为 [ABSTRACT-ONLY]"
+
+    # §13 Evidence type 必须明确标为 abstract-only hint，避免把摘要片段
+    # 伪装成已验证机制证据。兼容旧的 claimed_untested abstract notes。
+    ok, err = _validate_mechanism_claim(note_path, content)
+    if not ok:
+        return False, err
+
+    evidence_match = re.search(r"- \*\*Evidence type\*\*:\s*(.+)", content)
+    if evidence_match:
+        evidence_val = evidence_match.group(1).strip().lower()
+        if "abstract_claim_hint" not in evidence_val and "claimed_untested" not in evidence_val:
+            return False, f"{note_path.name} abstract note 的 Evidence type 必须为 abstract_claim_hint"
 
     return True, None
 

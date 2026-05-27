@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from researchos.tools.multi_source_search import MultiSourceSearchParams, MultiSourceSearchTool
 from researchos.tools.publisher_search import ElsevierScopusSearchTool, InformsSearchTool
 
 
@@ -125,3 +126,57 @@ async def test_informs_search_filters_to_journal_articles_by_default(monkeypatch
     assert result.ok
     assert "prefix:10.1287" in captured["params"]["filter"]
     assert "type:journal-article" in captured["params"]["filter"]
+
+
+def test_multi_source_search_defaults_include_informs():
+    params = MultiSourceSearchParams(query="supply chain optimization")
+
+    assert "informs" in params.sources
+
+
+@pytest.mark.asyncio
+async def test_multi_source_search_informs_branch_uses_crossref_prefix(monkeypatch):
+    captured = {}
+
+    class _FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "message": {
+                    "items": [
+                        {
+                            "DOI": "10.1287/mnsc.2025.1234",
+                            "title": ["An INFORMS Paper"],
+                            "author": [{"given": "Ada", "family": "Lovelace"}],
+                            "published-online": {"date-parts": [[2025, 4, 1]]},
+                            "container-title": ["Management Science"],
+                            "is-referenced-by-count": 11,
+                        }
+                    ]
+                }
+            }
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url):
+            captured["url"] = url
+            return _FakeResponse()
+
+    monkeypatch.setattr("researchos.tools.multi_source_search.httpx.AsyncClient", _FakeClient)
+
+    tool = MultiSourceSearchTool(email="researcher@example.com")
+    papers = await tool._search_informs("supply chain optimization", 5)
+
+    assert "filter=prefix:10.1287,type:journal-article" in captured["url"]
+    assert papers[0]["source"] == "informs_crossref"
+    assert papers[0]["externalIds"]["CrossrefPrefix"] == "10.1287"

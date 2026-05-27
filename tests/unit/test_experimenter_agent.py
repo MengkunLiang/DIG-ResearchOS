@@ -68,7 +68,7 @@ def test_experimenter_agent_spec(experimenter_agent):
     assert spec.model_tier == "medium"
     assert spec.max_steps == 2000
     assert spec.max_tokens_total == 60_000_000
-    assert spec.max_wall_seconds == 14400
+    assert spec.max_wall_seconds == 144000
     assert spec.temperature == 0.3
     assert spec.prompt_template == "experimenter.j2"
 

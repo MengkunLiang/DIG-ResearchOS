@@ -81,6 +81,11 @@ method
 - **Extraction calls**: extract_pdf_text pages 1-10
 - **Truncation**: none
 - **Status rationale**: All PDF pages were read without truncation.
+
+## 13. Mechanism Claim
+- **Stated mechanism**: The method improves performance through better feature extraction
+- **Evidence type**: ablation_supported
+- **Supporting artifact**: Table 2
 """
 
 

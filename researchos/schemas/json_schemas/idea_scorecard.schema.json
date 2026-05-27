@@ -32,9 +32,25 @@
               "target_problem": {
                 "type": "string",
                 "minLength": 1
+              },
+              "mechanism": {
+                "type": "string",
+                "minLength": 1
+              },
+              "prediction": {
+                "type": "string",
+                "minLength": 1
+              },
+              "counterfactual": {
+                "type": "string",
+                "minLength": 1
+              },
+              "mechanism_family": {
+                "type": "string",
+                "minLength": 1
               }
             },
-            "required": ["id", "title", "pitch", "core_claim", "target_problem"],
+            "required": ["id", "title", "pitch", "core_claim", "target_problem", "mechanism", "prediction", "counterfactual", "mechanism_family"],
             "additionalProperties": true
           },
           "hypothesis_refs": {
@@ -86,6 +102,10 @@
               "trigger_observation": {
                 "type": "string",
                 "minLength": 1
+              },
+              "seed_alignment": {
+                "type": "string",
+                "description": "How this idea aligns with the user's original seed ideas or constraints. 'direct' if derived from seed, 'partial' if related, 'none' if independent."
               }
             },
             "required": [

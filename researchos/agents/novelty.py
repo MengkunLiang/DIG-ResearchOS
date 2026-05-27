@@ -132,7 +132,9 @@ class NoveltyAgent(Agent):
     def _extract_mechanism_keywords(self, hypothesis: dict) -> list[str]:
         """从假设中提取技术机制关键词。
 
-        识别算法名、架构名、技术术语等。
+        使用结构化模式匹配 + 最小通用术语集提取技术术语。
+        通用术语集覆盖跨领域共用的 ML 基础概念（架构、训练、优化），
+        不绑定特定研究方向。
 
         Args:
             hypothesis: 假设字典，包含 title 和 content 字段
@@ -140,45 +142,7 @@ class NoveltyAgent(Agent):
         Returns:
             机制关键词列表
         """
-        # 常见技术术语模式
-        common_mechanisms = {
-            # 深度学习架构
-            "transformer", "bert", "gpt", "llama", "t5", "bart",
-            "cnn", "convolutional neural network", "resnet", "vgg", "inception",
-            "rnn", "lstm", "gru", "recurrent neural network",
-            "gan", "generative adversarial network", "vae", "variational autoencoder",
-            "diffusion", "stable diffusion", "ddpm",
-            "vision transformer", "vit", "swin transformer",
-
-            # 注意力机制
-            "attention", "self-attention", "cross-attention", "multi-head attention",
-            "flash attention", "linear attention",
-
-            # 优化算法
-            "adam", "sgd", "adamw", "rmsprop", "adagrad",
-            "gradient descent", "momentum",
-
-            # 强化学习
-            "reinforcement learning", "rl", "ppo", "dqn", "a3c", "sac",
-            "q-learning", "policy gradient", "actor-critic",
-
-            # 训练技术
-            "fine-tuning", "prompt tuning", "lora", "qlora", "adapter",
-            "knowledge distillation", "transfer learning",
-            "contrastive learning", "self-supervised learning",
-            "few-shot learning", "zero-shot learning", "meta-learning",
-
-            # 架构组件
-            "encoder", "decoder", "encoder-decoder",
-            "feedforward", "mlp", "residual connection", "skip connection",
-            "batch normalization", "layer normalization", "dropout",
-
-            # 其他技术
-            "graph neural network", "gnn", "gcn",
-            "neural architecture search", "nas",
-            "pruning", "quantization", "compression",
-            "retrieval", "rag", "retrieval-augmented generation",
-        }
+        import re
 
         # 提取文本
         text = ""
@@ -188,15 +152,110 @@ class NoveltyAgent(Agent):
             text = str(hypothesis)
 
         text_lower = text.lower()
+        keywords: set[str] = set()
 
-        # 查找匹配的机制关键词
-        found_keywords = []
-        for mechanism in common_mechanisms:
-            if mechanism in text_lower:
-                found_keywords.append(mechanism)
+        # 1. 提取带连字符的技术术语 (e.g., "self-supervised", "cross-attention")
+        hyphenated = re.findall(r"\b[a-z]+(?:-[a-z]+)+\b", text_lower)
+        keywords.update(h for h in hyphenated if len(h) > 5)
 
-        # 去重并返回
-        return list(set(found_keywords))
+        # 2. 提取缩写词 (e.g., "GNN", "RAG", "LoRA")
+        abbrevs = re.findall(r"\b[A-Z]{2,6}\b", text)
+        keywords.update(a.lower() for a in abbrevs)
+
+        # 3. 提取大写开头的技术名词 (e.g., "Transformer", "BERT", "ViT")
+        capitalized = re.findall(r"\b[A-Z][a-zA-Z]{2,}\b", text)
+        common_words = {
+            "the", "this", "that", "these", "those", "which", "what",
+            "where", "when", "how", "our", "their", "your", "with",
+            "from", "into", "through", "during", "before", "after",
+            "above", "below", "between", "about", "proposed", "proposes",
+            "method", "methods", "approach", "result", "results",
+            "paper", "work", "study", "problem", "solution", "figure",
+            "table", "section", "chapter", "however", "therefore",
+            "moreover", "furthermore", "although", "because", "while",
+            "whereas", "also", "still", "already", "even", "just",
+            "only", "both", "either", "neither", "each", "every",
+            "such", "than", "other", "another", "some", "many",
+            "much", "few", "several", "most", "all", "any",
+            "test", "user", "data", "system", "task", "tasks",
+            "process", "service", "support", "provide", "based",
+            "using", "used", "new", "first", "second", "third",
+            "high", "low", "large", "small", "good", "best",
+            "different", "same", "specific", "general", "important",
+            "available", "current", "recent", "existing", "traditional",
+            "effective", "efficient", "novel", "improved", "improving",
+            "behavior", "behaviour", "performance", "evaluation",
+            "analysis", "experiment", "experiments", "experimental",
+            "comparison", "comparative", "investigation", "survey",
+            "review", "overview", "introduction", "conclusion",
+            "discussion", "summary", "description", "explanation",
+        }
+        for term in capitalized:
+            lower = term.lower()
+            if lower not in common_words:
+                keywords.add(lower)
+
+        # 4. 通用 ML 术语匹配（跨领域共用的基础概念）
+        #    这些不是特定研究方向的关键词，而是 ML 领域共用的技术词汇。
+        #    用于为 LLM agent 提供搜索种子，agent 自身会根据上下文调整查询。
+        universal_terms = [
+            # 架构
+            "transformer", "attention", "encoder", "decoder",
+            "cnn", "rnn", "lstm", "gru", "gan", "vae",
+            "bert", "gpt", "llama", "t5", "bart", "roberta",
+            "resnet", "vgg", "inception", "vit", "diffusion",
+            # 训练技术
+            "fine-tuning", "transfer learning", "contrastive learning",
+            "self-supervised learning", "few-shot learning", "zero-shot learning",
+            "meta-learning", "knowledge distillation", "pruning", "quantization",
+            "lora", "adapter", "prompt tuning",
+            # 强化学习
+            "reinforcement learning", "policy gradient", "actor-critic",
+            "q-learning", "ppo", "dqn",
+            # 优化
+            "adam", "sgd", "adamw", "gradient descent", "momentum",
+            # 检索与生成
+            "retrieval", "retrieval-augmented generation",
+            # 归一化与正则化
+            "batch normalization", "layer normalization", "dropout",
+            # 注意力变体
+            "self-attention", "cross-attention", "flash attention",
+            # 图神经网络
+            "graph neural network", "graph convolution",
+            # 其他
+            "embedding", "representation", "backpropagation",
+        ]
+        for term in universal_terms:
+            if term in text_lower:
+                keywords.add(term)
+
+        # 5. 提取复合技术词 (e.g., "autoencoder", "feedforward", "backpropagation")
+        compound_patterns = [
+            r"\b([a-z]+(?:encoder|decoder|network|attention|embedding))\b",
+            r"\b((?:auto|feed|backprop|dropout|softmax|sigmoid)[a-z]*)\b",
+        ]
+        for pattern in compound_patterns:
+            compounds = re.findall(pattern, text_lower)
+            keywords.update(c for c in compounds if len(c) > 5)
+
+        # 6. 提取引号中的术语
+        quoted = re.findall(r"['\"]([^'\"]{3,30})['\"]", text)
+        keywords.update(q.lower().strip() for q in quoted)
+
+        # Filter out very short terms and normalize plurals
+        filtered = set()
+        for kw in keywords:
+            if len(kw) < 3:
+                continue
+            # Simple plural normalization: "adapters" → "adapter"
+            if kw.endswith("s") and not kw.endswith("ss") and len(kw) > 4:
+                singular = kw[:-1]
+                if singular in keywords or len(singular) >= 3:
+                    filtered.add(singular)
+                    continue
+            filtered.add(kw)
+
+        return list(filtered)[:20]
 
     def _search_similar_mechanisms(
         self, mechanism_keywords: list[str], tool_registry

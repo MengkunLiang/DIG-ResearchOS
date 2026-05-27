@@ -462,7 +462,6 @@ ResearchOS 可以加载 MCP server 配置，并把 MCP tool 暴露给 agent。
 
 ## 已知限制
 
-- `/home/liangmengkun/reference_materials` 在某些运行环境中可能不存在；这时实现以仓库内 `docs/`、`config/` 和测试为准。
 - T4 的两轮 idea gate 目前仍主要通过 `ask_human` 和 artifact 记录完成，尚未完全拆成状态机级正式 gate。
 - T4.5 novelty 审计仍依赖 LLM 生成搜索策略，后续应进一步工具化为结构化 novelty audit。
 - 长任务仍受 provider 稳定性、速率限制和 PDF 解析质量影响。

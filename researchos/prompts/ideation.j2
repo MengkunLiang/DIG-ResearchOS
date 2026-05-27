@@ -12,7 +12,7 @@
 ### 文献综述（synthesis.md前8000字符）
 {{ synthesis_preview }}
 
-### 文献缺口分析
+### 检索覆盖提示（不是研究缺口结论）
 {{ missing_areas }}
 
 {% if has_seed_ideas %}
@@ -23,6 +23,11 @@
 {% if comparison_table_preview %}
 ### 对比表预览
 {{ comparison_table_preview }}
+{% endif %}
+
+{% if agent_guidance %}
+{{ agent_guidance }}
+
 {% endif %}
 
 ## 你的任务：两阶段假设生成流程
@@ -37,10 +42,22 @@
 用 `read_file` 读取完整的 `literature/synthesis.md`，理解：
 - Q1-QN: 文献综述中提出的核心问题
 - 现有方法的局限性
-- missing_areas.md 中指出的研究缺口
+- missing_areas.md 中的检索覆盖提示；它们不是研究缺口结论，必须结合 synthesis 和 paper notes 复核
 
-### Step 2: 生成3-5个候选研究方向
-基于文献分析，生成3-5个候选方向。每个方向必须包含：
+### Step 2: 主线发散：自由推理 + 综述 + seed idea
+基于文献分析，先生成 3-5 个主线候选方向。这一步不受四类补充约束限制，必须充分发挥你的 LLM 研究判断：
+
+- **自由推理候选**：至少 1 个，直接来自你对 synthesis.md 的综合理解、方法家族、共同假设、趋势和可操作问题的推理。
+{% if has_seed_ideas %}
+- **seed-derived 候选**：至少 1 个，直接吸收、修订或挑战用户 seed ideas。不要机械照抄 seed idea，要把它改写成可验证、可差异化的研究假设。
+{% else %}
+- **seed slot 说明**：如果没有 seed idea，明确记录主线候选均来自综述/缺口/对比表。
+{% endif %}
+- **evidence-driven 候选**：至少 1 个，从 comparison_table、经复核的 missing_areas coverage hint 或具体 paper notes 的冲突/空白推出。
+
+主线候选可以是直接通过思考和综述提出的 idea，也可以是基于 seed idea 提炼后的 idea。四类约束只在 Step 2.5 用于补充覆盖，不能替代这一步。
+
+每个方向必须包含：
 
 **必需元素**：
 - **一句话Pitch**: 用一句话说清楚要做什么
@@ -70,84 +87,40 @@
 - 每个方向必须有observable metrics（可测量的成功标准）
 - 每个方向都要能进入 `idea_scorecard.yaml`：即使最后被淘汰，也要保留来源、评分、淘汰原因和可重访条件
 
-### Step 2.5: Ideation Lenses 审视（多视角深度分析）
+### Step 2.5: 四类补充通道（coverage supplements，不是全部来源）
 
-**来源**: AI-Research-SKILLs - 10个互补视角
+在 Step 2 的主线候选之外，尽量再生成 4 个补充候选 idea，每类 1 个。它们的目的不是限制创造力，而是补看容易被常规综述漏掉的四个角度。最终候选池合计建议 7-9 个：3-5 个主线候选 + 最多 4 个补充候选。
 
-对每个候选方向，用以下10个视角进行深度审视。如果某个视角发现了重要问题，需要在 `key_risks` 中记录。
+如果某一类确实没有证据基础，不要硬编；写明 `constraint_status: "not_supported_by_current_evidence"`，并用一个额外的 evidence-driven 候选替代，同时在 `basis_summary` 说明为什么替代。
 
-#### 10个Ideation Lenses
+**补充候选【机制质疑型】**:
+优先查看 `literature/synthesis_workbench.json` 的 `mechanism_claim_clusters` 字段（旧产物可能叫 `domain_consensus`），选取 `challengeable_hint: true` 且经你复核确实值得质疑的机制 claim cluster。
+这些 cluster 只是工具用 token 相似度聚合出的 review hint，不是已经成立的“领域共识”。你必须先判断它是否真是多篇论文共享的机制主张，证据是否弱，是否适合设计 falsification/disambiguation 实验。
+如果没有 mechanism_claim_clusters，则扫 `literature/paper_notes/*.md` 的 §13 Mechanism Claim，
+找 evidence_type 是 `claimed_untested` 或 `empirical_correlation` 的 mechanism。
+设计 idea 来 falsify 或 disambiguate 它。
+结构要求：指出被质疑的 mechanism、替代解释、能够区分两者的实验 E。
 
-| # | 视角 | 核心问题 | 审视要点 |
-|---|------|----------|----------|
-| 1 | **Contrastive（对比视角）** | 与现有方法的关键区别是什么？ | 对比SOTA方法，识别真正的差异化贡献；避免"略好一点点"的增量改进 |
-| 2 | **First-principles（第一性原理）** | 这个方向的根本动机是什么？ | 从物理/数学/信息论角度分析可行性；检查是否违反基本约束 |
-| 3 | **Analogical（类比视角）** | 其他领域有类似的成功案例吗？ | 寻找跨领域的类比（如NLP→CV的成功经验）；识别类比的边界条件 |
-| 4 | **Constraint-based（约束视角）** | 在什么约束条件下成立？ | 分析假设的适用范围和边界条件；明确"在X条件下成立" |
-| 5 | **Multi-scale（多尺度视角）** | 在不同尺度上表现如何？ | 检查从token级别到系统级别的效果；考虑 scaling law |
-| 6 | **Temporal（时间视角）** | 这个方向的生命周期如何？ | 评估3-5年后的影响力；考虑技术发展的时序风险 |
-| 7 | **Causal（因果视角）** | 为什么这个方法会有效？ | 明确因果机制，而非相关性；避免 spurious correlations |
-| 8 | **Uncertainty（不确定性视角）** | 哪些地方可能出错？ | 量化假设的不确定性；识别单点故障风险 |
-| 9 | **Resource（资源视角）** | 资源投入产出比如何？ | 评估计算/数据/人力成本；与同等资源下的其他方向对比 |
-| 10 | **Stakeholder（利益相关者视角）** | 谁会关心这个成果？ | 识别目标用户和受益者；评估实际应用价值 |
+注意：`literature/paper_notes_abstract/` 中也有 abstract-only 笔记，其 §13 Evidence type 通常为 `abstract_claim_hint`（旧产物可能是 `claimed_untested`）。
+引用 abstract-only paper 的 mechanism claim 时标注 "based on abstract only"，且不能把它当成已验证机制证据。
 
-**审视输出格式**：
-对每个候选方向，输出10个视角的审视结果：
+**补充候选【反向操作型】**:
+从文献中找一个普遍“加东西”的操作（加模块、加 objective、加数据、加过滤、加记忆、加推理步骤等），设计减掉、关掉、反转或最小化的版本。
+结构要求：说明为什么反向操作不是偷懒 ablation，而是能检验某个机制是否真的必要。
 
-```json
-{
-  "direction_id": "D1",
-  "lens_analysis": {
-    "contrastive": {
-      "key_insight": "与Diffusion Transformer相比，关键区别在于...",
-      "concern": "如果差异仅在超参数调优，可能不够novelty"
-    },
-    "first_principles": {
-      "key_insight": "从信息论角度，理论上界提升...",
-      "concern": null
-    },
-    "analogical": {
-      "key_insight": "类似GAN在CV领域的成功...",
-      "concern": "但NLP生成有独特挑战，如语法正确性"
-    },
-    "constraint_based": {
-      "key_insight": "在低资源场景下特别有效",
-      "concern": "高资源场景可能收益递减"
-    },
-    "multi_scale": {
-      "key_insight": "在句子级别效果显著",
-      "concern": "文档级别可能需要额外设计"
-    },
-    "temporal": {
-      "key_insight": "与LLM发展趋势契合",
-      "concern": "可能被foundation model直接解决"
-    },
-    "causal": {
-      "key_insight": "通过X机制实现Y效果",
-      "concern": "可能存在混淆因素"
-    },
-    "uncertainty": {
-      "key_insight": "主要不确定性在数据集质量",
-      "concern": "实验结果可能存在高方差"
-    },
-    "resource": {
-      "key_insight": "计算效率提升50%",
-      "concern": "需要额外的标注成本"
-    },
-    "stakeholder": {
-      "key_insight": "对NMT工业应用有价值",
-      "concern": "学术界可能更关注理论贡献"
-    }
-  }
-}
-```
+**补充候选【子群失败型】**:
+从 paper notes §5 (limitations) 或 comparison_table 找
+"所有 SOTA 在某子群/场景下 underperform" 的现象。
+提出关于"为什么"的 hypothesis。
+结构要求：定义子群 G、失败指标、候选失败机制 M、和一个能验证 M 的 cheap pilot。
 
-**综合评分更新**：
-基于10个视角的审视，更新原始的三维评分。如果某个视角发现重大问题，可能需要降低评分或重新设计方向。
+**补充候选【缺口探索型】**:
+从 `literature/missing_areas.md` 的 "## Retrieval Coverage Hints（不是研究缺口结论）" 段落中选取一个覆盖提示。
+这些提示只说明当前检索池哪里覆盖不足，不能直接改写成“领域没人做”或“真实研究空白”。
+结构要求：先说明覆盖缺口和建议复核动作；只有当 synthesis、paper notes 和你的领域判断共同支持时，才把它转化为研究 idea，否则应写成补检/验证计划。
+注意：提示中的"难度"字段只帮助评估复核成本，优先选 Medium/Low 难度的提示。
 
-**输出位置**：
-将审视结果写入 `ideation/_lens_analysis.json`（内部使用，不直接暴露给用户）。
-这是内部 JSON 文件，可以调用 `write_file` 并把 `content` 传为 JSON 对象；runtime 会自动序列化为 JSON 文本。
+这四个补充候选可以和主线候选合并，但不能覆盖掉主线自由推理/seed-derived 候选。`source` 中建议记录 `idea_origin`（如 `free_reasoning`、`seed_refinement`、`mechanism_challenge`、`reverse_operation`、`subgroup_failure`、`missing_area_exploration`）。
 
 ### Step 3: 写入候选方向
 将候选方向写入 `ideation/_candidate_directions.json`，格式：
@@ -160,8 +133,14 @@
       "pitch": "一句话描述",
       "core_claim": "这个方向要证明的核心命题",
       "target_problem": "这个方向解决的具体问题",
+      "mechanism": "因果断言(X causes Y)，不是方法描述(adding X improves Y)。实在写不出写 \"see core_claim\"",
+      "prediction": "如果 mechanism 成立，在条件 X 下应观察到 Y。实在写不出写 \"qualitative: outperforms baseline\"",
+      "counterfactual": "如果 mechanism 不成立，会观察到 Z。实在写不出写 \"no clear counterfactual\"",
+      "mechanism_family": "1-3 词标签，用于标识机制类型",
       "corresponds_to": "Q1",
       "basis_summary": "来自Q1中关于XXX缺口的观察，以及comparison_table里YYY基线的共同短板",
+      "idea_origin": "free_reasoning | seed_refinement | mechanism_challenge | reverse_operation | subgroup_failure | missing_area_exploration | evidence_driven",
+      "constraint_status": "mainline | supplement | not_supported_by_current_evidence",
       "basis_sources": [
         {"type": "synthesis", "ref": "Q1 / [p3]", "claim": "现有方法在长上下文下误差显著上升"},
         {"type": "missing_areas", "ref": "missing_areas.md", "claim": "缺少低预算可验证的机制实验"}
@@ -198,13 +177,69 @@
   ]
 }
 ```
+
+**每个 idea 必须包含 mechanism / prediction / counterfactual / mechanism_family**。
+
+质量检查：
+
+- `mechanism` 必须是因果解释：说明哪个变量或机制为什么导致结果变化；不能只是“使用某方法会提升某指标”。
+- `prediction` 必须包含条件、对象/子群、指标和预期方向；没有把条件说清楚的预测不可执行。
+- `counterfactual` 必须能反驳机制：如果机制不成立，哪个观察会不出现或反向出现；不能写成“如果没效果就没提升”。
+- `mechanism_family` 是 1-5 个词的抽象机制标签，不能只是任务名或模型名。
+
+=== 高质量写法模板 ===
+
+mechanism: "在条件 C 下，变量/组件 X 通过中间机制 M 改变 Y；这个解释不同于最近 baseline 的解释 B"
+prediction: "如果 M 成立，在子群/场景 G 上，干预 X 后指标 Y 应按方向 D 变化，同时对照指标 Z 不应同步恶化"
+counterfactual: "如果 baseline 解释 B 才正确，干预 X 不会改变 Y，或会首先改变 Z；这与 M 的预测不同"
+mechanism_family: "短机制标签"
+
+=== 低质量写法（Gate1 会直接暴露） ===
+
+mechanism: "方法 X improves task Y"
+                ↑ 这是方法描述，不是机制解释
+prediction: "metric improves by N%"
+                ↑ 没有条件、子群、干预和替代解释
+counterfactual: "if it fails, metric does not improve"
+                ↑ 同义反复，不能区分机制
+
 这是内部 JSON 文件，可以调用 `write_file` 并把 `content` 传为 JSON 对象；runtime 会自动序列化为 JSON 文本。
+
+### Step 3.25: 写 family distribution 中间产物
+
+在生成 idea_scorecard.yaml 之前，先写 `ideation/_family_distribution.md`。
+
+格式：
+```markdown
+## Mechanism Family Distribution
+
+### Family: <name>
+- Candidates: D1, D2, D5
+- Mechanism similarity notes: <这几个候选 mechanism 上有多接近；如果接近，说明在哪里区分>
+
+### Family: <name>
+- Candidates: D3
+- (single candidate, no overlap concern)
+
+## Summary
+
+- Total candidates: 5
+- Distinct families: 3
+- Families with multiple candidates: 1 (<机制家族名>)
+
+## Recommended for Gate1 review
+
+<你的建议：哪些是同 family 但值得保留，哪些建议合并>
+```
+
+这个文件本身**不强制做出合并动作**，它只是把 family 分布暴露给后面的 Gate1。
 
 ### Step 3.5: 初始化 idea scorecard
 根据候选方向写入 `ideation/idea_scorecard.yaml` 的初版。这个文件是T4最重要的证据链/决策链产物之一，必须记录所有候选idea，不只是最后选中的idea。
 
 初版中每个idea必须先填好：
-- `source`: 从哪里来，包括 synthesis section、missing area、seed idea、supporting papers、trigger observation
+- `source`: 从哪里来，包括 synthesis section、missing area、seed idea、supporting papers、trigger observation、seed_alignment
+  - `seed_alignment`: 描述该 idea 与用户原始 seed ideas / constraints 的对齐程度。`direct` = 直接来自 seed idea，`partial` = 与 seed 相关但有偏移，`none` = 独立于 seed 的新方向
 - `idea`: 核心内容，包括 id、title、pitch、core_claim、target_problem
 - `selection_rationale`: 为什么它看起来值得做
 - `closest_baselines`: 最相近已有工作，以及 similarity / difference
@@ -220,19 +255,29 @@ Gate1 和 Gate2 后必须回写 `decision` 字段：
 用 `ask_human` 工具呈现候选方向，格式：
 
 ```
-我基于文献综述生成了以下候选研究方向：
+=== Mechanism Family 分布 ===
 
-【方向1】一句话pitch
-- 对应问题: Q1
-- 来源依据: synthesis Q1 / missing_areas / seed idea / supporting papers
-- 最接近工作: BaselineA（相似点 / 差异点）
-- 评分: Novelty=4, Feasibility=3, Impact=4, Evaluability=5, Differentiation=3, Cost=4, PaperShapability=4
-- 最低可行实验: dataset + baseline + metric + estimated_cost
-- 关键风险: ...
+{从 _family_distribution.md 直接 paste Summary 段}
 
-【方向2】...
+注意：同 family 的 idea 在 mechanism 层接近，
+请在选择时关注它们之间的实质区别。
 
-【方向3】...
+=== 候选 idea 详情 ===
+
+[D1] Origin: seed_refinement | Family: <mechanism family> | seed_alignment: direct
+  core_claim:     <候选方向的核心命题>
+  mechanism:      see core_claim                          ← 占位，LLM 没写出真正机制
+  prediction:     <条件 + 子群/对象 + 指标 + 预期方向>
+  counterfactual: no clear counterfactual                 ← 占位，无法证伪
+
+[D2] Origin: mechanism_challenge | Family: <mechanism family> | seed_alignment: partial
+  core_claim:     ...
+  mechanism:      ...
+  prediction:     ...
+  counterfactual: ...
+
+[D3] Family: structural alignment | seed_alignment: none
+  ...
 
 请选择：
 [1-N] 选择方向N
@@ -242,6 +287,8 @@ Gate1 和 Gate2 后必须回写 `decision` 字段：
 
 请输入你的选择：
 ```
+
+**关键**：把 mechanism / counterfactual 字段是否为占位词**直接暴露给用户**，而不是让 validator 拦截。用户能立刻看出哪些 idea 还没想清楚机制。
 
 **Gate1处理逻辑**：
 - 如果用户选择某个方向 → 进入阶段A.5（Pre-mortem检查）
@@ -369,7 +416,7 @@ Gate1 和 Gate2 后必须回写 `decision` 字段：
 
 ### 生成依据
 - **文献观察**: [来自 synthesis.md / paper_notes / comparison_table 的具体观察，必须带 Q编号、论文标记或文件位置]
-- **研究缺口**: [来自 missing_areas.md 或 synthesis.md 的明确缺口]
+- **研究缺口/覆盖提示**: [来自 synthesis.md 的明确问题，或 missing_areas.md 中经复核后可转化的问题；不要把检索覆盖不足直接写成领域空白]
 - **推导逻辑**: [为什么这些观察会导向这个假设，而不是只做表面组合]
 - **置信度**: Low / Medium / High，并说明原因
 
@@ -412,9 +459,9 @@ write_structured_file(
 
 不要使用 `write_file` 写 `ideation/exp_plan.yaml`；runtime 会拒绝这种写入。
 
-**格式示例**：
+**格式示例（请替换为当前项目的真实数据集、baseline 和指标，不要照抄占位名）**：
 ```yaml
-goal: "验证假设H1：XXX方法能提升YYY性能"
+goal: "验证假设H1：<机制/方法> 能在 <目标场景> 改善 <可测指标>"
 
 experiments:
   - id: "exp1"
@@ -423,14 +470,14 @@ experiments:
     hypothesis_ref: "#H1"  # 必须指向hypotheses.md中的anchor
 
     datasets:
-      - name: "ImageNet-1k"
-        split: "val"
-        size: 50000
+      - name: "<与本项目匹配的数据集或合成任务>"
+        split: "<train/val/test 或具体切分>"
+        size: <样本数或预算内子集大小>
 
     baselines:
-      - name: "ResNet-50"
-        source: "torchvision"
-        why: "标准基线"
+      - name: "<最接近已有方法>"
+        source: "<论文/代码库/工具包来源>"
+        why: "与 H1 最接近，能检验差异是否真实"
 
     our_method:
       name: "OurMethod"
@@ -438,28 +485,28 @@ experiments:
       key_difference: "与基线的核心区别"
 
     metrics:
-      - name: "top1_accuracy"
+      - name: "<主指标>"
         primary: true
-        target: 0.80
-      - name: "inference_time"
+        target: <目标阈值>
+      - name: "<成本或鲁棒性指标>"
         primary: false
-        target: 100  # ms
+        target: <目标阈值>
 
     success_criteria:
-      - metric: "top1_accuracy"
-        threshold: 0.80
+      - metric: "<主指标>"
+        threshold: <阈值>
         comparison: ">="
 
     steps:
       - step: 1
         action: "数据准备"
-        details: "下载ImageNet-1k验证集"
+        details: "准备预算内数据子集或可控合成任务"
       - step: 2
         action: "基线训练"
-        details: "训练ResNet-50"
+        details: "运行最接近 baseline"
       - step: 3
         action: "我们的方法训练"
-        details: "训练OurMethod"
+        details: "运行候选方法或机制干预"
       - step: 4
         action: "评估对比"
         details: "在验证集上评估两个模型"
@@ -495,38 +542,40 @@ write_structured_file(
 )
 ```
 
-**格式示例**：
+**格式示例（结构示例，不是推荐研究方向；所有字段必须替换为当前项目证据）**：
 ```yaml
 version: "1.0"
 ideas:
   - idea:
       id: "D1"
-      title: "分层长期记忆压缩机制"
-      pitch: "为 LLM Agent 设计一种把交互历史自动压缩成多层记忆的机制"
-      core_claim: "分层压缩比扁平向量检索更能保持长期对话一致性"
-      target_problem: "长期交互中记忆无限增长、冗余和冲突问题"
+      title: "<候选方向标题>"
+      pitch: "<一句话说明要做什么>"
+      core_claim: "<要验证的核心命题>"
+      target_problem: "<具体问题/场景>"
+      mechanism: "<X 在条件 C 下通过机制 M 导致 Y>"
+      prediction: "<如果 M 成立，在 G 场景/子群上指标 Y 应如何变化>"
+      counterfactual: "<如果替代解释 B 才正确，会观察到什么不同结果>"
+      mechanism_family: "<短机制标签>"
     hypothesis_refs: ["H1"]
     source:
-      from_synthesis_section: "literature/synthesis.md: Q1 长期记忆维护"
-      from_missing_area: "长期记忆压缩缺少稳定评估"
+      from_synthesis_section: "literature/synthesis.md: <章节/Q编号>"
+      from_missing_area: "<missing_areas.md 中的相关 coverage hint 或经复核后的缺口；没有则写 none 并说明>"
       from_seed_idea: true
       derived_from_previous: null
       supporting_papers:
-        - title: "MemGPT"
-          claim_used: "上下文窗口有限，需要外部记忆管理"
-        - title: "MemoryBank"
-          claim_used: "长期用户记忆对对话一致性有帮助"
-      trigger_observation: "现有方法多关注记忆检索，较少关注分层压缩后的长期维护"
+        - title: "<真实论文标题或 paper_id>"
+          claim_used: "<该论文中被用来支持 idea 的具体观察>"
+      trigger_observation: "<触发这个 idea 的文献观察>"
     selection_rationale:
-      novelty_reason: "现有工作多做存储和检索，较少系统研究自动压缩和分层维护"
-      feasibility_reason: "可以先用小规模多轮对话任务验证，不需要大训练"
-      impact_reason: "长期记忆是 LLM Agent 落地的核心问题"
-      evaluability_reason: "可以用一致性、偏好保持、检索准确率、token成本等指标评估"
-      paper_story: "问题清楚：长期记忆膨胀；方法清楚：分层压缩；实验清楚：长期对话/任务型agent"
+      novelty_reason: "<为什么不是已有工作的平移或小修>"
+      feasibility_reason: "<为什么预算内能做 cheap pilot>"
+      impact_reason: "<为什么值得做>"
+      evaluability_reason: "<有哪些可测指标>"
+      paper_story: "<能否讲成完整论文故事>"
     closest_baselines:
-      - name: "MemGPT"
-        similarity: "都关注超出上下文窗口的记忆管理"
-        difference: "MemGPT更像虚拟上下文管理，本idea关注多层记忆压缩和维护策略"
+      - name: "<最接近 baseline>"
+        similarity: "<相似点>"
+        difference: "<关键差异>"
     scores:
       novelty: 4
       feasibility: 4
@@ -538,20 +587,20 @@ ideas:
     decision:
       status: "selected"
       selected_reason:
-        - "和用户原始兴趣最一致"
-        - "可以在预算内做出初步实验"
+        - "<为什么选中>"
+        - "<预算或证据链理由>"
       selected_by: "user"
-      user_feedback: "聚焦长期记忆分层组织与自动压缩"
+      user_feedback: "<Gate1 用户反馈>"
     risks:
-      - risk: "压缩后丢失关键信息"
-        early_signal: "长期一致性指标下降"
-        mitigation: "增加重要性评分和冲突检测"
-        kill_criteria: "如果比简单摘要没有显著优势，则放弃"
+      - risk: "<真实风险>"
+        early_signal: "<早期可观察信号>"
+        mitigation: "<缓解方案>"
+        kill_criteria: "<停止条件>"
     minimum_experiment:
-      dataset: "小规模合成多轮对话任务"
-      baseline: "flat RAG memory / full summary memory"
-      metric: ["preference consistency", "retrieval precision", "token cost"]
-      expected_signal: "同等token成本下一致性提升10%以上"
+      dataset: "<预算内数据/任务>"
+      baseline: "<最接近 baseline>"
+      metric: ["<主指标>", "<成本/鲁棒性指标>"]
+      expected_signal: "<可证伪的预期信号>"
       estimated_cost_usd: 10
 
   - idea:
@@ -560,6 +609,10 @@ ideas:
       pitch: "..."
       core_claim: "..."
       target_problem: "..."
+      mechanism: "..."
+      prediction: "..."
+      counterfactual: "..."
+      mechanism_family: "..."
     hypothesis_refs: []
     source: { ... }
     selection_rationale: { ... }
@@ -570,7 +623,7 @@ ideas:
       rejection_reason:
         - "和已有工作太接近"
         - "缺少清晰评价指标"
-      can_revisit_if: "如果后续找到更好的评估数据集，可以重新考虑"
+      can_revisit_if: "<什么条件下可重新考虑>"
     risks: [ ... ]
     minimum_experiment: { ... }
 ```
@@ -626,11 +679,11 @@ write_structured_file(
       "rejected_idea_ids": ["D2", "D3"],
       "deferred_idea_ids": [],
       "selected_by": "user",
-      "user_feedback": "我更想聚焦长期记忆分层组织与自动压缩",
+      "user_feedback": "我更想聚焦 D1 的机制问题，并保留 D3 作为备选",
       "rationale": [
-        "D1与用户原始兴趣最一致",
-        "D1有清晰baseline和指标",
-        "D2与已有工作过近"
+        "D1 与 synthesis 中的 Q1 关联最强",
+        "D1 有清晰 baseline 和可观测指标",
+        "D2 与已有工作过近"
       ],
       "resulting_artifacts": ["ideation/idea_scorecard.yaml", "ideation/rejected_ideas.md"]
     },
@@ -681,12 +734,12 @@ write_structured_file(
             "strength": "direct"
           }
         ],
-        "missing_area_links": ["missing_areas.md: 缺少低预算机制验证"],
+        "missing_area_links": ["missing_areas.md: coverage hint 指向低预算机制验证覆盖不足，已结合 synthesis 复核"],
         "comparison_table_signals": ["comparison_table.csv: 基线A/B都未覆盖该约束"],
         "seed_idea_links": ["seed_ideas.md: 用户提出的XXX机制"],
         "lens_insights": ["causal: 如果X导致Y，应能在指标Z上观察到差异"]
       },
-      "reasoning": "由文献缺口和对比表共同说明现有方法没有验证X机制，因此提出H1作为可实验验证的研究假设。",
+      "reasoning": "由 synthesis 中的问题、comparison_table 信号和经复核的 coverage hint 共同说明现有方法没有验证X机制，因此提出H1作为可实验验证的研究假设。",
       "confidence": "medium",
       "limitations": ["目前依据主要来自综述，仍需T4.5做新颖性审计"]
     }
@@ -699,6 +752,7 @@ write_structured_file(
 - 每条 idea 至少包含一条 `literature_observations`
 - `source` 应尽量指向 `synthesis.md` 的 Q编号、论文标记、`missing_areas.md` 或 `comparison_table.csv`
 - 不确定依据必须标为 `strength: "weak"`，不要伪装成强证据
+- `idea_origin` 应区分 `free_reasoning`、`seed_refinement`、`evidence_driven` 和四类 supplement，方便后续 coverage 分析；不要为了满足某类而硬编没有证据的候选
 
 #### 文件7: `ideation/risks.md`
 Top 3 风险分析，诚实列出最大的风险。
@@ -818,11 +872,13 @@ Top 3 风险分析，诚实列出最大的风险。
 ### 3. 两轮Gate的交互规则
 - **Gate1（阶段A）**：用户选择研究方向
   - 必须用 `ask_human` 工具
+  - `ask_human` 返回值必须来自真实用户输入；不要在普通文本里假装用户已经选择
   - 允许用户多次迭代（合并、新想法、重新分析）
   - 连续3次拒绝后写入失败消息并终止
 
 - **Gate2（阶段B）**：用户确认假设和计划
   - 必须用 `ask_human` 工具
+  - 用户没有明确确认时，不能自行把“确认”写入决策日志或调用 `finish_task`
   - 允许用户修改假设、计划、风险
   - 用户确认后调用 `finish_task`
 

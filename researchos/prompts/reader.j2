@@ -111,6 +111,7 @@
 - **恢复运行优先**：先扫描 `literature/paper_notes/` 现有文件，建立“已完成论文ID集合”
 - **恢复时先修质量**：如果已有 note 的 `Key Results` 中存在包含数字但同一行没有 `[Evidence: ...]` 的结果，必须先修订该 note；这种 note 不能视为已完成
 - **恢复时先补阅读覆盖**：如果已有 note 缺少 `## 12. Reading Coverage`，或 `[FULL-TEXT]` note 没有记录完整页码覆盖与最终无截断（`none`/`无`/`final no truncation`/`最终未截断`），必须先修订；这种 note 不能视为已完成
+- **恢复时先补 Mechanism Claim**：如果已有 note 缺少 `## 13. Mechanism Claim`，必须先修订补充；这种 note 不能视为已完成
 - **先做账目对齐**：如果已有笔记对应的 `comparison_table.csv` 行或 `related_work.bib` 条目缺失，先补齐这些缺口
 - **只补未完成论文**：如果某篇论文的规范化ID已经有对应 `.md` 笔记，则直接跳过，不要重写
 - **避免重复追加**：不要为已完成论文重复写入 `comparison_table.csv` 或 `related_work.bib`
@@ -144,9 +145,9 @@
 8. 仅为这篇“新完成的论文”追加一行到 `literature/comparison_table.csv`
 9. 仅为这篇“新完成的论文”追加一条到 `literature/related_work.bib`
 
-## paper_note.md 模板（12项checklist）
+## paper_note.md 模板（13项checklist）
 
-每篇笔记必须包含以下12个部分：
+每篇笔记必须包含以下13个部分：
 
 ```markdown
 # {title}
@@ -216,19 +217,30 @@
 - **Extraction calls**: {列出用过的 extract_pdf_text 调用范围，例如 `1-8, 9-16, 17-20`}
 - **Truncation**: {FULL-TEXT 必须说明最终无截断；如果第一次调用被工具或 runtime 截断但已通过分块重读解决，写 `first call truncated; resolved by chunked rereads; final no truncation`；仍未解决则不能标 FULL-TEXT}
 - **Status rationale**: {为什么是 FULL-TEXT / PARTIAL-TEXT / ABSTRACT-ONLY}
+
+## 13. Mechanism Claim
+- **Stated mechanism**: {一句话，作者声称是什么导致 improvement；实在抽不出来写 "not clearly stated"}
+- **Evidence type**: {ablation_supported | theoretically_justified | empirical_correlation | claimed_untested}
+- **Supporting artifact**: {Fig X / Table Y / Section Z / "none"}
 ```
 
 ## comparison_table.csv 结构
 
 第一行表头（如果文件不存在则创建）：
 ```
-id,title,year,venue,method_family,dataset,key_metric,metric_value,baseline_of_ours,relevance_score
+id,title,year,venue,method_family,dataset,key_metric,metric_value,baseline_of_ours,relevance_score,evidence_level
 ```
 
 每篇论文追加一行，例如：
 ```
-arxiv:2301.12345,Efficient Transformers,2023,ICML,Attention Optimization,ImageNet,Top-1 Acc,85.3,Yes,9
+paper_id,Paper Title,2026,Venue,Method Family,DatasetOrSetting,Primary Metric,85.3,Yes,0.82,FULL_TEXT
 ```
+
+注意：deep read 的论文 `evidence_level` 必须来自真实阅读状态：
+- PDF 全页覆盖且最终无截断：`FULL_TEXT`
+- 只读了部分页面或截断未完全解决：`PARTIAL_TEXT`
+- 无 PDF、只基于摘要：`ABSTRACT_ONLY`
+`ABSTRACT_ONLY` 也可能由 runtime 的 abstract sweep 自动追加。
 
 ## related_work.bib 格式
 
@@ -236,12 +248,11 @@ arxiv:2301.12345,Efficient Transformers,2023,ICML,Attention Optimization,ImageNe
 
 示例：
 ```bibtex
-@inproceedings{smith2023efficient,
-  title={Efficient Transformers for Large-Scale Vision},
-  author={Smith, John and Doe, Jane},
-  booktitle={International Conference on Machine Learning},
-  year={2023},
-  pages={1234--1245}
+@inproceedings{author2026paper,
+  title={Paper Title},
+  author={Author, A. and Collaborator, B.},
+  booktitle={Venue Name},
+  year={2026}
 }
 ```
 
@@ -288,11 +299,19 @@ arxiv:2301.12345,Efficient Transformers,2023,ICML,Attention Optimization,ImageNe
 ## 你的任务
 综合所有 paper_notes，产出 `literature/synthesis.md`，为后续的idea生成（T4）提供系统性的文献综述。
 
+**核心原则：你（LLM）负责智能分析，工具负责结构化组装。** 不要依赖工具的硬编码模板来分类论文、提取假设或生成问题——这些都需要你基于对论文内容的理解来做。
+
+{% if agent_guidance %}
+{{ agent_guidance }}
+
+{% endif %}
+
 ## 输入
-- `literature/paper_notes/`: 包含 {{ note_count }} 篇论文的结构化笔记
+- `literature/paper_notes/`: 包含 {{ note_count }} 篇论文的结构化笔记（full-text 精读）
+- `literature/paper_notes_abstract/`: {% if abstract_note_count %}{{ abstract_note_count }} 篇 abstract-only 笔记（证据较弱）{% else %}abstract-only 笔记（如有，由 runtime 自动补读）{% endif %}
 - `literature/comparison_table.csv`: 论文对比表
 {% if missing_areas %}
-- `literature/missing_areas.md`: T2阶段标注的文献缺口
+- `literature/missing_areas.md`: T2 阶段生成的检索覆盖提示，不是最终研究缺口结论
 {% endif %}
 {% if comparison_table_preview %}
 
@@ -308,8 +327,75 @@ arxiv:2301.12345,Efficient Transformers,2023,ICML,Attention Optimization,ImageNe
 ## 输出
 - `literature/synthesis_workbench.json`: 工具抽取的证据矩阵和候选问题
 - `literature/synthesis_outline.md`: 分阶段大纲
-- `literature/synthesis_draft.md`: 工具生成的初稿
-- `literature/synthesis.md`: 包含5个必需章节的最终文献综合
+- `literature/synthesis_draft.md`: 工具生成的写作指导/证据脚手架，不是最终结论
+- `literature/synthesis.md`: 由你审阅证据后亲自写出的最终文献综合
+
+## 执行流程（严格按顺序）
+
+### 阶段 1：论文分析与 LLM 洞察生成
+
+在调用工具之前，你必须先用自己的 LLM 能力分析论文内容，生成以下四类洞察：
+
+#### 1a. 方法家族分类
+逐篇分析 paper_notes，根据论文的**实际方法内容**（不是标题关键词）将其归入 3-5 个方法家族。
+- 家族名称应反映该组论文的核心方法论特征
+- 分类依据是 method_overview、Technical Details、Relevance 等章节的实际内容
+- **禁止**基于标题中的宽泛关键词（如 "graph"、"learning"）做表面分类
+- 例如：如果某篇论文标题含有宽泛词 T，但方法章节实际是在解决机制 M，就应归入以 M 为核心的方法家族，而不是标题词 T 对应的表层类别。
+
+#### 1b. 共同假设提取
+从 Limitations、Weaknesses/Gaps、Claims vs Evidence 等章节中，识别 2-4 个跨论文的共同假设。
+- 每个假设要有具体的论文支持证据
+- 说明为什么这个假设值得质疑
+
+#### 1c. 技术趋势识别
+对比近期论文（最近 2 年）和早期论文，识别 2-3 个技术趋势。
+- 趋势应基于 method_overview 和 Key Results 的实际变化
+- 列出支持每个趋势的近期和对照论文
+
+#### 1d. 研究问题生成
+基于论文的 Gaps、Missing Areas coverage hints、和你的分析，生成 3-6 个可操作的研究问题。
+- 每个问题要关联具体论文
+- 说明为什么这个问题尚未解决；如果只来自 `missing_areas.md`，必须先写清楚它只是覆盖提示并说明你的复核依据
+
+### 阶段 2：调用 build_synthesis_workbench
+
+将阶段 1 的分析结果通过 `llm_insights` 参数传递给工具：
+
+```
+build_synthesis_workbench(
+  write_final=false,
+  render_draft=false,
+  llm_insights={
+    "family_classifications": [
+      {"paper_id": "paper_id", "family": "<LLM-assigned method family based on method behavior>", "confidence": "high"},
+      ...
+    ],
+    "shared_assumptions": [
+      {"assumption": "...", "why_questionable": "...", "supporting_papers": ["id1", "id2"]},
+      ...
+    ],
+    "trends": [
+      {"trend": "...", "recent_papers": ["id1", ...], "contrast_papers": ["id3", ...]},
+      ...
+    ],
+    "research_questions": [
+      {"id": "Q1", "question": "...", "why_unsolved": "...", "related_papers": ["id1", ...]},
+      ...
+    ]
+  }
+)
+```
+
+### 阶段 3：审阅与修订
+
+读取工具生成的 `synthesis_workbench.json`、`synthesis_outline.md` 和 `synthesis_draft.md`，但不要把工具草稿当作最终文献判断。你必须检查：
+1. 方法家族分类是否准确反映了论文实际内容
+2. 共同假设是否有足够的论文支持
+3. 研究问题是否可操作
+4. 引用是否来自真实 paper_notes
+
+然后由你直接写 `literature/synthesis.md`。如果工具产物中的候选分类、假设或问题不合理，必须改写；不要为了迎合工具输出而保留错误结论。
 
 ## synthesis.md 必需章节（缺一不可）
 
@@ -362,14 +448,15 @@ arxiv:2301.12345,Efficient Transformers,2023,ICML,Attention Optimization,ImageNe
 
 ## 综合规则
 
-1. **先工具化再写作**：第一步必须调用 `build_synthesis_workbench(write_final=true)`，让工具从所有 paper_notes 中生成 `synthesis_workbench.json`、`synthesis_outline.md`、`synthesis_draft.md` 和初版 `synthesis.md`
-2. **再审阅修订**：读取 `synthesis_workbench.json` 和 `synthesis_draft.md`，检查五个章节是否完整、引用是否来自真实 note、问题是否可操作；必要时再改写 `literature/synthesis.md`
-3. **引用规范**：引用具体论文时使用paper_notes里的ID（如 `[arxiv_2301.12345]`），不要编造citation
-4. **缺口关联**：如果某方向论文太少，引用 `missing_areas.md` 里标注的缺口
+1. **LLM 分析优先**：先用自己的 LLM 能力分析论文内容，生成 family_classifications、shared_assumptions、trends、research_questions，再通过 `llm_insights` 参数传递给工具
+2. **工具做结构化组装**：`build_synthesis_workbench` 负责从笔记中提取证据片段、组装 workbench JSON、生成 outline 和写作指导；但家族分类、假设提取、趋势识别、问题生成和最终论述必须由你的 LLM 洞察驱动
+3. **引用规范**：引用具体论文时使用 paper_notes 里的真实 ID，可以是原始 ID（如 `[arxiv:2301.12345]`）或文件名规范化 ID（如 `[arxiv_2301.12345]`），但必须能对应到真实 note，不要编造 citation
+4. **缺口关联**：如果某方向论文太少，可以引用 `missing_areas.md` 里的 coverage hint，但必须说明它是检索覆盖不足，经你复核后才转化为研究问题
 5. **长度控制**：synthesis.md 长度 3000-8000 字，不要写流水账
 6. **批判性思维**：不要只是罗列论文，要分析、对比、找出模式和空白
 7. **面向T4**：记住这份综述是为T4 Ideation准备的，要突出创新机会
-8. **论文ID引用**：引用论文时使用规范化的ID（特殊字符替换为下划线），例如 `[arxiv_2301.12345]` 而不是 `[arxiv:2301.12345]`
+8. **论文ID与文件名区分**：文件路径必须使用规范化 ID（特殊字符替换为下划线，例如 `arxiv_2301.12345.md`）；正文引用可以使用 `[arxiv:2301.12345]` 或 `[arxiv_2301.12345]`，validator 会做兼容匹配
+9. **证据强度区分**：`paper_notes/` 中的论文可能是 FULL/PARTIAL/ABSTRACT，必须看每篇 note 的 Status 和 Reading Coverage；`paper_notes_abstract/` 中的论文仅基于 abstract，evidence_type 为 `abstract_claim_hint`（旧产物可能是 `claimed_untested`），只能用于覆盖广度和补检线索，不能作为机制结论
 
 ## 完成标准
 

@@ -52,6 +52,10 @@ def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) 
                     "pitch": "基于综述缺口提出一个可验证假设。",
                     "core_claim": "目标机制可以改善可观测指标。",
                     "target_problem": "现有方法在目标场景下存在明确短板。",
+                    "mechanism": "通过正则化梯度范数改善稀疏用户嵌入质量",
+                    "prediction": "在稀疏用户子群上 Recall@20 提升 5%+",
+                    "counterfactual": "如果机制不成立，选择性噪声关闭后指标应无显著差异",
+                    "mechanism_family": "selective noise application",
                 },
                 "hypothesis_refs": refs,
                 "source": {
@@ -122,6 +126,10 @@ def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) 
                     "pitch": "把已有方法直接迁移到新场景。",
                     "core_claim": "简单迁移也许可以提升指标。",
                     "target_problem": "另一个较弱的问题设定。",
+                    "mechanism": "see core_claim",
+                    "prediction": "qualitative: outperforms baseline",
+                    "counterfactual": "no clear counterfactual",
+                    "mechanism_family": "direct transfer",
                 },
                 "hypothesis_refs": [],
                 "source": {
@@ -188,6 +196,29 @@ def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) 
     }
     (workspace / "ideation" / "idea_scorecard.yaml").write_text(
         yaml.safe_dump(scorecard, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    (workspace / "ideation" / "_family_distribution.md").write_text(
+        """## Mechanism Family Distribution
+
+### Family: selective noise application
+- Candidates: D1
+- Mechanism similarity notes: single candidate, no overlap concern
+
+### Family: direct transfer
+- Candidates: D2
+- Mechanism similarity notes: single candidate, no overlap concern
+
+## Summary
+
+- Total candidates: 2
+- Distinct families: 2
+- Families with multiple candidates: 0
+
+## Recommended for Gate1 review
+
+Both families are distinct. D1 focuses on mechanism verification while D2 is a direct transfer approach.
+""",
         encoding="utf-8",
     )
     (workspace / "ideation" / "rejected_ideas.md").write_text(

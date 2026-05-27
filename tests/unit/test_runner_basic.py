@@ -43,7 +43,7 @@ class T35PrefinalizeAgent(Agent):
             AgentSpec(
                 name="reader",
                 model_tier="medium",
-                tool_names=[],
+                tool_names=["write_file", "finish_task"],
                 allowed_read_prefixes=["", "literature/"],
                 allowed_write_prefixes=["literature/"],
             )
@@ -220,6 +220,10 @@ def write_valid_t4_artifacts(workspace):
                             "pitch": "基于综述缺口提出预算内实验假设。",
                             "core_claim": "目标机制可以改善可观测指标。",
                             "target_problem": "现有方法在目标约束下存在缺口。",
+                            "mechanism": "通过正则化梯度范数改善稀疏用户嵌入质量",
+                            "prediction": "在稀疏用户子群上 Recall@20 提升 5%+",
+                            "counterfactual": "如果机制不成立，选择性噪声关闭后指标应无显著差异",
+                            "mechanism_family": "selective noise application",
                         },
                         "hypothesis_refs": ["H1"],
                         "source": {
@@ -287,6 +291,10 @@ def write_valid_t4_artifacts(workspace):
                             "pitch": "直接迁移已有方法。",
                             "core_claim": "简单迁移可能提升指标。",
                             "target_problem": "较弱问题设定。",
+                            "mechanism": "see core_claim",
+                            "prediction": "qualitative: outperforms baseline",
+                            "counterfactual": "no clear counterfactual",
+                            "mechanism_family": "direct transfer",
                         },
                         "hypothesis_refs": [],
                         "source": {
@@ -362,6 +370,21 @@ def write_valid_t4_artifacts(workspace):
         "- **Missing evidence / metric**: 缺少强差异化机制。\n"
         "- **Can revisit if**: 找到更强差异化机制。\n"
         "- **Cheap pilot that was not chosen**: proxy实验不足以证明贡献。\n"
+    )
+    (ideation_dir / "_family_distribution.md").write_text(
+        "## Mechanism Family Distribution\n\n"
+        "### Family: selective noise application\n"
+        "- Candidates: D1\n"
+        "- Mechanism similarity notes: single candidate\n\n"
+        "### Family: direct transfer\n"
+        "- Candidates: D2\n"
+        "- Mechanism similarity notes: single candidate\n\n"
+        "## Summary\n\n"
+        "- Total candidates: 2\n"
+        "- Distinct families: 2\n"
+        "- Families with multiple candidates: 0\n\n"
+        "## Recommended for Gate1 review\n\n"
+        "Both families are distinct.\n"
     )
     (ideation_dir / "gate_decisions.json").write_text(
         json.dumps(
@@ -632,7 +655,7 @@ async def test_runner_pauses_on_unavailable_ask_human_without_second_llm_call(tm
 
 
 @pytest.mark.asyncio
-async def test_t35_workbench_prefinalize_skips_llm_when_valid(tmp_workspace, registry):
+async def test_t35_workbench_prepares_artifacts_then_llm_writes_final(tmp_workspace, registry):
     literature = tmp_workspace / "literature"
     notes_dir = literature / "paper_notes"
     notes_dir.mkdir(parents=True)
@@ -672,7 +695,71 @@ Graph contrastive method for robust sparse recommendation.
         encoding="utf-8",
     )
     (literature / "missing_areas.md").write_text("# 缺口\n稀疏鲁棒性不足。\n", encoding="utf-8")
-    llm = MockLLMClient(responses=[])
+    llm = MockLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[
+                        FakeToolCall(
+                            name="write_file",
+                            arguments={
+                                "path": "literature/synthesis.md",
+                                "content": (
+                                    "# 文献综合\n\n"
+                                    "## 方法家族分类\n"
+                                    "LLM revised synthesis using [paper_0], [paper_1], [paper_2], [paper_3], [paper_4]. "
+                                    "The first family groups papers that explicitly manipulate the target mechanism "
+                                    "and report measurable effects under comparable evaluation settings. "
+                                    "The second family contains lighter baselines that are useful as controls because "
+                                    "they expose whether the proposed mechanism is necessary or merely correlated with "
+                                    "performance. The final synthesis distinguishes these families by their causal "
+                                    "claim, evidence strength, implementation cost, and failure conditions. "
+                                    "This paragraph is intentionally long enough to exercise the validator while "
+                                    "remaining a mock LLM-written synthesis rather than a deterministic tool draft.\n\n"
+                                    "## 共同假设\n"
+                                    "A shared assumption is that the measured improvement comes from the stated "
+                                    "mechanism rather than from incidental regularization, data filtering, or budget "
+                                    "changes. [paper_0] and [paper_1] support the mechanism claim but leave parts of "
+                                    "the causal path under-tested. [paper_2] and [paper_3] report related observations "
+                                    "with different controls. The final paper should therefore challenge the assumption "
+                                    "with an experiment that separates the mechanism from the surrounding method. "
+                                    "A second assumption is that aggregate metrics are representative of the target "
+                                    "subgroups. The notes suggest this may be false because several papers mention "
+                                    "failure modes that only appear under specific conditions.\n\n"
+                                    "## 性能-效率前沿\n"
+                                    "The frontier remains under-specified because the notes do not consistently report "
+                                    "the same cost metrics. [paper_0] gives the clearest performance signal, [paper_1] "
+                                    "is a likely efficient control, and [paper_4] is useful for checking whether the "
+                                    "same effect survives under a different implementation. A serious T4 idea should "
+                                    "therefore report both the primary task metric and at least one resource metric. "
+                                    "This makes the eventual hypothesis evaluable without requiring a full-scale run.\n\n"
+                                    "## 技术趋势\n"
+                                    "The trend across these notes is a shift from adding larger components toward "
+                                    "testing when the claimed mechanism is actually needed. Recent papers in the pool "
+                                    "place more emphasis on ablations, subgroup behavior, and simpler controls. The "
+                                    "trend is not yet a conclusion; it is a working reading of the evidence that T4 "
+                                    "should preserve as an explicit uncertainty.\n\n"
+                                    "## 可操作研究问题\n"
+                                    "Q1: Which observable condition separates cases where the stated mechanism helps "
+                                    "from cases where a simpler baseline is sufficient? Related papers include "
+                                    "[paper_0], [paper_1], [paper_2], [paper_3], and [paper_4]. Q2: What is the "
+                                    "cheapest pilot that can falsify the mechanism claim before T5 spends a larger "
+                                    "budget? These questions are actionable because they name measurable outcomes, "
+                                    "control papers, and failure criteria.\n"
+                                ),
+                            },
+                            id="tc1",
+                        )
+                    ]
+                )
+            ),
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="finish_task", arguments={"summary": "done"}, id="tc2")]
+                )
+            ),
+        ]
+    )
     ctx = ExecutionContext(
         workspace_dir=tmp_workspace,
         project_id="p1",
@@ -686,10 +773,11 @@ Graph contrastive method for robust sparse recommendation.
     result = await runner.run(ctx)
 
     assert result.ok
-    assert result.metadata["completion_mode"] == "t35_workbench"
-    assert llm.call_count == 0
+    assert "completion_mode" not in result.metadata
+    assert llm.call_count == 2
     assert (literature / "synthesis_workbench.json").exists()
     assert (literature / "synthesis.md").exists()
+    assert "LLM revised synthesis" in (literature / "synthesis.md").read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio

@@ -18,6 +18,11 @@
 {{ comparison_table_preview }}
 {% endif %}
 
+{% if agent_guidance %}
+{{ agent_guidance }}
+
+{% endif %}
+
 ## 你的任务：新颖性审计
 
 你需要对 ideation/hypotheses.md 中的每个假设（{{ hypothesis_count }}个假设：{{ hypothesis_anchors | join(', ') }}）进行新颖性审计，判断是否与已有工作重复，产出审计报告。
@@ -44,17 +49,17 @@
 
 #### 2.1 提取核心概念
 从假设中提取：
-- 核心方法关键词（如"sparse attention", "learnable pruning"）
-- 应用场景关键词（如"long-context", "video understanding"）
-- 技术组合（如"method A + method B"）
+- 核心方法关键词（从当前假设中抽取，不要使用本 prompt 的占位词）
+- 应用场景关键词（当前任务、数据、约束、用户群或使用场景）
+- 技术组合（如果存在，写清每个组件的作用和组合动机）
 
 #### 2.2 搜索近期相关工作
 使用 `search_papers` 搜索近12个月的相关工作：
 
 **搜索策略**：
-- 查询1：核心方法 + 应用场景（如"sparse attention long context"）
-- 查询2：核心技术术语（如"learnable attention pruning"）
-- 查询3：问题描述（如"efficient transformer inference"）
+- 查询1：核心方法 + 应用场景
+- 查询2：核心技术术语 / 机制术语
+- 查询3：问题描述 / failure mode / evaluation setting
 
 **搜索参数**：
 ```python
@@ -78,6 +83,61 @@ search_papers(
 - 我们的假设与这些方法的核心区别是什么？
 - 区别是否足够显著（不只是参数调整或数据集变化）？
 
+#### 2.35 提取 Mechanism Tuple
+
+对当前假设，提取 mechanism tuple 并调用 `extract_mechanism_tuple` 工具保存：
+
+```python
+extract_mechanism_tuple(
+    mechanism="<单句因果断言: X causes Y，不是方法描述>",
+    claimed_effect="<如果 mechanism 成立，什么会改善>",
+    input_signal="<mechanism 操作的对象，自由文本>",
+    evidence_type="<theory | simulation | empirical | none>",
+    source_type="hypothesis",
+    source_id="H1"  # 当前假设的 ID
+)
+```
+
+**mechanism 字段要求**：
+- 必须是因果断言（"X causes Y"），不是方法描述（"adding X improves Y"）
+- 如果假设本身没有明确 mechanism，从 core_claim 推断最可能的因果路径
+- 高质量写法："<干预/变量 X> 在条件 C 下通过 <中间机制 M> 改变 <结果 Y>"
+- 低质量写法："<方法 X> improves <task Y>"（这只是方法复述）
+
+**input_signal 字段要求**：
+- 写自由文本；如果你能给出更合适的领域标签，也传 `normalized_input_signal`
+- 工具不会内置领域 ontology；没有 `normalized_input_signal` 时会保留你的 raw input_signal 作为 hint
+- 示例：`input_signal="<mechanism operates on this signal>", normalized_input_signal="<LLM-defined domain label>"`
+
+#### 2.36 用 Mechanism Query 搜索（第4类查询）
+
+除了原有的3类搜索查询，新增第4类 mechanism-focused 查询：
+
+```python
+# 查询4: mechanism-focused
+search_papers(
+    query="<input_signal> <mechanism 前50字符>",
+    sources=["semantic_scholar", "arxiv"],
+    max_results=15,
+    year_from={{ recent_year_from }}
+)
+```
+
+对搜索到的每篇候选论文：
+1. 从摘要中提取 mechanism tuple
+2. 调用 `extract_mechanism_tuple(source_type="paper_abstract", source_id="<paper_id>")`
+3. 先由你阅读摘要/metadata 判断机制关系，再调用 `compare_mechanism_tuples(...)` 获取机械相似度 hint；如已有判断，可通过 `llm_assessment` 附上
+4. 记录 tool 的 heuristic hint 和你的 final judgment。最终新颖性判定以你的分析为准，不以工具矩阵为准
+
+#### 2.37 汇总 Mechanism Verdicts
+
+对当前假设 H，汇总所有比对结果：
+
+- 工具会返回 `possible_true_collision` / `possible_mechanism_collision` / `possible_explanatory_competition` / `likely_distinct` 等 heuristic hints
+- 你必须给出最终标签：`true_collision` / `mechanism_collision` / `explanatory_competition` / `safe`
+- 只有在你确认机制、任务边界、贡献点都高度一致时，才把 H 降为 Level 0
+- 如果只是机制相似但任务或贡献边界不同，应写成 baseline 或 crucial experiment，而不是机械判死刑
+
 #### 2.4 判断新颖性等级
 
 根据审计结果，为每个假设判断新颖性等级：
@@ -86,25 +146,25 @@ search_papers(
 - 完全未见于近期文献
 - 开创性的方向或方法
 - 与已有工作有本质性区别
-- 示例：提出全新的注意力机制范式
+- 需要能说明机制、任务边界或证据路径上的实质差异
 
 **Level 2 - 中度新颖（Moderately Novel）**：
 - 方法组合新颖，或应用场景新颖
 - 与已有工作有明确的差异点
 - 差异点有理论或实验支撑
-- 示例：将已有方法A和B以新方式结合，或将方法A应用到新场景
+- 组合或迁移必须有机制动机，不能只是并列拼接
 
 **Level 1 - 低度新颖（Incrementally Novel）**：
 - 增量改进，与已有工作相似度高
 - 主要是参数调整、工程优化
 - 差异点较小，创新性有限
-- 示例：在已有方法上调整超参数或改进训练技巧
+- 典型情况是只改变配置、规模、训练细节或数据切分
 
 **Level 0 - 无新颖性（Not Novel）**：
 - 已有工作完全覆盖
 - 发现明确的撞车论文（High Overlap）
 - 无明显差异化空间
-- 示例：近期已有论文实现了几乎相同的想法
+- 只有机制、任务边界和贡献点都高度一致时才判 Level 0
 
 ### Step 3: 生成审计报告
 
@@ -159,14 +219,39 @@ search_papers(
 
 ### 新颖性判定
 
-**新颖性等级**: Level X - [等级名称]
+**Original Level**: Level X - [等级名称]
+
+**Mechanism Tuple**:
+- input_signal: <normalized value>
+- mechanism: "<the causal claim>"
+- claimed_effect: "<what improves>"
+
+**Collision Findings**:
+
+#### true_collision (high confidence): N
+[列出所有 true_collision 的论文，如果没有写 "(none)"]
+
+#### mechanism_collision: N
+- [论文标题] (venue, year): <brief description of overlap>
+  → Add as must-baseline.
+
+#### explanatory_competition: N
+- [论文标题]: <brief description>
+  → This is the crucial experiment, frame as such in T7.
+
+#### safe: N
+[简要列出]
+
+**Adjusted Level**: Level X
+  (如果有 mechanism_collision 导致降级，在此说明)
 
 **判定理由**:
 [详细说明为什么给出这个等级，基于：
 1. 搜索结果分析
 2. 与已有方法的对比
-3. 差异点的显著性
-4. 创新点的本质性]
+3. Mechanism tuple verdict 分布
+4. 差异点的显著性
+5. 创新点的本质性]
 
 **差异化优势**:
 [如果Level >= 2，列出：
@@ -180,6 +265,17 @@ search_papers(
 - 如果有撞车风险: ⚠️ **撞车风险**: 发现[N]篇高度相似的工作，需要进一步明确差异点
 - 如果Level <= 1: ⚠️ **新颖性不足**: 与已有工作差异较小，可能难以发表
 - 如果无风险: 无重大风险。]
+
+**Required actions**:
+[基于 mechanism verdict 列出具体行动：
+- 如果有 mechanism_collision: Add baselines: [论文1], [论文2]
+- 如果有 explanatory_competition: Frame paper as mechanism-level investigation vs [论文]
+- 如果你最终确认 true_collision: Consider dropping this hypothesis
+
+### Suggested Baselines from Mechanism Collision
+[如果有 mechanism_collision 的论文，列在这里作为建议 baseline
+- **[方法名]** (论文, 年份) - mechanism collision: <brief reason>
+否则写: 无 mechanism collision 建议。]
 
 ---
 

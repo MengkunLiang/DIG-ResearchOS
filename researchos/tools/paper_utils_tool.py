@@ -67,7 +67,10 @@ class ScorePapersTool(Tool):
     """论文评分工具。"""
 
     name = "score_papers"
-    description = "为论文列表评分（基于来源类型、年份、引用数、关键词匹配度）"
+    description = (
+        "为论文列表生成 metadata/search priority hint（基于来源类型、年份、"
+        "引用数、关键词匹配度等机械信号；不是最终学术相关性判断）"
+    )
     parameters_schema = ScorePapersParams
 
     async def execute(self, **kwargs: Any) -> ToolResult:
@@ -92,6 +95,21 @@ class ExpandQueriesParams(BaseModel):
         None,
         description="可选：用于可复现测试的当前年份；默认使用运行时 UTC 年份",
     )
+    domain_profile: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "LLM 先归纳的领域 profile；可包含 include_keywords、exclude_keywords、"
+            "query_prefixes、query_variants、related_concepts、venue_terms 等。"
+        ),
+    )
+    llm_queries: list[str] | None = Field(
+        None,
+        description="LLM 已经设计好的检索式；工具只合并去重，不替代 LLM 的领域判断。",
+    )
+    domain_hints: list[str] | None = Field(
+        None,
+        description="LLM 给出的短领域限定词或概念，工具会与 topic 组合。",
+    )
 
 
 class ExpandQueriesTool(Tool):
@@ -110,6 +128,9 @@ class ExpandQueriesTool(Tool):
                 params.topic,
                 params.max_queries,
                 params.current_year,
+                params.domain_profile,
+                params.llm_queries,
+                params.domain_hints,
             )
             return ToolResult(
                 ok=True,
@@ -122,21 +143,29 @@ class ExpandQueriesTool(Tool):
 
 class FilterByDomainParams(BaseModel):
     papers: list[dict] = Field(..., description="论文列表")
-    target_domain: str = Field("cs", description="目标领域")
+    target_domain: str = Field("general", description="目标领域标签，仅用于记录/兼容")
+    domain_profile: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "LLM 归纳的过滤 profile。可包含 include_keywords/include_venues/"
+            "exclude_keywords/exclude_venues/keep_if_uncertain/min_include_matches。"
+            "如果不提供，工具不做领域过滤。"
+        ),
+    )
 
 
 class FilterByDomainTool(Tool):
     """领域过滤工具。"""
 
     name = "filter_by_domain"
-    description = "按领域过滤论文（避免心理学论文混入 AI 论文）"
+    description = "按 LLM 提供的领域 profile 做保守过滤；不内置任何固定学科知识"
     parameters_schema = FilterByDomainParams
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         """执行领域过滤。"""
         params = FilterByDomainParams(**kwargs)
         try:
-            result = filter_by_domain(params.papers, params.target_domain)
+            result = filter_by_domain(params.papers, params.target_domain, params.domain_profile)
             return ToolResult(
                 ok=True,
                 content=f"领域过滤完成：{len(params.papers)} 篇 → {len(result)} 篇",

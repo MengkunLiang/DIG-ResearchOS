@@ -308,6 +308,10 @@ def test_validate_t4_artifacts_reports_bad_hypothesis_ref(tmp_path: Path):
                             "pitch": "Traceable idea for H1.",
                             "core_claim": "A measurable mechanism improves the task.",
                             "target_problem": "The synthesis identifies a testable gap.",
+                            "mechanism": "gradient regularization improves sparse user embeddings",
+                            "prediction": "Recall@20 improves by 5% on sparse users",
+                            "counterfactual": "if mechanism fails, no improvement observed",
+                            "mechanism_family": "selective noise application",
                         },
                         "hypothesis_refs": ["H1"],
                         "source": {
@@ -374,6 +378,10 @@ def test_validate_t4_artifacts_reports_bad_hypothesis_ref(tmp_path: Path):
                             "pitch": "Too close to prior work.",
                             "core_claim": "A weak transfer may work.",
                             "target_problem": "Weak gap.",
+                            "mechanism": "see core_claim",
+                            "prediction": "qualitative: outperforms baseline",
+                            "counterfactual": "no clear counterfactual",
+                            "mechanism_family": "direct transfer",
                         },
                         "hypothesis_refs": [],
                         "source": {
@@ -449,6 +457,17 @@ def test_validate_t4_artifacts_reports_bad_hypothesis_ref(tmp_path: Path):
         "- **Missing evidence / metric**: stronger mechanism.\n"
         "- **Can revisit if**: Find a stronger mechanism.\n"
         "- **Cheap pilot that was not chosen**: small data is not enough.\n",
+        encoding="utf-8",
+    )
+    (workspace / "ideation" / "_family_distribution.md").write_text(
+        "## Mechanism Family Distribution\n\n"
+        "### Family: selective noise application\n"
+        "- Candidates: D1\n\n"
+        "### Family: direct transfer\n"
+        "- Candidates: D2\n\n"
+        "## Summary\n\n"
+        "- Total candidates: 2\n"
+        "- Distinct families: 2\n",
         encoding="utf-8",
     )
     (workspace / "ideation" / "gate_decisions.json").write_text(

@@ -67,7 +67,7 @@ agents:
       temperature: 0.3
     max_steps: 40
     max_tokens_total: 1000000
-    max_wall_seconds: 3000
+    max_wall_seconds: 30000
     max_validation_retries: 10
     tool_names:
       - read_file
@@ -104,12 +104,12 @@ agents:
       # Scout 直接用 profile，而不是绑死某个 model+endpoint。
       # 这样可以在 model_routing.yaml 里集中维护 fallback。
       profile: scout_resilient
-      max_context: 128000
+      max_context: 1280000
       tier: medium
       temperature: 0.5
     max_steps: 300
     max_tokens_total: 50000000
-    max_wall_seconds: 3600
+    max_wall_seconds: 36000
     max_validation_retries: 3
     tool_names:
       - read_file
@@ -172,7 +172,7 @@ agents:
       temperature: 0.5
     max_steps: 200
     max_tokens_total: 600000
-    max_wall_seconds: 5000
+    max_wall_seconds: 50000
     max_validation_retries: 10
     tool_names:
       - read_file
@@ -205,14 +205,24 @@ agents:
         deep_read_max: 30
         probe_pool: 45
         expected_outputs:
-          # 这些开关更多是“最低完成标准”，不是说超过这个数就一定完成得好。
+          # 这些开关更多是”最低完成标准”，不是说超过这个数就一定完成得好。
           paper_notes_min: 10
           comparison_table_required: true
           related_work_bib_required: true
+        abstract_sweep:
+          enabled: true
+          lite_paper_num: 40
+          min_relevance: 0.4
+          sources:
+            - papers_verified
+            - papers_dedup
+          exclude_already_read: true
       synthesize:
         description: 文献综合
         max_steps: 100
         max_tokens_total: 15000000
+        # 可选预构建 workbench/outline，但最终 synthesis.md 必须由 Reader LLM 审阅后写出。
+        prebuild_workbench_before_llm: true
         expected_sections:
           - "## Method Families"
           - "## Shared Assumptions"
@@ -231,7 +241,7 @@ agents:
       temperature: 0.75
     max_steps: 150
     max_tokens_total: 2000000
-    max_wall_seconds: 1200
+    max_wall_seconds: 12000
     max_validation_retries: 10
     tool_names:
       - read_file
@@ -275,7 +285,7 @@ agents:
       temperature: 0.3
     max_steps: 1000
     max_tokens_total: 600000
-    max_wall_seconds: 800
+    max_wall_seconds: 80000
     max_validation_retries: 10
     tool_names:
       - read_file
@@ -307,7 +317,7 @@ agents:
       temperature: 0.3
     max_steps: 1000
     max_tokens_total: 600000
-    max_wall_seconds: 8000
+    max_wall_seconds: 80000
     max_validation_retries: 10
     tool_names:
       - read_file
@@ -336,7 +346,7 @@ agents:
       temperature: 0.3
     max_steps: 2000
     max_tokens_total: 60000000
-    max_wall_seconds: 14400
+    max_wall_seconds: 144000
     max_validation_retries: 10
     tool_names:
       - read_file
@@ -366,7 +376,7 @@ agents:
         description: 试点实验
         max_steps: 1000
         max_tokens_total: 1000000
-        max_wall_seconds: 7200
+        max_wall_seconds: 72000
         max_validation_retries: 2
         docker_required: true
         gpu_required: true
@@ -377,7 +387,7 @@ agents:
         description: 完整实验
         max_steps: 5000
         max_tokens_total: 30000000
-        max_wall_seconds: 14400
+        max_wall_seconds: 144000
         max_validation_retries: 5
         docker_required: true
         gpu_required: true

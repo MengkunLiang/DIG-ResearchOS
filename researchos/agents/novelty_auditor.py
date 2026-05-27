@@ -32,6 +32,7 @@ from ._common import (
     read_text_file,
     validate_files_exist,
 )
+from .guidance import load_agent_guidance
 
 
 class NoveltyAuditorAgent(Agent):
@@ -49,6 +50,8 @@ class NoveltyAuditorAgent(Agent):
                         "list_files",
                         "search_papers",
                         "fetch_paper_metadata",
+                        "extract_mechanism_tuple",
+                        "compare_mechanism_tuples",
                         "finish_task",
                     ],
                     "max_steps": 60,
@@ -86,6 +89,7 @@ class NoveltyAuditorAgent(Agent):
             hypothesis_anchors=anchors,
             recent_year_from=recent_year_from(1),
             temperature=self.spec.temperature,
+            agent_guidance=load_agent_guidance("novelty-audit"),
         )
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
@@ -130,6 +134,39 @@ class NoveltyAuditorAgent(Agent):
         for anchor in anchors:
             if anchor not in audit_text:
                 return False, f"novelty_audit.md 缺少对假设 {anchor} 的审计"
+
+        # 检查 mechanism tuples 目录
+        tuples_dir = ws / "ideation" / "_mechanism_tuples"
+        if tuples_dir.exists():
+            # 每个 H 至少有一个 tuple 文件
+            for anchor in anchors:
+                anchor_lower = anchor.lower()
+                has_tuple = any(
+                    anchor_lower in f.stem.lower()
+                    for f in tuples_dir.glob("*.json")
+                )
+                if not has_tuple:
+                    return False, (
+                        f"ideation/_mechanism_tuples/ 缺少假设 {anchor} 的 mechanism tuple 文件"
+                    )
+
+        # 检查最终确认的 true_collision (high confidence) 必须对应 Level 0。
+        # Tool 现在只返回 possible_* heuristic hints；不能因为 hint 自动判死刑。
+        if "true_collision" in audit_text and "possible_true_collision" not in audit_text and "high confidence" in audit_text.lower():
+            # 找到所有提到 true_collision 的假设段落
+            for anchor in anchors:
+                anchor_pattern = re.escape(anchor)
+                section_match = re.search(
+                    rf"(?ms)^#+\s*{anchor_pattern}\b.*?(?=^#+\s*H\d|\Z)",
+                    audit_text,
+                )
+                if section_match:
+                    section = section_match.group(0)
+                    if "true_collision" in section and "high confidence" in section.lower():
+                        if "Level 0" not in section and "Adjusted Level: 0" not in section:
+                            return False, (
+                                f"{anchor} 有 true_collision (high confidence) 但未标为 Level 0"
+                            )
 
         if _audit_mentions_collision_case(audit_text):
             if not collision_path.exists():

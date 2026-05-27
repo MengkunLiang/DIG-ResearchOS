@@ -244,16 +244,13 @@ async def test_build_synthesis_workbench_writes_staged_outputs(tmp_workspace: Pa
     policy = WorkspaceAccessPolicy(tmp_workspace, ["", "literature/"], ["", "literature/"])
     tool = BuildSynthesisWorkbenchTool(policy)
 
-    result = await tool.execute(write_final=True)
+    result = await tool.execute(write_final=False)
 
     assert result.ok
     assert (literature / "synthesis_workbench.json").exists()
     assert (literature / "synthesis_outline.md").exists()
     assert (literature / "synthesis_draft.md").exists()
-    synthesis = (literature / "synthesis.md").read_text(encoding="utf-8")
-    assert "方法家族分类" in synthesis
-    assert "共同假设" in synthesis
-    assert "性能-效率前沿" in synthesis
-    assert "技术趋势" in synthesis
-    assert "可操作研究问题" in synthesis
-    assert "[paper_0]" in synthesis
+    assert not (literature / "synthesis.md").exists()
+    draft = (literature / "synthesis_draft.md").read_text(encoding="utf-8")
+    assert "This is not a final literature synthesis" in draft
+    assert "[paper_0]" in draft

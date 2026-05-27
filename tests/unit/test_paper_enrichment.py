@@ -85,6 +85,73 @@ def test_enrich_papers_preserves_unknown_year_as_none():
     assert papers[0]["year"] is None
 
 
+def test_enrich_papers_prefers_llm_annotations_over_fallbacks():
+    papers = enrich_papers(
+        [
+            {
+                "id": "p1",
+                "title": "Specialized Domain Paper",
+                "source": "unknown_source",
+                "venue": "Domain Symposium",
+                "year": 2026,
+                "abstract": "A domain-specific mechanism.",
+            }
+        ],
+        llm_annotations={
+            "p1": {
+                "source_type": "domain_flagship_symposium",
+                "why_relevant": "LLM judged this paper as the closest baseline for the target mechanism.",
+                "method_family": "activity-conditioned perturbation",
+                "domain_tags": ["target-domain"],
+            }
+        },
+    )
+
+    assert papers[0]["source_type"] == "domain_flagship_symposium"
+    assert papers[0]["why_relevant"].startswith("LLM judged")
+    assert papers[0]["method_family"] == "activity-conditioned perturbation"
+    assert papers[0]["domain_tags"] == ["target-domain"]
+    assert papers[0]["llm_annotation_applied"] is True
+
+
+def test_enrich_papers_unknown_source_type_is_marked_for_review():
+    papers = enrich_papers(
+        [
+            {
+                "id": "p1",
+                "title": "Unknown Venue Paper",
+                "source": "unknown_source",
+                "venue": "Unfamiliar Venue",
+                "abstract": "No profile terms here.",
+            }
+        ]
+    )
+
+    assert papers[0]["source_type"] == "unknown"
+    assert papers[0]["_needs_llm_source_type"] is True
+    assert papers[0]["_needs_llm_relevance_review"] is True
+
+
+def test_enrich_papers_does_not_infer_full_text_from_access_metadata():
+    papers = enrich_papers(
+        [
+            {
+                "id": "p1",
+                "title": "Likely Accessible",
+                "source": "arxiv",
+                "venue": "arXiv",
+                "url": "https://arxiv.org/pdf/2501.00001",
+                "pdf_url": "https://arxiv.org/pdf/2501.00001",
+                "abstract": "Abstract is available.",
+            }
+        ]
+    )
+
+    assert papers[0]["access_level_hint"] == "LIKELY_FULL_TEXT"
+    assert papers[0]["evidence_level"] == "ABSTRACT_ONLY"
+    assert papers[0]["_needs_reader_evidence_level"] is True
+
+
 def test_build_deep_read_queue_prefers_verified_pool_when_caller_passes_dedup(tmp_path):
     workspace = tmp_path / "ws"
     (workspace / "literature" / "pdfs").mkdir(parents=True)

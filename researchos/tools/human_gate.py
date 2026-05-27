@@ -48,33 +48,15 @@ class CLIHumanInterface(HumanInterface):
         print(question)
         if suggestions:
             print(json.dumps(suggestions, indent=2, ensure_ascii=False))
-        print("请输入回答（单行直接回车；多行先输入 MULTILINE，并在最后单独输入 END）:")
-
-        try:
-            first_line = input("> ")
-        except EOFError:
-            raise HumanInputUnavailable(
-                "ask_human 需要用户输入，但当前 stdin 已关闭或不可交互。"
-            )
-
-        if first_line.strip().upper() != "MULTILINE":
-            answer = first_line.strip()
-            if not answer:
-                raise HumanInputUnavailable("ask_human 收到空回答，任务已暂停等待明确输入。")
-            return answer
+        print("请输入回答（输入完毕后按 Ctrl+D 提交）:")
 
         lines: list[str] = []
         try:
             while True:
                 line = input("> ")
-                if line.strip() == "END":
-                    break
                 lines.append(line)
         except EOFError:
-            if not lines:
-                raise HumanInputUnavailable(
-                    "ask_human 多行输入在收到任何内容前结束，任务已暂停。"
-                )
+            pass  # Ctrl+D 正常提交
 
         answer = "\n".join(lines).strip()
         if not answer:

@@ -21,6 +21,56 @@ from .base import Tool, ToolResult
 from .workspace_policy import WorkspaceAccessPolicy
 
 
+class FamilyClassification(BaseModel):
+    paper_id: str = Field(description="Normalized paper ID.")
+    family: str = Field(description="LLM-assigned method family name.")
+    confidence: str = Field(default="high", description="Classification confidence: high/medium/low.")
+
+
+class SharedAssumption(BaseModel):
+    assumption: str = Field(description="Description of the shared assumption.")
+    why_questionable: str = Field(description="Why this assumption may not hold.")
+    supporting_papers: list[str] = Field(default_factory=list, description="Paper IDs supporting this assumption.")
+
+
+class Trend(BaseModel):
+    trend: str = Field(description="Trend description.")
+    recent_papers: list[str] = Field(default_factory=list, description="Recent paper IDs.")
+    contrast_papers: list[str] = Field(default_factory=list, description="Older paper IDs for contrast.")
+
+
+class ResearchQuestion(BaseModel):
+    id: str = Field(description="Question ID, e.g. Q1.")
+    question: str = Field(description="Research question text.")
+    why_unsolved: str = Field(default="", description="Why this question remains open.")
+    related_papers: list[str] = Field(default_factory=list, description="Related paper IDs.")
+
+
+class LLMInsights(BaseModel):
+    """LLM-generated insights from the Reader agent.
+
+    When provided, these override the deterministic/heuristic generation
+    in the synthesis workbench tool, replacing hardcoded templates with
+    domain-specific analysis from the LLM.
+    """
+    family_classifications: list[FamilyClassification] = Field(
+        default_factory=list,
+        description="Per-paper method family classifications from LLM analysis.",
+    )
+    shared_assumptions: list[SharedAssumption] = Field(
+        default_factory=list,
+        description="LLM-identified shared assumptions across the paper pool.",
+    )
+    trends: list[Trend] = Field(
+        default_factory=list,
+        description="LLM-identified technical trends.",
+    )
+    research_questions: list[ResearchQuestion] = Field(
+        default_factory=list,
+        description="LLM-generated actionable research questions.",
+    )
+
+
 class BuildSynthesisWorkbenchParams(BaseModel):
     notes_dir: str = Field(
         default="literature/paper_notes",
@@ -40,8 +90,26 @@ class BuildSynthesisWorkbenchParams(BaseModel):
     )
     max_notes: int = Field(default=80, ge=1, le=300, description="Maximum notes to include.")
     write_final: bool = Field(
-        default=True,
-        description="Whether to also write literature/synthesis.md as a deterministic baseline.",
+        default=False,
+        description=(
+            "Whether to also write literature/synthesis.md as a baseline draft. "
+            "Default is false because final synthesis should be written/revised by the Reader LLM."
+        ),
+    )
+    render_draft: bool = Field(
+        default=False,
+        description=(
+            "Whether to render a prose synthesis_draft.md. Default false keeps the tool as "
+            "an evidence workbench/outline builder instead of a deterministic knowledge writer."
+        ),
+    )
+    llm_insights: LLMInsights | None = Field(
+        default=None,
+        description=(
+            "Optional LLM-generated insights from the Reader agent. "
+            "When provided, overrides deterministic family classification, "
+            "shared assumption generation, trend detection, and research question formulation."
+        ),
     )
 
 
@@ -49,7 +117,7 @@ class BuildSynthesisWorkbenchTool(Tool):
     name = "build_synthesis_workbench"
     description = (
         "Build staged T3.5 synthesis artifacts from paper_notes: structured evidence JSON, "
-        "an outline, a draft, and optionally synthesis.md. Use before final synthesis writing."
+        "an outline, and optionally a baseline draft. Use before final LLM synthesis writing."
     )
     parameters_schema = BuildSynthesisWorkbenchParams
     timeout_seconds = 30.0
@@ -76,25 +144,41 @@ class BuildSynthesisWorkbenchTool(Tool):
 
         notes = [_parse_note(path) for path in sorted(notes_dir.glob("*.md"))[: params.max_notes]]
         notes = [note for note in notes if note.get("paper_id")]
-        if not notes:
+
+        # 读取 abstract-only notes（可选目录）
+        abstract_dir = notes_dir.parent / "paper_notes_abstract"
+        abstract_notes: list[dict] = []
+        if abstract_dir.exists() and abstract_dir.is_dir():
+            abstract_notes = [_parse_note(path, evidence_level="ABSTRACT_ONLY") for path in sorted(abstract_dir.glob("*.md"))]
+            abstract_notes = [note for note in abstract_notes if note.get("paper_id")]
+
+        if not notes and not abstract_notes:
             return ToolResult(ok=False, content="No parseable paper notes found.", error="empty_notes")
 
         comparison_rows = _read_comparison_rows(comparison_path) if comparison_path.exists() else []
         missing_areas = missing_path.read_text(encoding="utf-8", errors="replace") if missing_path.exists() else ""
-        families = _build_method_families(notes)
+        insights = params.llm_insights
+        families = _build_method_families(notes, abstract_notes, llm_insights=insights)
+        all_notes = notes + abstract_notes
         workbench = {
             "note_count": len(notes),
-            "paper_ids": [note["paper_id"] for note in notes],
+            "abstract_note_count": len(abstract_notes),
+            "total_note_count": len(all_notes),
+            "paper_ids": [note["paper_id"] for note in all_notes],
             "method_families": families,
-            "shared_assumption_candidates": _build_shared_assumptions(notes),
+            "shared_assumption_candidates": _build_shared_assumptions(notes, llm_insights=insights),
             "frontier_candidates": _build_frontier(notes, comparison_rows),
-            "trend_candidates": _build_trends(notes),
-            "research_question_candidates": _build_questions(notes, missing_areas),
+            "trend_candidates": _build_trends(notes, llm_insights=insights),
+            "research_question_candidates": _build_questions(notes, missing_areas, llm_insights=insights),
+            "mechanism_claim_clusters": _build_mechanism_claim_clusters(all_notes),
             "notes": notes,
         }
+        # Backward-compatible alias. Treat as mechanical mechanism-claim
+        # clusters, not authoritative domain consensus.
+        workbench["domain_consensus"] = workbench["mechanism_claim_clusters"]
 
         outline = _render_outline(workbench, missing_areas)
-        draft = _render_synthesis(workbench, missing_areas)
+        draft = _render_synthesis(workbench, missing_areas) if params.render_draft or params.write_final else _render_draft_guidance(workbench)
 
         output_dir.mkdir(parents=True, exist_ok=True)
         workbench_path = output_dir / "synthesis_workbench.json"
@@ -117,29 +201,36 @@ class BuildSynthesisWorkbenchTool(Tool):
                 "draft": str(draft_path.relative_to(self.policy.workspace_dir)),
                 "final": str(final_path.relative_to(self.policy.workspace_dir)) if final_path else None,
             },
+            "draft_is_guidance_only": not (params.render_draft or params.write_final),
         }
         return ToolResult(
             ok=True,
             content=(
                 "Built staged synthesis workbench from "
                 f"{len(notes)} notes into {data['outputs']['workbench']}, "
-                f"{data['outputs']['outline']}, {data['outputs']['draft']}."
+                f"{data['outputs']['outline']}, {data['outputs']['draft']}. "
+                "Final synthesis remains the Reader LLM's responsibility."
             ),
             data=data,
         )
 
 
-def _parse_note(path: Path) -> dict[str, Any]:
+def _parse_note(path: Path, evidence_level: str = "FULL_TEXT") -> dict[str, Any]:
     text = path.read_text(encoding="utf-8", errors="replace")
     title_match = re.search(r"(?m)^#\s+(.+)$", text)
     paper_id = _field(text, "ID") or path.stem
+    status_raw = _field(text, "Status")
+    # 从 Status 或参数推断 evidence_level
+    if "ABSTRACT-ONLY" in status_raw:
+        evidence_level = "ABSTRACT_ONLY"
     return {
         "paper_id": _normalize_ref_id(paper_id),
         "source_file": path.name,
         "title": title_match.group(1).strip() if title_match else path.stem,
         "year": _extract_year(_field(text, "Venue")),
         "venue": _field(text, "Venue"),
-        "status": _field(text, "Status"),
+        "status": status_raw,
+        "evidence_level": evidence_level,
         "method_overview": _section(text, "2. Method Overview"),
         "key_results": _section(text, "3. Key Results"),
         "limitations": _section(text, "5. Limitations"),
@@ -147,6 +238,7 @@ def _parse_note(path: Path) -> dict[str, Any]:
         "details": _section(text, "7. Technical Details Worth Noting"),
         "gaps": _section(text, "9. Weaknesses / Gaps"),
         "questions": _section(text, "11. My Questions"),
+        "mechanism_claim": _extract_mechanism_claim(text),
     }
 
 
@@ -171,6 +263,22 @@ def _extract_year(value: str) -> int | None:
     return int(match.group(0)) if match else None
 
 
+def _extract_mechanism_claim(text: str) -> dict[str, str]:
+    """从 §13 Mechanism Claim 提取三个字段。"""
+    section_match = re.search(
+        r"(?ms)^## 13\. Mechanism Claim\s*(?P<section>.*?)(?=^##\s+\d+\.|\Z)",
+        text,
+    )
+    if not section_match:
+        return {}
+    section = section_match.group("section")
+    return {
+        "stated_mechanism": _field(section, "Stated mechanism"),
+        "evidence_type": _field(section, "Evidence type"),
+        "supporting_artifact": _field(section, "Supporting artifact"),
+    }
+
+
 def _normalize_ref_id(value: str) -> str:
     cleaned = value.strip().strip("[]")
     cleaned = cleaned.replace(":", "_").replace("/", "_")
@@ -187,70 +295,93 @@ def _read_comparison_rows(path: Path) -> list[dict[str, str]]:
         return []
 
 
-def _build_method_families(notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _build_method_families(
+    notes: list[dict[str, Any]],
+    abstract_notes: list[dict[str, Any]] | None = None,
+    llm_insights: LLMInsights | None = None,
+) -> list[dict[str, Any]]:
+    all_notes = notes + (abstract_notes or [])
+    # Build LLM classification lookup if available
+    llm_classifications: dict[str, str] = {}
+    if llm_insights and llm_insights.family_classifications:
+        for fc in llm_insights.family_classifications:
+            llm_classifications[fc.paper_id] = fc.family
+
     buckets: dict[str, list[dict[str, Any]]] = {}
-    for note in notes:
-        label = _classify_family(note)
+    for note in all_notes:
+        label = _classify_family(note, llm_override=llm_classifications.get(note["paper_id"]))
         buckets.setdefault(label, []).append(note)
 
+    abstract_ids = {n["paper_id"] for n in (abstract_notes or [])}
     families = []
     for label, members in sorted(buckets.items(), key=lambda item: (-len(item[1]), item[0]))[:5]:
+        full_members = [m for m in members if m["paper_id"] not in abstract_ids]
+        abs_members = [m for m in members if m["paper_id"] in abstract_ids]
         families.append(
             {
                 "name": label,
                 "paper_ids": [note["paper_id"] for note in members[:8]],
-                "representative_titles": [note["title"] for note in members[:4]],
-                "core_observations": _top_snippets(members, "method_overview", limit=3),
-                "result_observations": _top_snippets(members, "key_results", limit=3),
+                "representative_titles": [note["title"] for note in full_members[:4]],
+                "core_observations": _top_snippets(full_members or members, "method_overview", limit=3),
+                "result_observations": _top_snippets(full_members or members, "key_results", limit=3),
+                "_abstract_count": len(abs_members),
             }
         )
     return families
 
 
-def _classify_family(note: dict[str, Any]) -> str:
-    blob = " ".join(str(note.get(key) or "") for key in ("title", "method_overview", "details", "relevance")).lower()
-    rules = [
-        ("图推荐与图表示学习", ("lightgcn", "graph", "gnn", "图", "recommend")),
-        ("对比学习与自监督目标", ("contrastive", "self-supervised", "self supervised", "cl", "对比")),
-        ("扰动、鲁棒性与正则化", ("robust", "perturb", "noise", "adversarial", "regularization", "鲁棒", "扰动")),
-        ("检索、记忆与长程上下文", ("retrieval", "memory", "long-context", "long context", "检索", "记忆")),
-        ("高效模型与系统优化", ("efficient", "efficiency", "compression", "distill", "latency", "高效")),
-        ("评估、基准与实证分析", ("benchmark", "evaluation", "dataset", "ablation", "评估", "基准")),
-    ]
-    for label, keywords in rules:
-        if any(keyword in blob for keyword in keywords):
-            return label
-    return "表示学习与方法扩展"
+def _classify_family(note: dict[str, Any], llm_override: str | None = None) -> str:
+    # If the LLM agent has provided a classification, use it directly.
+    if llm_override:
+        return llm_override
+
+    method_text = _shorten(note.get("method_overview") or note.get("title") or "unclassified", 56)
+    return f"LLM_REVIEW_REQUIRED: {method_text}"
 
 
-def _build_shared_assumptions(notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    templates = [
-        (
-            "相似样本或邻域结构能提供稳定监督信号",
-            "许多方法默认邻域、增强视图或检索结果能保留任务相关语义。",
-        ),
-        (
-            "统一表示空间足以承载跨场景泛化",
-            "多数方法把改进集中在嵌入、编码器或相似度目标上。",
-        ),
-        (
-            "更强的训练信号会自然转化为鲁棒性",
-            "不少论文报告主指标提升，但对稀疏、噪声或分布外条件的覆盖不足。",
-        ),
-        (
-            "离线 benchmark 能代表真实部署约束",
-            "效率、预算、冷启动和可解释性常被压缩成次要指标。",
-        ),
-    ]
-    refs = _cycle_refs(notes, 4)
-    return [
-        {
-            "assumption": assumption,
-            "why_questionable": reason,
-            "supporting_papers": refs[index : index + 2] or refs[:2],
-        }
-        for index, (assumption, reason) in enumerate(templates)
-    ]
+def _build_shared_assumptions(
+    notes: list[dict[str, Any]],
+    llm_insights: LLMInsights | None = None,
+) -> list[dict[str, Any]]:
+    # Use LLM-generated assumptions if available
+    if llm_insights and llm_insights.shared_assumptions:
+        return [
+            {
+                "assumption": sa.assumption,
+                "why_questionable": sa.why_questionable,
+                "supporting_papers": sa.supporting_papers or _cycle_refs(notes, 2),
+            }
+            for sa in llm_insights.shared_assumptions
+        ]
+
+    return _collect_llm_review_assumption_candidates(notes)
+
+
+def _extract_assumptions_from_notes(notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Backward-compatible alias for review candidate collection.
+
+    The function no longer maps keyword categories to domain assumptions.
+    """
+    return _collect_llm_review_assumption_candidates(notes)
+
+
+def _collect_llm_review_assumption_candidates(notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for note in notes:
+        snippet = _shorten(note.get("limitations") or note.get("gaps") or note.get("questions"), 220)
+        if not snippet:
+            continue
+        candidates.append(
+            {
+                "assumption": f"LLM_REVIEW_REQUIRED: derive any shared assumption from [{note['paper_id']}]",
+                "why_questionable": snippet,
+                "supporting_papers": [note["paper_id"]],
+                "review_required": True,
+            }
+        )
+        if len(candidates) >= 6:
+            break
+    return candidates
 
 
 def _build_frontier(notes: list[dict[str, Any]], rows: list[dict[str, str]]) -> list[dict[str, Any]]:
@@ -270,52 +401,193 @@ def _build_frontier(notes: list[dict[str, Any]], rows: list[dict[str, str]]) -> 
     return frontier
 
 
-def _build_trends(notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _build_trends(
+    notes: list[dict[str, Any]],
+    llm_insights: LLMInsights | None = None,
+) -> list[dict[str, Any]]:
+    # Use LLM-generated trends if available
+    if llm_insights and llm_insights.trends:
+        return [
+            {
+                "trend": t.trend,
+                "recent_papers": t.recent_papers or _cycle_refs(notes, 5),
+                "contrast_papers": t.contrast_papers or _cycle_refs(notes[3:] or notes, 3),
+            }
+            for t in llm_insights.trends
+        ]
+
+    # Fallback: expose chronological evidence only; LLM must infer trends.
     recent_start_year = recent_year_from(2)
     recent = [note for note in notes if (note.get("year") or 0) >= recent_start_year]
     older = [note for note in notes if note.get("year") and note.get("year") < recent_start_year]
     return [
         {
-            "trend": "从单点指标提升转向鲁棒性、效率和可恢复性的联合评估",
+            "trend": "LLM_REVIEW_REQUIRED: infer trend from chronological evidence",
             "recent_papers": [note["paper_id"] for note in recent[:5]] or _cycle_refs(notes, 5),
             "contrast_papers": [note["paper_id"] for note in older[:3]],
-        },
-        {
-            "trend": "方法设计更依赖可组合模块，例如增强、检索、扰动或轻量化训练目标",
-            "recent_papers": _cycle_refs(notes[1:] or notes, 5),
-            "contrast_papers": _cycle_refs(notes[5:] or notes, 3),
-        },
-        {
-            "trend": "实验报告逐渐强调消融、预算和部署可行性，但协议仍不统一",
-            "recent_papers": _cycle_refs(notes[2:] or notes, 5),
-            "contrast_papers": _cycle_refs(notes[6:] or notes, 3),
+            "review_required": True,
         },
     ]
 
 
-def _build_questions(notes: list[dict[str, Any]], missing_areas: str) -> list[dict[str, Any]]:
-    gaps = [note for note in notes if str(note.get("gaps") or "").strip()]
-    questions = [
-        "如何把现有方法的性能收益转化为稀疏、噪声或冷启动条件下的稳定鲁棒性？",
-        "哪些训练信号是真正必要的，哪些只是提高了离线 benchmark 上的表观性能？",
-        "能否用更低成本的模块达到接近复杂方法的效果，同时保留可解释证据链？",
-        "现有评估协议遗漏了哪些失败模式，如何设计更贴近部署约束的验证集？",
-        "不同方法家族之间是否存在可迁移的机制，而不是只在单一数据集上有效？",
+def _extract_trends_from_notes(
+    notes: list[dict[str, Any]],
+    recent: list[dict[str, Any]],
+    older: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return chronological review hints, not domain-specific trend labels."""
+    if not notes:
+        return []
+    return [
+        {
+            "trend": "LLM_REVIEW_REQUIRED: compare recent and older methods",
+            "recent_papers": [n["paper_id"] for n in recent[:5]],
+            "contrast_papers": [n["paper_id"] for n in older[:3]],
+            "review_required": True,
+        }
     ]
-    output = []
-    refs = _cycle_refs(gaps or notes, 20)
-    for idx, question in enumerate(questions, start=1):
-        output.append(
+
+
+def _build_questions(
+    notes: list[dict[str, Any]],
+    missing_areas: str,
+    llm_insights: LLMInsights | None = None,
+) -> list[dict[str, Any]]:
+    # Use LLM-generated questions if available
+    if llm_insights and llm_insights.research_questions:
+        return [
             {
-                "id": f"Q{idx}",
-                "question": question,
-                "why_unsolved": _shorten(missing_areas, 220)
-                if idx == 4 and missing_areas
-                else "现有论文的证据主要分散在单项指标、单数据集或局部消融中，缺少跨条件的系统比较。",
-                "related_papers": refs[(idx - 1) * 3 : idx * 3] or refs[:3],
+                "id": rq.id,
+                "question": rq.question,
+                "why_unsolved": rq.why_unsolved or _shorten(missing_areas, 220) if missing_areas else "",
+                "related_papers": rq.related_papers or _cycle_refs(notes, 3),
+            }
+            for rq in llm_insights.research_questions
+        ]
+
+    # Fallback: expose paper-authored questions/gaps only; LLM must formulate.
+    gaps = [note for note in notes if str(note.get("gaps") or "").strip()]
+    questions = _extract_questions_from_notes(notes, gaps, missing_areas)
+    if questions:
+        return questions
+    refs = _cycle_refs(gaps or notes, 3)
+    return [{
+        "id": "Q_REVIEW",
+        "question": "LLM_REVIEW_REQUIRED: formulate actionable research questions from notes and missing areas",
+        "why_unsolved": _shorten(missing_areas, 220) if missing_areas else "No LLM-generated question was provided.",
+        "related_papers": refs,
+        "review_required": True,
+    }]
+
+
+def _extract_questions_from_notes(
+    notes: list[dict[str, Any]],
+    gaps: list[dict[str, Any]],
+    missing_areas: str,
+) -> list[dict[str, Any]]:
+    """Extract paper-authored question snippets without inventing domain templates."""
+    questions: list[dict[str, Any]] = []
+    source_notes = gaps or notes
+    for idx, note in enumerate(source_notes[:6], start=1):
+        snippet = _shorten(note.get("questions") or note.get("gaps") or note.get("limitations"), 220)
+        if not snippet:
+            continue
+        questions.append(
+            {
+                "id": f"Q_REVIEW_{idx}",
+                "question": f"LLM_REVIEW_REQUIRED: turn note gap into a research question for [{note['paper_id']}]",
+                "why_unsolved": snippet,
+                "related_papers": [note["paper_id"]],
+                "review_required": True,
             }
         )
-    return output
+    return questions[:5]
+
+
+def _build_mechanism_claim_clusters(all_notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Aggregate mechanism claim hints across papers for LLM review.
+
+    The output deliberately avoids final consensus/challengeability judgment.
+    Similarity clusters are mechanical hints only; the Reader/Ideation LLM must
+    decide whether a claim is a real domain consensus and whether it is worth
+    challenging.
+    """
+    claims: list[dict[str, Any]] = []
+    for note in all_notes:
+        mc = note.get("mechanism_claim") or {}
+        stated = mc.get("stated_mechanism", "").strip()
+        if not stated or "LLM_REVIEW_REQUIRED" in stated:
+            continue
+        evidence_type = mc.get("evidence_type", "unknown")
+        evidence_level = note.get("evidence_level", "FULL_TEXT")
+        claims.append({
+            "paper_id": note["paper_id"],
+            "title": note.get("title", ""),
+            "mechanism": stated,
+            "evidence_type": evidence_type,
+            "evidence_level": evidence_level,
+            "abstract_only": evidence_level == "ABSTRACT_ONLY",
+        })
+
+    if not claims:
+        return []
+
+    # Group claims by rough keyword similarity
+    clusters: list[dict[str, Any]] = []
+    for claim in claims:
+        assigned = False
+        for cluster in clusters:
+            if _mechanism_similar(claim["mechanism"], cluster["representative_mechanism"]):
+                cluster["papers"].append(claim)
+                assigned = True
+                break
+        if not assigned:
+            clusters.append({
+                "representative_mechanism": claim["mechanism"],
+                "papers": [claim],
+            })
+
+    consensus = []
+    for cluster in clusters:
+        papers = cluster["papers"]
+        evidence_types = [p["evidence_type"] for p in papers]
+        evidence_levels = [p["evidence_level"] for p in papers]
+        weak_hint_count = sum(et in ("claimed_untested", "empirical_correlation", "abstract_claim_hint") for et in evidence_types)
+        abstract_only_count = sum(1 for el in evidence_levels if el == "ABSTRACT_ONLY")
+
+        consensus.append({
+            "mechanism": cluster["representative_mechanism"],
+            "paper_count": len(papers),
+            "paper_ids": [p["paper_id"] for p in papers[:6]],
+            "evidence_types": evidence_types,
+            "evidence_strength_hint": "llm_review_required",
+            "has_untested_claims": weak_hint_count > 0,
+            "weak_evidence_hint_count": weak_hint_count,
+            "abstract_only_count": abstract_only_count,
+            "challengeable_hint": weak_hint_count > 0 or len(papers) == 1,
+            "challengeable": weak_hint_count > 0 or len(papers) == 1,
+            "requires_llm_judgment": True,
+            "semantics": "mechanical_mechanism_claim_cluster_not_domain_consensus",
+        })
+
+    consensus.sort(key=lambda c: (not c["challengeable_hint"], -c["paper_count"]))
+    return consensus[:10]
+
+
+def _build_domain_consensus(all_notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Backward-compatible alias for mechanism-claim cluster hints."""
+
+    return _build_mechanism_claim_clusters(all_notes)
+
+
+def _mechanism_similar(m1: str, m2: str) -> bool:
+    """Quick keyword overlap check for mechanism similarity."""
+    words1 = set(re.findall(r"\w{3,}", m1.lower()))
+    words2 = set(re.findall(r"\w{3,}", m2.lower()))
+    if not words1 or not words2:
+        return False
+    overlap = len(words1 & words2)
+    return overlap >= max(2, min(len(words1), len(words2)) // 2)
 
 
 def _first_metric_line(text: str) -> str:
@@ -358,6 +630,12 @@ def _render_outline(workbench: dict[str, Any], missing_areas: str) -> str:
     lines.extend(["", "## Shared Assumptions"])
     for item in workbench["shared_assumption_candidates"]:
         lines.append(f"- {item['assumption']} ({', '.join(_refs(item['supporting_papers']))})")
+    mechanism_clusters = workbench.get("mechanism_claim_clusters") or workbench.get("domain_consensus", [])
+    if mechanism_clusters:
+        lines.extend(["", "## Mechanism Claim Clusters For LLM Review"])
+        challengeable = [c for c in mechanism_clusters if c.get("challengeable_hint") or c.get("challengeable")]
+        for item in challengeable[:5]:
+            lines.append(f"- [review hint] {item['mechanism'][:100]} ({item['paper_count']} papers)")
     lines.extend(["", "## Research Questions"])
     for item in workbench["research_question_candidates"]:
         lines.append(f"- {item['id']}: {item['question']}")
@@ -366,101 +644,71 @@ def _render_outline(workbench: dict[str, Any], missing_areas: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _render_synthesis(workbench: dict[str, Any], missing_areas: str) -> str:
-    note_count = workbench["note_count"]
+def _render_draft_guidance(workbench: dict[str, Any]) -> str:
+    """Render non-final writing guidance from the evidence workbench.
+
+    This file intentionally avoids producing polished domain conclusions. It is
+    a scaffold that tells the Reader LLM which evidence clusters exist and where
+    human/LLM judgment is still required.
+    """
+
     lines = [
-        "# 文献综合",
+        "# Synthesis Draft Guidance",
         "",
-        f"本综述基于 `literature/paper_notes/` 中 {note_count} 篇结构化笔记生成，先由工具抽取证据、分组和候选问题，再压缩为面向 T4 的研究机会地图。核心原则是保留论文 ID 引用，避免只写泛泛摘要。",
+        "This is not a final literature synthesis. It is a structured writing aid produced from paper notes.",
+        "The Reader LLM must inspect the workbench, verify classifications, add domain reasoning, and write `synthesis.md`.",
         "",
-        "## 方法家族分类",
+        "## Evidence Clusters To Review",
         "",
     ]
-    for family in workbench["method_families"]:
-        refs = ", ".join(_refs(family["paper_ids"][:6]))
+    for family in workbench.get("method_families", []):
+        refs = ", ".join(_refs(family.get("paper_ids", [])[:6]))
         lines.extend(
             [
-                f"### {family['name']}",
-                f"代表论文包括 {refs}。这一家族的共同点不是单一模型结构，而是围绕相同瓶颈组织训练目标、表示空间或评估协议。",
+                f"### {family.get('name', 'Unclassified')}",
+                f"- Candidate papers: {refs}",
+                "- LLM review needed: confirm whether these papers really share a method family, split or merge if necessary.",
             ]
         )
-        for obs in family["core_observations"]:
-            lines.append(f"- 方法观察：{obs}")
-        for obs in family["result_observations"]:
-            lines.append(f"- 结果线索：{obs}")
-        lines.append(
-            "这类工作适合作为后续假设生成的证据簇：如果多个论文在相似机制上获得收益，但失败模式、预算或稀疏条件没有被系统比较，就形成了可验证的创新入口。"
-        )
+        for obs in family.get("core_observations", [])[:3]:
+            lines.append(f"- Evidence snippet: {obs}")
         lines.append("")
 
-    lines.extend(["## 共同假设", ""])
-    for idx, item in enumerate(workbench["shared_assumption_candidates"], start=1):
-        refs = ", ".join(_refs(item["supporting_papers"]))
-        lines.extend(
-            [
-                f"### A{idx}. {item['assumption']}",
-                f"支持证据主要来自 {refs}。{item['why_questionable']}",
-                "这个假设值得被显式挑战，因为它通常决定了数据增强、邻域选择、表示扰动或评估协议的默认边界。如果后续实验只沿用该默认前提，很容易得到局部改进却无法解释真实失败模式。",
-                "",
-            ]
-        )
+    lines.extend(["## Candidate Assumptions To Verify", ""])
+    for item in workbench.get("shared_assumption_candidates", []):
+        refs = ", ".join(_refs(item.get("supporting_papers", [])))
+        lines.append(f"- {item.get('assumption', '')} | supporting papers: {refs}")
+        if item.get("why_questionable"):
+            lines.append(f"  Review question: {item['why_questionable']}")
 
-    lines.extend(["## 性能-效率前沿", ""])
-    lines.append(
-        "当前证据显示，论文往往分别报告性能、效率或鲁棒性，而较少把三者放进同一 Pareto 分析。下面的前沿候选来自 comparison table 和单篇 note 的 Key Results。"
-    )
-    for item in workbench["frontier_candidates"][:10]:
-        lines.append(
-            f"- {_ref(item['paper_id'])} {item['title']}：指标线索为 {item['metric']}；效率或实现线索为 {item['efficiency_signal']}。"
-        )
-    lines.append(
-        "因此，T4 阶段应优先寻找能同时改变性能和约束条件的假设，而不是只追求单一主指标的小幅提升。尤其当轻量方法在资源受限条件下接近复杂方法时，真正的问题会转向何时需要复杂机制、何时只需要更稳的训练信号。"
-    )
-    lines.append("")
+    lines.extend(["", "## Candidate Research Questions To Refine", ""])
+    for item in workbench.get("research_question_candidates", []):
+        refs = ", ".join(_refs(item.get("related_papers", [])))
+        lines.append(f"- {item.get('id', 'Q?')}: {item.get('question', '')} | related papers: {refs}")
 
-    lines.extend(["## 技术趋势", ""])
-    for idx, item in enumerate(workbench["trend_candidates"], start=1):
-        refs = ", ".join(_refs(item["recent_papers"]))
-        contrast = ", ".join(_refs(item["contrast_papers"])) if item["contrast_papers"] else "早期基线论文"
-        lines.extend(
-            [
-                f"### T{idx}. {item['trend']}",
-                f"近期证据集中在 {refs}，可与 {contrast} 形成对照。",
-                "这一趋势说明领域正在从“提出一个更强模块”转向“解释模块在何种条件下有效”。后续研究如果能把趋势背后的条件变量显式建模，会比简单叠加模块更容易形成清晰贡献。",
-                "",
-            ]
-        )
-
-    lines.extend(["## 可操作研究问题", ""])
-    for item in workbench["research_question_candidates"]:
-        refs = ", ".join(_refs(item["related_papers"]))
-        lines.extend(
-            [
-                f"### {item['id']}: {item['question']}",
-                "- **Why it matters**: 这个问题直接连接当前方法家族的共同瓶颈和实验协议缺口，能把文献观察转化为可运行的假设。",
-                f"- **Why unsolved**: {item['why_unsolved']}",
-                "- **Potential angle of attack**: 将机制变量拆成可控实验条件，优先做小规模但可重复的消融，再决定是否进入 T5 pilot。",
-                f"- **Related papers**: {refs}",
-                "",
-            ]
-        )
-
-    if missing_areas.strip():
-        lines.extend(
-            [
-                "## T2 缺口补充",
-                "",
-                _shorten(missing_areas, 1400),
-                "",
-                "这些缺口不应被当作最终结论，而应作为 T4 搜索新假设时的负空间：哪些方向文献密度不足、哪些评估条件缺失、哪些关键 baseline 需要继续补检索。",
-                "",
-            ]
-        )
-
-    lines.append(
-        "总的来说，当前证据足以支持下一阶段生成 3-6 个可检验假设，但 T4 必须保留证据链：每个假设都应追溯到上述方法家族、共同假设、前沿候选或研究问题之一，并明确它解决的是性能、效率、鲁棒性还是评估协议中的哪一种缺口。"
+    lines.extend(
+        [
+            "",
+            "## Required LLM Work",
+            "",
+            "- Re-read `synthesis_workbench.json` and the most important paper notes before writing final claims.",
+            "- Treat all heuristic fields as hints, not conclusions.",
+            "- Write `literature/synthesis.md` with explicit paper-ID evidence and no unsupported template prose.",
+        ]
     )
     return "\n".join(lines).strip() + "\n"
+
+
+def _render_synthesis(workbench: dict[str, Any], missing_areas: str) -> str:
+    guidance = _render_draft_guidance(workbench)
+    if missing_areas.strip():
+        guidance += "\n## Missing Areas Context For LLM Review\n\n"
+        guidance += _shorten(missing_areas, 1400) + "\n"
+    guidance += (
+        "\n> This file is a scaffold only. Do not submit it as final synthesis. "
+        "The Reader LLM must write the final `literature/synthesis.md`.\n"
+    )
+    return guidance
 
 
 def _ref(paper_id: str) -> str:

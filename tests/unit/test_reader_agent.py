@@ -83,6 +83,11 @@ method
 
 ## 12. Reading Coverage
 {coverage}
+
+## 13. Mechanism Claim
+- **Stated mechanism**: The method improves performance through better feature extraction
+- **Evidence type**: ablation_supported
+- **Supporting artifact**: Table 2
 """
 
 

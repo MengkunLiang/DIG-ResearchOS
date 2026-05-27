@@ -38,6 +38,7 @@ from ..tools.paper_utils import (
     filter_by_domain,
     generate_search_log,
 )
+from .guidance import load_agent_guidance
 from ._common import (
     load_project,
     load_jsonl,
@@ -155,6 +156,7 @@ class ScoutAgent(Agent):
             external_resources=external_resources[:10],
             external_resource_count=len(external_resources),
             has_external_resources=bool(external_resources),
+            agent_guidance=load_agent_guidance("literature-scout"),
         )
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
@@ -256,6 +258,24 @@ class ScoutAgent(Agent):
         seed_path = ctx.workspace_dir / "user_seeds" / "seed_papers.jsonl"
         if seed_path.exists() and load_jsonl(seed_path) and not seed_in_queue:
             return False, "存在用户 seed papers，但 deep_read_queue 没有保留任何 seed 论文"
+
+        # 7. 校验 missing_areas.md 的 retrieval coverage hint 结构。
+        missing_path = ctx.workspace_dir / "literature" / "missing_areas.md"
+        if missing_path.exists():
+            content = missing_path.read_text(encoding="utf-8")
+            if "## Retrieval Coverage Hints" in content:
+                import re
+                hint_sections = re.split(r"### 提示 \d+", content)
+                for i, section in enumerate(hint_sections[1:], 1):
+                    required_bullets = ["覆盖缺口", "为什么需要复核", "建议动作", "难度"]
+                    missing_bullets = [
+                        b for b in required_bullets
+                        if f"**{b}**" not in section and f"- **{b}**" not in section
+                    ]
+                    if missing_bullets:
+                        return False, f"missing_areas.md 提示 {i} 缺少必需字段: {', '.join(missing_bullets)}"
+            if "## 可探索缺口" in content or "为什么是缺口" in content or "可探索方向" in content:
+                return False, "missing_areas.md 使用了旧的研究缺口模板，请改为 Retrieval Coverage Hints 结构"
 
         return True, None
 

@@ -1,4 +1,4 @@
-"""多源论文API工具 - 添加Crossref、Europe PMC、PubMed等免费API
+"""多源论文API工具 - 添加Crossref、Europe PMC、PubMed、INFORMS等免费API
 
 支持的API：
 1. arXiv - 预印本（可能有速率限制）
@@ -6,6 +6,7 @@
 3. Europe PMC - 生物医学论文（无需注册）
 4. PubMed/NCBI - 生物医学论文（无需API key，但建议使用）
 5. Semantic Scholar - 学术论文（需要API key）
+6. INFORMS/Crossref - INFORMS 期刊 DOI prefix 元数据
 """
 
 from __future__ import annotations
@@ -33,18 +34,18 @@ class MultiSourceSearchParams(BaseModel):
     query: str = Field(..., min_length=1, description="搜索关键词")
     max_results: int = Field(20, ge=1, le=100, description="最多返回多少篇论文")
     sources: list[str] = Field(
-        default=["crossref", "arxiv", "europepmc"],
+        default=["crossref", "arxiv", "informs", "europepmc"],
         description="要使用的数据源列表，按优先级排序"
     )
 
 
 class MultiSourceSearchTool(Tool):
-    """多源论文搜索工具 - 支持Crossref、arXiv、Europe PMC等免费API"""
+    """多源论文搜索工具 - 支持Crossref、arXiv、INFORMS、Europe PMC等免费API"""
 
     name = "multi_source_search"
     description = (
         "从多个免费学术数据库搜索论文。"
-        "支持Crossref（DOI元数据）、arXiv（预印本）、Europe PMC（生物医学）等。"
+        "支持Crossref（DOI元数据）、arXiv（预印本）、INFORMS（10.1287 DOI prefix）、Europe PMC（生物医学）等。"
         "自动处理速率限制和API失败，返回真实可验证的论文数据。"
     )
     parameters_schema = MultiSourceSearchParams
@@ -71,7 +72,7 @@ class MultiSourceSearchTool(Tool):
         source_stats = {}
 
         # 按优先级尝试各个数据源
-        for source in params.sources:
+        for idx, source in enumerate(params.sources):
             try:
                 if source == "crossref":
                     papers = await self._search_crossref(params.query, params.max_results)
@@ -81,14 +82,18 @@ class MultiSourceSearchTool(Tool):
                     papers = await self._search_europepmc(params.query, params.max_results)
                 elif source == "pubmed":
                     papers = await self._search_pubmed(params.query, params.max_results)
+                elif source == "informs":
+                    papers = await self._search_informs(params.query, params.max_results)
                 else:
                     continue
 
                 source_stats[source] = len(papers)
                 all_papers.extend(papers)
 
-                # 如果已经获取足够的论文，可以提前停止
-                if len(all_papers) >= params.max_results:
+                # 如果已经获取足够的论文，可以提前停止；默认源中的 INFORMS
+                # 必须至少尝试一次，避免被 Crossref/arXiv 提前截断。
+                remaining_sources = params.sources[idx + 1:]
+                if len(all_papers) >= params.max_results and "informs" not in remaining_sources:
                     break
 
                 # 避免速率限制：每个数据源之间间隔2秒
@@ -157,6 +162,61 @@ class MultiSourceSearchTool(Tool):
                     "citation_count": item.get("is-referenced-by-count", 0),
                     "url": f"https://doi.org/{doi}" if doi else "",
                     "externalIds": {"DOI": doi} if doi else {}
+                })
+
+            return papers
+
+    async def _search_informs(self, query: str, max_results: int) -> list[dict]:
+        """搜索 INFORMS/Crossref（10.1287 DOI prefix）。"""
+        filters = "prefix:10.1287,type:journal-article"
+        url = (
+            "https://api.crossref.org/works"
+            f"?query={quote_plus(query)}&rows={max_results}&filter={filters}&mailto={self.email}"
+        )
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+
+            data = response.json()
+            items = data.get("message", {}).get("items", [])
+
+            papers = []
+            for item in items:
+                authors = []
+                for author in item.get("author", []):
+                    given = author.get("given", "")
+                    family = author.get("family", "")
+                    name = f"{given} {family}".strip() or "Unknown"
+                    authors.append({"name": name})
+
+                year = None
+                published = (
+                    item.get("published-print")
+                    or item.get("published-online")
+                    or item.get("published")
+                    or item.get("issued")
+                )
+                date_parts = (published or {}).get("date-parts", [[]])[0]
+                if date_parts:
+                    year = date_parts[0]
+
+                doi = item.get("DOI", "")
+                title = item.get("title", [""])[0] if item.get("title") else ""
+                venue = item.get("container-title", [""])[0] if item.get("container-title") else ""
+
+                papers.append({
+                    "id": f"doi:{doi}" if doi else title[:50],
+                    "source": "informs_crossref",
+                    "title": title,
+                    "authors": authors,
+                    "year": year,
+                    "abstract": item.get("abstract", ""),
+                    "venue": venue,
+                    "doi": doi,
+                    "citation_count": item.get("is-referenced-by-count", 0),
+                    "url": f"https://doi.org/{doi}" if doi else item.get("URL", ""),
+                    "externalIds": {"DOI": doi, "CrossrefPrefix": "10.1287"} if doi else {"CrossrefPrefix": "10.1287"},
                 })
 
             return papers

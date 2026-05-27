@@ -52,6 +52,7 @@ from .paper_save_tools import (
     SavePapersRawTool,
     SavePapersDedupTool,
 )
+from .mechanism_tools import ExtractMechanismTupleTool, CompareMechanismTuplesTool
 from .semantic_scholar import SemanticScholarSearchTool, SemanticScholarGetPaperTool
 from .arxiv_api import ArxivSearchTool
 from .openalex_api import OpenAlexSearchTool, OpenAlexGetWorkTool
@@ -165,6 +166,9 @@ def register_builtin_tools(
     # 兼容旧接口（保留）
     registry.register("save_papers_raw", lambda ctx: SavePapersRawTool(ctx.policy))
     registry.register("save_papers_dedup", lambda ctx: SavePapersDedupTool(ctx.policy))
+    # Mechanism tuple 工具（T4.5 新颖性审计用）
+    registry.register("extract_mechanism_tuple", lambda ctx: ExtractMechanismTupleTool(ctx.policy))
+    registry.register("compare_mechanism_tuples", lambda ctx: CompareMechanismTuplesTool(ctx.policy))
 
 
 def _build_log_scout_progress_tool(workspace_dir: str) -> LogScoutProgressTool:

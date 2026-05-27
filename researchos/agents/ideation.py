@@ -24,6 +24,7 @@ from ._common import (
     read_text_file,
     validate_files_exist,
 )
+from .guidance import load_agent_guidance
 
 
 class IdeationAgent(Agent):
@@ -86,6 +87,7 @@ class IdeationAgent(Agent):
             comparison_table_preview=comparison_table[:1000],
             has_seed_ideas=bool(seed_ideas.strip()),
             temperature=self.spec.temperature,
+            agent_guidance=load_agent_guidance("ideation"),
         )
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
@@ -211,6 +213,33 @@ class IdeationAgent(Agent):
         scorecard_ideas = scorecard_data.get("ideas", [])
         if not isinstance(scorecard_ideas, list) or len(scorecard_ideas) < 2:
             return False, "idea_scorecard.yaml 至少需要记录2个候选idea，包含选中和淘汰/暂缓项"
+
+        # R1: mechanism / prediction / counterfactual / mechanism_family 必须存在
+        _mechanism_fields = ("mechanism", "prediction", "counterfactual", "mechanism_family")
+        for i, item in enumerate(scorecard_ideas, start=1):
+            if not isinstance(item, dict):
+                continue
+            idea = item.get("idea") or {}
+            for field in _mechanism_fields:
+                val = str(idea.get(field) or "").strip()
+                if not val:
+                    idea_id = str(idea.get("id") or f"#{i}")
+                    return False, (
+                        f"idea_scorecard.yaml idea {idea_id} 缺少必要字段 mechanism/{field}，"
+                        "每个 idea 必须包含 mechanism, prediction, counterfactual, mechanism_family"
+                    )
+
+        # R2: _family_distribution.md 必须存在且长度 > 100
+        family_dist_path = ws / "ideation" / "_family_distribution.md"
+        if not family_dist_path.exists():
+            return False, "缺少 ideation/_family_distribution.md，必须在生成 scorecard 前写入 family distribution"
+        family_dist_text = read_text_file(family_dist_path)
+        if len(family_dist_text.strip()) < 100:
+            return False, (
+                f"ideation/_family_distribution.md 过短({len(family_dist_text.strip())} 字符)，"
+                "至少需要 100 字符的 family 分布描述"
+            )
+
         known_idea_ids: set[str] = set()
         selected_idea_ids: set[str] = set()
         rejected_or_deferred_ids: set[str] = set()

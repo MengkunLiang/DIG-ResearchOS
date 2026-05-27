@@ -110,6 +110,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "idea_scorecard": "ideation/idea_scorecard.yaml",
             "rejected_ideas": "ideation/rejected_ideas.md",
             "gate_decisions": "ideation/gate_decisions.json",
+            "family_distribution": "ideation/_family_distribution.md",
         },
         "required_inputs": ["project", "synthesis"],
         "schemas": {
@@ -125,9 +126,11 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "hypotheses": "ideation/hypotheses.md",
             "synthesis": "literature/synthesis.md",
             "comparison_table": "literature/comparison_table.csv",
+            "idea_scorecard": "ideation/idea_scorecard.yaml",
         },
         "outputs": {
             "novelty_audit": "ideation/novelty_audit.md",
+            "mechanism_tuples_dir": "ideation/_mechanism_tuples",
         },
         "required_inputs": ["project", "hypotheses", "synthesis"],
         "schemas": {},
