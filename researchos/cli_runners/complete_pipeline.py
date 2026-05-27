@@ -7,6 +7,7 @@ from pathlib import Path
 
 from ..agents.registry import get_agent_by_id
 from ..orchestration.state_machine import StateMachine
+from ..runtime.agent import AgentResult
 from ..runtime.config import RuntimeSettings
 from ..runtime.llm_client import LLMClient
 from ..runtime.logger import get_logger
@@ -113,6 +114,11 @@ class CompletePipelineRunner:
             # CLI 层会把 Ctrl-C / SIGTERM 转成 cancel；runner 这里只负责把状态落到
             # `PAUSED`，保证后续 `resume` 有据可依。
             state = self.state_machine.mark_interrupted(state)
+            state.dump_yaml(state_path)
+            return state
+
+        if result.stop_reason == AgentResult.STOP_INTERRUPTED:
+            state = self.state_machine.advance(state, result, workspace_dir=self.workspace)
             state.dump_yaml(state_path)
             return state
 

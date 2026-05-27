@@ -24,6 +24,43 @@ class MinimalAgent(Agent):
         return "echo then finish"
 
 
+class AskHumanAgent(Agent):
+    def __init__(self):
+        super().__init__(
+            AgentSpec(name="ask-human-test", model_tier="medium", tool_names=["ask_human", "finish_task"])
+        )
+
+    def system_prompt(self, ctx):
+        return "You ask for human input."
+
+    def initial_user_message(self, ctx):
+        return "ask human"
+
+
+class T35PrefinalizeAgent(Agent):
+    def __init__(self):
+        super().__init__(
+            AgentSpec(
+                name="reader",
+                model_tier="medium",
+                tool_names=[],
+                allowed_read_prefixes=["", "literature/"],
+                allowed_write_prefixes=["literature/"],
+            )
+        )
+
+    def system_prompt(self, ctx):
+        return "synthesize"
+
+    def initial_user_message(self, ctx):
+        return "build synthesis"
+
+    def validate_outputs(self, ctx):
+        from researchos.agents.reader import ReaderAgent
+
+        return ReaderAgent(mode="synthesize").validate_outputs(ctx)
+
+
 class SyncPreHookAgent(Agent):
     def __init__(self):
         def sync_pre_hook(_ctx):
@@ -525,6 +562,100 @@ async def test_budget_extension_gate_can_stop_run(tmp_workspace, registry):
     assert not result.ok
     assert result.stop_reason == AgentResult.STOP_BUDGET
     assert any(call[0] == "gate" for call in human.calls)
+
+
+@pytest.mark.asyncio
+async def test_runner_pauses_on_unavailable_ask_human_without_second_llm_call(tmp_workspace, registry):
+    llm = MockLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[
+                        FakeToolCall(
+                            name="ask_human",
+                            arguments={"question": "请选择", "suggestions": ["确认"]},
+                            id="tc1",
+                        )
+                    ]
+                )
+            ),
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="finish_task", arguments={"summary": "bad"}, id="tc2")]
+                )
+            ),
+        ]
+    )
+    human = MockHumanInterface(clarification_answer="")
+    ctx = ExecutionContext(workspace_dir=tmp_workspace, project_id="p1", task_id="T4", run_id="r_human_pause")
+    runner = AgentRunner(AskHumanAgent(), registry, llm, human)
+
+    result = await runner.run(ctx)
+
+    assert not result.ok
+    assert result.stop_reason == AgentResult.STOP_INTERRUPTED
+    assert llm.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_t35_workbench_prefinalize_skips_llm_when_valid(tmp_workspace, registry):
+    literature = tmp_workspace / "literature"
+    notes_dir = literature / "paper_notes"
+    notes_dir.mkdir(parents=True)
+    for index in range(6):
+        (notes_dir / f"paper_{index}.md").write_text(
+            f"""# Paper {index}
+
+- **ID**: paper_{index}
+- **Venue**: TestConf (2025)
+- **Status**: [FULL-TEXT]
+
+## 2. Method Overview
+Graph contrastive method for robust sparse recommendation.
+
+## 3. Key Results
+- Accuracy: 88.{index} [Evidence: p.4]
+
+## 5. Limitations
+- Sparse setting not fully explored.
+
+## 6. Relevance to Our Research
+- Directly related to sparse recommendation robustness.
+
+## 7. Technical Details Worth Noting
+- Lightweight perturbation strategy.
+
+## 9. Weaknesses / Gaps
+- Missing adaptive perturbation analysis.
+
+## 11. My Questions
+- Can adaptive perturbation improve sparse generalization?
+""",
+            encoding="utf-8",
+        )
+    (literature / "comparison_table.csv").write_text(
+        "id,title,year,venue,method_family,dataset,key_metric,metric_value\n",
+        encoding="utf-8",
+    )
+    (literature / "missing_areas.md").write_text("# 缺口\n稀疏鲁棒性不足。\n", encoding="utf-8")
+    llm = MockLLMClient(responses=[])
+    ctx = ExecutionContext(
+        workspace_dir=tmp_workspace,
+        project_id="p1",
+        task_id="T3.5",
+        run_id="r_t35_workbench",
+        mode="synthesize",
+        outputs_expected={"synthesis": literature / "synthesis.md"},
+    )
+    runner = AgentRunner(T35PrefinalizeAgent(), registry, llm, MockHumanInterface())
+
+    result = await runner.run(ctx)
+
+    assert result.ok
+    assert result.metadata["completion_mode"] == "t35_workbench"
+    assert llm.call_count == 0
+    assert (literature / "synthesis_workbench.json").exists()
+    assert (literature / "synthesis.md").exists()
 
 
 @pytest.mark.asyncio

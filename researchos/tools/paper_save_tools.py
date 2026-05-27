@@ -126,8 +126,8 @@ def _select_preferred_paper_id(paper: dict[str, Any]) -> tuple[str, str]:
 
     设计约束：
     - 对开放论文优先用 arXiv ID，便于 PDF 抓取与文件命名；
-    - 其次使用 DOI；
-    - 再回退到已有上游 source id。
+    - 已有上游 source id 时保留它，避免 raw 记录在保存时突然换主键；
+    - 只有缺少 source id 时才回退到 DOI。
     """
 
     external_ids = paper.get("externalIds") or {}
@@ -140,15 +140,14 @@ def _select_preferred_paper_id(paper: dict[str, Any]) -> tuple[str, str]:
         return _normalize_arxiv_identifier(str(arxiv_id)), "arxiv"
 
     doi = str(paper.get("doi") or external_ids.get("DOI") or "").strip()
-    if doi:
+    if doi and not str(paper.get("id") or paper.get("paperId") or "").strip():
         return doi.replace("https://doi.org/", "").replace("http://doi.org/", ""), "doi"
 
     raw_id = str(paper.get("id") or paper.get("paperId") or "").strip()
     if raw_id:
         return raw_id, "source_id"
 
-    title = str(paper.get("title", "")).strip()
-    return title or "unknown-paper", "title"
+    return "", "missing"
 
 
 def _ensure_provenance(

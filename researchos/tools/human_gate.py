@@ -7,6 +7,10 @@ import json
 import re
 
 
+class HumanInputUnavailable(RuntimeError):
+    """Raised when the CLI cannot obtain required human input."""
+
+
 class HumanInterface(ABC):
     """runtime 与外部用户交互的统一接口。"""
 
@@ -44,22 +48,38 @@ class CLIHumanInterface(HumanInterface):
         print(question)
         if suggestions:
             print(json.dumps(suggestions, indent=2, ensure_ascii=False))
-        print("请输入回答（多行输入请在最后输入单独一行 'END' 结束，或直接按 Ctrl+D）:")
+        print("请输入回答（单行直接回车；多行先输入 MULTILINE，并在最后单独输入 END）:")
 
-        # 支持多行输入
-        lines = []
+        try:
+            first_line = input("> ")
+        except EOFError:
+            raise HumanInputUnavailable(
+                "ask_human 需要用户输入，但当前 stdin 已关闭或不可交互。"
+            )
+
+        if first_line.strip().upper() != "MULTILINE":
+            answer = first_line.strip()
+            if not answer:
+                raise HumanInputUnavailable("ask_human 收到空回答，任务已暂停等待明确输入。")
+            return answer
+
+        lines: list[str] = []
         try:
             while True:
-                line = input()
-                # 如果用户输入 END，停止读取
+                line = input("> ")
                 if line.strip() == "END":
                     break
                 lines.append(line)
         except EOFError:
-            # Ctrl+D 触发 EOFError，正常结束
-            pass
+            if not lines:
+                raise HumanInputUnavailable(
+                    "ask_human 多行输入在收到任何内容前结束，任务已暂停。"
+                )
 
-        return "\n".join(lines).strip()
+        answer = "\n".join(lines).strip()
+        if not answer:
+            raise HumanInputUnavailable("ask_human 收到空回答，任务已暂停等待明确输入。")
+        return answer
 
     async def present_gate(
         self, *, gate_id: str, presentation: dict, options: list[dict]
@@ -90,7 +110,7 @@ class CLIHumanInterface(HumanInterface):
             except EOFError:
                 # 非交互环境触发 gate 时，默认选择 stop，避免运行时异常崩溃。
                 raw_answer = ""
-            answer = self._parse_option_index(raw_answer, len(options))
+            answer = self._parse_option_index(raw_answer, options)
             if answer is None:
                 if not raw_answer:
                     selected = next(
@@ -108,19 +128,97 @@ class CLIHumanInterface(HumanInterface):
         return {"option_id": option_id, "captured": captured}
 
     @staticmethod
-    def _parse_option_index(raw_answer: str, option_count: int) -> int | None:
+    def _parse_option_index(raw_answer: str, options: list[dict] | int) -> int | None:
         """解析 CLI gate 选择。
 
         某些终端会把快捷键或 ANSI 控制字符混进 input，例如 `\x1ba\x1ba1`。
-        这里只提取数字，避免预算 gate 因输入噪声直接崩溃。
+        优先提取数字，同时支持 option id/key、label 和常用中文/英文确认别名。
         """
 
+        if isinstance(options, int):
+            option_list: list[dict] = [{"id": str(index + 1), "label": ""} for index in range(options)]
+        else:
+            option_list = list(options)
+        option_count = len(option_list)
         cleaned = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", raw_answer)
         cleaned = cleaned.replace("\x1b", "")
         match = re.search(r"\d+", cleaned)
         if not match:
-            return None
+            return CLIHumanInterface._parse_option_alias(cleaned, option_list)
         idx = int(match.group(0)) - 1
-        if idx < 0 or idx >= option_count:
+        if 0 <= idx < option_count:
+            return idx
+        return CLIHumanInterface._parse_option_alias(cleaned, option_list)
+
+    @staticmethod
+    def _parse_option_alias(raw_answer: str, options: list[dict]) -> int | None:
+        normalized_answer = CLIHumanInterface._normalize_answer(raw_answer)
+        if not normalized_answer:
             return None
-        return idx
+
+        positive_aliases = {
+            "确认",
+            "确定",
+            "同意",
+            "继续",
+            "扩限",
+            "增加",
+            "是",
+            "好",
+            "yes",
+            "y",
+            "ok",
+            "okay",
+            "confirm",
+            "continue",
+            "extend",
+            "approve",
+        }
+        negative_aliases = {
+            "停止",
+            "停",
+            "取消",
+            "否",
+            "不",
+            "no",
+            "n",
+            "stop",
+            "cancel",
+            "reject",
+            "abort",
+        }
+
+        for idx, option in enumerate(options):
+            tokens = {
+                str(option.get("id") or ""),
+                str(option.get("key") or ""),
+                str(option.get("label") or ""),
+            }
+            tokens.update(str(alias) for alias in option.get("aliases") or [])
+            normalized_tokens = {CLIHumanInterface._normalize_answer(token) for token in tokens}
+            normalized_tokens = {token for token in normalized_tokens if token}
+            if normalized_answer in normalized_tokens:
+                return idx
+            if any(normalized_answer in token for token in normalized_tokens):
+                return idx
+
+        for idx, option in enumerate(options):
+            option_id = str(option.get("id") or option.get("key") or "").lower()
+            label = CLIHumanInterface._normalize_answer(str(option.get("label") or ""))
+            if option_id == "extend" and normalized_answer in positive_aliases:
+                return idx
+            if option_id == "stop" and normalized_answer in negative_aliases:
+                return idx
+            if any(alias in normalized_answer for alias in positive_aliases) and (
+                "继续" in label or "扩限" in label or "增加" in label or "continue" in label or "extend" in label
+            ):
+                return idx
+            if any(alias in normalized_answer for alias in negative_aliases) and (
+                "停止" in label or "取消" in label or "stop" in label or "cancel" in label
+            ):
+                return idx
+        return None
+
+    @staticmethod
+    def _normalize_answer(value: str) -> str:
+        return re.sub(r"[\s\[\]（）()。.!！,，:：;；\"'`]+", "", value.strip().lower())

@@ -42,7 +42,7 @@ def test_novelty_auditor_agent_spec(novelty_auditor_agent):
     spec = novelty_auditor_agent.spec
     assert spec.name == "novelty_auditor"
     assert spec.model_tier == "heavy"
-    assert spec.llm_profile is None
+    assert spec.llm_profile == "siliconflow_only"
     assert "read_file" in spec.tool_names
     assert "write_file" in spec.tool_names
     assert "search_papers" in spec.tool_names
@@ -52,7 +52,7 @@ def test_novelty_auditor_agent_spec(novelty_auditor_agent):
     assert "ideation/" in spec.allowed_read_prefixes
     assert "literature/" in spec.allowed_read_prefixes
     assert "ideation/" in spec.allowed_write_prefixes
-    assert spec.max_steps == 100
+    assert spec.max_steps == 1000
     assert spec.max_tokens_total == 600_000
 
 

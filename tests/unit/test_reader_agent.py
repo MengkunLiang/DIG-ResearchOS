@@ -366,6 +366,61 @@ def test_validate_note_structure_rejects_full_text_partial_page_coverage(tmp_pat
     assert "FULL-TEXT" in err
 
 
+def test_validate_note_structure_accepts_chunked_full_text_reread(tmp_path):
+    """分块重读覆盖完整 PDF 时，FULL-TEXT 不应被 Truncation 误判。"""
+    note_path = tmp_path / "chunked_coverage.md"
+    note_path.write_text(
+        _structured_note("chunked_coverage")
+        .replace("- **Pages read**: 1-10 / 10", "- **Pages read**: 1-4, 5-8, 9-10 / 10")
+        .replace(
+            "- **Extraction calls**: extract_pdf_text pages 1-10",
+            "- **Extraction calls**: extract_pdf_text pages 1-10 truncated, then pages 1-4, 5-8, 9-10",
+        )
+        .replace(
+            "- **Truncation**: none",
+            "- **Truncation**: first full call truncated; final chunked re-read covered all pages with no truncation",
+        ),
+        encoding="utf-8",
+    )
+
+    ok, err = _validate_note_structure(note_path)
+
+    assert ok, f"Validation failed: {err}"
+
+
+def test_validate_note_structure_accepts_chinese_final_untruncated(tmp_path):
+    """中文“最终未截断”应被视为明确无最终截断。"""
+    note_path = tmp_path / "chinese_untruncated.md"
+    note_path.write_text(
+        _structured_note("chinese_untruncated").replace(
+            "- **Truncation**: none",
+            "- **Truncation**: 第一次调用被截断；分块重读覆盖全部页面，最终未截断",
+        ),
+        encoding="utf-8",
+    )
+
+    ok, err = _validate_note_structure(note_path)
+
+    assert ok, f"Validation failed: {err}"
+
+
+def test_validate_note_structure_rejects_unresolved_truncation(tmp_path):
+    """历史截断如果没有明确最终解决，仍不能标 FULL-TEXT。"""
+    note_path = tmp_path / "still_truncated.md"
+    note_path.write_text(
+        _structured_note("still_truncated").replace(
+            "- **Truncation**: none",
+            "- **Truncation**: first full call truncated; chunked reread incomplete",
+        ),
+        encoding="utf-8",
+    )
+
+    ok, err = _validate_note_structure(note_path)
+
+    assert not ok
+    assert "Truncation" in err
+
+
 def test_validate_outputs_read_mode_missing_notes(reader_agent, temp_workspace):
     """测试read模式输出校验（缺少笔记）。"""
     queue_path = temp_workspace / "literature" / "deep_read_queue.jsonl"

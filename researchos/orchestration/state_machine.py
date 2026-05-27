@@ -306,6 +306,7 @@ class StateMachine:
             self._check_budget_drift(state, workspace_dir)
 
         if result.stop_reason == AgentResult.STOP_INTERRUPTED:
+            state.last_error = result.error
             return self.mark_interrupted(state)
 
         node = self.nodes[state.current_task]

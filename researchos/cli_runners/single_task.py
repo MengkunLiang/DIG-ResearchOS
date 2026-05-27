@@ -13,7 +13,7 @@ import yaml
 from ..agents.registry import TASK_TO_AGENT_MAP, get_agent_by_id
 from ..orchestration.state_machine import StateMachine
 from ..orchestration.task_io_contract import get_task_io, resolve_inputs, resolve_outputs
-from ..runtime.agent import ExecutionContext, LLMConfigOverride
+from ..runtime.agent import AgentResult, ExecutionContext, LLMConfigOverride
 from ..runtime.config import RuntimeSettings
 from ..runtime.llm_client import LLMClient
 from ..runtime.logger import get_logger
@@ -166,6 +166,14 @@ class SingleTaskRunner:
             state = self._record_interrupted(state)
             state.dump_yaml(state_path)
             print("Task interrupted. You can inspect state.yaml and trace files in this workspace.")
+            return 130
+
+        if result.stop_reason == AgentResult.STOP_INTERRUPTED:
+            print(f"\n[进度] 任务暂停: {result.error or result.message}")
+            state = self._record_interrupted(state)
+            state.dump_yaml(state_path)
+            self._print_result(result)
+            print("Task paused. Provide the requested human input and resume this workspace.")
             return 130
 
         print(f"\n[进度] Agent 执行完成，开始校验输出产物...")

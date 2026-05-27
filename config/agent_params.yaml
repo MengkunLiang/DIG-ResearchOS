@@ -183,6 +183,7 @@ agents:
       - fetch_paper_pdf
       - extract_paper_sections
       - extract_pdf_text
+      - build_synthesis_workbench
       - finish_task
     allowed_read_prefixes:
       - ""

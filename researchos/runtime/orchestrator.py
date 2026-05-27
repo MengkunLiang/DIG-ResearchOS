@@ -181,9 +181,12 @@ class AgentRunner:
 
             t2_pre_finalized = await self._maybe_finalize_t2_before_llm(ctx)
             t4_pre_finalized = False
+            t35_pre_finalized = False
             if not t2_pre_finalized:
+                t35_pre_finalized = await self._maybe_finalize_t35_before_llm(ctx, policy)
+            if not t2_pre_finalized and not t35_pre_finalized:
                 t4_pre_finalized = await self._maybe_finalize_t4_before_llm(ctx)
-            deterministic_pre_finalized = t2_pre_finalized or t4_pre_finalized
+            deterministic_pre_finalized = t2_pre_finalized or t35_pre_finalized or t4_pre_finalized
             if deterministic_pre_finalized:
                 stop_reason = AgentResult.STOP_FINISHED
                 error_msg = None
@@ -301,11 +304,26 @@ class AgentRunner:
                 )
 
                 finish_requested = False
+                pause_requested = False
+                pause_reason: str | None = None
                 for tool_call, tool_msg in zip(assistant_msg.tool_calls, tool_msgs):
                     messages.append(tool_msg)
                     trace.write_message(tool_msg)
                     if tool_call.name == "finish_task" and not tool_msg.metadata.get("is_error"):
                         finish_requested = True
+                    if (
+                        tool_call.name == "ask_human"
+                        and tool_msg.metadata.get("is_error")
+                        and ((tool_msg.metadata.get("error") or tool_msg.metadata.get("data", {}).get("error")) == "human_input_unavailable")
+                    ):
+                        pause_requested = True
+                        pause_reason = tool_msg.content or "ask_human 需要用户输入，但当前输入不可用。"
+
+                if pause_requested:
+                    stop_reason = AgentResult.STOP_INTERRUPTED
+                    error_msg = pause_reason
+                    print(f"[Agent] 任务暂停：{pause_reason}", flush=True)
+                    break
 
                 t2_finalized = await self._maybe_finalize_t2_after_tool_batch(
                     ctx=ctx,
@@ -513,6 +531,52 @@ class AgentRunner:
                 ],
             },
             action_type="t4_resume_prefinalize",
+        )
+        return True
+
+    async def _maybe_finalize_t35_before_llm(
+        self,
+        ctx: ExecutionContext,
+        policy: "WorkspaceAccessPolicy",
+    ) -> bool:
+        """T3.5 can deterministically build a staged synthesis baseline.
+
+        The LLM remains available for future refinement, but if the structured
+        tool output already satisfies Reader validation, the runtime can finish
+        without spending a broad one-shot prompt on synthesis generation.
+        """
+
+        if ctx.task_id != "T3.5":
+            return False
+        notes_dir = ctx.workspace_dir / "literature" / "paper_notes"
+        if not notes_dir.exists() or not any(notes_dir.glob("*.md")):
+            return False
+
+        from ..tools.literature_synthesis import BuildSynthesisWorkbenchTool
+
+        print("[Agent] T3.5 先执行分阶段 synthesis workbench 生成...", flush=True)
+        tool = BuildSynthesisWorkbenchTool(policy)
+        result = await tool.execute(write_final=True)
+        if not result.ok:
+            self.log.warning("t35_workbench_failed", error=result.error, content=result.content)
+            return False
+
+        ok, err = self.agent.validate_outputs(ctx)
+        if not ok:
+            self.log.info("t35_workbench_validation_skipped_llm", reason=err)
+            ctx.extra.setdefault("t35_workbench_error", err)
+            return False
+
+        print("[Agent] T3.5 分阶段 synthesis workbench 已通过校验，跳过一次性 LLM 综合", flush=True)
+        self._record_runtime_completion(
+            ctx,
+            "t35_workbench",
+            {
+                "outputs": list((result.data.get("outputs") or {}).values())
+                if isinstance(result.data.get("outputs"), dict)
+                else [],
+            },
+            action_type="t35_synthesis_workbench",
         )
         return True
 
@@ -1084,6 +1148,8 @@ class AgentRunner:
             message = "Agent 成功完成（T2 resume 确定性收尾）"
         elif ok and metadata.get("completion_mode") == "t4_resume_prefinalize":
             message = "Agent 成功完成（T4 resume 确定性收尾）"
+        elif ok and metadata.get("completion_mode") == "t35_workbench":
+            message = "Agent 成功完成（T3.5 synthesis workbench 确定性生成）"
         return AgentResult(
             ok=ok,
             message=message,

@@ -28,8 +28,10 @@
 T2 的后半段现在由 runtime 确定性处理：
 
 - 你的主要职责是设计检索式、调用检索工具，并让检索结果自动/流式进入 `literature/papers_raw.jsonl`。
+- `multi_source_search` / `search_papers` / publisher API 工具返回的 `papers` 会被 runtime 自动追加到 `papers_raw.jsonl`；看到 `[Runtime] 已自动追加 ...` 后，不要再为同一批结果调用 `append_papers_raw`。
 - 当 raw 结果达到运行时阈值后，runtime 会自动执行 `papers_raw -> papers_dedup -> papers_verified -> deep_read_queue -> access_audit -> search_log -> missing_areas`。
 - **不要读取完整 `literature/papers_raw.jsonl`，不要把大型 JSONL 手动拼成 `papers=[...]` 再传给去重/评分工具。**
+- **不要重复执行 deterministic 收尾**：除非 runtime 明确提示自动保存失败，否则不要手动把同一批 raw 再次 append；除非 runtime 未能收尾且要求修复，否则不要手动重建 dedup/verified/queue。
 - 如果 raw 数量仍不足，请继续检索；如果 raw 已足够，只需等待 runtime 收尾，不要反复 `read_file(papers_raw.jsonl)`。
 
 ---
@@ -265,41 +267,21 @@ detect_duplicate_queries(
    # ... 继续其他检索式和数据源
    ```
 
-   **步骤 2：合并所有论文到一个列表**
-   ```
-   # 将所有检索结果中的论文合并
-   all_papers = []
-   all_papers.extend(result1.data.papers)
-   all_papers.extend(result2.data.papers)
-   all_papers.extend(result3.data.papers)
-   # ... 继续添加其他结果
-   ```
+   **步骤 2：让 runtime 自动保存 raw**
+   - 每个检索工具返回 `data.papers` 后，runtime 会自动追加到 `literature/papers_raw.jsonl`
+   - 如果工具消息已经显示 `[Runtime] 已自动追加 ...`，不要再调用 `append_papers_raw`
+   - 除非 runtime 明确提示“自动保存 papers_raw 失败”，否则不要手动保存同一批结果
 
-   **步骤 3：流式保存原始结果**
-   ```
-   # 每完成一次检索，立即保存原始数据
-   append_papers_raw(papers=result.data.papers)
-   ```
-   - `append_papers_raw` 会直接将论文追加到 `literature/papers_raw.jsonl`（不转换格式）
-   - 不要先用 `write_file` 创建空文件
-
-   **步骤 4：批量处理和验证（所有检索完成后）**
-   ```
-   # 在完成所有检索后，一次性转换格式并验证 schema
-   process_papers_raw()
-   ```
-   - `process_papers_raw` 会读取原始数据、转换格式、验证 schema
-
-   **步骤 5：等待 runtime 收尾**
+   **步骤 3：等待 runtime 收尾**
    - 不要读取完整 `papers_raw.jsonl`。
    - 不要用 LLM 手动解析 JSONL。
    - runtime 会在 raw 达到阈值后自动完成去重、评分、enrich、metadata verification、queue、audit、日志和缺口分析。
 
    **❌ 常见错误**：
-   - 错误 1：调用工具但不保存返回结果
-   - 错误 2：只使用 content 文本，忽略 data.papers
+   - 错误 1：为已自动保存的检索结果再次调用 `append_papers_raw`，造成 raw 双写
+   - 错误 2：只使用 content 文本，忽略 runtime 自动追加提示
    - 错误 3：传递空列表 `papers=[]` 给去重/评分工具
-   - 错误 4：没有合并多次检索的结果
+   - 错误 4：在 raw 达标后继续重复相似检索
    - 错误 5：反复读取大型 `papers_raw.jsonl`，导致上下文膨胀和超时
 
 ### Step 3: 领域过滤（可选但推荐）
@@ -310,100 +292,21 @@ filter_by_domain(papers=[论文列表], target_domain="cs")
 ```
 这会过滤掉心理学、生物学等其他领域的论文。
 
-### Step 4: 去重 + 打分
+### Step 4: 确认 raw 覆盖并交给 runtime 收尾
 
-**使用确定性工具（不要手动实现）**：
+去重、打分、verified 构建、deep-read 队列和 access audit 已经是 runtime 的确定性职责。
+你只需要继续检索直到 raw 数量和来源覆盖足够。如果 runtime 没有自动收尾，优先继续补充不同 query/source 的 raw，而不是在 LLM 侧手动重建 `papers_dedup`。
 
-1. **去重**：使用 `deduplicate_papers` 工具
-   ```
-   deduplicate_papers(papers=[论文列表], doi_dedup=true, title_threshold=0.95)
-   ```
-   - DOI 精确去重 + 标题相似度去重
-   - 阈值 0.95 表示只去除几乎完全相同的标题
-   - **注意**：必须传入实际的论文列表，不能传空列表 []
+保留给工具的例外：
+- `detect_duplicate_queries`：检索前检查 query 重复度
+- `analyze_dedup_rate`：仅在 runtime 明确返回统计信息不足时用于诊断
+- `log_scout_progress`：记录检索覆盖进度
 
-2. **分析去重率（新增）**：使用 `analyze_dedup_rate` 工具
-   ```
-   analyze_dedup_rate(
-       raw_count=len(all_papers),  # 原始结果数量
-       dedup_count=len(dedup_papers)  # 去重后数量
-   )
-   ```
-   - 自动计算去重率
-   - 评估检索式质量
-   - 给出改进建议
-   - **正常去重率应该是 50-70%**
-   - **如果去重率 >80%，说明检索式重复度太高，需要重新设计！**
+不要在正常路径中调用 `deduplicate_papers`、`score_papers`、`build_verified_papers`、`build_deep_read_queue` 或 `build_access_audit` 重新实现 runtime 收尾。
 
-3. **打分**：使用 `score_papers` 工具
-   ```
-   score_papers(papers=[论文列表], keywords=["关键词1", "关键词2", ...])
-   ```
-   - 自动计算 relevance_score（0.0-1.0）
-   - 基于来源类型、年份、引用数、关键词匹配度
-   - **注意**：必须传入实际的论文列表，不能传空列表 []
+### Step 5: 完成判断
 
-4. **最终筛选**：
-   - 按 relevance_score 排序
-   - **先保留所有 seed papers**：凡是用户提供的 seed papers，只要 metadata 基本可用，就必须强制保留在最终候选池中
-   - 保留所有相关论文（relevance_score ≥ 0.5）
-   - 如果 >120 篇，取 top 80
-   - 如果 <10 篇，扩大检索式重试
-
-5. **构建 verified papers（新增，必需）**：
-   - 在 `papers_dedup` 保存完成后，先调用 `build_verified_papers`
-   - 它会按 `arXiv > DOI > OpenAlex > Semantic Scholar` 的顺序做 metadata verification
-   - 目标：把真正可追溯的论文放进 `papers_verified`，把坏样本放进 `verification_failures`
-   ```
-   build_verified_papers(
-       papers=enriched_papers,
-       title_similarity_threshold=0.84
-   )
-   ```
-   - 后续把 `build_verified_papers(...).data.verified_papers` 作为 `verified_papers` 变量继续传给 queue / audit 工具
-   - 生成：
-     - `literature/papers_verified.jsonl`
-     - `literature/verification_failures.jsonl`
-
-6. **构建 deep-read 队列（新增，必需）**：
-   - 在 `papers_verified` 保存完成后，调用 `build_deep_read_queue`
-   - 它会综合 `relevance_score`、`access_score_estimate` 和 `seed priority`
-   - 推荐参数：
-   ```
-   build_deep_read_queue(
-       papers=verified_papers,
-       deep_read_min=18,
-       deep_read_target=24,
-       deep_read_max=30,
-       probe_pool=45
-   )
-   ```
-   - 生成：
-     - `literature/deep_read_queue.jsonl`
-     - `literature/deep_read_queue_meta.json`
-   - **目的**：T3 不再对整个 dedup 池平均发力，而是围绕这个队列执行
-
-7. **构建 access audit（新增，必需）**：
-   - 在 `papers_verified` 保存完成后，调用 `build_access_audit`
-   - 它会汇总：
-     - 哪些论文已在 `literature/pdfs/`
-     - 哪些可匹配到 `user_seeds/pdfs/`
-     - 哪些论文只能做 `ABSTRACT_ONLY`
-   - 推荐参数：
-   ```
-   build_access_audit(
-       papers=verified_papers,
-       top_n=50
-   )
-   ```
-   - 生成：
-     - `literature/access_audit.md`
-     - `literature/access_audit.jsonl`
-   - **目的**：让用户和 T3 先看到“哪些值得 probe / 哪些不用硬读”
-
-### Step 5: 产出文件（必须按顺序生成所有8个文件）
-
-**🚨🚨🚨 CRITICAL: 必须生成以下8个文件，缺一不可 🚨🚨🚨**
+T2 的 8 个文件仍然是完成标准，但正常路径由 runtime 负责生成：
 
 1. **literature/papers_raw.jsonl** - 原始检索结果（去重前）
 2. **literature/papers_dedup.jsonl** - 去重后的论文池
@@ -414,98 +317,11 @@ filter_by_domain(papers=[论文列表], target_domain="cs")
 7. **literature/search_log.md** - 检索审计日志
 8. **literature/missing_areas.md** - 文献缺口分析
 
-**⚠️ 重要：必须先保存 papers_raw.jsonl，再进行去重！**
-
-#### 5.1 保存原始检索结果（流式追加）
-
-**🚨 每完成一次检索，立即保存原始数据 🚨**
-
-使用 `append_papers_raw` 工具将论文追加到 `literature/papers_raw.jsonl`：
-```
-append_papers_raw(papers=result.data.papers)
-```
-
-**在所有检索完成后，使用 `process_papers_raw` 进行格式转换和验证：**
-```
-process_papers_raw()
-```
-
-不要先用 `write_file` 初始化 raw 文件。
-
-#### 5.2 保存去重后的论文池（第二步）
-
-**在去重和评分之后，使用 enrich_papers 工具增强数据，然后保存：**
-
-**Step 5.2.1: 数据增强（新增，必需）**
-
-使用 `enrich_papers` 工具自动补充缺失字段，**记得传入关键词列表**：
-
-```
-enrich_papers(papers=scored_papers, keywords={{ project.get('keywords', []) }})
-```
-
-**工具会自动**：
-- 推断 source_type（根据 venue）
-- 生成 why_relevant（基于 relevance_score 和关键词匹配）
-- 转换 authors 格式（对象数组 → 字符串数组）
-- 补充缺失的必需字段
-- 标记数据质量问题（如缺少摘要）
-
-**为什么需要这个工具？**
-- papers_dedup.schema.json 要求 authors 是字符串数组，但 API 返回的是对象数组
-- schema 要求 source_type 和 why_relevant 字段，但原始数据没有
-- 手动转换容易出错，自动化工具确保数据符合 schema
-
-**Step 5.2.2: 保存最终论文池**
-
-使用 `save_papers_dedup` 工具（自动处理格式转换和 schema 验证）：
-```
-save_papers_dedup(
-    papers=enriched_papers  # 传递增强后的论文列表
-)
-```
-
-#### 5.3 生成 verified artifact（第三步）
-
-在保存 `papers_dedup` 后，立刻生成 verified artifact：
-
-```
-build_verified_papers(papers=enriched_papers, title_similarity_threshold=0.84)
-```
-
-#### 5.4 生成检索日志（第四步）
-
-**使用 generate_search_log 工具自动生成：**
-
-```
-generate_search_log(
-    raw_count=len(all_papers),  # 原始结果总数
-    dedup_count=len(scored_papers),  # 去重后总数
-    queries=["检索式1", "检索式2", ...],
-    query_results={"检索式1": 结果数, "检索式2": 结果数, ...}
-)
-```
-
-工具会自动生成 `literature/search_log.md` 文件。
-
-#### 5.5 生成缺口分析（第五步，必需）
-
-**🚨 CRITICAL: 必须手动生成 missing_areas.md 文件！**
-
-这是 finish_task 校验的必需文件，不能省略！
-
-使用 `write_file` 工具生成：
-```
-write_file(
-    path="literature/missing_areas.md",
-    content="# 文献缺口分析\n\n## 覆盖良好的领域\n- ...\n\n## 覆盖不足的领域\n- ..."
-)
-```
-
-**内容要求**：
-- 分析哪些子领域的论文覆盖充分
-- 指出哪些子领域的论文较少或缺失
-- 基于实际检索结果进行分析
+你的完成判断：
+- raw 仍不足：继续设计新 query 和新 source 检索
+- raw 已达到阈值：等待 runtime 自动收尾
+- runtime 已收尾且校验通过：调用 `finish_task`
+- runtime 提示某个文件缺失：优先补 raw 覆盖，不要手动重建整条收尾链
 
 **示例**：
 ```markdown
@@ -529,127 +345,12 @@ write_file(
 
 ## 文件格式说明
 
-### literature/papers_raw.jsonl（所有原始结果，每行一条JSON）
-```json
-{"id": "s2:abc123", "source": "semantic_scholar", "title": "...", "authors": [{"name": "..."}], "year": 2024, "venue": "NeurIPS", "abstract": "...", "doi": "10.xxx/...", "citation_count": 123}
-```
+正常路径下，文件格式由 runtime 工具和 schema 负责。你只需要保证检索工具返回的是真实论文数据，并避免手动拼接大型 JSONL。
 
-**重要格式要求**：
-- **JSONL格式**: 每行必须是一个完整的JSON对象，行与行之间用换行符分隔
-- **不要使用JSON数组**: 不要写成 `[{...}, {...}]` 这种数组格式
-- **正确示例**:
-  ```
-  {"id": "paper1", "title": "..."}
-  {"id": "paper2", "title": "..."}
-  ```
-- **错误示例**:
-  ```
-  [
-    {"id": "paper1", "title": "..."},
-    {"id": "paper2", "title": "..."}
-  ]
-  ```
-
-**必需字段**：
-- `id`: 论文唯一标识（如"s2:abc123"或"arxiv:2401.00001"）
-- `source`: 数据源（"semantic_scholar"、"arxiv"、"crossref"、"openalex"、"elsevier_scopus"、"informs_crossref"、"europepmc"等）
-- `title`: 论文标题
-- `authors`: 作者列表，可为字符串列表 `["Ada", "Bob"]` 或对象列表 `[{"name": "..."}]`
-- `year`: 发表年份（整数）
-- `abstract`: 摘要（字符串，如无则为空字符串""）
-- `venue`: 发表会议/期刊
-- `citation_count`: 引用次数（整数，如无则为0）
-
-**literature/papers_dedup.jsonl**（去重后，每行一条JSON）
-```json
-{"id": "s2:abc123", "source": "semantic_scholar", "title": "...", "authors": ["Ada", "Bob"], "year": 2024, "venue": "NeurIPS", "source_type": "top_conference", "relevance_score": 0.85, "why_relevant": "解决了离散扩散模型的factorized gap问题", "abstract": "...", "citation_count": 123, "url": "https://..."}
-```
-
-**重要格式要求**：
-- **JSONL格式**: 每行必须是一个完整的JSON对象，行与行之间用换行符分隔
-- **不要使用JSON数组**: 不要写成 `[{...}, {...}]` 这种数组格式
-
-**必需字段**：
-- `id`: 论文唯一标识（必需）
-- `source`: 数据源（必需）
-- `title`: 论文标题（必需）
-- `authors`: 作者列表，改为字符串数组 `["Ada", "Bob"]`（必需）
-- `year`: 发表年份（必需）
-- `venue`: 发表会议/期刊（必需）
-- `source_type`: 来源类型（必需）
-- `relevance_score`: 相关性评分0.0-1.0（必需）
-- `why_relevant`: 相关性说明（必需）
-- `abstract`: 摘要（必需）
-- `citation_count`: 引用次数（必需）
-- `url`: 论文链接（必需）
-
-**literature/search_log.md**（审计日志）
-
-**🚨 重要：使用 generate_search_log 工具生成日志 🚨**
-
-不要手动编写 search_log.md，使用 `generate_search_log` 工具。工具会**直接写入** `literature/search_log.md`，无需额外调用 write_file：
-```
-generate_search_log(
-    raw_count=实际原始结果数量,
-    dedup_count=实际去重后数量,
-    queries=["检索式1", "检索式2", ...],
-    query_results={"检索式1": 结果数, "检索式2": 结果数, ...}
-)
-```
-
-工具会自动生成基于真实数据的日志，格式如下：
-```markdown
-# T2 Scout 检索日志
-
-## 检索式
-1. "discrete diffusion language models" → 45篇
-2. "factorized gap in diffusion" → 23篇
-...
-
-## 检索统计
-- 原始结果: X篇
-- 去重后: Y篇
-- 去重率: Z%
-```
-
-**literature/missing_areas.md**（缺口分析，必需文件）
-
-**🚨 CRITICAL: 这是 finish_task 校验的必需文件，必须生成！**
-
-使用 `write_file` 工具手动生成此文件：
-```
-write_file(
-    path="literature/missing_areas.md",
-    content="# 文献缺口分析\n\n## 覆盖良好的领域\n- ...\n\n## 覆盖不足的领域\n- ..."
-)
-```
-
-**内容要求**：
-- 分析哪些子领域的论文覆盖充分（列出具体数量）
-- 指出哪些子领域的论文较少或缺失（列出具体数量）
-- 基于实际检索结果进行分析，不要编造
-
-**格式示例**：
-```markdown
-# 文献缺口分析
-
-## 覆盖良好的领域
-- LLM agent 记忆系统基础理论（15篇）
-- 检索增强生成（RAG）方法（12篇）
-
-## 覆盖不足的领域
-- 长期记忆的持久化机制（仅2篇）
-- 记忆检索的效率优化（仅3篇）
-
-## 建议
-- 需要补充更多关于记忆持久化的论文
-- 可以扩大检索范围到数据库系统领域
-```
-
-## 建议
-- T3 Reader 重点关注 factorized gap 相关论文
-- 可能需要补充搜索 "discrete flow" 作为同义词
-```
+- `literature/papers_raw.jsonl`：runtime 从检索工具的 `data.papers` 自动追加，每行一个原始论文 JSON 对象。
+- `literature/papers_dedup.jsonl`：runtime 从 raw 去重、增强、裁剪后生成，每行一个符合 schema 的论文对象。
+- `literature/search_log.md`：runtime 基于检索记录生成；你可以用 `log_scout_progress` 提供 query/source/count 线索。
+- `literature/missing_areas.md`：runtime 基于 raw/dedup/verified 覆盖生成；只有 runtime 明确提示缺失且 raw 已足够时，才做最小修补。
 
 ## 规则与约束
 
@@ -668,11 +369,10 @@ write_file(
    - **不要**为了满足输出要求而编造数据
    - 正确的做法：`finish_task(summary="所有API调用失败，无法检索论文。建议稍后重试或配置API密钥。")`
 
-3. **使用确定性工具处理论文数据**
-   - 去重：使用 `deduplicate_papers` 工具，不要手动实现
-   - 评分：使用 `score_papers` 工具，不要手动实现
-   - 日志：使用 `generate_search_log` 工具，不要手动编写
-   - 检索式扩展：使用 `expand_queries` 工具（如果有种子论文）
+3. **确定性收尾由 runtime 负责**
+   - 正常路径不要手动调用 `deduplicate_papers` / `score_papers` / `build_verified_papers` / `build_deep_read_queue`
+   - 检索式扩展仍可使用 `expand_queries`
+   - 检索进度仍可使用 `log_scout_progress`
 
 4. **进度日志记录（重要）**:
    - 使用 `log_scout_progress` 工具记录每一步的中间进度
@@ -680,14 +380,12 @@ write_file(
    - 主要调用时机：
      - `expand_queries` 后：记录生成的检索式
      - `multi_source_search` 后：记录每次检索的结果数量
-     - `deduplicate_papers` 后：记录去重前后的数量
-     - `score_papers` 后：记录评分完成
-     - 写入文件后：记录写入的文件和数量
+     - runtime 自动追加 raw 后：记录该 query 的结果数量
+     - runtime 收尾后：记录已生成的文件和数量
    - 示例调用：
      ```
      log_scout_progress(action="queries", queries=["query1", "query2"])
      log_scout_progress(action="search_result", query="attention mechanism", count=25, source="arxiv")
-     log_scout_progress(action="dedup", before=150, after=120)
      ```
 
 5. **数据质量检查**
@@ -703,9 +401,9 @@ write_file(
    - preprint: arXiv, bioRxiv 等
    - blog: 技术博客、公司博客
 
-2. **数量控制**: 最终 papers_dedup.jsonl 必须在 10-120 篇之间
+2. **数量控制**: runtime 生成的 papers_dedup.jsonl 必须在 10-120 篇之间
    - 少于 10 篇 → 扩大检索式重试，如果仍然不够则让任务失败
-   - 多于 120 篇 → 按 relevance_score 取 top 80
+   - 多于 120 篇 → runtime 会按 relevance_score 裁剪
 
 3. **完成标志**: 所有文件写入完成后，调用 `finish_task`
 
@@ -730,14 +428,9 @@ for query in queries:
     result = multi_source_search(query=query, max_results=30)
     papers = result["data"]["papers"]
     query_results[query] = len(papers)
-    # 立即保存原始数据
-    append_papers_raw(papers=papers)
+    # runtime 会自动把 data.papers 追加到 papers_raw.jsonl
     # 记录检索结果
     log_scout_progress(action="search_result", query=query, count=len(papers), source="multi_source")
-
-# 所有检索完成后，批量处理和验证
-process_papers_raw()
-log_scout_progress(action="write", detail="papers_raw.jsonl (processed)", count=sum(query_results.values()))
 
 # Step 3: 不要手动读取大型 papers_raw.jsonl
 # raw 达标后 runtime 会自动执行确定性收尾并结束任务。

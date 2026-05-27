@@ -20,6 +20,7 @@ from .structured_file import WriteStructuredFileTool
 from .glob_files import GlobFilesTool
 from .grep_search import GrepSearchTool
 from .latex_compile import LatexCompileTool
+from .literature_synthesis import BuildSynthesisWorkbenchTool
 from .multi_source_search import MultiSourceSearchTool
 from .paper_processing import ExtractSectionsTool
 from .paper_fetch import AppendFileTool, FetchPaperPdfTool, ExtractPdfTextTool
@@ -88,6 +89,7 @@ def register_builtin_tools(
     registry.register("fetch_paper_pdf", lambda ctx: FetchPaperPdfTool(ctx.policy))
     registry.register("extract_pdf_text", lambda ctx: ExtractPdfTextTool(ctx.policy))
     registry.register("lookup_paper_record", lambda ctx: LookupPaperRecordTool(ctx.policy))
+    registry.register("build_synthesis_workbench", lambda ctx: BuildSynthesisWorkbenchTool(ctx.policy))
     registry.register(
         "multi_source_search",
         lambda _ctx: MultiSourceSearchTool(os.environ.get("RESEARCHER_EMAIL")),

@@ -301,9 +301,15 @@ arxiv:2301.12345,Efficient Transformers,2023,ICML,Attention Optimization,ImageNe
 {{ comparison_table_preview }}
 ```
 {% endif %}
+{% if note_id_preview %}
+- 已发现的 paper note ID（前 {{ note_id_preview|length }} 个）：`{{ note_id_preview|join('`, `') }}`
+{% endif %}
 
 ## 输出
-`literature/synthesis.md`: 包含5个必需章节的综合文献综述
+- `literature/synthesis_workbench.json`: 工具抽取的证据矩阵和候选问题
+- `literature/synthesis_outline.md`: 分阶段大纲
+- `literature/synthesis_draft.md`: 工具生成的初稿
+- `literature/synthesis.md`: 包含5个必需章节的最终文献综合
 
 ## synthesis.md 必需章节（缺一不可）
 
@@ -356,12 +362,14 @@ arxiv:2301.12345,Efficient Transformers,2023,ICML,Attention Optimization,ImageNe
 
 ## 综合规则
 
-1. **引用规范**：引用具体论文时使用paper_notes里的ID（如 `[arxiv_2301.12345]`），不要编造citation
-2. **缺口关联**：如果某方向论文太少，引用 `missing_areas.md` 里标注的缺口
-3. **长度控制**：synthesis.md 长度 3000-8000 字，不要写流水账
-4. **批判性思维**：不要只是罗列论文，要分析、对比、找出模式和空白
-5. **面向T4**：记住这份综述是为T4 Ideation准备的，要突出创新机会
-6. **论文ID引用**：引用论文时使用规范化的ID（特殊字符替换为下划线），例如 `[arxiv_2301.12345]` 而不是 `[arxiv:2301.12345]`
+1. **先工具化再写作**：第一步必须调用 `build_synthesis_workbench(write_final=true)`，让工具从所有 paper_notes 中生成 `synthesis_workbench.json`、`synthesis_outline.md`、`synthesis_draft.md` 和初版 `synthesis.md`
+2. **再审阅修订**：读取 `synthesis_workbench.json` 和 `synthesis_draft.md`，检查五个章节是否完整、引用是否来自真实 note、问题是否可操作；必要时再改写 `literature/synthesis.md`
+3. **引用规范**：引用具体论文时使用paper_notes里的ID（如 `[arxiv_2301.12345]`），不要编造citation
+4. **缺口关联**：如果某方向论文太少，引用 `missing_areas.md` 里标注的缺口
+5. **长度控制**：synthesis.md 长度 3000-8000 字，不要写流水账
+6. **批判性思维**：不要只是罗列论文，要分析、对比、找出模式和空白
+7. **面向T4**：记住这份综述是为T4 Ideation准备的，要突出创新机会
+8. **论文ID引用**：引用论文时使用规范化的ID（特殊字符替换为下划线），例如 `[arxiv_2301.12345]` 而不是 `[arxiv:2301.12345]`
 
 ## 完成标准
 

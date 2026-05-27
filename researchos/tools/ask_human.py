@@ -6,7 +6,7 @@ import re
 from pydantic import BaseModel, Field, field_validator
 
 from .base import Tool, ToolResult
-from .human_gate import HumanInterface
+from .human_gate import HumanInputUnavailable, HumanInterface
 
 
 class AskHumanParams(BaseModel):
@@ -45,10 +45,25 @@ class AskHumanTool(Tool):
         self.human = human
 
     async def execute(self, **kwargs) -> ToolResult:
-        answer = await self.human.ask_clarification(
-            question=kwargs["question"],
-            suggestions=kwargs.get("suggestions"),
-        )
+        try:
+            answer = await self.human.ask_clarification(
+                question=kwargs["question"],
+                suggestions=kwargs.get("suggestions"),
+            )
+        except HumanInputUnavailable as exc:
+            return ToolResult(
+                ok=False,
+                content=f"Human input unavailable: {exc}",
+                data={"question": kwargs["question"], "answer": "", "input_unavailable": True},
+                error="human_input_unavailable",
+            )
+        if not answer.strip():
+            return ToolResult(
+                ok=False,
+                content="Human input unavailable: empty answer",
+                data={"question": kwargs["question"], "answer": "", "input_unavailable": True},
+                error="human_input_unavailable",
+            )
         return ToolResult(
             ok=True,
             content=f"User answered: {answer}",

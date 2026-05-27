@@ -185,6 +185,45 @@ def test_prepare_t3_resume_artifacts_keeps_incomplete_notes_pending(tmp_path: Pa
     assert [item["paper_id"] for item in pending_records] == ["paper1", "paper2"]
 
 
+def test_prepare_t3_resume_artifacts_treats_chunked_full_text_note_complete(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    literature = workspace / "literature"
+    notes_dir = literature / "paper_notes"
+    notes_dir.mkdir(parents=True)
+    chunked_note = (
+        _valid_note("paper1")
+        .replace("- **Pages read**: 1-10 / 10", "- **Pages read**: 1-4, 5-8, 9-10 / 10")
+        .replace(
+            "- **Extraction calls**: extract_pdf_text pages 1-10",
+            "- **Extraction calls**: extract_pdf_text pages 1-10 truncated, then pages 1-4, 5-8, 9-10",
+        )
+        .replace(
+            "- **Truncation**: none",
+            "- **Truncation**: 第一次调用被截断；分块重读覆盖全部页面，最终未截断",
+        )
+    )
+    (notes_dir / "paper1.md").write_text(chunked_note, encoding="utf-8")
+
+    _write_jsonl(
+        literature / "deep_read_queue.jsonl",
+        [
+            {"paper_id": "paper1", "normalized_id": "paper1", "queue_rank": 1, "title": "Paper 1"},
+            {"paper_id": "paper2", "normalized_id": "paper2", "queue_rank": 2, "title": "Paper 2"},
+        ],
+    )
+
+    info = prepare_t3_resume_artifacts(workspace)
+
+    pending_records = [
+        json.loads(line)
+        for line in (literature / "deep_read_queue_pending.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert info["existing_note_count"] == 1
+    assert info["resume_queue_count"] == 1
+    assert [item["paper_id"] for item in pending_records] == ["paper2"]
+
+
 def test_runner_refreshes_t3_pending_meta_after_finished_run(tmp_path: Path):
     workspace = tmp_path / "ws"
     literature = workspace / "literature"

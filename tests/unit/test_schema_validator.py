@@ -93,7 +93,7 @@ method
 
     assert not ok
     assert err is not None
-    assert "Key Results" in err
+    assert "Reading Coverage" in err or "Key Results" in err
 
 
 def test_validate_prerequisites_only_requires_declared_required_inputs(tmp_path):

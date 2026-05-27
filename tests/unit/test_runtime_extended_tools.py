@@ -11,6 +11,7 @@ from researchos.testing.mocks import MockHumanInterface
 from researchos.tools.bash_run import BashRunTool
 from researchos.tools.glob_files import GlobFilesTool
 from researchos.tools.grep_search import GrepSearchTool
+from researchos.tools.literature_synthesis import BuildSynthesisWorkbenchTool
 from researchos.tools.registry import ToolBuildContext, ToolRegistry
 from researchos.tools.web_fetch import WebFetchAllowlist, WebFetchTool
 from researchos.tools.workspace_policy import WorkspaceAccessPolicy
@@ -170,15 +171,89 @@ def test_builtin_registry_registers_extended_tools(tmp_workspace: Path):
     registry = ToolRegistry()
     register_builtin_tools(registry, RuntimeSettings())
     built = registry.build(
-        ["bash_run", "grep_search", "glob_files", "web_fetch", "extract_paper_sections", "lookup_paper_record"],
+        [
+            "bash_run",
+            "grep_search",
+            "glob_files",
+            "web_fetch",
+            "extract_paper_sections",
+            "lookup_paper_record",
+            "build_synthesis_workbench",
+        ],
         ToolBuildContext(policy=policy, human=MockHumanInterface()),
     )
 
     assert sorted(built) == [
         "bash_run",
+        "build_synthesis_workbench",
         "extract_paper_sections",
         "glob_files",
         "grep_search",
         "lookup_paper_record",
         "web_fetch",
     ]
+
+
+def _note(paper_id: str, *, family_hint: str) -> str:
+    return f"""# {family_hint} Paper {paper_id}
+
+- **ID**: {paper_id}
+- **Authors**: Ada, Bob
+- **Venue**: TestConf (2025)
+- **Status**: [FULL-TEXT]
+
+## 2. Method Overview
+This paper studies {family_hint} with a concrete mechanism for robust representation learning.
+
+## 3. Key Results
+- Accuracy: 88.1 [Evidence: p.4]
+
+## 5. Limitations
+- Limited sparse-data evaluation.
+
+## 6. Relevance to Our Research
+- Useful baseline for robustness and efficiency.
+
+## 7. Technical Details Worth Noting
+- Lightweight training objective.
+
+## 9. Weaknesses / Gaps
+- Missing deployment-oriented ablations.
+
+## 11. My Questions
+- Can the mechanism work under sparse feedback?
+"""
+
+
+@pytest.mark.asyncio
+async def test_build_synthesis_workbench_writes_staged_outputs(tmp_workspace: Path):
+    literature = tmp_workspace / "literature"
+    notes_dir = literature / "paper_notes"
+    notes_dir.mkdir(parents=True)
+    for index in range(6):
+        (notes_dir / f"paper_{index}.md").write_text(
+            _note(f"paper_{index}", family_hint="LightGCN graph contrastive"),
+            encoding="utf-8",
+        )
+    (literature / "comparison_table.csv").write_text(
+        "id,title,year,venue,method_family,dataset,key_metric,metric_value\n"
+        "paper_0,Paper 0,2025,TestConf,Graph,Dataset,Accuracy,88.1\n",
+        encoding="utf-8",
+    )
+    (literature / "missing_areas.md").write_text("# 缺口\n稀疏数据鲁棒性覆盖不足。\n", encoding="utf-8")
+    policy = WorkspaceAccessPolicy(tmp_workspace, ["", "literature/"], ["", "literature/"])
+    tool = BuildSynthesisWorkbenchTool(policy)
+
+    result = await tool.execute(write_final=True)
+
+    assert result.ok
+    assert (literature / "synthesis_workbench.json").exists()
+    assert (literature / "synthesis_outline.md").exists()
+    assert (literature / "synthesis_draft.md").exists()
+    synthesis = (literature / "synthesis.md").read_text(encoding="utf-8")
+    assert "方法家族分类" in synthesis
+    assert "共同假设" in synthesis
+    assert "性能-效率前沿" in synthesis
+    assert "技术趋势" in synthesis
+    assert "可操作研究问题" in synthesis
+    assert "[paper_0]" in synthesis

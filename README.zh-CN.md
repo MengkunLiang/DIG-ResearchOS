@@ -61,6 +61,8 @@ T1
 - artifact 校验
 - T4 假设生成会同时落盘 `ideation/idea_scorecard.yaml`、`ideation/rejected_ideas.md`、`ideation/gate_decisions.json` 和 `ideation/idea_rationales.json`，记录每个 idea 的证据链和决策链
 - T3 论文阅读会在每篇 `paper_notes/*.md` 中记录 `## 12. Reading Coverage`；PDF 可用时必须覆盖到最后一页，只有完整页码覆盖且无截断时才能标记 `[FULL-TEXT]`
+- T3.5 文献综合会先通过 `build_synthesis_workbench` 从 `paper_notes/` 生成 `synthesis_workbench.json`、`synthesis_outline.md` 和 `synthesis_draft.md`，再产出 `synthesis.md`，避免完全依赖单次 prompt
+- CLI 人工输入现在会区分真实回答和无输入；预算扩限 gate 支持 `1/2`、`继续/停止`、`确认/stop` 等输入
 - LLM profile / tier / fallback / retry
 - human gate
 - skill 发现与 `run-skill`
@@ -267,6 +269,8 @@ python -m researchos.cli init-workspace \
   --topic "reflective memory for long-horizon llm agents"
 
 python -m researchos.cli run --workspace ./workspace/local-test2
+
+"LightGCN作为一个轻量化的图推荐框架，其最大问题是在稀疏数据上的鲁棒性不足，能否通过引入嵌入空间中的对比学习改善其在稀疏数据上的泛化能力和鲁棒性"
 ```
 
 如果过程中因为 gate、预算扩限或人工中断暂停：
@@ -306,6 +310,35 @@ python -m researchos.cli status --workspace ./workspace/local-test2
 python -m researchos.cli trace T7_single_xxxxxxxx --workspace ./workspace/local-test2
 python -m researchos.cli validate --workspace ./workspace/local-test2 --task T7
 ```
+
+## 测试方式
+
+常用快速回归：
+
+```bash
+python -m py_compile researchos/tools/human_gate.py researchos/tools/ask_human.py researchos/agents/reader.py researchos/tools/literature_synthesis.py researchos/runtime/orchestrator.py
+
+pytest -q \
+  tests/unit/test_reader_agent.py \
+  tests/unit/test_t3_recovery.py \
+  tests/unit/test_ask_human_tool.py \
+  tests/unit/test_human_gate.py \
+  tests/unit/test_runner_basic.py
+```
+
+T5 之前链路相关回归：
+
+```bash
+pytest -q \
+  tests/unit/test_scout_agent.py \
+  tests/unit/test_paper_save_tools.py \
+  tests/unit/test_ideation_agent.py \
+  tests/unit/test_novelty_auditor_agent.py \
+  tests/unit/test_schema_validator.py \
+  tests/unit/test_cli_runners.py
+```
+
+如果当前沙箱禁止绑定本地端口，`test_runtime_extended_tools.py` 中的 `web_fetch` 本地 HTTP server 测试会因为 socket 权限失败；在普通本机或允许 loopback socket 的 CI 中再跑完整文件。
 
 ## Skills
 
@@ -397,6 +430,8 @@ ResearchOS 可以加载 MCP server 配置，并把 MCP tool 暴露给 agent。
 
 - 只有 `run` / `resume` 才会完整体现这些 gate
 - `run-task` 只能单独执行某个阶段，不会继续推进完整状态机
+- 如果 `ask_human` 在非交互环境中拿不到输入，runtime 会暂停任务并写入 `state.yaml`，不会把空回答当作用户确认继续执行
+- 预算扩限 gate 支持数字序号，也支持 `继续`、`确认`、`停止`、`stop` 等常用输入
 
 ## 文档导航
 
@@ -417,10 +452,21 @@ ResearchOS 可以加载 MCP server 配置，并把 MCP tool 暴露给 agent。
 
 - pipeline 基本可运行
 - 关键阶段已具备断点恢复
+- T2 正常路径由检索工具返回值触发 runtime 自动保存 raw，并由 runtime 确定性完成 dedup、verified、deep-read queue 和审计文件
+- T3 `[FULL-TEXT]` 校验支持分块重读覆盖全篇，例如 `1-4, 5-8, 9-10 / 10`，并要求 `Truncation` 明确说明最终无截断
+- T3.5 已具备分阶段 synthesis workbench，而不是只靠一次 LLM prompt 直接写完整综述
 - T9 已经改成“编译失败则修复并重试”的投稿包阶段
 - provider 稳定性仍会影响长任务
 - 部分配置字段是真正接线的，部分只是声明或部分接线
 - 某些 skills 如果依赖未注册能力，会以降级模式运行
+
+## 已知限制
+
+- `/home/liangmengkun/reference_materials` 在某些运行环境中可能不存在；这时实现以仓库内 `docs/`、`config/` 和测试为准。
+- T4 的两轮 idea gate 目前仍主要通过 `ask_human` 和 artifact 记录完成，尚未完全拆成状态机级正式 gate。
+- T4.5 novelty 审计仍依赖 LLM 生成搜索策略，后续应进一步工具化为结构化 novelty audit。
+- 长任务仍受 provider 稳定性、速率限制和 PDF 解析质量影响。
+- Docker / LaTeX / 本地 HTTP 测试依赖宿主环境权限；沙箱环境可能无法覆盖全部集成路径。
 
 ## 常见问题
 

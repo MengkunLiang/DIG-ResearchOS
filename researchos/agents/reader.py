@@ -41,6 +41,7 @@ class ReaderAgent(Agent):
                         "fetch_paper_pdf",
                         "extract_paper_sections",
                         "extract_pdf_text",
+                        "build_synthesis_workbench",
                         "finish_task",
                     ],
                     "max_steps": 100,
@@ -147,8 +148,10 @@ class ReaderAgent(Agent):
             context_vars["resume_mode"] = context_vars["resume_mode"] or bool(existing_notes)
         elif mode == "synthesize":
             notes_dir = ctx.workspace_dir / "literature" / "paper_notes"
-            note_count = len(list(notes_dir.glob("*.md"))) if notes_dir.exists() else 0
+            note_files = sorted(notes_dir.glob("*.md")) if notes_dir.exists() else []
+            note_count = len(note_files)
             context_vars["note_count"] = note_count
+            context_vars["note_id_preview"] = [path.stem for path in note_files[:30]]
             missing_areas_path = ctx.workspace_dir / "literature" / "missing_areas.md"
             context_vars["missing_areas"] = read_text_file(missing_areas_path, default="")
             comparison_table_path = ctx.workspace_dir / "literature" / "comparison_table.csv"
@@ -190,6 +193,7 @@ class ReaderAgent(Agent):
             ctx,
             (
             "请开始T3.5综合流程。综合literature/paper_notes/目录下的所有笔记，"
+            "先调用 build_synthesis_workbench 生成结构化证据、outline和draft，再审阅/修订"
             "产出literature/synthesis.md，包含5个必需章节：方法家族分类、共同假设、"
             "性能-效率前沿、技术趋势、可操作研究问题。"
             ),
@@ -326,8 +330,18 @@ class ReaderAgent(Agent):
         if len(content) < 2000:
             return False, f"synthesis.md过短({len(content)}字符)，可能没有认真综合"
 
-        # 检查是否有论文ID引用（至少应该引用一些论文）。
-        # 真实 paper_notes ID 可能包含点号、连字符或斜杠，如 [arxiv_2507.07957]。
+        note_ids = _paper_note_reference_ids(ctx.workspace_dir / "literature" / "paper_notes")
+        known_refs = _known_note_refs_in_content(content, note_ids)
+        if note_ids and len(known_refs) < min(5, len(note_ids)):
+            return False, (
+                f"synthesis.md中真实paper_notes引用过少({len(known_refs)}个)，"
+                "应引用更多已读论文"
+            )
+
+        # 兼容没有 paper_notes 白名单的旧测试/workspace，仍接受规范论文ID样式。
+        if note_ids:
+            return True, None
+
         import re
         paper_refs = re.findall(
             r'\[(?:arxiv|doi|paper|10\.)[A-Za-z0-9_:.\/-]+\]',
@@ -352,6 +366,30 @@ def _paper_match_keys(paper: dict[str, object]) -> set[str]:
         str(external_ids.get("DOI", "")),
     }
     return {normalize_text_key(candidate) for candidate in candidates if str(candidate).strip()}
+
+
+def _paper_note_reference_ids(notes_dir: Path) -> set[str]:
+    if not notes_dir.exists():
+        return set()
+    ids = {path.stem for path in notes_dir.glob("*.md") if path.is_file()}
+    normalized: set[str] = set()
+    for paper_id in ids:
+        normalized.add(paper_id)
+        normalized.add(paper_id.replace(":", "_").replace("/", "_"))
+        normalized.add(normalize_text_key(paper_id))
+    return {item for item in normalized if item}
+
+
+def _known_note_refs_in_content(content: str, note_ids: set[str]) -> set[str]:
+    import re
+
+    normalized_note_ids = {normalize_text_key(note_id) for note_id in note_ids if note_id}
+    found: set[str] = set()
+    for raw_ref in re.findall(r"\[([^\[\]]+)\]", content):
+        normalized = normalize_text_key(raw_ref.replace(":", "_").replace("/", "_"))
+        if normalized in normalized_note_ids:
+            found.add(normalized)
+    return found
 
 
 def _validate_note_structure(note_path: Path) -> tuple[bool, str | None]:
@@ -427,32 +465,154 @@ def _validate_reading_coverage(
         return False, f"{note_path.name} Reading Coverage 的 Truncation 不能为空"
 
     if "FULL-TEXT" in status_text:
-        page_range = re.search(r"\b1\s*[-–]\s*(\d+)\s*/\s*(\d+)\b", pages_line)
-        says_complete = any(token in pages_line.lower() for token in ("all", "complete", "full"))
-        says_complete = says_complete or any(token in pages_line for token in ("全部", "完整", "全篇"))
-        if page_range is None and not says_complete:
+        page_coverage_complete = _pages_read_covers_full_pdf(pages_line)
+        if not page_coverage_complete:
             return False, (
                 f"{note_path.name} 标记为 FULL-TEXT，但 Pages read 未说明完整页码覆盖，"
-                "应类似 `1-12 / 12`"
-            )
-        if page_range is not None and int(page_range.group(1)) != int(page_range.group(2)):
-            return False, (
-                f"{note_path.name} 标记为 FULL-TEXT，但 Pages read 不是完整覆盖: {pages_line}"
+                "应类似 `1-12 / 12` 或 `1-4, 5-8, 9-12 / 12`"
             )
 
-        truncation_value = truncation_line.lower()
-        no_truncation = (
-            "none" in truncation_value
-            or "no" in truncation_value
-            or "无" in truncation_line
-            or "没有" in truncation_line
-        )
-        if not no_truncation:
+        if not _truncation_indicates_no_final_truncation(truncation_line):
             return False, (
                 f"{note_path.name} 标记为 FULL-TEXT，但 Truncation 未明确为 none/无: {truncation_line}"
             )
 
     return True, None
+
+
+def _pages_read_covers_full_pdf(pages_line: str) -> bool:
+    """Return True when a Pages read line covers page 1 through the final page.
+
+    The validator accepts both compact ranges (`1-12 / 12`) and chunked rereads
+    (`1-4, 5-8, 9-12 / 12`) because long PDFs often need multiple tool calls.
+    """
+
+    import re
+
+    normalized = pages_line.strip()
+    lowered = normalized.lower()
+    negative_tokens = ("partial", "incomplete", "部分", "未完成", "未覆盖", "不完整")
+    positive_tokens = ("all", "complete", "full", "全部", "完整", "全篇")
+    if any(token in lowered or token in normalized for token in negative_tokens):
+        return False
+    if any(token in lowered for token in positive_tokens) or any(token in normalized for token in positive_tokens):
+        return True
+
+    total_page = _extract_total_page_count(normalized)
+    if total_page is None or total_page <= 0:
+        return False
+
+    ranges = _extract_page_ranges_before_total(normalized)
+    if not ranges:
+        return False
+    return _ranges_cover_pages(ranges, first_page=1, last_page=total_page)
+
+
+def _extract_total_page_count(pages_line: str) -> int | None:
+    import re
+
+    patterns = [
+        r"/\s*(\d+)\b",
+        r"\bof\s+(\d+)\b",
+        r"\btotal(?:_pages)?\s*[:=]\s*(\d+)\b",
+        r"共\s*(\d+)\s*页",
+        r"总(?:页数)?\s*[:：]?\s*(\d+)\s*页?",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, pages_line, flags=re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _extract_page_ranges_before_total(pages_line: str) -> list[tuple[int, int]]:
+    import re
+
+    prefix = re.split(r"/|\bof\b|\btotal(?:_pages)?\b|共|总", pages_line, maxsplit=1, flags=re.IGNORECASE)[0]
+    ranges: list[tuple[int, int]] = []
+
+    def _range_replacer(match: re.Match[str]) -> str:
+        start = int(match.group(1))
+        end = int(match.group(2))
+        ranges.append((min(start, end), max(start, end)))
+        return " "
+
+    without_ranges = re.sub(r"\b(\d+)\s*[-–—]\s*(\d+)\b", _range_replacer, prefix)
+    for value in re.findall(r"(?<![\w.])(\d+)(?![\w.])", without_ranges):
+        page = int(value)
+        ranges.append((page, page))
+    return ranges
+
+
+def _ranges_cover_pages(
+    ranges: list[tuple[int, int]],
+    *,
+    first_page: int,
+    last_page: int,
+) -> bool:
+    if not ranges:
+        return False
+    cursor = first_page
+    for start, end in sorted(ranges):
+        if end < cursor:
+            continue
+        if start > cursor:
+            return False
+        cursor = max(cursor, end + 1)
+        if cursor > last_page:
+            return True
+    return cursor > last_page
+
+
+def _truncation_indicates_no_final_truncation(truncation_line: str) -> bool:
+    """Accept explicit no-truncation and resolved chunked reread descriptions."""
+
+    import re
+
+    line = truncation_line.strip()
+    lowered = line.lower()
+    compact_line = re.sub(r"\s+", "", line)
+    unresolved_patterns = (
+        "still truncated",
+        "still partial",
+        "incomplete",
+        "not reread",
+        "not re-read",
+        "remaining truncation",
+        "仍被截断",
+        "仍然截断",
+        "未完成",
+        "未覆盖",
+        "不完整",
+        "缺失",
+    )
+    if any(pattern in lowered or pattern in line for pattern in unresolved_patterns):
+        return False
+
+    direct_no_truncation = (
+        bool(
+            re.search(
+                r"\bnone\b|\bno\s+(?:preview\s+)?truncation\b|\bnot\s+truncated\b|"
+                r"\bwithout\s+truncation\b|\buntruncated\b",
+                lowered,
+            )
+        )
+        or compact_line in {"无", "没有", "无截断", "未截断", "没有截断"}
+        or any(token in line for token in ("无截断", "未截断", "没有截断"))
+    )
+    if direct_no_truncation:
+        return True
+
+    has_historical_truncation = "truncated" in lowered or "截断" in line
+    has_reread_resolution = (
+        any(token in lowered for token in ("final", "resolved", "after", "reread", "re-read", "chunked", "covered"))
+        or any(token in line for token in ("最终", "最后", "重读", "分块", "覆盖", "通过"))
+    )
+    has_complete_coverage = (
+        any(token in lowered for token in ("all pages", "full", "complete", "covered all"))
+        or any(token in line for token in ("全部", "完整", "全篇", "所有页面"))
+    )
+    return has_historical_truncation and has_reread_resolution and has_complete_coverage
 
 
 def _extract_markdown_field(section: str, field_name: str) -> str:

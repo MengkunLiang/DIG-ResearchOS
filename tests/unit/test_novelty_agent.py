@@ -58,7 +58,7 @@ def test_novelty_agent_spec(novelty_agent):
     assert "pilot/" in spec.allowed_read_prefixes
     assert "novelty/" in spec.allowed_read_prefixes
     assert "novelty/" in spec.allowed_write_prefixes
-    assert spec.max_steps == 100
+    assert spec.max_steps == 1000
     assert spec.max_tokens_total == 600_000
 
 
