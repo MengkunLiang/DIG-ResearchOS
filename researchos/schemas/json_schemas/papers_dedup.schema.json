@@ -4,7 +4,7 @@
   "title": "Deduplicated Papers",
   "description": "Schema for deduplicated paper records (T2 Scout output)",
   "type": "object",
-  "required": ["id", "source", "title", "authors", "year", "venue", "source_type", "relevance_score", "why_relevant", "abstract", "citation_count", "url"],
+  "required": ["id", "source", "title", "authors", "venue", "source_type", "relevance_score", "why_relevant", "abstract", "citation_count", "url"],
   "properties": {
     "id": {
       "type": "string",
@@ -36,7 +36,7 @@
       }
     },
     "year": {
-      "type": "integer",
+      "type": ["integer", "null"],
       "description": "Publication year",
       "minimum": 1900,
       "maximum": 2100

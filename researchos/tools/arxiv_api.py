@@ -125,7 +125,7 @@ class ArxivSearchTool(Tool):
                         "source": "arxiv",
                         "title": title_text,
                         "authors": authors,
-                        "year": year or 2024,
+                        "year": year,
                         "abstract": abstract,
                         "venue": "arXiv",
                         "url": arxiv_id_text,
@@ -149,7 +149,7 @@ class ArxivSearchTool(Tool):
 
                     content_lines.append(f"{i}. {title}")
                     content_lines.append(f"   作者: {', '.join(authors)}")
-                    content_lines.append(f"   年份: {year} | arXiv ID: {paper['id']}")
+                    content_lines.append(f"   年份: {year if year is not None else 'unknown'} | arXiv ID: {paper['id']}")
                     content_lines.append("")
 
                 return ToolResult(

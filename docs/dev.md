@@ -394,9 +394,9 @@ python -m researchos.cli run-task T8-WRITE \
 | `T1` | `project.yaml` 合法且信息完整 | `project.yaml`, `state.yaml` |
 | `T2` | 候选池、verified 池、deep-read 队列都落盘 | `papers_dedup.jsonl`, `papers_verified.jsonl`, `deep_read_queue.jsonl`, `access_audit.md` |
 | `T3` | note/table/bib 同步增长、PDF 可用时全文覆盖、且支持续跑 | `paper_notes/`, `comparison_table.csv`, `related_work.bib`, `deep_read_queue_pending.jsonl` |
-| `T3.5` | synthesis 结构完整 | `literature/synthesis.md` |
+| `T3.5` | synthesis 分阶段产物和最终综合结构完整 | `literature/synthesis_workbench.json`, `literature/synthesis_outline.md`, `literature/synthesis_draft.md`, `literature/synthesis.md` |
 | `T4` | hypotheses / exp_plan / idea scorecard / gate decisions / risks 成对齐 | `ideation/hypotheses.md`, `ideation/exp_plan.yaml`, `ideation/idea_scorecard.yaml`, `ideation/rejected_ideas.md`, `ideation/gate_decisions.json`, `ideation/idea_rationales.json`, `ideation/risks.md` |
-| `T4.5` | novelty audit 生成 | `ideation/novelty_audit.md` |
+| `T4.5` | novelty audit 生成；如有 High/Medium Overlap 则归档 collision cases | `ideation/novelty_audit.md`, `ideation/collision_cases.md`（条件产物） |
 | `T5` | pilot plan/code/results、动机判断、smoke marker 和环境摘要完整 | `pilot/pilot_plan.yaml`, `pilot/pilot_code/`, `pilot/pilot_results.json`, `pilot/motivation_validation.md`, `pilot/smoke_test_passed.marker`, `pilot/docker_digests.txt` |
 | `T6` | novelty report / collision / baselines 三件套完整 | `novelty/novelty_report.md`, `novelty/collision_cases.md`, `novelty/must_add_baselines.md` |
 | `T7` | summary / runs / configs / ablations / log / seed ensemble / diversity / 环境摘要齐全 | `experiments/results_summary.json`, `experiments/runs/`, `experiments/configs/`, `experiments/ablations.csv`, `experiments/iteration_log.md`, `experiments/seed_ensemble_summary.json`, `experiments/iteration_diversity_check.md`, `experiments/docker_digests.txt` |
@@ -419,7 +419,7 @@ python -m researchos.cli run-task T8-WRITE \
 - 是否只复用结构合格的已有 `paper_notes`
 - 是否正确生成 `deep_read_queue_pending.jsonl`
 - PDF 可用的 note 是否包含 `## 12. Reading Coverage`
-- `[FULL-TEXT]` note 的 `Pages read` 是否类似 `1-N / N`，且 `Truncation` 为 `none`
+- `[FULL-TEXT]` note 的 `Pages read` 是否类似 `1-N / N` 或 `1-4, 5-8, 9-N / N`，且 `Truncation` 明确最终无截断
 - `comparison_table.csv` 是否持续可追加
 - `related_work.bib` 是否没有粘连/损坏
 

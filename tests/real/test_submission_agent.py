@@ -126,7 +126,7 @@ class TestSubmissionAgentValidateOutputs:
         # 创建 bundle 目录（缺少 main.tex）
         bundle = standard_workspace / "submission" / "bundle"
         bundle.mkdir(parents=True, exist_ok=True)
-        (bundle / "paper.pdf").write_text("%PDF-1.4", encoding="utf-8")
+        (bundle / "main.pdf").write_text("%PDF-1.4", encoding="utf-8")
 
         agent = SubmissionAgent()
         ctx = ExecutionContext(
@@ -172,7 +172,7 @@ class TestSubmissionAgentValidateOutputs:
             "@article{test,\n  title={Test}\n}",
             encoding="utf-8",
         )
-        (bundle / "paper.pdf").write_text("%PDF-1.4", encoding="utf-8")
+        (bundle / "main.pdf").write_text("%PDF-1.4", encoding="utf-8")
 
         # 创建 migration_report.md（SubmissionAgent 必需）
         report = standard_workspace / "submission" / "migration_report.md"
@@ -181,7 +181,7 @@ class TestSubmissionAgentValidateOutputs:
             "## 迁移状态\n\n"
             "所有文件已成功迁移。\n\n"
             "## 编译状态\n\n"
-            "LaTeX 编译成功。\n\n"
+            "编译状态: 成功\n\n"
             "## 匿名化检查\n\n"
             "已完成匿名化处理。\n\n"
             "This is sufficient content for the migration report to pass validation.",

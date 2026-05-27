@@ -92,6 +92,40 @@ class RecordingLLMClient(MockLLMClient):
         return await super().chat(**kwargs)
 
 
+def test_agent_runner_caps_pdf_tool_context_metadata():
+    runner = AgentRunner(
+        MinimalAgent(),
+        ToolRegistry(),
+        MockLLMClient(responses=[]),
+        MockHumanInterface(),
+    )
+    content = "\n".join(
+        [
+            "[PDF extraction metadata]",
+            "- total_pages: 10",
+            "- preview_truncated_by_max_chars: false",
+            "- covers_full_pdf: true",
+            "- complete_pdf_read: true",
+            "- next_start_page: none",
+            "- note: If preview_truncated_by_max_chars=true, re-read a narrower page range before marking the note FULL-TEXT.",
+            "",
+            "x" * 60000,
+        ]
+    )
+
+    capped, metadata = runner._cap_tool_content_for_context("extract_pdf_text", content)
+
+    assert metadata == {
+        "original_chars": len(content),
+        "shown_chars": 50000,
+        "reason": "tool_context_content_limit",
+    }
+    assert "- preview_truncated_by_max_chars: true" in capped
+    assert "- complete_pdf_read: false" in capped
+    assert "- covers_full_pdf: false" in capped
+    assert "runtime_context_truncated: true" in capped
+
+
 def write_valid_t4_artifacts(workspace):
     (workspace / "project.yaml").write_text(
         yaml.dump({"research_direction": "Test", "constraints": {"max_budget_usd": 1000}})

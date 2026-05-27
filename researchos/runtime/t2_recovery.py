@@ -22,6 +22,7 @@ from ..tools.paper_utils import (
     score_papers,
 )
 from ..tools.workspace_policy import WorkspaceAccessPolicy
+from ..time_utils import current_utc_year, format_year_window, recent_year_from
 
 
 SEARCH_TOOL_NAMES = frozenset(
@@ -139,6 +140,10 @@ def _seed_to_recovery_paper(seed: dict[str, Any]) -> dict[str, Any]:
     if not paper_id:
         paper_id = str(seed.get("doi") or seed.get("title") or "seed-paper").strip()
     url = str(seed.get("url") or "").strip()
+    try:
+        seed_year = int(seed["year"]) if seed.get("year") else None
+    except (TypeError, ValueError):
+        seed_year = None
     return {
         "id": paper_id,
         "canonical_id": paper_id,
@@ -146,7 +151,7 @@ def _seed_to_recovery_paper(seed: dict[str, Any]) -> dict[str, Any]:
         "source": "user_seed",
         "title": str(seed.get("title", "")).strip() or "Untitled seed paper",
         "authors": seed.get("authors") or ["Unknown"],
-        "year": int(seed.get("year") or 2024),
+        "year": seed_year,
         "abstract": str(seed.get("abstract") or ""),
         "venue": str(seed.get("venue") or "user_seed"),
         "citation_count": int(seed.get("citation_count") or 0),
@@ -313,9 +318,14 @@ def extract_t2_search_history(trace_paths: list[Path]) -> tuple[list[str], dict[
 def generate_missing_areas_report(
     project: dict[str, Any],
     papers: list[dict[str, Any]],
+    *,
+    current_year: int | None = None,
 ) -> str:
     """基于关键词覆盖和分布特征生成确定性的缺口分析初稿。"""
 
+    runtime_year = current_year if current_year is not None else current_utc_year()
+    recent_start_year = recent_year_from(2, current_year=runtime_year)
+    recent_label = format_year_window(2, current_year=runtime_year)
     research_direction = str(project.get("research_direction", "未指定")).strip() or "未指定"
     keywords = _normalize_keywords(project)
     keyword_counts: dict[str, int] = {}
@@ -337,7 +347,7 @@ def generate_missing_areas_report(
         year = paper.get("year")
         if isinstance(year, int):
             year_counter[year] += 1
-            if year >= 2024:
+            if year >= recent_start_year:
                 recent_count += 1
         if paper.get("_missing_abstract"):
             missing_abstract_count += 1
@@ -352,7 +362,7 @@ def generate_missing_areas_report(
     structural_gaps: list[str] = []
     strong_venue_count = source_counter.get("top_conference", 0) + source_counter.get("journal", 0)
     if total and recent_count < max(5, total // 4):
-        structural_gaps.append("2024-2026 的最新论文占比偏低，近期进展覆盖可能不足。")
+        structural_gaps.append(f"{recent_label} 的最新论文占比偏低，近期进展覆盖可能不足。")
     if total and strong_venue_count < max(5, total // 6):
         structural_gaps.append("高质量 conference/journal 覆盖偏少，后续可补更强 venue 的代表作。")
     if total and missing_abstract_count > total // 3:
@@ -369,7 +379,7 @@ def generate_missing_areas_report(
         "",
         f"- 研究方向: {research_direction}",
         f"- 去重后论文数: {total} 篇",
-        f"- 2024-2026 最近论文: {recent_count} 篇",
+        f"- {recent_label} 最近论文: {recent_count} 篇",
         f"- top conference / journal: {strong_venue_count} 篇",
         f"- preprint / workshop / other: {max(0, total - strong_venue_count)} 篇",
         "",
@@ -401,7 +411,7 @@ def generate_missing_areas_report(
     if missing_keywords:
         follow_ups.append(f"优先围绕 {', '.join(f'`{item}`' for item in missing_keywords[:3])} 继续补检或在精读时标注缺口。")
     if recent_count < max(5, total // 4) and total:
-        follow_ups.append("重点确认 2024-2026 的最新工作，避免只依赖旧综述或早期系统。")
+        follow_ups.append(f"重点确认 {recent_label} 的最新工作，避免只依赖旧综述或早期系统。")
     if strong_venue_count < max(5, total // 6) and total:
         follow_ups.append("补充更强 venue 的代表论文，帮助后续 novelty 对比更扎实。")
     if not follow_ups:

@@ -211,7 +211,8 @@ class Agent(ABC):
         """
         默认校验：
         1. 检查 outputs_expected 里的路径是否存在
-        2. 如果 agent spec 声明了 output_schemas，调用 schema 校验器
+        2. 如果 agent spec 声明了 output_schemas，调用 task artifact 校验器
+        3. 如果 agent spec 声明了 structured_outputs，逐个校验对应文件 schema
 
         子类可以覆盖此方法添加自定义校验，但应先调用 super().validate_outputs(ctx)
         """
@@ -236,4 +237,38 @@ class Agent(ABC):
                 # schemas.validator 尚未实现时，跳过 schema 校验
                 pass
 
+        # 3. 直接按 structured_outputs 校验文件。它和 task_io_contract 不同：
+        #    structured_outputs 是 agent 自身声明的“这个相对路径应符合这个 schema”。
+        structured_outputs = self._applicable_structured_outputs(ctx)
+        if structured_outputs:
+            try:
+                from ..schemas.validator import validate_structured_outputs
+            except ImportError:
+                return True, None
+            ok, err = validate_structured_outputs(ctx.workspace_dir, structured_outputs)
+            if not ok:
+                return False, f"Structured output schema 校验失败: {err}"
+
         return True, None
+
+    def _applicable_structured_outputs(self, ctx: ExecutionContext) -> dict[str, str]:
+        """Return structured outputs that apply to this task/mode run.
+
+        `AgentSpec.structured_outputs` is agent-level config, while several
+        agents are reused for multiple tasks or modes.  Filter it through the
+        current task's declared outputs so T5 does not require T7 schemas, T7
+        does not require T5 schemas, and T7.5 does not require T1 project.yaml.
+        """
+
+        if not self.spec.structured_outputs:
+            return {}
+
+        if not ctx.outputs_expected:
+            return {}
+
+        expected_paths = {path.resolve() for path in ctx.outputs_expected.values()}
+        return {
+            rel_path: schema_name
+            for rel_path, schema_name in self.spec.structured_outputs.items()
+            if (ctx.workspace_dir / rel_path).resolve() in expected_paths
+        }

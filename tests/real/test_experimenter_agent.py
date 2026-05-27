@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
+import yaml
 
 import pytest
 
@@ -137,6 +139,30 @@ class TestExperimenterAgentValidateOutputs:
         novelty_audit = standard_workspace / "ideation" / "novelty_audit.md"
         novelty_audit.write_text("# Novelty Audit\n\nLevel 2: 中等新颖性\n", encoding="utf-8")
 
+        # 创建 pilot_plan.yaml（T5 当前契约必需，且需要满足 schema）
+        pilot_plan = standard_workspace / "pilot" / "pilot_plan.yaml"
+        pilot_plan.write_text(
+            yaml.dump(
+                {
+                    "goal": "Pilot validation",
+                    "experiments": [
+                        {
+                            "name": "pilot_e1",
+                            "hypothesis_ref": "H1",
+                            "dataset": "test_dataset",
+                            "data_fraction": 0.1,
+                            "seed": 42,
+                            "smoke_test_required": True,
+                            "success_criteria": ["accuracy > 0.8"],
+                        }
+                    ],
+                    "success_criteria": ["smoke test passes", "seed is fixed"],
+                },
+                allow_unicode=True,
+            ),
+            encoding="utf-8",
+        )
+
         # 不创建 pilot_results.json，验证应该失败
         agent = ExperimenterAgent()
         ctx = ExecutionContext(
@@ -180,6 +206,30 @@ class TestExperimenterAgentValidateOutputs:
         novelty_audit = standard_workspace / "ideation" / "novelty_audit.md"
         novelty_audit.write_text("# Novelty Audit\n\nLevel 2: 中等新颖性\n", encoding="utf-8")
 
+        # 创建 pilot_plan.yaml（T5 当前契约必需，且需要满足 schema）
+        pilot_plan = standard_workspace / "pilot" / "pilot_plan.yaml"
+        pilot_plan.write_text(
+            yaml.dump(
+                {
+                    "goal": "Pilot validation",
+                    "experiments": [
+                        {
+                            "name": "pilot_e1",
+                            "hypothesis_ref": "H1",
+                            "dataset": "test_dataset",
+                            "data_fraction": 0.1,
+                            "seed": 42,
+                            "smoke_test_required": True,
+                            "success_criteria": ["accuracy > 0.8"],
+                        }
+                    ],
+                    "success_criteria": ["smoke test passes", "seed is fixed"],
+                },
+                allow_unicode=True,
+            ),
+            encoding="utf-8",
+        )
+
         # 创建 pilot/pilot_code/run_pilot.py（必须存在）
         pilot_code_dir = standard_workspace / "pilot" / "pilot_code"
         pilot_code_dir.mkdir(parents=True, exist_ok=True)
@@ -200,9 +250,26 @@ class TestExperimenterAgentValidateOutputs:
         # 创建 pilot_results.json（必须包含 seed: 42）
         pilot_results = standard_workspace / "pilot" / "pilot_results.json"
         pilot_results.write_text(
-            '{"seed": 42, "status": "success", '
-            '"metrics": {"accuracy": 0.85}, '
-            '"pilot_runs": [{"run_id": "r1", "status": "success"}]}',
+            json.dumps(
+                {
+                    "seed": 42,
+                    "total_experiments": 1,
+                    "successful": 1,
+                    "experiments": [
+                        {
+                            "experiment_id": "pilot_e1",
+                            "hypothesis_ref": "H1",
+                            "status": "DONE",
+                            "seed": 42,
+                            "metrics": {"accuracy": 0.85},
+                            "duration_seconds": 12.5,
+                            "smoke_test_passed": True,
+                            "error": None,
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
             encoding="utf-8",
         )
 

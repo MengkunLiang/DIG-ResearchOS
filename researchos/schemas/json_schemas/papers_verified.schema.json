@@ -10,7 +10,6 @@
     "source",
     "title",
     "authors",
-    "year",
     "venue",
     "source_type",
     "relevance_score",
@@ -33,7 +32,7 @@
       "type": "array",
       "items": { "type": "string" }
     },
-    "year": { "type": "integer", "minimum": 1900, "maximum": 2100 },
+    "year": { "type": ["integer", "null"], "minimum": 1900, "maximum": 2100 },
     "venue": { "type": "string" },
     "source_type": { "type": "string" },
     "relevance_score": { "type": "number", "minimum": 0, "maximum": 1 },

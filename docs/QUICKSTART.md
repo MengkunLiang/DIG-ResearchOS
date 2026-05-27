@@ -295,8 +295,8 @@ researchos run-skill deepxiv "summarize recent memory papers for llm agents"
 
 每篇 `paper_notes/*.md` 还应该包含 `## 12. Reading Coverage`。如果 note 标为 `[FULL-TEXT]`，重点检查：
 
-- `Pages read` 是否覆盖完整页码，例如 `1-12 / 12`
-- `Truncation` 是否为 `none`
+- `Pages read` 是否覆盖完整页码，例如 `1-12 / 12` 或 `1-4, 5-8, 9-12 / 12`
+- `Truncation` 是否明确最终无截断；如果初次调用被截断，必须说明已通过分块重读解决
 - 如果 PDF 可得但只读了部分页，应标为 `[PARTIAL-TEXT]`，不能标为 `[FULL-TEXT]`
 
 ### 5.4 如果 T5/T7 已经跑了

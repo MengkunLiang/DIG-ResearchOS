@@ -110,7 +110,7 @@
 {% if resume_mode or existing_note_count > 0 %}
 - **恢复运行优先**：先扫描 `literature/paper_notes/` 现有文件，建立“已完成论文ID集合”
 - **恢复时先修质量**：如果已有 note 的 `Key Results` 中存在包含数字但同一行没有 `[Evidence: ...]` 的结果，必须先修订该 note；这种 note 不能视为已完成
-- **恢复时先补阅读覆盖**：如果已有 note 缺少 `## 12. Reading Coverage`，或 `[FULL-TEXT]` note 没有记录完整页码覆盖与 `Truncation: none`，必须先修订；这种 note 不能视为已完成
+- **恢复时先补阅读覆盖**：如果已有 note 缺少 `## 12. Reading Coverage`，或 `[FULL-TEXT]` note 没有记录完整页码覆盖与最终无截断（`none`/`无`/`final no truncation`/`最终未截断`），必须先修订；这种 note 不能视为已完成
 - **先做账目对齐**：如果已有笔记对应的 `comparison_table.csv` 行或 `related_work.bib` 条目缺失，先补齐这些缺口
 - **只补未完成论文**：如果某篇论文的规范化ID已经有对应 `.md` 笔记，则直接跳过，不要重写
 - **避免重复追加**：不要为已完成论文重复写入 `comparison_table.csv` 或 `related_work.bib`
@@ -214,7 +214,7 @@
 - **PDF source**: {PDF路径；如果没有PDF，写 not available}
 - **Pages read**: {例如 `1-12 / 12`；如果只读了部分，写 `1-8 / 20`；如果无PDF，写 `0 / unknown`}
 - **Extraction calls**: {列出用过的 extract_pdf_text 调用范围，例如 `1-8, 9-16, 17-20`}
-- **Truncation**: {FULL-TEXT 必须是 `none`；如果有工具或 runtime 截断，写具体范围}
+- **Truncation**: {FULL-TEXT 必须说明最终无截断；如果第一次调用被工具或 runtime 截断但已通过分块重读解决，写 `first call truncated; resolved by chunked rereads; final no truncation`；仍未解决则不能标 FULL-TEXT}
 - **Status rationale**: {为什么是 FULL-TEXT / PARTIAL-TEXT / ABSTRACT-ONLY}
 ```
 
@@ -251,7 +251,7 @@ arxiv:2301.12345,Efficient Transformers,2023,ICML,Attention Optimization,ImageNe
 2. **verified 论文优先**：如果 `papers_verified.jsonl` 存在，优先从 verified 池和 queue 里读取；不要默认消费未核验 dedup 论文
 3. **单篇 metadata 查询**：需要论文详情时调用 `lookup_paper_record`；除非 queue 文件不存在且没有其他选择，不要读取完整 `papers_verified.jsonl` 或 `papers_dedup.jsonl`
 4. **PDF可用必须全文覆盖**：只要本地存在 PDF 或 `fetch_paper_pdf` 下载成功，就必须用 `extract_pdf_text` 读到 `total_pages` 的最后一页；不能只读前 8-10 页
-5. **FULL-TEXT判定要严格**：只有所有页面都读过且没有 `preview_truncated_by_max_chars=true` / runtime 截断时，Status 才能写 **[FULL-TEXT]**；否则写 **[PARTIAL-TEXT]**
+5. **FULL-TEXT判定要严格**：只有所有页面都读过且最终没有未解决的 `preview_truncated_by_max_chars=true` / runtime 截断时，Status 才能写 **[FULL-TEXT]**；如果初次调用被截断，必须分块重读直到全篇覆盖并在 `Truncation` 说明已解决；否则写 **[PARTIAL-TEXT]**
 6. **section 只作辅助定位**：`extract_paper_sections` 可用于快速找方法、实验、结论等位置，但最终笔记应基于全文或明确标注为部分阅读
 7. **数字必须具体**：不能写"显著提升"、"大幅改进"，必须写具体数值
 8. **数字必须有证据锚点**：`Key Results` 中每一条包含数字的 bullet/表格行，必须在同一行包含精确格式 `[Evidence: ...]`；全文可写 `[Evidence: p.3]` / `[Evidence: Section 4.2]`，摘要笔记可写 `[Evidence: Abstract]`；没有证据就不要写成确定性数字

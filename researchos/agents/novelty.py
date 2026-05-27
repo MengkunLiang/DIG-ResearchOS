@@ -22,10 +22,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 import re
 from pathlib import Path
 
+from ..time_utils import recent_year_from
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
 from ..runtime.logger import get_logger
@@ -99,8 +99,6 @@ class NoveltyAgent(Agent):
 
         # 提取假设 anchor
         anchors = re.findall(r"^#+\s*(H\d+)", hypotheses, re.MULTILINE)
-        recent_year_from = max(datetime.now().year - 1, 2000)
-
         return render_prompt(
             self.spec.prompt_template,
             ctx,
@@ -114,7 +112,7 @@ class NoveltyAgent(Agent):
             synthesis_preview=synthesis[:2000],
             hypothesis_count=len(anchors),
             hypothesis_anchors=anchors,
-            recent_year_from=recent_year_from,
+            recent_year_from=recent_year_from(1),
             temperature=self.spec.temperature,
         )
 

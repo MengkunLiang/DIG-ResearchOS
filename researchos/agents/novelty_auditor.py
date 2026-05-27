@@ -22,6 +22,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from ..time_utils import recent_year_from
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
@@ -83,6 +84,7 @@ class NoveltyAuditorAgent(Agent):
             comparison_table_preview=comparison_table[:1000],
             hypothesis_count=len(anchors),
             hypothesis_anchors=anchors,
+            recent_year_from=recent_year_from(1),
             temperature=self.spec.temperature,
         )
 
@@ -93,7 +95,8 @@ class NoveltyAuditorAgent(Agent):
             (
             "请执行 T4.5 新颖性审计。读取 ideation/hypotheses.md 和 literature/synthesis.md，"
             "对每个假设进行新颖性审计，搜索近期相关工作，判断新颖性等级，"
-            "产出 ideation/novelty_audit.md 和 ideation/collision_cases.md（如有撞车风险）。"
+            "产出 ideation/novelty_audit.md；如果发现 High/Medium Overlap，"
+            "还必须产出 ideation/collision_cases.md 归档潜在撞车案例。"
             ),
         )
 
@@ -105,11 +108,11 @@ class NoveltyAuditorAgent(Agent):
 
         ws = ctx.workspace_dir
         audit_path = ws / "ideation" / "novelty_audit.md"
+        collision_path = ws / "ideation" / "collision_cases.md"
 
         # 检查novelty_audit.md存在且有内容
         if not audit_path.exists():
             return False, "缺少 ideation/novelty_audit.md"
-
         audit_text = read_text_file(audit_path)
         if len(audit_text) < 500:
             return False, f"novelty_audit.md 过短({len(audit_text)} 字符)"
@@ -128,4 +131,51 @@ class NoveltyAuditorAgent(Agent):
             if anchor not in audit_text:
                 return False, f"novelty_audit.md 缺少对假设 {anchor} 的审计"
 
+        if _audit_mentions_collision_case(audit_text):
+            if not collision_path.exists():
+                return False, "novelty_audit.md 提到 High/Medium Overlap，但缺少 ideation/collision_cases.md"
+            collision_text = read_text_file(collision_path)
+            if len(collision_text.strip()) < 50:
+                return False, "collision_cases.md 过短；请归档 High/Medium Overlap 案例。"
+            collision_signals = ("High Overlap", "Medium Overlap", "高度重叠", "中度重叠")
+            if not any(signal in collision_text for signal in collision_signals):
+                return False, "novelty_audit.md 提到 High/Medium Overlap，但 collision_cases.md 未归档对应案例"
+
         return True, None
+
+
+def _audit_mentions_collision_case(audit_text: str) -> bool:
+    """Return True when the audit appears to list a real High/Medium overlap.
+
+    Headings such as "High Overlap: none" should not force a collision file.
+    We only require one when the relevant section contains a non-empty case
+    bullet, or when a case explicitly marks its similarity as High/Medium.
+    """
+
+    none_tokens = ("无", "none", "no ", "not found", "未发现")
+    in_overlap_section = False
+    for raw_line in audit_text.splitlines():
+        line = raw_line.strip()
+        lowered = line.lower()
+        if not line:
+            continue
+
+        if re.search(r"\*\*相似度\*\*\s*:\s*(high|medium)\s+overlap", line, re.IGNORECASE):
+            return True
+        if re.search(r"\*\*相似度\*\*\s*:\s*(高度重叠|中度重叠)", line, re.IGNORECASE):
+            return True
+
+        if line.startswith("#"):
+            in_overlap_section = bool(
+                re.search(r"\b(high|medium)\s+overlap\b", line, re.IGNORECASE)
+                or "高度重叠" in line
+                or "中度重叠" in line
+            )
+            continue
+
+        if in_overlap_section and line.startswith(("- **", "* **")):
+            if any(token in lowered for token in none_tokens) or any(token in line for token in ("无", "未发现")):
+                continue
+            return True
+
+    return False

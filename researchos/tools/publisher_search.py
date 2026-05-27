@@ -64,7 +64,7 @@ def _format_paper_summary(papers: list[dict[str, Any]], total: int, source_label
         lines.append(f"   作者: {', '.join(authors[:3])}")
         lines.append(
             "   年份: "
-            f"{paper.get('year') or '?'} | 期刊/会议: {paper.get('venue') or 'Unknown'}"
+            f"{paper.get('year') if paper.get('year') is not None else 'unknown'} | 期刊/会议: {paper.get('venue') or 'Unknown'}"
         )
         if paper.get("doi"):
             lines.append(f"   DOI: {paper['doi']}")
@@ -214,7 +214,7 @@ class ElsevierScopusSearchTool(Tool):
             "source": "elsevier_scopus",
             "title": title,
             "authors": authors,
-            "year": year or 2024,
+            "year": year,
             "abstract": "",
             "venue": html.unescape(str(entry.get("prism:publicationName") or "").strip()) or "Unknown",
             "url": url,
@@ -313,7 +313,7 @@ class InformsSearchTool(Tool):
             "source": "informs_crossref",
             "title": title,
             "authors": authors or ["Unknown"],
-            "year": _year_from_crossref(item) or 2024,
+            "year": _year_from_crossref(item),
             "abstract": _clean_abstract(item.get("abstract")),
             "venue": venue or "Unknown",
             "url": str(item.get("URL") or (f"https://doi.org/{doi}" if doi else "")).strip(),

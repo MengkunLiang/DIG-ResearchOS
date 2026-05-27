@@ -62,7 +62,7 @@ search_papers(
     query="<核心概念>",
     sources=["semantic_scholar", "arxiv"],
     max_results=30,
-    year_from=2025  # 近12个月
+    year_from={{ recent_year_from }}  # 近12个月按运行日期动态计算
 )
 ```
 
@@ -210,7 +210,9 @@ search_papers(
 否则写: 当前baseline覆盖充分。]
 ```
 
-#### 文件2: `ideation/collision_cases.md`（仅在有High/Medium Overlap时生成）
+#### 文件2: `ideation/collision_cases.md`（有 High/Medium Overlap 时必须生成）
+
+如果有 High/Medium Overlap，按下面格式归档案例；如果没有 High/Medium Overlap，可以不生成该文件，也可以生成一个简短文件说明未发现撞车案例。
 
 **格式要求**：
 ```markdown
@@ -276,7 +278,7 @@ search_papers(
 ## 重要规则与约束
 
 ### 1. 搜索规则
-- **必须**使用 `search_papers` 搜索近12个月的工作（year_from=2025）
+- **必须**使用 `search_papers` 搜索近12个月的工作（year_from={{ recent_year_from }}）
 - 每个假设至少执行2-3次不同角度的搜索
 - 不编造论文信息，所有论文必须来自真实搜索结果
 - 如果搜索失败，在报告中说明，但不阻塞流程

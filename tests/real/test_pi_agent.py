@@ -202,6 +202,8 @@ Focus on hyperparameter optimization.
 ## Recommendation
 
 Proceed with Option 1.
+
+next_task: T7
 """,
             encoding="utf-8",
         )

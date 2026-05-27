@@ -16,6 +16,7 @@ import pytest
 
 from researchos.agents.novelty_auditor import NoveltyAuditorAgent
 from researchos.runtime.agent import ExecutionContext
+from researchos.time_utils import recent_year_from
 
 
 @pytest.fixture
@@ -101,6 +102,8 @@ keywords: ["test", "research"]
     assert "Test research direction" in prompt
     assert "H1" in prompt or "H2" in prompt
     assert "Level" in prompt  # 新颖性等级
+    assert f"year_from={recent_year_from(1)}" in prompt
+    assert "year_from={{" not in prompt
 
 
 def test_novelty_auditor_initial_user_message(novelty_auditor_agent, temp_workspace):
@@ -168,7 +171,7 @@ def test_validate_outputs_success(novelty_auditor_agent, temp_workspace):
 无高度重叠的工作。
 
 #### Medium Overlap（中度重叠）
-- **Similar Work** (Smith et al., 2025, arXiv:2501.12345)
+- **None**: 无中度重叠的工作；Similar Work (Smith et al., 2025, arXiv:2501.12345) 只是低度相关。
   - 相似点: 都使用了方法A
   - 差异点: 我们的应用场景不同
 
@@ -361,3 +364,40 @@ def test_validate_outputs_missing_hypothesis(novelty_auditor_agent, temp_workspa
     ok, err = novelty_auditor_agent.validate_outputs(ctx)
     assert not ok
     assert "H2" in err
+
+
+def test_validate_outputs_requires_collision_cases_when_overlap_reported(
+    novelty_auditor_agent,
+    temp_workspace,
+):
+    """T4.5 审计提到 High/Medium overlap 时必须有归档文件。"""
+    (temp_workspace / "project.yaml").write_text("research_direction: Test\n")
+    (temp_workspace / "ideation" / "hypotheses.md").write_text(
+        "# 研究假设\n\n## H1: 假设1\n\n内容..."
+    )
+    (temp_workspace / "ideation" / "novelty_audit.md").write_text(
+        """# 新颖性审计报告
+
+## H1: 假设1
+
+### 相似工作分析
+#### High Overlap（高度重叠）
+- **Same Idea** (A et al., 2025)
+
+### 新颖性判定
+**新颖性等级**: Level 0 - 无新颖性
+"""
+        + "x" * 520,
+        encoding="utf-8",
+    )
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T4.5",
+        run_id="test-run-overlap",
+        mode=None,
+    )
+
+    ok, err = novelty_auditor_agent.validate_outputs(ctx)
+    assert not ok
+    assert "collision_cases.md" in err

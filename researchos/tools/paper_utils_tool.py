@@ -57,6 +57,10 @@ class ScorePapersParams(BaseModel):
     papers: list[dict] = Field(..., description="论文列表")
     keywords: list[str] = Field(..., description="关键词列表")
     weights: dict | None = Field(None, description="各维度权重（可选）")
+    current_year: int | None = Field(
+        None,
+        description="可选：用于可复现测试的当前年份；默认使用运行时 UTC 年份",
+    )
 
 
 class ScorePapersTool(Tool):
@@ -70,7 +74,7 @@ class ScorePapersTool(Tool):
         """执行评分。"""
         params = ScorePapersParams(**kwargs)
         try:
-            result = score_papers(params.papers, params.keywords, params.weights)
+            result = score_papers(params.papers, params.keywords, params.weights, params.current_year)
             return ToolResult(
                 ok=True,
                 content=f"评分完成：{len(result)} 篇论文",
@@ -84,6 +88,10 @@ class ExpandQueriesParams(BaseModel):
     seed_papers: list[dict] = Field(default_factory=list, description="种子论文列表（可选，如果没有则传空列表）")
     topic: str = Field(..., description="研究主题")
     max_queries: int = Field(10, description="最大检索式数量")
+    current_year: int | None = Field(
+        None,
+        description="可选：用于可复现测试的当前年份；默认使用运行时 UTC 年份",
+    )
 
 
 class ExpandQueriesTool(Tool):
@@ -97,7 +105,12 @@ class ExpandQueriesTool(Tool):
         """执行检索式扩展。"""
         params = ExpandQueriesParams(**kwargs)
         try:
-            result = expand_queries(params.seed_papers, params.topic, params.max_queries)
+            result = expand_queries(
+                params.seed_papers,
+                params.topic,
+                params.max_queries,
+                params.current_year,
+            )
             return ToolResult(
                 ok=True,
                 content=f"生成 {len(result)} 条检索式",

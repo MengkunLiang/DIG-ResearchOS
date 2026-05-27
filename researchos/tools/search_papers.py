@@ -197,7 +197,7 @@ class SearchPapersTool(Tool):
             if len(paper.get("authors", [])) > 3:
                 authors += " et al."
             title = paper.get("title", "?")
-            year = paper.get("year", "?")
+            year = paper.get("year")
             source = paper.get("source", "?")
             citations = paper.get("citationCount", 0)
             abstract = paper.get("abstract", "")
@@ -207,7 +207,7 @@ class SearchPapersTool(Tool):
             venue = paper.get("venue", "")
             lines.append(
                 f"[{index}] {title}\n"
-                f"    作者: {authors}, 年份: {year}, 出版地: {venue}, 引用: {citations}, 来源: {source}\n"
+                f"    作者: {authors}, 年份: {year if year is not None else 'unknown'}, 出版地: {venue}, 引用: {citations}, 来源: {source}\n"
                 f"    摘要: {abstract or '无'}"
             )
         return "\n".join(lines)

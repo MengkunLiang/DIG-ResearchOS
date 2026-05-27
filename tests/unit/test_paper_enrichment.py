@@ -69,6 +69,22 @@ def test_build_deep_read_queue_prioritizes_seed_and_access(tmp_path):
     assert meta["queue_count"] == 2
 
 
+def test_enrich_papers_preserves_unknown_year_as_none():
+    papers = enrich_papers(
+        [
+            {
+                "id": "unknown-year",
+                "title": "Unknown Year Paper",
+                "source": "arxiv",
+                "year": "not-a-year",
+                "abstract": "metadata without a reliable year",
+            }
+        ]
+    )
+
+    assert papers[0]["year"] is None
+
+
 def test_build_deep_read_queue_prefers_verified_pool_when_caller_passes_dedup(tmp_path):
     workspace = tmp_path / "ws"
     (workspace / "literature" / "pdfs").mkdir(parents=True)

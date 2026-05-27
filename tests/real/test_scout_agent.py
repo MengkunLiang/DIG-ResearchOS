@@ -5,11 +5,39 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
 from researchos.agents.scout import ScoutAgent
+
+
+def _paper_record(index: int) -> dict:
+    return {
+        "id": f"test{index}",
+        "canonical_id": f"test{index}",
+        "preferred_id_source": "source_id",
+        "source": "semantic_scholar" if index % 3 else "arxiv",
+        "title": f"Test Paper {index}",
+        "year": 2025 - (index % 6),
+        "authors": [f"Author{index}"],
+        "venue": "NeurIPS",
+        "source_type": "top_conference",
+        "relevance_score": round(0.95 - index * 0.01, 3),
+        "why_relevant": "Directly relevant to the test research direction.",
+        "abstract": f"Test abstract {index}",
+        "citation_count": index * 10,
+        "url": f"https://example.com/papers/{index}",
+        "doi": f"10.1234/test{index}",
+    }
+
+
+def _write_jsonl(path: Path, records: list[dict]) -> None:
+    path.write_text(
+        "".join(json.dumps(record, ensure_ascii=False) + "\n" for record in records),
+        encoding="utf-8",
+    )
 
 
 class TestScoutAgent:
@@ -113,41 +141,57 @@ class TestScoutAgent:
         """测试输出验证（有所有文件时）。"""
         from researchos.runtime.agent import ExecutionContext
 
-        # 创建所有必需的文件
-        papers_raw = standard_workspace / "literature" / "papers_raw.jsonl"
-        papers_raw.write_text(
-            '{"id": "test1", "title": "Test Paper 1", "year": 2024, "authors": ["Author1"], "relevance_score": 0.9}\n'
-            '{"id": "test2", "title": "Test Paper 2", "year": 2023, "authors": ["Author2"], "relevance_score": 0.85}\n'
-            '{"id": "test3", "title": "Test Paper 3", "year": 2023, "authors": ["Author3"], "relevance_score": 0.8}\n'
-            '{"id": "test4", "title": "Test Paper 4", "year": 2022, "authors": ["Author4"], "relevance_score": 0.75}\n'
-            '{"id": "test5", "title": "Test Paper 5", "year": 2022, "authors": ["Author5"], "relevance_score": 0.7}\n'
-            '{"id": "test6", "title": "Test Paper 6", "year": 2021, "authors": ["Author6"], "relevance_score": 0.65}\n'
-            '{"id": "test7", "title": "Test Paper 7", "year": 2021, "authors": ["Author7"], "relevance_score": 0.6}\n'
-            '{"id": "test8", "title": "Test Paper 8", "year": 2020, "authors": ["Author8"], "relevance_score": 0.55}\n'
-            '{"id": "test9", "title": "Test Paper 9", "year": 2020, "authors": ["Author9"], "relevance_score": 0.5}\n'
-            '{"id": "test10", "title": "Test Paper 10", "year": 2019, "authors": ["Author10"], "relevance_score": 0.45}\n'
-            '{"id": "test11", "title": "Test Paper 11", "year": 2019, "authors": ["Author11"], "relevance_score": 0.4}\n'
-            '{"id": "test12", "title": "Test Paper 12", "year": 2018, "authors": ["Author12"], "relevance_score": 0.35}\n',
-            encoding="utf-8",
-        )
+        lit_dir = standard_workspace / "literature"
+        raw_records = [_paper_record(i) for i in range(1, 13)]
+        dedup_records = [_paper_record(i) for i in range(1, 11)]
+        verified_records = []
+        for record in dedup_records:
+            verified = dict(record)
+            verified.update(
+                {
+                    "canonical_id": record["id"],
+                    "verification_status": "metadata_verified",
+                    "verification_method": "semantic_scholar",
+                    "verification_source": "semantic_scholar",
+                    "verification_confidence": 0.95,
+                    "verification_title_similarity": 0.98,
+                    "verification_year_match": True,
+                }
+            )
+            verified_records.append(verified)
+        queue_records = [
+            {
+                "paper_id": record["canonical_id"],
+                "normalized_id": record["canonical_id"],
+                "title": record["title"],
+                "source": record["source"],
+                "year": record["year"],
+                "venue": record["venue"],
+                "relevance_score": record["relevance_score"],
+                "access_score_estimate": 0.75,
+                "access_score": 0.75,
+                "evidence_level": "PARTIAL_TEXT",
+                "seed_priority": False,
+                "queue_rank": index,
+                "read_priority": 0.8,
+                "target_bucket": "target",
+                "verification_status": "metadata_verified",
+                "verification_confidence": 0.95,
+            }
+            for index, record in enumerate(verified_records, start=1)
+        ]
 
-        papers_dedup = standard_workspace / "literature" / "papers_dedup.jsonl"
-        papers_dedup.write_text(
-            '{"id": "test1", "source": "arxiv", "title": "Test Paper 1", "year": 2024, "authors": ["Author1"], "venue": "ICML", "source_type": "preprint", "relevance_score": 0.9, "why_relevant": "Directly relevant", "abstract": "Test abstract 1", "citation_count": 10, "url": "https://arxiv.org/abs/test1"}\n'
-            '{"id": "test2", "source": "arxiv", "title": "Test Paper 2", "year": 2023, "authors": ["Author2"], "venue": "NeurIPS", "source_type": "preprint", "relevance_score": 0.85, "why_relevant": "Very relevant", "abstract": "Test abstract 2", "citation_count": 5, "url": "https://arxiv.org/abs/test2"}\n'
-            '{"id": "test3", "source": "semantic_scholar", "title": "Test Paper 3", "year": 2023, "authors": ["Author3"], "venue": "ICLR", "source_type": "top_conference", "relevance_score": 0.8, "why_relevant": "Related work", "abstract": "Test abstract 3", "citation_count": 20, "url": "https://arxiv.org/abs/test3"}\n'
-            '{"id": "test4", "source": "arxiv", "title": "Test Paper 4", "year": 2022, "authors": ["Author4"], "venue": "AAAI", "source_type": "journal", "relevance_score": 0.75, "why_relevant": "Methodology", "abstract": "Test abstract 4", "citation_count": 15, "url": "https://arxiv.org/abs/test4"}\n'
-            '{"id": "test5", "source": "arxiv", "title": "Test Paper 5", "year": 2022, "authors": ["Author5"], "venue": "ICML", "source_type": "preprint", "relevance_score": 0.7, "why_relevant": "Foundation", "abstract": "Test abstract 5", "citation_count": 8, "url": "https://arxiv.org/abs/test5"}\n'
-            '{"id": "test6", "source": "semantic_scholar", "title": "Test Paper 6", "year": 2021, "authors": ["Author6"], "venue": "CVPR", "source_type": "top_conference", "relevance_score": 0.65, "why_relevant": "Applications", "abstract": "Test abstract 6", "citation_count": 50, "url": "https://arxiv.org/abs/test6"}\n'
-            '{"id": "test7", "source": "arxiv", "title": "Test Paper 7", "year": 2021, "authors": ["Author7"], "venue": "EMNLP", "source_type": "preprint", "relevance_score": 0.6, "why_relevant": "Evaluation", "abstract": "Test abstract 7", "citation_count": 12, "url": "https://arxiv.org/abs/test7"}\n'
-            '{"id": "test8", "source": "crossref", "title": "Test Paper 8", "year": 2020, "authors": ["Author8"], "venue": "JMLR", "source_type": "journal", "relevance_score": 0.55, "why_relevant": "Theory", "abstract": "Test abstract 8", "citation_count": 100, "url": "https://arxiv.org/abs/test8"}\n'
-            '{"id": "test9", "source": "arxiv", "title": "Test Paper 9", "year": 2020, "authors": ["Author9"], "venue": "ICLR", "source_type": "preprint", "relevance_score": 0.5, "why_relevant": "Comparison", "abstract": "Test abstract 9", "citation_count": 25, "url": "https://arxiv.org/abs/test9"}\n'
-            '{"id": "test10", "source": "semantic_scholar", "title": "Test Paper 10", "year": 2019, "authors": ["Author10"], "venue": "NeurIPS", "source_type": "top_conference", "relevance_score": 0.45, "why_relevant": "Background", "abstract": "Test abstract 10", "citation_count": 200, "url": "https://arxiv.org/abs/test10"}\n',
-            encoding="utf-8",
-        )
+        _write_jsonl(lit_dir / "papers_raw.jsonl", raw_records)
+        _write_jsonl(lit_dir / "papers_dedup.jsonl", dedup_records)
+        _write_jsonl(lit_dir / "papers_verified.jsonl", verified_records)
+        (lit_dir / "verification_failures.jsonl").write_text("", encoding="utf-8")
+        _write_jsonl(lit_dir / "deep_read_queue.jsonl", queue_records)
 
         search_log = standard_workspace / "literature" / "search_log.md"
         search_log.write_text("# Search Log\n\n## Query 1\n- Query: test\n- Results: 10\n", encoding="utf-8")
+
+        access_audit = standard_workspace / "literature" / "access_audit.md"
+        access_audit.write_text("# Access Audit\n\n- Verified metadata for 10 papers.\n", encoding="utf-8")
 
         missing_areas = standard_workspace / "literature" / "missing_areas.md"
         missing_areas.write_text("# Missing Areas\n\n- Area 1\n- Area 2\n", encoding="utf-8")

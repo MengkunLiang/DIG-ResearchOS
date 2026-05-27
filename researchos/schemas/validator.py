@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 try:
@@ -65,7 +66,13 @@ def validate_record(record: dict, schema_name: str) -> tuple[bool, str | None]:
         return False, f"Schema not found: {e}"
 
     try:
-        Draft7Validator(schema).validate(record)
+        validator = Draft7Validator(schema)
+        errors = sorted(validator.iter_errors(record), key=lambda item: list(item.path))
+        if errors:
+            messages = [error.message for error in errors[:8]]
+            if len(errors) > 8:
+                messages.append(f"... and {len(errors) - 8} more")
+            return False, "Validation error: " + "; ".join(messages)
         return True, None
     except ValidationError as e:
         return False, f"Validation error: {e.message}"
@@ -248,6 +255,70 @@ def validate_declared_outputs(workspace_dir: Path, declared_outputs: dict[str, s
         return False, f"Missing declared outputs: {', '.join(missing)}"
 
     return True, None
+
+
+def validate_structured_outputs(
+    workspace_dir: Path,
+    structured_outputs: dict[str, str],
+) -> tuple[bool, str | None]:
+    """Validate agent-declared structured output files.
+
+    `structured_outputs` maps a workspace-relative file path to a schema name,
+    for example `ideation/exp_plan.yaml: exp_plan`.
+    """
+
+    errors: list[str] = []
+    for rel_path, schema_name in structured_outputs.items():
+        file_path = workspace_dir / rel_path
+        if not file_path.exists():
+            errors.append(f"Missing structured output: {rel_path}")
+            continue
+        if not schema_name:
+            continue
+
+        suffix = file_path.suffix.lower()
+        if suffix == ".jsonl":
+            ok, err = _validate_jsonl_file(file_path, schema_name)
+        elif suffix == ".json":
+            ok, err = _validate_json_file(file_path, schema_name)
+        elif suffix in {".yaml", ".yml"}:
+            ok, err = _validate_yaml_file(file_path, schema_name)
+        else:
+            errors.append(f"Unsupported structured output format: {rel_path}")
+            continue
+
+        if not ok:
+            errors.append(_format_structured_output_error(rel_path, schema_name, err))
+
+    if errors:
+        return False, "; ".join(errors)
+
+    return True, None
+
+
+def _format_structured_output_error(rel_path: str, schema_name: str, err: str | None) -> str:
+    """Make schema errors useful to agents and compatible with legacy validators."""
+
+    detail = err or "unknown error"
+    hints: list[str] = []
+    lowered = detail.lower()
+    if "invalid json" in lowered:
+        hints.append("解析失败")
+    if "is a required property" in detail:
+        hints.append("缺少字段")
+        match = re.search(r"'([^']+)' is a required property", detail)
+        if match:
+            field = match.group(1)
+            hints.append(f"缺少字段: {field}")
+            if field == "experiments":
+                hints.append("实验")
+    if "is not one of [42]" in detail:
+        hints.append("seed=42")
+        hints.append("种子")
+    hint_text = "；".join(dict.fromkeys(hints))
+    if hint_text:
+        return f"{rel_path} ({schema_name}): {hint_text}; {detail}"
+    return f"{rel_path} ({schema_name}): {detail}"
 
 
 def _validate_jsonl_file(path: Path, schema_name: str) -> tuple[bool, str | None]:

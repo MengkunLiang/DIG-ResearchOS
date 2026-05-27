@@ -931,9 +931,15 @@ class AgentRunner:
         limit = TOOL_CONTEXT_CONTENT_LIMITS.get(tool_name)
         if limit is None or len(content) <= limit:
             return content, None
-        capped = (
-            content[:limit]
-            + f"\n\n[Runtime] Tool output truncated before LLM context: "
+        capped = content[:limit]
+        if tool_name == "extract_pdf_text":
+            capped = AgentRunner._rewrite_pdf_metadata_after_runtime_cap(
+                capped,
+                original_chars=len(content),
+                limit=limit,
+            )
+        capped += (
+            f"\n\n[Runtime] Tool output truncated before LLM context: "
             f"{limit}/{len(content)} chars shown. Use narrower parameters if more detail is needed."
         )
         return capped, {
@@ -941,6 +947,40 @@ class AgentRunner:
             "shown_chars": limit,
             "reason": "tool_context_content_limit",
         }
+
+    @staticmethod
+    def _rewrite_pdf_metadata_after_runtime_cap(
+        content: str,
+        *,
+        original_chars: int,
+        limit: int,
+    ) -> str:
+        """Prevent capped PDF previews from still advertising complete reads."""
+
+        if "[PDF extraction metadata]" not in content:
+            return content
+        replacements = {
+            r"(?m)^- preview_truncated_by_max_chars: false$": "- preview_truncated_by_max_chars: true",
+            r"(?m)^- complete_pdf_read: true$": "- complete_pdf_read: false",
+            r"(?m)^- covers_full_pdf: true$": "- covers_full_pdf: false",
+            r"(?m)^- next_start_page: none$": "- next_start_page: unknown_due_to_runtime_truncation",
+        }
+        rewritten = content
+        for pattern, replacement in replacements.items():
+            rewritten = re.sub(pattern, replacement, rewritten)
+        rewritten = re.sub(
+            r"(?m)^- note: .*$",
+            (
+                "- note: Runtime truncated this PDF preview before the LLM saw the full tool output; "
+                "do not mark the note FULL-TEXT from this call. Re-read narrower page ranges until "
+                "every chunk is visible and final Reading Coverage says truncation is resolved."
+            ),
+            rewritten,
+        )
+        return (
+            rewritten
+            + f"\n- runtime_context_truncated: true ({limit}/{original_chars} chars shown)"
+        )
 
     async def _maybe_auto_persist_t2_search_result(
         self,

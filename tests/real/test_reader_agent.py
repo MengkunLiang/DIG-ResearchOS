@@ -12,6 +12,77 @@ import pytest
 from researchos.agents.reader import ReaderAgent
 
 
+def _structured_note(paper_id: str, *, abstract_only: bool = False) -> str:
+    status = "[ABSTRACT-ONLY]" if abstract_only else "[FULL-TEXT]"
+    evidence_line = (
+        "- N/A for abstract-only note\n"
+        if abstract_only
+        else "- Accuracy improves over the baseline. [Evidence: Results section]\n"
+    )
+    if abstract_only:
+        coverage = """- **PDF source**: not available
+- **Pages read**: 0 / unknown
+- **Extraction calls**: none
+- **Truncation**: none
+- **Status rationale**: PDF was unavailable, so this note is based on metadata and abstract only.
+"""
+    else:
+        coverage = f"""- **PDF source**: literature/pdfs/{paper_id}.pdf
+- **Pages read**: 1-10 / 10
+- **Extraction calls**: extract_pdf_text pages 1-4, 5-8, 9-10
+- **Truncation**: first preview was truncated, but chunked rereads covered all pages; final notes have complete coverage.
+- **Status rationale**: All PDF pages were read via chunked extraction.
+"""
+    return f"""# {paper_id}
+
+- **ID**: {paper_id}
+- **Authors**: Author A, Author B
+- **Venue**: TestConf (2025)
+- **DOI/arXiv**: arxiv:2501.00001
+- **Citations**: 10
+- **Verification**: metadata_verified (confidence: 0.95)
+- **Status**: {status}
+
+## 1. Problem & Motivation
+The paper studies a relevant problem and motivates it with a concrete systems bottleneck.
+
+## 2. Method Overview
+The method combines a compact model component with a calibrated retrieval or routing step.
+
+## 3. Key Results
+{evidence_line}
+
+## 4. Claims vs Evidence
+| Claim | Evidence | Strength |
+|-------|----------|----------|
+| The approach improves efficiency | Reported controlled experiments | Strong |
+
+## 5. Limitations
+- The evaluation is limited to a small set of benchmark conditions.
+
+## 6. Relevance to Our Research
+- The design informs our own efficiency-oriented research direction.
+
+## 7. Technical Details Worth Noting
+- The implementation details include reproducible seeds and ablation-ready components.
+
+## 8. Strengths
+- Strong empirical framing.
+
+## 9. Weaknesses / Gaps
+- Limited stress testing.
+
+## 10. Key Quotes
+> "Representative quote."
+
+## 11. My Questions
+- How stable is the method under distribution shift?
+
+## 12. Reading Coverage
+{coverage}
+"""
+
+
 class TestReaderAgent:
     """Reader Agent 测试套件。"""
 
@@ -164,7 +235,7 @@ class TestReaderAgentValidateReadOutputs:
         notes_dir = standard_workspace / "literature" / "paper_notes"
         notes_dir.mkdir(parents=True, exist_ok=True)
         for i in range(3):
-            (notes_dir / f"p{i}.md").write_text("# Paper\n\nNotes...", encoding="utf-8")
+            (notes_dir / f"p{i}.md").write_text(_structured_note(f"p{i}"), encoding="utf-8")
 
         # 创建 comparison_table.csv 和 related_work.bib
         ct = standard_workspace / "literature" / "comparison_table.csv"
@@ -193,17 +264,16 @@ class TestReaderAgentValidateReadOutputs:
 
         # 创建 papers_dedup.jsonl（5 篇论文）
         papers_dedup = standard_workspace / "literature" / "papers_dedup.jsonl"
-        for i in range(5):
-            papers_dedup.write_text(
-                f'{{"id": "p{i}", "title": "Paper {i}"}}\n',
-                encoding="utf-8",
-            )
+        papers_dedup.write_text(
+            "\n".join(f'{{"id": "p{i}", "title": "Paper {i}"}}' for i in range(5)) + "\n",
+            encoding="utf-8",
+        )
 
         # 创建 paper_notes（5 篇笔记，满足 80%）
         notes_dir = standard_workspace / "literature" / "paper_notes"
         notes_dir.mkdir(parents=True, exist_ok=True)
         for i in range(5):
-            (notes_dir / f"p{i}.md").write_text("# Paper\n\nNotes...", encoding="utf-8")
+            (notes_dir / f"p{i}.md").write_text(_structured_note(f"p{i}"), encoding="utf-8")
 
         # 创建 comparison_table.csv
         ct = standard_workspace / "literature" / "comparison_table.csv"
@@ -277,6 +347,11 @@ class TestReaderAgentValidateSynthesizeOutputs:
     def test_validate_synthesize_success(self, standard_workspace: Path, project_yaml: Path):
         """测试成功验证。"""
         from researchos.runtime.agent import ExecutionContext
+
+        notes_dir = standard_workspace / "literature" / "paper_notes"
+        notes_dir.mkdir(parents=True, exist_ok=True)
+        for i in range(1, 6):
+            (notes_dir / f"p{i}.md").write_text(_structured_note(f"p{i}", abstract_only=True), encoding="utf-8")
 
         # 创建完整的 synthesis.md
         synthesis = standard_workspace / "literature" / "synthesis.md"

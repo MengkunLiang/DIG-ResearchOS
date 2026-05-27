@@ -15,6 +15,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from ..time_utils import recent_year_from
 from ..runtime.errors import ToolAccessDenied
 from .base import Tool, ToolResult
 from .workspace_policy import WorkspaceAccessPolicy
@@ -270,8 +271,9 @@ def _build_frontier(notes: list[dict[str, Any]], rows: list[dict[str, str]]) -> 
 
 
 def _build_trends(notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    recent = [note for note in notes if (note.get("year") or 0) >= 2024]
-    older = [note for note in notes if note.get("year") and note.get("year") < 2024]
+    recent_start_year = recent_year_from(2)
+    recent = [note for note in notes if (note.get("year") or 0) >= recent_start_year]
+    older = [note for note in notes if note.get("year") and note.get("year") < recent_start_year]
     return [
         {
             "trend": "从单点指标提升转向鲁棒性、效率和可恢复性的联合评估",

@@ -40,6 +40,17 @@ def test_elsevier_scopus_normalizes_entry():
     assert paper["externalIds"]["EID"] == "2-s2.0-123"
 
 
+def test_elsevier_scopus_keeps_missing_year_unknown():
+    paper = ElsevierScopusSearchTool._normalize_entry(
+        {
+            "dc:identifier": "SCOPUS_ID:123",
+            "dc:title": "A Scopus Paper",
+        }
+    )
+
+    assert paper["year"] is None
+
+
 def test_informs_search_normalizes_crossref_item():
     paper = InformsSearchTool._normalize_item(
         {
@@ -67,6 +78,18 @@ def test_informs_search_normalizes_crossref_item():
         "CrossrefPrefix": "10.1287",
     }
     assert paper["abstract"] == "Queueing and optimization."
+
+
+def test_informs_search_keeps_missing_year_unknown():
+    paper = InformsSearchTool._normalize_item(
+        {
+            "DOI": "10.1287/mnsc.example",
+            "title": ["An INFORMS Paper"],
+            "publisher": "Institute for Operations Research and the Management Sciences (INFORMS)",
+        }
+    )
+
+    assert paper["year"] is None
 
 
 @pytest.mark.asyncio

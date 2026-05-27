@@ -210,6 +210,25 @@ class DummyAgent(Agent):
         return "Test message"
 
 
+class StructuredDummyAgent(Agent):
+    """用于测试 structured_outputs schema 校验的 Agent。"""
+
+    def __init__(self):
+        spec = AgentSpec(
+            name="structured-test",
+            model_tier="medium",
+            tool_names=["read_file"],
+            structured_outputs={"out.json": "idea_rationales"},
+        )
+        super().__init__(spec)
+
+    def system_prompt(self, ctx: ExecutionContext) -> str:
+        return "Test prompt"
+
+    def initial_user_message(self, ctx: ExecutionContext) -> str:
+        return "Test message"
+
+
 class TestAgentValidateOutputs:
     """测试 Agent.validate_outputs 的边界情况。"""
 
@@ -287,6 +306,36 @@ class TestAgentValidateOutputs:
 
         ok, err = agent.validate_outputs(ctx)
         assert ok
+
+    def test_validate_structured_outputs_rejects_invalid_schema(self, tmp_path):
+        """structured_outputs 声明的文件应按 schema 校验。"""
+        agent = StructuredDummyAgent()
+        (tmp_path / "out.json").write_text('{"not": "a valid idea rationales file"}', encoding="utf-8")
+        ctx = ExecutionContext(
+            workspace_dir=tmp_path,
+            project_id="test",
+            task_id="T4",
+            run_id="r1",
+            outputs_expected={"out": tmp_path / "out.json"},
+        )
+
+        ok, err = agent.validate_outputs(ctx)
+        assert not ok
+        assert "Structured output" in err
+
+    def test_validate_structured_outputs_skips_when_outputs_not_declared(self, tmp_path):
+        """裸 agent.validate_outputs 调用不应被 agent-level structured_outputs 抢先卡住。"""
+        agent = StructuredDummyAgent()
+        ctx = ExecutionContext(
+            workspace_dir=tmp_path,
+            project_id="test",
+            task_id="T4",
+            run_id="r1",
+            outputs_expected={},
+        )
+
+        ok, err = agent.validate_outputs(ctx)
+        assert ok, err
 
 
 # ══════════════════════════════════════════════════════

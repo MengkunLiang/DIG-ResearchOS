@@ -16,6 +16,30 @@ from pydantic import BaseModel, Field
 from .base import Tool, ToolResult
 
 
+def _normalize_paper(item: dict[str, Any]) -> dict[str, Any]:
+    """Normalize Semantic Scholar output to the common paper shape."""
+
+    external_ids = item.get("externalIds") or {}
+    return {
+        "id": item.get("paperId") or external_ids.get("CorpusId") or item.get("title"),
+        "source": "semantic_scholar",
+        "title": item.get("title", ""),
+        "authors": [author.get("name", "") for author in item.get("authors", [])],
+        "year": item.get("year"),
+        "abstract": item.get("abstract", ""),
+        "venue": item.get("venue", ""),
+        "citationCount": item.get("citationCount", 0),
+        "externalIds": external_ids,
+        "url": item.get("url"),
+        "doi": external_ids.get("DOI", ""),
+        "provenance": {
+            "source_tool": "semantic_scholar_search",
+            "source_id": item.get("paperId") or "",
+            "source_url": item.get("url") or "",
+        },
+    }
+
+
 class SemanticScholarSearchParams(BaseModel):
     """搜索论文的参数"""
     query: str = Field(..., description="搜索查询字符串")
@@ -89,7 +113,7 @@ class SemanticScholarSearchTool(Tool):
                     response.raise_for_status()
                     data = response.json()
 
-                papers = data.get("data", [])
+                papers = [_normalize_paper(item) for item in data.get("data", [])]
                 total = data.get("total", 0)
 
                 # 格式化输出
@@ -101,13 +125,13 @@ class SemanticScholarSearchTool(Tool):
                 for i, paper in enumerate(papers, 1):
                     title = paper.get("title", "Unknown")
                     authors = paper.get("authors", [])
-                    author_names = [a.get("name", "Unknown") for a in authors[:3]]
-                    year = paper.get("year", "?")
+                    author_names = [str(author or "Unknown") for author in authors[:3]]
+                    year = paper.get("year")
                     citations = paper.get("citationCount", 0)
 
                     content_lines.append(f"{i}. {title}")
                     content_lines.append(f"   作者: {', '.join(author_names)}")
-                    content_lines.append(f"   年份: {year} | 引用数: {citations}")
+                    content_lines.append(f"   年份: {year if year is not None else 'unknown'} | 引用数: {citations}")
                     content_lines.append("")
 
                 return ToolResult(
@@ -178,17 +202,18 @@ class SemanticScholarGetPaperTool(Tool):
 
             # 格式化输出
             title = paper.get("title", "Unknown")
-            authors = paper.get("authors", [])
-            author_names = [a.get("name", "Unknown") for a in authors]
-            year = paper.get("year", "?")
-            venue = paper.get("venue", "Unknown")
-            citations = paper.get("citationCount", 0)
-            abstract = paper.get("abstract", "")
+            normalized_paper = _normalize_paper(paper)
+            authors = normalized_paper.get("authors", [])
+            author_names = [str(author or "Unknown") for author in authors]
+            year = normalized_paper.get("year")
+            venue = normalized_paper.get("venue", "Unknown")
+            citations = normalized_paper.get("citationCount", 0)
+            abstract = normalized_paper.get("abstract", "")
 
             content_lines = [
                 f"标题: {title}",
                 f"作者: {', '.join(author_names)}",
-                f"年份: {year}",
+                f"年份: {year if year is not None else 'unknown'}",
                 f"发表于: {venue}",
                 f"引用数: {citations}",
                 "",
@@ -199,7 +224,7 @@ class SemanticScholarGetPaperTool(Tool):
             return ToolResult(
                 ok=True,
                 content="\n".join(content_lines),
-                data={"paper": paper}
+                data={"paper": normalized_paper}
             )
 
         except httpx.HTTPStatusError as e:

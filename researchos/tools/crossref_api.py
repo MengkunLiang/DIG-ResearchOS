@@ -117,7 +117,7 @@ class CrossRefSearchTool(Tool):
                     "source": "crossref",
                     "title": title,
                     "authors": authors if authors else ["Unknown"],
-                    "year": year or 2024,
+                    "year": year,
                     "abstract": abstract,
                     "venue": venue,
                     "url": url,
@@ -141,7 +141,7 @@ class CrossRefSearchTool(Tool):
 
                 content_lines.append(f"{i}. {title}")
                 content_lines.append(f"   作者: {', '.join(authors)}")
-                content_lines.append(f"   年份: {year} | 引用数: {citations}")
+                content_lines.append(f"   年份: {year if year is not None else 'unknown'} | 引用数: {citations}")
                 if paper["doi"]:
                     content_lines.append(f"   DOI: {paper['doi']}")
                 content_lines.append("")
@@ -224,7 +224,7 @@ class CrossRefGetWorkTool(Tool):
             content_lines = [
                 f"标题: {title}",
                 f"作者: {', '.join(authors)}",
-                f"年份: {year}",
+                f"年份: {year if year is not None else 'unknown'}",
                 f"发表于: {venue}",
                 f"引用数: {citation_count}",
                 f"DOI: {doi}",
@@ -242,7 +242,7 @@ class CrossRefGetWorkTool(Tool):
                 "source": "crossref",
                 "title": title,
                 "authors": authors,
-                "year": year or 2024,
+                "year": year,
                 "abstract": abstract,
                 "venue": venue,
                 "url": url,

@@ -86,6 +86,9 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         },
         "outputs": {
             "synthesis": "literature/synthesis.md",
+            "synthesis_workbench": "literature/synthesis_workbench.json",
+            "synthesis_outline": "literature/synthesis_outline.md",
+            "synthesis_draft": "literature/synthesis_draft.md",
         },
         "required_inputs": ["project", "paper_notes_dir", "comparison_table"],
         "schemas": {},

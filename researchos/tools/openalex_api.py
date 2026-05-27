@@ -121,7 +121,7 @@ class OpenAlexSearchTool(Tool):
                     "source": "openalex",
                     "title": title,
                     "authors": authors if authors else ["Unknown"],
-                    "year": publication_year or 2024,
+                    "year": publication_year,
                     "abstract": abstract or "",
                     "venue": venue,
                     "url": f"https://doi.org/{doi}" if doi else openalex_id,
@@ -150,7 +150,7 @@ class OpenAlexSearchTool(Tool):
 
                 content_lines.append(
                     f"{i}. {title}\n"
-                    f"   作者: {', '.join(authors)}, 年份: {year}, 发表于: {venue}, 引用: {citations}\n"
+                    f"   作者: {', '.join(authors)}, 年份: {year if year is not None else 'unknown'}, 发表于: {venue}, 引用: {citations}\n"
                     f"   摘要: {abstract or '无'}"
                 )
                 content_lines.append("")
@@ -258,7 +258,7 @@ class OpenAlexGetWorkTool(Tool):
                 "source": "openalex",
                 "title": title,
                 "authors": authors,
-                "year": publication_year or 2024,
+                "year": publication_year,
                 "abstract": abstract or "",
                 "venue": venue,
                 "url": f"https://doi.org/{doi}" if doi else work.get("id", ""),

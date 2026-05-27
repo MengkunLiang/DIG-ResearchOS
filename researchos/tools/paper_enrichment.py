@@ -119,14 +119,14 @@ def enrich_papers(
         if "citation_count" not in paper:
             paper["citation_count"] = 0
 
-        # 5. 确保 year 是整数
+        # 5. 确保 year 是整数；缺失年份保持 None，避免把未知年份伪装成真实发表年。
         if "year" in paper and paper["year"]:
             try:
                 paper["year"] = int(paper["year"])
             except (ValueError, TypeError):
-                paper["year"] = 2024  # 默认值
+                paper["year"] = None
         else:
-            paper["year"] = 2024
+            paper["year"] = None
 
         enriched.append(paper)
 

@@ -10,6 +10,8 @@ import re
 from difflib import SequenceMatcher
 from typing import Any
 
+from ..time_utils import current_utc_year, format_year_window
+
 
 def deduplicate_papers(
     papers: list[dict[str, Any]],
@@ -65,6 +67,7 @@ def score_papers(
     papers: list[dict[str, Any]],
     keywords: list[str],
     weights: dict[str, float] | None = None,
+    current_year: int | None = None,
 ) -> list[dict[str, Any]]:
     """为论文列表评分。
 
@@ -90,7 +93,7 @@ def score_papers(
             "keyword": 0.3,
         }
 
-    current_year = 2026  # 可以从系统获取
+    scoring_year = current_year if current_year is not None else current_utc_year()
 
     for paper in papers:
         scores = {}
@@ -109,7 +112,7 @@ def score_papers(
         # 2. year 权重
         year = paper.get("year")
         if year and isinstance(year, int):
-            year_diff = current_year - year
+            year_diff = scoring_year - year
             if year_diff <= 0:
                 scores["year"] = 1.0
             elif year_diff == 1:
@@ -153,6 +156,7 @@ def expand_queries(
     seed_papers: list[dict[str, Any]],
     topic: str,
     max_queries: int = 10,
+    current_year: int | None = None,
 ) -> list[str]:
     """基于种子论文和主题扩展检索式。
 
@@ -198,8 +202,8 @@ def expand_queries(
     queries.extend(domain_variants[:3])
 
     # 4. 添加年份限定（最近论文）
-    queries.append(f"{topic} 2024-2026")
-    queries.append(f"{topic} 2023-2025")
+    queries.append(f"{topic} {format_year_window(2, current_year=current_year)}")
+    queries.append(f"{topic} {format_year_window(2, current_year=current_year, lag_years=1)}")
 
     # 去重并限制数量
     unique_queries = []

@@ -129,6 +129,9 @@ states:
       missing_areas: literature/missing_areas.md        # 输入：研究空白
     outputs:
       synthesis: literature/synthesis.md                # 文献综述
+      synthesis_workbench: literature/synthesis_workbench.json # 结构化证据工作台
+      synthesis_outline: literature/synthesis_outline.md # 分阶段大纲
+      synthesis_draft: literature/synthesis_draft.md    # 分阶段草稿
     next_on_success: T4
     next_on_failure: failed
 
