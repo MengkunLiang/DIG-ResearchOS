@@ -20,6 +20,8 @@ from ..runtime.prompts import render_prompt
 from ..schemas.validator import validate_record
 from ..tools.ideation_analysis import analyze_ideation_coverage
 from ._common import (
+    cdr_schema_prompt_summary,
+    load_cdr_schema,
     prepend_resume_prefix,
     load_project,
     read_text_file,
@@ -89,6 +91,7 @@ class IdeationAgent(Agent):
             has_seed_ideas=bool(seed_ideas.strip()),
             temperature=self.spec.temperature,
             agent_guidance=load_agent_guidance("ideation"),
+            cdr_schema_summary=cdr_schema_prompt_summary(),
         )
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
@@ -185,8 +188,18 @@ class IdeationAgent(Agent):
 
             basis = idea.get("basis") or {}
             observations = basis.get("literature_observations") or []
-            if not observations:
-                return False, f"idea_rationales.json 第{i}条idea缺少literature_observations依据"
+            forward_reasoning = (
+                basis.get("forward_reasoning")
+                or basis.get("problem_reframing")
+                or basis.get("analogy_basis")
+                or basis.get("grounding_checks")
+            )
+            if not observations and not forward_reasoning:
+                return False, (
+                    f"idea_rationales.json 第{i}条idea缺少生成依据："
+                    "可用 literature_observations，也可用 forward_reasoning/problem_reframing/"
+                    "analogy_basis/grounding_checks，不能为通过 gate 伪造文献来源"
+                )
             reasoning = str(idea.get("reasoning") or "").strip()
             if len(reasoning) < 10:
                 return False, f"idea_rationales.json 第{i}条idea的reasoning过短"
@@ -243,6 +256,49 @@ class IdeationAgent(Agent):
             status = str(decision.get("status") or "").strip().lower()
             has_hypothesis_refs = bool(item.get("hypothesis_refs"))
             if status == "selected" or has_hypothesis_refs:
+                cdr_tuple = idea.get("cdr_tuple") if isinstance(idea, dict) else {}
+                if not isinstance(cdr_tuple, dict):
+                    cdr_tuple = {}
+                design_rationale = str(
+                    cdr_tuple.get("design_rationale")
+                    or idea.get("design_rationale")
+                    or ""
+                ).strip()
+                contribution_type = str(
+                    cdr_tuple.get("contribution_type")
+                    or idea.get("contribution_type")
+                    or ""
+                ).strip().lower()
+                contribution_character = str(
+                    item.get("selection_rationale", {}).get("contribution_character")
+                    or idea.get("contribution_character")
+                    or ""
+                ).strip()
+                contribution_strength = (
+                    idea.get("contribution_strength")
+                    or item.get("scores", {}).get("contribution_strength")
+                )
+                if not design_rationale:
+                    return False, (
+                        f"idea_scorecard.yaml idea {idea_id} 缺少 CDR design_rationale；"
+                        "选中或进入最终假设的 idea 必须说明为什么 artifact 应该这样设计"
+                    )
+                if contribution_type not in {"invention", "improvement", "exaptation"}:
+                    return False, (
+                        f"idea_scorecard.yaml idea {idea_id} 的 contribution_type 不能为 "
+                        f"{contribution_type or '空'}；selected idea 不能是 routine"
+                    )
+                if len(contribution_character) < 20:
+                    return False, (
+                        f"idea_scorecard.yaml idea {idea_id} 缺少 contribution_character："
+                        "必须回答如果成立领域会怎样不同"
+                    )
+                try:
+                    strength_value = float(contribution_strength)
+                except (TypeError, ValueError):
+                    return False, f"idea_scorecard.yaml idea {idea_id} 缺少 contribution_strength"
+                if strength_value < 2:
+                    return False, f"idea_scorecard.yaml idea {idea_id} contribution_strength 过低"
                 for field, placeholders in placeholder_values.items():
                     val = str(idea.get(field) or "").strip().lower()
                     if val in placeholders:
@@ -319,7 +375,9 @@ class IdeationAgent(Agent):
         origin_mix = coverage.get("origin_mix", {}) if isinstance(coverage, dict) else {}
         mainline_total = int(origin_mix.get("mainline_total") or 0)
         if mainline_total < 1:
-            return False, "idea_scorecard.yaml 至少需要一个 free_reasoning/seed_refinement/evidence_driven 主线idea"
+            schema = load_cdr_schema()
+            mainline = ", ".join((schema.get("idea_origins") or {}).get("mainline") or [])
+            return False, f"idea_scorecard.yaml 至少需要一个 CDR 主线idea（{mainline}）"
         if origin_mix.get("supplement_only_risk") is True:
             return False, "idea_scorecard.yaml 不能全部由四类补充候选构成，必须保留主线LLM推理idea"
 
@@ -413,14 +471,21 @@ def _validate_candidate_directions(ws: Path) -> tuple[bool, str | None]:
     if not isinstance(candidates, list) or len(candidates) < 4:
         return False, "_candidate_directions.json 必须包含至少4个候选方向"
 
-    mainline_origins = {"free_reasoning", "seed_refinement", "seed_derived", "evidence_driven"}
-    supplement_origins = {
+    cdr_schema = load_cdr_schema()
+    origins = cdr_schema.get("idea_origins") or {}
+    mainline_origins = set(origins.get("mainline") or [
+        "free_reasoning",
+        "seed_refinement",
+        "seed_derived",
+        "evidence_driven",
+    ])
+    supplement_origins = set(origins.get("supplement") or [
         "mechanism_challenge",
         "reverse_operation",
         "subgroup_failure",
         "missing_area_exploration",
         "gap_exploration",
-    }
+    ])
     mainline_count = 0
     supplement_count = 0
     for idx, candidate in enumerate(candidates, start=1):
@@ -446,7 +511,10 @@ def _validate_candidate_directions(ws: Path) -> tuple[bool, str | None]:
             )
 
     if mainline_count < 2:
-        return False, "_candidate_directions.json 至少需要2个主线候选，不能只靠四类补充"
+        return False, (
+            "_candidate_directions.json 至少需要2个 CDR 主线候选，不能只靠四类补充；"
+            f"合法主线 origins: {sorted(mainline_origins)}"
+        )
     if supplement_count > mainline_count + 4:
         return False, "_candidate_directions.json 四类补充候选过多，主线推理被覆盖"
     return True, None

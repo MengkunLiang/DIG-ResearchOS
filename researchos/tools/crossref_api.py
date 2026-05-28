@@ -19,6 +19,10 @@ class CrossRefSearchParams(BaseModel):
     query: str = Field(..., description="搜索查询字符串")
     rows: int = Field(default=10, description="返回结果数量（最多1000）", ge=1, le=1000)
     sort: str = Field(default="relevance", description="排序方式：relevance, score, updated, deposited, published")
+    query_bucket: str | None = Field(
+        default=None,
+        description="可选检索式桶标签，仅用于 ResearchOS 队列保护，不发送给 Crossref。",
+    )
 
 
 class CrossRefGetWorkParams(BaseModel):
@@ -45,6 +49,7 @@ class CrossRefSearchTool(Tool):
         query = kwargs["query"]
         rows = kwargs.get("rows", 10)
         sort = kwargs.get("sort", "relevance")
+        query_bucket = kwargs.get("query_bucket")
 
         params = {
             "query": query,
@@ -149,7 +154,7 @@ class CrossRefSearchTool(Tool):
             return ToolResult(
                 ok=True,
                 content="\n".join(content_lines),
-                data={"papers": papers, "total": total_results}
+                data={"papers": papers, "total": total_results, "query": query, "query_bucket": query_bucket}
             )
 
         except Exception as e:

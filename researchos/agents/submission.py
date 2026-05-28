@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import shutil
 from pathlib import Path
@@ -16,6 +18,36 @@ from ..runtime.agent_params import build_agent_spec, get_agent_params
 from ..runtime.prompts import render_prompt
 from ..tools.docker_exec import check_docker_environment, get_default_image, load_project_config
 from ._common import load_project, prepend_resume_prefix, read_text_file
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _load_json(path: Path) -> tuple[dict | None, str | None]:
+    if not path.exists():
+        return None, f"{path.name} 不存在"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return None, f"{path.name} JSON 无效: {exc}"
+    if not isinstance(data, dict):
+        return None, f"{path.name} 顶层必须是对象"
+    return data, None
+
+
+def _migration_report_declares_current_compile_success(report_text: str) -> bool:
+    """Only accept the current summary line, not historical attempt prose."""
+
+    for line in report_text.splitlines():
+        stripped = line.strip()
+        if re.match(r"^-?\s*编译状态[:：]\s*成功\s*$", stripped):
+            return True
+    return False
 
 
 def check_anonymization(ctx: ExecutionContext) -> tuple[bool, str | None]:
@@ -156,6 +188,7 @@ class SubmissionAgent(Agent):
             return False, f"bundle缺少必需文件: {missing}"
 
         # 编译成功后必须留下 PDF，避免“只写报告不真正编译通过”的假成功。
+        main_tex = bundle_dir / "main.tex"
         pdf_path = bundle_dir / "main.pdf"
         if not pdf_path.exists():
             return False, "bundle缺少 main.pdf，说明投稿包尚未编译成功"
@@ -165,9 +198,20 @@ class SubmissionAgent(Agent):
         if pdf_path.stat().st_size < 20:
             return False, "main.pdf 文件过小，疑似占位文件"
 
-        main_tex = bundle_dir / "main.tex"
         if pdf_path.stat().st_mtime < main_tex.stat().st_mtime:
             return False, "main.pdf 早于 main.tex，需重新编译投稿包"
+
+        log_path = bundle_dir / "main.log"
+        if not log_path.exists():
+            return False, "submission/bundle/main.log 不存在，缺少真实 LaTeX 编译日志证据"
+
+        compile_report_path = ws / "submission" / "compile_report.json"
+        compile_report, compile_report_err = _load_json(compile_report_path)
+        if compile_report_err:
+            return False, f"submission/compile_report.json 校验失败: {compile_report_err}"
+        ok, err = _validate_compile_report(compile_report or {}, ws)
+        if not ok:
+            return False, err
 
         # 检查migration_report.md
         report_path = ws / "submission" / "migration_report.md"
@@ -185,23 +229,77 @@ class SubmissionAgent(Agent):
                 return False, f"migration_report.md 缺少: {content}"
 
         # 报告必须明确声明编译成功，避免把失败尝试误判为通过。
-        if not re.search(r"编译状态[:：]\s*成功", report_text):
+        if not _migration_report_declares_current_compile_success(report_text):
             return False, "migration_report.md 未声明“编译状态: 成功”"
 
-        # 如果存在日志文件，还要排除明显的 fatal 错误残留。
-        log_path = bundle_dir / "main.log"
-        if log_path.exists():
-            log_text = read_text_file(log_path)
-            fatal_markers = [
-                "Fatal error occurred",
-                "! Emergency stop.",
-                "==> Fatal error occurred",
-                "LaTeX Warning: There were undefined references",
-                "Citation `",
-                "Reference `",
-            ]
-            for marker in fatal_markers:
-                if marker in log_text:
-                    return False, f"main.log 仍包含致命编译错误: {marker}"
+        ok, err = _validate_latex_log(log_path)
+        if not ok:
+            return False, err
 
         return True, None
+
+
+def _validate_compile_report(report: dict, ws: Path) -> tuple[bool, str | None]:
+    if report.get("semantics") != "latex_compile_attempt_report":
+        return False, "submission/compile_report.json semantics 不正确"
+    if report.get("success") is not True:
+        return False, "submission/compile_report.json 未记录最终编译成功"
+    if report.get("tex_path") != "submission/bundle/main.tex":
+        return False, "compile_report.tex_path 必须是 submission/bundle/main.tex"
+    if report.get("pdf_path") != "submission/bundle/main.pdf":
+        return False, "compile_report.pdf_path 必须是 submission/bundle/main.pdf"
+    if report.get("log_path") != "submission/bundle/main.log":
+        return False, "compile_report.log_path 必须是 submission/bundle/main.log"
+
+    attempts = report.get("attempts")
+    if not isinstance(attempts, list) or not attempts:
+        return False, "compile_report.attempts 缺失"
+    last_attempt = attempts[-1]
+    if not isinstance(last_attempt, dict) or last_attempt.get("success") is not True:
+        return False, "compile_report 最后一次 attempt 未成功"
+    if last_attempt.get("exit_code") not in (0, None):
+        return False, "compile_report 最后一次 attempt exit_code 非 0"
+
+    main_tex = ws / "submission" / "bundle" / "main.tex"
+    main_pdf = ws / "submission" / "bundle" / "main.pdf"
+    main_log = ws / "submission" / "bundle" / "main.log"
+    for path in [main_tex, main_pdf, main_log]:
+        if not path.exists():
+            return False, f"compile_report 指向的文件不存在: {path.relative_to(ws).as_posix()}"
+
+    if report.get("main_tex_sha256") != _sha256_file(main_tex):
+        return False, "compile_report.main_tex_sha256 与当前 main.tex 不一致，需重新编译"
+    if report.get("pdf_sha256") != _sha256_file(main_pdf):
+        return False, "compile_report.pdf_sha256 与当前 main.pdf 不一致"
+    log_hash = report.get("log_sha256")
+    if log_hash and log_hash != _sha256_file(main_log):
+        return False, "compile_report.log_sha256 与当前 main.log 不一致"
+
+    if float(report.get("pdf_mtime") or 0) < main_tex.stat().st_mtime:
+        return False, "compile_report.pdf_mtime 早于当前 main.tex，需重新编译"
+    if float(report.get("log_mtime") or 0) < main_tex.stat().st_mtime:
+        return False, "compile_report.log_mtime 早于当前 main.tex，需重新编译"
+    if int(report.get("pdf_size") or 0) != main_pdf.stat().st_size:
+        return False, "compile_report.pdf_size 与当前 main.pdf 不一致"
+    if int(report.get("log_size") or 0) and int(report.get("log_size") or 0) != main_log.stat().st_size:
+        return False, "compile_report.log_size 与当前 main.log 不一致"
+    return True, None
+
+
+def _validate_latex_log(log_path: Path) -> tuple[bool, str | None]:
+    log_text = read_text_file(log_path)
+    fatal_markers = [
+        "Fatal error occurred",
+        "! Emergency stop.",
+        "==> Fatal error occurred",
+        "LaTeX Warning: There were undefined references",
+        "LaTeX Warning: Citation `",
+        "Citation `",
+        "Reference `",
+        "undefined citations",
+        "Undefined control sequence",
+    ]
+    for marker in fatal_markers:
+        if marker in log_text:
+            return False, f"main.log 仍包含致命编译错误: {marker}"
+    return True, None

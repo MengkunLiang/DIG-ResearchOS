@@ -6,6 +6,7 @@ import yaml
 from researchos.agents.ideation import IdeationAgent
 from researchos.agents.novelty_auditor import NoveltyAuditorAgent
 from researchos.agents.reader import ReaderAgent
+from researchos.agents.writer import WriterAgent
 from researchos.runtime.agent import (
     Agent,
     AgentResult,
@@ -18,6 +19,114 @@ from researchos.runtime.orchestrator import AgentRunner
 from researchos.testing.mocks import FakeLLMMessage, FakeRawCompletion, FakeToolCall, MockHumanInterface, MockLLMClient
 from researchos.tools.builtin import register_builtin_tools
 from researchos.tools.registry import ToolRegistry
+
+
+def _long_text(seed: str, repeat: int = 90) -> str:
+    return (seed + " ") * repeat
+
+
+def write_valid_t8_section_plan_inputs(workspace):
+    drafts = workspace / "drafts"
+    drafts.mkdir(parents=True, exist_ok=True)
+    (workspace / "project.yaml").write_text("target_venue: neurips2026\n", encoding="utf-8")
+    (drafts / "outline.md").write_text(
+        "# Outline\n\n## Introduction\nFrame the problem.\n\n## Method\nDescribe the mechanism.\n\n"
+        "## Experiments\nReport results.\n",
+        encoding="utf-8",
+    )
+    (drafts / "manuscript_resource_index.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "artifacts": [
+                    {"path": "ideation/hypotheses.md"},
+                    {"path": "experiments/results_summary.json"},
+                ],
+                "bib_keys": ["smith2024"],
+                "result_metrics": [{"metric": "accuracy", "value": 0.82}],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    sections = [
+        "abstract",
+        "introduction",
+        "related_work",
+        "methodology",
+        "experiments",
+        "analysis",
+        "limitations",
+        "conclusion",
+    ]
+    (drafts / "section_plan.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "sections": [
+                    {
+                        "id": section,
+                        "title": section.title(),
+                        "required_inputs": ["drafts/manuscript_resource_index.json"],
+                        "available_inputs": ["drafts/manuscript_resource_index.json"],
+                        "missing_inputs": [],
+                        "cdr_responsibility": "mechanical section responsibility seed",
+                    }
+                    for section in sections
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (drafts / "evidence_plan.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "claim_slots": [
+                    {
+                        "slot_id": "intro_problem_gap",
+                        "section": "introduction",
+                        "cdr_field": "problem_frame",
+                        "candidate_evidence": ["ideation/hypotheses.md"],
+                    },
+                    {
+                        "slot_id": "experiments_main_result",
+                        "section": "experiments",
+                        "cdr_field": "evaluation_mode",
+                        "candidate_evidence": ["experiments/results_summary.json"],
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (drafts / "figure_table_plan.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "planned_visuals": [
+                    {
+                        "figure_id": "fig:main_results",
+                        "intended_section": "experiments",
+                        "source_artifacts": ["experiments/results_summary.json"],
+                    },
+                    {
+                        "table_id": "tab:main_results",
+                        "intended_section": "experiments",
+                        "source_artifacts": ["experiments/results_summary.json"],
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (drafts / "paper_state.json").write_text(
+        json.dumps({"semantics": "old_invalid_state", "sections": {}}),
+        encoding="utf-8",
+    )
 
 
 class MinimalAgent(Agent):
@@ -275,6 +384,18 @@ def write_valid_t4_artifacts(workspace):
                             "prediction": "在稀疏用户子群上 Recall@20 提升 5%+",
                             "counterfactual": "如果机制不成立，选择性噪声关闭后指标应无显著差异",
                             "mechanism_family": "selective noise application",
+                            "cdr_tuple": {
+                                "problem_frame": "稀疏用户推荐中的扰动策略缺少活跃度感知设计。",
+                                "design_rationale": "活跃度不同的用户嵌入承受噪声的能力不同，因此应按用户活跃度调节扰动强度。",
+                                "artifact": "一个按用户活跃度选择扰动强度的图推荐训练模块。",
+                                "design_principles": ["按子群风险分配扰动", "用消融隔离机制"],
+                                "data_view": "用户按交互密度划分的推荐子群。",
+                                "evaluation_mode": "主指标加稀疏用户子群消融。",
+                                "contribution_type": "improvement",
+                                "boundary_conditions": ["稀疏度差异明显的数据集"],
+                                "cross_paper_tension": ["均匀扰动和子群稳健性之间的张力"],
+                            },
+                            "contribution_strength": 4,
                         },
                         "hypothesis_refs": ["H1"],
                         "source": {
@@ -298,6 +419,7 @@ def write_valid_t4_artifacts(workspace):
                             "impact_reason": "该问题影响系统可靠性。",
                             "evaluability_reason": "指标和baseline清楚。",
                             "paper_story": "问题、方法和实验链路清楚。",
+                            "contribution_character": "如果该假设成立，领域将从统一扰动默认设定转向按用户活跃度分配增强强度的设计原则。",
                         },
                         "closest_baselines": [
                             {
@@ -313,7 +435,7 @@ def write_valid_t4_artifacts(workspace):
                             "evaluability": 5,
                             "differentiation": 3,
                             "cost": 5,
-                            "paper_shapability": 4,
+                            "contribution_strength": 4,
                         },
                         "decision": {
                             "status": "selected",
@@ -348,6 +470,16 @@ def write_valid_t4_artifacts(workspace):
                             "prediction": "如果迁移偏置有效，新场景accuracy应相对baseline提升",
                             "counterfactual": "如果迁移偏置无效，替换为简单baseline后指标不会下降",
                             "mechanism_family": "direct transfer",
+                            "cdr_tuple": {
+                                "problem_frame": "简单场景迁移缺少设计差异。",
+                                "design_rationale": "复用已有表示可能不改变领域设计原则。",
+                                "artifact": "场景迁移 baseline。",
+                                "data_view": "常规任务数据。",
+                                "evaluation_mode": "普通主指标比较。",
+                                "contribution_type": "routine",
+                                "boundary_conditions": ["仅适合记录为被拒候选"],
+                            },
+                            "contribution_strength": 1,
                         },
                         "hypothesis_refs": [],
                         "source": {
@@ -371,6 +503,7 @@ def write_valid_t4_artifacts(workspace):
                             "impact_reason": "影响范围窄。",
                             "evaluability_reason": "评价指标不清。",
                             "paper_story": "论文故事不足。",
+                            "contribution_character": "如果成立也主要是应用迁移，不能改变领域的设计判断。",
                         },
                         "closest_baselines": [
                             {
@@ -386,7 +519,7 @@ def write_valid_t4_artifacts(workspace):
                             "evaluability": 2,
                             "differentiation": 2,
                             "cost": 4,
-                            "paper_shapability": 2,
+                            "contribution_strength": 1,
                         },
                         "decision": {
                             "status": "rejected",
@@ -533,12 +666,38 @@ def write_valid_t45_artifacts(workspace):
         "**新颖性等级**: Level 2 - 中度新颖\n\n"
         "**判定理由**:\n该假设与已有工作存在相关性，但机制、目标和验证方式不同。"
         "审计结果建议继续进入实验，同时保留补充 baseline 的风险提示。"
-        "这里补足足够长的说明，避免被长度校验误判。\n"
+        "这里补足足够长的说明，避免被长度校验误判。\n\n"
+        "### Collision Axis\n"
+        "- Collision level: no true collision; nearest work shares task but not design rationale.\n\n"
+        "### Ambition Axis\n"
+        "- Ambition: medium-high because it changes how perturbation strength is allocated across user groups.\n"
+        "- contribution_type: improvement\n\n"
+        "### Contribution Distance\n"
+        "- Distance: meaningful design-rationale distance from uniform perturbation baselines.\n\n"
+        "### Final Gate Verdict\n"
+        "- Verdict: proceed to T7/T8 with explicit boundary conditions, no routine contribution risk.\n\n"
     )
     (ideation_dir / "novelty_audit.md").write_text(audit_text * 8, encoding="utf-8")
     tuple_dir = ideation_dir / "_mechanism_tuples"
     tuple_dir.mkdir()
     (tuple_dir / "H1.json").write_text('{"source_id":"H1"}\n', encoding="utf-8")
+    design_tuple_dir = ideation_dir / "_design_rationale_tuples"
+    design_tuple_dir.mkdir()
+    (design_tuple_dir / "H1.json").write_text(
+        json.dumps(
+            {
+                "source_id": "H1",
+                "problem_frame": "稀疏用户扰动缺少活跃度感知",
+                "design_rationale": "不同活跃度用户需要不同扰动强度",
+                "artifact": "adaptive perturbation module",
+                "contribution_type": "improvement",
+                "boundary_conditions": ["推荐数据有明显稀疏子群"],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def write_valid_t3_artifacts(workspace):
@@ -614,6 +773,36 @@ method
 - **Stated mechanism**: The method improves performance through better feature extraction
 - **Evidence type**: ablation_supported
 - **Supporting artifact**: Table 1
+
+## 14. Design Rationale
+- **Rationale**: The method is designed to test whether the claimed feature extraction path explains sparse recommendation gains.
+- **Rationale evidence**: Table 1 and the reported ablation connect the artifact to the stated mechanism.
+- **Rationale weakness**: The note remains synthetic and cannot settle whether the mechanism generalizes.
+
+## 15. Artifact & Design Principles
+- **Artifact type**: model component
+- **Artifact description**: A lightweight perturbation component for representation learning.
+- **Design principles**: isolate the mechanism; compare against a simple control.
+
+## 16. Data View & Evaluation Mode
+- **Data view**: recommendation interactions split by sparsity.
+- **Evaluation mode**: accuracy and ablation evidence.
+- **Validity concern**: aggregate metrics may hide subgroup failures.
+
+## 17. Contribution Type
+- **Contribution type**: improvement
+- **Contribution character**: It improves the design rationale for sparse recommendation robustness.
+- **Why not routine**: It tests mechanism-specific behavior rather than only changing an application domain.
+
+## 18. Boundary Conditions
+- **Works when**: sparse users have distinct interaction patterns.
+- **May fail when**: all users have dense histories.
+- **Untested boundary**: cold-start users without any interactions.
+
+## 19. Cross-Paper Tension
+- **Tension**: Uniform perturbation claims compete with subgroup-specific robustness needs.
+- **Competing rationale**: Some baselines imply a single perturbation policy is sufficient.
+- **Idea fuel**: Test whether adaptive perturbation changes sparse subgroup behavior.
 """,
             encoding="utf-8",
         )
@@ -964,6 +1153,47 @@ async def test_validation_retry_exhaustion_pauses_for_resume(tmp_workspace, regi
 
 
 @pytest.mark.asyncio
+async def test_validation_retry_extension_gate_allows_repair_continue(tmp_workspace, registry):
+    llm = MockLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="finish_task", arguments={"summary": "bad"}, id="tc1")]
+                )
+            ),
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="finish_task", arguments={"summary": "bad again"}, id="tc2")]
+                )
+            ),
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="finish_task", arguments={"summary": "bad final"}, id="tc3")]
+                )
+            ),
+        ]
+    )
+    ctx = ExecutionContext(workspace_dir=tmp_workspace, project_id="p1", task_id="T8-SECTION-PLAN", run_id="r_validation_extend")
+    human = MockHumanInterface(gate_choices=[{"option_id": "extend", "captured": {}}])
+    runner = AgentRunner(AlwaysInvalidAgent(), registry, llm, human)
+    runner.budget_escalation_policy = {
+        "enabled": True,
+        "tasks": [],
+        "max_validation_extensions_per_run": 1,
+        "validation_retry_increase": 1,
+    }
+
+    result = await runner.run(ctx)
+
+    assert not result.ok
+    assert result.stop_reason == AgentResult.STOP_INTERRUPTED
+    assert "Validation failed 3 times" in (result.error or "")
+    gate_calls = [call for call in human.calls if call[0] == "gate"]
+    assert gate_calls
+    assert gate_calls[0][1]["gate_id"] == "runtime_validation_retry_extension"
+
+
+@pytest.mark.asyncio
 async def test_t35_workbench_prepares_artifacts_then_llm_writes_final(tmp_workspace, registry):
     literature = tmp_workspace / "literature"
     notes_dir = literature / "paper_notes"
@@ -1035,19 +1265,30 @@ Graph contrastive method for robust sparse recommendation.
                                     "A second assumption is that aggregate metrics are representative of the target "
                                     "subgroups. The notes suggest this may be false because several papers mention "
                                     "failure modes that only appear under specific conditions.\n\n"
-                                    "## 性能-效率前沿\n"
-                                    "The frontier remains under-specified because the notes do not consistently report "
-                                    "the same cost metrics. [paper_0] gives the clearest performance signal, [paper_1] "
-                                    "is a likely efficient control, and [paper_4] is useful for checking whether the "
-                                    "same effect survives under a different implementation. A serious T4 idea should "
-                                    "therefore report both the primary task metric and at least one resource metric. "
-                                    "This makes the eventual hypothesis evaluable without requiring a full-scale run.\n\n"
+                                    "## 贡献空间地图\n"
+                                    "The contribution-space map separates three design-rationale positions rather than "
+                                    "ranking papers by a single performance frontier. [paper_0] and [paper_1] treat "
+                                    "perturbation as a general regularizer, [paper_2] and [paper_3] imply that user "
+                                    "subgroups may require different controls, and [paper_4] is useful for checking "
+                                    "whether the same effect survives under a different implementation. This section "
+                                    "therefore frames T4 opportunities as choices about problem frame, artifact design, "
+                                    "evaluation mode, and boundary conditions, not as a deterministic opportunity map. "
+                                    "A serious T4 idea should explain which design rationale it changes and what "
+                                    "evidence would falsify that change.\n\n"
                                     "## 技术趋势\n"
                                     "The trend across these notes is a shift from adding larger components toward "
                                     "testing when the claimed mechanism is actually needed. Recent papers in the pool "
                                     "place more emphasis on ablations, subgroup behavior, and simpler controls. The "
                                     "trend is not yet a conclusion; it is a working reading of the evidence that T4 "
                                     "should preserve as an explicit uncertainty.\n\n"
+                                    "## 跨论文矛盾与张力\n"
+                                    "The key cross-paper contradiction is that some papers treat uniform perturbation "
+                                    "as sufficient while others report subgroup-sensitive failure modes. [paper_0] and "
+                                    "[paper_1] make broad mechanism claims, while [paper_2], [paper_3], and [paper_4] "
+                                    "suggest that aggregate metrics can hide sparse-user behavior. This tension should "
+                                    "feed ideation by asking whether the artifact should adapt to user activity, whether "
+                                    "the evaluation mode should privilege subgroup evidence, and which boundary "
+                                    "conditions would make the rationale fail.\n\n"
                                     "## 可操作研究问题\n"
                                     "Q1: Which observable condition separates cases where the stated mechanism helps "
                                     "from cases where a simpler baseline is sufficient? Related papers include "
@@ -1195,6 +1436,34 @@ async def test_t45_resume_prefinalize_skips_llm_when_artifacts_validate(tmp_work
     assert result.ok
     assert result.metadata["completion_mode"] == "t45_resume_prefinalize"
     assert llm.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_t8_section_plan_prefinalize_repairs_invalid_state_without_llm(tmp_workspace, registry):
+    write_valid_t8_section_plan_inputs(tmp_workspace)
+    llm = MockLLMClient(responses=[])
+    ctx = ExecutionContext(
+        workspace_dir=tmp_workspace,
+        project_id="p1",
+        task_id="T8-SECTION-PLAN",
+        run_id="r_t8_section_plan_prefinalize",
+        mode="section_plan",
+        outputs_expected={
+            "paper_state": tmp_workspace / "drafts" / "paper_state.json",
+            "section_outlines": tmp_workspace / "drafts" / "section_outlines",
+        },
+        extra={"phase": "section_plan"},
+    )
+    runner = AgentRunner(WriterAgent(), registry, llm, MockHumanInterface())
+
+    result = await runner.run(ctx)
+
+    assert result.ok
+    assert llm.call_count == 0
+    assert result.metadata["completion_mode"] == "t8_section_plan_prefinalize"
+    state = json.loads((tmp_workspace / "drafts" / "paper_state.json").read_text(encoding="utf-8"))
+    assert state["semantics"] == "shared_state_for_section_by_section_writing_not_final_claims"
+    assert state["sections"]["methodology"]["file"] == "drafts/sections/methodology.tex"
 
 
 @pytest.mark.asyncio

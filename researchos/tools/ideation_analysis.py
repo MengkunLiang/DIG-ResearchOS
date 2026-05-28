@@ -12,6 +12,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 
 def analyze_ideation_coverage(
     workspace_dir: Path,
@@ -24,8 +26,6 @@ def analyze_ideation_coverage(
 
     Returns a structured report with coverage metrics and gaps.
     """
-    import yaml
-
     ws = Path(workspace_dir)
 
     # Load idea scorecard
@@ -71,6 +71,10 @@ def analyze_ideation_coverage(
         "origin_free_reasoning": 0,
         "origin_seed_refinement": 0,
         "origin_evidence_driven": 0,
+        "origin_synthesis_gestalt": 0,
+        "origin_problem_reframing": 0,
+        "origin_design_rationale_derivation": 0,
+        "origin_cross_domain_analogy": 0,
         "origin_supplement": 0,
         "constraint_unsupported": 0,
         "has_mechanism_challenge": 0,
@@ -123,6 +127,14 @@ def analyze_ideation_coverage(
             source_stats["origin_seed_refinement"] += 1
         elif idea_origin == "evidence_driven":
             source_stats["origin_evidence_driven"] += 1
+        elif idea_origin == "synthesis_gestalt":
+            source_stats["origin_synthesis_gestalt"] += 1
+        elif idea_origin == "problem_reframing":
+            source_stats["origin_problem_reframing"] += 1
+        elif idea_origin == "design_rationale_derivation":
+            source_stats["origin_design_rationale_derivation"] += 1
+        elif idea_origin == "cross_domain_analogy":
+            source_stats["origin_cross_domain_analogy"] += 1
         if constraint_status == "supplement" or idea_origin in {
             "mechanism_challenge",
             "reverse_operation",
@@ -235,12 +247,12 @@ def analyze_ideation_coverage(
             "free_reasoning": source_stats["origin_free_reasoning"],
             "seed_refinement": source_stats["origin_seed_refinement"],
             "evidence_driven": source_stats["origin_evidence_driven"],
+            "synthesis_gestalt": source_stats["origin_synthesis_gestalt"],
+            "problem_reframing": source_stats["origin_problem_reframing"],
+            "design_rationale_derivation": source_stats["origin_design_rationale_derivation"],
+            "cross_domain_analogy": source_stats["origin_cross_domain_analogy"],
             "supplement": source_stats["origin_supplement"],
-            "mainline_total": (
-                source_stats["origin_free_reasoning"]
-                + source_stats["origin_seed_refinement"]
-                + source_stats["origin_evidence_driven"]
-            ),
+            "mainline_total": _count_mainline_origins(source_stats),
             "constraint_unsupported": source_stats["constraint_unsupported"],
             "supplement_only_risk": source_stats["origin_supplement"] >= len(ideas),
         },
@@ -248,3 +260,15 @@ def analyze_ideation_coverage(
     }
 
     return {"coverage": coverage, "ok": True}
+
+
+def _count_mainline_origins(source_stats: dict[str, int]) -> int:
+    return (
+        source_stats["origin_free_reasoning"]
+        + source_stats["origin_seed_refinement"]
+        + source_stats["origin_evidence_driven"]
+        + source_stats["origin_synthesis_gestalt"]
+        + source_stats["origin_problem_reframing"]
+        + source_stats["origin_design_rationale_derivation"]
+        + source_stats["origin_cross_domain_analogy"]
+    )

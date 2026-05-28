@@ -63,7 +63,7 @@ def _write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None)
                             "evaluability": 5,
                             "differentiation": 3,
                             "cost": 5,
-                            "paper_shapability": 4,
+                            "contribution_strength": 4,
                         },
                         "decision": {
                             "status": "selected",
@@ -129,7 +129,7 @@ def _write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None)
                             "evaluability": 2,
                             "differentiation": 2,
                             "cost": 4,
-                            "paper_shapability": 2,
+                            "contribution_strength": 2,
                         },
                         "decision": {
                             "status": "rejected",

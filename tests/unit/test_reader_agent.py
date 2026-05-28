@@ -88,6 +88,36 @@ method
 - **Stated mechanism**: The method improves performance through better feature extraction
 - **Evidence type**: ablation_supported
 - **Supporting artifact**: Table 2
+
+## 14. Design Rationale
+- **Rationale**: The method is designed to test whether feature extraction changes explain the reported result.
+- **Rationale evidence**: The paper reports an ablation and a result table connected to the mechanism.
+- **Rationale weakness**: The note does not prove whether the same rationale holds outside the tested setup.
+
+## 15. Artifact & Design Principles
+- **Artifact type**: model component
+- **Artifact description**: A lightweight component that changes representation learning behavior.
+- **Design principles**: isolate the claimed mechanism; compare with a simpler control.
+
+## 16. Data View & Evaluation Mode
+- **Data view**: benchmark examples grouped by task condition.
+- **Evaluation mode**: main metric plus ablation evidence.
+- **Validity concern**: Aggregate scores may hide subgroup-specific failures.
+
+## 17. Contribution Type
+- **Contribution type**: improvement
+- **Contribution character**: The work improves an existing method by clarifying when the mechanism helps.
+- **Why not routine**: It makes a mechanism-level design claim rather than only changing implementation details.
+
+## 18. Boundary Conditions
+- **Works when**: the benchmark setting matches the paper's assumptions.
+- **May fail when**: data distribution or compute constraints differ substantially.
+- **Untested boundary**: very small data regimes.
+
+## 19. Cross-Paper Tension
+- **Tension**: Some papers treat the mechanism as general while others suggest condition-specific behavior.
+- **Competing rationale**: Simpler baselines may explain part of the reported gain.
+- **Idea fuel**: Test whether the mechanism remains useful under a boundary condition.
 """
 
 
@@ -597,9 +627,9 @@ def test_validate_outputs_synthesize_mode_success(reader_agent, temp_workspace):
 
 3. **表示的平滑性**：连续的表示空间有助于模型的泛化能力。通过将离散的语言符号映射到连续的向量空间，模型能够更好地捕捉词语之间的语义相似性[paper_014]。
 
-## 性能-效率前沿
+## 贡献空间地图
 
-根据[paper_015]和[paper_016]的详细评估，我们绘制了当前方法的性能-效率权衡曲线。在准确率方面，Transformer-based方法表现最佳，但计算复杂度较高。在效率方面，轻量级模型如[paper_017]提出的方法具有明显优势。
+根据[paper_015]和[paper_016]的详细评估，我们将贡献空间按 design rationale、artifact 类型、data view 和 evaluation mode 拆分。在准确率方面，Transformer-based方法表现最佳，但计算复杂度较高；在贡献定位方面，轻量级模型如[paper_017]提出的方法更像对部署约束的改进，而不是全新问题表述。
 
 具体来说，在标准的GLUE基准测试[paper_018]上，BERT和RoBERTa等大型预训练模型达到了人类水平的表现，但在资源受限的场景下，这些模型的部署面临挑战。DistilBERT[paper_019]通过知识蒸馏将模型大小减少40%，同时保持95%的性能。
 
@@ -614,6 +644,10 @@ def test_validate_outputs_synthesize_mode_success(reader_agent, temp_workspace):
 3. **自适应计算**：根据输入复杂度动态调整计算量[paper_023]。对于简单的输入使用较少的计算资源，对于复杂的输入使用更多的计算资源。
 
 4. **多模态融合**：将文本与图像、语音等其他模态的信息进行融合[paper_024]。CLIP[paper_025]和GPT-4V[paper_026]代表了这一方向的重要进展。
+
+## 跨论文矛盾与张力
+
+跨论文矛盾主要体现在统一架构假设与场景自适应假设之间。一组论文认为更强的全局表示足以解释性能提升[paper_024]，另一组论文则表明 evaluation mode、资源约束和部署边界会改变 artifact 的真实价值[paper_025]。这种张力可以直接为 T4 提供问题重构燃料：如果一个方法只在高资源设置下有效，它的 contribution_type 可能只是 routine improvement；如果它改变了边界条件下的设计原则，则可能形成更强贡献[paper_026]。
 
 ## 可操作研究问题
 
@@ -668,11 +702,14 @@ def test_validate_outputs_synthesize_mode_accepts_real_paper_ids(reader_agent, t
 ## 共同假设
 共同假设包括长期状态可外化、检索质量决定推理质量、以及压缩会带来信息损失。
 
-## 性能-效率前沿
-性能-效率前沿显示，高准确率系统通常需要更复杂的路由和更高的运行成本。
+## 贡献空间地图
+贡献空间地图显示，高准确率系统通常需要更复杂的路由，但真正的贡献差异要按 design rationale、artifact 类型、data view 和 evaluation mode 区分。
 
 ## 技术趋势
 技术趋势包括分层化、轻量化、无状态企业部署和显式可审计记忆。
+
+## 跨论文矛盾与张力
+跨论文矛盾包括可审计长期记忆与压缩成本之间的张力，以及统一路由假设与用户状态差异之间的张力。
 
 ## 可操作研究问题
 可操作研究问题包括如何统一分层记忆结构、如何控制跨会话记忆漂移、以及如何评估长期用户偏好。

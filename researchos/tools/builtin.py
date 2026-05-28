@@ -24,6 +24,7 @@ from .literature_synthesis import BuildSynthesisWorkbenchTool
 from .manuscript import (
     AssembleManuscriptTool,
     AuditManuscriptClaimsTool,
+    BuildManuscriptRegistriesTool,
     BuildManuscriptRevisionPatchesTool,
     BuildManuscriptResourceIndexTool,
     InitializeManuscriptStateTool,
@@ -62,7 +63,12 @@ from .paper_save_tools import (
     SavePapersRawTool,
     SavePapersDedupTool,
 )
-from .mechanism_tools import ExtractMechanismTupleTool, CompareMechanismTuplesTool
+from .mechanism_tools import (
+    CompareDesignRationaleTuplesTool,
+    CompareMechanismTuplesTool,
+    ExtractDesignRationaleTupleTool,
+    ExtractMechanismTupleTool,
+)
 from .semantic_scholar import SemanticScholarSearchTool, SemanticScholarGetPaperTool
 from .arxiv_api import ArxivSearchTool
 from .openalex_api import OpenAlexSearchTool, OpenAlexGetWorkTool
@@ -104,6 +110,7 @@ def register_builtin_tools(
     registry.register("build_manuscript_resource_index", lambda ctx: BuildManuscriptResourceIndexTool(ctx.policy))
     registry.register("plan_manuscript_sections", lambda ctx: PlanManuscriptSectionsTool(ctx.policy))
     registry.register("plan_manuscript_evidence", lambda ctx: PlanManuscriptEvidenceTool(ctx.policy))
+    registry.register("build_manuscript_registries", lambda ctx: BuildManuscriptRegistriesTool(ctx.policy))
     registry.register("initialize_manuscript_state", lambda ctx: InitializeManuscriptStateTool(ctx.policy))
     registry.register("update_manuscript_section_state", lambda ctx: UpdateManuscriptSectionStateTool(ctx.policy))
     registry.register("assemble_manuscript", lambda ctx: AssembleManuscriptTool(ctx.policy))
@@ -187,6 +194,8 @@ def register_builtin_tools(
     # Mechanism tuple 工具（T4.5 新颖性审计用）
     registry.register("extract_mechanism_tuple", lambda ctx: ExtractMechanismTupleTool(ctx.policy))
     registry.register("compare_mechanism_tuples", lambda ctx: CompareMechanismTuplesTool(ctx.policy))
+    registry.register("extract_design_rationale_tuple", lambda ctx: ExtractDesignRationaleTupleTool(ctx.policy))
+    registry.register("compare_design_rationale_tuples", lambda ctx: CompareDesignRationaleTuplesTool(ctx.policy))
 
 
 def _build_log_scout_progress_tool(workspace_dir: str) -> LogScoutProgressTool:

@@ -365,7 +365,7 @@ def test_validate_t4_artifacts_reports_bad_hypothesis_ref(tmp_path: Path):
                             "evaluability": 5,
                             "differentiation": 3,
                             "cost": 5,
-                            "paper_shapability": 4,
+                            "contribution_strength": 4,
                         },
                         "decision": {
                             "status": "selected",
@@ -437,7 +437,7 @@ def test_validate_t4_artifacts_reports_bad_hypothesis_ref(tmp_path: Path):
                             "evaluability": 2,
                             "differentiation": 2,
                             "cost": 4,
-                            "paper_shapability": 2,
+                            "contribution_strength": 2,
                         },
                         "decision": {
                             "status": "rejected",

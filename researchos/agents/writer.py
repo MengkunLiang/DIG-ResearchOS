@@ -35,6 +35,7 @@ class WriterAgent(Agent):
                         "build_manuscript_resource_index",
                         "plan_manuscript_sections",
                         "plan_manuscript_evidence",
+                        "build_manuscript_registries",
                         "initialize_manuscript_state",
                         "update_manuscript_section_state",
                         "assemble_manuscript",
@@ -49,6 +50,7 @@ class WriterAgent(Agent):
                     "temperature": 0.7,
                     "allowed_read_prefixes": [
                         "",
+                        "drafts/",
                         "literature/",
                         "experiments/",
                         "ideation/",
@@ -125,6 +127,9 @@ class WriterAgent(Agent):
         section_plan = read_text_file(ws / "drafts" / "section_plan.json", default="")
         evidence_plan = read_text_file(ws / "drafts" / "evidence_plan.json", default="")
         figure_table_plan = read_text_file(ws / "drafts" / "figure_table_plan.json", default="")
+        cdr_claim_ledger = read_text_file(ws / "drafts" / "cdr_claim_ledger.json", default="")
+        claim_ledger = read_text_file(ws / "drafts" / "claim_ledger.json", default="")
+        figure_registry = read_text_file(ws / "drafts" / "figure_registry.json", default="")
         manuscript_audit = read_text_file(ws / "drafts" / "manuscript_audit.md", default="")
         paper_state = read_text_file(ws / "drafts" / "paper_state.json", default="")
 
@@ -169,6 +174,9 @@ class WriterAgent(Agent):
             section_plan_preview=section_plan[:5000],
             evidence_plan_preview=evidence_plan[:5000],
             figure_table_plan_preview=figure_table_plan[:5000],
+            cdr_claim_ledger_preview=cdr_claim_ledger[:5000],
+            claim_ledger_preview=claim_ledger[:4000],
+            figure_registry_preview=figure_registry[:4000],
             manuscript_audit_preview=manuscript_audit[:3000],
             paper_state_preview=paper_state[:5000],
             section_id=section_id,
@@ -198,7 +206,9 @@ class WriterAgent(Agent):
                 "请执行 T8 Writer Phase 0: 构建写作资源索引。\n\n"
                 "调用 build_manuscript_resource_index 生成 drafts/manuscript_resource_index.json，"
                 "调用 plan_manuscript_sections 生成 drafts/section_plan.json，"
-                "再调用 plan_manuscript_evidence 生成 drafts/evidence_plan.json 和 drafts/figure_table_plan.json。"
+                "调用 plan_manuscript_evidence 生成 drafts/evidence_plan.json 和 drafts/figure_table_plan.json，"
+                "再调用 build_manuscript_registries 生成 drafts/cdr_claim_ledger.json、"
+                "drafts/claim_ledger.json 和 drafts/figure_registry.json。"
                 ),
             )
         if phase == "section_plan":
@@ -441,6 +451,15 @@ def _validate_resource_index_artifacts(ws: Path) -> tuple[bool, str | None]:
     figures, err = _load_json_file(ws / "drafts" / "figure_table_plan.json")
     if err:
         return False, err
+    cdr_ledger, err = _load_json_file(ws / "drafts" / "cdr_claim_ledger.json")
+    if err:
+        return False, err
+    claim_ledger, err = _load_json_file(ws / "drafts" / "claim_ledger.json")
+    if err:
+        return False, err
+    figure_registry, err = _load_json_file(ws / "drafts" / "figure_registry.json")
+    if err:
+        return False, err
 
     if not isinstance(index.get("artifacts"), list):
         return False, "manuscript_resource_index.json 缺少 artifacts 列表"
@@ -469,6 +488,27 @@ def _validate_resource_index_artifacts(ws: Path) -> tuple[bool, str | None]:
     for required in ("fig:main_results", "tab:main_results"):
         if required not in visual_ids:
             return False, f"figure_table_plan.json 缺少图表计划: {required}"
+    if cdr_ledger.get("semantics") != "cdr_claim_ledger_seed_not_final_scientific_judgment":
+        return False, "cdr_claim_ledger.json semantics 不正确"
+    cdr_tuple = cdr_ledger.get("cdr_tuple")
+    if not isinstance(cdr_tuple, dict):
+        return False, "cdr_claim_ledger.json 缺少 cdr_tuple"
+    contribution_claims = cdr_ledger.get("contribution_claims")
+    if not isinstance(contribution_claims, list) or not contribution_claims:
+        return False, "cdr_claim_ledger.json 缺少 contribution_claims"
+    for item in contribution_claims:
+        if not isinstance(item, dict):
+            return False, "cdr_claim_ledger.json contribution_claims 必须是对象列表"
+        if not item.get("cdr_field") or not isinstance(item.get("required_section"), list):
+            return False, "cdr_claim_ledger.json 每条 claim 必须包含 cdr_field 和 required_section"
+    if claim_ledger.get("semantics") != "mechanical_claim_ledger_seed_not_final_scientific_judgment":
+        return False, "claim_ledger.json semantics 不正确"
+    if not isinstance(claim_ledger.get("claims"), list) or not claim_ledger.get("claims"):
+        return False, "claim_ledger.json 缺少 claims"
+    if figure_registry.get("semantics") != "mechanical_figure_registry_seed_not_visual_generation":
+        return False, "figure_registry.json semantics 不正确"
+    if not isinstance(figure_registry.get("visuals"), list) or not figure_registry.get("visuals"):
+        return False, "figure_registry.json 缺少 visuals"
     return True, None
 
 

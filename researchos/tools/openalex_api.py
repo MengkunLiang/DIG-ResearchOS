@@ -19,6 +19,10 @@ class OpenAlexSearchParams(BaseModel):
     query: str = Field(..., description="搜索查询字符串")
     per_page: int = Field(default=10, description="每页结果数量（最多200）", ge=1, le=200)
     filter_params: str | None = Field(default=None, description="过滤参数（如 publication_year:>2020）")
+    query_bucket: str | None = Field(
+        default=None,
+        description="可选检索式桶标签，仅用于 ResearchOS 队列保护，不发送给 OpenAlex。",
+    )
 
 
 class OpenAlexGetWorkParams(BaseModel):
@@ -45,6 +49,7 @@ class OpenAlexSearchTool(Tool):
         query = kwargs["query"]
         per_page = kwargs.get("per_page", 10)
         filter_params = kwargs.get("filter_params")
+        query_bucket = kwargs.get("query_bucket")
 
         params = {
             "search": query,
@@ -158,7 +163,7 @@ class OpenAlexSearchTool(Tool):
             return ToolResult(
                 ok=True,
                 content="\n".join(content_lines),
-                data={"papers": papers, "total": total_count}
+                data={"papers": papers, "total": total_count, "query": query, "query_bucket": query_bucket}
             )
 
         except Exception as e:

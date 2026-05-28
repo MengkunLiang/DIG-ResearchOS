@@ -38,6 +38,21 @@ def novelty_auditor_agent():
     return NoveltyAuditorAgent()
 
 
+def _write_design_rationale_tuples(workspace: Path, anchors: list[str]) -> None:
+    tuple_dir = workspace / "ideation" / "_design_rationale_tuples"
+    tuple_dir.mkdir(parents=True, exist_ok=True)
+    for anchor in anchors:
+        (tuple_dir / f"{anchor}.json").write_text(
+            (
+                '{"source_id":"'
+                + anchor
+                + '","design_rationale":"fixture rationale",'
+                + '"contribution_type":"improvement"}\n'
+            ),
+            encoding="utf-8",
+        )
+
+
 def test_novelty_auditor_agent_spec(novelty_auditor_agent):
     """测试Novelty Auditor Agent的AgentSpec配置。"""
     spec = novelty_auditor_agent.spec
@@ -259,12 +274,19 @@ def test_validate_outputs_success(novelty_auditor_agent, temp_workspace):
 
 ### 需要补充的Baseline
 当前baseline覆盖充分。
+
+### CDR Gate
+Collision Axis: pass
+Ambition Axis: pass
+Contribution Distance: medium
+Final Gate Verdict: pass
 """
     audit_path.write_text(audit_content)
     tuple_dir = temp_workspace / "ideation" / "_mechanism_tuples"
     tuple_dir.mkdir()
     (tuple_dir / "H1.json").write_text('{"source_id":"H1"}\n', encoding="utf-8")
     (tuple_dir / "H2.json").write_text('{"source_id":"H2"}\n', encoding="utf-8")
+    _write_design_rationale_tuples(temp_workspace, ["H1", "H2"])
 
     ctx = ExecutionContext(
         workspace_dir=temp_workspace,
@@ -427,6 +449,12 @@ def test_validate_outputs_requires_collision_cases_when_overlap_reported(
 
 ### 新颖性判定
 **新颖性等级**: Level 0 - 无新颖性
+
+### CDR Gate
+Collision Axis: fail
+Ambition Axis: fail
+Contribution Distance: low
+Final Gate Verdict: return to T4
 """
         + "x" * 520,
         encoding="utf-8",
@@ -434,6 +462,7 @@ def test_validate_outputs_requires_collision_cases_when_overlap_reported(
     tuple_dir = temp_workspace / "ideation" / "_mechanism_tuples"
     tuple_dir.mkdir()
     (tuple_dir / "H1.json").write_text('{"source_id":"H1"}\n', encoding="utf-8")
+    _write_design_rationale_tuples(temp_workspace, ["H1"])
     ctx = ExecutionContext(
         workspace_dir=temp_workspace,
         project_id="test_project",

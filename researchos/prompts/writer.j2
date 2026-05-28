@@ -50,13 +50,16 @@ project:
    `plan_manuscript_sections(resource_index_path="drafts/manuscript_resource_index.json", output_path="drafts/section_plan.json", target_venue="{{ target_venue }}")`
 3. 调用：
    `plan_manuscript_evidence(resource_index_path="drafts/manuscript_resource_index.json", evidence_output_path="drafts/evidence_plan.json", figure_output_path="drafts/figure_table_plan.json", target_venue="{{ target_venue }}")`
-4. 读取三个计划产物，检查是否覆盖：
+4. 调用：
+   `build_manuscript_registries(resource_index_path="drafts/manuscript_resource_index.json", evidence_plan_path="drafts/evidence_plan.json", figure_table_plan_path="drafts/figure_table_plan.json", cdr_output_path="drafts/cdr_claim_ledger.json", claim_output_path="drafts/claim_ledger.json", figure_output_path="drafts/figure_registry.json")`
+5. 读取计划和 registry 产物，检查是否覆盖：
    - literature / paper notes / bibliography
    - hypotheses / exp_plan / idea_scorecard / novelty audit
    - results_summary / ablations / seed ensemble / run artifacts
    - figures / tables / code / logs
    - evidence claim slots / figure-table slots
-5. 如有明显缺失，在 `drafts/section_plan.json`、`drafts/evidence_plan.json` 或 `drafts/figure_table_plan.json` 对应位置保留，不要假装已存在。
+   - CDR claim ledger / generic claim ledger / figure registry
+6. 如有明显缺失，在对应计划或 ledger 中保留 TODO/unsupported，不要假装已存在。
 
 {% elif phase == "outline" %}
 ## Phase 1: 论文论证大纲
@@ -83,6 +86,21 @@ project:
 {{ figure_table_plan_preview }}
 ```
 
+#### CDR Claim Ledger
+```json
+{{ cdr_claim_ledger_preview }}
+```
+
+#### Claim Ledger
+```json
+{{ claim_ledger_preview }}
+```
+
+#### Figure Registry
+```json
+{{ figure_registry_preview }}
+```
+
 #### 文献综述
 {{ synthesis_preview[:4000] }}
 
@@ -100,21 +118,21 @@ project:
 
 1. 标题候选 3-5 个，说明每个标题适合的投稿定位。
 2. Paper thesis：一句话说明本文真正证明什么。
-3. Contribution map：每条贡献对应证据来源、实验结果、图表/表格计划。
+3. Contribution map：每条贡献对应 `cdr_claim_ledger.json` 的 CDR 字段、证据来源、实验结果、图表/表格计划。
 4. Section-by-section argument：
-   - Abstract: 最后写，只列要点
-   - Introduction: 背景、痛点、gap、insight、贡献、结果 headline
-   - Related Work: taxonomy、差异点、本文位置
-   - Method: 核心机制、算法/流程、实现细节
-   - Experiments: setup、baseline、metrics、main results、ablation、seed ensemble
-   - Analysis: mechanism evidence、failure cases、sensitivity
-   - Limitations: direct-full/T5/T6 evidence boundary、外部有效性、成本
-   - Conclusion: 收束贡献与未来工作
+   - Abstract: 压缩 problem_frame、design_rationale、artifact/evidence、contribution_type
+   - Introduction: 背景、problem frame、field-change argument、贡献、结果 headline
+   - Related Work: design-rationale competition 和 citation-backed positioning
+   - Method: artifact 为什么这样设计、设计原则、算法/流程、实现细节
+   - Experiments: data_view、evaluation_mode、setup、baseline、metrics、main results、ablation、seed ensemble
+   - Analysis: design_rationale evidence、alternative explanations、failure cases、sensitivity
+   - Limitations: boundary_conditions、direct-full/T5/T6 evidence boundary、外部有效性、成本
+   - Conclusion: contribution_type、可迁移设计知识与未来工作
 5. Figure/table plan：
    - 每个 figure/table 的来源：existing artifact / generated from results / TODO
    - 必须参考 `drafts/figure_table_plan.json`，不能在没有数据的情况下承诺图表已经存在
    - 需要新生成的图表写清输入数据和目标信息
-6. Claim ledger：核心 claims 列表，每条 claim 的证据文件和 citation plan；必须参考 `drafts/evidence_plan.json` 的 claim_slots。
+6. Claim ledger：核心 claims 列表，每条 claim 的 CDR field、证据文件和 citation plan；必须参考 `drafts/cdr_claim_ledger.json` 与 `drafts/evidence_plan.json` 的 claim_slots。
 
 {% elif phase == "section_plan" %}
 ## Phase 1.5: 逐章节写作状态初始化
@@ -170,6 +188,16 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 {{ paper_state_preview }}
 ```
 
+#### CDR Claim Ledger
+```json
+{{ cdr_claim_ledger_preview }}
+```
+
+#### Claim Ledger
+```json
+{{ claim_ledger_preview }}
+```
+
 #### Section Outline
 ```markdown
 {{ section_outline_preview }}
@@ -211,31 +239,32 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 4. 章节文件只能包含该章节内容。可以包含 `\section{...}`，但不能包含 `\documentclass`、`\begin{document}`、`\end{document}`。
 5. 所有数字必须来自 `paper_state.shared_facts.result_metrics` 或明确读取的实验 artifact。
 6. 所有 citation key 必须来自 `paper_state.shared_facts.bib_keys` 或 `literature/related_work.bib`。
-7. 写完后调用：
+7. CDR ledger 是写作 scaffold，不是最终表述；你要用 LLM 判断把 design rationale / contribution type 写成连贯学术论证。
+8. 写完后调用：
    `update_manuscript_section_state(section_id="{{ section_id }}", state_path="drafts/paper_state.json", section_path="drafts/sections/{{ section_id }}.tex", status="written")`
-8. 然后调用 `finish_task`。
+9. 然后调用 `finish_task`。
 
 ### Section-specific guidance
 
 {% if section_id == "methodology" %}
-- 先稳定方法名、机制、输入输出和算法流程；不要使用实验结果证明方法有效。
+- 先稳定方法名、artifact、design rationale、输入输出和算法流程；不要使用实验结果证明方法有效。
 - 如果方法包含多个阶段，用 subsections 展开，但仍只写 method section。
 {% elif section_id == "experiments" %}
-- 写 setup、datasets、baselines、metrics、compute、main results、ablations。
+- 写 data_view、evaluation_mode、setup、datasets、baselines、metrics、compute、main results、ablations。
 - 数字必须逐一对照 results/ablations；不确定的统计写 TODO。
 {% elif section_id == "related_work" %}
-- 按 taxonomy 组织，不按论文流水账。
-- 每段必须说明已有工作做到什么、本文不同在哪里。
+- 按 competing design rationale 组织，不按论文流水账。
+- 每段必须说明已有工作背后的设计论证、它们互相的 tension、本文为什么采取不同 rationale。
 {% elif section_id == "analysis" %}
-- 解释结果如何支持或削弱机制，列出替代解释和 failure cases。
+- 解释结果如何支持或削弱 design rationale，列出替代解释和 failure cases。
 {% elif section_id == "introduction" %}
-- 只在 method/experiments 已写后写 intro，确保贡献和结果 headline 不超过已有 evidence。
+- 只在 method/experiments 已写后写 intro，确保“领域会怎样不同”的贡献论证和结果 headline 不超过已有 evidence。
 {% elif section_id == "limitations" %}
-- 明确 direct-full、跳过 T5/T6、数据规模、baseline 覆盖、复现风险。
+- 明确 boundary_conditions、direct-full、跳过 T5/T6、数据规模、baseline 覆盖、复现风险。
 {% elif section_id == "conclusion" %}
-- 不引入新 claim；呼应 introduction 和 experiments。
+- 不引入新 claim；呼应 contribution_type、design knowledge、introduction 和 experiments。
 {% elif section_id == "abstract" %}
-- 最后写；压缩 problem、method、evidence、result、contribution，不引入正文没有的 claim。
+- 最后写；压缩 problem_frame、design_rationale、artifact/evidence、result、contribution_type，不引入正文没有的 claim。
 {% endif %}
 
 {% elif phase == "draft" %}

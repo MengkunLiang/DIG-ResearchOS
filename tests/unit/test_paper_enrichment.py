@@ -235,3 +235,52 @@ def test_build_deep_read_queue_prefers_verified_pool_when_caller_passes_dedup(tm
     ]
     assert all(item["verification_status"] == "metadata_verified" for item in queue)
     assert meta["source_pool"] == "papers_verified"
+
+
+def test_build_deep_read_queue_protects_llm_labeled_adjacent_bucket(tmp_path):
+    workspace = tmp_path / "ws"
+    (workspace / "literature").mkdir(parents=True, exist_ok=True)
+    (workspace / "user_seeds").mkdir(parents=True, exist_ok=True)
+
+    papers = []
+    for idx in range(6):
+        papers.append(
+            {
+                "id": f"core-{idx}",
+                "title": f"Core Paper {idx}",
+                "source": "openalex",
+                "year": 2026,
+                "abstract": "core target-domain paper",
+                "relevance_score": 0.95 - idx * 0.02,
+                "verification_status": "metadata_verified",
+                "verification_confidence": 0.9,
+            }
+        )
+    papers.append(
+        {
+            "id": "adjacent-low-score",
+            "title": "Adjacent Field Analogy",
+            "source": "crossref",
+            "year": 2024,
+            "abstract": "adjacent field design rationale",
+            "relevance_score": 0.1,
+            "verification_status": "metadata_verified",
+            "verification_confidence": 0.9,
+            "search_bucket": "adjacent_field",
+        }
+    )
+
+    queue, meta = build_deep_read_queue(
+        enrich_papers(papers),
+        workspace,
+        deep_read_min=2,
+        deep_read_target=4,
+        deep_read_max=4,
+        probe_pool=4,
+    )
+
+    assert "adjacent-low-score" in {item["paper_id"] for item in queue}
+    adjacent = next(item for item in queue if item["paper_id"] == "adjacent-low-score")
+    assert adjacent["adjacent_field"] is True
+    assert adjacent["search_bucket"] == "adjacent_field"
+    assert meta["protected_bucket_in_queue"] >= 1

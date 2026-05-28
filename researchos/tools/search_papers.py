@@ -30,6 +30,10 @@ class SearchPapersParams(BaseModel):
     year_from: int | None = Field(None, description="起始年份，如 2022")
     year_to: int | None = Field(None, description="截止年份")
     max_results: int = Field(20, ge=1, le=100, description="最多返回多少篇论文")
+    query_bucket: str | None = Field(
+        None,
+        description="可选检索式桶标签，仅用于后续队列保护，例如 core/baseline/adjacent_field/theory_bridge。",
+    )
     source: Literal["semantic_scholar", "arxiv", "auto"] = Field(
         "auto",
         description="优先使用的来源",
@@ -58,6 +62,8 @@ class SearchPapersTool(Tool):
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         params = SearchPapersParams(**kwargs)
+        query_bucket = params.query_bucket
+        params.query_bucket = None
         papers: list[dict[str, Any]] = []
         source_used = params.source
 
@@ -93,7 +99,13 @@ class SearchPapersTool(Tool):
         return ToolResult(
             ok=True,
             content=self._format_papers(papers),
-            data={"source": source_used, "papers": papers, "count": len(papers)},
+            data={
+                "source": source_used,
+                "papers": papers,
+                "count": len(papers),
+                "query": params.query,
+                "query_bucket": query_bucket,
+            },
         )
 
     async def _s2_search(self, params: SearchPapersParams) -> list[dict[str, Any]]:

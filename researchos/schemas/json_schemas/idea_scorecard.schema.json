@@ -48,6 +48,42 @@
               "mechanism_family": {
                 "type": "string",
                 "minLength": 1
+              },
+              "cdr_tuple": {
+                "type": "object",
+                "properties": {
+                  "problem_frame": {"type": "string"},
+                  "design_rationale": {"type": "string"},
+                  "artifact": {"type": "string"},
+                  "design_principles": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                  },
+                  "data_view": {"type": "string"},
+                  "evaluation_mode": {"type": "string"},
+                  "contribution_type": {
+                    "type": "string",
+                    "enum": ["invention", "improvement", "exaptation", "routine"]
+                  },
+                  "boundary_conditions": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                  },
+                  "cross_paper_tension": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                  }
+                },
+                "additionalProperties": true
+              },
+              "contribution_type": {
+                "type": "string",
+                "enum": ["invention", "improvement", "exaptation", "routine"]
+              },
+              "contribution_strength": {
+                "type": ["integer", "number"],
+                "minimum": 1,
+                "maximum": 5
               }
             },
             "required": ["id", "title", "pitch", "core_claim", "target_problem", "mechanism", "prediction", "counterfactual", "mechanism_family"],
@@ -79,7 +115,6 @@
               },
               "supporting_papers": {
                 "type": "array",
-                "minItems": 1,
                 "items": {
                   "type": "object",
                   "properties": {
@@ -114,6 +149,10 @@
                   "seed_refinement",
                   "seed_derived",
                   "evidence_driven",
+                  "synthesis_gestalt",
+                  "problem_reframing",
+                  "design_rationale_derivation",
+                  "cross_domain_analogy",
                   "mechanism_challenge",
                   "reverse_operation",
                   "subgroup_failure",
@@ -121,18 +160,19 @@
                   "gap_exploration"
                 ]
               },
+              "prior_art": {
+                "type": ["string", "object", "null"],
+                "description": "Optional novelty grounding. 'none' is valid and can indicate high novelty with high risk."
+              },
               "constraint_status": {
                 "type": "string",
                 "enum": ["mainline", "supplement", "not_supported_by_current_evidence"]
               }
             },
             "required": [
-              "from_synthesis_section",
-              "from_missing_area",
               "from_seed_idea",
               "idea_origin",
               "constraint_status",
-              "supporting_papers",
               "trigger_observation"
             ],
             "additionalProperties": true
@@ -159,20 +199,22 @@
               "paper_story": {
                 "type": "string",
                 "minLength": 1
+              },
+              "contribution_character": {
+                "type": "string",
+                "description": "Forward-looking answer: how the field changes if the idea works."
               }
             },
             "required": [
               "novelty_reason",
               "feasibility_reason",
               "impact_reason",
-              "evaluability_reason",
-              "paper_story"
+              "evaluability_reason"
             ],
             "additionalProperties": true
           },
           "closest_baselines": {
             "type": "array",
-            "minItems": 1,
             "items": {
               "type": "object",
               "properties": {
@@ -226,7 +268,7 @@
                 "minimum": 1,
                 "maximum": 5
               },
-              "paper_shapability": {
+              "contribution_strength": {
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 5
@@ -239,7 +281,7 @@
               "evaluability",
               "differentiation",
               "cost",
-              "paper_shapability"
+              "contribution_strength"
             ],
             "additionalProperties": true
           },
@@ -343,7 +385,6 @@
           "idea",
           "source",
           "selection_rationale",
-          "closest_baselines",
           "scores",
           "decision",
           "risks",

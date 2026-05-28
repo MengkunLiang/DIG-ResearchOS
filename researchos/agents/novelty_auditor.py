@@ -52,6 +52,8 @@ class NoveltyAuditorAgent(Agent):
                         "fetch_paper_metadata",
                         "extract_mechanism_tuple",
                         "compare_mechanism_tuples",
+                        "extract_design_rationale_tuple",
+                        "compare_design_rationale_tuples",
                         "finish_task",
                     ],
                     "max_steps": 60,
@@ -150,6 +152,34 @@ class NoveltyAuditorAgent(Agent):
                 return False, (
                     f"ideation/_mechanism_tuples/ 缺少假设 {anchor} 的 mechanism tuple 文件"
                 )
+
+        design_tuple_dir = ws / "ideation" / "_design_rationale_tuples"
+        if not design_tuple_dir.is_dir():
+            return False, "缺少 ideation/_design_rationale_tuples/；T4.5 必须保存 design-rationale tuple"
+        for anchor in anchors:
+            anchor_lower = anchor.lower()
+            has_tuple = any(
+                anchor_lower in f.stem.lower()
+                for f in design_tuple_dir.glob("*.json")
+            )
+            if not has_tuple:
+                return False, (
+                    f"ideation/_design_rationale_tuples/ 缺少假设 {anchor} 的 design-rationale tuple 文件"
+                )
+
+        for marker in [
+            "Collision Axis",
+            "Ambition Axis",
+            "Contribution Distance",
+            "Final Gate Verdict",
+        ]:
+            if marker not in audit_text:
+                return False, f"novelty_audit.md 必须包含 {marker}"
+        if re.search(r"(?i)contribution[_ -]?type\s*[:：]\s*routine", audit_text) and not re.search(
+            r"(?i)(return to T4|回到T4|回退T4|reframe|needs reframing)",
+            audit_text,
+        ):
+            return False, "routine contribution 必须明确要求回到 T4 或重新 framing"
 
         # 检查最终确认的 true_collision (high confidence) 必须对应 Level 0。
         # Tool 现在只返回 possible_* heuristic hints；不能因为 hint 自动判死刑。

@@ -177,6 +177,7 @@ states:
     outputs:
       novelty_audit: ideation/novelty_audit.md          # 新颖性审计报告
       mechanism_tuples_dir: ideation/_mechanism_tuples   # mechanism tuple 中间产物
+      design_rationale_tuples_dir: ideation/_design_rationale_tuples # CDR design-rationale tuple 中间产物
     optional_outputs:
       collision_cases: ideation/collision_cases.md       # 条件输出：High/Medium Overlap 时必须存在
     # 当前主链暂时跳过 T5 pilot 与 T6 novelty-final，直接进入 T7 full 实验。
@@ -314,6 +315,9 @@ states:
       section_plan: drafts/section_plan.json
       evidence_plan: drafts/evidence_plan.json
       figure_table_plan: drafts/figure_table_plan.json
+      cdr_claim_ledger: drafts/cdr_claim_ledger.json
+      claim_ledger: drafts/claim_ledger.json
+      figure_registry: drafts/figure_registry.json
     next_on_success: T8-WRITE
     next_on_failure: failed
 
@@ -333,6 +337,9 @@ states:
       section_plan: drafts/section_plan.json
       evidence_plan: drafts/evidence_plan.json
       figure_table_plan: drafts/figure_table_plan.json
+      cdr_claim_ledger: drafts/cdr_claim_ledger.json
+      claim_ledger: drafts/claim_ledger.json
+      figure_registry: drafts/figure_registry.json
     outputs:
       outline: drafts/outline.md                       # 论文大纲
     next_on_success: T8-SECTION-PLAN
@@ -355,6 +362,9 @@ states:
       section_plan: drafts/section_plan.json
       evidence_plan: drafts/evidence_plan.json
       figure_table_plan: drafts/figure_table_plan.json
+      cdr_claim_ledger: drafts/cdr_claim_ledger.json
+      claim_ledger: drafts/claim_ledger.json
+      figure_registry: drafts/figure_registry.json
       ablations: experiments/ablations.csv
     outputs:
       paper_state: drafts/paper_state.json
@@ -378,6 +388,9 @@ states:
       manuscript_resource_index: drafts/manuscript_resource_index.json
       evidence_plan: drafts/evidence_plan.json
       figure_table_plan: drafts/figure_table_plan.json
+      cdr_claim_ledger: drafts/cdr_claim_ledger.json
+      claim_ledger: drafts/claim_ledger.json
+      figure_registry: drafts/figure_registry.json
     outputs:
       section: drafts/sections/methodology.tex
     next_on_success: T8-SEC-EXPERIMENTS
@@ -398,6 +411,9 @@ states:
       manuscript_resource_index: drafts/manuscript_resource_index.json
       evidence_plan: drafts/evidence_plan.json
       figure_table_plan: drafts/figure_table_plan.json
+      cdr_claim_ledger: drafts/cdr_claim_ledger.json
+      claim_ledger: drafts/claim_ledger.json
+      figure_registry: drafts/figure_registry.json
     outputs:
       section: drafts/sections/experiments.tex
     next_on_success: T8-SEC-RELATED
@@ -417,6 +433,9 @@ states:
       comparison_table: literature/comparison_table.csv
       manuscript_resource_index: drafts/manuscript_resource_index.json
       evidence_plan: drafts/evidence_plan.json
+      cdr_claim_ledger: drafts/cdr_claim_ledger.json
+      claim_ledger: drafts/claim_ledger.json
+      figure_registry: drafts/figure_registry.json
     outputs:
       section: drafts/sections/related_work.tex
     next_on_success: T8-SEC-ANALYSIS
@@ -436,6 +455,9 @@ states:
       novelty_audit: ideation/novelty_audit.md
       manuscript_resource_index: drafts/manuscript_resource_index.json
       evidence_plan: drafts/evidence_plan.json
+      cdr_claim_ledger: drafts/cdr_claim_ledger.json
+      claim_ledger: drafts/claim_ledger.json
+      figure_registry: drafts/figure_registry.json
     outputs:
       section: drafts/sections/analysis.tex
     next_on_success: T8-SEC-INTRO
@@ -458,6 +480,9 @@ states:
       manuscript_resource_index: drafts/manuscript_resource_index.json
       evidence_plan: drafts/evidence_plan.json
       figure_table_plan: drafts/figure_table_plan.json
+      cdr_claim_ledger: drafts/cdr_claim_ledger.json
+      claim_ledger: drafts/claim_ledger.json
+      figure_registry: drafts/figure_registry.json
     outputs:
       section: drafts/sections/introduction.tex
     next_on_success: T8-SEC-LIMITATIONS
@@ -476,6 +501,9 @@ states:
       novelty_audit: ideation/novelty_audit.md
       results_summary: experiments/results_summary.json
       manuscript_resource_index: drafts/manuscript_resource_index.json
+      cdr_claim_ledger: drafts/cdr_claim_ledger.json
+      claim_ledger: drafts/claim_ledger.json
+      figure_registry: drafts/figure_registry.json
     outputs:
       section: drafts/sections/limitations.tex
     next_on_success: T8-SEC-CONCLUSION
@@ -493,6 +521,9 @@ states:
       introduction_section: drafts/sections/introduction.tex
       experiments_section: drafts/sections/experiments.tex
       limitations_section: drafts/sections/limitations.tex
+      cdr_claim_ledger: drafts/cdr_claim_ledger.json
+      claim_ledger: drafts/claim_ledger.json
+      figure_registry: drafts/figure_registry.json
     outputs:
       section: drafts/sections/conclusion.tex
     next_on_success: T8-SEC-ABSTRACT
@@ -513,6 +544,9 @@ states:
       analysis_section: drafts/sections/analysis.tex
       limitations_section: drafts/sections/limitations.tex
       conclusion_section: drafts/sections/conclusion.tex
+      cdr_claim_ledger: drafts/cdr_claim_ledger.json
+      claim_ledger: drafts/claim_ledger.json
+      figure_registry: drafts/figure_registry.json
     outputs:
       section: drafts/sections/abstract.tex
     next_on_success: T8-DRAFT
@@ -539,6 +573,9 @@ states:
       section_plan: drafts/section_plan.json
       evidence_plan: drafts/evidence_plan.json
       figure_table_plan: drafts/figure_table_plan.json
+      cdr_claim_ledger: drafts/cdr_claim_ledger.json
+      claim_ledger: drafts/claim_ledger.json
+      figure_registry: drafts/figure_registry.json
     outputs:
       paper: drafts/paper.tex                           # 论文草稿
       manuscript_audit: drafts/manuscript_audit.md       # 机械审计报告
@@ -561,6 +598,9 @@ states:
       section_plan: drafts/section_plan.json
       evidence_plan: drafts/evidence_plan.json
       figure_table_plan: drafts/figure_table_plan.json
+      cdr_claim_ledger: drafts/cdr_claim_ledger.json
+      claim_ledger: drafts/claim_ledger.json
+      figure_registry: drafts/figure_registry.json
       manuscript_audit: drafts/manuscript_audit.md
     outputs:
       self_check: drafts/self_check.md
@@ -580,6 +620,7 @@ states:
       related_work_bib: literature/related_work.bib      # 输入：引用库
       manuscript_audit: drafts/manuscript_audit.md       # 输入：机械审计报告
       self_check: drafts/self_check.md                   # 输入：作者自查
+      cdr_claim_ledger: drafts/cdr_claim_ledger.json
     outputs:
       review_report: drafts/review_rounds/round_1.md   # 审稿报告
       section_review_dir: drafts/review_rounds/round_1_sections # 逐章节审稿
@@ -607,6 +648,9 @@ states:
       manuscript_resource_index: drafts/manuscript_resource_index.json
       evidence_plan: drafts/evidence_plan.json
       figure_table_plan: drafts/figure_table_plan.json
+      cdr_claim_ledger: drafts/cdr_claim_ledger.json
+      claim_ledger: drafts/claim_ledger.json
+      figure_registry: drafts/figure_registry.json
       manuscript_audit: drafts/manuscript_audit.md
     outputs:
       revision_patches: drafts/patches/round_1_patches.json
@@ -629,6 +673,7 @@ states:
       related_work_bib: literature/related_work.bib
       manuscript_audit: drafts/manuscript_audit.md
       previous_review: drafts/review_rounds/round_1.md
+      cdr_claim_ledger: drafts/cdr_claim_ledger.json
     outputs:
       review_report: drafts/review_rounds/round_2.md   # 审稿报告
       section_review_dir: drafts/review_rounds/round_2_sections # 逐章节审稿
@@ -657,6 +702,9 @@ states:
       manuscript_resource_index: drafts/manuscript_resource_index.json
       evidence_plan: drafts/evidence_plan.json
       figure_table_plan: drafts/figure_table_plan.json
+      cdr_claim_ledger: drafts/cdr_claim_ledger.json
+      claim_ledger: drafts/claim_ledger.json
+      figure_registry: drafts/figure_registry.json
       manuscript_audit: drafts/manuscript_audit.md
     outputs:
       revision_patches: drafts/patches/round_2_patches.json
@@ -682,6 +730,7 @@ states:
       references_bib: submission/bundle/references.bib
       main_pdf: submission/bundle/main.pdf
       compile_log: submission/bundle/main.log
+      compile_report: submission/compile_report.json
     gate:
       type: submission_gate
       prompt: |

@@ -17,6 +17,7 @@ from researchos.tools.literature_synthesis import BuildSynthesisWorkbenchTool
 from researchos.tools.manuscript import (
     AssembleManuscriptTool,
     AuditManuscriptClaimsTool,
+    BuildManuscriptRegistriesTool,
     BuildManuscriptRevisionPatchesTool,
     BuildManuscriptResourceIndexTool,
     InitializeManuscriptStateTool,
@@ -211,6 +212,13 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
         for visual in figure_table_plan["planned_visuals"]
         if "table_id" in visual
     )
+
+    registry_tool = BuildManuscriptRegistriesTool(policy)
+    registry_result = await registry_tool.execute()
+    assert registry_result.ok, registry_result.content
+    assert (tmp_workspace / "drafts" / "cdr_claim_ledger.json").exists()
+    assert (tmp_workspace / "drafts" / "claim_ledger.json").exists()
+    assert (tmp_workspace / "drafts" / "figure_registry.json").exists()
 
     validator = WriterAgent()
     ok, err = validator.validate_outputs(_WriterContext(tmp_workspace, "resource_index"))

@@ -22,6 +22,20 @@ CORE_SECTION_ORDER = [
     "conclusion",
 ]
 
+CDR_FIELDS = [
+    "problem_frame",
+    "design_rationale",
+    "artifact",
+    "design_principles",
+    "data_view",
+    "evaluation_mode",
+    "contribution_type",
+    "boundary_conditions",
+    "cross_paper_tension",
+]
+
+CDR_CONTRIBUTION_TYPES = {"invention", "improvement", "exaptation", "routine"}
+
 
 def build_claim_ledger_seed(
     evidence_plan: dict[str, Any],
@@ -152,9 +166,138 @@ def validate_claim_ledger(
             for ref in _unique_strings(claim.get("evidence_refs", [])) + _unique_strings(
                 claim.get("verified_evidence_refs", [])
             ):
+                if _artifact_path_exists(artifacts, ref):
+                    continue
                 if ref not in artifacts:
                     issues.append(f"{claim_id or index}: evidence artifact not indexed: {ref}")
 
+    return issues
+
+
+def build_cdr_claim_ledger_seed(
+    *,
+    evidence_plan: dict[str, Any],
+    resource_index: dict[str, Any] | None = None,
+    source_texts: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Build a CDR ledger seed without making final contribution judgments."""
+
+    source_texts = source_texts or {}
+    known_artifacts = sorted(_known_artifacts(resource_index))
+    cdr_tuple = _extract_cdr_tuple_hints(source_texts)
+    slots = evidence_plan.get("claim_slots", []) if isinstance(evidence_plan, dict) else []
+    claims: list[dict[str, Any]] = []
+    used_ids: set[str] = set()
+    for index, slot in enumerate(slots if isinstance(slots, list) else [], start=1):
+        if not isinstance(slot, dict):
+            continue
+        slot_id = str(slot.get("slot_id") or f"claim_slot_{index:03d}").strip()
+        claim_id = _dedupe_id(_safe_id(f"cdr_{slot_id}", fallback=f"cdr_claim_{index:03d}"), used_ids)
+        used_ids.add(claim_id)
+        section = _normalize_section(str(slot.get("section") or ""))
+        cdr_field = str(slot.get("cdr_field") or _default_cdr_field_for_section(section)).strip()
+        if cdr_field not in CDR_FIELDS:
+            cdr_field = _default_cdr_field_for_section(section)
+        evidence_refs = _unique_strings(slot.get("candidate_evidence", []))
+        claims.append(
+            {
+                "claim_id": claim_id,
+                "source_slot_id": slot_id,
+                "claim": "",
+                "status": "needs_llm_claim",
+                "cdr_field": cdr_field,
+                "required_section": [section] if section in CORE_SECTION_ORDER else [],
+                "evidence_artifacts": evidence_refs,
+                "citation_plan": _unique_strings(slot.get("citation_pool", [])),
+                "risk_if_unsupported": _risk_for_cdr_field(cdr_field),
+                "llm_task": str(slot.get("llm_task") or ""),
+                "notes": "Seeded mechanically from evidence_plan; Writer LLM must write/verify final claim.",
+            }
+        )
+
+    if not claims:
+        for index, cdr_field in enumerate(CDR_FIELDS[:6], start=1):
+            claims.append(
+                {
+                    "claim_id": f"cdr_{cdr_field}",
+                    "source_slot_id": "synthetic_cdr_field",
+                    "claim": "",
+                    "status": "needs_llm_claim",
+                    "cdr_field": cdr_field,
+                    "required_section": _sections_for_cdr_field(cdr_field),
+                    "evidence_artifacts": known_artifacts[:6],
+                    "citation_plan": [],
+                    "risk_if_unsupported": _risk_for_cdr_field(cdr_field),
+                    "llm_task": "Fill this CDR claim after reading source artifacts.",
+                    "notes": "Fallback seed because evidence_plan had no claim slots.",
+                }
+            )
+
+    return {
+        "version": "1.0",
+        "semantics": "cdr_claim_ledger_seed_not_final_scientific_judgment",
+        "paper_thesis": _extract_paper_thesis_hint(source_texts),
+        "cdr_tuple": cdr_tuple,
+        "contribution_claims": sorted(
+            claims,
+            key=lambda item: (
+                _section_sort_key((item.get("required_section") or ["global"])[0]),
+                str(item.get("claim_id")),
+            ),
+        ),
+        "source_artifacts": {
+            "available": known_artifacts,
+            "used_for_seeding": sorted(source_texts),
+        },
+        "rules": [
+            "This ledger is a mechanical seed; LLMs decide final claim wording and contribution framing.",
+            "Do not use provenance count as a quality gate.",
+            "A selected paper must explain design_rationale and contribution_type in prose.",
+            "Unsupported CDR claims must be marked as limitation or TODO, not invented.",
+        ],
+    }
+
+
+def validate_cdr_claim_ledger(ledger: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    if ledger.get("semantics") != "cdr_claim_ledger_seed_not_final_scientific_judgment":
+        issues.append("cdr ledger semantics is incorrect")
+    cdr_tuple = ledger.get("cdr_tuple")
+    if not isinstance(cdr_tuple, dict):
+        issues.append("cdr ledger missing cdr_tuple")
+        cdr_tuple = {}
+    contribution_type = str(cdr_tuple.get("contribution_type") or "").strip()
+    if contribution_type and contribution_type not in CDR_CONTRIBUTION_TYPES:
+        issues.append(f"invalid contribution_type: {contribution_type}")
+    for field in ("problem_frame", "design_rationale", "artifact", "data_view", "evaluation_mode"):
+        if field not in cdr_tuple:
+            issues.append(f"cdr_tuple missing field: {field}")
+    claims = ledger.get("contribution_claims")
+    if not isinstance(claims, list) or not claims:
+        issues.append("cdr ledger has no contribution_claims")
+        return issues
+    seen: set[str] = set()
+    for index, claim in enumerate(claims, start=1):
+        if not isinstance(claim, dict):
+            issues.append(f"contribution_claim #{index} is not an object")
+            continue
+        claim_id = str(claim.get("claim_id") or "").strip()
+        if not claim_id:
+            issues.append(f"contribution_claim #{index} missing claim_id")
+        elif claim_id in seen:
+            issues.append(f"duplicate contribution_claim id: {claim_id}")
+        seen.add(claim_id)
+        cdr_field = str(claim.get("cdr_field") or "").strip()
+        if cdr_field not in CDR_FIELDS:
+            issues.append(f"{claim_id or index}: invalid cdr_field {cdr_field!r}")
+        sections = claim.get("required_section")
+        if not isinstance(sections, list):
+            issues.append(f"{claim_id or index}: required_section must be a list")
+        evidence = claim.get("evidence_artifacts")
+        if not isinstance(evidence, list):
+            issues.append(f"{claim_id or index}: evidence_artifacts must be a list")
+        if not str(claim.get("risk_if_unsupported") or "").strip():
+            issues.append(f"{claim_id or index}: missing risk_if_unsupported")
     return issues
 
 
@@ -256,6 +399,8 @@ def validate_figure_registry(
 
         if artifacts:
             for ref in _unique_strings(visual.get("source_artifacts", [])):
+                if _artifact_path_exists(artifacts, ref):
+                    continue
                 if ref not in artifacts:
                     issues.append(f"{visual_id or index}: source artifact not indexed: {ref}")
 
@@ -277,6 +422,103 @@ def _known_artifacts(resource_index: dict[str, Any] | None) -> set[str]:
             if isinstance(item, dict) and item.get("path")
         )
     return paths
+
+
+def _artifact_path_exists(artifacts: set[str], ref: str) -> bool:
+    if ref in artifacts:
+        return True
+    prefix = ref.rstrip("/") + "/"
+    return any(item == ref or item.startswith(prefix) for item in artifacts)
+
+
+def _extract_cdr_tuple_hints(source_texts: dict[str, str]) -> dict[str, Any]:
+    combined = "\n".join(source_texts.values())
+    contribution_type = _extract_contribution_type(combined)
+    return {
+        "problem_frame": _extract_labeled_hint(combined, "problem_frame") or "",
+        "design_rationale": _extract_labeled_hint(combined, "design_rationale") or "",
+        "artifact": _extract_labeled_hint(combined, "artifact") or "",
+        "design_principles": _extract_list_hint(combined, "design_principles"),
+        "data_view": _extract_labeled_hint(combined, "data_view") or "",
+        "evaluation_mode": _extract_labeled_hint(combined, "evaluation_mode") or "",
+        "contribution_type": contribution_type or "",
+        "boundary_conditions": _extract_list_hint(combined, "boundary_conditions"),
+        "cross_paper_tension": _extract_list_hint(combined, "cross_paper_tension"),
+        "hint_semantics": "mechanical_text_hints_for_llm_review_not_final_claims",
+    }
+
+
+def _extract_paper_thesis_hint(source_texts: dict[str, str]) -> str:
+    for text in source_texts.values():
+        for pattern in (
+            r"(?im)^paper[_ -]?thesis\s*[:：]\s*(.+)$",
+            r"(?im)^thesis\s*[:：]\s*(.+)$",
+            r"(?im)^core[_ -]?claim\s*[:：]\s*(.+)$",
+        ):
+            match = re.search(pattern, text)
+            if match:
+                return match.group(1).strip()[:500]
+    return ""
+
+
+def _extract_contribution_type(text: str) -> str:
+    match = re.search(
+        r"(?i)\b(invention|improvement|exaptation|routine)\b",
+        text,
+    )
+    return match.group(1).lower() if match else ""
+
+
+def _extract_labeled_hint(text: str, label: str) -> str:
+    variants = {label, label.replace("_", " "), label.replace("_", "-")}
+    for variant in variants:
+        pattern = rf"(?im)^\s*[-*]?\s*['\"]?{re.escape(variant)}['\"]?\s*[:：]\s*(.+)$"
+        match = re.search(pattern, text)
+        if match:
+            return match.group(1).strip()[:800]
+    return ""
+
+
+def _extract_list_hint(text: str, label: str) -> list[str]:
+    value = _extract_labeled_hint(text, label)
+    if not value:
+        return []
+    return _unique_strings(re.split(r"[;；]|,\s+|，", value))
+
+
+def _default_cdr_field_for_section(section: str) -> str:
+    return {
+        "abstract": "contribution_type",
+        "introduction": "problem_frame",
+        "related_work": "cross_paper_tension",
+        "methodology": "design_rationale",
+        "experiments": "evaluation_mode",
+        "analysis": "design_rationale",
+        "limitations": "boundary_conditions",
+        "conclusion": "design_principles",
+    }.get(section, "design_rationale")
+
+
+def _sections_for_cdr_field(cdr_field: str) -> list[str]:
+    return {
+        "problem_frame": ["introduction", "abstract"],
+        "design_rationale": ["methodology", "analysis", "introduction"],
+        "artifact": ["methodology"],
+        "design_principles": ["methodology", "conclusion"],
+        "data_view": ["experiments"],
+        "evaluation_mode": ["experiments", "analysis"],
+        "contribution_type": ["abstract", "introduction", "conclusion"],
+        "boundary_conditions": ["limitations", "analysis"],
+        "cross_paper_tension": ["related_work", "introduction"],
+    }.get(cdr_field, [])
+
+
+def _risk_for_cdr_field(cdr_field: str) -> str:
+    if cdr_field in {"design_rationale", "contribution_type", "problem_frame"}:
+        return "high"
+    if cdr_field in {"evaluation_mode", "data_view", "boundary_conditions"}:
+        return "medium"
+    return "low"
 
 
 def _media_list(data: dict[str, Any] | None, key: str) -> list[dict[str, Any]]:

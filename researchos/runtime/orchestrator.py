@@ -17,6 +17,7 @@ from .config import RuntimeSettings
 from .errors import BudgetExceeded, LLMProviderError, RecoverableRuntimePause, ToolAccessDenied, ToolError
 from .llm_client import LLMClient, ModelBinding
 from .logger import get_logger
+from .manuscript_recovery import can_repair_t8_section_plan, repair_t8_section_plan_outputs
 from .message import Message, Role, ToolCall, is_empty_assistant
 from .t2_recovery import finalize_t2_outputs
 from .abstract_sweep import run_abstract_sweep
@@ -60,6 +61,26 @@ TOOL_CONTEXT_CONTENT_LIMITS = {
     "extract_paper_sections": 12000,
     "extract_pdf_text": 50000,
 }
+T2_PROTECTED_SEARCH_BUCKET_ALIASES = {
+    "adjacent": "adjacent_field",
+    "adjacent-field": "adjacent_field",
+    "adjacent_field": "adjacent_field",
+    "cross-domain": "adjacent_field",
+    "cross_domain": "adjacent_field",
+    "nearby-field": "adjacent_field",
+    "nearby_field": "adjacent_field",
+    "theory": "theory_bridge",
+    "theory-bridge": "theory_bridge",
+    "theory_bridge": "theory_bridge",
+    "theoretical": "theory_bridge",
+}
+
+
+def _normalize_t2_query_bucket(raw: object) -> str:
+    value = str(raw or "").strip().casefold()
+    if not value:
+        return ""
+    return T2_PROTECTED_SEARCH_BUCKET_ALIASES.get(value, value.replace(" ", "_"))
 
 
 class HookExecutionError(RuntimeError):
@@ -171,7 +192,9 @@ class AgentRunner:
         empty_count = 0
         nudge_count = 0
         validation_fails = 0
+        validation_retry_limit = int(self.agent.spec.max_validation_retries)
         budget_extensions_used = 0
+        validation_extensions_used = 0
         tool_failure_cache: dict[tuple[str, str], Message] = {}
 
         try:
@@ -193,8 +216,18 @@ class AgentRunner:
             t45_pre_finalized = False
             if not (t2_pre_finalized or t3_pre_finalized or t4_pre_finalized):
                 t45_pre_finalized = await self._maybe_finalize_t45_before_llm(ctx)
+            t8_section_plan_pre_finalized = False
+            if not (t2_pre_finalized or t3_pre_finalized or t4_pre_finalized or t45_pre_finalized):
+                t8_section_plan_pre_finalized = await self._maybe_finalize_t8_section_plan_before_llm(
+                    ctx,
+                    policy,
+                )
             deterministic_pre_finalized = (
-                t2_pre_finalized or t3_pre_finalized or t4_pre_finalized or t45_pre_finalized
+                t2_pre_finalized
+                or t3_pre_finalized
+                or t4_pre_finalized
+                or t45_pre_finalized
+                or t8_section_plan_pre_finalized
             )
             if deterministic_pre_finalized:
                 stop_reason = AgentResult.STOP_FINISHED
@@ -320,11 +353,7 @@ class AgentRunner:
                     trace.write_message(tool_msg)
                     if tool_call.name == "finish_task" and not tool_msg.metadata.get("is_error"):
                         finish_requested = True
-                    if (
-                        tool_call.name in {"ask_human", "docker_exec", "latex_compile"}
-                        and tool_msg.metadata.get("is_error")
-                        and ((tool_msg.metadata.get("error") or tool_msg.metadata.get("data", {}).get("error")) == "human_input_unavailable")
-                    ):
+                    if self._is_recoverable_tool_pause(tool_call.name, tool_msg):
                         pause_requested = True
                         pause_reason = tool_msg.content or "需要用户输入，但当前输入不可用。"
 
@@ -361,8 +390,30 @@ class AgentRunner:
                         stop_reason = AgentResult.STOP_FINISHED
                         break
                     validation_fails += 1
-                    print(f"[Agent] 输出校验失败 ({validation_fails}/{self.agent.spec.max_validation_retries}): {err}", flush=True)
-                    if validation_fails >= self.agent.spec.max_validation_retries:
+                    print(f"[Agent] 输出校验失败 ({validation_fails}/{validation_retry_limit}): {err}", flush=True)
+                    if validation_fails >= validation_retry_limit:
+                        (
+                            extended,
+                            validation_retry_limit,
+                            validation_extensions_used,
+                        ) = await self._maybe_offer_validation_retry_extension(
+                            ctx=ctx,
+                            budget=budget,
+                            last_error=str(err or "unknown validation error"),
+                            failures=validation_fails,
+                            retry_limit=validation_retry_limit,
+                            used_extensions=validation_extensions_used,
+                        )
+                        if extended:
+                            feedback = Message.user(
+                                "用户选择继续修复输出校验问题。请只针对最后一次校验错误做最小修复，"
+                                "优先调用确定性工具或读取现有 artifact，不要重写已合格的大文件。"
+                                f"最后一次错误：{err}",
+                                step=budget.steps,
+                            )
+                            messages.append(feedback)
+                            trace.write_message(feedback)
+                            continue
                         stop_reason = AgentResult.STOP_INTERRUPTED
                         error_msg = (
                             f"Validation failed {validation_fails} times. "
@@ -740,6 +791,90 @@ class AgentRunner:
         )
         return True
 
+    async def _maybe_finalize_t8_section_plan_before_llm(
+        self,
+        ctx: ExecutionContext,
+        policy: "WorkspaceAccessPolicy",
+    ) -> bool:
+        """Repair/initialize T8 section state deterministically before LLM work.
+
+        `T8-SECTION-PLAN` is a mechanical boundary: it should call
+        initialize_manuscript_state and stop. If a previous run let the LLM
+        hand-write an incompatible paper_state.json, resume should repair it
+        from the already-approved outline/plans instead of spending another
+        LLM run on the same deterministic job.
+        """
+
+        if ctx.task_id != "T8-SECTION-PLAN":
+            return False
+        if ctx.mode not in {None, "section_plan"} and ctx.extra.get("phase") != "section_plan":
+            return False
+
+        if not can_repair_t8_section_plan(ctx.workspace_dir):
+            return False
+
+        ok, err = self.agent.validate_outputs(ctx)
+        if ok:
+            print("[Agent] T8-SECTION-PLAN 检测到 paper_state/section_outlines 已合格，跳过 LLM 续跑", flush=True)
+            self._record_runtime_completion(
+                ctx,
+                "t8_section_plan_prefinalize",
+                {
+                    "outputs": [
+                        "drafts/paper_state.json",
+                        "drafts/section_outlines",
+                    ],
+                },
+                action_type="t8_section_plan_prefinalize",
+            )
+            return True
+
+        print(
+            "[Agent] T8-SECTION-PLAN 检测到已有计划文件但状态不合格，"
+            "使用 initialize_manuscript_state 确定性修复...",
+            flush=True,
+        )
+        project = {}
+        project_path = ctx.workspace_dir / "project.yaml"
+        if project_path.exists():
+            try:
+                import yaml
+
+                loaded = yaml.safe_load(project_path.read_text(encoding="utf-8")) or {}
+                if isinstance(loaded, dict):
+                    project = loaded
+            except Exception:
+                project = {}
+        ok, err = await repair_t8_section_plan_outputs(
+            ctx.workspace_dir,
+            target_venue=str(project.get("target_venue") or ""),
+        )
+        if not ok:
+            self.log.warning(
+                "t8_section_plan_prefinalize_failed",
+                error=err,
+            )
+            return False
+
+        ok, err = self.agent.validate_outputs(ctx)
+        if not ok:
+            self.log.warning("t8_section_plan_prefinalize_validation_failed", error=err)
+            return False
+
+        print("[Agent] T8-SECTION-PLAN 状态修复成功，跳过 LLM 续跑", flush=True)
+        self._record_runtime_completion(
+            ctx,
+            "t8_section_plan_prefinalize",
+            {
+                "outputs": [
+                    "drafts/paper_state.json",
+                    "drafts/section_outlines",
+                ],
+            },
+            action_type="t8_section_plan_prefinalize",
+        )
+        return True
+
     async def _maybe_prepare_t35_before_llm(
         self,
         ctx: ExecutionContext,
@@ -1084,6 +1219,7 @@ class AgentRunner:
             ctx=ctx,
             policy=policy,
             tool_name=tc.name,
+            tool_arguments=model_dump(parsed),
             result=result,
         )
         content = result.content
@@ -1144,6 +1280,25 @@ class AgentRunner:
             counts[normalized_path] = int(counts.get(normalized_path, 0) or 0) + 1
         if ctx.task_id == "T5" and normalized_path == "pilot/pilot_code/run_pilot.py":
             ctx.extra["pilot_code_write_count"] = int(ctx.extra.get("pilot_code_write_count", 0) or 0) + 1
+
+    @staticmethod
+    def _is_recoverable_tool_pause(tool_name: str, tool_msg: Message) -> bool:
+        """Return true for tool failures that should pause instead of burning retries."""
+
+        if tool_name not in {"ask_human", "docker_exec", "latex_compile"}:
+            return False
+        if not tool_msg.metadata.get("is_error"):
+            return False
+        error = tool_msg.metadata.get("error")
+        data = tool_msg.metadata.get("data")
+        if isinstance(data, dict) and not error:
+            error = data.get("error")
+        if error == "human_input_unavailable":
+            return True
+        content = tool_msg.content or ""
+        if isinstance(error, str) and error.startswith("waiting_environment"):
+            return True
+        return "WAITING_ENVIRONMENT" in content
 
     @staticmethod
     def _tool_failure_cache_key(tool_name: str, arguments: dict[str, object]) -> tuple[str, str] | None:
@@ -1257,6 +1412,7 @@ class AgentRunner:
         ctx: ExecutionContext,
         policy: "WorkspaceAccessPolicy",
         tool_name: str,
+        tool_arguments: dict[str, object],
         result: ToolResult,
     ) -> dict[str, object] | None:
         """T2 中的检索结果自动落盘到 papers_raw.jsonl。"""
@@ -1266,6 +1422,13 @@ class AgentRunner:
         papers = result.data.get("papers")
         if not isinstance(papers, list) or not papers:
             return None
+
+        papers = self._annotate_t2_search_bucket(
+            tool_name=tool_name,
+            tool_arguments=tool_arguments,
+            result=result,
+            papers=papers,
+        )
 
         save_tool = SavePapersRawTool(policy)
         save_result = await save_tool.execute(papers=papers, append=True)
@@ -1285,6 +1448,47 @@ class AgentRunner:
                 f"[Runtime] 已自动追加 {persisted_count} 篇到 literature/papers_raw.jsonl"
             ),
         }
+
+    @staticmethod
+    def _annotate_t2_search_bucket(
+        *,
+        tool_name: str,
+        tool_arguments: dict[str, object],
+        result: ToolResult,
+        papers: list[object],
+    ) -> list[object]:
+        """Preserve explicit Scout query-bucket labels in raw paper records.
+
+        The runtime does not infer academic relevance from keywords. It only
+        carries labels supplied by the LLM/tool metadata so deterministic queue
+        builders can protect adjacent-field and theory-bridge material.
+        """
+
+        bucket = _normalize_t2_query_bucket(
+            tool_arguments.get("search_bucket")
+            or tool_arguments.get("query_bucket")
+            or result.data.get("search_bucket")
+            or result.data.get("query_bucket")
+        )
+        query = str(tool_arguments.get("query") or result.data.get("query") or "").strip()
+        if not bucket and not query:
+            return papers
+
+        annotated: list[object] = []
+        for paper in papers:
+            if not isinstance(paper, dict):
+                annotated.append(paper)
+                continue
+            record = dict(paper)
+            if bucket and not record.get("search_bucket"):
+                record["search_bucket"] = bucket
+            if bucket in {"adjacent_field", "theory_bridge"}:
+                record.setdefault("adjacent_field", True)
+            if query:
+                record.setdefault("source_query", query)
+            record.setdefault("source_tool", tool_name)
+            annotated.append(record)
+        return annotated
 
     def _parse_llm_response(self, resp: object, *, step: int) -> Message:
         choice = resp.raw.choices[0].message
@@ -1461,6 +1665,8 @@ class AgentRunner:
             message = "Agent 成功完成（T4 resume 确定性收尾）"
         elif ok and metadata.get("completion_mode") == "t45_resume_prefinalize":
             message = "Agent 成功完成（T4.5 resume 确定性收尾）"
+        elif ok and metadata.get("completion_mode") == "t8_section_plan_prefinalize":
+            message = "Agent 成功完成（T8 section-plan 确定性修复/收尾）"
         return AgentResult(
             ok=ok,
             message=message,
@@ -1583,3 +1789,91 @@ class AgentRunner:
             new_limit=exc.limit + delta,
         )
         return True, used_extensions + 1
+
+    async def _maybe_offer_validation_retry_extension(
+        self,
+        *,
+        ctx: ExecutionContext,
+        budget: BudgetTracker,
+        last_error: str,
+        failures: int,
+        retry_limit: int,
+        used_extensions: int,
+    ) -> tuple[bool, int, int]:
+        """Offer a recoverable gate before pausing on validation retry exhaustion."""
+
+        policy = self.budget_escalation_policy or {}
+        if not policy.get("enabled", False):
+            return False, retry_limit, used_extensions
+
+        enabled_tasks = set(policy.get("tasks") or [])
+        if enabled_tasks and ctx.task_id not in enabled_tasks:
+            return False, retry_limit, used_extensions
+
+        raw_max_extensions = policy.get("max_validation_extensions_per_run")
+        if raw_max_extensions is None:
+            raw_max_extensions = policy.get("max_extensions_per_run")
+        if raw_max_extensions is None:
+            max_extensions = None
+        else:
+            max_extensions = int(raw_max_extensions)
+            if max_extensions < 0:
+                max_extensions = None
+        if max_extensions is not None and used_extensions >= max_extensions:
+            return False, retry_limit, used_extensions
+
+        delta = max(1, int(policy.get("validation_retry_increase", 2) or 2))
+        existing_outputs = [
+            str(path.relative_to(ctx.workspace_dir))
+            for path in ctx.outputs_expected.values()
+            if path.exists()
+        ]
+        human_started = time.time()
+        try:
+            result = await self.human.present_gate(
+                gate_id="runtime_validation_retry_extension",
+                presentation={
+                    "_title": "输出校验仍未通过",
+                    "_description": (
+                        "当前任务已耗尽自动修复轮次。你可以增加少量校验修复轮次继续，"
+                        "或暂停后人工检查 artifact 再 resume。"
+                    ),
+                    "task_id": ctx.task_id,
+                    "run_id": ctx.run_id,
+                    "failures": failures,
+                    "retry_limit": retry_limit,
+                    "last_error": last_error,
+                    "existing_outputs": existing_outputs,
+                    "suggested_extension": {
+                        "validation_retry_delta": delta,
+                        "new_retry_limit": retry_limit + delta,
+                    },
+                },
+                options=[
+                    {
+                        "id": "extend",
+                        "label": f"继续修复，并增加 {delta} 次校验机会",
+                    },
+                    {
+                        "id": "stop",
+                        "label": "暂停，稍后 resume",
+                    },
+                ],
+            )
+        except HumanInputUnavailable:
+            return False, retry_limit, used_extensions
+        finally:
+            budget.exclude_wall_time(time.time() - human_started)
+
+        if (result or {}).get("option_id") != "extend":
+            return False, retry_limit, used_extensions
+
+        new_limit = retry_limit + delta
+        self.log.info(
+            "validation_retry_limit_extended",
+            task_id=ctx.task_id,
+            failures=failures,
+            old_limit=retry_limit,
+            new_limit=new_limit,
+        )
+        return True, new_limit, used_extensions + 1

@@ -12,7 +12,9 @@ from __future__ import annotations
 """
 
 import asyncio
-import os
+from datetime import datetime, timezone
+import hashlib
+import json
 from pathlib import Path
 import shutil
 from typing import Any
@@ -51,15 +53,33 @@ class LatexCompileTool(Tool):
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         params = LatexCompileParams(**kwargs)
+        tex_abs = self.docker.policy.resolve_read(params.tex_path)
+        started_at = _now_iso()
+        report_base = _compile_report_base(
+            tex_abs=tex_abs,
+            workspace=self.docker.policy.workspace_dir,
+            params=params,
+            started_at=started_at,
+        )
 
         # 容器内模式或宿主机已有 TeX：直接调用 latexmk。
         if self._is_running_in_container() or shutil.which("latexmk"):
-            return await self._compile_native(params)
+            if shutil.which("latexmk") is None:
+                report = _finalize_compile_report(report_base, success=False, engine="native", exit_code=None)
+                _write_compile_report_if_submission(self.docker.policy.workspace_dir, params.tex_path, report)
+                return ToolResult(
+                    ok=False,
+                    content="WAITING_ENVIRONMENT: latexmk is not installed in the current container/native environment.",
+                    error="waiting_environment_latexmk_missing",
+                    data={"error": "waiting_environment_latexmk_missing", "compile_report": report},
+                )
+            result = await self._compile_native(params, report_base=report_base)
+            return result
 
         # 宿主机模式：通过 docker_exec
-        return await self._compile_via_docker(params)
+        return await self._compile_via_docker(params, report_base=report_base)
 
-    async def _compile_native(self, params: LatexCompileParams) -> ToolResult:
+    async def _compile_native(self, params: LatexCompileParams, *, report_base: dict[str, Any]) -> ToolResult:
         """容器内直接编译（方案 D1）"""
         tex_abs = self.docker.policy.resolve_read(params.tex_path)
         tex_dir = tex_abs.parent
@@ -104,10 +124,13 @@ class LatexCompileTool(Tool):
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
+            report = _finalize_compile_report(report_base, success=False, engine="native", exit_code=None, error="timeout")
+            _write_compile_report_if_submission(self.docker.policy.workspace_dir, params.tex_path, report)
             return ToolResult(
                 ok=False,
                 content=f"LaTeX compilation timed out after {self.timeout_seconds}s",
                 error="timeout",
+                data={"compile_report": report},
             )
 
         # 处理输出
@@ -122,15 +145,32 @@ class LatexCompileTool(Tool):
         content_parts.append(f"EXIT: {proc.returncode}")
 
         if proc.returncode != 0:
+            report = _finalize_compile_report(
+                report_base,
+                success=False,
+                engine="native",
+                exit_code=proc.returncode,
+                error="nonzero_exit",
+            )
+            _write_compile_report_if_submission(self.docker.policy.workspace_dir, params.tex_path, report)
             return ToolResult(
                 ok=False,
                 content="\n\n".join(content_parts),
                 error="nonzero_exit",
+                data={"compile_report": report},
             )
 
         # 检查 PDF 是否生成
         pdf_path = self._expected_pdf_path(tex_abs, params.output_dir)
         if not pdf_path.exists():
+            report = _finalize_compile_report(
+                report_base,
+                success=False,
+                engine="native",
+                exit_code=proc.returncode,
+                error="pdf_missing",
+            )
+            _write_compile_report_if_submission(self.docker.policy.workspace_dir, params.tex_path, report)
             return ToolResult(
                 ok=False,
                 content=(
@@ -139,18 +179,27 @@ class LatexCompileTool(Tool):
                     + "\n\n".join(content_parts)
                 ),
                 error="pdf_missing",
+                data={"compile_report": report},
             )
 
         pdf_rel = pdf_path.relative_to(self.docker.policy.workspace_dir).as_posix()
         content_parts.append(f"\nPDF: {pdf_rel}")
 
+        report = _finalize_compile_report(
+            report_base,
+            success=True,
+            engine="native",
+            exit_code=proc.returncode,
+            pdf_path=pdf_path,
+        )
+        _write_compile_report_if_submission(self.docker.policy.workspace_dir, params.tex_path, report)
         return ToolResult(
             ok=True,
             content="\n\n".join(content_parts),
-            data={"pdf_path": pdf_rel, "exit_code": proc.returncode},
+            data={"pdf_path": pdf_rel, "exit_code": proc.returncode, "compile_report": report},
         )
 
-    async def _compile_via_docker(self, params: LatexCompileParams) -> ToolResult:
+    async def _compile_via_docker(self, params: LatexCompileParams, *, report_base: dict[str, Any]) -> ToolResult:
         """宿主机模式：通过 docker_exec 编译（方案 A）"""
         tex_abs = self.docker.policy.resolve_read(params.tex_path)
         tex_dir_rel = tex_abs.parent.relative_to(self.docker.policy.workspace_dir).as_posix()
@@ -177,10 +226,49 @@ class LatexCompileTool(Tool):
             extra_mounts=[],
         )
         if not result.ok:
+            error_code = result.error or ""
+            if error_code in {
+                "docker_command_not_found",
+                "docker_daemon_unavailable",
+                "docker_image_missing",
+                "image_not_allowed",
+            }:
+                content = "WAITING_ENVIRONMENT: Docker/LaTeX compile environment unavailable.\n\n" + result.content
+                report = _finalize_compile_report(
+                    report_base,
+                    success=False,
+                    engine="docker",
+                    exit_code=result.data.get("exit_code") if isinstance(result.data, dict) else None,
+                    error=error_code or "waiting_environment",
+                )
+                _write_compile_report_if_submission(self.docker.policy.workspace_dir, params.tex_path, report)
+                return ToolResult(
+                    ok=False,
+                    content=content,
+                    error=f"waiting_environment_{error_code or 'docker'}",
+                    data={"error": "waiting_environment", "compile_report": report},
+                )
+            report = _finalize_compile_report(
+                report_base,
+                success=False,
+                engine="docker",
+                exit_code=result.data.get("exit_code") if isinstance(result.data, dict) else None,
+                error=result.error,
+            )
+            _write_compile_report_if_submission(self.docker.policy.workspace_dir, params.tex_path, report)
+            result.data["compile_report"] = report
             return result
 
         pdf_path = self._expected_pdf_path(tex_abs, params.output_dir)
         if not pdf_path.exists():
+            report = _finalize_compile_report(
+                report_base,
+                success=False,
+                engine="docker",
+                exit_code=result.data.get("exit_code") if isinstance(result.data, dict) else None,
+                error="pdf_missing",
+            )
+            _write_compile_report_if_submission(self.docker.policy.workspace_dir, params.tex_path, report)
             return ToolResult(
                 ok=False,
                 content=(
@@ -188,11 +276,22 @@ class LatexCompileTool(Tool):
                     f"{pdf_path.relative_to(self.docker.policy.workspace_dir)}"
                 ),
                 error="pdf_missing",
+                data={"compile_report": report},
             )
 
+        report = _finalize_compile_report(
+            report_base,
+            success=True,
+            engine="docker",
+            exit_code=result.data.get("exit_code") if isinstance(result.data, dict) else 0,
+            pdf_path=pdf_path,
+        )
+        _write_compile_report_if_submission(self.docker.policy.workspace_dir, params.tex_path, report)
         result.data["pdf_path"] = pdf_path.relative_to(self.docker.policy.workspace_dir).as_posix()
+        result.data["compile_report"] = report
         result.content += (
             f"\n\nPDF: {pdf_path.relative_to(self.docker.policy.workspace_dir).as_posix()}"
+            "\nCompile report: submission/compile_report.json"
         )
         return result
 
@@ -202,3 +301,116 @@ class LatexCompileTool(Tool):
         if output_dir:
             return tex_abs.parent / output_dir / pdf_name
         return tex_abs.with_suffix(".pdf")
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _compile_report_base(
+    *,
+    tex_abs: Path,
+    workspace: Path,
+    params: LatexCompileParams,
+    started_at: str,
+) -> dict[str, Any]:
+    tex_rel = tex_abs.relative_to(workspace).as_posix()
+    log_path = tex_abs.with_suffix(".log")
+    return {
+        "_workspace": workspace.as_posix(),
+        "version": "1.0",
+        "semantics": "latex_compile_attempt_report",
+        "tex_path": tex_rel,
+        "requested_engine": params.engine,
+        "bibtex": params.bibtex,
+        "output_dir": params.output_dir,
+        "started_at": started_at,
+        "main_tex_sha256": _sha256_file(tex_abs) if tex_abs.exists() else "",
+        "main_tex_mtime": tex_abs.stat().st_mtime if tex_abs.exists() else 0,
+        "log_path": log_path.relative_to(workspace).as_posix(),
+    }
+
+
+def _finalize_compile_report(
+    base: dict[str, Any],
+    *,
+    success: bool,
+    engine: str,
+    exit_code: int | None,
+    pdf_path: Path | None = None,
+    error: str | None = None,
+) -> dict[str, Any]:
+    workspace = Path(base.get("_workspace", "")) if base.get("_workspace") else None
+    finished_at = _now_iso()
+    report = dict(base)
+    report.pop("_workspace", None)
+    report.update(
+        {
+            "engine": engine,
+            "exit_code": exit_code,
+            "success": success,
+            "finished_at": finished_at,
+            "error": error,
+            "attempts": [
+                {
+                    "engine": engine,
+                    "exit_code": exit_code,
+                    "success": success,
+                    "started_at": base.get("started_at"),
+                    "finished_at": finished_at,
+                    "error": error,
+                }
+            ],
+        }
+    )
+    if pdf_path is not None and pdf_path.exists():
+        if workspace is not None:
+            try:
+                report["pdf_path"] = pdf_path.relative_to(workspace).as_posix()
+            except ValueError:
+                report["pdf_path"] = str(pdf_path)
+        else:
+            report["pdf_path"] = str(pdf_path)
+        report["pdf_sha256"] = _sha256_file(pdf_path)
+        report["pdf_size"] = pdf_path.stat().st_size
+        report["pdf_mtime"] = pdf_path.stat().st_mtime
+    else:
+        report["pdf_path"] = ""
+        report["pdf_sha256"] = ""
+        report["pdf_size"] = 0
+        report["pdf_mtime"] = 0
+    if workspace is not None:
+        log_rel = report.get("log_path")
+        if isinstance(log_rel, str) and log_rel:
+            log_path = workspace / log_rel
+            if log_path.exists():
+                report["log_sha256"] = _sha256_file(log_path)
+                report["log_mtime"] = log_path.stat().st_mtime
+                report["log_size"] = log_path.stat().st_size
+            else:
+                report["log_sha256"] = ""
+                report["log_mtime"] = 0
+                report["log_size"] = 0
+    return report
+
+
+def _write_compile_report_if_submission(workspace: Path, tex_path: str, report: dict[str, Any]) -> None:
+    if tex_path.strip().lstrip("./") != "submission/bundle/main.tex":
+        return
+    pdf_rel = report.get("pdf_path")
+    if isinstance(pdf_rel, str) and pdf_rel and pdf_rel.startswith(str(workspace)):
+        try:
+            report["pdf_path"] = Path(pdf_rel).relative_to(workspace).as_posix()
+        except ValueError:
+            pass
+    report_path = workspace / "submission" / "compile_report.json"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

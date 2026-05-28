@@ -46,6 +46,13 @@ class ResearchQuestion(BaseModel):
     related_papers: list[str] = Field(default_factory=list, description="Related paper IDs.")
 
 
+class CrossPaperTension(BaseModel):
+    tension: str = Field(description="Cross-paper contradiction or design-rationale tension.")
+    competing_rationales: list[str] = Field(default_factory=list, description="Competing rationales in free text.")
+    paper_ids: list[str] = Field(default_factory=list, description="Paper IDs involved in this tension.")
+    idea_fuel: str = Field(default="", description="How the tension may fuel forward ideation.")
+
+
 class LLMInsights(BaseModel):
     """LLM-generated insights from the Reader agent.
 
@@ -68,6 +75,10 @@ class LLMInsights(BaseModel):
     research_questions: list[ResearchQuestion] = Field(
         default_factory=list,
         description="LLM-generated actionable research questions.",
+    )
+    cross_paper_tensions: list[CrossPaperTension] = Field(
+        default_factory=list,
+        description="LLM-identified cross-paper design-rationale tensions.",
     )
 
 
@@ -167,7 +178,9 @@ class BuildSynthesisWorkbenchTool(Tool):
             "paper_ids": [note["paper_id"] for note in all_notes],
             "method_families": families,
             "shared_assumption_candidates": _build_shared_assumptions(notes, llm_insights=insights),
-            "frontier_candidates": _build_frontier(notes, comparison_rows),
+            "metric_landscape_hints": _build_metric_landscape_hints(notes, comparison_rows),
+            "contribution_space": _build_contribution_space(notes, abstract_notes),
+            "cross_paper_tensions": _build_cross_paper_tensions(notes, llm_insights=insights),
             "trend_candidates": _build_trends(notes, llm_insights=insights),
             "research_question_candidates": _build_questions(notes, missing_areas, llm_insights=insights),
             "mechanism_claim_clusters": _build_mechanism_claim_clusters(all_notes),
@@ -239,6 +252,12 @@ def _parse_note(path: Path, evidence_level: str = "FULL_TEXT") -> dict[str, Any]
         "gaps": _section(text, "9. Weaknesses / Gaps"),
         "questions": _section(text, "11. My Questions"),
         "mechanism_claim": _extract_mechanism_claim(text),
+        "design_rationale": _extract_design_rationale(text),
+        "artifact_design": _extract_artifact_design(text),
+        "data_view": _extract_data_view(text),
+        "contribution_type": _extract_contribution_type(text),
+        "boundary_conditions": _extract_boundary_conditions(text),
+        "cross_paper_tension": _extract_cross_paper_tension(text),
     }
 
 
@@ -277,6 +296,80 @@ def _extract_mechanism_claim(text: str) -> dict[str, str]:
         "evidence_type": _field(section, "Evidence type"),
         "supporting_artifact": _field(section, "Supporting artifact"),
     }
+
+
+def _extract_design_rationale(text: str) -> dict[str, str]:
+    section = _numbered_section(text, "14. Design Rationale")
+    if not section:
+        return {}
+    return {
+        "rationale": _field(section, "Rationale"),
+        "rationale_evidence": _field(section, "Rationale evidence"),
+        "rationale_weakness": _field(section, "Rationale weakness"),
+    }
+
+
+def _extract_artifact_design(text: str) -> dict[str, str]:
+    section = _numbered_section(text, "15. Artifact & Design Principles")
+    if not section:
+        return {}
+    return {
+        "artifact_type": _field(section, "Artifact type"),
+        "artifact_description": _field(section, "Artifact description"),
+        "design_principles": _field(section, "Design principles"),
+    }
+
+
+def _extract_data_view(text: str) -> dict[str, str]:
+    section = _numbered_section(text, "16. Data View & Evaluation Mode")
+    if not section:
+        return {}
+    return {
+        "data_view": _field(section, "Data view"),
+        "evaluation_mode": _field(section, "Evaluation mode"),
+        "validity_concern": _field(section, "Validity concern"),
+    }
+
+
+def _extract_contribution_type(text: str) -> dict[str, str]:
+    section = _numbered_section(text, "17. Contribution Type")
+    if not section:
+        return {}
+    return {
+        "contribution_type": _field(section, "Contribution type"),
+        "contribution_character": _field(section, "Contribution character"),
+        "why_not_routine": _field(section, "Why not routine"),
+    }
+
+
+def _extract_boundary_conditions(text: str) -> dict[str, str]:
+    section = _numbered_section(text, "18. Boundary Conditions")
+    if not section:
+        return {}
+    return {
+        "works_when": _field(section, "Works when"),
+        "may_fail_when": _field(section, "May fail when"),
+        "untested_boundary": _field(section, "Untested boundary"),
+    }
+
+
+def _extract_cross_paper_tension(text: str) -> dict[str, str]:
+    section = _numbered_section(text, "19. Cross-Paper Tension")
+    if not section:
+        return {}
+    return {
+        "tension": _field(section, "Tension"),
+        "competing_rationale": _field(section, "Competing rationale"),
+        "idea_fuel": _field(section, "Idea fuel"),
+    }
+
+
+def _numbered_section(text: str, heading: str) -> str:
+    section_match = re.search(
+        rf"(?ms)^##\s+{re.escape(heading)}\s*(?P<section>.*?)(?=^##\s+\d+\.|\Z)",
+        text,
+    )
+    return section_match.group("section") if section_match else ""
 
 
 def _normalize_ref_id(value: str) -> str:
@@ -384,13 +477,13 @@ def _collect_llm_review_assumption_candidates(notes: list[dict[str, Any]]) -> li
     return candidates
 
 
-def _build_frontier(notes: list[dict[str, Any]], rows: list[dict[str, str]]) -> list[dict[str, Any]]:
-    frontier: list[dict[str, Any]] = []
+def _build_metric_landscape_hints(notes: list[dict[str, Any]], rows: list[dict[str, str]]) -> dict[str, Any]:
+    hints: list[dict[str, Any]] = []
     row_by_id = {_normalize_ref_id(row.get("id", "")): row for row in rows if row.get("id")}
     for note in notes[:12]:
         row = row_by_id.get(note["paper_id"], {})
         metric = row.get("key_metric") or _first_metric_line(str(note.get("key_results") or ""))
-        frontier.append(
+        hints.append(
             {
                 "paper_id": note["paper_id"],
                 "title": note["title"],
@@ -398,7 +491,92 @@ def _build_frontier(notes: list[dict[str, Any]], rows: list[dict[str, str]]) -> 
                 "efficiency_signal": row.get("method_family") or _shorten(note.get("details", ""), 160),
             }
         )
-    return frontier
+    return {
+        "semantics": "mechanical_metric_landscape_hint_not_opportunity_map",
+        "warning": "Use only for factual metric context; T4 opportunity generation should use contribution_space and cross_paper_tensions.",
+        "items": hints,
+    }
+
+
+def _build_contribution_space(
+    notes: list[dict[str, Any]],
+    abstract_notes: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Build CDR contribution-space hints from note sections.
+
+    This is mechanical organization only; the Reader LLM still decides the
+    final contribution-space interpretation.
+    """
+
+    all_notes = notes + (abstract_notes or [])
+    by_contribution: dict[str, list[str]] = {}
+    by_artifact: dict[str, list[str]] = {}
+    rationale_snippets: list[dict[str, str]] = []
+    for note in all_notes:
+        paper_id = note["paper_id"]
+        contribution = str((note.get("contribution_type") or {}).get("contribution_type") or "unknown").strip().lower()
+        artifact_type = str((note.get("artifact_design") or {}).get("artifact_type") or "unknown").strip().lower()
+        by_contribution.setdefault(contribution or "unknown", []).append(paper_id)
+        by_artifact.setdefault(artifact_type or "unknown", []).append(paper_id)
+        rationale = (note.get("design_rationale") or {}).get("rationale", "")
+        if rationale:
+            rationale_snippets.append(
+                {
+                    "paper_id": paper_id,
+                    "rationale": _shorten(rationale, 240),
+                    "weakness": _shorten((note.get("design_rationale") or {}).get("rationale_weakness", ""), 180),
+                    "contribution_type": contribution or "unknown",
+                    "artifact_type": artifact_type or "unknown",
+                }
+            )
+
+    return {
+        "semantics": "mechanical_cdr_contribution_space_hints_not_final_synthesis",
+        "by_contribution_type": {key: value[:10] for key, value in sorted(by_contribution.items())},
+        "by_artifact_type": {key: value[:10] for key, value in sorted(by_artifact.items())},
+        "design_rationale_snippets": rationale_snippets[:20],
+        "review_tasks": [
+            "Cluster papers by competing design rationale rather than by title keywords.",
+            "Identify design-rationale gaps and underused problem framings.",
+            "Do not treat provenance counts as contribution quality.",
+        ],
+    }
+
+
+def _build_cross_paper_tensions(
+    notes: list[dict[str, Any]],
+    *,
+    llm_insights: LLMInsights | None = None,
+) -> list[dict[str, Any]]:
+    if llm_insights and llm_insights.cross_paper_tensions:
+        return [
+            {
+                "tension": item.tension,
+                "competing_rationales": item.competing_rationales,
+                "paper_ids": item.paper_ids,
+                "idea_fuel": item.idea_fuel,
+                "source": "llm_insight",
+            }
+            for item in llm_insights.cross_paper_tensions
+        ]
+
+    tensions: list[dict[str, Any]] = []
+    for note in notes:
+        cpt = note.get("cross_paper_tension") or {}
+        tension = str(cpt.get("tension") or "").strip()
+        if not tension:
+            continue
+        tensions.append(
+            {
+                "tension": _shorten(tension, 260),
+                "competing_rationales": [_shorten(cpt.get("competing_rationale", ""), 220)],
+                "paper_ids": [note["paper_id"]],
+                "idea_fuel": _shorten(cpt.get("idea_fuel", ""), 220),
+                "source": "paper_note_section_19",
+                "requires_llm_synthesis": True,
+            }
+        )
+    return tensions[:12]
 
 
 def _build_trends(
@@ -630,6 +808,19 @@ def _render_outline(workbench: dict[str, Any], missing_areas: str) -> str:
     lines.extend(["", "## Shared Assumptions"])
     for item in workbench["shared_assumption_candidates"]:
         lines.append(f"- {item['assumption']} ({', '.join(_refs(item['supporting_papers']))})")
+    lines.extend(["", "## Contribution-Space Map"])
+    contribution_space = workbench.get("contribution_space", {})
+    for item in contribution_space.get("design_rationale_snippets", [])[:6]:
+        lines.append(
+            f"- [{item.get('paper_id')}] {item.get('contribution_type')} / "
+            f"{item.get('artifact_type')}: {item.get('rationale')}"
+        )
+    tensions = workbench.get("cross_paper_tensions", [])
+    if tensions:
+        lines.extend(["", "## Cross-Paper Tensions"])
+        for item in tensions[:6]:
+            refs = ", ".join(_refs(item.get("paper_ids", [])))
+            lines.append(f"- {item.get('tension', '')} ({refs})")
     mechanism_clusters = workbench.get("mechanism_claim_clusters") or workbench.get("domain_consensus", [])
     if mechanism_clusters:
         lines.extend(["", "## Mechanism Claim Clusters For LLM Review"])
@@ -685,6 +876,17 @@ def _render_draft_guidance(workbench: dict[str, Any]) -> str:
     for item in workbench.get("research_question_candidates", []):
         refs = ", ".join(_refs(item.get("related_papers", [])))
         lines.append(f"- {item.get('id', 'Q?')}: {item.get('question', '')} | related papers: {refs}")
+
+    lines.extend(["", "## Contribution-Space And Tensions To Review", ""])
+    contribution_space = workbench.get("contribution_space", {})
+    for item in contribution_space.get("design_rationale_snippets", [])[:8]:
+        lines.append(
+            f"- [{item.get('paper_id')}] {item.get('contribution_type')} / "
+            f"{item.get('artifact_type')}: {item.get('rationale')}"
+        )
+    for item in workbench.get("cross_paper_tensions", [])[:8]:
+        refs = ", ".join(_refs(item.get("paper_ids", [])))
+        lines.append(f"- Tension: {item.get('tension', '')} | papers: {refs}")
 
     lines.extend(
         [

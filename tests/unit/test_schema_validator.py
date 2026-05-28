@@ -101,6 +101,7 @@ def test_validate_task_artifacts_skips_optional_outputs(tmp_path):
     ideation = workspace / "ideation"
     tuple_dir = ideation / "_mechanism_tuples"
     tuple_dir.mkdir(parents=True)
+    (ideation / "_design_rationale_tuples").mkdir(parents=True)
     (ideation / "novelty_audit.md").write_text("# Audit\n", encoding="utf-8")
 
     ok, err = validator.validate_task_artifacts(workspace, "T4.5")

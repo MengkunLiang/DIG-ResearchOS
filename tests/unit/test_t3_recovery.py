@@ -86,6 +86,36 @@ method
 - **Stated mechanism**: The method improves performance through better feature extraction
 - **Evidence type**: ablation_supported
 - **Supporting artifact**: Table 2
+
+## 14. Design Rationale
+- **Rationale**: The paper argues that targeted feature extraction is the right design because generic representations miss task-specific signals.
+- **Rationale evidence**: The rationale is supported by the ablation in Table 2 and the qualitative error analysis.
+- **Rationale weakness**: The rationale may depend on datasets where task-specific signals are stable.
+
+## 15. Artifact & Design Principles
+- **Artifact type**: method
+- **Artifact description**: A representation learning method with targeted feature extraction.
+- **Design principles**: Match perturbations and feature selection to the target task structure.
+
+## 16. Data View & Evaluation Mode
+- **Data view**: Benchmark datasets with labeled outcomes and held-out evaluation.
+- **Evaluation mode**: summative benchmark evaluation with ablation-supported mechanism checks.
+- **Validity concern**: External validity is limited outside the benchmark distribution.
+
+## 17. Contribution Type
+- **Contribution type**: improvement
+- **Contribution character**: The paper improves an existing representation learning pipeline rather than introducing a new artifact class.
+- **Why not routine**: The design rationale changes where task-specific structure enters the method.
+
+## 18. Boundary Conditions
+- **Works when**: Task-specific features are stable and observable in training data.
+- **May fail when**: The target task has rapidly changing or unobserved features.
+- **Untested boundary**: Cross-domain transfer remains untested.
+
+## 19. Cross-Paper Tension
+- **Tension**: none
+- **Competing rationale**: No prior completed note is available in this fixture.
+- **Idea fuel**: Revisit after more papers are read to compare task-specific and generic representation rationales.
 """
 
 

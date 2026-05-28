@@ -143,6 +143,12 @@ def score_papers(
 
     for paper in papers:
         scores = {}
+        year_raw = paper.get("year")
+        if year_raw and not isinstance(year_raw, int):
+            try:
+                paper["year"] = int(year_raw)
+            except (TypeError, ValueError):
+                paper["year"] = None
 
         # 1. source_type 权重
         source_type = paper.get("source_type") or "unknown"

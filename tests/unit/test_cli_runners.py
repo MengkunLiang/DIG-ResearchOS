@@ -20,6 +20,47 @@ from researchos.tools.builtin import register_builtin_tools
 from researchos.tools.registry import ToolRegistry
 
 
+def _write_t8_section_plan_inputs(workspace: Path) -> None:
+    drafts = workspace / "drafts"
+    drafts.mkdir(parents=True, exist_ok=True)
+    (workspace / "project.yaml").write_text("target_venue: neurips\n", encoding="utf-8")
+    (drafts / "outline.md").write_text(
+        "# Outline\n\n## Introduction\nFrame.\n\n## Method\nMethod.\n\n## Experiments\nResults.\n",
+        encoding="utf-8",
+    )
+    (drafts / "manuscript_resource_index.json").write_text(
+        '{"version":"1.0","bib_keys":["smith2024"],"result_metrics":[{"metric":"acc","value":0.8}]}\n',
+        encoding="utf-8",
+    )
+    sections = [
+        "abstract",
+        "introduction",
+        "related_work",
+        "methodology",
+        "experiments",
+        "analysis",
+        "limitations",
+        "conclusion",
+    ]
+    (drafts / "section_plan.json").write_text(
+        "{"
+        + '"version":"1.0","sections":['
+        + ",".join(
+            (
+                '{"id":"'
+                + section
+                + '","required_inputs":[],"available_inputs":[],"missing_inputs":[],"expected_outputs":["section"]}'
+            )
+            for section in sections
+        )
+        + "]}\n",
+        encoding="utf-8",
+    )
+    (drafts / "evidence_plan.json").write_text('{"version":"1.0","claim_slots":[]}\n', encoding="utf-8")
+    (drafts / "figure_table_plan.json").write_text('{"version":"1.0","planned_visuals":[]}\n', encoding="utf-8")
+    (drafts / "paper_state.json").write_text('{"semantics":"old_invalid_state","sections":{}}\n', encoding="utf-8")
+
+
 def _write_yaml(path: Path, content: str) -> None:
     path.write_text(textwrap.dedent(content).strip() + "\n", encoding="utf-8")
 
@@ -149,6 +190,26 @@ def test_cli_run_task_command_dispatches(monkeypatch, tmp_path: Path):
     assert observed["task_id"] == "HELLO"
     assert observed["from_workspace"] is None
     assert observed["profile"] == "audit"
+
+
+def test_cli_validate_repairs_t8_section_plan_state(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    _write_t8_section_plan_inputs(workspace)
+
+    exit_code = main(
+        [
+            "--no-banner",
+            "--workspace",
+            str(workspace),
+            "validate",
+            "--task",
+            "T8-SECTION-PLAN",
+        ]
+    )
+
+    assert exit_code == 0
+    state_text = (workspace / "drafts" / "paper_state.json").read_text(encoding="utf-8")
+    assert "shared_state_for_section_by_section_writing_not_final_claims" in state_text
 
 
 def test_cli_init_workspace_creates_standard_tree(tmp_path: Path):

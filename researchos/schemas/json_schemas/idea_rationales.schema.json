@@ -84,9 +84,27 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "forward_reasoning": {
+                "type": "string",
+                "description": "Knowledge-bearing first-principles or synthesis-gestalt reasoning used to generate the idea."
+              },
+              "problem_reframing": {
+                "type": "string",
+                "description": "How the problem frame was changed, if applicable."
+              },
+              "analogy_basis": {
+                "type": "string",
+                "description": "Cross-domain analogy basis, if applicable."
+              },
+              "grounding_checks": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Literature or feasibility checks performed after forward generation."
               }
             },
-            "required": ["literature_observations"],
             "additionalProperties": true
           },
           "reasoning": {

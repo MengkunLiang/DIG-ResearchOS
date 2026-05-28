@@ -22,6 +22,10 @@ class ArxivSearchParams(BaseModel):
     query: str = Field(..., description="搜索查询字符串")
     max_results: int = Field(default=10, description="返回结果数量（最多100）", ge=1, le=100)
     sort_by: str = Field(default="relevance", description="排序方式：relevance, lastUpdatedDate, submittedDate")
+    query_bucket: str | None = Field(
+        default=None,
+        description="可选检索式桶标签，仅用于 ResearchOS 队列保护，不发送给 arXiv。",
+    )
 
 
 class ArxivSearchTool(Tool):
@@ -43,6 +47,7 @@ class ArxivSearchTool(Tool):
         query = kwargs["query"]
         max_results = kwargs.get("max_results", 10)
         sort_by = kwargs.get("sort_by", "relevance")
+        query_bucket = kwargs.get("query_bucket")
 
         params = {
             "search_query": f"all:{query}",
@@ -155,7 +160,7 @@ class ArxivSearchTool(Tool):
                 return ToolResult(
                     ok=True,
                     content="\n".join(content_lines),
-                    data={"papers": papers}
+                    data={"papers": papers, "query": query, "query_bucket": query_bucket}
                 )
 
             except httpx.HTTPStatusError as e:

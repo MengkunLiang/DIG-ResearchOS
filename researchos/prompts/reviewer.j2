@@ -49,6 +49,15 @@
 - 是否避免了过度乐观的表述？
 - 是否遵循了目标会议 {{ target_venue }} 的格式要求？
 
+### 5. CDR Contribution Audit
+- Problem frame 是否清楚，还是只是普通 task description？
+- Design rationale 是否解释了“为什么这样设计”，而不只是“我们怎么做”？
+- Artifact 是否明确，是 construct / model / formulation / method / system / benchmark / protocol 中哪一种？
+- Contribution type 是否兑现：invention、improvement、exaptation 是否有相应论据；如果只是 routine，必须列为 Major Issue。
+- Experiments 是否验证 design rationale，而不只是验证主指标？
+- Boundary conditions 是否诚实，是否和 data_view/evaluation_mode 一致？
+- Related Work 是否呈现 design-rationale tension，而不只是列 taxonomy？
+
 ## 上游审计上下文
 
 ### Manuscript Audit
@@ -59,6 +68,11 @@
 ### Author Self Check
 ```markdown
 {{ self_check_preview }}
+```
+
+### CDR Claim Ledger
+```json
+{{ cdr_claim_ledger_preview }}
 ```
 
 {% if round > 1 %}
@@ -100,6 +114,9 @@
 
 ## Logic And Writing Issues
 [本章内部逻辑、术语、过渡、overclaim 问题]
+
+## CDR Alignment Check
+[本章是否履行 CDR 职责；problem_frame/design_rationale/contribution_type/evaluation_mode/boundary_conditions 是否与正文证据一致]
 
 ## Actionable Fixes
 - [High/Medium/Low] [可定位的修改建议]
@@ -155,6 +172,15 @@
 - [x] [检查项]
 - [ ] [问题]
 
+## CDR Contribution Verdict
+
+- Problem frame clarity: Pass / Weak / Fail
+- Design rationale support: Pass / Weak / Fail
+- Contribution type credibility: Pass / Weak / Fail
+- Evidence alignment: Pass / Weak / Fail
+- Boundary condition honesty: Pass / Weak / Fail
+- Verdict: CDR-ready / Needs reframing / Routine contribution risk
+
 ## 总结
 
 [对论文的最终评价和下一步建议]
@@ -167,7 +193,8 @@
 2. **验证引用**：检查所有 \cite{} 是否存在于 related_work.bib
 3. **利用机械审计**：对 `manuscript_audit.md` 中未解决的 `[ ]` 项逐条判断是否应成为审稿问题
 4. **利用作者自查**：对 `self_check.md` 中的 High/Medium TODO 判断是否已经反映在正文或 Limitations
-5. **检查匿名化**：确保论文不包含作者信息
+5. **利用 CDR ledger**：检查核心 contribution claims 是否在对应章节被解释并被证据支持；不要把 ledger 当最终真理
+6. **检查匿名化**：确保论文不包含作者信息
 
 ## 质量标准
 

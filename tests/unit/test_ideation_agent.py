@@ -56,6 +56,18 @@ def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) 
                     "prediction": "在稀疏用户子群上 Recall@20 提升 5%+",
                     "counterfactual": "如果机制不成立，选择性噪声关闭后指标应无显著差异",
                     "mechanism_family": "selective noise application",
+                    "cdr_tuple": {
+                        "problem_frame": "现有方法在目标场景下存在明确短板。",
+                        "design_rationale": "按用户状态调节机制强度可以更直接地检验稀疏子群的表示质量。",
+                        "artifact": "一个选择性机制调节模块。",
+                        "design_principles": ["隔离机制", "保留简单基线"],
+                        "data_view": "按子群切分的验证集。",
+                        "evaluation_mode": "主指标加机制消融。",
+                        "contribution_type": "improvement",
+                        "boundary_conditions": ["目标场景具有可观测子群差异"],
+                        "cross_paper_tension": ["统一机制假设与子群失败之间的张力"],
+                    },
+                    "contribution_strength": 4,
                 },
                 "hypothesis_refs": refs,
                 "source": {
@@ -79,6 +91,7 @@ def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) 
                     "impact_reason": "该问题影响后续系统可靠性。",
                     "evaluability_reason": "可以用accuracy和cost指标验证。",
                     "paper_story": "问题、方法和实验链路清楚。",
+                    "contribution_character": "如果该假设成立，领域会从统一机制默认设置转向按子群状态调节机制强度的设计原则。",
                 },
                 "closest_baselines": [
                     {
@@ -94,7 +107,7 @@ def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) 
                     "evaluability": 5,
                     "differentiation": 3,
                     "cost": 5,
-                    "paper_shapability": 4,
+                    "contribution_strength": 4,
                 },
                 "decision": {
                     "status": "selected",
@@ -132,6 +145,16 @@ def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) 
                     "prediction": "如果迁移偏置有用，新场景accuracy应相对baseline提升",
                     "counterfactual": "如果迁移偏置无效，替换为简单baseline后指标不会下降",
                     "mechanism_family": "direct transfer",
+                    "cdr_tuple": {
+                        "problem_frame": "另一个较弱的问题设定。",
+                        "design_rationale": "直接迁移已有方法不改变核心设计逻辑。",
+                        "artifact": "场景迁移 baseline。",
+                        "data_view": "常规验证集。",
+                        "evaluation_mode": "主指标比较。",
+                        "contribution_type": "routine",
+                        "boundary_conditions": ["仅作为 rejected idea 记录"],
+                    },
+                    "contribution_strength": 1,
                 },
                 "hypothesis_refs": [],
                 "source": {
@@ -155,6 +178,7 @@ def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) 
                     "impact_reason": "影响范围较窄。",
                     "evaluability_reason": "缺少稳定评价指标。",
                     "paper_story": "论文故事更像工程迁移。",
+                    "contribution_character": "如果成立也主要是应用迁移，不会改变领域对机制设计的理解。",
                 },
                 "closest_baselines": [
                     {
@@ -170,7 +194,7 @@ def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) 
                     "evaluability": 2,
                     "differentiation": 2,
                     "cost": 4,
-                    "paper_shapability": 2,
+                    "contribution_strength": 1,
                 },
                 "decision": {
                     "status": "rejected",
@@ -345,6 +369,8 @@ Both families are distinct. D1 focuses on mechanism verification while D2 is a d
                             "comparison_table_signals": ["comparison_table.csv: 基线未覆盖该约束"],
                             "seed_idea_links": [],
                             "lens_insights": ["causal: 可用accuracy指标验证机制差异"],
+                            "forward_reasoning": "从问题机制出发先提出可检验设计，再回到文献做 grounding。",
+                            "grounding_checks": ["确认预算内可评估", "确认已有基线不足以覆盖该机制"],
                         },
                         "reasoning": "文献缺口和对比表共同指向该机制，因此形成可实验验证的假设。",
                         "confidence": "medium",

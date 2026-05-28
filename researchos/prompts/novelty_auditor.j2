@@ -85,7 +85,7 @@ search_papers(
 
 #### 2.35 提取 Mechanism Tuple
 
-对当前假设，提取 mechanism tuple 并调用 `extract_mechanism_tuple` 工具保存：
+对当前假设，先提取 mechanism tuple 并调用 `extract_mechanism_tuple` 工具保存；再提取 CDR design-rationale tuple 并调用 `extract_design_rationale_tuple` 工具保存。前者服务 collision axis，后者服务 ambition / contribution-distance axis。
 
 ```python
 extract_mechanism_tuple(
@@ -109,6 +109,25 @@ extract_mechanism_tuple(
 - 工具不会内置领域 ontology；没有 `normalized_input_signal` 时会保留你的 raw input_signal 作为 hint
 - 示例：`input_signal="<mechanism operates on this signal>", normalized_input_signal="<LLM-defined domain label>"`
 
+然后调用：
+
+```python
+extract_design_rationale_tuple(
+    source_id="H1",
+    source_type="hypothesis",
+    design_rationale="<为什么这个 artifact 应该这样设计>",
+    artifact="<被设计的对象：construct/model/formulation/method/system/benchmark/protocol>",
+    contribution_type="<invention | improvement | exaptation | routine>",
+    problem_frame="<问题表述>",
+    design_principles=["<可迁移设计原则，如有>"],
+    data_view="<数据/证据视角>",
+    evaluation_mode="<如何知道它有效>",
+    boundary_conditions=["<成立/失效边界>"]
+)
+```
+
+`contribution_type=routine` 不是禁止记录，但不能作为通过结论；如果最后发现 routine，Final Gate Verdict 必须要求回到 T4 或重新 framing。
+
 #### 2.36 用 Mechanism Query 搜索（第4类查询）
 
 除了原有的3类搜索查询，新增第4类 mechanism-focused 查询：
@@ -126,10 +145,11 @@ search_papers(
 对搜索到的每篇候选论文：
 1. 从摘要中提取 mechanism tuple
 2. 调用 `extract_mechanism_tuple(source_type="paper_abstract", source_id="<paper_id>")`
-3. 先由你阅读摘要/metadata 判断机制关系，再调用 `compare_mechanism_tuples(...)` 获取机械相似度 hint；如已有判断，可通过 `llm_assessment` 附上
-4. 记录 tool 的 heuristic hint 和你的 final judgment。最终新颖性判定以你的分析为准，不以工具矩阵为准
+3. 从摘要/metadata 提取 design-rationale tuple，调用 `extract_design_rationale_tuple(source_type="paper_abstract", source_id="<paper_id>")`
+4. 先由你阅读摘要/metadata 判断机制关系，再调用 `compare_mechanism_tuples(...)` 与 `compare_design_rationale_tuples(...)` 获取机械相似度 hint；如已有判断，可通过 `llm_assessment` 附上
+5. 记录 tool 的 heuristic hint 和你的 final judgment。最终新颖性判定以你的分析为准，不以工具矩阵为准
 
-#### 2.37 汇总 Mechanism Verdicts
+#### 2.37 汇总 Collision Axis 与 Ambition Axis
 
 对当前假设 H，汇总所有比对结果：
 
@@ -137,6 +157,9 @@ search_papers(
 - 你必须给出最终标签：`true_collision` / `mechanism_collision` / `explanatory_competition` / `safe`
 - 只有在你确认机制、任务边界、贡献点都高度一致时，才把 H 降为 Level 0
 - 如果只是机制相似但任务或贡献边界不同，应写成 baseline 或 crucial experiment，而不是机械判死刑
+- Ambition Axis 必须独立判断：`high_ambition` / `medium_ambition` / `incremental` / `routine_risk`
+- 没有 closest baseline 或与现有工作正交时，不得降低 ambition；应标为 high novelty/high risk，并说明需要怎样验证
+- Final Gate Verdict = collision axis 与 ambition axis 的组合：collision 过高或 routine_risk 都不能无条件进入 T7/T8
 
 #### 2.4 判断新颖性等级
 
@@ -226,6 +249,22 @@ search_papers(
 - mechanism: "<the causal claim>"
 - claimed_effect: "<what improves>"
 
+**Design-Rationale Tuple**:
+- problem_frame: "<problem framing>"
+- design_rationale: "<why this artifact should be designed this way>"
+- artifact: "<designed object>"
+- contribution_type: invention / improvement / exaptation / routine
+- boundary_conditions: "<where it holds/fails>"
+
+**Collision Axis**:
+- final_collision_label: true_collision / mechanism_collision / explanatory_competition / safe
+- rationale: <why>
+
+**Ambition Axis**:
+- contribution_distance: high_ambition / medium_ambition / incremental / routine_risk
+- no_baseline_interpretation: <if no close baseline, mark high novelty/high risk rather than penalizing it>
+- rationale: <why this is or is not routine>
+
 **Collision Findings**:
 
 #### true_collision (high confidence): N
@@ -244,6 +283,9 @@ search_papers(
 
 **Adjusted Level**: Level X
   (如果有 mechanism_collision 导致降级，在此说明)
+
+**Final Gate Verdict**: pass_to_experiment / pass_with_required_baselines / return_to_T4_reframe / drop_due_to_collision
+（必须由 Collision Axis × Ambition Axis 共同决定；routine_risk 不能 pass）
 
 **判定理由**:
 [详细说明为什么给出这个等级，基于：
@@ -382,8 +424,10 @@ search_papers(
 ### 2. 判定规则
 - 新颖性等级判定必须基于搜索结果和对比分析
 - 不要过于乐观（避免漏掉撞车风险）
-- 不要过于悲观（合理的增量创新也是有价值的）
+- 不要过于悲观：无相近 baseline 是高新颖/高风险信号，不是降级理由
 - Level 0 判定必须有明确的High Overlap证据
+- routine contribution 必须标为 Routine contribution risk，并建议回到 T4 重新 framing 或放弃
+- ambition axis 和 collision axis 必须分开写；不撞车但 routine 仍然不能无条件通过
 
 ### 3. 报告质量规则
 - 每个假设的审计必须包含：搜索策略、相似工作分析、新颖性判定、风险提示

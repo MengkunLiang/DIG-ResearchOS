@@ -122,6 +122,21 @@ class TestTransformToPapersRaw:
         assert result["authors"] == []
         assert result["year"] is None
 
+    def test_preserves_query_bucket_annotations(self):
+        """Runtime/Scout routing labels should survive raw normalization."""
+        paper = {
+            "id": "p-adjacent",
+            "title": "Adjacent Field Paper",
+            "authors": ["Ada"],
+            "search_bucket": "adjacent_field",
+            "adjacent_field": True,
+            "source_query": "queueing congestion learning",
+        }
+        result = _transform_to_papers_raw(paper)
+        assert result["search_bucket"] == "adjacent_field"
+        assert result["adjacent_field"] is True
+        assert result["source_query"] == "queueing congestion learning"
+
 
 class TestSavePapersRawTool:
     """测试 save_papers_raw 工具。"""

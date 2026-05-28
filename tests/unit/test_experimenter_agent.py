@@ -81,6 +81,7 @@ def test_experimenter_agent_spec(experimenter_agent):
         "append_file",
         "bash_run",
         "docker_exec",
+        "latex_compile",
         "finish_task",
     ]
     assert set(spec.tool_names) == set(expected_tools)

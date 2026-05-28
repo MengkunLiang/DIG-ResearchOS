@@ -154,8 +154,11 @@ class CompletePipelineRunner:
         )
         if result.ok and not ok:
             result.ok = False
-            result.stop_reason = result.STOP_ERROR
-            result.error = "Runtime artifact validation failed: " + str(errors)
+            result.stop_reason = result.STOP_INTERRUPTED
+            result.error = (
+                "Runtime artifact validation failed; paused for artifact repair/resume: "
+                + str(errors)
+            )
             result.message = result.error
 
         state = self.state_machine.advance(state, result, workspace_dir=self.workspace)

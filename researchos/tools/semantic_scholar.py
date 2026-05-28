@@ -44,6 +44,10 @@ class SemanticScholarSearchParams(BaseModel):
     """搜索论文的参数"""
     query: str = Field(..., description="搜索查询字符串")
     limit: int = Field(default=10, description="返回结果数量（最多100）", ge=1, le=100)
+    query_bucket: str | None = Field(
+        default=None,
+        description="可选检索式桶标签，仅用于 ResearchOS 队列保护，不发送给 Semantic Scholar。",
+    )
     fields: str = Field(
         default="paperId,title,abstract,authors,year,venue,citationCount,url,externalIds",
         description="返回的字段列表（逗号分隔）"
@@ -78,6 +82,7 @@ class SemanticScholarSearchTool(Tool):
     async def execute(self, **kwargs) -> ToolResult:
         query = kwargs["query"]
         limit = kwargs.get("limit", 10)
+        query_bucket = kwargs.get("query_bucket")
         fields = kwargs.get("fields", "paperId,title,abstract,authors,year,venue,citationCount,url,externalIds")
 
         headers = {}
@@ -137,7 +142,7 @@ class SemanticScholarSearchTool(Tool):
                 return ToolResult(
                     ok=True,
                     content="\n".join(content_lines),
-                    data={"papers": papers, "total": total}
+                    data={"papers": papers, "total": total, "query": query, "query_bucket": query_bucket}
                 )
 
             except httpx.HTTPStatusError as e:

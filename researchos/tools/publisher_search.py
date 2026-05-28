@@ -81,6 +81,10 @@ class ElsevierScopusSearchParams(BaseModel):
     year_from: int | None = Field(default=None, description="起始发表年份，例如 2020")
     year_to: int | None = Field(default=None, description="结束发表年份，例如 2026")
     sort: str | None = Field(default=None, description="Scopus 排序参数，例如 -citedby-count")
+    query_bucket: str | None = Field(
+        default=None,
+        description="可选检索式桶标签，仅用于 ResearchOS 队列保护，不发送给 Scopus。",
+    )
 
 
 class InformsSearchParams(BaseModel):
@@ -91,6 +95,10 @@ class InformsSearchParams(BaseModel):
     year_from: int | None = Field(default=None, description="起始发表年份，例如 2020")
     year_to: int | None = Field(default=None, description="结束发表年份，例如 2026")
     sort: str = Field(default="relevance", description="Crossref 排序方式")
+    query_bucket: str | None = Field(
+        default=None,
+        description="可选检索式桶标签，仅用于 ResearchOS 队列保护，不发送给 Crossref/INFORMS。",
+    )
     journal_only: bool = Field(
         default=True,
         description="是否只返回 Crossref type=journal-article，默认过滤掉新闻、杂志、教学案例等非期刊论文记录",
@@ -188,7 +196,13 @@ class ElsevierScopusSearchTool(Tool):
         return ToolResult(
             ok=True,
             content=_format_paper_summary(papers, total, "Elsevier Scopus"),
-            data={"papers": papers, "total": total, "source": "elsevier_scopus"},
+            data={
+                "papers": papers,
+                "total": total,
+                "source": "elsevier_scopus",
+                "query": params.query,
+                "query_bucket": params.query_bucket,
+            },
         )
 
     @staticmethod
@@ -291,7 +305,13 @@ class InformsSearchTool(Tool):
         return ToolResult(
             ok=True,
             content=_format_paper_summary(papers, total, "INFORMS/Crossref"),
-            data={"papers": papers, "total": total, "source": "informs_crossref"},
+            data={
+                "papers": papers,
+                "total": total,
+                "source": "informs_crossref",
+                "query": params.query,
+                "query_bucket": params.query_bucket,
+            },
         )
 
     @staticmethod

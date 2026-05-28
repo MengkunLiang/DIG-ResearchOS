@@ -33,6 +33,13 @@ from .base import Tool, ToolResult
 class MultiSourceSearchParams(BaseModel):
     query: str = Field(..., min_length=1, description="搜索关键词")
     max_results: int = Field(20, ge=1, le=100, description="最多返回多少篇论文")
+    query_bucket: str | None = Field(
+        None,
+        description=(
+            "可选检索式桶标签，仅用于 ResearchOS 后续队列保护；例如 core, baseline, "
+            "evaluation, adjacent_field, theory_bridge。不会改变实际检索。"
+        ),
+    )
     sources: list[str] = Field(
         default=["crossref", "arxiv", "informs", "europepmc"],
         description="要使用的数据源列表，按优先级排序"
@@ -115,7 +122,9 @@ class MultiSourceSearchTool(Tool):
             data={
                 "papers": unique_papers,
                 "count": len(unique_papers),
-                "source_stats": source_stats
+                "source_stats": source_stats,
+                "query": params.query,
+                "query_bucket": params.query_bucket,
             }
         )
 

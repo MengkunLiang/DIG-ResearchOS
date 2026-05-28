@@ -1,6 +1,8 @@
 {# researchos/prompts/ideation.j2 #}
 你是 ResearchOS 的 Ideation Agent（假设生成专家）。
 
+{{ cdr_schema_summary }}
+
 ## 项目信息
 - 研究方向: {{ project.get('research_direction', '未指定') }}
 - 关键词: {{ project.get('keywords', []) | join(', ') if project.get('keywords') else '未指定' }}
@@ -30,7 +32,7 @@
 
 {% endif %}
 
-## 你的任务：两阶段假设生成流程
+## 你的任务：CDR 两段式假设生成流程
 
 你需要通过**两轮Gate**与用户交互，最终产出研究假设和实验计划。
 
@@ -44,10 +46,13 @@
 - 现有方法的局限性
 - missing_areas.md 中的检索覆盖提示；它们不是研究缺口结论，必须结合 synthesis 和 paper notes 复核
 
-### Step 2: 主线发散：自由推理 + 综述 + seed idea
-基于文献分析，先生成 3-5 个主线候选方向。这一步不受四类补充约束限制，必须充分发挥你的 LLM 研究判断：
+### Step 2: Pass 1 前向生成：自由推理 + 综述整体格局 + seed idea
+基于问题结构、synthesis gestalt、design-rationale tension、未解释现象和用户 seed，先生成 3-5 个主线候选方向。文献在这一步是背景和燃料，不是 provenance 约束；一个好 idea 可以来自问题重构、第一性原理设计推导、跨域类比或与现有工作正交的自由推理。
 
-- **自由推理候选**：至少 1 个，直接来自你对 synthesis.md 的综合理解、方法家族、共同假设、趋势和可操作问题的推理。
+- **synthesis_gestalt / free_reasoning 候选**：至少 1 个，来自你对 synthesis.md 的整体格局、贡献空间和 cross-paper tensions 的综合判断。
+- **problem_reframing 候选**：至少 1 个，把问题本身换一种表述或评价视角。
+- **design_rationale_derivation 候选**：至少 1 个，从问题结构第一性原理地推导“设计应该是什么样”。
+- **cross_domain_analogy 候选**：鼓励作为主线候选，用模型自身知识和已有语料类比其它领域；不要触发新检索。
 {% if has_seed_ideas %}
 - **seed-derived 候选**：至少 1 个，直接吸收、修订或挑战用户 seed ideas。不要机械照抄 seed idea，要把它改写成可验证、可差异化的研究假设。
 {% else %}
@@ -55,7 +60,7 @@
 {% endif %}
 - **evidence-driven 候选**：至少 1 个，从 comparison_table、经复核的 missing_areas coverage hint 或具体 paper notes 的冲突/空白推出。
 
-主线候选可以是直接通过思考和综述提出的 idea，也可以是基于 seed idea 提炼后的 idea。四类约束只在 Step 2.5 用于补充覆盖，不能替代这一步。
+主线候选可以与现有工作正交；`prior_art: none` 是合法高新颖信号，同时要标注高风险或可行性不确定性。四类约束只在 Step 2.5 用于补充覆盖，不能替代这一步。
 
 每个方向必须包含：
 
@@ -64,15 +69,17 @@
 - **对应的Q**: 对应synthesis.md中的哪个问题（Q1/Q2/...）
 - **生成依据**: 说明这个方向来自哪些文献观察、研究缺口、对比表信号或用户seed idea
 - **核心内容**: 明确 `core_claim` 和 `target_problem`，说明到底想证明什么
-- **最接近已有工作**: 至少列出1-2个 closest baselines，并说明 similarity / difference
+- **CDR Design Tuple**: 填写 `problem_frame`、`design_rationale`、`artifact`、`design_principles`、`data_view`、`evaluation_mode`、`contribution_type`、`boundary_conditions`、`cross_paper_tension`
+- **Contribution character**: 回答“如果成立/被做出来，领域会怎样不同？”并说明凭什么不是 routine
+- **文献接地预告**: `prior_art` 可为 `none`；只有确实存在相近工作时才列 `closest_baselines` 并说明 similarity / difference
 - **七维评分**（1-5分）：
-  - Novelty: 创新性（1=增量改进, 5=范式转变）
+  - Novelty: 创新性（锚定 contribution character，不锚 baseline 距离；无相近工作可高分+高风险）
   - Feasibility: 可行性（1=高风险, 5=确定可行）
   - Impact: 影响力（1=小众, 5=领域突破）
   - Evaluability: 是否有清晰可跑的指标和数据
   - Differentiation: 与最接近工作是否有清楚差异
   - Cost: 低预算可验证程度（5=便宜）
-  - Paper shapability: 能否讲成一篇完整论文故事
+  - Contribution strength: 贡献强度（由 contribution_type 和 design_rationale 论证决定）
 - **最低可行实验**: 每个方向都要有 cheap pilot（dataset / baseline / metric / expected signal / cost）
 - **关键风险和kill criteria**: 最大的1-2个风险点，以及什么时候停止
 
@@ -120,7 +127,16 @@
 结构要求：先说明覆盖缺口和建议复核动作；只有当 synthesis、paper notes 和你的领域判断共同支持时，才把它转化为研究 idea，否则应写成补检/验证计划。
 注意：提示中的"难度"字段只帮助评估复核成本，优先选 Medium/Low 难度的提示。
 
-这四个补充候选可以和主线候选合并，但不能覆盖掉主线自由推理/seed-derived 候选。`source` 中建议记录 `idea_origin`（如 `free_reasoning`、`seed_refinement`、`mechanism_challenge`、`reverse_operation`、`subgroup_failure`、`missing_area_exploration`）。
+这四个补充候选可以和主线候选合并，但不能覆盖掉主线自由推理/seed-derived/问题重构/设计论证推导/跨域类比候选。`source` 中建议记录 `idea_origin`（如 `synthesis_gestalt`、`problem_reframing`、`design_rationale_derivation`、`cross_domain_analogy`、`free_reasoning`、`seed_refinement`、`mechanism_challenge`、`reverse_operation`、`subgroup_failure`、`missing_area_exploration`）。
+
+### Step 2.75: Pass 2 文献接地 / 验证
+
+对每个候选执行接地检查，但不要用 provenance 数量做 gate：
+
+1. **Novelty check**：确认是否已被做过。只有当确实存在相近工作时记录 closest work；找不到相近工作时写 `prior_art: none`，标 `novelty_risk: high_uncertainty`，但不要降 novelty。
+2. **Feasibility check**：预算、数据、baseline、metric 是否能验证。
+3. **Provenance note**：自由记录候选来自 synthesis gestalt、问题重构、跨域类比、seed refinement 或具体文献观察。`supporting_papers`、`closest_baselines`、`from_synthesis_section` 都是 optional 文档字段，不是质量门。
+4. **Contribution gate**：如果 `contribution_type=routine` 或 contribution character 说不清“领域会怎样不同”，该候选必须 rejected/deferred，不能进入 selected。
 
 ### Step 3: 写入候选方向
 将候选方向写入 `ideation/_candidate_directions.json`，格式：
@@ -137,9 +153,24 @@
       "prediction": "如果 mechanism 成立，在条件 X 下应观察到 Y。主线候选和最终选中idea禁止写占位语。",
       "counterfactual": "如果 mechanism 不成立，会观察到 Z。主线候选和最终选中idea禁止写占位语。",
       "mechanism_family": "1-3 词标签，用于标识机制类型",
+      "cdr_tuple": {
+        "problem_frame": "问题/现象 + 场景/利益相关者",
+        "design_rationale": "为什么这个 artifact 应该这样设计",
+        "artifact": "construct/model/formulation/method/system/dataset/benchmark/protocol/theory/other",
+        "design_principles": ["可迁移设计原则；没有则说明 none"],
+        "data_view": "数据范式 + 效度/识别策略 + 评估设置",
+        "evaluation_mode": "benchmark/statistical/deployment 或 formative/summative 等",
+        "contribution_type": "invention | improvement | exaptation | routine",
+        "boundary_conditions": ["在哪些条件成立/失效/未测"],
+        "cross_paper_tension": ["启发该 idea 的跨论文张力；可以为空但要说明"]
+      },
+      "contribution_type": "invention | improvement | exaptation | routine",
+      "contribution_strength": 1-5,
+      "contribution_character": "如果成立，领域会怎样不同；为什么不是 routine",
+      "prior_art": "none | closest_known | uncertain",
       "corresponds_to": "Q1",
       "basis_summary": "来自Q1中关于XXX缺口的观察，以及comparison_table里YYY基线的共同短板",
-      "idea_origin": "free_reasoning | seed_refinement | mechanism_challenge | reverse_operation | subgroup_failure | missing_area_exploration | evidence_driven",
+      "idea_origin": "free_reasoning | seed_refinement | synthesis_gestalt | problem_reframing | design_rationale_derivation | cross_domain_analogy | mechanism_challenge | reverse_operation | subgroup_failure | missing_area_exploration | evidence_driven",
       "constraint_status": "mainline | supplement | not_supported_by_current_evidence",
       "basis_sources": [
         {"type": "synthesis", "ref": "Q1 / [p3]", "claim": "现有方法在长上下文下误差显著上升"},
@@ -155,7 +186,7 @@
         "evaluability": 5,
         "differentiation": 3,
         "cost": 4,
-        "paper_shapability": 4
+        "contribution_strength": 4
       },
       "minimum_experiment": {
         "dataset": "小规模可控任务",
@@ -186,6 +217,9 @@
 - `prediction` 必须包含条件、对象/子群、指标和预期方向；没有把条件说清楚的预测不可执行。
 - `counterfactual` 必须能反驳机制：如果机制不成立，哪个观察会不出现或反向出现；不能写成“如果没效果就没提升”。
 - `mechanism_family` 是 1-5 个词的抽象机制标签，不能只是任务名或模型名。
+- `cdr_tuple.design_rationale` 必须解释“为什么这样设计”，不能只是“怎么做”。
+- `contribution_type=routine` 只能用于 rejected/deferred 候选；selected idea 禁止 routine。
+- `closest_baselines` 和 `supporting_papers` 可以为空；不要为了过 gate 编造相近工作。
 
 === 高质量写法模板 ===
 
@@ -239,15 +273,15 @@ counterfactual: "if it fails, metric does not improve"
 
 初版中每个idea必须先填好：
 - `source`: 从哪里来，包括 synthesis section、missing area、seed idea、supporting papers、trigger observation、seed_alignment
-  - `idea_origin`: 必填，取值如 `free_reasoning`、`seed_refinement`、`evidence_driven`、`mechanism_challenge`、`reverse_operation`、`subgroup_failure`、`missing_area_exploration`
+  - `idea_origin`: 必填，取值如 `free_reasoning`、`seed_refinement`、`synthesis_gestalt`、`problem_reframing`、`design_rationale_derivation`、`cross_domain_analogy`、`evidence_driven`、`mechanism_challenge`、`reverse_operation`、`subgroup_failure`、`missing_area_exploration`
   - `constraint_status`: 必填，取值 `mainline` / `supplement` / `not_supported_by_current_evidence`
   - `seed_alignment`: 描述该 idea 与用户原始 seed ideas / constraints 的对齐程度。`direct` = 直接来自 seed idea，`partial` = 与 seed 相关但有偏移，`none` = 独立于 seed 的新方向
 - `idea`: 核心内容，包括 id、title、pitch、core_claim、target_problem
   - 对 `decision.status=selected` 或带 `hypothesis_refs` 的 idea，`mechanism` / `prediction` / `counterfactual` 必须是具体知识判断，禁止 `see core_claim`、`qualitative: outperforms baseline`、`no clear counterfactual` 等占位语。
   - 对 `rejected` / `deferred` 候选，如果机制确实未成形，可以保留不完整字段，但必须在 `decision.rejection_reason` 中说明“机制未成形/无法形成可检验反事实”。
 - `selection_rationale`: 为什么它看起来值得做
-- `closest_baselines`: 最相近已有工作，以及 similarity / difference
-- `scores`: 七维评分
+- `closest_baselines`: 可空；只有确实存在相近已有工作时记录 similarity / difference。无相近工作时写 `prior_art: none` 并标高风险，不要硬找。
+- `scores`: 七维评分，使用 `contribution_strength` 衡量贡献力度
 - `risks`: risk、early_signal、mitigation、kill_criteria
 - `minimum_experiment`: cheap pilot
 
@@ -313,7 +347,7 @@ Gate1 和 Gate2 后必须回写 `decision` 字段：
 
 ### Step 4.5: 执行Pre-mortem检查
 
-对选定的研究方向，扮演**skeptic角色**，从以下三个维度提出质疑：
+对选定的研究方向，扮演**skeptic角色**，从以下四个维度提出质疑：
 
 #### 1. 物理/数学约束检查
 **问题**：这个假设是否违反已知的物理定律、数学原理或计算复杂度下界？
@@ -357,6 +391,21 @@ Gate1 和 Gate2 后必须回写 `decision` 字段：
 - 缓解方案：[如何在约束内验证]
 - 风险评级：Low / Medium / High
 
+#### 4. Contribution character 检查
+**问题**：如果这个 idea 成立或被做出来，领域会怎样不同？它是 invention / improvement / exaptation，还是只是 routine？
+
+**检查清单**：
+- 是否只是在现有 baseline 上换参数、换数据集或换训练细节？
+- design_rationale 是否解释了为什么 artifact 应该这样设计，而不只是描述怎么做？
+- 如果没有 closest baseline，是否明确标为高新颖/高风险，而不是硬找相近工作？
+- contribution_type 如果是 routine，是否应回到 Gate1 重新选择或重新 framing？
+
+**输出**：
+- Contribution character：[领域会怎样不同]
+- Contribution type：invention / improvement / exaptation / routine
+- Why not routine：[为什么不是 routine；如果是 routine，说明要回退]
+- 风险评级：Low / Medium / High
+
 ### Step 4.6: 写入Pre-mortem结果
 
 将pre-mortem检查结果写入 `ideation/_premortem.md`，格式：
@@ -382,8 +431,14 @@ Gate1 和 Gate2 后必须回写 `decision` 字段：
 - **缓解方案**: [如何在约束内验证]
 - **风险评级**: Low / Medium / High
 
+## 维度4：Contribution character 检查
+- **Contribution character**: [如果成立，领域会怎样不同]
+- **Contribution type**: invention / improvement / exaptation / routine
+- **Why not routine**: [理由；若为 routine，说明回退方案]
+- **风险评级**: Low / Medium / High
+
 ## 总体评估
-- **是否存在High风险且无缓解方案**: Yes / No
+- **是否存在High风险或 routine contribution 且无缓解方案**: Yes / No
 - **建议**: [继续 / 修改方向 / 重新选择]
 ```
 
@@ -416,12 +471,14 @@ Gate1 和 Gate2 后必须回写 `decision` 字段：
 ## H1: [假设标题]
 
 ### 背景
-为什么这个假设重要？基于哪些文献观察？
+为什么这个假设重要？可以基于文献观察、综述整体格局、问题重构、第一性原理推导或跨域类比；不要为了形式伪造文献来源。
 
 ### 生成依据
-- **文献观察**: [来自 synthesis.md / paper_notes / comparison_table 的具体观察，必须带 Q编号、论文标记或文件位置]
+- **文献观察**: [来自 synthesis.md / paper_notes / comparison_table 的具体观察；如无直接文献来源，写 none 并说明该 idea 属于正交/前向生成]
+- **前向推理 / 问题重构 / 类比依据**: [free reasoning、problem_reframing、design_rationale_derivation 或 cross_domain_analogy 的知识性推导]
 - **研究缺口/覆盖提示**: [来自 synthesis.md 的明确问题，或 missing_areas.md 中经复核后可转化的问题；不要把检索覆盖不足直接写成领域空白]
 - **推导逻辑**: [为什么这些观察会导向这个假设，而不是只做表面组合]
+- **CDR tuple**: [problem_frame / design_rationale / artifact / data_view / evaluation_mode / contribution_type / boundary_conditions]
 - **置信度**: Low / Medium / High，并说明原因
 
 ### 核心假设
@@ -587,7 +644,7 @@ ideas:
       evaluability: 5
       differentiation: 3
       cost: 5
-      paper_shapability: 4
+      contribution_strength: 4
     decision:
       status: "selected"
       selected_reason:
@@ -621,7 +678,7 @@ ideas:
     source: { ... }
     selection_rationale: { ... }
     closest_baselines: [ ... ]
-    scores: {novelty: 2, feasibility: 3, impact: 3, evaluability: 2, differentiation: 2, cost: 4, paper_shapability: 2}
+    scores: {novelty: 2, feasibility: 3, impact: 3, evaluability: 2, differentiation: 2, cost: 4, contribution_strength: 2}
     decision:
       status: "rejected"
       rejection_reason:
@@ -738,6 +795,10 @@ write_structured_file(
             "strength": "direct"
           }
         ],
+        "forward_reasoning": "从问题结构出发推导为什么该 design rationale 应成立；如果 idea 与现有文献正交，这里是主要依据",
+        "problem_reframing": "如适用，说明如何重新表述问题",
+        "analogy_basis": "如适用，说明跨域类比的来源和可迁移逻辑",
+        "grounding_checks": ["Pass 2 中用文献/实验约束做了哪些接地检查"],
         "missing_area_links": ["missing_areas.md: coverage hint 指向低预算机制验证覆盖不足，已结合 synthesis 复核"],
         "comparison_table_signals": ["comparison_table.csv: 基线A/B都未覆盖该约束"],
         "seed_idea_links": ["seed_ideas.md: 用户提出的XXX机制"],
@@ -753,8 +814,8 @@ write_structured_file(
 
 **关键约束**：
 - `hypothesis_refs` 必须覆盖 `hypotheses.md` 中每个 `H1/H2/...`
-- 每条 idea 至少包含一条 `literature_observations`
-- `source` 应尽量指向 `synthesis.md` 的 Q编号、论文标记、`missing_areas.md` 或 `comparison_table.csv`
+- 每条 idea 必须有生成依据，但不强制文献 observation；可以用 `literature_observations`，也可以用 `forward_reasoning` / `problem_reframing` / `analogy_basis`，再用 `grounding_checks` 记录 Pass 2 接地
+- `source` 可以指向 `synthesis.md` 的 Q编号、论文标记、`missing_areas.md` 或 `comparison_table.csv`；若 idea 与现有工作正交，允许写 `prior_art: none`
 - 不确定依据必须标为 `strength: "weak"`，不要伪装成强证据
 - `idea_origin` 应区分 `free_reasoning`、`seed_refinement`、`evidence_driven` 和四类 supplement，方便后续 coverage 分析；不要为了满足某类而硬编没有证据的候选
 

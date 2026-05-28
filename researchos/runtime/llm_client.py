@@ -437,6 +437,7 @@ class LLMClient:
                     "error": str(exc)[:200],
                     "latency_ms": int((time.time() - started) * 1000),
                 }
+        await self.aclose()
         return results
 
     async def chat(
@@ -513,14 +514,14 @@ class LLMClient:
                     errors.append(f"{qualified}@{endpoint.name} attempt {attempt + 1}: {exc!r}")
             if attempt < max_retries_per_model - 1:
                 await asyncio.sleep(min(retry_base_delay * (2**attempt), 8))
-        await self._close_litellm_async_clients_after_failure()
+        await self.aclose()
         raise LLMProviderError(
             f"All candidates failed (profile={profile or self.default_profile_name}, "
             f"tier={tier}). Errors: {errors}"
         )
 
-    async def _close_litellm_async_clients_after_failure(self) -> None:
-        """清理 LiteLLM 失败调用遗留的 aiohttp session。"""
+    async def aclose(self) -> None:
+        """Close LiteLLM async HTTP clients created by this process."""
 
         if litellm is None:
             return

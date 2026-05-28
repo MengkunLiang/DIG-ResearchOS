@@ -242,6 +242,14 @@ class PreparedRuntime:
     mcp_server_count: int = 0
     mcp_tool_count: int = 0
 
+    async def aclose(self) -> None:
+        close = getattr(self.llm_client, "aclose", None)
+        if not callable(close):
+            return
+        result = close()
+        if hasattr(result, "__await__"):
+            await result
+
 
 def install_signal_handlers() -> None:
     """把 Ctrl-C / SIGTERM 转成 asyncio task cancel，便于优雅暂停。"""
@@ -545,16 +553,19 @@ async def run_command(args: argparse.Namespace) -> int:
         mcp_server_count=prepared.mcp_server_count,
         mcp_tool_count=prepared.mcp_tool_count,
     )
-    runner = CompletePipelineRunner(
-        workspace=workspace_dir,
-        state_machine=state_machine,
-        llm_client=prepared.llm_client,
-        tool_registry=prepared.registry,
-        skill_roots=prepared.skill_roots,
-        human_interface=_build_human_interface(runtime_settings),
-        runtime_settings=runtime_settings,
-    )
-    return await runner.run(project_id=args.project_id, resume=getattr(args, "resume", False))
+    try:
+        runner = CompletePipelineRunner(
+            workspace=workspace_dir,
+            state_machine=state_machine,
+            llm_client=prepared.llm_client,
+            tool_registry=prepared.registry,
+            skill_roots=prepared.skill_roots,
+            human_interface=_build_human_interface(runtime_settings),
+            runtime_settings=runtime_settings,
+        )
+        return await runner.run(project_id=args.project_id, resume=getattr(args, "resume", False))
+    finally:
+        await prepared.aclose()
 
 
 async def run_task_command(args: argparse.Namespace) -> int:
@@ -582,17 +593,20 @@ async def run_task_command(args: argparse.Namespace) -> int:
         mcp_tool_count=prepared.mcp_tool_count,
     )
     from_workspace = Path(args.from_workspace).resolve() if args.from_workspace else None
-    runner = SingleTaskRunner(
-        workspace=workspace_dir,
-        task_id=args.task_id.strip(),
-        llm_client=prepared.llm_client,
-        tool_registry=prepared.registry,
-        from_workspace=from_workspace,
-        override_profile=args.profile,
-        human_interface=_build_human_interface(runtime_settings),
-        runtime_settings=runtime_settings,
-    )
-    return await runner.run()
+    try:
+        runner = SingleTaskRunner(
+            workspace=workspace_dir,
+            task_id=args.task_id.strip(),
+            llm_client=prepared.llm_client,
+            tool_registry=prepared.registry,
+            from_workspace=from_workspace,
+            override_profile=args.profile,
+            human_interface=_build_human_interface(runtime_settings),
+            runtime_settings=runtime_settings,
+        )
+        return await runner.run()
+    finally:
+        await prepared.aclose()
 
 
 async def run_skill_command(args: argparse.Namespace) -> int:
@@ -620,23 +634,26 @@ async def run_skill_command(args: argparse.Namespace) -> int:
         mcp_tool_count=prepared.mcp_tool_count,
     )
 
-    skill = resolve_skill(args.skill_name, prepared.skill_roots)
-    outputs_expected = {
-        name: workspace_dir / rel_path
-        for name, rel_path in (skill.metadata.get("outputs_expected") or {}).items()
-    }
-    human = _build_human_interface(runtime_settings)
-    result = await run_skill(
-        skill=skill,
-        user_request=" ".join(args.request).strip() or f"Execute skill '{skill.name}'.",
-        workspace=workspace_dir,
-        tool_registry=prepared.registry,
-        llm_client=prepared.llm_client,
-        human_interface=human,
-        outputs_expected=outputs_expected,
-        llm_profile=args.profile,
-        runtime_settings=runtime_settings,
-    )
+    try:
+        skill = resolve_skill(args.skill_name, prepared.skill_roots)
+        outputs_expected = {
+            name: workspace_dir / rel_path
+            for name, rel_path in (skill.metadata.get("outputs_expected") or {}).items()
+        }
+        human = _build_human_interface(runtime_settings)
+        result = await run_skill(
+            skill=skill,
+            user_request=" ".join(args.request).strip() or f"Execute skill '{skill.name}'.",
+            workspace=workspace_dir,
+            tool_registry=prepared.registry,
+            llm_client=prepared.llm_client,
+            human_interface=human,
+            outputs_expected=outputs_expected,
+            llm_profile=args.profile,
+            runtime_settings=runtime_settings,
+        )
+    finally:
+        await prepared.aclose()
     if outputs_expected:
         ok, errors = validate_declared_outputs(workspace_dir, outputs_expected)
         if not ok:
@@ -672,7 +689,10 @@ async def selftest_command(args: argparse.Namespace) -> int:
         show_summary=False,
     )
     client = LLMClient(Path(args.model_routing).resolve())
-    llm_results = await client.selftest(args.profile or None)
+    try:
+        llm_results = await client.selftest(args.profile or None)
+    finally:
+        await client.aclose()
     dependency_results = _dependency_selftest()
     print(
         yaml.safe_dump(
@@ -742,6 +762,19 @@ def validate_command(args: argparse.Namespace) -> int:
         task_id,
         declared_outputs=declared_outputs,
     )
+    if not ok and task_id == "T8-SECTION-PLAN":
+        from .runtime.manuscript_recovery import can_repair_t8_section_plan, repair_t8_section_plan_outputs
+
+        if can_repair_t8_section_plan(workspace):
+            repair_ok, repair_err = asyncio.run(repair_t8_section_plan_outputs(workspace))
+            if repair_ok:
+                ok, errors = validate_task_artifacts(
+                    workspace,
+                    task_id,
+                    declared_outputs=declared_outputs,
+                )
+            else:
+                errors = f"{errors}; T8-SECTION-PLAN deterministic repair failed: {repair_err}"
     print(
         yaml.safe_dump(
             {"ok": ok, "task": task_id, "errors": errors},

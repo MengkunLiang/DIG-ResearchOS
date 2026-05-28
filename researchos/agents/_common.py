@@ -28,6 +28,61 @@ def load_project(ctx: "ExecutionContext") -> dict:
     return yaml.safe_load(project_path.read_text(encoding="utf-8"))
 
 
+def repo_root() -> Path:
+    """Return the repository root for reading versioned config files."""
+
+    return Path(__file__).resolve().parents[2]
+
+
+def load_cdr_schema() -> dict:
+    """Load the shared CDR schema used by Pre-T5 and manuscript agents."""
+
+    schema_path = repo_root() / "config" / "cdr_schema.yaml"
+    if not schema_path.exists():
+        return {}
+    return yaml.safe_load(schema_path.read_text(encoding="utf-8")) or {}
+
+
+def cdr_schema_prompt_summary() -> str:
+    """Compact schema summary for prompts without embedding long docs."""
+
+    schema = load_cdr_schema()
+    fields = schema.get("design_tuple_fields") or {}
+    origins = schema.get("idea_origins") or {}
+    contribution = fields.get("contribution_type") or {}
+    responsibilities = schema.get("section_cdr_responsibilities") or {}
+    lines = [
+        "## Shared CDR Schema",
+        "",
+        f"- semantics: {schema.get('semantics', 'not loaded')}",
+        "- design_tuple fields:",
+    ]
+    for name, meta in fields.items():
+        description = meta.get("description", "") if isinstance(meta, dict) else ""
+        lines.append(f"  - `{name}`: {description}")
+    if contribution.get("enum"):
+        lines.append(f"- contribution_type enum: {', '.join(contribution['enum'])}")
+    if origins:
+        lines.append(
+            "- mainline idea origins: "
+            + ", ".join(str(item) for item in origins.get("mainline", []))
+        )
+        lines.append(
+            "- supplement idea origins: "
+            + ", ".join(str(item) for item in origins.get("supplement", []))
+        )
+    if responsibilities:
+        lines.append("- manuscript section CDR responsibilities:")
+        for section, responsibility in responsibilities.items():
+            lines.append(f"  - `{section}`: {responsibility}")
+    principles = schema.get("principles") or []
+    if principles:
+        lines.append("- principles:")
+        for item in principles:
+            lines.append(f"  - {item}")
+    return "\n".join(lines)
+
+
 def load_jsonl(path: Path) -> list[dict]:
     """读JSONL格式artifact（papers_raw, papers_dedup等）。"""
     if not path.exists():

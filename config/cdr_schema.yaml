@@ -1,0 +1,108 @@
+version: "1.0"
+name: "CDR Design Tuple"
+semantics: "single_source_of_truth_for_contribution_design_rationale_fields_not_domain_knowledge"
+
+principles:
+  - "Provenance grounds and checks ideas; it is not a quality gate."
+  - "Contribution character is judged by how the field changes if the idea works."
+  - "No close baseline is a valid high-novelty signal with high-risk/feasibility flags."
+  - "Tools should organize repeatable evidence; LLMs should supply scientific judgment and prose."
+
+design_tuple_fields:
+  problem_frame:
+    description: "Problem/phenomenon plus setting and stakeholder or use context."
+    required_for:
+      - "selected_idea"
+      - "cdr_claim_ledger"
+      - "manuscript_outline"
+  design_rationale:
+    description: "Why this artifact should be designed this way; the justificatory knowledge behind the contribution."
+    required_for:
+      - "selected_idea"
+      - "novelty_ambition_audit"
+      - "manuscript_core_sections"
+  artifact:
+    description: "Designed object: construct, model, formulation, method, system, dataset, benchmark, protocol, or theory."
+    required_for:
+      - "selected_idea"
+      - "methodology"
+  design_principles:
+    description: "Transferable design knowledge when applicable."
+    required_for:
+      - "manuscript_discussion"
+  data_view:
+    description: "Data paradigm, validity/identification strategy, and evaluation setting."
+    required_for:
+      - "experiments"
+      - "analysis"
+  evaluation_mode:
+    description: "How effectiveness will be known, e.g. formative/summative, benchmark/statistical/deployment, naturalistic/artificial."
+    required_for:
+      - "exp_plan"
+      - "experiments"
+  contribution_type:
+    description: "Contribution character. Routine is allowed for rejected/deferred records but must not pass as selected."
+    enum:
+      - "invention"
+      - "improvement"
+      - "exaptation"
+      - "routine"
+    required_for:
+      - "candidate_idea"
+      - "selected_idea"
+      - "novelty_ambition_audit"
+      - "cdr_claim_ledger"
+  boundary_conditions:
+    description: "Where the design rationale should hold, fail, or remain untested."
+    required_for:
+      - "limitations"
+      - "analysis"
+  cross_paper_tension:
+    description: "Contradictions, design-rationale competitions, or incompatible assumptions across papers. This is generative fuel, not provenance gate."
+    required_for:
+      - "reader_notes"
+      - "synthesis_workbench"
+
+idea_origins:
+  mainline:
+    - "free_reasoning"
+    - "seed_refinement"
+    - "seed_derived"
+    - "evidence_driven"
+    - "synthesis_gestalt"
+    - "problem_reframing"
+    - "design_rationale_derivation"
+    - "cross_domain_analogy"
+  supplement:
+    - "mechanism_challenge"
+    - "reverse_operation"
+    - "subgroup_failure"
+    - "missing_area_exploration"
+    - "gap_exploration"
+
+optional_provenance_fields:
+  - "supporting_papers"
+  - "closest_baselines"
+  - "from_synthesis_section"
+  - "from_missing_area"
+  - "prior_art"
+
+section_cdr_responsibilities:
+  abstract: "Compress problem_frame, design_rationale, artifact/evidence, and contribution_type without adding new claims."
+  introduction: "Make the problem frame and field-change argument explicit; answer how the field differs if the contribution works."
+  related_work: "Compare competing design rationales and cross-paper tensions, not only method taxonomies."
+  methodology: "Explain why the artifact is designed this way, including design principles and operational details."
+  experiments: "Align setup, metrics, baselines, and results with data_view and evaluation_mode."
+  analysis: "Assess whether evidence supports or weakens design_rationale; discuss alternative explanations."
+  limitations: "State boundary_conditions, unsupported claims, skipped stages, and external validity limits."
+  conclusion: "Return to contribution_type and transferable design knowledge without introducing new evidence."
+
+ambition_axis:
+  labels:
+    - "high"
+    - "medium"
+    - "incremental"
+  rules:
+    - "Collision and ambition are separate axes."
+    - "No close baseline must not reduce ambition; mark risk instead."
+    - "Routine or incremental selected ideas should be returned to T4 unless the LLM gives a strong reframing path."

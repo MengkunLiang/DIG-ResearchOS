@@ -135,6 +135,42 @@ class CompareMechanismTuplesParams(BaseModel):
     )
 
 
+class ExtractDesignRationaleTupleParams(BaseModel):
+    source_id: str = Field(..., min_length=1, description="Unique identifier such as H1.")
+    source_type: Literal["hypothesis", "paper_abstract", "idea"] = Field(
+        ...,
+        description="Where this design-rationale tuple comes from.",
+    )
+    design_rationale: str = Field(
+        ...,
+        min_length=1,
+        description="Why the artifact should be designed this way; extracted by the LLM.",
+    )
+    artifact: str = Field(..., min_length=1, description="Designed object or method/system/formulation.")
+    contribution_type: str = Field(
+        ...,
+        description="LLM-provided contribution type: invention, improvement, exaptation, or routine.",
+    )
+    problem_frame: str = Field("", description="Optional problem frame.")
+    design_principles: list[str] = Field(default_factory=list, description="Optional transferable design principles.")
+    data_view: str = Field("", description="Optional data/evaluation view.")
+    evaluation_mode: str = Field("", description="Optional evaluation mode.")
+    boundary_conditions: list[str] = Field(default_factory=list, description="Optional boundary conditions.")
+    output_dir: str = Field(
+        "ideation/_design_rationale_tuples",
+        description="Relative workspace directory to save the tuple JSON.",
+    )
+
+
+class CompareDesignRationaleTuplesParams(BaseModel):
+    tuple_a_path: str = Field(..., min_length=1, description="Relative path to first design-rationale tuple.")
+    tuple_b_path: str = Field(..., min_length=1, description="Relative path to second design-rationale tuple.")
+    llm_assessment: dict[str, Any] | None = Field(
+        None,
+        description="Optional LLM assessment to attach; tool output remains a mechanical hint.",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Normalization helpers
 # ---------------------------------------------------------------------------
@@ -287,6 +323,103 @@ class CompareMechanismTuplesTool(Tool):
         )
 
 
+class ExtractDesignRationaleTupleTool(Tool):
+    name = "extract_design_rationale_tuple"
+    description = (
+        "Persist a design-rationale tuple for T4.5 CDR novelty/ambition auditing. "
+        "The LLM supplies the knowledge-bearing fields; the tool normalizes contribution_type "
+        "and saves the tuple for deterministic comparison."
+    )
+    parameters_schema = ExtractDesignRationaleTupleParams
+    timeout_seconds = 15.0
+
+    def __init__(self, policy: WorkspaceAccessPolicy):
+        self.policy = policy
+
+    async def execute(self, **kwargs: Any) -> ToolResult:
+        params = ExtractDesignRationaleTupleParams(**kwargs)
+        contribution_type = _normalize_contribution_type(params.contribution_type)
+        tuple_data = {
+            "source_id": params.source_id,
+            "source_type": params.source_type,
+            "problem_frame": params.problem_frame.strip(),
+            "design_rationale": params.design_rationale.strip(),
+            "artifact": params.artifact.strip(),
+            "design_principles": [str(item).strip() for item in params.design_principles if str(item).strip()],
+            "data_view": params.data_view.strip(),
+            "evaluation_mode": params.evaluation_mode.strip(),
+            "contribution_type_raw": params.contribution_type,
+            "contribution_type": contribution_type,
+            "boundary_conditions": [str(item).strip() for item in params.boundary_conditions if str(item).strip()],
+            "semantics": "llm_extracted_design_rationale_tuple_for_audit",
+        }
+        try:
+            output_dir = self.policy.resolve_write(params.output_dir)
+        except ToolAccessDenied as exc:
+            return ToolResult(ok=False, content=str(exc), error="access_denied")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        safe_id = re.sub(r"[^a-zA-Z0-9_\-]", "_", params.source_id)
+        output_path = output_dir / f"{safe_id}.json"
+        output_path.write_text(
+            json.dumps(tuple_data, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        return ToolResult(
+            ok=True,
+            content=(
+                f"Design-rationale tuple saved to {output_path.relative_to(self.policy.workspace_dir)}\n"
+                f"  contribution_type: {params.contribution_type} -> {contribution_type}\n"
+                f"  artifact: {tuple_data['artifact'][:80]}\n"
+                f"  design_rationale: {tuple_data['design_rationale'][:120]}"
+            ),
+            data=tuple_data,
+        )
+
+
+class CompareDesignRationaleTuplesTool(Tool):
+    name = "compare_design_rationale_tuples"
+    description = (
+        "Compare two design-rationale tuples and return collision/ambition hints. "
+        "This is mechanical support for the Novelty Auditor LLM, not a final judgment."
+    )
+    parameters_schema = CompareDesignRationaleTuplesParams
+    timeout_seconds = 10.0
+
+    def __init__(self, policy: WorkspaceAccessPolicy):
+        self.policy = policy
+
+    async def execute(self, **kwargs: Any) -> ToolResult:
+        params = CompareDesignRationaleTuplesParams(**kwargs)
+        try:
+            path_a = self.policy.resolve_read(params.tuple_a_path)
+            path_b = self.policy.resolve_read(params.tuple_b_path)
+        except ToolAccessDenied as exc:
+            return ToolResult(ok=False, content=str(exc), error="access_denied")
+        if not path_a.exists():
+            return ToolResult(ok=False, content=f"Tuple file not found: {params.tuple_a_path}", error="not_found")
+        if not path_b.exists():
+            return ToolResult(ok=False, content=f"Tuple file not found: {params.tuple_b_path}", error="not_found")
+        try:
+            tuple_a = json.loads(path_a.read_text(encoding="utf-8"))
+            tuple_b = json.loads(path_b.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            return ToolResult(ok=False, content=f"Failed to read tuple: {exc}", error="parse_error")
+        result = compare_design_rationale_tuples(tuple_a, tuple_b)
+        if params.llm_assessment:
+            result["llm_assessment"] = params.llm_assessment
+        return ToolResult(
+            ok=True,
+            content=(
+                f"Collision axis hint: {result['collision_axis']['hint']} "
+                f"({result['collision_axis']['confidence']})\n"
+                f"Ambition axis hint: {result['ambition_axis']['hint']} "
+                f"({result['ambition_axis']['confidence']})\n"
+                "Final verdict must be made by the Novelty Auditor LLM."
+            ),
+            data=result,
+        )
+
+
 def compare_mechanism_tuples(tuple_a: dict, tuple_b: dict) -> dict:
     """Pure-code comparison of two mechanism tuples.
 
@@ -345,6 +478,76 @@ def compare_mechanism_tuples(tuple_a: dict, tuple_b: dict) -> dict:
         "source_a": tuple_a.get("source_id", "?"),
         "source_b": tuple_b.get("source_id", "?"),
     }
+
+
+def compare_design_rationale_tuples(tuple_a: dict, tuple_b: dict) -> dict:
+    rationale_a = str(tuple_a.get("design_rationale") or "")
+    rationale_b = str(tuple_b.get("design_rationale") or "")
+    artifact_a = str(tuple_a.get("artifact") or "")
+    artifact_b = str(tuple_b.get("artifact") or "")
+    contribution_a = _normalize_contribution_type(str(tuple_a.get("contribution_type") or ""))
+    contribution_b = _normalize_contribution_type(str(tuple_b.get("contribution_type") or ""))
+
+    rationale_jaccard = _jaccard(_tokenize(rationale_a), _tokenize(rationale_b))
+    artifact_jaccard = _jaccard(_tokenize(artifact_a), _tokenize(artifact_b))
+    if rationale_jaccard >= 0.55 and artifact_jaccard >= 0.35:
+        collision_hint = "possible_design_rationale_collision"
+        collision_conf = "high" if rationale_jaccard >= 0.7 else "medium"
+    elif rationale_jaccard >= 0.35 or artifact_jaccard >= 0.45:
+        collision_hint = "possible_design_rationale_overlap"
+        collision_conf = "medium"
+    else:
+        collision_hint = "likely_distinct_design_rationale"
+        collision_conf = "low"
+
+    ambition_rank = {
+        "routine": 0,
+        "improvement": 1,
+        "exaptation": 2,
+        "invention": 3,
+    }
+    rank_a = ambition_rank.get(contribution_a, 1)
+    rank_b = ambition_rank.get(contribution_b, 1)
+    if contribution_a == "routine":
+        ambition_hint = "routine_contribution_risk"
+        ambition_conf = "high"
+    elif rank_a > rank_b:
+        ambition_hint = "higher_ambition_than_compared_work"
+        ambition_conf = "medium"
+    elif contribution_a in {"invention", "exaptation"}:
+        ambition_hint = "high_ambition_with_risk"
+        ambition_conf = "medium"
+    else:
+        ambition_hint = "incremental_or_improvement"
+        ambition_conf = "low"
+
+    return {
+        "source_a": tuple_a.get("source_id", "?"),
+        "source_b": tuple_b.get("source_id", "?"),
+        "rationale_similarity_hint": round(rationale_jaccard, 3),
+        "artifact_similarity_hint": round(artifact_jaccard, 3),
+        "collision_axis": {
+            "hint": collision_hint,
+            "confidence": collision_conf,
+            "requires_llm_judgment": True,
+        },
+        "ambition_axis": {
+            "hint": ambition_hint,
+            "confidence": ambition_conf,
+            "contribution_type_a": contribution_a,
+            "contribution_type_b": contribution_b,
+            "requires_llm_judgment": True,
+        },
+        "semantics": "mechanical_design_rationale_similarity_hint_not_final_novelty_verdict",
+    }
+
+
+def _normalize_contribution_type(raw: str) -> str:
+    lowered = raw.lower().strip()
+    for value in ("invention", "improvement", "exaptation", "routine"):
+        if value in lowered:
+            return value
+    return "improvement"
 
 
 def _compute_verdict(

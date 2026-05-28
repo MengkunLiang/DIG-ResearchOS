@@ -15,6 +15,7 @@ from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec, get_agent_mode_params
 from ..runtime.prompts import render_prompt
 from ._common import (
+    cdr_schema_prompt_summary,
     load_project,
     load_jsonl,
     normalize_text_key,
@@ -86,6 +87,7 @@ class ReaderAgent(Agent):
             "resume_queue_count": 0,
             "resume_mode": bool(ctx.extra.get("is_resume")),
             "resume_reason": str(ctx.extra.get("resume_reason", "")),
+            "cdr_schema_summary": cdr_schema_prompt_summary(),
         }
 
         if mode == "read":
@@ -202,7 +204,7 @@ class ReaderAgent(Agent):
             "先用你的LLM能力分析方法家族、共同假设、趋势和问题，再调用 build_synthesis_workbench "
             "生成结构化证据、outline和写作指导。工具产物不是最终结论；你必须审阅后亲自写出"
             "literature/synthesis.md，包含5个必需章节：方法家族分类、共同假设、"
-            "性能-效率前沿、技术趋势、可操作研究问题。"
+            "贡献空间地图、跨论文矛盾/张力、技术趋势、可操作研究问题。"
             ),
         )
 
@@ -340,7 +342,8 @@ class ReaderAgent(Agent):
         required_sections = [
             ("方法家族", "Method Families"),
             ("共同假设", "Shared Assumptions", "Assumptions"),
-            ("前沿", "Frontier", "前沿工作", "Performance-Efficiency"),
+            ("贡献空间", "Contribution-Space", "Contribution Space", "贡献空间地图"),
+            ("跨论文矛盾", "Cross-Paper", "Contradictions", "张力"),
             ("趋势", "Trends", "技术趋势"),
             ("研究问题", "Research Questions", "Open Questions", "Actionable"),
         ]
@@ -483,6 +486,12 @@ def _validate_note_structure(note_path: Path) -> tuple[bool, str | None]:
         "## 11. My Questions",
         "## 12. Reading Coverage",
         "## 13. Mechanism Claim",
+        "## 14. Design Rationale",
+        "## 15. Artifact & Design Principles",
+        "## 16. Data View & Evaluation Mode",
+        "## 17. Contribution Type",
+        "## 18. Boundary Conditions",
+        "## 19. Cross-Paper Tension",
     ]
     for marker in required_markers:
         if marker not in content:
@@ -503,6 +512,10 @@ def _validate_note_structure(note_path: Path) -> tuple[bool, str | None]:
         return False, err
 
     ok, err = _validate_mechanism_claim(note_path, content)
+    if not ok:
+        return False, err
+
+    ok, err = _validate_cdr_note_fields(note_path, content, abstract_only=False)
     if not ok:
         return False, err
 
@@ -622,6 +635,82 @@ def _validate_abstract_note_structure(note_path: Path) -> tuple[bool, str | None
         evidence_val = evidence_match.group(1).strip().lower()
         if "abstract_claim_hint" not in evidence_val and "claimed_untested" not in evidence_val:
             return False, f"{note_path.name} abstract note 的 Evidence type 必须为 abstract_claim_hint"
+
+    return True, None
+
+
+def _validate_cdr_note_fields(
+    note_path: Path,
+    content: str,
+    *,
+    abstract_only: bool,
+) -> tuple[bool, str | None]:
+    """Validate CDR note extensions without judging domain correctness."""
+
+    required_sections = [
+        ("14. Design Rationale", ["Rationale", "Rationale evidence", "Rationale weakness"]),
+        ("15. Artifact & Design Principles", ["Artifact type", "Artifact description", "Design principles"]),
+        ("16. Data View & Evaluation Mode", ["Data view", "Evaluation mode", "Validity concern"]),
+        ("17. Contribution Type", ["Contribution type", "Contribution character", "Why not routine"]),
+        ("18. Boundary Conditions", ["Works when", "May fail when", "Untested boundary"]),
+        ("19. Cross-Paper Tension", ["Tension", "Competing rationale", "Idea fuel"]),
+    ]
+    for heading, fields in required_sections:
+        section_match = re.search(
+            rf"(?ms)^##\s+{re.escape(heading)}\s*(?P<section>.*?)(?=^##\s+\d+\.|\Z)",
+            content,
+        )
+        if section_match is None:
+            if abstract_only:
+                continue
+            return False, f"{note_path.name} 缺少 ## {heading} 章节"
+        section = section_match.group("section")
+        for field in fields:
+            marker = f"- **{field}**:"
+            if marker not in section:
+                if abstract_only:
+                    continue
+                return False, f"{note_path.name} ## {heading} 缺少字段: {marker}"
+            value = _extract_markdown_field(section, field)
+            if not value and not abstract_only:
+                return False, f"{note_path.name} ## {heading} 的 {field} 不能为空"
+
+    contribution_section = re.search(
+        r"(?ms)^##\s+17\. Contribution Type\s*(?P<section>.*?)(?=^##\s+\d+\.|\Z)",
+        content,
+    )
+    contribution_value = _extract_markdown_field(
+        contribution_section.group("section") if contribution_section else "",
+        "Contribution type",
+    ).lower()
+    allowed = {"invention", "improvement", "exaptation", "routine"}
+    if contribution_value and contribution_value not in allowed:
+        return False, (
+            f"{note_path.name} Contribution type 必须是 "
+            "invention/improvement/exaptation/routine"
+        )
+
+    if not abstract_only:
+        tension_section = re.search(
+            r"(?ms)^##\s+19\. Cross-Paper Tension\s*(?P<section>.*?)(?=^##\s+\d+\.|\Z)",
+            content,
+        )
+        tension = _extract_markdown_field(
+            tension_section.group("section") if tension_section else "",
+            "Tension",
+        )
+        if not tension:
+            return False, f"{note_path.name} Cross-Paper Tension 不能为空"
+        if tension.strip().lower() in {"none", "n/a", "无", "暂无", "no tension"}:
+            reason = _extract_markdown_field(
+                tension_section.group("section") if tension_section else "",
+                "Idea fuel",
+            ) or _extract_markdown_field(
+                tension_section.group("section") if tension_section else "",
+                "Competing rationale",
+            )
+            if not reason:
+                return False, f"{note_path.name} Cross-Paper Tension 为 none 时必须说明无张力原因"
 
     return True, None
 

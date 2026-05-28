@@ -1,5 +1,6 @@
 """Writer/Reviewer/Submission Agent 单元测试"""
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -62,6 +63,122 @@ def temp_workspace(tmp_path):
         "name: test_project\nresearch_direction: AI\ntarget_venue: neurips2026"
     )
     return ws
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _write_compile_report(workspace: Path, *, success: bool = True) -> None:
+    bundle_dir = workspace / "submission" / "bundle"
+    main_tex = bundle_dir / "main.tex"
+    main_pdf = bundle_dir / "main.pdf"
+    main_log = bundle_dir / "main.log"
+    report = {
+        "version": "1.0",
+        "semantics": "latex_compile_attempt_report",
+        "tex_path": "submission/bundle/main.tex",
+        "requested_engine": "pdflatex",
+        "bibtex": True,
+        "output_dir": None,
+        "started_at": "2026-05-28T00:00:00+00:00",
+        "finished_at": "2026-05-28T00:00:01+00:00",
+        "engine": "docker",
+        "exit_code": 0 if success else 1,
+        "success": success,
+        "error": None if success else "nonzero_exit",
+        "main_tex_sha256": _sha256_file(main_tex) if main_tex.exists() else "",
+        "main_tex_mtime": main_tex.stat().st_mtime if main_tex.exists() else 0,
+        "log_path": "submission/bundle/main.log",
+        "log_sha256": _sha256_file(main_log) if main_log.exists() else "",
+        "log_mtime": main_log.stat().st_mtime if main_log.exists() else 0,
+        "log_size": main_log.stat().st_size if main_log.exists() else 0,
+        "pdf_path": "submission/bundle/main.pdf",
+        "pdf_sha256": _sha256_file(main_pdf) if main_pdf.exists() else "",
+        "pdf_size": main_pdf.stat().st_size if main_pdf.exists() else 0,
+        "pdf_mtime": main_pdf.stat().st_mtime if main_pdf.exists() else 0,
+        "attempts": [
+            {
+                "engine": "docker",
+                "exit_code": 0 if success else 1,
+                "success": success,
+                "started_at": "2026-05-28T00:00:00+00:00",
+                "finished_at": "2026-05-28T00:00:01+00:00",
+                "error": None if success else "nonzero_exit",
+            }
+        ],
+    }
+    (workspace / "submission" / "compile_report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_manuscript_registries(workspace: Path) -> None:
+    (workspace / "drafts" / "cdr_claim_ledger.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "cdr_claim_ledger_seed_not_final_scientific_judgment",
+                "cdr_tuple": {
+                    "problem_frame": "test problem frame",
+                    "design_rationale": "test design rationale",
+                    "artifact": "test artifact",
+                    "data_view": "test data view",
+                    "evaluation_mode": "test evaluation mode",
+                    "contribution_type": "improvement",
+                    "boundary_conditions": ["synthetic boundary"],
+                },
+                "contribution_claims": [
+                    {
+                        "claim_id": "C1",
+                        "claim_text": "test contribution claim",
+                        "cdr_field": "design_rationale",
+                        "required_section": ["introduction", "methodology"],
+                        "evidence_artifacts": ["ideation/hypotheses.md"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (workspace / "drafts" / "claim_ledger.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "mechanical_claim_ledger_seed_not_final_scientific_judgment",
+                "claims": [
+                    {
+                        "claim_id": "Q1",
+                        "claim_text": "test claim",
+                        "required_section": ["experiments"],
+                        "evidence_artifacts": ["experiments/results_summary.json"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (workspace / "drafts" / "figure_registry.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "mechanical_figure_registry_seed_not_visual_generation",
+                "visuals": [
+                    {
+                        "visual_id": "fig:main_results",
+                        "type": "figure",
+                        "source_artifacts": ["experiments/results_summary.json"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 # ══════════════════════════════════════════════════════
@@ -245,6 +362,7 @@ def test_writer_validate_outputs_resource_index_success(temp_workspace):
         ),
         encoding="utf-8",
     )
+    _write_manuscript_registries(temp_workspace)
 
     ok, err = agent.validate_outputs(ctx)
     assert ok
@@ -774,6 +892,15 @@ def test_reviewer_validate_outputs_success(temp_workspace):
 **建议**: 修正格式
 **严重程度**: Low
 
+## CDR Contribution Verdict
+
+- Problem frame clarity: Clear enough for this test report.
+- Design rationale support: Supported enough for this test report.
+- Contribution type credibility: Improvement claim is plausible.
+- Evidence alignment: Evidence issues are actionable.
+- Boundary condition honesty: Boundary conditions are stated.
+- Verdict: Needs minor revision.
+
 ## 总结
 
 论文需要小修后提交。
@@ -787,6 +914,7 @@ def test_reviewer_validate_outputs_success(temp_workspace):
             "## Section Purpose Check\nSubstantive check.\n\n"
             "## Evidence And Number Check\nSubstantive check.\n\n"
             "## Logic And Writing Issues\nSubstantive check.\n\n"
+            "## CDR Alignment Check\nProblem, rationale, evidence, and boundary alignment are checked.\n\n"
             "## Actionable Fixes\n- [Low] Fix wording.\n",
             encoding="utf-8",
         )
@@ -876,6 +1004,7 @@ def test_submission_validate_outputs_success(temp_workspace):
     (bundle_dir / "references.bib").write_text("@article{test,}")
     (bundle_dir / "main.pdf").write_bytes(b"%PDF-1.4\nmock pdf body\n%%EOF")
     (bundle_dir / "main.log").write_text("This is a clean compile log.")
+    _write_compile_report(temp_workspace)
 
     # 创建迁移报告
     report_content = """# 投稿迁移报告
@@ -969,6 +1098,8 @@ def test_submission_validate_outputs_compile_not_marked_success(temp_workspace):
     (bundle_dir / "main.tex").write_text(r"\documentclass{article}\begin{document}\end{document}")
     (bundle_dir / "references.bib").write_text("@article{test,}")
     (bundle_dir / "main.pdf").write_bytes(b"%PDF-1.4\nmock pdf body\n%%EOF")
+    (bundle_dir / "main.log").write_text("This is a clean compile log.")
+    _write_compile_report(temp_workspace)
 
     report_content = """# 投稿迁移报告
 
@@ -1003,6 +1134,7 @@ def test_submission_validate_outputs_rejects_non_pdf_payload(temp_workspace):
     (bundle_dir / "references.bib").write_text("@article{test,}")
     (bundle_dir / "main.pdf").write_bytes(b"this is not a pdf even if the filename says pdf")
     (bundle_dir / "main.log").write_text("This is a clean compile log.")
+    _write_compile_report(temp_workspace)
     (temp_workspace / "submission" / "migration_report.md").write_text(
         "# 投稿迁移报告\n\n"
         "## 迁移摘要\n"
@@ -1030,6 +1162,7 @@ def test_submission_validate_outputs_rejects_tiny_pdf_placeholder(temp_workspace
     (bundle_dir / "references.bib").write_text("@article{test,}")
     (bundle_dir / "main.pdf").write_bytes(b"%PDF-1.4\n")
     (bundle_dir / "main.log").write_text("This is a clean compile log.")
+    _write_compile_report(temp_workspace)
     (temp_workspace / "submission" / "migration_report.md").write_text(
         "# 投稿迁移报告\n\n"
         "## 迁移摘要\n"
@@ -1057,6 +1190,7 @@ def test_submission_validate_outputs_fatal_log_detected(temp_workspace):
     (bundle_dir / "references.bib").write_text("@article{test,}")
     (bundle_dir / "main.pdf").write_bytes(b"%PDF-1.4\nmock pdf body\n%%EOF")
     (bundle_dir / "main.log").write_text("! Emergency stop.\nFatal error occurred")
+    _write_compile_report(temp_workspace)
 
     report_content = """# 投稿迁移报告
 
@@ -1100,6 +1234,7 @@ def test_submission_validate_outputs_undefined_reference_log_detected(temp_works
         "LaTeX Warning: There were undefined references.\n"
         "LaTeX Warning: Citation `missing2024' on page 1 undefined."
     )
+    _write_compile_report(temp_workspace)
     (temp_workspace / "submission" / "migration_report.md").write_text(
         "# 投稿迁移报告\n\n"
         "## 迁移摘要\n"
@@ -1116,10 +1251,6 @@ def test_submission_validate_outputs_undefined_reference_log_detected(temp_works
     assert "致命编译错误" in err
 
 
-@pytest.mark.xfail(
-    reason="Submission validator 目前不强制 main.log/latex_compile 证据，伪造 PDF+报告仍可能通过。",
-    strict=False,
-)
 def test_submission_validate_outputs_should_require_compile_log_evidence(temp_workspace):
     """待修：没有编译日志或工具证据时，不应只凭 PDF 文件头和报告文字通过。"""
     agent = SubmissionAgent()
@@ -1143,13 +1274,9 @@ def test_submission_validate_outputs_should_require_compile_log_evidence(temp_wo
     ok, err = agent.validate_outputs(ctx)
 
     assert not ok
-    assert "main.log" in err or "编译日志" in err or "latex_compile" in err
+    assert "main.log" in err or "编译日志" in err or "compile_report" in err
 
 
-@pytest.mark.xfail(
-    reason="Submission validator 当前用宽松正则匹配任意“编译状态: 成功”，可能误读历史记录。",
-    strict=False,
-)
 def test_submission_validate_outputs_should_not_accept_historical_compile_success(temp_workspace):
     """待修：报告里当前状态失败但历史文本有成功时，不能误判成功。"""
     agent = SubmissionAgent()
@@ -1161,6 +1288,7 @@ def test_submission_validate_outputs_should_not_accept_historical_compile_succes
     (bundle_dir / "references.bib").write_text("@article{test,}")
     (bundle_dir / "main.pdf").write_bytes(b"%PDF-1.4\nmock pdf body\n%%EOF")
     (bundle_dir / "main.log").write_text("This is a clean compile log.")
+    _write_compile_report(temp_workspace)
     (temp_workspace / "submission" / "migration_report.md").write_text(
         "# 投稿迁移报告\n\n"
         "## 迁移摘要\n"
@@ -1190,6 +1318,8 @@ def test_submission_validate_outputs_report_too_short(temp_workspace):
     (bundle_dir / "main.tex").write_text(r"\documentclass{article}\begin{document}\end{document}")
     (bundle_dir / "references.bib").write_text("@article{test,}")
     (bundle_dir / "main.pdf").write_bytes(b"%PDF-1.4\nmock pdf body\n%%EOF")
+    (bundle_dir / "main.log").write_text("This is a clean compile log.")
+    _write_compile_report(temp_workspace)
 
     # 创建过短的报告
     (temp_workspace / "submission" / "migration_report.md").write_text("Too short")
@@ -1210,6 +1340,8 @@ def test_submission_validate_outputs_rejects_stale_pdf(temp_workspace):
     pdf_path.write_bytes(b"%PDF-1.4\nmock pdf body\n%%EOF")
     (bundle_dir / "main.tex").write_text(r"\documentclass{article}\begin{document}\end{document}")
     (bundle_dir / "references.bib").write_text("@article{test,}")
+    (bundle_dir / "main.log").write_text("This is a clean compile log.")
+    _write_compile_report(temp_workspace)
     old_time = (bundle_dir / "main.tex").stat().st_mtime - 5
     os.utime(pdf_path, (old_time, old_time))
     (temp_workspace / "submission" / "migration_report.md").write_text(

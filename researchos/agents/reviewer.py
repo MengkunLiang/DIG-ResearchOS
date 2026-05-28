@@ -68,6 +68,7 @@ class ReviewerAgent(Agent):
         related_work = read_text_file(ws / "literature" / "related_work.bib", default="")
         manuscript_audit = read_text_file(ws / "drafts" / "manuscript_audit.md", default="")
         self_check = read_text_file(ws / "drafts" / "self_check.md", default="")
+        cdr_claim_ledger = read_text_file(ws / "drafts" / "cdr_claim_ledger.json", default="")
 
         round_num = self._round(ctx)
         previous_review = (
@@ -87,6 +88,7 @@ class ReviewerAgent(Agent):
             related_work_bib=related_work[:3000],
             manuscript_audit_preview=manuscript_audit[:3000],
             self_check_preview=self_check[:3000],
+            cdr_claim_ledger_preview=cdr_claim_ledger[:5000],
             previous_review_preview=previous_review[:3000],
             round=round_num,
             target_venue=project.get("target_venue", "neurips"),
@@ -104,7 +106,8 @@ class ReviewerAgent(Agent):
             f"{'、drafts/review_rounds/round_' + str(round_num - 1) + '.md' if round_num > 1 else ''}，"
             f"先逐章生成 drafts/review_rounds/round_{round_num}_sections/*.md，"
             f"再综合生成 drafts/review_rounds/round_{round_num}.md。"
-            "从内容完整性、技术准确性、写作质量、学术规范四个维度审查，并检查上一轮问题是否闭环。"
+            "从内容完整性、技术准确性、写作质量、学术规范和 CDR 贡献兑现五个维度审查，"
+            "并检查上一轮问题是否闭环。"
             ),
         )
 
@@ -120,10 +123,20 @@ class ReviewerAgent(Agent):
             return False, f"review report 过短({len(report)}字符)"
 
         # 检查报告结构
-        required_sections = ["## 总体评价", "## 主要问题", "## 次要问题"]
+        required_sections = ["## 总体评价", "## 主要问题", "## 次要问题", "## CDR Contribution Verdict"]
         for section in required_sections:
             if section not in report:
                 return False, f"review report 缺少必需章节: {section}"
+        for marker in [
+            "Problem frame clarity",
+            "Design rationale support",
+            "Contribution type credibility",
+            "Evidence alignment",
+            "Boundary condition honesty",
+            "Verdict",
+        ]:
+            if marker not in report:
+                return False, f"CDR Contribution Verdict 缺少字段: {marker}"
 
         section_dir = ws / "drafts" / "review_rounds" / f"round_{round_num}_sections"
         if not section_dir.exists():
@@ -135,5 +148,7 @@ class ReviewerAgent(Agent):
                 return False, f"逐章节审稿过短或缺失: {section_report.relative_to(ws)}"
             if "##" not in text:
                 return False, f"逐章节审稿缺少结构化标题: {section_report.relative_to(ws)}"
+            if "## CDR Alignment Check" not in text:
+                return False, f"逐章节审稿缺少 CDR Alignment Check: {section_report.relative_to(ws)}"
 
         return True, None

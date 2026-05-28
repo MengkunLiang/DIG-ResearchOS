@@ -63,6 +63,11 @@ def enrich_papers(
             ):
                 if key in annotation and annotation[key] not in (None, ""):
                     paper[key] = annotation[key]
+            bucket = annotation.get("search_bucket") or annotation.get("query_bucket")
+            if bucket not in (None, ""):
+                paper["search_bucket"] = _normalize_search_bucket(bucket)
+            if annotation.get("adjacent_field") is not None:
+                paper["adjacent_field"] = bool(annotation.get("adjacent_field"))
             paper["llm_annotation_applied"] = True
 
         # 1. 转换 authors 格式
@@ -159,6 +164,13 @@ def enrich_papers(
         if "citation_count" not in paper:
             paper["citation_count"] = 0
 
+        if paper.get("search_bucket"):
+            paper["search_bucket"] = _normalize_search_bucket(paper.get("search_bucket"))
+        if paper.get("query_bucket") and not paper.get("search_bucket"):
+            paper["search_bucket"] = _normalize_search_bucket(paper.get("query_bucket"))
+        if _is_protected_search_bucket(paper):
+            paper["adjacent_field"] = True
+
         # 5. 确保 year 是整数；缺失年份保持 None，避免把未知年份伪装成真实发表年。
         if "year" in paper and paper["year"]:
             try:
@@ -217,6 +229,25 @@ def _annotation_keys(record: dict[str, Any]) -> set[str]:
         record.get("title"),
     }
     return {normalize_text_key(str(item)) for item in candidates if str(item or "").strip()}
+
+
+def _normalize_search_bucket(raw: Any) -> str:
+    value = str(raw or "").strip().casefold().replace(" ", "_").replace("-", "_")
+    aliases = {
+        "adjacent": "adjacent_field",
+        "nearby_field": "adjacent_field",
+        "cross_domain": "adjacent_field",
+        "theory": "theory_bridge",
+        "theoretical": "theory_bridge",
+    }
+    return aliases.get(value, value)
+
+
+def _is_protected_search_bucket(paper: dict[str, Any]) -> bool:
+    if bool(paper.get("adjacent_field")):
+        return True
+    bucket = _normalize_search_bucket(paper.get("search_bucket") or paper.get("query_bucket"))
+    return bucket in {"adjacent_field", "theory_bridge"}
 
 
 def _as_str_list(value: Any) -> list[str]:
@@ -299,6 +330,9 @@ def build_deep_read_queue(
         verification_bonus = 0.25 if verification_status in {"metadata_verified", "pdf_verified"} else 0.0
         # methodological_signal 只是通用方法论文本 hint，不是领域相关性判断。
         meth_signal = float(paper.get("methodological_signal", 0.0))
+        search_bucket = _normalize_search_bucket(paper.get("search_bucket") or paper.get("query_bucket"))
+        protected_bucket = _is_protected_search_bucket(paper)
+        bucket_bonus = 0.12 if protected_bucket else 0.0
         read_priority = round(
             (1.0 if is_seed else 0.0) * 100.0
             + relevance_score * 0.50
@@ -331,6 +365,9 @@ def build_deep_read_queue(
             "read_priority": read_priority,
             "read_priority_semantics": "queue_priority_hint_not_final_relevance",
             "methodological_signal_hint": round(meth_signal, 2),
+            "search_bucket": search_bucket,
+            "adjacent_field": protected_bucket,
+            "protected_bucket_bonus": bucket_bonus,
         }
         ranked_records.append(record)
 
@@ -344,22 +381,42 @@ def build_deep_read_queue(
         )
     )
 
-    # --- venue diversity bonus: 动态选择，避免同一 venue 占据过多 queue 名额 ---
+    # --- protected bucket selection: preserve LLM-labeled adjacent/theory material ---
     selected_count = min(len(ranked_records), max(probe_pool, deep_read_target, deep_read_min))
-    queue_records: list[dict[str, Any]] = []
+    protected_target = min(
+        max(1, int(round(deep_read_target * 0.15))),
+        max(0, selected_count),
+    )
+    protected_records = [
+        record
+        for record in ranked_records
+        if record.get("adjacent_field") and not record.get("seed_priority")
+    ][:protected_target]
+    protected_ids = {id(record) for record in protected_records}
+    queue_records: list[dict[str, Any]] = list(protected_records)
+
+    # --- venue diversity bonus: 动态选择，避免同一 venue 占据过多 queue 名额 ---
     venue_counts: dict[str, int] = {}
+    for record in queue_records:
+        venue = record.get("venue", "unknown") or "unknown"
+        venue_counts[venue] = venue_counts.get(venue, 0) + 1
     for record in ranked_records:
         if len(queue_records) >= selected_count:
             break
+        if id(record) in protected_ids:
+            continue
         venue = record.get("venue", "unknown") or "unknown"
         same_venue = venue_counts.get(venue, 0)
         # 0 同 venue: 1.0, 1 个: 0.7, 2 个: 0.4, >=3 个: 0.0
         venue_bonus = max(0.0, 1.0 - same_venue * 0.3)
         record["venue_diversity_bonus"] = round(venue_bonus, 2)
         # 把 venue bonus 加入 read_priority 作为最终排序依据
-        record["final_priority"] = record["read_priority"] + 0.10 * venue_bonus
+        record["final_priority"] = record["read_priority"] + 0.10 * venue_bonus + float(record.get("protected_bucket_bonus") or 0.0)
         queue_records.append(record)
         venue_counts[venue] = same_venue + 1
+    for record in protected_records:
+        venue_bonus = float(record.get("venue_diversity_bonus") or 0.0)
+        record["final_priority"] = record["read_priority"] + 0.10 * venue_bonus + float(record.get("protected_bucket_bonus") or 0.0)
 
     # 重新按 final_priority 排序（seed 不参与 venue bonus，保持 seed 最高优先）
     queue_records.sort(
@@ -389,6 +446,8 @@ def build_deep_read_queue(
         "seed_total": len(seed_papers),
         "seed_titles": seed_titles[:20],
         "seed_in_queue": sum(1 for item in queue_records if item["seed_priority"]),
+        "protected_bucket_target": protected_target,
+        "protected_bucket_in_queue": sum(1 for item in queue_records if item.get("adjacent_field")),
         "full_text_candidates": sum(
             1
             for item in queue_records

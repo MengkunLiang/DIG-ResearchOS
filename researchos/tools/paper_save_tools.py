@@ -234,7 +234,28 @@ def _transform_to_papers_raw(paper: dict[str, Any]) -> dict[str, Any]:
         "url": url,
         "externalIds": external_ids,
         "provenance": provenance,
+        **_passthrough_raw_annotations(paper),
     }
+
+
+def _passthrough_raw_annotations(paper: dict[str, Any]) -> dict[str, Any]:
+    """Preserve non-claim routing annotations supplied by Scout/runtime."""
+
+    allowed = (
+        "search_bucket",
+        "query_bucket",
+        "adjacent_field",
+        "source_query",
+        "source_tool",
+        "llm_annotation_applied",
+        "domain_tags",
+    )
+    annotations: dict[str, Any] = {}
+    for key in allowed:
+        value = paper.get(key)
+        if value not in (None, "", []):
+            annotations[key] = value
+    return annotations
 
 
 # ============================================================================

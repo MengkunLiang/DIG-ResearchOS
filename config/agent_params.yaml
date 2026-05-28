@@ -226,8 +226,8 @@ agents:
         expected_sections:
           - "## Method Families"
           - "## Shared Assumptions"
-          - "## Performance-Efficiency Frontier"
-          - "## Technology Trends"
+          - "## Contribution-Space Map"
+          - "## Trends & Cross-Paper Contradictions"
           - "## Research Questions"
         expected_length_min: 1000
         expected_citations_min: 5
@@ -417,6 +417,7 @@ agents:
       - build_manuscript_resource_index
       - plan_manuscript_sections
       - plan_manuscript_evidence
+      - build_manuscript_registries
       - initialize_manuscript_state
       - update_manuscript_section_state
       - assemble_manuscript
@@ -425,6 +426,7 @@ agents:
       - finish_task
     allowed_read_prefixes:
       - ""
+      - drafts/
       - literature/
       - experiments/
       - ideation/
@@ -599,6 +601,11 @@ budget_escalation:
   steps_increase_ratio: 0.25
   token_increase_ratio: 0.5
   wall_seconds_increase_ratio: 0.5
+  # 输出校验重试耗尽时也先给用户 gate，而不是直接暂停到不可见错误。
+  # 这解决 T8-SECTION-PLAN / T9 这类“已有 artifact 但语义字段不合格”时
+  # 需要少量修复轮次的问题。
+  max_validation_extensions_per_run: null
+  validation_retry_increase: 2
 
 logging:
   level: INFO

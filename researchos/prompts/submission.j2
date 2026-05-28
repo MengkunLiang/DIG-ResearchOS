@@ -55,13 +55,20 @@ Pre-hook 已执行检查，请确保以下内容不出现：
 你必须真的尝试编译投稿包，而不是只写“编译状态”。
 
 - 优先调用标准工具 `latex_compile` 编译 `submission/bundle/main.tex`
+- `latex_compile` 成功或失败都会在投稿主文件场景写入 `submission/compile_report.json`
+- 编译成功后必须读取 `submission/compile_report.json`，确认：
+  - `semantics` 为 `latex_compile_attempt_report`
+  - `success: true`
+  - `tex_path: submission/bundle/main.tex`
+  - `pdf_path: submission/bundle/main.pdf`
+  - `log_path: submission/bundle/main.log`
 - 不要用手写占位 PDF 代替编译结果；`main.pdf` 必须由真实编译产生
 - 如果编译失败，必须先读取 `.log` 或命令输出，定位失败原因
 - 根据失败原因修改 `main.tex`、引用、样式、图路径或相关 bundle 文件
 - 修改后再次编译
 - 最多可进行 `{{ max_compile_attempts }}` 轮“诊断-修复-重试”
 - 只有两种情况下允许结束：
-  - 编译成功，并产出 `main.pdf`
+  - 编译成功，产出 `main.pdf`、`main.log` 和 `submission/compile_report.json`
   - 达到最大重试次数，且你已在 `migration_report.md` 中清楚写明最后失败原因、已尝试修复和建议人工处理点
 
 编译失败时，不要直接 `finish_task`。必须先尝试修复并重试。
@@ -80,6 +87,8 @@ Pre-hook 已执行检查，请确保以下内容不出现：
 - 会议样式文件
 - `README.txt`
 - `main.pdf`
+- `main.log`
+- `submission/compile_report.json`
 - `figures/`（如果论文引用了图）
 
 缺失文件应先补齐，再结束。
@@ -133,6 +142,16 @@ project:
 ## 文件清单
 [列出所有生成的文件]
 
+## 编译证据
+- compile_report: submission/compile_report.json
+- tex_path: submission/bundle/main.tex
+- pdf_path: submission/bundle/main.pdf
+- log_path: submission/bundle/main.log
+- engine: [native/docker]
+- final_exit_code: 0
+- main_tex_sha256: [...]
+- pdf_sha256: [...]
+
 ## 投稿检查清单
 - [x] 主论文
 - [x] 参考文献
@@ -145,11 +164,18 @@ project:
 submission/bundle/
 ├── main.tex
 ├── references.bib
+├── main.log
+├── main.pdf
 ├── [venue]_style.sty
 ├── figures/
 │   ├── figure1.pdf
 │   └── ...
 └── README.txt
+```
+
+submission/
+├── compile_report.json
+└── migration_report.md
 ```
 
 ## 质量标准
