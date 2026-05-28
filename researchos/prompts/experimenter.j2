@@ -89,6 +89,18 @@
 {% elif mode == "full" %}
 ## T7 Full 模式核心要求
 
+{% if direct_full_mode %}
+### 0. Direct-Full 入口（当前主链）
+当前运行从 T4.5 直接进入 T7，T5 pilot 与 T6 novelty-final 被暂时跳过：
+{% if skipped_optional_tasks %}
+- 跳过节点：{{ skipped_optional_tasks | join(', ') }}
+{% endif %}
+- 不要假设 `pilot/pilot_results.json`、`pilot/pilot_code/`、`novelty/novelty_report.md` 或 `novelty/must_add_baselines.md` 一定存在。
+- 必须读取并使用 `ideation/novelty_audit.md`、`literature/synthesis.md`、`literature/comparison_table.csv`、`ideation/idea_scorecard.yaml`、`ideation/risks.md` 作为替代上下文。
+- 在 `experiments/iteration_log.md` 开头记录 `entrypoint: direct_full_from_t45`、跳过了哪些可选阶段、因此新增了哪些风险控制。
+- 在 `experiments/results_summary.json` 的 `quality_status` 或备注字段中标注 direct-full 运行的证据边界；不要伪装成已经完成 pilot/T6。
+{% endif %}
+
 ### 1. Ablation 实验（硬性规则，§5.3）
 每个假设必须至少 3 条 ablation，产出 experiments/ablations.csv
 
@@ -178,9 +190,16 @@ exp_h1_ablation3,H1,replace_with_baseline,accuracy,0.83,0.87,-0.04
 ```
 
 {% if novelty_report_preview %}
-**T6 新颖性报告摘要**：
+**新颖性报告/审计摘要**：
 ```
 {{ novelty_report_preview }}
+```
+{% endif %}
+
+{% if novelty_audit_preview %}
+**T4.5 新颖性预审摘要（direct-full 必读）**：
+```
+{{ novelty_audit_preview }}
 ```
 {% endif %}
 
@@ -189,6 +208,10 @@ exp_h1_ablation3,H1,replace_with_baseline,accuracy,0.83,0.87,-0.04
 ```
 {{ must_add_baselines_preview }}
 ```
+{% elif direct_full_mode %}
+**Direct-full 基线策略**：
+- 若 `novelty/must_add_baselines.md` 不存在，从 `ideation/novelty_audit.md`、`literature/comparison_table.csv` 和最接近 baseline 列表中提取必须比较项。
+- 如果无法确认某个 baseline 是否必须，先加入最小可运行 baseline，并在 `iteration_log.md` 记录待补风险。
 {% endif %}
 
 ## 输入说明

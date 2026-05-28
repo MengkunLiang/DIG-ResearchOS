@@ -501,6 +501,44 @@ def test_validate_outputs_read_mode_requires_seed_queue_coverage(reader_agent, t
     assert "seed papers" in err
 
 
+def test_validate_outputs_read_mode_ignores_non_queue_duplicate_stub(reader_agent, temp_workspace):
+    """非队列重复 stub 不应拖死已有合格 T3 产物。"""
+    queue_path = temp_workspace / "literature" / "deep_read_queue.jsonl"
+    queue_path.write_text(
+        "\n".join(
+            f'{{"paper_id": "paper{i}", "normalized_id": "paper{i}", "title": "Paper {i}", "relevance_score": 0.8, "access_score_estimate": 0.7, "access_score": 0.7, "evidence_level": "PARTIAL_TEXT", "seed_priority": false, "queue_rank": {i+1}, "read_priority": 0.8, "target_bucket": "target"}}'
+            for i in range(18)
+        )
+        + "\n"
+    )
+    notes_dir = temp_workspace / "literature" / "paper_notes"
+    for i in range(18):
+        (notes_dir / f"paper{i}.md").write_text(_structured_note(f"paper{i}"), encoding="utf-8")
+    (notes_dir / "paper0_duplicate_stub.md").write_text(
+        "# duplicate\n\nThis duplicate stub points to paper0 but is not a complete note.\n",
+        encoding="utf-8",
+    )
+    (temp_workspace / "literature" / "comparison_table.csv").write_text(
+        "id,title,year\ntest1,Test Paper,2023\n",
+        encoding="utf-8",
+    )
+    (temp_workspace / "literature" / "related_work.bib").write_text(
+        "@article{test2023,\n  title={Test},\n  year={2023}\n}\n",
+        encoding="utf-8",
+    )
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T3",
+        run_id="test-run-duplicate-stub",
+        mode="read",
+    )
+
+    ok, err = reader_agent.validate_outputs(ctx)
+
+    assert ok, f"Validation failed: {err}"
+
+
 def test_reader_system_prompt_read_mode_includes_resume_progress(reader_agent, temp_workspace):
     """测试read模式prompt会暴露已有进度，指导断点续跑。"""
     (temp_workspace / "project.yaml").write_text("direction: Test research direction\n")

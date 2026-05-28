@@ -28,6 +28,11 @@ IMAGE_NAME="${RESEARCHOS_IMAGE:-researchos/system:latest}"
 
 # Workspace 目录（宿主机路径）
 WORKSPACE_DIR="${RESEARCHOS_WORKSPACE:-$(pwd)/workspace}"
+RESEARCHOS_DOCKER_ROOT="${RESEARCHOS_DOCKER_ROOT:-/mnt/data/Docker}"
+if [ -z "${DOCKER_CONFIG:-}" ]; then
+    export DOCKER_CONFIG="$RESEARCHOS_DOCKER_ROOT/cli-config"
+fi
+mkdir -p "$DOCKER_CONFIG"
 
 # 自动加载项目根目录的 .env，方便直接在 .env 里切换 provider。
 # shell 中已显式设置的环境变量会覆盖 .env 中的值。
@@ -43,6 +48,12 @@ if ! command -v docker &> /dev/null; then
     echo "错误: Docker 未安装或不在 PATH 中"
     exit 1
 fi
+
+echo "[Docker 存储检查]"
+docker info --format '  Docker Root Dir: {{.DockerRootDir}}' || true
+echo "  Docker CLI config: $DOCKER_CONFIG"
+echo "  建议 Docker daemon data-root: $RESEARCHOS_DOCKER_ROOT"
+echo ""
 
 # 检查镜像是否存在
 if ! docker images "$IMAGE_NAME" --format "{{.Repository}}:{{.Tag}}" | grep -q "$IMAGE_NAME"; then

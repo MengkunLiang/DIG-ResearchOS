@@ -164,6 +164,44 @@ def test_prepare_t3_resume_artifacts_filters_existing_queue(tmp_path: Path):
     assert pending_records[0]["queue_rank"] == 1
 
 
+def test_prepare_t3_resume_artifacts_matches_note_internal_ids_and_titles(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    literature = workspace / "literature"
+    notes_dir = literature / "paper_notes"
+    notes_dir.mkdir(parents=True)
+    (notes_dir / "Causal Intervention-Based Memory Selection for Long-Horizon LLM Agents.md").write_text(
+        _valid_note("arxiv:2605.17641"),
+        encoding="utf-8",
+    )
+
+    _write_jsonl(
+        literature / "deep_read_queue.jsonl",
+        [
+            {
+                "paper_id": "arxiv:2605.17641",
+                "normalized_id": "arxiv_2605.17641",
+                "queue_rank": 1,
+                "title": "Causal Intervention-Based Memory Selection for Long-Horizon LLM Agents",
+            },
+            {"paper_id": "paper2", "normalized_id": "paper2", "queue_rank": 2, "title": "Paper 2"},
+        ],
+    )
+
+    info = prepare_t3_resume_artifacts(workspace)
+
+    pending_records = [
+        json.loads(line)
+        for line in (literature / "deep_read_queue_pending.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    meta = json.loads((literature / "deep_read_queue_pending_meta.json").read_text(encoding="utf-8"))
+    assert info["existing_note_count"] >= 1
+    assert info["resume_queue_count"] == 1
+    assert pending_records[0]["paper_id"] == "paper2"
+    assert meta["valid_note_file_count"] == 1
+    assert meta["invalid_note_file_count"] == 0
+
+
 def test_prepare_t3_resume_artifacts_keeps_incomplete_notes_pending(tmp_path: Path):
     workspace = tmp_path / "ws"
     literature = workspace / "literature"
@@ -229,7 +267,7 @@ def test_prepare_t3_resume_artifacts_treats_chunked_full_text_note_complete(tmp_
     assert [item["paper_id"] for item in pending_records] == ["paper2"]
 
 
-def test_runner_refreshes_t3_pending_meta_after_finished_run(tmp_path: Path):
+def test_runner_refreshes_t3_pending_meta_after_any_exit(tmp_path: Path):
     workspace = tmp_path / "ws"
     literature = workspace / "literature"
     notes_dir = literature / "paper_notes"
@@ -259,9 +297,10 @@ def test_runner_refreshes_t3_pending_meta_after_finished_run(tmp_path: Path):
 
     runner = AgentRunner(_T3Agent(), ToolRegistry(), MockLLMClient([]), MockHumanInterface())
     ctx = ExecutionContext(workspace_dir=workspace, project_id="p1", task_id="T3", run_id="r1")
-    runner._maybe_refresh_t3_resume_artifacts(ctx, AgentResult.STOP_FINISHED)
+    runner._maybe_refresh_t3_resume_artifacts(ctx, AgentResult.STOP_MAX_STEPS)
 
     meta = json.loads((literature / "deep_read_queue_pending_meta.json").read_text(encoding="utf-8"))
     assert meta["completed_note_count"] == 2
     assert meta["pending_queue_count"] == 1
+    assert meta["refresh_reason"] == "runner_exit:max_steps"
     assert ctx.extra["resume_queue_count"] == 1

@@ -159,6 +159,7 @@ states:
       rejected_ideas: ideation/rejected_ideas.md      # 被淘汰/暂缓 idea 的人类可读记录
       gate_decisions: ideation/gate_decisions.json    # Gate 选择、反馈和决策链
       family_distribution: ideation/_family_distribution.md  # mechanism family 分布
+      candidate_directions: ideation/_candidate_directions.json # 主线与补充候选方向池
     next_on_success: T4.5
     next_on_failure: T4  # 允许失败后重试
 
@@ -176,7 +177,11 @@ states:
     outputs:
       novelty_audit: ideation/novelty_audit.md          # 新颖性审计报告
       mechanism_tuples_dir: ideation/_mechanism_tuples   # mechanism tuple 中间产物
-    next_on_success: T5
+    optional_outputs:
+      collision_cases: ideation/collision_cases.md       # 条件输出：High/Medium Overlap 时必须存在
+    # 当前主链暂时跳过 T5 pilot 与 T6 novelty-final，直接进入 T7 full 实验。
+    # T5/T6 节点仍保留，可通过 run-task 单独执行；T7 会把 pilot/T6 产物作为可选增强输入。
+    next_on_success: T7
     next_on_failure: failed
 
   # T5 状态：试点实验（Pilot Experimentation）
@@ -237,14 +242,24 @@ states:
   T7:
     agent: experimenter
     mode: full
+    extra:
+      experiment_entrypoint: direct_full_from_t45
+      skipped_optional_tasks:
+        - T5
+        - T6
     inputs:
       project: project.yaml                           # 项目配置
       hypotheses: ideation/hypotheses.md             # 研究假设
       exp_plan: ideation/exp_plan.yaml               # 实验计划
-      pilot_results: pilot/pilot_results.json        # 试点结果
-      pilot_code: pilot/pilot_code                   # 试点代码
-      novelty_report: novelty/novelty_report.md      # 新颖性报告
-      must_add_baselines: novelty/must_add_baselines.md # 必须补充的基线
+      risks: ideation/risks.md                       # 风险评估
+      novelty_audit: ideation/novelty_audit.md       # T4.5 新颖性预审结果
+      idea_scorecard: ideation/idea_scorecard.yaml   # idea 证据链
+      synthesis: literature/synthesis.md             # 文献综合
+      comparison_table: literature/comparison_table.csv # 方法对比表
+      pilot_results: pilot/pilot_results.json        # 试点结果（可选，若单独跑过 T5）
+      pilot_code: pilot/pilot_code                   # 试点代码（可选）
+      novelty_report: novelty/novelty_report.md      # 新颖性最终报告（可选，若单独跑过 T6）
+      must_add_baselines: novelty/must_add_baselines.md # 必须补充的基线（可选）
     outputs:
       results_summary: experiments/results_summary.json # 结果摘要
       runs_dir: experiments/runs                       # 运行结果目录
@@ -278,8 +293,32 @@ states:
     next_on_success: __parse_from_output__
     next_on_failure: failed
 
-  # T8-WRITE 状态：论文写作（Paper Writing）
-  # 用途：生成论文大纲、初稿、修订
+  # T8-RESOURCE 状态：论文写作资源索引（Manuscript Resource Indexing）
+  # 用途：索引全部写作资料，并生成章节计划
+  # Agent：writer（论文写作）
+  T8-RESOURCE:
+    agent: writer
+    mode: resource_index
+    inputs:
+      project: project.yaml
+      results_summary: experiments/results_summary.json
+      synthesis: literature/synthesis.md
+      related_work_bib: literature/related_work.bib
+      hypotheses: ideation/hypotheses.md
+      exp_plan: ideation/exp_plan.yaml
+      novelty_audit: ideation/novelty_audit.md
+      comparison_table: literature/comparison_table.csv
+      ablations: experiments/ablations.csv
+    outputs:
+      manuscript_resource_index: drafts/manuscript_resource_index.json
+      section_plan: drafts/section_plan.json
+      evidence_plan: drafts/evidence_plan.json
+      figure_table_plan: drafts/figure_table_plan.json
+    next_on_success: T8-WRITE
+    next_on_failure: failed
+
+  # T8-WRITE 状态：论文大纲（Paper Outline）
+  # 用途：生成资源驱动的大纲
   # Agent：writer（论文写作）
   T8-WRITE:
     agent: writer
@@ -290,13 +329,197 @@ states:
       synthesis: literature/synthesis.md                # 输入：文献综述
       related_work_bib: literature/related_work.bib     # 输入：引用库
       hypotheses: ideation/hypotheses.md                # 输入：研究假设
+      manuscript_resource_index: drafts/manuscript_resource_index.json
+      section_plan: drafts/section_plan.json
+      evidence_plan: drafts/evidence_plan.json
+      figure_table_plan: drafts/figure_table_plan.json
     outputs:
       outline: drafts/outline.md                       # 论文大纲
+    next_on_success: T8-SECTION-PLAN
+    next_on_failure: failed
+
+  # T8-SECTION-PLAN 状态：逐章节写作状态初始化
+  # 用途：生成 paper_state 与每章局部大纲；不写正文
+  # Agent：writer（论文写作）
+  T8-SECTION-PLAN:
+    agent: writer
+    mode: section_plan
+    inputs:
+      project: project.yaml
+      results_summary: experiments/results_summary.json
+      synthesis: literature/synthesis.md
+      related_work_bib: literature/related_work.bib
+      hypotheses: ideation/hypotheses.md
+      outline: drafts/outline.md
+      manuscript_resource_index: drafts/manuscript_resource_index.json
+      section_plan: drafts/section_plan.json
+      evidence_plan: drafts/evidence_plan.json
+      figure_table_plan: drafts/figure_table_plan.json
+      ablations: experiments/ablations.csv
+    outputs:
+      paper_state: drafts/paper_state.json
+      section_outlines_dir: drafts/section_outlines
+    next_on_success: T8-SEC-METHOD
+    next_on_failure: failed
+
+  T8-SEC-METHOD:
+    agent: writer
+    mode: section_draft
+    extra:
+      section_id: methodology
+    inputs:
+      project: project.yaml
+      paper_state: drafts/paper_state.json
+      section_outline: drafts/section_outlines/methodology.md
+      hypotheses: ideation/hypotheses.md
+      exp_plan: ideation/exp_plan.yaml
+      results_summary: experiments/results_summary.json
+      outline: drafts/outline.md
+      manuscript_resource_index: drafts/manuscript_resource_index.json
+      evidence_plan: drafts/evidence_plan.json
+      figure_table_plan: drafts/figure_table_plan.json
+    outputs:
+      section: drafts/sections/methodology.tex
+    next_on_success: T8-SEC-EXPERIMENTS
+    next_on_failure: failed
+
+  T8-SEC-EXPERIMENTS:
+    agent: writer
+    mode: section_draft
+    extra:
+      section_id: experiments
+    inputs:
+      project: project.yaml
+      paper_state: drafts/paper_state.json
+      section_outline: drafts/section_outlines/experiments.md
+      results_summary: experiments/results_summary.json
+      ablations: experiments/ablations.csv
+      exp_plan: ideation/exp_plan.yaml
+      manuscript_resource_index: drafts/manuscript_resource_index.json
+      evidence_plan: drafts/evidence_plan.json
+      figure_table_plan: drafts/figure_table_plan.json
+    outputs:
+      section: drafts/sections/experiments.tex
+    next_on_success: T8-SEC-RELATED
+    next_on_failure: failed
+
+  T8-SEC-RELATED:
+    agent: writer
+    mode: section_draft
+    extra:
+      section_id: related_work
+    inputs:
+      project: project.yaml
+      paper_state: drafts/paper_state.json
+      section_outline: drafts/section_outlines/related_work.md
+      synthesis: literature/synthesis.md
+      related_work_bib: literature/related_work.bib
+      comparison_table: literature/comparison_table.csv
+      manuscript_resource_index: drafts/manuscript_resource_index.json
+      evidence_plan: drafts/evidence_plan.json
+    outputs:
+      section: drafts/sections/related_work.tex
+    next_on_success: T8-SEC-ANALYSIS
+    next_on_failure: failed
+
+  T8-SEC-ANALYSIS:
+    agent: writer
+    mode: section_draft
+    extra:
+      section_id: analysis
+    inputs:
+      project: project.yaml
+      paper_state: drafts/paper_state.json
+      section_outline: drafts/section_outlines/analysis.md
+      results_summary: experiments/results_summary.json
+      ablations: experiments/ablations.csv
+      novelty_audit: ideation/novelty_audit.md
+      manuscript_resource_index: drafts/manuscript_resource_index.json
+      evidence_plan: drafts/evidence_plan.json
+    outputs:
+      section: drafts/sections/analysis.tex
+    next_on_success: T8-SEC-INTRO
+    next_on_failure: failed
+
+  T8-SEC-INTRO:
+    agent: writer
+    mode: section_draft
+    extra:
+      section_id: introduction
+    inputs:
+      project: project.yaml
+      paper_state: drafts/paper_state.json
+      section_outline: drafts/section_outlines/introduction.md
+      synthesis: literature/synthesis.md
+      hypotheses: ideation/hypotheses.md
+      results_summary: experiments/results_summary.json
+      methodology_section: drafts/sections/methodology.tex
+      experiments_section: drafts/sections/experiments.tex
+      manuscript_resource_index: drafts/manuscript_resource_index.json
+      evidence_plan: drafts/evidence_plan.json
+      figure_table_plan: drafts/figure_table_plan.json
+    outputs:
+      section: drafts/sections/introduction.tex
+    next_on_success: T8-SEC-LIMITATIONS
+    next_on_failure: failed
+
+  T8-SEC-LIMITATIONS:
+    agent: writer
+    mode: section_draft
+    extra:
+      section_id: limitations
+    inputs:
+      project: project.yaml
+      paper_state: drafts/paper_state.json
+      section_outline: drafts/section_outlines/limitations.md
+      risks: ideation/risks.md
+      novelty_audit: ideation/novelty_audit.md
+      results_summary: experiments/results_summary.json
+      manuscript_resource_index: drafts/manuscript_resource_index.json
+    outputs:
+      section: drafts/sections/limitations.tex
+    next_on_success: T8-SEC-CONCLUSION
+    next_on_failure: failed
+
+  T8-SEC-CONCLUSION:
+    agent: writer
+    mode: section_draft
+    extra:
+      section_id: conclusion
+    inputs:
+      project: project.yaml
+      paper_state: drafts/paper_state.json
+      section_outline: drafts/section_outlines/conclusion.md
+      introduction_section: drafts/sections/introduction.tex
+      experiments_section: drafts/sections/experiments.tex
+      limitations_section: drafts/sections/limitations.tex
+    outputs:
+      section: drafts/sections/conclusion.tex
+    next_on_success: T8-SEC-ABSTRACT
+    next_on_failure: failed
+
+  T8-SEC-ABSTRACT:
+    agent: writer
+    mode: section_draft
+    extra:
+      section_id: abstract
+    inputs:
+      project: project.yaml
+      paper_state: drafts/paper_state.json
+      section_outline: drafts/section_outlines/abstract.md
+      introduction_section: drafts/sections/introduction.tex
+      methodology_section: drafts/sections/methodology.tex
+      experiments_section: drafts/sections/experiments.tex
+      analysis_section: drafts/sections/analysis.tex
+      limitations_section: drafts/sections/limitations.tex
+      conclusion_section: drafts/sections/conclusion.tex
+    outputs:
+      section: drafts/sections/abstract.tex
     next_on_success: T8-DRAFT
     next_on_failure: failed
 
   # T8-DRAFT 状态：论文初稿（Paper Draft）
-  # 用途：基于大纲生成完整论文
+  # 用途：拼装章节草稿并生成完整论文
   # Agent：writer（论文写作）
   T8-DRAFT:
     agent: writer
@@ -304,9 +527,43 @@ states:
     inputs:
       project: project.yaml                             # 输入：项目配置
       results_summary: experiments/results_summary.json # 输入：实验结果
+      synthesis: literature/synthesis.md                # 输入：文献综合
+      related_work_bib: literature/related_work.bib      # 输入：引用库
+      hypotheses: ideation/hypotheses.md                # 输入：研究假设
+      novelty_audit: ideation/novelty_audit.md          # 输入：T4.5 新颖性预审
+      ablations: experiments/ablations.csv              # 输入：消融结果
       outline: drafts/outline.md                        # 输入：论文大纲
+      paper_state: drafts/paper_state.json              # 输入：逐章节共享状态
+      sections_dir: drafts/sections
+      manuscript_resource_index: drafts/manuscript_resource_index.json
+      section_plan: drafts/section_plan.json
+      evidence_plan: drafts/evidence_plan.json
+      figure_table_plan: drafts/figure_table_plan.json
     outputs:
       paper: drafts/paper.tex                           # 论文草稿
+      manuscript_audit: drafts/manuscript_audit.md       # 机械审计报告
+    next_on_success: T8-SELF-CHECK
+    next_on_failure: failed
+
+  # T8-SELF-CHECK 状态：作者自查（Self Check）
+  # 用途：在外部 reviewer 前完成数字/引用/图表/论证自查
+  T8-SELF-CHECK:
+    agent: writer
+    mode: self_check
+    inputs:
+      project: project.yaml
+      paper: drafts/paper.tex
+      results_summary: experiments/results_summary.json
+      synthesis: literature/synthesis.md
+      related_work_bib: literature/related_work.bib
+      ablations: experiments/ablations.csv
+      manuscript_resource_index: drafts/manuscript_resource_index.json
+      section_plan: drafts/section_plan.json
+      evidence_plan: drafts/evidence_plan.json
+      figure_table_plan: drafts/figure_table_plan.json
+      manuscript_audit: drafts/manuscript_audit.md
+    outputs:
+      self_check: drafts/self_check.md
     next_on_success: T8-REVIEW-1
     next_on_failure: failed
 
@@ -320,8 +577,12 @@ states:
       project: project.yaml                             # 输入：项目配置
       paper: drafts/paper.tex                           # 输入：论文草稿
       results_summary: experiments/results_summary.json # 输入：实验结果
+      related_work_bib: literature/related_work.bib      # 输入：引用库
+      manuscript_audit: drafts/manuscript_audit.md       # 输入：机械审计报告
+      self_check: drafts/self_check.md                   # 输入：作者自查
     outputs:
       review_report: drafts/review_rounds/round_1.md   # 审稿报告
+      section_review_dir: drafts/review_rounds/round_1_sections # 逐章节审稿
     next_on_success: T8-REVISE-1
     next_on_failure: failed
 
@@ -335,9 +596,23 @@ states:
     inputs:
       project: project.yaml                             # 输入：项目配置
       paper: drafts/paper.tex                           # 输入：论文草稿
+      paper_state: drafts/paper_state.json              # 输入：逐章节共享状态
       review_report: drafts/review_rounds/round_1.md   # 输入：审稿报告
+      section_review_dir: drafts/review_rounds/round_1_sections
+      results_summary: experiments/results_summary.json
+      synthesis: literature/synthesis.md
+      related_work_bib: literature/related_work.bib
+      ablations: experiments/ablations.csv
+      sections_dir: drafts/sections
+      manuscript_resource_index: drafts/manuscript_resource_index.json
+      evidence_plan: drafts/evidence_plan.json
+      figure_table_plan: drafts/figure_table_plan.json
+      manuscript_audit: drafts/manuscript_audit.md
     outputs:
+      revision_patches: drafts/patches/round_1_patches.json
+      revision_response: drafts/revision_response_round_1.md
       paper: drafts/paper.tex                           # 修订后的论文
+      manuscript_audit: drafts/manuscript_audit.md       # 更新后的机械审计
     next_on_success: T8-REVIEW-2
     next_on_failure: failed
 
@@ -350,10 +625,15 @@ states:
     inputs:
       project: project.yaml                             # 输入：项目配置
       paper: drafts/paper.tex                           # 输入：修订后的论文
+      results_summary: experiments/results_summary.json
+      related_work_bib: literature/related_work.bib
+      manuscript_audit: drafts/manuscript_audit.md
+      previous_review: drafts/review_rounds/round_1.md
     outputs:
       review_report: drafts/review_rounds/round_2.md   # 审稿报告
+      section_review_dir: drafts/review_rounds/round_2_sections # 逐章节审稿
     next_on_success: T8-REVISE-2
-    next_on_failure: T9
+    next_on_failure: failed
 
   # T8-REVISE-2 状态：论文修订第2轮（Paper Revision Round 2）
   # 用途：根据第2轮审稿意见修订论文
@@ -365,11 +645,26 @@ states:
     inputs:
       project: project.yaml                             # 输入：项目配置
       paper: drafts/paper.tex                           # 输入：论文草稿
+      paper_state: drafts/paper_state.json
       review_report: drafts/review_rounds/round_2.md   # 输入：审稿报告
+      section_review_dir: drafts/review_rounds/round_2_sections
+      previous_review: drafts/review_rounds/round_1.md
+      results_summary: experiments/results_summary.json
+      synthesis: literature/synthesis.md
+      related_work_bib: literature/related_work.bib
+      ablations: experiments/ablations.csv
+      sections_dir: drafts/sections
+      manuscript_resource_index: drafts/manuscript_resource_index.json
+      evidence_plan: drafts/evidence_plan.json
+      figure_table_plan: drafts/figure_table_plan.json
+      manuscript_audit: drafts/manuscript_audit.md
     outputs:
+      revision_patches: drafts/patches/round_2_patches.json
+      revision_response: drafts/revision_response_round_2.md
       paper: drafts/paper.tex                           # 修订后的论文
+      manuscript_audit: drafts/manuscript_audit.md       # 更新后的机械审计
     next_on_success: T9
-    next_on_failure: T9
+    next_on_failure: failed
 
   # T9 状态：投稿准备（Submission Preparation）
   # 用途：将论文迁移到目标会议格式，匿名化检查，编译验证
@@ -383,6 +678,10 @@ states:
     outputs:
       bundle_dir: submission/bundle                  # 投稿包目录
       migration_report: submission/migration_report.md  # 迁移报告
+      main_tex: submission/bundle/main.tex
+      references_bib: submission/bundle/references.bib
+      main_pdf: submission/bundle/main.pdf
+      compile_log: submission/bundle/main.log
     gate:
       type: submission_gate
       prompt: |

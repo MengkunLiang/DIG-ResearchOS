@@ -12,6 +12,7 @@ from pathlib import Path
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
+from ..tools.manuscript import CORE_SECTIONS
 from ._common import load_project, prepend_resume_prefix, read_text_file
 
 
@@ -65,8 +66,18 @@ class ReviewerAgent(Agent):
             ws / "experiments" / "results_summary.json", default="{}"
         )
         related_work = read_text_file(ws / "literature" / "related_work.bib", default="")
+        manuscript_audit = read_text_file(ws / "drafts" / "manuscript_audit.md", default="")
+        self_check = read_text_file(ws / "drafts" / "self_check.md", default="")
 
         round_num = self._round(ctx)
+        previous_review = (
+            read_text_file(
+                ws / "drafts" / "review_rounds" / f"round_{round_num - 1}.md",
+                default="",
+            )
+            if round_num > 1
+            else ""
+        )
 
         return render_prompt(
             self.spec.prompt_template,
@@ -74,6 +85,9 @@ class ReviewerAgent(Agent):
             project=project,
             results_summary=results_summary,
             related_work_bib=related_work[:3000],
+            manuscript_audit_preview=manuscript_audit[:3000],
+            self_check_preview=self_check[:3000],
+            previous_review_preview=previous_review[:3000],
             round=round_num,
             target_venue=project.get("target_venue", "neurips"),
             temperature=self.spec.temperature,
@@ -86,8 +100,11 @@ class ReviewerAgent(Agent):
             ctx,
             (
             f"请执行 T8 Reviewer 第{round_num}轮审稿。\n\n"
-            f"读取 drafts/paper.tex，生成 drafts/review_rounds/round_{round_num}.md。"
-            "从内容完整性、技术准确性、写作质量、学术规范四个维度审查。"
+            "读取 drafts/paper.tex、drafts/manuscript_audit.md、drafts/self_check.md"
+            f"{'、drafts/review_rounds/round_' + str(round_num - 1) + '.md' if round_num > 1 else ''}，"
+            f"先逐章生成 drafts/review_rounds/round_{round_num}_sections/*.md，"
+            f"再综合生成 drafts/review_rounds/round_{round_num}.md。"
+            "从内容完整性、技术准确性、写作质量、学术规范四个维度审查，并检查上一轮问题是否闭环。"
             ),
         )
 
@@ -108,11 +125,15 @@ class ReviewerAgent(Agent):
             if section not in report:
                 return False, f"review report 缺少必需章节: {section}"
 
-        # 验证数字准确性（如果可以）
-        paper_path = ws / "drafts" / "paper.tex"
-        if paper_path.exists():
-            paper = paper_path.read_text()
-            # 简单检查：report 中引用的数字是否在 paper 中提到
-            # 这里不做严格验证，因为报告可能有合理的总结性表述
+        section_dir = ws / "drafts" / "review_rounds" / f"round_{round_num}_sections"
+        if not section_dir.exists():
+            return False, f"缺少逐章节审稿目录: drafts/review_rounds/round_{round_num}_sections"
+        for section_id in CORE_SECTIONS:
+            section_report = section_dir / f"{section_id}.md"
+            text = read_text_file(section_report, default="")
+            if len(text.strip()) < 80:
+                return False, f"逐章节审稿过短或缺失: {section_report.relative_to(ws)}"
+            if "##" not in text:
+                return False, f"逐章节审稿缺少结构化标题: {section_report.relative_to(ws)}"
 
         return True, None

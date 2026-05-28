@@ -47,6 +47,30 @@ def test_build_execution_context_sets_resume_and_iteration(tmp_workspace):
     assert ctx.extra["iteration_count"] == 2
 
 
+def test_mark_interrupted_records_stale_running_reason(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T1
+        states:
+          T1:
+            agent: hello
+            outputs:
+              hello_file: hello.txt
+        """,
+    )
+    sm = StateMachine(config)
+    state = sm.create_initial_state("p1")
+    state = sm.start_task(state, "run_stale")
+
+    state = sm.mark_interrupted(state, reason="resume_detected_stale_running_state")
+
+    assert state.status == "PAUSED"
+    assert state.history[-1].status == "INTERRUPTED"
+    assert state.history[-1].error == "resume_detected_stale_running_state"
+
+
 def test_build_execution_context_propagates_mode_phase_and_round(tmp_workspace):
     config = tmp_workspace / "fsm.yaml"
     _write_yaml(
@@ -230,6 +254,8 @@ def test_t75_gate_can_follow_recommended_next_task_from_output(tmp_workspace):
             next_on_success: __parse_from_output__
           T7:
             agent: experimenter
+          T8-RESOURCE:
+            agent: writer
           T8-WRITE:
             agent: writer
           done:
@@ -278,8 +304,69 @@ def test_t75_gate_can_follow_recommended_next_task_from_output(tmp_workspace):
         {"option_id": "follow_recommendation", "captured": {}},
         workspace_dir=tmp_workspace,
     )
-    assert state.current_task == "T8-WRITE"
+    assert state.current_task == "T8-RESOURCE"
     assert state.status == "RUNNING"
+
+
+def test_t75_gate_direct_write_enters_resource_stage(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    gates = tmp_workspace / "gates.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T7.5
+        states:
+          T7.5:
+            agent: pi
+            mode: evaluate
+            outputs:
+              evaluation_decision: evaluation/evaluation_decision.md
+            gate: t75_gate
+            next_on_success: __parse_from_output__
+          T8-RESOURCE:
+            agent: writer
+          T8-WRITE:
+            agent: writer
+          done:
+            terminal: true
+          failed:
+            terminal: true
+        """,
+    )
+    _write_yaml(
+        gates,
+        """
+        gates:
+          t75_gate:
+            options:
+              - id: go_write
+                label: Write
+                next: T8-RESOURCE
+        """,
+    )
+    sm = StateMachine(config, gates)
+    state = sm.create_initial_state("p1")
+    state = sm.start_task(state, "run_1")
+    result = AgentResult(
+        ok=True,
+        message="done",
+        outputs_produced={},
+        steps_used=1,
+        tokens_in=1,
+        tokens_out=1,
+        cost_usd=0.0,
+        duration_seconds=0.1,
+        stop_reason=AgentResult.STOP_FINISHED,
+    )
+
+    state = sm.advance(state, result, workspace_dir=tmp_workspace)
+    state = sm.resolve_pending_gate(
+        state,
+        {"option_id": "go_write", "captured": {}},
+        workspace_dir=tmp_workspace,
+    )
+
+    assert state.current_task == "T8-RESOURCE"
 
 
 def test_mark_interrupted_updates_state(tmp_workspace):
@@ -302,6 +389,55 @@ def test_mark_interrupted_updates_state(tmp_workspace):
     assert state.status == "PAUSED"
     assert state.history[-1].status == "INTERRUPTED"
     assert state.history[-1].stop_reason == AgentResult.STOP_INTERRUPTED
+
+
+def test_advance_pauses_on_recoverable_runtime_limits(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T3
+        states:
+          T3:
+            agent: reader
+            outputs:
+              notes: literature/paper_notes
+            next_on_success: T4
+            next_on_failure: failed
+          T4:
+            agent: ideation
+          failed:
+            terminal: true
+        """,
+    )
+    sm = StateMachine(config)
+    state = sm.create_initial_state("p1")
+    state = sm.start_task(state, "run_1")
+    result = AgentResult(
+        ok=False,
+        message="max steps",
+        outputs_produced={},
+        steps_used=100,
+        tokens_in=0,
+        tokens_out=0,
+        cost_usd=0.0,
+        duration_seconds=1.0,
+        stop_reason=AgentResult.STOP_MAX_STEPS,
+        error="Reached maximum allowed steps; paused so you can resume.",
+    )
+
+    state = sm.advance(state, result, workspace_dir=tmp_workspace)
+
+    assert state.status == "PAUSED"
+    assert state.current_task == "T3"
+    assert state.history[-1].status == "INTERRUPTED"
+    assert state.history[-1].stop_reason == AgentResult.STOP_MAX_STEPS
+
+    ctx = sm.build_execution_context(tmp_workspace, state)
+
+    assert ctx.extra["resume_mode"] is True
+    assert ctx.extra["resume_reason"] == "interrupted"
+    assert ctx.extra["resumed_from_run_id"] == "run_1"
 
 
 def test_validate_definition_reports_unknown_branch_and_contract_mismatch(tmp_workspace):

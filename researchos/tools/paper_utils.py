@@ -116,7 +116,7 @@ def score_papers(
     domain_profile 和论文内容判断。
 
     机械维度：
-    - source_type: 来源类型权重
+    - source_type: 来源类型权重；缺失时为 unknown 中性 hint，不推断成 preprint
     - year: 年份权重（越新越高）
     - citation_count: 引用数权重
     - keyword_match: 关键词匹配度
@@ -145,12 +145,13 @@ def score_papers(
         scores = {}
 
         # 1. source_type 权重
-        source_type = paper.get("source_type", "preprint")
+        source_type = paper.get("source_type") or "unknown"
         source_type_map = {
             "top_conference": 1.0,
             "journal": 0.8,
             "preprint": 0.6,
             "workshop": 0.5,
+            "unknown": 0.5,
             "blog": 0.3,
         }
         scores["source_type"] = source_type_map.get(source_type, 0.5)

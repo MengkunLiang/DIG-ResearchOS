@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from researchos.tools.base import ToolResult
-from researchos.tools.docker_exec import DockerExecTool
+from researchos.tools.docker_exec import DockerExecTool, check_docker_environment
 from researchos.tools.latex_compile import LatexCompileTool
 from researchos.tools.search_papers import FetchPaperMetadataTool, SearchPapersTool
 from researchos.tools.workspace_policy import WorkspaceAccessPolicy
@@ -131,6 +131,11 @@ compute_budget:
         return _FakeProc(stdout=b"ok", stderr=b"")
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create)
+    if not container_mode:
+        monkeypatch.setattr(
+            "researchos.tools.docker_exec.check_docker_environment",
+            lambda **_kwargs: (True, None, {"mode": "host_docker"}),
+        )
 
     result = await tool.execute(
         image="researchos/python:3.11-ml",
@@ -155,6 +160,36 @@ compute_budget:
         # 宿主机模式：应该是 docker run 命令
         assert captured["args"][0] == "docker"
         assert "run" in captured["args"]
+
+
+def test_check_docker_environment_reports_missing_command(monkeypatch):
+    monkeypatch.setattr("researchos.tools.docker_exec.shutil.which", lambda _name: None)
+
+    ok, err, details = check_docker_environment(image="researchos/system:latest")
+
+    assert not ok
+    assert "WAITING_ENVIRONMENT" in err
+    assert details["error"] == "docker_command_not_found"
+
+
+@pytest.mark.asyncio
+async def test_docker_exec_rejects_workspace_prefix_trick(tmp_workspace: Path):
+    policy = WorkspaceAccessPolicy(tmp_workspace, [""], [""])
+    tool = DockerExecTool(policy, project_config={"compute_budget": {"gpu_enabled": False}})
+
+    result = await tool.execute(
+        image="researchos/system:latest",
+        command="pwd",
+        cwd="/workspace2",
+        timeout_seconds=30,
+        allow_network=False,
+        gpu=False,
+        env={},
+        extra_mounts=[],
+    )
+
+    assert not result.ok
+    assert result.error == "invalid_cwd"
 
 
 @pytest.mark.asyncio

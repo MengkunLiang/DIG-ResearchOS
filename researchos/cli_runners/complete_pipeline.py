@@ -3,6 +3,7 @@ from __future__ import annotations
 """完整 pipeline 运行器。"""
 
 import asyncio
+from datetime import datetime, timezone
 from pathlib import Path
 
 from ..agents.registry import get_agent_by_id
@@ -22,6 +23,10 @@ from ..tools.registry import ToolRegistry
 
 
 _LOG = get_logger("complete_pipeline")
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 class CompletePipelineRunner:
@@ -63,6 +68,15 @@ class CompletePipelineRunner:
         else:
             state = self.state_machine.create_initial_state(project_id=project_id)
 
+        if resume and state.status == "RUNNING":
+            state = self.state_machine.mark_interrupted(
+                state,
+                reason="resume_detected_stale_running_state",
+            )
+            state.last_error = "检测到上次运行停留在 RUNNING，已按陈旧运行自动转为 PAUSED。"
+            state.dump_yaml(state_path)
+            print("检测到陈旧 RUNNING 状态，已转为 PAUSED 并继续 resume。")
+
         if resume and state.status not in {"PAUSED", "WAITING_HUMAN"}:
             print("当前状态不是 PAUSED/WAITING_HUMAN，无法 resume。")
             return 1
@@ -103,7 +117,14 @@ class CompletePipelineRunner:
             state.dump_yaml(state_path)
             return state
 
-        ctx = self.state_machine.build_execution_context(self.workspace, state)
+        try:
+            ctx = self.state_machine.build_execution_context(self.workspace, state)
+        except Exception as exc:
+            state.status = "PAUSED"
+            state.paused_at = _now_iso()
+            state.last_error = f"构建执行上下文失败: {exc}"
+            state.dump_yaml(state_path)
+            return state
         state = self.state_machine.start_task(state, ctx.run_id)
         state.dump_yaml(state_path)
 
@@ -117,7 +138,11 @@ class CompletePipelineRunner:
             state.dump_yaml(state_path)
             return state
 
-        if result.stop_reason == AgentResult.STOP_INTERRUPTED:
+        if result.stop_reason in {
+            AgentResult.STOP_INTERRUPTED,
+            AgentResult.STOP_MAX_STEPS,
+            AgentResult.STOP_BUDGET,
+        }:
             state = self.state_machine.advance(state, result, workspace_dir=self.workspace)
             state.dump_yaml(state_path)
             return state
@@ -130,7 +155,7 @@ class CompletePipelineRunner:
         if result.ok and not ok:
             result.ok = False
             result.stop_reason = result.STOP_ERROR
-            result.error = "Runtime artifact validation failed: " + "; ".join(errors)
+            result.error = "Runtime artifact validation failed: " + str(errors)
             result.message = result.error
 
         state = self.state_machine.advance(state, result, workspace_dir=self.workspace)

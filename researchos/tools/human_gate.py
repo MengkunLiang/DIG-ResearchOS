@@ -39,7 +39,10 @@ class CLIHumanInterface(HumanInterface):
         print(f"工具请求批准: {tool_name}")
         print(json.dumps(arguments, indent=2, ensure_ascii=False))
         print("═" * 60)
-        answer = input("批准执行? [y/N]: ").strip().lower()
+        try:
+            answer = input("批准执行? [y/N]: ").strip().lower()
+        except EOFError as exc:
+            raise HumanInputUnavailable(f"{tool_name} 需要用户批准，但当前输入不可用。") from exc
         return answer in {"y", "yes"}
 
     async def ask_clarification(

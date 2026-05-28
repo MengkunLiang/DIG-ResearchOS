@@ -227,7 +227,7 @@ researchos run-task T9 --workspace ./workspace/local-test2
 ### 4.5 从其他 workspace 复制前置产物
 
 ```bash
-researchos run-task T8-WRITE \
+researchos run-task T8-RESOURCE \
   --workspace ./workspace/scratch-write \
   --from ./workspace/local-test2
 ```

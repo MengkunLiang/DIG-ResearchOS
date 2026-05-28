@@ -16,6 +16,9 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
+import shlex
+import shutil
+import subprocess
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -98,6 +101,123 @@ def get_default_allowed_images() -> list[str]:
     return list(_DEFAULT_ALLOWED_IMAGES)
 
 
+def check_docker_environment(
+    *,
+    project_config: dict[str, Any] | None = None,
+    image: str | None = None,
+    require_gpu: bool = False,
+) -> tuple[bool, str | None, dict[str, Any]]:
+    """Probe whether Docker execution is available before spending LLM steps."""
+
+    from researchos.runtime.container_detection import is_running_in_container
+
+    if is_running_in_container():
+        return True, None, {"mode": "container_native", "docker_required": False}
+
+    details: dict[str, Any] = {
+        "mode": "host_docker",
+        "docker_required": True,
+        "image": image,
+        "gpu_requested": require_gpu,
+    }
+    if shutil.which("docker") is None:
+        details["error"] = "docker_command_not_found"
+        return (
+            False,
+            "WAITING_ENVIRONMENT: Docker 命令不可用。T5/T7 正式实验需要 Docker；"
+            "请安装 Docker，或进入已包含 ResearchOS 环境的容器后 resume。",
+            details,
+        )
+
+    try:
+        version = subprocess.run(
+            ["docker", "version"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired:
+        details["error"] = "docker_version_timeout"
+        return (
+            False,
+            "WAITING_ENVIRONMENT: `docker version` 超时。请确认 Docker daemon 正常后 resume。",
+            details,
+        )
+    if version.returncode != 0:
+        details.update(
+            {
+                "error": "docker_daemon_unavailable",
+                "stderr": (version.stderr or version.stdout or "").strip()[:1000],
+            }
+        )
+        return (
+            False,
+            "WAITING_ENVIRONMENT: Docker daemon 当前不可用。请启动 Docker 服务并确认 "
+            "`docker version` 成功后 resume。",
+            details,
+        )
+
+    allowed_images = get_default_allowed_images()
+    docker_cfg = (project_config or {}).get("docker", {})
+    if isinstance(docker_cfg, dict) and docker_cfg.get("allowed_images"):
+        allowed_images = list(docker_cfg["allowed_images"])
+    if image and image not in allowed_images:
+        details.update({"error": "image_not_allowed", "allowed_images": allowed_images})
+        return (
+            False,
+            f"WAITING_ENVIRONMENT: Docker 镜像 {image!r} 不在 allowlist 中: {allowed_images}",
+            details,
+        )
+
+    if image:
+        try:
+            inspect_result = subprocess.run(
+                ["docker", "image", "inspect", image],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=15,
+            )
+        except subprocess.TimeoutExpired:
+            details.update({"error": "docker_image_inspect_timeout"})
+            return (
+                False,
+                f"WAITING_ENVIRONMENT: 检查 Docker 镜像 {image!r} 超时。请确认 Docker daemon 正常后 resume。",
+                details,
+            )
+        if inspect_result.returncode != 0:
+            details.update(
+                {
+                    "error": "docker_image_missing",
+                    "stderr": (inspect_result.stderr or inspect_result.stdout or "").strip()[:1000],
+                }
+            )
+            return (
+                False,
+                f"WAITING_ENVIRONMENT: Docker 镜像 {image!r} 尚不可用。"
+                "请先运行 `bash infra/docker/build.sh` 构建统一镜像，或拉取/配置允许的镜像后 resume。",
+                details,
+            )
+
+    if require_gpu:
+        try:
+            gpu_probe = subprocess.run(
+                ["docker", "info", "--format", "{{json .Runtimes}}"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=15,
+            )
+        except subprocess.TimeoutExpired:
+            gpu_probe = subprocess.CompletedProcess(args=[], returncode=124, stdout="", stderr="timeout")
+        details["gpu_runtime_available"] = (
+            gpu_probe.returncode == 0 and "nvidia" in (gpu_probe.stdout or "").lower()
+        )
+
+    return True, None, details
+
+
 class DockerExecParams(BaseModel):
     image: str = Field("researchos/system:latest", description="Docker 镜像，默认 researchos/system:latest")
     command: str = Field(..., description="容器内执行的命令")
@@ -144,6 +264,20 @@ class DockerExecTool(Tool):
         validation_error = self._validate_params(params)
         if validation_error is not None:
             return validation_error
+
+        if not self._container_mode:
+            ok, err, data = check_docker_environment(
+                project_config=self.project_config,
+                image=params.image,
+                require_gpu=params.gpu,
+            )
+            if not ok:
+                return ToolResult(
+                    ok=False,
+                    content=err or "Docker environment unavailable",
+                    data=data,
+                    error=str(data.get("error") or "docker_unavailable"),
+                )
 
         docker_cmd = self._build_docker_command(params)
         _LOG.info(
@@ -286,7 +420,7 @@ class DockerExecTool(Tool):
                 )
 
         # 工作目录检查（两种模式都需要）
-        if not params.cwd.startswith("/workspace"):
+        if not self._is_workspace_cwd(params.cwd):
             return ToolResult(
                 ok=False,
                 content="Docker cwd must stay within /workspace",
@@ -349,12 +483,15 @@ class DockerExecTool(Tool):
 
             # 添加环境变量
             if params.env:
-                env_exports = " ".join(f"export {k}={v};" for k, v in params.env.items())
+                env_exports = " ".join(
+                    f"export {shlex.quote(str(k))}={shlex.quote(str(v))};"
+                    for k, v in params.env.items()
+                )
                 cmd_parts.append(env_exports)
 
             # 切换工作目录（如果不是默认的 /workspace）
             if params.cwd != "/workspace":
-                cmd_parts.append(f"cd {params.cwd};")
+                cmd_parts.append(f"cd {shlex.quote(params.cwd)};")
 
             # 添加实际命令
             cmd_parts.append(params.command)
@@ -409,6 +546,10 @@ class DockerExecTool(Tool):
         else:
             candidate = self.policy.resolve_read(host_part)
         return f"{candidate}:{remainder}"
+
+    @staticmethod
+    def _is_workspace_cwd(cwd: str) -> bool:
+        return cwd == "/workspace" or cwd.startswith("/workspace/")
 
 
 def load_project_config(workspace_dir: Path) -> dict[str, Any]:

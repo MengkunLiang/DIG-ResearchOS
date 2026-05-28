@@ -360,7 +360,7 @@ python -m researchos.cli run-skill paper-compile "compile the paper in ./workspa
 如果你要在另一个 workspace 上只复用上游产物：
 
 ```bash
-python -m researchos.cli run-task T8-WRITE \
+python -m researchos.cli run-task T8-RESOURCE \
   --workspace ./workspace/scratch \
   --from ./workspace/local-test2
 ```
@@ -379,6 +379,10 @@ python -m researchos.cli run-task T8-WRITE \
 - `T3`：验证 PDF 获取、全文覆盖、Reading Coverage 和续跑
 - `T5/T7`：验证实验恢复、预算 gate、Docker
 - `T7.5`：验证 PI 评估与 `next_task`
+- `T8-RESOURCE`：验证资源索引、证据计划和图表计划
+- `T8-SECTION-PLAN`：验证 `paper_state.json` 和每章局部大纲
+- `T8-SEC-*`：逐个验证单章节草稿；每次只写一个 section
+- `T8-DRAFT`：验证章节拼装和 manuscript audit
 - `T8-REVIEW-1/2`：验证 reviewer 逻辑
 - `T9`：验证 bundle 生成、编译、修复重试
 
@@ -401,8 +405,12 @@ python -m researchos.cli run-task T8-WRITE \
 | `T6` | novelty report / collision / baselines 三件套完整 | `novelty/novelty_report.md`, `novelty/collision_cases.md`, `novelty/must_add_baselines.md` |
 | `T7` | summary / runs / configs / ablations / log / seed ensemble / diversity / 环境摘要齐全 | `experiments/results_summary.json`, `experiments/runs/`, `experiments/configs/`, `experiments/ablations.csv`, `experiments/iteration_log.md`, `experiments/seed_ensemble_summary.json`, `experiments/iteration_diversity_check.md`, `experiments/docker_digests.txt` |
 | `T7.5` | evaluation decision 能给出 `next_task` | `evaluation/evaluation_decision.md` |
-| `T8-WRITE` | 论文大纲生成 | `drafts/outline.md` |
-| `T8-DRAFT` | 初稿扩写完成 | `drafts/paper.tex` |
+| `T8-RESOURCE` | 写作资源、章节、证据和图表计划生成 | `drafts/manuscript_resource_index.json`, `drafts/section_plan.json`, `drafts/evidence_plan.json`, `drafts/figure_table_plan.json` |
+| `T8-WRITE` | 论文论证大纲生成 | `drafts/outline.md` |
+| `T8-SECTION-PLAN` | 逐章节写作共享状态和局部大纲生成 | `drafts/paper_state.json`, `drafts/section_outlines/*.md` |
+| `T8-SEC-*` | 单章节草稿完成；每个节点只写一个 section | `drafts/sections/<section>.tex` |
+| `T8-DRAFT` | 章节拼装、全局融合、机械审计完成 | `drafts/paper.tex`, `drafts/manuscript_audit.md` |
+| `T8-SELF-CHECK` | 作者自查完成 | `drafts/self_check.md` |
 | `T8-REVIEW-1/2` | 审稿意见生成 | `drafts/review_rounds/round_1.md`, `round_2.md` |
 | `T8-REVISE-1/2` | 主稿按审稿意见修订 | `drafts/paper.tex` |
 | `T9` | bundle 生成且编译成功 | `submission/bundle/main.tex`, `main.pdf`, `migration_report.md` |

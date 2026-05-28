@@ -160,6 +160,7 @@ experiments:
     )
     (temp_workspace / "pilot" / "smoke_test_passed.marker").write_text("passed")
     (temp_workspace / "pilot" / "docker_digests.txt").write_text("researchos/system@sha256:abc123")
+    ctx.extra["docker_exec_success_count"] = 1
 
     ok, err = agent.validate_outputs(ctx)
     assert ok
@@ -295,6 +296,7 @@ def test_full_mode_validate_outputs_insufficient_seeds(temp_workspace):
     """测试 full 模式 seed ensemble 不足"""
     agent = ExperimenterAgent()
     ctx = MockExecutionContext("full", temp_workspace)
+    ctx.extra["docker_exec_success_count"] = 1
 
     # 创建文件但 headline 实验的 seed 少于 3 个
     (temp_workspace / "experiments" / "ablations.csv").write_text(
@@ -326,6 +328,7 @@ def test_full_mode_validate_outputs_success(temp_workspace):
     """测试 full 模式输出验证成功"""
     agent = ExperimenterAgent()
     ctx = MockExecutionContext("full", temp_workspace)
+    ctx.extra["docker_exec_success_count"] = 1
 
     # 创建所有必需文件且符合要求
     (temp_workspace / "experiments" / "ablations.csv").write_text(
@@ -358,3 +361,41 @@ def test_full_mode_validate_outputs_success(temp_workspace):
     ok, err = agent.validate_outputs(ctx)
     assert ok
     assert err is None
+
+
+def test_full_mode_validate_outputs_rejects_docker_placeholder(temp_workspace):
+    agent = ExperimenterAgent()
+    ctx = MockExecutionContext("full", temp_workspace)
+    ctx.extra["docker_exec_success_count"] = 1
+
+    (temp_workspace / "experiments" / "ablations.csv").write_text(
+        "experiment_id,accuracy\nexp1,0.85\nexp2,0.86\nexp3,0.87\nexp4,0.88"
+    )
+    results = {
+        "experiments": [
+            {
+                "experiment_id": "headline_exp1",
+                "tier": "headline",
+                "seed_runs": [{"seed": 42}, {"seed": 43}, {"seed": 44}],
+                "status": "success",
+                "quality_status": "ok",
+            },
+            {
+                "experiment_id": "final_exp1",
+                "tier": "final_method",
+                "seed_runs": [{"seed": 42}, {"seed": 43}],
+                "status": "success",
+                "quality_status": "ok",
+            },
+        ]
+    }
+    (temp_workspace / "experiments" / "results_summary.json").write_text(json.dumps(results))
+    (temp_workspace / "experiments" / "iteration_log.md").write_text("# Log\n" + "test " * 50)
+    (temp_workspace / "experiments" / "docker_digests.txt").write_text("local build only; no remote digest")
+    (temp_workspace / "experiments" / "iteration_diversity_check.md").write_text("test")
+    (temp_workspace / "experiments" / "seed_ensemble_summary.json").write_text("{}")
+
+    ok, err = agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "真实 Docker" in err

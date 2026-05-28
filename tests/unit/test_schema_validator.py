@@ -96,6 +96,19 @@ method
     assert "Reading Coverage" in err or "Key Results" in err
 
 
+def test_validate_task_artifacts_skips_optional_outputs(tmp_path):
+    workspace = tmp_path / "workspace"
+    ideation = workspace / "ideation"
+    tuple_dir = ideation / "_mechanism_tuples"
+    tuple_dir.mkdir(parents=True)
+    (ideation / "novelty_audit.md").write_text("# Audit\n", encoding="utf-8")
+
+    ok, err = validator.validate_task_artifacts(workspace, "T4.5")
+
+    assert ok
+    assert err is None
+
+
 def test_validate_prerequisites_only_requires_declared_required_inputs(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()

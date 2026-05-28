@@ -1,17 +1,29 @@
 from __future__ import annotations
 
+import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
 
+from researchos.agents.writer import WriterAgent
 from researchos.runtime.config import RuntimeSettings, WebFetchSettings
 from researchos.testing.mocks import MockHumanInterface
 from researchos.tools.bash_run import BashRunTool
 from researchos.tools.glob_files import GlobFilesTool
 from researchos.tools.grep_search import GrepSearchTool
 from researchos.tools.literature_synthesis import BuildSynthesisWorkbenchTool
+from researchos.tools.manuscript import (
+    AssembleManuscriptTool,
+    AuditManuscriptClaimsTool,
+    BuildManuscriptRevisionPatchesTool,
+    BuildManuscriptResourceIndexTool,
+    InitializeManuscriptStateTool,
+    PlanManuscriptEvidenceTool,
+    PlanManuscriptSectionsTool,
+    UpdateManuscriptSectionStateTool,
+)
 from researchos.tools.registry import ToolBuildContext, ToolRegistry
 from researchos.tools.web_fetch import WebFetchAllowlist, WebFetchTool
 from researchos.tools.workspace_policy import WorkspaceAccessPolicy
@@ -39,6 +51,15 @@ class _TestHandler(BaseHTTPRequestHandler):
         return
 
 
+class _WriterContext:
+    def __init__(self, workspace_dir: Path, mode: str, extra: dict | None = None):
+        self.mode = mode
+        self.workspace_dir = workspace_dir
+        self.extra = {"phase": mode}
+        if extra:
+            self.extra.update(extra)
+
+
 @pytest.fixture
 def local_http_server():
     server = ThreadingHTTPServer(("127.0.0.1", 0), _TestHandler)
@@ -53,7 +74,7 @@ def local_http_server():
 
 @pytest.mark.asyncio
 async def test_bash_run_supports_workspace_env_and_truncation(tmp_workspace: Path):
-    policy = WorkspaceAccessPolicy(tmp_workspace, [""], [""])
+    policy = WorkspaceAccessPolicy(tmp_workspace, ["", "drafts/"], ["drafts/"])
     tool = BashRunTool(policy, max_output_bytes=32)
 
     result = await tool.execute(
@@ -119,6 +140,195 @@ async def test_grep_search_python_fallback_finds_matches(monkeypatch, tmp_worksp
     assert "src/b.md:2:Needle again" in result.content
 
 
+def _prepare_manuscript_workspace(workspace: Path) -> None:
+    (workspace / "literature").mkdir(parents=True, exist_ok=True)
+    (workspace / "ideation").mkdir(parents=True, exist_ok=True)
+    (workspace / "experiments").mkdir(parents=True, exist_ok=True)
+    (workspace / "drafts" / "sections").mkdir(parents=True, exist_ok=True)
+    (workspace / "project.yaml").write_text("project_id: p\nresearch_direction: Test\n", encoding="utf-8")
+    (workspace / "literature" / "synthesis.md").write_text("# Synthesis\nPrior work shows a gap.\n", encoding="utf-8")
+    (workspace / "literature" / "related_work.bib").write_text(
+        "@article{smith2024,\n title={A Paper},\n year={2024}\n}\n",
+        encoding="utf-8",
+    )
+    (workspace / "literature" / "comparison_table.csv").write_text("paper,metric\nA,0.7\n", encoding="utf-8")
+    (workspace / "ideation" / "hypotheses.md").write_text("## H1\nHypothesis text.\n", encoding="utf-8")
+    (workspace / "ideation" / "exp_plan.yaml").write_text("experiments:\n- name: exp1\n", encoding="utf-8")
+    (workspace / "ideation" / "novelty_audit.md").write_text("# Novelty\nLevel 2\n", encoding="utf-8")
+    (workspace / "experiments" / "results_summary.json").write_text(
+        '{"experiments":[{"experiment_id":"exp1","metrics":{"accuracy":0.82}}]}\n',
+        encoding="utf-8",
+    )
+    (workspace / "experiments" / "ablations.csv").write_text(
+        "experiment_id,hypothesis_ref,ablation_type,metric,value,baseline_value,delta\n"
+        "exp1,H1,remove_x,accuracy,0.80,0.82,-0.02\n",
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.asyncio
+async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: Path):
+    _prepare_manuscript_workspace(tmp_workspace)
+    policy = WorkspaceAccessPolicy(tmp_workspace, ["", "drafts/"], ["drafts/"])
+
+    index_tool = BuildManuscriptResourceIndexTool(policy)
+    index_result = await index_tool.execute()
+    assert index_result.ok
+    index_path = tmp_workspace / "drafts" / "manuscript_resource_index.json"
+    assert index_path.exists()
+    resource_index = json.loads(index_path.read_text(encoding="utf-8"))
+    assert "smith2024" in resource_index["bib_keys"]
+    assert any(item["path"] == "experiments/results_summary.json" for item in resource_index["artifacts"])
+
+    plan_tool = PlanManuscriptSectionsTool(policy)
+    plan_result = await plan_tool.execute(target_venue="neurips")
+    assert plan_result.ok
+    section_plan_path = tmp_workspace / "drafts" / "section_plan.json"
+    assert section_plan_path.exists()
+    section_plan = json.loads(section_plan_path.read_text(encoding="utf-8"))
+    assert any(section["id"] == "introduction" for section in section_plan["sections"])
+
+    evidence_tool = PlanManuscriptEvidenceTool(policy)
+    evidence_result = await evidence_tool.execute(target_venue="neurips")
+    assert evidence_result.ok
+    evidence_path = tmp_workspace / "drafts" / "evidence_plan.json"
+    figure_table_path = tmp_workspace / "drafts" / "figure_table_plan.json"
+    assert evidence_path.exists()
+    assert figure_table_path.exists()
+    evidence_plan = json.loads(evidence_path.read_text(encoding="utf-8"))
+    figure_table_plan = json.loads(figure_table_path.read_text(encoding="utf-8"))
+    assert any(
+        slot["slot_id"] == "experiments_main_result"
+        for slot in evidence_plan["claim_slots"]
+    )
+    assert any(
+        visual["figure_id"] == "fig:main_results"
+        for visual in figure_table_plan["planned_visuals"]
+        if "figure_id" in visual
+    )
+    assert any(
+        visual["table_id"] == "tab:main_results"
+        for visual in figure_table_plan["planned_visuals"]
+        if "table_id" in visual
+    )
+
+    validator = WriterAgent()
+    ok, err = validator.validate_outputs(_WriterContext(tmp_workspace, "resource_index"))
+    assert ok, err
+
+    (tmp_workspace / "drafts" / "outline.md").write_text(
+        "# Outline\n"
+        "## Title: Test Paper\n"
+        "## Method\nProposed method details.\n"
+        "## Experiments\nReport accuracy 0.82.\n"
+        "## Introduction\nFrame the gap.\n",
+        encoding="utf-8",
+    )
+    state_tool = InitializeManuscriptStateTool(policy)
+    state_result = await state_tool.execute(target_venue="neurips")
+    assert state_result.ok
+    paper_state = json.loads((tmp_workspace / "drafts" / "paper_state.json").read_text(encoding="utf-8"))
+    assert paper_state["semantics"] == "shared_state_for_section_by_section_writing_not_final_claims"
+    assert paper_state["sections"]["methodology"]["file"] == "drafts/sections/methodology.tex"
+    assert paper_state["shared_facts"]["bib_keys"] == ["smith2024"]
+    assert (tmp_workspace / "drafts" / "section_outlines" / "methodology.md").exists()
+    ok, err = validator.validate_outputs(_WriterContext(tmp_workspace, "section_plan"))
+    assert ok, err
+
+    for name in [
+        "abstract",
+        "introduction",
+        "related_work",
+        "methodology",
+        "experiments",
+        "analysis",
+        "limitations",
+        "conclusion",
+    ]:
+        (tmp_workspace / "drafts" / "sections" / f"{name}.tex").write_text(
+            f"\\section{{{name.replace('_', ' ').title()}}}\n"
+            + (f"Content for {name} with 0.82 and \\cite{{smith2024}}. " * 5)
+            + "\n",
+            encoding="utf-8",
+        )
+    update_tool = UpdateManuscriptSectionStateTool(policy)
+    updated = await update_tool.execute(section_id="methodology")
+    assert updated.ok
+    paper_state = json.loads((tmp_workspace / "drafts" / "paper_state.json").read_text(encoding="utf-8"))
+    assert paper_state["sections"]["methodology"]["status"] == "written"
+    ok, err = validator.validate_outputs(_WriterContext(tmp_workspace, "section_draft", {"section_id": "methodology"}))
+    assert ok, err
+
+    assemble_tool = AssembleManuscriptTool(policy)
+    assembled = await assemble_tool.execute(target_venue="neurips")
+    assert assembled.ok
+    paper = (tmp_workspace / "drafts" / "paper.tex").read_text(encoding="utf-8")
+    assert "\\documentclass" in paper
+    assert "\\begin{document}" in paper
+    assert "\\bibliography{related_work}" in paper
+    assert "\\section{Introduction}" in paper
+
+    audit_tool = AuditManuscriptClaimsTool(policy)
+    audit = await audit_tool.execute()
+    assert audit.ok
+    assert audit.data["path"] == "drafts/manuscript_audit.md"
+    audit_text = (tmp_workspace / "drafts" / "manuscript_audit.md").read_text(encoding="utf-8")
+    assert audit_text.startswith("# Manuscript Mechanical Audit")
+    assert "Citation Keys" in audit_text
+
+    review_dir = tmp_workspace / "drafts" / "review_rounds" / "round_1_sections"
+    review_dir.mkdir(parents=True)
+    (review_dir / "experiments.md").write_text(
+        "# Section Review: experiments\n\n"
+        "## Actionable Fixes\n"
+        "- [High] Experiments reports accuracy without tying it to the result artifact.\n",
+        encoding="utf-8",
+    )
+    (tmp_workspace / "drafts" / "review_rounds" / "round_1.md").write_text(
+        "# Review\n\n## 主要问题\n- [Medium] Introduction overclaims the headline result.\n",
+        encoding="utf-8",
+    )
+    patch_tool = BuildManuscriptRevisionPatchesTool(policy)
+    patches = await patch_tool.execute(round_num=1)
+    assert patches.ok
+    patch_path = tmp_workspace / "drafts" / "patches" / "round_1_patches.json"
+    patch_doc = json.loads(patch_path.read_text(encoding="utf-8"))
+    assert patch_doc["semantics"] == "mechanical_review_issue_locations_not_final_revision_decisions"
+    assert any(item["target_section"] == "experiments" for item in patch_doc["patches"])
+    assert any(item["target_section"] == "introduction" for item in patch_doc["patches"])
+
+
+@pytest.mark.asyncio
+async def test_manuscript_audit_builds_index_fallback_and_accepts_real_citekeys(tmp_workspace: Path):
+    _prepare_manuscript_workspace(tmp_workspace)
+    policy = WorkspaceAccessPolicy(tmp_workspace, ["", "drafts/"], ["drafts/"])
+    bib = tmp_workspace / "literature" / "related_work.bib"
+    bib.write_text(
+        "@inproceedings{arxiv:2301.12345,\n title={A Paper},\n year={2024}\n}\n"
+        "@article{smith-2024.test,\n title={Another Paper},\n year={2024}\n}\n",
+        encoding="utf-8",
+    )
+    (tmp_workspace / "drafts" / "paper.tex").write_text(
+        "\\documentclass{article}\n"
+        "\\begin{document}\n"
+        "\\section{Introduction}\nText \\citep{arxiv:2301.12345}.\n"
+        "\\section*{Literature Review}\nMore \\citet{smith-2024.test}.\n"
+        "\\section{Methodology}\nMethod.\n"
+        "\\section{Evaluation}\nMetric 0.82.\n"
+        "\\section{Conclusions}\nDone.\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+
+    audit_tool = AuditManuscriptClaimsTool(policy)
+    audit = await audit_tool.execute()
+
+    assert audit.ok
+    audit_text = (tmp_workspace / "drafts" / "manuscript_audit.md").read_text(encoding="utf-8")
+    assert "Missing BibTeX key" not in audit_text
+    assert "Missing or nonstandard section" not in audit_text
+
+
 @pytest.mark.asyncio
 async def test_glob_files_lists_matches_and_respects_limit(tmp_workspace: Path):
     policy = WorkspaceAccessPolicy(tmp_workspace, [""], [""])
@@ -179,12 +389,14 @@ def test_builtin_registry_registers_extended_tools(tmp_workspace: Path):
             "extract_paper_sections",
             "lookup_paper_record",
             "build_synthesis_workbench",
+            "build_manuscript_revision_patches",
         ],
         ToolBuildContext(policy=policy, human=MockHumanInterface()),
     )
 
     assert sorted(built) == [
         "bash_run",
+        "build_manuscript_revision_patches",
         "build_synthesis_workbench",
         "extract_paper_sections",
         "glob_files",

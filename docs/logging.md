@@ -296,6 +296,13 @@ ls ./workspace/local-test2/literature/deep_read_queue_pending.jsonl
 
 如果已有 note 但没生成 pending queue，说明恢复逻辑可能没生效。
 
+`deep_read_queue_pending_meta.json` 是恢复快照。正常情况下，T3 在成功、`max_steps`、budget 暂停和校验修复暂停后都会刷新它。排查时重点看：
+
+- `refresh_reason`：最近一次刷新来自 `runner_exit:finished`、`runner_exit:max_steps`、`runner_exit:budget`，还是旧的 `context_build`
+- `valid_note_file_count` / `invalid_note_file_count`：是否有历史重复 stub 或结构不合格 note
+- `completed_note_key_count`：是否明显大于 note 文件数；这是多 ID/标题/DOI 匹配 key，不等于论文篇数
+- `pending_queue_count`：是否仍包含已读论文；若有，通常是 note 内部 ID/DOI/arXiv 缺失或写法和 queue 无法匹配
+
 ## 6.3 T7 校验失败
 
 先看：

@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
+import shutil
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -35,9 +36,9 @@ class LatexCompileParams(BaseModel):
 
 class LatexCompileTool(Tool):
     name = "latex_compile"
-    description = "在 LaTeX Docker 镜像中编译 .tex 文件并生成 PDF。"
+    description = "使用本机 latexmk 或统一 Docker 镜像编译 .tex 文件并生成 PDF。"
     parameters_schema = LatexCompileParams
-    timeout_seconds = 300.0
+    timeout_seconds = 1800.0
 
     def __init__(self, docker_tool: DockerExecTool):
         self.docker = docker_tool
@@ -51,8 +52,8 @@ class LatexCompileTool(Tool):
     async def execute(self, **kwargs: Any) -> ToolResult:
         params = LatexCompileParams(**kwargs)
 
-        # 容器内模式：直接调用 latexmk
-        if self._is_running_in_container():
+        # 容器内模式或宿主机已有 TeX：直接调用 latexmk。
+        if self._is_running_in_container() or shutil.which("latexmk"):
             return await self._compile_native(params)
 
         # 宿主机模式：通过 docker_exec
@@ -166,7 +167,7 @@ class LatexCompileTool(Tool):
         ).strip()
 
         result = await self.docker.execute(
-            image="researchos/latex:texlive-2024",
+            image="researchos/system:latest",
             command=command,
             cwd=f"/workspace/{tex_dir_rel}",
             timeout_seconds=int(self.timeout_seconds),

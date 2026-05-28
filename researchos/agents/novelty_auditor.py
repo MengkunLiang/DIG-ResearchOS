@@ -135,20 +135,21 @@ class NoveltyAuditorAgent(Agent):
             if anchor not in audit_text:
                 return False, f"novelty_audit.md 缺少对假设 {anchor} 的审计"
 
-        # 检查 mechanism tuples 目录
+        # 检查 mechanism tuples 目录。T4.5 必须显式保存每个假设的 tuple；
+        # collision_cases 是条件输出，但 tuple 目录不是条件输出。
         tuples_dir = ws / "ideation" / "_mechanism_tuples"
-        if tuples_dir.exists():
-            # 每个 H 至少有一个 tuple 文件
-            for anchor in anchors:
-                anchor_lower = anchor.lower()
-                has_tuple = any(
-                    anchor_lower in f.stem.lower()
-                    for f in tuples_dir.glob("*.json")
+        if not tuples_dir.is_dir():
+            return False, "缺少 ideation/_mechanism_tuples/；T4.5 必须为每个假设保存 mechanism tuple"
+        for anchor in anchors:
+            anchor_lower = anchor.lower()
+            has_tuple = any(
+                anchor_lower in f.stem.lower()
+                for f in tuples_dir.glob("*.json")
+            )
+            if not has_tuple:
+                return False, (
+                    f"ideation/_mechanism_tuples/ 缺少假设 {anchor} 的 mechanism tuple 文件"
                 )
-                if not has_tuple:
-                    return False, (
-                        f"ideation/_mechanism_tuples/ 缺少假设 {anchor} 的 mechanism tuple 文件"
-                    )
 
         # 检查最终确认的 true_collision (high confidence) 必须对应 Level 0。
         # Tool 现在只返回 possible_* heuristic hints；不能因为 hint 自动判死刑。

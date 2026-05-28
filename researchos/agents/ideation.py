@@ -18,6 +18,7 @@ from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
 from ..schemas.validator import validate_record
+from ..tools.ideation_analysis import analyze_ideation_coverage
 from ._common import (
     prepend_resume_prefix,
     load_project,
@@ -214,8 +215,17 @@ class IdeationAgent(Agent):
         if not isinstance(scorecard_ideas, list) or len(scorecard_ideas) < 2:
             return False, "idea_scorecard.yaml 至少需要记录2个候选idea，包含选中和淘汰/暂缓项"
 
+        ok, err = _validate_candidate_directions(ws)
+        if not ok:
+            return False, err
+
         # R1: mechanism / prediction / counterfactual / mechanism_family 必须存在
         _mechanism_fields = ("mechanism", "prediction", "counterfactual", "mechanism_family")
+        placeholder_values = {
+            "mechanism": {"see core_claim", "same as core_claim", "tbd", "todo", "n/a"},
+            "prediction": {"qualitative: outperforms baseline", "outperforms baseline", "tbd", "todo", "n/a"},
+            "counterfactual": {"no clear counterfactual", "tbd", "todo", "n/a"},
+        }
         for i, item in enumerate(scorecard_ideas, start=1):
             if not isinstance(item, dict):
                 continue
@@ -228,6 +238,30 @@ class IdeationAgent(Agent):
                         f"idea_scorecard.yaml idea {idea_id} 缺少必要字段 mechanism/{field}，"
                         "每个 idea 必须包含 mechanism, prediction, counterfactual, mechanism_family"
                     )
+            idea_id = str(idea.get("id") or f"#{i}")
+            decision = item.get("decision") or {}
+            status = str(decision.get("status") or "").strip().lower()
+            has_hypothesis_refs = bool(item.get("hypothesis_refs"))
+            if status == "selected" or has_hypothesis_refs:
+                for field, placeholders in placeholder_values.items():
+                    val = str(idea.get(field) or "").strip().lower()
+                    if val in placeholders:
+                        return False, (
+                            f"idea_scorecard.yaml idea {idea_id} 的 {field} 仍是占位语；"
+                            "选中或进入最终假设的 idea 必须给出具体机制、预测和反事实"
+                        )
+            elif status in {"rejected", "deferred", "merged"}:
+                has_placeholder = any(
+                    str(idea.get(field) or "").strip().lower() in placeholders
+                    for field, placeholders in placeholder_values.items()
+                )
+                if has_placeholder:
+                    reasons = " ".join(str(v) for v in (decision.get("rejection_reason") or []))
+                    if not re.search(r"机制未成形|反事实|mechanism|counterfactual", reasons, re.IGNORECASE):
+                        return False, (
+                            f"idea_scorecard.yaml {status} idea {idea_id} 使用机制占位语，"
+                            "必须在 rejection_reason 中说明机制未成形或无法形成可检验反事实"
+                        )
 
         # R2: _family_distribution.md 必须存在且长度 > 100
         family_dist_path = ws / "ideation" / "_family_distribution.md"
@@ -279,6 +313,15 @@ class IdeationAgent(Agent):
                 "idea_scorecard.yaml 中选中idea的hypothesis_refs必须覆盖所有最终假设anchor，"
                 f"缺少: {missing_selected_refs}"
             )
+
+        coverage_result = analyze_ideation_coverage(ws)
+        coverage = coverage_result.get("coverage", {}) if isinstance(coverage_result, dict) else {}
+        origin_mix = coverage.get("origin_mix", {}) if isinstance(coverage, dict) else {}
+        mainline_total = int(origin_mix.get("mainline_total") or 0)
+        if mainline_total < 1:
+            return False, "idea_scorecard.yaml 至少需要一个 free_reasoning/seed_refinement/evidence_driven 主线idea"
+        if origin_mix.get("supplement_only_risk") is True:
+            return False, "idea_scorecard.yaml 不能全部由四类补充候选构成，必须保留主线LLM推理idea"
 
         rejected_path = ws / "ideation" / "rejected_ideas.md"
         rejected_text = read_text_file(rejected_path)
@@ -356,3 +399,54 @@ class IdeationAgent(Agent):
             return False, "exp_plan.yaml budget_check.over_budget=true，不能判定为完成"
 
         return True, None
+
+
+def _validate_candidate_directions(ws: Path) -> tuple[bool, str | None]:
+    candidate_path = ws / "ideation" / "_candidate_directions.json"
+    if not candidate_path.exists():
+        return False, "缺少 ideation/_candidate_directions.json，必须记录主线与补充候选方向池"
+    try:
+        candidate_data = json.loads(candidate_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return False, f"_candidate_directions.json 解析失败: {exc}"
+    candidates = candidate_data.get("candidates") if isinstance(candidate_data, dict) else None
+    if not isinstance(candidates, list) or len(candidates) < 4:
+        return False, "_candidate_directions.json 必须包含至少4个候选方向"
+
+    mainline_origins = {"free_reasoning", "seed_refinement", "seed_derived", "evidence_driven"}
+    supplement_origins = {
+        "mechanism_challenge",
+        "reverse_operation",
+        "subgroup_failure",
+        "missing_area_exploration",
+        "gap_exploration",
+    }
+    mainline_count = 0
+    supplement_count = 0
+    for idx, candidate in enumerate(candidates, start=1):
+        if not isinstance(candidate, dict):
+            return False, f"_candidate_directions.json 第{idx}条候选必须是对象"
+        origin = str(candidate.get("idea_origin") or candidate.get("origin") or "").strip()
+        status = str(candidate.get("constraint_status") or "").strip()
+        basis = str(candidate.get("basis_summary") or candidate.get("basis") or "").strip()
+        if not origin:
+            return False, f"_candidate_directions.json 第{idx}条候选缺少 idea_origin"
+        if not status:
+            return False, f"_candidate_directions.json 第{idx}条候选缺少 constraint_status"
+        if len(basis) < 20:
+            return False, f"_candidate_directions.json 第{idx}条候选 basis_summary 过短"
+        if origin in mainline_origins or status == "mainline":
+            mainline_count += 1
+        if origin in supplement_origins or status == "supplement":
+            supplement_count += 1
+        if status == "not_supported_by_current_evidence" and origin not in supplement_origins:
+            return False, (
+                f"_candidate_directions.json 第{idx}条 unsupported 候选必须对应四类补充通道，"
+                "不能把主线候选标成无证据"
+            )
+
+    if mainline_count < 2:
+        return False, "_candidate_directions.json 至少需要2个主线候选，不能只靠四类补充"
+    if supplement_count > mainline_count + 4:
+        return False, "_candidate_directions.json 四类补充候选过多，主线推理被覆盖"
+    return True, None

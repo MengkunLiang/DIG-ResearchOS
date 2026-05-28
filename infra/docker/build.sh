@@ -21,6 +21,11 @@ cd "$SCRIPT_DIR"
 # 镜像标签
 TAG="${1:-latest}"
 IMAGE_NAME="researchos/system:${TAG}"
+RESEARCHOS_DOCKER_ROOT="${RESEARCHOS_DOCKER_ROOT:-/mnt/data/Docker}"
+if [ -z "${DOCKER_CONFIG:-}" ]; then
+    export DOCKER_CONFIG="$RESEARCHOS_DOCKER_ROOT/cli-config"
+fi
+mkdir -p "$DOCKER_CONFIG"
 
 echo "=========================================="
 echo "ResearchOS Docker 镜像构建"
@@ -28,6 +33,7 @@ echo "=========================================="
 echo "工作目录: $SCRIPT_DIR"
 echo "镜像名称: $IMAGE_NAME"
 echo "Dockerfile: infra/docker/Dockerfile"
+echo "Docker CLI config: $DOCKER_CONFIG"
 echo "=========================================="
 echo ""
 
@@ -50,6 +56,12 @@ if ! command -v docker &> /dev/null; then
     echo "错误: Docker 未安装或不在 PATH 中"
     exit 1
 fi
+
+echo "[Docker 存储检查]"
+docker info --format '  Docker Root Dir: {{.DockerRootDir}}' || true
+echo "  建议 Docker daemon data-root: $RESEARCHOS_DOCKER_ROOT"
+echo "  若仍指向 /var/lib/docker，请参考 docs/docker.md 迁移。"
+echo ""
 
 # 检查必需文件
 if [ ! -f "infra/docker/Dockerfile" ]; then

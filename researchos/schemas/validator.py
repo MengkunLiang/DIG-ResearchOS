@@ -120,21 +120,29 @@ def validate_task_artifacts(
     except KeyError:
         return False, f"Unknown task: {task_id}"
 
-    # task_io是dict，不是对象
-    outputs = task_io.get("outputs", {})
+    # task_io是dict，不是对象。CLI 可传入状态机声明的 outputs，以避免 contract
+    # 与 state_machine.yaml 漂移时校验错对象；schema/optional 仍来自 contract。
+    outputs = declared_outputs or task_io.get("outputs", {})
     if not outputs:
         # 没有定义outputs，跳过校验
         return True, None
+    optional_outputs = set(task_io.get("optional_outputs", []))
 
     errors = []
 
     for output_name, output_path in outputs.items():
+        if output_name in optional_outputs:
+            continue
+        if isinstance(output_path, Path):
+            file_path = output_path
+            output_display = output_path.as_posix()
+        else:
+            output_display = str(output_path)
+            file_path = workspace_dir / output_display
         # output_path是字符串，如"hello.txt"或"literature/papers_dedup.jsonl"
-        file_path = workspace_dir / output_path
-
         # 检查文件存在
         if not file_path.exists():
-            errors.append(f"Missing output: {output_name} ({output_path})")
+            errors.append(f"Missing output: {output_name} ({output_display})")
             continue
 
         # 检查schema（如果定义）
@@ -444,16 +452,135 @@ def register_builtin_task_checkers():
         if not note_files:
             return False, "literature/paper_notes has no markdown notes"
 
-        from ..agents.reader import _validate_note_structure
+        from ..agents.reader import ReaderAgent
+        from ..runtime.agent import ExecutionContext
 
-        for note_path in note_files:
-            ok, err = _validate_note_structure(note_path)
-            if not ok:
-                return False, err
-        return True, None
+        ctx = ExecutionContext(
+            workspace_dir=workspace_dir,
+            project_id="validation",
+            task_id="T3",
+            run_id="artifact-check",
+            mode="read",
+            outputs_expected={
+                "paper_notes_dir": workspace_dir / "literature" / "paper_notes",
+                "comparison_table": workspace_dir / "literature" / "comparison_table.csv",
+                "related_work_bib": workspace_dir / "literature" / "related_work.bib",
+            },
+        )
+        return ReaderAgent(mode="read").validate_outputs(ctx)
+
+    def check_writer_phase(workspace_dir: Path, task_id: str) -> tuple[bool, str | None]:
+        """T8 writer checker：复用 WriterAgent 的阶段级校验。"""
+        from ..agents.writer import WriterAgent
+        from ..runtime.agent import ExecutionContext
+
+        mode = None
+        extra: dict[str, object] = {}
+        section_map = {
+            "T8-SECTION-PLAN": ("section_plan", None),
+            "T8-SEC-METHOD": ("section_draft", "methodology"),
+            "T8-SEC-EXPERIMENTS": ("section_draft", "experiments"),
+            "T8-SEC-RELATED": ("section_draft", "related_work"),
+            "T8-SEC-ANALYSIS": ("section_draft", "analysis"),
+            "T8-SEC-INTRO": ("section_draft", "introduction"),
+            "T8-SEC-LIMITATIONS": ("section_draft", "limitations"),
+            "T8-SEC-CONCLUSION": ("section_draft", "conclusion"),
+            "T8-SEC-ABSTRACT": ("section_draft", "abstract"),
+            "T8-SECTIONS": ("section_drafts", None),
+            "T8-DRAFT": ("draft", None),
+            "T8-SELF-CHECK": ("self_check", None),
+        }
+        if task_id == "T8-RESOURCE":
+            mode = "resource_index"
+        elif task_id == "T8-WRITE":
+            mode = "outline"
+        elif task_id in {"T8-REVISE-1", "T8-REVISE-2"}:
+            mode = "revise"
+            extra["round"] = 1 if task_id.endswith("-1") else 2
+        elif task_id in section_map:
+            mode, section_id = section_map[task_id]
+            if section_id:
+                extra["section_id"] = section_id
+        if mode is None:
+            return True, None
+
+        ctx = ExecutionContext(
+            workspace_dir=workspace_dir,
+            project_id="validator",
+            task_id=task_id,
+            run_id="validator",
+            mode=mode,
+            extra=extra,
+        )
+        return WriterAgent(mode=mode).validate_outputs(ctx)
+
+    def check_experimenter_phase(workspace_dir: Path, task_id: str) -> tuple[bool, str | None]:
+        from ..agents.experimenter import ExperimenterAgent
+        from ..runtime.agent import ExecutionContext
+
+        mode = "pilot" if task_id == "T5" else "full"
+        ctx = ExecutionContext(
+            workspace_dir=workspace_dir,
+            project_id="validator",
+            task_id=task_id,
+            run_id="validator",
+            mode=mode,
+            extra={"artifact_validation": True},
+        )
+        return ExperimenterAgent(mode=mode).validate_outputs(ctx)
+
+    def check_reviewer_phase(workspace_dir: Path, task_id: str) -> tuple[bool, str | None]:
+        from ..agents.reviewer import ReviewerAgent
+        from ..runtime.agent import ExecutionContext
+
+        round_num = 1 if task_id.endswith("-1") else 2
+        ctx = ExecutionContext(
+            workspace_dir=workspace_dir,
+            project_id="validator",
+            task_id=task_id,
+            run_id="validator",
+            extra={"round": round_num},
+        )
+        return ReviewerAgent().validate_outputs(ctx)
+
+    def check_submission_phase(workspace_dir: Path) -> tuple[bool, str | None]:
+        from ..agents.submission import SubmissionAgent
+        from ..runtime.agent import ExecutionContext
+
+        ctx = ExecutionContext(
+            workspace_dir=workspace_dir,
+            project_id="validator",
+            task_id="T9",
+            run_id="validator",
+        )
+        return SubmissionAgent().validate_outputs(ctx)
 
     register_task_checker("HELLO", check_hello)
     register_task_checker("T3", check_t3)
+    register_task_checker("T5", lambda workspace_dir: check_experimenter_phase(workspace_dir, "T5"))
+    register_task_checker("T7", lambda workspace_dir: check_experimenter_phase(workspace_dir, "T7"))
+    register_task_checker("T8-REVIEW-1", lambda workspace_dir: check_reviewer_phase(workspace_dir, "T8-REVIEW-1"))
+    register_task_checker("T8-REVIEW-2", lambda workspace_dir: check_reviewer_phase(workspace_dir, "T8-REVIEW-2"))
+    register_task_checker("T9", check_submission_phase)
+    for task_id in [
+        "T8-RESOURCE",
+        "T8-WRITE",
+        "T8-SECTION-PLAN",
+        "T8-SEC-METHOD",
+        "T8-SEC-EXPERIMENTS",
+        "T8-SEC-RELATED",
+        "T8-SEC-ANALYSIS",
+        "T8-SEC-INTRO",
+        "T8-SEC-LIMITATIONS",
+        "T8-SEC-CONCLUSION",
+        "T8-SEC-ABSTRACT",
+        "T8-SECTIONS",
+        "T8-DRAFT",
+        "T8-SELF-CHECK",
+        "T8-REVISE-1",
+        "T8-REVISE-2",
+    ]:
+        register_task_checker(task_id, lambda workspace_dir, task_id=task_id: check_writer_phase(workspace_dir, task_id))
 
     # TODO: 为T1-T9添加更多checker
 

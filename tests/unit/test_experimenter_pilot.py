@@ -294,6 +294,22 @@ def test_t5_preflight_rejects_over_budget_plan(pilot_workspace):
     assert "over_budget" in err or "超过项目预算" in err
 
 
+def test_t5_preflight_pauses_when_docker_missing(monkeypatch, pilot_workspace):
+    monkeypatch.setattr("researchos.tools.docker_exec.shutil.which", lambda _name: None)
+    ctx = ExecutionContext(
+        workspace_dir=pilot_workspace,
+        project_id="test_project",
+        task_id="T5",
+        run_id="test_run_no_docker",
+        mode="pilot",
+    )
+
+    ok, err = run_experimenter_preflight(ctx)
+
+    assert not ok
+    assert "WAITING_ENVIRONMENT" in err
+
+
 def test_pilot_validate_outputs_missing_smoke_test(experimenter_agent, pilot_workspace):
     """测试 pilot 模式输出校验 - 缺少 smoke test marker。
 

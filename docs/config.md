@@ -418,6 +418,13 @@ profiles:
 - `retry_policy.llm_retry_delay`
 - `budget_escalation`
 
+`global_timeout.max_tool_call` 只作为普通工具的小上限。长任务工具会使用专用上限：
+
+- `docker_exec` 使用 `global_timeout.docker_operation`
+- `latex_compile` 使用 `global_timeout.latex_compile`
+
+这样 T7 长实验和 T9 TeX 编译不会再被 180 秒的普通工具上限误杀。
+
 ### 5.7 当前值得注意的字段
 
 #### `submission.enforce_anonymization_precheck`
@@ -443,6 +450,8 @@ enforce_anonymization_precheck: false
 当前设为 `null` 时表示：
 
 - 不限制扩限次数
+
+预算扩限 gate 覆盖 `steps`、`tokens` 和 `wall_seconds`。当 `max_steps`、token 或 wall time 触顶时，runtime 会先询问是否扩限；如果用户选择停止或当前无法继续输入，本轮 run 会保存为 `PAUSED`，后续可以用 `researchos resume --workspace ...` 从已落盘 artifact 继续。
 
 ---
 
@@ -478,8 +487,19 @@ enforce_anonymization_precheck: false
 
 - `T1` 到 `T9`
 - `T7.5`
+- `T8-RESOURCE`
 - `T8-WRITE`
+- `T8-SECTION-PLAN`
+- `T8-SEC-METHOD`
+- `T8-SEC-EXPERIMENTS`
+- `T8-SEC-RELATED`
+- `T8-SEC-ANALYSIS`
+- `T8-SEC-INTRO`
+- `T8-SEC-LIMITATIONS`
+- `T8-SEC-CONCLUSION`
+- `T8-SEC-ABSTRACT`
 - `T8-DRAFT`
+- `T8-SELF-CHECK`
 - `T8-REVIEW-1`
 - `T8-REVISE-1`
 - `T8-REVIEW-2`

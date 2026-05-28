@@ -161,7 +161,12 @@ def prepare_task_resume_artifacts(
 
     # T3 有“剩余精读队列”这种强 task-specific 语义，继续保留原专项恢复器。
     if task_id == "T3":
-        recovery.update(prepare_t3_resume_artifacts(workspace_dir))
+        recovery.update(
+            prepare_t3_resume_artifacts(
+                workspace_dir,
+                refresh_reason=str(base_extra.get("resume_reason") or "context_build"),
+            )
+        )
     # T5 / T7 的“已有代码 + 待补实验产物”也继续沿用专项恢复器。
     elif task_id == "T5":
         recovery.update(prepare_experiment_resume_artifacts(workspace_dir, mode="pilot"))

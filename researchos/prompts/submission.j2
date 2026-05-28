@@ -54,7 +54,8 @@ Pre-hook 已执行检查，请确保以下内容不出现：
 ### Step 5: 编译-修复-重试闭环
 你必须真的尝试编译投稿包，而不是只写“编译状态”。
 
-- 在 `submission/bundle/` 中运行 LaTeX / BibTeX 编译流程
+- 优先调用标准工具 `latex_compile` 编译 `submission/bundle/main.tex`
+- 不要用手写占位 PDF 代替编译结果；`main.pdf` 必须由真实编译产生
 - 如果编译失败，必须先读取 `.log` 或命令输出，定位失败原因
 - 根据失败原因修改 `main.tex`、引用、样式、图路径或相关 bundle 文件
 - 修改后再次编译

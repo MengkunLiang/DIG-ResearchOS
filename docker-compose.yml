@@ -18,6 +18,9 @@
 #
 #   5. 停止系统
 #      docker-compose down
+#
+# 默认把 compose 级缓存/数据放到 /mnt/data/Docker，避免占用系统盘。
+# 如需改路径：RESEARCHOS_DOCKER_ROOT=/data/docker-researchos docker-compose up
 
 services:
   researchos:
@@ -51,8 +54,8 @@ services:
     # 挂载工作空间
     volumes:
       - ./workspace:/workspace
-      - researchos_cache:/root/.cache  # 缓存目录（pip, huggingface 等）
-      - researchos_data:/app/data      # 研究数据持久化
+      - ${RESEARCHOS_DOCKER_ROOT:-/mnt/data/Docker}/researchos_cache:/root/.cache  # 缓存目录（pip, huggingface 等）
+      - ${RESEARCHOS_DOCKER_ROOT:-/mnt/data/Docker}/researchos_data:/app/data      # 研究数据持久化
 
     # GPU 支持（需要 nvidia-container-toolkit）
     # 如果没有 GPU，注释掉这个 deploy 段落
@@ -74,12 +77,6 @@ services:
     # 默认命令：显示帮助信息
     # 实际使用时通过 docker-compose run 指定命令
     command: --help
-
-volumes:
-  researchos_cache:
-    driver: local
-  researchos_data:
-    driver: local
 
 networks:
   researchos-net:

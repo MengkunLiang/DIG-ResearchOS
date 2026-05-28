@@ -25,6 +25,10 @@ class AgentError(ResearchOSError):
     """Agent-scoped failure."""
 
 
+class RecoverableRuntimePause(AgentError):
+    """A precondition is missing, but the workspace can be resumed after repair."""
+
+
 class BudgetExceeded(AgentError):
     def __init__(self, dimension: str, limit: float, used: float):
         self.dimension = dimension
@@ -79,4 +83,3 @@ class ToolRuntimeError(ToolError):
         self.tool_name = tool_name
         self.underlying = underlying
         super().__init__(f"Tool {tool_name} crashed: {underlying!r}")
-

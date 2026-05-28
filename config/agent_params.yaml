@@ -293,6 +293,8 @@ agents:
       - list_files
       - search_papers
       - fetch_paper_metadata
+      - extract_mechanism_tuple
+      - compare_mechanism_tuples
       - finish_task
     allowed_read_prefixes:
       - ""
@@ -356,6 +358,7 @@ agents:
       - append_file
       - bash_run
       - docker_exec
+      - latex_compile
       - finish_task
     allowed_read_prefixes:
       - ""
@@ -411,26 +414,57 @@ agents:
       - read_file
       - write_file
       - list_files
+      - build_manuscript_resource_index
+      - plan_manuscript_sections
+      - plan_manuscript_evidence
+      - initialize_manuscript_state
+      - update_manuscript_section_state
+      - assemble_manuscript
+      - audit_manuscript_claims
+      - build_manuscript_revision_patches
       - finish_task
     allowed_read_prefixes:
       - ""
       - literature/
       - experiments/
       - ideation/
+      - novelty/
+      - evaluation/
+      - pilot/
     allowed_write_prefixes:
       - drafts/
     prompt_template: writer.j2
     modes:
+      resource_index:
+        description: 构建写作资源索引和章节计划
+        max_steps: 100
+        max_tokens_total: 500000
       outline:
-        description: 生成大纲
+        description: 生成资源驱动大纲
         max_steps: 300
         max_tokens_total: 1000000
+      section_plan:
+        description: 初始化逐章节写作状态和每章局部大纲
+        max_steps: 80
+        max_tokens_total: 300000
+      section_drafts:
+        description: 已废弃的旧批量分章节入口；只做兼容检查，不写正文
+        max_steps: 20
+        max_tokens_total: 100000
+      section_draft:
+        description: 单章节草稿
+        max_steps: 80
+        max_tokens_total: 500000
       draft:
-        description: 生成初稿
-        max_steps: 500
-        max_tokens_total: 2500000
+        description: 拼装、spot-check 与机械审计
+        max_steps: 180
+        max_tokens_total: 1000000
+      self_check:
+        description: 作者自查
+        max_steps: 200
+        max_tokens_total: 1000000
       revise:
-        description: 修订
+        description: 按 section patch 修订
         max_steps: 300
         max_tokens_total: 1500000
     latex_required: true
@@ -482,6 +516,7 @@ agents:
       - list_files
       - bash_run
       - docker_exec
+      - latex_compile
       - finish_task
     allowed_read_prefixes:
       - ""
@@ -521,6 +556,7 @@ global_timeout:
   max_agent_runtime: 7200
   max_tool_call: 180
   docker_operation: 7200
+  latex_compile: 1800
   llm_call: 90
 
 docker:

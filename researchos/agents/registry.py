@@ -48,8 +48,20 @@ TASK_TO_AGENT_MAP = {
     "T5": ExperimenterAgent,  # Pilot实验
     "T6": NoveltyAgent,  # 新颖性验证
     "T7": ExperimenterAgent,  # 完整实验
-    "T8-WRITE": WriterAgent,  # 论文写作
+    "T8-RESOURCE": WriterAgent,  # 写作资源索引
+    "T8-WRITE": WriterAgent,  # 论文大纲
+    "T8-SECTION-PLAN": WriterAgent,  # 逐章节写作状态
+    "T8-SEC-METHOD": WriterAgent,  # Method 单章
+    "T8-SEC-EXPERIMENTS": WriterAgent,  # Experiments 单章
+    "T8-SEC-RELATED": WriterAgent,  # Related Work 单章
+    "T8-SEC-ANALYSIS": WriterAgent,  # Analysis 单章
+    "T8-SEC-INTRO": WriterAgent,  # Introduction 单章
+    "T8-SEC-LIMITATIONS": WriterAgent,  # Limitations 单章
+    "T8-SEC-CONCLUSION": WriterAgent,  # Conclusion 单章
+    "T8-SEC-ABSTRACT": WriterAgent,  # Abstract 单章
+    "T8-SECTIONS": WriterAgent,  # 分章节草稿
     "T8-DRAFT": WriterAgent,  # 论文初稿
+    "T8-SELF-CHECK": WriterAgent,  # 作者自查
     "T8-REVIEW": ReviewerAgent,  # 论文审稿
     "T8-REVIEW-1": ReviewerAgent,  # 第1轮审稿
     "T8-REVIEW-2": ReviewerAgent,  # 第2轮审稿

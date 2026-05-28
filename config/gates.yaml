@@ -83,14 +83,14 @@ gates:
           path: evaluation/evaluation_decision.md
           pattern: "next_task:\\s*([A-Za-z0-9_.-]+)"
           group: 1
-          default: "T8-WRITE"
+          default: "T8-RESOURCE"
     options:
       - id: follow_recommendation
         label: "按 PI 推荐推进"
         next: "__parse_from_output__"
       - id: go_write
         label: "直接启动写作"
-        next: T8-WRITE
+        next: T8-RESOURCE
       - id: rerun_t7
         label: "回到 T7 补实验"
         next: T7

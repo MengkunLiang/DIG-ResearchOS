@@ -50,7 +50,7 @@ class SingleTaskRunner:
         runtime_settings: RuntimeSettings | None = None,
     ) -> None:
         self.workspace = workspace
-        self.task_id = task_id
+        self.task_id = self._normalize_task_id(task_id)
         self.llm = llm_client
         self.tools = tool_registry
         self.from_workspace = from_workspace
@@ -58,6 +58,14 @@ class SingleTaskRunner:
         self.runtime_settings = runtime_settings or RuntimeSettings()
         self.human = human_interface or CLIHumanInterface()
         register_builtin_task_checkers()
+
+    @staticmethod
+    def _normalize_task_id(task_id: str) -> str:
+        aliases = {
+            "T8": "T8-RESOURCE",
+            "T8-SECTIONS": "T8-SECTION-PLAN",
+        }
+        return aliases.get(task_id, task_id)
 
     async def run(self) -> int:
         """执行单次 task 调试。"""
@@ -168,9 +176,13 @@ class SingleTaskRunner:
             print("Task interrupted. You can inspect state.yaml and trace files in this workspace.")
             return 130
 
-        if result.stop_reason == AgentResult.STOP_INTERRUPTED:
+        if result.stop_reason in {
+            AgentResult.STOP_INTERRUPTED,
+            AgentResult.STOP_MAX_STEPS,
+            AgentResult.STOP_BUDGET,
+        }:
             print(f"\n[进度] 任务暂停: {result.error or result.message}")
-            state = self._record_interrupted(state)
+            state = self._record_finished(state, result)
             state.dump_yaml(state_path)
             self._print_result(result)
             print("Task paused. Provide the requested human input and resume this workspace.")
@@ -184,11 +196,12 @@ class SingleTaskRunner:
             declared_outputs=io_spec["outputs"],
         )
         if not ok:
-            print(f"[进度] 输出校验失败: {'; '.join(errors)}", flush=True)
+            error_text = str(errors)
+            print(f"[进度] 输出校验失败: {error_text}", flush=True)
             if result.ok:
                 result.ok = False
                 result.stop_reason = result.STOP_ERROR
-                result.error = "Runtime artifact validation failed: " + "; ".join(errors)
+                result.error = "Runtime artifact validation failed: " + error_text
                 result.message = result.error
         else:
             print(f"[进度] 输出校验通过", flush=True)
@@ -318,9 +331,10 @@ class SingleTaskRunner:
         """把当前 single-task run 标记为中断。"""
 
         if state.history:
-            state.history[-1].status = "INTERRUPTED"
+            if state.history[-1].status not in {"DONE", "FAILED", "INTERRUPTED"}:
+                state.history[-1].status = "INTERRUPTED"
             state.history[-1].finished_at = _now_iso()
-            state.history[-1].stop_reason = "interrupted"
+            state.history[-1].stop_reason = state.history[-1].stop_reason or "interrupted"
         state.status = "PAUSED"
         state.paused_at = _now_iso()
         return state
@@ -344,13 +358,28 @@ class SingleTaskRunner:
         history.llm_endpoint = result.llm_endpoint_used
         history.completion_mode = (result.metadata or {}).get("completion_mode")
         history.error = result.error
-        history.status = "DONE" if result.ok else "FAILED"
+        if result.ok:
+            history.status = "DONE"
+        elif result.stop_reason in {
+            AgentResult.STOP_INTERRUPTED,
+            AgentResult.STOP_MAX_STEPS,
+            AgentResult.STOP_BUDGET,
+        }:
+            history.status = "INTERRUPTED"
+        else:
+            history.status = "FAILED"
 
         state.budget_cumulative.tokens_total += history.tokens
         state.budget_cumulative.cost_usd_total += result.cost_usd
-        state.status = "COMPLETED" if result.ok else "FAILED"
+        state.status = (
+            "COMPLETED"
+            if result.ok
+            else "PAUSED"
+            if history.status == "INTERRUPTED"
+            else "FAILED"
+        )
         state.last_error = result.error
-        state.paused_at = None
+        state.paused_at = _now_iso() if state.status == "PAUSED" else None
         return state
 
     @staticmethod

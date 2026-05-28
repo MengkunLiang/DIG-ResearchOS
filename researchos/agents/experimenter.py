@@ -25,8 +25,10 @@ Full 模式（T7）输入：
 - ideation/exp_plan.yaml: 实验计划
 - ideation/hypotheses.md: 研究假设
 - project.yaml: 项目配置
+- ideation/novelty_audit.md: T4.5 新颖性预审结果（direct-full 主入口必需）
+- literature/synthesis.md: 文献综合（direct-full 主入口必需）
 - pilot/pilot_results.json: 试点结果（可选）
-- ideation/novelty_report.md: 新颖性报告（可选）
+- novelty/novelty_report.md: 新颖性最终报告（可选）
 
 Full 模式（T7）输出：
 - experiments/results_summary.json: 实验结果汇总（必须包含 quality_status 字段）
@@ -51,10 +53,12 @@ import yaml
 
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
+from ..runtime.agent_params import get_agent_mode_params
 from ..runtime.logger import get_logger
 from ..runtime.prompts import render_prompt
 from ..schemas.validator import validate_record
 from ..schemas.validator import validate_task_artifacts
+from ..tools.docker_exec import check_docker_environment, get_default_image, load_project_config
 from ._common import (
     generate_findings_summary,
     generate_manifest,
@@ -127,14 +131,24 @@ def run_integrity_gate(ctx: ExecutionContext) -> tuple[bool, str | None]:
 
 
 def run_experimenter_preflight(ctx: ExecutionContext) -> tuple[bool, str | None]:
-    """在进入 LLM 前做 T5 输入契约检查，避免拿明显非法计划跑实验。"""
+    """在进入 LLM 前做实验输入契约检查，避免拿明显非法计划跑实验。"""
 
-    if ctx.task_id != "T5":
+    if ctx.task_id not in {"T5", "T7"}:
         return True, None
 
     ok, err = run_integrity_gate(ctx)
     if not ok:
         return False, err
+
+    if ctx.task_id == "T7":
+        ws = ctx.workspace_dir
+        required_direct_inputs = [
+            "ideation/novelty_audit.md",
+            "literature/synthesis.md",
+        ]
+        missing = [rel for rel in required_direct_inputs if not (ws / rel).exists()]
+        if missing:
+            return False, f"T7 preflight 失败：direct-full 缺少必要输入 {missing}"
 
     ws = ctx.workspace_dir
     project = load_project(ctx)
@@ -167,6 +181,35 @@ def run_experimenter_preflight(ctx: ExecutionContext) -> tuple[bool, str | None]
             f"T5 preflight 失败：实验计划逐项成本总和 ${total_from_experiments:.2f} "
             f"超过项目预算 ${max_budget:.2f}"
         )
+
+    mode = "pilot" if ctx.task_id == "T5" else "full"
+    mode_params = get_agent_mode_params("experimenter", mode)
+    if mode_params.get("docker_required", True):
+        project_config = load_project_config(ws)
+        ok, err, details = check_docker_environment(
+            project_config=project_config,
+            image=get_default_image(),
+            require_gpu=bool(mode_params.get("gpu_required", False)),
+        )
+        if not ok:
+            ctx.extra["environment_blocker"] = details
+            return False, err
+
+        if bool(mode_params.get("gpu_required", False)) and not details.get("gpu_runtime_available", False):
+            gpu_hours_requested = any(
+                float(((exp.get("compute_estimate") or {}).get("gpu_hours") or 0) or 0) > 0
+                for exp in plan.get("experiments", []) or []
+                if isinstance(exp, dict)
+            )
+            project_allows_cpu = bool(
+                (project_config.get("compute_budget") or {}).get("allow_cpu_fallback", False)
+            )
+            if gpu_hours_requested and not project_allows_cpu:
+                return False, (
+                    "WAITING_ENVIRONMENT: 实验计划声明需要 GPU，但 Docker 未检测到 nvidia runtime。"
+                    "请安装/配置 nvidia-container-toolkit，或在 project.yaml 中显式设置 "
+                    "compute_budget.allow_cpu_fallback: true 后 resume。"
+                )
 
     return True, None
 
@@ -404,8 +447,15 @@ class ExperimenterAgent(Agent):
 
         # 读取新颖性报告和必须补充的基线（full 模式可能需要）
         novelty_report = ""
+        novelty_audit = ""
         must_add_baselines = ""
+        direct_full_mode = False
         if mode == "full":
+            direct_full_mode = bool(ctx.extra.get("experiment_entrypoint") == "direct_full_from_t45")
+            novelty_audit = read_text_file(
+                ws / "ideation" / "novelty_audit.md",
+                default="",
+            )[:2000]
             for novelty_report_path in (
                 ws / "novelty" / "novelty_report.md",
                 ws / "ideation" / "novelty_report.md",
@@ -417,6 +467,11 @@ class ExperimenterAgent(Agent):
                 ws / "novelty" / "must_add_baselines.md",
                 default="",
             )[:1500]
+            if not novelty_report and novelty_audit:
+                novelty_report = (
+                    "[T6 skipped] Using T4.5 novelty audit as the current novelty-risk input.\n\n"
+                    + novelty_audit[:1200]
+                )
 
         # 读取 seed_ensemble 配置（§2.5）
         seed_ensemble = project.get("seed_ensemble", {
@@ -451,7 +506,10 @@ class ExperimenterAgent(Agent):
             experiment_count=len(exp_plan.get("experiments", [])),
             pilot_results=pilot_results,
             novelty_report_preview=novelty_report,
+            novelty_audit_preview=novelty_audit,
             must_add_baselines_preview=must_add_baselines,
+            direct_full_mode=direct_full_mode,
+            skipped_optional_tasks=list(ctx.extra.get("skipped_optional_tasks", [])),
             budget_hint=budget_hint,
             seed_ensemble=seed_ensemble,
             resume_state=resume_state,
@@ -497,6 +555,9 @@ class ExperimenterAgent(Agent):
                 (
                 "请按 system prompt 执行 T7 Full 实验任务。\n"
                 "实验计划在 ideation/exp_plan.yaml 中。\n"
+                "当前主链允许跳过 T5/T6 直接进入 full 实验；如果 pilot 或 novelty_final 产物不存在，"
+                "请基于 hypotheses、exp_plan、ideation/novelty_audit.md、synthesis.md 和 comparison_table.csv "
+                "建立完整实验计划，并在 iteration_log.md 中明确记录 direct_full_from_t45。\n"
                 "请执行完整实验，包含至少 3 条 ablation 实验，"
                 "使用 seed ensemble（headline: 3 seeds, final_method: 2 seeds），"
                 "生成 experiments/results_summary.json、experiments/ablations.csv 和 "
@@ -572,7 +633,7 @@ class ExperimenterAgent(Agent):
             if not seed_ok:
                 return False, seed_err
 
-            if ctx.task_id == "T5":
+            if ctx.task_id == "T5" and not ctx.extra.get("artifact_validation"):
                 ok, err = validate_task_artifacts(ctx.task_id, ws)
                 if not ok:
                     return False, err
@@ -644,6 +705,17 @@ class ExperimenterAgent(Agent):
             ok, err = validate_files_exist(ctx, required_files)
             if not ok:
                 return False, err
+
+            digest_file = ws / "experiments" / "docker_digests.txt"
+            digest_text = read_text_file(digest_file)
+            if not self._has_reproducible_docker_evidence(digest_text):
+                return False, (
+                    "experiments/docker_digests.txt 必须记录真实 Docker 镜像 digest"
+                    "（包含 sha256，不能是本地占位说明）"
+                )
+            docker_success_count = ctx.extra.get("docker_exec_success_count")
+            if docker_success_count is not None and int(docker_success_count or 0) < 1:
+                return False, "T7 要求至少一次成功的 docker_exec 执行，不能只用 bash_run 本地运行"
 
             # 2. Ablation 最少 3 条（§5.3 - 鲁棒性要求）
             # 为什么需要：ablation 实验是验证方法有效性的关键，至少需要 3 条才能充分验证

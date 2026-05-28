@@ -362,11 +362,7 @@ def _any_registered_agent_uses_any_tool(tool_names: set[str]) -> bool:
 
 
 def _maybe_check_docker_availability() -> None:
-    """按需检查 Docker 是否可用。
-
-    现阶段正式 agent 只有 Hello，不会触发这个检查；但把逻辑先固化在 CLI 里，
-    后续 T5/T7/T9 agent 落地后无需再改主入口。
-    """
+    """Emit an early Docker warning without blocking non-Docker stages."""
     # 容器内模式：跳过 Docker 检查
     container_env = _detect_container_environment()
     if container_env["in_container"]:
@@ -375,10 +371,12 @@ def _maybe_check_docker_availability() -> None:
     if not _any_registered_agent_uses_any_tool({"docker_exec", "latex_compile"}):
         return
 
-    # 检查 docker 命令是否存在
     if shutil.which("docker") is None:
-        # Docker 命令不存在，但某些 agent 可能需要它
-        # 这里只是警告，不阻止运行
+        print(
+            "[startup-warning] 未检测到 Docker。T5/T7 正式实验会在 preflight "
+            "暂停等待环境；T9 若本机没有 latexmk 也会暂停。详见 docs/docker.md。",
+            file=sys.stderr,
+        )
         return
 
     result = subprocess.run(
@@ -388,7 +386,10 @@ def _maybe_check_docker_availability() -> None:
         check=False,
     )
     if result.returncode != 0:
-        raise SystemExit("Docker not available but some registered agents require it")
+        print(
+            "[startup-warning] Docker 命令存在但 daemon 不可用。需要 Docker 的阶段会暂停等待环境。",
+            file=sys.stderr,
+        )
 
 
 async def _maybe_run_selftest(args: argparse.Namespace, llm_client: LLMClient) -> None:

@@ -42,8 +42,10 @@ class TaskNode:
     task_id: str
     agent: str | None = None
     skill: str | None = None
+    description: str | None = None
     inputs: dict[str, str] | None = None
     outputs: dict[str, str] | None = None
+    optional_outputs: dict[str, str] | None = None
     next_on_success: str | None = None
     next_on_failure: str | None = None
     terminal: bool = False
@@ -158,6 +160,12 @@ class StateMachine:
         # 3. runtime 自动注入的 resume / iteration 标志
         extra = dict(state.task_context)
         extra.update(node.extra or {})
+        if node.description:
+            extra.setdefault("task_description", node.description)
+        if node.agent:
+            extra.setdefault("agent_id", node.agent)
+        if node.skill:
+            extra.setdefault("skill_id", node.skill)
         if node.mode is not None:
             extra.setdefault("phase", node.mode)
         if node.round is not None:
@@ -262,12 +270,15 @@ class StateMachine:
 
         return state
 
-    def mark_interrupted(self, state: StateYaml) -> StateYaml:
+    def mark_interrupted(self, state: StateYaml, *, reason: str | None = None) -> StateYaml:
         """收到 SIGINT / SIGTERM 后，把项目置为 PAUSED。"""
         if state.history:
-            state.history[-1].status = "INTERRUPTED"
+            if state.history[-1].status not in {"DONE", "FAILED", "INTERRUPTED"}:
+                state.history[-1].status = "INTERRUPTED"
             state.history[-1].finished_at = _now_iso()
-            state.history[-1].stop_reason = AgentResult.STOP_INTERRUPTED
+            state.history[-1].stop_reason = state.history[-1].stop_reason or AgentResult.STOP_INTERRUPTED
+            if reason and not state.history[-1].error:
+                state.history[-1].error = reason
         state.status = "PAUSED"
         state.paused_at = _now_iso()
         return state
@@ -293,7 +304,12 @@ class StateMachine:
         history.llm_endpoint = result.llm_endpoint_used
         history.completion_mode = (result.metadata or {}).get("completion_mode")
         history.error = result.error
-        history.status = "DONE" if result.ok else "FAILED"
+        recoverable_pause = result.stop_reason in {
+            AgentResult.STOP_INTERRUPTED,
+            AgentResult.STOP_MAX_STEPS,
+            AgentResult.STOP_BUDGET,
+        }
+        history.status = "DONE" if result.ok else "INTERRUPTED" if recoverable_pause else "FAILED"
 
         state.budget_cumulative = BudgetCumulative(
             tokens_total=state.budget_cumulative.tokens_total + history.tokens,
@@ -305,7 +321,11 @@ class StateMachine:
         if workspace_dir:
             self._check_budget_drift(state, workspace_dir)
 
-        if result.stop_reason == AgentResult.STOP_INTERRUPTED:
+        if result.stop_reason in {
+            AgentResult.STOP_INTERRUPTED,
+            AgentResult.STOP_MAX_STEPS,
+            AgentResult.STOP_BUDGET,
+        }:
             state.last_error = result.error
             return self.mark_interrupted(state)
 
@@ -466,27 +486,38 @@ class StateMachine:
     def _parse_t75_decision(self, workspace_dir: Path) -> str:
         """T7.5 完成后，解析 evaluation_decision.md 的推荐下一步。"""
 
+        default_t8_entry = self._default_t8_entry()
         decision_path = workspace_dir / "evaluation" / "evaluation_decision.md"
         if not decision_path.exists():
-            return "T8-WRITE"
+            return default_t8_entry
 
         text = decision_path.read_text(encoding="utf-8", errors="replace")
         match = re.search(r"next_task:\s*([A-Za-z0-9_.-]+)", text, re.DOTALL)
         if match is None:
-            return "T8-WRITE"
+            return default_t8_entry
 
         raw_target = match.group(1).strip()
         aliases = {
-            "T8": "T8-WRITE",
+            "T8": "T8-RESOURCE",
+            "T8-WRITE": "T8-RESOURCE",
             "terminate": "done",
             "terminal": "done",
             "stop": "done",
             "end": "done",
         }
         target = aliases.get(raw_target, raw_target)
+        if target not in self.nodes and raw_target in self.nodes:
+            return raw_target
         if target not in self.nodes:
-            return "T8-WRITE"
+            return default_t8_entry
         return target
+
+    def _default_t8_entry(self) -> str:
+        if "T8-RESOURCE" in self.nodes:
+            return "T8-RESOURCE"
+        if "T8-WRITE" in self.nodes:
+            return "T8-WRITE"
+        return "done"
 
     @staticmethod
     def _find_option(gate_spec: dict[str, Any], option_id: str | None) -> dict[str, Any] | None:
@@ -593,6 +624,7 @@ class StateMachine:
 
         declared_inputs = dict(node.inputs or {})
         declared_outputs = dict(node.outputs or {})
+        declared_outputs.update(dict(node.optional_outputs or {}))
         contract_inputs = dict(contract.get("inputs", {}))
         contract_outputs = dict(contract.get("outputs", {}))
 

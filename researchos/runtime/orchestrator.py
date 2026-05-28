@@ -14,16 +14,17 @@ from ..pydantic_compat import model_dump
 from .agent import Agent, AgentResult, EffectiveConfig, ExecutionContext, resolve_effective_config
 from .budget import BudgetTracker
 from .config import RuntimeSettings
-from .errors import BudgetExceeded, LLMProviderError, ToolAccessDenied, ToolError
+from .errors import BudgetExceeded, LLMProviderError, RecoverableRuntimePause, ToolAccessDenied, ToolError
 from .llm_client import LLMClient, ModelBinding
 from .logger import get_logger
 from .message import Message, Role, ToolCall, is_empty_assistant
 from .t2_recovery import finalize_t2_outputs
 from .abstract_sweep import run_abstract_sweep
 from .t3_recovery import prepare_t3_resume_artifacts
+from .task_recovery import prepare_generic_resume_artifacts
 from .trace import NullTraceWriter, TraceWriter
 from ..tools.base import Tool, ToolResult
-from ..tools.human_gate import HumanInterface
+from ..tools.human_gate import HumanInputUnavailable, HumanInterface
 from ..tools.paper_save_tools import SavePapersRawTool
 from ..tools.registry import ToolBuildContext, ToolRegistry
 from .agent_params import get_agent_mode_params, get_budget_escalation_policy, get_global_timeout, get_retry_policy
@@ -138,8 +139,7 @@ class AgentRunner:
             trace = NullTraceWriter()
 
 
-        # 输出初始化信息
-        print(f"[Agent] 初始化完成 (模型层级: {eff.llm_tier}, 最大步数: {eff.max_steps})", flush=True)
+        self._print_task_start_summary(ctx, eff)
         last_model_used: str | None = None
         last_endpoint_used: str | None = None
         stop_reason = AgentResult.STOP_ERROR
@@ -181,13 +181,21 @@ class AgentRunner:
                 await self._run_pre_hook(hook, ctx)
 
             t2_pre_finalized = await self._maybe_finalize_t2_before_llm(ctx)
+            t3_pre_finalized = False
+            if not t2_pre_finalized:
+                t3_pre_finalized = await self._maybe_finalize_t3_before_llm(ctx)
             t4_pre_finalized = False
             t35_prepared = False
-            if not t2_pre_finalized:
+            if not (t2_pre_finalized or t3_pre_finalized):
                 t35_prepared = await self._maybe_prepare_t35_before_llm(ctx, policy)
-            if not t2_pre_finalized:
+            if not (t2_pre_finalized or t3_pre_finalized):
                 t4_pre_finalized = await self._maybe_finalize_t4_before_llm(ctx)
-            deterministic_pre_finalized = t2_pre_finalized or t4_pre_finalized
+            t45_pre_finalized = False
+            if not (t2_pre_finalized or t3_pre_finalized or t4_pre_finalized):
+                t45_pre_finalized = await self._maybe_finalize_t45_before_llm(ctx)
+            deterministic_pre_finalized = (
+                t2_pre_finalized or t3_pre_finalized or t4_pre_finalized or t45_pre_finalized
+            )
             if deterministic_pre_finalized:
                 stop_reason = AgentResult.STOP_FINISHED
                 error_msg = None
@@ -313,12 +321,12 @@ class AgentRunner:
                     if tool_call.name == "finish_task" and not tool_msg.metadata.get("is_error"):
                         finish_requested = True
                     if (
-                        tool_call.name == "ask_human"
+                        tool_call.name in {"ask_human", "docker_exec", "latex_compile"}
                         and tool_msg.metadata.get("is_error")
                         and ((tool_msg.metadata.get("error") or tool_msg.metadata.get("data", {}).get("error")) == "human_input_unavailable")
                     ):
                         pause_requested = True
-                        pause_reason = tool_msg.content or "ask_human 需要用户输入，但当前输入不可用。"
+                        pause_reason = tool_msg.content or "需要用户输入，但当前输入不可用。"
 
                 if pause_requested:
                     stop_reason = AgentResult.STOP_INTERRUPTED
@@ -355,8 +363,11 @@ class AgentRunner:
                     validation_fails += 1
                     print(f"[Agent] 输出校验失败 ({validation_fails}/{self.agent.spec.max_validation_retries}): {err}", flush=True)
                     if validation_fails >= self.agent.spec.max_validation_retries:
-                        stop_reason = AgentResult.STOP_ERROR
-                        error_msg = f"Validation failed {validation_fails} times. Last reason: {err}"
+                        stop_reason = AgentResult.STOP_INTERRUPTED
+                        error_msg = (
+                            f"Validation failed {validation_fails} times. "
+                            f"Paused for artifact repair/resume. Last reason: {err}"
+                        )
                         break
                     feedback = Message.user(
                         f"你声称已完成，但输出校验失败：{err}。请修复后再次调用 finish_task。",
@@ -366,14 +377,25 @@ class AgentRunner:
                     trace.write_message(feedback)
 
                 if budget.steps >= budget.max_steps:
+                    extended, budget_extensions_used = await self._maybe_offer_budget_extension(
+                        ctx=ctx,
+                        budget=budget,
+                        exc=BudgetExceeded("steps", budget.max_steps, budget.steps),
+                        used_extensions=budget_extensions_used,
+                    )
+                    if extended:
+                        continue
                     stop_reason = AgentResult.STOP_MAX_STEPS
-                    error_msg = "Reached maximum allowed steps"
+                    error_msg = "Reached maximum allowed steps; paused so you can resume or raise the step budget."
                     break
 
         except asyncio.CancelledError:
             stop_reason = AgentResult.STOP_INTERRUPTED
             error_msg = "Cancelled"
             raise
+        except RecoverableRuntimePause as exc:
+            stop_reason = AgentResult.STOP_INTERRUPTED
+            error_msg = str(exc)
         except HookExecutionError as exc:
             stop_reason = AgentResult.STOP_ERROR
             error_msg = str(exc)
@@ -387,6 +409,7 @@ class AgentRunner:
                 stop_reason=stop_reason,
                 error_msg=error_msg,
             )
+            self._refresh_resume_artifacts(ctx)
             self._maybe_refresh_t3_resume_artifacts(ctx, stop_reason)
             self._maybe_run_t3_abstract_sweep(ctx, stop_reason)
             result = self._build_result(
@@ -417,11 +440,62 @@ class AgentRunner:
         if isinstance(result, tuple) and len(result) == 2:
             ok, message = result
             if not ok:
-                raise HookExecutionError(str(message or f"Pre-hook failed: {hook.__name__}"))
+                text = str(message or f"Pre-hook failed: {hook.__name__}")
+                if "WAITING_ENVIRONMENT" in text or "环境不可用" in text:
+                    raise RecoverableRuntimePause(text)
+                raise HookExecutionError(text)
             return
 
         if result is False:
             raise HookExecutionError(f"Pre-hook failed: {hook.__name__}")
+
+    def _print_task_start_summary(self, ctx: ExecutionContext, eff: EffectiveConfig) -> None:
+        """Print a human-readable one-line task summary before LLM work."""
+
+        phase = ctx.mode or ctx.extra.get("phase") or "-"
+        description = str(ctx.extra.get("task_description") or self._infer_task_description(ctx))
+        expected = [
+            str(path.relative_to(ctx.workspace_dir))
+            for path in list(ctx.outputs_expected.values())[:5]
+        ]
+        if len(ctx.outputs_expected) > 5:
+            expected.append(f"...(+{len(ctx.outputs_expected) - 5})")
+        print(
+            "[Agent] 初始化完成 | "
+            f"任务: {ctx.task_id} | Agent: {self.agent.spec.name} | 阶段: {phase} | "
+            f"目标: {description} | 输出: {', '.join(expected) if expected else '未声明'} | "
+            f"模型层级: {eff.llm_tier} | 最大步数: {eff.max_steps}",
+            flush=True,
+        )
+
+    @staticmethod
+    def _infer_task_description(ctx: ExecutionContext) -> str:
+        task_map = {
+            "T1": "初始化项目配置和 workspace 状态",
+            "T2": "检索、去重并验证候选论文",
+            "T3": "精读论文并生成结构化 paper notes",
+            "T3.5": "基于 notes 分阶段合成 literature synthesis",
+            "T4": "生成候选研究假设、实验计划和风险分析",
+            "T4.5": "做新颖性预审和 mechanism tuple 审计",
+            "T5": "执行 pilot 实验和 smoke test",
+            "T6": "基于 pilot 结果复核新颖性和必补 baseline",
+            "T7": "执行完整实验、ablation 和多 seed 汇总",
+            "T7.5": "评估实验证据是否足够进入写作",
+            "T8-RESOURCE": "构建写作资源索引、证据计划和图表计划",
+            "T8-WRITE": "生成资源驱动的论文总大纲",
+            "T8-SECTION-PLAN": "初始化 paper_state 和每章局部大纲",
+            "T8-DRAFT": "拼装章节、审计 claim 并生成 paper.tex",
+            "T8-SELF-CHECK": "作者自查整篇论文",
+            "T8-REVIEW-1": "第一轮逐章节审稿",
+            "T8-REVIEW-2": "第二轮逐章节审稿",
+            "T8-REVISE-1": "按第一轮 patch list 修订论文",
+            "T8-REVISE-2": "按第二轮 patch list 修订论文",
+            "T9": "构建投稿包、编译 PDF 并修复 TeX 问题",
+        }
+        if ctx.task_id.startswith("T8-SEC-"):
+            section_id = ctx.extra.get("section_id") or ctx.extra.get("section") or "section"
+            return f"只写单个论文 section: {section_id}"
+        return task_map.get(ctx.task_id, "执行当前状态机节点声明的任务")
 
     async def _run_post_hook(self, hook, ctx: ExecutionContext, result: AgentResult) -> None:
         """兼容同步/异步 post-hook。"""
@@ -463,13 +537,37 @@ class AgentRunner:
 
         return stop_reason, error_msg
 
-    def _maybe_refresh_t3_resume_artifacts(self, ctx: ExecutionContext, stop_reason: str) -> None:
-        """T3 成功后刷新 pending queue 快照，避免下次/人工查看仍显示旧进度。"""
+    def _refresh_resume_artifacts(self, ctx: ExecutionContext) -> None:
+        """在任意退出路径刷新通用恢复快照，避免失败/暂停后仍看到旧进度。"""
 
-        if ctx.task_id != "T3" or stop_reason != AgentResult.STOP_FINISHED:
+        try:
+            recovery = prepare_generic_resume_artifacts(
+                ctx.workspace_dir,
+                task_id=ctx.task_id,
+                outputs_expected=ctx.outputs_expected,
+            )
+            ctx.extra.update(
+                {
+                    "resume_state_path": recovery.get("resume_state_path"),
+                    "resume_existing_outputs": recovery.get("resume_existing_outputs"),
+                    "resume_missing_outputs": recovery.get("resume_missing_outputs"),
+                    "resume_output_summaries": recovery.get("resume_output_summaries"),
+                    "resume_existing_artifacts": recovery.get("resume_existing_artifacts"),
+                }
+            )
+        except Exception:  # pragma: no cover - refresh failure should not hide the real result
+            self.log.exception("resume_artifact_refresh_failed")
+
+    def _maybe_refresh_t3_resume_artifacts(self, ctx: ExecutionContext, stop_reason: str) -> None:
+        """T3 退出时刷新 pending queue 快照，避免暂停/失败后仍显示旧进度。"""
+
+        if ctx.task_id != "T3":
             return
         try:
-            recovery = prepare_t3_resume_artifacts(ctx.workspace_dir)
+            recovery = prepare_t3_resume_artifacts(
+                ctx.workspace_dir,
+                refresh_reason=f"runner_exit:{stop_reason}",
+            )
             ctx.extra.update(
                 {
                     "resume_queue_path": recovery.get("resume_queue_path"),
@@ -525,6 +623,45 @@ class AgentRunner:
             success_message="[Agent] T2 确定性收尾成功，跳过 LLM 续跑",
         )
 
+    async def _maybe_finalize_t3_before_llm(self, ctx: ExecutionContext) -> bool:
+        """T3 续跑时，已有 deep-read 产物通过校验则直接完成。
+
+        T3 的成功条件是“足够且结构合格的深读证据”，不是必须把
+        `deep_read_queue_pending.jsonl` 中所有低优先级或 overflow 条目全部读完。
+        若当前 artifact 已满足 Reader validator，继续让 LLM 补 alias/stub 会浪费预算。
+        """
+
+        if ctx.task_id != "T3":
+            return False
+
+        expected_paths = [
+            ctx.workspace_dir / "literature" / "paper_notes",
+            ctx.workspace_dir / "literature" / "comparison_table.csv",
+            ctx.workspace_dir / "literature" / "related_work.bib",
+        ]
+        if any(not path.exists() for path in expected_paths):
+            return False
+
+        ok, err = self.agent.validate_outputs(ctx)
+        if not ok:
+            self.log.info("t3_resume_prefinalize_skipped", reason=err)
+            return False
+
+        print("[Agent] T3 检测到已有 deep-read 产物且校验通过，跳过 LLM 续跑", flush=True)
+        self._record_runtime_completion(
+            ctx,
+            "t3_resume_prefinalize",
+            {
+                "outputs": [
+                    "literature/paper_notes",
+                    "literature/comparison_table.csv",
+                    "literature/related_work.bib",
+                ],
+            },
+            action_type="t3_resume_prefinalize",
+        )
+        return True
+
     async def _maybe_finalize_t4_before_llm(self, ctx: ExecutionContext) -> bool:
         """T4 续跑时，已有三件套可通过校验则直接完成。
 
@@ -540,6 +677,12 @@ class AgentRunner:
             ctx.workspace_dir / "ideation" / "hypotheses.md",
             ctx.workspace_dir / "ideation" / "exp_plan.yaml",
             ctx.workspace_dir / "ideation" / "risks.md",
+            ctx.workspace_dir / "ideation" / "idea_scorecard.yaml",
+            ctx.workspace_dir / "ideation" / "idea_rationales.json",
+            ctx.workspace_dir / "ideation" / "gate_decisions.json",
+            ctx.workspace_dir / "ideation" / "rejected_ideas.md",
+            ctx.workspace_dir / "ideation" / "_family_distribution.md",
+            ctx.workspace_dir / "ideation" / "_candidate_directions.json",
         ]
         if any(not path.exists() or path.stat().st_size <= 0 for path in expected_paths):
             return False
@@ -563,6 +706,40 @@ class AgentRunner:
         )
         return True
 
+    async def _maybe_finalize_t45_before_llm(self, ctx: ExecutionContext) -> bool:
+        """T4.5 续跑时，已有审计和 mechanism tuples 合格则直接完成。"""
+
+        if ctx.task_id != "T4.5":
+            return False
+
+        required_paths = [
+            ctx.workspace_dir / "ideation" / "novelty_audit.md",
+            ctx.workspace_dir / "ideation" / "_mechanism_tuples",
+        ]
+        if any(not path.exists() for path in required_paths):
+            return False
+
+        ok, err = self.agent.validate_outputs(ctx)
+        if not ok:
+            self.log.info("t45_resume_prefinalize_skipped", reason=err)
+            return False
+
+        print("[Agent] T4.5 检测到已有 novelty audit 且校验通过，跳过 LLM 续跑", flush=True)
+        outputs = [
+            "ideation/novelty_audit.md",
+            "ideation/_mechanism_tuples",
+        ]
+        collision_path = ctx.workspace_dir / "ideation" / "collision_cases.md"
+        if collision_path.exists():
+            outputs.append("ideation/collision_cases.md")
+        self._record_runtime_completion(
+            ctx,
+            "t45_resume_prefinalize",
+            {"outputs": outputs},
+            action_type="t45_resume_prefinalize",
+        )
+        return True
+
     async def _maybe_prepare_t35_before_llm(
         self,
         ctx: ExecutionContext,
@@ -583,6 +760,32 @@ class AgentRunner:
         notes_dir = ctx.workspace_dir / "literature" / "paper_notes"
         if not notes_dir.exists() or not any(notes_dir.glob("*.md")):
             return False
+        staged_outputs = [
+            ctx.workspace_dir / "literature" / "synthesis_workbench.json",
+            ctx.workspace_dir / "literature" / "synthesis_outline.md",
+            ctx.workspace_dir / "literature" / "synthesis_draft.md",
+        ]
+        note_files = [path for path in notes_dir.glob("*.md") if path.is_file()]
+        if all(path.exists() and path.stat().st_size > 0 for path in staged_outputs):
+            newest_note_mtime = max((path.stat().st_mtime for path in note_files), default=0)
+            oldest_staged_mtime = min(path.stat().st_mtime for path in staged_outputs)
+            if oldest_staged_mtime >= newest_note_mtime:
+                print("[Agent] T3.5 检测到现有 synthesis workbench 且未过期，跳过重复生成", flush=True)
+                actions = ctx.extra.setdefault("runtime_actions", [])
+                if isinstance(actions, list):
+                    actions.append(
+                        {
+                            "type": "t35_synthesis_workbench_reused",
+                            "mode": "t35_workbench_reused",
+                            "outputs": [
+                                str(path.relative_to(ctx.workspace_dir))
+                                for path in staged_outputs
+                            ],
+                        }
+                    )
+                ctx.extra["t35_workbench_prepared"] = True
+                ctx.extra["t35_workbench_reused"] = True
+                return True
 
         from ..tools.literature_synthesis import BuildSynthesisWorkbenchTool
 
@@ -762,6 +965,15 @@ class AgentRunner:
             human_started = time.time()
             try:
                 approved = await self.human.ask_approval(tool_name=tc.name, arguments=tc.arguments)
+            except HumanInputUnavailable as exc:
+                return Message.tool(
+                    tool_call_id=tc.id,
+                    name=tc.name,
+                    content=f"ERROR: approval input unavailable: {exc}",
+                    is_error=True,
+                    step=step,
+                    metadata={"data": {"input_unavailable": True}, "error": "human_input_unavailable"},
+                )
             except Exception as exc:
                 return Message.tool(
                     tool_call_id=tc.id,
@@ -818,7 +1030,7 @@ class AgentRunner:
             )
 
         try:
-            max_tool_timeout = float(self.global_timeout.get("max_tool_call") or tool.timeout_seconds)
+            max_tool_timeout = self._timeout_for_tool(tc.name, tool)
             tool_timeout = min(tool.timeout_seconds, max_tool_timeout)
             # 工具自身可有细粒度超时，但 runtime 仍统一包一层 wait_for。
             tool_execute_started = time.time()
@@ -914,6 +1126,12 @@ class AgentRunner:
                 ctx.extra["docker_exec_success_count"] = int(ctx.extra.get("docker_exec_success_count", 0) or 0) + 1
             return
 
+        if tool_name == "latex_compile":
+            ctx.extra["latex_compile_call_count"] = int(ctx.extra.get("latex_compile_call_count", 0) or 0) + 1
+            if result.ok:
+                ctx.extra["latex_compile_success_count"] = int(ctx.extra.get("latex_compile_success_count", 0) or 0) + 1
+            return
+
         if tool_name not in {"write_file", "write_structured_file"} or not result.ok:
             return
 
@@ -939,6 +1157,29 @@ class AgentRunner:
             if save_path:
                 return (tool_name, f"save_path:{save_path}")
         return None
+
+    def _timeout_for_tool(self, tool_name: str, tool: Tool) -> float:
+        """Return the runtime timeout cap for a tool.
+
+        Long-running experiment and LaTeX tools need their dedicated timeout
+        budget; otherwise the global small-tool cap kills valid T7/T9 work.
+        """
+
+        if tool_name == "docker_exec":
+            return float(
+                self.global_timeout.get("docker_operation")
+                or self.global_timeout.get("max_tool_call")
+                or tool.timeout_seconds
+            )
+        if tool_name == "latex_compile":
+            return float(
+                self.global_timeout.get("latex_compile")
+                or self.global_timeout.get("max_compile")
+                or self.global_timeout.get("docker_operation")
+                or self.global_timeout.get("max_tool_call")
+                or tool.timeout_seconds
+            )
+        return float(self.global_timeout.get("max_tool_call") or tool.timeout_seconds)
 
     @staticmethod
     def _remember_tool_failure(
@@ -1214,8 +1455,12 @@ class AgentRunner:
             message = "Agent 成功完成（T2 recovery 自动补全）"
         elif ok and metadata.get("completion_mode") == "t2_resume_prefinalize":
             message = "Agent 成功完成（T2 resume 确定性收尾）"
+        elif ok and metadata.get("completion_mode") == "t3_resume_prefinalize":
+            message = "Agent 成功完成（T3 resume 确定性收尾）"
         elif ok and metadata.get("completion_mode") == "t4_resume_prefinalize":
             message = "Agent 成功完成（T4 resume 确定性收尾）"
+        elif ok and metadata.get("completion_mode") == "t45_resume_prefinalize":
+            message = "Agent 成功完成（T4.5 resume 确定性收尾）"
         return AgentResult(
             ok=ok,
             message=message,

@@ -40,7 +40,58 @@ ResearchOS 当前采用 **统一镜像** 模式，而不是“实验镜像一套
 
 ---
 
-## 2. Docker 方案包含什么
+## 2. 避免占用系统盘
+
+Docker 的镜像层、构建缓存、容器层和默认 named volume 默认会写入 daemon 的
+`Docker Root Dir`，常见位置是 `/var/lib/docker`。这会快速占满系统盘。
+ResearchOS 推荐把 Docker 数据根目录迁移到：
+
+```text
+/mnt/data/Docker
+```
+
+### 2.1 daemon 级迁移
+
+在宿主机执行：
+
+```bash
+sudo mkdir -p /mnt/data/Docker
+sudo mkdir -p /etc/docker
+sudo tee /etc/docker/daemon.json >/dev/null <<'JSON'
+{
+  "data-root": "/mnt/data/Docker"
+}
+JSON
+sudo systemctl restart docker
+docker info --format 'Docker Root Dir: {{.DockerRootDir}}'
+```
+
+如果旧机器已经在 `/var/lib/docker` 有大量镜像和容器，先停止 Docker，再按你的运维策略
+迁移或重新构建镜像。不要在 Docker daemon 正运行时直接移动 `/var/lib/docker`。
+
+### 2.2 ResearchOS 脚本与 compose
+
+`infra/docker/build.sh` 和 `infra/docker/run.sh` 会打印当前 `Docker Root Dir`，并在
+未显式设置 `DOCKER_CONFIG` 时把 Docker CLI 配置放到：
+
+```text
+${RESEARCHOS_DOCKER_ROOT:-/mnt/data/Docker}/cli-config
+```
+
+`docker-compose.yml` 已将 ResearchOS 缓存和数据目录改为显式 bind mount：
+
+```text
+${RESEARCHOS_DOCKER_ROOT:-/mnt/data/Docker}/researchos_cache
+${RESEARCHOS_DOCKER_ROOT:-/mnt/data/Docker}/researchos_data
+```
+
+这只能控制 compose 级缓存和数据；镜像层、BuildKit cache 和容器 writable layer 仍由
+Docker daemon 的 `data-root` 控制。因此真正避免系统盘占用，必须优先配置
+`/etc/docker/daemon.json`。
+
+---
+
+## 3. Docker 方案包含什么
 
 当前 Dockerfile 基于：
 
@@ -66,9 +117,9 @@ ResearchOS 当前采用 **统一镜像** 模式，而不是“实验镜像一套
 
 ---
 
-## 3. 核心设计原则
+## 4. 核心设计原则
 
-### 3.1 统一入口
+### 4.1 统一入口
 
 容器入口点设置为：
 
@@ -78,7 +129,7 @@ python3 -m researchos.cli
 
 所以在容器里最终跑的不是某个 ad-hoc shell，而是同一套 CLI。
 
-### 3.2 Workspace 挂载优先
+### 4.2 Workspace 挂载优先
 
 容器运行时，宿主机的 workspace 挂载到容器内：
 
@@ -91,7 +142,7 @@ python3 -m researchos.cli
 - 容器退出后文件不丢
 - 便于本地继续调试同一 workspace
 
-### 3.3 自动环境变量透传
+### 4.3 自动环境变量透传
 
 `run.sh` 会自动读取项目根目录 `.env`，并把常用变量注入容器，例如：
 
@@ -107,9 +158,9 @@ python3 -m researchos.cli
 
 ---
 
-## 4. 主要脚本与职责
+## 5. 主要脚本与职责
 
-### 4.1 `infra/docker/build.sh`
+### 5.1 `infra/docker/build.sh`
 
 用途：
 
@@ -130,7 +181,7 @@ bash infra/docker/build.sh
 bash infra/docker/build.sh dev
 ```
 
-### 4.2 `infra/docker/run.sh`
+### 5.2 `infra/docker/run.sh`
 
 用途：
 
@@ -157,7 +208,7 @@ bash infra/docker/run.sh run --workspace /workspace/local-test2
 bash infra/docker/run.sh bash
 ```
 
-### 4.3 `docker-compose.yml`
+### 5.3 `docker-compose.yml`
 
 用途：
 
@@ -170,7 +221,7 @@ bash infra/docker/run.sh bash
 - 固定化服务定义
 - 长期环境维护
 
-### 4.4 什么时候优先用 Docker
+### 5.4 什么时候优先用 Docker
 
 推荐优先使用 Docker 的场景：
 
@@ -187,9 +238,9 @@ bash infra/docker/run.sh bash
 
 ---
 
-## 5. 构建镜像
+## 6. 构建镜像
 
-### 5.1 标准构建
+### 6.1 标准构建
 
 ```bash
 cd ResearchOS
@@ -202,7 +253,7 @@ bash infra/docker/build.sh
 docker images | grep researchos
 ```
 
-### 5.2 Dockerfile 做了什么
+### 6.2 Dockerfile 做了什么
 
 主要步骤：
 
@@ -216,7 +267,7 @@ docker images | grep researchos
 8. 创建 `/workspace`
 9. 设置 entrypoint
 
-### 5.3 常见构建问题
+### 6.3 常见构建问题
 
 #### 问题 1：Docker 未安装
 
@@ -248,16 +299,16 @@ docker images | grep researchos
 
 ---
 
-## 6. 运行容器
+## 7. 运行容器
 
-### 6.1 最小运行
+### 7.1 最小运行
 
 ```bash
 cd ResearchOS
 bash infra/docker/run.sh --help
 ```
 
-### 6.2 初始化 workspace
+### 7.2 初始化 workspace
 
 ```bash
 bash infra/docker/run.sh init-workspace --workspace /workspace/local-test2 --project-id local-test2 --topic "demo topic"
@@ -268,20 +319,20 @@ bash infra/docker/run.sh init-workspace --workspace /workspace/local-test2 --pro
 - 这里的 `/workspace/local-test2` 是容器内路径
 - 实际落盘会回写到宿主机映射目录
 
-### 6.3 跑完整流水线
+### 7.3 跑完整流水线
 
 ```bash
 bash infra/docker/run.sh run --workspace /workspace/local-test2
 ```
 
-### 6.4 跑单阶段
+### 7.4 跑单阶段
 
 ```bash
 bash infra/docker/run.sh run-task T2 --workspace /workspace/local-test2
 bash infra/docker/run.sh run-task T9 --workspace /workspace/local-test2
 ```
 
-### 6.5 手动 `docker run`（不用 `run.sh`）
+### 7.5 手动 `docker run`（不用 `run.sh`）
 
 如果你想完全显式地控制挂载和环境变量，也可以直接用 `docker run`。
 
@@ -320,7 +371,7 @@ docker run --rm -it \
   run-task T3 --workspace /workspace/local-test2
 ```
 
-### 6.6 交互式进入容器
+### 7.6 交互式进入容器
 
 ```bash
 bash infra/docker/run.sh bash
@@ -334,11 +385,11 @@ bash infra/docker/run.sh bash
 
 ---
 
-## 7. Workspace 映射与文件保存机制
+## 8. Workspace 映射与文件保存机制
 
 这是 Docker 使用里最关键的一点。
 
-### 7.1 映射关系
+### 8.1 映射关系
 
 宿主机：
 
@@ -352,7 +403,7 @@ bash infra/docker/run.sh bash
 /workspace
 ```
 
-### 7.2 这意味着什么
+### 8.2 这意味着什么
 
 - 在容器内写入 `/workspace/local-test2/...`
 - 等价于在宿主机写入 `./workspace/local-test2/...`
@@ -363,7 +414,7 @@ bash infra/docker/run.sh bash
 - 本地 IDE 里能直接打开同一套文件
 - 单任务续跑和 pipeline resume 仍然可用
 
-### 7.3 最常见的路径误解
+### 8.3 最常见的路径误解
 
 最常见的误解是：
 
@@ -381,7 +432,7 @@ bash infra/docker/run.sh bash
 
 ---
 
-## 8. GPU 检测逻辑
+## 9. GPU 检测逻辑
 
 `run.sh` 当前不会盲目加 `--gpus all`，而是做一轮真实探测。
 
@@ -395,7 +446,7 @@ bash infra/docker/run.sh bash
    - 或必要时回退为 `--runtime=nvidia --gpus all`
 5. 否则退回 CPU 模式
 
-### 8.1 为什么这样设计
+### 9.1 为什么这样设计
 
 因为“宿主机能跑 `nvidia-smi`”并不等于“Docker 里就能用 GPU”。
 
@@ -405,7 +456,7 @@ bash infra/docker/run.sh bash
 - 但 Docker 没装 `nvidia-container-toolkit`
 - 或当前系统是 LXC，GPU 设备没暴露给 Docker
 
-### 8.2 你应该如何验证
+### 9.2 你应该如何验证
 
 宿主机验证：
 
@@ -422,7 +473,7 @@ docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi
 
 ---
 
-## 9. T5/T7 与 Docker
+## 10. T5/T7 与 Docker
 
 实验阶段往往最适合放进 Docker。
 
@@ -442,7 +493,7 @@ docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi
 
 ---
 
-## 10. T9 与 Docker
+## 11. T9 与 Docker
 
 T9 尤其适合在 Docker 中运行，因为：
 
@@ -460,7 +511,7 @@ T9 尤其适合在 Docker 中运行，因为：
 
 ---
 
-## 11. 环境变量与 `.env`
+## 12. 环境变量与 `.env`
 
 Docker 脚本会自动：
 
@@ -489,7 +540,7 @@ cp .env.example .env
 - `S2_API_KEY`
 - `RESEARCHER_EMAIL`
 
-### 11.1 这些变量分别干什么
+### 12.1 这些变量分别干什么
 
 | 变量 | 用途 |
 | --- | --- |
@@ -502,7 +553,7 @@ cp .env.example .env
 | `RESEARCHER_EMAIL` | OpenAlex / arXiv 等抓取时的联系标识 |
 | `GITHUB_TOKEN` | 部分 MCP / GitHub 集成需要 |
 
-### 11.2 Docker 里变量如何生效
+### 12.2 Docker 里变量如何生效
 
 典型链路是：
 
@@ -520,9 +571,9 @@ cp .env.example .env
 
 ---
 
-## 12. 数据持久化、日志和追踪
+## 13. 数据持久化、日志和追踪
 
-### 12.1 哪些文件会持久化
+### 13.1 哪些文件会持久化
 
 只要写在挂载的 workspace 里，就会持久化到宿主机：
 
@@ -535,11 +586,11 @@ cp .env.example .env
 - `_runtime/logs/`
 - `_runtime/traces/`
 
-### 12.2 哪些文件不会保留
+### 13.2 哪些文件不会保留
 
 容器内部但不在挂载目录里的临时文件，容器退出后就会消失。
 
-### 12.3 Docker 模式下怎么看日志
+### 13.3 Docker 模式下怎么看日志
 
 ResearchOS 自己的主日志仍然在 workspace 里：
 
@@ -557,9 +608,9 @@ ls ./workspace/local-test2/_runtime/traces
 
 ---
 
-## 13. 常见问题与排查
+## 14. 常见问题与排查
 
-### 13.1 `镜像不存在`
+### 14.1 `镜像不存在`
 
 表现：
 
@@ -573,7 +624,7 @@ ls ./workspace/local-test2/_runtime/traces
 bash infra/docker/build.sh
 ```
 
-### 13.2 `未检测到 LLM API 密钥`
+### 14.2 `未检测到 LLM API 密钥`
 
 表现：
 
@@ -590,7 +641,7 @@ bash infra/docker/build.sh
 
 - 在 `.env` 中填写至少一个 provider 的 API key
 
-### 13.3 GPU 不可用
+### 14.3 GPU 不可用
 
 表现：
 
@@ -604,7 +655,7 @@ bash infra/docker/build.sh
 3. `nvidia-container-toolkit`
 4. 是否处于 LXC / 嵌套虚拟化
 
-### 13.4 T9 编译失败
+### 14.4 T9 编译失败
 
 不要先怀疑 Docker 本身。
 
@@ -624,7 +675,7 @@ latexmk -pdf -interaction=nonstopmode -halt-on-error main.tex
 tail -n 80 main.log
 ```
 
-### 13.5 `run.sh` 能跑，但手动 `docker run` 失败
+### 14.5 `run.sh` 能跑，但手动 `docker run` 失败
 
 最常见原因：
 
@@ -633,7 +684,7 @@ tail -n 80 main.log
 - 你把宿主机路径写成了容器内路径
 - 你在容器里用了宿主机路径
 
-### 13.6 明明宿主机文件存在，容器里看不到
+### 14.6 明明宿主机文件存在，容器里看不到
 
 通常是挂载目录不对。
 
@@ -649,7 +700,7 @@ tail -n 80 main.log
 /workspace/local-test2
 ```
 
-### 13.7 容器里路径和宿主机路径不一致
+### 14.7 容器里路径和宿主机路径不一致
 
 记住：
 
@@ -660,16 +711,16 @@ tail -n 80 main.log
 
 ---
 
-## 14. 推荐使用模式
+## 15. 推荐使用模式
 
-### 14.1 使用者
+### 15.1 使用者
 
 推荐：
 
 - 平时本地阅读与检查：宿主机模式
 - 正式实验与打包：Docker 模式
 
-### 14.2 开发者
+### 15.2 开发者
 
 推荐：
 
@@ -679,7 +730,7 @@ tail -n 80 main.log
 
 ---
 
-## 15. 一组推荐命令
+## 16. 一组推荐命令
 
 ### 构建
 
@@ -743,7 +794,7 @@ latexmk -pdf -interaction=nonstopmode -halt-on-error main.tex
 
 ---
 
-## 16. 相关文档
+## 17. 相关文档
 
 - [docs/runtime.md](./runtime.md)
 - [docs/agent_pipeline.md](./agent_pipeline.md)

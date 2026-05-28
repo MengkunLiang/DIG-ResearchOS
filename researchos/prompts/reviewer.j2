@@ -15,6 +15,11 @@
 1. 需要查看目录内容时，先使用 `list_files`，不要对目录调用 `read_file`
 2. `read_file` 只用于具体文件，例如：
    - `drafts/paper.tex`
+   - `drafts/paper_state.json`
+   - `drafts/sections/introduction.tex`
+   - `drafts/manuscript_audit.md`
+   - `drafts/self_check.md`
+   - `drafts/review_rounds/round_{{ round - 1 }}.md`（第2轮及以后）
    - `experiments/results_summary.json`
    - `literature/related_work.bib`
 3. 如果某个路径看起来像目录（例如 `experiments/`、workspace 根目录），先列目录，再读取具体文件
@@ -44,9 +49,65 @@
 - 是否避免了过度乐观的表述？
 - 是否遵循了目标会议 {{ target_venue }} 的格式要求？
 
+## 上游审计上下文
+
+### Manuscript Audit
+```markdown
+{{ manuscript_audit_preview }}
+```
+
+### Author Self Check
+```markdown
+{{ self_check_preview }}
+```
+
+{% if round > 1 %}
+### Previous Review
+```markdown
+{{ previous_review_preview }}
+```
+
+第 {{ round }} 轮必须明确检查上一轮 High/Medium 问题是否已经被正文修复；没有修复的要升级为主要问题。
+{% endif %}
+
 ## 审稿报告格式
 
-请生成 drafts/review_rounds/round_{{ round }}.md，格式如下：
+必须先逐章审稿，再综合审稿。不要只读整篇 `paper.tex` 后凭印象写总评。
+
+### 逐章审稿产物
+
+先读取 `drafts/paper_state.json` 和 `drafts/sections/*.tex`。对每个章节分别写：
+
+- `drafts/review_rounds/round_{{ round }}_sections/abstract.md`
+- `drafts/review_rounds/round_{{ round }}_sections/introduction.md`
+- `drafts/review_rounds/round_{{ round }}_sections/related_work.md`
+- `drafts/review_rounds/round_{{ round }}_sections/methodology.md`
+- `drafts/review_rounds/round_{{ round }}_sections/experiments.md`
+- `drafts/review_rounds/round_{{ round }}_sections/analysis.md`
+- `drafts/review_rounds/round_{{ round }}_sections/limitations.md`
+- `drafts/review_rounds/round_{{ round }}_sections/conclusion.md`
+
+每个逐章审稿文件至少包含：
+
+```markdown
+# Section Review: <section> (Round {{ round }})
+
+## Section Purpose Check
+[该章是否完成它在 outline / paper_state 中的职责]
+
+## Evidence And Number Check
+[数字、引用、图表是否可追溯；没有数字/引用的章节说明原因]
+
+## Logic And Writing Issues
+[本章内部逻辑、术语、过渡、overclaim 问题]
+
+## Actionable Fixes
+- [High/Medium/Low] [可定位的修改建议]
+```
+
+### 综合审稿产物
+
+然后生成 `drafts/review_rounds/round_{{ round }}.md`，格式如下：
 
 ```markdown
 # 审稿报告 - Round {{ round }}
@@ -104,7 +165,9 @@
 在审稿时，请务必：
 1. **验证实验数字**：对照 results_summary.json 检查论文中的数字是否准确
 2. **验证引用**：检查所有 \cite{} 是否存在于 related_work.bib
-3. **检查匿名化**：确保论文不包含作者信息
+3. **利用机械审计**：对 `manuscript_audit.md` 中未解决的 `[ ]` 项逐条判断是否应成为审稿问题
+4. **利用作者自查**：对 `self_check.md` 中的 High/Medium TODO 判断是否已经反映在正文或 Limitations
+5. **检查匿名化**：确保论文不包含作者信息
 
 ## 质量标准
 

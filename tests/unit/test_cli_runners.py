@@ -8,6 +8,7 @@ import pytest
 from researchos.cli import PreparedRuntime, main
 from researchos.cli_runners import CompletePipelineRunner, SingleTaskRunner
 from researchos.orchestration.state_machine import StateMachine
+from researchos.runtime.agent import AgentResult
 from researchos.schemas.state import StateYaml, TaskHistoryEntry
 from researchos.testing.mocks import (
     FakeLLMMessage,
@@ -239,3 +240,34 @@ def test_single_task_runner_injects_resume_extra_from_failed_history(tmp_workspa
     assert extra["is_resume"] is True
     assert extra["resumed_from_run_id"] == "T3_single_prev"
     assert extra["resume_reason"] == "retry_after_failure"
+
+
+def test_single_task_record_finished_preserves_recoverable_stop_reason(tmp_workspace: Path):
+    runner = SingleTaskRunner(
+        workspace=tmp_workspace,
+        task_id="T3",
+        llm_client=_hello_llm(),
+        tool_registry=_registry(),
+    )
+    state = StateYaml(project_id="demo-project", current_task="T3")
+    state = runner._record_started(state, "T3_single_run")
+    result = AgentResult(
+        ok=False,
+        message="max steps",
+        outputs_produced={},
+        steps_used=10,
+        tokens_in=11,
+        tokens_out=12,
+        cost_usd=0.0,
+        duration_seconds=1.0,
+        stop_reason=AgentResult.STOP_MAX_STEPS,
+        error="Reached maximum allowed steps; paused so you can resume.",
+    )
+
+    state = runner._record_finished(state, result)
+
+    assert state.status == "PAUSED"
+    assert state.history[-1].status == "INTERRUPTED"
+    assert state.history[-1].stop_reason == AgentResult.STOP_MAX_STEPS
+    assert state.history[-1].tokens == 23
+    assert state.last_error == result.error

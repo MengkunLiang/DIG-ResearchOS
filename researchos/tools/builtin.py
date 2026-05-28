@@ -21,6 +21,16 @@ from .glob_files import GlobFilesTool
 from .grep_search import GrepSearchTool
 from .latex_compile import LatexCompileTool
 from .literature_synthesis import BuildSynthesisWorkbenchTool
+from .manuscript import (
+    AssembleManuscriptTool,
+    AuditManuscriptClaimsTool,
+    BuildManuscriptRevisionPatchesTool,
+    BuildManuscriptResourceIndexTool,
+    InitializeManuscriptStateTool,
+    PlanManuscriptEvidenceTool,
+    PlanManuscriptSectionsTool,
+    UpdateManuscriptSectionStateTool,
+)
 from .multi_source_search import MultiSourceSearchTool
 from .paper_processing import ExtractSectionsTool
 from .paper_fetch import AppendFileTool, FetchPaperPdfTool, ExtractPdfTextTool
@@ -91,6 +101,14 @@ def register_builtin_tools(
     registry.register("extract_pdf_text", lambda ctx: ExtractPdfTextTool(ctx.policy))
     registry.register("lookup_paper_record", lambda ctx: LookupPaperRecordTool(ctx.policy))
     registry.register("build_synthesis_workbench", lambda ctx: BuildSynthesisWorkbenchTool(ctx.policy))
+    registry.register("build_manuscript_resource_index", lambda ctx: BuildManuscriptResourceIndexTool(ctx.policy))
+    registry.register("plan_manuscript_sections", lambda ctx: PlanManuscriptSectionsTool(ctx.policy))
+    registry.register("plan_manuscript_evidence", lambda ctx: PlanManuscriptEvidenceTool(ctx.policy))
+    registry.register("initialize_manuscript_state", lambda ctx: InitializeManuscriptStateTool(ctx.policy))
+    registry.register("update_manuscript_section_state", lambda ctx: UpdateManuscriptSectionStateTool(ctx.policy))
+    registry.register("assemble_manuscript", lambda ctx: AssembleManuscriptTool(ctx.policy))
+    registry.register("audit_manuscript_claims", lambda ctx: AuditManuscriptClaimsTool(ctx.policy))
+    registry.register("build_manuscript_revision_patches", lambda ctx: BuildManuscriptRevisionPatchesTool(ctx.policy))
     registry.register(
         "multi_source_search",
         lambda _ctx: MultiSourceSearchTool(os.environ.get("RESEARCHER_EMAIL")),

@@ -9,6 +9,7 @@ T3.5 (synthesize模式): 综合所有笔记，产出synthesis.md
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec, get_agent_mode_params
@@ -225,11 +226,17 @@ class ReaderAgent(Agent):
             return False, "缺少literature/paper_notes目录"
 
         note_files = list(notes_dir.glob("*.md"))
-        completed_note_keys = {normalize_text_key(path.stem) for path in note_files}
+        valid_note_files: list[Path] = []
+        invalid_note_files: list[tuple[Path, str]] = []
         for note_path in note_files:
             ok, err = _validate_note_structure(note_path)
             if not ok:
-                return False, err
+                invalid_note_files.append((note_path, err or "结构不完整"))
+                continue
+            valid_note_files.append(note_path)
+        completed_note_keys: set[str] = set()
+        for note_path in valid_note_files:
+            completed_note_keys.update(_paper_note_match_keys(note_path))
 
         mode_params = get_agent_mode_params("reader", "read")
         min_required = int(mode_params.get("deep_read_min", 18))
@@ -281,13 +288,18 @@ class ReaderAgent(Agent):
         else:
             expected_count = 0
 
-        if len(note_files) < min_required:
+        if len(valid_note_files) < min_required:
             if queue_count:
                 return False, (
-                    f"paper_notes只有{len(note_files)}篇，至少需要{min_required}篇；"
+                    f"paper_notes只有{len(valid_note_files)}篇结构合格笔记，至少需要{min_required}篇；"
                     f"当前 deep_read_queue 有 {queue_count} 篇，目标阅读数为 {target_required}。"
+                    + _invalid_note_summary(invalid_note_files)
                 )
-            return False, f"paper_notes只有{len(note_files)}篇，至少需要{min_required}篇（基于{expected_count if dedup_path.exists() else '默认'}篇输入论文）"
+            return False, (
+                f"paper_notes只有{len(valid_note_files)}篇结构合格笔记，至少需要{min_required}篇"
+                f"（基于{expected_count if dedup_path.exists() else '默认'}篇输入论文）"
+                + _invalid_note_summary(invalid_note_files)
+            )
 
         ct_path = ctx.workspace_dir / "literature" / "comparison_table.csv"
         if not ct_path.exists():
@@ -358,7 +370,7 @@ class ReaderAgent(Agent):
 
         import re
         paper_refs = re.findall(
-            r'\[(?:arxiv|doi|paper|10\.)[A-Za-z0-9_:.\/-]+\]',
+        r'\[(?:arxiv|doi|paper|10\.)[A-Za-z0-9_:.\/-]+\]',
             content,
             flags=re.IGNORECASE,
         )
@@ -366,6 +378,55 @@ class ReaderAgent(Agent):
             return False, f"synthesis.md中论文引用过少({len(paper_refs)}个)，应该引用更多paper_notes中的论文"
 
         return True, None
+
+
+def _add_note_key_variants(keys: set[str], value: str) -> None:
+    raw = str(value or "").strip()
+    if not raw:
+        return
+    candidates = {
+        raw,
+        raw.replace(":", "_").replace("/", "_"),
+    }
+    if raw.startswith("arxiv_"):
+        candidates.add("arxiv:" + raw[len("arxiv_"):])
+    if raw.lower().startswith("arxiv:"):
+        candidates.add("arxiv_" + raw.split(":", 1)[1])
+    for candidate in candidates:
+        normalized = normalize_text_key(candidate)
+        if normalized:
+            keys.add(normalized)
+
+
+def _paper_note_match_keys(note_path: Path) -> set[str]:
+    keys: set[str] = set()
+    _add_note_key_variants(keys, note_path.stem)
+    try:
+        content = note_path.read_text(encoding="utf-8")
+    except OSError:
+        return keys
+    for line in content.splitlines()[:80]:
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            _add_note_key_variants(keys, stripped.lstrip("#").strip())
+            continue
+        match = re.match(r"-\s+\*\*(ID|DOI/arXiv)\*\*:\s*(.+)$", stripped, flags=re.IGNORECASE)
+        if match:
+            value = match.group(2).strip()
+            _add_note_key_variants(keys, value)
+            for token in re.findall(r"(?:arxiv:\s*)?\d{4}\.\d{4,5}(?:v\d+)?|10\.\d{4,9}/[^\s,;)\]]+", value, flags=re.IGNORECASE):
+                token = token.replace(" ", "")
+                if not token.lower().startswith("arxiv:") and re.fullmatch(r"\d{4}\.\d{4,5}(?:v\d+)?", token):
+                    token = f"arxiv:{token}"
+                _add_note_key_variants(keys, token)
+    return keys
+
+
+def _invalid_note_summary(invalid_note_files: list[tuple[Path, str]]) -> str:
+    if not invalid_note_files:
+        return ""
+    examples = ", ".join(f"{path.name}: {err}" for path, err in invalid_note_files[:3])
+    return f"；另有 {len(invalid_note_files)} 个不合格/重复 note 未计入完成数: {examples}"
 
 
 def _paper_match_keys(paper: dict[str, object]) -> set[str]:

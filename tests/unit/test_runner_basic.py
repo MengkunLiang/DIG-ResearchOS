@@ -4,7 +4,16 @@ import pytest
 import yaml
 
 from researchos.agents.ideation import IdeationAgent
-from researchos.runtime.agent import Agent, AgentResult, AgentSpec, BudgetOverride, ExecutionContext
+from researchos.agents.novelty_auditor import NoveltyAuditorAgent
+from researchos.agents.reader import ReaderAgent
+from researchos.runtime.agent import (
+    Agent,
+    AgentResult,
+    AgentSpec,
+    BudgetOverride,
+    ExecutionContext,
+    resolve_effective_config,
+)
 from researchos.runtime.orchestrator import AgentRunner
 from researchos.testing.mocks import FakeLLMMessage, FakeRawCompletion, FakeToolCall, MockHumanInterface, MockLLMClient
 from researchos.tools.builtin import register_builtin_tools
@@ -35,6 +44,27 @@ class AskHumanAgent(Agent):
 
     def initial_user_message(self, ctx):
         return "ask human"
+
+
+class AlwaysInvalidAgent(Agent):
+    def __init__(self):
+        super().__init__(
+            AgentSpec(
+                name="always-invalid",
+                model_tier="medium",
+                tool_names=["finish_task"],
+                max_validation_retries=2,
+            )
+        )
+
+    def system_prompt(self, ctx):
+        return "You always fail validation."
+
+    def initial_user_message(self, ctx):
+        return "finish"
+
+    def validate_outputs(self, ctx):
+        return False, "missing artifact"
 
 
 class T35PrefinalizeAgent(Agent):
@@ -69,6 +99,27 @@ class SyncPreHookAgent(Agent):
         super().__init__(
             AgentSpec(
                 name="sync-prehook-test",
+                model_tier="medium",
+                tool_names=["finish_task"],
+                pre_hooks=[sync_pre_hook],
+            )
+        )
+
+    def system_prompt(self, ctx):
+        return "You are a test agent."
+
+    def initial_user_message(self, ctx):
+        return "finish"
+
+
+class RecoverablePreHookAgent(Agent):
+    def __init__(self):
+        def sync_pre_hook(_ctx):
+            return False, "WAITING_ENVIRONMENT: docker missing"
+
+        super().__init__(
+            AgentSpec(
+                name="recoverable-prehook-test",
                 model_tier="medium",
                 tool_names=["finish_task"],
                 pre_hooks=[sync_pre_hook],
@@ -227,6 +278,8 @@ def write_valid_t4_artifacts(workspace):
                         },
                         "hypothesis_refs": ["H1"],
                         "source": {
+                            "idea_origin": "free_reasoning",
+                            "constraint_status": "mainline",
                             "from_synthesis_section": "literature/synthesis.md: Q1",
                             "from_missing_area": "missing_areas.md: 需要验证",
                             "from_seed_idea": False,
@@ -291,13 +344,15 @@ def write_valid_t4_artifacts(workspace):
                             "pitch": "直接迁移已有方法。",
                             "core_claim": "简单迁移可能提升指标。",
                             "target_problem": "较弱问题设定。",
-                            "mechanism": "see core_claim",
-                            "prediction": "qualitative: outperforms baseline",
-                            "counterfactual": "no clear counterfactual",
+                            "mechanism": "直接迁移复用已有表示偏置，在新场景中可能影响目标指标",
+                            "prediction": "如果迁移偏置有效，新场景accuracy应相对baseline提升",
+                            "counterfactual": "如果迁移偏置无效，替换为简单baseline后指标不会下降",
                             "mechanism_family": "direct transfer",
                         },
                         "hypothesis_refs": [],
                         "source": {
+                            "idea_origin": "seed_refinement",
+                            "constraint_status": "mainline",
                             "from_synthesis_section": "literature/synthesis.md: Q2",
                             "from_missing_area": "missing_areas.md: 指标不清",
                             "from_seed_idea": False,
@@ -386,6 +441,46 @@ def write_valid_t4_artifacts(workspace):
         "## Recommended for Gate1 review\n\n"
         "Both families are distinct.\n"
     )
+    (ideation_dir / "_candidate_directions.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "candidates": [
+                    {
+                        "idea_id": "D1",
+                        "title": "假设1依据",
+                        "idea_origin": "free_reasoning",
+                        "constraint_status": "mainline",
+                        "basis_summary": "LLM 综合 synthesis、comparison_table 和预算约束后提出的主线候选方向。",
+                    },
+                    {
+                        "idea_id": "D1b",
+                        "title": "证据驱动替代候选",
+                        "idea_origin": "evidence_driven",
+                        "constraint_status": "mainline",
+                        "basis_summary": "从 paper notes 的共同限制和实验可行性出发形成的第二个主线候选。",
+                    },
+                    {
+                        "idea_id": "D2",
+                        "title": "被淘汰方向",
+                        "idea_origin": "seed_refinement",
+                        "constraint_status": "mainline",
+                        "basis_summary": "由 seed idea 细化而来，但因新颖性和评价链条不足被淘汰。",
+                    },
+                    {
+                        "idea_id": "S1",
+                        "title": "反向操作补充候选",
+                        "idea_origin": "reverse_operation",
+                        "constraint_status": "supplement",
+                        "basis_summary": "作为 coverage supplement，检查移除关键机制时指标是否下降。",
+                    },
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     (ideation_dir / "gate_decisions.json").write_text(
         json.dumps(
             {
@@ -416,6 +511,123 @@ def write_valid_t4_artifacts(workspace):
             ensure_ascii=False,
             indent=2,
         )
+    )
+
+
+def write_valid_t45_artifacts(workspace):
+    (workspace / "project.yaml").write_text("research_direction: Test\n", encoding="utf-8")
+    ideation_dir = workspace / "ideation"
+    ideation_dir.mkdir(exist_ok=True)
+    (ideation_dir / "hypotheses.md").write_text(
+        "# 研究假设\n\n## H1: 假设1\n\n内容...\n",
+        encoding="utf-8",
+    )
+    audit_text = (
+        "# 新颖性审计报告\n\n"
+        "## H1: 假设1\n\n"
+        "### 搜索策略\n- 查询1: adaptive retrieval memory agent\n\n"
+        "### 相似工作分析\n"
+        "#### High Overlap（高度重叠）\n无高度重叠的工作。\n\n"
+        "#### Medium Overlap（中度重叠）\n无中度重叠的工作。\n\n"
+        "### 新颖性判定\n"
+        "**新颖性等级**: Level 2 - 中度新颖\n\n"
+        "**判定理由**:\n该假设与已有工作存在相关性，但机制、目标和验证方式不同。"
+        "审计结果建议继续进入实验，同时保留补充 baseline 的风险提示。"
+        "这里补足足够长的说明，避免被长度校验误判。\n"
+    )
+    (ideation_dir / "novelty_audit.md").write_text(audit_text * 8, encoding="utf-8")
+    tuple_dir = ideation_dir / "_mechanism_tuples"
+    tuple_dir.mkdir()
+    (tuple_dir / "H1.json").write_text('{"source_id":"H1"}\n', encoding="utf-8")
+
+
+def write_valid_t3_artifacts(workspace):
+    literature = workspace / "literature"
+    notes_dir = literature / "paper_notes"
+    notes_dir.mkdir(parents=True, exist_ok=True)
+    queue_rows = []
+    for idx in range(18):
+        paper_id = f"paper{idx}"
+        queue_rows.append(
+            {
+                "paper_id": paper_id,
+                "normalized_id": paper_id,
+                "queue_rank": idx + 1,
+                "title": f"Paper {idx}",
+                "seed_priority": False,
+            }
+        )
+        (notes_dir / f"{paper_id}.md").write_text(
+            f"""# {paper_id}
+
+- **ID**: {paper_id}
+- **Authors**: A, B
+- **Venue**: TestConf (2026)
+- **DOI/arXiv**: arxiv:2601.{idx:05d}
+- **Citations**: N/A
+- **Verification**: metadata_verified (confidence: 0.95)
+- **Status**: [FULL-TEXT]
+
+## 1. Problem & Motivation
+problem
+
+## 2. Method Overview
+method
+
+## 3. Key Results
+- Accuracy: 88.1 [Evidence: Table 1]
+
+## 4. Claims vs Evidence
+| Claim | Evidence | Strength |
+|-------|----------|----------|
+| test | Table 1 | Strong |
+
+## 5. Limitations
+- limitation
+
+## 6. Relevance to Our Research
+- relevant
+
+## 7. Technical Details Worth Noting
+- detail
+
+## 8. Strengths
+- strength
+
+## 9. Weaknesses / Gaps
+- gap
+
+## 10. Key Quotes
+> "quote"
+
+## 11. My Questions
+- question
+
+## 12. Reading Coverage
+- **PDF source**: literature/pdfs/{paper_id}.pdf
+- **Pages read**: 1-10 / 10
+- **Extraction calls**: extract_pdf_text pages 1-10
+- **Truncation**: none
+- **Status rationale**: All PDF pages were read without truncation.
+
+## 13. Mechanism Claim
+- **Stated mechanism**: The method improves performance through better feature extraction
+- **Evidence type**: ablation_supported
+- **Supporting artifact**: Table 1
+""",
+            encoding="utf-8",
+        )
+    (literature / "deep_read_queue.jsonl").write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in queue_rows) + "\n",
+        encoding="utf-8",
+    )
+    (literature / "comparison_table.csv").write_text(
+        "id,title,year,evidence_level\npaper0,Paper 0,2026,FULL_TEXT\n",
+        encoding="utf-8",
+    )
+    (literature / "related_work.bib").write_text(
+        "@article{paper0,\n  title={Paper 0},\n  year={2026}\n}\n",
+        encoding="utf-8",
     )
 
 
@@ -622,6 +834,77 @@ async def test_budget_extension_gate_can_stop_run(tmp_workspace, registry):
 
 
 @pytest.mark.asyncio
+async def test_max_steps_tail_check_offers_extension_gate(tmp_workspace, registry):
+    llm = MockLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(tool_calls=[FakeToolCall(name="echo", arguments={"text": "hi"}, id="tc1")])
+            ),
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="finish_task", arguments={"summary": "done"}, id="tc2")]
+                )
+            ),
+        ]
+    )
+    ctx = ExecutionContext(
+        workspace_dir=tmp_workspace,
+        project_id="p1",
+        task_id="T3",
+        run_id="r_step_tail_extend",
+        budget_override=BudgetOverride(max_steps=1),
+    )
+    human = MockHumanInterface(gate_choices=[{"option_id": "extend", "captured": {}}])
+    runner = AgentRunner(MinimalAgent(), registry, llm, human)
+    runner.budget_escalation_policy = {
+        "enabled": True,
+        "tasks": [],
+        "max_extensions_per_run": 1,
+        "steps_increase_ratio": 1.0,
+        "token_increase_ratio": 0.5,
+        "wall_seconds_increase_ratio": 0.5,
+    }
+
+    result = await runner.run(ctx)
+
+    assert result.ok
+    assert any(call[0] == "gate" for call in human.calls)
+
+
+@pytest.mark.asyncio
+async def test_max_steps_tail_check_pauses_when_user_stops(tmp_workspace, registry):
+    llm = MockLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(tool_calls=[FakeToolCall(name="echo", arguments={"text": "hi"}, id="tc1")])
+            ),
+        ]
+    )
+    ctx = ExecutionContext(
+        workspace_dir=tmp_workspace,
+        project_id="p1",
+        task_id="T3",
+        run_id="r_step_tail_stop",
+        budget_override=BudgetOverride(max_steps=1),
+    )
+    human = MockHumanInterface(gate_choices=[{"option_id": "stop", "captured": {}}])
+    runner = AgentRunner(MinimalAgent(), registry, llm, human)
+    runner.budget_escalation_policy = {
+        "enabled": True,
+        "tasks": [],
+        "max_extensions_per_run": 1,
+        "steps_increase_ratio": 1.0,
+    }
+
+    result = await runner.run(ctx)
+
+    assert not result.ok
+    assert result.stop_reason == AgentResult.STOP_MAX_STEPS
+    assert "paused" in (result.error or "")
+    assert any(call[0] == "gate" for call in human.calls)
+
+
+@pytest.mark.asyncio
 async def test_runner_pauses_on_unavailable_ask_human_without_second_llm_call(tmp_workspace, registry):
     llm = MockLLMClient(
         responses=[
@@ -652,6 +935,32 @@ async def test_runner_pauses_on_unavailable_ask_human_without_second_llm_call(tm
     assert not result.ok
     assert result.stop_reason == AgentResult.STOP_INTERRUPTED
     assert llm.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_validation_retry_exhaustion_pauses_for_resume(tmp_workspace, registry):
+    llm = MockLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="finish_task", arguments={"summary": "bad"}, id="tc1")]
+                )
+            ),
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="finish_task", arguments={"summary": "bad again"}, id="tc2")]
+                )
+            ),
+        ]
+    )
+    ctx = ExecutionContext(workspace_dir=tmp_workspace, project_id="p1", task_id="T3", run_id="r_validation_pause")
+    runner = AgentRunner(AlwaysInvalidAgent(), registry, llm, MockHumanInterface())
+
+    result = await runner.run(ctx)
+
+    assert not result.ok
+    assert result.stop_reason == AgentResult.STOP_INTERRUPTED
+    assert "Validation failed 2 times" in (result.error or "")
 
 
 @pytest.mark.asyncio
@@ -781,6 +1090,61 @@ Graph contrastive method for robust sparse recommendation.
 
 
 @pytest.mark.asyncio
+async def test_t35_workbench_reuses_fresh_staged_artifacts(tmp_workspace, registry):
+    literature = tmp_workspace / "literature"
+    notes_dir = literature / "paper_notes"
+    notes_dir.mkdir(parents=True)
+    (notes_dir / "paper_0.md").write_text("# Paper 0\n\n## 1. Problem & Motivation\nx\n", encoding="utf-8")
+    (literature / "comparison_table.csv").write_text("id,title\npaper_0,Paper 0\n", encoding="utf-8")
+    (literature / "missing_areas.md").write_text("# missing\n", encoding="utf-8")
+    (literature / "synthesis_workbench.json").write_text('{"items":[]}\n', encoding="utf-8")
+    (literature / "synthesis_outline.md").write_text("# outline\n", encoding="utf-8")
+    (literature / "synthesis_draft.md").write_text("# draft\n", encoding="utf-8")
+
+    runner = AgentRunner(T35PrefinalizeAgent(), registry, MockLLMClient([]), MockHumanInterface())
+    ctx = ExecutionContext(
+        workspace_dir=tmp_workspace,
+        project_id="p1",
+        task_id="T3.5",
+        run_id="r_t35_reuse",
+        mode="synthesize",
+    )
+
+    reused = await runner._maybe_prepare_t35_before_llm(
+        ctx,
+        runner._default_policy_factory(ctx, resolve_effective_config(runner.agent.spec, ctx)),
+    )
+
+    assert reused is True
+    assert ctx.extra["t35_workbench_reused"] is True
+
+
+@pytest.mark.asyncio
+async def test_t3_resume_prefinalize_skips_llm_when_artifacts_validate(tmp_workspace, registry):
+    write_valid_t3_artifacts(tmp_workspace)
+    llm = MockLLMClient(responses=[])
+    ctx = ExecutionContext(
+        workspace_dir=tmp_workspace,
+        project_id="p1",
+        task_id="T3",
+        run_id="r_t3_resume_prefinalize",
+        mode="read",
+        outputs_expected={
+            "paper_notes_dir": tmp_workspace / "literature" / "paper_notes",
+            "comparison_table": tmp_workspace / "literature" / "comparison_table.csv",
+            "related_work_bib": tmp_workspace / "literature" / "related_work.bib",
+        },
+    )
+    runner = AgentRunner(ReaderAgent(mode="read"), registry, llm, MockHumanInterface())
+
+    result = await runner.run(ctx)
+
+    assert result.ok
+    assert result.metadata["completion_mode"] == "t3_resume_prefinalize"
+    assert llm.call_count == 0
+
+
+@pytest.mark.asyncio
 async def test_t4_resume_prefinalize_skips_llm_when_artifacts_validate(tmp_workspace, registry):
     write_valid_t4_artifacts(tmp_workspace)
     llm = MockLLMClient(responses=[])
@@ -793,6 +1157,12 @@ async def test_t4_resume_prefinalize_skips_llm_when_artifacts_validate(tmp_works
             "hypotheses": tmp_workspace / "ideation" / "hypotheses.md",
             "exp_plan": tmp_workspace / "ideation" / "exp_plan.yaml",
             "risks": tmp_workspace / "ideation" / "risks.md",
+            "idea_scorecard": tmp_workspace / "ideation" / "idea_scorecard.yaml",
+            "idea_rationales": tmp_workspace / "ideation" / "idea_rationales.json",
+            "gate_decisions": tmp_workspace / "ideation" / "gate_decisions.json",
+            "rejected_ideas": tmp_workspace / "ideation" / "rejected_ideas.md",
+            "family_distribution": tmp_workspace / "ideation" / "_family_distribution.md",
+            "candidate_directions": tmp_workspace / "ideation" / "_candidate_directions.json",
         },
     )
     runner = AgentRunner(IdeationAgent(), registry, llm, MockHumanInterface())
@@ -801,6 +1171,29 @@ async def test_t4_resume_prefinalize_skips_llm_when_artifacts_validate(tmp_works
 
     assert result.ok
     assert result.metadata["completion_mode"] == "t4_resume_prefinalize"
+    assert llm.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_t45_resume_prefinalize_skips_llm_when_artifacts_validate(tmp_workspace, registry):
+    write_valid_t45_artifacts(tmp_workspace)
+    llm = MockLLMClient(responses=[])
+    ctx = ExecutionContext(
+        workspace_dir=tmp_workspace,
+        project_id="p1",
+        task_id="T4.5",
+        run_id="r_t45_resume_prefinalize",
+        outputs_expected={
+            "novelty_audit": tmp_workspace / "ideation" / "novelty_audit.md",
+            "mechanism_tuples_dir": tmp_workspace / "ideation" / "_mechanism_tuples",
+        },
+    )
+    runner = AgentRunner(NoveltyAuditorAgent(), registry, llm, MockHumanInterface())
+
+    result = await runner.run(ctx)
+
+    assert result.ok
+    assert result.metadata["completion_mode"] == "t45_resume_prefinalize"
     assert llm.call_count == 0
 
 
@@ -820,3 +1213,52 @@ async def test_sync_pre_hook_failure_is_reported_cleanly(tmp_workspace, registry
     assert not result.ok
     assert result.stop_reason == AgentResult.STOP_ERROR
     assert result.error == "pre-hook blocked run"
+
+
+@pytest.mark.asyncio
+async def test_recoverable_pre_hook_pauses_for_resume(tmp_workspace, registry):
+    llm = MockLLMClient(responses=[])
+    ctx = ExecutionContext(
+        workspace_dir=tmp_workspace,
+        project_id="p1",
+        task_id="T7",
+        run_id="r_recoverable_hook",
+    )
+    runner = AgentRunner(RecoverablePreHookAgent(), registry, llm, MockHumanInterface())
+
+    result = await runner.run(ctx)
+
+    assert not result.ok
+    assert result.stop_reason == AgentResult.STOP_INTERRUPTED
+    assert "WAITING_ENVIRONMENT" in result.error
+    assert llm.call_count == 0
+
+
+def test_tool_timeout_uses_docker_specific_cap(tmp_workspace, registry):
+    runner = AgentRunner(MinimalAgent(), registry, MockLLMClient(responses=[]), MockHumanInterface())
+    runner.global_timeout = {"max_tool_call": 180, "docker_operation": 7200}
+
+    class _Tool:
+        timeout_seconds = 7200
+
+    assert runner._timeout_for_tool("docker_exec", _Tool()) == 7200
+
+
+def test_task_start_summary_includes_task_goal(tmp_workspace, registry, capsys):
+    ctx = ExecutionContext(
+        workspace_dir=tmp_workspace,
+        project_id="p1",
+        task_id="T9",
+        run_id="r_summary",
+        outputs_expected={"pdf": tmp_workspace / "submission" / "bundle" / "main.pdf"},
+        mode=None,
+    )
+    runner = AgentRunner(MinimalAgent(), registry, MockLLMClient(responses=[]), MockHumanInterface())
+    eff = resolve_effective_config(runner.agent.spec, ctx)
+
+    runner._print_task_start_summary(ctx, eff)
+
+    out = capsys.readouterr().out
+    assert "任务: T9" in out
+    assert "目标: 构建投稿包" in out
+    assert "submission/bundle/main.pdf" in out

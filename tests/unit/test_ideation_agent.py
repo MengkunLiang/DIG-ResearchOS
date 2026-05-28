@@ -59,6 +59,8 @@ def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) 
                 },
                 "hypothesis_refs": refs,
                 "source": {
+                    "idea_origin": "free_reasoning",
+                    "constraint_status": "mainline",
                     "from_synthesis_section": "literature/synthesis.md: Q1",
                     "from_missing_area": "missing_areas.md: 需要机制验证",
                     "from_seed_idea": False,
@@ -126,13 +128,15 @@ def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) 
                     "pitch": "把已有方法直接迁移到新场景。",
                     "core_claim": "简单迁移也许可以提升指标。",
                     "target_problem": "另一个较弱的问题设定。",
-                    "mechanism": "see core_claim",
-                    "prediction": "qualitative: outperforms baseline",
-                    "counterfactual": "no clear counterfactual",
+                    "mechanism": "直接迁移在新场景中复用已有表示偏置影响目标指标",
+                    "prediction": "如果迁移偏置有用，新场景accuracy应相对baseline提升",
+                    "counterfactual": "如果迁移偏置无效，替换为简单baseline后指标不会下降",
                     "mechanism_family": "direct transfer",
                 },
                 "hypothesis_refs": [],
                 "source": {
+                    "idea_origin": "seed_refinement",
+                    "constraint_status": "mainline",
                     "from_synthesis_section": "literature/synthesis.md: Q2",
                     "from_missing_area": "missing_areas.md: 评价指标不清楚",
                     "from_seed_idea": False,
@@ -219,6 +223,46 @@ def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) 
 
 Both families are distinct. D1 focuses on mechanism verification while D2 is a direct transfer approach.
 """,
+        encoding="utf-8",
+    )
+    (workspace / "ideation" / "_candidate_directions.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "candidates": [
+                    {
+                        "idea_id": "D1",
+                        "title": "测试假设依据",
+                        "idea_origin": "free_reasoning",
+                        "constraint_status": "mainline",
+                        "basis_summary": "LLM 综合 synthesis、comparison_table 和最终研究问题后提出的主线候选方向。",
+                    },
+                    {
+                        "idea_id": "D1b",
+                        "title": "基于证据的替代候选",
+                        "idea_origin": "evidence_driven",
+                        "constraint_status": "mainline",
+                        "basis_summary": "从 paper notes 的共同限制和实验可行性出发形成的第二个主线候选。",
+                    },
+                    {
+                        "idea_id": "D2",
+                        "title": "被淘汰方向",
+                        "idea_origin": "seed_refinement",
+                        "constraint_status": "mainline",
+                        "basis_summary": "由用户 seed idea 细化而来，但因新颖性和评价链条不足被淘汰。",
+                    },
+                    {
+                        "idea_id": "S1",
+                        "title": "反向操作补充候选",
+                        "idea_origin": "reverse_operation",
+                        "constraint_status": "supplement",
+                        "basis_summary": "作为 coverage supplement，检查移除关键机制时指标是否下降。",
+                    },
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
     (workspace / "ideation" / "rejected_ideas.md").write_text(

@@ -102,6 +102,22 @@ def test_load_runtime_settings_reads_shared_runtime_options(tmp_path: Path):
     )
 
 
+def test_t7_direct_full_prerequisites_do_not_require_t5_t6_outputs(tmp_path: Path):
+    ws = tmp_path / "ws"
+    (ws / "project.yaml").parent.mkdir(parents=True, exist_ok=True)
+    (ws / "project.yaml").write_text("project_id: p\nresearch_direction: Test\n", encoding="utf-8")
+    (ws / "ideation").mkdir()
+    (ws / "literature").mkdir()
+    (ws / "ideation" / "hypotheses.md").write_text("## H1\nHypothesis\n", encoding="utf-8")
+    (ws / "ideation" / "exp_plan.yaml").write_text("experiments:\n- name: exp1\n", encoding="utf-8")
+    (ws / "ideation" / "novelty_audit.md").write_text("# Audit\nLevel 2\n", encoding="utf-8")
+    (ws / "literature" / "synthesis.md").write_text("# Synthesis\n", encoding="utf-8")
+
+    ok, err = validator.validate_prerequisites(ws, "T7")
+
+    assert ok, err
+
+
 async def test_single_task_runner_respects_custom_runtime_dir(tmp_workspace: Path):
     settings = RuntimeSettings(
         workspace=WorkspaceSettings(default_root="./workspace", runtime_dir=".runtime"),
@@ -314,11 +330,13 @@ def test_validate_t4_artifacts_reports_bad_hypothesis_ref(tmp_path: Path):
                             "mechanism_family": "selective noise application",
                         },
                         "hypothesis_refs": ["H1"],
-                        "source": {
-                            "from_synthesis_section": "synthesis.md: Q1",
-                            "from_missing_area": "missing_areas.md: gap",
-                            "from_seed_idea": False,
-                            "supporting_papers": [
+                            "source": {
+                                "from_synthesis_section": "synthesis.md: Q1",
+                                "from_missing_area": "missing_areas.md: gap",
+                                "from_seed_idea": False,
+                                "idea_origin": "free_reasoning",
+                                "constraint_status": "mainline",
+                                "supporting_papers": [
                                 {
                                     "title": "Paper 1",
                                     "claim_used": "The synthesis identifies a testable gap.",
@@ -378,17 +396,19 @@ def test_validate_t4_artifacts_reports_bad_hypothesis_ref(tmp_path: Path):
                             "pitch": "Too close to prior work.",
                             "core_claim": "A weak transfer may work.",
                             "target_problem": "Weak gap.",
-                            "mechanism": "see core_claim",
-                            "prediction": "qualitative: outperforms baseline",
-                            "counterfactual": "no clear counterfactual",
+                            "mechanism": "direct transfer changes target-domain representations through inherited source bias",
+                            "prediction": "if transfer bias helps, target accuracy improves over baseline",
+                            "counterfactual": "if transfer bias is irrelevant, replacing it with baseline does not reduce accuracy",
                             "mechanism_family": "direct transfer",
                         },
                         "hypothesis_refs": [],
-                        "source": {
-                            "from_synthesis_section": "synthesis.md: Q2",
-                            "from_missing_area": "missing_areas.md: weak gap",
-                            "from_seed_idea": False,
-                            "supporting_papers": [
+                            "source": {
+                                "from_synthesis_section": "synthesis.md: Q2",
+                                "from_missing_area": "missing_areas.md: weak gap",
+                                "from_seed_idea": False,
+                                "idea_origin": "seed_refinement",
+                                "constraint_status": "mainline",
+                                "supporting_papers": [
                                 {
                                     "title": "Paper 2",
                                     "claim_used": "Prior work already covers it.",
@@ -498,6 +518,42 @@ def test_validate_t4_artifacts_reports_bad_hypothesis_ref(tmp_path: Path):
         ),
         encoding="utf-8",
     )
+    (workspace / "ideation" / "_candidate_directions.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "candidates": [
+                    {
+                        "idea_id": "D1",
+                        "idea_origin": "free_reasoning",
+                        "constraint_status": "mainline",
+                        "basis_summary": "LLM mainline reasoning from synthesis and comparison table supports this hypothesis.",
+                    },
+                    {
+                        "idea_id": "D1b",
+                        "idea_origin": "evidence_driven",
+                        "constraint_status": "mainline",
+                        "basis_summary": "Evidence-driven candidate from paper notes and experiment feasibility.",
+                    },
+                    {
+                        "idea_id": "D2",
+                        "idea_origin": "seed_refinement",
+                        "constraint_status": "mainline",
+                        "basis_summary": "Seed-refinement candidate rejected because novelty and metrics are weak.",
+                    },
+                    {
+                        "idea_id": "S1",
+                        "idea_origin": "reverse_operation",
+                        "constraint_status": "supplement",
+                        "basis_summary": "Supplemental reverse-operation check for coverage of alternative mechanisms.",
+                    },
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     ok, errors = validator.validate_task_artifacts(workspace, "T4")
 
@@ -528,8 +584,44 @@ def test_validate_t7_artifacts_happy_path(tmp_path: Path):
         json.dumps({"run_id": "run_001", "status": "done"}, ensure_ascii=False),
         encoding="utf-8",
     )
-    (workspace / "experiments" / "iteration_log.md").write_text("iter-1\n", encoding="utf-8")
-    (workspace / "experiments" / "ablations.csv").write_text("name,value\nbase,1\n", encoding="utf-8")
+    (workspace / "experiments" / "iteration_log.md").write_text(
+        "# Iteration Log\n" + "run completed with stable metrics and checked artifacts. " * 5,
+        encoding="utf-8",
+    )
+    (workspace / "experiments" / "ablations.csv").write_text(
+        "experiment_id,accuracy\nexp1,0.85\nexp2,0.86\nexp3,0.87\n",
+        encoding="utf-8",
+    )
+    (workspace / "experiments" / "docker_digests.txt").write_text(
+        "researchos/system@sha256:abc123",
+        encoding="utf-8",
+    )
+    (workspace / "experiments" / "iteration_diversity_check.md").write_text("diverse iterations\n", encoding="utf-8")
+    (workspace / "experiments" / "seed_ensemble_summary.json").write_text("{}", encoding="utf-8")
+    (workspace / "experiments" / "results_summary.json").write_text(
+        json.dumps(
+            {
+                "experiments": [
+                    {
+                        "experiment_id": "headline_exp1",
+                        "tier": "headline",
+                        "seed_runs": [{"seed": 42}, {"seed": 43}, {"seed": 44}],
+                        "status": "success",
+                        "quality_status": "ok",
+                    },
+                    {
+                        "experiment_id": "final_exp1",
+                        "tier": "final_method",
+                        "seed_runs": [{"seed": 42}, {"seed": 43}],
+                        "status": "success",
+                        "quality_status": "ok",
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
 
     ok, errors = validator.validate_task_artifacts(workspace, "T7")
 

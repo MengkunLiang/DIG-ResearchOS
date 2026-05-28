@@ -8,17 +8,21 @@
 from __future__ import annotations
 
 import re
+import shutil
 from pathlib import Path
 
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec, get_agent_params
 from ..runtime.prompts import render_prompt
+from ..tools.docker_exec import check_docker_environment, get_default_image, load_project_config
 from ._common import load_project, prepend_resume_prefix, read_text_file
 
 
 def check_anonymization(ctx: ExecutionContext) -> tuple[bool, str | None]:
     """Pre-hook: 检查论文匿名化。"""
-    paper_path = ctx.workspace_dir / "drafts" / "paper.tex"
+    paper_path = ctx.workspace_dir / "submission" / "bundle" / "main.tex"
+    if not paper_path.exists():
+        paper_path = ctx.workspace_dir / "drafts" / "paper.tex"
 
     if not paper_path.exists():
         return True, None
@@ -46,6 +50,28 @@ def check_anonymization(ctx: ExecutionContext) -> tuple[bool, str | None]:
     return True, None
 
 
+def check_submission_compile_environment(ctx: ExecutionContext) -> tuple[bool, str | None]:
+    """Pre-hook: ensure T9 has either native TeX or Docker before LLM work."""
+
+    if shutil.which("latexmk"):
+        return True, None
+
+    project_config = load_project_config(ctx.workspace_dir)
+    ok, err, details = check_docker_environment(
+        project_config=project_config,
+        image=get_default_image(),
+        require_gpu=False,
+    )
+    if not ok:
+        ctx.extra["environment_blocker"] = details
+        return False, (
+            (err or "WAITING_ENVIRONMENT: LaTeX 编译环境不可用")
+            + " T9 需要本机 latexmk 或可用的 ResearchOS Docker 统一镜像；"
+            "请安装 TeX Live/latexmk 或构建 Docker 镜像后 resume。"
+        )
+    return True, None
+
+
 class SubmissionAgent(Agent):
     """投稿准备Agent，处理模板迁移、匿名化检查、编译验证。"""
 
@@ -67,6 +93,7 @@ class SubmissionAgent(Agent):
                         "list_files",
                         "bash_run",
                         "docker_exec",
+                        "latex_compile",
                         "finish_task",
                     ],
                     "max_steps": 40,
@@ -77,7 +104,8 @@ class SubmissionAgent(Agent):
                     "allowed_read_prefixes": ["", "drafts/", "literature/", "experiments/"],
                     "allowed_write_prefixes": ["submission/"],
                     "prompt_template": "submission.j2",
-                    "pre_hooks": [check_anonymization] if enforce_anonymization_precheck else [],
+                    "pre_hooks": [check_submission_compile_environment]
+                    + ([check_anonymization] if enforce_anonymization_precheck else []),
                 },
             )
         )
@@ -131,6 +159,15 @@ class SubmissionAgent(Agent):
         pdf_path = bundle_dir / "main.pdf"
         if not pdf_path.exists():
             return False, "bundle缺少 main.pdf，说明投稿包尚未编译成功"
+        pdf_bytes = pdf_path.read_bytes()[:8]
+        if not pdf_bytes.startswith(b"%PDF"):
+            return False, "main.pdf 不是有效 PDF（缺少 %PDF 文件头）"
+        if pdf_path.stat().st_size < 20:
+            return False, "main.pdf 文件过小，疑似占位文件"
+
+        main_tex = bundle_dir / "main.tex"
+        if pdf_path.stat().st_mtime < main_tex.stat().st_mtime:
+            return False, "main.pdf 早于 main.tex，需重新编译投稿包"
 
         # 检查migration_report.md
         report_path = ws / "submission" / "migration_report.md"
@@ -159,6 +196,9 @@ class SubmissionAgent(Agent):
                 "Fatal error occurred",
                 "! Emergency stop.",
                 "==> Fatal error occurred",
+                "LaTeX Warning: There were undefined references",
+                "Citation `",
+                "Reference `",
             ]
             for marker in fatal_markers:
                 if marker in log_text:

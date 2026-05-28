@@ -48,6 +48,8 @@ def test_novelty_auditor_agent_spec(novelty_auditor_agent):
     assert "write_file" in spec.tool_names
     assert "search_papers" in spec.tool_names
     assert "fetch_paper_metadata" in spec.tool_names
+    assert "extract_mechanism_tuple" in spec.tool_names
+    assert "compare_mechanism_tuples" in spec.tool_names
     assert "finish_task" in spec.tool_names
     assert spec.temperature == 0.3
     assert "ideation/" in spec.allowed_read_prefixes
@@ -259,6 +261,10 @@ def test_validate_outputs_success(novelty_auditor_agent, temp_workspace):
 当前baseline覆盖充分。
 """
     audit_path.write_text(audit_content)
+    tuple_dir = temp_workspace / "ideation" / "_mechanism_tuples"
+    tuple_dir.mkdir()
+    (tuple_dir / "H1.json").write_text('{"source_id":"H1"}\n', encoding="utf-8")
+    (tuple_dir / "H2.json").write_text('{"source_id":"H2"}\n', encoding="utf-8")
 
     ctx = ExecutionContext(
         workspace_dir=temp_workspace,
@@ -270,6 +276,41 @@ def test_validate_outputs_success(novelty_auditor_agent, temp_workspace):
 
     ok, err = novelty_auditor_agent.validate_outputs(ctx)
     assert ok, f"Validation failed: {err}"
+
+
+def test_validate_outputs_requires_mechanism_tuples(novelty_auditor_agent, temp_workspace):
+    """T4.5 必须落盘每个假设的 mechanism tuple，不能只写文字审计。"""
+    (temp_workspace / "project.yaml").write_text("research_direction: Test\n")
+    (temp_workspace / "ideation" / "hypotheses.md").write_text(
+        "# 研究假设\n\n## H1: 假设1\n\n内容..."
+    )
+    (temp_workspace / "ideation" / "novelty_audit.md").write_text(
+        """# 新颖性审计报告
+
+## H1: 假设1
+
+### 新颖性判定
+**新颖性等级**: Level 2 - 中度新颖
+
+### 相似工作分析
+High Overlap: none
+Medium Overlap: none
+"""
+        + "x" * 520,
+        encoding="utf-8",
+    )
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T4.5",
+        run_id="test-run-no-tuples",
+        mode=None,
+    )
+
+    ok, err = novelty_auditor_agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "_mechanism_tuples" in err
 
 
 def test_validate_outputs_missing_audit(novelty_auditor_agent, temp_workspace):
@@ -390,6 +431,9 @@ def test_validate_outputs_requires_collision_cases_when_overlap_reported(
         + "x" * 520,
         encoding="utf-8",
     )
+    tuple_dir = temp_workspace / "ideation" / "_mechanism_tuples"
+    tuple_dir.mkdir()
+    (tuple_dir / "H1.json").write_text('{"source_id":"H1"}\n', encoding="utf-8")
     ctx = ExecutionContext(
         workspace_dir=temp_workspace,
         project_id="test_project",

@@ -65,7 +65,7 @@
 ```python
 search_papers(
     query="<核心概念>",
-    sources=["semantic_scholar", "arxiv"],
+    source="auto",
     max_results=30,
     year_from={{ recent_year_from }}  # 近12个月按运行日期动态计算
 )
@@ -117,7 +117,7 @@ extract_mechanism_tuple(
 # 查询4: mechanism-focused
 search_papers(
     query="<input_signal> <mechanism 前50字符>",
-    sources=["semantic_scholar", "arxiv"],
+    source="auto",
     max_results=15,
     year_from={{ recent_year_from }}
 )

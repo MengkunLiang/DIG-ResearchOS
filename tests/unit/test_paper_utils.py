@@ -80,6 +80,26 @@ def test_score_papers_methodological_signal_is_hint_not_default_rank_factor():
     assert scored[0]["relevance_score"] == scored[1]["relevance_score"]
 
 
+def test_score_papers_missing_source_type_is_unknown_neutral_hint():
+    papers = [
+        {"title": "Unknown keyword", "abstract": "keyword", "year": 2028, "citation_count": 0},
+        {
+            "title": "Preprint keyword",
+            "abstract": "keyword",
+            "year": 2028,
+            "citation_count": 0,
+            "source_type": "preprint",
+        },
+    ]
+
+    scored = score_papers(papers, ["keyword"], current_year=2028)
+
+    unknown = next(paper for paper in scored if paper["title"].startswith("Unknown"))
+    preprint = next(paper for paper in scored if paper["title"].startswith("Preprint"))
+    assert unknown["relevance_score_components"]["source_type"] == 0.5
+    assert preprint["relevance_score_components"]["source_type"] == 0.6
+
+
 def test_semantic_scholar_normalizer_returns_common_shape():
     paper = _normalize_paper(
         {

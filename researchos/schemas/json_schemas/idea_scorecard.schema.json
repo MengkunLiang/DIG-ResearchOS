@@ -106,12 +106,32 @@
               "seed_alignment": {
                 "type": "string",
                 "description": "How this idea aligns with the user's original seed ideas or constraints. 'direct' if derived from seed, 'partial' if related, 'none' if independent."
+              },
+              "idea_origin": {
+                "type": "string",
+                "enum": [
+                  "free_reasoning",
+                  "seed_refinement",
+                  "seed_derived",
+                  "evidence_driven",
+                  "mechanism_challenge",
+                  "reverse_operation",
+                  "subgroup_failure",
+                  "missing_area_exploration",
+                  "gap_exploration"
+                ]
+              },
+              "constraint_status": {
+                "type": "string",
+                "enum": ["mainline", "supplement", "not_supported_by_current_evidence"]
               }
             },
             "required": [
               "from_synthesis_section",
               "from_missing_area",
               "from_seed_idea",
+              "idea_origin",
+              "constraint_status",
               "supporting_papers",
               "trigger_observation"
             ],

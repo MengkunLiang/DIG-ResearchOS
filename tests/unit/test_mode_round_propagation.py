@@ -368,14 +368,36 @@ class TestMultiModeStateFlow:
     def test_t8_subtasks_all_have_modes(self, temp_workspace):
         """T8 的所有子任务应该都有正确的 mode。"""
         sm_config = {
-            "initial_state": "T8-WRITE",
+            "initial_state": "T8-RESOURCE",
             "states": {
+                "T8-RESOURCE": {
+                    "agent": "writer",
+                    "mode": "resource_index",
+                    "outputs": {"index": "drafts/manuscript_resource_index.json"},
+                    "inputs": {"project": "project.yaml"},
+                    "next_on_success": "T8-WRITE",
+                },
                 "T8-WRITE": {
                     "agent": "writer",
                     "mode": "outline",
                     "round": 1,
                     "outputs": {"outline": "drafts/outline.md"},
                     "inputs": {"project": "project.yaml"},
+                    "next_on_success": "T8-SECTION-PLAN",
+                },
+                "T8-SECTION-PLAN": {
+                    "agent": "writer",
+                    "mode": "section_plan",
+                    "outputs": {"paper_state": "drafts/paper_state.json"},
+                    "inputs": {"outline": "drafts/outline.md"},
+                    "next_on_success": "T8-SEC-METHOD",
+                },
+                "T8-SEC-METHOD": {
+                    "agent": "writer",
+                    "mode": "section_draft",
+                    "extra": {"section_id": "methodology"},
+                    "outputs": {"section": "drafts/sections/methodology.tex"},
+                    "inputs": {"paper_state": "drafts/paper_state.json"},
                     "next_on_success": "T8-DRAFT",
                 },
                 "T8-DRAFT": {
@@ -412,7 +434,10 @@ class TestMultiModeStateFlow:
 
         # 验证所有 T8 子任务都有正确的 mode
         expected_modes = {
+            "T8-RESOURCE": "resource_index",
             "T8-WRITE": "outline",
+            "T8-SECTION-PLAN": "section_plan",
+            "T8-SEC-METHOD": "section_draft",
             "T8-DRAFT": "draft",
             "T8-REVIEW-1": "review",
             "T8-REVISE-1": "revise",
@@ -422,6 +447,134 @@ class TestMultiModeStateFlow:
             node = sm.nodes.get(task_id)
             assert node is not None, f"{task_id} not found"
             assert node.mode == expected_mode, f"{task_id} mode should be {expected_mode}, got {node.mode}"
+
+    def test_real_t8_chain_uses_single_section_nodes(self, temp_workspace):
+        """真实状态机中 T8 正文写作必须逐 section 执行，不能回退到 T8-SECTIONS。"""
+        sm_path = Path(__file__).resolve().parents[2] / "config" / "state_machine.yaml"
+        sm = StateMachine(sm_path)
+
+        expected_chain = [
+            ("T8-SECTION-PLAN", "T8-SEC-METHOD", None),
+            ("T8-SEC-METHOD", "T8-SEC-EXPERIMENTS", "methodology"),
+            ("T8-SEC-EXPERIMENTS", "T8-SEC-RELATED", "experiments"),
+            ("T8-SEC-RELATED", "T8-SEC-ANALYSIS", "related_work"),
+            ("T8-SEC-ANALYSIS", "T8-SEC-INTRO", "analysis"),
+            ("T8-SEC-INTRO", "T8-SEC-LIMITATIONS", "introduction"),
+            ("T8-SEC-LIMITATIONS", "T8-SEC-CONCLUSION", "limitations"),
+            ("T8-SEC-CONCLUSION", "T8-SEC-ABSTRACT", "conclusion"),
+            ("T8-SEC-ABSTRACT", "T8-DRAFT", "abstract"),
+        ]
+
+        for task_id, next_task, section_id in expected_chain:
+            node = sm.nodes[task_id]
+            assert node.next_on_success == next_task
+            if task_id == "T8-SECTION-PLAN":
+                assert node.mode == "section_plan"
+                continue
+            assert node.mode == "section_draft"
+            assert node.extra.get("section_id") == section_id
+            assert set(node.outputs or {}) == {"section"}
+
+        assert "T8-SECTIONS" not in [
+            task_id for task_id, _, _ in expected_chain
+        ]
+
+    def test_t75_parse_defaults_to_resource_stage(self, temp_workspace):
+        """T7.5 parse fallback should enter manuscript resource indexing."""
+        sm_config = {
+            "initial_state": "T7.5",
+            "states": {
+                "T7.5": {
+                    "agent": "pi",
+                    "mode": "evaluate",
+                    "inputs": {"results_summary": "experiments/results_summary.json"},
+                    "outputs": {"evaluation_decision": "evaluation/evaluation_decision.md"},
+                    "next_on_success": "__parse_from_output__",
+                },
+                "T8-RESOURCE": {
+                    "agent": "writer",
+                    "mode": "resource_index",
+                    "inputs": {"project": "project.yaml"},
+                    "outputs": {"index": "drafts/manuscript_resource_index.json"},
+                    "next_on_success": "done",
+                },
+                "done": {"terminal": True},
+            },
+        }
+
+        sm_path = temp_workspace / "state_machine.yaml"
+        sm_path.write_text(yaml.dump(sm_config))
+        sm = StateMachine(sm_path)
+
+        assert sm._parse_t75_decision(temp_workspace) == "T8-RESOURCE"
+
+    def test_t75_parse_maps_legacy_t8_write_to_resource_when_available(self, temp_workspace):
+        """旧评估报告写 next_task: T8-WRITE 时应进入新版资源索引入口。"""
+        sm_config = {
+            "initial_state": "T7.5",
+            "states": {
+                "T7.5": {
+                    "agent": "pi",
+                    "mode": "evaluate",
+                    "outputs": {"evaluation_decision": "evaluation/evaluation_decision.md"},
+                    "next_on_success": "__parse_from_output__",
+                },
+                "T8-RESOURCE": {
+                    "agent": "writer",
+                    "mode": "resource_index",
+                    "outputs": {"index": "drafts/manuscript_resource_index.json"},
+                    "next_on_success": "done",
+                },
+                "T8-WRITE": {
+                    "agent": "writer",
+                    "mode": "outline",
+                    "outputs": {"outline": "drafts/outline.md"},
+                    "next_on_success": "done",
+                },
+                "done": {"terminal": True},
+            },
+        }
+        (temp_workspace / "evaluation").mkdir()
+        (temp_workspace / "evaluation" / "evaluation_decision.md").write_text(
+            "next_task: T8-WRITE\n",
+            encoding="utf-8",
+        )
+        sm_path = temp_workspace / "state_machine.yaml"
+        sm_path.write_text(yaml.dump(sm_config))
+        sm = StateMachine(sm_path)
+
+        assert sm._parse_t75_decision(temp_workspace) == "T8-RESOURCE"
+
+    def test_t75_parse_keeps_legacy_t8_write_when_resource_stage_absent(self, temp_workspace):
+        """旧测试/旧配置没有 T8-RESOURCE 时仍应兼容 T8-WRITE。"""
+        sm_config = {
+            "initial_state": "T7.5",
+            "states": {
+                "T7.5": {
+                    "agent": "pi",
+                    "mode": "evaluate",
+                    "outputs": {"evaluation_decision": "evaluation/evaluation_decision.md"},
+                    "next_on_success": "__parse_from_output__",
+                },
+                "T8-WRITE": {
+                    "agent": "writer",
+                    "mode": "outline",
+                    "outputs": {"outline": "drafts/outline.md"},
+                    "next_on_success": "done",
+                },
+                "done": {"terminal": True},
+            },
+        }
+        (temp_workspace / "evaluation").mkdir()
+        (temp_workspace / "evaluation" / "evaluation_decision.md").write_text(
+            "next_task: T8-WRITE\n",
+            encoding="utf-8",
+        )
+        sm_path = temp_workspace / "state_machine.yaml"
+        sm_path.write_text(yaml.dump(sm_config))
+        sm = StateMachine(sm_path)
+
+        assert sm._parse_t75_decision(temp_workspace) == "T8-WRITE"
 
     def test_experimenter_modes(self, temp_workspace):
         """T5 和 T7 应该有不同的 mode。"""
