@@ -351,6 +351,31 @@ LLM 判断包括：
 - `informs_search` 确实是 INFORMS 期刊记录检索，适合 OR/MS、management science、supply chain、queueing、optimization 等 INFORMS 覆盖强的方向；这里保留的是数据源覆盖特性说明，不是把主题相关性判断写进工具。当前 T2 默认启用它作为补充检索源，返回为空或失败时记录并继续，不让它阻塞主检索。
 - `[arxiv:2301.12345]` 这类正文引用是合法的，因为它保留了真实论文 ID；只有写文件路径时才必须规范化成 `arxiv_2301.12345.md` / `arxiv_2301.12345.pdf`。validator 应兼容正文中的原始 ID 和规范化 ID，但不能容忍编造不存在的 ID。
 
+### `docs/fix.md` CDR 落地对照
+
+`docs/fix.md` 强调的 T3/T3.5/T4/T4.5 不是只停留在文档层。当前已经落到 prompt、tool、validator 和状态契约中，但要区分“已经强制校验”和“仍由 LLM 学术判断完成”的部分。
+
+| fix.md 项 | 当前落点 | 状态 |
+| --- | --- | --- |
+| CDR 单一事实源 | `config/cdr_schema.yaml` 定义 `problem_frame`、`design_rationale`、`artifact`、`data_view`、`evaluation_mode`、`contribution_type`、`boundary_conditions`、`cross_paper_tension`，并明确 provenance 不是质量门 | 已落地 |
+| T2 检索广度和跨域保护 | `researchos/prompts/scout.j2` 默认启用 `informs_search`，允许 `query_bucket=adjacent_field/theory_bridge`；`researchos/tools/paper_enrichment.py` 只保护 LLM 标注的跨域/理论 bucket，不硬编码学科归属 | 已落地 |
+| T3 note schema 扩展 | `researchos/prompts/reader.j2` read 模式从 13 节扩为 19 节，新增 `§14 Design Rationale` 到 `§19 Cross-Paper Tension`；`researchos/agents/reader.py::_validate_cdr_note_fields` 校验字段和 `contribution_type` 枚举 | 已落地 |
+| T3 FULL-TEXT / 截断校验 | `reader.j2` 要求分块重读覆盖全部页码；`reader.py` 校验 `Reading Coverage`、页码范围、最终 `Truncation` 状态和 Key Results evidence anchor | 已落地 |
+| T3 resume 防重读 | Reader 进入时优先 `deep_read_queue_pending.jsonl`，runtime 会按结构合格 note 刷新 pending queue/meta；多 key 匹配 `normalized_id`、原始 ID、标题、DOI，避免 resume 后把已读论文重写 | 已落地 |
+| T3.5 贡献空间综合 | `reader.j2` synthesize 模式改为 LLM 先分析，再把 `LLMInsights` 传给 `build_synthesis_workbench`；`literature_synthesis.py` 生成 `contribution_space` 与 `cross_paper_tensions` | 已落地 |
+| T3.5 不硬编码知识 | `build_synthesis_workbench` 只结构化证据和 LLM 洞察；方法家族、共同假设、趋势、研究问题由 LLM 提供，缺失时写 `LLM_REVIEW_REQUIRED`，不把工具 hint 当最终综述 | 已落地 |
+| T4 两段式 ideation | `researchos/prompts/ideation.j2` 明确 Pass 1 前向生成和 Pass 2 文献接地；Pass 1 主线包含 `synthesis_gestalt`、`problem_reframing`、`design_rationale_derivation`、`cross_domain_analogy`、`free_reasoning`、`seed_refinement`、`evidence_driven` | 已落地 |
+| T4 四类约束降级为补充 | `ideation.j2` 把【机制质疑型、反向操作、子群失败、缺口探索】放在 Step 2.5，定义为 coverage supplements；`_candidate_directions.json` 必须区分 `constraint_status=mainline/supplement` | 已落地 |
+| T4 provenance 不再 gate | `supporting_papers`、`closest_baselines`、`from_synthesis_section` 为 optional 文档字段；`prior_art: none` 合法且表示高新颖/高风险，不因无 baseline 被降分 | 已落地 |
+| T4 anti-incrementalism gate | `ideation.py` 对 selected / hypothesis-linked idea 校验 `design_rationale`、`contribution_type`、`contribution_character`、`contribution_strength`；`routine` 不能作为 selected idea 通过 | 已落地 |
+| T4 多样性与主线来源 | `ideation.py` 要求 `_candidate_directions.json` 和 `idea_scorecard.yaml` 记录 `idea_origin`、`constraint_status`；validator 会拒绝候选池只由四类补充通道构成 | 已落地 |
+| T4.5 collision + ambition | `novelty_auditor.j2` 要求同时写 Collision Axis 和 Ambition Axis；`mechanism_tools.py` 增加 `extract_design_rationale_tuple` / `compare_design_rationale_tuples`；`novelty_auditor.py` 校验 `_design_rationale_tuples/` 与 routine reframe 要求 | 已落地 |
+| T4.5 自动回 T4 | 当前 prompt/validator 会要求 routine 或低 ambition 明确 `return_to_T4_reframe`，`config/gates.yaml` 也提供“回到 T4 重构假设”选项；但 T4.5 成功后仍默认进入 T7，尚未做成 T4.5 完成后的自动分支 gate | 部分落地，后续可加强 |
+| T7.5/T8 消费 CDR | T8-RESOURCE 生成 `cdr_claim_ledger.json`，T8 section plan/section draft 消费 CDR tuple、claim ledger、figure registry；Reviewer 增加 `CDR Contribution Verdict` | 已落地 |
+| T9 编译校验 | T9 生成 `compile_report.json`，记录 LaTeX 构建、hash/mtime、错误日志和 PDF artifact；不是只看 `paper.pdf` 是否存在 | 已落地 |
+
+这里的 CDR schema 和 tool 输出都是“结构化职责”和“证据脚手架”，不是 deterministic 学术模板。需要知识、判断和写作的地方仍由 LLM 完成：T3 的 design rationale 判断、T3.5 的方法家族/张力综合、T4 的前向生成、T4.5 的 novelty/ambition 解释、T8 的最终论文叙事，都不能由工具硬编码替代。
+
 ---
 
 ## 6.1 HELLO
@@ -2681,11 +2706,15 @@ resource index
 
 如果旧 workspace 已有 `outline/resource_index/section_plan/evidence_plan/figure_table_plan`，但 `paper_state.json` 语义字段错误或 section outlines 缺失，orchestrator 会在进入 LLM 前调用 `initialize_manuscript_state` 确定性修复，然后以 `completion_mode=t8_section_plan_prefinalize` 完成。这避免 T8-SECTION-PLAN resume 时再次让 LLM 手写状态 JSON。`researchos validate --task T8-SECTION-PLAN` 也会先尝试这一步安全修复再校验，因此可作为续跑前的状态校准命令。
 
+实测恢复行为：如果 `state.yaml` 停在 `PAUSED / T8-SECTION-PLAN`，且 `drafts/paper_state.json` 与 `drafts/section_outlines/*.md` 已合格，`researchos resume --workspace ...` 会先打印 `T8-SECTION-PLAN 检测到 paper_state/section_outlines 已合格，跳过 LLM 续跑`，随后状态机直接推进到 `T8-SEC-METHOD`。这个阶段不会再消耗一次 LLM 去重写 section plan。
+
 ### 6.12.4 T8-SEC-METHOD：WriterAgent（section_draft, section_id=methodology）
 
 `T8-SEC-METHOD` 是一次独立 WriterAgent 调用，只写 `drafts/sections/methodology.tex`。它读取 `drafts/paper_state.json`、`drafts/section_outlines/methodology.md`、`ideation/hypotheses.md`、`ideation/exp_plan.yaml`、实验配置和可用代码 artifact，说明方法名、机制、输入输出、算法/流程、实现细节和资源假设。CDR 职责是解释 artifact 为什么这样设计，写清 design rationale 和 design principles。这个节点不能写实验结果证明方法有效，也不能写 Introduction、Experiments 或整篇 `paper.tex`。
 
 写完后必须调用 `update_manuscript_section_state(section_id="methodology", state_path="drafts/paper_state.json", section_path="drafts/sections/methodology.tex", status="written")`，然后 `finish_task`。validator 只检查 `methodology.tex`，要求它非空、没有 `\documentclass` / `\begin{document}` / `\end{document}`，并且 `paper_state.json` 中 `methodology.status` 已经是 `written` 或 `revised`。
+
+如果在 `T8-SEC-METHOD` 中途 Ctrl-C 或运行被暂停，`state.yaml` 会保持 `current_task: T8-SEC-METHOD`、`status: PAUSED`，最近一条 history 标为 `INTERRUPTED`。下一次 `resume` 会从本章继续，而不是回到 `T8-SECTION-PLAN` 或重做前面章节；Writer prompt 会携带 `_runtime/resume/t8_sec_method_resume_state.json` 中的已有输出/缺失输出快照。
 
 ### 6.12.5 T8-SEC-EXPERIMENTS：WriterAgent（section_draft, section_id=experiments）
 
@@ -3103,6 +3132,7 @@ researchos run-task T9 --workspace ./workspace/local-test2
   `INTERRUPTED` 并自动转回 `PAUSED` 后继续，避免“当前状态不是 PAUSED/WAITING_HUMAN，
   无法 resume”的死状态。
 - `resume` 后不会恢复模型内部上下文，而是通过 `_runtime/resume/*.json`、T3 pending queue、已有输出文件和 task-specific recovery artifact 注入 `resume_mode`，让 agent 从已落盘事实继续
+- 对 T8 来说，`resume` 先看 `state.yaml.current_task`：如果当前 task 是 `T8-SECTION-PLAN` 且状态文件已合格，会确定性跳过；如果当前 task 已推进到某个 `T8-SEC-*`，只恢复该单章，不会回退重写 section plan 或其它章节
 - agent 调用 `finish_task` 后如果输出校验连续失败到上限，runtime 会先触发 `runtime_validation_retry_extension` gate，询问是否增加少量校验修复轮次继续；用户选择暂停、无交互输入或扩展次数耗尽时，任务会暂停为可恢复状态而不是直接 `FAILED`。错误信息会保留最后一次校验失败原因，后续 `resume` 可从已有 artifact 做定向修复
 - 任意退出路径都会刷新通用 `_runtime/resume/<task>_resume_state.json`；T3 还会同步刷新 pending queue/meta，所以暂停或失败后的恢复提示不再依赖旧快照
 - `docker_exec` 和 `latex_compile` 不再受普通工具 `max_tool_call=180s` 的小上限截断：

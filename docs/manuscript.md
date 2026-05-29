@@ -86,6 +86,8 @@ initialize_manuscript_state(...)
 
 `paper_state.json` 包含 `semantics=shared_state_for_section_by_section_writing_not_final_claims`、`section_order`、每章状态、每章目标文件、`shared_facts.bib_keys`、`shared_facts.result_metrics`、claim slots 和 planned visuals。它是防止数字漂移和术语漂移的共享状态。若旧 workspace 中已有错误语义的 `paper_state.json`，`T8-SECTION-PLAN` 会在进入 LLM 前用 `initialize_manuscript_state` 确定性修复并跳过重复 LLM 写作。续跑前也可以运行 `validate --task T8-SECTION-PLAN`，validator 会复用同一安全修复逻辑后再返回结果。
 
+当前实测行为：`local-test5` 曾停在 `PAUSED / T8-SECTION-PLAN`，修复后的 `paper_state.json` 通过 `validate --task T8-SECTION-PLAN` 后，再执行 `resume` 会先跳过 T8-SECTION-PLAN 的 LLM 调用，然后直接进入 `T8-SEC-METHOD`。如果用户在 `T8-SEC-METHOD` 中途中断，下一次 resume 会从 Method 单章继续，不会回头重建 section plan。
+
 ### T8-SEC-METHOD
 
 `WriterAgent(section_draft, section_id=methodology)` 只写 `drafts/sections/methodology.tex`。它读取 `paper_state.json`、`section_outlines/methodology.md`、`hypotheses.md`、`exp_plan.yaml` 和可用 config/code artifacts，讲清方法名、机制、输入输出、算法/流程和实现细节。它不能用实验结果证明方法有效，不能写其它章节。写完调用 `update_manuscript_section_state(section_id="methodology")`。
@@ -976,6 +978,8 @@ python -m researchos.cli validate --workspace ./workspace/local-test2 --task T8-
 python -m researchos.cli validate --workspace ./workspace/local-test2 --task T8-REVISE-1
 python -m researchos.cli validate --workspace ./workspace/local-test2 --task T9
 ```
+
+`T8-SECTION-PLAN` 的 validate 有一个特殊安全行为：当 outline/resource/section/evidence/figure plan 已存在但 `paper_state.json` 是旧语义或 outline 缺失时，validate 会先调用确定性 recovery helper 重建 `paper_state.json` 和 `section_outlines/*.md`，再返回校验结果。这个命令适合在长时间 resume 前先校准写作状态。
 
 测试：
 
