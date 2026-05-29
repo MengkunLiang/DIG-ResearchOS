@@ -554,6 +554,69 @@ def test_validate_t4_artifacts_reports_bad_hypothesis_ref(tmp_path: Path):
         ),
         encoding="utf-8",
     )
+    (workspace / "ideation" / "_pass1_forward_candidates.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "raw_forward_generation_candidates_visible_to_gate",
+                "candidates": [
+                    {
+                        "id": "D1",
+                        "idea_origin": "free_reasoning",
+                        "constraint_status": "mainline",
+                        "basis_summary": "LLM mainline reasoning from synthesis and comparison table supports this hypothesis.",
+                    },
+                    {
+                        "id": "D1b",
+                        "idea_origin": "evidence_driven",
+                        "constraint_status": "mainline",
+                        "basis_summary": "Evidence-driven candidate from paper notes and experiment feasibility.",
+                    },
+                    {
+                        "id": "D2",
+                        "idea_origin": "seed_refinement",
+                        "constraint_status": "mainline",
+                        "basis_summary": "Seed-refinement candidate rejected because novelty and metrics are weak.",
+                    },
+                    {
+                        "id": "S1",
+                        "idea_origin": "reverse_operation",
+                        "constraint_status": "supplement",
+                        "basis_summary": "Supplemental reverse-operation check for coverage of alternative mechanisms.",
+                    },
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (workspace / "ideation" / "_pass2_grounding_review.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "grounding_review_flags_not_deletion_or_final_quality_gate",
+                "reviews": [
+                    {"idea_id": "D1", "screening_recommendation": "proceed", "visible_to_gate": True},
+                    {"idea_id": "D1b", "screening_recommendation": "defer_recommended", "visible_to_gate": True},
+                    {"idea_id": "D2", "screening_recommendation": "reject_recommended", "visible_to_gate": True},
+                    {"idea_id": "S1", "screening_recommendation": "revise_before_selection", "visible_to_gate": True},
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (workspace / "ideation" / "_gate1_selection_brief.md").write_text(
+        "# Gate1 Selection Brief\n\n"
+        "- D1: Pass2 proceed.\n"
+        "- D1b: Pass2 defer_recommended.\n"
+        "- D2: Pass2 reject_recommended.\n"
+        "- S1: Pass2 revise_before_selection.\n\n"
+        "Merge options: 合并 D1+D1b or 合并 D1+S1.\n",
+        encoding="utf-8",
+    )
 
     ok, errors = validator.validate_task_artifacts(workspace, "T4")
 

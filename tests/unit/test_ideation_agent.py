@@ -42,6 +42,122 @@ def ideation_agent():
 def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) -> None:
     """写入覆盖假设anchor的idea依据与决策链记录。"""
     refs = refs or ["H1"]
+    pass1_candidates = [
+        {
+            "id": "D1",
+            "title": "测试假设依据",
+            "generation_stage": "mainline",
+            "idea_origin": "free_reasoning",
+            "constraint_status": "mainline",
+            "pitch": "基于综述缺口提出一个可验证假设。",
+            "core_claim": "目标机制可以改善可观测指标。",
+            "mechanism": "通过正则化梯度范数改善稀疏用户嵌入质量",
+            "prediction": "在稀疏用户子群上 Recall@20 提升 5%+",
+            "counterfactual": "如果机制不成立，选择性噪声关闭后指标应无显著差异",
+            "basis_summary": "LLM 综合 synthesis、comparison_table 和最终研究问题后提出的主线候选方向。",
+        },
+        {
+            "id": "D1b",
+            "title": "基于证据的替代候选",
+            "generation_stage": "mainline",
+            "idea_origin": "evidence_driven",
+            "constraint_status": "mainline",
+            "pitch": "从 paper notes 的共同限制形成替代方向。",
+            "core_claim": "证据驱动的机制干预能改善目标指标。",
+            "mechanism": "针对共同失败模式调整训练信号可降低目标误差",
+            "prediction": "目标失败子群上的 accuracy 相对 baseline 提升",
+            "counterfactual": "若失败来自数据噪声而非训练信号，干预不会改善子群指标",
+            "basis_summary": "从 paper notes 的共同限制和实验可行性出发形成的第二个主线候选。",
+        },
+        {
+            "id": "D2",
+            "title": "被淘汰方向",
+            "generation_stage": "mainline",
+            "idea_origin": "seed_refinement",
+            "constraint_status": "mainline",
+            "pitch": "把已有方法直接迁移到新场景。",
+            "core_claim": "简单迁移也许可以提升指标。",
+            "mechanism": "直接迁移在新场景中复用已有表示偏置影响目标指标",
+            "prediction": "如果迁移偏置有用，新场景accuracy应相对baseline提升",
+            "counterfactual": "如果迁移偏置无效，替换为简单baseline后指标不会下降",
+            "basis_summary": "由用户 seed idea 细化而来，但因新颖性和评价链条不足被淘汰。",
+        },
+        {
+            "id": "S1",
+            "title": "反向操作补充候选",
+            "generation_stage": "supplement",
+            "idea_origin": "reverse_operation",
+            "constraint_status": "supplement",
+            "pitch": "检查移除关键机制时指标是否下降。",
+            "core_claim": "反向操作可以检验机制是否必要。",
+            "mechanism": "移除常规增强后若指标不降说明原增强并非关键机制",
+            "prediction": "关闭增强后目标指标保持稳定或仅轻微下降",
+            "counterfactual": "若增强确实必要，关闭后目标指标显著下降",
+            "basis_summary": "作为 coverage supplement，检查移除关键机制时指标是否下降。",
+        },
+    ]
+    pass2_reviews = [
+        {
+            "idea_id": "D1",
+            "screening_recommendation": "proceed",
+            "visible_to_gate": True,
+            "novelty_check": {"prior_art": "uncertain", "closest_baselines": [], "novelty_risk": "medium"},
+            "feasibility_check": {"feasible_under_budget": True, "blocking_risks": []},
+            "contribution_check": {
+                "contribution_type": "improvement",
+                "routine_risk": False,
+                "reframe_needed": False,
+                "why": "有明确机制和子群评价。",
+            },
+            "grounding_notes": ["可以进入 Gate1。"],
+            "selection_warning": "none",
+        },
+        {
+            "idea_id": "D1b",
+            "screening_recommendation": "defer_recommended",
+            "visible_to_gate": True,
+            "novelty_check": {"prior_art": "uncertain", "closest_baselines": [], "novelty_risk": "high_uncertainty"},
+            "feasibility_check": {"feasible_under_budget": True, "blocking_risks": []},
+            "contribution_check": {
+                "contribution_type": "improvement",
+                "routine_risk": False,
+                "reframe_needed": True,
+                "why": "需要进一步收紧机制。",
+            },
+            "grounding_notes": ["可见但建议暂缓。"],
+            "selection_warning": "若选择需要重构机制。",
+        },
+        {
+            "idea_id": "D2",
+            "screening_recommendation": "reject_recommended",
+            "visible_to_gate": True,
+            "novelty_check": {"prior_art": "closest_known", "closest_baselines": ["Nearby Paper"], "novelty_risk": "low"},
+            "feasibility_check": {"feasible_under_budget": True, "blocking_risks": []},
+            "contribution_check": {
+                "contribution_type": "routine",
+                "routine_risk": True,
+                "reframe_needed": True,
+                "why": "贡献更像应用迁移。",
+            },
+            "grounding_notes": ["Pass2 建议淘汰，但 Gate1 仍可见。"],
+            "selection_warning": "若选择必须先重构 contribution character。",
+        },
+        {
+            "idea_id": "S1",
+            "screening_recommendation": "revise_before_selection",
+            "visible_to_gate": True,
+            "novelty_check": {"prior_art": "uncertain", "closest_baselines": [], "novelty_risk": "medium"},
+            "feasibility_check": {"feasible_under_budget": True, "blocking_risks": []},
+            "contribution_check": {
+                "contribution_type": "improvement",
+                "routine_risk": False,
+                "reframe_needed": True,
+                "why": "需要从 ablation 重构成机制检验。",
+            },
+            "grounding_notes": ["补充候选可见。"],
+            "selection_warning": "选择前要说明为何不是普通消融。",
+        },
+    ]
     scorecard = {
         "version": "1.0",
         "ideas": [
@@ -136,6 +252,78 @@ def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) 
             },
             {
                 "idea": {
+                    "id": "D1b",
+                    "title": "基于证据的替代候选",
+                    "pitch": "从 paper notes 的共同限制形成替代方向。",
+                    "core_claim": "证据驱动的机制干预能改善目标指标。",
+                    "target_problem": "共同失败模式尚未被验证。",
+                    "mechanism": "针对共同失败模式调整训练信号可降低目标误差",
+                    "prediction": "目标失败子群上的 accuracy 相对 baseline 提升",
+                    "counterfactual": "若失败来自数据噪声而非训练信号，干预不会改善子群指标",
+                    "mechanism_family": "failure-mode intervention",
+                    "cdr_tuple": {
+                        "problem_frame": "共同失败模式尚未被验证。",
+                        "design_rationale": "从失败模式出发能更直接定位机制。",
+                        "artifact": "失败模式干预模块。",
+                        "design_principles": ["机制定位"],
+                        "data_view": "失败子群验证集。",
+                        "evaluation_mode": "子群指标加消融。",
+                        "contribution_type": "improvement",
+                        "boundary_conditions": ["失败模式可观测"],
+                    },
+                    "contribution_strength": 2,
+                },
+                "hypothesis_refs": [],
+                "source": {
+                    "idea_origin": "evidence_driven",
+                    "constraint_status": "mainline",
+                    "from_synthesis_section": "literature/synthesis.md: Q1",
+                    "from_missing_area": "missing_areas.md: 失败子群",
+                    "from_seed_idea": False,
+                    "derived_from_previous": None,
+                    "supporting_papers": [{"title": "Failure Paper", "claim_used": "存在共同失败模式。"}],
+                    "trigger_observation": "paper notes 显示共同失败模式但机制未验证。",
+                },
+                "selection_rationale": {
+                    "novelty_reason": "需要进一步收紧机制。",
+                    "feasibility_reason": "可用小规模失败子群测试。",
+                    "impact_reason": "有潜在价值但尚不如 D1 清楚。",
+                    "evaluability_reason": "可评价但指标链较弱。",
+                    "contribution_character": "如果成立，会把失败模式从现象描述推进到可干预机制。",
+                },
+                "closest_baselines": [],
+                "scores": {
+                    "novelty": 3,
+                    "feasibility": 3,
+                    "impact": 3,
+                    "evaluability": 3,
+                    "differentiation": 3,
+                    "cost": 4,
+                    "contribution_strength": 2,
+                },
+                "decision": {
+                    "status": "deferred",
+                    "rejection_reason": ["Pass2 建议暂缓，需要进一步收紧机制。"],
+                    "can_revisit_if": "如果 D1 pilot 失败但失败子群信号强，可以重访。",
+                },
+                "risks": [
+                    {
+                        "risk": "机制过宽",
+                        "early_signal": "多个失败解释都成立",
+                        "mitigation": "缩小子群",
+                        "kill_criteria": "无法形成单一反事实",
+                    }
+                ],
+                "minimum_experiment": {
+                    "dataset": "failure subset",
+                    "baseline": "baseline1",
+                    "metric": ["accuracy"],
+                    "expected_signal": "失败子群指标提升",
+                    "estimated_cost_usd": 6.0,
+                },
+            },
+            {
+                "idea": {
                     "id": "D2",
                     "title": "被淘汰方向",
                     "pitch": "把已有方法直接迁移到新场景。",
@@ -220,6 +408,78 @@ def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) 
                     "estimated_cost_usd": 8.0,
                 },
             },
+            {
+                "idea": {
+                    "id": "S1",
+                    "title": "反向操作补充候选",
+                    "pitch": "检查移除关键机制时指标是否下降。",
+                    "core_claim": "反向操作可以检验机制是否必要。",
+                    "target_problem": "常规增强是否真是必要机制。",
+                    "mechanism": "移除常规增强后若指标不降说明原增强并非关键机制",
+                    "prediction": "关闭增强后目标指标保持稳定或仅轻微下降",
+                    "counterfactual": "若增强确实必要，关闭后目标指标显著下降",
+                    "mechanism_family": "reverse operation",
+                    "cdr_tuple": {
+                        "problem_frame": "常规增强是否真是必要机制。",
+                        "design_rationale": "反向操作可区分机制必要性和表面增益。",
+                        "artifact": "反向操作实验。",
+                        "design_principles": ["必要性检验"],
+                        "data_view": "主验证集。",
+                        "evaluation_mode": "消融式机制检验。",
+                        "contribution_type": "improvement",
+                        "boundary_conditions": ["增强可被独立关闭"],
+                    },
+                    "contribution_strength": 2,
+                },
+                "hypothesis_refs": [],
+                "source": {
+                    "idea_origin": "reverse_operation",
+                    "constraint_status": "supplement",
+                    "from_synthesis_section": "literature/synthesis.md: mechanism cluster",
+                    "from_missing_area": "none",
+                    "from_seed_idea": False,
+                    "derived_from_previous": None,
+                    "supporting_papers": [{"title": "Ablation Paper", "claim_used": "增强常被默认开启。"}],
+                    "trigger_observation": "多个方法默认添加增强但缺少必要性检验。",
+                },
+                "selection_rationale": {
+                    "novelty_reason": "作为机制补充有价值。",
+                    "feasibility_reason": "反向操作成本低。",
+                    "impact_reason": "单独成文较弱。",
+                    "evaluability_reason": "消融可测。",
+                    "contribution_character": "如果成立，会削弱现有方法对默认增强必要性的解释。",
+                },
+                "closest_baselines": [],
+                "scores": {
+                    "novelty": 3,
+                    "feasibility": 5,
+                    "impact": 2,
+                    "evaluability": 5,
+                    "differentiation": 3,
+                    "cost": 5,
+                    "contribution_strength": 2,
+                },
+                "decision": {
+                    "status": "deferred",
+                    "rejection_reason": ["适合作为 D1 的消融补充，不单独作为主线。"],
+                    "can_revisit_if": "如果反向操作出现强信号，可以合并进主假设。",
+                },
+                "risks": [
+                    {
+                        "risk": "只是普通消融",
+                        "early_signal": "没有机制解释",
+                        "mitigation": "绑定反事实预测",
+                        "kill_criteria": "无法区分机制必要性",
+                    }
+                ],
+                "minimum_experiment": {
+                    "dataset": "test validation set",
+                    "baseline": "baseline1",
+                    "metric": ["accuracy"],
+                    "expected_signal": "关闭增强后指标变化可解释",
+                    "estimated_cost_usd": 4.0,
+                },
+            },
         ],
     }
     (workspace / "ideation" / "idea_scorecard.yaml").write_text(
@@ -249,44 +509,80 @@ Both families are distinct. D1 focuses on mechanism verification while D2 is a d
 """,
         encoding="utf-8",
     )
-    (workspace / "ideation" / "_candidate_directions.json").write_text(
+    pass1_payload = {
+        "version": "1.0",
+        "semantics": "raw_forward_generation_candidates_visible_to_gate",
+        "candidates": pass1_candidates,
+    }
+    (workspace / "ideation" / "_pass1_forward_candidates.json").write_text(
+        json.dumps(pass1_payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (workspace / "ideation" / "_pass2_grounding_review.json").write_text(
         json.dumps(
             {
                 "version": "1.0",
-                "candidates": [
-                    {
-                        "idea_id": "D1",
-                        "title": "测试假设依据",
-                        "idea_origin": "free_reasoning",
-                        "constraint_status": "mainline",
-                        "basis_summary": "LLM 综合 synthesis、comparison_table 和最终研究问题后提出的主线候选方向。",
-                    },
-                    {
-                        "idea_id": "D1b",
-                        "title": "基于证据的替代候选",
-                        "idea_origin": "evidence_driven",
-                        "constraint_status": "mainline",
-                        "basis_summary": "从 paper notes 的共同限制和实验可行性出发形成的第二个主线候选。",
-                    },
-                    {
-                        "idea_id": "D2",
-                        "title": "被淘汰方向",
-                        "idea_origin": "seed_refinement",
-                        "constraint_status": "mainline",
-                        "basis_summary": "由用户 seed idea 细化而来，但因新颖性和评价链条不足被淘汰。",
-                    },
-                    {
-                        "idea_id": "S1",
-                        "title": "反向操作补充候选",
-                        "idea_origin": "reverse_operation",
-                        "constraint_status": "supplement",
-                        "basis_summary": "作为 coverage supplement，检查移除关键机制时指标是否下降。",
-                    },
-                ],
+                "semantics": "grounding_review_flags_not_deletion_or_final_quality_gate",
+                "reviews": pass2_reviews,
             },
             ensure_ascii=False,
             indent=2,
         ),
+        encoding="utf-8",
+    )
+    candidate_payload = {
+        "version": "1.0",
+        "semantics": "gate_visible_candidate_pool_after_grounding_review",
+        "candidates": [
+            {
+                **candidate,
+                "pass2_screening": {
+                    "screening_recommendation": next(
+                        review["screening_recommendation"]
+                        for review in pass2_reviews
+                        if review["idea_id"] == candidate["id"]
+                    ),
+                    "visible_to_gate": True,
+                    "selection_warning": next(
+                        review["selection_warning"]
+                        for review in pass2_reviews
+                        if review["idea_id"] == candidate["id"]
+                    ),
+                },
+                "gate_visibility": "visible",
+                "can_select_despite_risk": True,
+            }
+            for candidate in pass1_candidates
+        ],
+    }
+    (workspace / "ideation" / "_candidate_directions.json").write_text(
+        json.dumps(candidate_payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (workspace / "ideation" / "_gate1_selection_brief.md").write_text(
+        """# Gate1 Selection Brief
+
+## Pass1 candidates
+
+- D1: 测试假设依据，Origin free_reasoning，Pass2 proceed。
+- D1b: 基于证据的替代候选，Origin evidence_driven，Pass2 defer_recommended，仍可选择但需要重构机制。
+- D2: 被淘汰方向，Origin seed_refinement，Pass2 reject_recommended，仍可选择但必须重构 contribution character。
+- S1: 反向操作补充候选，Origin reverse_operation，Pass2 revise_before_selection，适合作为补充。
+
+## Pass2 warnings
+
+- D1: none。
+- D1b: 若选择需要重构机制。
+- D2: 若选择必须先重构 contribution character。
+- S1: 选择前要说明为何不是普通消融。
+
+## Merge options
+
+- 合并 D1+D1b：用 D1 的清晰机制吸收 D1b 的失败子群证据。
+- 合并 D1+S1：把 S1 作为 D1 的反向操作消融。
+
+用户可选择 D1、选择 D2 并重构、合并 D1+D1b、合并 D1+S1、新想法或重新分析。
+""",
         encoding="utf-8",
     )
     (workspace / "ideation" / "rejected_ideas.md").write_text(
@@ -302,6 +598,22 @@ Both families are distinct. D1 focuses on mechanism verification while D2 is a d
 - **Missing evidence / metric**: 缺少稳定评价指标和强差异化机制。
 - **Can revisit if**: 如果找到更强的差异化机制和数据集，可以重访。
 - **Cheap pilot that was not chosen**: 小规模proxy set不足以证明新颖贡献。
+
+## D1b: 基于证据的替代候选
+
+- **Status**: deferred
+- **Why deferred**:
+  - Pass2 建议暂缓，需要进一步收紧机制。
+  - 该方向仍保留在 Gate1 候选池，用户可以选择并要求重构。
+- **Can revisit if**: 如果 D1 pilot 失败但失败子群信号强，可以重访。
+
+## S1: 反向操作补充候选
+
+- **Status**: deferred
+- **Why deferred**:
+  - 更适合作为 D1 的消融补充，不单独作为主线。
+  - Gate1 仍可选择或合并，例如合并 D1+S1。
+- **Can revisit if**: 如果反向操作出现强信号，可以合并进主假设。
 """,
         encoding="utf-8",
     )
@@ -876,3 +1188,198 @@ def test_validate_outputs_total_budget_exceeded_even_when_single_experiments_fit
     ok, err = ideation_agent.validate_outputs(ctx)
     assert not ok
     assert "总成本" in err or "over_budget" in err
+
+
+def test_validate_outputs_rejects_missing_pass2_review(
+    ideation_agent,
+    temp_workspace,
+):
+    """Pass2 必须覆盖 Pass1 全部候选，不能筛掉后不留记录。"""
+    (temp_workspace / "project.yaml").write_text(
+        yaml.dump({"research_direction": "Test", "constraints": {"max_budget_usd": 1000}})
+    )
+    (temp_workspace / "ideation" / "hypotheses.md").write_text(
+        "# 研究假设\n\n## H1: 假设1\n\n" + "内容" * 260
+    )
+    (temp_workspace / "ideation" / "exp_plan.yaml").write_text(
+        yaml.dump(
+            {
+                "goal": "验证假设H1",
+                "experiments": [
+                    {
+                        "id": "exp1",
+                        "name": "Baseline",
+                        "title": "基线实验",
+                        "hypothesis_ref": "#H1",
+                        "datasets": [{"name": "test", "split": "val", "size": 1000}],
+                        "baselines": [{"name": "baseline1", "source": "paper", "why": "standard"}],
+                        "our_method": {
+                            "name": "OurMethod",
+                            "description": "Our approach",
+                            "key_difference": "Different",
+                        },
+                        "metrics": [{"name": "accuracy", "primary": True, "target": 0.8}],
+                        "success_criteria": [
+                            {"metric": "accuracy", "threshold": 0.8, "comparison": ">="}
+                        ],
+                        "steps": [{"step": 1, "action": "Run", "details": "Run experiment"}],
+                        "compute_estimate": {
+                            "gpu_hours": 10,
+                            "gpu_type": "A100",
+                            "estimated_cost_usd": 30,
+                        },
+                        "expected_duration_days": 2,
+                    }
+                ],
+            }
+        )
+    )
+    (temp_workspace / "ideation" / "risks.md").write_text(
+        "## 风险1\n内容\n## 风险2\n内容\n## 风险3\n内容\n"
+    )
+    write_valid_idea_rationales(temp_workspace)
+    pass2_path = temp_workspace / "ideation" / "_pass2_grounding_review.json"
+    data = json.loads(pass2_path.read_text(encoding="utf-8"))
+    data["reviews"] = [review for review in data["reviews"] if review["idea_id"] != "S1"]
+    pass2_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T4",
+        run_id="test-run-missing-pass2",
+    )
+
+    ok, err = ideation_agent.validate_outputs(ctx)
+    assert not ok
+    assert "未覆盖" in err and "S1" in err
+
+
+def test_validate_outputs_rejects_hidden_pass2_candidate(
+    ideation_agent,
+    temp_workspace,
+):
+    """Pass2 只能标风险，不能把候选隐藏出 Gate1。"""
+    (temp_workspace / "project.yaml").write_text(
+        yaml.dump({"research_direction": "Test", "constraints": {"max_budget_usd": 1000}})
+    )
+    (temp_workspace / "ideation" / "hypotheses.md").write_text(
+        "# 研究假设\n\n## H1: 假设1\n\n" + "内容" * 260
+    )
+    (temp_workspace / "ideation" / "exp_plan.yaml").write_text(
+        yaml.dump(
+            {
+                "goal": "验证假设H1",
+                "experiments": [
+                    {
+                        "id": "exp1",
+                        "name": "Baseline",
+                        "title": "基线实验",
+                        "hypothesis_ref": "#H1",
+                        "datasets": [{"name": "test", "split": "val", "size": 1000}],
+                        "baselines": [{"name": "baseline1", "source": "paper", "why": "standard"}],
+                        "our_method": {
+                            "name": "OurMethod",
+                            "description": "Our approach",
+                            "key_difference": "Different",
+                        },
+                        "metrics": [{"name": "accuracy", "primary": True, "target": 0.8}],
+                        "success_criteria": [
+                            {"metric": "accuracy", "threshold": 0.8, "comparison": ">="}
+                        ],
+                        "steps": [{"step": 1, "action": "Run", "details": "Run experiment"}],
+                        "compute_estimate": {
+                            "gpu_hours": 10,
+                            "gpu_type": "A100",
+                            "estimated_cost_usd": 30,
+                        },
+                        "expected_duration_days": 2,
+                    }
+                ],
+            }
+        )
+    )
+    (temp_workspace / "ideation" / "risks.md").write_text(
+        "## 风险1\n内容\n## 风险2\n内容\n## 风险3\n内容\n"
+    )
+    write_valid_idea_rationales(temp_workspace)
+    pass2_path = temp_workspace / "ideation" / "_pass2_grounding_review.json"
+    data = json.loads(pass2_path.read_text(encoding="utf-8"))
+    data["reviews"][0]["visible_to_gate"] = False
+    pass2_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T4",
+        run_id="test-run-hidden-pass2",
+    )
+
+    ok, err = ideation_agent.validate_outputs(ctx)
+    assert not ok
+    assert "不能隐藏候选" in err or "visible_to_gate=false" in err
+
+
+def test_validate_outputs_rejects_candidate_pool_deleting_pass1(
+    ideation_agent,
+    temp_workspace,
+):
+    """Gate1 候选池必须保留 Pass1 全部候选。"""
+    (temp_workspace / "project.yaml").write_text(
+        yaml.dump({"research_direction": "Test", "constraints": {"max_budget_usd": 1000}})
+    )
+    (temp_workspace / "ideation" / "hypotheses.md").write_text(
+        "# 研究假设\n\n## H1: 假设1\n\n" + "内容" * 260
+    )
+    (temp_workspace / "ideation" / "exp_plan.yaml").write_text(
+        yaml.dump(
+            {
+                "goal": "验证假设H1",
+                "experiments": [
+                    {
+                        "id": "exp1",
+                        "name": "Baseline",
+                        "title": "基线实验",
+                        "hypothesis_ref": "#H1",
+                        "datasets": [{"name": "test", "split": "val", "size": 1000}],
+                        "baselines": [{"name": "baseline1", "source": "paper", "why": "standard"}],
+                        "our_method": {
+                            "name": "OurMethod",
+                            "description": "Our approach",
+                            "key_difference": "Different",
+                        },
+                        "metrics": [{"name": "accuracy", "primary": True, "target": 0.8}],
+                        "success_criteria": [
+                            {"metric": "accuracy", "threshold": 0.8, "comparison": ">="}
+                        ],
+                        "steps": [{"step": 1, "action": "Run", "details": "Run experiment"}],
+                        "compute_estimate": {
+                            "gpu_hours": 10,
+                            "gpu_type": "A100",
+                            "estimated_cost_usd": 30,
+                        },
+                        "expected_duration_days": 2,
+                    }
+                ],
+            }
+        )
+    )
+    (temp_workspace / "ideation" / "risks.md").write_text(
+        "## 风险1\n内容\n## 风险2\n内容\n## 风险3\n内容\n"
+    )
+    write_valid_idea_rationales(temp_workspace)
+    candidate_path = temp_workspace / "ideation" / "_candidate_directions.json"
+    data = json.loads(candidate_path.read_text(encoding="utf-8"))
+    data["candidates"] = [candidate for candidate in data["candidates"] if candidate["id"] != "D2"]
+    candidate_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T4",
+        run_id="test-run-deleted-pass1",
+    )
+
+    ok, err = ideation_agent.validate_outputs(ctx)
+    assert not ok
+    assert "不能因 Pass2 筛选删除" in err and "D2" in err

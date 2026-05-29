@@ -129,6 +129,41 @@
 
 这四个补充候选可以和主线候选合并，但不能覆盖掉主线自由推理/seed-derived/问题重构/设计论证推导/跨域类比候选。`source` 中建议记录 `idea_origin`（如 `synthesis_gestalt`、`problem_reframing`、`design_rationale_derivation`、`cross_domain_analogy`、`free_reasoning`、`seed_refinement`、`mechanism_challenge`、`reverse_operation`、`subgroup_failure`、`missing_area_exploration`）。
 
+### Step 2.6: 保存 Pass 1 原始候选池
+
+在做 Pass 2 文献接地之前，必须先把 Pass 1 + 四类补充后形成的完整候选池写入 `ideation/_pass1_forward_candidates.json`。这个文件是“原始发散结果”，不能在 Pass 2 中被覆盖、删减或重写成只剩推荐候选。
+
+格式：
+```json
+{
+  "version": "1.0",
+  "semantics": "raw_forward_generation_candidates_visible_to_gate",
+  "candidates": [
+    {
+      "id": "D1",
+      "title": "...",
+      "generation_stage": "mainline | supplement",
+      "idea_origin": "synthesis_gestalt | problem_reframing | design_rationale_derivation | cross_domain_analogy | free_reasoning | seed_refinement | evidence_driven | mechanism_challenge | reverse_operation | subgroup_failure | missing_area_exploration",
+      "constraint_status": "mainline | supplement | not_supported_by_current_evidence",
+      "pitch": "...",
+      "core_claim": "...",
+      "mechanism": "...",
+      "prediction": "...",
+      "counterfactual": "...",
+      "cdr_tuple": {...},
+      "basis_summary": "...",
+      "minimum_experiment": {...},
+      "risks": [...]
+    }
+  ]
+}
+```
+
+关键规则：
+- `id` 必须稳定，例如 `D1`、`D2`、`D3`；后续 Pass 2、Gate1、scorecard 都复用同一 ID。
+- 不要删除 routine、高风险、证据不足或你不推荐的候选；它们仍然是用户可见的选择项。
+- 如果某个候选只适合“重构后再选”，也保留原始版本，并在 Pass 2 中标风险。
+
 ### Step 2.75: Pass 2 文献接地 / 验证
 
 对每个候选执行接地检查，但不要用 provenance 数量做 gate：
@@ -136,12 +171,49 @@
 1. **Novelty check**：确认是否已被做过。只有当确实存在相近工作时记录 closest work；找不到相近工作时写 `prior_art: none`，标 `novelty_risk: high_uncertainty`，但不要降 novelty。
 2. **Feasibility check**：预算、数据、baseline、metric 是否能验证。
 3. **Provenance note**：自由记录候选来自 synthesis gestalt、问题重构、跨域类比、seed refinement 或具体文献观察。`supporting_papers`、`closest_baselines`、`from_synthesis_section` 都是 optional 文档字段，不是质量门。
-4. **Contribution gate**：如果 `contribution_type=routine` 或 contribution character 说不清“领域会怎样不同”，该候选必须 rejected/deferred，不能进入 selected。
+4. **Contribution gate**：如果 `contribution_type=routine` 或 contribution character 说不清“领域会怎样不同”，该候选必须标为 `reject_recommended` 或 `revise_before_selection`，但不能从候选池删除。用户仍可在 Gate1 选择它，前提是你先重构 design rationale / contribution character，再进入 pre-mortem。
 
-### Step 3: 写入候选方向
-将候选方向写入 `ideation/_candidate_directions.json`，格式：
+然后必须写 `ideation/_pass2_grounding_review.json`：
+
 ```json
 {
+  "version": "1.0",
+  "semantics": "grounding_review_flags_not_deletion_or_final_quality_gate",
+  "reviews": [
+    {
+      "idea_id": "D1",
+      "screening_recommendation": "proceed | revise_before_selection | defer_recommended | reject_recommended",
+      "visible_to_gate": true,
+      "novelty_check": {
+        "prior_art": "none | closest_known | uncertain",
+        "closest_baselines": [],
+        "novelty_risk": "low | medium | high_uncertainty"
+      },
+      "feasibility_check": {
+        "feasible_under_budget": true,
+        "blocking_risks": []
+      },
+      "contribution_check": {
+        "contribution_type": "invention | improvement | exaptation | routine",
+        "routine_risk": false,
+        "reframe_needed": false,
+        "why": "..."
+      },
+      "grounding_notes": ["..."],
+      "selection_warning": "如果用户选择该候选，需要先处理的风险；没有则写 none"
+    }
+  ]
+}
+```
+
+`_pass2_grounding_review.json` 是审阅和接地报告，不是删除列表。所有 `ideation/_pass1_forward_candidates.json` 中的 `id` 都必须在这里出现，且 `visible_to_gate` 必须为 true。
+
+### Step 3: 写入候选方向
+将候选方向写入 `ideation/_candidate_directions.json`，格式。这个文件是 Pass 1 候选 + Pass 2 接地后的 Gate1 候选池，必须覆盖 `_pass1_forward_candidates.json` 的全部候选，不允许只保留推荐项：
+```json
+{
+  "version": "1.0",
+  "semantics": "gate_visible_candidate_pool_after_grounding_review",
   "candidates": [
     {
       "id": "D1",
@@ -168,6 +240,13 @@
       "contribution_strength": 1-5,
       "contribution_character": "如果成立，领域会怎样不同；为什么不是 routine",
       "prior_art": "none | closest_known | uncertain",
+      "pass2_screening": {
+        "screening_recommendation": "proceed | revise_before_selection | defer_recommended | reject_recommended",
+        "visible_to_gate": true,
+        "selection_warning": "..."
+      },
+      "gate_visibility": "visible",
+      "can_select_despite_risk": true,
       "corresponds_to": "Q1",
       "basis_summary": "来自Q1中关于XXX缺口的观察，以及comparison_table里YYY基线的共同短板",
       "idea_origin": "free_reasoning | seed_refinement | synthesis_gestalt | problem_reframing | design_rationale_derivation | cross_domain_analogy | mechanism_challenge | reverse_operation | subgroup_failure | missing_area_exploration | evidence_driven",
@@ -220,6 +299,7 @@
 - `cdr_tuple.design_rationale` 必须解释“为什么这样设计”，不能只是“怎么做”。
 - `contribution_type=routine` 只能用于 rejected/deferred 候选；selected idea 禁止 routine。
 - `closest_baselines` 和 `supporting_papers` 可以为空；不要为了过 gate 编造相近工作。
+- Pass 2 标为 `reject_recommended` / `defer_recommended` 的候选也必须保留在 `_candidate_directions.json`、`idea_scorecard.yaml` 和 Gate1 brief 中；不能静默删除。
 
 === 高质量写法模板 ===
 
@@ -268,6 +348,23 @@ counterfactual: "if it fails, metric does not improve"
 
 这个文件本身**不强制做出合并动作**，它只是把 family 分布暴露给后面的 Gate1。
 
+### Step 3.35: 写 Gate1 选择简报
+
+在调用 `ask_human` 前，必须写 `ideation/_gate1_selection_brief.md`。它是给用户看的候选全量清单，必须包含：
+
+- Pass 1 原始候选 ID、标题、origin、mainline/supplement 状态
+- Pass 2 对每个候选的 `screening_recommendation`、主要风险和 `selection_warning`
+- 所有候选都必须可见，包括 `reject_recommended`、`defer_recommended`、`routine_risk`、证据不足候选
+- 合并建议，例如 `D1 + D3 -> M1`，并说明合并后应继承哪些 design rationale、mechanism、experiment
+- 明确写出用户可选动作：
+  - `选择 Dn`
+  - `选择 Dn 并重构`
+  - `合并 D1+D3`
+  - `新想法: ...`
+  - `重新分析`
+
+`_gate1_selection_brief.md` 不替代 `ask_human`，但它保证用户和后续 resume 都能看到完整候选池。
+
 ### Step 3.5: 初始化 idea scorecard
 根据候选方向写入 `ideation/idea_scorecard.yaml` 的初版。这个文件是T4最重要的证据链/决策链产物之一，必须记录所有候选idea，不只是最后选中的idea。
 
@@ -288,6 +385,13 @@ counterfactual: "if it fails, metric does not improve"
 Gate1 和 Gate2 后必须回写 `decision` 字段：
 - 选中：`status: selected`，写 `selected_reason`、`selected_by`、`user_feedback`
 - 淘汰/暂缓/合并：`status: rejected/deferred/merged`，写 `rejection_reason` 和 `can_revisit_if`
+- 如果用户选择 `合并 D1+D3`，必须新增一个合并后的 idea，例如 `M1`，并在 `idea_scorecard.yaml` 中记录：
+  - `M1.decision.status: selected`
+  - `M1.source.merged_from_idea_ids: ["D1", "D3"]`
+  - `D1.decision.status: merged`、`D1.decision.merged_into: "M1"`
+  - `D3.decision.status: merged`、`D3.decision.merged_into: "M1"`
+  - 原始 `D1`、`D3` 不能删除，它们仍保留原始机制、预测、反事实和 Pass 2 风险
+- 如果用户选择 Pass 2 标为 `reject_recommended` 或 `routine_risk` 的候选，先写一个重构后的 selected 版本或更新该候选的 CDR tuple，使最终进入 `hypotheses.md` 的 idea 不再是 routine；原始风险写入 `risks.md` 和 `gate_decisions.json`。
 
 ### Step 4: Gate1 - 让用户选择方向
 用 `ask_human` 工具呈现候选方向，格式：
@@ -302,35 +406,39 @@ Gate1 和 Gate2 后必须回写 `decision` 字段：
 
 === 候选 idea 详情 ===
 
-[D1] Origin: seed_refinement | Family: <mechanism family> | seed_alignment: direct
+[D1] Origin: seed_refinement | Family: <mechanism family> | seed_alignment: direct | Pass2: revise_before_selection
   core_claim:     <候选方向的核心命题>
   mechanism:      see core_claim                          ← 占位，LLM 没写出真正机制
   prediction:     <条件 + 子群/对象 + 指标 + 预期方向>
   counterfactual: no clear counterfactual                 ← 占位，无法证伪
+  warning:         若选择，需要先补清机制和反事实
 
-[D2] Origin: mechanism_challenge | Family: <mechanism family> | seed_alignment: partial
+[D2] Origin: mechanism_challenge | Family: <mechanism family> | seed_alignment: partial | Pass2: reject_recommended
   core_claim:     ...
   mechanism:      ...
   prediction:     ...
   counterfactual: ...
+  warning:         Pass2 建议淘汰，但用户仍可选择或要求重构
 
 [D3] Family: structural alignment | seed_alignment: none
   ...
 
 请选择：
-[1-N] 选择方向N
-[合并 X+Y] 合并方向X和Y
+[选择 Dn] 选择方向Dn
+[选择 Dn 并重构] 选择一个被 Pass2 标风险的方向，但要求先重构
+[合并 D1+D3] 合并多个方向
 [新想法: "..."] 提出新的研究想法
 [重新分析] 回到Step 2重新发散
 
 请输入你的选择：
 ```
 
-**关键**：把 mechanism / counterfactual 字段是否为占位词**直接暴露给用户**，而不是让 validator 拦截。用户能立刻看出哪些 idea 还没想清楚机制。
+**关键**：把 mechanism / counterfactual 字段是否为占位词、Pass2 为什么不推荐、是否需要重构都**直接暴露给用户**，而不是提前删除。用户能立刻看出哪些 idea 还没想清楚机制，也能主动选择高风险候选或要求合并。
 
 **Gate1处理逻辑**：
 - 如果用户选择某个方向 → 进入阶段A.5（Pre-mortem检查）
-- 如果用户要求合并 → 回Step 3重新评分合并后的方向，再次ask_human
+- 如果用户选择被 Pass2 标为 `reject_recommended` / `defer_recommended` 的方向 → 先重构该方向的 CDR tuple、mechanism、prediction、counterfactual 和 minimum experiment，再进入阶段A.5；原始 Pass2 风险保留
+- 如果用户要求合并 → 新增合并后的 idea（如 `M1`），保留原始 D1/D3，回Step 3重新评分合并后的方向，再次ask_human
 - 如果用户提出新想法 → 回Step 3评估新方向，再次ask_human
 - 如果用户要求重新分析 → 回Step 2重新发散
 - 如果用户连续3次拒绝所有方向 → 写入异常消息到 `ideation/_gate1_failed.md` 并 finish_task

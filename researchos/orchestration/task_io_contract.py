@@ -111,7 +111,10 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "rejected_ideas": "ideation/rejected_ideas.md",
             "gate_decisions": "ideation/gate_decisions.json",
             "family_distribution": "ideation/_family_distribution.md",
+            "pass1_forward_candidates": "ideation/_pass1_forward_candidates.json",
+            "pass2_grounding_review": "ideation/_pass2_grounding_review.json",
             "candidate_directions": "ideation/_candidate_directions.json",
+            "gate1_selection_brief": "ideation/_gate1_selection_brief.md",
         },
         "required_inputs": ["project", "synthesis"],
         "schemas": {

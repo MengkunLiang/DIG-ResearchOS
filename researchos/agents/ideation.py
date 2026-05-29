@@ -3,7 +3,9 @@
 基于文献综述生成研究假设和实验计划，通过两轮Gate确认。
 输入: synthesis.md, missing_areas.md, seed_ideas.md
 输出: hypotheses.md, exp_plan.yaml, risks.md, idea_rationales.json,
-      idea_scorecard.yaml, rejected_ideas.md, gate_decisions.json
+      idea_scorecard.yaml, rejected_ideas.md, gate_decisions.json,
+      _pass1_forward_candidates.json, _pass2_grounding_review.json,
+      _gate1_selection_brief.md
 """
 
 from __future__ import annotations
@@ -102,7 +104,7 @@ class IdeationAgent(Agent):
             "请执行 T4 假设生成。基于 synthesis.md 和 seed_ideas.md，"
             "通过两轮 Gate 与用户确认，产出 hypotheses.md + exp_plan.yaml + "
             "risks.md + idea_rationales.json + idea_scorecard.yaml + "
-            "rejected_ideas.md + gate_decisions.json。"
+            "rejected_ideas.md + gate_decisions.json + Pass1/Pass2可见候选文件。"
             ),
         )
 
@@ -228,6 +230,9 @@ class IdeationAgent(Agent):
         if not isinstance(scorecard_ideas, list) or len(scorecard_ideas) < 2:
             return False, "idea_scorecard.yaml 至少需要记录2个候选idea，包含选中和淘汰/暂缓项"
 
+        ok, err = _validate_pass_stage_artifacts(ws)
+        if not ok:
+            return False, err
         ok, err = _validate_candidate_directions(ws)
         if not ok:
             return False, err
@@ -363,6 +368,23 @@ class IdeationAgent(Agent):
             return False, "idea_scorecard.yaml 必须至少有一个 decision.status=selected 的idea"
         if not rejected_or_deferred_ids:
             return False, "idea_scorecard.yaml 必须记录至少一个被淘汰/暂缓/合并的idea及原因"
+        try:
+            pass1_data_for_scorecard = json.loads(
+                (ws / "ideation" / "_pass1_forward_candidates.json").read_text(encoding="utf-8")
+            )
+        except Exception:
+            pass1_data_for_scorecard = {}
+        pass1_ids_for_scorecard = {
+            str(candidate.get("id") or candidate.get("idea_id") or "").strip()
+            for candidate in pass1_data_for_scorecard.get("candidates", [])
+            if isinstance(candidate, dict)
+        }
+        missing_scorecard_candidates = sorted(pass1_ids_for_scorecard - known_idea_ids)
+        if missing_scorecard_candidates:
+            return False, (
+                "idea_scorecard.yaml 必须记录 Pass1 全部候选，不能删除被 Pass2 筛掉的候选: "
+                f"{missing_scorecard_candidates}"
+            )
         missing_selected_refs = sorted(anchor_set - selected_scorecard_refs)
         if missing_selected_refs:
             return False, (
@@ -413,12 +435,22 @@ class IdeationAgent(Agent):
             return False, f"gate_decisions.json 必须记录两轮Gate决策，缺少: {missing_gates}"
         gate_selected_ids: set[str] = set()
         gate_rejected_ids: set[str] = set()
+        merged_sources_in_gate: set[str] = set()
         for item in decisions:
             if not isinstance(item, dict):
                 continue
             gate_selected_ids.update(str(v).strip() for v in item.get("selected_idea_ids") or [] if str(v).strip())
             gate_rejected_ids.update(str(v).strip() for v in item.get("rejected_idea_ids") or [] if str(v).strip())
             gate_rejected_ids.update(str(v).strip() for v in item.get("deferred_idea_ids") or [] if str(v).strip())
+            for merge in item.get("merged_idea_ids") or []:
+                if isinstance(merge, (list, tuple)):
+                    merged_sources_in_gate.update(str(v).strip() for v in merge if str(v).strip())
+                elif isinstance(merge, dict):
+                    merged_sources_in_gate.update(
+                        str(v).strip()
+                        for v in merge.get("from") or merge.get("source_idea_ids") or []
+                        if str(v).strip()
+                    )
         unknown_gate_ids = sorted((gate_selected_ids | gate_rejected_ids) - known_idea_ids)
         if unknown_gate_ids:
             return False, f"gate_decisions.json 引用了scorecard中不存在的idea_id: {unknown_gate_ids}"
@@ -426,6 +458,18 @@ class IdeationAgent(Agent):
             return False, "gate_decisions.json 必须记录scorecard中所有selected idea"
         if not rejected_or_deferred_ids.intersection(gate_rejected_ids):
             return False, "gate_decisions.json 必须记录至少一个被淘汰/暂缓idea"
+
+        merged_scorecard_ids = {
+            str((item.get("idea") or {}).get("id") or "").strip()
+            for item in scorecard_ideas
+            if isinstance(item, dict)
+            and str((item.get("decision") or {}).get("status") or "").strip().lower() == "merged"
+        }
+        if merged_scorecard_ids and not merged_scorecard_ids.issubset(gate_rejected_ids | merged_sources_in_gate):
+            return False, (
+                "gate_decisions.json 必须记录被合并的原始idea，缺少: "
+                f"{sorted(merged_scorecard_ids - (gate_rejected_ids | merged_sources_in_gate))}"
+            )
 
         project = load_project(ctx)
         max_budget = project.get("constraints", {}).get("max_budget_usd", 100.0)
@@ -488,9 +532,16 @@ def _validate_candidate_directions(ws: Path) -> tuple[bool, str | None]:
     ])
     mainline_count = 0
     supplement_count = 0
+    ids: set[str] = set()
     for idx, candidate in enumerate(candidates, start=1):
         if not isinstance(candidate, dict):
             return False, f"_candidate_directions.json 第{idx}条候选必须是对象"
+        idea_id = str(candidate.get("id") or candidate.get("idea_id") or "").strip()
+        if not idea_id:
+            return False, f"_candidate_directions.json 第{idx}条候选缺少 id/idea_id"
+        if idea_id in ids:
+            return False, f"_candidate_directions.json 候选ID重复: {idea_id}"
+        ids.add(idea_id)
         origin = str(candidate.get("idea_origin") or candidate.get("origin") or "").strip()
         status = str(candidate.get("constraint_status") or "").strip()
         basis = str(candidate.get("basis_summary") or candidate.get("basis") or "").strip()
@@ -504,6 +555,15 @@ def _validate_candidate_directions(ws: Path) -> tuple[bool, str | None]:
             mainline_count += 1
         if origin in supplement_origins or status == "supplement":
             supplement_count += 1
+        pass2 = candidate.get("pass2_screening") or {}
+        if pass2:
+            visible = pass2.get("visible_to_gate")
+            gate_visibility = str(candidate.get("gate_visibility") or "").strip().lower()
+            if visible is False or gate_visibility == "hidden":
+                return False, (
+                    f"_candidate_directions.json 候选 {idea_id} 被 Pass2 隐藏；"
+                    "Pass2 只能标风险，不能从 Gate1 删除候选"
+                )
         if status == "not_supported_by_current_evidence" and origin not in supplement_origins:
             return False, (
                 f"_candidate_directions.json 第{idx}条 unsupported 候选必须对应四类补充通道，"
@@ -517,4 +577,108 @@ def _validate_candidate_directions(ws: Path) -> tuple[bool, str | None]:
         )
     if supplement_count > mainline_count + 4:
         return False, "_candidate_directions.json 四类补充候选过多，主线推理被覆盖"
+    return True, None
+
+
+def _validate_pass_stage_artifacts(ws: Path) -> tuple[bool, str | None]:
+    """Validate that T4 exposes both generation and grounding stages to Gate1."""
+
+    ideation_dir = ws / "ideation"
+    pass1_path = ideation_dir / "_pass1_forward_candidates.json"
+    pass2_path = ideation_dir / "_pass2_grounding_review.json"
+    candidate_path = ideation_dir / "_candidate_directions.json"
+    gate_brief_path = ideation_dir / "_gate1_selection_brief.md"
+
+    for path, label in [
+        (pass1_path, "_pass1_forward_candidates.json"),
+        (pass2_path, "_pass2_grounding_review.json"),
+        (gate_brief_path, "_gate1_selection_brief.md"),
+    ]:
+        if not path.exists():
+            return False, f"缺少 ideation/{label}，T4 必须暴露 Pass1/Pass2 和 Gate1 全量候选"
+
+    try:
+        pass1_data = json.loads(pass1_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return False, f"_pass1_forward_candidates.json 解析失败: {exc}"
+    try:
+        pass2_data = json.loads(pass2_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return False, f"_pass2_grounding_review.json 解析失败: {exc}"
+    try:
+        candidate_data = json.loads(candidate_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return False, f"_candidate_directions.json 解析失败: {exc}"
+
+    pass1_candidates = pass1_data.get("candidates") if isinstance(pass1_data, dict) else None
+    if not isinstance(pass1_candidates, list) or len(pass1_candidates) < 4:
+        return False, "_pass1_forward_candidates.json 必须包含至少4个 Pass1 原始候选"
+
+    pass1_ids: set[str] = set()
+    for idx, candidate in enumerate(pass1_candidates, start=1):
+        if not isinstance(candidate, dict):
+            return False, f"_pass1_forward_candidates.json 第{idx}条候选必须是对象"
+        idea_id = str(candidate.get("id") or candidate.get("idea_id") or "").strip()
+        if not idea_id:
+            return False, f"_pass1_forward_candidates.json 第{idx}条候选缺少 id"
+        if idea_id in pass1_ids:
+            return False, f"_pass1_forward_candidates.json 候选ID重复: {idea_id}"
+        pass1_ids.add(idea_id)
+        if not str(candidate.get("idea_origin") or candidate.get("origin") or "").strip():
+            return False, f"_pass1_forward_candidates.json 候选 {idea_id} 缺少 idea_origin"
+
+    reviews = pass2_data.get("reviews") if isinstance(pass2_data, dict) else None
+    if not isinstance(reviews, list):
+        return False, "_pass2_grounding_review.json 必须包含 reviews 数组"
+    pass2_ids: set[str] = set()
+    for idx, review in enumerate(reviews, start=1):
+        if not isinstance(review, dict):
+            return False, f"_pass2_grounding_review.json 第{idx}条review必须是对象"
+        idea_id = str(review.get("idea_id") or review.get("id") or "").strip()
+        if not idea_id:
+            return False, f"_pass2_grounding_review.json 第{idx}条review缺少 idea_id"
+        pass2_ids.add(idea_id)
+        if review.get("visible_to_gate") is False:
+            return False, (
+                f"_pass2_grounding_review.json review {idea_id} visible_to_gate=false；"
+                "Pass2 不能隐藏候选"
+            )
+        recommendation = str(review.get("screening_recommendation") or "").strip()
+        if recommendation not in {
+            "proceed",
+            "revise_before_selection",
+            "defer_recommended",
+            "reject_recommended",
+        }:
+            return False, (
+                f"_pass2_grounding_review.json review {idea_id} screening_recommendation 无效: "
+                f"{recommendation or '空'}"
+            )
+
+    missing_reviews = sorted(pass1_ids - pass2_ids)
+    if missing_reviews:
+        return False, f"_pass2_grounding_review.json 未覆盖这些 Pass1 候选: {missing_reviews}"
+
+    candidates = candidate_data.get("candidates") if isinstance(candidate_data, dict) else None
+    candidate_ids = {
+        str(candidate.get("id") or candidate.get("idea_id") or "").strip()
+        for candidate in candidates or []
+        if isinstance(candidate, dict)
+    }
+    missing_gate_candidates = sorted(pass1_ids - candidate_ids)
+    if missing_gate_candidates:
+        return False, (
+            "_candidate_directions.json 必须保留 Pass1 全部候选，不能因 Pass2 筛选删除: "
+            f"{missing_gate_candidates}"
+        )
+
+    brief_text = read_text_file(gate_brief_path)
+    if len(brief_text.strip()) < 300:
+        return False, "_gate1_selection_brief.md 过短，必须展示全量候选、Pass2风险和合并建议"
+    missing_from_brief = [idea_id for idea_id in sorted(pass1_ids) if idea_id not in brief_text]
+    if missing_from_brief:
+        return False, f"_gate1_selection_brief.md 必须提到所有候选ID，缺少: {missing_from_brief}"
+    if not re.search(r"合并|merge|D\d+\+D\d+", brief_text, re.IGNORECASE):
+        return False, "_gate1_selection_brief.md 必须说明可合并多个候选，例如 合并 D1+D3"
+
     return True, None

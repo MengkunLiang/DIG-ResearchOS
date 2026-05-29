@@ -1607,7 +1607,10 @@ T3.5 没有像 T3/T5/T7 那样复杂的专门恢复文件，但它天然是 arti
 | `idea_rationales` | `ideation/idea_rationales.json` | 每个 idea / hypothesis 的生成依据和来源追踪 |
 | `risks` | `ideation/risks.md` | 风险评估 |
 | `family_distribution` | `ideation/_family_distribution.md` | mechanism family 分布统计 |
-| - | `ideation/_candidate_directions.json` | 中间候选方向 |
+| `pass1_forward_candidates` | `ideation/_pass1_forward_candidates.json` | Pass 1 原始发散候选池；包含主线和补充候选，不能被 Pass 2 覆盖或删减 |
+| `pass2_grounding_review` | `ideation/_pass2_grounding_review.json` | Pass 2 文献接地/风险审阅；只标 `proceed/revise/defer/reject_recommended`，不删除候选 |
+| `candidate_directions` | `ideation/_candidate_directions.json` | Gate1 可见候选池；必须覆盖 Pass 1 全部候选并附上 Pass 2 风险 |
+| `gate1_selection_brief` | `ideation/_gate1_selection_brief.md` | 给用户看的 Gate1 全量选择简报，包含候选、风险、重构和合并建议 |
 | - | `ideation/_premortem.md` | pre-mortem 质疑结果 |
 
 ### T4 的流程不是“一次生成完”
@@ -1615,13 +1618,16 @@ T3.5 没有像 T3/T5/T7 那样复杂的专门恢复文件，但它天然是 arti
 当前 prompt 明确把它设计成了多阶段思考：
 
 1. 读取 `synthesis.md`
-2. 生成 `3-5` 个主线候选方向：free reasoning / seed refinement / evidence-driven
+2. 生成 `3-5` 个主线候选方向：synthesis gestalt / problem reframing / design-rationale derivation / cross-domain analogy / free reasoning / seed refinement / evidence-driven
 3. 再用四类补充通道做 coverage supplement；有证据才生成候选，没有证据则记录 unsupported
-4. 对每个候选写七维评分、机制、prediction、counterfactual、最低实验和 kill criteria
-5. 用 `ask_human` 做 Gate1
-6. 对选定方向做 pre-mortem
-7. 写 `_family_distribution.md` 统计 mechanism family 分布
-8. 最终产出：
+4. 写 `ideation/_pass1_forward_candidates.json` 保存原始发散结果，包含不推荐、高风险、routine risk 或证据不足候选
+5. 做 Pass 2 文献接地，把每个候选标为 `proceed` / `revise_before_selection` / `defer_recommended` / `reject_recommended`，写 `ideation/_pass2_grounding_review.json`
+6. 写 `ideation/_candidate_directions.json` 和 `_gate1_selection_brief.md`，保证所有 Pass 1 候选都对用户可见
+7. 对每个候选写七维评分、机制、prediction、counterfactual、最低实验和 kill criteria
+8. 用 `ask_human` 做 Gate1，支持选择、选择并重构、合并多个候选、新想法和重新分析
+9. 对选定方向做 pre-mortem
+10. 写 `_family_distribution.md` 统计 mechanism family 分布
+11. 最终产出：
    - `hypotheses.md`
    - `exp_plan.yaml`
    - `idea_scorecard.yaml`
@@ -1661,13 +1667,45 @@ T3.5 没有像 T3/T5/T7 那样复杂的专门恢复文件，但它天然是 arti
    - `key_risks`（风险和 kill criteria）
    - `source.seed_alignment`（与用户 seed 的对齐程度：`direct`/`partial`/`none`）
 
-5. **写 `_family_distribution.md`**：统计 mechanism family 分布，标注同 family 的候选
+5. **写 `ideation/_pass1_forward_candidates.json`**：这是 Pass 1 原始候选池，必须保存全部主线候选和补充候选。T4 不能因为候选高风险、routine risk、证据不足或自己不推荐就删除它；这些候选仍然要给用户看。
 
-6. **写 `ideation/_candidate_directions.json`**：中间候选方向
+6. **Pass 2 文献接地 / 风险审阅**：对 Pass 1 的每个候选做 novelty、feasibility、provenance note 和 contribution check，写 `ideation/_pass2_grounding_review.json`。这里的结果是推荐和警告，不是删除列表：`reject_recommended` 只表示系统不推荐，用户仍可在 Gate1 选择并要求重构。
 
-7. **Gate1**：用 `ask_human` 呈现候选方向，暴露 mechanism/counterfactual 是否为占位词，让用户选择、合并、补充或重新分析
+7. **写 `_family_distribution.md`**：统计 mechanism family 分布，标注同 family 的候选。
 
-8. **更新决策链**：每次 Gate1 后更新 `idea_scorecard.yaml`、`rejected_ideas.md`、`gate_decisions.json`
+8. **写 `ideation/_candidate_directions.json`**：这是 Gate1 可见候选池，必须覆盖 `_pass1_forward_candidates.json` 的所有候选，并为每个候选附上 `pass2_screening.visible_to_gate=true`、`screening_recommendation` 和 `selection_warning`。这个文件不能只保留推荐项。
+
+9. **写 `ideation/_gate1_selection_brief.md`**：把所有候选、人类可读风险、Pass 2 推荐、可重构项和合并建议列出来，例如 `合并 D1+D3`。这个文件用于 resume 和人工审阅，即使 `ask_human` 输出滚动过去也能回看。
+
+10. **Gate1**：用 `ask_human` 呈现候选方向，暴露 mechanism/counterfactual 是否为占位词、Pass 2 为什么不推荐、是否需要重构，让用户选择、选择并重构、合并、补充或重新分析。
+
+11. **更新决策链**：每次 Gate1 后更新 `idea_scorecard.yaml`、`rejected_ideas.md`、`gate_decisions.json`。
+
+### Pass 1 / Pass 2 可见性与选择语义
+
+T4 的两个阶段都必须可见：
+
+- `ideation/_pass1_forward_candidates.json`：原始发散结果，不做删除。
+- `ideation/_pass2_grounding_review.json`：接地审阅结果，只加风险标签和推荐动作。
+- `ideation/_candidate_directions.json`：Gate1 真正展示的候选池，必须覆盖 Pass 1 全部 ID。
+- `ideation/_gate1_selection_brief.md`：人类可读简报，必须提到每个候选 ID 和合并建议。
+
+因此，被 Pass 2 标为 `reject_recommended`、`defer_recommended`、`revise_before_selection` 的候选不会消失。用户可以：
+
+- 直接选择推荐候选，例如 `选择 D1`
+- 选择一个高风险候选并要求重构，例如 `选择 D2 并重构`
+- 合并多个候选，例如 `合并 D1+D3` 或 `合并 D1+S1`
+- 提出新想法，例如 `新想法: ...`
+- 要求重新分析
+
+合并时不要覆盖原始候选。正确做法是新增合并后的 idea，例如 `M1`，并在 `idea_scorecard.yaml` 中保留：
+
+- `M1.decision.status=selected`
+- `M1.source.merged_from_idea_ids=["D1", "D3"]`
+- `D1.decision.status=merged`、`D1.decision.merged_into="M1"`
+- `D3.decision.status=merged`、`D3.decision.merged_into="M1"`
+
+如果用户坚持选择 routine risk 或 `reject_recommended` 候选，T4 不能直接让 routine idea 进入 `hypotheses.md`。它必须先重构 CDR tuple、mechanism、prediction、counterfactual 和 contribution character；原始风险仍写入 `risks.md`、`gate_decisions.json` 和 `rejected_ideas.md`。
 
 #### 阶段A.5：Pre-mortem 检查
 
@@ -1701,7 +1739,12 @@ T3.5 没有像 T3/T5/T7 那样复杂的专门恢复文件，但它天然是 arti
 - `hypotheses.md` 不能太短，必须有 `H1/H2/...` 锚点
 - `exp_plan.yaml` 必须过 schema，`hypothesis_ref` 必须指向存在的 anchor
 - `idea_scorecard.yaml` 必须过 schema，记录选中和淘汰/暂缓/合并的候选 idea；每个 idea 必须包含 `mechanism`、`prediction`、`counterfactual`、`mechanism_family` 四个非空字段
+- `_pass1_forward_candidates.json` 必须存在，且至少包含 4 个原始候选；每个候选必须有稳定 ID 和 `idea_origin`
+- `_pass2_grounding_review.json` 必须覆盖 Pass 1 全部候选；每个 review 必须 `visible_to_gate=true`，并给出 `screening_recommendation`
 - `_candidate_directions.json` 顶层必须使用 `candidates`，不能使用旧字段 `directions`；每个候选必须有 `idea_origin`、`constraint_status` 和足够长的 `basis_summary`
+- `_candidate_directions.json` 必须保留 Pass 1 全部候选，不能因为 Pass 2 标风险而删除；如果写了 `pass2_screening`，`visible_to_gate` 不能是 false
+- `_gate1_selection_brief.md` 必须提到所有候选 ID，并说明可合并多个候选，例如 `合并 D1+D3`
+- `idea_scorecard.yaml` 必须记录 Pass 1 全部候选，不能只记录最后 selected 的 idea
 - `idea_scorecard.yaml` 的每个 `source` 必须显式包含 `idea_origin` 和 `constraint_status`；origin mix 至少要包含 CDR schema 中的主线 origins（如 `synthesis_gestalt`、`problem_reframing`、`design_rationale_derivation`、`cross_domain_analogy`、`free_reasoning`、`seed_refinement`、`evidence_driven`），不能全部由四类补充候选构成
 - `supporting_papers`、`closest_baselines`、`from_synthesis_section` 是 optional provenance 文档字段；validator 不用数量做质量门。质量门看 `design_rationale`、`contribution_type`、`contribution_character` 和 `contribution_strength`
 - 对 `decision.status=selected` 或带 `hypothesis_refs` 的 idea，`contribution_type` 不能是 `routine`，`design_rationale` 不能为空，`contribution_character` 必须回答“领域会怎样不同”，`contribution_strength` 不能低于 2
