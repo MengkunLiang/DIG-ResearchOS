@@ -166,6 +166,22 @@ def test_writer_prompt_defaults_suggested_style_when_not_injected(temp_workspace
     assert "venue_style: ccf_a" in prompt
 
 
+def test_writer_abstract_prompt_forbids_formal_citations(temp_workspace):
+    agent = WriterAgent()
+    ctx = MockExecutionContext(
+        "section_draft",
+        temp_workspace,
+        {"phase": "section_draft", "section_id": "abstract"},
+    )
+
+    prompt = agent.system_prompt(ctx)
+
+    assert "Abstract 不写正式引用" in prompt
+    assert "\\cite{}" in prompt
+    assert "作者-年份" in prompt
+    assert "Introduction 或 Related Work" in prompt
+
+
 def _write_manuscript_registries(workspace: Path) -> None:
     (workspace / "drafts" / "cdr_claim_ledger.json").write_text(
         json.dumps(
@@ -297,6 +313,7 @@ def _write_passing_craft_audit(workspace: Path) -> None:
     checks = [
         {"name": "matrix_row_count", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "intro_contribution_count", "level": "PASS", "passed": True, "detail": "ok"},
+        {"name": "abstract_no_cite", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "number_traceability", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "no_standalone_limitations", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "conclusion_has_limitations_subsection", "level": "PASS", "passed": True, "detail": "ok"},
@@ -436,6 +453,35 @@ def test_writer_single_section_phase_initial_message(temp_workspace):
     assert "experiments.tex" in msg
     assert "update_manuscript_section_state" in msg
     assert "paper.tex" in msg
+
+
+@pytest.mark.parametrize(
+    "abstract_text",
+    [
+        "This abstract cites prior work \\cite{smith2024} while summarizing the method and evidence. " * 2,
+        "This abstract cites prior work (Smith et al., 2024) while summarizing the method and evidence. " * 2,
+        "This abstract cites prior work [12] while summarizing the method and evidence. " * 2,
+    ],
+)
+def test_writer_validate_outputs_abstract_rejects_formal_citations(temp_workspace, abstract_text):
+    agent = WriterAgent()
+    ctx = MockExecutionContext(
+        "section_draft",
+        temp_workspace,
+        {"phase": "section_draft", "section_id": "abstract"},
+    )
+    _write_valid_paper_state(temp_workspace)
+    state = json.loads((temp_workspace / "drafts" / "paper_state.json").read_text(encoding="utf-8"))
+    state["sections"]["abstract"]["status"] = "written"
+    (temp_workspace / "drafts" / "paper_state.json").write_text(json.dumps(state), encoding="utf-8")
+    section_dir = temp_workspace / "drafts" / "sections"
+    section_dir.mkdir(parents=True, exist_ok=True)
+    (section_dir / "abstract.tex").write_text(abstract_text, encoding="utf-8")
+
+    ok, err = agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "正式引用" in err
 
 
 def test_writer_uses_ctx_mode_when_phase_extra_missing(temp_workspace):
@@ -1086,6 +1132,17 @@ def test_reviewer_round2_prompt_includes_audit_self_check_and_previous_review(te
     assert "Previous Review" in prompt
     assert "Fix result table" in prompt
     assert "round_1.md" in msg
+
+
+def test_reviewer_prompt_flags_abstract_formal_citations(temp_workspace):
+    agent = ReviewerAgent()
+    ctx = MockExecutionContext("review", temp_workspace, {"round": 1})
+
+    prompt = agent.system_prompt(ctx)
+
+    assert "Abstract是否自洽且没有正式引用" in prompt
+    assert "作者-年份" in prompt
+    assert "Introduction 或 Related Work" in prompt
 
 
 def test_reviewer_validate_outputs_success(temp_workspace):

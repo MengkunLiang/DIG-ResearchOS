@@ -29,7 +29,7 @@ Write the paper as a staged research argument, not as one long generation. Tools
 - Experiments: datasets/settings, baselines, metrics, main results, ablations, seed ensemble, compute budget, and quality controls.
 - Analysis: connect ablations and failures back to hypotheses and alternative explanations.
 - Conclusion limitations subsection: direct-full evidence boundaries, skipped pilot/novelty-final risks if applicable, external validity, cost, and failure cases.
-- Abstract and Conclusion: write after main sections; no new claims.
+- Abstract and Conclusion: write after main sections; no new claims. Abstract should not contain formal citations.
 
 ## Section Depth
 
@@ -49,7 +49,7 @@ Avoid hard word-count floors. If evidence is missing, write TODO/limitation. If 
 - Figures must come from existing generated assets or be explicitly marked as TODO with a generation plan.
 - Claims about prior work must cite `literature/related_work.bib` keys and be traceable to `literature/synthesis.md` or paper notes.
 - If T5/T6 were skipped, state the evidence boundary in Conclusion's Limitations subsection and avoid claiming pilot-validated novelty-final evidence.
-- Abstract may contain real LaTeX citation keys when needed, but should not pile up citations or introduce literature not discussed in the body.
+- Abstract should not contain formal citations: no LaTeX citation commands, no author-year parenthetical citations, and no numeric citation brackets. Refer to method families or problem classes in the Abstract, then put concrete prior-work citations in Introduction or Related Work.
 
 ## Tool Boundary
 

@@ -153,7 +153,7 @@ project:
    motivation -> contribution -> related_gap -> design_choice -> experiment -> analysis。
    这里需要你的学术判断；工具只给 seed，不替你决定论文贡献。
 4. Section-by-section argument：
-   - Abstract: 压缩 problem_frame、design_rationale、artifact/evidence、contribution_type
+   - Abstract: 压缩 problem_frame、design_rationale、artifact/evidence、contribution_type；不放正式引用
    - Introduction: 背景、problem frame、field-change argument、贡献、结果 headline
    - Related Work: design-rationale competition、`domain_map.json` 引用图骨架、`synthesis_workbench.adjacent_transfers`、`nearest_prior_work` 和 citation-backed positioning
    - Method: artifact 为什么这样设计、设计原则、算法/流程、实现细节
@@ -277,7 +277,7 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 3. 只写 `drafts/sections/{{ section_id }}.tex`。
 4. 章节文件只能包含该章节内容。可以包含 `\section{...}`，但不能包含 `\documentclass`、`\begin{document}`、`\end{document}`。
 5. 所有数字必须来自 `paper_state.shared_facts.result_metrics` 或明确读取的实验 artifact。
-6. 所有 citation key 必须来自 `paper_state.shared_facts.bib_keys` 或 `literature/related_work.bib`。
+6. 除 Abstract 外，所有 citation key 必须来自 `paper_state.shared_facts.bib_keys` 或 `literature/related_work.bib`。Abstract 不写正式引用；具体文献引用放到 Introduction、Related Work 或 Method。
 7. CDR ledger 是写作 scaffold，不是最终表述；你要用 LLM 判断把 design rationale / contribution type 写成连贯学术论证。
 8. 若某段明确兑现某条 contribution，可在段首加 `% [Cn]` 作为 traceability hint，CID 来自 `drafts/alignment_matrix.json` 或 section outline 的 Responsible CIDs；不要为了凑注释破坏正文自然度。
 9. 写完后调用：
@@ -340,8 +340,9 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 - Required Inputs：`paper_state.json`、`section_outlines/abstract.md`、`alignment_matrix.json`、已写 Introduction/Methodology/Experiments/Analysis/Conclusion。
 - 使命：把全文压成 5 句骨架，不引入正文外内容。
 - 段落范式：S1 Problem；S2 Gap；S3 Approach；S4 Key result；S5 Contribution type。
-- 约束：`ccf_a` 通常 150-300 词，`is` 200-300 词；允许使用真实存在的 LaTeX citation key，但不要在 Abstract 堆砌引用；禁止正文未支撑的新数字、claim、术语。
-- Failure checklist：无量化 key result、引用 key 不存在、贡献描述过度泛化或引入新术语，都必须修。
+- 约束：`ccf_a` 通常 150-300 词，`is` 200-300 词；不写任何正式引用，包括 `\cite{}` / `\citep{}` / `\citet{}` / `\parencite{}` 等 LaTeX citation command、作者-年份括号引用和数字引用；禁止正文未支撑的新数字、claim、术语。
+- 写法：如果必须提到先前工作，只写方法族或问题类别，例如 "prior contrastive recommenders"；具体作者、年份和 BibTeX key 放到 Introduction 或 Related Work。
+- Failure checklist：无量化 key result、出现正式引用、贡献描述过度泛化或引入新术语，都必须修。
 {% endif %}
 
 {% elif phase == "draft" %}

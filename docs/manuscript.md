@@ -119,7 +119,7 @@ initialize_manuscript_state(...)
 
 ### T8-SEC-ABSTRACT
 
-只写 `drafts/sections/abstract.tex`。它最后运行，读取主要章节，压缩 problem、method、evidence、result、contribution。Abstract 允许使用真实存在的 LaTeX citation key，但不能引入正文没有的数字、claim、术语或未讨论文献。
+只写 `drafts/sections/abstract.tex`。它最后运行，读取主要章节，压缩 problem、method、evidence、result、contribution。Abstract 不放正式引用：不使用 LaTeX citation command，不写作者-年份括号引用，也不写数字引用；具体 prior work citation 放到 Introduction 或 Related Work。Abstract 也不能引入正文没有的数字、claim、术语或未讨论文献。
 
 ### T8-DRAFT
 
@@ -700,7 +700,7 @@ Tool 职责：
 
 边界：
 
-- Abstract 允许使用真实存在的 LaTeX citation key，但不应堆砌引用或引入正文没有讨论过的文献。
+- Abstract 不放正式引用；具体文献 attribution 放到 Introduction 或 Related Work。
 - Abstract 不放正文没有的数字。
 - Abstract 不夸大 novelty。
 

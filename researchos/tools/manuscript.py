@@ -82,6 +82,33 @@ SECTION_ALIASES = {
     "abstract": "abstract",
 }
 
+_LATEX_CITATION_COMMAND_RE = re.compile(
+    r"\\(?:cite|citep|citet|citealp|citealt|citeauthor|citeyear|parencite|textcite|autocite|footcite|supercite)\*?"
+    r"(?:\[[^\]]*\]){0,2}\{[^}]+\}",
+    flags=re.IGNORECASE,
+)
+_AUTHOR_YEAR_CITATION_RE = re.compile(
+    r"\b[A-Z][A-Za-z][A-Za-z'\-]+(?:\s+et\s+al\.)?\s*(?:\(|,\s*)20\d{2}\)?"
+)
+_NUMERIC_CITATION_RE = re.compile(r"\[(?:\d{1,3})(?:\s*[,;-]\s*\d{1,3})*\]")
+
+
+def has_latex_citation_command(text: str) -> bool:
+    """Return True when text contains an explicit LaTeX citation command."""
+
+    return bool(_LATEX_CITATION_COMMAND_RE.search(text or ""))
+
+
+def has_formal_citation(text: str) -> bool:
+    """Return True for citation formats that should not appear in an Abstract."""
+
+    text = text or ""
+    return bool(
+        _LATEX_CITATION_COMMAND_RE.search(text)
+        or _AUTHOR_YEAR_CITATION_RE.search(text)
+        or _NUMERIC_CITATION_RE.search(text)
+    )
+
 
 class BuildManuscriptResourceIndexParams(BaseModel):
     output_path: str = Field(
@@ -795,7 +822,7 @@ class AuditWritingCraftTool(Tool):
     name = "audit_writing_craft"
     description = (
         "Run deterministic writing-craft and alignment checks after manuscript assembly. "
-        "It detects standalone Limitations sections, weak CID coverage hints, "
+        "It detects standalone Limitations sections, abstract citation commands, weak CID coverage hints, "
         "AI boilerplate, and other mechanically checkable writing issues."
     )
     parameters_schema = AuditWritingCraftParams
@@ -1898,6 +1925,12 @@ def audit_writing_craft(
         "FAIL",
         bool(re.search(r"\\subsection\*?\{\s*Limitations\s*\}", conclusion, flags=re.IGNORECASE)),
         "Conclusion must include \\subsection{Limitations}.",
+    )
+    add(
+        "abstract_no_cite",
+        "FAIL",
+        not has_formal_citation(abstract),
+        "Abstract must not contain formal citations; cite prior work in Introduction or Related Work.",
     )
     word_count = len(re.findall(r"[A-Za-z]+(?:[-'][A-Za-z]+)?", abstract))
     if venue_style == "is":

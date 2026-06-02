@@ -15,7 +15,13 @@ import yaml
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
-from ..tools.manuscript import CORE_SECTIONS, SECTION_TITLES, SECTION_WRITING_SEQUENCE, normalize_section_id
+from ..tools.manuscript import (
+    CORE_SECTIONS,
+    SECTION_TITLES,
+    SECTION_WRITING_SEQUENCE,
+    has_formal_citation,
+    normalize_section_id,
+)
 from .guidance import load_agent_guidance
 from ._common import load_project, prepend_resume_prefix, read_text_file
 
@@ -618,6 +624,8 @@ def _validate_single_section(ws: Path, section_id: str) -> tuple[bool, str | Non
         return False, f"章节草稿过短: {section_id}"
     if "\\documentclass" in text or "\\begin{document}" in text or "\\end{document}" in text:
         return False, f"章节草稿不能包含整篇LaTeX wrapper: {section_id}"
+    if section_id == "abstract" and has_formal_citation(text):
+        return False, "Abstract 不应包含正式引用；请把作者-年份、数字引用或 LaTeX citation command 放到 Introduction 或 Related Work"
     foreign_headers = _find_foreign_section_headers(text, section_id)
     if foreign_headers:
         return False, (
@@ -750,6 +758,7 @@ def _validate_required_craft_checks(ws: Path) -> tuple[bool, str | None]:
     required_names = {
         "matrix_row_count",
         "intro_contribution_count",
+        "abstract_no_cite",
         "number_traceability",
         "no_standalone_limitations",
         "conclusion_has_limitations_subsection",
@@ -757,10 +766,7 @@ def _validate_required_craft_checks(ws: Path) -> tuple[bool, str | None]:
     missing = sorted(required_names - set(by_name))
     if missing:
         return False, "craft_audit.json 缺少关键检查: " + ", ".join(missing)
-    soft_legacy_failures = {
-        "abstract_no_cite",
-        "intro_contribution_count",
-    }
+    soft_legacy_failures = {"intro_contribution_count"}
     fail_items = [
         name
         for name, item in by_name.items()

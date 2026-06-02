@@ -259,13 +259,13 @@ def test_audit_writing_craft_warns_when_related_work_ignores_pre_t5_signals():
     assert check["level"] == "PASS"
 
 
-def test_writing_craft_counts_itemize_contributions_and_allows_abstract_cites():
+def test_writing_craft_counts_itemize_contributions_and_rejects_abstract_cites():
     rows = [
         {"cid": f"C{idx}", "experiment": {"rq": f"RQ{idx}", "table": "tab:main", "result_metric": "accuracy"}}
         for idx in range(1, 4)
     ]
     section_texts = {
-        "abstract": "We position the setting against prior work \\cite{smith2024}. " * 20,
+        "abstract": "We study a concrete problem gap and report a reproducible method with measured evidence. " * 12,
         "introduction": (
             "\\paragraph{Contributions}\n"
             "\\begin{itemize}\n"
@@ -290,7 +290,24 @@ def test_writing_craft_counts_itemize_contributions_and_allows_abstract_cites():
 
     checks = {item["name"]: item for item in audit["json"]["checks"]}
     assert checks["intro_contribution_count"]["level"] == "PASS"
-    assert "abstract_no_cite" not in checks
+    assert checks["abstract_no_cite"]["level"] == "PASS"
+
+    for cited_abstract in (
+        "We position the setting against prior work \\cite{smith2024}. " * 20,
+        "We position the setting against prior work (Smith et al., 2024). " * 20,
+        "We position the setting against prior work [12]. " * 20,
+    ):
+        section_texts["abstract"] = cited_abstract
+        cited_audit = audit_writing_craft(
+            paper="\n".join(section_texts.values()),
+            section_texts=section_texts,
+            paper_state={"shared_facts": {"result_metrics": ["accuracy"], "alignment_matrix": rows}},
+            alignment_matrix={"rows": rows},
+            cdr_ledger={"contribution_chains": rows},
+            venue_style="ccf_a",
+        )
+        cited_checks = {item["name"]: item for item in cited_audit["json"]["checks"]}
+        assert cited_checks["abstract_no_cite"]["level"] == "FAIL"
 
 
 def test_ideation_soft_signal_tools_are_diagnostic_not_gates():
@@ -577,7 +594,11 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
     assert "Writing Craft And Alignment Audit" in craft_text
     craft_json = json.loads((tmp_workspace / "drafts" / "craft_audit.json").read_text(encoding="utf-8"))
     assert craft_json["semantics"] == "deterministic_writing_craft_audit_not_scientific_judgment"
-    assert {item["name"] for item in craft_json["checks"]} >= {"matrix_row_count", "number_traceability"}
+    assert {item["name"] for item in craft_json["checks"]} >= {
+        "matrix_row_count",
+        "number_traceability",
+        "abstract_no_cite",
+    }
     assert (tmp_workspace / "drafts" / "is" / "craft_audit.json").exists()
     assert (tmp_workspace / "drafts" / "ccf_a" / "craft_audit.json").exists()
     ccf_variant = (tmp_workspace / "drafts" / "ccf_a" / "paper.tex").read_text(encoding="utf-8")
@@ -594,11 +615,9 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
     refreshed_craft = await craft_tool.execute(venue_style="both")
     assert refreshed_craft.ok
     ccf_craft = json.loads((tmp_workspace / "drafts" / "ccf_a" / "craft_audit.json").read_text(encoding="utf-8"))
-    assert all(item["name"] != "abstract_no_cite" for item in ccf_craft["checks"])
-    assert not any(
-        item["level"] == "FAIL" and item["passed"] is False and "abstract" in item["name"]
-        for item in ccf_craft["checks"]
-    )
+    abstract_check = next(item for item in ccf_craft["checks"] if item["name"] == "abstract_no_cite")
+    assert abstract_check["level"] == "FAIL"
+    assert abstract_check["passed"] is False
 
     review_dir = tmp_workspace / "drafts" / "review_rounds" / "round_1_sections"
     review_dir.mkdir(parents=True)
@@ -734,7 +753,7 @@ async def test_writing_craft_audit_reports_alignment_and_traceability_failures(t
     failed = {item["name"] for item in audit["checks"] if item["level"] == "FAIL" and not item["passed"]}
     intro_check = next(item for item in audit["checks"] if item["name"] == "intro_contribution_count")
     assert intro_check["level"] == "WARN"
-    assert all(item["name"] != "abstract_no_cite" for item in audit["checks"])
+    assert "abstract_no_cite" in failed
     assert "no_standalone_limitations" in failed
     assert "conclusion_has_limitations_subsection" in failed
     assert "number_traceability" in failed
