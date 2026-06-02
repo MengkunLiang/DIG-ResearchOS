@@ -31,12 +31,25 @@ Write the paper as a staged research argument, not as one long generation. Tools
 - Conclusion limitations subsection: direct-full evidence boundaries, skipped pilot/novelty-final risks if applicable, external validity, cost, and failure cases.
 - Abstract and Conclusion: write after main sections; no new claims.
 
+## Section Depth
+
+Do not turn section-by-section drafting into several short placeholders. Except for the Abstract, each section should be fully developed according to its evidence:
+
+- Methodology should cover artifact overview, component roles, inputs/outputs, algorithm or notation, design choices, and rejected alternatives.
+- Experiments should cover RQs, data/splits, baselines, metrics, seeds/compute, main results, ablations, error analysis, and result provenance.
+- Related Work should use 2-4 taxonomy or competing-rationale subsections, not a paper-by-paper laundry list.
+- Analysis should explain support for design rationales, alternative explanations, failure cases, sensitivity, and boundaries.
+- Introduction and Conclusion should form a complete problem-method-evidence-contribution chain.
+
+Avoid hard word-count floors. If evidence is missing, write TODO/limitation. If evidence is available, develop the section to the density expected by the target venue.
+
 ## Evidence Rules
 
 - Numbers must come from `experiments/results_summary.json`, `experiments/ablations.csv`, or indexed run artifacts.
 - Figures must come from existing generated assets or be explicitly marked as TODO with a generation plan.
 - Claims about prior work must cite `literature/related_work.bib` keys and be traceable to `literature/synthesis.md` or paper notes.
 - If T5/T6 were skipped, state the evidence boundary in Conclusion's Limitations subsection and avoid claiming pilot-validated novelty-final evidence.
+- Abstract may contain real LaTeX citation keys when needed, but should not pile up citations or introduce literature not discussed in the body.
 
 ## Tool Boundary
 

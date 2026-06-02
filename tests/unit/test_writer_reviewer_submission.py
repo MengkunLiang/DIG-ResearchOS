@@ -297,7 +297,6 @@ def _write_passing_craft_audit(workspace: Path) -> None:
     checks = [
         {"name": "matrix_row_count", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "intro_contribution_count", "level": "PASS", "passed": True, "detail": "ok"},
-        {"name": "abstract_no_cite", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "number_traceability", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "no_standalone_limitations", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "conclusion_has_limitations_subsection", "level": "PASS", "passed": True, "detail": "ok"},

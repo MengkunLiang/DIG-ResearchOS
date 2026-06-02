@@ -302,7 +302,7 @@ profiles:
         endpoint: siliconflow
         max_context: 128000
       fallback:
-        - model: "Pro/MiniMaxAI/MiniMax-M2.5"
+        - model: "deepseek-ai/DeepSeek-V4-Pro"
           endpoint: siliconflow
           max_context: 128000
 ```
@@ -437,8 +437,13 @@ agents:
 这些字段放在 `agents.<agent>.budget` 下。mode 级预算放在
 `agents.<agent>.modes.<mode>.budget` 下，并只覆盖当前 mode。
 
-`unlimited_budget` 是显式 opt-in，不是默认行为。它用于少数确定会很长、
-但已经有其他停止条件或人工监控的 agent/mode：
+runtime 的 `unlimited_budget` 仍是一个显式配置字段；当前 checked-in
+`agent_params.yaml` 已在每个基础 agent 的 `budget` 下设置
+`unlimited_budget: true`，所以默认运行不会因为 agent runtime 的
+`max_steps`、`max_tokens_total`、`max_wall_seconds` 暂停。`max_*` 字段仍保留为
+可见的参考值，也用于你把某个 mode/task 恢复成有限预算时的上限。
+
+新增 agent 或 mode 时，可以显式启用：
 
 ```yaml
 agents:
@@ -461,7 +466,7 @@ agents:
 ```
 
 两种写法等价。runtime 会把 `unlimited-budget`、`unlimited_budget` 归一化成同一语义。
-如果某个 mode 继承了上层无限预算但需要恢复有限预算，写：
+如果某个 mode 或 state-machine task 继承了上层无限预算但需要恢复有限预算，写：
 
 ```yaml
 budget:
@@ -890,7 +895,7 @@ profiles:
         model: deepseek-ai/DeepSeek-V4-Flash
         endpoint: siliconflow
       fallback:
-        - model: Pro/MiniMaxAI/MiniMax-M2.5
+        - model: deepseek-ai/DeepSeek-V4-Pro
           endpoint: siliconflow
 ```
 

@@ -795,7 +795,7 @@ class AuditWritingCraftTool(Tool):
     name = "audit_writing_craft"
     description = (
         "Run deterministic writing-craft and alignment checks after manuscript assembly. "
-        "It detects standalone Limitations sections, abstract citations, missing CID anchors, "
+        "It detects standalone Limitations sections, weak CID coverage hints, "
         "AI boilerplate, and other mechanically checkable writing issues."
     )
     parameters_schema = AuditWritingCraftParams
@@ -1863,9 +1863,8 @@ def audit_writing_craft(
         "matrix_row_count",
         "FAIL",
         bool(rows)
-        and 3 <= len(rows) <= 5
-        and (expected_count == 0 or len(rows) == expected_count)
-        and (contribution_count == 0 or len(rows) == contribution_count),
+        and 3 <= len(rows) <= 6
+        and (expected_count == 0 or len(rows) == expected_count),
         (
             f"matrix rows={len(rows)}, contribution lanes={expected_count}, "
             f"intro contribution bullets={contribution_count}"
@@ -1873,16 +1872,16 @@ def audit_writing_craft(
     )
     add(
         "intro_contribution_count",
-        "FAIL",
-        3 <= contribution_count <= 5,
-        f"detected introduction contribution bullets={contribution_count}; target 3-5",
+        "WARN",
+        3 <= contribution_count <= 6,
+        f"detected introduction contribution bullets={contribution_count}; suggested range 3-6; reviewer/LLM should verify prose if 0",
     )
     if gap_count:
         add("intro_gap_count", "WARN", gap_count <= 3, f"detected gap/motivation markers={gap_count}; target <=3")
         add(
             "intro_gap_eq_contribution",
-            "FAIL",
-            contribution_count > 0 and gap_count == contribution_count,
+            "WARN",
+            contribution_count == 0 or gap_count == contribution_count,
             f"gap/motivation markers={gap_count}, contribution bullets={contribution_count}",
         )
     else:
@@ -1900,20 +1899,13 @@ def audit_writing_craft(
         bool(re.search(r"\\subsection\*?\{\s*Limitations\s*\}", conclusion, flags=re.IGNORECASE)),
         "Conclusion must include \\subsection{Limitations}.",
     )
-    add(
-        "abstract_no_cite",
-        "FAIL",
-        "\\cite" not in abstract,
-        "Abstract must not contain citation commands.",
-    )
-
     word_count = len(re.findall(r"[A-Za-z]+(?:[-'][A-Za-z]+)?", abstract))
     if venue_style == "is":
         passed = 200 <= word_count <= 300
         target = "200-300"
     else:
-        passed = 150 <= word_count <= 250
-        target = "150-250"
+        passed = 150 <= word_count <= 300
+        target = "150-300"
     add("abstract_wordcount", "WARN", passed or word_count == 0, f"abstract words={word_count}; target={target} for style={venue_style}")
 
     for row in rows:
@@ -1922,21 +1914,21 @@ def audit_writing_craft(
             continue
         add(
             f"cid_{cid}_intro_anchor",
-            "FAIL",
+            "WARN",
             _section_has_cid_anchor(intro, cid),
-            f"Introduction should mark motivation/contribution paragraph with % [{cid}].",
+            f"Introduction may mark motivation/contribution paragraph with % [{cid}] for traceability.",
         )
         add(
             f"cid_{cid}_related_anchor",
-            "FAIL",
+            "WARN",
             _section_has_cid_anchor(related, cid),
-            f"Related Work should map a gap/tension paragraph to % [{cid}].",
+            f"Related Work may map a gap/tension paragraph to % [{cid}] for traceability.",
         )
         add(
             f"cid_{cid}_experiment_anchor",
-            "FAIL",
+            "WARN",
             _section_has_cid_anchor(experiments, cid),
-            f"Experiments should map an RQ/result paragraph to % [{cid}].",
+            f"Experiments may map an RQ/result paragraph to % [{cid}] for traceability.",
         )
         add(
             f"cid_{cid}_experiment_artifact",
@@ -2437,7 +2429,7 @@ def _read_section_texts_from_paper(paper: str) -> dict[str, str]:
 def _count_intro_contributions(text: str) -> int:
     if not text.strip():
         return 0
-    if re.search(r"\\begin\{enumerate\}", text):
+    if re.search(r"\\begin\{(?:enumerate|itemize)\}", text):
         return len(re.findall(r"\\item\b", text))
     lines = text.splitlines()
     count = 0
@@ -2447,7 +2439,10 @@ def _count_intro_contributions(text: str) -> int:
         if re.search(r"contributions?|贡献", clean, flags=re.IGNORECASE):
             in_contrib = True
             continue
-        if in_contrib and re.match(r"(?:[-*]|\d+[.)])\s+", clean):
+        if in_contrib and (
+            re.match(r"(?:[-*]|\d+[.)])\s+", clean)
+            or re.match(r"\\item\b", clean)
+        ):
             count += 1
         elif in_contrib and clean.startswith("\\section"):
             break

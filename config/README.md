@@ -238,7 +238,12 @@ agents:
           type: user_select
 ```
 
-如需让某个 agent 或 mode 跳过 agent runtime 预算上限，可以显式启用：
+当前 checked-in `agent_params.yaml` 已在每个基础 agent 的 `budget` 下设置
+`unlimited_budget: true`，因此默认不会因为 agent runtime 的
+`max_steps`、`max_tokens_total`、`max_wall_seconds` 暂停。`max_*` 字段仍保留为
+可见的参考值和恢复有限预算时的上限。
+
+如果新增 agent/mode，仍可以用显式写法启用无限预算：
 
 ```yaml
 agents:
@@ -252,7 +257,7 @@ agents:
 等价写法是 `budget.unlimited_budget: true`。该开关只跳过本轮 agent 的
 `max_steps`、`max_tokens_total`、`max_wall_seconds` 检查；仍会记录 step/token/cost，
 也不会关闭 LLM 单次调用超时、工具超时、Docker/TeX 专用超时、workspace 权限或输出校验。
-如果某个 mode 继承了上层无限预算但需要恢复有限预算，写
+如果某个 mode 或 state-machine task 继承了上层无限预算但需要恢复有限预算，写
 `budget.unlimited_budget: false`。
 
 建议：

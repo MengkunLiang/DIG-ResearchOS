@@ -366,7 +366,7 @@ runtime 不会立刻死掉，而是会主动发“继续推进或调用 finish_t
 - 每次触顶都可以弹 gate
 - 默认不限制扩限次数
 - 会展示当前预算、已有输出、建议扩容量
-- 如果当前 run 显式启用了 `unlimited_budget`，`BudgetTracker` 会跳过
+- 如果当前 run 启用了 `unlimited_budget`，`BudgetTracker` 会跳过
   `max_steps`、`max_tokens_total`、`max_wall_seconds` 检查，因此不会触发预算扩限 gate
 
 `unlimited_budget` 有两类入口：
@@ -376,10 +376,11 @@ runtime 不会立刻死掉，而是会主动发“继续推进或调用 finish_t
 - state-machine 节点临时覆盖：`states.<task>.budget.unlimited_budget: true`
   或 `states.<task>.tags: [unlimited_budget]`
 
-它不是全局默认开关，必须逐 agent、逐 mode 或逐 task 显式启用。启用后仍会记录
-step/token/cost，也不会关闭 LLM 单次调用超时、工具超时、Docker/TeX 专用超时、
-workspace 权限、输出校验或项目级实验预算检查。若某个 mode 或 task 需要从上层默认恢复有限预算，
-写 `unlimited_budget: false`。
+当前 checked-in `config/agent_params.yaml` 已在每个基础 agent 的 `budget` 下设置
+`unlimited_budget: true`，所以默认不会因为 agent runtime 的 step/token/wall 上限暂停。
+启用后仍会记录 step/token/cost，也不会关闭 LLM 单次调用超时、工具超时、Docker/TeX
+专用超时、workspace 权限、输出校验或项目级实验预算检查。若某个 mode 或 task
+需要从上层默认恢复有限预算，写 `unlimited_budget: false`。
 
 ---
 

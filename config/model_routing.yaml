@@ -101,7 +101,7 @@ profiles:
       fallback:
         # 先在同一个 SiliconFlow provider 内切换备选模型，
         # 只有 primary 持续超时/拥塞时才会走到这里。
-        - model: "Pro/MiniMaxAI/MiniMax-M2.5"
+        - model: "deepseek-ai/DeepSeek-V4-Pro"
           endpoint: siliconflow
           max_context: 128000
 
@@ -114,7 +114,7 @@ profiles:
         max_context: 128000
       fallback:
         # default.medium 是当前报 timeout 最多的链路，因此这里显式补同 provider fallback。
-        - model: "Pro/MiniMaxAI/MiniMax-M2.5"
+        - model: "deepseek-ai/DeepSeek-V4-Pro"
           endpoint: siliconflow
           max_context: 128000
 
@@ -125,7 +125,7 @@ profiles:
         endpoint: siliconflow
         max_context: 128000
       fallback:
-        - model: "Pro/MiniMaxAI/MiniMax-M2.5"
+        - model: "deepseek-ai/DeepSeek-V4-Pro"
           endpoint: siliconflow
           max_context: 128000
 
@@ -139,7 +139,7 @@ profiles:
         endpoint: siliconflow
         max_context: 128000
       fallback:
-        - model: "Pro/MiniMaxAI/MiniMax-M2.5"
+        - model: "deepseek-ai/DeepSeek-V4-Pro"
           endpoint: siliconflow
           max_context: 128000
 
@@ -149,7 +149,7 @@ profiles:
         endpoint: siliconflow
         max_context: 128000
       fallback:
-        - model: "Pro/MiniMaxAI/MiniMax-M2.5"
+        - model: "deepseek-ai/DeepSeek-V4-Pro"
           endpoint: siliconflow
           max_context: 128000
 
@@ -160,7 +160,7 @@ profiles:
         endpoint: siliconflow
         max_context: 128000
       fallback:
-        - model: "Pro/MiniMaxAI/MiniMax-M2.5"
+        - model: "deepseek-ai/DeepSeek-V4-Pro"
           endpoint: siliconflow
           max_context: 128000
 
@@ -201,7 +201,7 @@ profiles:
       fallback:
         # 这里的 fallback 只在 primary 真失败时才会触发，
         # 不是“每次都两个模型一起跑”。
-        - model: "Pro/MiniMaxAI/MiniMax-M2.5"
+        - model: "deepseek-ai/DeepSeek-V4-Pro"
           endpoint: siliconflow
           max_context: 128000
         - model: "openrouter/openai/gpt-4o"
@@ -217,7 +217,7 @@ profiles:
         - model: "deepseek-ai/DeepSeek-V4-Flash"
           endpoint: siliconflow
           max_context: 128000
-        - model: "Pro/MiniMaxAI/MiniMax-M2.5"
+        - model: "deepseek-ai/DeepSeek-V4-Pro"
           endpoint: siliconflow
           max_context: 128000
 
@@ -246,7 +246,7 @@ profiles:
         max_context: 128000
       fallback:
         # 先保持同 provider 的备选，再回退到 OpenRouter。
-        - model: "Pro/MiniMaxAI/MiniMax-M2.5"
+        - model: "deepseek-ai/DeepSeek-V4-Pro"
           endpoint: siliconflow
           max_context: 128000
         - model: "openrouter/openai/gpt-4o"
@@ -271,8 +271,8 @@ profiles:
         endpoint: siliconflow
         max_context: 128000
       fallback:
-        # 先尝试同一个 SiliconFlow 内的 MiniMax，再跨 provider 切 OpenRouter。
-        - model: "Pro/MiniMaxAI/MiniMax-M2.5"
+        # 先尝试同一个 SiliconFlow 内的 DeepSeek Pro，再跨 provider 切 OpenRouter。
+        - model: "deepseek-ai/DeepSeek-V4-Pro"
           endpoint: siliconflow
           max_context: 128000
         - model: "openrouter/openai/gpt-4o-mini"

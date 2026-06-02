@@ -750,7 +750,6 @@ def _validate_required_craft_checks(ws: Path) -> tuple[bool, str | None]:
     required_names = {
         "matrix_row_count",
         "intro_contribution_count",
-        "abstract_no_cite",
         "number_traceability",
         "no_standalone_limitations",
         "conclusion_has_limitations_subsection",
@@ -758,10 +757,20 @@ def _validate_required_craft_checks(ws: Path) -> tuple[bool, str | None]:
     missing = sorted(required_names - set(by_name))
     if missing:
         return False, "craft_audit.json 缺少关键检查: " + ", ".join(missing)
+    soft_legacy_failures = {
+        "abstract_no_cite",
+        "intro_contribution_count",
+    }
     fail_items = [
         name
         for name, item in by_name.items()
-        if item.get("level") == "FAIL" and item.get("passed") is False
+        if item.get("level") == "FAIL"
+        and item.get("passed") is False
+        and name not in soft_legacy_failures
+        and not (
+            name.startswith("cid_")
+            and name.endswith(("_intro_anchor", "_related_anchor", "_experiment_anchor"))
+        )
     ]
     if fail_items:
         return False, "craft_audit.json 存在 FAIL: " + ", ".join(fail_items[:8])

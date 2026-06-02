@@ -322,7 +322,7 @@ profiles:
         endpoint: siliconflow
         max_context: 128000
       fallback:
-        - model: Pro/MiniMaxAI/MiniMax-M2.5
+        - model: deepseek-ai/DeepSeek-V4-Pro
           endpoint: siliconflow
           max_context: 128000
 """.strip(),
@@ -360,10 +360,10 @@ profiles:
         retry_base_delay=0.25,
     )
 
-    assert response.model_used == "openai/Pro/MiniMaxAI/MiniMax-M2.5"
+    assert response.model_used == "openai/deepseek-ai/DeepSeek-V4-Pro"
     assert calls[:2] == [
         "openai/deepseek-ai/DeepSeek-V4-Flash",
-        "openai/Pro/MiniMaxAI/MiniMax-M2.5",
+        "openai/deepseek-ai/DeepSeek-V4-Pro",
     ]
 
 
@@ -386,7 +386,7 @@ profiles:
         endpoint: siliconflow
         max_context: 64000
       fallback:
-        - model: Pro/MiniMaxAI/MiniMax-M2.5
+        - model: deepseek-ai/DeepSeek-V4-Pro
           endpoint: siliconflow
           max_context: 64000
 """.strip(),
@@ -404,6 +404,6 @@ profiles:
 
     assert [binding.model for binding, _ in resolved] == [
         "deepseek-ai/DeepSeek-V4-Flash",
-        "Pro/MiniMaxAI/MiniMax-M2.5",
+        "deepseek-ai/DeepSeek-V4-Pro",
     ]
     assert [binding.max_context for binding, _ in resolved] == [128000, 128000]
