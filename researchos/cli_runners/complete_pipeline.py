@@ -95,6 +95,10 @@ class CompletePipelineRunner:
                 _LOG.info("pipeline_paused")
                 print("Project paused.")
                 return 130
+            if state.status == "WAITING_HUMAN":
+                _LOG.info("pipeline_waiting_human")
+                print("Project waiting for human input.")
+                return 130
 
     async def _run_one_step(self, state: StateYaml, state_path: Path) -> StateYaml:
         """推进一个状态机 step。"""
@@ -114,6 +118,14 @@ class CompletePipelineRunner:
         node = self.state_machine.nodes[state.current_task]
         if node.terminal:
             state.status = "COMPLETED" if state.status != "FAILED" else state.status
+            state.dump_yaml(state_path)
+            return state
+
+        if self.state_machine.should_pause_for_immediate_gate(state):
+            state = self.state_machine.pause_for_immediate_gate(
+                state,
+                workspace_dir=self.workspace,
+            )
             state.dump_yaml(state_path)
             return state
 

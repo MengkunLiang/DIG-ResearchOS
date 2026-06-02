@@ -95,6 +95,10 @@ class BuildSynthesisWorkbenchParams(BaseModel):
         default="literature/missing_areas.md",
         description="Relative workspace path to missing_areas.md.",
     )
+    domain_map_path: str = Field(
+        default="literature/domain_map.json",
+        description="Relative workspace path to T2 domain_map.json.",
+    )
     output_dir: str = Field(
         default="literature",
         description="Relative workspace directory for synthesis workbench artifacts.",
@@ -142,6 +146,7 @@ class BuildSynthesisWorkbenchTool(Tool):
             notes_dir = self.policy.resolve_read(params.notes_dir)
             comparison_path = self.policy.resolve_read(params.comparison_table)
             missing_path = self.policy.resolve_read(params.missing_areas)
+            domain_map_path = self.policy.resolve_read(params.domain_map_path)
             output_dir = self.policy.resolve_write(params.output_dir)
         except ToolAccessDenied as exc:
             return ToolResult(ok=False, content=str(exc), error="access_denied")
@@ -168,6 +173,7 @@ class BuildSynthesisWorkbenchTool(Tool):
 
         comparison_rows = _read_comparison_rows(comparison_path) if comparison_path.exists() else []
         missing_areas = missing_path.read_text(encoding="utf-8", errors="replace") if missing_path.exists() else ""
+        domain_map = _read_json(domain_map_path) if domain_map_path.exists() else {}
         insights = params.llm_insights
         families = _build_method_families(notes, abstract_notes, llm_insights=insights)
         all_notes = notes + abstract_notes
@@ -181,6 +187,9 @@ class BuildSynthesisWorkbenchTool(Tool):
             "metric_landscape_hints": _build_metric_landscape_hints(notes, comparison_rows),
             "contribution_space": _build_contribution_space(notes, abstract_notes),
             "cross_paper_tensions": _build_cross_paper_tensions(notes, llm_insights=insights),
+            "citation_graph_context": _build_citation_graph_context(domain_map),
+            "domain_map_bucket_summary": _build_domain_map_bucket_summary(domain_map),
+            "adjacent_transfers": _build_adjacent_transfers(domain_map, all_notes),
             "trend_candidates": _build_trends(notes, llm_insights=insights),
             "research_question_candidates": _build_questions(notes, missing_areas, llm_insights=insights),
             "mechanism_claim_clusters": _build_mechanism_claim_clusters(all_notes),
@@ -244,7 +253,9 @@ def _parse_note(path: Path, evidence_level: str = "FULL_TEXT") -> dict[str, Any]
         "venue": _field(text, "Venue"),
         "status": status_raw,
         "evidence_level": evidence_level,
-        "method_overview": _section(text, "2. Method Overview"),
+        "method_overview": _section(text, "2. Method Overview") or _section(text, "2. Method Summary"),
+        "core_approach_view": _section(text, "A. 核心做法/视角"),
+        "bridge_point": _section(text, "B. 桥接点"),
         "key_results": _section(text, "3. Key Results"),
         "limitations": _section(text, "5. Limitations"),
         "relevance": _section(text, "6. Relevance to Our Research"),
@@ -268,7 +279,7 @@ def _field(text: str, name: str) -> str:
 
 def _section(text: str, heading: str) -> str:
     pattern = re.compile(
-        rf"(?ms)^##\s+{re.escape(heading)}\s*(?P<body>.*?)(?=^##\s+\d+\.|\Z)"
+        rf"(?ms)^##\s+{re.escape(heading)}\s*(?P<body>.*?)(?=^##\s+|\Z)"
     )
     match = pattern.search(text)
     if not match:
@@ -380,12 +391,24 @@ def _normalize_ref_id(value: str) -> str:
     return cleaned.strip("_") or "paper"
 
 
+def _normalize_title_key(value: Any) -> str:
+    return re.sub(r"\W+", " ", str(value or "").casefold()).strip()
+
+
 def _read_comparison_rows(path: Path) -> list[dict[str, str]]:
     try:
         with path.open(encoding="utf-8", newline="") as handle:
             return [dict(row) for row in csv.DictReader(handle)]
     except Exception:
         return []
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _build_method_families(
@@ -577,6 +600,82 @@ def _build_cross_paper_tensions(
             }
         )
     return tensions[:12]
+
+
+def _build_citation_graph_context(domain_map: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(domain_map, dict) or not domain_map:
+        return {
+            "semantics": "citation_graph_context_unavailable",
+            "citation_edges": [],
+            "review_note": "No domain_map.json was available; Reader LLM should rely on paper notes and explicitly mention this limitation.",
+        }
+    return {
+        "semantics": "mechanical_citation_graph_context_not_final_literature_structure",
+        "domain_map_semantics": domain_map.get("semantics", ""),
+        "citation_edges": domain_map.get("citation_edges", [])[:200],
+        "core_ids": [item.get("id") for item in domain_map.get("core", []) if isinstance(item, dict)][:30],
+        "adjacent_ids": [item.get("id") for item in domain_map.get("adjacent", []) if isinstance(item, dict)][:30],
+        "boundary_ids": [item.get("id") for item in domain_map.get("boundary", []) if isinstance(item, dict)][:30],
+        "warnings": domain_map.get("warnings", []),
+    }
+
+
+def _build_domain_map_bucket_summary(domain_map: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(domain_map, dict) or not domain_map:
+        return {"core": 0, "adjacent": 0, "boundary": 0, "warnings": ["domain_map_missing"]}
+    return {
+        "semantics": "domain_map_bucket_counts_for_llm_review",
+        "core": len(domain_map.get("core", []) or []),
+        "adjacent": len(domain_map.get("adjacent", []) or []),
+        "boundary": len(domain_map.get("boundary", []) or []),
+        "edge_count": len(domain_map.get("citation_edges", []) or []),
+        "warnings": domain_map.get("warnings", []),
+    }
+
+
+def _build_adjacent_transfers(
+    domain_map: dict[str, Any],
+    all_notes: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Seed adjacent-transfer candidates without inventing domain knowledge."""
+
+    if not isinstance(domain_map, dict):
+        return []
+    adjacent_nodes = [item for item in domain_map.get("adjacent", []) if isinstance(item, dict)]
+    if not adjacent_nodes:
+        return []
+
+    note_by_id = {note.get("paper_id"): note for note in all_notes if note.get("paper_id")}
+    title_to_note = {_normalize_title_key(note.get("title", "")): note for note in all_notes if note.get("title")}
+    transfers: list[dict[str, Any]] = []
+    for node in adjacent_nodes[:12]:
+        node_id = str(node.get("id") or "").strip()
+        note = note_by_id.get(node_id) or note_by_id.get(_normalize_ref_id(node_id))
+        if note is None:
+            note = title_to_note.get(_normalize_title_key(node.get("title", "")))
+        mechanism = ""
+        bridge = ""
+        if note:
+            mechanism = (
+                str(note.get("core_approach_view") or "").strip()
+                or str(note.get("method_overview") or "").strip()
+                or str((note.get("mechanism_claim") or {}).get("stated_mechanism") or "").strip()
+            )
+            bridge = str(note.get("bridge_point") or "").strip()
+        transfers.append(
+            {
+                "mechanism": _shorten(mechanism, 260) or "LLM_REVIEW_REQUIRED: infer possible transferable mechanism from adjacent paper metadata/note",
+                "source_field": "adjacent_domain_or_theory_bridge",
+                "source_papers": [node_id] if node_id else [],
+                "bridges_to_core": node.get("bridges_to_core", []),
+                "why_unused_in_target": "LLM_REVIEW_REQUIRED: compare this adjacent mechanism with core target-domain design rationales",
+                "transfer_hypothesis_hint": _shorten(bridge or node.get("why_adjacent", ""), 260)
+                or "LLM_REVIEW_REQUIRED: formulate a transfer hypothesis only after reading the note.",
+                "evidence_level": str(note.get("evidence_level") if note else "metadata_or_domain_map_hint"),
+                "semantics": "adjacent_transfer_seed_for_llm_review_not_claim",
+            }
+        )
+    return transfers
 
 
 def _build_trends(
@@ -821,6 +920,14 @@ def _render_outline(workbench: dict[str, Any], missing_areas: str) -> str:
         for item in tensions[:6]:
             refs = ", ".join(_refs(item.get("paper_ids", [])))
             lines.append(f"- {item.get('tension', '')} ({refs})")
+    adjacent_transfers = workbench.get("adjacent_transfers", [])
+    lines.extend(["", "## Adjacent Transfers / 邻接领域可迁移机制"])
+    if adjacent_transfers:
+        for item in adjacent_transfers[:6]:
+            refs = ", ".join(_refs(item.get("source_papers", [])))
+            lines.append(f"- {item.get('mechanism', '')} ({refs}) -> {item.get('transfer_hypothesis_hint', '')}")
+    else:
+        lines.append("- No adjacent-transfer seed was detected; final synthesis should state whether this is a retrieval limitation.")
     mechanism_clusters = workbench.get("mechanism_claim_clusters") or workbench.get("domain_consensus", [])
     if mechanism_clusters:
         lines.extend(["", "## Mechanism Claim Clusters For LLM Review"])
@@ -887,6 +994,16 @@ def _render_draft_guidance(workbench: dict[str, Any]) -> str:
     for item in workbench.get("cross_paper_tensions", [])[:8]:
         refs = ", ".join(_refs(item.get("paper_ids", [])))
         lines.append(f"- Tension: {item.get('tension', '')} | papers: {refs}")
+
+    lines.extend(["", "## Adjacent Transfers To Review", ""])
+    for item in workbench.get("adjacent_transfers", [])[:8]:
+        refs = ", ".join(_refs(item.get("source_papers", [])))
+        lines.append(
+            f"- Transfer seed: {item.get('mechanism', '')} | source papers: {refs} | "
+            f"bridge: {item.get('transfer_hypothesis_hint', '')}"
+        )
+    if not workbench.get("adjacent_transfers"):
+        lines.append("- No adjacent-transfer seed was detected; Reader LLM should explain coverage limits instead of inventing one.")
 
     lines.extend(
         [

@@ -243,6 +243,23 @@ def test_validate_t2_artifacts_with_builtin_checker(tmp_path: Path):
         json.dumps(deep_read_item, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+    (workspace / "literature" / "citation_edges.json").write_text("[]\n", encoding="utf-8")
+    (workspace / "literature" / "domain_map.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "domain_map_for_synthesis_and_ideation_not_final_gaps",
+                "core": [{"id": "paper-1", "title": "A Runtime Paper", "degree": 0}],
+                "adjacent": [],
+                "boundary": [],
+                "citation_edges": [],
+                "bucket_assignments": {"paper-1": "core"},
+                "warnings": ["citation_edges_empty_or_unavailable"],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
     (workspace / "literature" / "access_audit.md").write_text(
         "# Access Audit\n",
         encoding="utf-8",
@@ -330,13 +347,13 @@ def test_validate_t4_artifacts_reports_bad_hypothesis_ref(tmp_path: Path):
                             "mechanism_family": "selective noise application",
                         },
                         "hypothesis_refs": ["H1"],
-                            "source": {
-                                "from_synthesis_section": "synthesis.md: Q1",
-                                "from_missing_area": "missing_areas.md: gap",
-                                "from_seed_idea": False,
-                                "idea_origin": "free_reasoning",
-                                "constraint_status": "mainline",
-                                "supporting_papers": [
+                        "source": {
+                            "from_synthesis_section": "synthesis.md: Q1",
+                            "from_missing_area": "missing_areas.md: gap",
+                            "from_seed_idea": False,
+                            "idea_origin": "free_reasoning",
+                            "constraint_status": "mainline",
+                            "supporting_papers": [
                                 {
                                     "title": "Paper 1",
                                     "claim_used": "The synthesis identifies a testable gap.",
@@ -388,6 +405,10 @@ def test_validate_t4_artifacts_reports_bad_hypothesis_ref(tmp_path: Path):
                             "expected_signal": "improvement",
                             "estimated_cost_usd": 5,
                         },
+                        "counterfactual_check": "independent",
+                        "counterfactual_note": "The design rationale remains valid without Paper 1; the paper only supplies one motivating example.",
+                        "nearest_prior_work": {"work": "Paper 1", "distance": "moderate"},
+                        "novelty_signal": "adjacent_zone",
                     },
                     {
                         "idea": {
@@ -402,13 +423,13 @@ def test_validate_t4_artifacts_reports_bad_hypothesis_ref(tmp_path: Path):
                             "mechanism_family": "direct transfer",
                         },
                         "hypothesis_refs": [],
-                            "source": {
-                                "from_synthesis_section": "synthesis.md: Q2",
-                                "from_missing_area": "missing_areas.md: weak gap",
-                                "from_seed_idea": False,
-                                "idea_origin": "seed_refinement",
-                                "constraint_status": "mainline",
-                                "supporting_papers": [
+                        "source": {
+                            "from_synthesis_section": "synthesis.md: Q2",
+                            "from_missing_area": "missing_areas.md: weak gap",
+                            "from_seed_idea": False,
+                            "idea_origin": "seed_refinement",
+                            "constraint_status": "mainline",
+                            "supporting_papers": [
                                 {
                                     "title": "Paper 2",
                                     "claim_used": "Prior work already covers it.",
@@ -459,6 +480,10 @@ def test_validate_t4_artifacts_reports_bad_hypothesis_ref(tmp_path: Path):
                             "expected_signal": "large improvement",
                             "estimated_cost_usd": 5,
                         },
+                        "counterfactual_check": "collapses",
+                        "counterfactual_note": "Without Paper 2 the remaining idea is mostly a direct scenario transfer.",
+                        "nearest_prior_work": {"work": "Paper 2", "distance": "very_close"},
+                        "novelty_signal": "marginal_zone",
                     },
                 ],
             },
@@ -597,10 +622,42 @@ def test_validate_t4_artifacts_reports_bad_hypothesis_ref(tmp_path: Path):
                 "version": "1.0",
                 "semantics": "grounding_review_flags_not_deletion_or_final_quality_gate",
                 "reviews": [
-                    {"idea_id": "D1", "screening_recommendation": "proceed", "visible_to_gate": True},
-                    {"idea_id": "D1b", "screening_recommendation": "defer_recommended", "visible_to_gate": True},
-                    {"idea_id": "D2", "screening_recommendation": "reject_recommended", "visible_to_gate": True},
-                    {"idea_id": "S1", "screening_recommendation": "revise_before_selection", "visible_to_gate": True},
+                    {
+                        "idea_id": "D1",
+                        "screening_recommendation": "proceed",
+                        "visible_to_gate": True,
+                        "counterfactual_check": "independent",
+                        "counterfactual_note": "Independent rationale remains without the nearest paper.",
+                        "nearest_prior_work": {"work": "Smith2024", "distance": "moderate"},
+                        "novelty_signal": "adjacent_zone",
+                    },
+                    {
+                        "idea_id": "D1b",
+                        "screening_recommendation": "defer_recommended",
+                        "visible_to_gate": True,
+                        "counterfactual_check": "survives_weakened",
+                        "counterfactual_note": "Rationale survives but with weaker evidence.",
+                        "nearest_prior_work": {"work": "Nearby Paper", "distance": "distant"},
+                        "novelty_signal": "no_nearby_cluster",
+                    },
+                    {
+                        "idea_id": "D2",
+                        "screening_recommendation": "reject_recommended",
+                        "visible_to_gate": True,
+                        "counterfactual_check": "collapses",
+                        "counterfactual_note": "Without the nearest prior work this is mostly transfer.",
+                        "nearest_prior_work": {"work": "Nearby Paper", "distance": "very_close"},
+                        "novelty_signal": "marginal_zone",
+                    },
+                    {
+                        "idea_id": "S1",
+                        "screening_recommendation": "revise_before_selection",
+                        "visible_to_gate": True,
+                        "counterfactual_check": "survives_weakened",
+                        "counterfactual_note": "Reverse operation remains useful as a diagnostic.",
+                        "nearest_prior_work": {"work": "none", "distance": "none_found"},
+                        "novelty_signal": "no_nearby_cluster",
+                    },
                 ],
             },
             ensure_ascii=False,

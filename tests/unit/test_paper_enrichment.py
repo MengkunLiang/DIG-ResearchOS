@@ -284,3 +284,51 @@ def test_build_deep_read_queue_protects_llm_labeled_adjacent_bucket(tmp_path):
     assert adjacent["adjacent_field"] is True
     assert adjacent["search_bucket"] == "adjacent_field"
     assert meta["protected_bucket_in_queue"] >= 1
+    assert meta["protected_bucket_in_target"] >= 1
+    assert adjacent["target_bucket"] != "overflow"
+
+
+def test_build_deep_read_queue_protected_bucket_cannot_be_sorted_to_overflow(tmp_path):
+    workspace = tmp_path / "ws"
+    (workspace / "literature").mkdir(parents=True, exist_ok=True)
+    (workspace / "user_seeds").mkdir(parents=True, exist_ok=True)
+
+    papers = [
+        {
+            "id": f"core-{idx}",
+            "title": f"High Score Core {idx}",
+            "source": "openalex",
+            "year": 2026,
+            "abstract": "high score core target-domain paper",
+            "relevance_score": 0.99 - idx * 0.01,
+            "verification_status": "metadata_verified",
+            "verification_confidence": 0.95,
+        }
+        for idx in range(10)
+    ]
+    papers.append(
+        {
+            "id": "theory-bridge-low-score",
+            "title": "Low Score Theory Bridge",
+            "source": "openalex",
+            "year": 2024,
+            "abstract": "theory bridge material with low lexical relevance",
+            "relevance_score": 0.01,
+            "verification_status": "metadata_verified",
+            "verification_confidence": 0.9,
+            "search_bucket": "theory_bridge",
+        }
+    )
+
+    queue, meta = build_deep_read_queue(
+        enrich_papers(papers),
+        workspace,
+        deep_read_min=2,
+        deep_read_target=3,
+        deep_read_max=6,
+        probe_pool=6,
+    )
+
+    bridge = next(item for item in queue if item["paper_id"] == "theory-bridge-low-score")
+    assert bridge["target_bucket"] == "target"
+    assert meta["protected_bucket_in_target"] >= 1

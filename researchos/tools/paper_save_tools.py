@@ -244,6 +244,7 @@ def _passthrough_raw_annotations(paper: dict[str, Any]) -> dict[str, Any]:
     allowed = (
         "search_bucket",
         "query_bucket",
+        "source_bucket",
         "adjacent_field",
         "source_query",
         "source_tool",

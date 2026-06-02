@@ -12,18 +12,30 @@ from ..runtime.config import RuntimeSettings
 from .ask_human import AskHumanTool
 from .bash_run import BashRunTool
 from .clone_repo import CloneRepoTool
+from .citation_graph import BuildDomainMapTool, FetchOutgoingCitationsTool
 from .docker_exec import DockerExecTool, load_project_config
 from .echo import EchoTool
 from .filesystem import ListFilesTool, ReadFileTool, WriteFileTool
 from .finish_task import FinishTaskTool
 from .structured_file import WriteStructuredFileTool
+from .survey_tools import (
+    AssembleSurveyTool,
+    AuditSurveyCoverageTool,
+    BuildSurveyStateTool,
+    ExpandSurveyCorpusTool,
+    ExportSurveyForIdeationTool,
+    UpdateSurveySectionStateTool,
+)
 from .glob_files import GlobFilesTool
 from .grep_search import GrepSearchTool
+from .ideation_tools import AnalyzeIdeaConcentrationTool, ComputeIdeaNoveltySignalTool
 from .latex_compile import LatexCompileTool
 from .literature_synthesis import BuildSynthesisWorkbenchTool
 from .manuscript import (
     AssembleManuscriptTool,
     AuditManuscriptClaimsTool,
+    AuditWritingCraftTool,
+    BuildAlignmentMatrixTool,
     BuildManuscriptRegistriesTool,
     BuildManuscriptRevisionPatchesTool,
     BuildManuscriptResourceIndexTool,
@@ -111,11 +123,19 @@ def register_builtin_tools(
     registry.register("plan_manuscript_sections", lambda ctx: PlanManuscriptSectionsTool(ctx.policy))
     registry.register("plan_manuscript_evidence", lambda ctx: PlanManuscriptEvidenceTool(ctx.policy))
     registry.register("build_manuscript_registries", lambda ctx: BuildManuscriptRegistriesTool(ctx.policy))
+    registry.register("build_alignment_matrix", lambda ctx: BuildAlignmentMatrixTool(ctx.policy))
     registry.register("initialize_manuscript_state", lambda ctx: InitializeManuscriptStateTool(ctx.policy))
     registry.register("update_manuscript_section_state", lambda ctx: UpdateManuscriptSectionStateTool(ctx.policy))
     registry.register("assemble_manuscript", lambda ctx: AssembleManuscriptTool(ctx.policy))
     registry.register("audit_manuscript_claims", lambda ctx: AuditManuscriptClaimsTool(ctx.policy))
+    registry.register("audit_writing_craft", lambda ctx: AuditWritingCraftTool(ctx.policy))
     registry.register("build_manuscript_revision_patches", lambda ctx: BuildManuscriptRevisionPatchesTool(ctx.policy))
+    registry.register("build_survey_state", lambda ctx: BuildSurveyStateTool(ctx.policy))
+    registry.register("update_survey_section_state", lambda ctx: UpdateSurveySectionStateTool(ctx.policy))
+    registry.register("assemble_survey", lambda ctx: AssembleSurveyTool(ctx.policy))
+    registry.register("audit_survey_coverage", lambda ctx: AuditSurveyCoverageTool(ctx.policy))
+    registry.register("export_survey_for_ideation", lambda ctx: ExportSurveyForIdeationTool(ctx.policy))
+    registry.register("expand_corpus_for_survey", lambda ctx: ExpandSurveyCorpusTool(ctx.policy))
     registry.register(
         "multi_source_search",
         lambda _ctx: MultiSourceSearchTool(os.environ.get("RESEARCHER_EMAIL")),
@@ -161,6 +181,10 @@ def register_builtin_tools(
     registry.register("build_verified_papers", lambda ctx: BuildVerifiedPapersTool(ctx.policy))
     registry.register("build_access_audit", lambda ctx: BuildAccessAuditTool(ctx.policy))
     registry.register("build_deep_read_queue", lambda ctx: BuildDeepReadQueueTool(ctx.policy))
+    registry.register("fetch_outgoing_citations", lambda ctx: FetchOutgoingCitationsTool())
+    registry.register("build_domain_map", lambda ctx: BuildDomainMapTool(ctx.policy))
+    registry.register("analyze_idea_concentration", lambda ctx: AnalyzeIdeaConcentrationTool(ctx.policy))
+    registry.register("compute_idea_novelty_signal", lambda ctx: ComputeIdeaNoveltySignalTool(ctx.policy))
     # Semantic Scholar 工具（直接 API 调用，不依赖 MCP）
     registry.register("semantic_scholar_search", lambda ctx: SemanticScholarSearchTool())
     registry.register("semantic_scholar_get_paper", lambda ctx: SemanticScholarGetPaperTool())

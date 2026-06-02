@@ -39,7 +39,6 @@ def _write_t8_section_plan_inputs(workspace: Path) -> None:
         "methodology",
         "experiments",
         "analysis",
-        "limitations",
         "conclusion",
     ]
     (drafts / "section_plan.json").write_text(
@@ -58,6 +57,10 @@ def _write_t8_section_plan_inputs(workspace: Path) -> None:
     )
     (drafts / "evidence_plan.json").write_text('{"version":"1.0","claim_slots":[]}\n', encoding="utf-8")
     (drafts / "figure_table_plan.json").write_text('{"version":"1.0","planned_visuals":[]}\n', encoding="utf-8")
+    (drafts / "alignment_matrix.json").write_text(
+        '{"version":"1.0","semantics":"alignment_matrix_seed_not_final_scientific_judgment","rows":[{"cid":"C1"}]}\n',
+        encoding="utf-8",
+    )
     (drafts / "paper_state.json").write_text('{"semantics":"old_invalid_state","sections":{}}\n', encoding="utf-8")
 
 

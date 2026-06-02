@@ -133,6 +133,11 @@ def _write_manuscript_registries(workspace: Path) -> None:
                     "contribution_type": "improvement",
                     "boundary_conditions": ["synthetic boundary"],
                 },
+                "contribution_chains": [
+                    {"cid": "C1", "hypothesis": "H1", "source_claim_ids": ["cdr_C1"], "contribution_type": "improvement"},
+                    {"cid": "C2", "hypothesis": "H2", "source_claim_ids": ["cdr_C1"], "contribution_type": "improvement"},
+                    {"cid": "C3", "hypothesis": "H3", "source_claim_ids": ["cdr_C1"], "contribution_type": "improvement"},
+                ],
                 "contribution_claims": [
                     {
                         "claim_id": "C1",
@@ -177,6 +182,129 @@ def _write_manuscript_registries(workspace: Path) -> None:
                 ],
             }
         ),
+        encoding="utf-8",
+    )
+    (workspace / "drafts" / "alignment_matrix.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "alignment_matrix_seed_not_final_scientific_judgment",
+                "rows": [
+                    {
+                        "cid": "C1",
+                        "hypothesis": "H1",
+                        "motivation": "test motivation",
+                        "contribution": "test contribution",
+                        "contribution_type": "improvement",
+                        "related_gap": {"papers": ["smith2024"], "tension": "test tension"},
+                        "counterfactual": "independent",
+                        "counterfactual_note": "test counterfactual note",
+                        "nearest_prior_work": {"work": "smith2024", "distance": "moderate"},
+                        "novelty_signal": "adjacent_zone",
+                        "design_choice": "test design choice",
+                        "experiment": {"rq": "RQ1", "result_metric": "accuracy", "table": "tab:main_results"},
+                        "analysis": "test analysis",
+                        "status": "seed_needs_llm_completion",
+                    },
+                    {
+                        "cid": "C2",
+                        "hypothesis": "H2",
+                        "motivation": "test motivation 2",
+                        "contribution": "test contribution 2",
+                        "contribution_type": "improvement",
+                        "related_gap": {"papers": ["smith2024"], "tension": "test tension 2"},
+                        "counterfactual": "survives_weakened",
+                        "counterfactual_note": "test counterfactual note 2",
+                        "nearest_prior_work": {"work": "smith2024", "distance": "distant"},
+                        "novelty_signal": "no_nearby_cluster",
+                        "design_choice": "test design choice 2",
+                        "experiment": {"rq": "RQ2", "result_metric": "accuracy", "table": "tab:main_results"},
+                        "analysis": "test analysis 2",
+                        "status": "seed_needs_llm_completion",
+                    },
+                    {
+                        "cid": "C3",
+                        "hypothesis": "H3",
+                        "motivation": "test motivation 3",
+                        "contribution": "test contribution 3",
+                        "contribution_type": "improvement",
+                        "related_gap": {"papers": ["smith2024"], "tension": "test tension 3"},
+                        "counterfactual": "collapses",
+                        "counterfactual_note": "test counterfactual note 3",
+                        "nearest_prior_work": {"work": "smith2024", "distance": "very_close"},
+                        "novelty_signal": "marginal_zone",
+                        "design_choice": "test design choice 3",
+                        "experiment": {"rq": "RQ3", "result_metric": "accuracy", "table": "tab:main_results"},
+                        "analysis": "test analysis 3",
+                        "status": "seed_needs_llm_completion",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_passing_craft_audit(workspace: Path) -> None:
+    checks = [
+        {"name": "matrix_row_count", "level": "PASS", "passed": True, "detail": "ok"},
+        {"name": "intro_contribution_count", "level": "PASS", "passed": True, "detail": "ok"},
+        {"name": "abstract_no_cite", "level": "PASS", "passed": True, "detail": "ok"},
+        {"name": "number_traceability", "level": "PASS", "passed": True, "detail": "ok"},
+        {"name": "no_standalone_limitations", "level": "PASS", "passed": True, "detail": "ok"},
+        {"name": "conclusion_has_limitations_subsection", "level": "PASS", "passed": True, "detail": "ok"},
+    ]
+    (workspace / "drafts" / "craft_audit.md").write_text("# Writing Craft And Alignment Audit\n- [x] ok\n")
+    (workspace / "drafts" / "craft_audit.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "deterministic_writing_craft_audit_not_scientific_judgment",
+                "venue_style": "ccf_a",
+                "alignment_cids": ["C1", "C2", "C3"],
+                "checks": checks,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_valid_draft_artifacts(workspace: Path) -> None:
+    _write_valid_paper_state(workspace)
+    state = json.loads((workspace / "drafts" / "paper_state.json").read_text(encoding="utf-8"))
+    section_dir = workspace / "drafts" / "sections"
+    section_dir.mkdir(parents=True, exist_ok=True)
+    for name in CORE_SECTIONS:
+        state["sections"][name]["status"] = "written"
+        (section_dir / f"{name}.tex").write_text(
+            f"\\section{{{name.replace('_', ' ').title()}}}\n" + ("Substantive section content. " * 6),
+            encoding="utf-8",
+        )
+    (workspace / "drafts" / "paper_state.json").write_text(json.dumps(state), encoding="utf-8")
+    paper_content = r"""\documentclass{article}
+\begin{document}
+\begin{abstract}
+This is an abstract.
+\end{abstract}
+\section{Introduction}
+Content here.
+\section{Related Work}
+Related work here.
+\section{Method}
+Method description.
+\section{Experiments}
+Experimental results.
+\section{Conclusion}
+Conclusion.
+\subsection{Limitations}
+Validity boundaries.
+\end{document}
+"""
+    (workspace / "drafts" / "paper.tex").write_text(paper_content, encoding="utf-8")
+    (workspace / "drafts" / "manuscript_audit.md").write_text("# Audit\n- [x] ok\n", encoding="utf-8")
+    _write_passing_craft_audit(workspace)
+    (workspace / "literature" / "related_work.bib").write_text(
+        "@article{test2024,\n  author={Test Author},\n  title={Test Title},\n  year={2024}\n}",
         encoding="utf-8",
     )
 
@@ -302,8 +430,9 @@ def test_writer_validate_outputs_outline_success(temp_workspace):
 
 ## 4. Experiments
 实验章节
-"""
+    """
     (temp_workspace / "drafts" / "outline.md").write_text(outline_content)
+    _write_manuscript_registries(temp_workspace)
 
     ok, err = agent.validate_outputs(ctx)
     assert ok
@@ -391,7 +520,6 @@ def _write_valid_paper_state(workspace: Path) -> None:
         "related_work",
         "analysis",
         "introduction",
-        "limitations",
         "conclusion",
         "abstract",
     ]:
@@ -413,7 +541,48 @@ def _write_valid_paper_state(workspace: Path) -> None:
                 "semantics": "shared_state_for_section_by_section_writing_not_final_claims",
                 "section_order": list(sections),
                 "sections": sections,
-                "shared_facts": {"bib_keys": ["smith2024"], "result_metrics": []},
+                "shared_facts": {
+                    "bib_keys": ["smith2024"],
+                    "result_metrics": [],
+                    "alignment_matrix": [
+                        {
+                            "cid": "C1",
+                            "hypothesis": "H1",
+                            "motivation": "test motivation",
+                            "contribution": "test contribution",
+                            "contribution_type": "improvement",
+                            "related_gap": {"papers": ["smith2024"], "tension": "test tension"},
+                            "design_choice": "test design choice",
+                            "experiment": {"rq": "RQ1", "result_metric": "accuracy"},
+                            "analysis": "test analysis",
+                            "status": "seed_needs_llm_completion",
+                        },
+                        {
+                            "cid": "C2",
+                            "hypothesis": "H2",
+                            "motivation": "test motivation 2",
+                            "contribution": "test contribution 2",
+                            "contribution_type": "improvement",
+                            "related_gap": {"papers": ["smith2024"], "tension": "test tension 2"},
+                            "design_choice": "test design choice 2",
+                            "experiment": {"rq": "RQ2", "result_metric": "accuracy", "table": "tab:main_results"},
+                            "analysis": "test analysis 2",
+                            "status": "seed_needs_llm_completion",
+                        },
+                        {
+                            "cid": "C3",
+                            "hypothesis": "H3",
+                            "motivation": "test motivation 3",
+                            "contribution": "test contribution 3",
+                            "contribution_type": "improvement",
+                            "related_gap": {"papers": ["smith2024"], "tension": "test tension 3"},
+                            "design_choice": "test design choice 3",
+                            "experiment": {"rq": "RQ3", "result_metric": "accuracy", "table": "tab:main_results"},
+                            "analysis": "test analysis 3",
+                            "status": "seed_needs_llm_completion",
+                        },
+                    ],
+                },
             }
         ),
         encoding="utf-8",
@@ -534,7 +703,6 @@ def test_writer_validate_outputs_draft_rejects_unvalidated_section_wrapper(temp_
         "methodology",
         "experiments",
         "analysis",
-        "limitations",
         "conclusion",
     ]:
         state["sections"][name]["status"] = "written"
@@ -572,60 +740,71 @@ def test_writer_validate_outputs_draft_success(temp_workspace):
     """测试 draft 模式验证成功"""
     agent = WriterAgent()
     ctx = MockExecutionContext("draft", temp_workspace, {"phase": "draft"})
-    _write_valid_paper_state(temp_workspace)
-    state = json.loads((temp_workspace / "drafts" / "paper_state.json").read_text(encoding="utf-8"))
-    section_dir = temp_workspace / "drafts" / "sections"
-    section_dir.mkdir(parents=True, exist_ok=True)
-    for name in [
-        "abstract",
-        "introduction",
-        "related_work",
-        "methodology",
-        "experiments",
-        "analysis",
-        "limitations",
-        "conclusion",
-    ]:
-        state["sections"][name]["status"] = "written"
-        (section_dir / f"{name}.tex").write_text(
-            f"\\section{{{name.replace('_', ' ').title()}}}\n" + ("Substantive section content. " * 6),
-            encoding="utf-8",
-        )
-    (temp_workspace / "drafts" / "paper_state.json").write_text(json.dumps(state), encoding="utf-8")
-
-    # 创建符合要求的 paper.tex
-    paper_content = r"""\documentclass{article}
-\usepackage{graphicx}
-\begin{document}
-\title{Test Paper}
-\author{}
-\maketitle
-\begin{abstract}
-This is an abstract.
-\end{abstract}
-\section{Introduction}
-Content here.
-\section{Related Work}
-Related work here.
-\section{Method}
-Method description.
-\section{Experiments}
-Experimental results.
-\section{Conclusion}
-Conclusion.
-\end{document}
-"""
-    (temp_workspace / "drafts" / "paper.tex").write_text(paper_content)
-    (temp_workspace / "drafts" / "manuscript_audit.md").write_text("# Audit\n- [x] ok\n")
-
-    # 创建相关的 bib 文件
-    (temp_workspace / "literature" / "related_work.bib").write_text(
-        "@article{test2024,\n  author={Test Author},\n  title={Test Title},\n  year={2024}\n}"
-    )
+    _write_valid_draft_artifacts(temp_workspace)
 
     ok, err = agent.validate_outputs(ctx)
     assert ok
     assert err is None
+
+
+def test_writer_validate_outputs_both_rejects_annotation_only_variants(temp_workspace):
+    agent = WriterAgent()
+    ctx = MockExecutionContext("draft", temp_workspace, {"phase": "draft"})
+    _write_valid_draft_artifacts(temp_workspace)
+    main = (temp_workspace / "drafts" / "paper.tex").read_text(encoding="utf-8")
+    (temp_workspace / "drafts" / "writing_style.json").write_text('{"venue_style":"both"}\n', encoding="utf-8")
+    for style_id in ("is", "ccf_a"):
+        style_dir = temp_workspace / "drafts" / style_id
+        style_dir.mkdir(parents=True, exist_ok=True)
+        (style_dir / "paper.tex").write_text(
+            f"% ResearchOS style variant: {style_id}\n% Target venue: neurips2026\n" + main,
+            encoding="utf-8",
+        )
+        (style_dir / "craft_audit.json").write_text(
+            (temp_workspace / "drafts" / "craft_audit.json").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        (style_dir / "style_revision_notes.md").write_text(
+            "# Style Revision Notes\n\nThis note says the style was reviewed, but the body was not actually changed.",
+            encoding="utf-8",
+        )
+
+    ok, err = agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "不能只是主稿加注释" in err
+
+
+def test_writer_validate_outputs_both_accepts_style_revised_variants(temp_workspace):
+    agent = WriterAgent()
+    ctx = MockExecutionContext("draft", temp_workspace, {"phase": "draft"})
+    _write_valid_draft_artifacts(temp_workspace)
+    main = (temp_workspace / "drafts" / "paper.tex").read_text(encoding="utf-8")
+    (temp_workspace / "drafts" / "writing_style.json").write_text('{"venue_style":"both"}\n', encoding="utf-8")
+    for style_id, sentence in (
+        ("is", "This IS-style revision expands the theoretical positioning and validity framing."),
+        ("ccf_a", "This CCF-A revision tightens the result headline and reproducibility framing."),
+    ):
+        style_dir = temp_workspace / "drafts" / style_id
+        style_dir.mkdir(parents=True, exist_ok=True)
+        (style_dir / "paper.tex").write_text(
+            main.replace("Content here.", f"Content here. {sentence}"),
+            encoding="utf-8",
+        )
+        (style_dir / "craft_audit.json").write_text(
+            (temp_workspace / "drafts" / "craft_audit.json").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        (style_dir / "style_revision_notes.md").write_text(
+            "# Style Revision Notes\n\n"
+            f"The {style_id} variant was revised with venue-specific framing while preserving the same "
+            "alignment matrix, result numbers, citation keys, and contribution facts.",
+            encoding="utf-8",
+        )
+
+    ok, err = agent.validate_outputs(ctx)
+
+    assert ok, err
 
 
 def test_writer_validate_outputs_revise_requires_audit(temp_workspace):
@@ -643,7 +822,6 @@ def test_writer_validate_outputs_revise_requires_audit(temp_workspace):
         "methodology",
         "experiments",
         "analysis",
-        "limitations",
         "conclusion",
     ]:
         state["sections"][name]["status"] = "revised"
@@ -705,7 +883,6 @@ def test_writer_validate_outputs_revise_requires_patch_list(temp_workspace):
         "methodology",
         "experiments",
         "analysis",
-        "limitations",
         "conclusion",
     ]:
         state["sections"][name]["status"] = "revised"
@@ -720,6 +897,7 @@ def test_writer_validate_outputs_revise_requires_patch_list(temp_workspace):
         encoding="utf-8",
     )
     (temp_workspace / "drafts" / "manuscript_audit.md").write_text("# Audit\n")
+    (temp_workspace / "drafts" / "craft_audit.md").write_text("# Writing Craft And Alignment Audit\n")
 
     ok, err = agent.validate_outputs(ctx)
 
@@ -742,7 +920,6 @@ def test_writer_validate_outputs_draft_missing_documentclass(temp_workspace):
         "methodology",
         "experiments",
         "analysis",
-        "limitations",
         "conclusion",
     ]:
         state["sections"][name]["status"] = "written"
@@ -781,7 +958,6 @@ def test_writer_validate_outputs_draft_invalid_citations(temp_workspace):
         "methodology",
         "experiments",
         "analysis",
-        "limitations",
         "conclusion",
     ]:
         state["sections"][name]["status"] = "written"
@@ -847,6 +1023,8 @@ def test_reviewer_initial_message(temp_workspace):
 def test_reviewer_round2_prompt_includes_audit_self_check_and_previous_review(temp_workspace):
     agent = ReviewerAgent()
     (temp_workspace / "drafts" / "manuscript_audit.md").write_text("# Audit\n- [ ] issue\n")
+    (temp_workspace / "drafts" / "craft_audit.md").write_text("# Writing Craft And Alignment Audit\n- [ ] FAIL item\n")
+    (temp_workspace / "drafts" / "alignment_matrix.json").write_text('{"rows":[{"cid":"C1"}]}\n')
     (temp_workspace / "drafts" / "self_check.md").write_text("# Self Check\nHigh TODO\n")
     (temp_workspace / "drafts" / "review_rounds" / "round_1.md").write_text("# Round 1\nFix result table.\n")
     ctx = MockExecutionContext("review", temp_workspace, {"round": 2})
@@ -855,6 +1033,8 @@ def test_reviewer_round2_prompt_includes_audit_self_check_and_previous_review(te
     msg = agent.initial_user_message(ctx)
 
     assert "Manuscript Audit" in prompt
+    assert "Writing Craft Audit" in prompt
+    assert "Alignment Matrix" in prompt
     assert "High TODO" in prompt
     assert "Previous Review" in prompt
     assert "Fix result table" in prompt
@@ -892,6 +1072,14 @@ def test_reviewer_validate_outputs_success(temp_workspace):
 **建议**: 修正格式
 **严重程度**: Low
 
+## 写作范式与对齐核查
+
+- Alignment matrix closure: Pass
+- Craft audit FAIL items: none
+- Craft audit WARN items: none
+- Standalone Limitations section: Pass
+- CID anchor coverage: Pass
+
 ## CDR Contribution Verdict
 
 - Problem frame clarity: Clear enough for this test report.
@@ -915,6 +1103,8 @@ def test_reviewer_validate_outputs_success(temp_workspace):
             "## Evidence And Number Check\nSubstantive check.\n\n"
             "## Logic And Writing Issues\nSubstantive check.\n\n"
             "## CDR Alignment Check\nProblem, rationale, evidence, and boundary alignment are checked.\n\n"
+            "## Alignment Matrix Check\nCID coverage is checked.\n\n"
+            "## Writing Craft Check\nCraft audit is checked.\n\n"
             "## Actionable Fixes\n- [Low] Fix wording.\n",
             encoding="utf-8",
         )

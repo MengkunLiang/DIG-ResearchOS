@@ -46,6 +46,8 @@ class IdeationAgent(Agent):
                         "write_file",
                         "write_structured_file",
                         "list_files",
+                        "analyze_idea_concentration",
+                        "compute_idea_novelty_signal",
                         "ask_human",
                         "finish_task",
                     ],
@@ -81,6 +83,9 @@ class IdeationAgent(Agent):
         missing_areas = read_text_file(ws / "literature" / "missing_areas.md", default="")
         seed_ideas = read_text_file(ws / "user_seeds" / "seed_ideas.md", default="")
         comparison_table = read_text_file(ws / "literature" / "comparison_table.csv", default="")
+        domain_map = read_text_file(ws / "literature" / "domain_map.json", default="")
+        synthesis_workbench = read_text_file(ws / "literature" / "synthesis_workbench.json", default="")
+        survey_insights = read_text_file(ws / "ideation" / "survey_insights.json", default="")
 
         return render_prompt(
             self.spec.prompt_template,
@@ -90,6 +95,12 @@ class IdeationAgent(Agent):
             missing_areas=missing_areas[:2000],
             seed_ideas=seed_ideas[:2000],
             comparison_table_preview=comparison_table[:1000],
+            domain_map_preview=domain_map[:2500],
+            synthesis_workbench_preview=synthesis_workbench[:3000],
+            survey_insights_preview=survey_insights[:3000],
+            has_domain_map=bool(domain_map.strip()),
+            has_synthesis_workbench=bool(synthesis_workbench.strip()),
+            has_survey_insights=bool(survey_insights.strip()),
             has_seed_ideas=bool(seed_ideas.strip()),
             temperature=self.spec.temperature,
             agent_guidance=load_agent_guidance("ideation"),
@@ -248,15 +259,17 @@ class IdeationAgent(Agent):
             if not isinstance(item, dict):
                 continue
             idea = item.get("idea") or {}
+            idea_id = str(idea.get("id") or f"#{i}")
+            ok, err = _validate_soft_novelty_fields(item, idea_id)
+            if not ok:
+                return False, err
             for field in _mechanism_fields:
                 val = str(idea.get(field) or "").strip()
                 if not val:
-                    idea_id = str(idea.get("id") or f"#{i}")
                     return False, (
                         f"idea_scorecard.yaml idea {idea_id} 缺少必要字段 mechanism/{field}，"
                         "每个 idea 必须包含 mechanism, prediction, counterfactual, mechanism_family"
                     )
-            idea_id = str(idea.get("id") or f"#{i}")
             decision = item.get("decision") or {}
             status = str(decision.get("status") or "").strip().lower()
             has_hypothesis_refs = bool(item.get("hypothesis_refs"))
@@ -638,6 +651,9 @@ def _validate_pass_stage_artifacts(ws: Path) -> tuple[bool, str | None]:
         if not idea_id:
             return False, f"_pass2_grounding_review.json 第{idx}条review缺少 idea_id"
         pass2_ids.add(idea_id)
+        ok, err = _validate_pass2_soft_diagnostics(review, idea_id)
+        if not ok:
+            return False, err
         if review.get("visible_to_gate") is False:
             return False, (
                 f"_pass2_grounding_review.json review {idea_id} visible_to_gate=false；"
@@ -680,5 +696,89 @@ def _validate_pass_stage_artifacts(ws: Path) -> tuple[bool, str | None]:
         return False, f"_gate1_selection_brief.md 必须提到所有候选ID，缺少: {missing_from_brief}"
     if not re.search(r"合并|merge|D\d+\+D\d+", brief_text, re.IGNORECASE):
         return False, "_gate1_selection_brief.md 必须说明可合并多个候选，例如 合并 D1+D3"
+    required_soft_sections = [
+        ("集中度提示", r"集中度|concentration"),
+        ("Origin 分布", r"Origin\s*分布|origin\s+distribution|origin mix"),
+        ("Novelty-Utility 谱系排布", r"Novelty[-– ]Utility|新颖度.*可行|新颖.*效用"),
+    ]
+    missing_soft = [
+        label for label, pattern in required_soft_sections
+        if not re.search(pattern, brief_text, re.IGNORECASE)
+    ]
+    if missing_soft:
+        return False, "_gate1_selection_brief.md 缺少软提示章节: " + ", ".join(missing_soft)
 
+    return True, None
+
+
+def _validate_pass2_soft_diagnostics(review: dict, idea_id: str) -> tuple[bool, str | None]:
+    """Pass2 must expose soft diagnostics before Gate1, without using them as gates."""
+
+    counterfactual_values = {"collapses", "survives_weakened", "independent", "insufficient_evidence"}
+    distance_values = {"very_close", "moderate", "distant", "none_found", "not_computed"}
+    novelty_values = {"marginal_zone", "adjacent_zone", "no_nearby_cluster", "not_computed", "domain_map_unavailable"}
+
+    counterfactual_check = review.get("counterfactual_check")
+    if counterfactual_check not in counterfactual_values:
+        return False, (
+            f"_pass2_grounding_review.json review {idea_id} 缺少合法 counterfactual_check；"
+            "Pass2 必须在 Gate1 前标注该软信号或说明 insufficient_evidence"
+        )
+    counterfactual_note = str(review.get("counterfactual_note") or "").strip()
+    if len(counterfactual_note) < 8:
+        return False, f"_pass2_grounding_review.json review {idea_id} counterfactual_note 过短"
+    nearest = review.get("nearest_prior_work")
+    if not isinstance(nearest, dict):
+        return False, f"_pass2_grounding_review.json review {idea_id} 缺少 nearest_prior_work"
+    distance = str(nearest.get("distance") or "").strip()
+    if distance not in distance_values:
+        return False, (
+            f"_pass2_grounding_review.json review {idea_id} nearest_prior_work.distance 无效: "
+            f"{distance or '空'}"
+        )
+    if "work" not in nearest:
+        return False, f"_pass2_grounding_review.json review {idea_id} nearest_prior_work 缺少 work"
+    novelty_signal = review.get("novelty_signal")
+    if novelty_signal not in novelty_values:
+        return False, (
+            f"_pass2_grounding_review.json review {idea_id} 缺少合法 novelty_signal；"
+            "该字段只是引用图近邻参考信号，不是 gate；图谱不可用时写 domain_map_unavailable/not_computed"
+        )
+    return True, None
+
+
+def _validate_soft_novelty_fields(item: dict, idea_id: str) -> tuple[bool, str | None]:
+    """Ensure soft diagnostic fields are present without turning them into gates."""
+
+    counterfactual_values = {"collapses", "survives_weakened", "independent", "insufficient_evidence"}
+    distance_values = {"very_close", "moderate", "distant", "none_found", "not_computed"}
+    novelty_values = {"marginal_zone", "adjacent_zone", "no_nearby_cluster", "not_computed", "domain_map_unavailable"}
+
+    idea = item.get("idea") if isinstance(item.get("idea"), dict) else {}
+    counterfactual_check = item.get("counterfactual_check") or idea.get("counterfactual_check")
+    if counterfactual_check not in counterfactual_values:
+        return False, (
+            f"idea_scorecard.yaml idea {idea_id} 缺少合法 counterfactual_check；"
+            "该字段是软提示，可取 collapses/survives_weakened/independent/insufficient_evidence"
+        )
+    counterfactual_note = str(item.get("counterfactual_note") or idea.get("counterfactual_note") or "").strip()
+    if len(counterfactual_note) < 8:
+        return False, f"idea_scorecard.yaml idea {idea_id} counterfactual_note 过短"
+    nearest = item.get("nearest_prior_work") or idea.get("nearest_prior_work")
+    if not isinstance(nearest, dict):
+        return False, f"idea_scorecard.yaml idea {idea_id} 缺少 nearest_prior_work"
+    distance = str(nearest.get("distance") or "").strip()
+    if distance not in distance_values:
+        return False, (
+            f"idea_scorecard.yaml idea {idea_id} nearest_prior_work.distance 无效: "
+            f"{distance or '空'}"
+        )
+    if "work" not in nearest:
+        return False, f"idea_scorecard.yaml idea {idea_id} nearest_prior_work 缺少 work"
+    novelty_signal = item.get("novelty_signal") or idea.get("novelty_signal")
+    if novelty_signal not in novelty_values:
+        return False, (
+            f"idea_scorecard.yaml idea {idea_id} 缺少合法 novelty_signal；"
+            "该字段只是引用图近邻参考信号，不是 gate；图谱不可用时写 domain_map_unavailable/not_computed"
+        )
     return True, None

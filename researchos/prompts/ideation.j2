@@ -27,6 +27,26 @@
 {{ comparison_table_preview }}
 {% endif %}
 
+{% if has_domain_map %}
+### 引用图领域地图（domain_map.json 预览）
+{{ domain_map_preview }}
+
+{% endif %}
+{% if has_synthesis_workbench %}
+### 结构化综述工作台（synthesis_workbench.json 预览）
+{{ synthesis_workbench_preview }}
+
+{% endif %}
+{% if has_survey_insights %}
+### 可选综述论文洞察（survey_insights.json 预览）
+{{ survey_insights_preview }}
+
+说明：这是 T3.6 综述支线导出的 taxonomy / challenges / future directions 素材。
+它是额外 idea fuel，不是 gate，也不能替代你自己的学术判断。可以生成
+`idea_origin=survey_driven` 或把 survey insight 融入 free_reasoning / problem_reframing 候选。
+
+{% endif %}
+
 {% if agent_guidance %}
 {{ agent_guidance }}
 
@@ -53,12 +73,16 @@
 - **problem_reframing 候选**：至少 1 个，把问题本身换一种表述或评价视角。
 - **design_rationale_derivation 候选**：至少 1 个，从问题结构第一性原理地推导“设计应该是什么样”。
 - **cross_domain_analogy 候选**：鼓励作为主线候选，用模型自身知识和已有语料类比其它领域；不要触发新检索。
+  - 如果 `literature/synthesis_workbench.json` 中有 `adjacent_transfers`，优先把其中的 transfer seed 作为类比锚点；它只是素材，不是 provenance gate。
 {% if has_seed_ideas %}
 - **seed-derived 候选**：至少 1 个，直接吸收、修订或挑战用户 seed ideas。不要机械照抄 seed idea，要把它改写成可验证、可差异化的研究假设。
 {% else %}
 - **seed slot 说明**：如果没有 seed idea，明确记录主线候选均来自综述/缺口/对比表。
 {% endif %}
 - **evidence-driven 候选**：至少 1 个，从 comparison_table、经复核的 missing_areas coverage hint 或具体 paper notes 的冲突/空白推出。
+{% if has_survey_insights %}
+- **survey-driven 候选（可选增强）**：如果 `ideation/survey_insights.json` 中的 taxonomy、challenge_hints 或 future_direction_hints 暴露出新的组织视角，可以生成 1 个 survey_driven 候选。但它只是额外素材，不要让 survey 支线覆盖自由推理、问题重构和 seed-derived 候选。
+{% endif %}
 
 主线候选可以与现有工作正交；`prior_art: none` 是合法高新颖信号，同时要标注高风险或可行性不确定性。四类约束只在 Step 2.5 用于补充覆盖，不能替代这一步。
 
@@ -127,7 +151,7 @@
 结构要求：先说明覆盖缺口和建议复核动作；只有当 synthesis、paper notes 和你的领域判断共同支持时，才把它转化为研究 idea，否则应写成补检/验证计划。
 注意：提示中的"难度"字段只帮助评估复核成本，优先选 Medium/Low 难度的提示。
 
-这四个补充候选可以和主线候选合并，但不能覆盖掉主线自由推理/seed-derived/问题重构/设计论证推导/跨域类比候选。`source` 中建议记录 `idea_origin`（如 `synthesis_gestalt`、`problem_reframing`、`design_rationale_derivation`、`cross_domain_analogy`、`free_reasoning`、`seed_refinement`、`mechanism_challenge`、`reverse_operation`、`subgroup_failure`、`missing_area_exploration`）。
+这四个补充候选可以和主线候选合并，但不能覆盖掉主线自由推理/seed-derived/问题重构/设计论证推导/跨域类比候选。`source` 中建议记录 `idea_origin`（如 `synthesis_gestalt`、`problem_reframing`、`design_rationale_derivation`、`cross_domain_analogy`、`free_reasoning`、`seed_refinement`、`survey_driven`、`mechanism_challenge`、`reverse_operation`、`subgroup_failure`、`missing_area_exploration`）。
 
 ### Step 2.6: 保存 Pass 1 原始候选池
 
@@ -143,7 +167,7 @@
       "id": "D1",
       "title": "...",
       "generation_stage": "mainline | supplement",
-      "idea_origin": "synthesis_gestalt | problem_reframing | design_rationale_derivation | cross_domain_analogy | free_reasoning | seed_refinement | evidence_driven | mechanism_challenge | reverse_operation | subgroup_failure | missing_area_exploration",
+      "idea_origin": "synthesis_gestalt | problem_reframing | design_rationale_derivation | cross_domain_analogy | free_reasoning | seed_refinement | survey_driven | evidence_driven | mechanism_challenge | reverse_operation | subgroup_failure | missing_area_exploration",
       "constraint_status": "mainline | supplement | not_supported_by_current_evidence",
       "pitch": "...",
       "core_claim": "...",
@@ -172,6 +196,14 @@
 2. **Feasibility check**：预算、数据、baseline、metric 是否能验证。
 3. **Provenance note**：自由记录候选来自 synthesis gestalt、问题重构、跨域类比、seed refinement 或具体文献观察。`supporting_papers`、`closest_baselines`、`from_synthesis_section` 都是 optional 文档字段，不是质量门。
 4. **Contribution gate**：如果 `contribution_type=routine` 或 contribution character 说不清“领域会怎样不同”，该候选必须标为 `reject_recommended` 或 `revise_before_selection`，但不能从候选池删除。用户仍可在 Gate1 选择它，前提是你先重构 design rationale / contribution character，再进入 pre-mortem。
+5. **反事实自检（软提示）**：回答“假设这个 idea 最依赖的那篇论文不存在，这个 idea 是否仍然成立？”，写入 `counterfactual_check`：
+   - `collapses`: 抽掉该论文后 idea 基本崩塌，提示可能是 marginal 增量。
+   - `survives_weakened`: 仍成立但少一个例证或支撑变弱。
+   - `independent`: 论文只是事后印证，idea 有独立 rationale。
+   - `insufficient_evidence`: 当前材料无法可靠判断，必须在 note 写明缺什么证据。
+   这只是提示，不触发删除或返工。
+6. **最近已有工作距离（软提示）**：写入 `nearest_prior_work: {work, distance}`，`distance` 取 `very_close | moderate | distant | none_found | not_computed`。`none_found` 是高新颖+高风险信号，不是失败；材料不足或无法可靠计算时写 `not_computed` 并说明原因，不要硬编最近工作。
+7. **引用图 novelty 信号（软提示）**：可调用 `compute_idea_novelty_signal(idea=..., domain_map_path="literature/domain_map.json")`，把结果写入 `novelty_signal`。它只能作为参考，不能替代你的学术判断；domain_map 缺失/不可用时写 `domain_map_unavailable` 或 `not_computed`，不要伪造三分类。
 
 然后必须写 `ideation/_pass2_grounding_review.json`：
 
@@ -200,6 +232,10 @@
         "why": "..."
       },
       "grounding_notes": ["..."],
+      "counterfactual_check": "collapses | survives_weakened | independent | insufficient_evidence",
+      "counterfactual_note": "...",
+      "nearest_prior_work": {"work": "...", "distance": "very_close | moderate | distant | none_found | not_computed"},
+      "novelty_signal": "marginal_zone | adjacent_zone | no_nearby_cluster | not_computed | domain_map_unavailable",
       "selection_warning": "如果用户选择该候选，需要先处理的风险；没有则写 none"
     }
   ]
@@ -240,6 +276,10 @@
       "contribution_strength": 1-5,
       "contribution_character": "如果成立，领域会怎样不同；为什么不是 routine",
       "prior_art": "none | closest_known | uncertain",
+      "counterfactual_check": "collapses | survives_weakened | independent | insufficient_evidence",
+      "counterfactual_note": "抽掉最依赖论文后为什么仍成立/崩塌；软提示，不是 gate",
+      "nearest_prior_work": {"work": "最像的已有工作、none_found 或 not_computed 原因", "distance": "very_close | moderate | distant | none_found | not_computed"},
+      "novelty_signal": "marginal_zone | adjacent_zone | no_nearby_cluster | not_computed | domain_map_unavailable",
       "pass2_screening": {
         "screening_recommendation": "proceed | revise_before_selection | defer_recommended | reject_recommended",
         "visible_to_gate": true,
@@ -354,8 +394,10 @@ counterfactual: "if it fails, metric does not improve"
 
 - Pass 1 原始候选 ID、标题、origin、mainline/supplement 状态
 - Pass 2 对每个候选的 `screening_recommendation`、主要风险和 `selection_warning`
+- 每个候选的 `counterfactual_check`、`nearest_prior_work.distance`、`novelty_signal`
 - 所有候选都必须可见，包括 `reject_recommended`、`defer_recommended`、`routine_risk`、证据不足候选
 - 合并建议，例如 `D1 + D3 -> M1`，并说明合并后应继承哪些 design rationale、mechanism、experiment
+- 末尾必须有三段软提示：`集中度提示`、`Origin 分布`、`Novelty-Utility 谱系排布`
 - 明确写出用户可选动作：
   - `选择 Dn`
   - `选择 Dn 并重构`
@@ -364,6 +406,8 @@ counterfactual: "if it fails, metric does not improve"
   - `重新分析`
 
 `_gate1_selection_brief.md` 不替代 `ask_human`，但它保证用户和后续 resume 都能看到完整候选池。
+
+写 brief 前可以调用 `analyze_idea_concentration(scorecard_path="ideation/idea_scorecard.yaml")`，把 `human_hint` 粘贴到“集中度提示”。该工具不返回 pass/fail，只帮助用户看见候选是否过度集中在同一篇论文或同一类 design rationale 上。
 
 ### Step 3.5: 初始化 idea scorecard
 根据候选方向写入 `ideation/idea_scorecard.yaml` 的初版。这个文件是T4最重要的证据链/决策链产物之一，必须记录所有候选idea，不只是最后选中的idea。
@@ -378,6 +422,7 @@ counterfactual: "if it fails, metric does not improve"
   - 对 `rejected` / `deferred` 候选，如果机制确实未成形，可以保留不完整字段，但必须在 `decision.rejection_reason` 中说明“机制未成形/无法形成可检验反事实”。
 - `selection_rationale`: 为什么它看起来值得做
 - `closest_baselines`: 可空；只有确实存在相近已有工作时记录 similarity / difference。无相近工作时写 `prior_art: none` 并标高风险，不要硬找。
+- `counterfactual_check` / `nearest_prior_work` / `novelty_signal`: 必填软诊断字段；它们只帮助用户选择，不是质量 gate。`counterfactual_check=collapses` 的候选仍必须保留可见；材料不足时可写 `insufficient_evidence`、`not_computed` 或 `domain_map_unavailable` 并解释原因，不能为过校验硬编。
 - `scores`: 七维评分，使用 `contribution_strength` 衡量贡献力度
 - `risks`: risk、early_signal、mitigation、kill_criteria
 - `minimum_experiment`: cheap pilot

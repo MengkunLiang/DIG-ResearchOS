@@ -67,8 +67,10 @@ class ReviewerAgent(Agent):
         )
         related_work = read_text_file(ws / "literature" / "related_work.bib", default="")
         manuscript_audit = read_text_file(ws / "drafts" / "manuscript_audit.md", default="")
+        craft_audit = read_text_file(ws / "drafts" / "craft_audit.md", default="")
         self_check = read_text_file(ws / "drafts" / "self_check.md", default="")
         cdr_claim_ledger = read_text_file(ws / "drafts" / "cdr_claim_ledger.json", default="")
+        alignment_matrix = read_text_file(ws / "drafts" / "alignment_matrix.json", default="")
 
         round_num = self._round(ctx)
         previous_review = (
@@ -87,8 +89,10 @@ class ReviewerAgent(Agent):
             results_summary=results_summary,
             related_work_bib=related_work[:3000],
             manuscript_audit_preview=manuscript_audit[:3000],
+            craft_audit_preview=craft_audit[:3000],
             self_check_preview=self_check[:3000],
             cdr_claim_ledger_preview=cdr_claim_ledger[:5000],
+            alignment_matrix_preview=alignment_matrix[:5000],
             previous_review_preview=previous_review[:3000],
             round=round_num,
             target_venue=project.get("target_venue", "neurips"),
@@ -102,11 +106,12 @@ class ReviewerAgent(Agent):
             ctx,
             (
             f"请执行 T8 Reviewer 第{round_num}轮审稿。\n\n"
-            "读取 drafts/paper.tex、drafts/manuscript_audit.md、drafts/self_check.md"
+            "读取 drafts/paper.tex、drafts/manuscript_audit.md、drafts/craft_audit.md、"
+            "drafts/alignment_matrix.json、drafts/self_check.md"
             f"{'、drafts/review_rounds/round_' + str(round_num - 1) + '.md' if round_num > 1 else ''}，"
             f"先逐章生成 drafts/review_rounds/round_{round_num}_sections/*.md，"
             f"再综合生成 drafts/review_rounds/round_{round_num}.md。"
-            "从内容完整性、技术准确性、写作质量、学术规范和 CDR 贡献兑现五个维度审查，"
+            "从内容完整性、技术准确性、写作质量、学术规范、CDR 贡献兑现、alignment 闭环和 craft 合规维度审查，"
             "并检查上一轮问题是否闭环。"
             ),
         )
@@ -123,7 +128,13 @@ class ReviewerAgent(Agent):
             return False, f"review report 过短({len(report)}字符)"
 
         # 检查报告结构
-        required_sections = ["## 总体评价", "## 主要问题", "## 次要问题", "## CDR Contribution Verdict"]
+        required_sections = [
+            "## 总体评价",
+            "## 主要问题",
+            "## 次要问题",
+            "## 写作范式与对齐核查",
+            "## CDR Contribution Verdict",
+        ]
         for section in required_sections:
             if section not in report:
                 return False, f"review report 缺少必需章节: {section}"
@@ -150,5 +161,9 @@ class ReviewerAgent(Agent):
                 return False, f"逐章节审稿缺少结构化标题: {section_report.relative_to(ws)}"
             if "## CDR Alignment Check" not in text:
                 return False, f"逐章节审稿缺少 CDR Alignment Check: {section_report.relative_to(ws)}"
+            if "## Alignment Matrix Check" not in text:
+                return False, f"逐章节审稿缺少 Alignment Matrix Check: {section_report.relative_to(ws)}"
+            if "## Writing Craft Check" not in text:
+                return False, f"逐章节审稿缺少 Writing Craft Check: {section_report.relative_to(ws)}"
 
         return True, None

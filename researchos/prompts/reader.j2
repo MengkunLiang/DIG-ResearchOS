@@ -92,6 +92,10 @@
 2. `literature/comparison_table.csv`: 论文对比表（累积写入）
 3. `literature/related_work.bib`: BibTeX引用库（累积写入）
 
+如果只能基于 abstract/metadata 写 note，除 FULL/PARTIAL note 的主体字段外，还必须包含两个轻字段，供 T3.5 看见跨域桥接价值：
+- `## A. 核心做法/视角`：这篇 abstract 呈现出的核心方法、机制视角或评价视角；无法确认时明确写 `LLM_REVIEW_REQUIRED`。
+- `## B. 桥接点`：它与本项目主线、邻接领域或 theory bridge 的连接点；只能作为后续综述/ideation 的复核提示，不可当成已验证机制。
+
 ## 执行策略
 
 ### 批次处理原则
@@ -225,6 +229,12 @@
 - **Evidence type**: {ablation_supported | theoretically_justified | empirical_correlation | claimed_untested}
 - **Supporting artifact**: {Fig X / Table Y / Section Z / "none"}
 
+## A. 核心做法/视角
+{ABSTRACT-ONLY note 必填；FULL/PARTIAL note 也建议填写。用 1-3 句话说明这篇论文采用的核心方法、理论视角或设计视角；如果只能基于摘要，请明确写 `abstract-level`。}
+
+## B. 桥接点
+{ABSTRACT-ONLY note 必填；FULL/PARTIAL note 也建议填写。说明它与本项目主线、邻接领域或 theory bridge 的连接点；如果没有明显桥接价值，写 `no obvious bridge`，不要硬编。}
+
 ## 14. Design Rationale
 - **Rationale**: {为什么作者认为这个设计应该有效；不是方法步骤复述}
 - **Rationale evidence**: {理论/实验/案例/作者主张；写明证据位置}
@@ -344,6 +354,7 @@ paper_id,Paper Title,2026,Venue,Method Family,DatasetOrSetting,Primary Metric,85
 - `literature/paper_notes/`: 包含 {{ note_count }} 篇论文的结构化笔记（full-text 精读）
 - `literature/paper_notes_abstract/`: {% if abstract_note_count %}{{ abstract_note_count }} 篇 abstract-only 笔记（证据较弱）{% else %}abstract-only 笔记（如有，由 runtime 自动补读）{% endif %}
 - `literature/comparison_table.csv`: 论文对比表
+- `literature/domain_map.json`: T2 生成的引用图领域地图；用于把 citation_edges 作为客观骨架，并识别 core/adjacent/boundary 区域
 {% if missing_areas %}
 - `literature/missing_areas.md`: T2 阶段生成的检索覆盖提示，不是最终研究缺口结论
 {% endif %}
@@ -393,6 +404,12 @@ paper_id,Paper Title,2026,Venue,Method Family,DatasetOrSetting,Primary Metric,85
 - 每个问题要关联具体论文
 - 说明为什么这个问题尚未解决；如果只来自 `missing_areas.md`，必须先写清楚它只是覆盖提示并说明你的复核依据
 
+#### 1e. 邻接领域可迁移机制
+读取 `literature/domain_map.json`，把 `citation_edges` 当作客观引用骨架，再叠加你对 paper notes 的 design_rationale 判断。
+- 重点查看 `domain_map.adjacent` 和 abstract-only notes 的 `## A. 核心做法/视角` / `## B. 桥接点`
+- 找出邻接领域中可能可迁移的机制、视角或评价模式
+- 这些只是 T4 的生成燃料，不是已经成立的研究缺口；证据不足时要说明“覆盖不足/需复核”
+
 ### 阶段 2：调用 build_synthesis_workbench
 
 将阶段 1 的分析结果通过 `llm_insights` 参数传递给工具：
@@ -401,6 +418,7 @@ paper_id,Paper Title,2026,Venue,Method Family,DatasetOrSetting,Primary Metric,85
 build_synthesis_workbench(
   write_final=false,
   render_draft=false,
+  domain_map_path="literature/domain_map.json",
   llm_insights={
     "family_classifications": [
       {"paper_id": "paper_id", "family": "<LLM-assigned method family based on method behavior>", "confidence": "high"},
@@ -480,7 +498,17 @@ build_synthesis_workbench(
 - **Evidence boundary**：哪方证据更强，哪方只是 claim
 - **Idea fuel**：这个 tension 如何供 T4 Pass 1 生成问题重构或 design rationale
 
-### 5. 可操作研究问题 (Actionable Research Questions)
+### 5. 邻接领域可迁移机制 (Adjacent Transfers / Transferable Mechanisms)
+显式消费 `domain_map.adjacent`、`domain_map.citation_edges` 和 abstract-only note 的桥接字段，列出邻接领域可能迁移到本领域的 2-5 个机制/视角。
+
+每个条目包含：
+- **Source field / papers**: 来自哪个邻接方向和哪些 paper IDs
+- **Mechanism or viewpoint**: 邻接领域的核心做法/视角
+- **Bridge to target domain**: 它与本项目主线的连接点
+- **Why not already used**: 本领域目前为什么可能没有充分使用；不确定时写“需复核”
+- **Transfer hypothesis hint**: 给 T4 的候选生成提示
+
+### 6. 可操作研究问题 (Actionable Research Questions)
 列出 3-6 个可推进的研究问题。每个问题包含：
 
 **Q1: {问题描述}**
@@ -503,7 +531,8 @@ build_synthesis_workbench(
 7. **面向T4**：记住这份综述是为T4 Ideation准备的，要突出创新机会
 8. **论文ID与文件名区分**：文件路径必须使用规范化 ID（特殊字符替换为下划线，例如 `arxiv_2301.12345.md`）；正文引用可以使用 `[arxiv:2301.12345]` 或 `[arxiv_2301.12345]`，validator 会做兼容匹配
 9. **证据强度区分**：`paper_notes/` 中的论文可能是 FULL/PARTIAL/ABSTRACT，必须看每篇 note 的 Status 和 Reading Coverage；`paper_notes_abstract/` 中的论文仅基于 abstract，evidence_type 为 `abstract_claim_hint`（旧产物可能是 `claimed_untested`），只能用于覆盖广度和补检线索，不能作为机制结论
-10. **CDR 输出对齐 T4 Pass 1**：`synthesis_workbench.json` 和最终 `synthesis.md` 必须包含 contribution_space / cross_paper_tensions 素材；这些是生成燃料，不是 provenance gate
+10. **CDR 输出对齐 T4 Pass 1**：`synthesis_workbench.json` 和最终 `synthesis.md` 必须包含 contribution_space / cross_paper_tensions / adjacent_transfers 素材；这些是生成燃料，不是 provenance gate
+11. **引用图骨架**：使用 `domain_map.citation_edges` 理解论文之间的关系，但不要把机械 core/adjacent/boundary bucket 当成最终学术结论；最终解释仍由你基于笔记和领域知识判断。
 
 ## 完成标准
 

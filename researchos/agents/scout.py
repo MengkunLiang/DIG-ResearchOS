@@ -81,6 +81,8 @@ class ScoutAgent(Agent):
                         "build_verified_papers",
                         "build_access_audit",
                         "build_deep_read_queue",
+                        "fetch_outgoing_citations",
+                        "build_domain_map",
                         "semantic_scholar_search",
                         "semantic_scholar_get_paper",
                         "arxiv_search",
@@ -254,12 +256,48 @@ class ScoutAgent(Agent):
         if any(paper_id and paper_id not in verified_ids for paper_id in queue_ids):
             return False, "deep_read_queue 中存在不在 papers_verified 里的论文"
 
+        protected_verified = [
+            item
+            for item in verified_records
+            if _is_protected_literature_bucket(item)
+        ]
+        if protected_verified and not any(_is_protected_literature_bucket(item) for item in queue_records):
+            return False, "verified 池包含 adjacent/theory/snowball 论文，但 deep_read_queue 未保留任何跨域/桥接候选"
+
         seed_in_queue = any(bool(item.get("seed_priority")) for item in queue_records)
         seed_path = ctx.workspace_dir / "user_seeds" / "seed_papers.jsonl"
         if seed_path.exists() and load_jsonl(seed_path) and not seed_in_queue:
             return False, "存在用户 seed papers，但 deep_read_queue 没有保留任何 seed 论文"
 
         # 7. 校验 missing_areas.md 的 retrieval coverage hint 结构。
+        domain_map_path = ctx.workspace_dir / "literature" / "domain_map.json"
+        if not domain_map_path.exists():
+            return False, "缺少 literature/domain_map.json，T2 必须产出引用图领域地图供 T3.5/T4/T8 复用"
+        try:
+            domain_map = json.loads(domain_map_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return False, f"domain_map.json 解析失败: {exc}"
+        if domain_map.get("semantics") != "domain_map_for_synthesis_and_ideation_not_final_gaps":
+            return False, "domain_map.json semantics 不正确"
+        for field in ("core", "adjacent", "boundary", "citation_edges", "bucket_assignments"):
+            if field not in domain_map:
+                return False, f"domain_map.json 缺少字段: {field}"
+        if not isinstance(domain_map.get("bucket_assignments"), dict):
+            return False, "domain_map.json bucket_assignments 必须是对象"
+        mapped_ids = set(str(key) for key in domain_map.get("bucket_assignments", {}).keys())
+        verified_overlap = {
+            str(item.get("canonical_id") or item.get("id") or "").strip()
+            for item in verified_records
+        }
+        verified_overlap = {paper_id.replace(":", "_").replace("/", "_") for paper_id in verified_overlap if paper_id}
+        def _norm(value: str) -> str:
+            return value.replace("https://openalex.org/", "").replace("https://api.openalex.org/works/", "").replace(":", "_").replace("/", "_").strip("_")
+
+        normalized_mapped = {_norm(item) for item in mapped_ids}
+        if verified_records and not (normalized_mapped & verified_overlap):
+            return False, "domain_map.json 与 papers_verified 没有可匹配论文ID"
+
+        # 8. 校验 missing_areas.md 的 retrieval coverage hint 结构。
         missing_path = ctx.workspace_dir / "literature" / "missing_areas.md"
         if missing_path.exists():
             content = missing_path.read_text(encoding="utf-8")
@@ -304,3 +342,13 @@ def _load_external_resources(path: Path) -> list[dict[str, str]]:
             }
         )
     return resources
+
+
+def _is_protected_literature_bucket(record: dict[str, object]) -> bool:
+    if bool(record.get("adjacent_field")):
+        return True
+    bucket = str(record.get("search_bucket") or record.get("query_bucket") or "").strip().casefold()
+    bucket = bucket.replace("-", "_").replace(" ", "_")
+    source_bucket = str(record.get("source_bucket") or "").strip().casefold()
+    source_bucket = source_bucket.replace("-", "_").replace(" ", "_")
+    return bucket in {"adjacent_field", "theory_bridge"} or source_bucket in {"adjacent", "snowball"}

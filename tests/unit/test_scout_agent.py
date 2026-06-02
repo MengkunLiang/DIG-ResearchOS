@@ -61,6 +61,7 @@ def execution_context(test_workspace):
             "papers_verified": test_workspace / "literature" / "papers_verified.jsonl",
             "verification_failures": test_workspace / "literature" / "verification_failures.jsonl",
             "deep_read_queue": test_workspace / "literature" / "deep_read_queue.jsonl",
+            "domain_map": test_workspace / "literature" / "domain_map.json",
             "access_audit": test_workspace / "literature" / "access_audit.md",
             "search_log": test_workspace / "literature" / "search_log.md",
             "missing_areas": test_workspace / "literature" / "missing_areas.md",
@@ -80,6 +81,8 @@ def test_scout_agent_spec(scout_agent):
     assert "filter_by_domain" in spec.tool_names
     assert "build_verified_papers" in spec.tool_names
     assert "build_deep_read_queue" in spec.tool_names
+    assert "fetch_outgoing_citations" in spec.tool_names
+    assert "build_domain_map" in spec.tool_names
     assert "elsevier_scopus_search" in spec.tool_names
     assert "informs_search" in spec.tool_names
     # MCP工具已移除，等MCP配置完成后再启用
@@ -252,6 +255,17 @@ def test_validate_outputs_success(scout_agent, execution_context):
             }
             f.write(json.dumps(queue_record) + "\n")
 
+    (lit_dir / "domain_map.json").write_text(json.dumps({
+        "version": "1.0",
+        "semantics": "domain_map_for_synthesis_and_ideation_not_final_gaps",
+        "core": [{"id": "s2_0", "title": "Paper 0", "degree": 1, "key_rationale_hint": "LLM_REVIEW_REQUIRED"}],
+        "adjacent": [],
+        "boundary": [],
+        "citation_edges": [],
+        "bucket_assignments": {"s2_0": "core"},
+        "warnings": ["citation_edges_empty_or_unavailable"]
+    }, ensure_ascii=False))
+
     # search_log.md
     (lit_dir / "access_audit.md").write_text("# Access Audit\n")
     (lit_dir / "search_log.md").write_text("# Search Log\n")
@@ -347,6 +361,17 @@ def test_validate_outputs_too_few_papers(scout_agent, execution_context):
 
     (lit_dir / "verification_failures.jsonl").write_text("", encoding="utf-8")
 
+    (lit_dir / "domain_map.json").write_text(json.dumps({
+        "version": "1.0",
+        "semantics": "domain_map_for_synthesis_and_ideation_not_final_gaps",
+        "core": [{"id": "s2_0", "title": "Paper 0", "degree": 1, "key_rationale_hint": "LLM_REVIEW_REQUIRED"}],
+        "adjacent": [],
+        "boundary": [],
+        "citation_edges": [],
+        "bucket_assignments": {"s2_0": "core"},
+        "warnings": ["citation_edges_empty_or_unavailable"]
+    }, ensure_ascii=False))
+
     (lit_dir / "access_audit.md").write_text("# Access Audit\n")
     (lit_dir / "search_log.md").write_text("")
     (lit_dir / "missing_areas.md").write_text("")
@@ -411,6 +436,17 @@ def test_validate_outputs_dedup_anomaly(scout_agent, execution_context):
     (lit_dir / "search_log.md").write_text("")
     (lit_dir / "missing_areas.md").write_text("")
 
+    (lit_dir / "domain_map.json").write_text(json.dumps({
+        "version": "1.0",
+        "semantics": "domain_map_for_synthesis_and_ideation_not_final_gaps",
+        "core": [],
+        "adjacent": [],
+        "boundary": [],
+        "citation_edges": [],
+        "bucket_assignments": {},
+        "warnings": ["test"]
+    }, ensure_ascii=False))
+
     ok, err = scout_agent.validate_outputs(execution_context)
     assert not ok
     assert "去重异常" in err
@@ -449,6 +485,17 @@ def test_validate_outputs_missing_required_field(scout_agent, execution_context)
     (lit_dir / "access_audit.md").write_text("# Access Audit\n")
     (lit_dir / "search_log.md").write_text("")
     (lit_dir / "missing_areas.md").write_text("")
+
+    (lit_dir / "domain_map.json").write_text(json.dumps({
+        "version": "1.0",
+        "semantics": "domain_map_for_synthesis_and_ideation_not_final_gaps",
+        "core": [],
+        "adjacent": [],
+        "boundary": [],
+        "citation_edges": [],
+        "bucket_assignments": {},
+        "warnings": ["test"]
+    }, ensure_ascii=False))
 
     ok, err = scout_agent.validate_outputs(execution_context)
     assert not ok

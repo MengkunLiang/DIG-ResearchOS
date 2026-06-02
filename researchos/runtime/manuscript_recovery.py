@@ -20,6 +20,7 @@ T8_SECTION_PLAN_REQUIRED_INPUTS = [
     "drafts/section_plan.json",
     "drafts/evidence_plan.json",
     "drafts/figure_table_plan.json",
+    "drafts/alignment_matrix.json",
 ]
 
 
@@ -64,6 +65,7 @@ async def repair_t8_section_plan_outputs(
         section_plan_path="drafts/section_plan.json",
         evidence_plan_path="drafts/evidence_plan.json",
         figure_table_plan_path="drafts/figure_table_plan.json",
+        alignment_matrix_path="drafts/alignment_matrix.json",
         state_output_path="drafts/paper_state.json",
         section_outline_dir="drafts/section_outlines",
         target_venue=str(venue or ""),

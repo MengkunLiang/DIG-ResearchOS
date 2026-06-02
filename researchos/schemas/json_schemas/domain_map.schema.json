@@ -1,0 +1,94 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://researchos.dev/schemas/domain_map.schema.json",
+  "title": "Domain Map",
+  "description": "Mechanical T2 citation/domain map for synthesis, ideation, and writing.",
+  "type": "object",
+  "required": [
+    "semantics",
+    "core",
+    "adjacent",
+    "boundary",
+    "citation_edges",
+    "bucket_assignments"
+  ],
+  "properties": {
+    "version": { "type": "string" },
+    "semantics": {
+      "type": "string",
+      "enum": ["domain_map_for_synthesis_and_ideation_not_final_gaps"]
+    },
+    "core": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "degree"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "title": { "type": "string" },
+          "degree": { "type": "integer", "minimum": 0 },
+          "inbound_degree": { "type": "integer", "minimum": 0 },
+          "key_rationale_hint": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "adjacent": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "bridges_to_core", "why_adjacent"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "title": { "type": "string" },
+          "degree": { "type": "integer", "minimum": 0 },
+          "bridges_to_core": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "why_adjacent": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "boundary": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "note"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "title": { "type": "string" },
+          "degree": { "type": "integer", "minimum": 0 },
+          "note": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "citation_edges": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "minItems": 2,
+        "maxItems": 2,
+        "items": { "type": "string" }
+      }
+    },
+    "bucket_assignments": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "enum": ["core", "adjacent", "boundary", "snowball", "seed"]
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": true
+}

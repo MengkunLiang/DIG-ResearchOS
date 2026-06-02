@@ -101,6 +101,10 @@ def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) 
             "idea_id": "D1",
             "screening_recommendation": "proceed",
             "visible_to_gate": True,
+            "counterfactual_check": "independent",
+            "counterfactual_note": "抽掉最近论文后仍有独立机制论证。",
+            "nearest_prior_work": {"work": "Smith2024", "distance": "moderate"},
+            "novelty_signal": "adjacent_zone",
             "novelty_check": {"prior_art": "uncertain", "closest_baselines": [], "novelty_risk": "medium"},
             "feasibility_check": {"feasible_under_budget": True, "blocking_risks": []},
             "contribution_check": {
@@ -116,6 +120,10 @@ def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) 
             "idea_id": "D1b",
             "screening_recommendation": "defer_recommended",
             "visible_to_gate": True,
+            "counterfactual_check": "survives_weakened",
+            "counterfactual_note": "抽掉最近工作后仍成立但证据会弱化。",
+            "nearest_prior_work": {"work": "Nearby Paper", "distance": "distant"},
+            "novelty_signal": "no_nearby_cluster",
             "novelty_check": {"prior_art": "uncertain", "closest_baselines": [], "novelty_risk": "high_uncertainty"},
             "feasibility_check": {"feasible_under_budget": True, "blocking_risks": []},
             "contribution_check": {
@@ -131,6 +139,10 @@ def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) 
             "idea_id": "D2",
             "screening_recommendation": "reject_recommended",
             "visible_to_gate": True,
+            "counterfactual_check": "collapses",
+            "counterfactual_note": "抽掉最相近工作后只剩应用迁移。",
+            "nearest_prior_work": {"work": "Nearby Paper", "distance": "very_close"},
+            "novelty_signal": "marginal_zone",
             "novelty_check": {"prior_art": "closest_known", "closest_baselines": ["Nearby Paper"], "novelty_risk": "low"},
             "feasibility_check": {"feasible_under_budget": True, "blocking_risks": []},
             "contribution_check": {
@@ -146,6 +158,10 @@ def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) 
             "idea_id": "S1",
             "screening_recommendation": "revise_before_selection",
             "visible_to_gate": True,
+            "counterfactual_check": "survives_weakened",
+            "counterfactual_note": "作为反向操作仍可服务机制检验。",
+            "nearest_prior_work": {"work": "none", "distance": "none_found"},
+            "novelty_signal": "no_nearby_cluster",
             "novelty_check": {"prior_art": "uncertain", "closest_baselines": [], "novelty_risk": "medium"},
             "feasibility_check": {"feasible_under_budget": True, "blocking_risks": []},
             "contribution_check": {
@@ -216,6 +232,10 @@ def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) 
                         "difference": "本idea强调机制验证和成本约束。",
                     }
                 ],
+                "counterfactual_check": "independent",
+                "counterfactual_note": "抽掉单篇相关论文后，该方向仍可由综述张力和问题重构独立推出。",
+                "nearest_prior_work": {"work": "baseline1", "distance": "moderate"},
+                "novelty_signal": "adjacent_zone",
                 "scores": {
                     "novelty": 4,
                     "feasibility": 4,
@@ -292,6 +312,10 @@ def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) 
                     "contribution_character": "如果成立，会把失败模式从现象描述推进到可干预机制。",
                 },
                 "closest_baselines": [],
+                "counterfactual_check": "survives_weakened",
+                "counterfactual_note": "抽掉失败模式论文后，该方向仍可成立但经验支撑会变弱。",
+                "nearest_prior_work": {"work": "Failure Paper", "distance": "moderate"},
+                "novelty_signal": "adjacent_zone",
                 "scores": {
                     "novelty": 3,
                     "feasibility": 3,
@@ -375,6 +399,10 @@ def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) 
                         "difference": "差异主要是场景变化。",
                     }
                 ],
+                "counterfactual_check": "collapses",
+                "counterfactual_note": "抽掉 Nearby Paper 后，该方向基本只剩应用迁移，独立设计论证不足。",
+                "nearest_prior_work": {"work": "Nearby Paper", "distance": "very_close"},
+                "novelty_signal": "marginal_zone",
                 "scores": {
                     "novelty": 2,
                     "feasibility": 4,
@@ -450,6 +478,10 @@ def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) 
                     "contribution_character": "如果成立，会削弱现有方法对默认增强必要性的解释。",
                 },
                 "closest_baselines": [],
+                "counterfactual_check": "survives_weakened",
+                "counterfactual_note": "抽掉具体消融论文后，反向操作仍可作为机制检验，但支撑较弱。",
+                "nearest_prior_work": {"work": "Ablation Paper", "distance": "distant"},
+                "novelty_signal": "no_nearby_cluster",
                 "scores": {
                     "novelty": 3,
                     "feasibility": 5,
@@ -580,6 +612,23 @@ Both families are distinct. D1 focuses on mechanism verification while D2 is a d
 
 - 合并 D1+D1b：用 D1 的清晰机制吸收 D1b 的失败子群证据。
 - 合并 D1+S1：把 S1 作为 D1 的反向操作消融。
+
+## 集中度提示
+
+多个候选没有过度依赖同一篇论文；这是软提示，不是质量结论。
+
+## Origin 分布
+
+- free_reasoning: 1
+- evidence_driven: 1
+- seed_refinement: 1
+- reverse_operation: 1
+
+## Novelty-Utility 谱系排布
+
+- 高新颖高风险: S1
+- 中新颖高可行: D1, D1b
+- 低新颖高可行: D2
 
 用户可选择 D1、选择 D2 并重构、合并 D1+D1b、合并 D1+S1、新想法或重新分析。
 """,

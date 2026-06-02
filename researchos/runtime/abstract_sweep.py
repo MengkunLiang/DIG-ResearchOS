@@ -154,6 +154,14 @@ LLM_REVIEW_REQUIRED. Abstract opening snippet:
 LLM_REVIEW_REQUIRED. Abstract middle snippet:
 {middle_hint}
 
+## A. 核心做法/视角
+LLM_REVIEW_REQUIRED. Abstract-only hint about the method, lens, or viewpoint:
+{middle_hint}
+
+## B. 桥接点
+LLM_REVIEW_REQUIRED. Explain how this paper may connect to the target domain or adjacent transfer:
+{paper.get('why_relevant', '') or paper.get('source_bucket', '') or 'review required before use'}
+
 ## 3. Key Claimed Results
 LLM_REVIEW_REQUIRED. Abstract closing snippet:
 {closing_hint}

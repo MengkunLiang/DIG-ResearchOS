@@ -85,6 +85,10 @@ def _write_t4_stage_visibility_artifacts(ideation_dir):
             "idea_id": "D1",
             "screening_recommendation": "proceed",
             "visible_to_gate": True,
+            "counterfactual_check": "independent",
+            "counterfactual_note": "抽掉最近论文后仍有独立机制论证。",
+            "nearest_prior_work": {"work": "Smith2024", "distance": "moderate"},
+            "novelty_signal": "adjacent_zone",
             "novelty_check": {"prior_art": "uncertain", "closest_baselines": [], "novelty_risk": "medium"},
             "feasibility_check": {"feasible_under_budget": True, "blocking_risks": []},
             "contribution_check": {
@@ -100,6 +104,10 @@ def _write_t4_stage_visibility_artifacts(ideation_dir):
             "idea_id": "D1b",
             "screening_recommendation": "defer_recommended",
             "visible_to_gate": True,
+            "counterfactual_check": "survives_weakened",
+            "counterfactual_note": "抽掉最近工作后仍成立但证据会弱化。",
+            "nearest_prior_work": {"work": "Nearby Paper", "distance": "distant"},
+            "novelty_signal": "no_nearby_cluster",
             "novelty_check": {"prior_art": "uncertain", "closest_baselines": [], "novelty_risk": "high_uncertainty"},
             "feasibility_check": {"feasible_under_budget": True, "blocking_risks": []},
             "contribution_check": {
@@ -115,6 +123,10 @@ def _write_t4_stage_visibility_artifacts(ideation_dir):
             "idea_id": "D2",
             "screening_recommendation": "reject_recommended",
             "visible_to_gate": True,
+            "counterfactual_check": "collapses",
+            "counterfactual_note": "抽掉最相近工作后只剩应用迁移。",
+            "nearest_prior_work": {"work": "Nearby Paper", "distance": "very_close"},
+            "novelty_signal": "marginal_zone",
             "novelty_check": {"prior_art": "closest_known", "closest_baselines": ["Nearby Paper"], "novelty_risk": "low"},
             "feasibility_check": {"feasible_under_budget": True, "blocking_risks": []},
             "contribution_check": {
@@ -130,6 +142,10 @@ def _write_t4_stage_visibility_artifacts(ideation_dir):
             "idea_id": "S1",
             "screening_recommendation": "revise_before_selection",
             "visible_to_gate": True,
+            "counterfactual_check": "survives_weakened",
+            "counterfactual_note": "作为反向操作仍可服务机制检验。",
+            "nearest_prior_work": {"work": "none", "distance": "none_found"},
+            "novelty_signal": "no_nearby_cluster",
             "novelty_check": {"prior_art": "uncertain", "closest_baselines": [], "novelty_risk": "medium"},
             "feasibility_check": {"feasible_under_budget": True, "blocking_risks": []},
             "contribution_check": {
@@ -213,6 +229,12 @@ def _write_t4_stage_visibility_artifacts(ideation_dir):
         "## Merge options\n\n"
         "- 合并 D1+D1b：用 D1 的清晰机制吸收 D1b 的失败子群证据。\n"
         "- 合并 D1+S1：把 S1 作为 D1 的反向操作消融。\n\n"
+        "## 集中度提示\n\n"
+        "候选没有过度集中在单一论文；这是软提示。\n\n"
+        "## Origin 分布\n\n"
+        "free_reasoning: 1; evidence_driven: 1; seed_refinement: 1; reverse_operation: 1。\n\n"
+        "## Novelty-Utility 谱系排布\n\n"
+        "高新颖高风险: S1；中新颖高可行: D1, D1b；低新颖高可行: D2。\n\n"
         "用户可选择 D1、选择 D2 并重构、合并 D1+D1b、合并 D1+S1、新想法或重新分析。\n",
         encoding="utf-8",
     )
@@ -249,7 +271,6 @@ def write_valid_t8_section_plan_inputs(workspace):
         "methodology",
         "experiments",
         "analysis",
-        "limitations",
         "conclusion",
     ]
     (drafts / "section_plan.json").write_text(
@@ -310,6 +331,33 @@ def write_valid_t8_section_plan_inputs(workspace):
                         "intended_section": "experiments",
                         "source_artifacts": ["experiments/results_summary.json"],
                     },
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (drafts / "alignment_matrix.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "alignment_matrix_seed_not_final_scientific_judgment",
+                "rows": [
+                    {
+                        "cid": "C1",
+                        "hypothesis": "H1",
+                        "motivation": "test motivation",
+                        "contribution": "test contribution",
+                        "contribution_type": "improvement",
+                        "related_gap": {"papers": ["smith2024"], "tension": "test tension"},
+                        "counterfactual": "independent",
+                        "counterfactual_note": "test counterfactual note",
+                        "nearest_prior_work": {"work": "smith2024", "distance": "moderate"},
+                        "novelty_signal": "adjacent_zone",
+                        "design_choice": "test design choice",
+                        "experiment": {"rq": "RQ1", "result_metric": "accuracy"},
+                        "analysis": "test analysis",
+                    }
                 ],
             },
             ensure_ascii=False,
@@ -621,6 +669,10 @@ def write_valid_t4_artifacts(workspace):
                                 "difference": "本idea强调机制验证。",
                             }
                         ],
+                        "counterfactual_check": "independent",
+                        "counterfactual_note": "抽掉单篇相关论文后，该方向仍可由综述张力独立推出。",
+                        "nearest_prior_work": {"work": "baseline1", "distance": "moderate"},
+                        "novelty_signal": "adjacent_zone",
                         "scores": {
                             "novelty": 4,
                             "feasibility": 4,
@@ -699,6 +751,10 @@ def write_valid_t4_artifacts(workspace):
                             "contribution_character": "如果成立，会把失败模式从现象描述推进到可干预机制。",
                         },
                         "closest_baselines": [],
+                        "counterfactual_check": "survives_weakened",
+                        "counterfactual_note": "抽掉相关论文后仍可成立但支撑变弱。",
+                        "nearest_prior_work": {"work": "Failure Paper", "distance": "moderate"},
+                        "novelty_signal": "adjacent_zone",
                         "scores": {
                             "novelty": 3,
                             "feasibility": 3,
@@ -782,6 +838,10 @@ def write_valid_t4_artifacts(workspace):
                                 "difference": "差异主要是场景变化。",
                             }
                         ],
+                        "counterfactual_check": "collapses",
+                        "counterfactual_note": "抽掉 Nearby Paper 后，该方向基本只剩应用迁移。",
+                        "nearest_prior_work": {"work": "Nearby Paper", "distance": "very_close"},
+                        "novelty_signal": "marginal_zone",
                         "scores": {
                             "novelty": 2,
                             "feasibility": 4,
@@ -859,6 +919,10 @@ def write_valid_t4_artifacts(workspace):
                             "contribution_character": "如果成立，会削弱现有方法对默认增强必要性的解释。",
                         },
                         "closest_baselines": [],
+                        "counterfactual_check": "survives_weakened",
+                        "counterfactual_note": "抽掉消融论文后仍可作为机制检验但支撑较弱。",
+                        "nearest_prior_work": {"work": "Ablation Paper", "distance": "distant"},
+                        "novelty_signal": "no_nearby_cluster",
                         "scores": {
                             "novelty": 3,
                             "feasibility": 5,
@@ -1609,6 +1673,15 @@ Graph contrastive method for robust sparse recommendation.
                                     "feed ideation by asking whether the artifact should adapt to user activity, whether "
                                     "the evaluation mode should privilege subgroup evidence, and which boundary "
                                     "conditions would make the rationale fail.\n\n"
+                                    "## 邻接领域可迁移机制\n"
+                                    "The current mock corpus has limited explicit adjacent-domain coverage, so this "
+                                    "section records the transfer boundary instead of inventing an external field. "
+                                    "The transferable mechanism suggested by the notes is subgroup-sensitive control: "
+                                    "[paper_2] and [paper_3] imply that sparse-user behavior may require adaptive "
+                                    "rather than uniform perturbation. This is only a synthesis hint for T4, not a "
+                                    "finished idea or a claim that another domain has already solved the problem. "
+                                    "A later ideation step should verify whether this adjacent-transfer framing "
+                                    "survives comparison with [paper_0], [paper_1], and [paper_4].\n\n"
                                     "## 可操作研究问题\n"
                                     "Q1: Which observable condition separates cases where the stated mechanism helps "
                                     "from cases where a simpler baseline is sufficient? Related papers include "

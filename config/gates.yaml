@@ -83,19 +83,54 @@ gates:
           path: evaluation/evaluation_decision.md
           pattern: "next_task:\\s*([A-Za-z0-9_.-]+)"
           group: 1
-          default: "T8-RESOURCE"
+          default: "T8-STYLE-GATE"
     options:
       - id: follow_recommendation
         label: "按 PI 推荐推进"
         next: "__parse_from_output__"
       - id: go_write
         label: "直接启动写作"
-        next: T8-RESOURCE
+        next: T8-STYLE-GATE
       - id: rerun_t7
         label: "回到 T7 补实验"
         next: T7
       - id: rethink_t4
         label: "回到 T4 重构假设"
+        next: T4
+      - id: stop_project
+        label: "结束当前项目"
+        next: done
+
+  # T4.5 非通过 verdict 的人工确认门：
+  # Novelty Auditor 可以建议 reframe/drop，但最终是否回 T4、继续 T7 或停止由用户决定。
+  t45_human_review_gate:
+    title: "T4.5 新颖性审计人工决策"
+    description: "T4.5 的 Final Gate Verdict 未直接通过。请查看审计报告和候选池后决定下一步，系统不会自动拒绝或自动回退。"
+    presentation:
+      final_gate_verdict:
+        from_file_regex:
+          path: ideation/novelty_audit.md
+          pattern: "(?im)^\\s*(?:#+\\s*)?(?:\\*\\*)?\\s*Final\\s+Gate\\s+Verdict\\s*(?:\\*\\*)?\\s*[:：]\\s*(.+?)\\s*$"
+          group: 1
+          default: "未解析到 Final Gate Verdict"
+      novelty_audit:
+        from_file: ideation/novelty_audit.md
+        max_chars: 7000
+      gate1_selection_brief:
+        from_file: ideation/_gate1_selection_brief.md
+        max_chars: 5000
+      idea_scorecard:
+        from_file: ideation/idea_scorecard.yaml
+        max_chars: 5000
+      rejected_ideas:
+        from_file: ideation/rejected_ideas.md
+        max_chars: 3000
+    options:
+      - id: continue_to_t7
+        label: "继续进入 T7"
+        next: T7
+      - id: return_to_t4
+        label: "回到 T4 重构"
         next: T4
       - id: stop_project
         label: "结束当前项目"

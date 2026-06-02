@@ -88,6 +88,7 @@ class ReaderAgent(Agent):
             "resume_mode": bool(ctx.extra.get("is_resume")),
             "resume_reason": str(ctx.extra.get("resume_reason", "")),
             "cdr_schema_summary": cdr_schema_prompt_summary(),
+            "domain_map_exists": (ctx.workspace_dir / "literature" / "domain_map.json").exists(),
         }
 
         if mode == "read":
@@ -276,6 +277,19 @@ class ReaderAgent(Agent):
                     f"至少需要完成 {min_required} 篇队列论文；当前目标阅读数为 {target_required}。"
                 )
 
+            protected_queue_keys = {
+                normalize_text_key(str(item.get("normalized_id") or item.get("paper_id") or ""))
+                for item in queue_records
+                if _is_protected_queue_record(item) and str(item.get("target_bucket") or "") != "overflow"
+            }
+            protected_queue_keys = {key for key in protected_queue_keys if key}
+            missing_protected_notes = sorted(protected_queue_keys - completed_note_keys)
+            if missing_protected_notes:
+                return False, (
+                    "deep_read_queue 中的 adjacent/theory/snowball 保护论文尚未完成笔记: "
+                    + ", ".join(missing_protected_notes[:6])
+                )
+
         # 动态确定最小笔记数：优先围绕 deep_read_queue，其次回退到 papers_dedup
         dedup_path = ctx.workspace_dir / "literature" / "papers_dedup.jsonl"
         verified_path = ctx.workspace_dir / "literature" / "papers_verified.jsonl"
@@ -347,6 +361,12 @@ class ReaderAgent(Agent):
             ("趋势", "Trends", "技术趋势"),
             ("研究问题", "Research Questions", "Open Questions", "Actionable"),
         ]
+        if (ctx.workspace_dir / "literature" / "domain_map.json").exists() or (
+            ctx.workspace_dir / "literature" / "synthesis_workbench.json"
+        ).exists():
+            required_sections.append(
+                ("邻接领域可迁移机制", "Adjacent Transfers", "Transferable Mechanisms", "邻接迁移")
+            )
 
         missing = []
         for section_keywords in required_sections:
@@ -358,6 +378,21 @@ class ReaderAgent(Agent):
 
         if len(content) < 2000:
             return False, f"synthesis.md过短({len(content)}字符)，可能没有认真综合"
+
+        workbench_path = ctx.workspace_dir / "literature" / "synthesis_workbench.json"
+        domain_map_exists = (ctx.workspace_dir / "literature" / "domain_map.json").exists()
+        if workbench_path.exists():
+            try:
+                import json
+                workbench = json.loads(workbench_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                return False, f"synthesis_workbench.json 解析失败: {exc}"
+            if "adjacent_transfers" not in workbench and domain_map_exists:
+                return False, "synthesis_workbench.json 缺少 adjacent_transfers"
+            if "adjacent_transfers" in workbench and not isinstance(workbench.get("adjacent_transfers"), list):
+                return False, "synthesis_workbench.json adjacent_transfers 必须是数组"
+        elif domain_map_exists:
+            return False, "缺少 literature/synthesis_workbench.json"
 
         note_ids = _paper_note_reference_ids(ctx.workspace_dir / "literature" / "paper_notes")
         known_refs = _known_note_refs_in_content(content, note_ids)
@@ -446,6 +481,18 @@ def _paper_match_keys(paper: dict[str, object]) -> set[str]:
     return {normalize_text_key(candidate) for candidate in candidates if str(candidate).strip()}
 
 
+def _is_protected_queue_record(record: dict[str, object]) -> bool:
+    """Return true for T2 labels that should be read, not silently skipped."""
+
+    if bool(record.get("adjacent_field")):
+        return True
+    bucket = str(record.get("search_bucket") or record.get("query_bucket") or "").strip().casefold()
+    bucket = bucket.replace("-", "_").replace(" ", "_")
+    source_bucket = str(record.get("source_bucket") or "").strip().casefold()
+    source_bucket = source_bucket.replace("-", "_").replace(" ", "_")
+    return bucket in {"adjacent_field", "theory_bridge"} or source_bucket in {"adjacent", "snowball"}
+
+
 def _paper_note_reference_ids(notes_dir: Path) -> set[str]:
     if not notes_dir.exists():
         return set()
@@ -504,6 +551,10 @@ def _validate_note_structure(note_path: Path) -> tuple[bool, str | None]:
     # 旧格式 note 允许没有 Verification 字段；但全文类 note 至少要有证据锚点痕迹。
     status_text = content.partition("- **Status**:")[2].splitlines()[0] if "- **Status**:" in content else ""
     is_abstract_only = "ABSTRACT-ONLY" in status_text
+    if is_abstract_only:
+        for marker in ("## A. 核心做法/视角", "## B. 桥接点"):
+            if marker not in content:
+                return False, f"{note_path.name} ABSTRACT-ONLY note 缺少必要轻字段: {marker}"
     if not is_abstract_only and "Evidence Source" not in content and "| Claim | Evidence | Strength |" not in content:
         return False, f"{note_path.name} 缺少 evidence 锚点，无法支撑全文类结论"
 
@@ -612,6 +663,8 @@ def _validate_abstract_note_structure(note_path: Path) -> tuple[bool, str | None
         "- **Status**:",
         "## 1. Problem & Motivation",
         "## 2. Method Summary",
+        "## A. 核心做法/视角",
+        "## B. 桥接点",
         "## 3. Key Claimed Results",
         "## 13. Mechanism Claim",
         "## Source",

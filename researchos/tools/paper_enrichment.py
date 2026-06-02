@@ -66,6 +66,9 @@ def enrich_papers(
             bucket = annotation.get("search_bucket") or annotation.get("query_bucket")
             if bucket not in (None, ""):
                 paper["search_bucket"] = _normalize_search_bucket(bucket)
+            source_bucket = annotation.get("source_bucket")
+            if source_bucket not in (None, ""):
+                paper["source_bucket"] = _normalize_source_bucket(source_bucket)
             if annotation.get("adjacent_field") is not None:
                 paper["adjacent_field"] = bool(annotation.get("adjacent_field"))
             paper["llm_annotation_applied"] = True
@@ -168,6 +171,8 @@ def enrich_papers(
             paper["search_bucket"] = _normalize_search_bucket(paper.get("search_bucket"))
         if paper.get("query_bucket") and not paper.get("search_bucket"):
             paper["search_bucket"] = _normalize_search_bucket(paper.get("query_bucket"))
+        if paper.get("source_bucket"):
+            paper["source_bucket"] = _normalize_source_bucket(paper.get("source_bucket"))
         if _is_protected_search_bucket(paper):
             paper["adjacent_field"] = True
 
@@ -243,11 +248,27 @@ def _normalize_search_bucket(raw: Any) -> str:
     return aliases.get(value, value)
 
 
+def _normalize_source_bucket(raw: Any) -> str:
+    value = str(raw or "").strip().casefold().replace(" ", "_").replace("-", "_")
+    aliases = {
+        "adjacent_field": "adjacent",
+        "nearby_field": "adjacent",
+        "cross_domain": "adjacent",
+        "theory": "adjacent",
+        "theory_bridge": "adjacent",
+        "seed_paper": "seed",
+        "snowball_reference": "snowball",
+        "related_work": "snowball",
+    }
+    return aliases.get(value, value)
+
+
 def _is_protected_search_bucket(paper: dict[str, Any]) -> bool:
     if bool(paper.get("adjacent_field")):
         return True
     bucket = _normalize_search_bucket(paper.get("search_bucket") or paper.get("query_bucket"))
-    return bucket in {"adjacent_field", "theory_bridge"}
+    source_bucket = _normalize_source_bucket(paper.get("source_bucket"))
+    return bucket in {"adjacent_field", "theory_bridge"} or source_bucket in {"adjacent", "snowball"}
 
 
 def _as_str_list(value: Any) -> list[str]:
@@ -331,6 +352,7 @@ def build_deep_read_queue(
         # methodological_signal 只是通用方法论文本 hint，不是领域相关性判断。
         meth_signal = float(paper.get("methodological_signal", 0.0))
         search_bucket = _normalize_search_bucket(paper.get("search_bucket") or paper.get("query_bucket"))
+        source_bucket = _normalize_source_bucket(paper.get("source_bucket"))
         protected_bucket = _is_protected_search_bucket(paper)
         bucket_bonus = 0.12 if protected_bucket else 0.0
         read_priority = round(
@@ -366,6 +388,7 @@ def build_deep_read_queue(
             "read_priority_semantics": "queue_priority_hint_not_final_relevance",
             "methodological_signal_hint": round(meth_signal, 2),
             "search_bucket": search_bucket,
+            "source_bucket": source_bucket,
             "adjacent_field": protected_bucket,
             "protected_bucket_bonus": bucket_bonus,
         }
@@ -422,6 +445,7 @@ def build_deep_read_queue(
     queue_records.sort(
         key=lambda item: (
             not item["seed_priority"],
+            id(item) not in protected_ids,
             -item["final_priority"],
             -item["relevance_score"],
             -item["access_score"],
@@ -448,6 +472,11 @@ def build_deep_read_queue(
         "seed_in_queue": sum(1 for item in queue_records if item["seed_priority"]),
         "protected_bucket_target": protected_target,
         "protected_bucket_in_queue": sum(1 for item in queue_records if item.get("adjacent_field")),
+        "protected_bucket_in_target": sum(
+            1
+            for item in queue_records
+            if item.get("adjacent_field") and item.get("target_bucket") != "overflow"
+        ),
         "full_text_candidates": sum(
             1
             for item in queue_records

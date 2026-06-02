@@ -113,13 +113,70 @@ class SearchTool(Tool):
         )
 
 
+class CitationParams(BaseModel):
+    openalex_id_or_doi: str
+
+
+class CitationSnowballTool(Tool):
+    name = "fetch_outgoing_citations"
+    description = "citation snowball"
+    parameters_schema = CitationParams
+
+    async def execute(self, **kwargs):
+        return ToolResult(
+            ok=True,
+            content="resolved citation snowball candidates",
+            data={
+                "source_id": "W_seed",
+                "referenced_works": ["W_ref"],
+                "related_works": ["W_rel"],
+                "query_bucket": "snowball",
+                "papers": [
+                    {
+                        "id": "W_ref",
+                        "source": "openalex_snowball",
+                        "title": "Referenced Snowball Paper",
+                        "authors": ["Ref Author"],
+                        "year": 2024,
+                        "abstract": "Referenced work with a reusable design rationale.",
+                        "venue": "Journal",
+                        "url": "https://openalex.org/W_ref",
+                        "citation_count": 7,
+                        "doi": "",
+                        "referenced_works": [],
+                        "related_works": [],
+                        "source_bucket": "snowball",
+                        "search_bucket": "snowball",
+                    },
+                    {
+                        "id": "W_rel",
+                        "source": "openalex_snowball",
+                        "title": "Adjacent Related Paper",
+                        "authors": ["Rel Author"],
+                        "year": 2025,
+                        "abstract": "Adjacent field mechanism.",
+                        "venue": "AdjacentConf",
+                        "url": "https://openalex.org/W_rel",
+                        "citation_count": 3,
+                        "doi": "",
+                        "referenced_works": [],
+                        "related_works": [],
+                        "source_bucket": "adjacent",
+                        "search_bucket": "snowball",
+                        "adjacent_field": True,
+                    },
+                ],
+            },
+        )
+
+
 class T2SearchAgent(Agent):
     def __init__(self):
         super().__init__(
             AgentSpec(
                 name="t2-search",
                 model_tier="medium",
-                tool_names=["arxiv_search", "finish_task"],
+                tool_names=["arxiv_search", "fetch_outgoing_citations", "finish_task"],
                 allowed_write_prefixes=["literature/"],
             )
         )
@@ -396,6 +453,7 @@ async def test_runner_records_t5_reproducibility_metadata(tmp_workspace):
 async def test_t2_search_results_are_auto_persisted_to_papers_raw(tmp_workspace):
     registry = ToolRegistry()
     registry.register("arxiv_search", lambda ctx: SearchTool())
+    registry.register("fetch_outgoing_citations", lambda ctx: CitationSnowballTool())
     from researchos.tools.finish_task import FinishTaskTool
 
     registry.register("finish_task", lambda ctx: FinishTaskTool())
@@ -430,6 +488,53 @@ async def test_t2_search_results_are_auto_persisted_to_papers_raw(tmp_workspace)
     assert raw_path.exists()
     content = raw_path.read_text(encoding="utf-8")
     assert "Runtime Auto Save for T2" in content
+
+
+@pytest.mark.asyncio
+async def test_t2_citation_snowball_candidates_are_auto_persisted(tmp_workspace):
+    registry = ToolRegistry()
+    registry.register("arxiv_search", lambda ctx: SearchTool())
+    registry.register("fetch_outgoing_citations", lambda ctx: CitationSnowballTool())
+    from researchos.tools.finish_task import FinishTaskTool
+
+    registry.register("finish_task", lambda ctx: FinishTaskTool())
+    llm = MockLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[
+                        FakeToolCall(
+                            name="fetch_outgoing_citations",
+                            arguments={"openalex_id_or_doi": "W_seed"},
+                            id="tc1",
+                        )
+                    ]
+                )
+            ),
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="finish_task", arguments={"summary": "done"}, id="tc2")]
+                )
+            ),
+        ]
+    )
+    runner = AgentRunner(T2SearchAgent(), registry, llm, MockHumanInterface())
+    result = await runner.run(
+        ExecutionContext(workspace_dir=tmp_workspace, project_id="p1", task_id="T2", run_id="r_snowball")
+    )
+
+    assert result.ok
+    raw_records = [
+        json.loads(line)
+        for line in (tmp_workspace / "literature" / "papers_raw.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert {record["id"] for record in raw_records} == {"W_ref", "W_rel"}
+    assert any(record.get("source_bucket") == "adjacent" for record in raw_records)
+    assert any(record.get("search_bucket") == "snowball" for record in raw_records)
+    citation_edges = json.loads((tmp_workspace / "literature" / "citation_edges.json").read_text(encoding="utf-8"))
+    assert ["W_seed", "W_ref"] in citation_edges
+    assert ["W_seed", "W_rel"] in citation_edges
 
 
 @pytest.mark.asyncio

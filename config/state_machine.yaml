@@ -86,7 +86,9 @@ states:
       papers_dedup: literature/papers_dedup.jsonl      # 去重后的论文列表
       papers_verified: literature/papers_verified.jsonl # 已做 metadata verification 的论文
       verification_failures: literature/verification_failures.jsonl # verification 失败清单
+      citation_edges: literature/citation_edges.json     # 一跳出引/related_works 边，供 domain_map 与下游复用
       deep_read_queue: literature/deep_read_queue.jsonl # T3 精读队列
+      domain_map: literature/domain_map.json             # 引用图领域地图，供 T3.5/T4/T8 复用
       access_audit: literature/access_audit.md         # PDF/可读性审计清单
       search_log: literature/search_log.md             # 检索日志
       missing_areas: literature/missing_areas.md       # 识别的研究空白
@@ -106,6 +108,7 @@ states:
       papers_verified: literature/papers_verified.jsonl # 输入：已核验论文列表（优先）
       deep_read_queue_pending: literature/deep_read_queue_pending.jsonl # 输入：恢复运行时的剩余精读队列（优先）
       deep_read_queue: literature/deep_read_queue.jsonl # 输入：精读队列（优先）
+      domain_map: literature/domain_map.json             # 输入：T2 引用图领域地图（邻接/边界提示）
       access_audit: literature/access_audit.md          # 输入：可读性审计
       missing_areas: literature/missing_areas.md        # 输入：研究空白
     outputs:
@@ -128,11 +131,426 @@ states:
       paper_notes_dir: literature/paper_notes           # 输入：论文笔记
       comparison_table: literature/comparison_table.csv # 输入：对比表
       missing_areas: literature/missing_areas.md        # 输入：研究空白
+      domain_map: literature/domain_map.json             # 输入：引用图领域地图
     outputs:
       synthesis: literature/synthesis.md                # 文献综述
       synthesis_workbench: literature/synthesis_workbench.json # 结构化证据工作台
       synthesis_outline: literature/synthesis_outline.md # 分阶段大纲
       synthesis_draft: literature/synthesis_draft.md    # 分阶段草稿
+    next_on_success: T3.6-GATE-SURVEY
+    next_on_failure: failed
+
+  # T3.6-GATE-SURVEY 状态：可选综述论文支线入口
+  # 用途：T3.5 synthesis.md 是 idea 燃料；这里询问是否额外撰写 taxonomy-driven survey paper。
+  # Agent：survey_writer（综述论文写作）
+  # 模式：survey_gate
+  T3.6-GATE-SURVEY:
+    agent: survey_writer
+    mode: survey_gate
+    inputs:
+      project: project.yaml
+      synthesis: literature/synthesis.md
+      synthesis_workbench: literature/synthesis_workbench.json
+      domain_map: literature/domain_map.json
+      comparison_table: literature/comparison_table.csv
+    outputs:
+      survey_decision: drafts/survey/decision.json
+    next_on_success: __parse_from_output__
+    next_on_failure: failed
+
+  # T3.6-PLAN 状态：综述 taxonomy 与章节大纲规划
+  # 用途：LLM 基于 synthesis/workbench/domain_map/paper_notes 设计 taxonomy，而不是转写 synthesis.md。
+  T3.6-PLAN:
+    agent: survey_writer
+    mode: survey_plan
+    inputs:
+      project: project.yaml
+      synthesis: literature/synthesis.md
+      synthesis_workbench: literature/synthesis_workbench.json
+      domain_map: literature/domain_map.json
+      comparison_table: literature/comparison_table.csv
+      paper_notes_dir: literature/paper_notes
+      paper_notes_abstract_dir: literature/paper_notes_abstract
+      related_work_bib: literature/related_work.bib
+    outputs:
+      survey_plan: drafts/survey/survey_plan.json
+    next_on_success: T3.6-GATE-OUTLINE
+    next_on_failure: failed
+
+  # T3.6-GATE-OUTLINE 状态：人工确认/调整 taxonomy 大纲
+  # 用途：taxonomy 是综述主轴，写正文前必须交给用户确认。
+  T3.6-GATE-OUTLINE:
+    agent: survey_writer
+    mode: outline_gate
+    inputs:
+      project: project.yaml
+      survey_plan: drafts/survey/survey_plan.json
+    outputs:
+      survey_plan: drafts/survey/survey_plan.json
+      outline_decision: drafts/survey/outline_decision.json
+    next_on_success: T3.6-GATE-CORPUS
+    next_on_failure: failed
+
+  # T3.6-GATE-CORPUS 状态：人工选择综述素材范围
+  # 用途：保守模式只用现有语料；完整模式触发一次性定向补检提示，不回到 T2/T4 循环。
+  T3.6-GATE-CORPUS:
+    agent: survey_writer
+    mode: corpus_gate
+    inputs:
+      project: project.yaml
+      survey_plan: drafts/survey/survey_plan.json
+      paper_notes_dir: literature/paper_notes
+      paper_notes_abstract_dir: literature/paper_notes_abstract
+    outputs:
+      corpus_decision: drafts/survey/corpus_decision.json
+    next_on_success: __parse_from_output__
+    next_on_failure: failed
+
+  # T3.6-EXPAND 状态：一次性综述补检计划/记录
+  # 用途：仅在用户选择完整模式时，围绕 taxonomy 空类生成定向补检记录与补读清单。
+  T3.6-EXPAND:
+    agent: survey_writer
+    mode: survey_expand
+    inputs:
+      project: project.yaml
+      survey_plan: drafts/survey/survey_plan.json
+      corpus_decision: drafts/survey/corpus_decision.json
+      domain_map: literature/domain_map.json
+      papers_verified: literature/papers_verified.jsonl
+    outputs:
+      survey_expansion: drafts/survey/survey_expansion.json
+    next_on_success: T3.6-STATE
+    next_on_failure: failed
+
+  # T3.6-STATE 状态：初始化 survey_state 和 section outlines
+  # 用途：把 taxonomy/outline 机械拆成逐 section 状态，不写正文。
+  T3.6-STATE:
+    agent: survey_writer
+    mode: survey_state
+    inputs:
+      project: project.yaml
+      survey_plan: drafts/survey/survey_plan.json
+      corpus_decision: drafts/survey/corpus_decision.json
+      survey_expansion: drafts/survey/survey_expansion.json
+      synthesis: literature/synthesis.md
+      synthesis_workbench: literature/synthesis_workbench.json
+      domain_map: literature/domain_map.json
+      comparison_table: literature/comparison_table.csv
+      related_work_bib: literature/related_work.bib
+    outputs:
+      survey_state: drafts/survey/survey_state.json
+      survey_section_outlines_dir: drafts/survey/section_outlines
+    next_on_success: T3.6-SEC-BACKGROUND
+    next_on_failure: failed
+
+  T3.6-SEC-BACKGROUND:
+    agent: survey_writer
+    mode: survey_section
+    extra:
+      section_id: background
+    inputs:
+      project: project.yaml
+      survey_state: drafts/survey/survey_state.json
+      section_outline: drafts/survey/section_outlines/background.md
+      synthesis: literature/synthesis.md
+      domain_map: literature/domain_map.json
+      comparison_table: literature/comparison_table.csv
+      related_work_bib: literature/related_work.bib
+    outputs:
+      section: drafts/survey/sections/background.tex
+    next_on_success: T3.6-SEC-TAXONOMY
+    next_on_failure: failed
+
+  T3.6-SEC-TAXONOMY:
+    agent: survey_writer
+    mode: survey_section
+    extra:
+      section_id: taxonomy
+    inputs:
+      project: project.yaml
+      survey_state: drafts/survey/survey_state.json
+      section_outline: drafts/survey/section_outlines/taxonomy.md
+      survey_plan: drafts/survey/survey_plan.json
+      synthesis_workbench: literature/synthesis_workbench.json
+      domain_map: literature/domain_map.json
+      related_work_bib: literature/related_work.bib
+    outputs:
+      section: drafts/survey/sections/taxonomy.tex
+    next_on_success: T3.6-SEC-THEME-1
+    next_on_failure: failed
+
+  T3.6-SEC-THEME-1:
+    agent: survey_writer
+    mode: survey_section
+    extra:
+      section_id: theme_1
+    inputs:
+      project: project.yaml
+      survey_state: drafts/survey/survey_state.json
+      survey_plan: drafts/survey/survey_plan.json
+      section_outline: drafts/survey/section_outlines/theme_1.md
+      synthesis: literature/synthesis.md
+      synthesis_workbench: literature/synthesis_workbench.json
+      domain_map: literature/domain_map.json
+      comparison_table: literature/comparison_table.csv
+      paper_notes_dir: literature/paper_notes
+      paper_notes_abstract_dir: literature/paper_notes_abstract
+      related_work_bib: literature/related_work.bib
+    outputs:
+      section: drafts/survey/sections/theme_1.tex
+    next_on_success: T3.6-SEC-THEME-2
+    next_on_failure: failed
+
+  T3.6-SEC-THEME-2:
+    agent: survey_writer
+    mode: survey_section
+    extra:
+      section_id: theme_2
+    inputs:
+      project: project.yaml
+      survey_state: drafts/survey/survey_state.json
+      survey_plan: drafts/survey/survey_plan.json
+      section_outline: drafts/survey/section_outlines/theme_2.md
+      synthesis: literature/synthesis.md
+      synthesis_workbench: literature/synthesis_workbench.json
+      domain_map: literature/domain_map.json
+      comparison_table: literature/comparison_table.csv
+      paper_notes_dir: literature/paper_notes
+      paper_notes_abstract_dir: literature/paper_notes_abstract
+      related_work_bib: literature/related_work.bib
+    outputs:
+      section: drafts/survey/sections/theme_2.tex
+    next_on_success: T3.6-SEC-THEME-3
+    next_on_failure: failed
+
+  T3.6-SEC-THEME-3:
+    agent: survey_writer
+    mode: survey_section
+    extra:
+      section_id: theme_3
+    inputs:
+      project: project.yaml
+      survey_state: drafts/survey/survey_state.json
+      survey_plan: drafts/survey/survey_plan.json
+      section_outline: drafts/survey/section_outlines/theme_3.md
+      synthesis: literature/synthesis.md
+      synthesis_workbench: literature/synthesis_workbench.json
+      domain_map: literature/domain_map.json
+      comparison_table: literature/comparison_table.csv
+      paper_notes_dir: literature/paper_notes
+      paper_notes_abstract_dir: literature/paper_notes_abstract
+      related_work_bib: literature/related_work.bib
+    outputs:
+      section: drafts/survey/sections/theme_3.tex
+    next_on_success: T3.6-SEC-THEME-4
+    next_on_failure: failed
+
+  T3.6-SEC-THEME-4:
+    agent: survey_writer
+    mode: survey_section
+    extra:
+      section_id: theme_4
+    inputs:
+      project: project.yaml
+      survey_state: drafts/survey/survey_state.json
+      survey_plan: drafts/survey/survey_plan.json
+      section_outline: drafts/survey/section_outlines/theme_4.md
+      synthesis: literature/synthesis.md
+      synthesis_workbench: literature/synthesis_workbench.json
+      domain_map: literature/domain_map.json
+      comparison_table: literature/comparison_table.csv
+      paper_notes_dir: literature/paper_notes
+      paper_notes_abstract_dir: literature/paper_notes_abstract
+      related_work_bib: literature/related_work.bib
+    outputs:
+      section: drafts/survey/sections/theme_4.tex
+    next_on_success: T3.6-SEC-COMPARISON
+    next_on_failure: failed
+
+  T3.6-SEC-COMPARISON:
+    agent: survey_writer
+    mode: survey_section
+    extra:
+      section_id: comparison
+    inputs:
+      project: project.yaml
+      survey_state: drafts/survey/survey_state.json
+      section_outline: drafts/survey/section_outlines/comparison.md
+      comparison_table: literature/comparison_table.csv
+      synthesis_workbench: literature/synthesis_workbench.json
+      related_work_bib: literature/related_work.bib
+    outputs:
+      section: drafts/survey/sections/comparison.tex
+    next_on_success: T3.6-SEC-CHALLENGES
+    next_on_failure: failed
+
+  T3.6-SEC-CHALLENGES:
+    agent: survey_writer
+    mode: survey_section
+    extra:
+      section_id: challenges
+    inputs:
+      project: project.yaml
+      survey_state: drafts/survey/survey_state.json
+      section_outline: drafts/survey/section_outlines/challenges.md
+      synthesis: literature/synthesis.md
+      synthesis_workbench: literature/synthesis_workbench.json
+      domain_map: literature/domain_map.json
+      related_work_bib: literature/related_work.bib
+    outputs:
+      section: drafts/survey/sections/challenges.tex
+    next_on_success: T3.6-SEC-FUTURE
+    next_on_failure: failed
+
+  T3.6-SEC-FUTURE:
+    agent: survey_writer
+    mode: survey_section
+    extra:
+      section_id: future
+    inputs:
+      project: project.yaml
+      survey_state: drafts/survey/survey_state.json
+      section_outline: drafts/survey/section_outlines/future.md
+      synthesis_workbench: literature/synthesis_workbench.json
+      domain_map: literature/domain_map.json
+      related_work_bib: literature/related_work.bib
+    outputs:
+      section: drafts/survey/sections/future.tex
+    next_on_success: T3.6-SEC-INTRO
+    next_on_failure: failed
+
+  T3.6-SEC-INTRO:
+    agent: survey_writer
+    mode: survey_section
+    extra:
+      section_id: introduction
+    inputs:
+      project: project.yaml
+      survey_state: drafts/survey/survey_state.json
+      section_outline: drafts/survey/section_outlines/introduction.md
+      background_section: drafts/survey/sections/background.tex
+      taxonomy_section: drafts/survey/sections/taxonomy.tex
+      comparison_section: drafts/survey/sections/comparison.tex
+      challenges_section: drafts/survey/sections/challenges.tex
+      future_section: drafts/survey/sections/future.tex
+      related_work_bib: literature/related_work.bib
+    outputs:
+      section: drafts/survey/sections/introduction.tex
+    next_on_success: T3.6-SEC-CONCLUSION
+    next_on_failure: failed
+
+  T3.6-SEC-CONCLUSION:
+    agent: survey_writer
+    mode: survey_section
+    extra:
+      section_id: conclusion
+    inputs:
+      project: project.yaml
+      survey_state: drafts/survey/survey_state.json
+      section_outline: drafts/survey/section_outlines/conclusion.md
+      challenges_section: drafts/survey/sections/challenges.tex
+      future_section: drafts/survey/sections/future.tex
+    outputs:
+      section: drafts/survey/sections/conclusion.tex
+    next_on_success: T3.6-SEC-ABSTRACT
+    next_on_failure: failed
+
+  T3.6-SEC-ABSTRACT:
+    agent: survey_writer
+    mode: survey_section
+    extra:
+      section_id: abstract
+    inputs:
+      project: project.yaml
+      survey_state: drafts/survey/survey_state.json
+      section_outline: drafts/survey/section_outlines/abstract.md
+      introduction_section: drafts/survey/sections/introduction.tex
+      taxonomy_section: drafts/survey/sections/taxonomy.tex
+      comparison_section: drafts/survey/sections/comparison.tex
+      challenges_section: drafts/survey/sections/challenges.tex
+      future_section: drafts/survey/sections/future.tex
+      conclusion_section: drafts/survey/sections/conclusion.tex
+    outputs:
+      section: drafts/survey/sections/abstract.tex
+    next_on_success: T3.6-ASSEMBLE
+    next_on_failure: failed
+
+  # T3.6-ASSEMBLE 状态：拼装 survey.tex 并做覆盖审计
+  T3.6-ASSEMBLE:
+    agent: survey_writer
+    mode: survey_assemble
+    inputs:
+      project: project.yaml
+      survey_state: drafts/survey/survey_state.json
+      sections_dir: drafts/survey/sections
+      survey_plan: drafts/survey/survey_plan.json
+      related_work_bib: literature/related_work.bib
+    outputs:
+      survey_tex: drafts/survey/survey.tex
+      survey_audit: drafts/survey/survey_audit.md
+      survey_audit_json: drafts/survey/survey_audit.json
+    next_on_success: T3.6-REVIEW
+    next_on_failure: failed
+
+  # T3.6-REVIEW 状态：综述模式审阅与定向修订
+  # 用途：LLM 按 taxonomy/coverage/fairness/challenges/future/scope 维度审阅，必要时只修对应 section。
+  T3.6-REVIEW:
+    agent: survey_writer
+    mode: survey_review
+    inputs:
+      project: project.yaml
+      survey_plan: drafts/survey/survey_plan.json
+      survey_state: drafts/survey/survey_state.json
+      survey_tex: drafts/survey/survey.tex
+      survey_audit: drafts/survey/survey_audit.md
+      survey_audit_json: drafts/survey/survey_audit.json
+      sections_dir: drafts/survey/sections
+      synthesis_workbench: literature/synthesis_workbench.json
+      domain_map: literature/domain_map.json
+      comparison_table: literature/comparison_table.csv
+      related_work_bib: literature/related_work.bib
+    outputs:
+      survey_review: drafts/survey/survey_review.md
+      survey_review_actions: drafts/survey/survey_review_actions.json
+      survey_tex: drafts/survey/survey.tex
+      survey_audit: drafts/survey/survey_audit.md
+      survey_audit_json: drafts/survey/survey_audit.json
+    next_on_success: T3.6-COMPILE
+    next_on_failure: failed
+
+  # T3.6-COMPILE 状态：编译 survey.tex 为 PDF
+  # 用途：验证 survey 分章节写作产物能形成可读 PDF；失败时暂停等待 TeX/Docker 环境或章节修复。
+  T3.6-COMPILE:
+    agent: survey_writer
+    mode: survey_compile
+    inputs:
+      project: project.yaml
+      survey_tex: drafts/survey/survey.tex
+      references_bib: drafts/survey/references.bib
+      survey_audit_json: drafts/survey/survey_audit.json
+      survey_review_actions: drafts/survey/survey_review_actions.json
+    outputs:
+      survey_pdf: drafts/survey/survey.pdf
+      survey_log: drafts/survey/survey.log
+      survey_compile_report: drafts/survey/survey_compile_report.json
+    next_on_success: T3.6-FEED
+    next_on_failure: failed
+
+  # T3.6-FEED 状态：导出 T4 可消费的综述洞察
+  # 用途：把 taxonomy/challenges/future directions 作为额外 idea fuel，不作为 T4 gate。
+  T3.6-FEED:
+    agent: survey_writer
+    mode: survey_feed
+    inputs:
+      project: project.yaml
+      survey_plan: drafts/survey/survey_plan.json
+      survey_state: drafts/survey/survey_state.json
+      survey_tex: drafts/survey/survey.tex
+      survey_audit_json: drafts/survey/survey_audit.json
+      survey_compile_report: drafts/survey/survey_compile_report.json
+    outputs:
+      survey_insights: ideation/survey_insights.json
+      survey_summary: drafts/survey/survey_summary.md
     next_on_success: T4
     next_on_failure: failed
 
@@ -148,6 +566,9 @@ states:
       synthesis: literature/synthesis.md               # 文献综述
       comparison_table: literature/comparison_table.csv # 方法对比表
       missing_areas: literature/missing_areas.md       # 研究空白
+      domain_map: literature/domain_map.json            # 引用图领域地图与 novelty 近邻信号
+      synthesis_workbench: literature/synthesis_workbench.json # 结构化综述工作台
+      survey_insights: ideation/survey_insights.json    # 可选：T3.6 综述支线导出的 taxonomy/challenge/future 素材
       seed_ideas: user_seeds/seed_ideas.md            # 种子想法（可选）
       seed_constraints: user_seeds/seed_constraints.md # 种子约束（可选）
     outputs:
@@ -183,9 +604,30 @@ states:
       design_rationale_tuples_dir: ideation/_design_rationale_tuples # CDR design-rationale tuple 中间产物
     optional_outputs:
       collision_cases: ideation/collision_cases.md       # 条件输出：High/Medium Overlap 时必须存在
-    # 当前主链暂时跳过 T5 pilot 与 T6 novelty-final，直接进入 T7 full 实验。
-    # T5/T6 节点仍保留，可通过 run-task 单独执行；T7 会把 pilot/T6 产物作为可选增强输入。
-    next_on_success: T7
+    # 当前主链默认跳过 T5 pilot 与 T6 novelty-final，但必须尊重 T4.5 Final Gate Verdict。
+    # pass* 进入 T7；return/drop/reject/collision 进入人工审阅 gate，由用户决定 T7/T4/stop。
+    next_on_success: __parse_from_output__
+    next_on_failure: failed
+
+  # T4.5-HUMAN-REVIEW 状态：T4.5 非通过 verdict 的人工决策
+  # 用途：Novelty Auditor 可提出 reframe/drop，但不能自动拒绝或自动回退，避免 T4.5-T4 死循环。
+  T4.5-HUMAN-REVIEW:
+    agent: novelty_auditor
+    mode: human_review
+    extra:
+      immediate_gate: true
+    inputs:
+      project: project.yaml
+      hypotheses: ideation/hypotheses.md
+      novelty_audit: ideation/novelty_audit.md
+      idea_scorecard: ideation/idea_scorecard.yaml
+      gate1_selection_brief: ideation/_gate1_selection_brief.md
+      rejected_ideas: ideation/rejected_ideas.md
+    outputs:
+      novelty_human_review: ideation/novelty_human_review.json
+    gate:
+      type: t45_human_review_gate
+    next_on_success: __parse_from_output__
     next_on_failure: failed
 
   # T5 状态：试点实验（Pilot Experimentation）
@@ -297,6 +739,19 @@ states:
     next_on_success: __parse_from_output__
     next_on_failure: failed
 
+  # T8-STYLE-GATE 状态：写作风格确认
+  # 用途：根据目标 venue 确认 IS / CCF-A / both 写作风格
+  # Agent：writer（论文写作）
+  T8-STYLE-GATE:
+    agent: writer
+    mode: style_gate
+    inputs:
+      project: project.yaml
+    outputs:
+      writing_style: drafts/writing_style.json
+    next_on_success: T8-RESOURCE
+    next_on_failure: failed
+
   # T8-RESOURCE 状态：论文写作资源索引（Manuscript Resource Indexing）
   # 用途：索引全部写作资料，并生成章节计划
   # Agent：writer（论文写作）
@@ -305,12 +760,16 @@ states:
     mode: resource_index
     inputs:
       project: project.yaml
+      writing_style: drafts/writing_style.json
       results_summary: experiments/results_summary.json
       synthesis: literature/synthesis.md
+      synthesis_workbench: literature/synthesis_workbench.json
+      domain_map: literature/domain_map.json
       related_work_bib: literature/related_work.bib
       hypotheses: ideation/hypotheses.md
       exp_plan: ideation/exp_plan.yaml
       novelty_audit: ideation/novelty_audit.md
+      idea_scorecard: ideation/idea_scorecard.yaml
       comparison_table: literature/comparison_table.csv
       ablations: experiments/ablations.csv
     outputs:
@@ -321,6 +780,7 @@ states:
       cdr_claim_ledger: drafts/cdr_claim_ledger.json
       claim_ledger: drafts/claim_ledger.json
       figure_registry: drafts/figure_registry.json
+      alignment_matrix: drafts/alignment_matrix.json
     next_on_success: T8-WRITE
     next_on_failure: failed
 
@@ -332,10 +792,14 @@ states:
     mode: outline  # 先生成大纲
     inputs:
       project: project.yaml                             # 输入：项目配置
+      writing_style: drafts/writing_style.json
       results_summary: experiments/results_summary.json # 输入：实验结果
       synthesis: literature/synthesis.md                # 输入：文献综述
+      synthesis_workbench: literature/synthesis_workbench.json
+      domain_map: literature/domain_map.json
       related_work_bib: literature/related_work.bib     # 输入：引用库
       hypotheses: ideation/hypotheses.md                # 输入：研究假设
+      idea_scorecard: ideation/idea_scorecard.yaml
       manuscript_resource_index: drafts/manuscript_resource_index.json
       section_plan: drafts/section_plan.json
       evidence_plan: drafts/evidence_plan.json
@@ -343,6 +807,7 @@ states:
       cdr_claim_ledger: drafts/cdr_claim_ledger.json
       claim_ledger: drafts/claim_ledger.json
       figure_registry: drafts/figure_registry.json
+      alignment_matrix: drafts/alignment_matrix.json
     outputs:
       outline: drafts/outline.md                       # 论文大纲
     next_on_success: T8-SECTION-PLAN
@@ -356,10 +821,14 @@ states:
     mode: section_plan
     inputs:
       project: project.yaml
+      writing_style: drafts/writing_style.json
       results_summary: experiments/results_summary.json
       synthesis: literature/synthesis.md
+      synthesis_workbench: literature/synthesis_workbench.json
+      domain_map: literature/domain_map.json
       related_work_bib: literature/related_work.bib
       hypotheses: ideation/hypotheses.md
+      idea_scorecard: ideation/idea_scorecard.yaml
       outline: drafts/outline.md
       manuscript_resource_index: drafts/manuscript_resource_index.json
       section_plan: drafts/section_plan.json
@@ -368,6 +837,7 @@ states:
       cdr_claim_ledger: drafts/cdr_claim_ledger.json
       claim_ledger: drafts/claim_ledger.json
       figure_registry: drafts/figure_registry.json
+      alignment_matrix: drafts/alignment_matrix.json
       ablations: experiments/ablations.csv
     outputs:
       paper_state: drafts/paper_state.json
@@ -386,7 +856,12 @@ states:
       section_outline: drafts/section_outlines/methodology.md
       hypotheses: ideation/hypotheses.md
       exp_plan: ideation/exp_plan.yaml
+      idea_scorecard: ideation/idea_scorecard.yaml
+      novelty_audit: ideation/novelty_audit.md
+      design_rationale_tuples_dir: ideation/_design_rationale_tuples
       results_summary: experiments/results_summary.json
+      configs_dir: experiments/configs
+      code_dir: experiments/code
       outline: drafts/outline.md
       manuscript_resource_index: drafts/manuscript_resource_index.json
       evidence_plan: drafts/evidence_plan.json
@@ -394,6 +869,7 @@ states:
       cdr_claim_ledger: drafts/cdr_claim_ledger.json
       claim_ledger: drafts/claim_ledger.json
       figure_registry: drafts/figure_registry.json
+      alignment_matrix: drafts/alignment_matrix.json
     outputs:
       section: drafts/sections/methodology.tex
     next_on_success: T8-SEC-EXPERIMENTS
@@ -411,12 +887,17 @@ states:
       results_summary: experiments/results_summary.json
       ablations: experiments/ablations.csv
       exp_plan: ideation/exp_plan.yaml
+      seed_ensemble_summary: experiments/seed_ensemble_summary.json
+      runs_dir: experiments/runs
+      configs_dir: experiments/configs
+      must_add_baselines: novelty/must_add_baselines.md
       manuscript_resource_index: drafts/manuscript_resource_index.json
       evidence_plan: drafts/evidence_plan.json
       figure_table_plan: drafts/figure_table_plan.json
       cdr_claim_ledger: drafts/cdr_claim_ledger.json
       claim_ledger: drafts/claim_ledger.json
       figure_registry: drafts/figure_registry.json
+      alignment_matrix: drafts/alignment_matrix.json
     outputs:
       section: drafts/sections/experiments.tex
     next_on_success: T8-SEC-RELATED
@@ -432,13 +913,17 @@ states:
       paper_state: drafts/paper_state.json
       section_outline: drafts/section_outlines/related_work.md
       synthesis: literature/synthesis.md
+      synthesis_workbench: literature/synthesis_workbench.json
+      domain_map: literature/domain_map.json
       related_work_bib: literature/related_work.bib
       comparison_table: literature/comparison_table.csv
+      idea_scorecard: ideation/idea_scorecard.yaml
       manuscript_resource_index: drafts/manuscript_resource_index.json
       evidence_plan: drafts/evidence_plan.json
       cdr_claim_ledger: drafts/cdr_claim_ledger.json
       claim_ledger: drafts/claim_ledger.json
       figure_registry: drafts/figure_registry.json
+      alignment_matrix: drafts/alignment_matrix.json
     outputs:
       section: drafts/sections/related_work.tex
     next_on_success: T8-SEC-ANALYSIS
@@ -455,12 +940,16 @@ states:
       section_outline: drafts/section_outlines/analysis.md
       results_summary: experiments/results_summary.json
       ablations: experiments/ablations.csv
+      iteration_log: experiments/iteration_log.md
       novelty_audit: ideation/novelty_audit.md
+      methodology_section: drafts/sections/methodology.tex
+      experiments_section: drafts/sections/experiments.tex
       manuscript_resource_index: drafts/manuscript_resource_index.json
       evidence_plan: drafts/evidence_plan.json
       cdr_claim_ledger: drafts/cdr_claim_ledger.json
       claim_ledger: drafts/claim_ledger.json
       figure_registry: drafts/figure_registry.json
+      alignment_matrix: drafts/alignment_matrix.json
     outputs:
       section: drafts/sections/analysis.tex
     next_on_success: T8-SEC-INTRO
@@ -480,35 +969,17 @@ states:
       results_summary: experiments/results_summary.json
       methodology_section: drafts/sections/methodology.tex
       experiments_section: drafts/sections/experiments.tex
+      related_work_section: drafts/sections/related_work.tex
+      analysis_section: drafts/sections/analysis.tex
       manuscript_resource_index: drafts/manuscript_resource_index.json
       evidence_plan: drafts/evidence_plan.json
       figure_table_plan: drafts/figure_table_plan.json
       cdr_claim_ledger: drafts/cdr_claim_ledger.json
       claim_ledger: drafts/claim_ledger.json
       figure_registry: drafts/figure_registry.json
+      alignment_matrix: drafts/alignment_matrix.json
     outputs:
       section: drafts/sections/introduction.tex
-    next_on_success: T8-SEC-LIMITATIONS
-    next_on_failure: failed
-
-  T8-SEC-LIMITATIONS:
-    agent: writer
-    mode: section_draft
-    extra:
-      section_id: limitations
-    inputs:
-      project: project.yaml
-      paper_state: drafts/paper_state.json
-      section_outline: drafts/section_outlines/limitations.md
-      risks: ideation/risks.md
-      novelty_audit: ideation/novelty_audit.md
-      results_summary: experiments/results_summary.json
-      manuscript_resource_index: drafts/manuscript_resource_index.json
-      cdr_claim_ledger: drafts/cdr_claim_ledger.json
-      claim_ledger: drafts/claim_ledger.json
-      figure_registry: drafts/figure_registry.json
-    outputs:
-      section: drafts/sections/limitations.tex
     next_on_success: T8-SEC-CONCLUSION
     next_on_failure: failed
 
@@ -523,10 +994,14 @@ states:
       section_outline: drafts/section_outlines/conclusion.md
       introduction_section: drafts/sections/introduction.tex
       experiments_section: drafts/sections/experiments.tex
-      limitations_section: drafts/sections/limitations.tex
+      risks: ideation/risks.md
+      novelty_audit: ideation/novelty_audit.md
+      results_summary: experiments/results_summary.json
+      iteration_log: experiments/iteration_log.md
       cdr_claim_ledger: drafts/cdr_claim_ledger.json
       claim_ledger: drafts/claim_ledger.json
       figure_registry: drafts/figure_registry.json
+      alignment_matrix: drafts/alignment_matrix.json
     outputs:
       section: drafts/sections/conclusion.tex
     next_on_success: T8-SEC-ABSTRACT
@@ -545,11 +1020,11 @@ states:
       methodology_section: drafts/sections/methodology.tex
       experiments_section: drafts/sections/experiments.tex
       analysis_section: drafts/sections/analysis.tex
-      limitations_section: drafts/sections/limitations.tex
       conclusion_section: drafts/sections/conclusion.tex
       cdr_claim_ledger: drafts/cdr_claim_ledger.json
       claim_ledger: drafts/claim_ledger.json
       figure_registry: drafts/figure_registry.json
+      alignment_matrix: drafts/alignment_matrix.json
     outputs:
       section: drafts/sections/abstract.tex
     next_on_success: T8-DRAFT
@@ -579,9 +1054,11 @@ states:
       cdr_claim_ledger: drafts/cdr_claim_ledger.json
       claim_ledger: drafts/claim_ledger.json
       figure_registry: drafts/figure_registry.json
+      alignment_matrix: drafts/alignment_matrix.json
     outputs:
       paper: drafts/paper.tex                           # 论文草稿
       manuscript_audit: drafts/manuscript_audit.md       # 机械审计报告
+      craft_audit: drafts/craft_audit.md
     next_on_success: T8-SELF-CHECK
     next_on_failure: failed
 
@@ -605,6 +1082,8 @@ states:
       claim_ledger: drafts/claim_ledger.json
       figure_registry: drafts/figure_registry.json
       manuscript_audit: drafts/manuscript_audit.md
+      craft_audit: drafts/craft_audit.md
+      alignment_matrix: drafts/alignment_matrix.json
     outputs:
       self_check: drafts/self_check.md
     next_on_success: T8-REVIEW-1
@@ -622,8 +1101,10 @@ states:
       results_summary: experiments/results_summary.json # 输入：实验结果
       related_work_bib: literature/related_work.bib      # 输入：引用库
       manuscript_audit: drafts/manuscript_audit.md       # 输入：机械审计报告
+      craft_audit: drafts/craft_audit.md
       self_check: drafts/self_check.md                   # 输入：作者自查
       cdr_claim_ledger: drafts/cdr_claim_ledger.json
+      alignment_matrix: drafts/alignment_matrix.json
     outputs:
       review_report: drafts/review_rounds/round_1.md   # 审稿报告
       section_review_dir: drafts/review_rounds/round_1_sections # 逐章节审稿
@@ -655,11 +1136,14 @@ states:
       claim_ledger: drafts/claim_ledger.json
       figure_registry: drafts/figure_registry.json
       manuscript_audit: drafts/manuscript_audit.md
+      craft_audit: drafts/craft_audit.md
+      alignment_matrix: drafts/alignment_matrix.json
     outputs:
       revision_patches: drafts/patches/round_1_patches.json
       revision_response: drafts/revision_response_round_1.md
       paper: drafts/paper.tex                           # 修订后的论文
       manuscript_audit: drafts/manuscript_audit.md       # 更新后的机械审计
+      craft_audit: drafts/craft_audit.md
     next_on_success: T8-REVIEW-2
     next_on_failure: failed
 
@@ -675,8 +1159,10 @@ states:
       results_summary: experiments/results_summary.json
       related_work_bib: literature/related_work.bib
       manuscript_audit: drafts/manuscript_audit.md
+      craft_audit: drafts/craft_audit.md
       previous_review: drafts/review_rounds/round_1.md
       cdr_claim_ledger: drafts/cdr_claim_ledger.json
+      alignment_matrix: drafts/alignment_matrix.json
     outputs:
       review_report: drafts/review_rounds/round_2.md   # 审稿报告
       section_review_dir: drafts/review_rounds/round_2_sections # 逐章节审稿
@@ -709,11 +1195,14 @@ states:
       claim_ledger: drafts/claim_ledger.json
       figure_registry: drafts/figure_registry.json
       manuscript_audit: drafts/manuscript_audit.md
+      craft_audit: drafts/craft_audit.md
+      alignment_matrix: drafts/alignment_matrix.json
     outputs:
       revision_patches: drafts/patches/round_2_patches.json
       revision_response: drafts/revision_response_round_2.md
       paper: drafts/paper.tex                           # 修订后的论文
       manuscript_audit: drafts/manuscript_audit.md       # 更新后的机械审计
+      craft_audit: drafts/craft_audit.md
     next_on_success: T9
     next_on_failure: failed
 

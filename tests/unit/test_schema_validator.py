@@ -131,3 +131,38 @@ def test_validate_prerequisites_reports_missing_required_inputs(tmp_path):
     assert err is not None
     assert "project" in err
     assert "papers_dedup" in err
+
+
+def test_validate_prerequisites_requires_pre_t5_shared_artifacts_for_t4(tmp_path):
+    workspace = tmp_path / "workspace"
+    (workspace / "literature").mkdir(parents=True)
+    (workspace / "project.yaml").write_text("project_id: p\nresearch_direction: Test\n", encoding="utf-8")
+    (workspace / "literature" / "synthesis.md").write_text("# Synthesis\n", encoding="utf-8")
+
+    ok, err = validator.validate_prerequisites(workspace, "T4")
+
+    assert not ok
+    assert err is not None
+    assert "domain_map" in err
+    assert "synthesis_workbench" in err
+
+
+def test_validate_prerequisites_requires_t8_related_work_structured_inputs(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "project.yaml").write_text("project_id: p\nresearch_direction: Test\n", encoding="utf-8")
+    (workspace / "drafts" / "section_outlines").mkdir(parents=True)
+    (workspace / "drafts" / "paper_state.json").write_text("{}\n", encoding="utf-8")
+    (workspace / "drafts" / "section_outlines" / "related_work.md").write_text("# Related\n", encoding="utf-8")
+    (workspace / "drafts" / "alignment_matrix.json").write_text("{}\n", encoding="utf-8")
+    (workspace / "literature").mkdir(exist_ok=True)
+    (workspace / "literature" / "synthesis.md").write_text("# Synthesis\n", encoding="utf-8")
+    (workspace / "literature" / "related_work.bib").write_text("@article{x,\n title={X}\n}\n", encoding="utf-8")
+
+    ok, err = validator.validate_prerequisites(workspace, "T8-SEC-RELATED")
+
+    assert not ok
+    assert err is not None
+    assert "synthesis_workbench" in err
+    assert "domain_map" in err
+    assert "idea_scorecard" in err

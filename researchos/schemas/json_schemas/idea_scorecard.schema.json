@@ -235,6 +235,29 @@
               "additionalProperties": true
             }
           },
+          "counterfactual_check": {
+            "type": "string",
+            "enum": ["collapses", "survives_weakened", "independent", "insufficient_evidence"]
+          },
+          "counterfactual_note": {
+            "type": "string"
+          },
+          "nearest_prior_work": {
+            "type": "object",
+            "properties": {
+              "work": { "type": "string" },
+              "distance": {
+                "type": "string",
+                "enum": ["very_close", "moderate", "distant", "none_found", "not_computed"]
+              }
+            },
+            "required": ["work", "distance"],
+            "additionalProperties": true
+          },
+          "novelty_signal": {
+            "type": "string",
+            "enum": ["marginal_zone", "adjacent_zone", "no_nearby_cluster", "not_computed", "domain_map_unavailable"]
+          },
           "scores": {
             "type": "object",
             "properties": {
@@ -385,6 +408,10 @@
           "idea",
           "source",
           "selection_rationale",
+          "counterfactual_check",
+          "counterfactual_note",
+          "nearest_prior_work",
+          "novelty_signal",
           "scores",
           "decision",
           "risks",

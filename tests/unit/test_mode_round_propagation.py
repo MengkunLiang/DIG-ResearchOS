@@ -21,8 +21,13 @@ from researchos.agents.registry import get_agent_by_id
 from researchos.agents.writer import WriterAgent
 from researchos.cli_runners.single_task import SingleTaskRunner
 from researchos.orchestration.state_machine import StateMachine, TaskNode
-from researchos.orchestration.task_io_contract import TASK_IO_CONTRACTS, resolve_inputs, resolve_outputs
-from researchos.runtime.agent import ExecutionContext
+from researchos.orchestration.task_io_contract import (
+    TASK_IO_CONTRACTS,
+    required_input_names,
+    resolve_inputs,
+    resolve_outputs,
+)
+from researchos.runtime.agent import AgentResult, ExecutionContext
 
 
 class TestAgentModeInitialization:
@@ -356,6 +361,29 @@ class TestTaskIOContractCompleteness:
                 # 但应该保持一致
                 pass
 
+    def test_pre_t5_and_t8_required_contracts_cover_shared_artifacts(self):
+        """Pre-T5/T8 single-task contracts must not silently drop shared artifacts."""
+
+        assert "citation_edges" in TASK_IO_CONTRACTS["T2"]["outputs"]
+        assert TASK_IO_CONTRACTS["T2"]["outputs"]["citation_edges"] == "literature/citation_edges.json"
+
+        expected_required = {
+            "T3.5": {"domain_map"},
+            "T4": {"domain_map", "synthesis_workbench"},
+            "T8": {"domain_map", "synthesis_workbench", "idea_scorecard", "writing_style"},
+            "T8-RESOURCE": {"domain_map", "synthesis_workbench", "idea_scorecard", "writing_style"},
+            "T8-WRITE": {"domain_map", "synthesis_workbench", "idea_scorecard", "writing_style"},
+            "T8-SECTION-PLAN": {"domain_map", "synthesis_workbench", "idea_scorecard", "writing_style"},
+            "T8-SEC-RELATED": {
+                "domain_map",
+                "synthesis_workbench",
+                "idea_scorecard",
+                "alignment_matrix",
+            },
+        }
+        for task_id, names in expected_required.items():
+            assert names.issubset(set(required_input_names(task_id)))
+
 
 class TestMultiModeStateFlow:
     """测试多模式状态流转。"""
@@ -459,8 +487,7 @@ class TestMultiModeStateFlow:
             ("T8-SEC-EXPERIMENTS", "T8-SEC-RELATED", "experiments"),
             ("T8-SEC-RELATED", "T8-SEC-ANALYSIS", "related_work"),
             ("T8-SEC-ANALYSIS", "T8-SEC-INTRO", "analysis"),
-            ("T8-SEC-INTRO", "T8-SEC-LIMITATIONS", "introduction"),
-            ("T8-SEC-LIMITATIONS", "T8-SEC-CONCLUSION", "limitations"),
+            ("T8-SEC-INTRO", "T8-SEC-CONCLUSION", "introduction"),
             ("T8-SEC-CONCLUSION", "T8-SEC-ABSTRACT", "conclusion"),
             ("T8-SEC-ABSTRACT", "T8-DRAFT", "abstract"),
         ]
@@ -478,9 +505,10 @@ class TestMultiModeStateFlow:
         assert "T8-SECTIONS" not in [
             task_id for task_id, _, _ in expected_chain
         ]
+        assert "T8-SEC-LIMITATIONS" not in sm.nodes
 
     def test_t75_parse_defaults_to_resource_stage(self, temp_workspace):
-        """T7.5 parse fallback should enter manuscript resource indexing."""
+        """T7.5 parse fallback should enter the writing style gate first."""
         sm_config = {
             "initial_state": "T7.5",
             "states": {
@@ -490,6 +518,13 @@ class TestMultiModeStateFlow:
                     "inputs": {"results_summary": "experiments/results_summary.json"},
                     "outputs": {"evaluation_decision": "evaluation/evaluation_decision.md"},
                     "next_on_success": "__parse_from_output__",
+                },
+                "T8-STYLE-GATE": {
+                    "agent": "writer",
+                    "mode": "style_gate",
+                    "inputs": {"project": "project.yaml"},
+                    "outputs": {"style": "drafts/writing_style.json"},
+                    "next_on_success": "T8-RESOURCE",
                 },
                 "T8-RESOURCE": {
                     "agent": "writer",
@@ -506,10 +541,10 @@ class TestMultiModeStateFlow:
         sm_path.write_text(yaml.dump(sm_config))
         sm = StateMachine(sm_path)
 
-        assert sm._parse_t75_decision(temp_workspace) == "T8-RESOURCE"
+        assert sm._parse_t75_decision(temp_workspace) == "T8-STYLE-GATE"
 
     def test_t75_parse_maps_legacy_t8_write_to_resource_when_available(self, temp_workspace):
-        """旧评估报告写 next_task: T8-WRITE 时应进入新版资源索引入口。"""
+        """旧评估报告写 next_task: T8-WRITE 时应先进入写作风格 gate。"""
         sm_config = {
             "initial_state": "T7.5",
             "states": {
@@ -524,6 +559,12 @@ class TestMultiModeStateFlow:
                     "mode": "resource_index",
                     "outputs": {"index": "drafts/manuscript_resource_index.json"},
                     "next_on_success": "done",
+                },
+                "T8-STYLE-GATE": {
+                    "agent": "writer",
+                    "mode": "style_gate",
+                    "outputs": {"style": "drafts/writing_style.json"},
+                    "next_on_success": "T8-RESOURCE",
                 },
                 "T8-WRITE": {
                     "agent": "writer",
@@ -543,7 +584,166 @@ class TestMultiModeStateFlow:
         sm_path.write_text(yaml.dump(sm_config))
         sm = StateMachine(sm_path)
 
+        assert sm._parse_t75_decision(temp_workspace) == "T8-STYLE-GATE"
+
+    def test_t75_parse_skips_style_gate_when_style_exists(self, temp_workspace):
+        sm_config = {
+            "initial_state": "T7.5",
+            "states": {
+                "T7.5": {
+                    "agent": "pi",
+                    "mode": "evaluate",
+                    "outputs": {"evaluation_decision": "evaluation/evaluation_decision.md"},
+                    "next_on_success": "__parse_from_output__",
+                },
+                "T8-STYLE-GATE": {
+                    "agent": "writer",
+                    "mode": "style_gate",
+                    "outputs": {"style": "drafts/writing_style.json"},
+                    "next_on_success": "T8-RESOURCE",
+                },
+                "T8-RESOURCE": {
+                    "agent": "writer",
+                    "mode": "resource_index",
+                    "outputs": {"index": "drafts/manuscript_resource_index.json"},
+                    "next_on_success": "done",
+                },
+                "done": {"terminal": True},
+            },
+        }
+        (temp_workspace / "evaluation").mkdir()
+        (temp_workspace / "evaluation" / "evaluation_decision.md").write_text("next_task: T8\n", encoding="utf-8")
+        (temp_workspace / "drafts").mkdir()
+        (temp_workspace / "drafts" / "writing_style.json").write_text('{"venue_style":"ccf_a"}\n', encoding="utf-8")
+        sm_path = temp_workspace / "state_machine.yaml"
+        sm_path.write_text(yaml.dump(sm_config))
+        sm = StateMachine(sm_path)
+
         assert sm._parse_t75_decision(temp_workspace) == "T8-RESOURCE"
+
+    def test_t75_parse_does_not_skip_style_gate_when_style_invalid(self, temp_workspace):
+        sm_config = {
+            "initial_state": "T7.5",
+            "states": {
+                "T7.5": {
+                    "agent": "pi",
+                    "mode": "evaluate",
+                    "outputs": {"evaluation_decision": "evaluation/evaluation_decision.md"},
+                    "next_on_success": "__parse_from_output__",
+                },
+                "T8-STYLE-GATE": {
+                    "agent": "writer",
+                    "mode": "style_gate",
+                    "outputs": {"style": "drafts/writing_style.json"},
+                    "next_on_success": "T8-RESOURCE",
+                },
+                "T8-RESOURCE": {
+                    "agent": "writer",
+                    "mode": "resource_index",
+                    "outputs": {"index": "drafts/manuscript_resource_index.json"},
+                    "next_on_success": "done",
+                },
+                "done": {"terminal": True},
+            },
+        }
+        (temp_workspace / "evaluation").mkdir()
+        (temp_workspace / "evaluation" / "evaluation_decision.md").write_text("next_task: T8\n", encoding="utf-8")
+        (temp_workspace / "drafts").mkdir()
+        sm_path = temp_workspace / "state_machine.yaml"
+        sm_path.write_text(yaml.dump(sm_config))
+        sm = StateMachine(sm_path)
+
+        for invalid_style_text in ["not-json", '{"venue_style":"other"}\n', '{"suggested":"ccf_a"}\n']:
+            (temp_workspace / "drafts" / "writing_style.json").write_text(invalid_style_text, encoding="utf-8")
+            assert sm._parse_t75_decision(temp_workspace) == "T8-STYLE-GATE"
+
+    def test_t45_parse_routes_final_gate_verdicts(self, temp_workspace):
+        sm_config = {
+            "initial_state": "T4.5",
+            "states": {
+                "T4": {"agent": "ideation", "outputs": {"hypotheses": "ideation/hypotheses.md"}, "next_on_success": "T4.5"},
+                "T4.5": {
+                    "agent": "novelty_auditor",
+                    "outputs": {"novelty_audit": "ideation/novelty_audit.md"},
+                    "next_on_success": "__parse_from_output__",
+                    "next_on_failure": "failed",
+                },
+                "T4.5-HUMAN-REVIEW": {
+                    "agent": "novelty_auditor",
+                    "mode": "human_review",
+                    "outputs": {"novelty_human_review": "ideation/novelty_human_review.json"},
+                    "gate": {"type": "t45_human_review_gate"},
+                },
+                "T7": {"agent": "experimenter", "mode": "full", "outputs": {"results": "experiments/results_summary.json"}, "next_on_success": "done"},
+                "done": {"terminal": True},
+                "failed": {"terminal": True},
+            },
+        }
+        (temp_workspace / "ideation").mkdir()
+        sm_path = temp_workspace / "state_machine.yaml"
+        sm_path.write_text(yaml.dump(sm_config))
+        sm = StateMachine(sm_path)
+
+        verdicts = {
+            "Final Gate Verdict: pass_to_experiment\n": "T7",
+            "Final Gate Verdict: pass_with_required_baselines\n": "T7",
+            "Final Gate Verdict: return_to_T4_reframe\n": "T4.5-HUMAN-REVIEW",
+            "Final Gate Verdict: drop_due_to_collision\n": "T4.5-HUMAN-REVIEW",
+            "Final Gate Verdict: uncertain_needs_user_decision\n": "T4.5-HUMAN-REVIEW",
+            "Final Gate Verdict: do_not_pass_to_experiment\n": "T4.5-HUMAN-REVIEW",
+            "# Audit without explicit final verdict\n": "T4.5-HUMAN-REVIEW",
+        }
+        for text, expected in verdicts.items():
+            (temp_workspace / "ideation" / "novelty_audit.md").write_text(text, encoding="utf-8")
+            assert sm._parse_t45_verdict(temp_workspace) == expected
+
+    def test_t45_advance_uses_final_gate_verdict(self, temp_workspace):
+        sm_config = {
+            "initial_state": "T4.5",
+            "states": {
+                "T4": {"agent": "ideation", "outputs": {"hypotheses": "ideation/hypotheses.md"}, "next_on_success": "T4.5"},
+                "T4.5": {
+                    "agent": "novelty_auditor",
+                    "outputs": {"novelty_audit": "ideation/novelty_audit.md"},
+                    "next_on_success": "__parse_from_output__",
+                    "next_on_failure": "failed",
+                },
+                "T4.5-HUMAN-REVIEW": {
+                    "agent": "novelty_auditor",
+                    "mode": "human_review",
+                    "outputs": {"novelty_human_review": "ideation/novelty_human_review.json"},
+                    "gate": {"type": "t45_human_review_gate"},
+                },
+                "T7": {"agent": "experimenter", "mode": "full", "outputs": {"results": "experiments/results_summary.json"}, "next_on_success": "done"},
+                "done": {"terminal": True},
+                "failed": {"terminal": True},
+            },
+        }
+        (temp_workspace / "ideation").mkdir()
+        (temp_workspace / "ideation" / "novelty_audit.md").write_text(
+            "# Audit\n\nFinal Gate Verdict: return_to_T4_reframe\n",
+            encoding="utf-8",
+        )
+        sm_path = temp_workspace / "state_machine.yaml"
+        sm_path.write_text(yaml.dump(sm_config))
+        sm = StateMachine(sm_path)
+        state = sm.start_task(sm.create_initial_state("p1"), "run_t45")
+        result = AgentResult(
+            ok=True,
+            message="done",
+            outputs_produced={},
+            steps_used=1,
+            tokens_in=0,
+            tokens_out=0,
+            cost_usd=0,
+            duration_seconds=0,
+            stop_reason=AgentResult.STOP_FINISHED,
+        )
+
+        state = sm.advance(state, result, workspace_dir=temp_workspace)
+
+        assert state.current_task == "T4.5-HUMAN-REVIEW"
+        assert state.status == "RUNNING"
 
     def test_t75_parse_keeps_legacy_t8_write_when_resource_stage_absent(self, temp_workspace):
         """旧测试/旧配置没有 T8-RESOURCE 时仍应兼容 T8-WRITE。"""
@@ -621,6 +821,19 @@ class TestStateMachineValidation:
         errors = sm.validate_definition()
 
         assert len(errors) == 0, f"State machine validation errors:\n" + "\n".join(errors)
+
+    def test_t75_gate_go_write_enters_style_gate(self):
+        """Manual write option must not bypass T8-STYLE-GATE."""
+        gates_path = Path(__file__).resolve().parents[2] / "config" / "gates.yaml"
+        data = yaml.safe_load(gates_path.read_text(encoding="utf-8")) or {}
+        gate = (data.get("gates") or {}).get("t75_human_review_gate") or {}
+        options = {
+            str(option.get("id")): option
+            for option in gate.get("options", [])
+            if isinstance(option, dict)
+        }
+        assert options["go_write"]["next"] == "T8-STYLE-GATE"
+        assert gate["presentation"]["recommended_next_task"]["from_file_regex"]["default"] == "T8-STYLE-GATE"
 
     def test_validate_definition_missing_initial_state(self):
         """缺少 initial_state 应该报错。"""

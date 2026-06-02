@@ -63,6 +63,19 @@ design_tuple_fields:
       - "reader_notes"
       - "synthesis_workbench"
 
+contribution_type_enum:
+  invention: "New problem plus new solution; stronger novelty wording may be appropriate only when evidence supports it."
+  improvement: "Known problem plus materially different solution; avoid first/novel-paradigm wording unless justified."
+  exaptation: "Known solution or rationale transferred to a new problem or field; use adapt/transfer language."
+  routine: "Known problem plus known solution. Allowed for rejected/deferred candidates, not selected ideas."
+
+source_bucket_enum:
+  - "core"
+  - "adjacent"
+  - "snowball"
+  - "seed"
+  - "boundary"
+
 idea_origins:
   mainline:
     - "free_reasoning"

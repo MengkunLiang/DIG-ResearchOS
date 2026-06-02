@@ -18,7 +18,6 @@ CORE_SECTION_ORDER = [
     "methodology",
     "experiments",
     "analysis",
-    "limitations",
     "conclusion",
 ]
 
@@ -233,11 +232,18 @@ def build_cdr_claim_ledger_seed(
                 }
             )
 
+    contribution_chains = _build_contribution_chain_seeds(
+        claims,
+        cdr_tuple=cdr_tuple,
+        source_texts=source_texts,
+    )
+
     return {
         "version": "1.0",
         "semantics": "cdr_claim_ledger_seed_not_final_scientific_judgment",
         "paper_thesis": _extract_paper_thesis_hint(source_texts),
         "cdr_tuple": cdr_tuple,
+        "contribution_chains": contribution_chains,
         "contribution_claims": sorted(
             claims,
             key=lambda item: (
@@ -251,11 +257,68 @@ def build_cdr_claim_ledger_seed(
         },
         "rules": [
             "This ledger is a mechanical seed; LLMs decide final claim wording and contribution framing.",
+            "contribution_chains are writing lanes for 3-4 final contribution bullets, not final scientific claims.",
             "Do not use provenance count as a quality gate.",
             "A selected paper must explain design_rationale and contribution_type in prose.",
             "Unsupported CDR claims must be marked as limitation or TODO, not invented.",
         ],
     }
+
+
+def _build_contribution_chain_seeds(
+    claims: list[dict[str, Any]],
+    *,
+    cdr_tuple: dict[str, Any],
+    source_texts: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Seed 3-4 contribution lanes without deciding final contribution wording.
+
+    CDR claim slots are section/evidence slots, so using them one-to-one as
+    manuscript contributions creates too many alignment rows. These lanes give
+    the Writer LLM a compact contribution skeleton to complete from evidence.
+    """
+
+    hypothesis_ids = _extract_hypothesis_ids_from_sources(source_texts)
+    target_count = min(4, max(3, len(hypothesis_ids) if hypothesis_ids else 3))
+    claims_by_section: dict[str, list[dict[str, Any]]] = {}
+    for claim in claims:
+        if not isinstance(claim, dict):
+            continue
+        for section in claim.get("required_section", []) or []:
+            normalized = _normalize_section(str(section))
+            claims_by_section.setdefault(normalized, []).append(claim)
+
+    chains: list[dict[str, Any]] = []
+    contribution_type = str(cdr_tuple.get("contribution_type") or "").strip()
+    for idx in range(target_count):
+        cid = f"C{idx + 1}"
+        chain_claim_ids: list[str] = []
+        for section in ["introduction", "related_work", "methodology", "experiments", "analysis", "conclusion"]:
+            pool = claims_by_section.get(section, [])
+            if pool:
+                claim_id = str(pool[idx % len(pool)].get("claim_id") or "").strip()
+                if claim_id and claim_id not in chain_claim_ids:
+                    chain_claim_ids.append(claim_id)
+        chains.append(
+            {
+                "cid": cid,
+                "hypothesis": hypothesis_ids[idx] if idx < len(hypothesis_ids) else "LLM_REVIEW_REQUIRED",
+                "source_claim_ids": chain_claim_ids,
+                "contribution_type": contribution_type or "LLM_REVIEW_REQUIRED",
+                "seed_status": "needs_llm_completion",
+                "llm_task": (
+                    "Complete this contribution lane by reading the linked claim slots and source artifacts; "
+                    "do not treat the mechanical lane as a final claim."
+                ),
+            }
+        )
+    return chains
+
+
+def _extract_hypothesis_ids_from_sources(source_texts: dict[str, str]) -> list[str]:
+    text = "\n".join(str(value or "") for value in source_texts.values())
+    found = re.findall(r"\bH\d+\b", text, flags=re.IGNORECASE)
+    return [item.upper() for item in dict.fromkeys(found)]
 
 
 def validate_cdr_claim_ledger(ledger: dict[str, Any]) -> list[str]:
@@ -487,6 +550,8 @@ def _extract_list_hint(text: str, label: str) -> list[str]:
 
 
 def _default_cdr_field_for_section(section: str) -> str:
+    if section in {"limitation", "limitations"}:
+        return "boundary_conditions"
     return {
         "abstract": "contribution_type",
         "introduction": "problem_frame",
@@ -494,7 +559,6 @@ def _default_cdr_field_for_section(section: str) -> str:
         "methodology": "design_rationale",
         "experiments": "evaluation_mode",
         "analysis": "design_rationale",
-        "limitations": "boundary_conditions",
         "conclusion": "design_principles",
     }.get(section, "design_rationale")
 
@@ -508,7 +572,7 @@ def _sections_for_cdr_field(cdr_field: str) -> list[str]:
         "data_view": ["experiments"],
         "evaluation_mode": ["experiments", "analysis"],
         "contribution_type": ["abstract", "introduction", "conclusion"],
-        "boundary_conditions": ["limitations", "analysis"],
+        "boundary_conditions": ["conclusion", "analysis"],
         "cross_paper_tension": ["related_work", "introduction"],
     }.get(cdr_field, [])
 
@@ -578,7 +642,8 @@ def _normalize_section(section: str) -> str:
         "results": "experiments",
         "evaluation": "experiments",
         "discussion": "analysis",
-        "limitation": "limitations",
+        "limitation": "conclusion",
+        "limitations": "conclusion",
     }
     return aliases.get(key, key or "global")
 

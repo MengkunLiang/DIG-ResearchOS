@@ -44,6 +44,7 @@ T2_AUTO_PERSIST_SEARCH_TOOLS = frozenset(
         "crossref_search",
         "elsevier_scopus_search",
         "informs_search",
+        "fetch_outgoing_citations",
     }
 )
 T2_AUTO_FINALIZE_TRIGGER_TOOLS = T2_AUTO_PERSIST_SEARCH_TOOLS | frozenset(
@@ -1420,8 +1421,14 @@ class AgentRunner:
             return None
 
         papers = result.data.get("papers")
+        edge_persist = self._persist_t2_citation_edges_if_present(
+            ctx=ctx,
+            policy=policy,
+            tool_name=tool_name,
+            result=result,
+        )
         if not isinstance(papers, list) or not papers:
-            return None
+            return edge_persist
 
         papers = self._annotate_t2_search_bucket(
             tool_name=tool_name,
@@ -1440,13 +1447,79 @@ class AgentRunner:
             }
 
         persisted_count = save_result.data.get("count", len(papers))
+        content_suffix = f"[Runtime] 已自动追加 {persisted_count} 篇到 literature/papers_raw.jsonl"
+        if edge_persist and edge_persist.get("content_suffix"):
+            content_suffix += "\n" + str(edge_persist["content_suffix"])
         return {
             "ok": True,
             "count": persisted_count,
             "mode": save_result.data.get("mode", "append"),
-            "content_suffix": (
-                f"[Runtime] 已自动追加 {persisted_count} 篇到 literature/papers_raw.jsonl"
-            ),
+            "content_suffix": content_suffix,
+        }
+
+    def _persist_t2_citation_edges_if_present(
+        self,
+        *,
+        ctx: ExecutionContext,
+        policy: "WorkspaceAccessPolicy",
+        tool_name: str,
+        result: ToolResult,
+    ) -> dict[str, object] | None:
+        """Persist raw one-hop citation edges independently of neighbor paper resolution."""
+
+        if ctx.task_id != "T2" or tool_name != "fetch_outgoing_citations" or not result.ok:
+            return None
+        source_id = str(result.data.get("source_id") or "").strip()
+        if not source_id:
+            return None
+        edges: list[list[str]] = []
+        for key in ("referenced_works", "related_works"):
+            values = result.data.get(key)
+            if not isinstance(values, list):
+                continue
+            for target in values:
+                target_id = str(target or "").strip()
+                if target_id and target_id != source_id:
+                    edges.append([source_id, target_id])
+        if not edges:
+            return None
+
+        try:
+            path = policy.resolve_write("literature/citation_edges.json")
+            existing: list[object] = []
+            if path.exists():
+                try:
+                    loaded = json.loads(path.read_text(encoding="utf-8"))
+                    if isinstance(loaded, list):
+                        existing = loaded
+                except Exception:
+                    existing = []
+            seen: set[tuple[str, str]] = set()
+            merged: list[object] = []
+            for item in [*existing, *edges]:
+                if not isinstance(item, (list, tuple)) or len(item) < 2:
+                    merged.append(item)
+                    continue
+                left, right = str(item[0] or ""), str(item[1] or "")
+                if not left or not right or left == right:
+                    continue
+                key = tuple(sorted((left, right)))
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append([left, right])
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(merged, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error": str(exc),
+                "content_suffix": f"[Runtime] 自动保存 citation_edges 失败: {exc}",
+            }
+        return {
+            "ok": True,
+            "edge_count": len(edges),
+            "content_suffix": f"[Runtime] 已自动追加 {len(edges)} 条到 literature/citation_edges.json",
         }
 
     @staticmethod
@@ -1482,6 +1555,13 @@ class AgentRunner:
             record = dict(paper)
             if bucket and not record.get("search_bucket"):
                 record["search_bucket"] = bucket
+            if bucket and not record.get("source_bucket"):
+                if bucket == "adjacent_field":
+                    record["source_bucket"] = "adjacent"
+                elif bucket == "theory_bridge":
+                    record["source_bucket"] = "adjacent"
+                elif bucket in {"core", "snowball", "seed"}:
+                    record["source_bucket"] = bucket
             if bucket in {"adjacent_field", "theory_bridge"}:
                 record.setdefault("adjacent_field", True)
             if query:

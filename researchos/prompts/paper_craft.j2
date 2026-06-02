@@ -1,0 +1,35 @@
+## 通用写作 Craft（所有 section 适用）
+
+### 段落
+- 一段一个核心论点，以 topic sentence 领起。
+- 段落间有因果、对比或递进关系，不能只是材料并列堆砌。
+
+### Claim 强度 = Evidence 强度
+- `invention`：可用 introduce / first to，但必须有证据链。
+- `improvement`：用 improve / extend，禁止 first / novel paradigm。
+- `exaptation`：用 adapt / transfer X to Y。
+- `routine`：不应作为核心贡献；若出现，标 TODO 并提示上游 gate 需要重审。
+- 每个量化 claim 必须指向 result metric 或实验 artifact，否则写 `% TODO(evidence)`。
+
+### 时态 / 语态
+- Method 用现在时。
+- 实验过程用过去时。
+- 普遍事实用现在时。
+- 主动语态优先。
+
+### 禁用 AI 套话
+不要使用：delve into / it is worth noting / plays a crucial|pivotal|vital role /
+in the realm of / rich tapestry / a testament to / shed light on / pave the way /
+With the rapid development|advancement of / in today's fast-paced|ever-evolving /
+段首连续 3 次以上 Furthermore。
+
+### 引用
+- citation key 必须存在于 `paper_state.shared_facts.bib_keys`。
+- 引用支撑具体 claim；不要一句话堆 5 个以上引用而不区分。
+
+### 数字
+- 数字来自 result_metrics 或明确读取的 artifact，保留与来源一致的有效位数。
+- 不在多个 section 中用不同小数位重复报告同一结果。
+
+### 对齐标注
+- 凡兑现某条贡献的段落，段首加 `% [Cn]` 注释；多贡献写 `% [C1,C3]`。

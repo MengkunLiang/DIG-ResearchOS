@@ -18,6 +18,8 @@
    - `drafts/paper_state.json`
    - `drafts/sections/introduction.tex`
    - `drafts/manuscript_audit.md`
+   - `drafts/craft_audit.md`
+   - `drafts/alignment_matrix.json`
    - `drafts/self_check.md`
    - `drafts/review_rounds/round_{{ round - 1 }}.md`（第2轮及以后）
    - `experiments/results_summary.json`
@@ -58,11 +60,29 @@
 - Boundary conditions 是否诚实，是否和 data_view/evaluation_mode 一致？
 - Related Work 是否呈现 design-rationale tension，而不只是列 taxonomy？
 
+### 6. Alignment Matrix 与 Writing Craft
+- 每条 cid 是否形成 motivation -> contribution -> related_gap -> experiment -> analysis 闭环？
+- 章节中是否用 `% [Cn]` 标注兑现关系？
+- Introduction 的 gap 和 contribution 是否一一对应？
+- Related Work 是否有 orphan 段落或流水账式 citation？
+- Conclusion 是否包含 `\subsection{Limitations}`，且没有独立 `\section{Limitations}`？
+- craft_audit.md 的 FAIL/WARN 是否被正文或 self_check 处理？
+
 ## 上游审计上下文
 
 ### Manuscript Audit
 ```markdown
 {{ manuscript_audit_preview }}
+```
+
+### Writing Craft Audit
+```markdown
+{{ craft_audit_preview }}
+```
+
+### Alignment Matrix
+```json
+{{ alignment_matrix_preview }}
 ```
 
 ### Author Self Check
@@ -98,7 +118,6 @@
 - `drafts/review_rounds/round_{{ round }}_sections/methodology.md`
 - `drafts/review_rounds/round_{{ round }}_sections/experiments.md`
 - `drafts/review_rounds/round_{{ round }}_sections/analysis.md`
-- `drafts/review_rounds/round_{{ round }}_sections/limitations.md`
 - `drafts/review_rounds/round_{{ round }}_sections/conclusion.md`
 
 每个逐章审稿文件至少包含：
@@ -117,6 +136,12 @@
 
 ## CDR Alignment Check
 [本章是否履行 CDR 职责；problem_frame/design_rationale/contribution_type/evaluation_mode/boundary_conditions 是否与正文证据一致]
+
+## Alignment Matrix Check
+[本章是否兑现它负责的 cid；是否存在缺失、错误或无锚点的 % [Cn] 段落]
+
+## Writing Craft Check
+[本章是否违反 craft_audit 或 section craft：流水账、过度 claim、abstract citation、独立 limitations 等]
 
 ## Actionable Fixes
 - [High/Medium/Low] [可定位的修改建议]
@@ -172,6 +197,14 @@
 - [x] [检查项]
 - [ ] [问题]
 
+## 写作范式与对齐核查
+
+- Alignment matrix closure: Pass / Weak / Fail
+- Craft audit FAIL items: [列出并判断是否必须修]
+- Craft audit WARN items: [列出需要进入 Medium TODO 的项]
+- Standalone Limitations section: Pass / Fail
+- CID anchor coverage: Pass / Weak / Fail
+
 ## CDR Contribution Verdict
 
 - Problem frame clarity: Pass / Weak / Fail
@@ -192,9 +225,11 @@
 1. **验证实验数字**：对照 results_summary.json 检查论文中的数字是否准确
 2. **验证引用**：检查所有 \cite{} 是否存在于 related_work.bib
 3. **利用机械审计**：对 `manuscript_audit.md` 中未解决的 `[ ]` 项逐条判断是否应成为审稿问题
-4. **利用作者自查**：对 `self_check.md` 中的 High/Medium TODO 判断是否已经反映在正文或 Limitations
-5. **利用 CDR ledger**：检查核心 contribution claims 是否在对应章节被解释并被证据支持；不要把 ledger 当最终真理
-6. **检查匿名化**：确保论文不包含作者信息
+4. **利用 craft 审计**：对 `craft_audit.md` 中 FAIL/WARN 逐条判断是否已经修复；未修复的 FAIL 进入主要问题
+5. **利用 alignment matrix**：检查 cid 是否在 responsible section 中被 `% [Cn]` 标注并闭环
+6. **利用作者自查**：对 `self_check.md` 中的 High/Medium TODO 判断是否已经反映在正文或 Conclusion 的 Limitations 子段
+7. **利用 CDR ledger**：检查核心 contribution claims 是否在对应章节被解释并被证据支持；不要把 ledger 当最终真理
+8. **检查匿名化**：确保论文不包含作者信息
 
 ## 质量标准
 

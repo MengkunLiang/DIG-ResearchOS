@@ -62,8 +62,10 @@ class SingleTaskRunner:
     @staticmethod
     def _normalize_task_id(task_id: str) -> str:
         aliases = {
-            "T8": "T8-RESOURCE",
+            "T8": "T8-STYLE-GATE",
+            "T8-WRITE": "T8-STYLE-GATE",
             "T8-SECTIONS": "T8-SECTION-PLAN",
+            "T8-SEC-LIMITATIONS": "T8-SEC-CONCLUSION",
         }
         return aliases.get(task_id, task_id)
 

@@ -74,6 +74,8 @@ agents:
       - write_file
       - write_structured_file
       - list_files
+      - analyze_idea_concentration
+      - compute_idea_novelty_signal
       - ask_human
       - finish_task
       - process_seed_paper
@@ -134,6 +136,8 @@ agents:
       - build_verified_papers
       - build_access_audit
       - build_deep_read_queue
+      - fetch_outgoing_citations
+      - build_domain_map
       - semantic_scholar_search
       - semantic_scholar_get_paper
       - arxiv_search
@@ -407,10 +411,11 @@ agents:
       tier: heavy
       temperature: 0.7
     max_steps: 1500
-    max_tokens_total: 1000000
-    max_wall_seconds: 24000
+    max_tokens_total: 10000000
+    max_wall_seconds: 240000
     max_validation_retries: 3
     tool_names:
+      - ask_human
       - read_file
       - write_file
       - list_files
@@ -418,10 +423,12 @@ agents:
       - plan_manuscript_sections
       - plan_manuscript_evidence
       - build_manuscript_registries
+      - build_alignment_matrix
       - initialize_manuscript_state
       - update_manuscript_section_state
       - assemble_manuscript
       - audit_manuscript_claims
+      - audit_writing_craft
       - build_manuscript_revision_patches
       - finish_task
     allowed_read_prefixes:
@@ -437,39 +444,122 @@ agents:
       - drafts/
     prompt_template: writer.j2
     modes:
+      style_gate:
+        description: 确认 IS/CCF-A/both 写作风格
+        max_steps: 20
+        max_tokens_total: 2000000
       resource_index:
         description: 构建写作资源索引和章节计划
         max_steps: 100
-        max_tokens_total: 500000
+        max_tokens_total: 50000000
       outline:
         description: 生成资源驱动大纲
         max_steps: 300
-        max_tokens_total: 1000000
+        max_tokens_total: 100000000
       section_plan:
         description: 初始化逐章节写作状态和每章局部大纲
         max_steps: 80
-        max_tokens_total: 300000
+        max_tokens_total: 30000000
       section_drafts:
         description: 已废弃的旧批量分章节入口；只做兼容检查，不写正文
         max_steps: 20
-        max_tokens_total: 100000
+        max_tokens_total: 10000000
       section_draft:
         description: 单章节草稿
         max_steps: 80
-        max_tokens_total: 500000
+        max_tokens_total: 50000000
       draft:
         description: 拼装、spot-check 与机械审计
         max_steps: 180
-        max_tokens_total: 1000000
+        max_tokens_total: 100000000
       self_check:
         description: 作者自查
         max_steps: 200
-        max_tokens_total: 1000000
+        max_tokens_total: 100000000
       revise:
         description: 按 section patch 修订
         max_steps: 300
         max_tokens_total: 1500000
     latex_required: true
+
+  survey_writer:
+    llm:
+      profile: siliconflow_only
+      max_context: 128000
+      tier: heavy
+      temperature: 0.55
+    max_steps: 160
+    max_tokens_total: 20000000
+    max_wall_seconds: 36000
+    max_validation_retries: 3
+    tool_names:
+      - ask_human
+      - read_file
+      - write_file
+      - list_files
+      - expand_corpus_for_survey
+      - build_survey_state
+      - update_survey_section_state
+      - assemble_survey
+      - audit_survey_coverage
+      - export_survey_for_ideation
+      - latex_compile
+      - finish_task
+    allowed_read_prefixes:
+      - ""
+      - literature/
+      - drafts/survey/
+      - ideation/
+      - _runtime/resume/
+    allowed_write_prefixes:
+      - drafts/survey/
+      - ideation/
+    prompt_template: survey_writer.j2
+    modes:
+      survey_gate:
+        description: 询问是否撰写 taxonomy-driven survey
+        max_steps: 20
+        max_tokens_total: 2000000
+      survey_plan:
+        description: 构建综述 taxonomy 与章节大纲
+        max_steps: 120
+        max_tokens_total: 40000000
+      outline_gate:
+        description: 人工确认/调整 taxonomy 大纲
+        max_steps: 40
+        max_tokens_total: 5000000
+      corpus_gate:
+        description: 人工选择保守/完整素材范围
+        max_steps: 30
+        max_tokens_total: 3000000
+      survey_expand:
+        description: 生成一次性定向补检计划
+        max_steps: 80
+        max_tokens_total: 10000000
+      survey_state:
+        description: 初始化 survey_state 与逐 section outline
+        max_steps: 40
+        max_tokens_total: 10000000
+      survey_section:
+        description: 单个综述 section 写作
+        max_steps: 100
+        max_tokens_total: 50000000
+      survey_assemble:
+        description: 拼装 survey.tex 并审计
+        max_steps: 60
+        max_tokens_total: 10000000
+      survey_review:
+        description: 综述模式审阅与按 section 定向修订
+        max_steps: 100
+        max_tokens_total: 20000000
+      survey_compile:
+        description: 编译 survey.tex 为 PDF
+        max_steps: 40
+        max_tokens_total: 5000000
+      survey_feed:
+        description: 导出 T4 可消费的 survey insights
+        max_steps: 40
+        max_tokens_total: 5000000
 
   reviewer:
     llm:
@@ -479,7 +569,7 @@ agents:
       tier: heavy
       temperature: 0.3
     max_steps: 200
-    max_tokens_total: 6000000
+    max_tokens_total: 600000000
     max_wall_seconds: 12000
     max_validation_retries: 10
     tool_names:
@@ -505,12 +595,12 @@ agents:
     llm:
       # 投稿整理阶段同样保留 MiniMax fallback。
       profile: siliconflow_only
-      max_context: 128000
+      max_context: 12800000
       tier: medium
       temperature: 0.3
-    max_steps: 3000
-    max_tokens_total: 5000000
-    max_wall_seconds: 8000
+    max_steps: 30000
+    max_tokens_total: 500000000
+    max_wall_seconds: 80000
     max_validation_retries: 10
     tool_names:
       - read_file
@@ -533,7 +623,7 @@ agents:
     enforce_anonymization_precheck: false
     # T9 在编译失败时允许的“诊断-修复-重试”上限。
     # 这个值会注入 prompt，用来防止 submission 阶段无限循环编译。
-    max_compile_attempts: 4
+    max_compile_attempts: 10
     docker_required: true
     expected_outputs:
       bundle_required: true

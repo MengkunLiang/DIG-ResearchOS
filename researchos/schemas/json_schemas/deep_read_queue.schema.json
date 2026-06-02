@@ -42,6 +42,10 @@
     },
     "verification_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
     "read_priority": { "type": "number" },
+    "search_bucket": { "type": "string" },
+    "source_bucket": { "type": "string" },
+    "adjacent_field": { "type": "boolean" },
+    "protected_bucket_bonus": { "type": "number" },
     "queue_rank": { "type": "integer", "minimum": 1 },
     "target_bucket": { "type": "string", "enum": ["seed", "target", "overflow"] }
   },

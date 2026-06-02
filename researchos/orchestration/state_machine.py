@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 import re
 import uuid
@@ -33,6 +34,37 @@ from .task_io_contract import get_task_io
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _valid_writing_style_file(path: Path) -> bool:
+    if not path.exists() or path.stat().st_size <= 0:
+        return False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    return isinstance(data, dict) and data.get("venue_style") in {"is", "ccf_a", "both"}
+
+
+def _extract_t45_final_gate_verdict(text: str) -> str:
+    """Extract the T4.5 Final Gate Verdict without interpreting scientific quality."""
+
+    match = re.search(
+        r"(?im)^\s*(?:#+\s*)?(?:\*\*)?\s*Final\s+Gate\s+Verdict\s*(?:\*\*)?\s*[:：]\s*(.+?)\s*$",
+        text,
+    )
+    if match:
+        return match.group(1).strip()
+
+    heading = re.search(r"(?im)^\s*#+\s*Final\s+Gate\s+Verdict\s*$", text)
+    if heading:
+        tail = text[heading.end() :].splitlines()
+        for line in tail[:8]:
+            stripped = line.strip().strip("*")
+            if not stripped or stripped.startswith("#"):
+                continue
+            return stripped
+    return ""
 
 
 @dataclass
@@ -251,6 +283,40 @@ class StateMachine:
         ctx.tool_policy_override = tool_ov
         return ctx
 
+    def should_pause_for_immediate_gate(self, state: StateYaml) -> bool:
+        """Return true when the current node is a gate-only node that should not run an LLM."""
+
+        node = self.nodes[state.current_task]
+        return bool(node.gate and (node.extra or {}).get("immediate_gate"))
+
+    def pause_for_immediate_gate(
+        self,
+        state: StateYaml,
+        *,
+        workspace_dir: Path | None = None,
+    ) -> StateYaml:
+        """Present a gate-only node directly and pause without starting an agent run."""
+
+        node = self.nodes[state.current_task]
+        if not node.gate:
+            raise ValueError(f"{state.current_task} has no gate")
+        gate_id = self._gate_id_for_node(node)
+        gate_spec = self._find_gate(gate_id)
+        presentation = build_presentation(
+            gate_spec,
+            model_dump(state, mode="json"),
+            workspace_dir or Path("."),
+        )
+        state.pending_gate = GateState(
+            gate_id=gate_id,
+            presented_at=_now_iso(),
+            presentation=presentation,
+            options=list(gate_spec.get("options", [])),
+        )
+        state.status = "WAITING_HUMAN"
+        state.paused_at = _now_iso()
+        return state
+
     def start_task(self, state: StateYaml, run_id: str) -> StateYaml:
         """task 开始执行前，先写入一条 RUNNING history。"""
         state.status = "RUNNING"
@@ -373,6 +439,7 @@ class StateMachine:
             raise ValueError("No pending gate to resolve")
         node = self.nodes[state.current_task]
         next_task = self._resolve_branch(node, gate_result, state, workspace_dir=workspace_dir)
+        self._persist_immediate_gate_result(node, gate_result, next_task, workspace_dir)
         state.pending_gate = None
         return self._transition_to_next(state, next_task, workspace_dir=workspace_dir)
 
@@ -465,6 +532,35 @@ class StateMachine:
                     return "ITER_LIMIT_GATE"
         return next_state
 
+    def _persist_immediate_gate_result(
+        self,
+        node: TaskNode,
+        gate_result: dict[str, Any],
+        next_task: str,
+        workspace_dir: Path | None,
+    ) -> None:
+        """Persist the user decision for gate-only nodes that declare a JSON output."""
+
+        if workspace_dir is None or not (node.extra or {}).get("immediate_gate"):
+            return
+        outputs = node.outputs or {}
+        for rel_path in outputs.values():
+            path = workspace_dir / rel_path
+            if path.suffix.lower() != ".json":
+                continue
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "semantics": "human_decision_over_agent_recommendation",
+                "task_id": node.task_id,
+                "gate_id": self._gate_id_for_node(node),
+                "selected_option": gate_result.get("option_id") or gate_result.get("key"),
+                "captured": gate_result.get("captured") or {},
+                "next_task": next_task,
+                "decided_at": _now_iso(),
+            }
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            return
+
     def _resolve_special_target(
         self,
         *,
@@ -480,13 +576,85 @@ class StateMachine:
 
         if current_task == "T7.5":
             return self._parse_t75_decision(workspace_dir)
+        if current_task == "T4.5":
+            return self._parse_t45_verdict(workspace_dir)
+        if current_task == "T3.6-GATE-SURVEY":
+            return self._parse_t36_survey_decision(workspace_dir)
+        if current_task == "T3.6-GATE-CORPUS":
+            return self._parse_t36_corpus_decision(workspace_dir)
 
         raise ValueError(f"Unsupported __parse_from_output__ task: {current_task}")
+
+    def _parse_t45_verdict(self, workspace_dir: Path) -> str:
+        """Route T4.5 according to the explicit Final Gate Verdict in novelty_audit.md."""
+
+        human_review = "T4.5-HUMAN-REVIEW" if "T4.5-HUMAN-REVIEW" in self.nodes else "failed"
+        audit_path = workspace_dir / "ideation" / "novelty_audit.md"
+        if not audit_path.exists():
+            return human_review
+
+        text = audit_path.read_text(encoding="utf-8", errors="replace")
+        verdict_text = _extract_t45_final_gate_verdict(text)
+        if not verdict_text:
+            return human_review
+
+        normalized = verdict_text.lower().replace("-", "_").replace(" ", "_")
+        if any(token in normalized for token in ("return_to_t4", "return_tot4", "reframe", "回到t4", "回退t4")):
+            return human_review
+        if any(token in normalized for token in ("drop_due_to_collision", "drop", "collision", "reject", "fail")):
+            return human_review
+        verdict_token = re.split(r"[^a-z0-9_]+", normalized, maxsplit=1)[0]
+        pass_tokens = {
+            "pass",
+            "passed",
+            "pass_to_experiment",
+            "pass_with_required_baselines",
+            "go_t7",
+            "continue_to_t7",
+            "continue_to_experiment",
+        }
+        if verdict_token in pass_tokens:
+            return "T7" if "T7" in self.nodes else "failed"
+        return human_review
+
+    def _parse_t36_survey_decision(self, workspace_dir: Path) -> str:
+        """Route the optional T3.6 survey branch from drafts/survey/decision.json."""
+
+        path = workspace_dir / "drafts" / "survey" / "decision.json"
+        data = self._read_json_dict(path)
+        if data is None:
+            return "T4" if "T4" in self.nodes else "failed"
+        decision = data.get("write_survey")
+        if isinstance(decision, str):
+            decision = decision.strip().lower() in {"yes", "true", "1", "write", "survey", "撰写", "是"}
+        if decision:
+            return "T3.6-PLAN" if "T3.6-PLAN" in self.nodes else "T4"
+        return "T4" if "T4" in self.nodes else "failed"
+
+    def _parse_t36_corpus_decision(self, workspace_dir: Path) -> str:
+        """Route the survey corpus-scope gate from drafts/survey/corpus_decision.json."""
+
+        path = workspace_dir / "drafts" / "survey" / "corpus_decision.json"
+        data = self._read_json_dict(path)
+        if data is None:
+            return "T3.6-STATE" if "T3.6-STATE" in self.nodes else "T4"
+        scope = str(data.get("scope") or data.get("corpus_scope") or "").strip().lower()
+        if scope in {"complete", "full", "expand", "完整", "补检", "定向补检"}:
+            return "T3.6-EXPAND" if "T3.6-EXPAND" in self.nodes else "T3.6-STATE"
+        return "T3.6-STATE" if "T3.6-STATE" in self.nodes else "T4"
+
+    @staticmethod
+    def _read_json_dict(path: Path) -> dict[str, Any] | None:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        return data if isinstance(data, dict) else None
 
     def _parse_t75_decision(self, workspace_dir: Path) -> str:
         """T7.5 完成后，解析 evaluation_decision.md 的推荐下一步。"""
 
-        default_t8_entry = self._default_t8_entry()
+        default_t8_entry = self._default_t8_entry(workspace_dir)
         decision_path = workspace_dir / "evaluation" / "evaluation_decision.md"
         if not decision_path.exists():
             return default_t8_entry
@@ -498,8 +666,9 @@ class StateMachine:
 
         raw_target = match.group(1).strip()
         aliases = {
-            "T8": "T8-RESOURCE",
-            "T8-WRITE": "T8-RESOURCE",
+            "T8": self._default_t8_entry(workspace_dir),
+            "T8-WRITE": self._default_t8_entry(workspace_dir),
+            "T8-SEC-LIMITATIONS": "T8-SEC-CONCLUSION",
             "terminate": "done",
             "terminal": "done",
             "stop": "done",
@@ -512,7 +681,12 @@ class StateMachine:
             return default_t8_entry
         return target
 
-    def _default_t8_entry(self) -> str:
+    def _default_t8_entry(self, workspace_dir: Path | None = None) -> str:
+        if "T8-STYLE-GATE" in self.nodes:
+            if workspace_dir is not None and _valid_writing_style_file(workspace_dir / "drafts" / "writing_style.json"):
+                if "T8-RESOURCE" in self.nodes:
+                    return "T8-RESOURCE"
+            return "T8-STYLE-GATE"
         if "T8-RESOURCE" in self.nodes:
             return "T8-RESOURCE"
         if "T8-WRITE" in self.nodes:

@@ -477,13 +477,13 @@ def register_builtin_task_checkers():
         mode = None
         extra: dict[str, object] = {}
         section_map = {
+            "T8-STYLE-GATE": ("style_gate", None),
             "T8-SECTION-PLAN": ("section_plan", None),
             "T8-SEC-METHOD": ("section_draft", "methodology"),
             "T8-SEC-EXPERIMENTS": ("section_draft", "experiments"),
             "T8-SEC-RELATED": ("section_draft", "related_work"),
             "T8-SEC-ANALYSIS": ("section_draft", "analysis"),
             "T8-SEC-INTRO": ("section_draft", "introduction"),
-            "T8-SEC-LIMITATIONS": ("section_draft", "limitations"),
             "T8-SEC-CONCLUSION": ("section_draft", "conclusion"),
             "T8-SEC-ABSTRACT": ("section_draft", "abstract"),
             "T8-SECTIONS": ("section_drafts", None),
@@ -563,6 +563,7 @@ def register_builtin_task_checkers():
     register_task_checker("T8-REVIEW-2", lambda workspace_dir: check_reviewer_phase(workspace_dir, "T8-REVIEW-2"))
     register_task_checker("T9", check_submission_phase)
     for task_id in [
+        "T8-STYLE-GATE",
         "T8-RESOURCE",
         "T8-WRITE",
         "T8-SECTION-PLAN",
@@ -571,7 +572,6 @@ def register_builtin_task_checkers():
         "T8-SEC-RELATED",
         "T8-SEC-ANALYSIS",
         "T8-SEC-INTRO",
-        "T8-SEC-LIMITATIONS",
         "T8-SEC-CONCLUSION",
         "T8-SEC-ABSTRACT",
         "T8-SECTIONS",

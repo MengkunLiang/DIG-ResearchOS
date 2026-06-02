@@ -14,6 +14,7 @@ from typing import Any
 import yaml
 
 from ..tools.paper_enrichment import build_access_audit, build_deep_read_queue, enrich_papers
+from ..tools.citation_graph import build_domain_map
 from ..tools.paper_save_tools import SavePapersDedupTool
 from ..tools.paper_utils import (
     deduplicate_papers,
@@ -35,6 +36,7 @@ SEARCH_TOOL_NAMES = frozenset(
         "crossref_search",
         "elsevier_scopus_search",
         "informs_search",
+        "fetch_outgoing_citations",
     }
 )
 
@@ -241,6 +243,34 @@ def _build_recovered_verified_papers(
         record["verification_year_match"] = True
         verified.append(record)
     return verified
+
+
+def _build_recovered_citation_edges(papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Build cheap citation-edge hints from already persisted metadata.
+
+    Recovery/finalize deliberately avoids extra network calls. When raw records
+    already contain referenced_works/related_works, we preserve them; otherwise
+    the domain map still records buckets and emits a warning.
+    """
+
+    payload: list[dict[str, Any]] = []
+    for paper in papers:
+        source_id = str(paper.get("canonical_id") or paper.get("id") or "").strip()
+        if not source_id:
+            continue
+        refs = paper.get("referenced_works") or paper.get("references") or []
+        related = paper.get("related_works") or paper.get("related") or []
+        if not refs and not related:
+            continue
+        payload.append(
+            {
+                "source_id": source_id,
+                "referenced_works": refs,
+                "related_works": related,
+                "source": "recovered_existing_metadata",
+            }
+        )
+    return payload
 
 
 def _iter_t2_trace_paths(workspace_dir: Path) -> list[Path]:
@@ -566,6 +596,22 @@ async def finalize_t2_outputs(
     _write_jsonl(verified_path, verified_papers)
     _write_jsonl(failures_path, [])
 
+    citation_edges = _build_recovered_citation_edges(verified_papers)
+    citation_edges_path = workspace_dir / "literature" / "citation_edges.json"
+    citation_edges_path.write_text(
+        json.dumps(citation_edges, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    domain_map = build_domain_map(
+        papers_verified=verified_papers,
+        citation_edges=citation_edges,
+    )
+    domain_map_path = workspace_dir / "literature" / "domain_map.json"
+    domain_map_path.write_text(
+        json.dumps(domain_map, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
     queue_records, queue_meta = build_deep_read_queue(
         verified_papers,
         workspace_dir,
@@ -627,6 +673,8 @@ async def finalize_t2_outputs(
             "papers_verified": str(verified_path),
             "verification_failures": str(failures_path),
             "deep_read_queue": str(queue_path),
+            "domain_map": str(domain_map_path),
+            "citation_edges": str(citation_edges_path),
             "access_audit": str(access_audit_path),
             "search_log": str(search_log_path),
             "missing_areas": str(missing_areas_path),

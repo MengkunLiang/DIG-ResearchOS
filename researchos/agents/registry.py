@@ -12,6 +12,7 @@ from .ideation import IdeationAgent
 from .novelty_auditor import NoveltyAuditorAgent
 from .novelty import NoveltyAgent
 from .experimenter import ExperimenterAgent
+from .survey_writer import SurveyWriterAgent
 from .writer import WriterAgent
 from .reviewer import ReviewerAgent
 from .submission import SubmissionAgent
@@ -30,6 +31,7 @@ AGENT_REGISTRY = {
     "novelty_auditor": NoveltyAuditorAgent,  # T4.5
     "novelty": NoveltyAgent,  # T6
     "experimenter": ExperimenterAgent,  # T5/T7
+    "survey_writer": SurveyWriterAgent,  # T3.6 optional survey branch
     "writer": WriterAgent,  # T8
     "reviewer": ReviewerAgent,  # T8
     "submission": SubmissionAgent,  # T9
@@ -43,11 +45,34 @@ TASK_TO_AGENT_MAP = {
     "T2": ScoutAgent,
     "T3": ReaderAgent,  # 深度阅读
     "T3.5": ReaderAgent,  # 文献综合
+    "T3.6-GATE-SURVEY": SurveyWriterAgent,  # 综述支线入口
+    "T3.6-PLAN": SurveyWriterAgent,  # 综述 taxonomy/outline 规划
+    "T3.6-GATE-OUTLINE": SurveyWriterAgent,  # taxonomy 大纲确认
+    "T3.6-GATE-CORPUS": SurveyWriterAgent,  # 综述素材范围确认
+    "T3.6-EXPAND": SurveyWriterAgent,  # 一次性定向补检计划
+    "T3.6-STATE": SurveyWriterAgent,  # 综述逐章状态初始化
+    "T3.6-SEC-BACKGROUND": SurveyWriterAgent,
+    "T3.6-SEC-TAXONOMY": SurveyWriterAgent,
+    "T3.6-SEC-THEME-1": SurveyWriterAgent,
+    "T3.6-SEC-THEME-2": SurveyWriterAgent,
+    "T3.6-SEC-THEME-3": SurveyWriterAgent,
+    "T3.6-SEC-THEME-4": SurveyWriterAgent,
+    "T3.6-SEC-COMPARISON": SurveyWriterAgent,
+    "T3.6-SEC-CHALLENGES": SurveyWriterAgent,
+    "T3.6-SEC-FUTURE": SurveyWriterAgent,
+    "T3.6-SEC-INTRO": SurveyWriterAgent,
+    "T3.6-SEC-CONCLUSION": SurveyWriterAgent,
+    "T3.6-SEC-ABSTRACT": SurveyWriterAgent,
+    "T3.6-ASSEMBLE": SurveyWriterAgent,
+    "T3.6-REVIEW": SurveyWriterAgent,
+    "T3.6-COMPILE": SurveyWriterAgent,
+    "T3.6-FEED": SurveyWriterAgent,
     "T4": IdeationAgent,  # 假设生成
     "T4.5": NoveltyAuditorAgent,  # 新颖性审计
     "T5": ExperimenterAgent,  # Pilot实验
     "T6": NoveltyAgent,  # 新颖性验证
     "T7": ExperimenterAgent,  # 完整实验
+    "T8-STYLE-GATE": WriterAgent,  # 写作风格确认
     "T8-RESOURCE": WriterAgent,  # 写作资源索引
     "T8-WRITE": WriterAgent,  # 论文大纲
     "T8-SECTION-PLAN": WriterAgent,  # 逐章节写作状态
@@ -56,7 +81,6 @@ TASK_TO_AGENT_MAP = {
     "T8-SEC-RELATED": WriterAgent,  # Related Work 单章
     "T8-SEC-ANALYSIS": WriterAgent,  # Analysis 单章
     "T8-SEC-INTRO": WriterAgent,  # Introduction 单章
-    "T8-SEC-LIMITATIONS": WriterAgent,  # Limitations 单章
     "T8-SEC-CONCLUSION": WriterAgent,  # Conclusion 单章
     "T8-SEC-ABSTRACT": WriterAgent,  # Abstract 单章
     "T8-SECTIONS": WriterAgent,  # 分章节草稿

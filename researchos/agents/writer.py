@@ -10,6 +10,8 @@ import json
 import re
 from pathlib import Path
 
+import yaml
+
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
@@ -29,6 +31,7 @@ class WriterAgent(Agent):
                 defaults={
                     "model_tier": "heavy",
                     "tool_names": [
+                        "ask_human",
                         "read_file",
                         "write_file",
                         "list_files",
@@ -36,10 +39,12 @@ class WriterAgent(Agent):
                         "plan_manuscript_sections",
                         "plan_manuscript_evidence",
                         "build_manuscript_registries",
+                        "build_alignment_matrix",
                         "initialize_manuscript_state",
                         "update_manuscript_section_state",
                         "assemble_manuscript",
                         "audit_manuscript_claims",
+                        "audit_writing_craft",
                         "build_manuscript_revision_patches",
                         "finish_task",
                     ],
@@ -86,16 +91,7 @@ class WriterAgent(Agent):
 
     def _previous_section_tail(self, ctx: ExecutionContext) -> str:
         section_id = self._section_id(ctx)
-        order = [
-            "methodology",
-            "experiments",
-            "related_work",
-            "analysis",
-            "introduction",
-            "limitations",
-            "conclusion",
-            "abstract",
-        ]
+        order = list(SECTION_WRITING_SEQUENCE)
         if not section_id or section_id not in order:
             return ""
         idx = order.index(section_id)
@@ -131,7 +127,11 @@ class WriterAgent(Agent):
         claim_ledger = read_text_file(ws / "drafts" / "claim_ledger.json", default="")
         figure_registry = read_text_file(ws / "drafts" / "figure_registry.json", default="")
         manuscript_audit = read_text_file(ws / "drafts" / "manuscript_audit.md", default="")
+        craft_audit = read_text_file(ws / "drafts" / "craft_audit.md", default="")
         paper_state = read_text_file(ws / "drafts" / "paper_state.json", default="")
+        alignment_matrix = read_text_file(ws / "drafts" / "alignment_matrix.json", default="")
+        writing_style_text = read_text_file(ws / "drafts" / "writing_style.json", default="")
+        writing_style = _parse_writing_style(writing_style_text)
 
         # 根据phase选择不同的prompt策略
         phase = self._phase(ctx)
@@ -178,7 +178,11 @@ class WriterAgent(Agent):
             claim_ledger_preview=claim_ledger[:4000],
             figure_registry_preview=figure_registry[:4000],
             manuscript_audit_preview=manuscript_audit[:3000],
+            craft_audit_preview=craft_audit[:3000],
             paper_state_preview=paper_state[:5000],
+            alignment_matrix_preview=alignment_matrix[:5000],
+            writing_style=writing_style,
+            suggested_style=_suggest_venue_style(project.get("target_venue", "neurips")),
             section_id=section_id,
             section_title=SECTION_TITLES.get(section_id or "", (section_id or "").replace("_", " ").title()),
             section_outline_preview=section_outline[:5000],
@@ -208,7 +212,19 @@ class WriterAgent(Agent):
                 "调用 plan_manuscript_sections 生成 drafts/section_plan.json，"
                 "调用 plan_manuscript_evidence 生成 drafts/evidence_plan.json 和 drafts/figure_table_plan.json，"
                 "再调用 build_manuscript_registries 生成 drafts/cdr_claim_ledger.json、"
-                "drafts/claim_ledger.json 和 drafts/figure_registry.json。"
+                "drafts/claim_ledger.json 和 drafts/figure_registry.json，最后调用 build_alignment_matrix "
+                "生成 drafts/alignment_matrix.json。"
+                ),
+            )
+        if phase == "style_gate":
+            return prepend_resume_prefix(
+                ctx,
+                (
+                "请执行 T8 Writer Phase -1: 写作风格确认。\n\n"
+                "根据 target_venue 和系统建议，调用 ask_human 让用户在 is / ccf_a / both 中选择。"
+                "如果当前运行环境不支持人工输入，runtime 会暂停等待 resume；不要写入伪造默认选择。"
+                "若 drafts/writing_style.json 已存在且 venue_style 合法，可直接 finish_task。"
+                "否则必须在收到真实选择后写 drafts/writing_style.json，然后 finish_task。"
                 ),
             )
         if phase == "section_plan":
@@ -217,7 +233,7 @@ class WriterAgent(Agent):
                 (
                 "请执行 T8 Writer Phase 1.5: 初始化逐章节写作状态。\n\n"
                 "调用 initialize_manuscript_state 读取 drafts/outline.md、resource index、"
-                "section/evidence/figure plans，生成 drafts/paper_state.json 和 "
+                "section/evidence/figure plans 和 drafts/alignment_matrix.json，生成 drafts/paper_state.json 和 "
                 "drafts/section_outlines/*.md。不要写任何章节正文。"
                 ),
             )
@@ -226,7 +242,8 @@ class WriterAgent(Agent):
                 ctx,
                 (
                 "请执行 T8 Writer Phase 1: 生成论文大纲。\n\n"
-                "基于 drafts/manuscript_resource_index.json、drafts/section_plan.json、实验结果和文献综述，生成 drafts/outline.md。"
+                "基于 drafts/manuscript_resource_index.json、drafts/section_plan.json、"
+                "drafts/alignment_matrix.json、实验结果和文献综述，生成 drafts/outline.md。"
                 "大纲应包含：标题候选、Abstract要点、Introduction结构、"
                 "Related Work分类、Method结构、Experiments结构、Conclusion要点。"
                 ),
@@ -251,7 +268,7 @@ class WriterAgent(Agent):
                 "旧入口 section_drafts 已废弃，不能在一次 Writer 调用中写多个章节。\n\n"
                 "请不要生成 drafts/sections/*.tex 或 drafts/paper.tex。新版流程必须先运行 "
                 "T8-SECTION-PLAN，再依次运行 T8-SEC-METHOD、T8-SEC-EXPERIMENTS、"
-                "T8-SEC-RELATED、T8-SEC-ANALYSIS、T8-SEC-INTRO、T8-SEC-LIMITATIONS、"
+                "T8-SEC-RELATED、T8-SEC-ANALYSIS、T8-SEC-INTRO、"
                 "T8-SEC-CONCLUSION、T8-SEC-ABSTRACT。若 paper_state.json 已存在，"
                 "只需调用 finish_task 结束兼容检查。"
                 ),
@@ -264,7 +281,7 @@ class WriterAgent(Agent):
                 "先调用 assemble_manuscript 将 drafts/sections/ 下的章节草稿拼装为 drafts/paper.tex，"
                 "再做一致性 spot-check；如发现需要修改正文，请回改对应 drafts/sections/<section>.tex "
                 "并重新 assemble，而不是一次性重写整篇 paper.tex。最后调用 audit_manuscript_claims "
-                "生成 drafts/manuscript_audit.md。"
+                "生成 drafts/manuscript_audit.md，并调用 audit_writing_craft 生成 drafts/craft_audit.md。"
                 "**重要**: 所有实验数字必须来自 experiments/results_summary.json，"
                 "所有引用必须存在于 literature/related_work.bib。"
                 ),
@@ -275,7 +292,8 @@ class WriterAgent(Agent):
                 (
                 "请执行 T8 Writer Phase 4: 论文自查。\n\n"
                 "读取 drafts/paper.tex，生成 drafts/self_check.md。"
-                "检查内容完整性、数字准确性、引用完整性、格式规范，并参考 drafts/manuscript_audit.md。"
+                "检查内容完整性、数字准确性、引用完整性、格式规范，并参考 drafts/manuscript_audit.md "
+                "和 drafts/craft_audit.md。"
                 ),
             )
         elif phase == "revise":
@@ -308,6 +326,15 @@ class WriterAgent(Agent):
         ws = ctx.workspace_dir
         phase = self._phase(ctx)
 
+        if phase == "style_gate":
+            style_path = ws / "drafts" / "writing_style.json"
+            style, err = _load_json_file(style_path)
+            if err:
+                return False, err
+            if style.get("venue_style") not in {"is", "ccf_a", "both"}:
+                return False, "writing_style.json venue_style 必须是 is/ccf_a/both"
+            return True, None
+
         if phase == "resource_index":
             ok, err = _validate_resource_index_artifacts(ws)
             if not ok:
@@ -324,7 +351,6 @@ class WriterAgent(Agent):
                 "related_work",
                 "analysis",
                 "introduction",
-                "limitations",
                 "conclusion",
                 "abstract",
             ]:
@@ -342,6 +368,9 @@ class WriterAgent(Agent):
             for required in ("Introduction", "Related Work", "Method", "Experiments"):
                 if required.lower() not in outline.lower():
                     return False, f"outline.md 缺少必要章节: {required}"
+            ok, err = _validate_alignment_matrix(ws)
+            if not ok:
+                return False, err
             return True, None
 
         elif phase == "section_draft":
@@ -408,6 +437,28 @@ class WriterAgent(Agent):
             audit_path = ws / "drafts" / "manuscript_audit.md"
             if phase in {"draft", "revise"} and not audit_path.exists():
                 return False, f"{phase} phase 必须生成 drafts/manuscript_audit.md"
+            craft_audit_path = ws / "drafts" / "craft_audit.md"
+            if phase in {"draft", "revise"} and not craft_audit_path.exists():
+                return False, f"{phase} phase 必须生成 drafts/craft_audit.md"
+            craft_json_path = ws / "drafts" / "craft_audit.json"
+            if phase in {"draft", "revise"} and not craft_json_path.exists():
+                return False, f"{phase} phase 必须生成 drafts/craft_audit.json"
+            if phase in {"draft", "revise"}:
+                ok, err = _validate_required_craft_checks(ws)
+                if not ok:
+                    return False, err
+                style = _parse_writing_style(read_text_file(ws / "drafts" / "writing_style.json", default=""))
+                if style.get("venue_style") == "both":
+                    ok, err = _validate_style_variants(ws)
+                    if not ok:
+                        return False, err
+                    for style_id in ("is", "ccf_a"):
+                        variant_paper = ws / "drafts" / style_id / "paper.tex"
+                        variant_audit = ws / "drafts" / style_id / "craft_audit.json"
+                        if not variant_paper.exists():
+                            return False, f"venue_style=both 必须生成 drafts/{style_id}/paper.tex"
+                        if not variant_audit.exists():
+                            return False, f"venue_style=both 必须生成 drafts/{style_id}/craft_audit.json"
 
             return True, None
 
@@ -460,6 +511,9 @@ def _validate_resource_index_artifacts(ws: Path) -> tuple[bool, str | None]:
     figure_registry, err = _load_json_file(ws / "drafts" / "figure_registry.json")
     if err:
         return False, err
+    alignment_matrix, err = _load_json_file(ws / "drafts" / "alignment_matrix.json")
+    if err:
+        return False, err
 
     if not isinstance(index.get("artifacts"), list):
         return False, "manuscript_resource_index.json 缺少 artifacts 列表"
@@ -509,6 +563,10 @@ def _validate_resource_index_artifacts(ws: Path) -> tuple[bool, str | None]:
         return False, "figure_registry.json semantics 不正确"
     if not isinstance(figure_registry.get("visuals"), list) or not figure_registry.get("visuals"):
         return False, "figure_registry.json 缺少 visuals"
+    if alignment_matrix.get("semantics") != "alignment_matrix_seed_not_final_scientific_judgment":
+        return False, "alignment_matrix.json semantics 不正确"
+    if not isinstance(alignment_matrix.get("rows"), list) or not alignment_matrix.get("rows"):
+        return False, "alignment_matrix.json 缺少 rows"
     return True, None
 
 
@@ -527,7 +585,6 @@ def _validate_paper_state(ws: Path) -> tuple[bool, str | None]:
         "related_work",
         "analysis",
         "introduction",
-        "limitations",
         "conclusion",
         "abstract",
     ]:
@@ -543,6 +600,8 @@ def _validate_paper_state(ws: Path) -> tuple[bool, str | None]:
         return False, "paper_state.json shared_facts.bib_keys 必须是列表"
     if not isinstance(shared.get("result_metrics"), list):
         return False, "paper_state.json shared_facts.result_metrics 必须是列表"
+    if not isinstance(shared.get("alignment_matrix"), list):
+        return False, "paper_state.json shared_facts.alignment_matrix 必须是列表"
     return True, None
 
 
@@ -618,3 +677,155 @@ def _validate_revision_artifacts(ws: Path, round_num: int) -> tuple[bool, str | 
     if "resolved" not in response.lower() and "已解决" not in response and "未解决" not in response:
         return False, f"{response_path.relative_to(ws)} 必须记录 resolved/unresolved 修订状态"
     return True, None
+
+
+def _validate_alignment_matrix(ws: Path) -> tuple[bool, str | None]:
+    matrix, err = _load_json_file(ws / "drafts" / "alignment_matrix.json")
+    if err:
+        return False, err
+    if matrix.get("semantics") != "alignment_matrix_seed_not_final_scientific_judgment":
+        return False, "alignment_matrix.json semantics 不正确"
+    rows = matrix.get("rows")
+    if not isinstance(rows, list) or not rows:
+        return False, "alignment_matrix.json 缺少 rows"
+    if len(rows) < 3 or len(rows) > 5:
+        return False, "alignment_matrix.json 应包含 3-5 条 contribution alignment rows"
+    required_fields = [
+        "cid",
+        "motivation",
+        "contribution",
+        "related_gap",
+        "counterfactual",
+        "nearest_prior_work",
+        "novelty_signal",
+        "design_choice",
+        "experiment",
+        "analysis",
+    ]
+    placeholder_tokens = {"LLM_REVIEW_REQUIRED", "TODO", "TBD"}
+    for index, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            return False, f"alignment_matrix row #{index} 必须是对象"
+        for field in required_fields:
+            value = row.get(field)
+            if value in (None, "", [], {}):
+                return False, f"alignment_matrix row {row.get('cid') or index} 缺少 {field}"
+            if field in {
+                "motivation",
+                "contribution",
+                "counterfactual",
+                "novelty_signal",
+                "design_choice",
+                "analysis",
+            }:
+                text = str(value).strip()
+                if text in placeholder_tokens or text.startswith("LLM_REVIEW_REQUIRED"):
+                    return False, f"alignment_matrix row {row.get('cid') or index} 的 {field} 仍是 LLM_REVIEW_REQUIRED/TODO"
+        related_gap = row.get("related_gap")
+        if isinstance(related_gap, dict):
+            tension = str(related_gap.get("tension") or "").strip()
+            if tension in placeholder_tokens or tension.startswith("LLM_REVIEW_REQUIRED"):
+                return False, f"alignment_matrix row {row.get('cid') or index} 的 related_gap.tension 仍是 LLM_REVIEW_REQUIRED/TODO"
+            nearest = related_gap.get("nearest_prior_work") or row.get("nearest_prior_work")
+        else:
+            nearest = row.get("nearest_prior_work")
+        if not isinstance(nearest, dict):
+            return False, f"alignment_matrix row {row.get('cid') or index} nearest_prior_work 必须是对象"
+        distance = str(nearest.get("distance") or "").strip()
+        if distance and distance not in {"very_close", "moderate", "distant", "none_found"}:
+            return False, f"alignment_matrix row {row.get('cid') or index} nearest_prior_work.distance 无效: {distance}"
+    return True, None
+
+
+def _validate_required_craft_checks(ws: Path) -> tuple[bool, str | None]:
+    craft, err = _load_json_file(ws / "drafts" / "craft_audit.json")
+    if err:
+        return False, err
+    if craft.get("semantics") != "deterministic_writing_craft_audit_not_scientific_judgment":
+        return False, "craft_audit.json semantics 不正确"
+    checks = craft.get("checks")
+    if not isinstance(checks, list):
+        return False, "craft_audit.json 缺少 checks 列表"
+    by_name = {str(item.get("name")): item for item in checks if isinstance(item, dict)}
+    required_names = {
+        "matrix_row_count",
+        "intro_contribution_count",
+        "abstract_no_cite",
+        "number_traceability",
+        "no_standalone_limitations",
+        "conclusion_has_limitations_subsection",
+    }
+    missing = sorted(required_names - set(by_name))
+    if missing:
+        return False, "craft_audit.json 缺少关键检查: " + ", ".join(missing)
+    fail_items = [
+        name
+        for name, item in by_name.items()
+        if item.get("level") == "FAIL" and item.get("passed") is False
+    ]
+    if fail_items:
+        return False, "craft_audit.json 存在 FAIL: " + ", ".join(fail_items[:8])
+    return True, None
+
+
+def _parse_writing_style(text: str) -> dict[str, str]:
+    if not text.strip():
+        return {}
+    try:
+        data = json.loads(text)
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(key): str(value) for key, value in data.items() if value is not None}
+
+
+def _normalize_style_variant_text(text: str) -> str:
+    lines = [
+        line
+        for line in text.splitlines()
+        if not line.startswith("% ResearchOS style variant:")
+        and not line.startswith("% Target venue:")
+        and not line.startswith("% This variant shares")
+        and not line.startswith("% ResearchOS venue_style:")
+        and not line.startswith("% ResearchOS target_venue:")
+    ]
+    return re.sub(r"\s+", " ", "\n".join(lines)).strip()
+
+
+def _validate_style_variants(ws: Path) -> tuple[bool, str | None]:
+    main_text = read_text_file(ws / "drafts" / "paper.tex", default="")
+    main_norm = _normalize_style_variant_text(main_text)
+    for style_id in ("is", "ccf_a"):
+        variant_path = ws / "drafts" / style_id / "paper.tex"
+        if not variant_path.exists():
+            return False, f"venue_style=both 必须生成 drafts/{style_id}/paper.tex"
+        variant_text = read_text_file(variant_path, default="")
+        if not variant_text.strip():
+            return False, f"drafts/{style_id}/paper.tex 为空"
+        variant_norm = _normalize_style_variant_text(variant_text)
+        if variant_norm == main_norm:
+            return False, (
+                f"venue_style=both 的 drafts/{style_id}/paper.tex 不能只是主稿加注释；"
+                f"Writer 必须基于 LLM 判断完成 {style_id} 风格化改写"
+            )
+        note_path = ws / "drafts" / style_id / "style_revision_notes.md"
+        notes = read_text_file(note_path, default="")
+        if len(notes.strip()) < 80:
+            return False, f"venue_style=both 必须生成 drafts/{style_id}/style_revision_notes.md 说明风格化改写取舍"
+    return True, None
+
+
+def _suggest_venue_style(target_venue: object) -> str:
+    venue = str(target_venue or "").lower()
+    config_path = Path(__file__).resolve().parents[2] / "config" / "venue_style_map.yaml"
+    try:
+        data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        data = {}
+    is_patterns = data.get("is", []) if isinstance(data, dict) else []
+    if any(str(pattern).lower() in venue for pattern in is_patterns):
+        return "is"
+    if isinstance(data, dict) and data.get("ccf_a_default", True):
+        return "ccf_a"
+    return "ccf_a"
