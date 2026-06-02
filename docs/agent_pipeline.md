@@ -1382,15 +1382,19 @@ T8/T9 会直接消费它，而不是重新从 note 手工抽引用。
 
 Deep read 完成后，orchestrator 自动运行 abstract sweep，从 verified/dedup 池中再扫一批论文，只基于 abstract 生成精简 note。
 
-配置在 `config/agent_params.yaml` 的 `reader.modes.read.abstract_sweep`：
+配置在 `config/agent_params.yaml` 的 `reader.modes.read.behavior.abstract_sweep`：
 
 ```yaml
-abstract_sweep:
-  enabled: true
-  lite_paper_num: 40      # 最多扫多少篇
-  min_relevance: 0.4      # relevance_score 阈值
-  sources: [papers_verified, papers_dedup]
-  exclude_already_read: true
+reader:
+  modes:
+    read:
+      behavior:
+        abstract_sweep:
+          enabled: true
+          lite_paper_num: 40      # 最多扫多少篇
+          min_relevance: 0.4      # relevance_score 阈值
+          sources: [papers_verified, papers_dedup]
+          exclude_already_read: true
 ```
 
 产出：
@@ -2742,13 +2746,15 @@ validator 会检查：
   - `docker_exec`
   - `finish_task`
 - mode `full` 额外强调：
-  - `docker_required: true`
-  - `gpu_required: true`
+  - `behavior.docker_required: true`
+  - `behavior.gpu_required: true`
   - `ablation_min: 3`
   - `seed_ensemble_min: 3`
 
 T7 进入 LLM 前会先执行 `run_experimenter_preflight()`：读取 `exp_plan.yaml`、项目预算、
-direct-full 必需输入和 `agent_params.yaml` 的 `docker_required/gpu_required`。如果 Docker
+direct-full 必需输入和 `agent_params.yaml` 的
+`experimenter.modes.full.behavior.docker_required` /
+`experimenter.modes.full.behavior.gpu_required`。如果 Docker
 命令、daemon 或统一镜像不可用，会以 `WAITING_ENVIRONMENT` 暂停；如果计划需要 GPU
 但 Docker 没有 nvidia runtime，除非 `project.yaml` 明确设置
 `compute_budget.allow_cpu_fallback: true`，也会暂停等待环境。这一步的目标是把“无
@@ -3249,7 +3255,7 @@ TeX；否则检查 Docker 命令、daemon 和统一镜像 `researchos/system:lat
 
 当前机器的 Docker root 已迁移到 `/mnt/data/Docker`；宿主机无 `latexmk` 时，T9 会默认走 Docker 编译。可用 `docker info --format '{{.DockerRootDir}}'` 确认路径，用 `docker image inspect researchos/system:latest` 确认统一镜像是否存在。
 
-**匿名化 precheck 默认关闭**（`submission.py` line 83: `enforce_anonymization_precheck` 默认 `False`）。只有当 `agent_params.yaml` 中 `submission.enforce_anonymization_precheck` 设为 `true` 时，才会在进入 LLM 前拦截检查邮箱、URL、GitHub 等匿名化问题。这便于本地调试或非匿名投稿场景直接产出投稿包。
+**匿名化 precheck 默认关闭**（`submission.py` line 83: `enforce_anonymization_precheck` 默认 `False`）。只有当 `agent_params.yaml` 中 `submission.behavior.enforce_anonymization_precheck` 设为 `true` 时，才会在进入 LLM 前拦截检查邮箱、URL、GitHub 等匿名化问题。这便于本地调试或非匿名投稿场景直接产出投稿包。
 
 **Venue 模板支持**：T9 从 `project.yaml` 的 `target_venue` 字段（默认 `neurips2026`）读取目标会议格式，迁移主稿到对应模板。
 
@@ -3300,11 +3306,11 @@ TeX；否则检查 Docker 命令、daemon 和统一镜像 `researchos/system:lat
 
 - 编译失败不能直接 `finish_task`
 - 必须先诊断并修复
-- 最多进行 `max_compile_attempts` 轮
+- 最多进行 `submission.behavior.max_compile_attempts` 轮
 
 当前配置默认：
 
-- `max_compile_attempts = 4`
+- `submission.behavior.max_compile_attempts = 10`
 
 ### T9 当前的 validator 有多严格
 
@@ -3345,7 +3351,7 @@ T9 编译成功后、validation 之前，状态机会触发一个 `submission_ga
 
 ### T9 失败后的回退路径
 
-状态机中 T9 配置了 `next_on_failure: T8-WRITE`。当 T9 编译失败且 `max_compile_attempts` 耗尽时：
+状态机中 T9 配置了 `next_on_failure: T8-WRITE`。当 T9 编译失败且 `submission.behavior.max_compile_attempts` 耗尽时：
 
 1. T9 的 `finish_task` 会触发 validator 检查
 2. runtime 会先弹 `runtime_validation_retry_extension` gate，允许用户增加少量修复轮次继续 T9

@@ -12,9 +12,9 @@
 # 使用顺序：
 # - Agent 可以直接在 config/agent_params.yaml 里声明 llm.model + llm.endpoint
 # - 如果 state_machine.yaml 里给某个 task 配了 llm.model / llm.endpoint，会再覆盖 Agent 默认值
-# - 如果没有显式 model + endpoint，才回退到 Agent 的 model_tier（例如 Hello=medium, Ideation=heavy）
+# - 如果没有显式 model + endpoint，才回退到 Agent 的 llm.tier（例如 hello=medium, ideation=heavy）
 # - 如果 state_machine.yaml 里给某个 task 配了 llm.profile，则优先使用该 profile
-# - 否则回退到 agent 自己的 llm_profile
+# - 否则回退到 agent 自己的 llm.profile
 # - 再否则回退到本文件的 default_profile
 #
 # 建议：

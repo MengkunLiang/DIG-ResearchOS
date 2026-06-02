@@ -655,7 +655,7 @@ pip install -e .
 检查：
 
 - `config/model_routing.yaml` 是否有 fallback
-- `agent_params.yaml` 中 `llm_retries` 是否过大
+- `agent_params.yaml` 顶层 `retry_policy.llm_retries` 是否过大
 - 是否误用了只含一个候选的 profile
 
 ### 13.3 任务中断后从头跑
@@ -679,7 +679,7 @@ pip install -e .
 
 先检查：
 
-- `agent_params.yaml` 是否把工具暴露给了该 agent
+- `agent_params.yaml` 的 `agents.<agent>.tools.tool_names` 是否把工具暴露给了该 agent
 - tool 是否注册在 `builtin.py`
 - prompt 是否明确告诉 agent 该怎么用
 

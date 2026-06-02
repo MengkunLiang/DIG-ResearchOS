@@ -231,6 +231,7 @@ cp .env.example .env
 
 - 密钥写 `.env`
 - 运行参数写 `config/*.yaml`
+- Agent 默认参数写 `config/agent_params.yaml`，并按 `llm`、`budget`、`tools`、`prompt`、`behavior`、`modes` 分区；旧扁平字段仍兼容，但不是推荐写法
 
 完整配置说明见 [docs/config.md](./docs/config.md)。
 

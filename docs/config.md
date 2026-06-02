@@ -346,45 +346,49 @@ profiles:
 - `modes` 下的分阶段覆盖
 - 各 agent 自定义参数
 
-推荐阅读时把每个 agent 切成 5 个 part：
+当前推荐把每个 agent 切成 6 个分区：
 
 ```yaml
 agents:
   writer:
-    # Part 1: 模型路由与模型运行参数
     llm:
       profile: siliconflow_only
       tier: heavy
       max_context: 1280000
       temperature: 0.7
 
-    # Part 2: Agent 级默认预算
-    max_steps: 1500
-    max_tokens_total: 10000000
-    max_wall_seconds: 240000
-    max_validation_retries: 3
+    budget:
+      max_steps: 1500
+      max_tokens_total: 10000000
+      max_wall_seconds: 240000
+      max_validation_retries: 3
 
-    # Part 3: 工具能力与 workspace 权限
-    tool_names: [...]
-    allowed_read_prefixes: [...]
-    allowed_write_prefixes: [...]
+    tools:
+      tool_names: [...]
+      allowed_read_prefixes: [...]
+      allowed_write_prefixes: [...]
 
-    # Part 4: prompt / schema / task-specific knobs
-    prompt_template: writer.j2
-    structured_outputs: {...}
-    expected_outputs: {...}
+    prompt:
+      prompt_template: writer.j2
+      structured_outputs: {...}
+      expected_outputs: {...}
 
-    # Part 5: mode 级覆盖
+    behavior:
+      latex_required: true
+
     modes:
       section_draft:
         description: 单章节草稿
-        max_steps: 80
-        max_tokens_total: 50000000
+        budget:
+          max_steps: 80
+          max_tokens_total: 50000000
 ```
 
-当前 runtime 仍使用扁平字段读取预算和权限，这是为了保持向后兼容。不要把 `max_steps`
-移动到 `budget.max_steps` 这类新结构，除非同时修改 `researchos/runtime/agent_params.py`
-的加载逻辑和相关测试。最清晰、最安全的做法是：用注释和字段顺序分区，保持字段名稳定。
+这不是只靠注释做“视觉分区”。当前 runtime 已经真实支持 `llm`、`budget`、`tools`、
+`prompt`、`behavior` 和 `modes` 分区，并在读取时通过
+`researchos/runtime/agent_params.py` 规范化为旧的扁平字段。因此现有代码中
+`params.get("max_steps")`、`params.get("tool_names")`、`params.get("prompt_template")`
+仍然有效；旧扁平配置也仍可读取，但不再是推荐写法。
 
 ### 5.2 当前主要 agent 段
 
@@ -419,7 +423,7 @@ agents:
 - 想固定具体模型和 endpoint：配 `model + endpoint`
 - 想保留 profile 体系，只声明负载级别：配 `tier`
 
-### 5.4 行为与预算字段
+### 5.4 `budget` 分区
 
 每个 agent 最常用的运行上限：
 
@@ -428,7 +432,10 @@ agents:
 - `max_wall_seconds`
 - `max_validation_retries`
 
-### 5.5 工具与权限字段
+这些字段放在 `agents.<agent>.budget` 下。mode 级预算放在
+`agents.<agent>.modes.<mode>.budget` 下，并只覆盖当前 mode。
+
+### 5.5 `tools` 分区
 
 - `tool_names`
 - `allowed_read_prefixes`
@@ -439,7 +446,27 @@ agents:
 - tool registry 构建哪些工具
 - workspace policy 允许读写什么路径
 
-### 5.6 重要的全局块
+### 5.6 `prompt` 与 `behavior` 分区
+
+`prompt` 放 prompt 和输出契约：
+
+- `prompt_template`
+- `structured_outputs`
+- `expected_outputs`
+- `expected_sections`
+- `expected_length_min`
+
+`behavior` 放当前 agent/task 的机械行为开关或 validator/preflight 参数：
+
+- `reader.modes.read.behavior.abstract_sweep`
+- `experimenter.modes.full.behavior.docker_required`
+- `experimenter.modes.full.behavior.gpu_required`
+- `submission.behavior.max_compile_attempts`
+- `submission.behavior.enforce_anonymization_precheck`
+
+原则是：不依赖学术知识、可机械执行或可验证的运行参数放 `behavior`；需要知识判断、写作策略、审稿标准、idea 推理的内容仍放 prompt/skill guidance，让 LLM 发挥能力。
+
+### 5.7 重要的全局块
 
 除了 per-agent 配置，还包含：
 
@@ -463,21 +490,24 @@ agents:
 
 这样 T7 长实验和 T9 TeX 编译不会再被 180 秒的普通工具上限误杀。
 
-### 5.7 当前值得注意的字段
+### 5.8 当前值得注意的字段
 
-#### `submission.enforce_anonymization_precheck`
+#### `submission.behavior.enforce_anonymization_precheck`
 
 当前默认是：
 
 ```yaml
-enforce_anonymization_precheck: false
+agents:
+  submission:
+    behavior:
+      enforce_anonymization_precheck: false
 ```
 
 作用：
 
 - 是否在 T9 开始前就用 pre-hook 拦匿名化问题
 
-#### `submission.max_compile_attempts`
+#### `submission.behavior.max_compile_attempts`
 
 当前用于：
 
@@ -491,9 +521,10 @@ enforce_anonymization_precheck: false
 
 预算扩限 gate 覆盖 `steps`、`tokens` 和 `wall_seconds`。当 `max_steps`、token 或 wall time 触顶时，runtime 会先询问是否扩限；如果用户选择停止或当前无法继续输入，本轮 run 会保存为 `PAUSED`，后续可以用 `researchos resume --workspace ...` 从已落盘 artifact 继续。
 
-`modes` 中的字段会覆盖 agent 级默认值。例如 `writer.section_draft.max_steps`
-只影响单章节写作，不影响 `writer.self_check`。这比复制多个 agent 配置更清晰，也能让
-T3.6、T8、T9 这种长流程按阶段设置不同预算。
+`modes` 中的字段会覆盖 agent 级默认值。例如
+`writer.modes.section_draft.budget.max_steps` 只影响单章节写作，不影响
+`writer.modes.self_check`。这比复制多个 agent 配置更清晰，也能让 T3.6、T8、T9
+这种长流程按阶段设置不同预算。
 
 ---
 
@@ -728,7 +759,7 @@ cp .env.example .env
 
 - `runtime.yaml` 中前面列出的共享字段
 - `model_routing.yaml` 的 endpoint/profile/fallback/truncation
-- `agent_params.yaml` 中 agent 的工具、预算、温度、路径、prompt
+- `agent_params.yaml` 中 agent 的 `llm/budget/tools/prompt/behavior/modes` 分区
 - `state_machine.yaml` 的节点跳转、gate、inputs/outputs
 - `.env` 中的 provider / API keys
 
@@ -822,18 +853,19 @@ debug:
 
 改：
 
-- `agent_params.yaml` 中对应 agent 的 `allowed_*_prefixes`
+- `agent_params.yaml` 中对应 agent 的 `tools.allowed_*_prefixes`
 
 例子：
 
 ```yaml
 agents:
   reviewer:
-    allowed_read_prefixes:
-      - drafts/
-      - experiments/
-    allowed_write_prefixes:
-      - drafts/review_rounds/
+    tools:
+      allowed_read_prefixes:
+        - drafts/
+        - experiments/
+      allowed_write_prefixes:
+        - drafts/review_rounds/
 ```
 
 ### 12.6 想让 T9 更严格
@@ -849,10 +881,12 @@ agents:
 ```yaml
 agents:
   submission:
-    max_steps: 300
-    max_validation_retries: 10
-    enforce_anonymization_precheck: true
-    max_compile_attempts: 4
+    budget:
+      max_steps: 300
+      max_validation_retries: 10
+    behavior:
+      enforce_anonymization_precheck: true
+      max_compile_attempts: 4
 ```
 
 ---

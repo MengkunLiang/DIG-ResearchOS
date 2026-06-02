@@ -193,6 +193,7 @@ Important rule:
 
 - secrets belong in `.env`
 - runtime behavior belongs in `config/*.yaml`
+- agent defaults live in `config/agent_params.yaml`, grouped by `llm`, `budget`, `tools`, `prompt`, `behavior`, and `modes`; legacy flat fields are still accepted for compatibility, but the checked-in config uses the sectioned form
 
 See [docs/config.md](./docs/config.md) for the full configuration model.
 

@@ -53,7 +53,7 @@ def get_agent_params(agent_name: str) -> dict[str, Any]:
     agents = config.get("agents", {})
     if agent_name not in agents:
         raise KeyError(f"Agent '{agent_name}' not found in agent_params.yaml")
-    return deepcopy(agents[agent_name])
+    return _flatten_agent_sections(agents[agent_name])
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -64,6 +64,40 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
         else:
             merged[key] = deepcopy(value)
     return merged
+
+
+def _flatten_agent_sections(params: dict[str, Any]) -> dict[str, Any]:
+    """Normalize new sectioned agent params into the legacy flat shape.
+
+    `agent_params.yaml` now groups each agent into:
+    - `llm`
+    - `budget`
+    - `tools`
+    - `prompt`
+    - `behavior`
+    - `modes`
+
+    Runtime callers still expect keys such as `max_steps`, `tool_names`, or
+    `prompt_template` at the top level. This adapter keeps old flat configs
+    working while allowing the checked-in config to be easier to read.
+    """
+
+    if not isinstance(params, dict):
+        return {}
+
+    flat = deepcopy(params)
+    for section_name in ("budget", "tools", "prompt", "behavior"):
+        section = params.get(section_name)
+        if isinstance(section, dict):
+            flat.update(deepcopy(section))
+
+    modes = params.get("modes")
+    if isinstance(modes, dict):
+        flat["modes"] = {
+            mode_name: _flatten_agent_sections(mode_cfg) if isinstance(mode_cfg, dict) else mode_cfg
+            for mode_name, mode_cfg in modes.items()
+        }
+    return flat
 
 
 def get_agent_mode_params(agent_name: str, mode: str | None) -> dict[str, Any]:

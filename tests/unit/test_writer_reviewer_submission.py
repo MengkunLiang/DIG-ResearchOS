@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 
 import pytest
-import yaml
 
 from researchos.agents.writer import WriterAgent
 from researchos.agents.reviewer import ReviewerAgent
@@ -15,16 +14,18 @@ from researchos.agents.submission import (
     check_anonymization,
     check_submission_compile_environment,
 )
+from researchos.runtime.agent_params import get_agent_params
 from researchos.runtime.prompts import render_prompt
 from researchos.tools.manuscript import CORE_SECTIONS
 
 
 def _load_agent_params():
-    """从 YAML 加载 agent 参数，用于测试断言"""
-    config_path = Path(__file__).parent.parent.parent / "config" / "agent_params.yaml"
-    with open(config_path) as f:
-        config = yaml.safe_load(f)
-    return config["agents"]
+    """加载 runtime 规范化后的 agent 参数，用于测试断言。"""
+
+    return {
+        name: get_agent_params(name)
+        for name in ("writer", "reviewer", "submission")
+    }
 
 
 class MockExecutionContext:

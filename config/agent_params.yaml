@@ -4,83 +4,68 @@
 # - 把每个 Agent 的默认 LLM / budget / tool / 路径参数集中到这里管理
 # - 便于按 Agent 单独切换模型、provider、profile，而不必改 Python 源码
 #
-# 设计说明：
-# 1. llm.model + llm.endpoint
-#    - 这是当前推荐写法：每个 Agent 直接绑定自己的模型和 endpoint
-#    - endpoint 需要对应 config/model_routing.yaml 里的 endpoints.<name>
-#    - provider 不在这里写，而是在 endpoint 层统一定义
+# 每个 agent 采用真实分区结构：
+# - llm: 模型路由与模型运行参数（profile/tier/model/endpoint/max_context/temperature）
+# - budget: agent 默认预算（max_steps/max_tokens_total/max_wall_seconds/max_validation_retries）
+# - tools: 工具能力与 workspace 权限（tool_names/allowed_read_prefixes/allowed_write_prefixes）
+# - prompt: prompt/schema/expected_outputs 等输出契约提示
+# - behavior: agent/task-specific 行为开关，例如 docker_required、abstract_sweep、max_compile_attempts
+# - modes: 分阶段覆盖；每个 mode 也可以使用同样的 llm/budget/tools/prompt/behavior 分区
 #
-# 2. llm.tier
-#    - 现在只作为兼容/回退字段保留
-#    - 当 llm.model / llm.endpoint 未设置，或你想批量走 profile 路由时再使用
+# runtime 同时兼容旧扁平字段和当前分区字段。读取时会把 budget/tools/prompt/behavior
+# 规范化成旧字段名，因此已有代码中的 params.get("max_steps")、params.get("tool_names")
+# 等调用仍然有效。
 #
-# 3. llm.profile
-#    - 直接指定 config/model_routing.yaml 中的 profile
-#    - 适合“这个 Agent 永远走某个 profile”，或想临时恢复到分档路由
-#
-# 4. max_tokens_total
-#    - 这里使用普通整数写法，例如 100000
-#    - 之前的 100_000 只是可读性写法，语义完全相同；现在统一成普通整数，避免阅读困惑
-#
-# 实际覆盖优先级（从高到低）：
-# 1. state_machine.yaml 中某个 task 的 llm / budget 临时覆盖
-# 2. 本文件对应 agent 的配置
-# 3. Python 代码里的 defaults
-#
-# 建议把这份文件理解为“Agent 级默认值”：
-# - 想让整个 reader 永久换模型，就改 `agents.reader.llm`
-# - 想只让某次 T3 临时换模型，就去改 state_machine.yaml 里的 T3.llm
-# - 想统一改重试/超时/预算，就看文件末尾的 global_* / retry_policy
-#
-# 每个 agent 段建议按 5 个 part 阅读和维护：
-# Part 1: llm 模型路由与模型运行参数（profile/tier/model/endpoint/max_context/temperature）
-# Part 2: agent 默认预算（max_steps/max_tokens_total/max_wall_seconds/max_validation_retries）
-# Part 3: 工具能力与 workspace 权限（tool_names/allowed_read_prefixes/allowed_write_prefixes）
-# Part 4: prompt/schema/expected_outputs/业务开关
-# Part 5: modes 分阶段覆盖
-#
-# 注意：当前 runtime 仍读取扁平预算字段，如 max_steps/max_tokens_total。
-# 不要把它们迁移成 budget.max_steps 之类的嵌套结构，除非同步修改
-# researchos/runtime/agent_params.py 和相关测试。
+# 覆盖优先级（从高到低）：
+# 1. state_machine.yaml 中某个 task 的 llm / budget / tools 临时覆盖
+# 2. 本文件对应 agent 的 mode 分区覆盖
+# 3. 本文件对应 agent 的基础分区配置
+# 4. Python 代码里的 defaults
 
 agents:
   hello:
     llm:
-      # model + endpoint 是当前主入口；tier 仅作为回退保留
-      model: "deepseek-ai/DeepSeek-V4-Flash"
+      model: deepseek-ai/DeepSeek-V4-Flash
       endpoint: siliconflow
       max_context: 128000
       tier: medium
       temperature: 0.3
-      # profile: hello_fast
-      # 如果把 model/endpoint 删掉，仅保留 profile+tier，就会回到 profile 路由模式。
-    max_steps: 5
-    max_tokens_total: 10000
-    max_wall_seconds: 60
-    max_validation_retries: 3
-    tool_names:
+    budget:
+      max_validation_retries: 3
+      max_tokens_total: 10000
+      max_steps: 5
+      max_wall_seconds: 60
+    tools:
+      allowed_read_prefixes:
+      - ''
+      tool_names:
       - echo
       - write_file
       - read_file
       - finish_task
-    allowed_read_prefixes:
-      - ""
-    allowed_write_prefixes:
-      - ""
-    prompt_template: hello.j2
-
+      allowed_write_prefixes:
+      - ''
+    prompt:
+      prompt_template: hello.j2
   pi:
     llm:
-      # 改为走 profile，让 SiliconFlow 主模型失败时也能 fallback 到 MiniMax。
       profile: siliconflow_only
       max_context: 128000
       tier: heavy
       temperature: 0.3
-    max_steps: 40
-    max_tokens_total: 1000000
-    max_wall_seconds: 30000
-    max_validation_retries: 10
-    tool_names:
+    budget:
+      max_validation_retries: 10
+      max_tokens_total: 1000000
+      max_steps: 40
+      max_wall_seconds: 30000
+    tools:
+      allowed_read_prefixes:
+      - ''
+      - user_seeds/
+      - experiments/
+      - ideation/
+      - evaluation/
+      tool_names:
       - read_file
       - write_file
       - write_structured_file
@@ -90,20 +75,14 @@ agents:
       - ask_human
       - finish_task
       - process_seed_paper
-    allowed_read_prefixes:
-      - ""
-      - user_seeds/
-      - experiments/
-      - ideation/
-      - evaluation/
-    allowed_write_prefixes:
-      - ""
+      allowed_write_prefixes:
+      - ''
       - user_seeds/
       - evaluation/
-    prompt_template: pi.j2
-    structured_outputs:
-      # structured_outputs 主要用于 runtime 校验“这些关键文件应当产出什么 schema”。
-      project.yaml: project
+    prompt:
+      prompt_template: pi.j2
+      structured_outputs:
+        project.yaml: project
     modes:
       init:
         description: 项目初始化
@@ -111,20 +90,25 @@ agents:
       evaluate:
         description: 结果评估
         expected_rounds: 2
-
   scout:
     llm:
-      # Scout 直接用 profile，而不是绑死某个 model+endpoint。
-      # 这样可以在 model_routing.yaml 里集中维护 fallback。
       profile: scout_resilient
       max_context: 1280000
       tier: medium
       temperature: 0.5
-    max_steps: 300
-    max_tokens_total: 50000000
-    max_wall_seconds: 36000
-    max_validation_retries: 3
-    tool_names:
+    budget:
+      max_validation_retries: 3
+      max_tokens_total: 50000000
+      max_steps: 300
+      max_wall_seconds: 36000
+    tools:
+      allowed_read_prefixes:
+      - ''
+      - literature/
+      - user_seeds/
+      - seeds/
+      - _runtime/resume/
+      tool_names:
       - read_file
       - write_file
       - write_structured_file
@@ -159,37 +143,36 @@ agents:
       - elsevier_scopus_search
       - informs_search
       - log_scout_progress
-    allowed_read_prefixes:
-      - ""
+      allowed_write_prefixes:
       - literature/
-      - user_seeds/
-      - seeds/
-      - _runtime/resume/
-    allowed_write_prefixes:
-      - literature/
-    prompt_template: scout.j2
-    structured_outputs:
-      literature/papers_dedup.jsonl: papers_dedup
-      literature/papers_verified.jsonl: papers_verified
-      literature/papers_raw.jsonl: papers_raw
-    expected_outputs:
-      # 这里只是“产出预期”，不是唯一校验来源；真正的 artifact 校验还会结合 schema 和 runtime validator。
-      papers_raw_min: 30
-      papers_dedup_min: 15
-      papers_dedup_max: 120
-
+    prompt:
+      prompt_template: scout.j2
+      structured_outputs:
+        literature/papers_dedup.jsonl: papers_dedup
+        literature/papers_verified.jsonl: papers_verified
+        literature/papers_raw.jsonl: papers_raw
+      expected_outputs:
+        papers_raw_min: 30
+        papers_dedup_min: 15
+        papers_dedup_max: 120
   reader:
     llm:
-      # Reader 改为 profile 模式，确保 T3/T3.5 也有同 provider fallback。
       profile: siliconflow_only
       max_context: 128000
       tier: medium
       temperature: 0.5
-    max_steps: 200
-    max_tokens_total: 600000
-    max_wall_seconds: 50000
-    max_validation_retries: 10
-    tool_names:
+    budget:
+      max_validation_retries: 10
+      max_tokens_total: 600000
+      max_steps: 200
+      max_wall_seconds: 50000
+    tools:
+      allowed_read_prefixes:
+      - ''
+      - literature/
+      - user_seeds/
+      - _runtime/resume/
+      tool_names:
       - read_file
       - write_file
       - append_file
@@ -200,109 +183,113 @@ agents:
       - extract_pdf_text
       - build_synthesis_workbench
       - finish_task
-    allowed_read_prefixes:
-      - ""
+      allowed_write_prefixes:
       - literature/
-      - user_seeds/
-      - _runtime/resume/
-    allowed_write_prefixes:
-      - literature/
-    prompt_template: reader.j2
+    prompt:
+      prompt_template: reader.j2
     modes:
       read:
+        budget:
+          max_tokens_total: 20000000
+          max_steps: 200
+        prompt:
+          expected_outputs:
+            paper_notes_min: 10
+            comparison_table_required: true
+            related_work_bib_required: true
+        behavior:
+          abstract_sweep:
+            enabled: true
+            lite_paper_num: 40
+            min_relevance: 0.4
+            sources:
+            - papers_verified
+            - papers_dedup
+            exclude_already_read: true
         description: 深度阅读
-        # read 模式预算通常要显著高于普通 agent，因为它会多轮处理论文。
-        max_steps: 200
-        max_tokens_total: 20000000
         expected_notes_ratio: 0.8
         deep_read_min: 18
         deep_read_target: 24
         deep_read_max: 30
         probe_pool: 45
-        expected_outputs:
-          # 这些开关更多是”最低完成标准”，不是说超过这个数就一定完成得好。
-          paper_notes_min: 10
-          comparison_table_required: true
-          related_work_bib_required: true
-        abstract_sweep:
-          enabled: true
-          lite_paper_num: 40
-          min_relevance: 0.4
-          sources:
-            - papers_verified
-            - papers_dedup
-          exclude_already_read: true
       synthesize:
+        budget:
+          max_tokens_total: 15000000
+          max_steps: 100
+        prompt:
+          expected_length_min: 1000
+          expected_sections:
+          - '## Method Families'
+          - '## Shared Assumptions'
+          - '## Contribution-Space Map'
+          - '## Trends & Cross-Paper Contradictions'
+          - '## Research Questions'
+        behavior:
+          prebuild_workbench_before_llm: true
         description: 文献综合
-        max_steps: 100
-        max_tokens_total: 15000000
-        # 可选预构建 workbench/outline，但最终 synthesis.md 必须由 Reader LLM 审阅后写出。
-        prebuild_workbench_before_llm: true
-        expected_sections:
-          - "## Method Families"
-          - "## Shared Assumptions"
-          - "## Contribution-Space Map"
-          - "## Trends & Cross-Paper Contradictions"
-          - "## Research Questions"
-        expected_length_min: 1000
         expected_citations_min: 5
-
   ideation:
     llm:
-      # Ideation 直接走专用 profile：先 DeepSeek，再 MiniMax，最后 OpenRouter。
       profile: ideation_deep
       max_context: 128000
       tier: heavy
       temperature: 0.75
-    max_steps: 150
-    max_tokens_total: 2000000
-    max_wall_seconds: 12000
-    max_validation_retries: 10
-    tool_names:
+    budget:
+      max_validation_retries: 10
+      max_tokens_total: 2000000
+      max_steps: 150
+      max_wall_seconds: 12000
+    tools:
+      allowed_read_prefixes:
+      - ''
+      - literature/
+      - user_seeds/
+      - ideation/
+      - _runtime/resume/
+      tool_names:
       - read_file
       - write_file
       - write_structured_file
       - list_files
       - ask_human
       - finish_task
-    allowed_read_prefixes:
-      - ""
-      - literature/
-      - user_seeds/
+      allowed_write_prefixes:
       - ideation/
-      - _runtime/resume/
-    allowed_write_prefixes:
-      - ideation/
-    prompt_template: ideation.j2
-    structured_outputs:
-      ideation/exp_plan.yaml: exp_plan
-      ideation/idea_rationales.json: idea_rationales
-      ideation/idea_scorecard.yaml: idea_scorecard
-      ideation/gate_decisions.json: gate_decisions
-    expected_outputs:
-      hypothesis_count: 3
-      risk_count: 3
-    gates:
-      # gate id 会在状态机/人机交互里引用，改名时要同步检查调用方。
+    prompt:
+      prompt_template: ideation.j2
+      structured_outputs:
+        ideation/exp_plan.yaml: exp_plan
+        ideation/idea_rationales.json: idea_rationales
+        ideation/idea_scorecard.yaml: idea_scorecard
+        ideation/gate_decisions.json: gate_decisions
+      expected_outputs:
+        hypothesis_count: 3
+        risk_count: 3
+    behavior:
+      gates:
       - id: gate1
         description: 选择研究方向
         type: user_select
       - id: gate2
         description: 确认假设方案
         type: user_confirm
-
   novelty_auditor:
     llm:
-      # novelty_auditor 也走 SiliconFlow profile，避免 T4.5 只有单一候选。
       profile: siliconflow_only
       max_context: 128000
       tier: heavy
       temperature: 0.3
-    max_steps: 1000
-    max_tokens_total: 600000
-    max_wall_seconds: 80000
-    max_validation_retries: 10
-    tool_names:
+    budget:
+      max_validation_retries: 10
+      max_tokens_total: 600000
+      max_steps: 1000
+      max_wall_seconds: 80000
+    tools:
+      allowed_read_prefixes:
+      - ''
+      - ideation/
+      - literature/
+      tool_names:
       - read_file
       - write_file
       - list_files
@@ -311,61 +298,64 @@ agents:
       - extract_mechanism_tuple
       - compare_mechanism_tuples
       - finish_task
-    allowed_read_prefixes:
-      - ""
+      allowed_write_prefixes:
       - ideation/
-      - literature/
-    allowed_write_prefixes:
-      - ideation/
-    prompt_template: novelty_auditor.j2
-    novelty_levels:
+    prompt:
+      prompt_template: novelty_auditor.j2
+    behavior:
+      novelty_levels:
       - Level 0
       - Level 1
       - Level 2
       - Level 3
-
   novelty:
     llm:
-      # T6 之前没有 fallback，就是因为这里写死了 model+endpoint。
-      # 改成 profile 后，会先走 DeepSeek，再 fallback 到 MiniMax。
       profile: siliconflow_only
       max_context: 1280000
       tier: medium
       temperature: 0.3
-    max_steps: 1000
-    max_tokens_total: 600000
-    max_wall_seconds: 80000
-    max_validation_retries: 10
-    tool_names:
+    budget:
+      max_validation_retries: 10
+      max_tokens_total: 600000
+      max_steps: 1000
+      max_wall_seconds: 80000
+    tools:
+      allowed_read_prefixes:
+      - ''
+      - ideation/
+      - literature/
+      - pilot/
+      - novelty/
+      tool_names:
       - read_file
       - write_file
       - list_files
       - search_papers
       - ask_human
       - finish_task
-    allowed_read_prefixes:
-      - ""
-      - ideation/
-      - literature/
-      - pilot/
-      # T6 需要读取自己上次已生成的 novelty 草稿，才能真正续跑而不是盲目重写。
+      allowed_write_prefixes:
       - novelty/
-    allowed_write_prefixes:
-      - novelty/
-    prompt_template: novelty.j2
-
+    prompt:
+      prompt_template: novelty.j2
   experimenter:
     llm:
-      # T5/T7 也改成 profile，长任务更需要 fallback。
       profile: siliconflow_only
       max_context: 128000
       tier: medium
       temperature: 0.3
-    max_steps: 2000
-    max_tokens_total: 60000000
-    max_wall_seconds: 144000
-    max_validation_retries: 10
-    tool_names:
+    budget:
+      max_validation_retries: 10
+      max_tokens_total: 60000000
+      max_steps: 2000
+      max_wall_seconds: 144000
+    tools:
+      allowed_read_prefixes:
+      - ''
+      - ideation/
+      - experiments/
+      - pilot/
+      - literature/
+      tool_names:
       - read_file
       - write_file
       - write_structured_file
@@ -375,57 +365,67 @@ agents:
       - docker_exec
       - latex_compile
       - finish_task
-    allowed_read_prefixes:
-      - ""
-      - ideation/
+      allowed_write_prefixes:
       - experiments/
       - pilot/
-      - literature/
-    allowed_write_prefixes:
-      - experiments/
-      - pilot/
-    prompt_template: experimenter.j2
-    structured_outputs:
-      experiments/results_summary.json: results_summary
-      pilot/pilot_results.json: pilot_results
-      pilot/pilot_plan.yaml: pilot_plan
+    prompt:
+      prompt_template: experimenter.j2
+      structured_outputs:
+        experiments/results_summary.json: results_summary
+        pilot/pilot_results.json: pilot_results
+        pilot/pilot_plan.yaml: pilot_plan
     modes:
       pilot:
+        budget:
+          max_validation_retries: 2
+          max_tokens_total: 1000000
+          max_steps: 1000
+          max_wall_seconds: 72000
+        prompt:
+          expected_outputs:
+            smoke_test_required: true
+            motivation_validation_required: true
+        behavior:
+          gpu_required: true
+          docker_required: true
         description: 试点实验
-        max_steps: 1000
-        max_tokens_total: 1000000
-        max_wall_seconds: 72000
-        max_validation_retries: 2
-        docker_required: true
-        gpu_required: true
-        expected_outputs:
-          smoke_test_required: true
-          motivation_validation_required: true
       full:
+        budget:
+          max_validation_retries: 5
+          max_tokens_total: 30000000
+          max_steps: 5000
+          max_wall_seconds: 144000
+        prompt:
+          expected_outputs:
+            ablation_min: 3
+            seed_ensemble_min: 3
+            results_summary_required: true
+        behavior:
+          gpu_required: true
+          docker_required: true
         description: 完整实验
-        max_steps: 5000
-        max_tokens_total: 30000000
-        max_wall_seconds: 144000
-        max_validation_retries: 5
-        docker_required: true
-        gpu_required: true
-        expected_outputs:
-          ablation_min: 3
-          seed_ensemble_min: 3
-          results_summary_required: true
-
   writer:
     llm:
-      # 写作阶段默认仍先走 SiliconFlow，但保留 MiniMax fallback。
       profile: siliconflow_only
       max_context: 1280000
       tier: heavy
       temperature: 0.7
-    max_steps: 1500
-    max_tokens_total: 10000000
-    max_wall_seconds: 240000
-    max_validation_retries: 3
-    tool_names:
+    budget:
+      max_validation_retries: 3
+      max_tokens_total: 10000000
+      max_steps: 1500
+      max_wall_seconds: 240000
+    tools:
+      allowed_read_prefixes:
+      - ''
+      - drafts/
+      - literature/
+      - experiments/
+      - ideation/
+      - novelty/
+      - evaluation/
+      - pilot/
+      tool_names:
       - ask_human
       - read_file
       - write_file
@@ -442,68 +442,76 @@ agents:
       - audit_writing_craft
       - build_manuscript_revision_patches
       - finish_task
-    allowed_read_prefixes:
-      - ""
+      allowed_write_prefixes:
       - drafts/
-      - literature/
-      - experiments/
-      - ideation/
-      - novelty/
-      - evaluation/
-      - pilot/
-    allowed_write_prefixes:
-      - drafts/
-    prompt_template: writer.j2
+    prompt:
+      prompt_template: writer.j2
+      latex_required: true
     modes:
       style_gate:
+        budget:
+          max_tokens_total: 2000000
+          max_steps: 20
         description: 确认 IS/CCF-A/both 写作风格
-        max_steps: 20
-        max_tokens_total: 2000000
       resource_index:
+        budget:
+          max_tokens_total: 50000000
+          max_steps: 100
         description: 构建写作资源索引和章节计划
-        max_steps: 100
-        max_tokens_total: 50000000
       outline:
+        budget:
+          max_tokens_total: 100000000
+          max_steps: 300
         description: 生成资源驱动大纲
-        max_steps: 300
-        max_tokens_total: 100000000
       section_plan:
+        budget:
+          max_tokens_total: 30000000
+          max_steps: 80
         description: 初始化逐章节写作状态和每章局部大纲
-        max_steps: 80
-        max_tokens_total: 30000000
       section_drafts:
+        budget:
+          max_tokens_total: 10000000
+          max_steps: 20
         description: 已废弃的旧批量分章节入口；只做兼容检查，不写正文
-        max_steps: 20
-        max_tokens_total: 10000000
       section_draft:
+        budget:
+          max_tokens_total: 50000000
+          max_steps: 80
         description: 单章节草稿
-        max_steps: 80
-        max_tokens_total: 50000000
       draft:
+        budget:
+          max_tokens_total: 100000000
+          max_steps: 180
         description: 拼装、spot-check 与机械审计
-        max_steps: 180
-        max_tokens_total: 100000000
       self_check:
+        budget:
+          max_tokens_total: 100000000
+          max_steps: 200
         description: 作者自查
-        max_steps: 200
-        max_tokens_total: 100000000
       revise:
+        budget:
+          max_tokens_total: 1500000
+          max_steps: 300
         description: 按 section patch 修订
-        max_steps: 300
-        max_tokens_total: 1500000
-    latex_required: true
-
   survey_writer:
     llm:
       profile: siliconflow_only
       max_context: 128000
       tier: heavy
       temperature: 0.55
-    max_steps: 160
-    max_tokens_total: 20000000
-    max_wall_seconds: 36000
-    max_validation_retries: 3
-    tool_names:
+    budget:
+      max_validation_retries: 3
+      max_tokens_total: 20000000
+      max_steps: 160
+      max_wall_seconds: 36000
+    tools:
+      allowed_read_prefixes:
+      - ''
+      - literature/
+      - drafts/survey/
+      - ideation/
+      - _runtime/resume/
+      tool_names:
       - ask_human
       - read_file
       - write_file
@@ -516,104 +524,116 @@ agents:
       - export_survey_for_ideation
       - latex_compile
       - finish_task
-    allowed_read_prefixes:
-      - ""
-      - literature/
+      allowed_write_prefixes:
       - drafts/survey/
       - ideation/
-      - _runtime/resume/
-    allowed_write_prefixes:
-      - drafts/survey/
-      - ideation/
-    prompt_template: survey_writer.j2
+    prompt:
+      prompt_template: survey_writer.j2
     modes:
       survey_gate:
+        budget:
+          max_tokens_total: 2000000
+          max_steps: 20
         description: 询问是否撰写 taxonomy-driven survey
-        max_steps: 20
-        max_tokens_total: 2000000
       survey_plan:
+        budget:
+          max_tokens_total: 40000000
+          max_steps: 120
         description: 构建综述 taxonomy 与章节大纲
-        max_steps: 120
-        max_tokens_total: 40000000
       outline_gate:
+        budget:
+          max_tokens_total: 5000000
+          max_steps: 40
         description: 人工确认/调整 taxonomy 大纲
-        max_steps: 40
-        max_tokens_total: 5000000
       corpus_gate:
+        budget:
+          max_tokens_total: 3000000
+          max_steps: 30
         description: 人工选择保守/完整素材范围
-        max_steps: 30
-        max_tokens_total: 3000000
       survey_expand:
+        budget:
+          max_tokens_total: 10000000
+          max_steps: 80
         description: 生成一次性定向补检计划
-        max_steps: 80
-        max_tokens_total: 10000000
       survey_state:
+        budget:
+          max_tokens_total: 10000000
+          max_steps: 40
         description: 初始化 survey_state 与逐 section outline
-        max_steps: 40
-        max_tokens_total: 10000000
       survey_section:
+        budget:
+          max_tokens_total: 50000000
+          max_steps: 100
         description: 单个综述 section 写作
-        max_steps: 100
-        max_tokens_total: 50000000
       survey_assemble:
+        budget:
+          max_tokens_total: 10000000
+          max_steps: 60
         description: 拼装 survey.tex 并审计
-        max_steps: 60
-        max_tokens_total: 10000000
       survey_review:
+        budget:
+          max_tokens_total: 20000000
+          max_steps: 100
         description: 综述模式审阅与按 section 定向修订
-        max_steps: 100
-        max_tokens_total: 20000000
       survey_compile:
+        budget:
+          max_tokens_total: 5000000
+          max_steps: 40
         description: 编译 survey.tex 为 PDF
-        max_steps: 40
-        max_tokens_total: 5000000
       survey_feed:
+        budget:
+          max_tokens_total: 5000000
+          max_steps: 40
         description: 导出 T4 可消费的 survey insights
-        max_steps: 40
-        max_tokens_total: 5000000
-
   reviewer:
     llm:
-      # 审稿也改成 profile，避免只剩单模型重试。
       profile: siliconflow_only
       max_context: 128000
       tier: heavy
       temperature: 0.3
-    max_steps: 200
-    max_tokens_total: 600000000
-    max_wall_seconds: 12000
-    max_validation_retries: 10
-    tool_names:
+    budget:
+      max_validation_retries: 10
+      max_tokens_total: 600000000
+      max_steps: 200
+      max_wall_seconds: 12000
+    tools:
+      allowed_read_prefixes:
+      - ''
+      - drafts/
+      - literature/
+      - experiments/
+      tool_names:
       - read_file
       - list_files
       - write_file
       - finish_task
-    allowed_read_prefixes:
-      - ""
-      - drafts/
-      - literature/
-      - experiments/
-    allowed_write_prefixes:
+      allowed_write_prefixes:
       - drafts/review_rounds/
-    prompt_template: reviewer.j2
-    expected_sections:
-      - "## Overall Assessment"
-      - "## Major Issues"
-      - "## Minor Issues"
-    expected_length_min: 500
-
+    prompt:
+      prompt_template: reviewer.j2
+      expected_length_min: 500
+      expected_sections:
+      - '## Overall Assessment'
+      - '## Major Issues'
+      - '## Minor Issues'
   submission:
     llm:
-      # 投稿整理阶段同样保留 MiniMax fallback。
       profile: siliconflow_only
       max_context: 12800000
       tier: medium
       temperature: 0.3
-    max_steps: 30000
-    max_tokens_total: 500000000
-    max_wall_seconds: 80000
-    max_validation_retries: 10
-    tool_names:
+    budget:
+      max_validation_retries: 10
+      max_tokens_total: 500000000
+      max_steps: 30000
+      max_wall_seconds: 80000
+    tools:
+      allowed_read_prefixes:
+      - ''
+      - drafts/
+      - literature/
+      - experiments/
+      tool_names:
       - read_file
       - write_file
       - list_files
@@ -621,59 +641,48 @@ agents:
       - docker_exec
       - latex_compile
       - finish_task
-    allowed_read_prefixes:
-      - ""
-      - drafts/
-      - literature/
-      - experiments/
-    allowed_write_prefixes:
+      allowed_write_prefixes:
       - submission/
-    prompt_template: submission.j2
-    # 匿名化前置检查默认关闭，便于本地调试或非匿名投稿场景直接产出投稿包。
-    # 如果要恢复“运行前先拦截邮箱/URL/GitHub”等检查，可改回 true。
-    enforce_anonymization_precheck: false
-    # T9 在编译失败时允许的“诊断-修复-重试”上限。
-    # 这个值会注入 prompt，用来防止 submission 阶段无限循环编译。
-    max_compile_attempts: 10
-    docker_required: true
-    expected_outputs:
-      bundle_required: true
-      anonymization_required: true
-      compile_required: true
-
+    prompt:
+      prompt_template: submission.j2
+      expected_outputs:
+        bundle_required: true
+        anonymization_required: true
+        compile_required: true
+    behavior:
+      docker_required: true
+      max_compile_attempts: 10
+      enforce_anonymization_precheck: false
 global_budget:
   default_max_budget_usd: 100.0
   warning_threshold: 0.7
   critical_threshold: 0.9
   stage_allocation:
     T1_init: 0.05
-    T2_scout: 0.10
+    T2_scout: 0.1
     T3_read: 0.15
-    T4_ideation: 0.10
-    T5_pilot: 0.20
-    T7_full: 0.30
+    T4_ideation: 0.1
+    T5_pilot: 0.2
+    T7_full: 0.3
     T8_write: 0.08
     T9_submission: 0.02
-
 global_timeout:
   max_agent_runtime: 7200
   max_tool_call: 180
   docker_operation: 7200
   latex_compile: 1800
   llm_call: 90
-
 docker:
   requires_docker:
-    - experimenter
-    - submission
+  - experimenter
+  - submission
   requires_gpu:
-    - experimenter
+  - experimenter
   default_image: researchos/system:latest
   gpu:
     default_count: 1
     max_count: 2
     memory_limit: 16g
-
 retry_policy:
   llm_retries: 10
   llm_retry_delay: 1
@@ -681,33 +690,18 @@ retry_policy:
   tool_retry_delay: 1
   validation_retries: 3
   no_retry_errors:
-    - AuthenticationError
-    - PermissionDenied
-    - BudgetExceeded
-
-# 预算触顶时的人工扩限策略。
-# 典型用途：T5/T7 这类长任务已经写出代码/中间产物，不希望因为 token 或 wall time 上限
-# 直接中断丢掉上下文，而是先询问一次“是否增加预算继续跑”。
+  - AuthenticationError
+  - PermissionDenied
+  - BudgetExceeded
 budget_escalation:
   enabled: true
-  # 留空表示“对所有 task 生效”。
-  # 如果将来只想限制到少数长任务，再填入类似 ["T5", "T7"] 的列表即可。
   tasks: []
-  # 同一 run 最多允许扩限多少次。
-  # - 设为 null：不设上限；每次触顶都继续弹 gate 询问
-  # - 设为正整数：达到次数后不再询问，直接按预算超限停止
-  # - 设为负数：等同于 null
   max_extensions_per_run: null
-  # 各维度默认扩限比例；实际扩大量还会受 runtime 中的最小增量约束。
   steps_increase_ratio: 0.25
   token_increase_ratio: 0.5
   wall_seconds_increase_ratio: 0.5
-  # 输出校验重试耗尽时也先给用户 gate，而不是直接暂停到不可见错误。
-  # 这解决 T8-SECTION-PLAN / T9 这类“已有 artifact 但语义字段不合格”时
-  # 需要少量修复轮次的问题。
   max_validation_extensions_per_run: null
   validation_retry_increase: 2
-
 logging:
   level: INFO
   trace_enabled: true

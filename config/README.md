@@ -102,7 +102,7 @@ logging:
 
 | 层级 | 你配置什么 | 作用 | 例子 |
 |------|------------|------|------|
-| Agent | `model_tier` | 只声明任务需要 `heavy` / `medium` / `light` 哪一档 | `HelloAgent -> medium`，`IdeationAgent -> heavy` |
+| Agent | `agents.<agent>.llm.tier` | 只声明任务需要 `heavy` / `medium` / `light` 哪一档 | `hello.llm.tier -> medium`，`ideation.llm.tier -> heavy` |
 | state_machine | `states.<task>.llm.profile` | 给某个 task 单独指定用哪套路由 | `HELLO -> hello_fast`，`T4 -> ideation_deep` |
 | model_routing | `profiles.<profile>.<tier>` | 把某个 profile 下的 tier 映射到具体模型 | `ideation_deep.heavy -> deepseek-ai/DeepSeek-V4-Flash` |
 | endpoint | `endpoints.<name>` | 决定最终 provider / API key / base URL | `siliconflow -> provider=openai` |
@@ -110,7 +110,7 @@ logging:
 默认链路：
 - Agent 先给出 `tier`
 - 如果 `state_machine.yaml` 里给当前 task 配了 `llm.profile`，优先用它
-- 否则回退到 agent 自带的 `llm_profile`
+- 否则回退到 agent 自带的 `llm.profile`
 - 再否则使用 `model_routing.yaml` 的 `default_profile`
 
 对 `run-task HELLO` 这种单任务调试模式：
@@ -130,7 +130,7 @@ logging:
   - `light`: 轻负载任务（简单查询、格式转换）
 
 说明：
-- Agent 本身只声明 `model_tier` / `llm_profile`，并不把 provider 写死在代码里。
+- Agent 本身只声明 `llm.tier` / `llm.profile`，并不把 provider 写死在代码里。
 - 每个 `primary` / `fallback` 都可以指向不同的 `endpoint`。
 - provider 是挂在 `endpoints.<name>.provider` 上的，所以完全可以做到：
   - `heavy.primary -> siliconflow(openai-compatible)`
@@ -181,32 +181,20 @@ profiles:
 
 定义每个 Agent 的默认静态参数。
 
-最常用的是 `llm` 这一段：
+每个 agent 现在采用真实分区结构，而不是把所有字段摊平成一层：
 
-- `llm.model + llm.endpoint`
-  - 当前推荐写法
-  - 直接指定模型和 endpoint
-  - provider 不在这里写，而是在 `model_routing.yaml` 的 `endpoints` 层统一定义
-- `llm.profile`
-  - 直接选用 `model_routing.yaml` 中某个 profile
-  - 适合一组 Agent / task 共用一套路由策略
-- `llm.tier`
-  - `heavy / medium / light` 的兼容抽象
-  - 现在更适合作为回退字段或批量路由时使用
-- `llm.max_context`
-  - 给直接模型覆盖指定上下文窗口
-- `llm.temperature`
-  - 直接定义 Agent 默认温度
+| 分区 | 作用 | 常见字段 |
+|------|------|----------|
+| `llm` | 模型路由与模型运行参数 | `profile`, `tier`, `model`, `endpoint`, `max_context`, `temperature` |
+| `budget` | Agent 默认预算 | `max_steps`, `max_tokens_total`, `max_wall_seconds`, `max_validation_retries` |
+| `tools` | 工具能力与 workspace 权限 | `tool_names`, `allowed_read_prefixes`, `allowed_write_prefixes` |
+| `prompt` | prompt 模板和输出契约 | `prompt_template`, `structured_outputs`, `expected_outputs`, `expected_sections` |
+| `behavior` | 可机械执行或校验的行为开关 | `docker_required`, `gpu_required`, `abstract_sweep`, `max_compile_attempts` |
+| `modes` | 分阶段覆盖 | 每个 mode 可继续使用 `llm/budget/tools/prompt/behavior` |
 
-其他静态默认值也在这里调：
-
-- `max_steps`
-- `max_tokens_total`
-- `max_wall_seconds`
-- `tool_names`
-- `allowed_read_prefixes`
-- `allowed_write_prefixes`
-- `prompt_template`
+runtime 会在读取时把 `budget/tools/prompt/behavior` 规范化为旧扁平字段，因此现有代码里
+`params.get("max_steps")`、`params.get("tool_names")` 等仍然可用。旧扁平配置也保留兼容，
+但当前推荐写法是分区结构。
 
 示例：
 
@@ -218,8 +206,16 @@ agents:
       endpoint: openrouter_main
       max_context: 128000
       temperature: 0.3
-    max_steps: 5
-    max_tokens_total: 10000
+    budget:
+      max_steps: 5
+      max_tokens_total: 10000
+      max_wall_seconds: 60
+    tools:
+      tool_names: [echo, write_file, read_file, finish_task]
+      allowed_read_prefixes: [""]
+      allowed_write_prefixes: [""]
+    prompt:
+      prompt_template: hello.j2
 
   ideation:
     llm:
@@ -227,13 +223,27 @@ agents:
       endpoint: siliconflow
       max_context: 128000
       temperature: 0.75
-    max_steps: 150
-    max_tokens_total: 2000000
+    budget:
+      max_steps: 150
+      max_tokens_total: 2000000
+    tools:
+      tool_names: [read_file, write_file, ask_human, finish_task]
+      allowed_read_prefixes: ["", literature/, user_seeds/, ideation/]
+      allowed_write_prefixes: [ideation/]
+    prompt:
+      prompt_template: ideation.j2
+    behavior:
+      gates:
+        - id: gate1
+          type: user_select
 ```
 
 建议：
 - 想单独给某个 Agent 绑定固定模型/provider，优先改 `agent_params.yaml` 的 `llm.model + llm.endpoint`
 - 想批量切一组任务的模型策略，优先改 `model_routing.yaml` 的 `profile`
+- 想改预算，改 `agents.<agent>.budget` 或 `agents.<agent>.modes.<mode>.budget`
+- 想启用/禁用工具，改 `agents.<agent>.tools.tool_names`
+- 想改 Docker、abstract sweep、编译重试等机械行为，改 `behavior`
 
 ### state_machine.yaml - 状态机定义
 
