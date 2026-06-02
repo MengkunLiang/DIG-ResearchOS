@@ -152,8 +152,9 @@ class SurveyWriterAgent(Agent):
         elif phase == "survey_compile":
             message = (
                 "请执行 T3.6-COMPILE：调用 latex_compile(tex_path=\"drafts/survey/survey.tex\") "
-                "编译 survey PDF。把工具返回 data.compile_report 写入 "
-                "drafts/survey/survey_compile_report.json。若环境缺失或编译失败，按工具结果暂停/修复后 resume。"
+                "编译 survey PDF。latex_compile 会自动写 "
+                "drafts/survey/survey_compile_report.json；不要伪造或手抄 report。"
+                "若环境缺失或编译失败，按工具结果暂停/修复后 resume。"
             )
         elif phase == "survey_feed":
             message = (

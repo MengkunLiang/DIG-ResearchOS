@@ -31,6 +31,17 @@
 # - 想让整个 reader 永久换模型，就改 `agents.reader.llm`
 # - 想只让某次 T3 临时换模型，就去改 state_machine.yaml 里的 T3.llm
 # - 想统一改重试/超时/预算，就看文件末尾的 global_* / retry_policy
+#
+# 每个 agent 段建议按 5 个 part 阅读和维护：
+# Part 1: llm 模型路由与模型运行参数（profile/tier/model/endpoint/max_context/temperature）
+# Part 2: agent 默认预算（max_steps/max_tokens_total/max_wall_seconds/max_validation_retries）
+# Part 3: 工具能力与 workspace 权限（tool_names/allowed_read_prefixes/allowed_write_prefixes）
+# Part 4: prompt/schema/expected_outputs/业务开关
+# Part 5: modes 分阶段覆盖
+#
+# 注意：当前 runtime 仍读取扁平预算字段，如 max_steps/max_tokens_total。
+# 不要把它们迁移成 budget.max_steps 之类的嵌套结构，除非同步修改
+# researchos/runtime/agent_params.py 和相关测试。
 
 agents:
   hello:

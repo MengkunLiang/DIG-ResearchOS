@@ -66,7 +66,7 @@ class LatexCompileTool(Tool):
         if self._is_running_in_container() or shutil.which("latexmk"):
             if shutil.which("latexmk") is None:
                 report = _finalize_compile_report(report_base, success=False, engine="native", exit_code=None)
-                _write_compile_report_if_submission(self.docker.policy.workspace_dir, params.tex_path, report)
+                _write_compile_report_for_known_target(self.docker.policy.workspace_dir, params.tex_path, report)
                 return ToolResult(
                     ok=False,
                     content="WAITING_ENVIRONMENT: latexmk is not installed in the current container/native environment.",
@@ -125,7 +125,7 @@ class LatexCompileTool(Tool):
             proc.kill()
             await proc.wait()
             report = _finalize_compile_report(report_base, success=False, engine="native", exit_code=None, error="timeout")
-            _write_compile_report_if_submission(self.docker.policy.workspace_dir, params.tex_path, report)
+            _write_compile_report_for_known_target(self.docker.policy.workspace_dir, params.tex_path, report)
             return ToolResult(
                 ok=False,
                 content=f"LaTeX compilation timed out after {self.timeout_seconds}s",
@@ -152,7 +152,7 @@ class LatexCompileTool(Tool):
                 exit_code=proc.returncode,
                 error="nonzero_exit",
             )
-            _write_compile_report_if_submission(self.docker.policy.workspace_dir, params.tex_path, report)
+            _write_compile_report_for_known_target(self.docker.policy.workspace_dir, params.tex_path, report)
             return ToolResult(
                 ok=False,
                 content="\n\n".join(content_parts),
@@ -170,7 +170,7 @@ class LatexCompileTool(Tool):
                 exit_code=proc.returncode,
                 error="pdf_missing",
             )
-            _write_compile_report_if_submission(self.docker.policy.workspace_dir, params.tex_path, report)
+            _write_compile_report_for_known_target(self.docker.policy.workspace_dir, params.tex_path, report)
             return ToolResult(
                 ok=False,
                 content=(
@@ -192,7 +192,7 @@ class LatexCompileTool(Tool):
             exit_code=proc.returncode,
             pdf_path=pdf_path,
         )
-        _write_compile_report_if_submission(self.docker.policy.workspace_dir, params.tex_path, report)
+        _write_compile_report_for_known_target(self.docker.policy.workspace_dir, params.tex_path, report)
         return ToolResult(
             ok=True,
             content="\n\n".join(content_parts),
@@ -241,7 +241,7 @@ class LatexCompileTool(Tool):
                     exit_code=result.data.get("exit_code") if isinstance(result.data, dict) else None,
                     error=error_code or "waiting_environment",
                 )
-                _write_compile_report_if_submission(self.docker.policy.workspace_dir, params.tex_path, report)
+                _write_compile_report_for_known_target(self.docker.policy.workspace_dir, params.tex_path, report)
                 return ToolResult(
                     ok=False,
                     content=content,
@@ -255,7 +255,7 @@ class LatexCompileTool(Tool):
                 exit_code=result.data.get("exit_code") if isinstance(result.data, dict) else None,
                 error=result.error,
             )
-            _write_compile_report_if_submission(self.docker.policy.workspace_dir, params.tex_path, report)
+            _write_compile_report_for_known_target(self.docker.policy.workspace_dir, params.tex_path, report)
             result.data["compile_report"] = report
             return result
 
@@ -268,7 +268,7 @@ class LatexCompileTool(Tool):
                 exit_code=result.data.get("exit_code") if isinstance(result.data, dict) else None,
                 error="pdf_missing",
             )
-            _write_compile_report_if_submission(self.docker.policy.workspace_dir, params.tex_path, report)
+            _write_compile_report_for_known_target(self.docker.policy.workspace_dir, params.tex_path, report)
             return ToolResult(
                 ok=False,
                 content=(
@@ -286,12 +286,12 @@ class LatexCompileTool(Tool):
             exit_code=result.data.get("exit_code") if isinstance(result.data, dict) else 0,
             pdf_path=pdf_path,
         )
-        _write_compile_report_if_submission(self.docker.policy.workspace_dir, params.tex_path, report)
+        _write_compile_report_for_known_target(self.docker.policy.workspace_dir, params.tex_path, report)
         result.data["pdf_path"] = pdf_path.relative_to(self.docker.policy.workspace_dir).as_posix()
         result.data["compile_report"] = report
         result.content += (
             f"\n\nPDF: {pdf_path.relative_to(self.docker.policy.workspace_dir).as_posix()}"
-            "\nCompile report: submission/compile_report.json"
+            f"\nCompile report: {_compile_report_target_for_tex(params.tex_path) or 'not persisted for this tex_path'}"
         )
         return result
 
@@ -402,15 +402,29 @@ def _finalize_compile_report(
     return report
 
 
-def _write_compile_report_if_submission(workspace: Path, tex_path: str, report: dict[str, Any]) -> None:
-    if tex_path.strip().lstrip("./") != "submission/bundle/main.tex":
+def _write_compile_report_for_known_target(workspace: Path, tex_path: str, report: dict[str, Any]) -> None:
+    """Persist compile reports for task-level TeX targets that validators expect."""
+
+    report_rel = _compile_report_target_for_tex(tex_path)
+    if not report_rel:
         return
+    report_path = workspace / report_rel
     pdf_rel = report.get("pdf_path")
     if isinstance(pdf_rel, str) and pdf_rel and pdf_rel.startswith(str(workspace)):
         try:
             report["pdf_path"] = Path(pdf_rel).relative_to(workspace).as_posix()
         except ValueError:
             pass
-    report_path = workspace / "submission" / "compile_report.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _compile_report_target_for_tex(tex_path: str) -> str:
+    """Return the workspace-relative compile report path expected by validators."""
+
+    normalized = tex_path.strip().lstrip("./")
+    if normalized == "submission/bundle/main.tex":
+        return "submission/compile_report.json"
+    if normalized == "drafts/survey/survey.tex":
+        return "drafts/survey/survey_compile_report.json"
+    return ""

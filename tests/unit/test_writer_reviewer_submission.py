@@ -15,6 +15,7 @@ from researchos.agents.submission import (
     check_anonymization,
     check_submission_compile_environment,
 )
+from researchos.runtime.prompts import render_prompt
 from researchos.tools.manuscript import CORE_SECTIONS
 
 
@@ -116,6 +117,52 @@ def _write_compile_report(workspace: Path, *, success: bool = True) -> None:
         json.dumps(report, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+
+
+def test_writer_prompt_defaults_suggested_style_when_not_injected(temp_workspace):
+    """writer.j2 must not crash if an older render path omits suggested_style."""
+
+    ctx = MockExecutionContext("self_check", temp_workspace)
+    prompt = render_prompt(
+        "writer.j2",
+        ctx,
+        project={"name": "p", "research_direction": "AI"},
+        target_venue="unknown",
+        phase="self_check",
+        writing_style={},
+        agent_guidance="",
+        results_summary="{}",
+        synthesis_preview="",
+        related_work_preview="",
+        hypotheses_preview="",
+        novelty_report_preview="",
+        novelty_audit_preview="",
+        ablations_preview="",
+        resource_index_preview="",
+        section_plan_preview="",
+        evidence_plan_preview="",
+        figure_table_plan_preview="",
+        cdr_claim_ledger_preview="",
+        claim_ledger_preview="",
+        figure_registry_preview="",
+        manuscript_audit_preview="",
+        craft_audit_preview="",
+        paper_state_preview="",
+        alignment_matrix_preview="",
+        section_id=None,
+        section_title="",
+        section_outline_preview="",
+        section_draft_preview="",
+        previous_section_tail="",
+        outline_preview="",
+        review_report_preview="",
+        revision_patch_preview="",
+        user_corrections_preview="",
+        round_num=1,
+        temperature=0.7,
+    )
+
+    assert "venue_style: ccf_a" in prompt
 
 
 def _write_manuscript_registries(workspace: Path) -> None:

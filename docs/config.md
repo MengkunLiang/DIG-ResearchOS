@@ -338,15 +338,53 @@ profiles:
 按 agent 存放：
 
 - LLM 默认值
-- `max_steps`
-- `max_tokens_total`
-- `max_wall_seconds`
-- `max_validation_retries`
-- `tool_names`
-- `allowed_read_prefixes`
-- `allowed_write_prefixes`
+- 运行预算
+- 模型运行参数
+- 工具列表
+- workspace 读写权限
 - `prompt_template`
+- `modes` 下的分阶段覆盖
 - 各 agent 自定义参数
+
+推荐阅读时把每个 agent 切成 5 个 part：
+
+```yaml
+agents:
+  writer:
+    # Part 1: 模型路由与模型运行参数
+    llm:
+      profile: siliconflow_only
+      tier: heavy
+      max_context: 1280000
+      temperature: 0.7
+
+    # Part 2: Agent 级默认预算
+    max_steps: 1500
+    max_tokens_total: 10000000
+    max_wall_seconds: 240000
+    max_validation_retries: 3
+
+    # Part 3: 工具能力与 workspace 权限
+    tool_names: [...]
+    allowed_read_prefixes: [...]
+    allowed_write_prefixes: [...]
+
+    # Part 4: prompt / schema / task-specific knobs
+    prompt_template: writer.j2
+    structured_outputs: {...}
+    expected_outputs: {...}
+
+    # Part 5: mode 级覆盖
+    modes:
+      section_draft:
+        description: 单章节草稿
+        max_steps: 80
+        max_tokens_total: 50000000
+```
+
+当前 runtime 仍使用扁平字段读取预算和权限，这是为了保持向后兼容。不要把 `max_steps`
+移动到 `budget.max_steps` 这类新结构，除非同时修改 `researchos/runtime/agent_params.py`
+的加载逻辑和相关测试。最清晰、最安全的做法是：用注释和字段顺序分区，保持字段名稳定。
 
 ### 5.2 当前主要 agent 段
 
@@ -453,6 +491,10 @@ enforce_anonymization_precheck: false
 
 预算扩限 gate 覆盖 `steps`、`tokens` 和 `wall_seconds`。当 `max_steps`、token 或 wall time 触顶时，runtime 会先询问是否扩限；如果用户选择停止或当前无法继续输入，本轮 run 会保存为 `PAUSED`，后续可以用 `researchos resume --workspace ...` 从已落盘 artifact 继续。
 
+`modes` 中的字段会覆盖 agent 级默认值。例如 `writer.section_draft.max_steps`
+只影响单章节写作，不影响 `writer.self_check`。这比复制多个 agent 配置更清晰，也能让
+T3.6、T8、T9 这种长流程按阶段设置不同预算。
+
 ---
 
 ## 6. `config/state_machine.yaml`
@@ -495,7 +537,6 @@ enforce_anonymization_precheck: false
 - `T8-SEC-RELATED`
 - `T8-SEC-ANALYSIS`
 - `T8-SEC-INTRO`
-- `T8-SEC-LIMITATIONS`
 - `T8-SEC-CONCLUSION`
 - `T8-SEC-ABSTRACT`
 - `T8-DRAFT`

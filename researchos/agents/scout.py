@@ -263,6 +263,12 @@ class ScoutAgent(Agent):
         ]
         if protected_verified and not any(_is_protected_literature_bucket(item) for item in queue_records):
             return False, "verified 池包含 adjacent/theory/snowball 论文，但 deep_read_queue 未保留任何跨域/桥接候选"
+        if protected_verified and not any(
+            _is_protected_literature_bucket(item)
+            and str(item.get("target_bucket") or "") != "overflow"
+            for item in queue_records
+        ):
+            return False, "deep_read_queue 保留了跨域/桥接候选，但未放入 target/seed 阅读区"
 
         seed_in_queue = any(bool(item.get("seed_priority")) for item in queue_records)
         seed_path = ctx.workspace_dir / "user_seeds" / "seed_papers.jsonl"

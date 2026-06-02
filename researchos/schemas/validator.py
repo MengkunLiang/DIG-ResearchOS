@@ -555,6 +555,65 @@ def register_builtin_task_checkers():
         )
         return SubmissionAgent().validate_outputs(ctx)
 
+    def check_survey_writer_phase(workspace_dir: Path, task_id: str) -> tuple[bool, str | None]:
+        from ..agents.survey_writer import SurveyWriterAgent
+        from ..runtime.agent import ExecutionContext
+
+        mode = None
+        section_id = None
+        section_modes = {
+            "T3.6-SEC-BACKGROUND": "background",
+            "T3.6-SEC-TAXONOMY": "taxonomy",
+            "T3.6-SEC-THEME-1": "theme_1",
+            "T3.6-SEC-THEME-2": "theme_2",
+            "T3.6-SEC-THEME-3": "theme_3",
+            "T3.6-SEC-THEME-4": "theme_4",
+            "T3.6-SEC-COMPARISON": "comparison",
+            "T3.6-SEC-CHALLENGES": "challenges",
+            "T3.6-SEC-FUTURE": "future",
+            "T3.6-SEC-INTRO": "introduction",
+            "T3.6-SEC-CONCLUSION": "conclusion",
+            "T3.6-SEC-ABSTRACT": "abstract",
+        }
+        if task_id == "T3.6-GATE-SURVEY":
+            mode = "survey_gate"
+        elif task_id == "T3.6-PLAN":
+            mode = "survey_plan"
+        elif task_id == "T3.6-GATE-OUTLINE":
+            mode = "outline_gate"
+        elif task_id == "T3.6-GATE-CORPUS":
+            mode = "corpus_gate"
+        elif task_id == "T3.6-EXPAND":
+            mode = "survey_expand"
+        elif task_id == "T3.6-STATE":
+            mode = "survey_state"
+        elif task_id in section_modes:
+            mode = "survey_section"
+            section_id = section_modes[task_id]
+        elif task_id == "T3.6-ASSEMBLE":
+            mode = "survey_assemble"
+        elif task_id == "T3.6-REVIEW":
+            mode = "survey_review"
+        elif task_id == "T3.6-COMPILE":
+            mode = "survey_compile"
+        elif task_id == "T3.6-FEED":
+            mode = "survey_feed"
+        if mode is None:
+            return True, None
+
+        extra: dict[str, object] = {}
+        if section_id:
+            extra["section_id"] = section_id
+        ctx = ExecutionContext(
+            workspace_dir=workspace_dir,
+            project_id="validator",
+            task_id=task_id,
+            run_id="validator",
+            mode=mode,
+            extra=extra,
+        )
+        return SurveyWriterAgent(mode=mode).validate_outputs(ctx)
+
     register_task_checker("HELLO", check_hello)
     register_task_checker("T3", check_t3)
     register_task_checker("T5", lambda workspace_dir: check_experimenter_phase(workspace_dir, "T5"))
@@ -581,6 +640,35 @@ def register_builtin_task_checkers():
         "T8-REVISE-2",
     ]:
         register_task_checker(task_id, lambda workspace_dir, task_id=task_id: check_writer_phase(workspace_dir, task_id))
+
+    for task_id in [
+        "T3.6-GATE-SURVEY",
+        "T3.6-PLAN",
+        "T3.6-GATE-OUTLINE",
+        "T3.6-GATE-CORPUS",
+        "T3.6-EXPAND",
+        "T3.6-STATE",
+        "T3.6-SEC-BACKGROUND",
+        "T3.6-SEC-TAXONOMY",
+        "T3.6-SEC-THEME-1",
+        "T3.6-SEC-THEME-2",
+        "T3.6-SEC-THEME-3",
+        "T3.6-SEC-THEME-4",
+        "T3.6-SEC-COMPARISON",
+        "T3.6-SEC-CHALLENGES",
+        "T3.6-SEC-FUTURE",
+        "T3.6-SEC-INTRO",
+        "T3.6-SEC-CONCLUSION",
+        "T3.6-SEC-ABSTRACT",
+        "T3.6-ASSEMBLE",
+        "T3.6-REVIEW",
+        "T3.6-COMPILE",
+        "T3.6-FEED",
+    ]:
+        register_task_checker(
+            task_id,
+            lambda workspace_dir, task_id=task_id: check_survey_writer_phase(workspace_dir, task_id),
+        )
 
     # TODO: 为T1-T9添加更多checker
 

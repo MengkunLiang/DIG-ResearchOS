@@ -105,6 +105,12 @@ def _registry() -> ToolRegistry:
     return registry
 
 
+def test_single_task_runner_t36_alias_points_to_survey_gate():
+    assert SingleTaskRunner._normalize_task_id("T3.6") == "T3.6-GATE-SURVEY"
+    assert SingleTaskRunner._normalize_task_id("T3.6-SURVEY") == "T3.6-GATE-SURVEY"
+    assert SingleTaskRunner._normalize_task_id("SURVEY") == "T3.6-GATE-SURVEY"
+
+
 @pytest.mark.asyncio
 async def test_single_task_runner_runs_hello_happy_path(tmp_workspace: Path):
     runner = SingleTaskRunner(

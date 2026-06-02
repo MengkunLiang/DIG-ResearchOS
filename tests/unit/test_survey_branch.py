@@ -10,6 +10,7 @@ from researchos.agents.registry import get_agent_by_id
 from researchos.agents.survey_writer import SurveyWriterAgent
 from researchos.orchestration.state_machine import StateMachine
 from researchos.runtime.agent import AgentResult
+from researchos.schemas.validator import validate_task_artifacts
 from researchos.schemas.state import StateYaml
 from researchos.tools.survey_tools import (
     AssembleSurveyTool,
@@ -147,6 +148,19 @@ def test_survey_writer_compile_validation_accepts_success_report(tmp_path: Path)
     ctx = type("Ctx", (), {"workspace_dir": ws, "mode": "survey_compile", "extra": {}})()
     ok, err = agent.validate_outputs(ctx)
     assert ok, err
+
+
+def test_t36_compile_artifact_checker_requires_compile_report(tmp_path: Path):
+    ws = tmp_path
+    (ws / "drafts" / "survey").mkdir(parents=True)
+    (ws / "drafts" / "survey" / "survey.pdf").write_bytes(b"%PDF-1.4\n")
+    (ws / "drafts" / "survey" / "survey.log").write_text("ok", encoding="utf-8")
+
+    ok, err = validate_task_artifacts(ws, "T3.6-COMPILE")
+
+    assert not ok
+    assert err is not None
+    assert "survey_compile_report" in err
 
 
 def test_survey_writer_review_validation_accepts_complete_review(tmp_path: Path):

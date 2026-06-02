@@ -38,6 +38,29 @@ ResearchOS 当前采用 **统一镜像** 模式，而不是“实验镜像一套
 - [infra/docker/run.sh](../infra/docker/run.sh)
 - [docker-compose.yml](../docker-compose.yml)
 
+### 1.1 当前有两种 Docker 使用模式
+
+ResearchOS 不是只能“整个系统都在 Docker 中”或“完全不用 Docker”。当前设计同时支持两种模式：
+
+1. **整体系统在 Docker 中运行**
+   使用 `bash infra/docker/run.sh ...` 启动统一镜像，容器入口仍然是 `python3 -m researchos.cli`。这种模式下 CLI、Agent、tool、LaTeX 和实验命令都在容器环境里执行，workspace 通过 bind mount 挂到 `/workspace`。
+
+2. **宿主机运行 ResearchOS，部分阶段使用 Docker tool**
+   宿主机 Python 进程运行 `researchos run/resume/run-task`。当 T5/T7 需要隔离实验，或 T9/T3.6-COMPILE 需要 LaTeX 编译时，`docker_exec` / `latex_compile` 会调用统一镜像执行具体命令。宿主机没有 `latexmk` 时，`latex_compile` 会自动走 Docker；如果 Docker 不可用，相关阶段会以 `WAITING_ENVIRONMENT` 暂停，修好环境后可以 `resume`。
+
+容器内运行时会检测到自己已经在容器中，`latex_compile` 会直接调用容器内 `latexmk`，不会再做 Docker-in-Docker。
+
+### 1.2 当前机器实测状态
+
+在当前 `/mnt/data/DIG-ResearchOS` 环境中已经检查到：
+
+- Docker CLI/daemon 可用，`Docker Root Dir` 已是 `/mnt/data/Docker`，不会继续默认占用 `/var/lib/docker`。
+- 镜像 `researchos/system:latest` 已存在，且 `bash infra/docker/build.sh` 已实测可完成构建。
+- 容器内 `latexmk` 可用，可以支撑 T3.6 survey 和 T9 投稿包的 TeX 编译；最小 `article` smoke test 已在 `workspace/docker-tex-smoke/main.tex` 上通过并生成 `main.pdf`。
+- 宿主机 `nvidia-smi` 可用，但 `docker info` 的 runtimes 里没有 `nvidia`，`docker run --gpus all ... nvidia-smi` 当前失败，报错类似 `failed to discover GPU vendor from CDI: no known GPU vendor found`。
+
+结论：当前 Docker 存储、镜像和 TeX 工具链可用；Docker GPU 还不可用，需要注册 NVIDIA Container Toolkit / runtime 或 CDI 后才能让容器使用 GPU。T5/T7 如果强依赖 GPU，在 GPU runtime 修好前应预期以环境等待或 CPU 降级处理。
+
 ---
 
 ## 2. 避免占用系统盘
@@ -439,12 +462,10 @@ bash infra/docker/run.sh bash
 判断逻辑大致是：
 
 1. 宿主机 `nvidia-smi` 是否可用
-2. Docker 是否注册了 `nvidia` runtime
-3. `/proc/driver/nvidia/gpus` 是否可见
-4. 若可用则添加：
-   - `--gpus all`
-   - 或必要时回退为 `--runtime=nvidia --gpus all`
-5. 否则退回 CPU 模式
+2. 直接运行 `docker run --rm --gpus all --entrypoint nvidia-smi researchos/system:latest`
+3. 若失败，再在宿主机存在 `nvidia-container-runtime` 时尝试 `--runtime=nvidia --gpus all`
+4. 若任一 probe 成功，则给正式容器添加 GPU 参数
+5. 否则明确提示 GPU probe 错误并退回 CPU 模式
 
 ### 9.1 为什么这样设计
 
@@ -470,6 +491,47 @@ Docker 验证：
 ```bash
 docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi
 ```
+
+ResearchOS 镜像验证：
+
+```bash
+docker run --rm --gpus all --entrypoint nvidia-smi researchos/system:latest
+```
+
+### 9.3 注册 NVIDIA runtime / CDI
+
+如果宿主机 `nvidia-smi` 正常，但 Docker GPU probe 失败，需要安装并配置 NVIDIA Container Toolkit。Ubuntu/Debian 常见步骤如下，实际以 [NVIDIA Container Toolkit 安装文档](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/1.17.4/install-guide.html) 为准：
+
+```bash
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+  | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+  | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+  | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+
+sudo apt-get update
+sudo apt-get install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+```
+
+如果 Docker 版本或宿主环境走 CDI 发现路径，还可以生成 CDI 配置：
+
+```bash
+sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+sudo systemctl restart docker
+```
+
+修复后验证：
+
+```bash
+docker info --format '{{json .Runtimes}}'
+docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi
+docker run --rm --gpus all --entrypoint nvidia-smi researchos/system:latest
+```
+
+只有最后一个 ResearchOS 镜像 probe 成功，`infra/docker/run.sh` 才会在正式运行时自动启用 GPU。
 
 ---
 
@@ -508,6 +570,28 @@ T9 尤其适合在 Docker 中运行，因为：
 - 若编译失败，要尝试修复并重试
 
 这类行为在 Docker 中更稳定，因为宿主机不同发行版 / TeX 发行版之间差异较大。
+
+同一套 `latex_compile` 也被 T3.6-COMPILE 复用。编译 `drafts/survey/survey.tex` 时，工具会自动写 `drafts/survey/survey_compile_report.json`；编译 `submission/bundle/main.tex` 时，工具会自动写 `submission/compile_report.json`。这两个 report 都记录 `tex_path`、engine、exit code、PDF/log hash、mtime 和 error，validator 不只看 PDF 是否存在。
+
+### 11.1 LaTeX smoke test
+
+容器内工具链最小检查：
+
+```bash
+docker run --rm --entrypoint bash researchos/system:latest -lc 'which latexmk && latexmk -version | head -5'
+```
+
+如果要确认完整编译链路，可以在一个临时 workspace 中放最小 `main.tex`，再执行：
+
+```bash
+docker run --rm \
+  -v /mnt/data/DIG-ResearchOS/workspace/docker-tex-smoke:/workspace \
+  --entrypoint bash \
+  researchos/system:latest \
+  -lc 'cd /workspace && latexmk -pdf -interaction=nonstopmode main.tex'
+```
+
+成功后应在挂载目录看到 `main.pdf`。
 
 ---
 
@@ -802,3 +886,5 @@ latexmk -pdf -interaction=nonstopmode -halt-on-error main.tex
 - [docs/dev.md](./dev.md)
 - [README.md](../README.md)
 - [README.zh-CN.md](../README.zh-CN.md)
+- Docker daemon `data-root` 官方说明：<https://docs.docker.com/engine/daemon/>
+- NVIDIA Container Toolkit 官方说明：<https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/1.17.4/install-guide.html>

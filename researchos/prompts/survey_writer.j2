@@ -173,6 +173,9 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - 应优先检索什么关键词/venue
 - 哪些已有论文只是邻接提示，不能直接作为综述核心证据
 
+`complete` 模式的含义是“一次性补检计划 + LLM 审阅记录”，不是自动回到 T2/T3 做无限检索，也不是把 query hints 当作已读文献。
+如果你补写 `llm_review`，必须保留工具原有的 `semantics`、`query_hints` 和 `classes_needing_more_lit` 字段。
+
 不要回到 T2，不要启动无限补检。最后 `finish_task`。
 {% endif %}
 
@@ -294,7 +297,7 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 
 要求：
 - `assemble_survey` 已经把 `literature/related_work.bib` 复制为 `drafts/survey/references.bib`。
-- 如果 latex_compile 返回 ok=true，把返回的 `data.compile_report` 原样写入 `drafts/survey/survey_compile_report.json`。
+- `latex_compile` 会自动把编译报告写入 `drafts/survey/survey_compile_report.json`，你不需要再手工复制 `data.compile_report`。
 - 编译产物应包括 `drafts/survey/survey.pdf` 和 `drafts/survey/survey.log`。
 - 如果工具返回 `waiting_environment_*`，不要伪造 PDF 或 report；让 runtime 暂停，等 TeX/Docker 环境修好后 resume。
 - 如果是 LaTeX 语法或引用错误，读取 log，修对应 section 文件或 references，再重新 assemble/compile；不要一次性重写整篇 survey.tex。

@@ -62,6 +62,9 @@ class SingleTaskRunner:
     @staticmethod
     def _normalize_task_id(task_id: str) -> str:
         aliases = {
+            "T3.6": "T3.6-GATE-SURVEY",
+            "T3.6-SURVEY": "T3.6-GATE-SURVEY",
+            "SURVEY": "T3.6-GATE-SURVEY",
             "T8": "T8-STYLE-GATE",
             "T8-WRITE": "T8-STYLE-GATE",
             "T8-SECTIONS": "T8-SECTION-PLAN",

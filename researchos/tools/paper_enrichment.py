@@ -456,7 +456,7 @@ def build_deep_read_queue(
         record["queue_rank"] = idx
         record["target_bucket"] = (
             "seed" if record["seed_priority"] else "target"
-            if idx <= deep_read_target
+            if idx <= deep_read_target or id(record) in protected_ids
             else "overflow"
         )
 

@@ -74,26 +74,25 @@ mkdir -p "$WORKSPACE_DIR"
 
 # 检测 Docker 是否真的支持 GPU。
 # 仅宿主机上 nvidia-smi 正常还不够；还需要 nvidia-container-toolkit
-# 把 nvidia runtime 注册给 Docker。
-GPU_FLAG=""
-RUNTIME_FLAG=""
+# 把 nvidia runtime/CDI 注册给 Docker。检测失败时自动 CPU 降级。
+GPU_FLAG=()
+RUNTIME_FLAG=()
 if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
-    if docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q 'nvidia' && [ -d /proc/driver/nvidia/gpus ] && [ -n "$(ls -A /proc/driver/nvidia/gpus 2>/dev/null)" ]; then
-        GPU_FLAG="--gpus all"
-        echo "检测到宿主机 GPU，且 Docker 已配置 nvidia runtime，将使用 --gpus all"
-    elif docker run --rm --help 2>&1 | grep -q "\-\-runtime" && command -v nvidia-container-runtime &> /dev/null; then
-        if [ -d /proc/driver/nvidia/gpus ] && [ -n "$(ls -A /proc/driver/nvidia/gpus 2>/dev/null)" ]; then
-            RUNTIME_FLAG="--runtime=nvidia"
-            GPU_FLAG="--gpus all"
-            echo "检测到宿主机 GPU，将回退使用 --runtime=nvidia --gpus all"
-        else
-            echo "检测到宿主机 GPU，但 /proc/driver/nvidia/gpus 未暴露给当前系统（常见于 LXC）；本次将以 CPU 模式启动容器"
-        fi
+    if docker run --rm --gpus all --entrypoint nvidia-smi "$IMAGE_NAME" >/tmp/researchos_gpu_probe.out 2>/tmp/researchos_gpu_probe.err; then
+        GPU_FLAG=(--gpus all)
+        echo "检测到 Docker GPU 可用，将使用 --gpus all"
     else
-        if [ ! -d /proc/driver/nvidia/gpus ] || [ -z "$(ls -A /proc/driver/nvidia/gpus 2>/dev/null)" ]; then
-            echo "检测到宿主机 GPU，但 /proc/driver/nvidia/gpus 未暴露给当前系统（常见于 LXC）；本次将以 CPU 模式启动容器"
+        gpu_probe_error="$(cat /tmp/researchos_gpu_probe.err 2>/dev/null | head -3)"
+        if command -v nvidia-container-runtime &> /dev/null && docker run --rm --runtime=nvidia --gpus all --entrypoint nvidia-smi "$IMAGE_NAME" >/tmp/researchos_gpu_probe.out 2>/tmp/researchos_gpu_probe.err; then
+            RUNTIME_FLAG=(--runtime=nvidia)
+            GPU_FLAG=(--gpus all)
+            echo "检测到 Docker GPU 可用，将使用 --runtime=nvidia --gpus all"
         else
-            echo "检测到宿主机 GPU，但 Docker 未配置 nvidia runtime；本次将以 CPU 模式启动容器"
+            echo "检测到宿主机 GPU，但 Docker GPU probe 失败，本次将以 CPU 模式启动容器"
+            if [ -n "$gpu_probe_error" ]; then
+                echo "  GPU probe error: $gpu_probe_error"
+            fi
+            echo "  请参考 docs/docker.md 注册 nvidia-container-toolkit / CDI 后再启用 GPU。"
         fi
     fi
 else
@@ -141,7 +140,7 @@ docker run --rm \
     "${DOCKER_TTY_ARGS[@]}" \
     -v "$WORKSPACE_DIR:/workspace" \
     "${DOCKER_ENV_ARGS[@]}" \
-    ${RUNTIME_FLAG} \
-    ${GPU_FLAG} \
+    "${RUNTIME_FLAG[@]}" \
+    "${GPU_FLAG[@]}" \
     "$IMAGE_NAME" \
     "$@"

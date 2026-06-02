@@ -36,11 +36,21 @@ T1
  -> T2
  -> T3
  -> T3.5
+ -> T3.6-GATE-SURVEY
+    -> no: T4
+    -> yes: T3.6-PLAN -> T3.6-GATE-OUTLINE -> T3.6-GATE-CORPUS
+            -> optional T3.6-EXPAND
+            -> T3.6-STATE
+            -> T3.6-SEC-* section-by-section
+            -> T3.6-ASSEMBLE -> T3.6-REVIEW -> T3.6-COMPILE -> T3.6-FEED -> T4
  -> T4
  -> T4.5
+    -> pass*: T7
+    -> reframe/drop/unknown: T4.5-HUMAN-REVIEW -> user chooses T7/T4/done
  -> T7
  -> T7.5
  -> human gate
+ -> T8-STYLE-GATE
  -> T8-RESOURCE
  -> T8-WRITE
  -> T8-SECTION-PLAN
@@ -49,7 +59,6 @@ T1
  -> T8-SEC-RELATED
  -> T8-SEC-ANALYSIS
  -> T8-SEC-INTRO
- -> T8-SEC-LIMITATIONS
  -> T8-SEC-CONCLUSION
  -> T8-SEC-ABSTRACT
  -> T8-DRAFT
@@ -71,8 +80,10 @@ T1
 - T4 假设生成会同时落盘 `ideation/idea_scorecard.yaml`、`ideation/rejected_ideas.md`、`ideation/gate_decisions.json` 和 `ideation/idea_rationales.json`，记录每个 idea 的证据链和决策链
 - T3 论文阅读会在每篇 `paper_notes/*.md` 中记录 `## 12. Reading Coverage`；PDF 可用时必须覆盖到最后一页，只有完整页码覆盖且最终无截断时才能标记 `[FULL-TEXT]`，分块重读覆盖全篇是合法完成方式
 - T3.5 文献综合会先通过 `build_synthesis_workbench` 从 `paper_notes/` 生成 `synthesis_workbench.json`、`synthesis_outline.md` 和 `synthesis_draft.md`，再产出 `synthesis.md`，避免完全依赖单次 prompt
+- T3.6 是可选综述论文支线：T3.5 后先问“是否撰写综述论文”，选择 yes 后按 taxonomy 规划、人工确认、逐 section 写作、拼装审阅、LaTeX 编译和导出 `survey_insights.json` 的方式执行；它不是把 `synthesis.md` 转成 TeX
 - 当前主链暂时从 `T4.5` 直接进入 `T7` 完整实验；`T5`/`T6` 保留为可单独运行的增强节点
-- T8 写作已经拆成 `T8-RESOURCE -> T8-WRITE -> T8-SECTION-PLAN -> T8-SEC-* -> T8-DRAFT -> T8-SELF-CHECK -> review/revise`，会先生成资源索引、证据计划、图表计划、`paper_state.json` 和每章局部大纲，再用一个节点只写一个 section 的方式逐章生成正文，最后拼装审计
+- T4.5 的非通过或不确定 verdict 不会自动拒绝，也不会自动回 T4，而是进入人工决策 gate；用户可以选择继续 T7、回 T4 重构或结束
+- T8 写作已经拆成 `T8-STYLE-GATE -> T8-RESOURCE -> T8-WRITE -> T8-SECTION-PLAN -> T8-SEC-* -> T8-DRAFT -> T8-SELF-CHECK -> review/revise`，会先确认 IS/CCF-A/both 风格，再生成资源索引、证据计划、图表计划、`paper_state.json` 和每章局部大纲，再用一个节点只写一个 section 的方式逐章生成正文，最后拼装审计；Limitations 已并入 Conclusion
 - CLI 人工输入现在会区分真实回答和无输入；预算扩限 gate 支持 `1/2`、`继续/停止`、`确认/stop` 等输入
 - LLM profile / tier / fallback / retry
 - human gate
@@ -296,6 +307,13 @@ python -m researchos.cli resume --workspace ./workspace/local-test2
 
 ```bash
 python -m researchos.cli run-task T3 --workspace ./workspace/local-test2
+python -m researchos.cli run-task T3.6 --workspace ./workspace/local-test2
+python -m researchos.cli run-task T3.6-GATE-SURVEY --workspace ./workspace/local-test2
+python -m researchos.cli run-task T3.6-PLAN --workspace ./workspace/local-test2
+python -m researchos.cli run-task T3.6-STATE --workspace ./workspace/local-test2
+python -m researchos.cli run-task T3.6-SEC-TAXONOMY --workspace ./workspace/local-test2
+python -m researchos.cli run-task T3.6-ASSEMBLE --workspace ./workspace/local-test2
+python -m researchos.cli run-task T3.6-COMPILE --workspace ./workspace/local-test2
 python -m researchos.cli run-task T7.5 --workspace ./workspace/local-test2
 python -m researchos.cli run-task T9 --workspace ./workspace/local-test2
 ```
@@ -313,6 +331,7 @@ python -m researchos.cli run-task T8-RESOURCE \
 - `run/resume` 用来推进完整状态机
 - `run-task` 只跑当前阶段
 - 但在同一个 workspace 上重跑 `run-task` 时，很多阶段会优先基于已有 artifact 继续
+- T3.6 的完整分支建议用 `run/resume` 跑，因为其中包含多个 `ask_human` gate；`run-task` 更适合调试单个 section、assemble 或 compile
 
 ### 场景 3：查看状态和 trace
 
@@ -429,6 +448,7 @@ ResearchOS 可以加载 MCP server 配置，并把 MCP tool 暴露给 agent。
 - T3 会基于已有且结构合格的 note 重建 pending deep-read queue；缺少 `Reading Coverage` 或 `[FULL-TEXT]` 页码不完整的旧 note 会继续留在待处理队列中
 - T3 的 pending queue/meta 会在成功、预算/步数暂停和校验修复暂停等退出路径刷新；`completed_note_count` 是结构合格 note 文件数，历史重复 stub 不会计入完成数，也不会在有效覆盖已满足时拖死整体验证
 - T3.5 会复用未过期的 `synthesis_workbench.json` / `synthesis_outline.md` / `synthesis_draft.md`，避免重跑时重复生成结构化脚手架
+- T3.6 会复用 `drafts/survey/survey_plan.json`、`survey_state.json`、`section_outlines/`、`sections/*.tex`、`survey_audit.json` 和 `survey_compile_report.json`；中断后会按 section 继续，不需要重写整个 survey
 - T4.5 已有合格 `novelty_audit.md` 和 `_mechanism_tuples/` 时会执行 resume prefinalize，跳过不必要的 LLM 续跑；`collision_cases.md` 仍只在 High/Medium Overlap 时条件要求
 - T5 / T7 会基于已有实验产物重建 resume state
 - T7.5 / T8 / T9 会优先复用现有产物，而不是假装它们不存在
@@ -482,7 +502,8 @@ ResearchOS 可以加载 MCP server 配置，并把 MCP tool 暴露给 agent。
 ## 已知限制
 
 - T4 的两轮 idea gate 目前仍主要通过 `ask_human` 和 artifact 记录完成，尚未完全拆成状态机级正式 gate。
-- T4.5 novelty 审计仍依赖 LLM 生成搜索策略，后续应进一步工具化为结构化 novelty audit。
+- T3.6 complete 素材范围当前是一次性补检计划和 LLM 审阅记录，不会自动回到 T2/T3 做无限检索；需要真正扩大语料时，应由用户确认后单独补跑检索/阅读。
+- T4.5 novelty 审计仍依赖 LLM 生成搜索策略，但非通过 verdict 已进入人工决策 gate，避免自动拒绝或死循环回退。
 - 长任务仍受 provider 稳定性、速率限制和 PDF 解析质量影响。
 - Docker / LaTeX / 本地 HTTP 测试依赖宿主环境权限；沙箱环境可能无法覆盖全部集成路径。
 

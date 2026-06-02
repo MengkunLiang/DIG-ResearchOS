@@ -856,7 +856,7 @@ fetch_outgoing_citations(openalex_id_or_doi=<OpenAlex ID 或 DOI>, max_refs=60)
 
 真正抓论文时默认调用 `openalex_search`、`crossref_search`、`arxiv_search`、`semantic_scholar_search`、`elsevier_scopus_search` 和 `informs_search`。其中 `informs_search` 是通过 Crossref DOI prefix `10.1287` 检索 INFORMS 论文元数据，适合 OR/MS、management science、supply chain、queueing、optimization 等方向，也可以作为低成本补充源默认启用；如果某个主题不在 INFORMS 强覆盖范围内，它通常只会返回 0 篇或少量噪声，T2 记录后继续。`domain_profile` 的作用是解释和过滤结果，不是决定是否完全跳过 INFORMS。
 
-每次工具返回的 `data.papers` 会被 `AgentRunner` 自动追加到 `literature/papers_raw.jsonl`，不需要模型手工复制 JSON。自动落盘工具包括常规检索工具和 `fetch_outgoing_citations`；因此引用图滚雪球解析出的 neighbor papers 也会进入 raw 池。Scout 可以在搜索工具调用中附带 `query_bucket`，例如 `core`、`baseline`、`evaluation`、`adjacent_field`、`theory_bridge`；runtime 只保存这个显式标签，不根据关键词猜学科。raw 达到阈值后，runtime 会确定性调用去重、metadata priority hint、enrich、metadata verification、引用边/domain map、access audit 和 deep-read queue 构建逻辑，依次产出 `papers_dedup.jsonl`、`papers_verified.jsonl`、`verification_failures.jsonl`、`citation_edges.json`、`domain_map.json`、`deep_read_queue.jsonl`、`access_audit.md`、`search_log.md` 和 `missing_areas.md`；最后 `ScoutAgent.validate_outputs()` 再检查数量、schema、`dedup <= raw`、queue 是否来自 verified 池、seed paper 是否进入队列，以及若 verified 池里已有 adjacent/theory/snowball 候选，queue 至少保留一个跨域/桥接候选。
+每次工具返回的 `data.papers` 会被 `AgentRunner` 自动追加到 `literature/papers_raw.jsonl`，不需要模型手工复制 JSON。自动落盘工具包括常规检索工具和 `fetch_outgoing_citations`；因此引用图滚雪球解析出的 neighbor papers 也会进入 raw 池。Scout 可以在搜索工具调用中附带 `query_bucket`，例如 `core`、`baseline`、`evaluation`、`adjacent_field`、`theory_bridge`；runtime 只保存这个显式标签，不根据关键词猜学科。raw 达到阈值后，runtime 会确定性调用去重、metadata priority hint、enrich、metadata verification、引用边/domain map、access audit 和 deep-read queue 构建逻辑，依次产出 `papers_dedup.jsonl`、`papers_verified.jsonl`、`verification_failures.jsonl`、`citation_edges.json`、`domain_map.json`、`deep_read_queue.jsonl`、`access_audit.md`、`search_log.md` 和 `missing_areas.md`；最后 `ScoutAgent.validate_outputs()` 再检查数量、schema、`dedup <= raw`、queue 是否来自 verified 池、seed paper 是否进入队列，以及若 verified 池里已有 adjacent/theory/snowball 候选，queue 至少保留一个跨域/桥接候选并放入 target/seed 阅读区，避免该类素材落到 overflow 后被 T3 跳过。
 
 ### T2 怎样保存 raw 结果
 
@@ -1908,7 +1908,7 @@ Agent 调用：
 latex_compile(tex_path="drafts/survey/survey.tex", engine="pdflatex", bibtex=true)
 ```
 
-编译成功后，把工具返回的 `data.compile_report` 原样写到 `drafts/survey/survey_compile_report.json`，并要求存在 `drafts/survey/survey.pdf` 与 `drafts/survey/survey.log`。
+`latex_compile` 会自动把编译报告落盘到 `drafts/survey/survey_compile_report.json`。Agent 不需要、也不允许手抄 `data.compile_report` 来伪造进度。validator 会同时检查 `survey.pdf`、`survey.log` 和 `survey_compile_report.json` 的 `semantics`、`tex_path` 与 `success=true`，因此“只有 PDF、没有 report”的旧产物不会通过。
 
 如果当前环境缺少 TeX/Docker，`latex_compile` 会返回 `waiting_environment_*`，runtime 会暂停；修复环境后可 resume。如果是 citation 或 LaTeX 语法错误，应读 log 后修对应 section，再重新 assemble/compile，而不是一口气重写整篇 survey。
 
@@ -1936,6 +1936,7 @@ T3.6 是 artifact-first 支线。每个 section 都是单独文件，`survey_sta
 
 ```bash
 cd ResearchOS
+researchos run-task T3.6 --workspace ./workspace/local-test2
 researchos run-task T3.6-GATE-SURVEY --workspace ./workspace/local-test2
 researchos run-task T3.6-PLAN --workspace ./workspace/local-test2
 researchos run-task T3.6-SEC-TAXONOMY --workspace ./workspace/local-test2

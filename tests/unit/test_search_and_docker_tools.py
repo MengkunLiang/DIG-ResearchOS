@@ -251,3 +251,29 @@ async def test_latex_compile_reports_pdf_path(tmp_workspace: Path, monkeypatch, 
 
     assert result.ok
     assert result.data["pdf_path"] == "drafts/paper.pdf"
+
+
+@pytest.mark.asyncio
+async def test_latex_compile_writes_survey_compile_report(tmp_workspace: Path):
+    """T3.6 survey compile should not rely on the LLM copying tool data by hand."""
+
+    survey_dir = tmp_workspace / "drafts" / "survey"
+    survey_dir.mkdir(parents=True)
+    tex_path = survey_dir / "survey.tex"
+    tex_path.write_text("\\documentclass{article}\\begin{document}Survey\\end{document}", encoding="utf-8")
+    (survey_dir / "survey.pdf").write_text("pdf", encoding="utf-8")
+    (survey_dir / "survey.log").write_text("log", encoding="utf-8")
+
+    class _FakeDockerTool:
+        policy = WorkspaceAccessPolicy(tmp_workspace, ["", "drafts/"], ["", "drafts/"])
+
+        async def execute(self, **kwargs):
+            return ToolResult(ok=True, content="compiled", data={"exit_code": 0})
+
+    tool = LatexCompileTool(_FakeDockerTool())
+    result = await tool.execute(tex_path="drafts/survey/survey.tex")
+
+    assert result.ok
+    report_path = survey_dir / "survey_compile_report.json"
+    assert report_path.exists()
+    assert '"tex_path": "drafts/survey/survey.tex"' in report_path.read_text(encoding="utf-8")
