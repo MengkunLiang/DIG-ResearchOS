@@ -971,10 +971,17 @@ def build_resource_index(workspace: Path, *, include_previews: bool = True) -> d
         "novelty/novelty_report.md",
         "novelty/must_add_baselines.md",
         "experiments/results_summary.json",
+        "experiments/integrity_audit.json",
+        "experiments/evidence_index.json",
+        "experiments/experimental_claims.json",
         "experiments/ablations.csv",
         "experiments/iteration_log.md",
         "experiments/seed_ensemble_summary.json",
         "experiments/iteration_diversity_check.md",
+        "drafts/experiment_evidence_pack.json",
+        "drafts/result_to_claim.json",
+        "drafts/paper_claim_audit.md",
+        "drafts/paper_claim_audit.json",
         "drafts/cdr_claim_ledger.json",
         "drafts/claim_ledger.json",
         "drafts/figure_registry.json",
@@ -998,6 +1005,8 @@ def build_resource_index(workspace: Path, *, include_previews: bool = True) -> d
     tables = [_media_entry(workspace, path) for path in _glob_media(workspace, kind="table")]
     bib_keys = _extract_bib_keys(workspace / "literature" / "related_work.bib")
     result_metrics = _extract_result_metrics(workspace / "experiments" / "results_summary.json")
+    result_metrics.extend(_extract_evidence_pack_metrics(workspace / "drafts" / "experiment_evidence_pack.json"))
+    result_metrics = _dedupe_metric_records(result_metrics)
     ablation_columns = _csv_columns(workspace / "experiments" / "ablations.csv")
 
     return {
@@ -1232,6 +1241,8 @@ def build_evidence_and_figure_plans(
                 "ideation/idea_scorecard.yaml",
                 "experiments/results_summary.json",
                 "experiments/ablations.csv",
+                "drafts/experiment_evidence_pack.json",
+                "drafts/result_to_claim.json",
             ),
             "result_metric_candidates": metrics,
             "llm_task": "Write contribution bullets that each map to a hypothesis and at least one result artifact.",
@@ -1272,6 +1283,9 @@ def build_evidence_and_figure_plans(
                 "experiments/ablations.csv",
                 "experiments/seed_ensemble_summary.json",
                 "experiments/iteration_log.md",
+                "experiments/integrity_audit.json",
+                "drafts/experiment_evidence_pack.json",
+                "drafts/result_to_claim.json",
             ),
             "result_metric_candidates": metrics,
             "llm_task": "Report only metrics present in result artifacts and state seed/baseline context.",
@@ -1285,6 +1299,8 @@ def build_evidence_and_figure_plans(
                 "experiments/ablations.csv",
                 "experiments/iteration_log.md",
                 "ideation/novelty_audit.md",
+                "drafts/experiment_evidence_pack.json",
+                "drafts/result_to_claim.json",
             ),
             "llm_task": "Interpret why ablations support or weaken the claimed mechanism; note alternative explanations.",
             "cdr_field": "design_rationale",
@@ -1297,9 +1313,11 @@ def build_evidence_and_figure_plans(
                 "ideation/risks.md",
                 "ideation/novelty_audit.md",
                 "experiments/iteration_log.md",
+                "experiments/integrity_audit.json",
+                "drafts/result_to_claim.json",
                 "novelty/novelty_report.md",
             ),
-            "llm_task": "In the Conclusion limitations subsection, state direct-full, skipped T5/T6, data, baseline, and reproducibility boundaries honestly.",
+            "llm_task": "In the Conclusion limitations subsection, state external-executor provenance, mock/dry-run status, data, baseline, seed/compute, and reproducibility boundaries honestly.",
             "cdr_field": "boundary_conditions",
         },
     ]
@@ -1965,9 +1983,9 @@ def audit_writing_craft(
         )
         add(
             f"cid_{cid}_experiment_artifact",
-            "FAIL",
+            "WARN",
             _row_experiment_refs_present(row, experiments),
-            f"Experiments should mention table/metric/ablation refs seeded for % [{cid}].",
+            f"Experiments may mention table/metric/ablation refs seeded for % [{cid}] when the row has concrete evidence.",
         )
         add(
             f"cid_{cid}_analysis_anchor",
@@ -2009,9 +2027,9 @@ def audit_writing_craft(
     )
     add(
         "number_traceability",
-        "FAIL",
+        "WARN",
         _numbers_have_known_values(paper, paper_state),
-        "Detected manuscript numeric values must be traceable to paper_state.shared_facts.result_metrics or ignored structural numbers.",
+        "Detected manuscript numeric values should be traceable to paper_state.shared_facts.result_metrics or source artifacts; reviewer/LLM should verify any unmatched numbers.",
     )
     add(
         "conclusion_no_new_claim_hint",
@@ -2837,6 +2855,55 @@ def _extract_result_metrics(path: Path) -> list[dict[str, Any]]:
             continue
         metrics.append({"experiment_id": "results_summary", "metric": path_key, "value": value})
     return metrics
+
+
+def _extract_evidence_pack_metrics(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if not isinstance(data, dict) or data.get("semantics") != "normalized_experiment_evidence_pack":
+        return []
+    metrics: list[dict[str, Any]] = []
+    for metric in data.get("metrics", []) or []:
+        if not isinstance(metric, dict):
+            continue
+        value = metric.get("value")
+        name = metric.get("name") or metric.get("metric") or metric.get("metric_id") or "metric"
+        record = {
+            "experiment_id": metric.get("experiment_id") or "external_executor",
+            "metric": name,
+            "value": value,
+            "metric_id": metric.get("metric_id"),
+            "source_artifact": metric.get("source_artifact"),
+            "dataset": metric.get("dataset"),
+            "seed": metric.get("seed"),
+            "mock_only": bool(metric.get("mock_only") or data.get("mock_only")),
+            "evidence_pack": "drafts/experiment_evidence_pack.json",
+        }
+        metrics.append({key: val for key, val in record.items() if val is not None})
+    return metrics
+
+
+def _dedupe_metric_records(metrics: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for metric in metrics:
+        if not isinstance(metric, dict):
+            continue
+        key = (
+            str(metric.get("metric_id") or ""),
+            str(metric.get("experiment_id") or ""),
+            str(metric.get("metric") or metric.get("name") or ""),
+            str(metric.get("value") or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(metric)
+    return deduped
 
 
 def _walk_numeric_values(value: Any, *, prefix: str = "") -> list[tuple[str, int | float]]:

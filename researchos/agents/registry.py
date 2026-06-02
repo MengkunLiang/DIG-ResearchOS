@@ -69,8 +69,13 @@ TASK_TO_AGENT_MAP = {
     "T3.6-FEED": SurveyWriterAgent,
     "T4": IdeationAgent,  # 假设生成
     "T4.5": NoveltyAuditorAgent,  # 新颖性审计
+    "T5-HANDOFF": ExperimenterAgent,  # 外部实验 handoff
+    "T5-DRY-RUN": ExperimenterAgent,  # 外部实验 dry-run
     "T5": ExperimenterAgent,  # Pilot实验
     "T6": NoveltyAgent,  # 新颖性验证
+    "T7-INGEST": ExperimenterAgent,  # 外部结果摄取
+    "T7-AUDIT": ExperimenterAgent,  # 实验诚信审计
+    "T7-CLAIMS": ExperimenterAgent,  # result-to-claim
     "T7": ExperimenterAgent,  # 完整实验
     "T8-STYLE-GATE": WriterAgent,  # 写作风格确认
     "T8-RESOURCE": WriterAgent,  # 写作资源索引

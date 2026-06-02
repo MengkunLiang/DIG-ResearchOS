@@ -129,9 +129,12 @@ seed_ensemble:
 
 ## 工作流程
 
-### Step 1: 读取实验结果
+### Step 1: 读取外部执行器摄取后的实验结果
 - `experiments/results_summary.json`
 - `experiments/iteration_log.md`
+- `experiments/integrity_audit.json`
+- `drafts/result_to_claim.json`
+- `drafts/experiment_evidence_pack.json`
 - `ideation/exp_plan.yaml`
 
 ### Step 2: 判断 Situation
@@ -139,7 +142,7 @@ seed_ensemble:
 | Situation | 条件 | 建议 |
 |-----------|------|------|
 | A | 核心指标达标率 >80% | 推进 T8 写作 |
-| B | 核心指标达标率 50-80% | 可选继续 T7 优化，或直接 T8 |
+| B | 核心指标达标率 50-80% | 可选回到外部实验链补实验，或直接 T8 |
 | C | 有意外发现 | 可能回 T4 重构假设 |
 | D | 全部未达标 | 回 T4 换方向，或终止 |
 
@@ -153,9 +156,11 @@ seed_ensemble:
 
 `next_task` 必须使用当前状态机里的真实节点名，例如：
 - 推进写作：`T8-RESOURCE`
-- 回到完整实验：`T7`
+- 回到外部实验链补实验：`T5-HANDOFF`
 - 回到假设生成：`T4`
 - 结束项目：`done`
+
+不要推荐 legacy `T5` / `T6` / `T7`，除非用户明确要求单独运行旧内部实验兼容节点。
 
 ### Step 4: 调用 finish_task
 

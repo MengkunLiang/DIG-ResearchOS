@@ -28,7 +28,7 @@ Write the paper as a staged research argument, not as one long generation. Tools
 - Methodology: describe the proposed mechanism, algorithm/protocol, implementation choices, and how it differs from baselines.
 - Experiments: datasets/settings, baselines, metrics, main results, ablations, seed ensemble, compute budget, and quality controls.
 - Analysis: connect ablations and failures back to hypotheses and alternative explanations.
-- Conclusion limitations subsection: direct-full evidence boundaries, skipped pilot/novelty-final risks if applicable, external validity, cost, and failure cases.
+- Conclusion limitations subsection: external-executor evidence boundaries, mock/dry-run status, result-to-claim limitations, external validity, cost, and failure cases.
 - Abstract and Conclusion: write after main sections; no new claims. Abstract should not contain formal citations.
 
 ## Section Depth
@@ -45,14 +45,14 @@ Avoid hard word-count floors. If evidence is missing, write TODO/limitation. If 
 
 ## Evidence Rules
 
-- Numbers must come from `experiments/results_summary.json`, `experiments/ablations.csv`, or indexed run artifacts.
+- Numbers must come from `drafts/experiment_evidence_pack.json`, `drafts/result_to_claim.json`, `experiments/results_summary.json`, `experiments/ablations.csv`, or indexed run artifacts.
 - Figures must come from existing generated assets or be explicitly marked as TODO with a generation plan.
 - Claims about prior work must cite `literature/related_work.bib` keys and be traceable to `literature/synthesis.md` or paper notes.
-- If T5/T6 were skipped, state the evidence boundary in Conclusion's Limitations subsection and avoid claiming pilot-validated novelty-final evidence.
+- If evidence is external, weak, mock-only, or not fully audited, state the boundary in Conclusion's Limitations subsection and avoid claiming unsupported empirical validation.
 - Abstract should not contain formal citations: no LaTeX citation commands, no author-year parenthetical citations, and no numeric citation brackets. Refer to method families or problem classes in the Abstract, then put concrete prior-work citations in Introduction or Related Work.
 
 ## Tool Boundary
 
-- Use `build_manuscript_resource_index`, `plan_manuscript_sections`, `plan_manuscript_evidence`, `build_alignment_matrix`, `assemble_manuscript`, `audit_manuscript_claims`, and `audit_writing_craft` for mechanical workflow.
+- Use `build_manuscript_resource_index`, `plan_manuscript_sections`, `plan_manuscript_evidence`, `build_alignment_matrix`, `assemble_manuscript`, `audit_manuscript_claims`, `audit_writing_craft`, and `audit_paper_claims` for mechanical workflow.
 - Do not let tools invent claims, choose final framing, or write the final argument.
 - If a tool audit flags a number/citation/figure, fix the source or mark the limitation; do not hide the issue.

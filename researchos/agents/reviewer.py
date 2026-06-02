@@ -68,6 +68,9 @@ class ReviewerAgent(Agent):
         related_work = read_text_file(ws / "literature" / "related_work.bib", default="")
         manuscript_audit = read_text_file(ws / "drafts" / "manuscript_audit.md", default="")
         craft_audit = read_text_file(ws / "drafts" / "craft_audit.md", default="")
+        paper_claim_audit = read_text_file(ws / "drafts" / "paper_claim_audit.md", default="")
+        result_to_claim = read_text_file(ws / "drafts" / "result_to_claim.json", default="")
+        experiment_evidence_pack = read_text_file(ws / "drafts" / "experiment_evidence_pack.json", default="")
         self_check = read_text_file(ws / "drafts" / "self_check.md", default="")
         cdr_claim_ledger = read_text_file(ws / "drafts" / "cdr_claim_ledger.json", default="")
         alignment_matrix = read_text_file(ws / "drafts" / "alignment_matrix.json", default="")
@@ -90,6 +93,9 @@ class ReviewerAgent(Agent):
             related_work_bib=related_work[:3000],
             manuscript_audit_preview=manuscript_audit[:3000],
             craft_audit_preview=craft_audit[:3000],
+            paper_claim_audit_preview=paper_claim_audit[:3000],
+            result_to_claim_preview=result_to_claim[:4000],
+            experiment_evidence_pack_preview=experiment_evidence_pack[:4000],
             self_check_preview=self_check[:3000],
             cdr_claim_ledger_preview=cdr_claim_ledger[:5000],
             alignment_matrix_preview=alignment_matrix[:5000],
@@ -107,6 +113,7 @@ class ReviewerAgent(Agent):
             (
             f"请执行 T8 Reviewer 第{round_num}轮审稿。\n\n"
             "读取 drafts/paper.tex、drafts/manuscript_audit.md、drafts/craft_audit.md、"
+            "drafts/paper_claim_audit.md、drafts/result_to_claim.json、"
             "drafts/alignment_matrix.json、drafts/self_check.md"
             f"{'、drafts/review_rounds/round_' + str(round_num - 1) + '.md' if round_num > 1 else ''}，"
             f"先逐章生成 drafts/review_rounds/round_{round_num}_sections/*.md，"

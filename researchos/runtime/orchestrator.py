@@ -17,7 +17,12 @@ from .config import RuntimeSettings
 from .errors import BudgetExceeded, LLMProviderError, RecoverableRuntimePause, ToolAccessDenied, ToolError
 from .llm_client import LLMClient, ModelBinding
 from .logger import get_logger
-from .manuscript_recovery import can_repair_t8_section_plan, repair_t8_section_plan_outputs
+from .manuscript_recovery import (
+    can_refresh_t8_manuscript_outputs,
+    can_repair_t8_section_plan,
+    refresh_t8_manuscript_outputs,
+    repair_t8_section_plan_outputs,
+)
 from .message import Message, Role, ToolCall, is_empty_assistant
 from .t2_recovery import finalize_t2_outputs
 from .abstract_sweep import run_abstract_sweep
@@ -133,6 +138,38 @@ class AgentRunner:
             allowed_write_prefixes=eff.allowed_write_prefixes,
         )
 
+    @staticmethod
+    def _is_timeout_provider_error(exc: LLMProviderError) -> bool:
+        text = str(exc).lower()
+        if not text:
+            return False
+        timeout_markers = (
+            "timeouterror",
+            "timeout error",
+            "timed out",
+            "timeout",
+            "readtimeout",
+            "connecttimeout",
+            "超时",
+        )
+        fatal_markers = (
+            "authentication",
+            "permissiondenied",
+            "permission denied",
+            "invalid_api_key",
+            "invalid api key",
+            "unauthorized",
+            "rate limit",
+            "ratelimit",
+            "context_length",
+            "context window",
+            "badrequest",
+            "bad request",
+        )
+        return any(marker in text for marker in timeout_markers) and not any(
+            marker in text for marker in fatal_markers
+        )
+
     async def run(self, ctx: ExecutionContext) -> AgentResult:
         """执行一次完整 agent run。"""
         started = time.time()
@@ -197,6 +234,7 @@ class AgentRunner:
         validation_retry_limit = int(self.agent.spec.max_validation_retries)
         budget_extensions_used = 0
         validation_extensions_used = 0
+        llm_timeout_cooldowns_used = 0
         tool_failure_cache: dict[tuple[str, str], Message] = {}
 
         try:
@@ -224,12 +262,22 @@ class AgentRunner:
                     ctx,
                     policy,
                 )
+            t8_manuscript_pre_finalized = False
+            if not (
+                t2_pre_finalized
+                or t3_pre_finalized
+                or t4_pre_finalized
+                or t45_pre_finalized
+                or t8_section_plan_pre_finalized
+            ):
+                t8_manuscript_pre_finalized = await self._maybe_finalize_t8_manuscript_before_llm(ctx)
             deterministic_pre_finalized = (
                 t2_pre_finalized
                 or t3_pre_finalized
                 or t4_pre_finalized
                 or t45_pre_finalized
                 or t8_section_plan_pre_finalized
+                or t8_manuscript_pre_finalized
             )
             if deterministic_pre_finalized:
                 stop_reason = AgentResult.STOP_FINISHED
@@ -277,6 +325,24 @@ class AgentRunner:
                         retry_base_delay=float(self.retry_policy.get("llm_retry_delay") or 2),
                     )
                 except LLMProviderError as exc:
+                    if self._is_timeout_provider_error(exc):
+                        cooldown_raw = self.retry_policy.get("llm_timeout_cooldown_seconds")
+                        cooldown = 60.0 if cooldown_raw is None else float(cooldown_raw)
+                        pause_after = int(self.retry_policy.get("llm_timeout_pause_after_cooldowns") or 0)
+                        llm_timeout_cooldowns_used += 1
+                        if pause_after > 0 and llm_timeout_cooldowns_used > pause_after:
+                            raise RecoverableRuntimePause(
+                                "LLM provider 连续超时，已暂停等待人工处理或稍后 resume；"
+                                f"最近错误: {exc}"
+                            ) from exc
+                        print(
+                            "[Agent] LLM provider 连续超时，"
+                            f"冷却 {cooldown:g}s 后继续尝试（第 {llm_timeout_cooldowns_used} 轮）",
+                            flush=True,
+                        )
+                        if cooldown > 0:
+                            await asyncio.sleep(cooldown)
+                        continue
                     stop_reason = AgentResult.STOP_ERROR
                     error_msg = f"LLM failed: {exc}"
                     break
@@ -532,10 +598,15 @@ class AgentRunner:
             "T3.5": "基于 notes 分阶段合成 literature synthesis",
             "T4": "生成候选研究假设、实验计划和风险分析",
             "T4.5": "做新颖性预审和 mechanism tuple 审计",
-            "T5": "执行 pilot 实验和 smoke test",
-            "T6": "基于 pilot 结果复核新颖性和必补 baseline",
-            "T7": "执行完整实验、ablation 和多 seed 汇总",
-            "T7.5": "评估实验证据是否足够进入写作",
+            "T5-HANDOFF": "编译外部实验协议、执行器选择和 handoff prompt",
+            "T5-DRY-RUN": "跑通 mock 外部执行器文件协议，不执行真实实验",
+            "T7-INGEST": "摄取外部 result pack 并规范化结果证据",
+            "T7-AUDIT": "审计实验 provenance、hash、mock 标记和指标来源",
+            "T7-CLAIMS": "生成 result-to-claim 和写作 evidence pack",
+            "T5": "legacy pilot 实验兼容节点",
+            "T6": "legacy pilot 后新颖性复核兼容节点",
+            "T7": "legacy 内部完整实验兼容节点",
+            "T7.5": "评估外部实验证据是否足够进入写作",
             "T8-RESOURCE": "构建写作资源索引、证据计划和图表计划",
             "T8-WRITE": "生成资源驱动的论文总大纲",
             "T8-SECTION-PLAN": "初始化 paper_state 和每章局部大纲",
@@ -876,6 +947,50 @@ class AgentRunner:
                 ],
             },
             action_type="t8_section_plan_prefinalize",
+        )
+        return True
+
+    async def _maybe_finalize_t8_manuscript_before_llm(self, ctx: ExecutionContext) -> bool:
+        """Refresh T8 assembled manuscript/audits before spending another LLM run.
+
+        T8-DRAFT and T8-REVISE are artifact-first boundaries. If section files,
+        patch lists, revision responses, and audits are already present, resume
+        should first rebuild deterministic outputs from section files and then
+        validate. This prevents stale craft audits from sending Writer into
+        repeated section rewrites for old or soft checks.
+        """
+
+        if ctx.task_id not in {"T8-DRAFT", "T8-REVISE-1", "T8-REVISE-2"}:
+            return False
+        if ctx.mode not in {None, "draft", "revise"} and ctx.extra.get("phase") not in {"draft", "revise"}:
+            return False
+        if not can_refresh_t8_manuscript_outputs(ctx.workspace_dir):
+            return False
+
+        print("[Agent] T8 检测到已有章节草稿，先确定性重拼 manuscript 并刷新审计...", flush=True)
+        ok, err = await refresh_t8_manuscript_outputs(ctx.workspace_dir)
+        if not ok:
+            self.log.info("t8_manuscript_prefinalize_refresh_failed", reason=err)
+            return False
+
+        ok, err = self.agent.validate_outputs(ctx)
+        if not ok:
+            self.log.info("t8_manuscript_prefinalize_validation_skipped", reason=err)
+            return False
+
+        print("[Agent] T8 manuscript 产物已合格，跳过重复 LLM 续跑", flush=True)
+        self._record_runtime_completion(
+            ctx,
+            "t8_manuscript_prefinalize",
+            {
+                "outputs": [
+                    "drafts/paper.tex",
+                    "drafts/manuscript_audit.md",
+                    "drafts/craft_audit.md",
+                    "drafts/craft_audit.json",
+                ],
+            },
+            action_type="t8_manuscript_prefinalize",
         )
         return True
 

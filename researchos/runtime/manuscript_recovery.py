@@ -10,7 +10,12 @@ import yaml
 
 from ..agents.writer import WriterAgent
 from ..runtime.agent import ExecutionContext
-from ..tools.manuscript import InitializeManuscriptStateTool
+from ..tools.manuscript import (
+    AssembleManuscriptTool,
+    AuditManuscriptClaimsTool,
+    AuditWritingCraftTool,
+    InitializeManuscriptStateTool,
+)
 from ..tools.workspace_policy import WorkspaceAccessPolicy
 
 
@@ -98,6 +103,103 @@ def _load_target_venue(workspace_dir: Path) -> str:
     if not isinstance(data, dict):
         return ""
     return str(data.get("target_venue") or "")
+
+
+def _load_venue_style(workspace_dir: Path) -> str:
+    style_path = workspace_dir / "drafts" / "writing_style.json"
+    if not style_path.exists():
+        return "auto"
+    try:
+        data = json.loads(style_path.read_text(encoding="utf-8"))
+    except Exception:
+        return "auto"
+    if not isinstance(data, dict):
+        return "auto"
+    style = str(data.get("venue_style") or "auto").strip()
+    return style if style in {"is", "ccf_a", "both", "auto"} else "auto"
+
+
+def can_refresh_t8_manuscript_outputs(workspace_dir: Path) -> bool:
+    """Return true when section drafts exist and manuscript audits can be refreshed."""
+
+    sections_dir = workspace_dir / "drafts" / "sections"
+    if not sections_dir.exists():
+        return False
+    required = [
+        "abstract",
+        "introduction",
+        "related_work",
+        "methodology",
+        "experiments",
+        "conclusion",
+    ]
+    for section_id in required:
+        if not any((sections_dir / f"{section_id}{suffix}").exists() for suffix in (".tex", ".md")):
+            return False
+    return True
+
+
+async def refresh_t8_manuscript_outputs(
+    workspace_dir: Path,
+    *,
+    target_venue: str | None = None,
+    venue_style: str | None = None,
+    refresh_style_variant_audits: bool = True,
+) -> tuple[bool, str | None]:
+    """Reassemble paper.tex and refresh mechanical audits from section files.
+
+    This is a deterministic recovery boundary for T8-DRAFT/T8-REVISE resume.
+    It does not rewrite section prose, review responses, or patch lists. If
+    `venue_style=both`, the main paper is assembled without overwriting existing
+    style-variant manuscripts; variant craft audits are refreshed only when the
+    variant files already exist.
+    """
+
+    workspace_dir = workspace_dir.resolve()
+    if not can_refresh_t8_manuscript_outputs(workspace_dir):
+        return False, "缺少 drafts/sections 下的核心章节，无法刷新 T8 manuscript 输出"
+
+    style = venue_style or _load_venue_style(workspace_dir) or "auto"
+    venue = target_venue if target_venue is not None else _load_target_venue(workspace_dir)
+    assembly_style = "auto" if style == "both" else style
+    policy = WorkspaceAccessPolicy(
+        workspace_dir=workspace_dir,
+        allowed_read_prefixes=["", "drafts/", "literature/", "experiments/", "ideation/"],
+        allowed_write_prefixes=["drafts/"],
+    )
+
+    assembled = await AssembleManuscriptTool(policy).execute(
+        section_dir="drafts/sections",
+        output_path="drafts/paper.tex",
+        outline_path="drafts/outline.md",
+        target_venue=str(venue or ""),
+        venue_style=assembly_style,
+    )
+    if not assembled.ok:
+        return False, assembled.content or assembled.error or "T8 manuscript 拼装失败"
+
+    claim_audit = await AuditManuscriptClaimsTool(policy).execute(
+        paper_path="drafts/paper.tex",
+        output_path="drafts/manuscript_audit.md",
+        resource_index_path="drafts/manuscript_resource_index.json",
+    )
+    if not claim_audit.ok:
+        return False, claim_audit.content or claim_audit.error or "T8 claim audit 刷新失败"
+
+    craft_audit = await AuditWritingCraftTool(policy).execute(
+        paper_path="drafts/paper.tex",
+        sections_dir="drafts/sections",
+        paper_state_path="drafts/paper_state.json",
+        alignment_matrix_path="drafts/alignment_matrix.json",
+        cdr_claim_ledger_path="drafts/cdr_claim_ledger.json",
+        venue_style=style,
+        output_path="drafts/craft_audit.md",
+        also_audit_style_variants=bool(style == "both" and refresh_style_variant_audits),
+    )
+    if not craft_audit.ok:
+        return False, craft_audit.content or craft_audit.error or "T8 craft audit 刷新失败"
+
+    return True, None
 
 
 def paper_state_semantics(workspace_dir: Path) -> str:

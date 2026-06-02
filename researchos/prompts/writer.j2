@@ -22,12 +22,13 @@
 ## 通用硬规则
 
 1. 工具负责资源索引、章节任务、拼装和机械审计；你负责学术判断、章节论证、技术表述和取舍。
-2. 所有实验数字必须来自 `experiments/results_summary.json`、`experiments/ablations.csv` 或 indexed run artifacts；不确定就写 TODO/limitation，不编造。
+2. 所有实验数字必须来自 `paper_state.shared_facts.result_metrics`、`drafts/experiment_evidence_pack.json`、`drafts/result_to_claim.json`、`experiments/results_summary.json`、`experiments/ablations.csv` 或 indexed run artifacts；不确定就写 TODO/limitation，不编造。
 3. 所有引用必须对应 `literature/related_work.bib` 中真实 BibTeX key。
 4. 写作必须显式利用已有资源：`synthesis.md`、`comparison_table.csv`、paper notes、hypotheses、idea_scorecard、novelty audit、实验结果、ablation、run logs、figures/tables/code artifacts。
-5. 如果 T5/T6 被跳过，Experiments 与 Conclusion 的 `\subsection{Limitations}` 必须说明 direct-full evidence boundary，不允许伪装成 pilot/T6 已完成。
+5. Experiments 与 Conclusion 的 `\subsection{Limitations}` 必须说明外部执行器证据边界；`mock_only` / `unsupported_mock_only` 只能写成协议 dry-run 或限制，不能伪装成真实实验证据。
 6. 每个章节必须作为独立 run 成稿，再拼装融合；不要在任何单章阶段直接写整篇 `paper.tex`。
 7. `drafts/alignment_matrix.json` 是跨章节对齐契约的 seed/hint，不是最终科学判断；你必须用 LLM 阅读证据后补全 motivation、related_gap、counterfactual、nearest_prior_work、novelty_signal、design_choice、experiment、analysis。若某段明确兑现 contribution，可用 `% [Cn]` 做 traceability hint，但不要把注释当成论文格式硬要求。
+8. 如果存在 `drafts/experiment_evidence_pack.json`，实验 claim 必须先经过 `drafts/result_to_claim.json` 的 support_status/allowed_wording 约束；mock_only 或 unsupported_mock_only 只能写成协议 dry-run/限制，不能写成实证结果。
 
 ## 项目信息
 
@@ -81,6 +82,7 @@ project:
    - literature / paper notes / bibliography
    - hypotheses / exp_plan / idea_scorecard / novelty audit
    - results_summary / ablations / seed ensemble / run artifacts
+   - experiment_evidence_pack / result_to_claim / integrity audit
    - figures / tables / code / logs
    - evidence claim slots / figure-table slots
    - CDR claim ledger / generic claim ledger / figure registry / alignment matrix
@@ -140,6 +142,16 @@ project:
 #### 实验结果
 ```json
 {{ results_summary }}
+```
+
+#### Experiment Evidence Pack
+```json
+{{ experiment_evidence_pack_preview }}
+```
+
+#### Result To Claim
+```json
+{{ result_to_claim_preview }}
 ```
 
 ### 输出
@@ -307,10 +319,10 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 - 约束：不使用实验结果证明方法有效；每个 design_choice 有 `% [Cn]` 段落；`ccf_a` 紧凑，`is` 可展开 design principles 与理论联系。
 - Failure checklist：无 architecture 概览、只讲 how 不讲 why、notation 散落、符号复用冲突，都必须修。
 {% elif section_id == "experiments" %}
-- Required Inputs：`paper_state.json`、`section_outlines/experiments.md`、`alignment_matrix.json` 的 experiment 列、`results_summary.json`、`ablations.csv`、runs/configs、seed ensemble、`exp_plan.yaml`、`figure_table_plan.json`、T6 baseline 要求。
+- Required Inputs：`paper_state.json`、`section_outlines/experiments.md`、`alignment_matrix.json` 的 experiment 列、`experiment_evidence_pack.json`、`result_to_claim.json`、`integrity_audit.json`、`results_summary.json`、`ablations.csv`、runs/configs、seed ensemble、`exp_plan.yaml`、`figure_table_plan.json`、baseline 要求。
 - 使命：把 data_view/evaluation_mode 变成可复核证据，逐条回答 intro claim。
 - 段落范式：RQ 前置且每个 RQ 标 cid；setup 写 datasets/splits/baselines/metrics/seeds/compute；main results 先 takeaway 再表；ablation 覆盖 method design choices。
-- 约束：所有数字逐一对照 artifacts；缺 seed/error bar/baseline 时写 TODO 或转 Conclusion Limitations；若 direct-full 跳过 T5/T6，setup 必须说明 evidence boundary。
+- 约束：所有数字逐一对照 artifacts；缺 seed/error bar/baseline 时写 TODO 或转 Conclusion Limitations；setup 必须说明外部执行器、result pack、raw/config/log/hash 和 integrity audit 边界。
 - Failure checklist：直接从 dataset 开头、表无 takeaway、ablation 与 method 对不上、数字来源不明，都必须修。
 {% elif section_id == "related_work" %}
 - Required Inputs：`paper_state.json`、`section_outlines/related_work.md`、`alignment_matrix.json` 的 related_gap / nearest_prior_work / counterfactual / novelty_signal、`synthesis.md`、`synthesis_workbench.json` 的 adjacent_transfers、`domain_map.json` 的 core/adjacent/citation_edges、`comparison_table.csv`、paper notes、`related_work.bib`。
@@ -322,7 +334,7 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 - Required Inputs：`paper_state.json`、`section_outlines/analysis.md`、`alignment_matrix.json` 的 analysis 列、已写 Method/Experiments、`ablations.csv`、`iteration_log.md`、`novelty_audit.md`。
 - 使命：判断证据支持、削弱还是仅部分支持 design rationale，把“调参涨点”和“真贡献”区分开。
 - 段落范式：每条 cid 一段机制解读；至少一个 alternative explanation 并用证据排除；failure case；sensitivity。
-- 约束：每个解释必须指回 artifact；不能把未做的 T5/T6 或额外实验写成已完成。
+- 约束：每个解释必须指回 artifact；不能把 mock dry-run、未审计外部结果或额外计划实验写成已完成。
 - Failure checklist：只复述数字、不考虑替代解释、failure case 装饰化，都必须修。
 {% elif section_id == "introduction" %}
 - Required Inputs：`paper_state.json`、`section_outlines/introduction.md`、`alignment_matrix.json` 的 motivation/contribution、CDR ledger、synthesis、hypotheses、results、已写 Method/Experiments/Related。
@@ -331,9 +343,9 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 - 约束：gap 与 contribution 应逻辑对应，不要求机械一一等数；贡献动词开头、可验证、强度匹配 contribution_type；`ccf_a` 有量化 headline，`is` 有 theory/reference anchor。
 - Failure checklist：背景过长、贡献散文、overclaim、缺 cid、把 planned/跳过实验写成已发生，都必须修。
 {% elif section_id == "conclusion" %}
-- Required Inputs：`paper_state.json`、`section_outlines/conclusion.md`、`alignment_matrix.json`、Introduction、Experiments、`risks.md`、`novelty_audit.md`、`results_summary.json`、`iteration_log.md`。
+- Required Inputs：`paper_state.json`、`section_outlines/conclusion.md`、`alignment_matrix.json`、Introduction、Experiments、`risks.md`、`novelty_audit.md`、`experiment_evidence_pack.json`、`result_to_claim.json`、`results_summary.json`、`iteration_log.md`。
 - 使命：收束 problem -> method -> evidence -> contribution，给出可迁移 design knowledge，并诚实陈述限制。
-- 段落范式：先收束本文证明了什么；再写 `\subsection{Limitations}` 覆盖 boundary/direct-full/T5/T6/baseline/data/compute/seed/reproducibility；最后 design knowledge + future work。
+- 段落范式：先收束本文证明了什么；再写 `\subsection{Limitations}` 覆盖 external-executor boundary、mock/dry-run、baseline/data/compute/seed/reproducibility；最后 design knowledge + future work。
 - 约束：不引入新 claim、新数字、新引用；每条 limitation 尽量配 future direction。
 - Failure checklist：复制 abstract、假谦虚、不触及效度威胁、引入正文未出现的新主张，都必须修。
 {% elif section_id == "abstract" %}
@@ -364,13 +376,14 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
    如必须改正文，先改对应 `drafts/sections/<section>.tex`，再重新调用 `assemble_manuscript`。不要直接重写整篇 `paper.tex`。
 3. 调用 `audit_manuscript_claims(paper_path="drafts/paper.tex", output_path="drafts/manuscript_audit.md")`。
 4. 调用 `audit_writing_craft(paper_path="drafts/paper.tex", sections_dir="drafts/sections", paper_state_path="drafts/paper_state.json", alignment_matrix_path="drafts/alignment_matrix.json", venue_style="{{ venue_style }}", output_path="drafts/craft_audit.md")`。如果 `venue_style=both`，该工具还会为 `drafts/is/paper.tex` 与 `drafts/ccf_a/paper.tex` 生成对应 craft audit。
-5. 如果 `venue_style=both`，你必须在 tool 派生的两个入口稿基础上做 LLM 风格化改写：
+5. 如果 `drafts/experiment_evidence_pack.json` 存在，调用 `audit_paper_claims(paper_path="drafts/paper.tex", evidence_pack_path="drafts/experiment_evidence_pack.json", result_to_claim_path="drafts/result_to_claim.json", output_path="drafts/paper_claim_audit.md")`。
+6. 如果 `venue_style=both`，你必须在 tool 派生的两个入口稿基础上做 LLM 风格化改写：
    - `drafts/is/paper.tex`：强化 theoretical positioning、design knowledge、长 introduction 和效度论证。
    - `drafts/ccf_a/paper.tex`：强化紧凑 problem framing、量化 headline、可复现实验和 ablation 呈现。
    - 两套稿件共享同一 alignment matrix、数字和 citation，不允许改动事实骨架。
    - 分别写 `drafts/is/style_revision_notes.md` 与 `drafts/ccf_a/style_revision_notes.md`，说明哪些章节被改写、为什么符合该风格、哪些事实保持不变。
    - 改写后重新调用 `audit_writing_craft(..., venue_style="both")` 刷新主稿和两套变体审计。
-6. 如果 audit 发现 missing citation、可疑数字、缺图/缺表、alignment 断裂或 craft FAIL：
+7. 如果 audit 发现 missing citation、可疑数字、缺图/缺表、alignment 断裂、paper-claim unsupported 或 craft FAIL：
    - 能修就修
    - 不能修则在 manuscript_audit 或 Conclusion 的 Limitations 子段中明确 TODO/限制
 
@@ -386,7 +399,7 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 {% elif phase == "self_check" %}
 ## Phase 4: 作者自查
 
-读取 `drafts/paper.tex`、`drafts/manuscript_audit.md`、`drafts/craft_audit.md`、`drafts/alignment_matrix.json`、`experiments/results_summary.json`、`literature/related_work.bib`，写 `drafts/self_check.md`。
+读取 `drafts/paper.tex`、`drafts/manuscript_audit.md`、`drafts/craft_audit.md`、`drafts/paper_claim_audit.md`、`drafts/result_to_claim.json`、`drafts/alignment_matrix.json`、`experiments/results_summary.json`、`literature/related_work.bib`，写 `drafts/self_check.md`。
 
 自查必须包含：
 
@@ -395,9 +408,10 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 3. Citation audit：列出核心 related work claims 和 BibTeX key。
 4. Figure/table audit：列出已用与待生成图表。
 5. Reproducibility audit：代码、配置、seed、compute 是否可追溯。
-6. Direct-full/T5/T6 boundary：如果跳过 T5/T6，是否已经在文中诚实说明。
+6. External-executor evidence boundary：是否已经诚实说明 result pack、integrity audit、mock/dry-run、baseline/seed/compute 和复现边界。
 7. Writing craft / alignment：把 craft_audit 的 FAIL 全部列为 High TODO，WARN 列为 Medium TODO；逐条说明是否已在正文处理。
-8. Revision TODO：按 High/Medium/Low 排序。
+8. Paper claim audit：列出 paper_claim_audit 的 FAIL/WARN，尤其是 unsupported number、mock_only evidence、stronger-than-evidence wording。
+9. Revision TODO：按 High/Medium/Low 排序。
 
 {% elif phase == "revise" %}
 ## Phase 5: 审稿后修订
@@ -416,6 +430,9 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 ### 当前写作范式审计
 {{ craft_audit_preview[:2500] }}
 
+### 当前 Paper Claim Audit
+{{ paper_claim_audit_preview[:2500] }}
+
 ### 执行要求
 
 1. 先调用：
@@ -426,7 +443,7 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 4. 对 global patch，优先拆成多个章节修改；只有无法定位时才做最小范围全文检查。
 5. 每改完一个 section，调用：
    `update_manuscript_section_state(section_id="<section>", status="revised")`
-6. 所有修订完成后，调用 `assemble_manuscript(section_dir="drafts/sections", output_path="drafts/paper.tex", outline_path="drafts/outline.md", target_venue="{{ target_venue }}", venue_style="{{ venue_style }}")` 重新生成 `drafts/paper.tex`，再调用 `audit_manuscript_claims` 更新 `drafts/manuscript_audit.md`，并调用 `audit_writing_craft(..., venue_style="{{ venue_style }}")` 更新 `drafts/craft_audit.md`。
+6. 所有修订完成后，调用 `assemble_manuscript(section_dir="drafts/sections", output_path="drafts/paper.tex", outline_path="drafts/outline.md", target_venue="{{ target_venue }}", venue_style="{{ venue_style }}")` 重新生成 `drafts/paper.tex`，再调用 `audit_manuscript_claims` 更新 `drafts/manuscript_audit.md`，调用 `audit_writing_craft(..., venue_style="{{ venue_style }}")` 更新 `drafts/craft_audit.md`；如果 `drafts/experiment_evidence_pack.json` 存在，再调用 `audit_paper_claims` 更新 `drafts/paper_claim_audit.md/json`。
 7. 如果 `venue_style=both`，重新检查并必要时改写 `drafts/is/paper.tex` 与 `drafts/ccf_a/paper.tex`，刷新各自 `style_revision_notes.md`；不能只让两个变体等于主稿加注释。
 8. 写 `drafts/revision_response_round_{{ round_num }}.md`，逐条记录 resolved / unresolved / deferred。不要只写“已修订”。
 

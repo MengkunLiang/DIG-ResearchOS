@@ -280,7 +280,7 @@ def test_t45_reframe_and_drop_pause_for_human_gate(tmp_path: Path):
                 "title": "T4.5 review",
                 "presentation": {"audit": {"from_file": "ideation/novelty_audit.md", "max_chars": 1000}},
                 "options": [
-                    {"id": "continue_to_t7", "label": "继续进入 T7", "next": "T7"},
+                    {"id": "continue_to_t7", "label": "继续进入外部实验链", "next": "T5-HANDOFF"},
                     {"id": "return_to_t4", "label": "回到 T4", "next": "T4"},
                     {"id": "stop_project", "label": "结束", "next": "done"},
                 ],

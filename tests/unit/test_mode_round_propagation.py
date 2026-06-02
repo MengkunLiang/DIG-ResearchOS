@@ -697,6 +697,49 @@ class TestMultiModeStateFlow:
             (temp_workspace / "ideation" / "novelty_audit.md").write_text(text, encoding="utf-8")
             assert sm._parse_t45_verdict(temp_workspace) == expected
 
+    def test_t45_pass_routes_to_external_handoff_when_available(self, temp_workspace):
+        sm_config = {
+            "initial_state": "T4.5",
+            "states": {
+                "T4.5": {
+                    "agent": "novelty_auditor",
+                    "outputs": {"novelty_audit": "ideation/novelty_audit.md"},
+                    "next_on_success": "__parse_from_output__",
+                    "next_on_failure": "failed",
+                },
+                "T4.5-HUMAN-REVIEW": {
+                    "agent": "novelty_auditor",
+                    "mode": "human_review",
+                    "outputs": {"novelty_human_review": "ideation/novelty_human_review.json"},
+                    "gate": {"type": "t45_human_review_gate"},
+                },
+                "T5-HANDOFF": {
+                    "agent": "experimenter",
+                    "mode": "handoff",
+                    "outputs": {"handoff_pack": "external_executor/handoff_pack.json"},
+                    "next_on_success": "done",
+                },
+                "T7": {
+                    "agent": "experimenter",
+                    "mode": "full",
+                    "outputs": {"results": "experiments/results_summary.json"},
+                    "next_on_success": "done",
+                },
+                "done": {"terminal": True},
+                "failed": {"terminal": True},
+            },
+        }
+        (temp_workspace / "ideation").mkdir()
+        (temp_workspace / "ideation" / "novelty_audit.md").write_text(
+            "Final Gate Verdict: pass_to_experiment\n",
+            encoding="utf-8",
+        )
+        sm_path = temp_workspace / "state_machine.yaml"
+        sm_path.write_text(yaml.dump(sm_config))
+        sm = StateMachine(sm_path)
+
+        assert sm._parse_t45_verdict(temp_workspace) == "T5-HANDOFF"
+
     def test_t45_advance_uses_final_gate_verdict(self, temp_workspace):
         sm_config = {
             "initial_state": "T4.5",
@@ -775,6 +818,49 @@ class TestMultiModeStateFlow:
         sm = StateMachine(sm_path)
 
         assert sm._parse_t75_decision(temp_workspace) == "T8-WRITE"
+
+    def test_t75_legacy_t7_recommendation_routes_to_external_handoff_when_available(self, temp_workspace):
+        """旧 PI 报告写 next_task: T7 时，主链应回到外部实验 handoff，而不是 legacy 内部实验。"""
+        sm_config = {
+            "initial_state": "T7.5",
+            "states": {
+                "T7.5": {
+                    "agent": "pi",
+                    "mode": "evaluate",
+                    "outputs": {"evaluation_decision": "evaluation/evaluation_decision.md"},
+                    "next_on_success": "__parse_from_output__",
+                },
+                "T5-HANDOFF": {
+                    "agent": "experimenter",
+                    "mode": "handoff",
+                    "outputs": {"handoff_pack": "external_executor/handoff_pack.json"},
+                    "next_on_success": "done",
+                },
+                "T7": {
+                    "agent": "experimenter",
+                    "mode": "full",
+                    "outputs": {"results": "experiments/results_summary.json"},
+                    "next_on_success": "done",
+                },
+                "T8-STYLE-GATE": {
+                    "agent": "writer",
+                    "mode": "style_gate",
+                    "outputs": {"writing_style": "drafts/writing_style.json"},
+                    "next_on_success": "done",
+                },
+                "done": {"terminal": True},
+            },
+        }
+        (temp_workspace / "evaluation").mkdir()
+        (temp_workspace / "evaluation" / "evaluation_decision.md").write_text(
+            "next_task: T7\n",
+            encoding="utf-8",
+        )
+        sm_path = temp_workspace / "state_machine.yaml"
+        sm_path.write_text(yaml.dump(sm_config))
+        sm = StateMachine(sm_path)
+
+        assert sm._parse_t75_decision(temp_workspace) == "T5-HANDOFF"
 
     def test_experimenter_modes(self, temp_workspace):
         """T5 和 T7 应该有不同的 mode。"""

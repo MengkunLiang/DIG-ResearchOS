@@ -92,8 +92,8 @@ gates:
         label: "直接启动写作"
         next: T8-STYLE-GATE
       - id: rerun_t7
-        label: "回到 T7 补实验"
-        next: T7
+        label: "回到外部实验链补实验"
+        next: T5-HANDOFF
       - id: rethink_t4
         label: "回到 T4 重构假设"
         next: T4
@@ -127,8 +127,8 @@ gates:
         max_chars: 3000
     options:
       - id: continue_to_t7
-        label: "继续进入 T7"
-        next: T7
+        label: "继续进入外部实验链"
+        next: T5-HANDOFF
       - id: return_to_t4
         label: "回到 T4 重构"
         next: T4

@@ -10,8 +10,9 @@
 
 当前仓库的 Docker 方案不是“可选附属品”，而是正式支持的运行模式之一，尤其适合：
 
-- T5 / T7 实验阶段
 - T9 LaTeX 编译和投稿打包
+- legacy T5 / T7 内部实验调试
+- 外部 executor 自行需要的隔离实验环境
 - 环境一致性要求高的场景
 - 需要避免宿主机依赖漂移的场景
 
@@ -27,7 +28,7 @@ ResearchOS 当前采用 **统一镜像** 模式，而不是“实验镜像一套
 
 目标：
 
-- 同一个镜像支持 T5/T7 实验执行
+- 同一个镜像支持 legacy T5/T7 内部实验调试和外部 executor 隔离运行
 - 同一个镜像支持 T9 论文编译与投稿打包
 - 同一个镜像支持 CLI 命令和 runtime 工具
 
@@ -46,7 +47,7 @@ ResearchOS 不是只能“整个系统都在 Docker 中”或“完全不用 Doc
    使用 `bash infra/docker/run.sh ...` 启动统一镜像，容器入口仍然是 `python3 -m researchos.cli`。这种模式下 CLI、Agent、tool、LaTeX 和实验命令都在容器环境里执行，workspace 通过 bind mount 挂到 `/workspace`。
 
 2. **宿主机运行 ResearchOS，部分阶段使用 Docker tool**
-   宿主机 Python 进程运行 `researchos run/resume/run-task`。当 T5/T7 需要隔离实验，或 T9/T3.6-COMPILE 需要 LaTeX 编译时，`docker_exec` / `latex_compile` 会调用统一镜像执行具体命令。宿主机没有 `latexmk` 时，`latex_compile` 会自动走 Docker；如果 Docker 不可用，相关阶段会以 `WAITING_ENVIRONMENT` 暂停，修好环境后可以 `resume`。
+   宿主机 Python 进程运行 `researchos run/resume/run-task`。默认外部实验主链的 `T5-HANDOFF/T5-DRY-RUN/T7-*` 不要求 Docker；legacy T5/T7 内部实验调试、外部 executor 自行隔离运行，或 T9/T3.6-COMPILE 需要 LaTeX 编译时，`docker_exec` / `latex_compile` 可调用统一镜像执行具体命令。宿主机没有 `latexmk` 时，`latex_compile` 会自动走 Docker；如果 Docker 不可用，相关阶段会以 `WAITING_ENVIRONMENT` 暂停，修好环境后可以 `resume`。
 
 容器内运行时会检测到自己已经在容器中，`latex_compile` 会直接调用容器内 `latexmk`，不会再做 Docker-in-Docker。
 
@@ -59,7 +60,7 @@ ResearchOS 不是只能“整个系统都在 Docker 中”或“完全不用 Doc
 - 容器内 `latexmk` 可用，可以支撑 T3.6 survey 和 T9 投稿包的 TeX 编译；最小 `article` smoke test 已在 `workspace/docker-tex-smoke/main.tex` 上通过并生成 `main.pdf`。
 - 宿主机 `nvidia-smi` 可用，但 `docker info` 的 runtimes 里没有 `nvidia`，`docker run --gpus all ... nvidia-smi` 当前失败，报错类似 `failed to discover GPU vendor from CDI: no known GPU vendor found`。
 
-结论：当前 Docker 存储、镜像和 TeX 工具链可用；Docker GPU 还不可用，需要注册 NVIDIA Container Toolkit / runtime 或 CDI 后才能让容器使用 GPU。T5/T7 如果强依赖 GPU，在 GPU runtime 修好前应预期以环境等待或 CPU 降级处理。
+结论：当前 Docker 存储、镜像和 TeX 工具链可用；Docker GPU 还不可用，需要注册 NVIDIA Container Toolkit / runtime 或 CDI 后才能让容器使用 GPU。默认外部实验主链不依赖 ResearchOS 内部 Docker/GPU；legacy T5/T7 或外部 executor 如果强依赖 GPU，在 GPU runtime 修好前应预期以环境等待或 CPU 降级处理。
 
 ---
 

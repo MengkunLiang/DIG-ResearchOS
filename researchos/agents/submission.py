@@ -228,6 +228,10 @@ class SubmissionAgent(Agent):
             if content not in report_text:
                 return False, f"migration_report.md 缺少: {content}"
 
+        ok, err = _validate_evidence_audit_trace(report_text, ws)
+        if not ok:
+            return False, err
+
         # 报告必须明确声明编译成功，避免把失败尝试误判为通过。
         if not _migration_report_declares_current_compile_success(report_text):
             return False, "migration_report.md 未声明“编译状态: 成功”"
@@ -237,6 +241,24 @@ class SubmissionAgent(Agent):
             return False, err
 
         return True, None
+
+
+def _validate_evidence_audit_trace(report_text: str, ws: Path) -> tuple[bool, str | None]:
+    evidence_files = [
+        "drafts/paper_claim_audit.md",
+        "drafts/paper_claim_audit.json",
+        "drafts/result_to_claim.json",
+        "drafts/experiment_evidence_pack.json",
+    ]
+    existing = [rel for rel in evidence_files if (ws / rel).exists()]
+    if not existing:
+        return True, None
+    lowered = report_text.lower()
+    for rel in existing:
+        filename = Path(rel).name.lower()
+        if rel.lower() not in lowered and filename not in lowered:
+            return False, f"migration_report.md 必须记录 evidence audit artifact: {rel}"
+    return True, None
 
 
 def _validate_compile_report(report: dict, ws: Path) -> tuple[bool, str | None]:

@@ -663,6 +663,8 @@ class StateMachine:
             "continue_to_experiment",
         }
         if verdict_token in pass_tokens:
+            if "T5-HANDOFF" in self.nodes:
+                return "T5-HANDOFF"
             return "T7" if "T7" in self.nodes else "failed"
         return human_review
 
@@ -715,6 +717,9 @@ class StateMachine:
 
         raw_target = match.group(1).strip()
         aliases = {
+            "T5": self._default_experiment_entry(),
+            "T6": self._default_experiment_entry(),
+            "T7": self._default_experiment_entry(),
             "T8": self._default_t8_entry(workspace_dir),
             "T8-WRITE": self._default_t8_entry(workspace_dir),
             "T8-SEC-LIMITATIONS": "T8-SEC-CONCLUSION",
@@ -729,6 +734,15 @@ class StateMachine:
         if target not in self.nodes:
             return default_t8_entry
         return target
+
+    def _default_experiment_entry(self) -> str:
+        if "T5-HANDOFF" in self.nodes:
+            return "T5-HANDOFF"
+        if "T7" in self.nodes:
+            return "T7"
+        if "T5" in self.nodes:
+            return "T5"
+        return "failed"
 
     def _default_t8_entry(self, workspace_dir: Path | None = None) -> str:
         if "T8-STYLE-GATE" in self.nodes:

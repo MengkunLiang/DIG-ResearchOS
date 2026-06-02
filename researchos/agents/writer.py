@@ -51,6 +51,7 @@ class WriterAgent(Agent):
                         "assemble_manuscript",
                         "audit_manuscript_claims",
                         "audit_writing_craft",
+                        "audit_paper_claims",
                         "build_manuscript_revision_patches",
                         "finish_task",
                     ],
@@ -134,6 +135,9 @@ class WriterAgent(Agent):
         figure_registry = read_text_file(ws / "drafts" / "figure_registry.json", default="")
         manuscript_audit = read_text_file(ws / "drafts" / "manuscript_audit.md", default="")
         craft_audit = read_text_file(ws / "drafts" / "craft_audit.md", default="")
+        paper_claim_audit = read_text_file(ws / "drafts" / "paper_claim_audit.md", default="")
+        experiment_evidence_pack = read_text_file(ws / "drafts" / "experiment_evidence_pack.json", default="")
+        result_to_claim = read_text_file(ws / "drafts" / "result_to_claim.json", default="")
         paper_state = read_text_file(ws / "drafts" / "paper_state.json", default="")
         alignment_matrix = read_text_file(ws / "drafts" / "alignment_matrix.json", default="")
         writing_style_text = read_text_file(ws / "drafts" / "writing_style.json", default="")
@@ -185,6 +189,9 @@ class WriterAgent(Agent):
             figure_registry_preview=figure_registry[:4000],
             manuscript_audit_preview=manuscript_audit[:3000],
             craft_audit_preview=craft_audit[:3000],
+            paper_claim_audit_preview=paper_claim_audit[:3000],
+            experiment_evidence_pack_preview=experiment_evidence_pack[:4000],
+            result_to_claim_preview=result_to_claim[:4000],
             paper_state_preview=paper_state[:5000],
             alignment_matrix_preview=alignment_matrix[:5000],
             writing_style=writing_style,
@@ -287,8 +294,11 @@ class WriterAgent(Agent):
                 "先调用 assemble_manuscript 将 drafts/sections/ 下的章节草稿拼装为 drafts/paper.tex，"
                 "再做一致性 spot-check；如发现需要修改正文，请回改对应 drafts/sections/<section>.tex "
                 "并重新 assemble，而不是一次性重写整篇 paper.tex。最后调用 audit_manuscript_claims "
-                "生成 drafts/manuscript_audit.md，并调用 audit_writing_craft 生成 drafts/craft_audit.md。"
-                "**重要**: 所有实验数字必须来自 experiments/results_summary.json，"
+                "生成 drafts/manuscript_audit.md，调用 audit_writing_craft 生成 drafts/craft_audit.md，"
+                "如果 drafts/experiment_evidence_pack.json 存在，还必须调用 audit_paper_claims 生成 "
+                "drafts/paper_claim_audit.md/json。"
+                "**重要**: 所有实验数字必须来自 paper_state.shared_facts.result_metrics、"
+                "drafts/experiment_evidence_pack.json 或 experiments/results_summary.json，"
                 "所有引用必须存在于 literature/related_work.bib。"
                 ),
             )
@@ -312,7 +322,9 @@ class WriterAgent(Agent):
                 f"drafts/patches/round_{round_num}_patches.json，再按 patch 定位修订对应 "
                 "drafts/sections/<section>.tex。修订后调用 update_manuscript_section_state(status=\"revised\")，"
                 "再 assemble_manuscript 重新拼装 drafts/paper.tex，并调用 audit_manuscript_claims 刷新 "
-                f"drafts/manuscript_audit.md。最后写 drafts/revision_response_round_{round_num}.md。"
+                f"drafts/manuscript_audit.md；如果 drafts/experiment_evidence_pack.json 存在，还必须调用 "
+                f"audit_paper_claims 刷新 drafts/paper_claim_audit.md/json。最后写 "
+                f"drafts/revision_response_round_{round_num}.md。"
                 ),
             )
         elif phase == "final":
@@ -451,6 +463,9 @@ class WriterAgent(Agent):
                 return False, f"{phase} phase 必须生成 drafts/craft_audit.json"
             if phase in {"draft", "revise"}:
                 ok, err = _validate_required_craft_checks(ws)
+                if not ok:
+                    return False, err
+                ok, err = _validate_paper_claim_audit_if_needed(ws)
                 if not ok:
                     return False, err
                 style = _parse_writing_style(read_text_file(ws / "drafts" / "writing_style.json", default=""))
@@ -780,6 +795,29 @@ def _validate_required_craft_checks(ws: Path) -> tuple[bool, str | None]:
     ]
     if fail_items:
         return False, "craft_audit.json 存在 FAIL: " + ", ".join(fail_items[:8])
+    return True, None
+
+
+def _validate_paper_claim_audit_if_needed(ws: Path) -> tuple[bool, str | None]:
+    pack_path = ws / "drafts" / "experiment_evidence_pack.json"
+    if not pack_path.exists():
+        return True, None
+    audit_md = ws / "drafts" / "paper_claim_audit.md"
+    audit_json = ws / "drafts" / "paper_claim_audit.json"
+    if not audit_md.exists():
+        return False, "存在 experiment_evidence_pack 时必须生成 drafts/paper_claim_audit.md"
+    audit, err = _load_json_file(audit_json)
+    if err:
+        return False, f"存在 experiment_evidence_pack 时必须生成合法 paper_claim_audit.json: {err}"
+    if audit.get("semantics") != "paper_claim_audit_against_experiment_evidence_pack":
+        return False, "paper_claim_audit.json semantics 不正确"
+    summary = audit.get("summary")
+    if not isinstance(summary, dict):
+        return False, "paper_claim_audit.json 缺少 summary"
+    if "fail_count" not in summary or "warn_count" not in summary:
+        return False, "paper_claim_audit.json summary 必须包含 fail_count/warn_count"
+    if not isinstance(audit.get("issues"), list):
+        return False, "paper_claim_audit.json issues 必须是列表"
     return True, None
 
 

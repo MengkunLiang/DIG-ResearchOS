@@ -135,11 +135,11 @@ profiles:
   siliconflow_only:
     heavy:
       primary:
-        model: "deepseek-ai/DeepSeek-V4-Flash"
+        model: "deepseek-ai/DeepSeek-V4-Pro"
         endpoint: siliconflow
         max_context: 128000
       fallback:
-        - model: "deepseek-ai/DeepSeek-V4-Pro"
+        - model: "deepseek-ai/DeepSeek-V4-Flash"
           endpoint: siliconflow
           max_context: 128000
 
@@ -156,7 +156,7 @@ profiles:
     light:
       # 示例：light 可以和 heavy/medium 用不同模型，不要求整个 profile 完全一致。
       primary:
-        model: "Pro/zai-org/GLM-4.7"
+        model: "deepseek-ai/DeepSeek-V4-Flash"
         endpoint: siliconflow
         max_context: 128000
       fallback:

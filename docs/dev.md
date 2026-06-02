@@ -377,7 +377,8 @@ python -m researchos.cli run-task T8-RESOURCE \
 - `HELLO`：验证 runtime 最小闭环
 - `T2`：验证搜索、去重、verification 和队列生成
 - `T3`：验证 PDF 获取、全文覆盖、Reading Coverage 和续跑
-- `T5/T7`：验证实验恢复、预算 gate、Docker
+- `T5-HANDOFF/T5-DRY-RUN/T7-INGEST/T7-AUDIT/T7-CLAIMS`：验证外部实验协议、mock dry-run、摄取、诚信审计和 result-to-claim
+- legacy `T5/T7`：仅在显式兼容调试时验证内部实验恢复、预算 gate、Docker
 - `T7.5`：验证 PI 评估与 `next_task`
 - `T8-RESOURCE`：验证资源索引、证据计划和图表计划
 - `T8-SECTION-PLAN`：验证 `paper_state.json` 和每章局部大纲
@@ -401,9 +402,11 @@ python -m researchos.cli run-task T8-RESOURCE \
 | `T3.5` | synthesis 分阶段产物和最终综合结构完整 | `literature/synthesis_workbench.json`, `literature/synthesis_outline.md`, `literature/synthesis_draft.md`, `literature/synthesis.md` |
 | `T4` | hypotheses / exp_plan / idea scorecard / gate decisions / risks 成对齐 | `ideation/hypotheses.md`, `ideation/exp_plan.yaml`, `ideation/idea_scorecard.yaml`, `ideation/rejected_ideas.md`, `ideation/gate_decisions.json`, `ideation/idea_rationales.json`, `ideation/risks.md` |
 | `T4.5` | novelty audit 生成；如有 High/Medium Overlap 则归档 collision cases | `ideation/novelty_audit.md`, `ideation/collision_cases.md`（条件产物） |
-| `T5` | pilot plan/code/results、动机判断、smoke marker 和环境摘要完整 | `pilot/pilot_plan.yaml`, `pilot/pilot_code/`, `pilot/pilot_results.json`, `pilot/motivation_validation.md`, `pilot/smoke_test_passed.marker`, `pilot/docker_digests.txt` |
-| `T6` | novelty report / collision / baselines 三件套完整 | `novelty/novelty_report.md`, `novelty/collision_cases.md`, `novelty/must_add_baselines.md` |
-| `T7` | summary / runs / configs / ablations / log / seed ensemble / diversity / 环境摘要齐全 | `experiments/results_summary.json`, `experiments/runs/`, `experiments/configs/`, `experiments/ablations.csv`, `experiments/iteration_log.md`, `experiments/seed_ensemble_summary.json`, `experiments/iteration_diversity_check.md`, `experiments/docker_digests.txt` |
+| `T5-HANDOFF` | 外部执行协议、prompt、schema 和 allowed paths 完整 | `external_executor/handoff_pack.json`, `executor_prompt.md`, `codex_prompt.md`, `claude_code_prompt.md`, `expected_outputs_schema.json`, `allowed_paths.txt` |
+| `T5-DRY-RUN` | mock result/status/manifest/raw/config/log 协议跑通，且明确 mock_only | `external_executor/result_pack.json`, `executor_status.json`, `run_manifest.json`, `raw_results/`, `configs/`, `logs/` |
+| `T7-INGEST` | 外部 result pack 被规范化为 ResearchOS 下游结果 | `experiments/results_summary.json`, `experiments/run_records.jsonl`, `experiments/evidence_index.json`, `experiments/ingest_report.json` |
+| `T7-AUDIT` | provenance/hash/metric source/mock 标记被审计 | `experiments/integrity_audit.json` |
+| `T7-CLAIMS` | result-to-claim 和写作证据包生成 | `experiments/experimental_claims.json`, `drafts/result_to_claim.json`, `drafts/experiment_evidence_pack.json`, `experiments/iteration_log.md` |
 | `T7.5` | evaluation decision 能给出 `next_task` | `evaluation/evaluation_decision.md` |
 | `T8-RESOURCE` | 写作资源、章节、证据和图表计划生成 | `drafts/manuscript_resource_index.json`, `drafts/section_plan.json`, `drafts/evidence_plan.json`, `drafts/figure_table_plan.json` |
 | `T8-WRITE` | 论文论证大纲生成 | `drafts/outline.md` |
@@ -431,11 +434,16 @@ python -m researchos.cli run-task T8-RESOURCE \
 - `comparison_table.csv` 是否持续可追加
 - `related_work.bib` 是否没有粘连/损坏
 
-### 7.3 T5/T7 重点看什么
+### 7.3 外部实验链重点看什么
 
-- 是否存在 resume state
-- 是否复用了已有代码和运行目录
+- `T5-HANDOFF` 是否写出 handoff pack、expected schema、allowed paths 和 Codex/Claude/manual prompt
+- `T5-DRY-RUN` 是否写出 `mock_only=true` 的 result pack、status、run manifest、raw/config/log
+- `T7-INGEST` 是否把 result pack 规范化成 `results_summary.json`、`run_records.jsonl` 和 `evidence_index.json`
+- `T7-AUDIT` 是否检查 artifact 存在、sha256、metric source 和 run manifest
+- `T7-CLAIMS` 是否写出 `drafts/result_to_claim.json` 和 `drafts/experiment_evidence_pack.json`
 - 如果预算触顶，是否先进入 gate，而不是直接硬停
+
+legacy `T5/T7` 显式调试时再检查已有代码目录、Docker digest 和内部实验 resume state。
 
 ### 7.4 T7.5 重点看什么
 

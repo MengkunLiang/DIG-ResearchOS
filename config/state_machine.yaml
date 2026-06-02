@@ -630,10 +630,108 @@ states:
     next_on_success: __parse_from_output__
     next_on_failure: failed
 
-  # T5 状态：试点实验（Pilot Experimentation）
-  # 用途：执行小规模试点实验，验证假设可行性
-  # Agent：experimenter（实验执行器）
-  # 模式：pilot（试点模式）
+  # T5-HANDOFF 状态：外部实验执行器协议编译
+  # 用途：ResearchOS 编译实验契约、allowed paths 与 Codex/Claude/manual/mock 执行 prompt。
+  # 注意：主链不在 ResearchOS 内部实现或运行实验。
+  T5-HANDOFF:
+    agent: experimenter
+    mode: handoff
+    inputs:
+      project: project.yaml
+      hypotheses: ideation/hypotheses.md
+      exp_plan: ideation/exp_plan.yaml
+      risks: ideation/risks.md
+      novelty_audit: ideation/novelty_audit.md
+      idea_scorecard: ideation/idea_scorecard.yaml
+      synthesis: literature/synthesis.md
+      comparison_table: literature/comparison_table.csv
+    outputs:
+      handoff_pack: external_executor/handoff_pack.json
+      executor_prompt: external_executor/executor_prompt.md
+      expected_outputs_schema: external_executor/expected_outputs_schema.json
+      allowed_paths: external_executor/allowed_paths.txt
+      executor_selection: external_executor/executor_selection.json
+      input_manifest: external_executor/input_manifest.json
+      codex_prompt: external_executor/codex_prompt.md
+      claude_code_prompt: external_executor/claude_code_prompt.md
+      manual_instructions: external_executor/manual_instructions.md
+    next_on_success: T5-DRY-RUN
+    next_on_failure: failed
+
+  # T5-DRY-RUN 状态：mock 外部执行器协议 dry-run
+  # 用途：不跑真实实验，只验证 handoff/result_pack/status 文件协议可端到端通过。
+  T5-DRY-RUN:
+    agent: experimenter
+    mode: dry_run
+    inputs:
+      handoff_pack: external_executor/handoff_pack.json
+      expected_outputs_schema: external_executor/expected_outputs_schema.json
+    outputs:
+      result_pack: external_executor/result_pack.json
+      executor_status: external_executor/executor_status.json
+      run_manifest: external_executor/run_manifest.json
+      heartbeat: external_executor/heartbeat.json
+      raw_results_dir: external_executor/raw_results
+      configs_dir: external_executor/configs
+      logs_dir: external_executor/logs
+    next_on_success: T7-INGEST
+    next_on_failure: failed
+
+  # T7-INGEST 状态：摄取外部执行器结果
+  # 用途：把外部 result_pack 规范化为 ResearchOS 下游兼容 results_summary 与 evidence_index。
+  T7-INGEST:
+    agent: experimenter
+    mode: result_ingest
+    inputs:
+      result_pack: external_executor/result_pack.json
+      executor_status: external_executor/executor_status.json
+      handoff_pack: external_executor/handoff_pack.json
+    outputs:
+      results_summary: experiments/results_summary.json
+      run_records: experiments/run_records.jsonl
+      evidence_index: experiments/evidence_index.json
+      ingest_report: experiments/ingest_report.json
+    next_on_success: T7-AUDIT
+    next_on_failure: failed
+
+  # T7-AUDIT 状态：实验诚信审计
+  # 用途：审计 provenance、mock_only、metric、seed、artifact 引用；不信执行器总结。
+  T7-AUDIT:
+    agent: experimenter
+    mode: integrity_audit
+    inputs:
+      results_summary: experiments/results_summary.json
+      evidence_index: experiments/evidence_index.json
+      run_records: experiments/run_records.jsonl
+      exp_plan: ideation/exp_plan.yaml
+      novelty_audit: ideation/novelty_audit.md
+    outputs:
+      integrity_audit: experiments/integrity_audit.json
+    next_on_success: T7-CLAIMS
+    next_on_failure: failed
+
+  # T7-CLAIMS 状态：result-to-claim 与 writing evidence pack
+  # 用途：把审计后的实验数字转成保守 claim mapping，并交给 T8 作为证据包。
+  T7-CLAIMS:
+    agent: experimenter
+    mode: result_to_claim
+    inputs:
+      results_summary: experiments/results_summary.json
+      integrity_audit: experiments/integrity_audit.json
+      evidence_index: experiments/evidence_index.json
+      exp_plan: ideation/exp_plan.yaml
+      hypotheses: ideation/hypotheses.md
+      novelty_audit: ideation/novelty_audit.md
+    outputs:
+      experimental_claims: experiments/experimental_claims.json
+      result_to_claim: drafts/result_to_claim.json
+      experiment_evidence_pack: drafts/experiment_evidence_pack.json
+      iteration_log: experiments/iteration_log.md
+    next_on_success: T7.5
+    next_on_failure: failed
+
+  # T5 状态：legacy 试点实验（仅兼容显式 run-task，不在主链自动使用）
+  # 用途：旧模式由 ResearchOS 内部执行小规模试点实验；新主链使用 T5-HANDOFF。
   T5:
     agent: experimenter
     mode: pilot
@@ -650,8 +748,8 @@ states:
     next_on_success: T6
     next_on_failure: T4
 
-  # T6 状态：新颖性最终验证（Novelty Final Verification）
-  # 用途：基于 Pilot 结果验证新颖性，补充必须的基线方法
+  # T6 状态：legacy 新颖性最终验证（仅兼容显式 run-task，不在主链自动使用）
+  # 用途：基于 legacy Pilot 结果验证新颖性，补充必须的基线方法。
   # Agent：novelty（新颖性验证）
   T6:
     agent: novelty
@@ -681,10 +779,8 @@ states:
     next_on_success: T7
     next_on_failure: T4
 
-  # T7 状态：完整实验（Full Experimentation）
-  # 用途：执行完整的实验计划，收集全面结果
-  # Agent：experimenter（实验执行器）
-  # 模式：full（完整模式）
+  # T7 状态：legacy 完整实验（仅兼容显式 run-task，不在主链自动使用）
+  # 用途：旧模式由 ResearchOS 内部执行完整实验；新主链使用 T7-INGEST/AUDIT/CLAIMS。
   T7:
     agent: experimenter
     mode: full
@@ -716,7 +812,7 @@ states:
     next_on_failure: failed
 
   # T7.5 状态：PI 评估（Experiment Evaluation）
-  # 用途：在完整实验和论文写作之间增加一层 PI 评估与人工确认
+  # 用途：在外部实验审计/result-to-claim 和论文写作之间增加一层 PI 评估与人工确认
   # Agent：pi（evaluate 模式）
   T7.5:
     agent: pi
@@ -724,6 +820,10 @@ states:
     inputs:
       results_summary: experiments/results_summary.json
       iteration_log: experiments/iteration_log.md
+      integrity_audit: experiments/integrity_audit.json
+      experimental_claims: experiments/experimental_claims.json
+      result_to_claim: drafts/result_to_claim.json
+      experiment_evidence_pack: drafts/experiment_evidence_pack.json
       exp_plan: ideation/exp_plan.yaml
     outputs:
       evaluation_decision: evaluation/evaluation_decision.md
@@ -762,6 +862,9 @@ states:
       project: project.yaml
       writing_style: drafts/writing_style.json
       results_summary: experiments/results_summary.json
+      experiment_evidence_pack: drafts/experiment_evidence_pack.json
+      result_to_claim: drafts/result_to_claim.json
+      integrity_audit: experiments/integrity_audit.json
       synthesis: literature/synthesis.md
       synthesis_workbench: literature/synthesis_workbench.json
       domain_map: literature/domain_map.json
@@ -777,6 +880,8 @@ states:
       section_plan: drafts/section_plan.json
       evidence_plan: drafts/evidence_plan.json
       figure_table_plan: drafts/figure_table_plan.json
+      result_to_claim: drafts/result_to_claim.json
+      experiment_evidence_pack: drafts/experiment_evidence_pack.json
       cdr_claim_ledger: drafts/cdr_claim_ledger.json
       claim_ledger: drafts/claim_ledger.json
       figure_registry: drafts/figure_registry.json
@@ -794,6 +899,8 @@ states:
       project: project.yaml                             # 输入：项目配置
       writing_style: drafts/writing_style.json
       results_summary: experiments/results_summary.json # 输入：实验结果
+      experiment_evidence_pack: drafts/experiment_evidence_pack.json
+      result_to_claim: drafts/result_to_claim.json
       synthesis: literature/synthesis.md                # 输入：文献综述
       synthesis_workbench: literature/synthesis_workbench.json
       domain_map: literature/domain_map.json
@@ -823,6 +930,9 @@ states:
       project: project.yaml
       writing_style: drafts/writing_style.json
       results_summary: experiments/results_summary.json
+      experiment_evidence_pack: drafts/experiment_evidence_pack.json
+      result_to_claim: drafts/result_to_claim.json
+      integrity_audit: experiments/integrity_audit.json
       synthesis: literature/synthesis.md
       synthesis_workbench: literature/synthesis_workbench.json
       domain_map: literature/domain_map.json
@@ -860,6 +970,8 @@ states:
       novelty_audit: ideation/novelty_audit.md
       design_rationale_tuples_dir: ideation/_design_rationale_tuples
       results_summary: experiments/results_summary.json
+      experiment_evidence_pack: drafts/experiment_evidence_pack.json
+      result_to_claim: drafts/result_to_claim.json
       configs_dir: experiments/configs
       code_dir: experiments/code
       outline: drafts/outline.md
@@ -885,6 +997,9 @@ states:
       paper_state: drafts/paper_state.json
       section_outline: drafts/section_outlines/experiments.md
       results_summary: experiments/results_summary.json
+      experiment_evidence_pack: drafts/experiment_evidence_pack.json
+      result_to_claim: drafts/result_to_claim.json
+      integrity_audit: experiments/integrity_audit.json
       ablations: experiments/ablations.csv
       exp_plan: ideation/exp_plan.yaml
       seed_ensemble_summary: experiments/seed_ensemble_summary.json
@@ -939,6 +1054,8 @@ states:
       paper_state: drafts/paper_state.json
       section_outline: drafts/section_outlines/analysis.md
       results_summary: experiments/results_summary.json
+      experiment_evidence_pack: drafts/experiment_evidence_pack.json
+      result_to_claim: drafts/result_to_claim.json
       ablations: experiments/ablations.csv
       iteration_log: experiments/iteration_log.md
       novelty_audit: ideation/novelty_audit.md
@@ -967,6 +1084,8 @@ states:
       synthesis: literature/synthesis.md
       hypotheses: ideation/hypotheses.md
       results_summary: experiments/results_summary.json
+      experiment_evidence_pack: drafts/experiment_evidence_pack.json
+      result_to_claim: drafts/result_to_claim.json
       methodology_section: drafts/sections/methodology.tex
       experiments_section: drafts/sections/experiments.tex
       related_work_section: drafts/sections/related_work.tex
@@ -997,6 +1116,8 @@ states:
       risks: ideation/risks.md
       novelty_audit: ideation/novelty_audit.md
       results_summary: experiments/results_summary.json
+      experiment_evidence_pack: drafts/experiment_evidence_pack.json
+      result_to_claim: drafts/result_to_claim.json
       iteration_log: experiments/iteration_log.md
       cdr_claim_ledger: drafts/cdr_claim_ledger.json
       claim_ledger: drafts/claim_ledger.json
@@ -1039,6 +1160,9 @@ states:
     inputs:
       project: project.yaml                             # 输入：项目配置
       results_summary: experiments/results_summary.json # 输入：实验结果
+      experiment_evidence_pack: drafts/experiment_evidence_pack.json
+      result_to_claim: drafts/result_to_claim.json
+      integrity_audit: experiments/integrity_audit.json
       synthesis: literature/synthesis.md                # 输入：文献综合
       related_work_bib: literature/related_work.bib      # 输入：引用库
       hypotheses: ideation/hypotheses.md                # 输入：研究假设
@@ -1059,6 +1183,8 @@ states:
       paper: drafts/paper.tex                           # 论文草稿
       manuscript_audit: drafts/manuscript_audit.md       # 机械审计报告
       craft_audit: drafts/craft_audit.md
+      paper_claim_audit: drafts/paper_claim_audit.md
+      paper_claim_audit_json: drafts/paper_claim_audit.json
     next_on_success: T8-SELF-CHECK
     next_on_failure: failed
 
@@ -1071,6 +1197,9 @@ states:
       project: project.yaml
       paper: drafts/paper.tex
       results_summary: experiments/results_summary.json
+      experiment_evidence_pack: drafts/experiment_evidence_pack.json
+      result_to_claim: drafts/result_to_claim.json
+      paper_claim_audit: drafts/paper_claim_audit.md
       synthesis: literature/synthesis.md
       related_work_bib: literature/related_work.bib
       ablations: experiments/ablations.csv
@@ -1083,6 +1212,7 @@ states:
       figure_registry: drafts/figure_registry.json
       manuscript_audit: drafts/manuscript_audit.md
       craft_audit: drafts/craft_audit.md
+      paper_claim_audit: drafts/paper_claim_audit.md
       alignment_matrix: drafts/alignment_matrix.json
     outputs:
       self_check: drafts/self_check.md
@@ -1099,6 +1229,9 @@ states:
       project: project.yaml                             # 输入：项目配置
       paper: drafts/paper.tex                           # 输入：论文草稿
       results_summary: experiments/results_summary.json # 输入：实验结果
+      experiment_evidence_pack: drafts/experiment_evidence_pack.json
+      result_to_claim: drafts/result_to_claim.json
+      paper_claim_audit: drafts/paper_claim_audit.md
       related_work_bib: literature/related_work.bib      # 输入：引用库
       manuscript_audit: drafts/manuscript_audit.md       # 输入：机械审计报告
       craft_audit: drafts/craft_audit.md
@@ -1125,6 +1258,9 @@ states:
       review_report: drafts/review_rounds/round_1.md   # 输入：审稿报告
       section_review_dir: drafts/review_rounds/round_1_sections
       results_summary: experiments/results_summary.json
+      experiment_evidence_pack: drafts/experiment_evidence_pack.json
+      result_to_claim: drafts/result_to_claim.json
+      paper_claim_audit: drafts/paper_claim_audit.md
       synthesis: literature/synthesis.md
       related_work_bib: literature/related_work.bib
       ablations: experiments/ablations.csv
@@ -1144,6 +1280,8 @@ states:
       paper: drafts/paper.tex                           # 修订后的论文
       manuscript_audit: drafts/manuscript_audit.md       # 更新后的机械审计
       craft_audit: drafts/craft_audit.md
+      paper_claim_audit: drafts/paper_claim_audit.md
+      paper_claim_audit_json: drafts/paper_claim_audit.json
     next_on_success: T8-REVIEW-2
     next_on_failure: failed
 
@@ -1157,6 +1295,9 @@ states:
       project: project.yaml                             # 输入：项目配置
       paper: drafts/paper.tex                           # 输入：修订后的论文
       results_summary: experiments/results_summary.json
+      experiment_evidence_pack: drafts/experiment_evidence_pack.json
+      result_to_claim: drafts/result_to_claim.json
+      paper_claim_audit: drafts/paper_claim_audit.md
       related_work_bib: literature/related_work.bib
       manuscript_audit: drafts/manuscript_audit.md
       craft_audit: drafts/craft_audit.md
@@ -1184,6 +1325,9 @@ states:
       section_review_dir: drafts/review_rounds/round_2_sections
       previous_review: drafts/review_rounds/round_1.md
       results_summary: experiments/results_summary.json
+      experiment_evidence_pack: drafts/experiment_evidence_pack.json
+      result_to_claim: drafts/result_to_claim.json
+      paper_claim_audit: drafts/paper_claim_audit.md
       synthesis: literature/synthesis.md
       related_work_bib: literature/related_work.bib
       ablations: experiments/ablations.csv
@@ -1203,6 +1347,8 @@ states:
       paper: drafts/paper.tex                           # 修订后的论文
       manuscript_audit: drafts/manuscript_audit.md       # 更新后的机械审计
       craft_audit: drafts/craft_audit.md
+      paper_claim_audit: drafts/paper_claim_audit.md
+      paper_claim_audit_json: drafts/paper_claim_audit.json
     next_on_success: T9
     next_on_failure: failed
 
@@ -1215,6 +1361,9 @@ states:
       project: project.yaml                         # 项目配置
       paper: drafts/paper.tex                         # 论文草稿
       related_work_bib: literature/related_work.bib    # 引用库
+      paper_claim_audit: drafts/paper_claim_audit.md
+      result_to_claim: drafts/result_to_claim.json
+      experiment_evidence_pack: drafts/experiment_evidence_pack.json
     outputs:
       bundle_dir: submission/bundle                  # 投稿包目录
       migration_report: submission/migration_report.md  # 迁移报告

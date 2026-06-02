@@ -81,10 +81,16 @@ class PIAgent(Agent):
             # T7.5模式：读取实验结果
             results_path = ctx.workspace_dir / "experiments" / "results_summary.json"
             iteration_log_path = ctx.workspace_dir / "experiments" / "iteration_log.md"
+            integrity_audit_path = ctx.workspace_dir / "experiments" / "integrity_audit.json"
+            result_to_claim_path = ctx.workspace_dir / "drafts" / "result_to_claim.json"
+            evidence_pack_path = ctx.workspace_dir / "drafts" / "experiment_evidence_pack.json"
             exp_plan_path = ctx.workspace_dir / "ideation" / "exp_plan.yaml"
 
             context_vars["has_results"] = results_path.exists()
             context_vars["has_iteration_log"] = iteration_log_path.exists()
+            context_vars["has_integrity_audit"] = integrity_audit_path.exists()
+            context_vars["has_result_to_claim"] = result_to_claim_path.exists()
+            context_vars["has_experiment_evidence_pack"] = evidence_pack_path.exists()
             context_vars["has_exp_plan"] = exp_plan_path.exists()
 
         return render_prompt(self.spec.prompt_template, ctx, **context_vars)
@@ -113,9 +119,10 @@ class PIAgent(Agent):
             return prepend_resume_prefix(
                 ctx,
                 (
-                "请开始T7.5实验评估流程。\n\n"
-                "请读取experiments/results_summary.json、experiments/iteration_log.md "
-                "和ideation/exp_plan.yaml，评估实验结果，判断Situation (A/B/C/D)，"
+                "请开始T7.5外部实验评估流程。\n\n"
+                "请读取 experiments/results_summary.json、experiments/integrity_audit.json、"
+                "drafts/result_to_claim.json、drafts/experiment_evidence_pack.json、"
+                "experiments/iteration_log.md 和 ideation/exp_plan.yaml，评估实验证据链，判断Situation (A/B/C/D)，"
                 "并给出后续Options建议。"
                 ),
             )

@@ -1,19 +1,28 @@
-"""T5/T7 Experimenter Agent — 实验执行与结果收集（支持 pilot 和 full 模式）
+"""Experimenter Agent — 外部实验协议主链与 legacy 内部实验兼容模式
 
 业务需求：
-- 支持两种模式：pilot（T5）和 full（T7）
-- Pilot 模式：小规模验证实验，强制 smoke test，产出 motivation_validation.md
-- Full 模式：完整实验，强制 ablation，支持 seed ensemble 和迭代多样性检查
+- 主链模式：handoff / dry_run / result_ingest / integrity_audit / result_to_claim
+- 主链语义：ResearchOS 编译协议、选择外部执行器、摄取和审计结果，再生成 result-to-claim
+- 兼容模式：pilot（T5）和 full（T7）仍可显式 run-task 调用
+- Pilot 兼容模式：小规模验证实验，强制 smoke test，产出 motivation_validation.md
+- Full 兼容模式：完整实验，强制 ablation，支持 seed ensemble 和迭代多样性检查
 - 读取 ideation/exp_plan.yaml（T4 的输出）
-- 执行实验计划中的每个实验
-- 收集实验结果和日志
+- 主链不在 ResearchOS runtime 中实现或运行真实实验；真实执行由 Codex/Claude Code/manual executor 在隔离路径完成
+- ResearchOS 不接受执行器自然语言总结作为事实，只接受 raw artifact、config、log、hash、ingest/audit/result-to-claim
 
-Pilot 模式（T5）输入：
+外部实验主链输出：
+- T5-HANDOFF: external_executor/handoff_pack.json、executor_prompt.md、codex_prompt.md、claude_code_prompt.md、expected_outputs_schema.json、allowed_paths.txt
+- T5-DRY-RUN: external_executor/result_pack.json、executor_status.json、run_manifest.json、heartbeat.json、raw_results/configs/logs
+- T7-INGEST: experiments/results_summary.json、run_records.jsonl、evidence_index.json、ingest_report.json
+- T7-AUDIT: experiments/integrity_audit.json
+- T7-CLAIMS: experiments/experimental_claims.json、drafts/result_to_claim.json、drafts/experiment_evidence_pack.json、experiments/iteration_log.md
+
+Legacy Pilot 模式（T5）输入：
 - ideation/exp_plan.yaml: 实验计划
 - ideation/hypotheses.md: 研究假设
 - project.yaml: 项目配置
 
-Pilot 模式（T5）输出：
+Legacy Pilot 模式（T5）输出：
 - pilot/pilot_plan.yaml: 试点实验计划
 - pilot/pilot_code/run_pilot.py: 可执行的试点代码（必须支持 --smoke_test 和 --seed 参数）
 - pilot/pilot_results.json: 试点结果（必须包含 seed=42）
@@ -21,7 +30,7 @@ Pilot 模式（T5）输出：
 - pilot/smoke_test_passed.marker: 烟测通过标记（鲁棒性要求 §3.1）
 - pilot/docker_digests.txt: Docker 镜像 digest（鲁棒性要求 §8.2）
 
-Full 模式（T7）输入：
+Legacy Full 模式（T7）输入：
 - ideation/exp_plan.yaml: 实验计划
 - ideation/hypotheses.md: 研究假设
 - project.yaml: 项目配置
@@ -30,7 +39,7 @@ Full 模式（T7）输入：
 - pilot/pilot_results.json: 试点结果（可选）
 - novelty/novelty_report.md: 新颖性最终报告（可选）
 
-Full 模式（T7）输出：
+Legacy Full 模式（T7）输出：
 - experiments/results_summary.json: 实验结果汇总（必须包含 quality_status 字段）
 - experiments/iteration_log.md: 实验迭代日志
 - experiments/ablations.csv: Ablation 结果（最少 3 条，鲁棒性要求 §5.3）
@@ -40,14 +49,16 @@ Full 模式（T7）输出：
 - experiments/code/run_exp.py: 可执行的实验代码
 - experiments/docker_digests.txt: Docker 镜像 digest
 
-契约详见 ResearchOS v4.0 完整实现设计文档 §T5/T6/T7。
+契约详见 docs/agent_pipeline.md、docs/experiment_module_redesign.md 和 docs/external_executor_protocol.md。
 """
 
 from __future__ import annotations
 
 import json
 import re
+import hashlib
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -133,6 +144,9 @@ def run_integrity_gate(ctx: ExecutionContext) -> tuple[bool, str | None]:
 def run_experimenter_preflight(ctx: ExecutionContext) -> tuple[bool, str | None]:
     """在进入 LLM 前做实验输入契约检查，避免拿明显非法计划跑实验。"""
 
+    if ctx.mode in EXTERNAL_EXPERIMENT_MODES:
+        return True, None
+
     if ctx.task_id not in {"T5", "T7"}:
         return True, None
 
@@ -148,7 +162,7 @@ def run_experimenter_preflight(ctx: ExecutionContext) -> tuple[bool, str | None]
         ]
         missing = [rel for rel in required_direct_inputs if not (ws / rel).exists()]
         if missing:
-            return False, f"T7 preflight 失败：direct-full 缺少必要输入 {missing}"
+            return False, f"legacy T7 preflight 失败：direct-full 缺少必要输入 {missing}"
 
     ws = ctx.workspace_dir
     project = load_project(ctx)
@@ -371,6 +385,288 @@ def check_failure_modes(results: dict, log_content: str) -> list[dict]:
     return issues
 
 
+EXTERNAL_EXPERIMENT_MODES = {
+    "handoff",
+    "dry_run",
+    "result_ingest",
+    "integrity_audit",
+    "result_to_claim",
+}
+
+
+def _read_json_artifact(ws: Path, rel_path: str) -> tuple[dict[str, Any] | None, str | None]:
+    path = ws / rel_path
+    if not path.exists():
+        return None, f"缺少 {rel_path}"
+    if path.stat().st_size <= 0:
+        return None, f"{rel_path} 为空"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return None, f"{rel_path} 不是合法 JSON: {exc}"
+    if not isinstance(data, dict):
+        return None, f"{rel_path} 顶层必须是对象"
+    return data, None
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _require_external_files(ws: Path, rel_paths: list[str]) -> tuple[bool, str | None]:
+    missing = [rel for rel in rel_paths if not (ws / rel).exists()]
+    if missing:
+        return False, "缺少外部实验产物: " + ", ".join(missing)
+    empty = [rel for rel in rel_paths if (ws / rel).is_file() and (ws / rel).stat().st_size <= 0]
+    if empty:
+        return False, "外部实验产物为空: " + ", ".join(empty)
+    return True, None
+
+
+def _validate_external_handoff(ws: Path) -> tuple[bool, str | None]:
+    required = [
+        "external_executor/handoff_pack.json",
+        "external_executor/executor_prompt.md",
+        "external_executor/expected_outputs_schema.json",
+        "external_executor/allowed_paths.txt",
+        "external_executor/executor_selection.json",
+        "external_executor/input_manifest.json",
+        "external_executor/codex_prompt.md",
+        "external_executor/claude_code_prompt.md",
+        "external_executor/manual_instructions.md",
+    ]
+    ok, err = _require_external_files(ws, required)
+    if not ok:
+        return False, err
+    handoff, err = _read_json_artifact(ws, "external_executor/handoff_pack.json")
+    if err:
+        return False, err
+    if handoff.get("semantics") != "external_experiment_handoff_pack_not_execution_result":
+        return False, "external_executor/handoff_pack.json semantics 不正确"
+    if handoff.get("execution_mode") not in {"dry_run", "external"}:
+        return False, "handoff_pack.execution_mode 必须是 dry_run/external"
+    contract = handoff.get("experiment_contract")
+    if not isinstance(contract, dict):
+        return False, "handoff_pack 缺少 experiment_contract"
+    metrics = contract.get("metrics")
+    if not isinstance(metrics, list) or not metrics:
+        return False, "handoff_pack.experiment_contract.metrics 必须是非空列表"
+    seeds = contract.get("seeds")
+    if not isinstance(seeds, list) or not seeds:
+        return False, "handoff_pack.experiment_contract.seeds 必须是非空列表"
+    outputs = handoff.get("executor_outputs")
+    if not isinstance(outputs, dict) or outputs.get("result_pack") != "external_executor/result_pack.json":
+        return False, "handoff_pack.executor_outputs.result_pack 必须指向 external_executor/result_pack.json"
+    source_artifacts = handoff.get("source_artifacts")
+    if not isinstance(source_artifacts, list) or not source_artifacts:
+        return False, "handoff_pack.source_artifacts 必须记录上游来源"
+    allowed_paths = handoff.get("allowed_paths")
+    if not isinstance(allowed_paths, list) or "external_executor/" not in allowed_paths:
+        return False, "handoff_pack.allowed_paths 必须包含 external_executor/"
+    schema, err = _read_json_artifact(ws, "external_executor/expected_outputs_schema.json")
+    if err:
+        return False, err
+    if schema.get("semantics") != "expected_external_executor_outputs_schema":
+        return False, "expected_outputs_schema.json semantics 不正确"
+    selection, err = _read_json_artifact(ws, "external_executor/executor_selection.json")
+    if err:
+        return False, err
+    if selection.get("semantics") != "external_executor_selection":
+        return False, "external_executor/executor_selection.json semantics 不正确"
+    manifest, err = _read_json_artifact(ws, "external_executor/input_manifest.json")
+    if err:
+        return False, err
+    if manifest.get("semantics") != "external_executor_input_manifest":
+        return False, "external_executor/input_manifest.json semantics 不正确"
+    prompt = (ws / "external_executor" / "executor_prompt.md").read_text(encoding="utf-8", errors="replace")
+    if "external_executor/result_pack.json" not in prompt:
+        return False, "executor_prompt.md 必须明确要求写 external_executor/result_pack.json"
+    for rel in ("external_executor/codex_prompt.md", "external_executor/claude_code_prompt.md", "external_executor/manual_instructions.md"):
+        text = (ws / rel).read_text(encoding="utf-8", errors="replace")
+        if "external_executor/result_pack.json" not in text:
+            return False, f"{rel} 必须明确 result_pack 输出协议"
+    return True, None
+
+
+def _validate_external_dry_run(ws: Path) -> tuple[bool, str | None]:
+    required = [
+        "external_executor/handoff_pack.json",
+        "external_executor/result_pack.json",
+        "external_executor/executor_status.json",
+        "external_executor/run_manifest.json",
+        "external_executor/heartbeat.json",
+        "external_executor/raw_results",
+        "external_executor/configs",
+        "external_executor/logs",
+    ]
+    ok, err = _require_external_files(ws, required)
+    if not ok:
+        return False, err
+    result_pack, err = _read_json_artifact(ws, "external_executor/result_pack.json")
+    if err:
+        return False, err
+    if result_pack.get("semantics") != "external_executor_result_pack":
+        return False, "external_executor/result_pack.json semantics 不正确"
+    if result_pack.get("dry_run") is not True or result_pack.get("mock_only") is not True:
+        return False, "dry-run result_pack 必须显式 dry_run=true 且 mock_only=true"
+    metrics = result_pack.get("metrics")
+    if not isinstance(metrics, list) or not metrics:
+        return False, "result_pack.metrics 必须是非空列表"
+    artifacts = result_pack.get("artifacts")
+    if not isinstance(artifacts, list) or not artifacts:
+        return False, "result_pack.artifacts 必须是非空列表"
+    artifact_by_path: dict[str, dict[str, Any]] = {}
+    for idx, artifact in enumerate(artifacts, start=1):
+        if not isinstance(artifact, dict):
+            return False, f"result_pack.artifacts[{idx}] 必须是对象"
+        rel = str(artifact.get("path") or "")
+        if not rel:
+            return False, f"result_pack.artifacts[{idx}] 缺少 path"
+        path = ws / rel
+        if not path.exists():
+            return False, f"result_pack.artifacts[{idx}] 指向不存在文件: {rel}"
+        expected_hash = artifact.get("sha256")
+        if expected_hash and path.is_file() and expected_hash != _sha256_file(path):
+            return False, f"result_pack.artifacts[{idx}] hash 不匹配: {rel}"
+        artifact_by_path[rel] = artifact
+    for idx, metric in enumerate(metrics, start=1):
+        if not isinstance(metric, dict):
+            return False, f"result_pack.metrics[{idx}] 必须是对象"
+        for key in ("metric_id", "name", "value", "source_artifact"):
+            if metric.get(key) in (None, ""):
+                return False, f"result_pack.metrics[{idx}] 缺少 {key}"
+        if metric.get("mock_only") is not True:
+            return False, f"result_pack.metrics[{idx}] 必须标记 mock_only=true"
+        if str(metric.get("source_artifact")) not in artifact_by_path:
+            return False, f"result_pack.metrics[{idx}].source_artifact 未被 artifacts 索引"
+    manifest, err = _read_json_artifact(ws, "external_executor/run_manifest.json")
+    if err:
+        return False, err
+    if manifest.get("semantics") != "external_executor_run_manifest":
+        return False, "external_executor/run_manifest.json semantics 不正确"
+    if manifest.get("dry_run") is not True or manifest.get("mock_only") is not True:
+        return False, "run_manifest 必须显式 dry_run=true 且 mock_only=true"
+    status, err = _read_json_artifact(ws, "external_executor/executor_status.json")
+    if err:
+        return False, err
+    if status.get("semantics") != "external_executor_status":
+        return False, "executor_status.json semantics 不正确"
+    if status.get("status") != "done":
+        return False, "executor_status.status 必须是 done"
+    if status.get("accepted") is True:
+        return False, "dry-run executor_status.accepted 不能为 true；执行器 done 不等于 ResearchOS accepted"
+    if status.get("run_manifest") != "external_executor/run_manifest.json":
+        return False, "executor_status.run_manifest 必须指向 external_executor/run_manifest.json"
+    return True, None
+
+
+def _validate_external_ingest(ws: Path) -> tuple[bool, str | None]:
+    required = [
+        "experiments/results_summary.json",
+        "experiments/run_records.jsonl",
+        "experiments/evidence_index.json",
+        "experiments/ingest_report.json",
+    ]
+    ok, err = _require_external_files(ws, required)
+    if not ok:
+        return False, err
+    summary, err = _read_json_artifact(ws, "experiments/results_summary.json")
+    if err:
+        return False, err
+    if summary.get("semantics") != "external_executor_results_summary":
+        return False, "experiments/results_summary.json semantics 不正确"
+    if summary.get("source") != "external_executor":
+        return False, "experiments/results_summary.json source 必须是 external_executor"
+    if not isinstance(summary.get("metrics"), list) or not summary.get("metrics"):
+        return False, "experiments/results_summary.json 必须包含非空 metrics"
+    if not isinstance(summary.get("experiments"), list) or not summary.get("experiments"):
+        return False, "experiments/results_summary.json 必须包含非空 experiments"
+    if summary.get("ingest_report_ref") != "experiments/ingest_report.json":
+        return False, "results_summary.ingest_report_ref 必须指向 experiments/ingest_report.json"
+    evidence, err = _read_json_artifact(ws, "experiments/evidence_index.json")
+    if err:
+        return False, err
+    if evidence.get("semantics") != "external_experiment_evidence_index":
+        return False, "experiments/evidence_index.json semantics 不正确"
+    report, err = _read_json_artifact(ws, "experiments/ingest_report.json")
+    if err:
+        return False, err
+    if report.get("semantics") != "external_result_ingest_report" or report.get("ok") is not True:
+        return False, "experiments/ingest_report.json 必须是 ok=true 的 ingest report"
+    run_records = (ws / "experiments" / "run_records.jsonl").read_text(encoding="utf-8", errors="replace")
+    if "external_executor_result_pack" not in run_records:
+        return False, "experiments/run_records.jsonl 必须保存原始 external_executor_result_pack"
+    return True, None
+
+
+def _validate_external_integrity_audit(ws: Path) -> tuple[bool, str | None]:
+    audit, err = _read_json_artifact(ws, "experiments/integrity_audit.json")
+    if err:
+        return False, err
+    if audit.get("semantics") != "external_experiment_integrity_audit":
+        return False, "experiments/integrity_audit.json semantics 不正确"
+    if audit.get("status") not in {"pass", "mock_only", "fail"}:
+        return False, "integrity_audit.status 必须是 pass/mock_only/fail"
+    if not isinstance(audit.get("issues"), list):
+        return False, "integrity_audit.issues 必须是列表"
+    if audit.get("mock_only") is True and audit.get("status") != "mock_only":
+        return False, "mock_only 审计状态必须是 mock_only"
+    return True, None
+
+
+def _validate_external_result_to_claim(ws: Path) -> tuple[bool, str | None]:
+    required = [
+        "experiments/experimental_claims.json",
+        "drafts/result_to_claim.json",
+        "drafts/experiment_evidence_pack.json",
+        "experiments/iteration_log.md",
+    ]
+    ok, err = _require_external_files(ws, required)
+    if not ok:
+        return False, err
+    claims, err = _read_json_artifact(ws, "experiments/experimental_claims.json")
+    if err:
+        return False, err
+    mirror, err = _read_json_artifact(ws, "drafts/result_to_claim.json")
+    if err:
+        return False, err
+    for rel, data in {
+        "experiments/experimental_claims.json": claims,
+        "drafts/result_to_claim.json": mirror,
+    }.items():
+        if data.get("semantics") != "mechanical_result_to_claim_map_not_final_scientific_judgment":
+            return False, f"{rel} semantics 不正确"
+        mappings = data.get("claim_mappings")
+        if not isinstance(mappings, list) or not mappings:
+            return False, f"{rel} 必须包含非空 claim_mappings"
+        for idx, mapping in enumerate(mappings, start=1):
+            if not isinstance(mapping, dict):
+                return False, f"{rel} claim_mappings[{idx}] 必须是对象"
+            if mapping.get("support_status") not in {"supported", "weak", "unsupported_mock_only"}:
+                return False, f"{rel} claim_mappings[{idx}].support_status 无效"
+            if not isinstance(mapping.get("metric_refs"), list) or not mapping.get("metric_refs"):
+                return False, f"{rel} claim_mappings[{idx}] 缺少 metric_refs"
+    pack, err = _read_json_artifact(ws, "drafts/experiment_evidence_pack.json")
+    if err:
+        return False, err
+    if pack.get("semantics") != "normalized_experiment_evidence_pack":
+        return False, "drafts/experiment_evidence_pack.json semantics 不正确"
+    if pack.get("source") != "external_executor":
+        return False, "experiment_evidence_pack.source 必须是 external_executor"
+    if not isinstance(pack.get("metrics"), list) or not pack.get("metrics"):
+        return False, "experiment_evidence_pack.metrics 必须是非空列表"
+    if not isinstance(pack.get("claims"), list) or not pack.get("claims"):
+        return False, "experiment_evidence_pack.claims 必须是非空列表"
+    log = (ws / "experiments" / "iteration_log.md").read_text(encoding="utf-8", errors="replace")
+    if "External Experiment Iteration Log" not in log:
+        return False, "experiments/iteration_log.md 必须记录 External Experiment Iteration Log"
+    return True, None
+
+
 class ExperimenterAgent(Agent):
     """实验执行 Agent。支持 pilot（T5）和 full（T7）两种模式。
 
@@ -391,8 +687,12 @@ class ExperimenterAgent(Agent):
                         "write_structured_file",
                         "list_files",
                         "append_file",
-                        "bash_run",
-                        "docker_exec",
+                        "build_experiment_handoff_pack",
+                        "mock_external_dry_run",
+                        "ingest_external_results",
+                        "audit_experiment_integrity",
+                        "map_results_to_claims",
+                        "build_experiment_evidence_pack",
                         "finish_task",
                     ],
                     "max_steps": 150,
@@ -400,8 +700,8 @@ class ExperimenterAgent(Agent):
                     "max_wall_seconds": 14400,
                     "max_validation_retries": 2,
                     "temperature": 0.3,
-                    "allowed_read_prefixes": ["", "ideation/", "experiments/", "pilot/", "literature/"],
-                    "allowed_write_prefixes": ["experiments/", "pilot/"],
+                    "allowed_read_prefixes": ["", "ideation/", "experiments/", "pilot/", "literature/", "external_executor/", "drafts/"],
+                    "allowed_write_prefixes": ["experiments/", "pilot/", "external_executor/", "drafts/"],
                     "prompt_template": "experimenter.j2",
                     "pre_hooks": [run_experimenter_preflight],
                     "structured_outputs": {
@@ -519,6 +819,51 @@ class ExperimenterAgent(Agent):
         """初始用户消息，根据 mode 生成不同的指令。"""
         mode = ctx.mode or "full"
 
+        if mode == "handoff":
+            return prepend_resume_prefix(
+                ctx,
+                (
+                    "请执行外部实验 T5-HANDOFF：调用 build_experiment_handoff_pack，"
+                    "生成 external_executor/handoff_pack.json、executor_prompt.md、"
+                    "expected_outputs_schema.json 和 allowed_paths.txt。不要运行真实实验。"
+                ),
+            )
+        if mode == "dry_run":
+            return prepend_resume_prefix(
+                ctx,
+                (
+                    "请执行外部实验 T5-DRY-RUN：调用 mock_external_dry_run，"
+                    "生成 schema-compatible 的 external_executor/result_pack.json 和 executor_status.json。"
+                    "这是协议 dry-run，不是真实实验。"
+                ),
+            )
+        if mode == "result_ingest":
+            return prepend_resume_prefix(
+                ctx,
+                (
+                    "请执行 T7-INGEST：调用 ingest_external_results，把 external_executor/result_pack.json "
+                    "规范化为 experiments/results_summary.json、run_records.jsonl、evidence_index.json "
+                    "和 ingest_report.json。不要相信自然语言总结。"
+                ),
+            )
+        if mode == "integrity_audit":
+            return prepend_resume_prefix(
+                ctx,
+                (
+                    "请执行 T7-AUDIT：调用 audit_experiment_integrity，审计 experiments/results_summary.json "
+                    "和 evidence_index.json 的 provenance、mock_only、metric、seed 与 artifact 引用。"
+                ),
+            )
+        if mode == "result_to_claim":
+            return prepend_resume_prefix(
+                ctx,
+                (
+                    "请执行 T7-CLAIMS：调用 map_results_to_claims，再调用 build_experiment_evidence_pack，"
+                    "生成 experiments/experimental_claims.json、drafts/result_to_claim.json、"
+                    "drafts/experiment_evidence_pack.json 和 experiments/iteration_log.md。"
+                ),
+            )
+
         if mode == "pilot":
             if ctx.extra.get("resume_mode"):
                 return prepend_resume_prefix(
@@ -545,7 +890,7 @@ class ExperimenterAgent(Agent):
                 return prepend_resume_prefix(
                     ctx,
                     (
-                    "请继续 T7 Full 实验任务。\n"
+                    "请继续 legacy T7 Full 实验任务。\n"
                     "优先复用 experiments/ 下已有代码、运行目录和中间结果，只补剩余的 summary / ablation / log 产物，"
                     "不要从头重建整个实验目录。"
                     ),
@@ -553,9 +898,10 @@ class ExperimenterAgent(Agent):
             return prepend_resume_prefix(
                 ctx,
                 (
-                "请按 system prompt 执行 T7 Full 实验任务。\n"
+                "请按 system prompt 执行 legacy T7 Full 实验任务。\n"
                 "实验计划在 ideation/exp_plan.yaml 中。\n"
-                "当前主链允许跳过 T5/T6 直接进入 full 实验；如果 pilot 或 novelty_final 产物不存在，"
+                "注意：默认主链现在使用外部实验 handoff/ingest/audit/claims；本模式仅用于显式 legacy 调试。"
+                "如果 pilot 或 novelty_final 产物不存在，"
                 "请基于 hypotheses、exp_plan、ideation/novelty_audit.md、synthesis.md 和 comparison_table.csv "
                 "建立完整实验计划，并在 iteration_log.md 中明确记录 direct_full_from_t45。\n"
                 "请执行完整实验，包含至少 3 条 ablation 实验，"
@@ -579,6 +925,17 @@ class ExperimenterAgent(Agent):
         ok, err = super().validate_outputs(ctx)
         if not ok:
             return False, err
+
+        if mode == "handoff":
+            return _validate_external_handoff(ws)
+        if mode == "dry_run":
+            return _validate_external_dry_run(ws)
+        if mode == "result_ingest":
+            return _validate_external_ingest(ws)
+        if mode == "integrity_audit":
+            return _validate_external_integrity_audit(ws)
+        if mode == "result_to_claim":
+            return _validate_external_result_to_claim(ws)
 
         if mode == "pilot":
             # ═══════════════════════════════════════════════════════

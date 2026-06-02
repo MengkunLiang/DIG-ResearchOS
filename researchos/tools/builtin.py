@@ -15,6 +15,15 @@ from .clone_repo import CloneRepoTool
 from .citation_graph import BuildDomainMapTool, FetchOutgoingCitationsTool
 from .docker_exec import DockerExecTool, load_project_config
 from .echo import EchoTool
+from .external_experiment import (
+    AuditExperimentIntegrityTool,
+    AuditPaperClaimsTool,
+    BuildExperimentEvidencePackTool,
+    BuildExperimentHandoffPackTool,
+    IngestExternalResultsTool,
+    MapResultsToClaimsTool,
+    MockExternalDryRunTool,
+)
 from .filesystem import ListFilesTool, ReadFileTool, WriteFileTool
 from .finish_task import FinishTaskTool
 from .structured_file import WriteStructuredFileTool
@@ -61,6 +70,7 @@ from .paper_utils_tool import (
     GenerateSearchLogTool,
     LogScoutProgressTool,
 )
+from .reference_mining import MineReferenceProjectsTool
 from .paper_enrichment_tool import (
     EnrichPapersTool,
     DetectDuplicateQueriesTool,
@@ -130,6 +140,13 @@ def register_builtin_tools(
     registry.register("audit_manuscript_claims", lambda ctx: AuditManuscriptClaimsTool(ctx.policy))
     registry.register("audit_writing_craft", lambda ctx: AuditWritingCraftTool(ctx.policy))
     registry.register("build_manuscript_revision_patches", lambda ctx: BuildManuscriptRevisionPatchesTool(ctx.policy))
+    registry.register("build_experiment_handoff_pack", lambda ctx: BuildExperimentHandoffPackTool(ctx.policy))
+    registry.register("mock_external_dry_run", lambda ctx: MockExternalDryRunTool(ctx.policy))
+    registry.register("ingest_external_results", lambda ctx: IngestExternalResultsTool(ctx.policy))
+    registry.register("audit_experiment_integrity", lambda ctx: AuditExperimentIntegrityTool(ctx.policy))
+    registry.register("map_results_to_claims", lambda ctx: MapResultsToClaimsTool(ctx.policy))
+    registry.register("build_experiment_evidence_pack", lambda ctx: BuildExperimentEvidencePackTool(ctx.policy))
+    registry.register("audit_paper_claims", lambda ctx: AuditPaperClaimsTool(ctx.policy))
     registry.register("build_survey_state", lambda ctx: BuildSurveyStateTool(ctx.policy))
     registry.register("update_survey_section_state", lambda ctx: UpdateSurveySectionStateTool(ctx.policy))
     registry.register("assemble_survey", lambda ctx: AssembleSurveyTool(ctx.policy))
@@ -185,6 +202,7 @@ def register_builtin_tools(
     registry.register("build_domain_map", lambda ctx: BuildDomainMapTool(ctx.policy))
     registry.register("analyze_idea_concentration", lambda ctx: AnalyzeIdeaConcentrationTool(ctx.policy))
     registry.register("compute_idea_novelty_signal", lambda ctx: ComputeIdeaNoveltySignalTool(ctx.policy))
+    registry.register("mine_reference_projects", lambda ctx: MineReferenceProjectsTool(ctx.policy))
     # Semantic Scholar 工具（直接 API 调用，不依赖 MCP）
     registry.register("semantic_scholar_search", lambda ctx: SemanticScholarSearchTool())
     registry.register("semantic_scholar_get_paper", lambda ctx: SemanticScholarGetPaperTool())

@@ -34,6 +34,8 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
                 "global_timeout.llm_call",
                 "retry_policy.llm_retries",
                 "retry_policy.llm_retry_delay",
+                "retry_policy.llm_timeout_cooldown_seconds",
+                "retry_policy.llm_timeout_pause_after_cooldowns",
                 "agents.<agent>.llm.profile/tier/model/endpoint/temperature",
                 "agents.<agent>.budget.max_steps/max_tokens_total/max_wall_seconds/max_validation_retries/unlimited_budget/tags",
                 "agents.<agent>.tools.tool_names/allowed_read_prefixes/allowed_write_prefixes",

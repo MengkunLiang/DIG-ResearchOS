@@ -15,6 +15,7 @@ from researchos.runtime.agent import (
     ExecutionContext,
     resolve_effective_config,
 )
+from researchos.runtime.errors import LLMProviderError
 from researchos.runtime.orchestrator import AgentRunner
 from researchos.testing.mocks import FakeLLMMessage, FakeRawCompletion, FakeToolCall, MockHumanInterface, MockLLMClient
 from researchos.tools.builtin import register_builtin_tools
@@ -366,6 +367,111 @@ def write_valid_t8_section_plan_inputs(workspace):
     )
     (drafts / "paper_state.json").write_text(
         json.dumps({"semantics": "old_invalid_state", "sections": {}}),
+        encoding="utf-8",
+    )
+
+
+def write_valid_t8_revise_artifacts(workspace):
+    write_valid_t8_section_plan_inputs(workspace)
+    from researchos.tools.manuscript import SECTION_WRITING_SEQUENCE
+    drafts = workspace / "drafts"
+    literature = workspace / "literature"
+    experiments = workspace / "experiments"
+    literature.mkdir(parents=True, exist_ok=True)
+    experiments.mkdir(parents=True, exist_ok=True)
+    (literature / "related_work.bib").write_text(
+        "@article{smith2024,\n  title={Prior Work},\n  year={2024}\n}\n",
+        encoding="utf-8",
+    )
+    (experiments / "results_summary.json").write_text('{"metrics":{"accuracy":0.82}}\n', encoding="utf-8")
+    sections_dir = drafts / "sections"
+    sections_dir.mkdir(parents=True, exist_ok=True)
+    section_bodies = {
+        "methodology": "\\section{Method}\nMethod describes the mechanism and implementation details.",
+        "experiments": "\\section{Experiments}\nExperiments report accuracy 0.82 in Table~\\ref{tab:main_results}.",
+        "related_work": "\\section{Related Work}\nPrior work motivates the gap~\\cite{smith2024}.",
+        "analysis": "\\section{Analysis}\nThe result supports the mechanism while noting uncertainty.",
+        "introduction": "\\section{Introduction}\nThis paper makes three contributions to the problem.",
+        "conclusion": "\\section{Conclusion}\nWe summarize the findings.\\subsection{Limitations}\nEvidence remains bounded.",
+        "abstract": "This paper studies efficient memory retrieval and reports accuracy 0.82.",
+    }
+    alignment_rows = [
+        {
+            "cid": f"C{idx}",
+            "motivation": f"test motivation {idx}",
+            "contribution": f"test contribution {idx}",
+            "related_gap": {"papers": ["smith2024"], "tension": f"test tension {idx}"},
+            "design_choice": f"test design choice {idx}",
+            "experiment": {"rq": f"RQ{idx}", "result_metric": "accuracy", "table": "tab:main_results"},
+            "analysis": f"test analysis {idx}",
+        }
+        for idx in range(1, 4)
+    ]
+    (drafts / "alignment_matrix.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "alignment_matrix_seed_not_final_scientific_judgment",
+                "rows": alignment_rows,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    state = {
+        "version": "1.0",
+        "semantics": "shared_state_for_section_by_section_writing_not_final_claims",
+        "section_order": list(SECTION_WRITING_SEQUENCE),
+        "sections": {
+            section_id: {"status": "pending", "file": f"drafts/sections/{section_id}.tex"}
+            for section_id in SECTION_WRITING_SEQUENCE
+        },
+        "shared_facts": {
+            "bib_keys": ["smith2024"],
+            "result_metrics": [{"name": "accuracy", "value": 0.82}],
+            "alignment_matrix": alignment_rows,
+        },
+    }
+    for section_id in SECTION_WRITING_SEQUENCE:
+        body = section_bodies[section_id] + "\n" + ("Additional substantive text. " * 8)
+        (sections_dir / f"{section_id}.tex").write_text(body, encoding="utf-8")
+        state["sections"][section_id]["status"] = "revised"
+    (drafts / "paper_state.json").write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    (drafts / "patches").mkdir(parents=True, exist_ok=True)
+    (drafts / "patches" / "round_1_patches.json").write_text(
+        json.dumps(
+            {
+                "semantics": "mechanical_review_issue_locations_not_final_revision_decisions",
+                "round": 1,
+                "patches": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (drafts / "revision_response_round_1.md").write_text(
+        "# Revision Response Round 1\n\nResolved: existing section-level revisions are preserved.\n",
+        encoding="utf-8",
+    )
+    (drafts / "paper.tex").write_text(
+        "\\documentclass{article}\\begin{document}\\begin{abstract}x\\end{abstract}"
+        "\\section{Introduction}x\\section{Related Work}x\\section{Method}x"
+        "\\section{Experiments}x\\section{Conclusion}\\subsection{Limitations}x"
+        "\\bibliography{related_work}\\end{document}",
+        encoding="utf-8",
+    )
+    (drafts / "manuscript_audit.md").write_text("# Manuscript Mechanical Audit\n- [x] ok\n", encoding="utf-8")
+    (drafts / "craft_audit.md").write_text("# stale craft audit\n", encoding="utf-8")
+    (drafts / "craft_audit.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "deterministic_writing_craft_audit_not_scientific_judgment",
+                "checks": [
+                    {"name": "abstract_no_cite", "level": "PASS", "passed": True, "detail": "ok"},
+                    {"name": "number_traceability", "level": "FAIL", "passed": False, "detail": "old stale fail"},
+                ],
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -1341,6 +1447,34 @@ async def test_runner_passes_global_llm_timeout_and_retry_settings(tmp_workspace
 
 
 @pytest.mark.asyncio
+async def test_runner_pauses_after_configured_llm_timeout_cooldowns(tmp_workspace, registry, monkeypatch):
+    monkeypatch.setattr(
+        "researchos.runtime.orchestrator.get_global_timeout",
+        lambda: {"llm_call": 1, "max_agent_runtime": 999, "max_tool_call": 30},
+    )
+    monkeypatch.setattr(
+        "researchos.runtime.orchestrator.get_retry_policy",
+        lambda: {
+            "llm_retries": 1,
+            "llm_retry_delay": 0,
+            "llm_timeout_cooldown_seconds": 0,
+            "llm_timeout_pause_after_cooldowns": 1,
+        },
+    )
+
+    llm = MockLLMClient(responses=[], fail_with=LLMProviderError("All candidates failed: TimeoutError()"))
+    ctx = ExecutionContext(workspace_dir=tmp_workspace, project_id="p1", task_id="T0", run_id="r_timeout_pause")
+    runner = AgentRunner(MinimalAgent(), registry, llm, MockHumanInterface())
+
+    result = await runner.run(ctx)
+
+    assert not result.ok
+    assert result.stop_reason == AgentResult.STOP_INTERRUPTED
+    assert "连续超时" in (result.error or "")
+    assert llm.call_count == 2
+
+
+@pytest.mark.asyncio
 async def test_budget_extension_gate_allows_t5_to_continue(tmp_workspace, registry):
     llm = MockLLMClient(
         responses=[
@@ -1897,6 +2031,37 @@ async def test_t8_section_plan_prefinalize_repairs_invalid_state_without_llm(tmp
 
 
 @pytest.mark.asyncio
+async def test_t8_revise_prefinalize_refreshes_audits_and_skips_llm(tmp_workspace, registry):
+    write_valid_t8_revise_artifacts(tmp_workspace)
+    llm = MockLLMClient(responses=[])
+    ctx = ExecutionContext(
+        workspace_dir=tmp_workspace,
+        project_id="p1",
+        task_id="T8-REVISE-1",
+        run_id="r_t8_revise_prefinalize",
+        mode="revise",
+        outputs_expected={
+            "revision_patches": tmp_workspace / "drafts" / "patches" / "round_1_patches.json",
+            "revision_response": tmp_workspace / "drafts" / "revision_response_round_1.md",
+            "paper": tmp_workspace / "drafts" / "paper.tex",
+            "manuscript_audit": tmp_workspace / "drafts" / "manuscript_audit.md",
+            "craft_audit": tmp_workspace / "drafts" / "craft_audit.md",
+        },
+        extra={"phase": "revise", "round": 1},
+    )
+    runner = AgentRunner(WriterAgent(), registry, llm, MockHumanInterface())
+
+    result = await runner.run(ctx)
+
+    assert result.ok
+    assert llm.call_count == 0
+    assert result.metadata["completion_mode"] == "t8_manuscript_prefinalize"
+    craft = json.loads((tmp_workspace / "drafts" / "craft_audit.json").read_text(encoding="utf-8"))
+    failed = [item for item in craft["checks"] if item["level"] == "FAIL" and not item["passed"]]
+    assert failed == []
+
+
+@pytest.mark.asyncio
 async def test_sync_pre_hook_failure_is_reported_cleanly(tmp_workspace, registry):
     llm = MockLLMClient(responses=[])
     ctx = ExecutionContext(
@@ -1961,3 +2126,26 @@ def test_task_start_summary_includes_task_goal(tmp_workspace, registry, capsys):
     assert "任务: T9" in out
     assert "目标: 构建投稿包" in out
     assert "submission/bundle/main.pdf" in out
+    alignment_rows = [
+        {
+            "cid": f"C{idx}",
+            "motivation": f"test motivation {idx}",
+            "contribution": f"test contribution {idx}",
+            "related_gap": {"papers": ["smith2024"], "tension": f"test tension {idx}"},
+            "design_choice": f"test design choice {idx}",
+            "experiment": {"rq": f"RQ{idx}", "result_metric": "accuracy", "table": "tab:main_results"},
+            "analysis": f"test analysis {idx}",
+        }
+        for idx in range(1, 4)
+    ]
+    (drafts / "alignment_matrix.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "alignment_matrix_seed_not_final_scientific_judgment",
+                "rows": alignment_rows,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )

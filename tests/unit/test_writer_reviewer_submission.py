@@ -1331,6 +1331,66 @@ def test_submission_validate_outputs_success(temp_workspace):
     assert err is None
 
 
+def _write_valid_submission_bundle(workspace: Path) -> None:
+    bundle_dir = workspace / "submission" / "bundle"
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    (bundle_dir / "main.tex").write_text(r"\documentclass{article}\begin{document}\end{document}")
+    (bundle_dir / "references.bib").write_text("@article{test,}")
+    (bundle_dir / "main.pdf").write_bytes(b"%PDF-1.4\nmock pdf body\n%%EOF")
+    (bundle_dir / "main.log").write_text("This is a clean compile log.")
+    _write_compile_report(workspace)
+
+
+def _valid_migration_report(extra: str = "") -> str:
+    return (
+        "# 投稿迁移报告\n\n"
+        "生成时间: 2024-01-26 15:30:00\n"
+        "目标会议: neurips2026\n\n"
+        "## 迁移摘要\n\n"
+        "- 源文件: drafts/paper.tex\n"
+        "- 目标模板: neurips2026\n"
+        "- 迁移状态: 成功\n"
+        "- 编译状态: 成功\n"
+        "- 匿名化检查: 通过\n\n"
+        "## 文件清单\n\n"
+        "- main.tex\n"
+        "- references.bib\n\n"
+        "## 投稿检查清单\n\n"
+        "- [x] 主论文\n"
+        "- [x] 参考文献\n\n"
+        f"{extra}\n"
+    )
+
+
+def test_submission_requires_evidence_audit_trace_when_present(temp_workspace):
+    agent = SubmissionAgent()
+    ctx = MockExecutionContext("submission", temp_workspace)
+    _write_valid_submission_bundle(temp_workspace)
+    (temp_workspace / "drafts" / "paper_claim_audit.md").write_text("# Paper Claim Audit\n")
+    (temp_workspace / "drafts" / "paper_claim_audit.json").write_text('{"semantics":"paper_claim_audit_against_experiment_evidence_pack"}\n')
+    (temp_workspace / "drafts" / "result_to_claim.json").write_text('{"semantics":"mechanical_result_to_claim_map_not_final_scientific_judgment"}\n')
+    (temp_workspace / "drafts" / "experiment_evidence_pack.json").write_text('{"semantics":"normalized_experiment_evidence_pack"}\n')
+    (temp_workspace / "submission" / "migration_report.md").write_text(_valid_migration_report())
+
+    ok, err = agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "evidence audit artifact" in err
+
+    (temp_workspace / "submission" / "migration_report.md").write_text(
+        _valid_migration_report(
+            "## Evidence Audit Chain\n\n"
+            "- drafts/paper_claim_audit.md\n"
+            "- drafts/paper_claim_audit.json\n"
+            "- drafts/result_to_claim.json\n"
+            "- drafts/experiment_evidence_pack.json\n"
+        )
+    )
+
+    ok, err = agent.validate_outputs(ctx)
+    assert ok, err
+
+
 def test_submission_validate_outputs_missing_bundle(temp_workspace):
     """测试投稿包缺少bundle目录"""
     agent = SubmissionAgent()

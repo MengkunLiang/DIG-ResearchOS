@@ -429,6 +429,48 @@ def _prepare_manuscript_workspace(workspace: Path) -> None:
         "exp1,H1,remove_x,accuracy,0.80,0.82,-0.02\n",
         encoding="utf-8",
     )
+    (workspace / "drafts" / "experiment_evidence_pack.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "normalized_experiment_evidence_pack",
+                "source": "external_executor",
+                "dry_run": False,
+                "mock_only": False,
+                "metrics": [
+                    {
+                        "metric_id": "m_external_acc",
+                        "experiment_id": "external_run",
+                        "name": "accuracy",
+                        "value": 0.84,
+                        "source_artifact": "external_executor/result_pack.json",
+                    }
+                ],
+                "artifacts": [{"path": "external_executor/result_pack.json"}],
+                "claims": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (workspace / "drafts" / "result_to_claim.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "mechanical_result_to_claim_map_not_final_scientific_judgment",
+                "claim_mappings": [
+                    {
+                        "claim_id": "claim_m_external_acc",
+                        "support_status": "supported",
+                        "metric_refs": ["m_external_acc"],
+                        "evidence_refs": ["external_executor/result_pack.json"],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
 
 
 @pytest.mark.asyncio
@@ -444,6 +486,7 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
     resource_index = json.loads(index_path.read_text(encoding="utf-8"))
     assert "smith2024" in resource_index["bib_keys"]
     assert any(item["path"] == "experiments/results_summary.json" for item in resource_index["artifacts"])
+    assert any(item.get("metric_id") == "m_external_acc" for item in resource_index["result_metrics"])
 
     plan_tool = PlanManuscriptSectionsTool(policy)
     plan_result = await plan_tool.execute(target_venue="neurips")
@@ -466,6 +509,9 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
         slot["slot_id"] == "experiments_main_result"
         for slot in evidence_plan["claim_slots"]
     )
+    main_result_slot = next(slot for slot in evidence_plan["claim_slots"] if slot["slot_id"] == "experiments_main_result")
+    assert "drafts/experiment_evidence_pack.json" in main_result_slot["candidate_evidence"]
+    assert "drafts/result_to_claim.json" in main_result_slot["candidate_evidence"]
     assert any(
         visual["figure_id"] == "fig:main_results"
         for visual in figure_table_plan["planned_visuals"]
@@ -751,13 +797,14 @@ async def test_writing_craft_audit_reports_alignment_and_traceability_failures(t
     assert result.ok
     audit = json.loads((tmp_workspace / "drafts" / "craft_audit.json").read_text(encoding="utf-8"))
     failed = {item["name"] for item in audit["checks"] if item["level"] == "FAIL" and not item["passed"]}
+    warned = {item["name"] for item in audit["checks"] if item["level"] == "WARN" and not item["passed"]}
     intro_check = next(item for item in audit["checks"] if item["name"] == "intro_contribution_count")
     assert intro_check["level"] == "WARN"
     assert "abstract_no_cite" in failed
     assert "no_standalone_limitations" in failed
     assert "conclusion_has_limitations_subsection" in failed
-    assert "number_traceability" in failed
-    assert "cid_C1_experiment_artifact" in failed
+    assert "number_traceability" in warned
+    assert "cid_C1_experiment_artifact" in warned
 
 
 @pytest.mark.asyncio

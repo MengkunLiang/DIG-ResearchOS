@@ -19,6 +19,9 @@
    - `drafts/sections/introduction.tex`
    - `drafts/manuscript_audit.md`
    - `drafts/craft_audit.md`
+   - `drafts/paper_claim_audit.md`
+   - `drafts/result_to_claim.json`
+   - `drafts/experiment_evidence_pack.json`
    - `drafts/alignment_matrix.json`
    - `drafts/self_check.md`
    - `drafts/review_rounds/round_{{ round - 1 }}.md`（第2轮及以后）
@@ -36,7 +39,7 @@
 - Conclusion是否总结了贡献和局限性？
 
 ### 2. 技术准确性
-- 实验数字是否准确（对照results_summary.json）？
+- 实验数字是否准确（优先对照 experiment_evidence_pack/result_to_claim/paper_claim_audit，其次对照 results_summary.json）？
 - 方法描述是否正确？
 - 引用是否恰当？
 
@@ -80,6 +83,21 @@
 ### Writing Craft Audit
 ```markdown
 {{ craft_audit_preview }}
+```
+
+### Paper Claim Audit
+```markdown
+{{ paper_claim_audit_preview }}
+```
+
+### Result To Claim
+```json
+{{ result_to_claim_preview }}
+```
+
+### Experiment Evidence Pack
+```json
+{{ experiment_evidence_pack_preview }}
 ```
 
 ### Alignment Matrix

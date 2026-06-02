@@ -19,7 +19,7 @@ ResearchOS 当前有两种主用法：
 | 模式 | 适用场景 | 典型命令 |
 | --- | --- | --- |
 | 宿主机模式 | 本地开发、单阶段调试、改 prompt / 改 validator | `python -m researchos.cli ...` |
-| Docker 模式 | T5/T7 实验、T9 编译、环境隔离与复现 | `bash infra/docker/run.sh ...` |
+| Docker 模式 | T9 编译、legacy 内部实验调试、外部 executor 自行需要的隔离环境 | `bash infra/docker/run.sh ...` |
 
 如果你现在的目标是：
 
@@ -218,6 +218,11 @@ researchos resume --workspace ./workspace/local-test2
 ```bash
 researchos run-task T2 --workspace ./workspace/local-test2
 researchos run-task T3 --workspace ./workspace/local-test2
+researchos run-task T5-HANDOFF --workspace ./workspace/local-test2
+researchos run-task T5-DRY-RUN --workspace ./workspace/local-test2
+researchos run-task T7-INGEST --workspace ./workspace/local-test2
+researchos run-task T7-AUDIT --workspace ./workspace/local-test2
+researchos run-task T7-CLAIMS --workspace ./workspace/local-test2
 researchos run-task T7.5 --workspace ./workspace/local-test2
 researchos run-task T9 --workspace ./workspace/local-test2
 ```
@@ -248,7 +253,8 @@ researchos trace T7_single_12345678 --workspace ./workspace/local-test2 --raw
 ### 4.8 校验某阶段产物
 
 ```bash
-researchos validate --workspace ./workspace/local-test2 --task T7
+researchos validate --workspace ./workspace/local-test2 --task T7-AUDIT
+researchos validate --workspace ./workspace/local-test2 --task T7-CLAIMS
 ```
 
 ### 4.9 列出 skills
@@ -299,14 +305,17 @@ researchos run-skill deepxiv "summarize recent memory papers for llm agents"
 - `Truncation` 是否明确最终无截断；如果初次调用被截断，必须说明已通过分块重读解决
 - 如果 PDF 可得但只读了部分页，应标为 `[PARTIAL-TEXT]`，不能标为 `[FULL-TEXT]`
 
-### 5.4 如果 T5/T7 已经跑了
+### 5.4 如果外部实验链已经跑了
 
 看：
 
-- `workspace/local-test2/pilot/`
+- `workspace/local-test2/external_executor/handoff_pack.json`
+- `workspace/local-test2/external_executor/result_pack.json`
 - `workspace/local-test2/experiments/results_summary.json`
+- `workspace/local-test2/experiments/integrity_audit.json`
+- `workspace/local-test2/drafts/result_to_claim.json`
+- `workspace/local-test2/drafts/experiment_evidence_pack.json`
 - `workspace/local-test2/experiments/iteration_log.md`
-- `workspace/local-test2/experiments/ablations.csv`
 
 ### 5.5 如果 T8/T9 已经跑了
 

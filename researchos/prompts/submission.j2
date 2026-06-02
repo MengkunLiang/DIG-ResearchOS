@@ -15,6 +15,7 @@
 - 读取 drafts/paper.tex
 - 读取 project.yaml 获取 target_venue
 - 读取 literature/related_work.bib
+- 如果存在，读取 `drafts/paper_claim_audit.md/json`、`drafts/result_to_claim.json`、`drafts/experiment_evidence_pack.json`；T9 不重判 claim，但必须把 evidence audit 链写入迁移报告。
 
 ### Step 2: 模板迁移
 将 paper.tex 迁移到 {{ target_venue }} 会议格式：
@@ -50,6 +51,7 @@ Pre-hook 已执行检查，请确保以下内容不出现：
 - 匿名化检查结果
 - 文件清单
 - 编译验证结果
+- Evidence audit 文件清单与 hash（paper_claim_audit、result_to_claim、experiment_evidence_pack，如存在）
 
 ### Step 5: 编译-修复-重试闭环
 你必须真的尝试编译投稿包，而不是只写“编译状态”。
@@ -151,6 +153,12 @@ project:
 - final_exit_code: 0
 - main_tex_sha256: [...]
 - pdf_sha256: [...]
+
+## Evidence Audit Chain
+- paper_claim_audit: drafts/paper_claim_audit.md / drafts/paper_claim_audit.json
+- result_to_claim: drafts/result_to_claim.json
+- experiment_evidence_pack: drafts/experiment_evidence_pack.json
+- 说明: T9 只记录这些审计产物和 hash，不把 mock_only/unsupported claim 重新解释成实证结论。
 
 ## 投稿检查清单
 - [x] 主论文

@@ -331,7 +331,7 @@ states:
   HELLO:
     agent: hello
     llm:
-      model: "Pro/zai-org/GLM-4.7"
+      model: "deepseek-ai/DeepSeek-V4-Pro"
       endpoint: siliconflow
       max_context: 128000
     outputs:
@@ -353,17 +353,27 @@ states:
    HELLO → done/failed
    ```
 
-2. **T1-T4 完整研究 Workflow**
+2. **T1-T9 完整研究 Workflow**
    ```
    T1 (项目初始化)
    → T2 (文献检索)
    → T3 (深度阅读)
    → T3.5 (文献综合)
+   → T3.6 (可选综述论文支线)
    → T4 (假设生成)
    → T4.5 (新颖性审计)
-   → T6 (实验执行)
+   → T5-HANDOFF (外部实验协议编译)
+   → T5-DRY-RUN (mock 协议 dry-run)
+   → T7-INGEST (外部结果摄取)
+   → T7-AUDIT (实验诚信审计)
+   → T7-CLAIMS (result-to-claim 与 evidence pack)
+   → T7.5 (PI 评估与 human gate)
+   → T8-* (分章节写作、审计、review/revise)
+   → T9 (投稿包构建和 TeX 编译)
    → done/failed
    ```
+
+旧 `T5`、`T6`、`T7` 仍可通过 `run-task` 显式调用，但默认完整主链不再让 ResearchOS 自己长时间实现和运行实验。
 
 **使用场景：**
 
