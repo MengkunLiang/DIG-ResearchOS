@@ -123,6 +123,80 @@ def test_build_execution_context_injects_generic_recovery_snapshot(tmp_workspace
     assert "must_add_baselines" in ctx.extra["resume_missing_outputs"]
 
 
+def test_build_execution_context_supports_unlimited_budget_override(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T3
+        states:
+          T3:
+            agent: reader
+            budget:
+              max_steps: 1
+              unlimited_budget: true
+            outputs:
+              notes: literature/paper_notes
+        """,
+    )
+    sm = StateMachine(config)
+    state = sm.create_initial_state("p1")
+
+    ctx = sm.build_execution_context(tmp_workspace, state)
+
+    assert ctx.budget_override.max_steps == 1
+    assert ctx.budget_override.unlimited_budget is True
+
+
+def test_build_execution_context_supports_unlimited_budget_tag(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T8-SEC-INTRODUCTION
+        states:
+          T8-SEC-INTRODUCTION:
+            agent: writer
+            tags:
+              - unlimited_budget
+            budget:
+              max_steps: 1
+            outputs:
+              section: drafts/sections/01_introduction.tex
+        """,
+    )
+    sm = StateMachine(config)
+    state = sm.create_initial_state("p1")
+
+    ctx = sm.build_execution_context(tmp_workspace, state)
+
+    assert ctx.budget_override.max_steps == 1
+    assert ctx.budget_override.unlimited_budget is True
+
+
+def test_build_execution_context_can_explicitly_disable_unlimited_budget(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T4
+        states:
+          T4:
+            agent: ideation
+            budget:
+              unlimited_budget: "false"
+            outputs:
+              hypotheses: ideation/hypotheses.md
+        """,
+    )
+    sm = StateMachine(config)
+    state = sm.create_initial_state("p1")
+
+    ctx = sm.build_execution_context(tmp_workspace, state)
+
+    assert ctx.budget_override.unlimited_budget is False
+
+
 def test_advance_enters_gate_and_resolve_branch_increments_iteration(tmp_workspace):
     config = tmp_workspace / "fsm.yaml"
     gates = tmp_workspace / "gates.yaml"

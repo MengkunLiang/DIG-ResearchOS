@@ -614,6 +614,34 @@ class TestResolveEffectiveConfig:
         assert config.max_tokens == 50000
         assert config.max_wall_seconds == 1800  # 未被 override
 
+    def test_unlimited_budget_override_can_enable_and_disable(self):
+        """unlimited_budget 可以由默认值启用，也可以被 override 显式关闭。"""
+        spec = AgentSpec(
+            name="test",
+            model_tier="medium",
+            tool_names=["read_file"],
+            max_steps=1,
+            max_tokens_total=1,
+            max_wall_seconds=1,
+            unlimited_budget=True,
+        )
+        default_ctx = ExecutionContext(
+            workspace_dir=Path("/tmp"),
+            project_id="test",
+            task_id="T1",
+            run_id="r1",
+        )
+        limited_ctx = ExecutionContext(
+            workspace_dir=Path("/tmp"),
+            project_id="test",
+            task_id="T1",
+            run_id="r2",
+            budget_override=BudgetOverride(unlimited_budget=False),
+        )
+
+        assert resolve_effective_config(spec, default_ctx).unlimited_budget is True
+        assert resolve_effective_config(spec, limited_ctx).unlimited_budget is False
+
     def test_tool_policy_extra_tools(self):
         """额外工具被添加。"""
         spec = AgentSpec(

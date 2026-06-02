@@ -13,7 +13,7 @@ import yaml
 from ..agents.registry import TASK_TO_AGENT_MAP, get_agent_by_id
 from ..orchestration.state_machine import StateMachine
 from ..orchestration.task_io_contract import get_task_io, resolve_inputs, resolve_outputs
-from ..runtime.agent import AgentResult, ExecutionContext, LLMConfigOverride
+from ..runtime.agent import AgentResult, ExecutionContext, resolve_effective_config
 from ..runtime.config import RuntimeSettings
 from ..runtime.llm_client import LLMClient
 from ..runtime.logger import get_logger
@@ -155,8 +155,13 @@ class SingleTaskRunner:
             mode=task_node.mode if task_node is not None else None,
             extra=extra,
         )
+        if task_node is not None:
+            llm_ov, budget_ov, tool_ov = StateMachine._build_overrides(task_node)
+            ctx.llm_override = llm_ov
+            ctx.budget_override = budget_ov
+            ctx.tool_policy_override = tool_ov
         if self.override_profile:
-            ctx.llm_override = LLMConfigOverride(profile=self.override_profile)
+            ctx.llm_override.profile = self.override_profile
 
         print(f"[进度] 准备执行上下文 (run_id: {ctx.run_id})", flush=True)
         state_path = self.workspace / "state.yaml"
@@ -164,7 +169,9 @@ class SingleTaskRunner:
         state.dump_yaml(state_path)
 
         print(f"[进度] 启动 Agent 执行...", flush=True)
-        print(f"[进度] Agent 将执行最多 {agent.spec.max_steps} 步", flush=True)
+        effective = resolve_effective_config(agent.spec, ctx)
+        step_limit = "unlimited" if effective.unlimited_budget else str(effective.max_steps)
+        print(f"[进度] Agent 将执行最多 {step_limit} 步", flush=True)
         runner = AgentRunner(
             agent,
             self.tools,

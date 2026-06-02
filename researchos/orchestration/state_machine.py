@@ -36,6 +36,54 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _normalized_tags(value: Any) -> set[str]:
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        values = [value]
+    elif isinstance(value, list | tuple | set):
+        values = list(value)
+    else:
+        return set()
+    return {str(item).strip().lower().replace("-", "_") for item in values if str(item).strip()}
+
+
+def _config_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower().replace("-", "_")
+        if normalized in {"1", "true", "yes", "y", "on", "unlimited", "unlimited_budget"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off", "limited", ""}:
+            return False
+    return bool(value)
+
+
+def _budget_has_unlimited_tag(
+    budget_block: dict[str, Any],
+    node_tags: list[str] | None = None,
+) -> bool | None:
+    """Return explicit unlimited budget override from state-machine config.
+
+    `None` means the node did not express an override, so the AgentSpec default
+    should continue to apply.
+    """
+
+    if "unlimited_budget" in budget_block:
+        return _config_bool(budget_block.get("unlimited_budget"))
+    tags = (
+        _normalized_tags(budget_block.get("tags"))
+        | _normalized_tags(budget_block.get("budget_tags"))
+        | _normalized_tags(node_tags)
+    )
+    if {"unlimited_budget", "unlimited"} & tags:
+        return True
+    return None
+
+
 def _valid_writing_style_file(path: Path) -> bool:
     if not path.exists() or path.stat().st_size <= 0:
         return False
@@ -84,6 +132,7 @@ class TaskNode:
     llm: dict[str, Any] | None = None
     budget: dict[str, Any] | None = None
     tools: dict[str, Any] | None = None
+    tags: list[str] | None = None
     mode: str | None = None
     gate: str | dict[str, Any] | None = None
     branches: dict[str, str] | None = None
@@ -714,8 +763,8 @@ class StateMachine:
     def _is_iteration(self, next_state: str, state: StateYaml) -> bool:
         return any(history.task == next_state and history.status == "DONE" for history in state.history)
 
+    @staticmethod
     def _build_overrides(
-        self,
         node: TaskNode,
     ) -> tuple[LLMConfigOverride, BudgetOverride, ToolPolicyOverride]:
         """把节点里的 llm/budget/tools 块转换成 ExecutionContext override。"""
@@ -734,6 +783,7 @@ class StateMachine:
             max_steps=budget_block.get("max_steps"),
             max_tokens=budget_block.get("max_tokens"),
             max_wall_seconds=budget_block.get("max_wall_seconds"),
+            unlimited_budget=_budget_has_unlimited_tag(budget_block, node.tags),
         )
 
         tools_block = node.tools or {}

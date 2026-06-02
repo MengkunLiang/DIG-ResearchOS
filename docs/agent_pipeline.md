@@ -3428,6 +3428,12 @@ researchos run-task T9 --workspace ./workspace/local-test2
 - `ask_human` 是 agent 工具级的人类输入；如果当前 stdin 不可交互、已关闭或收到空回答，runtime 会暂停任务，而不是把空输入当成用户选择继续喂给 LLM
 - 预算 gate 的等待时间会从 wall-clock budget 中扣除，避免“等用户输入”本身把任务预算耗尽
 - `max_steps` 在循环尾部触顶时也会进入同一套扩限 gate；用户选择停止或无法继续输入时，状态会写成 `PAUSED`，history 中本轮 run 标记为 `INTERRUPTED`，后续可以 `researchos resume --workspace ...`
+- 对少数确认需要长时间运行的 agent/mode/task，可以显式设置无限预算标签：
+  `budget.unlimited_budget: true` 或 `tags: [unlimited_budget]`。这会跳过当前 run 的
+  `max_steps`、`max_tokens_total`、`max_wall_seconds` 检查，因此不会触发预算扩限 gate；
+  但 step/token/cost 仍会记录，LLM 单次超时、工具超时、Docker/TeX 专用超时、
+  workspace 权限、输出校验和项目级实验预算检查仍然生效。若需要从上层默认恢复有限预算，
+  在 task 或 mode 中写 `budget.unlimited_budget: false`。
 - 如果进程异常退出导致 `state.yaml` 停在 `RUNNING`，`resume` 会把最近一次 run 标为
   `INTERRUPTED` 并自动转回 `PAUSED` 后继续，避免“当前状态不是 PAUSED/WAITING_HUMAN，
   无法 resume”的死状态。

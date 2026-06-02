@@ -6,7 +6,7 @@
 #
 # 每个 agent 采用真实分区结构：
 # - llm: 模型路由与模型运行参数（profile/tier/model/endpoint/max_context/temperature）
-# - budget: agent 默认预算（max_steps/max_tokens_total/max_wall_seconds/max_validation_retries）
+# - budget: agent 默认预算（max_steps/max_tokens_total/max_wall_seconds/max_validation_retries/unlimited_budget/tags）
 # - tools: 工具能力与 workspace 权限（tool_names/allowed_read_prefixes/allowed_write_prefixes）
 # - prompt: prompt/schema/expected_outputs 等输出契约提示
 # - behavior: agent/task-specific 行为开关，例如 docker_required、abstract_sweep、max_compile_attempts
@@ -21,6 +21,11 @@
 # 2. 本文件对应 agent 的 mode 分区覆盖
 # 3. 本文件对应 agent 的基础分区配置
 # 4. Python 代码里的 defaults
+#
+# 如需显式跳过某个 agent/mode 的 runtime 预算上限，可在 budget 下设置
+# unlimited_budget: true，或 tags: [unlimited_budget]。这只跳过 agent 的
+# max_steps/max_tokens_total/max_wall_seconds 检查，不会关闭工具超时、LLM 单次
+# 调用超时、输出校验、TeX/Docker 专用超时或项目级实验预算检查。
 
 agents:
   hello:

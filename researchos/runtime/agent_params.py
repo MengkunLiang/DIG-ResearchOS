@@ -139,6 +139,41 @@ def _as_mapping(value: Any, *, fallback: dict[str, Any] | None = None) -> dict[s
     raise TypeError(f"Expected mapping value, got: {type(value).__name__}")
 
 
+def _tag_set(value: Any) -> set[str]:
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        values = [value]
+    elif isinstance(value, list | tuple | set):
+        values = list(value)
+    else:
+        return set()
+    return {str(item).strip().lower().replace("-", "_") for item in values if str(item).strip()}
+
+
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower().replace("-", "_")
+        if normalized in {"1", "true", "yes", "y", "on", "unlimited", "unlimited_budget"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off", "limited", ""}:
+            return False
+    return bool(value)
+
+
+def _is_unlimited_budget(params: dict[str, Any], defaults: dict[str, Any]) -> bool:
+    if params.get("unlimited_budget") is not None:
+        return _as_bool(params.get("unlimited_budget"))
+    tags = _tag_set(params.get("tags")) | _tag_set(params.get("budget_tags"))
+    if {"unlimited_budget", "unlimited"} & tags:
+        return True
+    return _as_bool(defaults.get("unlimited_budget", False))
+
+
 def build_agent_spec(
     agent_name: str,
     *,
@@ -189,6 +224,7 @@ def build_agent_spec(
         max_wall_seconds=int(
             _pick_first(params.get("max_wall_seconds"), defaults.get("max_wall_seconds"), 1800)
         ),
+        unlimited_budget=_is_unlimited_budget(params, defaults),
         temperature=temperature,
         model_override=_pick_first(
             llm_cfg.get("model"),

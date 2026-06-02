@@ -35,7 +35,7 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
                 "retry_policy.llm_retries",
                 "retry_policy.llm_retry_delay",
                 "agents.<agent>.llm.profile/tier/model/endpoint/temperature",
-                "agents.<agent>.budget.max_steps/max_tokens_total/max_wall_seconds/max_validation_retries",
+                "agents.<agent>.budget.max_steps/max_tokens_total/max_wall_seconds/max_validation_retries/unlimited_budget/tags",
                 "agents.<agent>.tools.tool_names/allowed_read_prefixes/allowed_write_prefixes",
                 "agents.<agent>.prompt.prompt_template/structured_outputs/expected_outputs",
                 "agents.<agent>.behavior.*",
@@ -51,6 +51,7 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
             "state_machine_yaml": [
                 "states.<task>.llm",
                 "states.<task>.budget",
+                "states.<task>.tags",
                 "states.<task>.tools",
                 "states.<task>.gate/branches",
             ],

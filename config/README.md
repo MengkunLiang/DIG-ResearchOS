@@ -186,7 +186,7 @@ profiles:
 | 分区 | 作用 | 常见字段 |
 |------|------|----------|
 | `llm` | 模型路由与模型运行参数 | `profile`, `tier`, `model`, `endpoint`, `max_context`, `temperature` |
-| `budget` | Agent 默认预算 | `max_steps`, `max_tokens_total`, `max_wall_seconds`, `max_validation_retries` |
+| `budget` | Agent 默认预算 | `max_steps`, `max_tokens_total`, `max_wall_seconds`, `max_validation_retries`, `unlimited_budget`, `tags` |
 | `tools` | 工具能力与 workspace 权限 | `tool_names`, `allowed_read_prefixes`, `allowed_write_prefixes` |
 | `prompt` | prompt 模板和输出契约 | `prompt_template`, `structured_outputs`, `expected_outputs`, `expected_sections` |
 | `behavior` | 可机械执行或校验的行为开关 | `docker_required`, `gpu_required`, `abstract_sweep`, `max_compile_attempts` |
@@ -237,6 +237,23 @@ agents:
         - id: gate1
           type: user_select
 ```
+
+如需让某个 agent 或 mode 跳过 agent runtime 预算上限，可以显式启用：
+
+```yaml
+agents:
+  reader:
+    modes:
+      read:
+        budget:
+          tags: [unlimited_budget]
+```
+
+等价写法是 `budget.unlimited_budget: true`。该开关只跳过本轮 agent 的
+`max_steps`、`max_tokens_total`、`max_wall_seconds` 检查；仍会记录 step/token/cost，
+也不会关闭 LLM 单次调用超时、工具超时、Docker/TeX 专用超时、workspace 权限或输出校验。
+如果某个 mode 继承了上层无限预算但需要恢复有限预算，写
+`budget.unlimited_budget: false`。
 
 建议：
 - 想单独给某个 Agent 绑定固定模型/provider，优先改 `agent_params.yaml` 的 `llm.model + llm.endpoint`

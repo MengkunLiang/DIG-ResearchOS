@@ -30,6 +30,7 @@ class AgentSpec:
     max_steps: int = 30
     max_tokens_total: int = 200_000
     max_wall_seconds: int = 1800
+    unlimited_budget: bool = False
     temperature: float = 0.7
     model_override: str | None = None
     llm_profile: str | None = None
@@ -66,6 +67,7 @@ class BudgetOverride:
     max_steps: int | None = None
     max_tokens: int | None = None
     max_wall_seconds: int | None = None
+    unlimited_budget: bool | None = None
 
 
 @dataclass
@@ -124,6 +126,7 @@ class EffectiveConfig:
     max_steps: int
     max_tokens: int
     max_wall_seconds: int
+    unlimited_budget: bool
     allowed_read_prefixes: list[str]
     allowed_write_prefixes: list[str]
     tool_names: list[str]
@@ -147,6 +150,9 @@ def resolve_effective_config(spec: AgentSpec, ctx: ExecutionContext) -> Effectiv
         max_tokens=bo.max_tokens if bo.max_tokens is not None else spec.max_tokens_total,
         max_wall_seconds=(
             bo.max_wall_seconds if bo.max_wall_seconds is not None else spec.max_wall_seconds
+        ),
+        unlimited_budget=(
+            bo.unlimited_budget if bo.unlimited_budget is not None else spec.unlimited_budget
         ),
         allowed_read_prefixes=(
             to.allowed_read_prefixes

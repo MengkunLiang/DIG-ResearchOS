@@ -26,6 +26,20 @@ def test_budget_tracker_can_exclude_human_wait_time():
     assert snapshot["excluded_wall_s"] >= 95
 
 
+def test_budget_tracker_unlimited_budget_still_records_usage():
+    budget = BudgetTracker(max_steps=0, max_tokens=0, max_wall_seconds=0, unlimited_budget=True)
+    budget.started_at -= 100
+    budget.tick_step()
+    budget.add_tokens(10, 20, 0.5)
+
+    budget.check()
+    snapshot = budget.snapshot()
+    assert snapshot["unlimited_budget"] is True
+    assert snapshot["steps"] == 1
+    assert snapshot["tokens_total"] == 30
+    assert snapshot["cost_usd"] == 0.5
+
+
 def test_message_and_toolcall_openai_contract():
     tool_call = ToolCall.create("echo", {"text": "hi"})
     message = Message.assistant(tool_calls=[tool_call], step=1)

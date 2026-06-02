@@ -431,9 +431,47 @@ agents:
 - `max_tokens_total`
 - `max_wall_seconds`
 - `max_validation_retries`
+- `unlimited_budget`
+- `tags`
 
 这些字段放在 `agents.<agent>.budget` 下。mode 级预算放在
 `agents.<agent>.modes.<mode>.budget` 下，并只覆盖当前 mode。
+
+`unlimited_budget` 是显式 opt-in，不是默认行为。它用于少数确定会很长、
+但已经有其他停止条件或人工监控的 agent/mode：
+
+```yaml
+agents:
+  writer:
+    modes:
+      section_draft:
+        budget:
+          unlimited_budget: true
+```
+
+也可以用 tag 写法：
+
+```yaml
+agents:
+  reader:
+    modes:
+      read:
+        budget:
+          tags: [unlimited_budget]
+```
+
+两种写法等价。runtime 会把 `unlimited-budget`、`unlimited_budget` 归一化成同一语义。
+如果某个 mode 继承了上层无限预算但需要恢复有限预算，写：
+
+```yaml
+budget:
+  unlimited_budget: false
+```
+
+启用后只跳过 agent runtime 的 `max_steps`、`max_tokens_total` 和
+`max_wall_seconds` 检查；step/token/cost 仍然记录在 result、trace 和 state history 中。
+它不会关闭 LLM 单次调用超时、工具超时、`docker_exec`/`latex_compile` 专用超时、
+workspace 读写权限、输出校验、TeX 编译校验或项目级实验预算检查。
 
 ### 5.5 `tools` 分区
 
@@ -592,7 +630,30 @@ agents:
 - `llm.model`
 - `llm.endpoint`
 - `budget.*`
+- `tags`
 - `tools.*`
+
+task 节点也支持显式无限预算：
+
+```yaml
+states:
+  T8-SEC-METHOD:
+    agent: writer
+    mode: section_draft
+    tags: [unlimited_budget]
+    budget:
+      max_steps: 1
+```
+
+上例会保留 `max_steps: 1` 作为可见配置，但当前节点运行时不会因为 step 上限暂停。
+也可以写在 `budget` 内：
+
+```yaml
+budget:
+  unlimited_budget: true
+```
+
+task 级 `budget.unlimited_budget: false` 可以覆盖 agent/mode 默认的无限预算。
 
 ---
 

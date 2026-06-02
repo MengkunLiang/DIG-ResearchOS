@@ -145,6 +145,7 @@ class AgentRunner:
             max_steps=eff.max_steps,
             max_tokens=eff.max_tokens,
             max_wall_seconds=effective_wall_seconds,
+            unlimited_budget=eff.unlimited_budget,
         )
         trace_file: Path | None = None
         if self.runtime_settings.debug.enable_trace:
@@ -240,7 +241,8 @@ class AgentRunner:
 
                 # 每5步输出一次进度
                 if budget.steps % 5 == 1 or budget.steps == 1:
-                    print(f"[Agent] 步骤 {budget.steps}/{budget.max_steps} | Token: {budget.tokens_in + budget.tokens_out} | 成本: ${budget.cost_usd:.4f}", flush=True)
+                    step_limit = "unlimited" if budget.unlimited_budget else str(budget.max_steps)
+                    print(f"[Agent] 步骤 {budget.steps}/{step_limit} | Token: {budget.tokens_in + budget.tokens_out} | 成本: ${budget.cost_usd:.4f}", flush=True)
                 try:
                     budget.check()
                 except BudgetExceeded as exc:
@@ -428,7 +430,7 @@ class AgentRunner:
                     messages.append(feedback)
                     trace.write_message(feedback)
 
-                if budget.steps >= budget.max_steps:
+                if not budget.unlimited_budget and budget.steps >= budget.max_steps:
                     extended, budget_extensions_used = await self._maybe_offer_budget_extension(
                         ctx=ctx,
                         budget=budget,
@@ -512,11 +514,12 @@ class AgentRunner:
         ]
         if len(ctx.outputs_expected) > 5:
             expected.append(f"...(+{len(ctx.outputs_expected) - 5})")
+        step_limit = "unlimited" if eff.unlimited_budget else str(eff.max_steps)
         print(
             "[Agent] 初始化完成 | "
             f"任务: {ctx.task_id} | Agent: {self.agent.spec.name} | 阶段: {phase} | "
             f"目标: {description} | 输出: {', '.join(expected) if expected else '未声明'} | "
-            f"模型层级: {eff.llm_tier} | 最大步数: {eff.max_steps}",
+            f"模型层级: {eff.llm_tier} | 最大步数: {step_limit}",
             flush=True,
         )
 

@@ -159,3 +159,54 @@ agents:
     assert spec.prompt_template == "writer_custom.j2"
 
     clear_cache()
+
+
+def test_agent_params_support_unlimited_budget_tags_and_explicit_false(tmp_path, monkeypatch):
+    config_path = tmp_path / "agent_params.yaml"
+    config_path.write_text(
+        """
+agents:
+  longrun:
+    llm:
+      tier: heavy
+    budget:
+      max_steps: 1
+      max_tokens_total: 1
+      max_wall_seconds: 1
+      tags:
+        - unlimited-budget
+    tools:
+      tool_names:
+        - finish_task
+      allowed_read_prefixes:
+        - ""
+      allowed_write_prefixes:
+        - ""
+    modes:
+      limited:
+        budget:
+          unlimited_budget: "false"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("RESEARCHOS_AGENT_PARAMS", str(config_path))
+    clear_cache()
+
+    defaults = {
+        "model_tier": "medium",
+        "tool_names": [],
+        "max_steps": 30,
+        "max_tokens_total": 200_000,
+        "max_wall_seconds": 1800,
+        "temperature": 0.3,
+        "allowed_read_prefixes": [""],
+        "allowed_write_prefixes": [""],
+    }
+    base = build_agent_spec("longrun", defaults=defaults)
+    limited = build_agent_spec("longrun", mode="limited", defaults=defaults)
+
+    assert base.unlimited_budget is True
+    assert limited.unlimited_budget is False
+
+    clear_cache()

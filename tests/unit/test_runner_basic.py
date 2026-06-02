@@ -1478,6 +1478,43 @@ async def test_max_steps_tail_check_pauses_when_user_stops(tmp_workspace, regist
 
 
 @pytest.mark.asyncio
+async def test_unlimited_budget_skips_max_steps_tail_gate(tmp_workspace, registry):
+    llm = MockLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(tool_calls=[FakeToolCall(name="echo", arguments={"text": "hi"}, id="tc1")])
+            ),
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="finish_task", arguments={"summary": "done"}, id="tc2")]
+                )
+            ),
+        ]
+    )
+    ctx = ExecutionContext(
+        workspace_dir=tmp_workspace,
+        project_id="p1",
+        task_id="T3",
+        run_id="r_unlimited_budget",
+        budget_override=BudgetOverride(max_steps=1, unlimited_budget=True),
+    )
+    human = MockHumanInterface(gate_choices=[{"option_id": "stop", "captured": {}}])
+    runner = AgentRunner(MinimalAgent(), registry, llm, human)
+    runner.budget_escalation_policy = {
+        "enabled": True,
+        "tasks": [],
+        "max_extensions_per_run": 1,
+        "steps_increase_ratio": 1.0,
+    }
+
+    result = await runner.run(ctx)
+
+    assert result.ok
+    assert result.steps_used == 2
+    assert not any(call[0] == "gate" for call in human.calls)
+
+
+@pytest.mark.asyncio
 async def test_runner_pauses_on_unavailable_ask_human_without_second_llm_call(tmp_workspace, registry):
     llm = MockLLMClient(
         responses=[

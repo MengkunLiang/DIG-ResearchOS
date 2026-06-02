@@ -11,6 +11,7 @@ class BudgetTracker:
     max_steps: int
     max_tokens: int
     max_wall_seconds: int
+    unlimited_budget: bool = False
     steps: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
@@ -39,6 +40,8 @@ class BudgetTracker:
         return self.tokens_in + self.tokens_out
 
     def check(self) -> None:
+        if self.unlimited_budget:
+            return
         if self.steps > self.max_steps:
             raise BudgetExceeded("steps", self.max_steps, self.steps)
         if self.total_tokens() > self.max_tokens:
@@ -48,7 +51,7 @@ class BudgetTracker:
                 "wall_seconds", self.max_wall_seconds, self.elapsed_seconds()
             )
 
-    def snapshot(self) -> dict[str, float | int]:
+    def snapshot(self) -> dict[str, float | int | bool]:
         return {
             "steps": self.steps,
             "tokens_in": self.tokens_in,
@@ -57,6 +60,7 @@ class BudgetTracker:
             "cost_usd": round(self.cost_usd, 6),
             "elapsed_s": round(self.elapsed_seconds(), 3),
             "excluded_wall_s": round(self.excluded_wall_seconds, 3),
+            "unlimited_budget": self.unlimited_budget,
         }
 
     def extend_limit(self, dimension: str, delta: int | float) -> None:
