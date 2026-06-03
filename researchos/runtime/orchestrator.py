@@ -55,14 +55,7 @@ T2_AUTO_PERSIST_SEARCH_TOOLS = frozenset(
         "fetch_outgoing_citations",
     }
 )
-T2_AUTO_FINALIZE_TRIGGER_TOOLS = T2_AUTO_PERSIST_SEARCH_TOOLS | frozenset(
-    {
-        "append_papers_raw",
-        "process_papers_raw",
-        "save_papers_raw",
-    }
-)
-T2_AUTO_FINALIZE_MIN_RAW = 100
+T2_FINISH_FINALIZE_MIN_RAW = 30
 TOOL_FAILURE_CACHE_NAMES = frozenset({"fetch_paper_pdf"})
 TOOL_CONTEXT_CONTENT_LIMITS = {
     # PDF 文本工具是 T3 上下文膨胀的主要来源。工具自身也有上限，这里再加
@@ -486,27 +479,18 @@ class AgentRunner:
                     print(f"[Agent] 任务暂停：{pause_reason}", flush=True)
                     break
 
-                t2_finalized = await self._maybe_finalize_t2_after_tool_batch(
-                    ctx=ctx,
-                    tool_calls=assistant_msg.tool_calls,
-                    tool_msgs=tool_msgs,
-                )
-                if t2_finalized:
-                    note = Message.user(
-                        "[Runtime] T2 已基于已落盘的 papers_raw.jsonl 完成确定性收尾，"
-                        "后续去重、验证、精读队列和审计文件由 runtime 生成。",
-                        step=budget.steps,
-                    )
-                    messages.append(note)
-                    trace.write_message(note)
-                    stop_reason = AgentResult.STOP_FINISHED
-                    error_msg = None
-                    break
-
                 if finish_requested:
                     # finish_task 只是“请求结束”而不是直接结束。
                     # 真正能否成功结束，仍以 validate_outputs 为准。
                     print(f"[Agent] Agent 请求完成任务，开始校验输出...", flush=True)
+                    if ctx.task_id == "T2":
+                        await self._finalize_t2_from_raw(
+                            ctx,
+                            mode="t2_finish_finalize",
+                            min_raw_count=self._t2_finish_finalize_min_raw(ctx),
+                            start_message="[Agent] T2 收到 finish_task，先基于 papers_raw 执行确定性收尾...",
+                            success_message="[Agent] T2 确定性收尾成功，继续校验输出",
+                        )
                     ok, err = self.agent.validate_outputs(ctx)
                     if ok:
                         print(f"[Agent] 输出校验通过，任务完成", flush=True)
@@ -694,14 +678,23 @@ class AgentRunner:
         stop_reason: str,
         error_msg: str | None,
     ) -> tuple[str, str | None]:
-        """当 T2 中途失败但 raw 已落盘时，尝试代码化补齐其余输出。"""
+        """T2 退出后的窄口恢复。
+
+        不能把普通冷启动中的 LLM/step 失败当成“raw 已足够，可以完成 T2”。
+        Scout 是否已经完成覆盖判断，必须由 finish_task 或真实 resume/retry 语义
+        触发；否则第一轮多源搜索返回大量 raw 时会伪装成 T2 已成功。
+        """
 
         if ctx.task_id != "T2":
             return stop_reason, error_msg
         if stop_reason in {AgentResult.STOP_INTERRUPTED, AgentResult.STOP_HUMAN_REJECT}:
             return stop_reason, error_msg
+        if stop_reason == AgentResult.STOP_FINISHED:
+            return stop_reason, error_msg
+        if not self._allow_t2_exit_recovery(ctx):
+            return stop_reason, error_msg
 
-        needs_recovery = stop_reason != AgentResult.STOP_FINISHED or any(
+        needs_recovery = any(
             not path.exists()
             for name, path in ctx.outputs_expected.items()
             if name != "papers_raw"
@@ -712,9 +705,9 @@ class AgentRunner:
         finalized = await self._finalize_t2_from_raw(
             ctx,
             mode="t2_recovery",
-            min_raw_count=1,
-            start_message="[Agent] T2 检测到未完成输出，尝试基于 papers_raw 自动补全...",
-            success_message="[Agent] T2 自动补全成功，已恢复完整 T2 产物",
+            min_raw_count=self._t2_finish_finalize_min_raw(ctx),
+            start_message="[Agent] T2 resume/recovery 检测到未完成输出，尝试基于 papers_raw 补齐...",
+            success_message="[Agent] T2 resume/recovery 补齐成功，已恢复完整 T2 产物",
         )
         if finalized:
             return AgentResult.STOP_FINISHED, None
@@ -790,21 +783,35 @@ class AgentRunner:
             self.log.exception("t3_abstract_sweep_failed")
 
     async def _maybe_finalize_t2_before_llm(self, ctx: ExecutionContext) -> bool:
-        """T2 续跑时，如果 raw 已存在，优先用确定性路径补齐产物。
+        """T2 续跑时，只有已足够完整的产物或显式恢复场景才跳过 LLM。
 
-        这避免模型在 `papers_raw.jsonl` 这种大文件和恢复状态之间反复读取，
-        也让中断后的 T2 可以稳定从 raw 收敛到完整的 8 个 T2 输出。
+        冷启动后第一轮检索可能已经因为多源工具返回大量 raw，但这不等于
+        Scout 的检索覆盖规划已经完成。因此这里不能只看 raw_count 自动结束。
         """
 
         if ctx.task_id != "T2":
             return False
 
+        if ctx.outputs_expected and all(path.exists() for path in ctx.outputs_expected.values()):
+            ok, _err = self.agent.validate_outputs(ctx)
+            if ok:
+                self._record_runtime_completion(
+                    ctx,
+                    "t2_existing_outputs_prefinalize",
+                    {"raw_count": self._count_jsonl_records(ctx.workspace_dir / "literature" / "papers_raw.jsonl")},
+                )
+                print("[Agent] T2 检测到已有完整产物且校验通过，跳过 LLM 续跑", flush=True)
+                return True
+
+        if not self._is_resume_run(ctx):
+            return False
+
         return await self._finalize_t2_from_raw(
             ctx,
             mode="t2_resume_prefinalize",
-            min_raw_count=1,
-            start_message="[Agent] T2 检测到已有 papers_raw，先执行确定性收尾...",
-            success_message="[Agent] T2 确定性收尾成功，跳过 LLM 续跑",
+            min_raw_count=self._t2_finish_finalize_min_raw(ctx),
+            start_message="[Agent] T2 resume 检测到已有 papers_raw，尝试确定性补齐缺失产物...",
+            success_message="[Agent] T2 resume 确定性补齐成功，跳过 LLM 续跑",
         )
 
     async def _maybe_finalize_t3_before_llm(self, ctx: ExecutionContext) -> bool:
@@ -1192,38 +1199,6 @@ class AgentRunner:
         ctx.extra["t35_workbench_prepared"] = True
         return True
 
-    async def _maybe_finalize_t2_after_tool_batch(
-        self,
-        *,
-        ctx: ExecutionContext,
-        tool_calls: list[ToolCall],
-        tool_msgs: list[Message],
-    ) -> bool:
-        """T2 冷启动正常路径：raw 达标后直接由 runtime 收尾。
-
-        这条路径避免 LLM 读取并手动解析 `papers_raw.jsonl`。检索工具负责拿到
-        raw，runtime 负责 raw -> dedup -> verified -> queue -> audit 的确定性处理。
-        """
-
-        if ctx.task_id != "T2":
-            return False
-
-        triggered = any(
-            tool_call.name in T2_AUTO_FINALIZE_TRIGGER_TOOLS
-            and not tool_msg.metadata.get("is_error")
-            for tool_call, tool_msg in zip(tool_calls, tool_msgs)
-        )
-        if not triggered:
-            return False
-
-        return await self._finalize_t2_from_raw(
-            ctx,
-            mode="t2_deterministic",
-            min_raw_count=self._t2_auto_finalize_min_raw(ctx),
-            start_message="[Agent] T2 raw 已达到收尾阈值，执行确定性收尾...",
-            success_message="[Agent] T2 确定性收尾成功，任务完成",
-        )
-
     async def _finalize_t2_from_raw(
         self,
         ctx: ExecutionContext,
@@ -1310,13 +1285,39 @@ class AgentRunner:
         return count
 
     @staticmethod
-    def _t2_auto_finalize_min_raw(ctx: ExecutionContext) -> int:
-        raw_value = ctx.extra.get("t2_auto_finalize_min_raw", T2_AUTO_FINALIZE_MIN_RAW)
+    def _t2_finish_finalize_min_raw(ctx: ExecutionContext) -> int:
+        raw_value = ctx.extra.get("t2_finish_finalize_min_raw", T2_FINISH_FINALIZE_MIN_RAW)
         try:
             value = int(raw_value)
         except (TypeError, ValueError):
-            return T2_AUTO_FINALIZE_MIN_RAW
+            return T2_FINISH_FINALIZE_MIN_RAW
         return max(10, value)
+
+    @staticmethod
+    def _is_resume_run(ctx: ExecutionContext) -> bool:
+        if ctx.extra.get("resume_reason") == "retry_after_failure" and not ctx.extra.get(
+            "allow_t2_failure_recovery"
+        ):
+            return False
+        return bool(
+            ctx.extra.get("is_resume")
+            or ctx.extra.get("resumed_from_run_id")
+            or ctx.extra.get("resumed_from")
+            or ctx.extra.get("resume_reason") in {"interrupted", "iteration"}
+        )
+
+    @staticmethod
+    def _allow_t2_exit_recovery(ctx: ExecutionContext) -> bool:
+        if ctx.extra.get("allow_t2_failure_recovery"):
+            return True
+        if ctx.extra.get("resume_reason") == "retry_after_failure":
+            return False
+        return bool(
+            ctx.extra.get("is_resume")
+            or ctx.extra.get("resumed_from_run_id")
+            or ctx.extra.get("resumed_from")
+            or ctx.extra.get("resume_reason") in {"interrupted", "iteration"}
+        )
 
     async def _execute_one_tool_call(
         self,
@@ -2063,8 +2064,8 @@ class AgentRunner:
             AgentResult.STOP_INTERRUPTED: "被中断",
             AgentResult.STOP_HUMAN_REJECT: "被用户拒绝",
         }[stop_reason]
-        if ok and metadata.get("completion_mode") == "t2_deterministic":
-            message = "Agent 成功完成（T2 runtime 确定性收尾）"
+        if ok and metadata.get("completion_mode") == "t2_finish_finalize":
+            message = "Agent 成功完成（T2 finish_task 确定性收尾）"
         elif ok and metadata.get("completion_mode") == "t2_recovery":
             message = "Agent 成功完成（T2 recovery 自动补全）"
         elif ok and metadata.get("completion_mode") == "t2_resume_prefinalize":

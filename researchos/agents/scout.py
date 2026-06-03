@@ -171,7 +171,8 @@ class ScoutAgent(Agent):
             "如有用户种子论文会在 user_seeds/seed_papers.jsonl 里，"
             "也请参考 seed_ideas.md 和 seed_external_resources.jsonl。"
             "你负责完成高质量多源检索并让 raw 结果落盘；"
-            "raw 达标后 runtime 会自动完成去重、metadata verification 和 deep_read_queue.jsonl，"
+            "raw 数量足够只是必要条件，你还要判断 query/source/bucket 覆盖是否足够；"
+            "覆盖足够后调用 finish_task，runtime 才会完成去重、metadata verification 和 deep_read_queue.jsonl，"
             "最终 papers_dedup 控制在 10-120 篇。"
             ),
         )

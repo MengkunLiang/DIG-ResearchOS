@@ -1,311 +1,152 @@
 # ResearchOS 配置系统
 
-本目录包含 ResearchOS 的所有配置文件。配置系统采用分层设计，将不同关注点分离到独立的配置文件中。
+本目录按“单一参数所有权”组织。普通使用只需要改 `user_settings.yaml` 和 `.env`；其他 YAML 是能力、路由或拓扑表，不要把同一个参数在多张表里重复配置。
 
-## 配置文件概览
+## 文件职责
 
-| 文件 | 用途 | 必需 | 说明 |
-|------|------|------|------|
-| `runtime.yaml` | Runtime 核心配置 | ✅ | 工作空间、日志、Agent 行为、Docker 执行模式 |
-| `model_routing.yaml` | LLM 模型路由 | ✅ | API 端点、模型选择、上下文截断策略 |
-| `agent_params.yaml` | Agent 默认参数 | ✅ | 每个 Agent 的 LLM、预算、工具、路径等静态默认值 |
-| `state_machine.yaml` | 状态机定义 | ✅ | Agent 工作流、状态转换、输入输出映射 |
-| `mcp.yaml` | MCP 工具配置 | ❌ | 外部工具和数据源（arXiv, Semantic Scholar 等）|
-| `gates.yaml` | Gate 配置 | ❌ | 状态转换的条件检查和验证 |
+| 文件 | 职责 | 日常是否修改 |
+| --- | --- | --- |
+| `user_settings.yaml` | `llm.*` 模型参数、`budget.*` 预算参数、`runtime.*` timeout/retry/budget escalation | 是，日常参数唯一入口 |
+| `runtime.yaml` | workspace、日志、UI、human interface、web_fetch allowlist、Docker 镜像与执行环境基础设置 | 偶尔 |
+| `model_routing.yaml` | endpoint、profile、primary/fallback 候选链、上下文截断策略 | 只在新增 provider/model/fallback 时改 |
+| `agent_params.yaml` | agent capability registry：工具、读写权限、prompt/schema、behavior、mode 说明 | 开发 agent/tool 时改 |
+| `state_machine.yaml` | 状态机拓扑、输入输出、gate、分支、节点 extra | 改流程时改 |
+| `gates.yaml` | human gate 展示、选项和附加上下文 | 改 gate 时改 |
+| `mcp.yaml` / `mcp.example.yaml` | MCP server 描述 | 需要 MCP 时改 |
 
 ## 快速开始
 
-### 1. 环境变量配置
-
-首先配置环境变量（API Key 等敏感信息）：
+1. 配置密钥：
 
 ```bash
-# 复制环境变量模板
 cp ../.env.example ../.env
-
-# 编辑并填入你的 API Key
 nano ../.env
 ```
 
-最少需要配置：
-- `OPENAI_API_KEY`: OpenAI API Key（必需）
-- `OPENAI_BASE_URL`: API 端点 URL（可选，默认为 OpenAI 官方）
+常用变量包括 `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`、`SILICONFLOW_API_KEY`、`SILICONFLOW_BASE_URL`、`OPENROUTER_API_KEY`、`OPENAI_API_KEY`、`OPENAI_BASE_URL`、`ANTHROPIC_API_KEY`、`S2_API_KEY`、`ELSEVIER_API_KEY`、`RESEARCHER_EMAIL`。
 
-### 2. 基础配置
-
-默认配置已经可以直接使用，适合快速开始：
+2. 日常切模型、预算或超时：
 
 ```bash
-# 使用默认配置运行
-python -m researchos.cli run
+nano config/user_settings.yaml
 ```
 
-### 3. 自定义配置
-
-根据需要修改配置文件：
+3. 验证配置：
 
 ```bash
-# 修改 Runtime 配置
-nano config/runtime.yaml
-
-# 修改模型路由配置
-nano config/model_routing.yaml
-
-# 修改工作流配置
-nano config/state_machine.yaml
+python -m researchos.cli validate-config
 ```
 
-## 配置文件详解
+## 参数所有权
 
-### runtime.yaml - Runtime 核心配置
+| 参数类型 | 唯一日常入口 | 说明 |
+| --- | --- | --- |
+| 默认 profile | `user_settings.yaml: llm.default_profile` | 例如 `deepseek`、`siliconflow_only`、`mixed` |
+| Agent 模型档位 | `user_settings.yaml: llm.agents.<agent>.tier` | `heavy` / `medium` / `light` |
+| Agent 直接模型绑定 | `user_settings.yaml: llm.agents.<agent>.model + endpoint` | 会绕过 profile fallback，只在确实需要固定模型时用 |
+| Agent temperature/max_context | `user_settings.yaml: llm.agents.<agent>.*` | mode 内可单独覆盖 |
+| Agent step/token/wall budget | `user_settings.yaml: budget.agents.<agent>.*` | 支持 `unlimited_budget: true` |
+| LLM timeout/retry/cooldown | `user_settings.yaml: runtime.timeouts` 和 `runtime.retry_policy` | 包含 provider 连续超时后的 cooldown |
+| budget escalation | `user_settings.yaml: runtime.budget_escalation` | 触顶后是否 ask_human 扩限 |
+| 工具列表和读写权限 | `agent_params.yaml` | 能力声明，不是预算表 |
+| endpoint/API base/API key env | `model_routing.yaml` + `.env` | 路由候选定义与密钥分离 |
+| 状态机输入输出和分支 | `state_machine.yaml` | 默认不要在这里写 LLM/budget 参数 |
 
-控制 ResearchOS 运行时的核心行为。
+## `user_settings.yaml`
 
-**主要配置项：**
-
-- **workspace**: 工作空间配置
-  - `default_root`: 工作空间根目录（默认：`./workspace`）
-  - `runtime_dir`: Runtime 私有目录（默认：`_runtime`）
-  - runtime 会在 `runtime_dir` 下维护 `logs/`、`traces/`、`resume/` 和 `human_interactions.jsonl`
-  - `init-workspace`、`run`、`resume`、`run-task` 都会幂等刷新标准 workspace 子目录和 `_DIR_GUIDE.md`
-
-- **logging**: 日志配置
-  - `level`: 日志级别（`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`）
-  - `json`: 是否使用 JSON 格式（`true`/`false`）
-
-- **agent_behavior**: Agent 行为控制
-  - `max_empty_reply`: 最大空回复次数（默认：2）
-  - `max_nudge_finish`: 最大推动完成次数（默认：2）
-  - `max_validation_retries`: 验证重试次数（默认：3）
-
-- **execution**: Docker 执行模式
-  - `mode`: 执行模式（`auto`, `docker`, `container-native`）
-  - `detect_container`: 是否自动检测容器环境（`true`/`false`）
-
-**使用场景：**
+这是普通用户最该看的文件。默认配置采用分表写法，避免同一个 agent 块里混入模型和预算：
 
 ```yaml
-# 开发环境：详细日志 + 文本格式
-logging:
-  level: "DEBUG"
-  json: false
+llm:
+  default_profile: deepseek
+  defaults:
+    profile: deepseek
+    tier: medium
+  agents:
+    scout:
+      tier: medium
+      temperature: 0.5
+      max_context: 1280000
+    writer:
+      tier: heavy
 
-# 生产环境：INFO 日志 + JSON 格式
-logging:
-  level: "INFO"
-  json: true
+budget:
+  defaults:
+    unlimited_budget: true
+  agents:
+    scout:
+      max_steps: 300
+      max_tokens_total: 50000000
+      max_wall_seconds: 36000
+    writer:
+      max_steps: 1500
+      modes:
+        section_draft:
+          max_steps: 80
+          max_tokens_total: 50000000
+
+runtime:
+  timeouts:
+    llm_call: 90
+    max_tool_call: 180
+    docker_operation: 7200
+    latex_compile: 1800
+  retry_policy:
+    llm_retries: 10
+    llm_retry_delay: 1
+    llm_timeout_cooldown_seconds: 60
+    llm_timeout_pause_after_cooldowns: 0
+  budget_escalation:
+    enabled: true
+    max_extensions_per_run: null
 ```
 
-### workspace 目录说明和恢复文件
+兼容层仍能读取旧的 `agents.<agent>` 混合简写，但 checked-in 默认配置不再使用。日常使用请按 `llm.*` 和 `budget.*` 分开写；`max_tokens` 会被归一化为 `max_tokens_total`，`tags: [unlimited_budget]` 与 `unlimited_budget: true` 等价。
 
-标准 workspace 目录由 `researchos/runtime/workspace.py` 生成，不建议在配置文件里手写一套不同目录树。每个标准子目录都会获得表格格式 `_DIR_GUIDE.md`：目录协议表说明生产者、消费者、可编辑范围和校验规则；关键文件表说明该目录下核心 artifact 的用途。已有自定义 guide 会保留。
+## `model_routing.yaml`
 
-新 workspace 默认只创建当前主链目录。`pilot/`、顶层 `reviews/`、workspace-local `skills/` 是 legacy/optional 目录，不再默认创建；旧 workspace 如果已经存在这些目录，runtime 会补 legacy guide 但不会删除。`external_executor/workdir`、`resources/repos`、PDF/figure 目录不会被递归写入 guide。
-
-`_runtime/resume/` 是恢复快照目录，runtime 在任意退出路径都会刷新输出存在性、缺失输出和 task-specific recovery 元数据。`_runtime/human_interactions.jsonl` 记录 `ask_human` 的问题、回答、task/run 和 `interaction_id`；需要人类 provenance 的 gate，例如 `T8-STYLE-GATE`，会校验 artifact 中的 `human_interaction_id` 是否真的存在。
-
-### model_routing.yaml - LLM 模型路由
-
-定义 LLM 服务端点和模型选择策略。
-
-#### 一张表看懂 LLM 选择链路
-
-| 层级 | 你配置什么 | 作用 | 例子 |
-|------|------------|------|------|
-| Agent | `agents.<agent>.llm.tier` | 只声明任务需要 `heavy` / `medium` / `light` 哪一档 | `hello.llm.tier -> medium`，`ideation.llm.tier -> heavy` |
-| state_machine | `states.<task>.llm.profile` | 少数 task 的临时覆盖；默认不要写，避免压过 agent 默认配置 | `HELLO -> hello_fast` |
-| model_routing | `profiles.<profile>.<tier>` | 把某个 profile 下的 tier 映射到具体模型 | `ideation_deep.heavy -> deepseek-ai/DeepSeek-V4-Flash` |
-| endpoint | `endpoints.<name>` | 决定最终 provider / API key / base URL | `siliconflow -> provider=openai` |
-
-默认链路：
-- Agent 先给出 `tier`
-- 如果 `state_machine.yaml` 里给当前 task 配了 `llm.profile`，优先用它；这会压过 `agent_params.yaml`，所以只在确实需要 task 级覆盖时使用
-- 否则回退到 agent 自带的 `llm.profile`
-- 再否则使用 `model_routing.yaml` 的 `default_profile`
-
-当前主链已经避免在 T4/T7.5 这类常调任务上重复写 `llm.profile`。因此你在 `agent_params.yaml` 中修改 `agents.ideation.llm.profile` 或 `agents.pi.llm.profile` 后，完整流程会继承该设置；若某个 task 仍不生效，优先检查 `state_machine.yaml` 是否显式写了 `llm.profile`、`llm.model` 或 `llm.endpoint`。
-
-对 `run-task HELLO` 这种单任务调试模式：
-- 不读取 `state_machine.yaml`
-- 需要用 `--profile xxx` 或依赖 `default_profile`
-
-**主要配置项：**
-
-- **endpoints**: API 端点定义
-  - `provider`: 服务提供商（如 `openai`、`anthropic`、`azure`）
-  - `api_key_env`: API Key 环境变量名
-  - `api_base_env`: Base URL 环境变量名
-  - DeepSeek 官方 OpenAI-compatible API 使用 `endpoint: deepseek`、`provider: openai`、`DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`；runtime 不会把 DeepSeek endpoint 自动借用 SiliconFlow/OpenAI 的 key/base URL，避免错连 provider
-
-- **profiles**: 模型配置文件
-  - `heavy`: 重负载任务（文献综合、深度分析）
-  - `medium`: 中等负载任务（文献检索、信息提取）
-  - `light`: 轻负载任务（简单查询、格式转换）
-
-说明：
-- Agent 本身只声明 `llm.tier` / `llm.profile`，并不把 provider 写死在代码里。
-- 每个 `primary` / `fallback` 都可以指向不同的 `endpoint`。
-- provider 是挂在 `endpoints.<name>.provider` 上的，所以完全可以做到：
-  - `heavy.primary -> siliconflow(openai-compatible)`
-  - `heavy.fallback -> anthropic`
-  - `medium.primary -> openai`
-- 可参考 [model_routing.multi_provider.example.yaml](./model_routing.multi_provider.example.yaml)。
-
-- **truncation**: 上下文截断策略
-  - `trigger_ratio`: 触发截断的阈值（默认：0.8）
-  - `target_ratio`: 截断后保留比例（默认：0.6）
-  - `keep_system`: 是否保留系统消息（默认：`true`）
-  - `keep_recent_turns`: 保留最近轮数（默认：10）
-
-**使用场景：**
+这里只定义可选的模型路由候选：
 
 ```yaml
-# 成本优化：大部分任务使用 gpt-3.5-turbo
+endpoints:
+  deepseek:
+    provider: openai
+    api_key_env: DEEPSEEK_API_KEY
+    api_base_env: DEEPSEEK_BASE_URL
+
 profiles:
-  default:
+  deepseek:
     heavy:
       primary:
-        model: "gpt-4"
-        max_context: 32000
-    medium:
-      primary:
-        model: "gpt-3.5-turbo"
-        max_context: 16000
-    light:
-      primary:
-        model: "gpt-3.5-turbo"
-        max_context: 4000
-
-# 性能优先：所有任务使用 gpt-4
-profiles:
-  performance:
-    heavy:
-      primary:
-        model: "gpt-4"
-    medium:
-      primary:
-        model: "gpt-4"
-    light:
-      primary:
-        model: "gpt-4"
+        model: deepseek-v4-pro
+        endpoint: deepseek
+        max_context: 128000
+      fallback:
+        - model: deepseek-v4-flash
+          endpoint: deepseek
+          max_context: 128000
 ```
 
-### agent_params.yaml - Agent 默认参数
+切全局默认不要改这里，改 `user_settings.yaml: llm.default_profile`。新增 provider、fallback 或上下文窗口候选时才改这里。
 
-定义每个 Agent 的默认静态参数。
+## `agent_params.yaml`
 
-每个 agent 现在采用真实分区结构，而不是把所有字段摊平成一层：
+这是能力注册表，主要放：
 
-| 分区 | 作用 | 常见字段 |
-|------|------|----------|
-| `llm` | 模型路由与模型运行参数 | `profile`, `tier`, `model`, `endpoint`, `max_context`, `temperature` |
-| `budget` | Agent 默认预算 | `max_steps`, `max_tokens_total`, `max_wall_seconds`, `max_validation_retries`, `unlimited_budget`, `tags` |
-| `tools` | 工具能力与 workspace 权限 | `tool_names`, `allowed_read_prefixes`, `allowed_write_prefixes` |
-| `prompt` | prompt 模板和输出契约 | `prompt_template`, `structured_outputs`, `expected_outputs`, `expected_sections` |
-| `behavior` | 可机械执行或校验的行为开关 | `docker_required`, `gpu_required`, `abstract_sweep`, `max_compile_attempts` |
-| `modes` | 分阶段覆盖 | 每个 mode 可继续使用 `llm/budget/tools/prompt/behavior` |
+- `tools.tool_names`
+- `tools.allowed_read_prefixes`
+- `tools.allowed_write_prefixes`
+- `prompt.prompt_template`
+- `prompt.structured_outputs`
+- `prompt.expected_outputs`
+- `behavior.*`
+- `modes.<mode>.description/prompt/behavior/tools`
 
-runtime 会在读取时把 `budget/tools/prompt/behavior` 规范化为旧扁平字段，因此现有代码里
-`params.get("max_steps")`、`params.get("tool_names")` 等仍然可用。旧扁平配置也保留兼容，
-但当前推荐写法是分区结构。
+兼容层仍能读取旧的 `llm` / `budget` 字段，但 checked-in 默认配置不再把它们放这里。不要把日常模型和预算参数写回 `agent_params.yaml`，否则又会出现多表参数冲突。
 
-示例：
+## `state_machine.yaml`
 
-```yaml
-agents:
-  hello:
-    llm:
-      model: "openrouter/openai/gpt-4o-mini"
-      endpoint: openrouter_main
-      max_context: 128000
-      temperature: 0.3
-    budget:
-      max_steps: 5
-      max_tokens_total: 10000
-      max_wall_seconds: 60
-    tools:
-      tool_names: [echo, write_file, read_file, finish_task]
-      allowed_read_prefixes: [""]
-      allowed_write_prefixes: [""]
-    prompt:
-      prompt_template: hello.j2
-
-  ideation:
-    llm:
-      model: "deepseek-ai/DeepSeek-V4-Flash"
-      endpoint: siliconflow
-      max_context: 128000
-      temperature: 0.75
-    budget:
-      max_steps: 150
-      max_tokens_total: 2000000
-    tools:
-      tool_names: [read_file, write_file, ask_human, finish_task]
-      allowed_read_prefixes: ["", literature/, user_seeds/, ideation/]
-      allowed_write_prefixes: [ideation/]
-    prompt:
-      prompt_template: ideation.j2
-    behavior:
-      gates:
-        - id: gate1
-          type: user_select
-```
-
-当前 checked-in `agent_params.yaml` 已在每个基础 agent 的 `budget` 下设置
-`unlimited_budget: true`，因此默认不会因为 agent runtime 的
-`max_steps`、`max_tokens_total`、`max_wall_seconds` 暂停。`max_*` 字段仍保留为
-可见的参考值和恢复有限预算时的上限。
-
-如果新增 agent/mode，仍可以用显式写法启用无限预算：
-
-```yaml
-agents:
-  reader:
-    modes:
-      read:
-        budget:
-          tags: [unlimited_budget]
-```
-
-等价写法是 `budget.unlimited_budget: true`。该开关只跳过本轮 agent 的
-`max_steps`、`max_tokens_total`、`max_wall_seconds` 检查；仍会记录 step/token/cost，
-也不会关闭 LLM 单次调用超时、工具超时、Docker/TeX 专用超时、workspace 权限或输出校验。
-如果某个 mode 或 state-machine task 继承了上层无限预算但需要恢复有限预算，写
-`budget.unlimited_budget: false`。
-
-建议：
-- 想单独给某个 Agent 绑定固定模型/provider，优先改 `agent_params.yaml` 的 `llm.model + llm.endpoint`
-- 想批量切一组任务的模型策略，优先改 `model_routing.yaml` 的 `profile`
-- 想改预算，改 `agents.<agent>.budget` 或 `agents.<agent>.modes.<mode>.budget`
-- 想启用/禁用工具，改 `agents.<agent>.tools.tool_names`
-- 想改 Docker、abstract sweep、编译重试等机械行为，改 `behavior`
-
-### state_machine.yaml - 状态机定义
-
-定义 Agent 工作流的状态转换和数据流。
-
-**主要配置项：**
-
-- **initial_state**: 初始状态（工作流入口）
-  - `HELLO`: 调试用的简单 workflow
-  - `T1`: 完整研究流程的起点
-
-- **states**: 状态定义
-  - `agent`: 使用的 Agent 名称
-  - `mode`: Agent 模式（可选）
-  - `llm.profile`: 给当前 task 单独指定 LLM profile（可选）
-  - `llm.tier`: 临时覆盖当前 task 的 tier（可选）
-  - `llm.model`: 临时覆盖当前 task 的模型名（可选）
-  - `llm.endpoint`: 临时覆盖当前 task 的 endpoint（可选）
-  - `llm.max_context`: 临时覆盖当前 task 的上下文窗口（可选）
-  - `llm.temperature`: 临时覆盖当前 task 的温度（可选）
-  - `inputs`: 输入文件映射
-  - `outputs`: 输出文件映射
-  - `next_on_success`: 成功后的下一状态
-  - `next_on_failure`: 失败后的下一状态
-  - `terminal`: 是否为终止状态
-
-**按 task 单独切 profile 的示例：**
+这里定义 workflow，不是参数表。默认主链不应写 `llm` / `budget`。只有临时调试或确实需要固定某个 task 时，才使用 task 级强覆盖：
 
 ```yaml
 states:
@@ -313,435 +154,22 @@ states:
     agent: hello
     llm:
       profile: hello_fast
-    outputs:
-      hello_file: hello.txt
-    next_on_success: done
-    next_on_failure: failed
-
-  T4:
-    agent: ideation
-    llm:
-      profile: ideation_deep
-    inputs:
-      project: project.yaml
-      synthesis: literature/synthesis.md
-    outputs:
-      hypotheses: ideation/hypotheses.md
-      exp_plan: ideation/exp_plan.yaml
-      idea_rationales: ideation/idea_rationales.json
-      idea_scorecard: ideation/idea_scorecard.yaml
-      rejected_ideas: ideation/rejected_ideas.md
-      gate_decisions: ideation/gate_decisions.json
-      risks: ideation/risks.md
-    next_on_success: T4.5
-    next_on_failure: T4
 ```
 
-**按 task 直接切模型和 endpoint 的示例：**
+如果 `user_settings.yaml` 改了 profile 但运行不生效，优先检查 `validate-config` 输出里的 `state_machine_llm_overrides`。
 
-```yaml
-states:
-  HELLO:
-    agent: hello
-    llm:
-      model: "deepseek-ai/DeepSeek-V4-Pro"
-      endpoint: siliconflow
-      max_context: 128000
-    outputs:
-      hello_file: hello.txt
-    next_on_success: done
-    next_on_failure: failed
-```
-
-说明：
-- `agent_params.yaml` 更适合配置“某个 Agent 默认用什么模型/provider”
-- `profile` 适合“这一组 task 共用哪套模型策略”
-- `model + endpoint` 适合“当前 task 临时强制切到某个模型/provider”
-- `tier` 适合临时回退到分档路由，而不是日常主入口
-
-**工作流说明：**
-
-1. **HELLO Workflow**（调试用）
-   ```
-   HELLO → done/failed
-   ```
-
-2. **T1-T9 完整研究 Workflow**
-   ```
-   T1 (项目初始化)
-   → T2 (文献检索)
-   → T3 (深度阅读)
-   → T3.5 (文献综合)
-   → T3.6 (可选综述论文支线)
-   → T4 (假设生成)
-   → T4.5 (新颖性审计)
-   → T5-HANDOFF (外部实验协议编译)
-   → T5-EXECUTOR-GATE (外部执行器选择)
-   → T5-DRY-RUN / T5-EXTERNAL-WAIT (mock 协议 dry-run 或等待真实外部结果)
-   → T7-INGEST (外部结果摄取)
-   → T7-AUDIT (实验诚信审计)
-   → T7-POST-NOVELTY (实验后 novelty/collision 复核)
-   → T7-CLAIMS (result-to-claim 与 evidence pack)
-   → T7.5 (PI 评估与 human gate)
-   → T8-* (分章节写作、审计、review/revise、paper claim audit)
-   → T9 (投稿包构建和 TeX 编译)
-   → done/failed
-   ```
-
-旧 `T5`、`T6`、`T7` 不再作为普通 `run-task` 入口。手动运行 `run-task T5/T6/T7` 会提示该旧内部实验语义已 retired；如确实需要调试旧内部实验，使用 `run-task LEGACY-T5-PILOT|LEGACY-T6-NOVELTY|LEGACY-T7-FULL --allow-legacy`。完整主链和旧 `next_task: T7` 恢复语义会进入新版外部实验链，不再让 ResearchOS 自己长时间实现和运行实验。
-
-**使用场景：**
-
-```yaml
-# 调试：只运行 HELLO
-initial_state: HELLO
-
-# 完整流程：从 T1 开始
-initial_state: T1
-
-# 从中间状态开始（需要准备好输入文件）
-initial_state: T3
-```
-
-### mcp.yaml - MCP 工具配置
-
-配置外部工具和数据源（Model Context Protocol）。
-
-**支持的 MCP 服务器：**
-
-1. **arxiv** - arXiv 论文搜索和下载
-   - 依赖：Node.js, npx
-   - 无需 API Key
-   - 推荐启用
-
-2. **semantic_scholar** - Semantic Scholar 学术搜索
-   - 依赖：Python, `semantic_scholar_mcp` 包
-   - 需要 API Key（`S2_API_KEY`）
-
-3. **T2 内置出版社检索工具**
-   - `elsevier_scopus_search`: 通过 Elsevier Scopus Search API 检索，需 `ELSEVIER_API_KEY`，机构授权可加 `ELSEVIER_INSTTOKEN`
-   - `informs_search`: 通过 Crossref DOI prefix `10.1287` 检索 INFORMS 论文元数据，建议配置 `RESEARCHER_EMAIL`
-   - 可选
-
-4. **github** - GitHub 仓库和代码搜索
-   - 依赖：Node.js, npx
-   - 需要 Personal Access Token（`GITHUB_TOKEN`）
-   - 可选
-
-**使用场景：**
-
-```yaml
-# 最小配置：只启用 arxiv
-servers:
-  - name: arxiv
-    command: "npx"
-    args: ["-y", "@modelcontextprotocol/server-arxiv"]
-
-# 完整配置：启用所有服务器
-servers:
-  - name: arxiv
-    command: "npx"
-    args: ["-y", "@modelcontextprotocol/server-arxiv"]
-  
-  - name: semantic_scholar
-    command: "python"
-    args: ["-m", "semantic_scholar_mcp"]
-    env:
-      S2_API_KEY: "${S2_API_KEY}"
-  
-  - name: github
-    command: "npx"
-    args: ["-y", "@modelcontextprotocol/server-github"]
-    env:
-      GITHUB_TOKEN: "${GITHUB_TOKEN}"
-```
-
-### gates.yaml - Gate 配置
-
-定义状态转换时的条件检查和验证规则。
-
-**当前状态：** 空配置（无 Gate 限制）
-
-**未来支持的 Gate 类型：**
-
-- `budget_check`: 预算检查（成本控制）
-- `quality_check`: 输出质量验证
-- `time_limit`: 时间限制
-- `approval_required`: 需要人工审批
-
-**使用场景：**
-
-```yaml
-# 预算控制
-gates:
-  budget_gate:
-    type: budget_check
-    config:
-      max_cost: 10.0         # 最大成本（美元）
-      warn_threshold: 0.8    # 警告阈值（80%）
-
-# 输出验证
-gates:
-  quality_gate:
-    type: output_validation
-    config:
-      min_length: 100        # 最小输出长度
-      required_fields:       # 必需字段
-        - title
-        - summary
-```
-
-## 配置优先级
-
-ResearchOS 建议按以下方式管理配置：
-
-1. **环境变量 / `.env`**
-   只放密钥、Token、邮箱等用户环境相关值。
-
-2. **配置文件**
-   `config/runtime.yaml` 管理运行参数，例如日志级别、trace、banner、web_fetch allowlist。
-
-3. **CLI 参数**
-   适合单次覆盖，例如 `--log-level DEBUG`、`--no-banner`。
-
-例如：
-   ```yaml
-   # runtime.yaml
-   logging:
-     level: "DEBUG"
-   debug:
-     enable_trace: true
-   ```
-
-## 配置验证
-
-ResearchOS 提供配置验证工具：
+## 验证与排查
 
 ```bash
-# 验证所有配置文件
 python -m researchos.cli validate-config
-
-# 查看当前生效的配置
-python -m researchos.cli show-config
-
-# 查看特定配置文件
-python -m researchos.cli show-config --file runtime.yaml
+python -m researchos.cli selftest --profile deepseek
 ```
 
-## 常见配置场景
+常见问题：
 
-### 场景 1：本地开发
+- 模型没有切过去：检查 `state_machine_llm_overrides` 是否有 task 级强覆盖。
+- DeepSeek OpenAI-compatible 调用失败：确认 `DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL` 和 profile 中的模型名匹配。
+- 预算仍然触顶：检查 `user_settings.yaml: budget.defaults` 或 `budget.agents.<agent>` 是否设置 `unlimited_budget: true`，以及 `runtime.budget_escalation.enabled` 是否开启。
+- T9/Docker 超时：检查 `runtime.timeouts.docker_operation` 与 `runtime.timeouts.latex_compile`，普通 `max_tool_call` 不应承担长实验或 TeX 编译上限。
 
-```yaml
-# runtime.yaml
-logging:
-  level: "DEBUG"
-  json: false
-
-debug:
-  enable_trace: true
-
-execution:
-  mode: "auto"
-```
-
-```bash
-# .env
-OPENAI_API_KEY=sk-xxxxx
-OPENAI_BASE_URL=https://api.openai.com/v1
-```
-
-### 场景 2：生产部署
-
-```yaml
-# runtime.yaml
-logging:
-  level: "INFO"
-  json: true
-
-debug:
-  enable_trace: false
-
-execution:
-  mode: "docker"
-```
-
-```bash
-# 使用系统环境变量
-export OPENAI_API_KEY=sk-xxxxx
-export OPENAI_BASE_URL=https://api.openai.com/v1
-```
-
-### 场景 3：成本优化
-
-```yaml
-# model_routing.yaml
-profiles:
-  cost_optimized:
-    heavy:
-      primary:
-        model: "gpt-4"
-        max_context: 32000    # 限制上下文
-    medium:
-      primary:
-        model: "gpt-3.5-turbo"
-    light:
-      primary:
-        model: "gpt-3.5-turbo"
-
-truncation:
-  trigger_ratio: 0.7          # 更早触发截断
-  target_ratio: 0.5           # 更激进的截断
-```
-
-### 场景 4：使用第三方 API
-
-```bash
-# .env
-OPENAI_API_KEY=your-api-key
-OPENAI_BASE_URL=https://your-service.com/v1
-```
-
-```yaml
-# model_routing.yaml
-endpoints:
-  relay:
-    provider: openai
-    api_key_env: OPENAI_API_KEY
-    api_base_env: OPENAI_BASE_URL
-```
-
-## 故障排查
-
-### 问题 1：配置不生效
-
-**症状：** 修改配置后没有变化
-
-**排查步骤：**
-1. 检查配置文件路径是否正确
-2. 验证 YAML 语法（使用 `yamllint` 或在线工具）
-3. 确认环境变量是否覆盖了配置文件
-4. 查看日志中的配置加载信息
-
-```bash
-# 验证 YAML 语法
-python -c "import yaml; yaml.safe_load(open('config/runtime.yaml'))"
-
-# 查看生效的配置
-python -m researchos.cli show-config
-```
-
-### 问题 2：API 调用失败
-
-**症状：** LLM 调用返回错误
-
-**排查步骤：**
-1. 验证 API Key 是否正确
-2. 检查 Base URL 是否可访问
-3. 确认模型名称是否正确
-4. 查看 API 服务商的状态页面
-
-```bash
-# 测试 API 连接
-curl -H "Authorization: Bearer $OPENAI_API_KEY" \
-     $OPENAI_BASE_URL/models
-
-# 查看详细错误日志
-python -m researchos.cli run --log-level DEBUG
-```
-
-### 问题 3：MCP 工具不可用
-
-**症状：** Agent 无法使用外部工具
-
-**排查步骤：**
-1. 检查 MCP 服务器是否正确配置
-2. 验证依赖是否已安装（Node.js, Python 包）
-3. 确认环境变量是否设置（API Key, Token）
-4. 查看 MCP 服务器日志
-
-```bash
-# 测试 arxiv MCP 服务器
-npx -y @modelcontextprotocol/server-arxiv
-
-# 测试 Semantic Scholar MCP 服务器
-python -m semantic_scholar_mcp
-```
-
-## 最佳实践
-
-### 1. 环境隔离
-
-为不同环境使用不同的配置：
-
-```bash
-# 开发环境
-cp .env.example .env.dev
-ln -sf .env.dev .env
-
-# 生产环境
-cp .env.example .env.prod
-# 编辑 .env.prod
-```
-
-### 2. 版本控制
-
-- ✅ 提交：`*.yaml` 配置文件、`.env.example`
-- ❌ 不提交：`.env` 文件（包含敏感信息）
-
-```bash
-# .gitignore
-.env
-.env.local
-*.env.local
-```
-
-### 3. 配置文档化
-
-在配置文件中添加详细注释：
-
-```yaml
-# 好的实践：说明配置项的作用和可选值
-logging:
-  level: "INFO"    # DEBUG, INFO, WARNING, ERROR, CRITICAL
-
-# 不好的实践：没有注释
-logging:
-  level: "INFO"
-```
-
-### 4. 配置验证
-
-在部署前验证配置：
-
-```bash
-# CI/CD 流程中添加配置验证
-python -m researchos.cli validate-config
-if [ $? -ne 0 ]; then
-  echo "配置验证失败"
-  exit 1
-fi
-```
-
-### 5. 敏感信息管理
-
-- 开发环境：使用 `.env` 文件
-- 生产环境：使用密钥管理服务（AWS Secrets Manager, HashiCorp Vault 等）
-- CI/CD：使用 CI 平台的密钥管理功能
-
-## 进一步阅读
-
-- [配置总览与参数说明](../docs/config.md)
-- [Docker 使用指南](../docs/docker.md)
-- [Runtime 机制说明](../docs/runtime.md)
-- [开发者手册](../docs/dev.md)
-- [README 中文版](../README.zh-CN.md)
-
-## 获取帮助
-
-如果遇到配置问题：
-
-1. 查看本文档的"故障排查"部分
-2. 查看详细的配置文档：`docs/config.md`
-3. 查看日志文件：`workspace/_runtime/logs/`
-4. 提交 Issue：https://github.com/MengkunLiang/DIG-ResearchOS/issues
+更多细节见 [docs/config.md](../docs/config.md)。

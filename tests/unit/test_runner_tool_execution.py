@@ -588,6 +588,7 @@ async def test_t2_failed_run_can_finalize_outputs_from_raw(tmp_workspace):
             project_id="p1",
             task_id="T2",
             run_id="T2_single_recover",
+            extra={"allow_t2_failure_recovery": True, "t2_finish_finalize_min_raw": 10},
             outputs_expected={
                 "papers_raw": tmp_workspace / "literature" / "papers_raw.jsonl",
                 "papers_dedup": tmp_workspace / "literature" / "papers_dedup.jsonl",
@@ -605,7 +606,7 @@ async def test_t2_failed_run_can_finalize_outputs_from_raw(tmp_workspace):
 
 
 @pytest.mark.asyncio
-async def test_t2_auto_finalizes_from_raw_without_second_llm_turn(tmp_workspace):
+async def test_t2_large_raw_search_does_not_auto_finalize_without_finish_task(tmp_workspace):
     (tmp_workspace / "project.yaml").write_text(
         json.dumps(
             {
@@ -654,7 +655,97 @@ async def test_t2_auto_finalizes_from_raw_without_second_llm_turn(tmp_workspace)
             workspace_dir=tmp_workspace,
             project_id="p1",
             task_id="T2",
-            run_id="T2_single_auto_finalize",
+            run_id="T2_large_raw_no_finish",
+            outputs_expected={
+                "papers_raw": tmp_workspace / "literature" / "papers_raw.jsonl",
+                "papers_dedup": tmp_workspace / "literature" / "papers_dedup.jsonl",
+                "papers_verified": tmp_workspace / "literature" / "papers_verified.jsonl",
+                "verification_failures": tmp_workspace / "literature" / "verification_failures.jsonl",
+                "deep_read_queue": tmp_workspace / "literature" / "deep_read_queue.jsonl",
+                "access_audit": tmp_workspace / "literature" / "access_audit.md",
+                "search_log": tmp_workspace / "literature" / "search_log.md",
+                "missing_areas": tmp_workspace / "literature" / "missing_areas.md",
+            },
+        )
+    )
+
+    assert not result.ok
+    assert result.stop_reason == result.STOP_ERROR
+    assert "No mock responses left" in (result.error or "")
+    assert result.steps_used == 2
+    assert llm.call_count == 2
+    assert (tmp_workspace / "literature" / "papers_raw.jsonl").exists()
+    assert not (tmp_workspace / "literature" / "papers_verified.jsonl").exists()
+    assert not (tmp_workspace / "literature" / "deep_read_queue.jsonl").exists()
+    assert "completion_mode" not in result.metadata
+
+
+@pytest.mark.asyncio
+async def test_t2_finish_task_finalizes_from_raw(tmp_workspace):
+    (tmp_workspace / "project.yaml").write_text(
+        json.dumps(
+            {
+                "project_id": "p1",
+                "research_direction": "LLM Agent long-term memory retrieval framework",
+                "keywords": [
+                    "LLM Agent",
+                    "long-term memory",
+                    "memory retrieval",
+                    "hierarchical memory",
+                    "memory compression",
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    registry = ToolRegistry()
+    registry.register("arxiv_search", lambda ctx: LargeRecoverySearchTool())
+    registry.register("fetch_outgoing_citations", lambda ctx: CitationSnowballTool())
+    from researchos.tools.finish_task import FinishTaskTool
+
+    registry.register("finish_task", lambda ctx: FinishTaskTool())
+
+    llm = MockLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[
+                        FakeToolCall(
+                            name="arxiv_search",
+                            arguments={"query": "LLM agent memory retrieval"},
+                            id="tc1",
+                        )
+                    ]
+                )
+            ),
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[
+                        FakeToolCall(
+                            name="finish_task",
+                            arguments={"summary": "coverage is sufficient"},
+                            id="tc2",
+                        )
+                    ]
+                )
+            ),
+        ]
+    )
+
+    runner = AgentRunner(
+        T2SearchAgent(),
+        registry,
+        llm,
+        MockHumanInterface(),
+    )
+    result = await runner.run(
+        ExecutionContext(
+            workspace_dir=tmp_workspace,
+            project_id="p1",
+            task_id="T2",
+            run_id="T2_finish_finalize",
             outputs_expected={
                 "papers_raw": tmp_workspace / "literature" / "papers_raw.jsonl",
                 "papers_dedup": tmp_workspace / "literature" / "papers_dedup.jsonl",
@@ -669,8 +760,8 @@ async def test_t2_auto_finalizes_from_raw_without_second_llm_turn(tmp_workspace)
     )
 
     assert result.ok
-    assert result.metadata["completion_mode"] == "t2_deterministic"
-    assert result.steps_used == 1
-    assert llm.call_count == 1
+    assert result.metadata["completion_mode"] == "t2_finish_finalize"
+    assert result.steps_used == 2
+    assert llm.call_count == 2
     assert (tmp_workspace / "literature" / "papers_verified.jsonl").exists()
     assert (tmp_workspace / "literature" / "deep_read_queue.jsonl").exists()

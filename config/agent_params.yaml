@@ -1,46 +1,18 @@
-# ResearchOS Agent 参数配置
+# ResearchOS Agent Capability Registry
 #
-# 目标：
-# - 把每个 Agent 的默认 LLM / budget / tool / 路径参数集中到这里管理
-# - 便于按 Agent 单独切换模型、provider、profile，而不必改 Python 源码
+# 日常参数不要改这里。请改 config/user_settings.yaml。
 #
-# 每个 agent 采用真实分区结构：
-# - llm: 模型路由与模型运行参数（profile/tier/model/endpoint/max_context/temperature）
-# - budget: agent 默认预算（max_steps/max_tokens_total/max_wall_seconds/max_validation_retries/unlimited_budget/tags）
-# - tools: 工具能力与 workspace 权限（tool_names/allowed_read_prefixes/allowed_write_prefixes）
-# - prompt: prompt/schema/expected_outputs 等输出契约提示
-# - behavior: agent/task-specific 行为开关，例如 docker_required、abstract_sweep、max_compile_attempts
-# - modes: 分阶段覆盖；每个 mode 也可以使用同样的 llm/budget/tools/prompt/behavior 分区
+# 本文件只保留 agent 能力声明：
+# - tools: 可用工具与 workspace 读写权限
+# - prompt: prompt 模板、structured_outputs、expected_outputs
+# - behavior: 与 agent 绑定的机械行为开关
+# - modes: 阶段说明与 mode 专属 prompt/behavior/tools
 #
-# runtime 同时兼容旧扁平字段和当前分区字段。读取时会把 budget/tools/prompt/behavior
-# 规范化成旧字段名，因此已有代码中的 params.get("max_steps")、params.get("tool_names")
-# 等调用仍然有效。
-#
-# 覆盖优先级（从高到低）：
-# 1. state_machine.yaml 中某个 task 的 llm / budget / tools 临时覆盖
-# 2. 本文件对应 agent 的 mode 分区覆盖
-# 3. 本文件对应 agent 的基础分区配置
-# 4. Python 代码里的 defaults
-#
-# 如需显式跳过某个 agent/mode 的 runtime 预算上限，可在 budget 下设置
-# unlimited_budget: true，或 tags: [unlimited_budget]。这只跳过 agent 的
-# max_steps/max_tokens_total/max_wall_seconds 检查，不会关闭工具超时、LLM 单次
-# 调用超时、输出校验、TeX/Docker 专用超时或项目级实验预算检查。
+# LLM profile/tier/model/temperature/max_context、预算、timeout、retry、budget escalation
+# 的日常配置统一由 config/user_settings.yaml 提供，并在运行时 overlay 到这里。
 
 agents:
   hello:
-    llm:
-      model: deepseek-v4-flash
-      endpoint: deepseek
-      max_context: 128000
-      tier: medium
-      temperature: 0.3
-    budget:
-      max_validation_retries: 3
-      max_tokens_total: 10000
-      max_steps: 5
-      max_wall_seconds: 60
-      unlimited_budget: true
     tools:
       allowed_read_prefixes:
       - ''
@@ -54,17 +26,6 @@ agents:
     prompt:
       prompt_template: hello.j2
   pi:
-    llm:
-      profile: deepseek
-      max_context: 128000
-      tier: heavy
-      temperature: 0.3
-    budget:
-      max_validation_retries: 10
-      max_tokens_total: 1000000
-      max_steps: 40
-      max_wall_seconds: 30000
-      unlimited_budget: true
     tools:
       allowed_read_prefixes:
       - ''
@@ -98,17 +59,6 @@ agents:
         description: 结果评估
         expected_rounds: 2
   scout:
-    llm:
-      profile: deepseek
-      max_context: 1280000
-      tier: medium
-      temperature: 0.5
-    budget:
-      max_validation_retries: 3
-      max_tokens_total: 50000000
-      max_steps: 300
-      max_wall_seconds: 36000
-      unlimited_budget: true
     tools:
       allowed_read_prefixes:
       - ''
@@ -164,17 +114,6 @@ agents:
         papers_dedup_min: 15
         papers_dedup_max: 120
   reader:
-    llm:
-      profile: deepseek
-      max_context: 128000
-      tier: medium
-      temperature: 0.5
-    budget:
-      max_validation_retries: 10
-      max_tokens_total: 600000
-      max_steps: 200
-      max_wall_seconds: 50000
-      unlimited_budget: true
     tools:
       allowed_read_prefixes:
       - ''
@@ -198,9 +137,6 @@ agents:
       prompt_template: reader.j2
     modes:
       read:
-        budget:
-          max_tokens_total: 20000000
-          max_steps: 200
         prompt:
           expected_outputs:
             paper_notes_min: 10
@@ -222,9 +158,6 @@ agents:
         deep_read_max: 30
         probe_pool: 45
       synthesize:
-        budget:
-          max_tokens_total: 15000000
-          max_steps: 100
         prompt:
           expected_length_min: 1000
           expected_sections:
@@ -238,17 +171,6 @@ agents:
         description: 文献综合
         expected_citations_min: 5
   ideation:
-    llm:
-      profile: ideation_deep
-      max_context: 128000
-      tier: heavy
-      temperature: 0.75
-    budget:
-      max_validation_retries: 10
-      max_tokens_total: 2000000
-      max_steps: 150
-      max_wall_seconds: 12000
-      unlimited_budget: true
     tools:
       allowed_read_prefixes:
       - ''
@@ -284,17 +206,6 @@ agents:
         description: 确认假设方案
         type: user_confirm
   novelty_auditor:
-    llm:
-      profile: deepseek
-      max_context: 128000
-      tier: heavy
-      temperature: 0.3
-    budget:
-      max_validation_retries: 10
-      max_tokens_total: 600000
-      max_steps: 1000
-      max_wall_seconds: 80000
-      unlimited_budget: true
     tools:
       allowed_read_prefixes:
       - ''
@@ -320,17 +231,6 @@ agents:
       - Level 2
       - Level 3
   novelty:
-    llm:
-      profile: deepseek
-      max_context: 1280000
-      tier: medium
-      temperature: 0.3
-    budget:
-      max_validation_retries: 10
-      max_tokens_total: 600000
-      max_steps: 1000
-      max_wall_seconds: 80000
-      unlimited_budget: true
     tools:
       allowed_read_prefixes:
       - ''
@@ -350,17 +250,6 @@ agents:
     prompt:
       prompt_template: novelty.j2
   experimenter:
-    llm:
-      profile: deepseek
-      max_context: 128000
-      tier: medium
-      temperature: 0.3
-    budget:
-      max_validation_retries: 10
-      max_tokens_total: 60000000
-      max_steps: 2000
-      max_wall_seconds: 144000
-      unlimited_budget: true
     tools:
       allowed_read_prefixes:
       - ''
@@ -421,11 +310,6 @@ agents:
           allowed_write_prefixes:
           - experiments/
           - pilot/
-        budget:
-          max_validation_retries: 2
-          max_tokens_total: 1000000
-          max_steps: 1000
-          max_wall_seconds: 72000
         prompt:
           expected_outputs:
             smoke_test_required: true
@@ -455,11 +339,6 @@ agents:
           allowed_write_prefixes:
           - experiments/
           - pilot/
-        budget:
-          max_validation_retries: 5
-          max_tokens_total: 30000000
-          max_steps: 5000
-          max_wall_seconds: 144000
         prompt:
           expected_outputs:
             ablation_min: 3
@@ -471,96 +350,45 @@ agents:
         description: 完整实验
       handoff:
         description: 编译外部执行器 handoff 包
-        budget:
-          max_validation_retries: 2
-          max_steps: 40
-          max_tokens_total: 1000000
-          max_wall_seconds: 3600
         behavior:
           docker_required: false
           gpu_required: false
       executor_gate:
         description: 选择外部执行器并 patch handoff prompt
-        budget:
-          max_validation_retries: 1
-          max_steps: 10
-          max_tokens_total: 100000
-          max_wall_seconds: 600
         behavior:
           docker_required: false
           gpu_required: false
       external_wait:
         description: 等待外部执行器 result_pack，resume 后确定性校验
-        budget:
-          max_validation_retries: 1
-          max_steps: 5
-          max_tokens_total: 100000
-          max_wall_seconds: 600
         behavior:
           docker_required: false
           gpu_required: false
       dry_run:
         description: mock 外部执行器 dry-run
-        budget:
-          max_validation_retries: 2
-          max_steps: 30
-          max_tokens_total: 500000
-          max_wall_seconds: 1800
         behavior:
           docker_required: false
           gpu_required: false
       result_ingest:
         description: 摄取外部执行器结果
-        budget:
-          max_validation_retries: 2
-          max_steps: 30
-          max_tokens_total: 500000
-          max_wall_seconds: 1800
         behavior:
           docker_required: false
           gpu_required: false
       integrity_audit:
         description: 实验诚信审计
-        budget:
-          max_validation_retries: 2
-          max_steps: 30
-          max_tokens_total: 500000
-          max_wall_seconds: 1800
         behavior:
           docker_required: false
           gpu_required: false
       post_novelty:
         description: 实验后 novelty/collision 复核
-        budget:
-          max_validation_retries: 2
-          max_steps: 20
-          max_tokens_total: 500000
-          max_wall_seconds: 1800
         behavior:
           docker_required: false
           gpu_required: false
       result_to_claim:
         description: result-to-claim 与 evidence pack
-        budget:
-          max_validation_retries: 2
-          max_steps: 40
-          max_tokens_total: 1000000
-          max_wall_seconds: 3600
         behavior:
           docker_required: false
           gpu_required: false
   writer:
-    llm:
-      profile: deepseek
-      max_context: 1280000
-      tier: heavy
-      temperature: 0.7
-    budget:
-      max_validation_retries: 3
-      max_tokens_total: 10000000
-      max_steps: 1500
-      max_wall_seconds: 240000
-      unlimited_budget: true
     tools:
       allowed_read_prefixes:
       - ''
@@ -596,67 +424,26 @@ agents:
       latex_required: true
     modes:
       style_gate:
-        budget:
-          max_tokens_total: 2000000
-          max_steps: 20
         description: 确认 IS/CCF-A/both 写作风格
       resource_index:
-        budget:
-          max_tokens_total: 50000000
-          max_steps: 100
         description: 构建写作资源索引和章节计划
       outline:
-        budget:
-          max_tokens_total: 100000000
-          max_steps: 300
         description: 生成资源驱动大纲
       section_plan:
-        budget:
-          max_tokens_total: 30000000
-          max_steps: 80
         description: 初始化逐章节写作状态和每章局部大纲
       section_drafts:
-        budget:
-          max_tokens_total: 10000000
-          max_steps: 20
         description: 已废弃的旧批量分章节入口；只做兼容检查，不写正文
       section_draft:
-        budget:
-          max_tokens_total: 50000000
-          max_steps: 80
         description: 单章节草稿
       draft:
-        budget:
-          max_tokens_total: 100000000
-          max_steps: 180
         description: 拼装、spot-check 与机械审计
       self_check:
-        budget:
-          max_tokens_total: 100000000
-          max_steps: 200
         description: 作者自查
       revise:
-        budget:
-          max_tokens_total: 1500000
-          max_steps: 300
         description: 按 section patch 修订
       paper_claim_audit:
-        budget:
-          max_tokens_total: 500000
-          max_steps: 20
         description: T9 前最终 claim/evidence 审计
   survey_writer:
-    llm:
-      profile: deepseek
-      max_context: 128000
-      tier: heavy
-      temperature: 0.55
-    budget:
-      max_validation_retries: 3
-      max_tokens_total: 20000000
-      max_steps: 160
-      max_wall_seconds: 36000
-      unlimited_budget: true
     tools:
       allowed_read_prefixes:
       - ''
@@ -684,72 +471,28 @@ agents:
       prompt_template: survey_writer.j2
     modes:
       survey_gate:
-        budget:
-          max_tokens_total: 2000000
-          max_steps: 20
         description: 询问是否撰写 taxonomy-driven survey
       survey_plan:
-        budget:
-          max_tokens_total: 40000000
-          max_steps: 120
         description: 构建综述 taxonomy 与章节大纲
       outline_gate:
-        budget:
-          max_tokens_total: 5000000
-          max_steps: 40
         description: 人工确认/调整 taxonomy 大纲
       corpus_gate:
-        budget:
-          max_tokens_total: 3000000
-          max_steps: 30
         description: 人工选择保守/完整素材范围
       survey_expand:
-        budget:
-          max_tokens_total: 10000000
-          max_steps: 80
         description: 生成一次性定向补检计划
       survey_state:
-        budget:
-          max_tokens_total: 10000000
-          max_steps: 40
         description: 初始化 survey_state 与逐 section outline
       survey_section:
-        budget:
-          max_tokens_total: 50000000
-          max_steps: 100
         description: 单个综述 section 写作
       survey_assemble:
-        budget:
-          max_tokens_total: 10000000
-          max_steps: 60
         description: 拼装 survey.tex 并审计
       survey_review:
-        budget:
-          max_tokens_total: 20000000
-          max_steps: 100
         description: 综述模式审阅与按 section 定向修订
       survey_compile:
-        budget:
-          max_tokens_total: 5000000
-          max_steps: 40
         description: 编译 survey.tex 为 PDF
       survey_feed:
-        budget:
-          max_tokens_total: 5000000
-          max_steps: 40
         description: 导出 T4 可消费的 survey insights
   reviewer:
-    llm:
-      profile: deepseek
-      max_context: 128000
-      tier: heavy
-      temperature: 0.3
-    budget:
-      max_validation_retries: 10
-      max_tokens_total: 600000000
-      max_steps: 200
-      max_wall_seconds: 12000
-      unlimited_budget: true
     tools:
       allowed_read_prefixes:
       - ''
@@ -771,17 +514,6 @@ agents:
       - '## Major Issues'
       - '## Minor Issues'
   submission:
-    llm:
-      profile: deepseek
-      max_context: 12800000
-      tier: medium
-      temperature: 0.3
-    budget:
-      max_validation_retries: 10
-      max_tokens_total: 500000000
-      max_steps: 30000
-      max_wall_seconds: 80000
-      unlimited_budget: true
     tools:
       allowed_read_prefixes:
       - ''
@@ -809,62 +541,3 @@ agents:
       docker_required: true
       max_compile_attempts: 10
       enforce_anonymization_precheck: false
-global_budget:
-  default_max_budget_usd: 100.0
-  warning_threshold: 0.7
-  critical_threshold: 0.9
-  stage_allocation:
-    T1_init: 0.05
-    T2_scout: 0.1
-    T3_read: 0.15
-    T4_ideation: 0.1
-    T5_pilot: 0.2
-    T7_full: 0.3
-    T8_write: 0.08
-    T9_submission: 0.02
-global_timeout:
-  max_agent_runtime: 7200
-  max_tool_call: 180
-  docker_operation: 7200
-  latex_compile: 1800
-  llm_call: 90
-docker:
-  requires_docker:
-  - experimenter
-  - submission
-  requires_gpu:
-  - experimenter
-  default_image: researchos/system:latest
-  gpu:
-    default_count: 1
-    max_count: 2
-    memory_limit: 16g
-retry_policy:
-  llm_retries: 10
-  llm_retry_delay: 1
-  # 当一整轮候选都因 TimeoutError/超时失败时，runner 不把项目标记为 failed。
-  # 默认冷却 60 秒后继续尝试；pause_after_cooldowns=0 表示无限冷却重试，
-  # 如需改成人工 gate，可设为正整数，达到次数后项目进入 PAUSED，可 resume。
-  llm_timeout_cooldown_seconds: 60
-  llm_timeout_pause_after_cooldowns: 0
-  tool_retries: 5
-  tool_retry_delay: 1
-  validation_retries: 3
-  no_retry_errors:
-  - AuthenticationError
-  - PermissionDenied
-  - BudgetExceeded
-budget_escalation:
-  enabled: true
-  tasks: []
-  max_extensions_per_run: null
-  steps_increase_ratio: 0.25
-  token_increase_ratio: 0.5
-  wall_seconds_increase_ratio: 0.5
-  max_validation_extensions_per_run: null
-  validation_retry_increase: 2
-logging:
-  level: INFO
-  trace_enabled: true
-  trace_retention_days: 30
-  trace_max_size_mb: 10

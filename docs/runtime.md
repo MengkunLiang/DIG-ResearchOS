@@ -381,13 +381,15 @@ runtime 不会立刻死掉，而是会主动发“继续推进或调用 finish_t
 
 `unlimited_budget` 有两类入口：
 
-- agent/mode 默认配置：`agents.<agent>.budget.unlimited_budget: true`
-  或 `agents.<agent>.budget.tags: [unlimited_budget]`
+- 日常 agent/mode 默认配置：`config/user_settings.yaml` 中
+  `budget.defaults.unlimited_budget: true`，或
+  `budget.agents.<agent>.unlimited_budget: true`
 - state-machine 节点临时覆盖：`states.<task>.budget.unlimited_budget: true`
   或 `states.<task>.tags: [unlimited_budget]`
 
-当前 checked-in `config/agent_params.yaml` 已在每个基础 agent 的 `budget` 下设置
-`unlimited_budget: true`，所以默认不会因为 agent runtime 的 step/token/wall 上限暂停。
+当前 checked-in [config/user_settings.yaml](../config/user_settings.yaml) 已在
+`budget.defaults` 中设置 `unlimited_budget: true`，所以默认不会因为 agent runtime
+的 step/token/wall 上限暂停。
 启用后仍会记录 step/token/cost，也不会关闭 LLM 单次调用超时、工具超时、Docker/TeX
 专用超时、workspace 权限、输出校验或项目级实验预算检查。若某个 mode 或 task
 需要从上层默认恢复有限预算，写 `unlimited_budget: false`。
@@ -488,9 +490,10 @@ LLM 不直接执行 shell 和文件操作。
 模型选择大致优先级是：
 
 1. task 级 override
-2. agent 默认 llm 设置
-3. profile + tier 解析
-4. `default_profile`
+2. `config/user_settings.yaml` 中 `llm.agents` / `llm.defaults` 的 LLM 设置
+3. `config/user_settings.yaml` 中 `llm.default_profile`
+4. `model_routing.yaml` 的 profile + tier 候选链
+5. 完全禁用 user settings 时的 Python fallback profile `default`
 
 ### 8.2 Endpoint 与 Provider 解耦
 

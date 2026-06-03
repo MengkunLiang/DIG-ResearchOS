@@ -7,11 +7,6 @@
 #   <state_name>:
 #     agent: <agent_name>        # 使用的 Agent
 #     mode: <mode>               # Agent 模式（可选）
-#     llm:                       # LLM 覆盖（可选）
-#       profile: <profile_name>  # 给当前 task 单独指定 profile
-#       tier: <tier_name>        # 临时覆盖为 heavy / medium / light
-#       model: <model_name>      # 临时强制指定模型
-#       temperature: <float>     # 临时覆盖温度
 #     inputs:                    # 输入文件映射
 #       <key>: <file_path>
 #     outputs:                   # 输出文件映射
@@ -42,8 +37,6 @@ states:
   # Agent：hello（输出简单的问候消息）
   HELLO:
     agent: hello
-    # llm:
-    #   profile: hello_fast
     outputs:
       hello_file: hello.txt      # 输出文件：问候消息
     next_on_success: done        # 成功后进入 done 状态
@@ -72,9 +65,9 @@ states:
   T2:
     agent: scout
     extra:
-      # raw 达到该数量后由 runtime 自动执行 raw -> dedup/verified/queue/audit。
-      # 这样避免 Scout LLM 读取并手动解析大型 papers_raw.jsonl。
-      t2_auto_finalize_min_raw: 100
+      # Scout 判断检索覆盖足够并调用 finish_task 后，runtime 才执行
+      # raw -> dedup/verified/queue/audit 的机械收尾。冷启动检索不会仅凭 raw_count 自动结束。
+      t2_finish_finalize_min_raw: 30
     inputs:
       project: project.yaml                            # 项目配置
       seed_papers: user_seeds/seed_papers.jsonl        # 种子论文（可选）
@@ -896,13 +889,6 @@ states:
       exp_plan: ideation/exp_plan.yaml
     outputs:
       evaluation_decision: evaluation/evaluation_decision.md
-    llm:
-      # 不在这里覆盖 profile；默认继承 agent_params.yaml 中 pi.llm.profile。
-      # 这样用户切换 PI Agent 的 provider/profile 时，T7.5 不会悄悄回到 default。
-      tier: heavy
-      temperature: 0.2
-    budget:
-      max_tokens: 80000
     gate:
       type: t75_human_review_gate
     # 正常情况下 gate 会先拦截；保留 parse 目标作为兜底和“按 PI 推荐推进”的统一语义。

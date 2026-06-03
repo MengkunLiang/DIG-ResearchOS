@@ -407,3 +407,56 @@ profiles:
         "deepseek-ai/DeepSeek-V4-Pro",
     ]
     assert [binding.max_context for binding, _ in resolved] == [128000, 128000]
+
+
+def test_user_settings_overlay_updates_model_routing(tmp_path, monkeypatch):
+    routing = tmp_path / "model_routing.yaml"
+    settings = tmp_path / "user_settings.yaml"
+    routing.write_text(
+        """
+default_profile: default
+
+endpoints:
+  relay:
+    provider: openai
+    api_key_env: TEST_API_KEY
+
+profiles:
+  default:
+    medium:
+      primary:
+        model: gpt-4o-mini
+        endpoint: relay
+        max_context: 32000
+""".strip(),
+        encoding="utf-8",
+    )
+    settings.write_text(
+        """
+llm:
+  default_profile: deepseek
+  endpoints:
+    deepseek:
+      provider: openai
+      api_key_env: DEEPSEEK_API_KEY
+      api_base_env: DEEPSEEK_BASE_URL
+  profiles:
+    deepseek:
+      medium:
+        primary:
+          model: deepseek-v4-flash
+          endpoint: deepseek
+          max_context: 128000
+""".strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("RESEARCHOS_USER_SETTINGS", str(settings))
+
+    client = LLMClient(routing)
+    binding, endpoint = client.resolve(profile=None, tier="medium", model_override=None)[0]
+
+    assert client.default_profile_name == "deepseek"
+    assert endpoint.name == "deepseek"
+    assert binding.model == "deepseek-v4-flash"
+    assert binding.max_context == 128000

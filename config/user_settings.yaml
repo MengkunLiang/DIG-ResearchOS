@@ -1,0 +1,306 @@
+# ResearchOS 日常配置入口
+#
+# 普通使用只改这份文件和 .env。底层完整表仍保留，但不是日常参数入口：
+# - agent_params.yaml: agent 工具、权限、prompt、schema、behavior 能力声明
+# - model_routing.yaml: endpoint/profile/fallback 候选定义
+# - state_machine.yaml: 流程拓扑、节点输入输出和 gate 分支
+#
+# 单一所有权：
+# - LLM 参数只在 llm.*：profile/tier/model/endpoint/max_context/temperature
+# - 预算参数只在 budget.*：max_steps/max_tokens_total/max_wall_seconds/max_validation_retries/unlimited_budget
+# - 超时/重试/扩限只在 runtime.*
+#
+# 覆盖关系：
+# CLI/run-task 临时参数 > state_machine 少数强覆盖 > user_settings.yaml >
+# agent_params.yaml/model_routing.yaml 能力默认 > Python fallback。
+
+llm:
+  default_profile: deepseek
+  endpoints: {}
+  profiles: {}
+  defaults:
+    profile: deepseek
+    tier: medium
+    max_context: 128000
+    temperature: 0.3
+  agents:
+    pi:
+      tier: heavy
+      temperature: 0.3
+      modes:
+        evaluate:
+          tier: heavy
+          temperature: 0.2
+    scout:
+      tier: medium
+      max_context: 1280000
+      temperature: 0.5
+    reader:
+      tier: medium
+      temperature: 0.5
+    ideation:
+      profile: ideation_deep
+      tier: heavy
+      temperature: 0.75
+    novelty_auditor:
+      tier: heavy
+      temperature: 0.3
+    experimenter:
+      tier: medium
+      temperature: 0.3
+    writer:
+      tier: heavy
+      max_context: 1280000
+      temperature: 0.7
+    survey_writer:
+      tier: heavy
+      temperature: 0.55
+    reviewer:
+      tier: heavy
+      temperature: 0.3
+    submission:
+      tier: medium
+      max_context: 12800000
+      temperature: 0.3
+    hello:
+      tier: medium
+      model: deepseek-v4-flash
+      endpoint: deepseek
+      temperature: 0.3
+    novelty:
+      tier: medium
+      max_context: 1280000
+      temperature: 0.3
+
+budget:
+  defaults:
+    unlimited_budget: true
+  agents:
+    pi:
+      max_validation_retries: 10
+      max_tokens_total: 1000000
+      max_steps: 40
+      max_wall_seconds: 30000
+      modes:
+        evaluate:
+          max_tokens_total: 80000
+    scout:
+      max_validation_retries: 3
+      max_tokens_total: 50000000
+      max_steps: 300
+      max_wall_seconds: 36000
+    reader:
+      max_validation_retries: 10
+      max_tokens_total: 600000
+      max_steps: 200
+      max_wall_seconds: 50000
+      modes:
+        read:
+          max_tokens_total: 20000000
+          max_steps: 200
+        synthesize:
+          max_tokens_total: 15000000
+          max_steps: 100
+    ideation:
+      max_validation_retries: 10
+      max_tokens_total: 2000000
+      max_steps: 150
+      max_wall_seconds: 12000
+    novelty_auditor:
+      max_validation_retries: 10
+      max_tokens_total: 600000
+      max_steps: 1000
+      max_wall_seconds: 80000
+    experimenter:
+      max_validation_retries: 10
+      max_tokens_total: 60000000
+      max_steps: 2000
+      max_wall_seconds: 144000
+      modes:
+        pilot:
+          max_validation_retries: 2
+          max_tokens_total: 1000000
+          max_steps: 1000
+          max_wall_seconds: 72000
+        full:
+          max_validation_retries: 5
+          max_tokens_total: 30000000
+          max_steps: 5000
+          max_wall_seconds: 144000
+        handoff:
+          max_validation_retries: 2
+          max_tokens_total: 1000000
+          max_steps: 40
+          max_wall_seconds: 3600
+        executor_gate:
+          max_validation_retries: 1
+          max_tokens_total: 100000
+          max_steps: 10
+          max_wall_seconds: 600
+        external_wait:
+          max_validation_retries: 1
+          max_tokens_total: 100000
+          max_steps: 5
+          max_wall_seconds: 600
+        dry_run:
+          max_validation_retries: 2
+          max_tokens_total: 500000
+          max_steps: 30
+          max_wall_seconds: 1800
+        result_ingest:
+          max_validation_retries: 2
+          max_tokens_total: 500000
+          max_steps: 30
+          max_wall_seconds: 1800
+        integrity_audit:
+          max_validation_retries: 2
+          max_tokens_total: 500000
+          max_steps: 30
+          max_wall_seconds: 1800
+        post_novelty:
+          max_validation_retries: 2
+          max_tokens_total: 500000
+          max_steps: 20
+          max_wall_seconds: 1800
+        result_to_claim:
+          max_validation_retries: 2
+          max_tokens_total: 1000000
+          max_steps: 40
+          max_wall_seconds: 3600
+    writer:
+      max_validation_retries: 3
+      max_tokens_total: 10000000
+      max_steps: 1500
+      max_wall_seconds: 240000
+      modes:
+        style_gate:
+          max_tokens_total: 2000000
+          max_steps: 20
+        resource_index:
+          max_tokens_total: 50000000
+          max_steps: 100
+        outline:
+          max_tokens_total: 100000000
+          max_steps: 300
+        section_plan:
+          max_tokens_total: 30000000
+          max_steps: 80
+        section_drafts:
+          max_tokens_total: 10000000
+          max_steps: 20
+        section_draft:
+          max_tokens_total: 50000000
+          max_steps: 80
+        draft:
+          max_tokens_total: 100000000
+          max_steps: 180
+        self_check:
+          max_tokens_total: 100000000
+          max_steps: 200
+        revise:
+          max_tokens_total: 1500000
+          max_steps: 300
+        paper_claim_audit:
+          max_tokens_total: 500000
+          max_steps: 20
+    survey_writer:
+      max_validation_retries: 3
+      max_tokens_total: 20000000
+      max_steps: 160
+      max_wall_seconds: 36000
+      modes:
+        survey_gate:
+          max_tokens_total: 2000000
+          max_steps: 20
+        survey_plan:
+          max_tokens_total: 40000000
+          max_steps: 120
+        outline_gate:
+          max_tokens_total: 5000000
+          max_steps: 40
+        corpus_gate:
+          max_tokens_total: 3000000
+          max_steps: 30
+        survey_expand:
+          max_tokens_total: 10000000
+          max_steps: 80
+        survey_state:
+          max_tokens_total: 10000000
+          max_steps: 40
+        survey_section:
+          max_tokens_total: 50000000
+          max_steps: 100
+        survey_assemble:
+          max_tokens_total: 10000000
+          max_steps: 60
+        survey_review:
+          max_tokens_total: 20000000
+          max_steps: 100
+        survey_compile:
+          max_tokens_total: 5000000
+          max_steps: 40
+        survey_feed:
+          max_tokens_total: 5000000
+          max_steps: 40
+    reviewer:
+      max_validation_retries: 10
+      max_tokens_total: 600000000
+      max_steps: 200
+      max_wall_seconds: 12000
+    submission:
+      max_validation_retries: 10
+      max_tokens_total: 500000000
+      max_steps: 30000
+      max_wall_seconds: 80000
+    hello:
+      max_validation_retries: 3
+      max_tokens_total: 10000
+      max_steps: 5
+      max_wall_seconds: 60
+    novelty:
+      max_validation_retries: 10
+      max_tokens_total: 600000
+      max_steps: 1000
+      max_wall_seconds: 80000
+
+runtime:
+  global_budget:
+    default_max_budget_usd: 100.0
+    warning_threshold: 0.7
+    critical_threshold: 0.9
+    stage_allocation:
+      T1_init: 0.05
+      T2_scout: 0.1
+      T3_read: 0.15
+      T4_ideation: 0.1
+      T5_pilot: 0.2
+      T7_full: 0.3
+      T8_write: 0.08
+      T9_submission: 0.02
+  timeouts:
+    max_agent_runtime: 7200
+    max_tool_call: 180
+    docker_operation: 7200
+    latex_compile: 1800
+    llm_call: 90
+  retry_policy:
+    llm_retries: 10
+    llm_retry_delay: 1
+    llm_timeout_cooldown_seconds: 60
+    llm_timeout_pause_after_cooldowns: 0
+    tool_retries: 5
+    tool_retry_delay: 1
+    validation_retries: 3
+    no_retry_errors:
+    - AuthenticationError
+    - PermissionDenied
+    - BudgetExceeded
+  budget_escalation:
+    enabled: true
+    tasks: []
+    max_extensions_per_run: null
+    steps_increase_ratio: 0.25
+    token_increase_ratio: 0.5
+    wall_seconds_increase_ratio: 0.5
+    max_validation_extensions_per_run: null
+    validation_retry_increase: 2

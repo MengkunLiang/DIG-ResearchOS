@@ -15,6 +15,11 @@ import yaml
 from .errors import ConfigurationError, LLMProviderError
 from .logger import get_logger
 from .rate_limiter import EndpointRateLimiter
+from .user_settings import (
+    apply_model_routing_overrides,
+    load_user_settings,
+    should_apply_default_user_settings,
+)
 
 try:  # pragma: no cover - optional import exercised in integration use
     import litellm
@@ -23,6 +28,7 @@ except Exception:  # pragma: no cover
 
 
 _log = get_logger("llm_client")
+DEFAULT_ROUTING_CONFIG_PATH = Path(__file__).parent.parent.parent / "config" / "model_routing.yaml"
 
 
 def _dedupe_nonempty(values: list[str]) -> list[str]:
@@ -246,7 +252,10 @@ class LLMClient:
             raise ConfigurationError(f"Routing config not found: {routing_config_path}")
         self._load_env_file(routing_config_path)
         self.routing_config_path = routing_config_path
-        self.raw = yaml.safe_load(routing_config_path.read_text(encoding="utf-8")) or {}
+        raw = yaml.safe_load(routing_config_path.read_text(encoding="utf-8")) or {}
+        if should_apply_default_user_settings(routing_config_path, DEFAULT_ROUTING_CONFIG_PATH):
+            raw = apply_model_routing_overrides(raw, load_user_settings())
+        self.raw = raw
         self.endpoints = self._parse_endpoints(self.raw)
         self.profiles = self._parse_profiles(self.raw)
         self.default_profile_name = self.raw.get("default_profile", "default")

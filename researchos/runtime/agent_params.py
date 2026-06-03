@@ -13,6 +13,11 @@ from typing import Any
 import yaml
 
 from .agent import AgentSpec
+from .user_settings import (
+    apply_agent_param_overrides,
+    load_user_settings,
+    should_apply_default_user_settings,
+)
 
 
 DEFAULT_CONFIG_PATH = Path(__file__).parent.parent.parent / "config" / "agent_params.yaml"
@@ -41,7 +46,12 @@ def load_agent_params() -> dict[str, Any]:
         raise FileNotFoundError(f"Agent params config not found: {config_path}")
 
     with open(config_path, "r", encoding="utf-8") as f:
-        _config_cache = yaml.safe_load(f) or {}
+        loaded = yaml.safe_load(f) or {}
+
+    if should_apply_default_user_settings(config_path, DEFAULT_CONFIG_PATH):
+        loaded = apply_agent_param_overrides(loaded, load_user_settings())
+
+    _config_cache = loaded
 
     return _config_cache
 
