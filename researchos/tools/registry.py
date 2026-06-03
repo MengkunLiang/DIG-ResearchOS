@@ -25,6 +25,8 @@ class ToolBuildContext:
     policy: WorkspaceAccessPolicy
     human: HumanInterface
     skill_dir: Path | None = None
+    task_id: str | None = None
+    run_id: str | None = None
 
 
 class ToolRegistry:

@@ -9,7 +9,9 @@ ResearchOS 与 Codex CLI、Claude Code、manual executor 或 mock dry-run 的交
 - `mock_dry_run`：默认测试执行器，只生成协议文件，不跑真实实验。
 - `codex_cli`：推荐正式执行器，由外部 Codex 在隔离路径实现和运行实验。
 - `claude_code_window`：适合把 `claude_code_prompt.md` 粘贴到 Claude Code 窗口执行。
-- `manual_external`：人工或其它工具按协议写 result pack。
+- `manual`：人工或其它工具按协议写 result pack。
+
+`codex_cli` 是唯一默认允许真实长实验的分支，CLI 会要求二次确认：只有输入 `yes` 才保持 `codex_cli`，否则降级为 `claude_code_window` 做协议联调。非交互 stdin 不可用时 gate 会暂停，等待用户之后 `resume`。
 
 ## Handoff 文件
 
@@ -18,17 +20,26 @@ ResearchOS 在 `T5-HANDOFF` 写：
 - `external_executor/handoff_pack.json`
 - `external_executor/expected_outputs_schema.json`
 - `external_executor/allowed_paths.txt`
+- `external_executor/AGENTS.md`
+- `external_executor/CLAUDE.md`
+- `external_executor/README.md`
+- `external_executor/job_state.json`
 - `external_executor/codex_prompt.md`
 - `external_executor/claude_code_prompt.md`
 - `external_executor/manual_instructions.md`
 
-外部执行器必须只在 allowed paths 内工作。推荐路径：
+`T5-EXECUTOR-GATE` 随后写 `external_executor/executor_selection.json` 并 patch 执行模式。外部执行器必须只在 allowed paths 内工作。当前 `allowed_paths.txt` 使用 `rw/ro/no` 前缀，例如：
 
-- `external_executor/`
-- `experiments/external_runs/`
-- `experiments/raw_results/`
-- `experiments/figures/`
-- `experiments/tables/`
+```text
+rw  external_executor/workdir/
+rw  external_executor/raw_results/
+rw  external_executor/configs/
+rw  external_executor/logs/
+ro  external_executor/handoff_pack.json
+ro  novelty/required_baselines.json
+no  researchos/
+no  drafts/
+```
 
 ## 外部执行器必须写出的文件
 
@@ -52,6 +63,13 @@ external_executor/logs/*
   "executor": "codex_cli",
   "dry_run": false,
   "mock_only": false,
+  "evidence_grade": "audited_external",
+  "baseline_coverage": {
+    "status": "complete",
+    "required": [],
+    "completed": [],
+    "missing_baselines": []
+  },
   "metrics": [
     {
       "metric_id": "m1",
@@ -87,7 +105,8 @@ external_executor/logs/*
 
 如果流程中断：
 
-- handoff 已存在时，从 `T5-DRY-RUN` 或真实外部执行后从 `T7-INGEST` 继续。
-- result pack 已存在时，不回 T5 重写协议，直接摄取。
+- handoff 已存在时，从 `T5-EXECUTOR-GATE` 选择执行器。
+- 真实外部执行器未写回 result pack 时，`T5-EXTERNAL-WAIT` 会暂停。
+- result pack/status 已存在且 schema 合格时，`resume` 会从 `T5-EXTERNAL-WAIT` 自动进入 `T7-INGEST`。
+- result pack 存在但引用文件缺失、hash 不符、路径越界、status 不可接收或真实运行没有 run/raw result 记录时，`T5-EXTERNAL-WAIT` 会写 `external_executor/wait_rejection_report.md` 并保持可恢复暂停；修复 artifact 后再次 `resume`。
 - audit 已存在且通过时，`T7-CLAIMS` 可只补 claim/evidence pack。
-

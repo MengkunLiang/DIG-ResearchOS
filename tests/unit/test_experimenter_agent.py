@@ -72,25 +72,34 @@ def test_experimenter_agent_spec(experimenter_agent):
     assert spec.temperature == 0.3
     assert spec.prompt_template == "experimenter.j2"
 
-    # 检查工具（包含 write_structured_file）
+    # 默认 ExperimenterAgent 是新版外部实验协议链，不在 ResearchOS 内部直接跑实验。
     expected_tools = [
         "read_file",
         "write_file",
         "write_structured_file",
         "list_files",
         "append_file",
-        "bash_run",
-        "docker_exec",
-        "latex_compile",
+        "build_experiment_handoff_pack",
+        "select_external_executor",
+        "wait_for_external_executor_result",
+        "mock_external_dry_run",
+        "ingest_external_results",
+        "audit_experiment_integrity",
+        "build_post_experiment_novelty_check",
+        "map_results_to_claims",
+        "build_experiment_evidence_pack",
         "finish_task",
     ]
     assert set(spec.tool_names) == set(expected_tools)
+    assert "docker_exec" not in spec.tool_names
 
     # 检查权限
     assert "" in spec.allowed_read_prefixes
     assert "ideation/" in spec.allowed_read_prefixes
     assert "experiments/" in spec.allowed_read_prefixes
+    assert "external_executor/" in spec.allowed_read_prefixes
     assert "experiments/" in spec.allowed_write_prefixes
+    assert "external_executor/" in spec.allowed_write_prefixes
 
 
 def test_experimenter_system_prompt(experimenter_agent, mock_workspace):

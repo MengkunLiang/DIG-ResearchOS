@@ -6,11 +6,17 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
 
 from researchos.agents.submission import SubmissionAgent
+
+
+def _sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 class TestSubmissionAgent:
@@ -165,6 +171,8 @@ class TestSubmissionAgentValidateOutputs:
             "\\documentclass{article}\n"
             "\\begin{document}\n"
             "Test\n"
+            "\\bibliographystyle{plain}\n"
+            "\\bibliography{references}\n"
             "\\end{document}",
             encoding="utf-8",
         )
@@ -172,7 +180,38 @@ class TestSubmissionAgentValidateOutputs:
             "@article{test,\n  title={Test}\n}",
             encoding="utf-8",
         )
-        (bundle / "main.pdf").write_text("%PDF-1.4", encoding="utf-8")
+        (bundle / "main.pdf").write_bytes(b"%PDF-1.4\n% ResearchOS test PDF placeholder\n1 0 obj\n<<>>\nendobj\n%%EOF\n")
+        (bundle / "main.log").write_text(
+            "This is pdfTeX, Version test\nOutput written on main.pdf (1 page).\n",
+            encoding="utf-8",
+        )
+        main_tex = bundle / "main.tex"
+        main_pdf = bundle / "main.pdf"
+        main_log = bundle / "main.log"
+        compile_report = standard_workspace / "submission" / "compile_report.json"
+        compile_report.write_text(
+            json.dumps(
+                {
+                    "version": "1.0",
+                    "semantics": "latex_compile_attempt_report",
+                    "success": True,
+                    "tex_path": "submission/bundle/main.tex",
+                    "pdf_path": "submission/bundle/main.pdf",
+                    "log_path": "submission/bundle/main.log",
+                    "main_tex_sha256": _sha256_file(main_tex),
+                    "pdf_sha256": _sha256_file(main_pdf),
+                    "log_sha256": _sha256_file(main_log),
+                    "pdf_mtime": main_pdf.stat().st_mtime,
+                    "log_mtime": main_log.stat().st_mtime,
+                    "pdf_size": main_pdf.stat().st_size,
+                    "log_size": main_log.stat().st_size,
+                    "attempts": [{"success": True, "exit_code": 0}],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
         # 创建 migration_report.md（SubmissionAgent 必需）
         report = standard_workspace / "submission" / "migration_report.md"
@@ -199,7 +238,7 @@ class TestSubmissionAgentValidateOutputs:
         )
 
         ok, err = agent.validate_outputs(ctx)
-        assert ok is True
+        assert ok is True, err
 
 
 class TestSubmissionAgentDockerDependency:

@@ -1,7 +1,8 @@
 """Experimenter Agent Integration Tests.
 
-测试实验执行 Agent（T5 pilot 模式和 T7 full 模式）。
-注意：这些测试验证 Docker 依赖边界 - experimenter 需要 Docker。
+测试外部实验协议主链，以及显式 legacy pilot/full 模式的 Docker 边界。
+默认 ExperimenterAgent 不再在 ResearchOS 内部直接跑实验；只有
+ExperimenterAgent(mode="pilot"|"full") 的 legacy 兼容入口保留 docker_exec。
 """
 
 from __future__ import annotations
@@ -32,11 +33,13 @@ class TestExperimenterAgent:
         assert "write_file" in agent.spec.tool_names
         assert "finish_task" in agent.spec.tool_names
 
-    def test_agent_does_need_docker_exec(self):
-        """测试 experimenter agent 需要 docker_exec 工具。"""
+    def test_default_agent_uses_external_executor_tools_not_docker_exec(self):
+        """默认 experimenter 只编译/审计外部执行器协议。"""
         agent = ExperimenterAgent()
-        # experimenter agent 需要 docker_exec（因为执行实验代码）
-        assert "docker_exec" in agent.spec.tool_names
+        assert "docker_exec" not in agent.spec.tool_names
+        assert "build_experiment_handoff_pack" in agent.spec.tool_names
+        assert "select_external_executor" in agent.spec.tool_names
+        assert "ingest_external_results" in agent.spec.tool_names
 
     def test_agent_system_prompt_pilot_mode(self, standard_workspace: Path, project_yaml: Path):
         """测试 pilot 模式的 system prompt。"""
@@ -458,9 +461,8 @@ class TestExperimenterAgentDockerDependency:
     """Experimenter Agent Docker 依赖测试。"""
 
     def test_experimenter_docker_boundary(self):
-        """测试 experimenter 在 Docker 边界内。"""
-        agent = ExperimenterAgent()
-        # experimenter 需要 Docker 执行实验代码
+        """legacy pilot/full 兼容模式仍保留 Docker 执行边界。"""
+        agent = ExperimenterAgent(mode="pilot")
         assert "docker_exec" in agent.spec.tool_names
 
     def test_experimenter_only_agent_requiring_docker(self):

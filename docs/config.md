@@ -54,11 +54,13 @@
 
 从高到低大致是：
 
-1. `state_machine.yaml` 中当前 task 的 `llm.*` 覆盖
-2. `ExecutionContext.llm_override`（例如 CLI `--profile`）
+1. CLI / 上层 runner 写入的 `ExecutionContext.llm_override`（例如 `run-task --profile`）
+2. `state_machine.yaml` 中当前 task 的 `llm.*` 覆盖
 3. `agent_params.yaml` 中该 agent 的默认 `llm`
 4. `model_routing.yaml` 的 `profile + tier`
 5. `default_profile`
+
+重要：`state_machine.yaml` 的 `states.<task>.llm.profile` 是 task 级强覆盖。它会压过 `agent_params.yaml` 中该 agent 的默认 profile；因此除非这个 task 确实需要不同 provider/模型策略，否则不要在状态机里重复写 profile。当前主链已避免给 T4/T7.5 这类常调节点写不必要的 profile，方便用户直接在 `agent_params.yaml` 切换 agent 默认路由。
 
 ### 2.2 Budget / 工具 / 路径相关优先级
 
@@ -254,6 +256,7 @@ default_profile: default
 当前典型 endpoint：
 
 - `siliconflow`
+- `deepseek`
 - `openrouter_main`
 - `openai_official`
 - `anthropic_main`
@@ -271,7 +274,44 @@ endpoints:
 注意：
 
 - SiliconFlow 是 OpenAI-compatible，所以 provider 仍可能是 `openai`
+- DeepSeek 官方 OpenAI-compatible API 也使用 `provider: openai`，但应使用 `DEEPSEEK_API_KEY` 和 `DEEPSEEK_BASE_URL`
 - endpoint 名字只是 runtime 内部逻辑名
+- runtime 不会再把 DeepSeek endpoint 自动回退到 SiliconFlow/OpenAI 的 key/base URL；如果 key 或 base 缺失，错误信息会显示 `endpoint`、`provider`、`model`、`api_base` 和 `api_key` 是否存在
+
+DeepSeek 官方接口推荐写法：
+
+```yaml
+api_keys:
+  DEEPSEEK_API_KEY: ""
+  DEEPSEEK_BASE_URL: "https://api.deepseek.com"
+
+endpoints:
+  deepseek:
+    provider: openai
+    api_key_env: DEEPSEEK_API_KEY
+    api_base_env: DEEPSEEK_BASE_URL
+```
+
+profile 中模型名写官方 OpenAI-compatible model id 即可，例如：
+
+```yaml
+profiles:
+  deepseek:
+    heavy:
+      primary:
+        model: "deepseek-v4-pro"
+        endpoint: deepseek
+        max_context: 128000
+      fallback:
+        - model: "deepseek-v4-flash"
+          endpoint: deepseek
+          max_context: 128000
+```
+
+ResearchOS 调用 LiteLLM 时会自动补成 `openai/deepseek-v4-pro`。如果日志里看到
+`LiteLLM completion() model= deepseek-v4-pro; provider = openai` 后跟着 LiteLLM 的
+`Give Feedback / Get Help`，那只是 LiteLLM 的异常提示，不一定表示 ResearchOS 配置解析失败；
+应优先看 ResearchOS 最终错误里打印的 endpoint debug hint，确认 base URL、key、模型名三者匹配。
 
 ### 4.5 `profiles`
 

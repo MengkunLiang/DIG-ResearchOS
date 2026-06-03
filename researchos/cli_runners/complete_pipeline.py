@@ -18,7 +18,7 @@ from ..schemas.state import StateYaml
 from ..schemas.validator import register_builtin_task_checkers, validate_task_artifacts
 from ..skills.agent import SkillAgent
 from ..skills.loader import resolve_skill
-from ..tools.human_gate import CLIHumanInterface, HumanInterface
+from ..tools.human_gate import CLIHumanInterface, HumanInputUnavailable, HumanInterface
 from ..tools.registry import ToolRegistry
 
 
@@ -103,11 +103,18 @@ class CompletePipelineRunner:
     async def _run_one_step(self, state: StateYaml, state_path: Path) -> StateYaml:
         """推进一个状态机 step。"""
         if state.pending_gate is not None:
-            gate_result = await self.human.present_gate(
-                gate_id=state.pending_gate.gate_id,
-                presentation=state.pending_gate.presentation,
-                options=state.pending_gate.options,
-            )
+            try:
+                gate_result = await self.human.present_gate(
+                    gate_id=state.pending_gate.gate_id,
+                    presentation=state.pending_gate.presentation,
+                    options=state.pending_gate.options,
+                )
+            except HumanInputUnavailable as exc:
+                state.status = "PAUSED"
+                state.paused_at = _now_iso()
+                state.last_error = str(exc)
+                state.dump_yaml(state_path)
+                return state
             state = self.state_machine.resolve_pending_gate(
                 state,
                 gate_result,

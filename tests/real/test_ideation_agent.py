@@ -234,6 +234,376 @@ def _write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None)
         ),
         encoding="utf-8",
     )
+    _write_current_ideation_artifacts(workspace, refs)
+
+
+def _write_current_ideation_artifacts(workspace: Path, refs: list[str]) -> None:
+    """Write the current T4 validator artifact shape for real integration tests."""
+
+    selected = {
+        "idea": {
+            "id": "D1",
+            "title": "Test rationale",
+            "pitch": "A traceable idea generated from synthesis gaps.",
+            "core_claim": "The proposed mechanism improves a measurable metric.",
+            "target_problem": "Prior methods leave a measurable gap.",
+            "mechanism": "A targeted calibration mechanism changes the measurable error pattern.",
+            "prediction": "Accuracy improves on the target validation set.",
+            "counterfactual": "If the mechanism is irrelevant, disabling calibration should not change accuracy.",
+            "mechanism_family": "targeted calibration",
+            "cdr_tuple": {
+                "problem_frame": "Prior methods leave a measurable calibration gap.",
+                "design_rationale": "A targeted calibration artifact should directly affect the observed error pattern.",
+                "artifact": "calibration module",
+                "design_principles": ["mechanism isolation", "ablation-ready comparison"],
+                "data_view": "validation examples grouped by target condition",
+                "evaluation_mode": "accuracy plus ablation",
+                "contribution_type": "improvement",
+                "boundary_conditions": ["works when target condition is observable"],
+                "cross_paper_tension": ["prior work disagrees on whether calibration is general"],
+            },
+            "contribution_type": "improvement",
+            "contribution_character": "If this works, the field gains a clearer mechanism-level explanation for when targeted calibration helps.",
+            "contribution_strength": 4,
+        },
+        "hypothesis_refs": refs,
+        "source": {
+            "from_synthesis_section": "synthesis.md: Q1",
+            "from_missing_area": "missing_areas.md: mechanism gap",
+            "from_seed_idea": False,
+            "idea_origin": "free_reasoning",
+            "constraint_status": "mainline",
+            "supporting_papers": [
+                {"title": "Prior Paper", "claim_used": "Prior methods leave a measurable gap."}
+            ],
+            "trigger_observation": "The synthesis gap points to a pilotable mechanism.",
+        },
+        "selection_rationale": {
+            "novelty_reason": "The mechanism is underexplored.",
+            "feasibility_reason": "A small pilot is enough.",
+            "impact_reason": "The problem matters.",
+            "evaluability_reason": "Metrics are clear.",
+            "paper_story": "Problem, method, and experiment align.",
+            "contribution_character": "If this works, the field gains a clearer mechanism-level explanation for when targeted calibration helps.",
+        },
+        "closest_baselines": [
+            {"name": "Baseline", "similarity": "Same target problem.", "difference": "Different mechanism."}
+        ],
+        "counterfactual_check": "independent",
+        "counterfactual_note": "The idea still has a mechanism after weakening the nearest prior.",
+        "nearest_prior_work": {"work": "Prior Paper", "distance": "moderate"},
+        "novelty_signal": "adjacent_zone",
+        "scores": {
+            "novelty": 4,
+            "feasibility": 4,
+            "impact": 4,
+            "evaluability": 5,
+            "differentiation": 3,
+            "cost": 5,
+            "contribution_strength": 4,
+        },
+        "decision": {
+            "status": "selected",
+            "selected_reason": ["clear story", "cheap pilot"],
+            "selected_by": "user",
+            "user_feedback": "select D1",
+        },
+        "risks": [
+            {
+                "risk": "No gain",
+                "early_signal": "Pilot fails",
+                "mitigation": "Run ablation",
+                "kill_criteria": "No improvement",
+            }
+        ],
+        "minimum_experiment": {
+            "dataset": "small data",
+            "baseline": "Baseline",
+            "metric": ["accuracy"],
+            "expected_signal": "improvement",
+            "estimated_cost_usd": 5,
+        },
+    }
+    rejected = {
+        "idea": {
+            "id": "D2",
+            "title": "Rejected idea",
+            "pitch": "Too close to prior work.",
+            "core_claim": "A weak transfer may work.",
+            "target_problem": "Weak gap.",
+            "mechanism": "Direct transfer reuses a prior mechanism with little change.",
+            "prediction": "Accuracy may improve slightly.",
+            "counterfactual": "If the prior mechanism already explains the effect, no new signal appears.",
+            "mechanism_family": "direct transfer",
+            "contribution_type": "routine",
+            "contribution_strength": 2,
+        },
+        "hypothesis_refs": [],
+        "source": {
+            "from_synthesis_section": "synthesis.md: Q2",
+            "from_missing_area": "missing_areas.md: weak gap",
+            "from_seed_idea": False,
+            "idea_origin": "seed_refinement",
+            "constraint_status": "mainline",
+            "supporting_papers": [
+                {"title": "Nearby Paper", "claim_used": "Prior work already covers it."}
+            ],
+            "trigger_observation": "Direct transfer idea.",
+        },
+        "selection_rationale": {
+            "novelty_reason": "Weak novelty.",
+            "feasibility_reason": "Feasible.",
+            "impact_reason": "Limited impact.",
+            "evaluability_reason": "Metrics unclear.",
+            "paper_story": "Story too thin.",
+        },
+        "closest_baselines": [
+            {"name": "Nearby Paper", "similarity": "Very similar.", "difference": "Mostly scenario change."}
+        ],
+        "counterfactual_check": "collapses",
+        "counterfactual_note": "Removing the nearest prior leaves only a scenario transfer.",
+        "nearest_prior_work": {"work": "Nearby Paper", "distance": "very_close"},
+        "novelty_signal": "marginal_zone",
+        "scores": {
+            "novelty": 2,
+            "feasibility": 4,
+            "impact": 2,
+            "evaluability": 2,
+            "differentiation": 2,
+            "cost": 4,
+            "contribution_strength": 2,
+        },
+        "decision": {
+            "status": "rejected",
+            "rejection_reason": ["too close to prior work"],
+            "can_revisit_if": "Find a stronger mechanism.",
+        },
+        "risks": [
+            {
+                "risk": "Low novelty",
+                "early_signal": "High overlap",
+                "mitigation": "Find differentiation",
+                "kill_criteria": "Only scenario change",
+            }
+        ],
+        "minimum_experiment": {
+            "dataset": "small data",
+            "baseline": "Nearby Paper",
+            "metric": ["accuracy"],
+            "expected_signal": "large improvement",
+            "estimated_cost_usd": 5,
+        },
+    }
+    deferred_a = {
+        **rejected,
+        "idea": {
+            **rejected["idea"],
+            "id": "D3",
+            "title": "Deferred evidence-driven idea",
+            "mechanism_family": "evidence-driven adjustment",
+        },
+        "source": {
+            **rejected["source"],
+            "idea_origin": "evidence_driven",
+            "trigger_observation": "A weaker evidence pattern suggests a possible but underspecified mechanism.",
+        },
+        "decision": {
+            "status": "deferred",
+            "rejection_reason": ["needs stronger mechanism evidence"],
+            "can_revisit_if": "D1 pilot exposes subgroup-specific failures.",
+        },
+        "counterfactual_check": "survives_weakened",
+        "counterfactual_note": "The idea survives but becomes weak without stronger evidence.",
+        "nearest_prior_work": {"work": "Related Evidence Paper", "distance": "distant"},
+        "novelty_signal": "no_nearby_cluster",
+    }
+    deferred_b = {
+        **rejected,
+        "idea": {
+            **rejected["idea"],
+            "id": "D4",
+            "title": "Deferred reverse-operation supplement",
+            "mechanism_family": "reverse operation",
+        },
+        "source": {
+            **rejected["source"],
+            "idea_origin": "reverse_operation",
+            "constraint_status": "supplement",
+            "trigger_observation": "A reverse operation would be useful as a supplement but not as the mainline idea.",
+        },
+        "decision": {
+            "status": "deferred",
+            "rejection_reason": ["better as a supplement than standalone contribution"],
+            "can_revisit_if": "Reverse-operation ablation becomes the strongest signal.",
+        },
+        "counterfactual_check": "survives_weakened",
+        "counterfactual_note": "The reverse operation is a useful test but not a standalone story.",
+        "nearest_prior_work": {"work": "none", "distance": "none_found"},
+        "novelty_signal": "no_nearby_cluster",
+    }
+    (workspace / "ideation" / "idea_scorecard.yaml").write_text(
+        yaml.safe_dump(
+            {"version": "1.0", "ideas": [selected, rejected, deferred_a, deferred_b]},
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (workspace / "ideation" / "_family_distribution.md").write_text(
+        "## Mechanism Family Distribution\n\n"
+        "### Family: targeted calibration\n- Candidates: D1\n- Distinct mainline mechanism.\n\n"
+        "### Family: direct transfer\n- Candidates: D2\n- Rejected routine transfer.\n\n"
+        "### Family: evidence-driven adjustment\n- Candidates: D3\n- Deferred but visible.\n\n"
+        "### Family: reverse operation\n- Candidates: D4\n- Supplement only.\n\n"
+        "## Summary\n\nTotal candidates: 4. Distinct families: 4. D1 is mainline free reasoning.\n",
+        encoding="utf-8",
+    )
+    pass1 = [
+        {
+            **selected["idea"],
+            "idea_origin": "free_reasoning",
+            "constraint_status": "mainline",
+            "basis_summary": "Generated from synthesis Q1 and a measurable mechanism gap.",
+        },
+        {
+            **rejected["idea"],
+            "idea_origin": "seed_refinement",
+            "constraint_status": "mainline",
+            "basis_summary": "Derived from a seed-like transfer option but too close to prior work.",
+        },
+        {
+            **deferred_a["idea"],
+            "idea_origin": "evidence_driven",
+            "constraint_status": "mainline",
+            "basis_summary": "Derived from weaker evidence patterns that need stronger mechanism support.",
+        },
+        {
+            **deferred_b["idea"],
+            "idea_origin": "reverse_operation",
+            "constraint_status": "supplement",
+            "basis_summary": "Generated as a reverse-operation supplement for testing the main mechanism.",
+        },
+    ]
+    reviews = [
+        {
+            "idea_id": "D1",
+            "screening_recommendation": "proceed",
+            "visible_to_gate": True,
+            "selection_warning": "none",
+            "counterfactual_check": selected["counterfactual_check"],
+            "counterfactual_note": selected["counterfactual_note"],
+            "nearest_prior_work": selected["nearest_prior_work"],
+            "novelty_signal": selected["novelty_signal"],
+        },
+        {
+            "idea_id": "D2",
+            "screening_recommendation": "reject_recommended",
+            "visible_to_gate": True,
+            "selection_warning": "too close to prior work",
+            "counterfactual_check": rejected["counterfactual_check"],
+            "counterfactual_note": rejected["counterfactual_note"],
+            "nearest_prior_work": rejected["nearest_prior_work"],
+            "novelty_signal": rejected["novelty_signal"],
+        },
+        {
+            "idea_id": "D3",
+            "screening_recommendation": "defer_recommended",
+            "visible_to_gate": True,
+            "selection_warning": "needs stronger mechanism evidence",
+            "counterfactual_check": deferred_a["counterfactual_check"],
+            "counterfactual_note": deferred_a["counterfactual_note"],
+            "nearest_prior_work": deferred_a["nearest_prior_work"],
+            "novelty_signal": deferred_a["novelty_signal"],
+        },
+        {
+            "idea_id": "D4",
+            "screening_recommendation": "revise_before_selection",
+            "visible_to_gate": True,
+            "selection_warning": "supplement only",
+            "counterfactual_check": deferred_b["counterfactual_check"],
+            "counterfactual_note": deferred_b["counterfactual_note"],
+            "nearest_prior_work": deferred_b["nearest_prior_work"],
+            "novelty_signal": deferred_b["novelty_signal"],
+        },
+    ]
+    (workspace / "ideation" / "_pass1_forward_candidates.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "raw_forward_generation_candidates_visible_to_gate",
+                "candidates": pass1,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (workspace / "ideation" / "_pass2_grounding_review.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "grounding_review_flags_not_deletion_or_final_quality_gate",
+                "reviews": reviews,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (workspace / "ideation" / "_candidate_directions.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "gate_visible_candidate_pool_after_grounding_review",
+                "candidates": [
+                    {
+                        **candidate,
+                        "pass2_screening": reviews[index],
+                        "gate_visibility": "visible",
+                        "can_select_despite_risk": True,
+                    }
+                    for index, candidate in enumerate(pass1)
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (workspace / "ideation" / "_gate1_selection_brief.md").write_text(
+        "# Gate1 Selection Brief\n\n"
+        "## Pass1 candidates\n\n"
+        "- D1: mainline candidate, proceed.\n"
+        "- D2: rejected recommendation, still visible.\n"
+        "- D3: deferred evidence-driven option.\n"
+        "- D4: supplement reverse-operation option.\n\n"
+        "## Pass2 warnings\n\n"
+        "- D1 has independent counterfactual support and moderate nearest prior distance.\n"
+        "- D2 collapses into Nearby Paper and should not be selected without reframing.\n"
+        "- D3 survives in weakened form but needs stronger mechanism evidence.\n"
+        "- D4 is useful as a reverse-operation supplement, not a standalone paper story.\n\n"
+        "## Merge options\n\n"
+        "- 合并 D1+D3: use D1 as the main mechanism and D3 as an evidence-driven subgroup extension.\n"
+        "- 合并 D1+D4: use D4 as a reverse-operation ablation for D1.\n\n"
+        "## 集中度提示\n\n"
+        "The candidates span four mechanism families, so the pool is not concentrated in a single prior paper.\n\n"
+        "## Origin 分布\n\nfree_reasoning: 1; seed_refinement: 1; evidence_driven: 1; reverse_operation: 1.\n\n"
+        "## Novelty-Utility 谱系排布\n\n"
+        "High utility and medium novelty: D1. Low novelty routine transfer: D2. "
+        "Higher uncertainty options: D3 and D4, both still visible for user choice.\n",
+        encoding="utf-8",
+    )
+    with (workspace / "ideation" / "rejected_ideas.md").open("a", encoding="utf-8") as handle:
+        handle.write(
+            "\n## D3: Deferred evidence-driven idea\n\n"
+            "- **Status**: deferred\n"
+            "- **Why rejected**: needs stronger mechanism evidence.\n"
+            "- **Can revisit if**: D1 pilot exposes subgroup-specific failures.\n\n"
+            "## D4: Deferred reverse-operation supplement\n\n"
+            "- **Status**: deferred\n"
+            "- **Why rejected**: better as supplement than standalone contribution.\n"
+            "- **Can revisit if**: reverse operation becomes the strongest signal.\n"
+        )
 
 
 class TestIdeationAgent:
@@ -443,7 +813,7 @@ class TestIdeationAgentValidateOutputs:
         )
 
         ok, err = agent.validate_outputs(ctx)
-        assert ok is True
+        assert ok is True, err
 
 
 class TestIdeationAgentHypothesisStructure:

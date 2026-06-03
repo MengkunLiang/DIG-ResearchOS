@@ -45,8 +45,17 @@ T5-HANDOFF
   external_executor/handoff_pack.json
   external_executor/expected_outputs_schema.json
   external_executor/allowed_paths.txt
+  external_executor/AGENTS.md
+  external_executor/CLAUDE.md
+  external_executor/job_state.json
   external_executor/codex_prompt.md
   external_executor/claude_code_prompt.md
+
+T5-EXECUTOR-GATE
+  external_executor/executor_selection.json
+
+T5-EXTERNAL-WAIT
+  external_executor/wait_acceptance_report.json
 
 external executor / T5-DRY-RUN
   external_executor/result_pack.json
@@ -64,10 +73,17 @@ T7-INGEST
 
 T7-AUDIT
   experiments/integrity_audit.json
+  experiments/experiment_fairness_review.md
+
+T7-POST-NOVELTY
+  novelty/post_experiment_novelty_check.json
+  novelty/post_experiment_collision_cases.md
 
 T7-CLAIMS
   experiments/experimental_claims.json
   drafts/result_to_claim.json
+  drafts/must_not_claim.md
+  drafts/claim_support_matrix.csv
   drafts/experiment_evidence_pack.json
   experiments/iteration_log.md
 ```
@@ -118,4 +134,3 @@ T9
 3. Writer 使用 `allowed_wording` 或更保守的表述。
 4. `drafts/paper_claim_audit.json` 中没有未处理 FAIL。
 5. T9 migration report 记录 evidence audit 文件链。
-

@@ -186,6 +186,22 @@ class TestScoutAgent:
         _write_jsonl(lit_dir / "papers_verified.jsonl", verified_records)
         (lit_dir / "verification_failures.jsonl").write_text("", encoding="utf-8")
         _write_jsonl(lit_dir / "deep_read_queue.jsonl", queue_records)
+        (lit_dir / "domain_map.json").write_text(
+            json.dumps(
+                {
+                    "version": "1.0",
+                    "semantics": "domain_map_for_synthesis_and_ideation_not_final_gaps",
+                    "core": [{"paper_id": "test1", "why": "core target paper"}],
+                    "adjacent": [],
+                    "boundary": [],
+                    "citation_edges": [],
+                    "bucket_assignments": {record["canonical_id"]: "core" for record in verified_records},
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
         search_log = standard_workspace / "literature" / "search_log.md"
         search_log.write_text("# Search Log\n\n## Query 1\n- Query: test\n- Results: 10\n", encoding="utf-8")
@@ -208,7 +224,7 @@ class TestScoutAgent:
 
         # 应该通过
         ok, err = agent.validate_outputs(ctx)
-        assert ok is True
+        assert ok is True, err
 
 
 class TestScoutAgentDedupLogic:

@@ -135,3 +135,44 @@ gates:
       - id: stop_project
         label: "结束当前项目"
         next: done
+
+  # T5 外部执行器选择门：
+  # 真实实验启动前必须由用户显式选择执行器，完整 pipeline 不再默认使用 mock。
+  t5_executor_gate:
+    title: "T5 外部实验执行器选择"
+    description: "ResearchOS 已生成 handoff 协议。请选择如何执行实验；mock 只用于协议联调，不是论文实验证据。"
+    presentation:
+      handoff_summary:
+        from_file: external_executor/handoff_pack.json
+        max_chars: 5000
+      allowed_paths:
+        from_file: external_executor/allowed_paths.txt
+        max_chars: 2500
+      codex_prompt:
+        from_file: external_executor/codex_prompt.md
+        max_chars: 2500
+      claude_prompt:
+        from_file: external_executor/claude_code_prompt.md
+        max_chars: 2500
+    options:
+      - id: mock_dry_run
+        label: "mock dry-run（协议测试）"
+        aliases: ["mock", "dry", "dry_run"]
+        next: T5-DRY-RUN
+      - id: claude_code_window
+        label: "Claude Code 窗口执行"
+        aliases: ["claude", "cc"]
+        next: T5-EXTERNAL-WAIT
+      - id: codex_cli
+        label: "Codex CLI 真实执行"
+        aliases: ["codex"]
+        next: T5-EXTERNAL-WAIT
+        collect_input:
+          - notes
+      - id: manual
+        label: "人工/其它执行器"
+        aliases: ["manual", "human"]
+        next: T5-EXTERNAL-WAIT
+      - id: revise_handoff
+        label: "返回重建 handoff"
+        next: T5-HANDOFF

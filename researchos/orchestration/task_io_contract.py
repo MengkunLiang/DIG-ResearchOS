@@ -566,6 +566,11 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "codex_prompt": "external_executor/codex_prompt.md",
             "claude_code_prompt": "external_executor/claude_code_prompt.md",
             "manual_instructions": "external_executor/manual_instructions.md",
+            "agents_md": "external_executor/AGENTS.md",
+            "claude_md": "external_executor/CLAUDE.md",
+            "external_readme": "external_executor/README.md",
+            "dir_guide": "external_executor/_DIR_GUIDE.md",
+            "job_state": "external_executor/job_state.json",
         },
         "required_inputs": [
             "project",
@@ -577,8 +582,38 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         ],
         "schemas": {},
     },
+    "T5-EXECUTOR-GATE": {
+        "inputs": {
+            "handoff_pack": "external_executor/handoff_pack.json",
+            "expected_outputs_schema": "external_executor/expected_outputs_schema.json",
+            "allowed_paths": "external_executor/allowed_paths.txt",
+            "agents_md": "external_executor/AGENTS.md",
+            "claude_md": "external_executor/CLAUDE.md",
+        },
+        "outputs": {
+            "executor_selection": "external_executor/executor_selection.json",
+        },
+        "required_inputs": ["handoff_pack", "expected_outputs_schema", "allowed_paths"],
+        "schemas": {},
+    },
+    "T5-EXTERNAL-WAIT": {
+        "inputs": {
+            "executor_selection": "external_executor/executor_selection.json",
+            "handoff_pack": "external_executor/handoff_pack.json",
+            "expected_outputs_schema": "external_executor/expected_outputs_schema.json",
+            "allowed_paths": "external_executor/allowed_paths.txt",
+            "result_pack": "external_executor/result_pack.json",
+            "executor_status": "external_executor/executor_status.json",
+        },
+        "outputs": {
+            "wait_acceptance_report": "external_executor/wait_acceptance_report.json",
+        },
+        "required_inputs": ["executor_selection", "handoff_pack", "expected_outputs_schema", "allowed_paths"],
+        "schemas": {},
+    },
     "T5-DRY-RUN": {
         "inputs": {
+            "executor_selection": "external_executor/executor_selection.json",
             "handoff_pack": "external_executor/handoff_pack.json",
             "expected_outputs_schema": "external_executor/expected_outputs_schema.json",
         },
@@ -591,7 +626,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "configs_dir": "external_executor/configs",
             "logs_dir": "external_executor/logs",
         },
-        "required_inputs": ["handoff_pack", "expected_outputs_schema"],
+        "required_inputs": ["executor_selection", "handoff_pack", "expected_outputs_schema"],
         "schemas": {},
     },
     "T7-INGEST": {
@@ -619,8 +654,28 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         },
         "outputs": {
             "integrity_audit": "experiments/integrity_audit.json",
+            "experiment_fairness_review": "experiments/experiment_fairness_review.md",
         },
         "required_inputs": ["results_summary", "evidence_index", "run_records"],
+        "schemas": {},
+    },
+    "T7-POST-NOVELTY": {
+        "inputs": {
+            "hypotheses": "ideation/hypotheses.md",
+            "exp_plan": "ideation/exp_plan.yaml",
+            "novelty_audit": "ideation/novelty_audit.md",
+            "required_baselines": "novelty/required_baselines.json",
+            "result_pack": "external_executor/result_pack.json",
+            "results_summary": "experiments/results_summary.json",
+            "integrity_audit": "experiments/integrity_audit.json",
+            "patch_log": "external_executor/patches/patch_log.jsonl",
+            "repo_snapshot": "external_executor/repo_snapshot.json",
+        },
+        "outputs": {
+            "post_experiment_novelty_check": "novelty/post_experiment_novelty_check.json",
+            "post_experiment_collision_cases": "novelty/post_experiment_collision_cases.md",
+        },
+        "required_inputs": ["results_summary", "integrity_audit", "novelty_audit"],
         "schemas": {},
     },
     "T7-CLAIMS": {
@@ -637,6 +692,10 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "result_to_claim": "drafts/result_to_claim.json",
             "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
             "iteration_log": "experiments/iteration_log.md",
+            "must_not_claim": "drafts/must_not_claim.md",
+            "claim_support_matrix": "drafts/claim_support_matrix.csv",
+            "limitations_from_experiments": "drafts/limitations_from_experiments.md",
+            "figure_table_evidence_map": "drafts/figure_table_evidence_map.json",
         },
         "required_inputs": ["results_summary", "integrity_audit", "evidence_index"],
         "schemas": {},
@@ -1385,6 +1444,24 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "paper_claim_audit_json": "drafts/paper_claim_audit.json",
         },
         "required_inputs": ["project", "paper", "paper_state", "review_report", "section_review_dir"],
+        "schemas": {},
+    },
+    "T8-PAPER-CLAIM-AUDIT": {
+        "inputs": {
+            "project": "project.yaml",
+            "paper": "drafts/paper.tex",
+            "result_to_claim": "drafts/result_to_claim.json",
+            "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
+            "integrity_audit": "experiments/integrity_audit.json",
+            "post_experiment_novelty_check": "novelty/post_experiment_novelty_check.json",
+            "must_not_claim": "drafts/must_not_claim.md",
+            "claim_ledger": "drafts/claim_ledger.json",
+        },
+        "outputs": {
+            "paper_claim_audit": "drafts/paper_claim_audit.md",
+            "paper_claim_audit_json": "drafts/paper_claim_audit.json",
+        },
+        "required_inputs": ["paper", "result_to_claim", "experiment_evidence_pack"],
         "schemas": {},
     },
     "T9": {

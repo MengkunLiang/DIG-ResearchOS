@@ -30,8 +30,8 @@
 agents:
   hello:
     llm:
-      model: deepseek-ai/DeepSeek-V4-Flash
-      endpoint: siliconflow
+      model: deepseek-v4-flash
+      endpoint: deepseek
       max_context: 128000
       tier: medium
       temperature: 0.3
@@ -55,7 +55,7 @@ agents:
       prompt_template: hello.j2
   pi:
     llm:
-      profile: siliconflow_only
+      profile: deepseek
       max_context: 128000
       tier: heavy
       temperature: 0.3
@@ -99,7 +99,7 @@ agents:
         expected_rounds: 2
   scout:
     llm:
-      profile: scout_resilient
+      profile: deepseek
       max_context: 1280000
       tier: medium
       temperature: 0.5
@@ -165,7 +165,7 @@ agents:
         papers_dedup_max: 120
   reader:
     llm:
-      profile: siliconflow_only
+      profile: deepseek
       max_context: 128000
       tier: medium
       temperature: 0.5
@@ -285,7 +285,7 @@ agents:
         type: user_confirm
   novelty_auditor:
     llm:
-      profile: siliconflow_only
+      profile: deepseek
       max_context: 128000
       tier: heavy
       temperature: 0.3
@@ -321,7 +321,7 @@ agents:
       - Level 3
   novelty:
     llm:
-      profile: siliconflow_only
+      profile: deepseek
       max_context: 1280000
       tier: medium
       temperature: 0.3
@@ -351,7 +351,7 @@ agents:
       prompt_template: novelty.j2
   experimenter:
     llm:
-      profile: siliconflow_only
+      profile: deepseek
       max_context: 128000
       tier: medium
       temperature: 0.3
@@ -370,6 +370,8 @@ agents:
       - literature/
       - external_executor/
       - drafts/
+      - novelty/
+      - resources/
       tool_names:
       - read_file
       - write_file
@@ -377,9 +379,12 @@ agents:
       - list_files
       - append_file
       - build_experiment_handoff_pack
+      - select_external_executor
+      - wait_for_external_executor_result
       - mock_external_dry_run
       - ingest_external_results
       - audit_experiment_integrity
+      - build_post_experiment_novelty_check
       - map_results_to_claims
       - build_experiment_evidence_pack
       - finish_task
@@ -388,6 +393,7 @@ agents:
       - pilot/
       - external_executor/
       - drafts/
+      - novelty/
     prompt:
       prompt_template: experimenter.j2
       structured_outputs:
@@ -473,6 +479,26 @@ agents:
         behavior:
           docker_required: false
           gpu_required: false
+      executor_gate:
+        description: 选择外部执行器并 patch handoff prompt
+        budget:
+          max_validation_retries: 1
+          max_steps: 10
+          max_tokens_total: 100000
+          max_wall_seconds: 600
+        behavior:
+          docker_required: false
+          gpu_required: false
+      external_wait:
+        description: 等待外部执行器 result_pack，resume 后确定性校验
+        budget:
+          max_validation_retries: 1
+          max_steps: 5
+          max_tokens_total: 100000
+          max_wall_seconds: 600
+        behavior:
+          docker_required: false
+          gpu_required: false
       dry_run:
         description: mock 外部执行器 dry-run
         budget:
@@ -503,6 +529,16 @@ agents:
         behavior:
           docker_required: false
           gpu_required: false
+      post_novelty:
+        description: 实验后 novelty/collision 复核
+        budget:
+          max_validation_retries: 2
+          max_steps: 20
+          max_tokens_total: 500000
+          max_wall_seconds: 1800
+        behavior:
+          docker_required: false
+          gpu_required: false
       result_to_claim:
         description: result-to-claim 与 evidence pack
         budget:
@@ -515,7 +551,7 @@ agents:
           gpu_required: false
   writer:
     llm:
-      profile: siliconflow_only
+      profile: deepseek
       max_context: 1280000
       tier: heavy
       temperature: 0.7
@@ -604,9 +640,14 @@ agents:
           max_tokens_total: 1500000
           max_steps: 300
         description: 按 section patch 修订
+      paper_claim_audit:
+        budget:
+          max_tokens_total: 500000
+          max_steps: 20
+        description: T9 前最终 claim/evidence 审计
   survey_writer:
     llm:
-      profile: siliconflow_only
+      profile: deepseek
       max_context: 128000
       tier: heavy
       temperature: 0.55
@@ -699,7 +740,7 @@ agents:
         description: 导出 T4 可消费的 survey insights
   reviewer:
     llm:
-      profile: siliconflow_only
+      profile: deepseek
       max_context: 128000
       tier: heavy
       temperature: 0.3
@@ -731,7 +772,7 @@ agents:
       - '## Minor Issues'
   submission:
     llm:
-      profile: siliconflow_only
+      profile: deepseek
       max_context: 12800000
       tier: medium
       temperature: 0.3
@@ -754,6 +795,7 @@ agents:
       - bash_run
       - docker_exec
       - latex_compile
+      - prepare_submission_bundle
       - finish_task
       allowed_write_prefixes:
       - submission/

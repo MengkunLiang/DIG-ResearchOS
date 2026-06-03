@@ -101,11 +101,11 @@ build_experiment_evidence_pack
 
 ```bash
 python -m researchos.cli run-task T5-HANDOFF --workspace ./workspace/local-test2
+python -m researchos.cli run-task T5-EXECUTOR-GATE --workspace ./workspace/local-test2
 python -m researchos.cli run-task T5-DRY-RUN --workspace ./workspace/local-test2
 python -m researchos.cli run-task T7-INGEST --workspace ./workspace/local-test2
 python -m researchos.cli run-task T7-AUDIT --workspace ./workspace/local-test2
 python -m researchos.cli run-task T7-CLAIMS --workspace ./workspace/local-test2
 ```
 
-真实外部执行器在 `T5-HANDOFF` 后接手，写入同一套 `external_executor/result_pack.json` 协议，ResearchOS 从 `T7-INGEST` 继续。
-
+真实外部执行器在 `T5-EXECUTOR-GATE` 选择真实执行器后接手。ResearchOS 会进入 `T5-EXTERNAL-WAIT` 并暂停；外部执行器写入 `external_executor/result_pack.json`、`executor_status.json` 和 `run_manifest.json` 后，用户执行 `researchos resume`，验收通过才进入 `T7-INGEST`。

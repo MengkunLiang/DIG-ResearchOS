@@ -20,9 +20,12 @@ from .external_experiment import (
     AuditPaperClaimsTool,
     BuildExperimentEvidencePackTool,
     BuildExperimentHandoffPackTool,
+    BuildPostExperimentNoveltyCheckTool,
     IngestExternalResultsTool,
     MapResultsToClaimsTool,
     MockExternalDryRunTool,
+    SelectExternalExecutorTool,
+    WaitForExternalExecutorResultTool,
 )
 from .filesystem import ListFilesTool, ReadFileTool, WriteFileTool
 from .finish_task import FinishTaskTool
@@ -51,6 +54,7 @@ from .manuscript import (
     InitializeManuscriptStateTool,
     PlanManuscriptEvidenceTool,
     PlanManuscriptSectionsTool,
+    PrepareSubmissionBundleTool,
     UpdateManuscriptSectionStateTool,
 )
 from .multi_source_search import MultiSourceSearchTool
@@ -110,7 +114,15 @@ def register_builtin_tools(
     registry.register("append_file", lambda ctx: AppendFileTool(ctx.policy))
     registry.register("list_files", lambda ctx: ListFilesTool(ctx.policy))
     registry.register("finish_task", lambda ctx: FinishTaskTool())
-    registry.register("ask_human", lambda ctx: AskHumanTool(ctx.human))
+    registry.register(
+        "ask_human",
+        lambda ctx: AskHumanTool(
+            ctx.human,
+            workspace_dir=ctx.policy.workspace_dir,
+            task_id=ctx.task_id,
+            run_id=ctx.run_id,
+        ),
+    )
     registry.register("echo", lambda ctx: EchoTool())
     registry.register("bash_run", lambda ctx: BashRunTool(ctx.policy, skill_dir=ctx.skill_dir))
     registry.register("grep_search", lambda ctx: GrepSearchTool(ctx.policy))
@@ -137,13 +149,17 @@ def register_builtin_tools(
     registry.register("initialize_manuscript_state", lambda ctx: InitializeManuscriptStateTool(ctx.policy))
     registry.register("update_manuscript_section_state", lambda ctx: UpdateManuscriptSectionStateTool(ctx.policy))
     registry.register("assemble_manuscript", lambda ctx: AssembleManuscriptTool(ctx.policy))
+    registry.register("prepare_submission_bundle", lambda ctx: PrepareSubmissionBundleTool(ctx.policy))
     registry.register("audit_manuscript_claims", lambda ctx: AuditManuscriptClaimsTool(ctx.policy))
     registry.register("audit_writing_craft", lambda ctx: AuditWritingCraftTool(ctx.policy))
     registry.register("build_manuscript_revision_patches", lambda ctx: BuildManuscriptRevisionPatchesTool(ctx.policy))
     registry.register("build_experiment_handoff_pack", lambda ctx: BuildExperimentHandoffPackTool(ctx.policy))
+    registry.register("select_external_executor", lambda ctx: SelectExternalExecutorTool(ctx.policy))
+    registry.register("wait_for_external_executor_result", lambda ctx: WaitForExternalExecutorResultTool(ctx.policy))
     registry.register("mock_external_dry_run", lambda ctx: MockExternalDryRunTool(ctx.policy))
     registry.register("ingest_external_results", lambda ctx: IngestExternalResultsTool(ctx.policy))
     registry.register("audit_experiment_integrity", lambda ctx: AuditExperimentIntegrityTool(ctx.policy))
+    registry.register("build_post_experiment_novelty_check", lambda ctx: BuildPostExperimentNoveltyCheckTool(ctx.policy))
     registry.register("map_results_to_claims", lambda ctx: MapResultsToClaimsTool(ctx.policy))
     registry.register("build_experiment_evidence_pack", lambda ctx: BuildExperimentEvidencePackTool(ctx.policy))
     registry.register("audit_paper_claims", lambda ctx: AuditPaperClaimsTool(ctx.policy))

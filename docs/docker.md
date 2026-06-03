@@ -664,12 +664,14 @@ cp .env.example .env
 
 - `literature/`
 - `ideation/`
-- `pilot/`
+- `external_executor/`
 - `experiments/`
 - `drafts/`
 - `submission/`
 - `_runtime/logs/`
 - `_runtime/traces/`
+
+legacy `pilot/` 如果旧 workspace 已存在也会持久化，但新主链的真实实验入口是 `external_executor/`，不是 `pilot/`。
 
 ### 13.2 哪些文件不会保留
 
@@ -846,7 +848,10 @@ bash infra/docker/run.sh resume --workspace /workspace/local-test2
 
 ```bash
 bash infra/docker/run.sh run-task T3 --workspace /workspace/local-test2
-bash infra/docker/run.sh run-task T7 --workspace /workspace/local-test2
+bash infra/docker/run.sh run-task T5-HANDOFF --workspace /workspace/local-test2
+bash infra/docker/run.sh run-task T5-EXECUTOR-GATE --workspace /workspace/local-test2
+bash infra/docker/run.sh run-task T5-DRY-RUN --workspace /workspace/local-test2
+bash infra/docker/run.sh run-task T7-INGEST --workspace /workspace/local-test2
 bash infra/docker/run.sh run-task T9 --workspace /workspace/local-test2
 ```
 

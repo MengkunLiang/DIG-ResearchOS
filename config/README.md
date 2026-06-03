@@ -66,6 +66,8 @@ nano config/state_machine.yaml
 - **workspace**: 工作空间配置
   - `default_root`: 工作空间根目录（默认：`./workspace`）
   - `runtime_dir`: Runtime 私有目录（默认：`_runtime`）
+  - runtime 会在 `runtime_dir` 下维护 `logs/`、`traces/`、`resume/` 和 `human_interactions.jsonl`
+  - `init-workspace`、`run`、`resume`、`run-task` 都会幂等刷新标准 workspace 子目录和 `_DIR_GUIDE.md`
 
 - **logging**: 日志配置
   - `level`: 日志级别（`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`）
@@ -94,6 +96,14 @@ logging:
   json: true
 ```
 
+### workspace 目录说明和恢复文件
+
+标准 workspace 目录由 `researchos/runtime/workspace.py` 生成，不建议在配置文件里手写一套不同目录树。每个标准子目录都会获得表格格式 `_DIR_GUIDE.md`：目录协议表说明生产者、消费者、可编辑范围和校验规则；关键文件表说明该目录下核心 artifact 的用途。已有自定义 guide 会保留。
+
+新 workspace 默认只创建当前主链目录。`pilot/`、顶层 `reviews/`、workspace-local `skills/` 是 legacy/optional 目录，不再默认创建；旧 workspace 如果已经存在这些目录，runtime 会补 legacy guide 但不会删除。`external_executor/workdir`、`resources/repos`、PDF/figure 目录不会被递归写入 guide。
+
+`_runtime/resume/` 是恢复快照目录，runtime 在任意退出路径都会刷新输出存在性、缺失输出和 task-specific recovery 元数据。`_runtime/human_interactions.jsonl` 记录 `ask_human` 的问题、回答、task/run 和 `interaction_id`；需要人类 provenance 的 gate，例如 `T8-STYLE-GATE`，会校验 artifact 中的 `human_interaction_id` 是否真的存在。
+
 ### model_routing.yaml - LLM 模型路由
 
 定义 LLM 服务端点和模型选择策略。
@@ -103,15 +113,17 @@ logging:
 | 层级 | 你配置什么 | 作用 | 例子 |
 |------|------------|------|------|
 | Agent | `agents.<agent>.llm.tier` | 只声明任务需要 `heavy` / `medium` / `light` 哪一档 | `hello.llm.tier -> medium`，`ideation.llm.tier -> heavy` |
-| state_machine | `states.<task>.llm.profile` | 给某个 task 单独指定用哪套路由 | `HELLO -> hello_fast`，`T4 -> ideation_deep` |
+| state_machine | `states.<task>.llm.profile` | 少数 task 的临时覆盖；默认不要写，避免压过 agent 默认配置 | `HELLO -> hello_fast` |
 | model_routing | `profiles.<profile>.<tier>` | 把某个 profile 下的 tier 映射到具体模型 | `ideation_deep.heavy -> deepseek-ai/DeepSeek-V4-Flash` |
 | endpoint | `endpoints.<name>` | 决定最终 provider / API key / base URL | `siliconflow -> provider=openai` |
 
 默认链路：
 - Agent 先给出 `tier`
-- 如果 `state_machine.yaml` 里给当前 task 配了 `llm.profile`，优先用它
+- 如果 `state_machine.yaml` 里给当前 task 配了 `llm.profile`，优先用它；这会压过 `agent_params.yaml`，所以只在确实需要 task 级覆盖时使用
 - 否则回退到 agent 自带的 `llm.profile`
 - 再否则使用 `model_routing.yaml` 的 `default_profile`
+
+当前主链已经避免在 T4/T7.5 这类常调任务上重复写 `llm.profile`。因此你在 `agent_params.yaml` 中修改 `agents.ideation.llm.profile` 或 `agents.pi.llm.profile` 后，完整流程会继承该设置；若某个 task 仍不生效，优先检查 `state_machine.yaml` 是否显式写了 `llm.profile`、`llm.model` 或 `llm.endpoint`。
 
 对 `run-task HELLO` 这种单任务调试模式：
 - 不读取 `state_machine.yaml`
@@ -123,6 +135,7 @@ logging:
   - `provider`: 服务提供商（如 `openai`、`anthropic`、`azure`）
   - `api_key_env`: API Key 环境变量名
   - `api_base_env`: Base URL 环境变量名
+  - DeepSeek 官方 OpenAI-compatible API 使用 `endpoint: deepseek`、`provider: openai`、`DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`；runtime 不会把 DeepSeek endpoint 自动借用 SiliconFlow/OpenAI 的 key/base URL，避免错连 provider
 
 - **profiles**: 模型配置文件
   - `heavy`: 重负载任务（文献综合、深度分析）
@@ -363,17 +376,19 @@ states:
    → T4 (假设生成)
    → T4.5 (新颖性审计)
    → T5-HANDOFF (外部实验协议编译)
-   → T5-DRY-RUN (mock 协议 dry-run)
+   → T5-EXECUTOR-GATE (外部执行器选择)
+   → T5-DRY-RUN / T5-EXTERNAL-WAIT (mock 协议 dry-run 或等待真实外部结果)
    → T7-INGEST (外部结果摄取)
    → T7-AUDIT (实验诚信审计)
+   → T7-POST-NOVELTY (实验后 novelty/collision 复核)
    → T7-CLAIMS (result-to-claim 与 evidence pack)
    → T7.5 (PI 评估与 human gate)
-   → T8-* (分章节写作、审计、review/revise)
+   → T8-* (分章节写作、审计、review/revise、paper claim audit)
    → T9 (投稿包构建和 TeX 编译)
    → done/failed
    ```
 
-旧 `T5`、`T6`、`T7` 仍可通过 `run-task` 显式调用，但默认完整主链不再让 ResearchOS 自己长时间实现和运行实验。
+旧 `T5`、`T6`、`T7` 不再作为普通 `run-task` 入口。手动运行 `run-task T5/T6/T7` 会提示该旧内部实验语义已 retired；如确实需要调试旧内部实验，使用 `run-task LEGACY-T5-PILOT|LEGACY-T6-NOVELTY|LEGACY-T7-FULL --allow-legacy`。完整主链和旧 `next_task: T7` 恢复语义会进入新版外部实验链，不再让 ResearchOS 自己长时间实现和运行实验。
 
 **使用场景：**
 

@@ -30,6 +30,11 @@ from ..runtime.task_recovery import prepare_task_resume_artifacts
 from ..schemas.state import BudgetCumulative, GateState, StateYaml, TaskHistoryEntry
 from .gate_presenter import build_presentation
 from .task_io_contract import get_task_io
+from ..tools.external_experiment import (
+    build_executor_selection_payload,
+    patch_external_executor_files_with_selection,
+    validate_external_executor_ready,
+)
 
 
 def _now_iso() -> str:
@@ -489,6 +494,19 @@ class StateMachine:
         node = self.nodes[state.current_task]
         next_task = self._resolve_branch(node, gate_result, state, workspace_dir=workspace_dir)
         self._persist_immediate_gate_result(node, gate_result, next_task, workspace_dir)
+        if node.task_id == "T5-EXTERNAL-WAIT" and workspace_dir is not None and next_task == "T7-INGEST":
+            readiness = validate_external_executor_ready(
+                workspace_dir,
+                "external_executor/result_pack.json",
+                "external_executor/executor_status.json",
+            )
+            if not readiness.get("ok"):
+                if state.pending_gate is not None:
+                    state.pending_gate.presentation["external_executor_wait_status"] = readiness.get("message")
+                state.status = "WAITING_HUMAN"
+                state.paused_at = _now_iso()
+                state.last_error = str(readiness.get("message") or "external executor result is not ready")
+                return state
         state.pending_gate = None
         return self._transition_to_next(state, next_task, workspace_dir=workspace_dir)
 
@@ -591,6 +609,55 @@ class StateMachine:
         """Persist the user decision for gate-only nodes that declare a JSON output."""
 
         if workspace_dir is None or not (node.extra or {}).get("immediate_gate"):
+            return
+        if node.task_id == "T5-EXECUTOR-GATE":
+            if next_task == "T5-HANDOFF":
+                outputs = node.outputs or {}
+                for rel_path in outputs.values():
+                    path = workspace_dir / rel_path
+                    if path.suffix.lower() != ".json":
+                        continue
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    payload = {
+                        "semantics": "external_executor_selection_deferred_for_handoff_rebuild",
+                        "task_id": node.task_id,
+                        "gate_id": self._gate_id_for_node(node),
+                        "selected_option": gate_result.get("option_id") or gate_result.get("key"),
+                        "next_task": next_task,
+                        "decided_at": _now_iso(),
+                    }
+                    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                    return
+            option_id = str(gate_result.get("option_id") or gate_result.get("key") or "mock_dry_run")
+            aliases = {
+                "mock": "mock_dry_run",
+                "dry": "mock_dry_run",
+                "dry_run": "mock_dry_run",
+                "external_ready_later": "claude_code_window",
+                "claude": "claude_code_window",
+                "manual_external": "manual",
+            }
+            selected_executor = aliases.get(option_id, option_id)
+            if selected_executor not in {"mock_dry_run", "codex_cli", "claude_code_window", "manual"}:
+                selected_executor = "mock_dry_run"
+            captured = gate_result.get("captured") or {}
+            notes = str(captured.get("notes") or captured.get("note") or "")
+            if captured.get("downgraded_from"):
+                downgrade_note = (
+                    f"downgraded_from={captured.get('downgraded_from')}; "
+                    f"reason={captured.get('downgrade_reason') or 'not specified'}"
+                )
+                notes = f"{notes}; {downgrade_note}".strip("; ")
+            selection = build_executor_selection_payload(
+                selected_executor=selected_executor,
+                selected_by="human",
+                notes=notes,
+            )
+            selection["next_state"] = next_task
+            path = workspace_dir / "external_executor" / "executor_selection.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(selection, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            patch_external_executor_files_with_selection(workspace_dir, selection)
             return
         outputs = node.outputs or {}
         for rel_path in outputs.values():

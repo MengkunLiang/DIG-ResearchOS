@@ -34,6 +34,9 @@ api_keys:
   SILICONFLOW_API_KEY: ""
   SILICONFLOW_BASE_URL: "https://api.siliconflow.cn/v1"
 
+  DEEPSEEK_API_KEY: ""
+  DEEPSEEK_BASE_URL: "https://api.deepseek.com"
+
   # OpenRouter API Key（直接配置）
   OPENROUTER_API_KEY: ""
 
@@ -63,6 +66,11 @@ endpoints:
     provider: openai
     api_key_env: SILICONFLOW_API_KEY
     api_base_env: SILICONFLOW_BASE_URL
+  
+  deepseek:
+    provider: openai
+    api_key_env: DEEPSEEK_API_KEY
+    api_base_env: DEEPSEEK_BASE_URL
 
   openrouter_main:
     # OpenRouter 在 LiteLLM 中有独立 provider。
@@ -92,42 +100,72 @@ profiles:
   # 如果你什么都不配，所有未覆盖的 task 都会走这里。
   default:
     heavy:
-      # heavy 通常留给 T1/T4/T4.5 这种更偏规划/综合的任务。
       primary:
-        # OpenAI-compatible 的原始模型名可以保留，不必手工写 openai/ 前缀。
-        model: "deepseek-ai/DeepSeek-V4-Flash"
-        endpoint: siliconflow
+        model: "deepseek-v4-pro"
+        endpoint: deepseek
         max_context: 128000
       fallback:
-        # 先在同一个 SiliconFlow provider 内切换备选模型，
-        # 只有 primary 持续超时/拥塞时才会走到这里。
-        - model: "deepseek-ai/DeepSeek-V4-Pro"
-          endpoint: siliconflow
+        - model: "deepseek-v4-flash"
+          endpoint: deepseek
           max_context: 128000
 
     medium:
-      # medium 是当前最常见档位，T2/T3/novelty 等常会走这里。
-      # 如果你最近主要是 T2/T3/T5 超时，优先改这里最有效。
       primary:
-        model: "deepseek-ai/DeepSeek-V4-Flash"
-        endpoint: siliconflow
+        model: "deepseek-v4-flash"
+        endpoint: deepseek
         max_context: 128000
       fallback:
-        # default.medium 是当前报 timeout 最多的链路，因此这里显式补同 provider fallback。
-        - model: "deepseek-ai/DeepSeek-V4-Pro"
-          endpoint: siliconflow
+        - model: "deepseek-v4-flash"
+          endpoint: deepseek
           max_context: 128000
 
     light:
-      # light 适合很短的问答、检查类任务；若仓库里很少用 light，可先不动。
+      # 示例：light 可以和 heavy/medium 用不同模型，不要求整个 profile 完全一致。
       primary:
-        model: "deepseek-ai/DeepSeek-V4-Flash"
-        endpoint: siliconflow
+        model: "deepseek-v4-flash"
+        endpoint: deepseek
         max_context: 128000
       fallback:
-        - model: "deepseek-ai/DeepSeek-V4-Pro"
-          endpoint: siliconflow
+        - model: "deepseek-v4-flash"
+          endpoint: deepseek
           max_context: 128000
+    # heavy:
+    #   # heavy 通常留给 T1/T4/T4.5 这种更偏规划/综合的任务。
+    #   primary:
+    #     # OpenAI-compatible 的原始模型名可以保留，不必手工写 openai/ 前缀。
+    #     model: "deepseek-ai/DeepSeek-V4-Flash"
+    #     endpoint: siliconflow
+    #     max_context: 128000
+    #   fallback:
+    #     # 先在同一个 SiliconFlow provider 内切换备选模型，
+    #     # 只有 primary 持续超时/拥塞时才会走到这里。
+    #     - model: "deepseek-ai/DeepSeek-V4-Pro"
+    #       endpoint: siliconflow
+    #       max_context: 128000
+
+    # medium:
+    #   # medium 是当前最常见档位，T2/T3/novelty 等常会走这里。
+    #   # 如果你最近主要是 T2/T3/T5 超时，优先改这里最有效。
+    #   primary:
+    #     model: "deepseek-ai/DeepSeek-V4-Flash"
+    #     endpoint: siliconflow
+    #     max_context: 128000
+    #   fallback:
+    #     # default.medium 是当前报 timeout 最多的链路，因此这里显式补同 provider fallback。
+    #     - model: "deepseek-ai/DeepSeek-V4-Pro"
+    #       endpoint: siliconflow
+    #       max_context: 128000
+
+    # light:
+    #   # light 适合很短的问答、检查类任务；若仓库里很少用 light，可先不动。
+    #   primary:
+    #     model: "deepseek-ai/DeepSeek-V4-Flash"
+    #     endpoint: siliconflow
+    #     max_context: 128000
+    #   fallback:
+    #     - model: "deepseek-ai/DeepSeek-V4-Pro"
+    #       endpoint: siliconflow
+    #       max_context: 128000
 
   # 显式的 SiliconFlow-only profile。
   # 适合在 state_machine 里直接写 llm.profile: siliconflow_only，
@@ -164,6 +202,37 @@ profiles:
           endpoint: siliconflow
           max_context: 128000
 
+  deepseek:
+    heavy:
+      primary:
+        model: "deepseek-v4-pro"
+        endpoint: deepseek
+        max_context: 128000
+      fallback:
+        - model: "deepseek-v4-flash"
+          endpoint: deepseek
+          max_context: 128000
+
+    medium:
+      primary:
+        model: "deepseek-v4-flash"
+        endpoint: deepseek
+        max_context: 128000
+      fallback:
+        - model: "deepseek-v4-flash"
+          endpoint: deepseek
+          max_context: 128000
+
+    light:
+      # 示例：light 可以和 heavy/medium 用不同模型，不要求整个 profile 完全一致。
+      primary:
+        model: "deepseek-v4-flash"
+        endpoint: deepseek
+        max_context: 128000
+      fallback:
+        - model: "deepseek-v4-flash"
+          endpoint: deepseek
+          max_context: 128000
   # OpenRouter 快速 profile。
   # 说明：
   # - openrouter 作为 provider 时，模型名建议写成
@@ -241,16 +310,16 @@ profiles:
   ideation_deep:
     heavy:
       primary:
-        model: "deepseek-ai/DeepSeek-V4-Flash"
-        endpoint: siliconflow
+        model: "deepseek-v4-pro"
+        endpoint: deepseek
         max_context: 128000
       fallback:
         # 先保持同 provider 的备选，再回退到 OpenRouter。
-        - model: "deepseek-ai/DeepSeek-V4-Pro"
-          endpoint: siliconflow
+        - model: "deepseek-v4-flash"
+          endpoint: deepseek
           max_context: 128000
-        - model: "openrouter/openai/gpt-4o"
-          endpoint: openrouter_main
+        - model: "deepseek-ai/DeepSeek-V4-Flash"
+          endpoint: siliconflow
           max_context: 128000
 
   audit_safe:

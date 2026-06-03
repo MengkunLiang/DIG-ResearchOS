@@ -19,8 +19,8 @@ idea
  -> synthesis
  -> hypothesis generation
  -> novelty audit
- -> pilot experiment
- -> full experiment
+ -> external experiment handoff / executor wait
+ -> result ingest / integrity audit / result-to-claim
  -> PI evaluation
  -> writing / review / revision
  -> submission bundle
@@ -37,17 +37,28 @@ T1
  -> T3.5
  -> T4
  -> T4.5
- -> T5
- -> T6
- -> T7
+ -> T5-HANDOFF
+ -> T5-EXECUTOR-GATE
+    -> mock_dry_run: T5-DRY-RUN
+    -> codex_cli / claude_code_window / manual: T5-EXTERNAL-WAIT
+ -> T7-INGEST
+ -> T7-AUDIT
+ -> T7-POST-NOVELTY
+ -> T7-CLAIMS
  -> T7.5
  -> human gate
+ -> T8-STYLE-GATE
+ -> T8-RESOURCE
  -> T8-WRITE
+ -> T8-SECTION-PLAN
+ -> T8-SEC-*
  -> T8-DRAFT
+ -> T8-SELF-CHECK
  -> T8-REVIEW-1
  -> T8-REVISE-1
  -> T8-REVIEW-2
  -> T8-REVISE-2
+ -> T8-PAPER-CLAIM-AUDIT
  -> T9
  -> done
 ```
@@ -62,7 +73,8 @@ Key runtime features already wired:
 - human gates in the state machine
 - skill discovery and `run-skill`
 - MCP server loading and tool registration
-- Docker-based experiment / LaTeX execution support
+- external executor handoff / dry-run / ingest / integrity audit / result-to-claim
+- Docker-assisted LaTeX execution and optional legacy/internal experiment support
 - trace and log recording under each workspace
 
 ## Core Concepts
@@ -75,14 +87,19 @@ Typical directories:
 
 - `user_seeds/`
 - `literature/`
+- `resources/`
 - `ideation/`
-- `pilot/`
 - `novelty/`
+- `external_executor/`
 - `experiments/`
 - `evaluation/`
 - `drafts/`
 - `submission/`
 - `_runtime/`
+
+`init-workspace`, `run`, `resume`, and `run-task` idempotently refresh the standard directory tree and write `_DIR_GUIDE.md` files for workspace subdirectories. Generated guides are table-based: one table explains purpose, producing stage, consumers, editability, and validation rules; a second table lists key files/subdirectories and their use. Custom guide files are preserved.
+
+New workspaces only create directories used by the current main pipeline. Legacy/optional directories such as `pilot/`, top-level `reviews/`, and workspace-local `skills/` are not created by default; if they already exist in an old workspace, ResearchOS writes legacy guides but does not delete artifacts. External code/assets under `external_executor/workdir`, `resources/repos`, PDFs, and figure folders are not recursively modified.
 
 ### Full pipeline vs single task
 
@@ -268,9 +285,15 @@ Best when you are fixing or testing one stage.
 
 ```bash
 python -m researchos.cli run-task T3 --workspace ./workspace/local-test2
+python -m researchos.cli run-task T5-HANDOFF --workspace ./workspace/local-test2
+python -m researchos.cli run-task T5-EXECUTOR-GATE --workspace ./workspace/local-test2
+python -m researchos.cli run-task T5-DRY-RUN --workspace ./workspace/local-test2
+python -m researchos.cli run-task T7-INGEST --workspace ./workspace/local-test2  # only after dry-run/wait accepted
 python -m researchos.cli run-task T7.5 --workspace ./workspace/local-test2
 python -m researchos.cli run-task T9 --workspace ./workspace/local-test2
 ```
+
+Plain `run-task T5/T6/T7` is retired to avoid accidentally entering the old internal experiment design. Use `T5-HANDOFF`, `T7-POST-NOVELTY`, or the explicit `LEGACY-* --allow-legacy` entries when debugging legacy behavior.
 
 You can also copy upstream artifacts from another workspace:
 
@@ -291,7 +314,7 @@ Notes:
 ```bash
 python -m researchos.cli status --workspace ./workspace/local-test2
 python -m researchos.cli trace T7_single_xxxxxxxx --workspace ./workspace/local-test2
-python -m researchos.cli validate --workspace ./workspace/local-test2 --task T7
+python -m researchos.cli validate --workspace ./workspace/local-test2 --task T7-AUDIT
 ```
 
 ## Skills

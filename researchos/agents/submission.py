@@ -17,6 +17,7 @@ from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec, get_agent_params
 from ..runtime.prompts import render_prompt
 from ..tools.docker_exec import check_docker_environment, get_default_image, load_project_config
+from ..tools.manuscript import extract_bibliography_stems
 from ._common import load_project, prepend_resume_prefix, read_text_file
 
 
@@ -126,6 +127,7 @@ class SubmissionAgent(Agent):
                         "bash_run",
                         "docker_exec",
                         "latex_compile",
+                        "prepare_submission_bundle",
                         "finish_task",
                     ],
                     "max_steps": 40,
@@ -189,6 +191,13 @@ class SubmissionAgent(Agent):
 
         # 编译成功后必须留下 PDF，避免“只写报告不真正编译通过”的假成功。
         main_tex = bundle_dir / "main.tex"
+        bibliography_stems = extract_bibliography_stems(read_text_file(main_tex))
+        if bibliography_stems:
+            missing_bib = [f"{stem}.bib" for stem in bibliography_stems if not (bundle_dir / f"{stem}.bib").exists()]
+            if missing_bib:
+                return False, f"main.tex 引用的 BibTeX 文件不在 bundle 中: {missing_bib}"
+            if "references" not in bibliography_stems:
+                return False, "main.tex 应使用 bundle 内 references.bib：请调用 prepare_submission_bundle 重写 bibliography"
         pdf_path = bundle_dir / "main.pdf"
         if not pdf_path.exists():
             return False, "bundle缺少 main.pdf，说明投稿包尚未编译成功"

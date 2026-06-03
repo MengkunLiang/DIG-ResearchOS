@@ -559,8 +559,6 @@ states:
   # Agent：ideation（创意生成器）
   T4:
     agent: ideation
-    # llm:
-    #   profile: ideation_deep
     inputs:
       project: project.yaml                             # 项目配置
       synthesis: literature/synthesis.md               # 文献综述
@@ -604,8 +602,9 @@ states:
       design_rationale_tuples_dir: ideation/_design_rationale_tuples # CDR design-rationale tuple 中间产物
     optional_outputs:
       collision_cases: ideation/collision_cases.md       # 条件输出：High/Medium Overlap 时必须存在
-    # 当前主链默认跳过 T5 pilot 与 T6 novelty-final，但必须尊重 T4.5 Final Gate Verdict。
-    # pass* 进入 T7；return/drop/reject/collision 进入人工审阅 gate，由用户决定 T7/T4/stop。
+    # 当前主链默认跳过 legacy T5 pilot 与 legacy T6 novelty-final，但必须尊重 T4.5 Final Gate Verdict。
+    # pass* 进入 T5-HANDOFF 外部实验协议链；return/drop/reject/collision 进入人工审阅 gate，
+    # 由用户决定外部实验链/T4/stop。
     next_on_success: __parse_from_output__
     next_on_failure: failed
 
@@ -655,7 +654,50 @@ states:
       codex_prompt: external_executor/codex_prompt.md
       claude_code_prompt: external_executor/claude_code_prompt.md
       manual_instructions: external_executor/manual_instructions.md
-    next_on_success: T5-DRY-RUN
+      agents_md: external_executor/AGENTS.md
+      claude_md: external_executor/CLAUDE.md
+      external_readme: external_executor/README.md
+      dir_guide: external_executor/_DIR_GUIDE.md
+      job_state: external_executor/job_state.json
+    next_on_success: T5-EXECUTOR-GATE
+    next_on_failure: failed
+
+  # T5-EXECUTOR-GATE 状态：外部执行器选择
+  # 用途：由用户显式选择 mock/Claude Code/Codex CLI/manual，不让完整主链默认混入 mock 结果。
+  T5-EXECUTOR-GATE:
+    agent: experimenter
+    mode: executor_gate
+    extra:
+      immediate_gate: true
+    inputs:
+      handoff_pack: external_executor/handoff_pack.json
+      expected_outputs_schema: external_executor/expected_outputs_schema.json
+      allowed_paths: external_executor/allowed_paths.txt
+      agents_md: external_executor/AGENTS.md
+      claude_md: external_executor/CLAUDE.md
+    outputs:
+      executor_selection: external_executor/executor_selection.json
+    gate:
+      type: t5_executor_gate
+    next_on_success: __parse_from_output__
+    next_on_failure: failed
+
+  # T5-EXTERNAL-WAIT 状态：等待外部执行器写回 result pack
+  # 用途：不启动 LLM；runtime 检查 external_executor/result_pack.json 和 executor_status.json。
+  # 缺失时 PAUSED，外部执行完后 resume 自动进入 T7-INGEST。
+  T5-EXTERNAL-WAIT:
+    agent: experimenter
+    mode: external_wait
+    inputs:
+      executor_selection: external_executor/executor_selection.json
+      handoff_pack: external_executor/handoff_pack.json
+      expected_outputs_schema: external_executor/expected_outputs_schema.json
+      allowed_paths: external_executor/allowed_paths.txt
+      result_pack: external_executor/result_pack.json
+      executor_status: external_executor/executor_status.json
+    outputs:
+      wait_acceptance_report: external_executor/wait_acceptance_report.json
+    next_on_success: T7-INGEST
     next_on_failure: failed
 
   # T5-DRY-RUN 状态：mock 外部执行器协议 dry-run
@@ -664,6 +706,7 @@ states:
     agent: experimenter
     mode: dry_run
     inputs:
+      executor_selection: external_executor/executor_selection.json
       handoff_pack: external_executor/handoff_pack.json
       expected_outputs_schema: external_executor/expected_outputs_schema.json
     outputs:
@@ -707,6 +750,28 @@ states:
       novelty_audit: ideation/novelty_audit.md
     outputs:
       integrity_audit: experiments/integrity_audit.json
+      experiment_fairness_review: experiments/experiment_fairness_review.md
+    next_on_success: T7-POST-NOVELTY
+    next_on_failure: failed
+
+  # T7-POST-NOVELTY 状态：实验后 novelty/collision 复核
+  # 用途：基于实现/结果/required baseline 覆盖情况，给 T7-CLAIMS 和 T8 写作提供 claim 降级边界。
+  T7-POST-NOVELTY:
+    agent: experimenter
+    mode: post_novelty
+    inputs:
+      hypotheses: ideation/hypotheses.md
+      exp_plan: ideation/exp_plan.yaml
+      novelty_audit: ideation/novelty_audit.md
+      required_baselines: novelty/required_baselines.json
+      result_pack: external_executor/result_pack.json
+      results_summary: experiments/results_summary.json
+      integrity_audit: experiments/integrity_audit.json
+      patch_log: external_executor/patches/patch_log.jsonl
+      repo_snapshot: external_executor/repo_snapshot.json
+    outputs:
+      post_experiment_novelty_check: novelty/post_experiment_novelty_check.json
+      post_experiment_collision_cases: novelty/post_experiment_collision_cases.md
     next_on_success: T7-CLAIMS
     next_on_failure: failed
 
@@ -727,6 +792,10 @@ states:
       result_to_claim: drafts/result_to_claim.json
       experiment_evidence_pack: drafts/experiment_evidence_pack.json
       iteration_log: experiments/iteration_log.md
+      must_not_claim: drafts/must_not_claim.md
+      claim_support_matrix: drafts/claim_support_matrix.csv
+      limitations_from_experiments: drafts/limitations_from_experiments.md
+      figure_table_evidence_map: drafts/figure_table_evidence_map.json
     next_on_success: T7.5
     next_on_failure: failed
 
@@ -828,7 +897,8 @@ states:
     outputs:
       evaluation_decision: evaluation/evaluation_decision.md
     llm:
-      profile: default
+      # 不在这里覆盖 profile；默认继承 agent_params.yaml 中 pi.llm.profile。
+      # 这样用户切换 PI Agent 的 provider/profile 时，T7.5 不会悄悄回到 default。
       tier: heavy
       temperature: 0.2
     budget:
@@ -1349,8 +1419,28 @@ states:
       craft_audit: drafts/craft_audit.md
       paper_claim_audit: drafts/paper_claim_audit.md
       paper_claim_audit_json: drafts/paper_claim_audit.json
-    next_on_success: T9
+    next_on_success: T8-PAPER-CLAIM-AUDIT
     next_on_failure: failed
+
+  # T8-PAPER-CLAIM-AUDIT 状态：论文 claim 与 evidence pack 的最终一致性审计
+  # 用途：进入 T9 前用零上下文审计检查 paper.tex 中实验数字/claim 是否有 result-to-claim 支撑。
+  T8-PAPER-CLAIM-AUDIT:
+    agent: writer
+    mode: paper_claim_audit
+    inputs:
+      project: project.yaml
+      paper: drafts/paper.tex
+      result_to_claim: drafts/result_to_claim.json
+      experiment_evidence_pack: drafts/experiment_evidence_pack.json
+      integrity_audit: experiments/integrity_audit.json
+      post_experiment_novelty_check: novelty/post_experiment_novelty_check.json
+      must_not_claim: drafts/must_not_claim.md
+      claim_ledger: drafts/claim_ledger.json
+    outputs:
+      paper_claim_audit: drafts/paper_claim_audit.md
+      paper_claim_audit_json: drafts/paper_claim_audit.json
+    next_on_success: T9
+    next_on_failure: T8-REVISE-2
 
   # T9 状态：投稿准备（Submission Preparation）
   # 用途：将论文迁移到目标会议格式，匿名化检查，编译验证

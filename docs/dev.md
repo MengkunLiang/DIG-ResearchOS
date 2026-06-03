@@ -254,13 +254,13 @@ python -m researchos.cli run-task T9 --workspace ./workspace/demo
 校验某个 workspace 当前产物是否符合约定。
 
 ```bash
-python -m researchos.cli validate --workspace ./workspace/demo --task T7
+python -m researchos.cli validate --workspace ./workspace/demo --task T7-AUDIT
 ```
 
 典型 case：
 
-- 你怀疑 `T7` 结果已经写出来了，但状态机仍说失败
-- 想单独验证 `results_summary.json`、`ablations.csv` 和相关输出是否满足规则
+- 你怀疑 `T7-AUDIT` 结果已经写出来了，但状态机仍说失败
+- 想单独验证 `results_summary.json`、`integrity_audit.json` 和 evidence index 是否满足规则
 
 ### 4.6 `status`
 
@@ -315,12 +315,14 @@ python -m researchos.cli run-skill paper-compile "compile the paper in ./workspa
 - `user_seeds/`
 - `literature/`
 - `ideation/`
-- `pilot/`
 - `novelty/`
+- `external_executor/`
 - `experiments/`
 - `evaluation/`
 - `drafts/`
 - `submission/`
+
+`pilot/` 只属于 legacy 内部实验兼容目录；新主链默认不创建，也不应作为真实实验入口。
 
 ### 5.2 Runtime 目录
 
@@ -377,8 +379,8 @@ python -m researchos.cli run-task T8-RESOURCE \
 - `HELLO`：验证 runtime 最小闭环
 - `T2`：验证搜索、去重、verification 和队列生成
 - `T3`：验证 PDF 获取、全文覆盖、Reading Coverage 和续跑
-- `T5-HANDOFF/T5-DRY-RUN/T7-INGEST/T7-AUDIT/T7-CLAIMS`：验证外部实验协议、mock dry-run、摄取、诚信审计和 result-to-claim
-- legacy `T5/T7`：仅在显式兼容调试时验证内部实验恢复、预算 gate、Docker
+- `T5-HANDOFF/T5-EXECUTOR-GATE/T5-DRY-RUN/T5-EXTERNAL-WAIT/T7-INGEST/T7-AUDIT/T7-POST-NOVELTY/T7-CLAIMS`：验证外部实验协议、执行器选择、mock dry-run 或真实外部等待、摄取、诚信审计、实验后 novelty 复核和 result-to-claim
+- legacy `LEGACY-T5-PILOT/LEGACY-T7-FULL`：仅在显式兼容调试时验证内部实验恢复、预算 gate、Docker
 - `T7.5`：验证 PI 评估与 `next_task`
 - `T8-RESOURCE`：验证资源索引、证据计划和图表计划
 - `T8-SECTION-PLAN`：验证 `paper_state.json` 和每章局部大纲
@@ -402,11 +404,14 @@ python -m researchos.cli run-task T8-RESOURCE \
 | `T3.5` | synthesis 分阶段产物和最终综合结构完整 | `literature/synthesis_workbench.json`, `literature/synthesis_outline.md`, `literature/synthesis_draft.md`, `literature/synthesis.md` |
 | `T4` | hypotheses / exp_plan / idea scorecard / gate decisions / risks 成对齐 | `ideation/hypotheses.md`, `ideation/exp_plan.yaml`, `ideation/idea_scorecard.yaml`, `ideation/rejected_ideas.md`, `ideation/gate_decisions.json`, `ideation/idea_rationales.json`, `ideation/risks.md` |
 | `T4.5` | novelty audit 生成；如有 High/Medium Overlap 则归档 collision cases | `ideation/novelty_audit.md`, `ideation/collision_cases.md`（条件产物） |
-| `T5-HANDOFF` | 外部执行协议、prompt、schema 和 allowed paths 完整 | `external_executor/handoff_pack.json`, `executor_prompt.md`, `codex_prompt.md`, `claude_code_prompt.md`, `expected_outputs_schema.json`, `allowed_paths.txt` |
+| `T5-HANDOFF` | 外部执行协议、AGENTS/CLAUDE、prompt、schema 和 allowed paths 完整 | `external_executor/handoff_pack.json`, `AGENTS.md`, `CLAUDE.md`, `executor_prompt.md`, `codex_prompt.md`, `claude_code_prompt.md`, `expected_outputs_schema.json`, `allowed_paths.txt` |
+| `T5-EXECUTOR-GATE` | 执行器选择写入并 patch mode 占位 | `external_executor/executor_selection.json`, `AGENTS.md`, `CLAUDE.md` |
+| `T5-EXTERNAL-WAIT` | 外部 result pack/status 就绪后写验收报告 | `external_executor/wait_acceptance_report.json` |
 | `T5-DRY-RUN` | mock result/status/manifest/raw/config/log 协议跑通，且明确 mock_only | `external_executor/result_pack.json`, `executor_status.json`, `run_manifest.json`, `raw_results/`, `configs/`, `logs/` |
 | `T7-INGEST` | 外部 result pack 被规范化为 ResearchOS 下游结果 | `experiments/results_summary.json`, `experiments/run_records.jsonl`, `experiments/evidence_index.json`, `experiments/ingest_report.json` |
-| `T7-AUDIT` | provenance/hash/metric source/mock 标记被审计 | `experiments/integrity_audit.json` |
-| `T7-CLAIMS` | result-to-claim 和写作证据包生成 | `experiments/experimental_claims.json`, `drafts/result_to_claim.json`, `drafts/experiment_evidence_pack.json`, `experiments/iteration_log.md` |
+| `T7-AUDIT` | provenance/hash/metric source/mock 标记和 required baseline coverage 被审计 | `experiments/integrity_audit.json`, `experiments/experiment_fairness_review.md` |
+| `T7-POST-NOVELTY` | 实验后 novelty/collision 复核产物存在 | `novelty/post_experiment_novelty_check.json`, `novelty/post_experiment_collision_cases.md` |
+| `T7-CLAIMS` | result-to-claim、must-not-claim 和写作证据包生成 | `experiments/experimental_claims.json`, `drafts/result_to_claim.json`, `drafts/experiment_evidence_pack.json`, `drafts/must_not_claim.md`, `experiments/iteration_log.md` |
 | `T7.5` | evaluation decision 能给出 `next_task` | `evaluation/evaluation_decision.md` |
 | `T8-RESOURCE` | 写作资源、章节、证据和图表计划生成 | `drafts/manuscript_resource_index.json`, `drafts/section_plan.json`, `drafts/evidence_plan.json`, `drafts/figure_table_plan.json` |
 | `T8-WRITE` | 论文论证大纲生成 | `drafts/outline.md` |
@@ -436,11 +441,14 @@ python -m researchos.cli run-task T8-RESOURCE \
 
 ### 7.3 外部实验链重点看什么
 
-- `T5-HANDOFF` 是否写出 handoff pack、expected schema、allowed paths 和 Codex/Claude/manual prompt
+- `T5-HANDOFF` 是否写出 handoff pack、AGENTS/CLAUDE、expected schema、allowed paths 和 Codex/Claude/manual prompt
+- `T5-EXECUTOR-GATE` 是否写出 executor_selection，并且 AGENTS/CLAUDE/prompt 不再包含 `UNSET`
+- `T5-EXTERNAL-WAIT` 缺 result pack 时是否 PAUSED，写回后 resume 是否生成 wait_acceptance_report
 - `T5-DRY-RUN` 是否写出 `mock_only=true` 的 result pack、status、run manifest、raw/config/log
 - `T7-INGEST` 是否把 result pack 规范化成 `results_summary.json`、`run_records.jsonl` 和 `evidence_index.json`
-- `T7-AUDIT` 是否检查 artifact 存在、sha256、metric source 和 run manifest
-- `T7-CLAIMS` 是否写出 `drafts/result_to_claim.json` 和 `drafts/experiment_evidence_pack.json`
+- `T7-AUDIT` 是否检查 artifact 存在、sha256、metric source、run manifest 和 required baseline coverage
+- `T7-POST-NOVELTY` 是否写出 post_experiment novelty/collision 复核
+- `T7-CLAIMS` 是否写出 `drafts/result_to_claim.json`、`drafts/experiment_evidence_pack.json`、`drafts/must_not_claim.md` 和 `drafts/claim_support_matrix.csv`
 - 如果预算触顶，是否先进入 gate，而不是直接硬停
 
 legacy `T5/T7` 显式调试时再检查已有代码目录、Docker digest 和内部实验 resume state。

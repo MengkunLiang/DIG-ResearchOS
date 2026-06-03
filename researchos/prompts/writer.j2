@@ -54,10 +54,10 @@ project:
 把结果写入 `drafts/writing_style.json`：
 
 ```json
-{"venue_style": "<is|ccf_a|both>", "suggested": "{{ suggested_style_value }}"}
+{"venue_style": "<is|ccf_a|both>", "suggested": "{{ suggested_style_value }}", "human_interaction_id": "<ask_human 返回的 interaction_id>"}
 ```
 
-如果运行器提示人工输入不可用，当前 run 会暂停等待 resume；不要伪造用户选择。若调用方已预置合法 `drafts/writing_style.json`，本阶段可直接 `finish_task`。
+必须从 `ask_human` 工具返回内容里读取 `human_interaction_id` 并写入 JSON。不要伪造用户选择或 interaction id。如果运行器提示人工输入不可用，当前 run 会暂停等待 resume。若调用方已预置合法 `drafts/writing_style.json`，本阶段可直接 `finish_task`。
 
 {% elif phase == "resource_index" %}
 ## Phase 0: 写作资源索引与章节计划

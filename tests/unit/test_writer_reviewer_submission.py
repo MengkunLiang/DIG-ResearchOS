@@ -17,6 +17,8 @@ from researchos.agents.submission import (
 from researchos.runtime.agent_params import get_agent_params
 from researchos.runtime.prompts import render_prompt
 from researchos.tools.manuscript import CORE_SECTIONS
+from researchos.tools.manuscript import PrepareSubmissionBundleTool
+from researchos.tools.workspace_policy import WorkspaceAccessPolicy
 
 
 def _load_agent_params():
@@ -118,6 +120,34 @@ def _write_compile_report(workspace: Path, *, success: bool = True) -> None:
         json.dumps(report, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+
+
+@pytest.mark.asyncio
+async def test_prepare_submission_bundle_rewrites_bibliography(temp_workspace):
+    (temp_workspace / "drafts" / "paper.tex").write_text(
+        "\\documentclass{article}\n\\begin{document}\n"
+        "Body \\cite{test}.\n"
+        "\\bibliographystyle{plain}\n\\bibliography{related_work}\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    (temp_workspace / "literature" / "related_work.bib").write_text(
+        "@article{test,title={T}}\n",
+        encoding="utf-8",
+    )
+    policy = WorkspaceAccessPolicy(
+        temp_workspace,
+        ["", "drafts/", "literature/"],
+        ["submission/"],
+    )
+
+    result = await PrepareSubmissionBundleTool(policy).execute()
+
+    assert result.ok
+    main_tex = (temp_workspace / "submission" / "bundle" / "main.tex").read_text(encoding="utf-8")
+    assert "\\bibliography{references}" in main_tex
+    assert "\\bibliography{related_work}" not in main_tex
+    assert (temp_workspace / "submission" / "bundle" / "references.bib").exists()
 
 
 def test_writer_prompt_defaults_suggested_style_when_not_injected(temp_workspace):
@@ -438,6 +468,48 @@ def test_writer_section_plan_phase_initial_message(temp_workspace):
     assert "Phase 1.5" in msg
     assert "initialize_manuscript_state" in msg
     assert "paper_state.json" in msg
+
+
+def test_writer_style_gate_requires_human_interaction_id(temp_workspace):
+    agent = WriterAgent()
+    ctx = MockExecutionContext("style_gate", temp_workspace, {"phase": "style_gate"})
+    (temp_workspace / "drafts" / "writing_style.json").write_text(
+        '{"venue_style":"ccf_a","suggested":"ccf_a"}\n',
+        encoding="utf-8",
+    )
+
+    ok, err = agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "human_interaction_id" in err
+
+
+def test_writer_style_gate_accepts_recorded_human_interaction(temp_workspace):
+    agent = WriterAgent()
+    ctx = MockExecutionContext("style_gate", temp_workspace, {"phase": "style_gate"})
+    runtime_dir = temp_workspace / "_runtime"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    (runtime_dir / "human_interactions.jsonl").write_text(
+        json.dumps(
+            {
+                "semantics": "researchos_human_interaction_record",
+                "interaction_id": "human_test123",
+                "task_id": "T8-STYLE-GATE",
+                "answer": "ccf_a",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (temp_workspace / "drafts" / "writing_style.json").write_text(
+        '{"venue_style":"ccf_a","suggested":"ccf_a","human_interaction_id":"human_test123"}\n',
+        encoding="utf-8",
+    )
+
+    ok, err = agent.validate_outputs(ctx)
+
+    assert ok, err
 
 
 def test_writer_single_section_phase_initial_message(temp_workspace):
@@ -1268,6 +1340,7 @@ def test_submission_agent_initialization():
     assert agent.spec.max_tokens_total == params["max_tokens_total"]
     assert "docker_exec" in agent.spec.tool_names
     assert "latex_compile" in agent.spec.tool_names
+    assert "prepare_submission_bundle" in agent.spec.tool_names
     assert "submission/" in agent.spec.allowed_write_prefixes
     # 默认关闭匿名化前置检查，避免本地调试或非匿名投稿流程被直接拦截。
     hook_names = [h.__name__ if callable(h) else str(h) for h in agent.spec.pre_hooks]
@@ -1389,6 +1462,23 @@ def test_submission_requires_evidence_audit_trace_when_present(temp_workspace):
 
     ok, err = agent.validate_outputs(ctx)
     assert ok, err
+
+
+def test_submission_validate_outputs_rejects_missing_bibliography_basename(temp_workspace):
+    agent = SubmissionAgent()
+    ctx = MockExecutionContext("submission", temp_workspace)
+    _write_valid_submission_bundle(temp_workspace)
+    (temp_workspace / "submission" / "bundle" / "main.tex").write_text(
+        r"\documentclass{article}\begin{document}\bibliographystyle{plain}\bibliography{related_work}\end{document}",
+        encoding="utf-8",
+    )
+    _write_compile_report(temp_workspace)
+    (temp_workspace / "submission" / "migration_report.md").write_text(_valid_migration_report(), encoding="utf-8")
+
+    ok, err = agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "BibTeX" in err or "references.bib" in err
 
 
 def test_submission_validate_outputs_missing_bundle(temp_workspace):

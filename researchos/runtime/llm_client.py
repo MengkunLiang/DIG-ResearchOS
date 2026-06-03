@@ -25,6 +25,16 @@ except Exception:  # pragma: no cover
 _log = get_logger("llm_client")
 
 
+def _dedupe_nonempty(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        if value and value not in seen:
+            seen.add(value)
+            out.append(value)
+    return out
+
+
 @dataclass
 class Endpoint:
     """一个具体 API endpoint 的连接信息。"""
@@ -65,8 +75,9 @@ class Endpoint:
         if key:
             return key
 
-        # 3. 尝试常见备选名称
-        fallback_names = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "SILICONFLOW_API_KEY"]
+        # 3. 尝试同 provider 的常见备选名称。不要跨 provider 随便借 key，
+        # 否则 deepseek endpoint 可能误拿 SiliconFlow/OpenAI key，错误会变得很难诊断。
+        fallback_names = self._fallback_api_key_names()
         for fallback in fallback_names:
             key = os.environ.get(fallback)
             if key:
@@ -101,8 +112,9 @@ class Endpoint:
             if base:
                 return base
 
-            # 尝试常见备选名称
-            fallback_names = ["OPENAI_API_BASE", "OPENAI_BASE_URL", "SILICONFLOW_BASE_URL"]
+            # 尝试同 endpoint/provider 的常见备选 base URL。不要把 SiliconFlow
+            # base URL 用到 DeepSeek endpoint 上。
+            fallback_names = self._fallback_api_base_names()
             for fallback in fallback_names:
                 base = os.environ.get(fallback)
                 if base:
@@ -145,6 +157,33 @@ class Endpoint:
         if self.extra_headers:
             kwargs["extra_headers"] = self.extra_headers
         return kwargs
+
+    def _fallback_api_key_names(self) -> list[str]:
+        names: list[str] = []
+        provider = self.provider.lower()
+        endpoint = self.name.lower()
+        if "deepseek" in endpoint:
+            names.extend(["DEEPSEEK_API_KEY"])
+        if "siliconflow" in endpoint:
+            names.extend(["SILICONFLOW_API_KEY"])
+        if provider == "openai":
+            names.extend(["OPENAI_API_KEY"])
+        elif provider == "anthropic":
+            names.extend(["ANTHROPIC_API_KEY"])
+        elif provider == "openrouter":
+            names.extend(["OPENROUTER_API_KEY"])
+        return _dedupe_nonempty(names)
+
+    def _fallback_api_base_names(self) -> list[str]:
+        names: list[str] = []
+        endpoint = self.name.lower()
+        if "deepseek" in endpoint:
+            names.extend(["DEEPSEEK_BASE_URL", "DEEPSEEK_API_BASE"])
+        if "siliconflow" in endpoint:
+            names.extend(["SILICONFLOW_BASE_URL", "SILICONFLOW_API_BASE"])
+        if self.provider.lower() == "openai":
+            names.extend(["OPENAI_BASE_URL", "OPENAI_API_BASE"])
+        return _dedupe_nonempty(names)
 
 
 @dataclass
@@ -511,13 +550,28 @@ class LLMClient:
                         duration_ms=int((time.time() - started) * 1000),
                     )
                 except Exception as exc:
-                    errors.append(f"{qualified}@{endpoint.name} attempt {attempt + 1}: {exc!r}")
+                    errors.append(
+                        f"{qualified}@{endpoint.name} attempt {attempt + 1}: {exc!r} "
+                        f"({self._endpoint_debug_hint(endpoint, qualified)})"
+                    )
             if attempt < max_retries_per_model - 1:
                 await asyncio.sleep(min(retry_base_delay * (2**attempt), 8))
         await self.aclose()
         raise LLMProviderError(
             f"All candidates failed (profile={profile or self.default_profile_name}, "
             f"tier={tier}). Errors: {errors}"
+        )
+
+    @staticmethod
+    def _endpoint_debug_hint(endpoint: Endpoint, qualified_model: str) -> str:
+        kwargs = endpoint.to_litellm_kwargs()
+        base = kwargs.get("api_base") or "<unset>"
+        has_key = bool(kwargs.get("api_key"))
+        return (
+            f"endpoint={endpoint.name}, provider={endpoint.provider}, model={qualified_model}, "
+            f"api_base={base}, api_key={'set' if has_key else 'missing'}; "
+            "OpenAI-compatible DeepSeek endpoints usually require model=openai/<model>, "
+            "DEEPSEEK_API_KEY, and DEEPSEEK_BASE_URL such as https://api.deepseek.com"
         )
 
     async def aclose(self) -> None:

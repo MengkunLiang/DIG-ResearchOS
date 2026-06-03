@@ -58,7 +58,7 @@ def test_novelty_auditor_agent_spec(novelty_auditor_agent):
     spec = novelty_auditor_agent.spec
     assert spec.name == "novelty_auditor"
     assert spec.model_tier == "heavy"
-    assert spec.llm_profile == "siliconflow_only"
+    assert spec.llm_profile == "deepseek"
     assert "read_file" in spec.tool_names
     assert "write_file" in spec.tool_names
     assert "search_papers" in spec.tool_names

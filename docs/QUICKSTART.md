@@ -219,8 +219,9 @@ researchos resume --workspace ./workspace/local-test2
 researchos run-task T2 --workspace ./workspace/local-test2
 researchos run-task T3 --workspace ./workspace/local-test2
 researchos run-task T5-HANDOFF --workspace ./workspace/local-test2
+researchos run-task T5-EXECUTOR-GATE --workspace ./workspace/local-test2
 researchos run-task T5-DRY-RUN --workspace ./workspace/local-test2
-researchos run-task T7-INGEST --workspace ./workspace/local-test2
+researchos run-task T7-INGEST --workspace ./workspace/local-test2  # 已有 dry-run 或 T5-EXTERNAL-WAIT 验收结果后再跑
 researchos run-task T7-AUDIT --workspace ./workspace/local-test2
 researchos run-task T7-CLAIMS --workspace ./workspace/local-test2
 researchos run-task T7.5 --workspace ./workspace/local-test2
@@ -382,11 +383,13 @@ pip install -e .
 最稳的判断方式是直接看这些目录和文件是否还在：
 
 - `literature/paper_notes/`
-- `pilot/`
+- `external_executor/`
 - `experiments/`
 - `drafts/`
 - `submission/`
 - `_runtime/resume/`
+
+旧 workspace 可能还有 `pilot/`；它只用于显式 legacy 内部实验调试，新主链不依赖它。
 
 ### 7.3 为什么 `run-task` 不能自动接着跑到下一个阶段？
 

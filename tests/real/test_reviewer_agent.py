@@ -187,9 +187,37 @@ class TestReviewerAgentValidateOutputs:
             "## 次要问题\n\n"
             "1. Grammar errors.\n"
             "2. Figure labels.\n\n"
+            "## 写作范式与对齐核查\n\n"
+            "- The review checks writing craft and alignment with the contribution plan.\n\n"
+            "## CDR Contribution Verdict\n\n"
+            "- Problem frame clarity: acceptable.\n"
+            "- Design rationale support: acceptable.\n"
+            "- Contribution type credibility: improvement.\n"
+            "- Evidence alignment: mostly aligned.\n"
+            "- Boundary condition honesty: limitations present.\n"
+            "- Verdict: revise.\n\n"
             "This is a complete feedback with all required sections.\n" * 5,
             encoding="utf-8",
         )
+        section_dir = review_rounds / "round_1_sections"
+        section_dir.mkdir(parents=True, exist_ok=True)
+        for section_id in [
+            "methodology",
+            "experiments",
+            "related_work",
+            "analysis",
+            "introduction",
+            "conclusion",
+            "abstract",
+        ]:
+            (section_dir / f"{section_id}.md").write_text(
+                f"# Review for {section_id}\n\n"
+                "## Summary\nThis section is readable but needs targeted revision.\n\n"
+                "## CDR Alignment Check\nThe section connects to the contribution map.\n\n"
+                "## Alignment Matrix Check\nThe section references the planned contribution rows.\n\n"
+                "## Writing Craft Check\nThe prose is acceptable for this test fixture.\n",
+                encoding="utf-8",
+            )
 
         agent = ReviewerAgent()
         ctx = ExecutionContext(
@@ -202,7 +230,7 @@ class TestReviewerAgentValidateOutputs:
         )
 
         ok, err = agent.validate_outputs(ctx)
-        assert ok is True
+        assert ok is True, err
 
 
 class TestReviewerAgentFeedbackQuality:

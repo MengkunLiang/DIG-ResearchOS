@@ -22,12 +22,13 @@ from ..runtime.task_recovery import prepare_task_resume_artifacts
 from ..runtime.workspace import initialize_workspace
 from ..schemas.state import StateYaml, TaskHistoryEntry
 from ..schemas.validator import register_builtin_task_checkers, validate_prerequisites, validate_task_artifacts
-from ..tools.human_gate import CLIHumanInterface, HumanInterface
+from ..tools.human_gate import CLIHumanInterface, HumanInputUnavailable, HumanInterface
 from ..tools.registry import ToolRegistry
 
 
 _LOG = get_logger("single_task")
 _DEFAULT_STATE_MACHINE_PATH = Path(__file__).resolve().parents[2] / "config" / "state_machine.yaml"
+_DEFAULT_GATES_PATH = Path(__file__).resolve().parents[2] / "config" / "gates.yaml"
 
 
 def _now_iso() -> str:
@@ -48,9 +49,10 @@ class SingleTaskRunner:
         override_profile: str | None = None,
         human_interface: HumanInterface | None = None,
         runtime_settings: RuntimeSettings | None = None,
+        allow_legacy: bool = False,
     ) -> None:
         self.workspace = workspace
-        self.task_id = self._normalize_task_id(task_id)
+        self.task_id = self._normalize_task_id(task_id, allow_legacy=allow_legacy)
         self.llm = llm_client
         self.tools = tool_registry
         self.from_workspace = from_workspace
@@ -60,7 +62,33 @@ class SingleTaskRunner:
         register_builtin_task_checkers()
 
     @staticmethod
-    def _normalize_task_id(task_id: str) -> str:
+    def _normalize_task_id(task_id: str, *, allow_legacy: bool = False) -> str:
+        legacy_retired = {
+            "T5": "T5-HANDOFF",
+            "T6": "T7-POST-NOVELTY",
+            "T7": "T5-HANDOFF",
+        }
+        legacy_explicit = {
+            "LEGACY-T5-PILOT": "T5",
+            "LEGACY-T6-NOVELTY": "T6",
+            "LEGACY-T7-FULL": "T7",
+        }
+        if task_id in legacy_retired:
+            replacement = legacy_retired[task_id]
+            legacy_name = {
+                "T5": "LEGACY-T5-PILOT",
+                "T6": "LEGACY-T6-NOVELTY",
+                "T7": "LEGACY-T7-FULL",
+            }[task_id]
+            raise ValueError(
+                f"{task_id} legacy internal experiment node has been retired for ordinary run-task. "
+                f"Use {replacement} for the external-executor chain, or use {legacy_name} --allow-legacy "
+                "only for explicit old internal-experiment debugging."
+            )
+        if task_id in legacy_explicit:
+            if not allow_legacy:
+                raise ValueError(f"{task_id} requires --allow-legacy.")
+            return legacy_explicit[task_id]
         aliases = {
             "T3.6": "T3.6-GATE-SURVEY",
             "T3.6-SURVEY": "T3.6-GATE-SURVEY",
@@ -165,6 +193,10 @@ class SingleTaskRunner:
 
         print(f"[进度] 准备执行上下文 (run_id: {ctx.run_id})", flush=True)
         state_path = self.workspace / "state.yaml"
+
+        if task_node is not None and StateMachine(_DEFAULT_STATE_MACHINE_PATH, _DEFAULT_GATES_PATH).should_pause_for_immediate_gate(state):
+            return await self._run_immediate_gate_task(state, state_path)
+
         state = self._record_started(state, ctx.run_id)
         state.dump_yaml(state_path)
 
@@ -225,6 +257,28 @@ class SingleTaskRunner:
         state.dump_yaml(state_path)
         self._print_result(result)
         return 0 if result.ok else 5
+
+    async def _run_immediate_gate_task(self, state: StateYaml, state_path: Path) -> int:
+        state_machine = StateMachine(_DEFAULT_STATE_MACHINE_PATH, _DEFAULT_GATES_PATH)
+        state = state_machine.pause_for_immediate_gate(state, workspace_dir=self.workspace)
+        state.dump_yaml(state_path)
+        try:
+            gate_result = await self.human.present_gate(
+                gate_id=state.pending_gate.gate_id,
+                presentation=state.pending_gate.presentation,
+                options=state.pending_gate.options,
+            )
+        except HumanInputUnavailable as exc:
+            state.status = "PAUSED"
+            state.last_error = str(exc)
+            state.dump_yaml(state_path)
+            print(f"Task paused: {exc}")
+            return 130
+        state = state_machine.resolve_pending_gate(state, gate_result, workspace_dir=self.workspace)
+        state.status = "COMPLETED" if state.status == "RUNNING" else state.status
+        state.dump_yaml(state_path)
+        print(f"[进度] Gate 已处理，下一状态: {state.current_task}")
+        return 0
 
     def _copy_prerequisites(self) -> None:
         """从另一个 workspace 复制输入 artifact。"""

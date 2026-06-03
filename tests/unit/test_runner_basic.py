@@ -1682,6 +1682,88 @@ async def test_runner_pauses_on_unavailable_ask_human_without_second_llm_call(tm
 
 
 @pytest.mark.asyncio
+async def test_runner_autobridges_text_question_to_ask_human_for_any_task(tmp_workspace, registry):
+    llm = MockLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(content="请选择下一步：\n[1] 继续\n[2] 停止")
+            ),
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="finish_task", arguments={"summary": "done"}, id="tc2")]
+                )
+            ),
+        ]
+    )
+    human = MockHumanInterface(clarification_answer="")
+    ctx = ExecutionContext(workspace_dir=tmp_workspace, project_id="p1", task_id="T4", run_id="r_human_text_pause")
+    runner = AgentRunner(AskHumanAgent(), registry, llm, human)
+
+    result = await runner.run(ctx)
+
+    assert not result.ok
+    assert result.stop_reason == AgentResult.STOP_INTERRUPTED
+    assert llm.call_count == 1
+    assert human.calls and human.calls[0][0] == "clarification"
+    assert "Runtime 检测到 Agent 正在请求人工选择/确认" in human.calls[0][1]["question"]
+
+
+@pytest.mark.asyncio
+async def test_runner_does_not_autobridge_plain_status_text_with_which(tmp_workspace, registry):
+    llm = MockLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(content="好的，我来检查一下用户已经提供了哪些材料。")
+            ),
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="finish_task", arguments={"summary": "done"}, id="tc2")]
+                )
+            ),
+        ]
+    )
+    human = MockHumanInterface(clarification_answer="")
+    ctx = ExecutionContext(workspace_dir=tmp_workspace, project_id="p1", task_id="T1", run_id="r_status_no_human")
+    runner = AgentRunner(AskHumanAgent(), registry, llm, human)
+
+    result = await runner.run(ctx)
+
+    assert result.ok
+    assert llm.call_count == 2
+    assert not human.calls
+
+
+@pytest.mark.asyncio
+async def test_runner_autobridge_blocks_other_tools_when_text_asks_human(tmp_workspace, registry):
+    llm = MockLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    content="请确认是否继续执行？",
+                    tool_calls=[FakeToolCall(name="write_file", arguments={"path": "should_not_exist.txt", "content": "bad"}, id="tc1")],
+                )
+            ),
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="finish_task", arguments={"summary": "done"}, id="tc2")]
+                )
+            ),
+        ]
+    )
+    human = MockHumanInterface(clarification_answer="")
+    ctx = ExecutionContext(workspace_dir=tmp_workspace, project_id="p1", task_id="T4", run_id="r_human_mixed_pause")
+    runner = AgentRunner(AskHumanAgent(), registry, llm, human)
+
+    result = await runner.run(ctx)
+
+    assert not result.ok
+    assert result.stop_reason == AgentResult.STOP_INTERRUPTED
+    assert llm.call_count == 1
+    assert human.calls and human.calls[0][0] == "clarification"
+    assert not (tmp_workspace / "should_not_exist.txt").exists()
+
+
+@pytest.mark.asyncio
 async def test_validation_retry_exhaustion_pauses_for_resume(tmp_workspace, registry):
     llm = MockLLMClient(
         responses=[
@@ -2126,26 +2208,3 @@ def test_task_start_summary_includes_task_goal(tmp_workspace, registry, capsys):
     assert "任务: T9" in out
     assert "目标: 构建投稿包" in out
     assert "submission/bundle/main.pdf" in out
-    alignment_rows = [
-        {
-            "cid": f"C{idx}",
-            "motivation": f"test motivation {idx}",
-            "contribution": f"test contribution {idx}",
-            "related_gap": {"papers": ["smith2024"], "tension": f"test tension {idx}"},
-            "design_choice": f"test design choice {idx}",
-            "experiment": {"rq": f"RQ{idx}", "result_metric": "accuracy", "table": "tab:main_results"},
-            "analysis": f"test analysis {idx}",
-        }
-        for idx in range(1, 4)
-    ]
-    (drafts / "alignment_matrix.json").write_text(
-        json.dumps(
-            {
-                "version": "1.0",
-                "semantics": "alignment_matrix_seed_not_final_scientific_judgment",
-                "rows": alignment_rows,
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )

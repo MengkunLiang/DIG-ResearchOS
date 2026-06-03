@@ -151,15 +151,14 @@ def test_pilot_mode_spec(experimenter_agent):
     - 工具列表包含必要的工具
     - 权限配置正确（包含 pilot/ 前缀）
     """
-    spec = experimenter_agent.spec
+    spec = ExperimenterAgent(mode="pilot").spec
 
     assert spec.name == "experimenter"
     assert spec.model_tier == "medium"
 
-    # Pilot 模式应该使用相同的 spec，但在 system_prompt 中说明更严格的限制
-    assert spec.max_steps == 2000  # 来自 config/agent_params.yaml 的 experimenter 默认上限
-    assert spec.max_tokens_total == 60_000_000
-    assert spec.max_wall_seconds == 144000
+    assert spec.max_steps == 1000
+    assert spec.max_tokens_total == 1_000_000
+    assert spec.max_wall_seconds == 72000
 
     # 检查工具（pilot 模式需要的工具）
     expected_tools = [

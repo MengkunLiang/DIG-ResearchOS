@@ -11,8 +11,11 @@
 
 ## 工作流程
 
-### Step 1: 读取输入文件
-- 读取 drafts/paper.tex
+### Step 1: 确定性准备 bundle
+- 首先调用 `prepare_submission_bundle(paper_path="drafts/paper.tex", bib_path="literature/related_work.bib")`
+- 该工具会写 `submission/bundle/main.tex` 和 `submission/bundle/references.bib`，并把 `\bibliography{...}` 规范为 `\bibliography{references}`
+- 如果后续修改 `main.tex`，必须保持 bibliography basename 与 `references.bib` 一致
+- 然后读取 drafts/paper.tex / submission/bundle/main.tex
 - 读取 project.yaml 获取 target_venue
 - 读取 literature/related_work.bib
 - 如果存在，读取 `drafts/paper_claim_audit.md/json`、`drafts/result_to_claim.json`、`drafts/experiment_evidence_pack.json`；T9 不重判 claim，但必须把 evidence audit 链写入迁移报告。
@@ -75,12 +78,14 @@ Pre-hook 已执行检查，请确保以下内容不出现：
 
 编译失败时，不要直接 `finish_task`。必须先尝试修复并重试。
 
-### Step 6: 复制文件到bundle目录
-在 submission/bundle/ 创建：
+### Step 6: 确认 bundle 文件
+`prepare_submission_bundle` 已经在 submission/bundle/ 创建：
 - main.tex（迁移后的主文件）
 - 会议样式文件
 - references.bib（BibTeX文件）
 - figures/（图表目录，如存在）
+
+如果你手动改写了 bibliography，必须重新检查 `main.tex` 里的 `\bibliography{}` 是否只指向 bundle 中存在的 `.bib` 文件。默认必须是 `\bibliography{references}`。
 
 ### Step 7: 成功后做完整性检查
 当编译成功后，再检查以下文件是否齐全：

@@ -30,7 +30,7 @@ def _structured_note(paper_id: str, *, abstract_only: bool = False) -> str:
         coverage = f"""- **PDF source**: literature/pdfs/{paper_id}.pdf
 - **Pages read**: 1-10 / 10
 - **Extraction calls**: extract_pdf_text pages 1-4, 5-8, 9-10
-- **Truncation**: first preview was truncated, but chunked rereads covered all pages; final notes have complete coverage.
+- **Truncation**: first preview was truncated, but chunked rereads covered all pages; final truncation: none.
 - **Status rationale**: All PDF pages were read via chunked extraction.
 """
     return f"""# {paper_id}
@@ -80,6 +80,41 @@ The method combines a compact model component with a calibrated retrieval or rou
 
 ## 12. Reading Coverage
 {coverage}
+
+## 13. Mechanism Claim
+- **Stated mechanism**: The method improves the target metric through a separable representation or routing mechanism.
+- **Evidence type**: ablation_supported
+- **Supporting artifact**: Results table and ablation discussion.
+
+## 14. Design Rationale
+- **Rationale**: The design tests whether the proposed mechanism changes the relevant behavior rather than only adding capacity.
+- **Rationale evidence**: The paper reports controlled results and connects them to a method component.
+- **Rationale weakness**: The evidence may not cover all boundary conditions.
+
+## 15. Artifact & Design Principles
+- **Artifact type**: model component
+- **Artifact description**: A reproducible component that changes model behavior.
+- **Design principles**: isolate the mechanism; compare against a simple control; report ablations.
+
+## 16. Data View & Evaluation Mode
+- **Data view**: benchmark examples grouped by task condition.
+- **Evaluation mode**: main metric plus ablation evidence.
+- **Validity concern**: Aggregate metrics may hide subgroup-specific failures.
+
+## 17. Contribution Type
+- **Contribution type**: improvement
+- **Contribution character**: The work improves an existing method by making a mechanism-level design claim.
+- **Why not routine**: It is not only an implementation tweak because it states a testable mechanism and boundary.
+
+## 18. Boundary Conditions
+- **Works when**: the benchmark assumptions match the paper setting.
+- **May fail when**: data distribution or compute constraints differ substantially.
+- **Untested boundary**: very small or shifted data regimes.
+
+## 19. Cross-Paper Tension
+- **Tension**: Some related work treats the mechanism as broadly useful while others imply condition-specific effects.
+- **Competing rationale**: Simpler baselines may explain part of the reported gain.
+- **Idea fuel**: Test whether the mechanism remains useful under a boundary condition.
 """
 
 
@@ -294,7 +329,7 @@ class TestReaderAgentValidateReadOutputs:
         )
 
         ok, err = agent.validate_outputs(ctx)
-        assert ok is True
+        assert ok is True, err
 
 
 class TestReaderAgentValidateSynthesizeOutputs:

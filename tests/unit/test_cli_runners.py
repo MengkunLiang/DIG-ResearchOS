@@ -17,6 +17,7 @@ from researchos.testing.mocks import (
     MockLLMClient,
 )
 from researchos.tools.builtin import register_builtin_tools
+from researchos.tools.human_gate import HumanInputUnavailable, HumanInterface
 from researchos.tools.registry import ToolRegistry
 
 
@@ -105,10 +106,29 @@ def _registry() -> ToolRegistry:
     return registry
 
 
+class _UnavailableGateHuman(HumanInterface):
+    async def ask_approval(self, *, tool_name: str, arguments: dict) -> bool:
+        return False
+
+    async def ask_clarification(self, *, question: str, suggestions: list[str] | None = None) -> str:
+        raise HumanInputUnavailable("stdin closed")
+
+    async def present_gate(self, *, gate_id: str, presentation: dict, options: list[dict]) -> dict:
+        raise HumanInputUnavailable("stdin closed")
+
+
 def test_single_task_runner_t36_alias_points_to_survey_gate():
     assert SingleTaskRunner._normalize_task_id("T3.6") == "T3.6-GATE-SURVEY"
     assert SingleTaskRunner._normalize_task_id("T3.6-SURVEY") == "T3.6-GATE-SURVEY"
     assert SingleTaskRunner._normalize_task_id("SURVEY") == "T3.6-GATE-SURVEY"
+
+
+def test_single_task_runner_retires_plain_legacy_experiment_tasks():
+    with pytest.raises(ValueError, match="retired"):
+        SingleTaskRunner._normalize_task_id("T7")
+    with pytest.raises(ValueError, match="requires --allow-legacy"):
+        SingleTaskRunner._normalize_task_id("LEGACY-T7-FULL")
+    assert SingleTaskRunner._normalize_task_id("LEGACY-T7-FULL", allow_legacy=True) == "T7"
 
 
 @pytest.mark.asyncio
@@ -160,6 +180,54 @@ async def test_complete_pipeline_runner_advances_until_completed(tmp_workspace: 
     assert "COMPLETED" in (tmp_workspace / "state.yaml").read_text(encoding="utf-8")
 
 
+@pytest.mark.asyncio
+async def test_complete_pipeline_pauses_when_pending_gate_input_unavailable(tmp_workspace: Path):
+    config = tmp_workspace / "fsm.yaml"
+    gates = tmp_workspace / "gates.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: GATE
+        states:
+          GATE:
+            agent: hello
+            extra:
+              immediate_gate: true
+            gate: gate1
+          done:
+            terminal: true
+        """,
+    )
+    _write_yaml(
+        gates,
+        """
+        gates:
+          gate1:
+            options:
+              - id: go
+                label: Go
+                next: done
+        """,
+    )
+    state = StateYaml(project_id="demo-project", current_task="GATE", status="WAITING_HUMAN")
+    state.pending_gate = StateMachine(config, gates).pause_for_immediate_gate(state, workspace_dir=tmp_workspace).pending_gate
+    state.dump_yaml(tmp_workspace / "state.yaml")
+    runner = CompletePipelineRunner(
+        workspace=tmp_workspace,
+        state_machine=StateMachine(config, gates),
+        llm_client=_hello_llm(),
+        tool_registry=_registry(),
+        human_interface=_UnavailableGateHuman(),
+    )
+
+    exit_code = await runner.run(project_id="demo-project", resume=True)
+
+    assert exit_code == 130
+    state_after = StateYaml.load_yaml(tmp_workspace / "state.yaml")
+    assert state_after.status == "PAUSED"
+    assert "stdin closed" in (state_after.last_error or "")
+
+
 def test_cli_run_task_command_dispatches(monkeypatch, tmp_path: Path):
     workspace = tmp_path / "workspace"
     observed: dict[str, object] = {}
@@ -199,6 +267,33 @@ def test_cli_run_task_command_dispatches(monkeypatch, tmp_path: Path):
     assert observed["task_id"] == "HELLO"
     assert observed["from_workspace"] is None
     assert observed["profile"] == "audit"
+
+
+def test_cli_run_task_plain_t7_reports_retired(monkeypatch, tmp_path: Path, capsys):
+    workspace = tmp_path / "workspace"
+
+    async def fake_prepare_runtime(args, workspace_dir):
+        return PreparedRuntime(
+            skill_roots=[],
+            registry=ToolRegistry(),
+            llm_client=object(),
+        )
+
+    monkeypatch.setattr("researchos.cli.install_signal_handlers", lambda: None)
+    monkeypatch.setattr("researchos.cli._prepare_runtime", fake_prepare_runtime)
+
+    exit_code = main(
+        [
+            "--no-banner",
+            "--workspace",
+            str(workspace),
+            "run-task",
+            "T7",
+        ]
+    )
+
+    assert exit_code == 2
+    assert "retired" in capsys.readouterr().out
 
 
 def test_cli_validate_repairs_t8_section_plan_state(tmp_path: Path):

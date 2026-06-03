@@ -155,7 +155,7 @@
 {% elif mode == "full" %}
 ## T7 Full 模式核心要求（legacy 兼容节点）
 
-注意：默认完整主链现在使用 `T5-HANDOFF -> T5-DRY-RUN -> T7-INGEST -> T7-AUDIT -> T7-CLAIMS` 外部实验链。只有用户显式 `run-task T7` 或旧 workspace 恢复到 T7 时，才执行本 legacy 内部完整实验模式。
+注意：默认完整主链现在使用 `T5-HANDOFF -> T5-EXECUTOR-GATE -> T5-DRY-RUN/T5-EXTERNAL-WAIT -> T7-INGEST -> T7-AUDIT -> T7-POST-NOVELTY -> T7-CLAIMS` 外部实验链。普通 `run-task T7` 也会映射到新版入口；只有显式 `run-task LEGACY-T7-FULL` 或旧 workspace 恢复到 legacy T7 时，才执行本内部完整实验模式。
 
 {% if direct_full_mode %}
 ### 0. Legacy Direct-Full 入口

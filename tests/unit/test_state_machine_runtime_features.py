@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import textwrap
 
 from researchos.orchestration.state_machine import StateMachine
@@ -197,6 +198,50 @@ def test_build_execution_context_can_explicitly_disable_unlimited_budget(tmp_wor
     assert ctx.budget_override.unlimited_budget is False
 
 
+def test_task_without_llm_profile_override_inherits_agent_params_profile(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T4
+        states:
+          T4:
+            agent: ideation
+            outputs:
+              hypotheses: ideation/hypotheses.md
+        """,
+    )
+    sm = StateMachine(config)
+    state = sm.create_initial_state("p1")
+
+    ctx = sm.build_execution_context(tmp_workspace, state)
+
+    assert ctx.llm_override.profile is None
+
+
+def test_task_llm_profile_override_is_explicit_and_visible(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T4
+        states:
+          T4:
+            agent: ideation
+            llm:
+              profile: audit_safe
+            outputs:
+              hypotheses: ideation/hypotheses.md
+        """,
+    )
+    sm = StateMachine(config)
+    state = sm.create_initial_state("p1")
+
+    ctx = sm.build_execution_context(tmp_workspace, state)
+
+    assert ctx.llm_override.profile == "audit_safe"
+
+
 def test_advance_enters_gate_and_resolve_branch_increments_iteration(tmp_workspace):
     config = tmp_workspace / "fsm.yaml"
     gates = tmp_workspace / "gates.yaml"
@@ -305,6 +350,109 @@ def test_gate_option_extra_flows_into_task_context(tmp_workspace):
 
     assert state.current_task == "T2"
     assert state.task_context["chosen_direction"] == 2
+
+
+def test_t5_executor_gate_persists_selection_and_patches_executor_files(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    gates = tmp_workspace / "gates.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T5-EXECUTOR-GATE
+        states:
+          T5-EXECUTOR-GATE:
+            agent: experimenter
+            mode: executor_gate
+            extra:
+              immediate_gate: true
+            outputs:
+              executor_selection: external_executor/executor_selection.json
+            gate: t5_executor_gate
+          T5-DRY-RUN:
+            agent: experimenter
+          T5-EXTERNAL-WAIT:
+            agent: experimenter
+        """,
+    )
+    _write_yaml(
+        gates,
+        """
+        gates:
+          t5_executor_gate:
+            options:
+              - id: mock_dry_run
+                label: Mock
+                next: T5-DRY-RUN
+              - id: claude_code_window
+                label: Claude
+                next: T5-EXTERNAL-WAIT
+        """,
+    )
+    ext = tmp_workspace / "external_executor"
+    ext.mkdir()
+    for name in ["AGENTS.md", "CLAUDE.md", "executor_prompt.md", "codex_prompt.md", "claude_code_prompt.md", "manual_instructions.md"]:
+        (ext / name).write_text("dry_run: UNSET\nmock_only: UNSET\nreal_experiment_allowed: UNSET\n", encoding="utf-8")
+
+    sm = StateMachine(config, gates)
+    state = sm.create_initial_state("p1")
+    state.pending_gate = None
+    state = sm.pause_for_immediate_gate(state, workspace_dir=tmp_workspace)
+    state = sm.resolve_pending_gate(
+        state,
+        {"option_id": "mock_dry_run", "captured": {}},
+        workspace_dir=tmp_workspace,
+    )
+
+    assert state.current_task == "T5-DRY-RUN"
+    selection = json.loads((ext / "executor_selection.json").read_text(encoding="utf-8"))
+    assert selection["selected_executor"] == "mock_dry_run"
+    assert selection["next_state"] == "T5-DRY-RUN"
+    assert "UNSET" not in (ext / "AGENTS.md").read_text(encoding="utf-8")
+
+
+def test_t5_external_wait_ready_option_requires_result_pack(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    gates = tmp_workspace / "gates.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T5-EXTERNAL-WAIT
+        states:
+          T5-EXTERNAL-WAIT:
+            agent: experimenter
+            extra:
+              immediate_gate: true
+            outputs:
+              wait_acceptance_report: external_executor/wait_acceptance_report.json
+            gate: external_wait_gate
+          T7-INGEST:
+            agent: experimenter
+        """,
+    )
+    _write_yaml(
+        gates,
+        """
+        gates:
+          external_wait_gate:
+            options:
+              - id: results_ready
+                label: Ready
+                next: T7-INGEST
+        """,
+    )
+
+    sm = StateMachine(config, gates)
+    state = sm.create_initial_state("p1")
+    state = sm.pause_for_immediate_gate(state, workspace_dir=tmp_workspace)
+    state = sm.resolve_pending_gate(
+        state,
+        {"option_id": "results_ready", "captured": {}},
+        workspace_dir=tmp_workspace,
+    )
+
+    assert state.status == "WAITING_HUMAN"
+    assert state.current_task == "T5-EXTERNAL-WAIT"
+    assert "WAITING_EXTERNAL" in (state.last_error or "")
 
 
 def test_t75_gate_can_follow_recommended_next_task_from_output(tmp_workspace):

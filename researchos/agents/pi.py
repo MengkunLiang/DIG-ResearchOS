@@ -100,17 +100,18 @@ class PIAgent(Agent):
         mode = ctx.mode or "init"
 
         if mode == "init":
-            # 不要在这里透露 user_topic，让 Agent 从第1轮对话开始询问
-            # user_topic 会在 system prompt 中提供作为背景信息
             return prepend_resume_prefix(
                 ctx,
                 (
                 f"请开始T1项目初始化流程。\n\n"
-                f"请严格按照system prompt中的三轮对话流程执行：\n"
-                f"- 第1轮：明确研究边界与约束\n"
-                f"- 第2轮：收集已有基础（论文、想法、约束）\n"
-                f"- 第2.5轮：收集外部资源\n"
-                f"- 第3轮：确认并生成所有文件\n\n"
+                f"T1 的目标是把用户的研究意图整理成 project.yaml 和 user_seeds/ 下的种子文件。"
+                f"你必须先调用 list_files/read_file 检查 user_seeds/ 中已有材料，"
+                f"然后再调用 ask_human 进行分轮访谈；不要把“检查材料”这类状态说明当成问题。\n\n"
+                f"分轮访谈要求：\n"
+                f"- 第1轮：明确研究边界与约束；ask_human 的 question 必须说明为什么需要回答，以及需要回答哪些字段。\n"
+                f"- 第2轮：收集已有基础（论文、想法、约束），并说明可直接引用已发现的 seed 文件。\n"
+                f"- 第2.5轮：收集外部资源（数据集、代码仓库、benchmark、预训练模型等）。\n"
+                f"- 第3轮：展示草案并确认，然后生成所有文件。\n\n"
                 f"重要：必须严格按照 prompt 中的 project.yaml 格式要求生成文件，"
                 f"包含所有必需字段（project_id, research_direction, keywords, constraints, created_at, seed_ensemble）。"
                 ),

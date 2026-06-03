@@ -49,9 +49,12 @@ T1
     -> pass*: T5-HANDOFF
     -> reframe/drop/unknown: T4.5-HUMAN-REVIEW -> user chooses T5-HANDOFF/T4/done
  -> T5-HANDOFF
- -> T5-DRY-RUN
+ -> T5-EXECUTOR-GATE
+    -> mock_dry_run: T5-DRY-RUN
+    -> codex_cli / claude_code_window / manual: T5-EXTERNAL-WAIT
  -> T7-INGEST
  -> T7-AUDIT
+ -> T7-POST-NOVELTY
  -> T7-CLAIMS
  -> T7.5
  -> human gate
@@ -72,6 +75,7 @@ T1
  -> T8-REVISE-1
  -> T8-REVIEW-2
  -> T8-REVISE-2
+ -> T8-PAPER-CLAIM-AUDIT
  -> T9
  -> done
 ```
@@ -86,8 +90,8 @@ T1
 - T3 论文阅读会在每篇 `paper_notes/*.md` 中记录 `## 12. Reading Coverage`；PDF 可用时必须覆盖到最后一页，只有完整页码覆盖且最终无截断时才能标记 `[FULL-TEXT]`，分块重读覆盖全篇是合法完成方式
 - T3.5 文献综合会先通过 `build_synthesis_workbench` 从 `paper_notes/` 生成 `synthesis_workbench.json`、`synthesis_outline.md` 和 `synthesis_draft.md`，再产出 `synthesis.md`，避免完全依赖单次 prompt
 - T3.6 是可选综述论文支线：T3.5 后先问“是否撰写综述论文”，选择 yes 后按 taxonomy 规划、人工确认、逐 section 写作、拼装审阅、LaTeX 编译和导出 `survey_insights.json` 的方式执行；它不是把 `synthesis.md` 转成 TeX
-- 当前主链从 `T4.5` 进入外部实验链：`T5-HANDOFF -> T5-DRY-RUN -> T7-INGEST -> T7-AUDIT -> T7-CLAIMS`。ResearchOS 负责编译协议、生成 Codex/Claude/manual prompt、摄取结果、审计证据和生成 result-to-claim；真实实验由外部执行器在隔离路径完成
-- 旧 `T5`/`T6`/`T7` 仍保留为显式 `run-task` 兼容节点，但不是默认主链
+- 当前主链从 `T4.5` 进入外部实验链：`T5-HANDOFF -> T5-EXECUTOR-GATE -> T5-DRY-RUN/T5-EXTERNAL-WAIT -> T7-INGEST -> T7-AUDIT -> T7-POST-NOVELTY -> T7-CLAIMS`。ResearchOS 负责编译协议、选择执行器、生成 Codex/Claude/manual prompt、摄取结果、审计证据、实验后 novelty 复核和生成 result-to-claim；真实实验由外部执行器在隔离路径完成
+- 旧 `T5`/`T6`/`T7` 仅保留为 legacy 兼容节点；普通 `run-task T5/T6/T7` 会报 retired，显式旧内部实验调试需使用 `LEGACY-* --allow-legacy`
 - T4.5 的非通过或不确定 verdict 不会自动拒绝，也不会自动回 T4，而是进入人工决策 gate；用户可以选择继续外部实验链、回 T4 重构或结束
 - T8 写作已经拆成 `T8-STYLE-GATE -> T8-RESOURCE -> T8-WRITE -> T8-SECTION-PLAN -> T8-SEC-* -> T8-DRAFT -> T8-SELF-CHECK -> review/revise`，会先确认 IS/CCF-A/both 风格，再生成资源索引、证据计划、图表计划、`paper_state.json` 和每章局部大纲，再用一个节点只写一个 section 的方式逐章生成正文，最后拼装审计；Limitations 已并入 Conclusion
 - CLI 人工输入现在会区分真实回答和无输入；预算扩限 gate 支持 `1/2`、`继续/停止`、`确认/stop` 等输入
@@ -109,14 +113,19 @@ ResearchOS 不靠“模型记住上次说了什么”来恢复进度，而是靠
 
 - `user_seeds/`
 - `literature/`
+- `resources/`
 - `ideation/`
-- `pilot/`
 - `novelty/`
+- `external_executor/`
 - `experiments/`
 - `evaluation/`
 - `drafts/`
 - `submission/`
 - `_runtime/`
+
+`init-workspace`、`run`、`resume` 和 `run-task` 都会幂等刷新标准目录树，并为每个 workspace 子目录写入 `_DIR_GUIDE.md`。当前 guide 是表格格式：第一张表说明目录用途、生成阶段、下游使用方、可编辑范围和校验规则；第二张表列出关键文件/子目录及用途。已有自定义 `_DIR_GUIDE.md` 不会被覆盖。
+
+新 workspace 默认只创建当前主链会用到的目录；`pilot/`、顶层 `reviews/`、workspace 内 `skills/` 属于 legacy/optional 目录，不再默认创建。旧 workspace 如果已经存在这些目录，runtime 会补一份 legacy guide，但不会删除产物。`external_executor/workdir`、`resources/repos`、PDF/figure 等可能包含外部代码或资产的子树不会被递归写入 guide。
 
 ### 2. `run/resume` 和 `run-task` 不是一回事
 
@@ -323,9 +332,11 @@ python -m researchos.cli run-task T3.6-SEC-TAXONOMY --workspace ./workspace/loca
 python -m researchos.cli run-task T3.6-ASSEMBLE --workspace ./workspace/local-test2
 python -m researchos.cli run-task T3.6-COMPILE --workspace ./workspace/local-test2
 python -m researchos.cli run-task T5-HANDOFF --workspace ./workspace/local-test2
+python -m researchos.cli run-task T5-EXECUTOR-GATE --workspace ./workspace/local-test2
 python -m researchos.cli run-task T5-DRY-RUN --workspace ./workspace/local-test2
-python -m researchos.cli run-task T7-INGEST --workspace ./workspace/local-test2
+python -m researchos.cli run-task T7-INGEST --workspace ./workspace/local-test2  # 必须已有 dry-run 或 T5-EXTERNAL-WAIT 验收结果
 python -m researchos.cli run-task T7-AUDIT --workspace ./workspace/local-test2
+python -m researchos.cli run-task T7-POST-NOVELTY --workspace ./workspace/local-test2
 python -m researchos.cli run-task T7-CLAIMS --workspace ./workspace/local-test2
 python -m researchos.cli run-task T7.5 --workspace ./workspace/local-test2
 python -m researchos.cli run-task T9 --workspace ./workspace/local-test2
@@ -337,13 +348,15 @@ python -m researchos.cli run-task T9 --workspace ./workspace/local-test2
 
 ```bash
 python -m researchos.cli run-task T5-HANDOFF --workspace ./workspace/local-test2
+python -m researchos.cli run-task T5-EXECUTOR-GATE --workspace ./workspace/local-test2
 python -m researchos.cli run-task T5-DRY-RUN --workspace ./workspace/local-test2
 python -m researchos.cli run-task T7-INGEST --workspace ./workspace/local-test2
 python -m researchos.cli run-task T7-AUDIT --workspace ./workspace/local-test2
+python -m researchos.cli run-task T7-POST-NOVELTY --workspace ./workspace/local-test2
 python -m researchos.cli run-task T7-CLAIMS --workspace ./workspace/local-test2
 ```
 
-真实实验时，外部 Codex/Claude/manual executor 读取 `external_executor/codex_prompt.md`、`claude_code_prompt.md` 或 `manual_instructions.md`，按 `expected_outputs_schema.json` 写 `external_executor/result_pack.json` 等文件。ResearchOS 从 `T7-INGEST` 继续摄取和审计。
+真实实验时，`T5-EXECUTOR-GATE` 选择 `codex_cli` / `claude_code_window` / `manual` 后会进入 `T5-EXTERNAL-WAIT` 并暂停。外部 Codex/Claude/manual executor 读取 `external_executor/codex_prompt.md`、`claude_code_prompt.md` 或 `manual_instructions.md`，按 `expected_outputs_schema.json` 写 `external_executor/result_pack.json`、`executor_status.json`、`run_manifest.json` 等文件；然后执行 `researchos resume --workspace ...`，验收通过后才进入 `T7-INGEST`。
 
 也可以从另一个 workspace 复制上游产物：
 
@@ -365,7 +378,7 @@ python -m researchos.cli run-task T8-RESOURCE \
 ```bash
 python -m researchos.cli status --workspace ./workspace/local-test2
 python -m researchos.cli trace T7_single_xxxxxxxx --workspace ./workspace/local-test2
-python -m researchos.cli validate --workspace ./workspace/local-test2 --task T7
+python -m researchos.cli validate --workspace ./workspace/local-test2 --task T7-AUDIT
 ```
 
 ## 测试方式
@@ -478,7 +491,7 @@ ResearchOS 可以加载 MCP server 配置，并把 MCP tool 暴露给 agent。
 - T3.6 会复用 `drafts/survey/survey_plan.json`、`survey_state.json`、`section_outlines/`、`sections/*.tex`、`survey_audit.json` 和 `survey_compile_report.json`；中断后会按 section 继续，不需要重写整个 survey
 - T4.5 已有合格 `novelty_audit.md` 和 `_mechanism_tuples/` 时会执行 resume prefinalize，跳过不必要的 LLM 续跑；`collision_cases.md` 仍只在 High/Medium Overlap 时条件要求
 - 外部实验链会基于已有 `external_executor/`、`experiments/` 和 `drafts/result_to_claim.json` / `drafts/experiment_evidence_pack.json` 重建 resume state
-- legacy `T5` / `T7` 显式 run-task 时才会基于已有内部实验代码和结果目录重建 resume state
+- legacy `T5` / `T7` 只有通过 `LEGACY-T5-PILOT` / `LEGACY-T7-FULL --allow-legacy` 显式调试时，才会基于已有内部实验代码和结果目录重建 resume state
 - T7.5 / T8 / T9 会优先复用现有产物，而不是假装它们不存在
 - 如果上次进程异常退出导致 `state.yaml` 停在 `RUNNING`，`resume` 会自动把最近 run
   标记为 `INTERRUPTED` 并转为 `PAUSED` 后继续
@@ -497,6 +510,7 @@ ResearchOS 可以加载 MCP server 配置，并把 MCP tool 暴露给 agent。
 - 只有 `run` / `resume` 才会完整体现这些 gate
 - `run-task` 只能单独执行某个阶段，不会继续推进完整状态机
 - 如果 `ask_human` 在非交互环境中拿不到输入，runtime 会暂停任务并写入 `state.yaml`，不会把空回答当作用户确认继续执行
+- 如果 Agent 文本里明确要求“请选择/请确认/请提供”等人工决策但忘记调用 `ask_human`，runtime 会自动桥接成 `ask_human` 并在问题开头解释原因；普通状态说明（例如“我来检查已有材料”）不会触发输入框
 - 预算扩限 gate 支持数字序号，也支持 `继续`、`确认`、`停止`、`stop` 等常用输入
 - `finish_task` 后输出校验多次失败会暂停为可恢复状态，并保留最后一次校验错误；后续可用 `resume` 继续定向修复，而不是直接进入不可恢复 `FAILED`
 

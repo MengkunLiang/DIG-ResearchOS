@@ -51,12 +51,14 @@ class CLIHumanInterface(HumanInterface):
         print(question)
         if suggestions:
             print(json.dumps(suggestions, indent=2, ensure_ascii=False))
-        print("请输入回答（输入完毕后按 Ctrl+D 提交）:")
+        print("请输入回答（单行直接回车；多行请在最后输入单独一行 END，或按 Ctrl+D 提交）:")
 
         lines: list[str] = []
         try:
             while True:
                 line = input("> ")
+                if line.strip() == "END":
+                    break
                 lines.append(line)
         except EOFError:
             pass  # Ctrl+D 正常提交
@@ -93,24 +95,50 @@ class CLIHumanInterface(HumanInterface):
             try:
                 raw_answer = input("请选择: ").strip()
             except EOFError:
-                # 非交互环境触发 gate 时，默认选择 stop，避免运行时异常崩溃。
-                raw_answer = ""
+                raise HumanInputUnavailable(f"Gate {gate_id} 需要用户选择，但当前输入不可用。") from None
             answer = self._parse_option_index(raw_answer, options)
             if answer is None:
                 if not raw_answer:
-                    selected = next(
-                        (option for option in options if (option.get("id") or option.get("key")) == "stop"),
-                        options[-1],
-                    )
+                    default_id = self._default_option_id(gate_id)
+                    if default_id:
+                        selected = next(
+                            (option for option in options if (option.get("id") or option.get("key")) == default_id),
+                            None,
+                        )
+                    if selected is None:
+                        print(f"请输入 1-{len(options)}，或输入选项别名。")
+                        continue
                     break
                 print(f"无效选择: {raw_answer!r}。请输入 1-{len(options)}。")
                 continue
             selected = options[answer]
         captured: dict[str, str] = {}
         for field_name in selected.get("collect_input", []):
-            captured[field_name] = input(f"{field_name}: ").strip()
+            try:
+                captured[field_name] = input(f"{field_name}: ").strip()
+            except EOFError as exc:
+                raise HumanInputUnavailable(f"Gate {gate_id} 需要输入 {field_name}，但当前输入不可用。") from exc
         option_id = selected.get("id") or selected.get("key")
+        if gate_id == "t5_executor_gate" and option_id == "codex_cli":
+            print(
+                "codex_cli 将允许在 external_executor/workdir 内运行真实实验，"
+                "可能消耗较多算力/时间。"
+            )
+            try:
+                confirm = input("确认允许真实实验？输入 yes 继续，其它任意输入降级为 Claude Code 窗口: ").strip()
+            except EOFError as exc:
+                raise HumanInputUnavailable("codex_cli 真实执行需要二次确认，但当前输入不可用。") from exc
+            if confirm.lower() != "yes":
+                option_id = "claude_code_window"
+                captured["downgraded_from"] = "codex_cli"
+                captured["downgrade_reason"] = "codex_cli confirmation was not yes"
         return {"option_id": option_id, "captured": captured}
+
+    @staticmethod
+    def _default_option_id(gate_id: str) -> str | None:
+        if gate_id == "t5_executor_gate":
+            return "mock_dry_run"
+        return None
 
     @staticmethod
     def _parse_option_index(raw_answer: str, options: list[dict] | int) -> int | None:

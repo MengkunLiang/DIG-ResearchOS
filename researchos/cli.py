@@ -594,16 +594,21 @@ async def run_task_command(args: argparse.Namespace) -> int:
     )
     from_workspace = Path(args.from_workspace).resolve() if args.from_workspace else None
     try:
-        runner = SingleTaskRunner(
-            workspace=workspace_dir,
-            task_id=args.task_id.strip(),
-            llm_client=prepared.llm_client,
-            tool_registry=prepared.registry,
-            from_workspace=from_workspace,
-            override_profile=args.profile,
-            human_interface=_build_human_interface(runtime_settings),
-            runtime_settings=runtime_settings,
-        )
+        try:
+            runner = SingleTaskRunner(
+                workspace=workspace_dir,
+                task_id=args.task_id.strip(),
+                llm_client=prepared.llm_client,
+                tool_registry=prepared.registry,
+                from_workspace=from_workspace,
+                override_profile=args.profile,
+                human_interface=_build_human_interface(runtime_settings),
+                runtime_settings=runtime_settings,
+                allow_legacy=bool(getattr(args, "allow_legacy", False)),
+            )
+        except ValueError as exc:
+            print(str(exc))
+            return 2
         return await runner.run()
     finally:
         await prepared.aclose()
@@ -982,6 +987,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--profile",
         default=None,
         help="覆盖 LLM profile，例如 cheap_fast / deep_reasoning / audit",
+    )
+    run_task_parser.add_argument(
+        "--allow-legacy",
+        action="store_true",
+        help="允许显式运行 LEGACY-T5-PILOT / LEGACY-T6-NOVELTY / LEGACY-T7-FULL 旧内部实验节点",
     )
     run_task_parser.add_argument("--startup-selftest", action="store_true")
     run_task_parser.add_argument("--skip-startup-selftest", action="store_true")

@@ -327,6 +327,18 @@ class WriterAgent(Agent):
                 f"drafts/revision_response_round_{round_num}.md。"
                 ),
             )
+        elif phase == "paper_claim_audit":
+            return prepend_resume_prefix(
+                ctx,
+                (
+                "请执行 T8-PAPER-CLAIM-AUDIT：只做进入 T9 前的最终 claim/evidence 审计。\n\n"
+                "调用 audit_paper_claims(paper_path=\"drafts/paper.tex\", "
+                "evidence_pack_path=\"drafts/experiment_evidence_pack.json\", "
+                "result_to_claim_path=\"drafts/result_to_claim.json\", "
+                "output_path=\"drafts/paper_claim_audit.md\")，生成 drafts/paper_claim_audit.md/json。"
+                "不要重写论文正文；若审计 FAIL，状态机会回到 T8-REVISE-2。"
+                ),
+            )
         elif phase == "final":
             return prepend_resume_prefix(
                 ctx,
@@ -351,6 +363,11 @@ class WriterAgent(Agent):
                 return False, err
             if style.get("venue_style") not in {"is", "ccf_a", "both"}:
                 return False, "writing_style.json venue_style 必须是 is/ccf_a/both"
+            interaction_id = str(style.get("human_interaction_id") or "").strip()
+            if not interaction_id:
+                return False, "writing_style.json 必须包含 ask_human 返回的 human_interaction_id"
+            if not _human_interaction_exists(ws, interaction_id):
+                return False, "writing_style.json human_interaction_id 未在 _runtime/human_interactions.jsonl 中找到"
             return True, None
 
         if phase == "resource_index":
@@ -399,6 +416,9 @@ class WriterAgent(Agent):
 
         elif phase == "section_drafts":
             return _validate_paper_state(ws)
+
+        elif phase == "paper_claim_audit":
+            return _validate_paper_claim_audit_if_needed(ws)
 
         elif phase in ("draft", "revise", "final"):
             if phase in {"draft", "revise"}:
@@ -816,6 +836,14 @@ def _validate_paper_claim_audit_if_needed(ws: Path) -> tuple[bool, str | None]:
         return False, "paper_claim_audit.json 缺少 summary"
     if "fail_count" not in summary or "warn_count" not in summary:
         return False, "paper_claim_audit.json summary 必须包含 fail_count/warn_count"
+    if int(summary.get("fail_count") or 0) > 0:
+        return False, "paper_claim_audit.json 存在 FAIL，必须先回 T8-REVISE-2 修订"
+    unsupported = audit.get("unsupported_strong_claims")
+    if unsupported:
+        return False, "paper_claim_audit.json 存在 unsupported_strong_claims，必须先修订"
+    forbidden = audit.get("forbidden_wording_violations")
+    if forbidden:
+        return False, "paper_claim_audit.json 存在 forbidden_wording_violations，必须先修订"
     if not isinstance(audit.get("issues"), list):
         return False, "paper_claim_audit.json issues 必须是列表"
     return True, None
@@ -831,6 +859,24 @@ def _parse_writing_style(text: str) -> dict[str, str]:
     if not isinstance(data, dict):
         return {}
     return {str(key): str(value) for key, value in data.items() if value is not None}
+
+
+def _human_interaction_exists(ws: Path, interaction_id: str) -> bool:
+    if not interaction_id:
+        return False
+    log_path = ws / "_runtime" / "human_interactions.jsonl"
+    if not log_path.exists():
+        return False
+    for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except Exception:
+            continue
+        if str(record.get("interaction_id") or "") == interaction_id:
+            return True
+    return False
 
 
 def _normalize_style_variant_text(text: str) -> str:

@@ -269,6 +269,15 @@ class AssembleManuscriptParams(BaseModel):
     )
 
 
+class PrepareSubmissionBundleParams(BaseModel):
+    paper_path: str = Field(default="drafts/paper.tex", description="Source manuscript LaTeX path.")
+    bib_path: str = Field(default="literature/related_work.bib", description="Source bibliography path.")
+    bundle_dir: str = Field(default="submission/bundle", description="Submission bundle directory.")
+    main_filename: str = Field(default="main.tex", description="Main TeX filename inside the bundle.")
+    references_filename: str = Field(default="references.bib", description="Bibliography filename inside the bundle.")
+    copy_figures: bool = Field(default=True, description="Copy drafts/figures and figures into bundle/figures when present.")
+
+
 class AuditManuscriptClaimsParams(BaseModel):
     paper_path: str = Field(default="drafts/paper.tex", description="Paper draft path.")
     output_path: str = Field(default="drafts/manuscript_audit.md", description="Audit report path.")
@@ -775,6 +784,62 @@ class AssembleManuscriptTool(Tool):
             ok=True,
             content=f"Assembled manuscript to {params.output_path} ({len(assembled)} chars).",
             data={"path": params.output_path, "chars": len(assembled), "style_variants": variant_outputs},
+        )
+
+
+class PrepareSubmissionBundleTool(Tool):
+    name = "prepare_submission_bundle"
+    description = (
+        "Mechanically prepare submission/bundle before T9 compilation: copy drafts/paper.tex to "
+        "main.tex, copy literature/related_work.bib to references.bib, rewrite bibliography commands "
+        "to use references, and copy figure assets. It does not write scientific prose."
+    )
+    parameters_schema = PrepareSubmissionBundleParams
+    timeout_seconds = 30.0
+
+    def __init__(self, policy: WorkspaceAccessPolicy):
+        self.policy = policy
+
+    async def execute(self, **kwargs: Any) -> ToolResult:
+        params = PrepareSubmissionBundleParams(**kwargs)
+        try:
+            paper_path = self.policy.resolve_read(params.paper_path)
+            bib_path = self.policy.resolve_read(params.bib_path)
+            bundle_marker = self.policy.resolve_write(f"{params.bundle_dir.rstrip('/')}/.bundle_marker")
+            bundle_dir = bundle_marker.parent
+            main_path = self.policy.resolve_write(f"{params.bundle_dir.rstrip('/')}/{params.main_filename}")
+            references_path = self.policy.resolve_write(
+                f"{params.bundle_dir.rstrip('/')}/{params.references_filename}"
+            )
+            tex = paper_path.read_text(encoding="utf-8")
+            tex = rewrite_bibliography_to_references(tex, Path(params.references_filename).stem)
+            bundle_dir.mkdir(parents=True, exist_ok=True)
+            main_path.write_text(tex, encoding="utf-8")
+            references_path.write_text(bib_path.read_text(encoding="utf-8"), encoding="utf-8")
+            copied_figures = _copy_submission_figures(
+                self.policy,
+                bundle_dir=params.bundle_dir.rstrip("/"),
+                enabled=params.copy_figures,
+            )
+        except ToolAccessDenied as exc:
+            return ToolResult(ok=False, content=str(exc), error="access_denied")
+        except FileNotFoundError as exc:
+            return ToolResult(ok=False, content=f"missing submission input: {exc}", error="missing_input")
+        except Exception as exc:
+            return ToolResult(ok=False, content=f"submission bundle preparation failed: {exc}", error="bundle_failed")
+
+        return ToolResult(
+            ok=True,
+            content=(
+                f"Prepared submission bundle at {params.bundle_dir}: "
+                f"{params.main_filename}, {params.references_filename}, {len(copied_figures)} figure files."
+            ),
+            data={
+                "bundle_dir": params.bundle_dir,
+                "main_tex": f"{params.bundle_dir.rstrip('/')}/{params.main_filename}",
+                "references_bib": f"{params.bundle_dir.rstrip('/')}/{params.references_filename}",
+                "copied_figures": copied_figures,
+            },
         )
 
 
@@ -3032,3 +3097,49 @@ def _latex_section_title(name: str) -> str:
 
 def _escape_latex_braces(text: str) -> str:
     return text.replace("{", "\\{").replace("}", "\\}")
+
+
+def rewrite_bibliography_to_references(tex: str, bib_stem: str = "references") -> str:
+    """Rewrite LaTeX bibliography commands to the bundle-local bibliography basename."""
+
+    target = bib_stem.strip() or "references"
+    if re.search(r"\\bibliography\{[^}]*\}", tex):
+        return re.sub(r"\\bibliography\{[^}]*\}", f"\\\\bibliography{{{target}}}", tex)
+    insertion = f"\n\\bibliographystyle{{plain}}\n\\bibliography{{{target}}}\n"
+    end_match = re.search(r"\\end\{document\}", tex)
+    if end_match:
+        return tex[: end_match.start()] + insertion + tex[end_match.start() :]
+    return tex.rstrip() + insertion
+
+
+def extract_bibliography_stems(tex: str) -> list[str]:
+    stems: list[str] = []
+    for chunk in re.findall(r"\\bibliography\{([^}]+)\}", tex):
+        for item in chunk.split(","):
+            stem = item.strip()
+            if stem:
+                stems.append(Path(stem).name)
+    return list(dict.fromkeys(stems))
+
+
+def _copy_submission_figures(
+    policy: WorkspaceAccessPolicy,
+    *,
+    bundle_dir: str,
+    enabled: bool,
+) -> list[str]:
+    if not enabled:
+        return []
+    copied: list[str] = []
+    for rel_dir in ("drafts/figures", "figures"):
+        src_dir = policy.workspace_dir / rel_dir
+        if not src_dir.exists() or not src_dir.is_dir():
+            continue
+        for src in sorted(path for path in src_dir.rglob("*") if path.is_file()):
+            rel_under_figures = src.relative_to(src_dir).as_posix()
+            dst_rel = f"{bundle_dir}/figures/{rel_under_figures}"
+            dst = policy.resolve_write(dst_rel)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes(src.read_bytes())
+            copied.append(dst_rel)
+    return copied

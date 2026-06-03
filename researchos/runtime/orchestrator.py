@@ -30,6 +30,9 @@ from .t3_recovery import prepare_t3_resume_artifacts
 from .task_recovery import prepare_generic_resume_artifacts
 from .trace import NullTraceWriter, TraceWriter
 from ..tools.base import Tool, ToolResult
+from ..tools.workspace_policy import WorkspaceAccessPolicy
+from ..tools.external_experiment import validate_external_executor_ready
+from ..tools.external_experiment import AuditPaperClaimsTool
 from ..tools.human_gate import HumanInputUnavailable, HumanInterface
 from ..tools.paper_save_tools import SavePapersRawTool
 from ..tools.registry import ToolBuildContext, ToolRegistry
@@ -210,6 +213,8 @@ class AgentRunner:
             policy=policy,
             human=self.human,
             skill_dir=Path(ctx.extra["skill_dir"]) if "skill_dir" in ctx.extra else None,
+            task_id=ctx.task_id,
+            run_id=ctx.run_id,
         )
         tool_map = self.tool_registry.build(eff.tool_names, build_ctx)
         tool_schemas = self.tool_registry.to_openai_schemas(tool_map)
@@ -256,8 +261,21 @@ class AgentRunner:
             t45_pre_finalized = False
             if not (t2_pre_finalized or t3_pre_finalized or t4_pre_finalized):
                 t45_pre_finalized = await self._maybe_finalize_t45_before_llm(ctx)
-            t8_section_plan_pre_finalized = False
+            external_wait_pre_finalized = False
             if not (t2_pre_finalized or t3_pre_finalized or t4_pre_finalized or t45_pre_finalized):
+                external_wait_pre_finalized = await self._maybe_finalize_external_wait_before_llm(ctx)
+            paper_claim_audit_pre_finalized = False
+            if not (t2_pre_finalized or t3_pre_finalized or t4_pre_finalized or t45_pre_finalized or external_wait_pre_finalized):
+                paper_claim_audit_pre_finalized = await self._maybe_finalize_paper_claim_audit_before_llm(ctx, policy)
+            t8_section_plan_pre_finalized = False
+            if not (
+                t2_pre_finalized
+                or t3_pre_finalized
+                or t4_pre_finalized
+                or t45_pre_finalized
+                or external_wait_pre_finalized
+                or paper_claim_audit_pre_finalized
+            ):
                 t8_section_plan_pre_finalized = await self._maybe_finalize_t8_section_plan_before_llm(
                     ctx,
                     policy,
@@ -268,6 +286,8 @@ class AgentRunner:
                 or t3_pre_finalized
                 or t4_pre_finalized
                 or t45_pre_finalized
+                or external_wait_pre_finalized
+                or paper_claim_audit_pre_finalized
                 or t8_section_plan_pre_finalized
             ):
                 t8_manuscript_pre_finalized = await self._maybe_finalize_t8_manuscript_before_llm(ctx)
@@ -276,6 +296,8 @@ class AgentRunner:
                 or t3_pre_finalized
                 or t4_pre_finalized
                 or t45_pre_finalized
+                or external_wait_pre_finalized
+                or paper_claim_audit_pre_finalized
                 or t8_section_plan_pre_finalized
                 or t8_manuscript_pre_finalized
             )
@@ -376,21 +398,53 @@ class AgentRunner:
                 if assistant_msg.content and assistant_msg.content.strip():
                     print(f"\n[Agent 输出]\n{assistant_msg.content}\n", flush=True)
 
+                # 如果模型在文本里向用户提问/要求选择，但没有显式调用 ask_human，
+                # runtime 必须先等待人类输入。即便同一轮还混有 read/write 等工具，
+                # 也不能继续执行那些工具，否则会复现“模型问了但没有输入框仍继续跑”的问题。
+                if self._looks_like_human_interaction_request(assistant_msg) and not any(
+                    tc.name == "ask_human" for tc in assistant_msg.tool_calls
+                ):
+                    if "ask_human" not in tool_map:
+                        stop_reason = AgentResult.STOP_INTERRUPTED
+                        error_msg = (
+                            "Agent asked for human input but ask_human is not available in this task. "
+                            "Paused so the user can answer or the task tool policy can be fixed."
+                        )
+                        break
+                    tool_call = ToolCall.create(
+                        "ask_human",
+                        {
+                            "question": self._build_autobridged_human_question(
+                                assistant_msg.content or "请补充必要的人类输入。"
+                            ),
+                            "suggestions": [],
+                        },
+                    )
+                    assistant_msg.tool_calls = [tool_call]
+                    bridge_note = Message.user(
+                        "[Runtime] 检测到 Agent 向用户提问/要求选择但未调用 ask_human，"
+                        "已自动转成 ask_human，并阻止本轮其它工具继续执行；如果输入不可用将暂停等待 resume。",
+                        step=budget.steps,
+                    )
+                    messages.append(bridge_note)
+                    trace.write_message(bridge_note)
+
                 # 如果模型只说话不调用工具，runtime 会反复提醒它：
                 # 要么继续推进，要么明确 finish_task。
                 if not assistant_msg.tool_calls:
-                    nudge_count += 1
-                    if nudge_count > self.runtime_settings.agent_behavior.max_nudge_finish:
-                        stop_reason = AgentResult.STOP_ERROR
-                        error_msg = "agent 多次只输出文本但未调用工具"
-                        break
-                    nudge = Message.user(
-                        "你没有调用任何工具。如果任务已完成，请调用 finish_task；否则请继续调用适当工具。",
-                        step=budget.steps,
-                    )
-                    messages.append(nudge)
-                    trace.write_message(nudge)
-                    continue
+                    if not self._looks_like_human_interaction_request(assistant_msg):
+                        nudge_count += 1
+                        if nudge_count > self.runtime_settings.agent_behavior.max_nudge_finish:
+                            stop_reason = AgentResult.STOP_ERROR
+                            error_msg = "agent 多次只输出文本但未调用工具"
+                            break
+                        nudge = Message.user(
+                            "你没有调用任何工具。如果任务已完成，请调用 finish_task；否则请继续调用适当工具。",
+                            step=budget.steps,
+                        )
+                        messages.append(nudge)
+                        trace.write_message(nudge)
+                        continue
 
                 nudge_count = 0
                 # 输出工具调用信息
@@ -599,9 +653,12 @@ class AgentRunner:
             "T4": "生成候选研究假设、实验计划和风险分析",
             "T4.5": "做新颖性预审和 mechanism tuple 审计",
             "T5-HANDOFF": "编译外部实验协议、执行器选择和 handoff prompt",
+            "T5-EXECUTOR-GATE": "由用户选择 mock、Claude Code、Codex CLI 或人工外部执行器",
+            "T5-EXTERNAL-WAIT": "等待外部执行器写回 result_pack 并在 resume 时校验",
             "T5-DRY-RUN": "跑通 mock 外部执行器文件协议，不执行真实实验",
             "T7-INGEST": "摄取外部 result pack 并规范化结果证据",
             "T7-AUDIT": "审计实验 provenance、hash、mock 标记和指标来源",
+            "T7-POST-NOVELTY": "基于实现/结果状态复核 novelty 和 claim 降级边界",
             "T7-CLAIMS": "生成 result-to-claim 和写作 evidence pack",
             "T5": "legacy pilot 实验兼容节点",
             "T6": "legacy pilot 后新颖性复核兼容节点",
@@ -616,6 +673,7 @@ class AgentRunner:
             "T8-REVIEW-2": "第二轮逐章节审稿",
             "T8-REVISE-1": "按第一轮 patch list 修订论文",
             "T8-REVISE-2": "按第二轮 patch list 修订论文",
+            "T8-PAPER-CLAIM-AUDIT": "进入 T9 前最终审计 paper claim 与 evidence pack 一致性",
             "T9": "构建投稿包、编译 PDF 并修复 TeX 问题",
         }
         if ctx.task_id.startswith("T8-SEC-"):
@@ -863,6 +921,75 @@ class AgentRunner:
             "t45_resume_prefinalize",
             {"outputs": outputs},
             action_type="t45_resume_prefinalize",
+        )
+        return True
+
+    async def _maybe_finalize_external_wait_before_llm(self, ctx: ExecutionContext) -> bool:
+        """T5-EXTERNAL-WAIT is a deterministic external handoff wait boundary."""
+
+        if ctx.task_id != "T5-EXTERNAL-WAIT":
+            return False
+
+        report = validate_external_executor_ready(
+            ctx.workspace_dir,
+            "external_executor/result_pack.json",
+            "external_executor/executor_status.json",
+        )
+        if not report.get("ok"):
+            raise RecoverableRuntimePause(str(report.get("message") or "WAITING_EXTERNAL: result pack not ready"))
+
+        output_path = ctx.workspace_dir / "external_executor" / "wait_acceptance_report.json"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print("[Agent] T5-EXTERNAL-WAIT 检测到外部 result_pack 已就绪，跳过 LLM 并进入 T7-INGEST", flush=True)
+        self._record_runtime_completion(
+            ctx,
+            "external_wait_prefinalize",
+            {"outputs": ["external_executor/wait_acceptance_report.json"]},
+            action_type="external_wait_prefinalize",
+        )
+        return True
+
+    async def _maybe_finalize_paper_claim_audit_before_llm(
+        self,
+        ctx: ExecutionContext,
+        policy: WorkspaceAccessPolicy,
+    ) -> bool:
+        """Run the final T8 paper-claim audit as a deterministic tool boundary."""
+
+        if ctx.task_id != "T8-PAPER-CLAIM-AUDIT":
+            return False
+
+        required = [
+            ctx.workspace_dir / "drafts" / "paper.tex",
+            ctx.workspace_dir / "drafts" / "experiment_evidence_pack.json",
+            ctx.workspace_dir / "drafts" / "result_to_claim.json",
+        ]
+        if any(not path.exists() or path.stat().st_size <= 0 for path in required):
+            return False
+
+        tool = AuditPaperClaimsTool(policy)
+        result = await tool.execute(
+            paper_path="drafts/paper.tex",
+            evidence_pack_path="drafts/experiment_evidence_pack.json",
+            result_to_claim_path="drafts/result_to_claim.json",
+            output_path="drafts/paper_claim_audit.md",
+        )
+        if not result.ok:
+            self.log.warning("paper_claim_audit_prefinalize_failed", error=result.error, content=result.content)
+            return False
+
+        ok, err = self.agent.validate_outputs(ctx)
+        if not ok:
+            self.log.warning("paper_claim_audit_prefinalize_validation_failed", error=err)
+            return False
+
+        print("[Agent] T8-PAPER-CLAIM-AUDIT 已用确定性工具完成，跳过 LLM", flush=True)
+        self._record_runtime_completion(
+            ctx,
+            "paper_claim_audit_prefinalize",
+            {"outputs": ["drafts/paper_claim_audit.md", "drafts/paper_claim_audit.json"]},
+            action_type="paper_claim_audit_prefinalize",
         )
         return True
 
@@ -1365,6 +1492,91 @@ class AgentRunner:
             self._remember_tool_failure(failure_cache_key, tool_msg, tool_failure_cache)
         self._record_tool_side_effect_metadata(ctx, tc.name, model_dump(parsed), result)
         return tool_msg
+
+    @staticmethod
+    def _looks_like_human_interaction_request(message: Message) -> bool:
+        """Detect text-only assistant turns that are actually waiting on a user.
+
+        This is a runtime safety net. Prompts should still require explicit
+        ask_human/gate usage, but if a model prints a question or choice menu
+        without a tool call, continuing to the next LLM turn would silently
+        skip the user interaction.
+        """
+
+        content = (message.content or "").strip()
+        if not content:
+            return False
+        normalized = content.lower()
+
+        # Plain status narration such as "我来检查已有材料" must not open an
+        # input box. This safety net only catches explicit user-facing
+        # requests to choose, confirm, answer, or provide missing information.
+        strong_markers = (
+            "请选择",
+            "请输入",
+            "请回答",
+            "请确认",
+            "请你确认",
+            "请补充",
+            "请提供",
+            "请明确",
+            "等待用户",
+            "需要用户",
+            "需要你回答",
+            "需要你确认",
+            "需要你选择",
+            "请告诉我",
+            "告诉我你的",
+            "please choose",
+            "please answer",
+            "please confirm",
+            "please provide",
+            "provide your",
+            "tell me your",
+            "do you want me to",
+            "waiting for user",
+        )
+        if any(marker in normalized for marker in strong_markers):
+            return True
+
+        question_lines = [
+            line.strip()
+            for line in content.splitlines()
+            if line.strip().endswith(("?", "？"))
+        ]
+        if question_lines:
+            explicit_question_prefixes = (
+                "请",
+                "你是否",
+                "是否",
+                "要不要",
+                "能否",
+                "可否",
+                "do you",
+                "would you",
+                "which",
+                "what would you like",
+            )
+            for line in question_lines:
+                lowered = line.lower()
+                if lowered.startswith(explicit_question_prefixes):
+                    return True
+
+        return bool(
+            re.search(r"(?m)^\s*(?:\[\d+\]|\d+[.)、])\s+.+", content)
+            and re.search(r"(?i)(请选择|please choose|选择|option|继续|停止|confirm|确认)", content)
+        )
+
+    @staticmethod
+    def _build_autobridged_human_question(content: str) -> str:
+        """Explain why runtime is asking before forwarding model text."""
+
+        return (
+            "Runtime 检测到 Agent 正在请求人工选择/确认，但这一轮没有显式调用 ask_human。"
+            "为避免跳过你的决策，ResearchOS 已暂停在这里。\n\n"
+            "请根据下面 Agent 原始请求作答；如果这是误触发，可以回答“继续”，runtime 会把回答记录为人工输入。\n\n"
+            f"--- Agent 原始请求 ---\n{content}"
+        )
 
     @staticmethod
     def _record_tool_side_effect_metadata(

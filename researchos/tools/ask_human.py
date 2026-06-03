@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timezone
+from pathlib import Path
+from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -41,10 +44,21 @@ class AskHumanTool(Tool):
     parameters_schema = AskHumanParams
     timeout_seconds = 3600.0
 
-    def __init__(self, human: HumanInterface):
+    def __init__(
+        self,
+        human: HumanInterface,
+        *,
+        workspace_dir: Path | None = None,
+        task_id: str | None = None,
+        run_id: str | None = None,
+    ):
         self.human = human
+        self.workspace_dir = workspace_dir
+        self.task_id = task_id
+        self.run_id = run_id
 
     async def execute(self, **kwargs) -> ToolResult:
+        interaction_id = f"human_{uuid4().hex[:12]}"
         try:
             answer = await self.human.ask_clarification(
                 question=kwargs["question"],
@@ -54,18 +68,63 @@ class AskHumanTool(Tool):
             return ToolResult(
                 ok=False,
                 content=f"Human input unavailable: {exc}",
-                data={"question": kwargs["question"], "answer": "", "input_unavailable": True},
+                data={
+                    "interaction_id": interaction_id,
+                    "question": kwargs["question"],
+                    "answer": "",
+                    "input_unavailable": True,
+                },
                 error="human_input_unavailable",
             )
         if not answer.strip():
             return ToolResult(
                 ok=False,
                 content="Human input unavailable: empty answer",
-                data={"question": kwargs["question"], "answer": "", "input_unavailable": True},
+                data={
+                    "interaction_id": interaction_id,
+                    "question": kwargs["question"],
+                    "answer": "",
+                    "input_unavailable": True,
+                },
                 error="human_input_unavailable",
             )
+        self._record_interaction(
+            interaction_id=interaction_id,
+            question=kwargs["question"],
+            suggestions=kwargs.get("suggestions") or [],
+            answer=answer,
+        )
         return ToolResult(
             ok=True,
-            content=f"User answered: {answer}",
-            data={"question": kwargs["question"], "answer": answer},
+            content=(
+                f"User answered: {answer}\n"
+                f"[ResearchOS human_interaction_id: {interaction_id}]"
+            ),
+            data={"interaction_id": interaction_id, "question": kwargs["question"], "answer": answer},
         )
+
+    def _record_interaction(
+        self,
+        *,
+        interaction_id: str,
+        question: str,
+        suggestions: list[str],
+        answer: str,
+    ) -> None:
+        if self.workspace_dir is None:
+            return
+        path = self.workspace_dir / "_runtime" / "human_interactions.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "version": "1.0",
+            "semantics": "researchos_human_interaction_record",
+            "interaction_id": interaction_id,
+            "task_id": self.task_id,
+            "run_id": self.run_id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "question": question,
+            "suggestions": suggestions,
+            "answer": answer,
+        }
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")

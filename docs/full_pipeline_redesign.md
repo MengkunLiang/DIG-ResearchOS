@@ -59,5 +59,4 @@ T8-RESOURCE 把它们合并进 `manuscript_resource_index.json`、`evidence_plan
 
 ## Legacy 节点
 
-旧 `T5`、`T6`、`T7` 仍保留为显式 `run-task` 兼容入口。完整主链和 T7.5 旧推荐 `next_task: T7` 都会进入 `T5-HANDOFF`，避免 resume 误回内部实验模式。
-
+旧 `T5`、`T6`、`T7` 仍保留为 legacy 节点，但普通 `run-task T5/T6/T7` 会报 retired；需要旧内部实验调试时必须使用 `LEGACY-* --allow-legacy`。完整主链和 T7.5 旧推荐 `next_task: T7` 都会进入 `T5-HANDOFF`，避免 resume 误回内部实验模式。

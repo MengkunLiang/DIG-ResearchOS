@@ -34,9 +34,27 @@ async def test_ask_human_tool_forwards_coerced_suggestions():
 
     assert result.ok is True
     assert result.data["answer"] == "确认"
+    assert result.data["interaction_id"].startswith("human_")
+    assert "human_interaction_id" in result.content
     assert human.calls == [
         ("clarification", {"question": "请选择", "suggestions": ["确认", "修改"]})
     ]
+
+
+@pytest.mark.asyncio
+async def test_ask_human_tool_records_interaction(tmp_path):
+    human = MockHumanInterface(clarification_answer="确认")
+    tool = AskHumanTool(human, workspace_dir=tmp_path, task_id="T4", run_id="r1")
+
+    result = await tool.execute(question="请选择", suggestions=["确认"])
+
+    assert result.ok is True
+    log_path = tmp_path / "_runtime" / "human_interactions.jsonl"
+    record = __import__("json").loads(log_path.read_text(encoding="utf-8").splitlines()[0])
+    assert record["interaction_id"] == result.data["interaction_id"]
+    assert record["task_id"] == "T4"
+    assert record["run_id"] == "r1"
+    assert record["answer"] == "确认"
 
 
 @pytest.mark.asyncio
