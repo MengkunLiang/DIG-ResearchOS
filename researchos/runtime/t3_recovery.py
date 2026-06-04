@@ -10,10 +10,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import re
 from typing import Any
 
-from ..agents._common import load_jsonl, normalize_text_key
+from ..literature_identity import (
+    is_paper_note_file,
+    paper_note_match_keys,
+    record_is_covered,
+)
+from ..agents._common import load_jsonl
 from ..runtime.agent_params import get_agent_mode_params
 from ..tools.paper_enrichment import build_access_audit, build_deep_read_queue
 
@@ -53,85 +57,9 @@ def _note_keys(notes_dir: Path) -> set[str]:
         return set()
     keys: set[str] = set()
     for path in notes_dir.glob("*.md"):
-        if not (path.is_file() and path.suffix == ".md" and _is_complete_note(path)):
+        if not (is_paper_note_file(path) and _is_complete_note(path)):
             continue
-        keys.update(_note_match_keys(path))
-    return {key for key in keys if key}
-
-
-def _add_key_variants(keys: set[str], value: str) -> None:
-    """为 DOI/arXiv/文件名增加常见写法变体。"""
-
-    raw = str(value or "").strip()
-    if not raw:
-        return
-    candidates = {
-        raw,
-        raw.replace(":", "_").replace("/", "_"),
-        raw.replace("_", ":"),
-        raw.replace("_", "/"),
-    }
-    if raw.startswith("arxiv_"):
-        candidates.add("arxiv:" + raw[len("arxiv_"):])
-    if raw.lower().startswith("arxiv:"):
-        candidates.add("arxiv_" + raw.split(":", 1)[1])
-    for candidate in candidates:
-        normalized = normalize_text_key(candidate)
-        if normalized:
-            keys.add(normalized)
-
-
-def _note_match_keys(note_path: Path) -> set[str]:
-    keys: set[str] = set()
-    _add_key_variants(keys, note_path.stem)
-    try:
-        content = note_path.read_text(encoding="utf-8")
-    except OSError:
-        return keys
-
-    lines = content.splitlines()
-    for line in lines[:80]:
-        stripped = line.strip()
-        if stripped.startswith("#"):
-            _add_key_variants(keys, stripped.lstrip("#").strip())
-            continue
-        match = re.match(r"-\s+\*\*(ID|DOI/arXiv)\*\*:\s*(.+)$", stripped, flags=re.IGNORECASE)
-        if not match:
-            continue
-        value = match.group(2).strip()
-        _add_key_variants(keys, value)
-        for token in re.findall(r"(?:arxiv:\s*)?\d{4}\.\d{4,5}(?:v\d+)?|10\.\d{4,9}/[^\s,;)\]]+", value, flags=re.IGNORECASE):
-            token = token.replace(" ", "")
-            if not token.lower().startswith("arxiv:") and re.fullmatch(r"\d{4}\.\d{4,5}(?:v\d+)?", token):
-                token = f"arxiv:{token}"
-            _add_key_variants(keys, token)
-    return keys
-
-
-def _queue_item_key(item: dict[str, Any]) -> str:
-    """为 queue 记录生成用于去重/比对的 key。"""
-
-    return normalize_text_key(
-        str(item.get("normalized_id") or item.get("paper_id") or item.get("id") or "")
-    )
-
-
-def _queue_item_keys(item: dict[str, Any]) -> set[str]:
-    external_ids = item.get("externalIds") if isinstance(item.get("externalIds"), dict) else {}
-    candidates = [
-        item.get("normalized_id"),
-        item.get("paper_id"),
-        item.get("id"),
-        item.get("canonical_id"),
-        item.get("title"),
-        item.get("doi"),
-        item.get("url"),
-        external_ids.get("ArXiv"),
-        external_ids.get("DOI"),
-    ]
-    keys: set[str] = set()
-    for candidate in candidates:
-        _add_key_variants(keys, str(candidate or ""))
+        keys.update(paper_note_match_keys(path))
     return {key for key in keys if key}
 
 
@@ -155,12 +83,12 @@ def prepare_t3_resume_artifacts(workspace_dir: Path, *, refresh_reason: str | No
     valid_note_file_count = sum(
         1
         for path in notes_dir.glob("*.md")
-        if path.is_file() and _is_complete_note(path)
+        if is_paper_note_file(path) and _is_complete_note(path)
     ) if notes_dir.exists() else 0
     invalid_note_file_count = sum(
         1
         for path in notes_dir.glob("*.md")
-        if path.is_file() and not _is_complete_note(path)
+        if is_paper_note_file(path) and not _is_complete_note(path)
     ) if notes_dir.exists() else 0
 
     queue_path = literature_dir / "deep_read_queue.jsonl"
@@ -210,7 +138,7 @@ def prepare_t3_resume_artifacts(workspace_dir: Path, *, refresh_reason: str | No
     pending_records = [
         record
         for record in queue_records
-        if not (_queue_item_keys(record) or {_queue_item_key(record)}) & completed_keys
+        if not record_is_covered(record, completed_keys)
     ]
     pending_records = _re_rank_pending_queue(pending_records)
     _write_jsonl(pending_queue_path, pending_records)

@@ -232,6 +232,42 @@ def test_prepare_t3_resume_artifacts_matches_note_internal_ids_and_titles(tmp_pa
     assert meta["invalid_note_file_count"] == 0
 
 
+def test_prepare_t3_resume_artifacts_matches_seed_title_punctuation_variants(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    literature = workspace / "literature"
+    notes_dir = literature / "paper_notes"
+    notes_dir.mkdir(parents=True)
+    (notes_dir / "From Feature Interaction to Feature Generation_ A Generative Paradigm of CTR Prediction Models.md").write_text(
+        _valid_note("From Feature Interaction to Feature Generation: A Generative Paradigm of CTR Prediction Models"),
+        encoding="utf-8",
+    )
+
+    _write_jsonl(
+        literature / "deep_read_queue.jsonl",
+        [
+            {
+                "paper_id": "From Feature Interaction to Feature Generation: A Generative Paradigm of CTR Prediction Models",
+                "normalized_id": "From Feature Interaction to Feature Generation_ A Generative Paradigm of CTR Prediction Models",
+                "queue_rank": 1,
+                "title": "From Feature Interaction to Feature Generation: A Generative Paradigm of CTR Prediction Models",
+                "seed_priority": True,
+            },
+            {"paper_id": "paper2", "normalized_id": "paper2", "queue_rank": 2, "title": "Paper 2"},
+        ],
+    )
+
+    info = prepare_t3_resume_artifacts(workspace)
+
+    pending_records = [
+        json.loads(line)
+        for line in (literature / "deep_read_queue_pending.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert info["existing_note_count"] == 1
+    assert info["resume_queue_count"] == 1
+    assert pending_records[0]["paper_id"] == "paper2"
+
+
 def test_prepare_t3_resume_artifacts_keeps_incomplete_notes_pending(tmp_path: Path):
     workspace = tmp_path / "ws"
     literature = workspace / "literature"

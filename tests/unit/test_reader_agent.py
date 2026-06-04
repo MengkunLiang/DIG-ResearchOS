@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from researchos.agents.reader import ReaderAgent, _validate_note_structure
+from researchos.literature_identity import paper_note_match_keys
 from researchos.runtime.agent import ExecutionContext
 
 
@@ -360,6 +361,35 @@ def test_validate_note_structure_allows_non_numeric_dataset_names_without_eviden
     ok, err = _validate_note_structure(note_path)
 
     assert ok, f"Validation failed: {err}"
+
+
+def test_validate_note_structure_allows_explained_contribution_type(tmp_path):
+    """Contribution type 可带解释，validator 不应把 LLM 的知识性说明误杀。"""
+    note_path = tmp_path / "explained_contribution.md"
+    note_path.write_text(
+        _structured_note("explained_contribution").replace(
+            "- **Contribution type**: improvement",
+            "- **Contribution type**: improvement (with invention elements)",
+        ),
+        encoding="utf-8",
+    )
+
+    ok, err = _validate_note_structure(note_path)
+
+    assert ok, f"Validation failed: {err}"
+
+
+def test_note_identity_keys_only_use_h1_and_metadata(tmp_path):
+    """note identity 不应把二级章节标题混入匹配 key。"""
+    note_path = tmp_path / "Causal-Invariant Cross-Domain Out-of-Distribution Recommendation.md"
+    note_path.write_text(_structured_note("arxiv:2501.5052"), encoding="utf-8")
+
+    keys = paper_note_match_keys(note_path)
+
+    assert "arxiv:2501.5052" in keys
+    assert "causal invariant cross domain out of distribution recommendation" in keys
+    assert "1 problem motivation" not in keys
+    assert "10 key quotes" not in keys
 
 
 def test_validate_note_structure_requires_reading_coverage(tmp_path):

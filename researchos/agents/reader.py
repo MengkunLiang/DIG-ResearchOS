@@ -11,6 +11,14 @@ from __future__ import annotations
 from pathlib import Path
 import re
 
+from ..literature_identity import (
+    add_identity_key_variants,
+    display_record_key,
+    is_paper_note_file,
+    paper_note_match_keys,
+    paper_record_match_keys,
+    record_is_covered,
+)
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec, get_agent_mode_params
 from ..runtime.prompts import render_prompt
@@ -121,10 +129,7 @@ class ReaderAgent(Agent):
             for paper in trust_pool:
                 dedup_keys.update(_paper_match_keys(paper))
             seed_titles = [str(seed.get("title", "")).strip() for seed in seed_papers if seed.get("title")]
-            seed_keys: set[str] = set()
-            for seed in seed_papers:
-                seed_keys.update(_paper_match_keys(seed))
-            seed_in_dedup_count = sum(1 for key in seed_keys if key and key in dedup_keys)
+            seed_in_dedup_count = sum(1 for seed in seed_papers if _paper_match_keys(seed) & dedup_keys)
             seed_missing_count = max(0, len(seed_titles) - seed_in_dedup_count)
             context_vars["paper_count"] = len(trust_pool)
             context_vars["paper_list_preview"] = trust_pool[:5]
@@ -228,7 +233,7 @@ class ReaderAgent(Agent):
         if not notes_dir.exists():
             return False, "缺少literature/paper_notes目录"
 
-        note_files = list(notes_dir.glob("*.md"))
+        note_files = [path for path in notes_dir.glob("*.md") if is_paper_note_file(path)]
         valid_note_files: list[Path] = []
         invalid_note_files: list[tuple[Path, str]] = []
         for note_path in note_files:
@@ -249,26 +254,18 @@ class ReaderAgent(Agent):
         queue_count = len(queue_records)
 
         if queue_records:
-            queue_keys = {
-                normalize_text_key(str(item.get("normalized_id") or item.get("paper_id") or ""))
+            missing_seed_notes = [
+                display_record_key(item)
                 for item in queue_records
-            }
-            queue_keys = {key for key in queue_keys if key}
-
-            queued_seed_keys = {
-                normalize_text_key(str(item.get("normalized_id") or item.get("paper_id") or ""))
-                for item in queue_records
-                if item.get("seed_priority")
-            }
-            queued_seed_keys = {key for key in queued_seed_keys if key}
-            missing_seed_notes = sorted(queued_seed_keys - completed_note_keys)
+                if item.get("seed_priority") and not record_is_covered(item, completed_note_keys)
+            ]
             if missing_seed_notes:
                 return False, (
                     "seed papers 尚未全部完成，缺少以下笔记: "
                     + ", ".join(missing_seed_notes[:5])
                 )
 
-            covered_queue_count = len(queue_keys & completed_note_keys)
+            covered_queue_count = sum(1 for item in queue_records if record_is_covered(item, completed_note_keys))
             min_required = min(queue_count, min_required)
 
             if covered_queue_count < min_required:
@@ -277,13 +274,13 @@ class ReaderAgent(Agent):
                     f"至少需要完成 {min_required} 篇队列论文；当前目标阅读数为 {target_required}。"
                 )
 
-            protected_queue_keys = {
-                normalize_text_key(str(item.get("normalized_id") or item.get("paper_id") or ""))
+            missing_protected_notes = [
+                display_record_key(item)
                 for item in queue_records
-                if _is_protected_queue_record(item) and str(item.get("target_bucket") or "") != "overflow"
-            }
-            protected_queue_keys = {key for key in protected_queue_keys if key}
-            missing_protected_notes = sorted(protected_queue_keys - completed_note_keys)
+                if _is_protected_queue_record(item)
+                and str(item.get("target_bucket") or "") != "overflow"
+                and not record_is_covered(item, completed_note_keys)
+            ]
             if missing_protected_notes:
                 return False, (
                     "deep_read_queue 中的 adjacent/theory/snowball 保护论文尚未完成笔记: "
@@ -419,45 +416,11 @@ class ReaderAgent(Agent):
 
 
 def _add_note_key_variants(keys: set[str], value: str) -> None:
-    raw = str(value or "").strip()
-    if not raw:
-        return
-    candidates = {
-        raw,
-        raw.replace(":", "_").replace("/", "_"),
-    }
-    if raw.startswith("arxiv_"):
-        candidates.add("arxiv:" + raw[len("arxiv_"):])
-    if raw.lower().startswith("arxiv:"):
-        candidates.add("arxiv_" + raw.split(":", 1)[1])
-    for candidate in candidates:
-        normalized = normalize_text_key(candidate)
-        if normalized:
-            keys.add(normalized)
+    add_identity_key_variants(keys, value)
 
 
 def _paper_note_match_keys(note_path: Path) -> set[str]:
-    keys: set[str] = set()
-    _add_note_key_variants(keys, note_path.stem)
-    try:
-        content = note_path.read_text(encoding="utf-8")
-    except OSError:
-        return keys
-    for line in content.splitlines()[:80]:
-        stripped = line.strip()
-        if stripped.startswith("#"):
-            _add_note_key_variants(keys, stripped.lstrip("#").strip())
-            continue
-        match = re.match(r"-\s+\*\*(ID|DOI/arXiv)\*\*:\s*(.+)$", stripped, flags=re.IGNORECASE)
-        if match:
-            value = match.group(2).strip()
-            _add_note_key_variants(keys, value)
-            for token in re.findall(r"(?:arxiv:\s*)?\d{4}\.\d{4,5}(?:v\d+)?|10\.\d{4,9}/[^\s,;)\]]+", value, flags=re.IGNORECASE):
-                token = token.replace(" ", "")
-                if not token.lower().startswith("arxiv:") and re.fullmatch(r"\d{4}\.\d{4,5}(?:v\d+)?", token):
-                    token = f"arxiv:{token}"
-                _add_note_key_variants(keys, token)
-    return keys
+    return paper_note_match_keys(note_path)
 
 
 def _invalid_note_summary(invalid_note_files: list[tuple[Path, str]]) -> str:
@@ -468,17 +431,7 @@ def _invalid_note_summary(invalid_note_files: list[tuple[Path, str]]) -> str:
 
 
 def _paper_match_keys(paper: dict[str, object]) -> set[str]:
-    external_ids = paper.get("externalIds") if isinstance(paper.get("externalIds"), dict) else {}
-    candidates = {
-        str(paper.get("id", "")),
-        str(paper.get("canonical_id", "")),
-        str(paper.get("title", "")),
-        str(paper.get("doi", "")),
-        str(paper.get("url", "")),
-        str(external_ids.get("ArXiv", "")),
-        str(external_ids.get("DOI", "")),
-    }
-    return {normalize_text_key(candidate) for candidate in candidates if str(candidate).strip()}
+    return paper_record_match_keys(paper)
 
 
 def _is_protected_queue_record(record: dict[str, object]) -> bool:
@@ -496,7 +449,7 @@ def _is_protected_queue_record(record: dict[str, object]) -> bool:
 def _paper_note_reference_ids(notes_dir: Path) -> set[str]:
     if not notes_dir.exists():
         return set()
-    ids = {path.stem for path in notes_dir.glob("*.md") if path.is_file()}
+    ids = {path.stem for path in notes_dir.glob("*.md") if is_paper_note_file(path)}
     normalized: set[str] = set()
     for paper_id in ids:
         normalized.add(paper_id)
@@ -735,13 +688,10 @@ def _validate_cdr_note_fields(
     contribution_value = _extract_markdown_field(
         contribution_section.group("section") if contribution_section else "",
         "Contribution type",
-    ).lower()
-    allowed = {"invention", "improvement", "exaptation", "routine"}
-    if contribution_value and contribution_value not in allowed:
-        return False, (
-            f"{note_path.name} Contribution type 必须是 "
-            "invention/improvement/exaptation/routine"
-        )
+    )
+    ok, err = _validate_contribution_type_field(note_path, contribution_value)
+    if not ok:
+        return False, err
 
     if not abstract_only:
         tension_section = re.search(
@@ -765,6 +715,29 @@ def _validate_cdr_note_fields(
             if not reason:
                 return False, f"{note_path.name} Cross-Paper Tension 为 none 时必须说明无张力原因"
 
+    return True, None
+
+
+def _validate_contribution_type_field(note_path: Path, value: str) -> tuple[bool, str | None]:
+    """Validate contribution-type signal without hard-coding away LLM judgment.
+
+    The prompt asks for invention/improvement/exaptation/routine, but real notes
+    often add a short parenthetical explanation. That is useful knowledge for
+    T3.5 and should not make the note invalid. We only require one recognizable
+    top-level label and reject empty or placeholder values.
+    """
+
+    normalized = value.strip().lower()
+    if not normalized:
+        return False, f"{note_path.name} Contribution type 不能为空"
+    placeholders = {"unknown", "n/a", "na", "none", "无", "暂无", "unclear", "not sure"}
+    if normalized in placeholders:
+        return False, f"{note_path.name} Contribution type 不能是占位值: {value}"
+    if not re.search(r"\b(invention|improvement|exaptation|routine)\b", normalized):
+        return False, (
+            f"{note_path.name} Contribution type 需要包含 invention/improvement/"
+            "exaptation/routine 之一，并可附加解释"
+        )
     return True, None
 
 

@@ -550,7 +550,6 @@ class AgentRunner:
         except asyncio.CancelledError:
             stop_reason = AgentResult.STOP_INTERRUPTED
             error_msg = "Cancelled"
-            raise
         except RecoverableRuntimePause as exc:
             stop_reason = AgentResult.STOP_INTERRUPTED
             error_msg = str(exc)
@@ -2184,6 +2183,8 @@ class AgentRunner:
                     },
                 ],
             )
+        except HumanInputUnavailable as exc:
+            raise RecoverableRuntimePause(str(exc)) from exc
         finally:
             budget.exclude_wall_time(time.time() - human_started)
         if (result or {}).get("option_id") != "extend":

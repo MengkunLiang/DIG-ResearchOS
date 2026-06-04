@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import pytest
@@ -18,6 +19,7 @@ from researchos.runtime.agent import (
 from researchos.runtime.errors import LLMProviderError
 from researchos.runtime.orchestrator import AgentRunner
 from researchos.testing.mocks import FakeLLMMessage, FakeRawCompletion, FakeToolCall, MockHumanInterface, MockLLMClient
+from researchos.tools.human_gate import HumanInputUnavailable
 from researchos.tools.builtin import register_builtin_tools
 from researchos.tools.registry import ToolRegistry
 
@@ -597,6 +599,26 @@ class RecordingLLMClient(MockLLMClient):
     async def chat(self, **kwargs):
         self.chat_kwargs.append(kwargs)
         return await super().chat(**kwargs)
+
+
+class CancelOnSecondCallLLMClient(MockLLMClient):
+    async def chat(self, **kwargs):
+        if self.call_count >= 1:
+            self.call_count += 1
+            self.last_messages.append(kwargs["messages"])
+            raise asyncio.CancelledError()
+        return await super().chat(**kwargs)
+
+
+class GateUnavailableHumanInterface(MockHumanInterface):
+    async def present_gate(self, *, gate_id: str, presentation: dict, options: list[dict]) -> dict:
+        self.calls.append(
+            (
+                "gate",
+                {"gate_id": gate_id, "presentation": presentation, "options": options},
+            )
+        )
+        raise HumanInputUnavailable(f"Gate {gate_id} 需要用户选择，但当前输入不可用。")
 
 
 def test_agent_runner_caps_pdf_tool_context_metadata():
@@ -1475,6 +1497,30 @@ async def test_runner_pauses_after_configured_llm_timeout_cooldowns(tmp_workspac
 
 
 @pytest.mark.asyncio
+async def test_runner_returns_interrupted_result_on_cancel(tmp_workspace, registry):
+    llm = CancelOnSecondCallLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(tool_calls=[FakeToolCall(name="echo", arguments={"text": "hi"}, id="tc1")]),
+                prompt_tokens=11,
+                completion_tokens=3,
+            ),
+        ]
+    )
+    ctx = ExecutionContext(workspace_dir=tmp_workspace, project_id="p1", task_id="T3", run_id="r_cancel")
+    runner = AgentRunner(MinimalAgent(), registry, llm, MockHumanInterface())
+
+    result = await runner.run(ctx)
+
+    assert not result.ok
+    assert result.stop_reason == AgentResult.STOP_INTERRUPTED
+    assert result.error == "Cancelled"
+    assert result.steps_used == 2
+    assert result.tokens_in == 11
+    assert result.tokens_out == 3
+
+
+@pytest.mark.asyncio
 async def test_budget_extension_gate_allows_t5_to_continue(tmp_workspace, registry):
     llm = MockLLMClient(
         responses=[
@@ -1509,6 +1555,35 @@ async def test_budget_extension_gate_allows_t5_to_continue(tmp_workspace, regist
     result = await runner.run(ctx)
 
     assert result.ok
+    assert any(call[0] == "gate" for call in human.calls)
+
+
+@pytest.mark.asyncio
+async def test_budget_extension_gate_input_unavailable_pauses(tmp_workspace, registry):
+    llm = MockLLMClient(responses=[])
+    ctx = ExecutionContext(
+        workspace_dir=tmp_workspace,
+        project_id="p1",
+        task_id="T5",
+        run_id="r_budget_gate_unavailable",
+        budget_override=BudgetOverride(max_steps=0),
+    )
+    human = GateUnavailableHumanInterface()
+    runner = AgentRunner(MinimalAgent(), registry, llm, human)
+    runner.budget_escalation_policy = {
+        "enabled": True,
+        "tasks": ["T5"],
+        "max_extensions_per_run": 1,
+        "steps_increase_ratio": 1.0,
+        "token_increase_ratio": 0.5,
+        "wall_seconds_increase_ratio": 0.5,
+    }
+
+    result = await runner.run(ctx)
+
+    assert not result.ok
+    assert result.stop_reason == AgentResult.STOP_INTERRUPTED
+    assert "需要用户选择" in (result.error or "")
     assert any(call[0] == "gate" for call in human.calls)
 
 
