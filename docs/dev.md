@@ -361,7 +361,7 @@ python -m researchos.cli run-skill paper-compile "compile the paper in ./workspa
 
 ### 6.2 `--from` 的用法
 
-如果你要在另一个 workspace 上只复用上游产物：
+如果你要在另一个 workspace 上只复用上游产物并只跑一个 task：
 
 ```bash
 python -m researchos.cli run-task T8-RESOURCE \
@@ -371,10 +371,22 @@ python -m researchos.cli run-task T8-RESOURCE \
 
 这会把当前 task 的前置 artifact 复制过来，再执行本 task。
 
+如果你要从某个中间 task 开始跑完整后续 pipeline，用 `run --from --start-task`：
+
+```bash
+python -m researchos.cli run \
+  --workspace ./workspace/new-test5-t2-redo \
+  --from ./workspace/new-test5 \
+  --start-task T2
+```
+
+`run --from` 不指定 `--start-task` 时默认从 `T2` 开始。它会按 `T2` 的输入契约复制 `project.yaml`、`user_seeds/` 中的 seed 文件与 `pdfs/`、以及 `literature/bridge_domain_plan.json`，初始化新 workspace 的 `state.yaml` 为 `current_task: T2`，然后继续完整状态机。
+
 适合：
 
 - 单独复现某阶段 bug
 - 不污染主 workspace
+- 保留 T1 和 seed，但重新做 T2 并继续 T3/T4/后续主链
 
 ### 6.3 推荐单任务调试顺序
 

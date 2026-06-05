@@ -238,6 +238,17 @@ researchos run-task T8-RESOURCE \
   --from ./workspace/local-test2
 ```
 
+如果想从另一个 workspace 继承 T1/seed，并从 T2 重新跑完整后续流程：
+
+```bash
+researchos run \
+  --workspace ./workspace/new-test5-t2-redo \
+  --from ./workspace/new-test5 \
+  --start-task T2
+```
+
+`run --from` 不复制旧 T2 输出，只复制目标 start task 的输入；`run-task --from` 则只运行一个 task，不推进完整状态机。
+
 ### 4.6 查看状态
 
 ```bash

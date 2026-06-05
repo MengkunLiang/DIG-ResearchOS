@@ -72,6 +72,7 @@ states:
     inputs:
       project: project.yaml                            # 项目配置
       seed_papers: user_seeds/seed_papers.jsonl        # 种子论文（可选）
+      seed_pdfs: user_seeds/pdfs                       # 种子 PDF（可选）
       seed_constraints: user_seeds/seed_constraints.md # 种子约束（可选）
       seed_ideas: user_seeds/seed_ideas.md             # 种子想法（可选）
       seed_external_resources: user_seeds/seed_external_resources.jsonl  # 外部资源（可选）

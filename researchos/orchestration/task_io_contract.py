@@ -38,6 +38,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "inputs": {
             "project": "project.yaml",
             "seed_papers": "user_seeds/seed_papers.jsonl",
+            "seed_pdfs": "user_seeds/pdfs",
             "seed_constraints": "user_seeds/seed_constraints.md",
             "seed_ideas": "user_seeds/seed_ideas.md",
             "seed_external_resources": "user_seeds/seed_external_resources.jsonl",

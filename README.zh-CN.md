@@ -367,6 +367,17 @@ python -m researchos.cli run-task T8-RESOURCE \
   --from ./workspace/local-test2
 ```
 
+如果不是单任务调试，而是想保留旧 workspace 的 T1/seed、从 T2 重新开始并继续完整主链：
+
+```bash
+python -m researchos.cli run \
+  --workspace ./workspace/new-test5-t2-redo \
+  --from ./workspace/new-test5 \
+  --start-task T2
+```
+
+这里 `run --from` 会复制 `T2` 的前置输入，不复制旧 T2 检索产物。若省略 `--start-task`，默认从 `T2` 开始。
+
 说明：
 
 - `run/resume` 用来推进完整状态机

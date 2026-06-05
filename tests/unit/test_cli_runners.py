@@ -332,6 +332,84 @@ def test_cli_run_task_command_dispatches(monkeypatch, tmp_path: Path):
     assert observed["profile"] == "audit"
 
 
+def test_cli_run_from_start_task_initializes_pipeline_state(monkeypatch, tmp_path: Path):
+    source = tmp_path / "source"
+    workspace = tmp_path / "workspace"
+    (source / "user_seeds" / "pdfs").mkdir(parents=True)
+    (source / "literature").mkdir()
+    (source / "project.yaml").write_text("project_id: copied-project\n", encoding="utf-8")
+    (source / "user_seeds" / "seed_papers.jsonl").write_text(
+        '{"title":"Seed Paper"}\n',
+        encoding="utf-8",
+    )
+    (source / "user_seeds" / "seed_constraints.md").write_text("constraints\n", encoding="utf-8")
+    (source / "user_seeds" / "seed_ideas.md").write_text("ideas\n", encoding="utf-8")
+    (source / "user_seeds" / "seed_external_resources.jsonl").write_text("", encoding="utf-8")
+    (source / "user_seeds" / "pdfs" / "seed.pdf").write_bytes(b"%PDF")
+    (source / "literature" / "bridge_domain_plan.json").write_text(
+        '{"source":"none","bridge_domains":[]}\n',
+        encoding="utf-8",
+    )
+    StateYaml(
+        project_id="copied-project",
+        current_task="T2",
+        status="PAUSED",
+        history=[
+            TaskHistoryEntry(
+                task="T1",
+                run_id="t1_done",
+                status="DONE",
+                started_at="2026-01-01T00:00:00+00:00",
+                finished_at="2026-01-01T00:01:00+00:00",
+            ),
+            TaskHistoryEntry(
+                task="T2",
+                run_id="t2_old",
+                status="INTERRUPTED",
+                started_at="2026-01-01T00:02:00+00:00",
+                finished_at="2026-01-01T00:03:00+00:00",
+            ),
+        ],
+    ).dump_yaml(source / "state.yaml")
+
+    async def fake_prepare_runtime(args, workspace_dir):
+        return PreparedRuntime(
+            skill_roots=[],
+            registry=ToolRegistry(),
+            llm_client=object(),
+        )
+
+    async def fake_run(self, *, project_id: str, resume: bool = False):
+        state = StateYaml.load_yaml(self.workspace / "state.yaml")
+        assert state.current_task == "T2"
+        assert state.status == "RUNNING"
+        assert [entry.task for entry in state.history] == ["T1"]
+        assert (self.workspace / "project.yaml").read_text(encoding="utf-8") == "project_id: copied-project\n"
+        assert (self.workspace / "user_seeds" / "seed_papers.jsonl").read_text(encoding="utf-8") == '{"title":"Seed Paper"}\n'
+        assert (self.workspace / "user_seeds" / "pdfs" / "seed.pdf").exists()
+        assert (self.workspace / "literature" / "bridge_domain_plan.json").exists()
+        return 0
+
+    monkeypatch.setattr("researchos.cli.install_signal_handlers", lambda: None)
+    monkeypatch.setattr("researchos.cli._prepare_runtime", fake_prepare_runtime)
+    monkeypatch.setattr("researchos.cli.CompletePipelineRunner.run", fake_run)
+
+    exit_code = main(
+        [
+            "--no-banner",
+            "--workspace",
+            str(workspace),
+            "run",
+            "--from",
+            str(source),
+            "--start-task",
+            "T2",
+        ]
+    )
+
+    assert exit_code == 0
+
+
 def test_cli_run_task_plain_t7_reports_retired(monkeypatch, tmp_path: Path, capsys):
     workspace = tmp_path / "workspace"
 

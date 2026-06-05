@@ -206,6 +206,17 @@ researchos run-task T8-RESOURCE \
 - 从 `local-test2` 拷到 `scratch-write`
 - 然后只跑 `T8-RESOURCE`
 
+如果要保留来源 workspace 的 T1 和 seed，但从 T2 重新开始完整状态机，不要用 `run-task`：
+
+```bash
+researchos run \
+  --workspace ./workspace/new-test5-t2-redo \
+  --from ./workspace/new-test5 \
+  --start-task T2
+```
+
+这会按 `T2` 输入契约复制 `project.yaml`、`user_seeds/seed_papers.jsonl`、`user_seeds/pdfs/`、seed 约束/想法/外部资源和 `literature/bridge_domain_plan.json`，然后初始化 `state.yaml` 为 `current_task: T2`。旧的 T2 输出如 `papers_raw.jsonl`、`papers_verified.jsonl`、`deep_read_queue.jsonl` 不会被复制。
+
 新写作链的推荐调试入口是 `T8-STYLE-GATE`；如果已经有合法 `drafts/writing_style.json`，也可以直接跑 `T8-RESOURCE`。如果你还使用旧命令 `researchos run-task T8 --workspace ...`，单任务运行器会把它视为 `T8-STYLE-GATE`，避免绕过风格确认、资源索引和章节计划。
 
 ### 3.5 两者到底差在哪

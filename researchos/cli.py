@@ -40,6 +40,7 @@ except ImportError:
 
 from .agents.registry import AGENT_REGISTRY
 from .cli_runners import CompletePipelineRunner, SingleTaskRunner
+from .orchestration.task_io_contract import get_task_io
 from .orchestration.state_machine import StateMachine
 from .pydantic_compat import model_dump
 from .runtime.agent import AgentResult
@@ -55,6 +56,7 @@ from .schemas.validator import (
     build_declared_outputs_from_state_machine,
     register_builtin_task_checkers,
     validate_declared_outputs,
+    validate_prerequisites,
     validate_task_artifacts,
 )
 from .skills.loader import discover_skills_from_roots, register_skill_tools, resolve_skill
@@ -564,7 +566,6 @@ async def run_command(args: argparse.Namespace) -> int:
         show_summary=False,
     )
     install_signal_handlers()
-    prepared = await _prepare_runtime(args, workspace_dir)
     state_machine = StateMachine(
         Path(args.state_machine).resolve(),
         Path(args.gates).resolve() if args.gates else None,
@@ -574,6 +575,20 @@ async def run_command(args: argparse.Namespace) -> int:
         raise SystemExit(
             "State machine definition is invalid:\n" + "\n".join(f"- {item}" for item in definition_errors)
         )
+
+    start_task = _resolve_pipeline_start_task(args)
+    if start_task:
+        prepare_code = _prepare_pipeline_start_workspace(
+            workspace_dir=workspace_dir,
+            state_machine=state_machine,
+            start_task=start_task,
+            from_workspace=Path(args.from_workspace).resolve() if getattr(args, "from_workspace", None) else None,
+            project_id=args.project_id,
+        )
+        if prepare_code != 0:
+            return prepare_code
+
+    prepared = await _prepare_runtime(args, workspace_dir)
     _emit_startup_ui(
         args=args,
         runtime_settings=runtime_settings,
@@ -596,6 +611,130 @@ async def run_command(args: argparse.Namespace) -> int:
         return await runner.run(project_id=args.project_id, resume=getattr(args, "resume", False))
     finally:
         await prepared.aclose()
+
+
+def _resolve_pipeline_start_task(args: argparse.Namespace) -> str | None:
+    """Resolve `run --start-task` / `run --from` startup semantics."""
+
+    start_task = str(getattr(args, "start_task", "") or "").strip()
+    from_workspace = str(getattr(args, "from_workspace", "") or "").strip()
+    if start_task:
+        return start_task
+    if from_workspace:
+        print("[进度] run --from 未指定 --start-task，默认从 T2 开始。", flush=True)
+        return "T2"
+    return None
+
+
+def _prepare_pipeline_start_workspace(
+    *,
+    workspace_dir: Path,
+    state_machine: StateMachine,
+    start_task: str,
+    from_workspace: Path | None,
+    project_id: str,
+) -> int:
+    """Prepare a full pipeline workspace that starts from an intermediate task."""
+
+    if start_task not in state_machine.nodes:
+        print(f"Unknown --start-task: {start_task}")
+        return 2
+    if state_machine.nodes[start_task].terminal:
+        print(f"--start-task cannot be terminal state: {start_task}")
+        return 2
+
+    state_path = workspace_dir / "state.yaml"
+    if state_path.exists():
+        print(
+            "目标 workspace 已存在 state.yaml；为避免覆盖已有运行状态，请使用 resume，"
+            "或换一个新的 --workspace。",
+            flush=True,
+        )
+        return 2
+
+    source_state: StateYaml | None = None
+    if from_workspace is not None:
+        if not from_workspace.exists():
+            print(f"--from workspace 不存在: {from_workspace}")
+            return 2
+        if from_workspace.resolve() == workspace_dir.resolve():
+            print("--from 不能指向当前 --workspace；请使用不同的新 workspace。")
+            return 2
+        _copy_task_inputs_from_workspace(
+            task_id=start_task,
+            from_workspace=from_workspace,
+            workspace_dir=workspace_dir,
+        )
+        source_state_path = from_workspace / "state.yaml"
+        if source_state_path.exists():
+            try:
+                source_state = StateYaml.load_yaml(source_state_path)
+            except Exception as exc:
+                print(f"[warning] 无法读取来源 state.yaml，仍会从 {start_task} 初始化状态: {exc}")
+
+    ok, err = validate_prerequisites(workspace_dir, start_task)
+    if not ok:
+        print(f"Prerequisites not met for {start_task}: {err}")
+        if from_workspace is None:
+            print("Hint: use --from <other-workspace> to copy upstream artifacts.")
+        return 3
+
+    state = _build_start_task_state(
+        start_task=start_task,
+        project_id=project_id,
+        source_state=source_state,
+    )
+    state.dump_yaml(state_path)
+    print(f"[进度] 已初始化 pipeline state: current_task={start_task}", flush=True)
+    return 0
+
+
+def _copy_task_inputs_from_workspace(*, task_id: str, from_workspace: Path, workspace_dir: Path) -> None:
+    """Copy task input artifacts from another workspace for full-pipeline restart."""
+
+    io_spec = get_task_io(task_id)
+    for rel_path in io_spec["inputs"].values():
+        src = from_workspace / rel_path
+        dst = workspace_dir / rel_path
+        if not src.exists():
+            continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if src.is_dir():
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+        else:
+            shutil.copy2(src, dst)
+        print(f"copied: {rel_path}", flush=True)
+
+
+def _build_start_task_state(
+    *,
+    start_task: str,
+    project_id: str,
+    source_state: StateYaml | None,
+) -> StateYaml:
+    if source_state is None:
+        return StateYaml(project_id=project_id, current_task=start_task, status="RUNNING")
+
+    state = StateYaml(
+        project_id=source_state.project_id or project_id,
+        current_task=start_task,
+        status="RUNNING",
+        budget_cumulative=source_state.budget_cumulative,
+        task_context={},
+    )
+    kept_tasks: set[str] = set()
+    for entry in source_state.history:
+        if entry.task == start_task:
+            break
+        state.history.append(entry)
+        kept_tasks.add(entry.task)
+    state.iteration_count = {
+        task: count for task, count in source_state.iteration_count.items() if task in kept_tasks
+    }
+    state.iteration_history = {
+        task: entries for task, entries in source_state.iteration_history.items() if task in kept_tasks
+    }
+    return state
 
 
 async def run_task_command(args: argparse.Namespace) -> int:
@@ -1013,6 +1152,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_parser = subparsers.add_parser("run", help="运行完整 pipeline")
     _add_shared_cli_options(run_parser, runtime_settings, use_defaults=False)
+    run_parser.add_argument(
+        "--from",
+        dest="from_workspace",
+        default=None,
+        help="从另一个 workspace 复制 --start-task 的前置 artifact；未指定 --start-task 时默认从 T2 开始",
+    )
+    run_parser.add_argument(
+        "--start-task",
+        default=None,
+        help="从指定状态机节点开始完整 pipeline，例如 T2、T3、T8-STYLE-GATE",
+    )
     run_parser.add_argument("--startup-selftest", action="store_true")
     run_parser.add_argument("--skip-startup-selftest", action="store_true")
 
