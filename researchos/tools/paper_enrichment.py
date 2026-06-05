@@ -526,7 +526,32 @@ def _target_bucket_for_record(record: dict[str, Any], *, active_target: bool) ->
         return "seed"
     if record.get("bridge_id") and record.get("cross_domain_candidate"):
         return "bridge_deep" if active_target else "bridge_screened"
+    if record.get("unscreened_bridge_backlog_candidate"):
+        return "bridge_screened"
+    if record.get("semantic_screen_excluded_candidate") and record.get("bridge_id"):
+        return "bridge_screened"
     return "mainline_deep" if active_target else "mainline_screened"
+
+
+def _can_enter_active_target(record: dict[str, Any]) -> bool:
+    """Return whether a queue record may count as an active T3 read target.
+
+    Scout LLM screening is preferred, but T2 can legitimately end with many
+    verified papers and only a partial semantic screen. In that case, metadata
+    fallback records from the mainline pool may fill the active T3 budget so the
+    Reader LLM can do the actual content-level review. Unscreened bridge query
+    hits stay in screened backlog until Scout has made a semantic judgment.
+    """
+
+    if bool(record.get("seed_priority")):
+        return True
+    if bool(record.get("cross_domain_candidate")):
+        return True
+    if bool(record.get("semantic_screen", {}).get("can_enter_deep_read")):
+        return True
+    if bool(record.get("metadata_fallback_candidate")):
+        return True
+    return False
 
 
 def _cap_bridge_screened_records(
@@ -726,6 +751,13 @@ def build_deep_read_queue(
         )
         bridge_sources = _bridge_sources_for_record(paper, semantic_screen)
         raw_bridge_id = str(semantic_screen.get("bridge_id") or paper.get("bridge_id") or "").strip() or None
+        is_cross_domain_retrieval = (
+            str(paper.get("retrieval_intent") or "").strip() == "cross_domain_bridge"
+            or bool(raw_bridge_id)
+            or search_bucket in {"adjacent_field", "theory_bridge"}
+            or source_bucket in {"adjacent", "theory_bridge"}
+        )
+        has_semantic_screen = bool(semantic_screen)
         resolved_bridge_id = None if can_enter_core else raw_bridge_id
         cross_domain_candidate = (
             can_enter_deep_read
@@ -736,6 +768,21 @@ def build_deep_read_queue(
                 or bool(raw_bridge_id)
             )
             and not can_enter_core
+        )
+        metadata_fallback_candidate = (
+            not is_seed
+            and not has_semantic_screen
+            and not is_cross_domain_retrieval
+        )
+        unscreened_bridge_backlog_candidate = (
+            not is_seed
+            and not has_semantic_screen
+            and is_cross_domain_retrieval
+        )
+        semantic_screen_excluded_candidate = (
+            not is_seed
+            and has_semantic_screen
+            and not can_enter_deep_read
         )
         hub = _lookup_citation_hub(paper, canonical_id, citation_hub_index)
         is_citation_hub = bool(hub) and (is_seed or can_enter_deep_read)
@@ -772,6 +819,9 @@ def build_deep_read_queue(
                 "seed_paper" if is_seed
                 else "screened_cross_domain_candidate" if cross_domain_candidate
                 else "semantic_screen_deep_read_candidate" if can_enter_deep_read
+                else "metadata_fallback_candidate" if metadata_fallback_candidate
+                else "unscreened_bridge_backlog_candidate" if unscreened_bridge_backlog_candidate
+                else "semantic_screen_excluded_candidate" if semantic_screen_excluded_candidate
                 else "backlog_not_screened_for_deep_read"
             ),
             "normalized_id": normalized_id,
@@ -794,6 +844,9 @@ def build_deep_read_queue(
             "semantic_screen": semantic_screen,
             "cross_domain_retrieval_candidate": bool(paper.get("cross_domain_retrieval_candidate")),
             "cross_domain_candidate": cross_domain_candidate,
+            "metadata_fallback_candidate": metadata_fallback_candidate,
+            "unscreened_bridge_backlog_candidate": unscreened_bridge_backlog_candidate,
+            "semantic_screen_excluded_candidate": semantic_screen_excluded_candidate,
             "adjacent_field": cross_domain_candidate,  # deprecated compatibility alias
             "protected_slot_bonus": protected_slot_bonus,
             "protected_bucket_bonus": protected_slot_bonus,  # deprecated compatibility alias
@@ -814,7 +867,13 @@ def build_deep_read_queue(
                 if hub_type == "seed_neighbor"
                 else "citation_hub_deep_read_candidate"
             )
-        if is_seed or can_enter_deep_read:
+        if (
+            is_seed
+            or can_enter_deep_read
+            or metadata_fallback_candidate
+            or unscreened_bridge_backlog_candidate
+            or semantic_screen_excluded_candidate
+        ):
             ranked_records.append(record)
 
     ranked_records.sort(
@@ -829,13 +888,11 @@ def build_deep_read_queue(
 
     # --- protected slot selection: preserve LLM-screened cross-domain/theory material ---
     selected_count = min(len(ranked_records), max(probe_pool, deep_read_target, deep_read_min))
-    queue_retention_count = min(
-        len(ranked_records),
-        max(
-            selected_count,
-            int(mainline_screened_cap) + int(bridge_pool_cap) * max(1, len(confirmed_bridge_ids)),
-        ),
-    )
+    # Keep every admitted verified record in the queue artifact. Active T3
+    # reading is still capped by deep_read_target/deep_read_max, but overflow is
+    # retained as shallow-read/backlog disposition so verified papers never
+    # disappear silently between T2 and T3 abstract sweep.
+    queue_retention_count = len(ranked_records)
     if cross_domain_slots is None:
         cross_domain_slot_count = min(4, max(1, int(round(deep_read_target * 0.20)))) if deep_read_target > 0 else 0
     else:
@@ -898,8 +955,6 @@ def build_deep_read_queue(
             break
         if id(record) in protected_ids:
             continue
-        if _bridge_pool_count(queue_records, str(record.get("bridge_id") or "")) >= bridge_pool_cap:
-            continue
         venue = record.get("venue", "unknown") or "unknown"
         same_venue = venue_counts.get(venue, 0)
         # 0 同 venue: 1.0, 1 个: 0.7, 2 个: 0.4, >=3 个: 0.0
@@ -933,13 +988,25 @@ def build_deep_read_queue(
         target_cap,
         max(target_goal, len(protected_ids)),
     )
+    active_assigned = 0
     for idx, record in enumerate(queue_records, start=1):
         record["queue_rank"] = idx
-        active_target = idx <= active_target_limit
+        active_target = (
+            active_assigned < active_target_limit
+            and _can_enter_active_target(record)
+        )
+        if active_target:
+            active_assigned += 1
         record["triaged_out"] = not active_target
         record["target_bucket"] = _target_bucket_for_record(record, active_target=active_target)
         if record["triaged_out"]:
             record.setdefault("triaged_reason", "probe_pool_triage_out")
+        record["read_disposition"] = "deep_read" if active_target else "shallow_read"
+        record["read_disposition_reason"] = (
+            "active_t3_target"
+            if active_target
+            else "retained_for_t3_abstract_sweep_or_human_revisit"
+        )
 
     _cap_mainline_screened_records(queue_records, mainline_screened_cap=mainline_screened_cap)
     _cap_bridge_screened_records(queue_records, bridge_screened_cap=bridge_screened_cap)
@@ -959,6 +1026,15 @@ def build_deep_read_queue(
         "active_target_limit": active_target_limit,
         "target_entry_count": sum(1 for item in queue_records if not item.get("triaged_out")),
         "triaged_out_count": sum(1 for item in queue_records if item.get("triaged_out")),
+        "verified_pool_count": len(authoritative_records),
+        "verified_disposition_count": len(queue_records),
+        "verified_disposition_coverage": round(
+            len(queue_records) / max(1, len(authoritative_records)),
+            4,
+        ),
+        "shallow_read_backlog_count": sum(
+            1 for item in queue_records if item.get("read_disposition") == "shallow_read"
+        ),
         "mainline_screened_retained": sum(
             1 for item in queue_records if item.get("target_bucket") == "mainline_screened"
         ),
@@ -1019,6 +1095,20 @@ def build_deep_read_queue(
             1
             for item in queue_records
             if item.get("cross_domain_candidate") and not item.get("triaged_out")
+        ),
+        "metadata_fallback_in_target": sum(
+            1
+            for item in queue_records
+            if item.get("metadata_fallback_candidate") and not item.get("triaged_out")
+        ),
+        "metadata_fallback_in_queue": sum(
+            1 for item in queue_records if item.get("metadata_fallback_candidate")
+        ),
+        "unscreened_bridge_backlog_count": sum(
+            1 for item in queue_records if item.get("unscreened_bridge_backlog_candidate")
+        ),
+        "semantic_screen_excluded_in_queue": sum(
+            1 for item in queue_records if item.get("semantic_screen_excluded_candidate")
         ),
         "full_text_candidates": sum(
             1

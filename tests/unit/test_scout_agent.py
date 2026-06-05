@@ -408,6 +408,97 @@ def test_validate_outputs_too_few_papers(scout_agent, execution_context):
     assert ok
 
 
+def test_validate_outputs_rejects_verified_records_missing_queue_disposition(scout_agent, execution_context):
+    """verified 池里的论文不能在 deep/shallow 阅读链中静默消失。"""
+    lit_dir = execution_context.workspace_dir / "literature"
+    lit_dir.mkdir()
+
+    raw_papers = [
+        {
+            "id": f"s2:{i}",
+            "source": "semantic_scholar",
+            "title": f"Paper {i}",
+            "authors": ["Author A"],
+            "year": 2024,
+            "venue": "Test Venue",
+            "abstract": "Abstract",
+            "citation_count": 1,
+            "doi": f"10.1234/{i}",
+            "url": f"https://example.com/{i}",
+        }
+        for i in range(12)
+    ]
+    dedup_papers = [
+        {
+            **paper,
+            "source_type": "unknown",
+            "relevance_score": 0.8,
+            "why_relevant": "metadata priority hint; needs review",
+        }
+        for paper in raw_papers
+    ]
+    with (lit_dir / "papers_raw.jsonl").open("w", encoding="utf-8") as f:
+        for paper in raw_papers:
+            f.write(json.dumps(paper) + "\n")
+    with (lit_dir / "papers_dedup.jsonl").open("w", encoding="utf-8") as f:
+        for paper in dedup_papers:
+            f.write(json.dumps(paper) + "\n")
+    with (lit_dir / "papers_verified.jsonl").open("w", encoding="utf-8") as f:
+        for paper in dedup_papers:
+            verified = dict(paper)
+            verified["canonical_id"] = paper["id"]
+            verified["verification_status"] = "metadata_verified"
+            verified["verification_method"] = "semantic_scholar"
+            verified["verification_source"] = "semantic_scholar"
+            verified["verification_confidence"] = 0.9
+            verified["verification_title_similarity"] = 0.99
+            verified["verification_year_match"] = True
+            f.write(json.dumps(verified) + "\n")
+    (lit_dir / "verification_failures.jsonl").write_text("", encoding="utf-8")
+
+    # Old bug shape: queue reaches the minimum 10, but two verified papers have
+    # no deep/shallow disposition and would vanish before T3 abstract sweep.
+    with (lit_dir / "deep_read_queue.jsonl").open("w", encoding="utf-8") as f:
+        for i, paper in enumerate(dedup_papers[:10], start=1):
+            queue_record = {
+                "paper_id": paper["id"],
+                "title": paper["title"],
+                "relevance_score": paper["relevance_score"],
+                "access_score_estimate": 0.7,
+                "access_score": 0.7,
+                "evidence_level": "ABSTRACT_ONLY",
+                "verification_status": "metadata_verified",
+                "verification_confidence": 0.9,
+                "seed_priority": False,
+                "queue_rank": i,
+                "read_priority": 0.8,
+                "target_bucket": "mainline_deep" if i <= 4 else "mainline_screened",
+                "triaged_out": i > 4,
+                "read_disposition": "deep_read" if i <= 4 else "shallow_read",
+            }
+            f.write(json.dumps(queue_record) + "\n")
+
+    (lit_dir / "domain_map.json").write_text(
+        json.dumps(
+            _domain_map_fixture(
+                core=[{"id": "s2_0", "title": "Paper 0", "degree": 1, "key_rationale_hint": "LLM_REVIEW_REQUIRED"}],
+                bucket_assignments={"s2_0": "core"},
+            ),
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (lit_dir / "access_audit.md").write_text("# Access Audit\n", encoding="utf-8")
+    (lit_dir / "search_log.md").write_text("# Search Log\n", encoding="utf-8")
+    (lit_dir / "missing_areas.md").write_text("# Missing Areas\n", encoding="utf-8")
+
+    ok, err = scout_agent.validate_outputs(execution_context)
+
+    assert not ok
+    assert err is not None
+    assert "没有进入 deep_read_queue 的深读/浅读处置" in err
+
+
 def test_validate_outputs_dedup_anomaly(scout_agent, execution_context):
     """测试validate_outputs失败：去重异常（dedup > raw）"""
     lit_dir = execution_context.workspace_dir / "literature"

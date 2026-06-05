@@ -30,6 +30,7 @@ import json
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
+from ..literature_identity import paper_record_match_keys
 from ..tools.pdf_metadata import scan_seed_papers
 from ..tools.paper_utils import (
     deduplicate_papers,
@@ -249,12 +250,6 @@ class ScoutAgent(Agent):
             return False, err
 
         verified_records = load_jsonl(verified_path)
-        verified_ids = {
-            str(item.get("canonical_id") or item.get("id") or "").strip()
-            for item in verified_records
-        }
-        verified_ids = {paper_id for paper_id in verified_ids if paper_id}
-
         # 6. 校验 deep_read_queue：必须建立在 verified 池之上。
         queue_path = ctx.workspace_dir / "literature" / "deep_read_queue.jsonl"
         ok, err = validate_jsonl_schema(
@@ -267,9 +262,12 @@ class ScoutAgent(Agent):
             return False, err
 
         queue_records = load_jsonl(queue_path)
-        queue_ids = {str(item.get("paper_id", "")).strip() for item in queue_records}
-        if any(paper_id and paper_id not in verified_ids for paper_id in queue_ids):
-            return False, "deep_read_queue 中存在不在 papers_verified 里的论文"
+        ok, err = _validate_queue_membership_and_disposition(
+            verified_records=verified_records,
+            queue_records=queue_records,
+        )
+        if not ok:
+            return False, err
 
         protected_verified = [
             item
@@ -418,6 +416,94 @@ def _is_semantic_screened_protected_candidate(record: dict[str, object]) -> bool
             and (role == "theory_bridge" or retrieval_intent == "cross_domain_bridge")
         )
     return False
+
+
+def _validate_queue_membership_and_disposition(
+    *,
+    verified_records: list[dict],
+    queue_records: list[dict],
+) -> tuple[bool, str | None]:
+    """Ensure verified papers have a full deep/shallow reading disposition.
+
+    T2 may not LLM-screen every verified paper before finish, but no verified
+    paper should vanish. Every verified record must either be an active deep-read
+    target or retained as a shallow/backlog queue record for T3 abstract sweep
+    and later human revisit.
+    """
+
+    verified_key_sets = [_record_keys(record) for record in verified_records]
+    queue_key_sets = [_record_keys(record) for record in queue_records]
+
+    verified_matched = [False for _ in verified_records]
+    queue_outside_verified: list[str] = []
+    for queue_record, queue_keys in zip(queue_records, queue_key_sets):
+        matched = False
+        for idx, verified_keys in enumerate(verified_key_sets):
+            if queue_keys and verified_keys and queue_keys & verified_keys:
+                verified_matched[idx] = True
+                matched = True
+                break
+        if not matched:
+            queue_outside_verified.append(_display_queue_record(queue_record))
+
+    if queue_outside_verified:
+        return (
+            False,
+            "deep_read_queue 中存在不在 papers_verified 里的论文: "
+            + ", ".join(queue_outside_verified[:6]),
+        )
+
+    missing = [
+        _display_queue_record(record)
+        for record, matched in zip(verified_records, verified_matched)
+        if not matched
+    ]
+    if missing:
+        return (
+            False,
+            f"papers_verified 中有 {len(missing)}/{len(verified_records)} 篇没有进入 deep_read_queue 的深读/浅读处置: "
+            + ", ".join(missing[:8])
+            + "。T2 deterministic 收尾必须保留 verified 100% 去向覆盖；请重新 finalize T2 或 resume 修复 queue。",
+        )
+
+    active_count = sum(
+        1
+        for item in queue_records
+        if not bool(item.get("triaged_out")) and str(item.get("target_bucket") or "") != "overflow"
+    )
+    shallow_count = len(queue_records) - active_count
+    if verified_records and len(queue_records) < len(verified_records):
+        return (
+            False,
+            f"deep_read_queue 仅保留 {len(queue_records)}/{len(verified_records)} 篇 verified 论文；"
+            "必须 100% 保留为 deep_read 或 shallow_read/backlog。",
+        )
+    if queue_records and active_count <= 0:
+        return False, "deep_read_queue 没有任何 active deep-read target"
+    if len(queue_records) > active_count and shallow_count <= 0:
+        return False, "deep_read_queue 有截断候选但未保留 shallow/backlog 处置"
+    return True, None
+
+
+def _record_keys(record: dict) -> set[str]:
+    keys = paper_record_match_keys(record)
+    for key in ("paper_id", "canonical_id", "id", "normalized_id", "doi", "title"):
+        value = str(record.get(key) or "").strip()
+        if value:
+            keys.add(" ".join(value.casefold().split()))
+            keys.add(value.replace(":", "_").replace("/", "_").casefold())
+    return {key for key in keys if key}
+
+
+def _display_queue_record(record: dict) -> str:
+    return str(
+        record.get("normalized_id")
+        or record.get("paper_id")
+        or record.get("canonical_id")
+        or record.get("id")
+        or record.get("title")
+        or "unknown"
+    ).strip()
 
 
 def _validate_bridge_recall_and_screen_coverage(

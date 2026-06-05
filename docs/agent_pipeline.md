@@ -402,7 +402,7 @@ LLM 判断包括：
 | updataPreT5.md 项 | 当前落点 | 状态 |
 | --- | --- | --- |
 | CDR 单一事实源 | `config/cdr_schema.yaml` 定义 `problem_frame`、`design_rationale`、`artifact`、`data_view`、`evaluation_mode`、`contribution_type`、`boundary_conditions`、`cross_paper_tension`，并明确 provenance 不是质量门 | 已落地 |
-| T2 检索广度和跨域召回 | `researchos/prompts/scout.j2` 默认启用 `informs_search`，允许 `query_bucket=adjacent_field/theory_bridge` 和 `bridge_id` 作为召回意图；Scout LLM 必须输出 `semantic_screen`，`apply_semantic_screening` 只合并判定；`build_domain_map` / `build_deep_read_queue` 只读取 `semantic_screen`，不把 bucket/retrieval_intent 当语义准入 | 已落地 |
+| T2 检索广度和跨域召回 | `researchos/prompts/scout.j2` 默认启用 `informs_search`，允许 `query_bucket=adjacent_field/theory_bridge` 和 `bridge_id` 作为召回意图；Scout LLM 优先对 seed 邻域、bridge/must_explore、高优先级主线候选输出 `semantic_screen`，`apply_semantic_screening` 只合并判定；`build_domain_map` 只让 LLM-screened 论文进入 core/theory/adjacent，`build_deep_read_queue` 则要求 verified 池 100% 保留为 deep_read 或 shallow_read/backlog，不把 bucket/retrieval_intent 当语义准入 | 已落地 |
 | T2 引用图主轴 | `fetch_outgoing_citations` 读取 OpenAlex outgoing references + related works，并解析少量一跳候选论文；OpenAlex/Crossref/seed 记录保留 `canonical_id`、`referenced_works`、`related_works`、`refs_unavailable`，runtime 会把 `data.papers` 自动追加进 `papers_raw.jsonl`，同时把 `source_id -> referenced_works/related_works` 独立追加到 `literature/citation_edges.json`；`build_domain_map` 生成含 `core/theory_bridge/adjacent/boundary/audit` 的 `domain_map.json` | 已落地 |
 | T3 note schema 扩展 | `researchos/prompts/reader.j2` read 模式从 13 节扩为 19 节，新增 `§14 Design Rationale` 到 `§19 Cross-Paper Tension`；`researchos/agents/reader.py::_validate_cdr_note_fields` 校验字段和 `contribution_type` 枚举 | 已落地 |
 | T3 abstract-only 桥接字段 | `abstract_sweep.py` 和 `reader.j2` 要求 abstract-only note 写 `## A. 核心做法/视角` 与 `## B. 桥接点`；`reader.py` 对 `paper_notes_abstract/` 以及 `paper_notes/` 中 `[ABSTRACT-ONLY]` note 都做结构校验 | 已落地 |
@@ -927,9 +927,9 @@ raw 覆盖足够后，Scout 必须先执行一次机械摘要回填，再执行 
 1. **回填**：调用 `backfill_paper_abstracts(papers_path="literature/papers_raw.jsonl")`。这个工具只清洗已有摘要、重建 OpenAlex `abstract_inverted_index`、去掉 Crossref/JATS 标签，并按 Semantic Scholar batch、arXiv、OpenAlex、Crossref、Semantic Scholar、Europe PMC、标题匹配等机械来源补 `abstract` 和 `_abstract_backfilled_from`。它不判断论文相关性、证据强度或是否应进入 deep-read。
 2. **判断**：Scout LLM 分批读取回填后的候选标题、摘要、source_query、citation context，对可能进入 core、theory_bridge 或 deep-read target 的非 seed 论文输出结构化 `semantic_screen`。字段包括 `relation_to_project`、`role`、`confidence`、`bridge_id`、`can_enter_core`、`can_enter_deep_read`、`rationale`、`evidence_fields_used`。
 3. **合并**：调用 `apply_semantic_screening(papers_path="literature/papers_raw.jsonl", screenings=[...])`。该工具只按 `paper_id/id/canonical_id/doi/title` 匹配并把 LLM 判定合并回论文池；不在工具内部调用 LLM，不重判是否 core/bridge。
-4. **读取**：finish 后的 deterministic 收尾、`build_domain_map` 和 `build_deep_read_queue` 只读取 `semantic_screen`。缺少 `semantic_screen` 的非 seed 论文默认进入 boundary/backlog，不能只凭分数、bucket 或 degree 进入 core/target。
+4. **读取/处置**：finish 后的 deterministic 收尾会把 `semantic_screen` 作为唯一语义判定来源。`build_domain_map` 只允许 LLM-screened 论文进入 `core/theory_bridge/adjacent`，缺 screen 的非 seed 论文只能进入 boundary/backlog；`build_deep_read_queue` 还承担 verified 池阅读处置账本职责，必须把每篇 verified 论文保留为 active `deep_read` 或 `shallow_read`/backlog，不能只凭分数、bucket 或 degree 宣称它属于 core/target。
 
-raw 数量只是完成 T2 的必要条件，不是充分条件；Scout 必须先判断 query/source/bucket 覆盖是否足够，完成摘要回填和必要 semantic screening，随后调用 `finish_task`。runtime 才会确定性调用去重、metadata priority hint、enrich、metadata verification、引用边/domain map、access audit 和 deep-read queue 构建逻辑，依次产出 `papers_dedup.jsonl`、`papers_verified.jsonl`、`verification_failures.jsonl`、`citation_edges.json`、`domain_map.json`、`deep_read_queue.jsonl`、`access_audit.md`、`search_log.md` 和 `missing_areas.md`。最后 `ScoutAgent.validate_outputs()` 再检查数量、schema、`dedup <= raw`、queue 是否来自 verified 池、seed paper 是否进入队列，以及若 verified 池里已有 `semantic_screen` 允许的跨域/理论桥接候选，queue 至少保留一个并放入非 `triaged_out` 的 `seed/mainline_deep/bridge_deep` 阅读区，避免该类素材只留在 screened backlog 后被 T3 跳过。
+raw 数量只是完成 T2 的必要条件，不是充分条件；Scout 必须先判断 query/source/bucket 覆盖是否足够，完成摘要回填和必要 semantic screening，随后调用 `finish_task`。runtime 才会确定性调用去重、metadata priority hint、enrich、metadata verification、引用边/domain map、access audit 和 deep-read queue 构建逻辑，依次产出 `papers_dedup.jsonl`、`papers_verified.jsonl`、`verification_failures.jsonl`、`citation_edges.json`、`domain_map.json`、`deep_read_queue.jsonl`、`access_audit.md`、`search_log.md` 和 `missing_areas.md`。最后 `ScoutAgent.validate_outputs()` 再检查数量、schema、`dedup <= raw`、queue 是否来自 verified 池、verified 论文是否 100% 进入 deep/shallow 阅读处置链、seed paper 是否进入队列，以及若 verified 池里已有 `semantic_screen` 允许的跨域/理论桥接候选，queue 至少保留一个并放入非 `triaged_out` 的 `seed/mainline_deep/bridge_deep` 阅读区，避免该类素材只留在 screened backlog 后被 T3 跳过。
 
 ### T2 怎样保存 raw 结果
 
@@ -1072,12 +1072,15 @@ raw 数量只是完成 T2 的必要条件，不是充分条件；Scout 必须先
 - `bridge_screened_cap = 7`
 - `bridge_pool_cap = 15`
 
-这里的 `deep_read_target=35` 是 T3 默认应读目标，`deep_read_max=45` 是保护位和高优先级 seed/bridge/citation hub 合并后的 active 上限；保护项会占用 active 名额，而不是无限额外追加。`probe_pool` 与 screened caps 用于保留可恢复的筛读 backlog：`triaged_out=true` 的记录仍写入 `deep_read_queue.jsonl` 做 coverage/恢复记账，但不算 T3 必读。
+这里的 `deep_read_target=35` 是 T3 默认应读目标，`deep_read_max=45` 是保护位和高优先级 seed/bridge/citation hub 合并后的 active 上限；保护项会占用 active 名额，而不是无限额外追加。`deep_read_queue.jsonl` 同时是 verified 池的阅读处置账本：非 `triaged_out` 记录是 T3 active deep-read 目标，`triaged_out=true` 记录仍写入队列并标为 `read_disposition=shallow_read`，后续由 abstract sweep 生成 abstract-only / metadata-only 轻量笔记或供人工回捞。T2 不允许出现 `papers_verified` 中的论文既没有 deep-read 目标、也没有 shallow/backlog 去向；无 `deep_read_queue` 的旧 workspace fallback 也使用 `expected_notes_ratio=1.0`，默认要求输入池 100% 覆盖。
 
-当前排序的核心思想是：
+当前排序和处置的核心思想是：
 
 - seed papers 最高优先级
-- 非 seed 必须有 `semantic_screen.can_enter_deep_read=true` 才能进入 queue
+- `semantic_screen.can_enter_deep_read=true` 的非 seed 优先进入 active deep-read
+- 未 screen 的主线 verified 论文会标为 `metadata_fallback_candidate`，可填充 active 预算并由 Reader 复核
+- 未 screen 的 bridge/cross-domain 命中会标为 `unscreened_bridge_backlog_candidate`，进入 `bridge_screened` shallow/backlog，不得仅凭 bridge_id 作为 active bridge 证据
+- 显式 `shared_keyword_only/unrelated` 或 `can_enter_deep_read=false` 的论文会保留为 shallow/read-disposition 线索，不进入 `domain_map.core/theory_bridge/adjacent`
 - 再看 `relevance_score` / `priority_score_hint`
 - 再看 `access_score` / 本地 PDF 可读性
 - 再看 `verification_confidence`
@@ -1100,9 +1103,9 @@ semantic-screened protected slot 的条件是三者同时满足：
 - `semantic_screen.relation_to_project` 属于 `mechanism_bridge`、`method_transfer`、`evaluation_or_metric_bridge`、`baseline_or_dataset_relevance`
 - `semantic_screen.role=theory_bridge` 或 `retrieval_intent=cross_domain_bridge`
 
-因此 `search_bucket=adjacent_field/theory_bridge`、`source_bucket=adjacent/snowball` 和 `retrieval_intent=cross_domain_bridge` 都只是召回意图和 provenance；它们不能绕过 `semantic_screen`。`shared_keyword_only` / `unrelated`、缺 screen 的非 seed、或只共享宽泛词汇但无法说明下游用途的论文不会进入 target。
+因此 `search_bucket=adjacent_field/theory_bridge`、`source_bucket=adjacent/snowball` 和 `retrieval_intent=cross_domain_bridge` 都只是召回意图和 provenance；它们不能绕过 `semantic_screen`。`shared_keyword_only` / `unrelated`、缺 screen 的 bridge 命中、或只共享宽泛词汇但无法说明下游用途的论文不会进入 active bridge target，但仍会留在 shallow/backlog 处置链，避免 verified 论文静默消失。
 
-semantic-screened protected slot 会在 seed 后优先占用 active slots，再填中心论文；它不会只靠加权排序被高分 core 论文挤到 screened backlog。`deep_read_queue` metadata 会记录 `active_target_limit`、`protected_slot_target`、`cross_domain_slots`、`protected_slot_in_queue`、`protected_slot_in_target` 和 `screened_deep_read_candidates`；旧的 `protected_bucket_*` 字段只作为兼容 alias 保留，不再表达准入依据。`ScoutAgent.validate_outputs()` 只检查 `semantic_screen` 允许的跨域/桥接候选是否被保留；不会再把 bucket 标签本身当作保护依据。`ReaderAgent.validate_outputs()` 还会检查这些非 `triaged_out` 的 protected queue 论文是否真正完成 note。这个校验防止系统表面生成了 `domain_map`，但精读队列仍全部被中心论文占满。它仍然不是质量门：进入队列只表示应被 Reader 复核，不表示论文一定重要。
+semantic-screened protected slot 会在 seed 后优先占用 active slots，再填中心论文；它不会只靠加权排序被高分 core 论文挤到 screened backlog。`deep_read_queue` metadata 会记录 `active_target_limit`、`protected_slot_target`、`cross_domain_slots`、`protected_slot_in_queue`、`protected_slot_in_target`、`screened_deep_read_candidates`、`verified_disposition_count`、`verified_disposition_coverage`、`metadata_fallback_in_queue` 和 `shallow_read_backlog_count`；旧的 `protected_bucket_*` 字段只作为兼容 alias 保留，不再表达准入依据。`ScoutAgent.validate_outputs()` 会检查队列来自 verified 池、verified 100% 有 deep/shallow 去向，以及 `semantic_screen` 允许的跨域/桥接候选是否被保留；不会再把 bucket 标签本身当作保护依据。`ReaderAgent.validate_outputs()` 还会检查这些非 `triaged_out` 的 protected queue 论文是否真正完成 note。这个校验防止系统表面生成了 `domain_map`，但精读队列仍全部被中心论文占满。它仍然不是质量门：进入队列只表示应被 Reader 复核，不表示论文一定重要。
 
 引用图也会转化为真实 T3 证据，而不是只停留在 `domain_map`。`identify_citation_hubs` 会基于 pool 内部的 `citation_edges`、record 自带 `referenced_works/related_works` 和 canonical id 计算结构节点，标出：
 
@@ -1161,6 +1164,7 @@ Bridge domain 是一条独立于主线文献池的补强链路，不等于“把
 - `papers_verified.jsonl` 存在且数量合理
 - `verification_failures.jsonl` schema 正确
 - `deep_read_queue.jsonl` 必须来自 verified 池
+- `papers_verified.jsonl` 中每篇论文都必须在 `deep_read_queue.jsonl` 中有 deep_read 或 shallow_read/backlog 处置，不能因为缺 `semantic_screen` 被静默丢弃
 - 如果存在 seed papers，queue 中必须保留 seed
 - `domain_map.json` 必须存在，包含 `core`、`theory_bridge`、`adjacent`、`boundary`、`citation_edges`、`bucket_assignments`，且 semantics 为 `domain_map_for_synthesis_and_ideation_not_final_gaps`
 - 如果 verified 池有 `semantic_screen` 允许的跨域/理论桥接候选，deep-read queue 至少保留一个这类候选并放入非 `triaged_out` 的 `seed/mainline_deep/bridge_deep` 阅读区
@@ -1521,7 +1525,7 @@ T8/T9 会直接消费它，而不是重新从 note 手工抽引用。
 
 ### T3 的 Abstract Sweep（轻量补读）
 
-Deep read 完成后，orchestrator 自动运行 abstract sweep，从 verified/dedup 池中再扫一批论文，只基于 title/abstract 做轻量补读。它不是全文证据，也不会新增复杂 report；继续复用 `literature/paper_notes_abstract/`、`literature/access_audit.md` 和 `_runtime/logs/researchos.log`。
+Deep read 完成后，orchestrator 自动运行 abstract sweep，从 verified/dedup 池中补读所有尚未被 `paper_notes/` 或 `paper_notes_abstract/` 覆盖的论文。它只基于 title/abstract/metadata 做轻量补读，不是全文证据，也不会新增复杂 report；继续复用 `literature/paper_notes_abstract/`、`literature/access_audit.md` 和 `_runtime/logs/researchos.log`。
 
 配置在 `config/agent_params.yaml` 的 `reader.modes.read.behavior.abstract_sweep`：
 
@@ -1532,17 +1536,19 @@ reader:
       behavior:
         abstract_sweep:
           enabled: true
-          lite_paper_num: 40      # 最多扫多少篇
-          min_relevance: 0.4      # relevance_score 阈值
+          lite_paper_num: null    # null/all 表示覆盖所有剩余候选
+          min_relevance: 0.0      # 默认不按 metadata hint 丢弃
           sources: [papers_verified, papers_dedup]
           exclude_already_read: true
+          include_metadata_only: true
+          exclude_semantic_excluded: false
 ```
 
 候选过滤：
 
 - 跳过 `paper_notes/` 已覆盖的论文，匹配使用 ID、canonical_id、DOI、arXiv、title overlap 等多 key，不只看文件名
 - 跳过 `paper_notes_abstract/` 已覆盖的论文
-- 跳过 duplicate、semantic exclude、`shared_keyword_only/unrelated` 或缺少 title/abstract 的记录
+- 跳过 explicit duplicate；默认保留 semantic exclude / `shared_keyword_only/unrelated` 作为 abstract-only 排除线索，也保留缺摘要但有 title 的 metadata-only 轻量记录
 - 如果 T3 已经完成全文/部分全文 note，abstract sweep 不再重复写一个 abstract note
 
 执行方式：

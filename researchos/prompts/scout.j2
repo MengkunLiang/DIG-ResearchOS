@@ -377,6 +377,8 @@ backfill_paper_abstracts(papers_path="literature/papers_raw.jsonl")
 
 摘要回填完成后，再读取 `literature/papers_raw.jsonl` 的标题/摘要/来源查询（可分批读，不要把超大文件一次塞进上下文），由你作为 Scout LLM 对“可能竞争进入 core/theory_bridge/deep-read target 的非 seed 论文”输出逐论文判定，然后调用 `apply_semantic_screening` 合并到论文池。
 
+默认不要求你对 verified 池每篇论文都做昂贵的 LLM semantic_screen；100% 覆盖要求指的是每篇 verified 论文必须有后续阅读/处置去向。runtime 收尾会把 active 预算内的论文标为 deep_read，把未进入 active 的已核验论文保留为 shallow_read/backlog，T3 后的 abstract sweep 会继续生成 abstract-only 或 metadata-only 轻量笔记。你必须优先 screen seed 邻域、bridge/must_explore 命中、可能进入 core/theory_bridge 的候选和高优先级主线论文；未筛主线不能被丢弃，未筛 bridge 也不能被丢弃，只能留作浅层阅读/待补筛 backlog。
+
 每条 screening 必须包含：
 ```json
 {
@@ -405,6 +407,7 @@ apply_semantic_screening(
 - `shared_keyword_only` / `unrelated` 且非 seed 的论文必须 `can_enter_core=false`、`can_enter_deep_read=false`；
 - `role=theory_bridge` 需要说明可迁移机制、方法、评价协议、baseline/dataset 或失败模式，不能只因为来自 bridge query；
 - 不新建 `screening_plan.json` 或 `excluded_candidates.jsonl`；所有判定都合并到 `papers_raw.jsonl`，runtime 收尾会保留到 verified。
+- 不允许把未 screen 的 verified 论文静默丢弃：主线未筛论文由 runtime 标为 `metadata_fallback_candidate`，未筛 bridge/query hit 标为 `unscreened_bridge_backlog_candidate`，显式排除的 screen 也会被保留为浅层证据/排除线索，供 T3/T3.5/T8 可追溯使用。
 
 保留给工具的例外：
 - `detect_duplicate_queries`：检索前检查 query 重复度

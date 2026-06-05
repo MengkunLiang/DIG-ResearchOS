@@ -145,6 +145,16 @@ profiles:
 
 兼容层仍能读取旧的 `llm` / `budget` 字段，但 checked-in 默认配置不再把它们放这里。不要把日常模型和预算参数写回 `agent_params.yaml`，否则又会出现多表参数冲突。
 
+当前 Reader 的 `modes.read.behavior.abstract_sweep` 默认用于覆盖 T3 deep read 后尚未读完的 verified 论文：
+
+- `expected_notes_ratio: 1.0` 是无 queue 旧 workspace 的 fallback 比例，表示输入池默认必须 100% 有笔记；新主流程仍优先用 `deep_read_queue` 区分 active deep-read 和 shallow/backlog。
+- `lite_paper_num: null` 表示不设固定 40 篇上限，尽量覆盖所有剩余候选。
+- `min_relevance: 0.0` 表示不靠 metadata priority hint 丢弃候选。
+- `include_metadata_only: true` 表示缺摘要但有标题的论文也会生成 metadata-only 轻量 note。
+- `exclude_semantic_excluded: false` 表示 `shared_keyword_only/unrelated` 也会保留为排除线索，而不是静默消失。
+
+这组参数只控制机械覆盖行为；论文是否能作为学术证据仍由 Reader/Writer 的 LLM 判断和 evidence level 控制。
+
 ### 日志与控制台
 
 - `runtime.yaml: ui.quiet=true`：控制台只显示状态跳转、暂停、错误和最终结果

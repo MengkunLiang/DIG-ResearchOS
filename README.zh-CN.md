@@ -87,7 +87,7 @@ T1
 - 多阶段断点恢复
 - artifact 校验
 - T4 假设生成会同时落盘 `ideation/idea_scorecard.yaml`、`ideation/rejected_ideas.md`、`ideation/gate_decisions.json` 和 `ideation/idea_rationales.json`，记录每个 idea 的证据链和决策链
-- T2 在 raw 检索池覆盖足够后，会先调用 `backfill_paper_abstracts` 清洗和补全 `literature/papers_raw.jsonl` 的摘要，再让 Scout LLM 做 `semantic_screen`；摘要回填只补 metadata，不替代 LLM 相关性判断
+- T2 在 raw 检索池覆盖足够后，会先调用 `backfill_paper_abstracts` 清洗和补全 `literature/papers_raw.jsonl` 的摘要，再让 Scout LLM 优先对 seed 邻域、bridge/must_explore 和高优先级主线候选做 `semantic_screen`；摘要回填只补 metadata，不替代 LLM 相关性判断。runtime 收尾会要求 `papers_verified.jsonl` 中每篇论文都有 deep_read 或 shallow_read/backlog 去向，不能因为缺少 `semantic_screen` 被静默丢弃。
 - T3 论文阅读以 `queue_rank` 为工作单位：`lookup_paper_record(queue_rank=...)` 取单篇 metadata，`save_paper_note(queue_rank=..., content=...)` 自动生成 note 路径、即时校验并刷新 `literature/notes_manifest.json`；每篇 `paper_notes/*.md` 都必须记录 `## 12. Reading Coverage`，PDF 可用时必须覆盖到最后一页，只有完整页码覆盖且最终无截断时才能标记 `[FULL-TEXT]`
 - T3.5 文献综合会先通过 `build_synthesis_workbench` 从 `paper_notes/` 生成 `synthesis_workbench.json`、`synthesis_outline.md` 和 `synthesis_draft.md`，再产出 `synthesis.md`，避免完全依赖单次 prompt
 - T3.6 是可选综述论文支线：T3.5 后先问“是否撰写综述论文”，选择 yes 后按 taxonomy 规划、人工确认、逐 section 写作、拼装审阅、LaTeX 编译和导出 `survey_insights.json` 的方式执行；它不是把 `synthesis.md` 转成 TeX
@@ -537,10 +537,10 @@ ResearchOS 可以加载 MCP server 配置，并把 MCP tool 暴露给 agent。
 
 - pipeline 基本可运行
 - 关键阶段已具备断点恢复
-- T2 正常路径由检索工具返回值触发 runtime 自动保存 raw；Scout 会先对 `papers_raw.jsonl` 做机械摘要回填，再进行 LLM `semantic_screen`，最后由 runtime 确定性完成 dedup、verified、deep-read queue 和审计文件；启动时会用 `inspect_user_seeds` 区分真实 seed 与 `_DIR_GUIDE.md`/模板/空文件
+- T2 正常路径由检索工具返回值触发 runtime 自动保存 raw；Scout 会先对 `papers_raw.jsonl` 做机械摘要回填，再对重点候选进行 LLM `semantic_screen`，最后由 runtime 确定性完成 dedup、verified、deep-read/shallow-read queue 和审计文件；启动时会用 `inspect_user_seeds` 区分真实 seed 与 `_DIR_GUIDE.md`/模板/空文件
 - T2 会把“检索式规划为空”和“搜索工具收到空 query”都当作硬错误：`expand_queries` / `detect_duplicate_queries` 返回 `empty_query_plan`，搜索工具返回 `empty_query`，`log_scout_progress` 不再允许把缺失 query/source/count 的状态说明写成 `检索 '' -> 0 篇`；`researchos.log` 会记录 search tool 的 `reported_paper_count`、`persisted_raw_delta`、`raw_count_after` 和 `append_status`
 - T3 `fetch_paper_pdf` 会从本地 literature metadata、OpenAlex OA locations、Unpaywall、arXiv 和 DOI fallback 解析候选 PDF；`[FULL-TEXT]` 校验仍只认 `extract_pdf_text` 完整页码覆盖和最终无截断，例如 `1-4, 5-8, 9-10 / 10`
-- T3 deep read 后会运行 Reader LLM abstract sweep，向 `literature/paper_notes_abstract/` 补充 abstract-only 轻量笔记，确定性模板只作为失败兜底
+- T3 deep read 后会运行 Reader LLM abstract sweep，向 `literature/paper_notes_abstract/` 补充所有剩余 verified 论文的 abstract-only 或 metadata-only 轻量笔记；确定性模板只作为失败兜底
 - T3.5 已具备分阶段 synthesis workbench，而不是只靠一次 LLM prompt 直接写完整综述
 - T9 已经改成“编译失败则修复并重试”的投稿包阶段
 - provider 稳定性仍会影响长任务

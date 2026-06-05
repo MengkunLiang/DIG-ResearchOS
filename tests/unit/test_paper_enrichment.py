@@ -555,7 +555,7 @@ def test_build_deep_read_queue_protects_llm_screened_cross_domain_candidate(tmp_
     assert adjacent["target_bucket"] != "overflow"
 
 
-def test_build_deep_read_queue_does_not_admit_unscreened_bridge_query(tmp_path):
+def test_build_deep_read_queue_keeps_unscreened_bridge_query_as_backlog(tmp_path):
     workspace = tmp_path / "ws"
     (workspace / "literature").mkdir(parents=True, exist_ok=True)
     (workspace / "user_seeds").mkdir(parents=True, exist_ok=True)
@@ -600,11 +600,104 @@ def test_build_deep_read_queue_does_not_admit_unscreened_bridge_query(tmp_path):
         probe_pool=2,
     )
 
-    assert {item["paper_id"] for item in queue} == {"screened-core"}
+    by_id = {item["paper_id"]: item for item in queue}
+    assert set(by_id) == {"screened-core", "unscreened-bridge"}
+    assert by_id["screened-core"]["triaged_out"] is False
+    assert by_id["screened-core"]["target_bucket"] == "mainline_deep"
+    assert by_id["unscreened-bridge"]["triaged_out"] is True
+    assert by_id["unscreened-bridge"]["target_bucket"] == "bridge_screened"
+    assert by_id["unscreened-bridge"]["queue_reason"] == "unscreened_bridge_backlog_candidate"
     assert meta["protected_slot_in_queue"] == 0
     enriched_unscreened = next(item for item in enrich_papers(papers) if item["id"] == "unscreened-bridge")
     assert enriched_unscreened["cross_domain_retrieval_candidate"] is True
     assert "semantic_screen" not in enriched_unscreened
+
+
+def test_build_deep_read_queue_uses_mainline_metadata_fallback_to_fill_target(tmp_path):
+    workspace = tmp_path / "ws"
+    (workspace / "literature").mkdir(parents=True, exist_ok=True)
+    (workspace / "user_seeds").mkdir(parents=True, exist_ok=True)
+
+    papers = [
+        {
+            "id": "screened-core",
+            "title": "Screened Core",
+            "source": "openalex",
+            "year": 2026,
+            "abstract": "target-domain baseline",
+            "relevance_score": 0.8,
+            "verification_status": "metadata_verified",
+            "verification_confidence": 0.9,
+            "semantic_screen": _screen(
+                relation="baseline_or_dataset_relevance",
+                role="core",
+                can_enter_core=True,
+            ),
+        },
+        *[
+            {
+                "id": f"mainline-{idx}",
+                "title": f"Mainline Verified Paper {idx}",
+                "source": "openalex",
+                "year": 2025,
+                "abstract": "target-domain treatment effect estimation and transfer learning",
+                "relevance_score": 0.7 - idx * 0.01,
+                "verification_status": "metadata_verified",
+                "verification_confidence": 0.8,
+            }
+            for idx in range(5)
+        ],
+    ]
+
+    queue, meta = build_deep_read_queue(
+        enrich_papers(papers),
+        workspace,
+        deep_read_min=4,
+        deep_read_target=4,
+        deep_read_max=4,
+        probe_pool=4,
+    )
+
+    active = [item for item in queue if not item.get("triaged_out")]
+    assert len(active) == 4
+    assert any(item["queue_reason"] == "metadata_fallback_candidate" for item in active)
+    assert meta["target_entry_count"] == 4
+
+
+def test_build_deep_read_queue_retains_all_verified_as_deep_or_shallow(tmp_path):
+    workspace = tmp_path / "ws"
+    (workspace / "literature").mkdir(parents=True, exist_ok=True)
+    (workspace / "user_seeds").mkdir(parents=True, exist_ok=True)
+
+    papers = [
+        {
+            "id": f"mainline-{idx}",
+            "title": f"Mainline Verified Paper {idx}",
+            "source": "openalex",
+            "year": 2025,
+            "abstract": "target-domain treatment effect estimation and transfer learning",
+            "relevance_score": 0.9 - idx * 0.02,
+            "verification_status": "metadata_verified",
+            "verification_confidence": 0.8,
+        }
+        for idx in range(8)
+    ]
+
+    queue, meta = build_deep_read_queue(
+        enrich_papers(papers),
+        workspace,
+        deep_read_min=3,
+        deep_read_target=3,
+        deep_read_max=3,
+        probe_pool=3,
+    )
+
+    assert len(queue) == len(papers)
+    assert meta["verified_disposition_count"] == len(papers)
+    assert meta["verified_disposition_coverage"] == 1.0
+    assert meta["target_entry_count"] == 3
+    assert meta["shallow_read_backlog_count"] == 5
+    assert {item["read_disposition"] for item in queue} == {"deep_read", "shallow_read"}
 
 
 def test_build_deep_read_queue_protected_slot_cannot_be_sorted_to_overflow(tmp_path):
@@ -853,7 +946,10 @@ def test_build_deep_read_queue_protects_semantically_screened_citation_hub(tmp_p
     assert by_id["W_neighbor"]["hub_type"] == "seed_neighbor"
     assert by_id["W_neighbor"]["citation_hub_protected_slot"] is True
     assert by_id["W_neighbor"]["target_bucket"] == "mainline_deep"
-    assert "W_bad" not in by_id
+    assert by_id["W_bad"]["queue_reason"] == "semantic_screen_excluded_candidate"
+    assert by_id["W_bad"]["triaged_out"] is True
+    assert by_id["W_bad"]["read_disposition"] == "shallow_read"
+    assert by_id["W_bad"]["is_citation_hub"] is False
     assert meta["citation_hub_slots"] == 1
     assert meta["citation_hub_in_target"] >= 1
 

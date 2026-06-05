@@ -266,7 +266,7 @@ class TestReaderAgentValidateReadOutputs:
             encoding="utf-8",
         )
 
-        # 创建 paper_notes（只有 3 篇笔记，不足 80%）
+        # 创建 paper_notes（只有 3 篇笔记，不足默认 100% fallback 覆盖）
         notes_dir = standard_workspace / "literature" / "paper_notes"
         notes_dir.mkdir(parents=True, exist_ok=True)
         for i in range(3):
@@ -304,7 +304,7 @@ class TestReaderAgentValidateReadOutputs:
             encoding="utf-8",
         )
 
-        # 创建 paper_notes（5 篇笔记，满足 80%）
+        # 创建 paper_notes（5 篇笔记，满足默认 100% fallback 覆盖）
         notes_dir = standard_workspace / "literature" / "paper_notes"
         notes_dir.mkdir(parents=True, exist_ok=True)
         for i in range(5):

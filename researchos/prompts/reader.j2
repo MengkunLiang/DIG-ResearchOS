@@ -328,7 +328,7 @@ paper_id,Paper Title,2026,Venue,Method Family,DatasetOrSetting,Primary Metric,85
 - 理想目标是完成 `deep_read_target`（当前为 {{ deep_read_target }}）篇高质量笔记
 - 队列中的 seed papers 必须优先完成；如果某个 seed paper 在上游缺失，要在笔记或记录中明确指出
 {% else %}
-- 至少完成输入论文的 80% 笔记（兼容旧模式）
+- 至少完成输入论文池的全部论文笔记（默认 expected_notes_ratio=100%；旧 workspace 若缺少 `deep_read_queue`，也不能按比例丢弃论文）
 {% endif %}
 - comparison_table.csv 有对应数量的行
 - related_work.bib 有对应数量的条目

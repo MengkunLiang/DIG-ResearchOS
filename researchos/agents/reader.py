@@ -8,6 +8,7 @@ T3.5 (synthesize模式): 综合所有笔记，产出synthesis.md
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 import re
 
@@ -317,17 +318,19 @@ class ReaderAgent(Agent):
                     + _manifest_diagnostic_suffix(manifest_entries)
                 )
 
-        # 动态确定最小笔记数：优先围绕 deep_read_queue，其次回退到 papers_dedup
+        # 动态确定最小笔记数：优先围绕 deep_read_queue，其次回退到 verified/dedup。
+        # 默认 expected_notes_ratio=1.0；旧 workspace 没有 queue 时也不能再按 80% 静默放过。
         dedup_path = ctx.workspace_dir / "literature" / "papers_dedup.jsonl"
         verified_path = ctx.workspace_dir / "literature" / "papers_verified.jsonl"
+        expected_notes_ratio = _expected_notes_ratio(mode_params.get("expected_notes_ratio", 1.0))
         if not queue_count and verified_path.exists():
             verified_papers = load_jsonl(verified_path)
             expected_count = len(verified_papers)
-            min_required = max(3, int(expected_count * 0.8))
+            min_required = _required_note_count(expected_count, expected_notes_ratio)
         elif not queue_count and dedup_path.exists():
             dedup_papers = load_jsonl(dedup_path)
             expected_count = len(dedup_papers)
-            min_required = max(3, int(expected_count * 0.8))  # 兼容旧模式
+            min_required = _required_note_count(expected_count, expected_notes_ratio)
         else:
             expected_count = 0
 
@@ -596,6 +599,22 @@ def _validate_note_structure(note_path: Path) -> tuple[bool, str | None]:
         return False, err
 
     return True, None
+
+
+def _expected_notes_ratio(raw: object) -> float:
+    try:
+        ratio = float(raw)
+    except (TypeError, ValueError):
+        return 1.0
+    if ratio <= 0:
+        return 1.0
+    return min(1.0, ratio)
+
+
+def _required_note_count(expected_count: int, ratio: float) -> int:
+    if expected_count <= 0:
+        return 0
+    return min(expected_count, max(1, int(math.ceil(expected_count * ratio))))
 
 
 def _validate_reading_coverage(

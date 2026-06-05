@@ -154,14 +154,16 @@ agents:
         behavior:
           abstract_sweep:
             enabled: true
-            lite_paper_num: 40
-            min_relevance: 0.4
+            lite_paper_num: null
+            min_relevance: 0.0
             sources:
             - papers_verified
             - papers_dedup
             exclude_already_read: true
+            include_metadata_only: true
+            exclude_semantic_excluded: false
         description: 深度阅读
-        expected_notes_ratio: 0.8
+        expected_notes_ratio: 1.0
         deep_read_min: 35
         deep_read_target: 35
         deep_read_max: 45

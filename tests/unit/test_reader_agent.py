@@ -327,6 +327,40 @@ def test_validate_outputs_read_mode_success(reader_agent, temp_workspace):
     assert ok, f"Validation failed: {err}"
 
 
+def test_validate_outputs_read_mode_fallback_requires_full_input_pool(reader_agent, temp_workspace):
+    """没有 deep_read_queue 的旧 workspace 也不能再按 80% 放过输入论文。"""
+
+    verified_path = temp_workspace / "literature" / "papers_verified.jsonl"
+    verified_path.write_text(
+        "\n".join(f'{{"id": "paper{i}", "title": "Paper {i}"}}' for i in range(4)) + "\n",
+        encoding="utf-8",
+    )
+    notes_dir = temp_workspace / "literature" / "paper_notes"
+    for i in range(3):
+        (notes_dir / f"paper{i}.md").write_text(_structured_note(f"paper{i}"), encoding="utf-8")
+    (temp_workspace / "literature" / "comparison_table.csv").write_text(
+        "id,title,year\ntest1,Test Paper,2023\n",
+        encoding="utf-8",
+    )
+    (temp_workspace / "literature" / "related_work.bib").write_text(
+        "@article{test2023,\n  title={Test},\n  year={2023}\n}\n",
+        encoding="utf-8",
+    )
+
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T3",
+        run_id="test-run-fallback-ratio",
+        mode="read",
+    )
+
+    ok, err = reader_agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "至少需要4篇" in (err or "")
+
+
 def test_validate_note_structure_rejects_numeric_key_results_without_evidence(tmp_path):
     """Key Results 里出现数字时，必须用统一的 [Evidence: ...] 格式标注来源。"""
     note_path = tmp_path / "bad_note.md"

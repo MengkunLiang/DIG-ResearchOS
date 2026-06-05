@@ -29,10 +29,12 @@ from ..literature_identity import (
 
 _DEFAULT_CONFIG = {
     "enabled": False,
-    "lite_paper_num": 40,
-    "min_relevance": 0.4,
+    "lite_paper_num": None,
+    "min_relevance": 0.0,
     "sources": ["papers_verified", "papers_dedup"],
     "exclude_already_read": True,
+    "include_metadata_only": True,
+    "exclude_semantic_excluded": False,
 }
 
 
@@ -57,10 +59,18 @@ def build_sweep_candidates(
     """从 papers_verified/papers_dedup 中筛选 abstract sweep 候选。"""
 
     cfg = _resolve_config(config)
-    lite_num = int(cfg.get("lite_paper_num", 40))
+    lite_raw = cfg.get("lite_paper_num")
+    if lite_raw in (None, "", "all", "ALL", "unlimited", "UNLIMITED"):
+        lite_num: int | None = None
+    else:
+        lite_num = int(lite_raw)
+        if lite_num <= 0:
+            lite_num = None
     min_rel = float(cfg.get("min_relevance", 0.4))
     sources = cfg.get("sources", ["papers_verified", "papers_dedup"])
     exclude_read = cfg.get("exclude_already_read", True)
+    include_metadata_only = bool(cfg.get("include_metadata_only", True))
+    exclude_semantic_excluded = bool(cfg.get("exclude_semantic_excluded", False))
 
     completed_keys: set[str] = set()
     if exclude_read:
@@ -104,20 +114,20 @@ def build_sweep_candidates(
             continue
         if _is_duplicate_record(record):
             continue
-        if _is_semantic_excluded(record):
+        if exclude_semantic_excluded and _is_semantic_excluded(record):
             continue
         if not str(record.get("title") or "").strip():
             continue
         relevance = float(record.get("relevance_score", 0))
         if relevance < min_rel:
             continue
-        if not record.get("abstract", "").strip():
+        if not include_metadata_only and not record.get("abstract", "").strip():
             continue
         candidates.append(record)
 
     # 按 relevance_score 降序
     candidates.sort(key=lambda r: float(r.get("relevance_score", 0)), reverse=True)
-    return candidates[:lite_num]
+    return candidates if lite_num is None else candidates[:lite_num]
 
 
 def _normalize_id(record: dict) -> str:

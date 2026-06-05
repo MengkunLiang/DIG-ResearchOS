@@ -247,7 +247,7 @@ def test_build_sweep_candidates_respects_lite_paper_num(tmp_path: Path):
     assert len(candidates) == 5
 
 
-def test_build_sweep_candidates_skips_no_abstract(tmp_path: Path):
+def test_build_sweep_candidates_keeps_metadata_only_by_default(tmp_path: Path):
     workspace = tmp_path / "ws"
     _write_jsonl(
         workspace / "literature" / "papers_dedup.jsonl",
@@ -258,11 +258,33 @@ def test_build_sweep_candidates_skips_no_abstract(tmp_path: Path):
     )
 
     candidates = build_sweep_candidates(workspace, {"lite_paper_num": 10, "min_relevance": 0.0, "sources": ["papers_dedup"], "exclude_already_read": True})
-    assert len(candidates) == 1
-    assert candidates[0]["id"] == "p2"
+    assert [item["id"] for item in candidates] == ["p1", "p2"]
 
 
-def test_build_sweep_candidates_skips_duplicates_semantic_excludes_and_title_covered_notes(tmp_path: Path):
+def test_build_sweep_candidates_can_skip_metadata_only_when_configured(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    _write_jsonl(
+        workspace / "literature" / "papers_dedup.jsonl",
+        [
+            {"id": "p1", "title": "P1", "abstract": "", "relevance_score": 0.9},
+            {"id": "p2", "title": "P2", "abstract": "has abstract", "relevance_score": 0.8},
+        ],
+    )
+
+    candidates = build_sweep_candidates(
+        workspace,
+        {
+            "lite_paper_num": 10,
+            "min_relevance": 0.0,
+            "sources": ["papers_dedup"],
+            "exclude_already_read": True,
+            "include_metadata_only": False,
+        },
+    )
+    assert [item["id"] for item in candidates] == ["p2"]
+
+
+def test_build_sweep_candidates_skips_duplicates_but_keeps_semantic_excludes_by_default(tmp_path: Path):
     workspace = tmp_path / "ws"
     notes_dir = workspace / "literature" / "paper_notes"
     notes_dir.mkdir(parents=True)
@@ -307,6 +329,42 @@ def test_build_sweep_candidates_skips_duplicates_semantic_excludes_and_title_cov
     candidates = build_sweep_candidates(
         workspace,
         {"lite_paper_num": 10, "min_relevance": 0.0, "sources": ["papers_verified"], "exclude_already_read": True},
+    )
+
+    assert [item["id"] for item in candidates] == ["excluded", "keep"]
+
+
+def test_build_sweep_candidates_can_skip_semantic_excludes_when_configured(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    _write_jsonl(
+        workspace / "literature" / "papers_verified.jsonl",
+        [
+            {
+                "id": "excluded",
+                "title": "Keyword Only Paper",
+                "abstract": "Excluded.",
+                "relevance_score": 0.9,
+                "semantic_screen": {"relation_to_project": "shared_keyword_only"},
+            },
+            {
+                "id": "keep",
+                "title": "Useful Abstract Candidate",
+                "abstract": "Useful abstract.",
+                "relevance_score": 0.8,
+                "semantic_screen": {"relation_to_project": "method_transfer", "can_enter_deep_read": True},
+            },
+        ],
+    )
+
+    candidates = build_sweep_candidates(
+        workspace,
+        {
+            "lite_paper_num": 10,
+            "min_relevance": 0.0,
+            "sources": ["papers_verified"],
+            "exclude_already_read": True,
+            "exclude_semantic_excluded": True,
+        },
     )
 
     assert [item["id"] for item in candidates] == ["keep"]

@@ -536,6 +536,16 @@ agents:
 
 原则是：不依赖学术知识、可机械执行或可验证的运行参数放 `behavior`；需要知识判断、写作策略、审稿标准、idea 推理的内容仍放 prompt/skill guidance，让 LLM 发挥能力。
 
+`reader.modes.read.behavior.abstract_sweep` 当前默认是全量补读取向：
+
+- `expected_notes_ratio: 1.0` 表示无 `deep_read_queue` 的旧 workspace fallback 也按输入池 100% 校验，不再按 80% 放行。
+- `lite_paper_num: null` 表示不设固定数量上限。
+- `min_relevance: 0.0` 表示不靠 metadata priority hint 丢弃剩余 verified 论文。
+- `include_metadata_only: true` 表示缺摘要但有标题的论文也会生成 metadata-only 轻量 note。
+- `exclude_semantic_excluded: false` 表示 LLM screen 为 `shared_keyword_only/unrelated` 的论文也会保留为排除线索，而不是静默消失。
+
+这和 T2 的 `deep_read_queue` 100% verified 去向覆盖配套：active deep-read 由 T3 精读，剩余 shallow/backlog 由 abstract sweep 生成弱证据提示。
+
 ### 5.5 当前值得注意的字段
 
 #### `submission.behavior.enforce_anonymization_precheck`
