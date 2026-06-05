@@ -14,7 +14,9 @@ import xml.etree.ElementTree as ET
 import httpx
 from pydantic import BaseModel, Field
 
+from .abstract_utils import clean_abstract
 from .base import Tool, ToolResult
+from .search_validation import clean_search_query, empty_query_result, filter_usable_papers
 
 
 class ArxivSearchParams(BaseModel):
@@ -24,7 +26,11 @@ class ArxivSearchParams(BaseModel):
     sort_by: str = Field(default="relevance", description="排序方式：relevance, lastUpdatedDate, submittedDate")
     query_bucket: str | None = Field(
         default=None,
-        description="可选检索式桶标签，仅用于 ResearchOS 队列保护，不发送给 arXiv。",
+        description="可选检索式桶标签，仅作为 ResearchOS 召回意图/provenance，不发送给 arXiv，也不决定语义角色。",
+    )
+    bridge_id: str | None = Field(
+        default=None,
+        description="可选 bridge_domain_plan.json 中的 bridge_id；只记录召回意图，不代表语义角色。",
     )
 
 
@@ -44,10 +50,13 @@ class ArxivSearchTool(Tool):
         self.base_url = "https://export.arxiv.org/api/query"
 
     async def execute(self, **kwargs) -> ToolResult:
-        query = kwargs["query"]
+        query = clean_search_query(kwargs["query"])
+        if not query:
+            return empty_query_result(self.name, kwargs.get("query"))
         max_results = kwargs.get("max_results", 10)
         sort_by = kwargs.get("sort_by", "relevance")
         query_bucket = kwargs.get("query_bucket")
+        bridge_id = kwargs.get("bridge_id")
 
         params = {
             "search_query": f"all:{query}",
@@ -88,10 +97,10 @@ class ArxivSearchTool(Tool):
                 for entry in entries:
                     # 提取基本信息
                     title = entry.find("atom:title", ns)
-                    title_text = title.text.strip().replace("\n", " ") if title is not None else "Unknown"
+                    title_text = clean_abstract(title.text if title is not None else "Unknown")
 
                     summary = entry.find("atom:summary", ns)
-                    abstract = summary.text.strip().replace("\n", " ") if summary is not None else ""
+                    abstract = clean_abstract(summary.text if summary is not None else "")
 
                     # 提取作者
                     authors = []
@@ -141,6 +150,8 @@ class ArxivSearchTool(Tool):
                     }
                     papers.append(paper)
 
+                papers = filter_usable_papers(papers)
+
                 # 格式化输出
                 content_lines = [
                     f"找到 {len(papers)} 篇 arXiv 预印本：",
@@ -160,7 +171,7 @@ class ArxivSearchTool(Tool):
                 return ToolResult(
                     ok=True,
                     content="\n".join(content_lines),
-                    data={"papers": papers, "query": query, "query_bucket": query_bucket}
+                    data={"papers": papers, "query": query, "query_bucket": query_bucket, "bridge_id": bridge_id}
                 )
 
             except httpx.HTTPStatusError as e:

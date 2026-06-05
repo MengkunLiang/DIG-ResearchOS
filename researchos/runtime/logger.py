@@ -41,7 +41,22 @@ class _StdlibStructuredLogger:
         self._logger.log(level, message, exc_info=exc_info)
 
 
+def _suppress_noisy_library_loggers() -> None:
+    """Keep provider SDK INFO logs out of CLI and human timeline logs."""
+
+    for name in (
+        "LiteLLM",
+        "litellm",
+        "litellm.utils",
+        "litellm.litellm_core_utils",
+        "httpx",
+        "httpcore",
+    ):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
 def configure_logging(level: str = "INFO", json_logs: bool = True) -> None:
+    _suppress_noisy_library_loggers()
     # ResearchOS 的结构化日志首选 structlog；但测试环境或最小运行环境里如果没有装，
     # runtime 也不应因此直接不可导入，所以这里提供标准库 logging 的降级路径。
     if structlog is None:

@@ -11,7 +11,71 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, Field
 
+from .abstract_utils import abstract_from_openalex_index
 from .base import Tool, ToolResult
+from .search_validation import clean_search_query, empty_query_result, filter_usable_papers
+
+
+def _normalize_openalex_id(value: Any) -> str:
+    text = str(value or "").strip()
+    if text.startswith("https://openalex.org/") or text.startswith("https://api.openalex.org/works/"):
+        return text.rstrip("/").split("/")[-1]
+    return text
+
+
+def _work_to_paper(work: dict[str, Any]) -> dict[str, Any]:
+    """Convert an OpenAlex work payload while preserving graph fields."""
+
+    title = work.get("title", "Unknown")
+    authors = []
+    for authorship in (work.get("authorships") or [])[:10]:
+        author = authorship.get("author")
+        if isinstance(author, dict):
+            name = author.get("display_name", "Unknown")
+            if name:
+                authors.append(name)
+
+    primary_location = work.get("primary_location", {})
+    if isinstance(primary_location, dict):
+        source = primary_location.get("source", {})
+        venue = source.get("display_name", "Unknown") if isinstance(source, dict) else "Unknown"
+    else:
+        venue = "Unknown"
+
+    doi = str(work.get("doi") or "")
+    if doi.startswith("https://doi.org/"):
+        doi = doi.replace("https://doi.org/", "")
+
+    openalex_url = str(work.get("id") or "")
+    openalex_id = _normalize_openalex_id(openalex_url)
+    refs = [_normalize_openalex_id(item) for item in work.get("referenced_works") or [] if item]
+    related = [_normalize_openalex_id(item) for item in work.get("related_works") or [] if item]
+
+    return {
+        "id": openalex_id,
+        "canonical_id": openalex_id,
+        "canonical_id_source": "openalex",
+        "no_openalex_id": False,
+        "source": "openalex",
+        "title": title,
+        "authors": authors if authors else ["Unknown"],
+        "year": work.get("publication_year"),
+        "abstract": abstract_from_openalex_index(work.get("abstract_inverted_index")),
+        "venue": venue,
+        "url": f"https://doi.org/{doi}" if doi else openalex_url,
+        "citation_count": int(work.get("cited_by_count") or 0),
+        "doi": doi,
+        "referenced_works": refs,
+        "related_works": related,
+        "refs_unavailable": not bool(refs),
+        "provenance": {
+            "source_tool": "openalex",
+            "source_id": openalex_id,
+            "source_url": openalex_url,
+            "canonical_id": openalex_id,
+            "id_source": "openalex",
+        },
+    }
 
 
 class OpenAlexSearchParams(BaseModel):
@@ -21,7 +85,11 @@ class OpenAlexSearchParams(BaseModel):
     filter_params: str | None = Field(default=None, description="过滤参数（如 publication_year:>2020）")
     query_bucket: str | None = Field(
         default=None,
-        description="可选检索式桶标签，仅用于 ResearchOS 队列保护，不发送给 OpenAlex。",
+        description="可选检索式桶标签，仅作为 ResearchOS 召回意图/provenance，不发送给 OpenAlex，也不决定语义角色。",
+    )
+    bridge_id: str | None = Field(
+        default=None,
+        description="可选 bridge_domain_plan.json 中的 bridge_id；只记录召回意图，不代表语义角色。",
     )
 
 
@@ -46,10 +114,13 @@ class OpenAlexSearchTool(Tool):
         self.base_url = "https://api.openalex.org"
 
     async def execute(self, **kwargs) -> ToolResult:
-        query = kwargs["query"]
+        query = clean_search_query(kwargs["query"])
+        if not query:
+            return empty_query_result(self.name, kwargs.get("query"))
         per_page = kwargs.get("per_page", 10)
         filter_params = kwargs.get("filter_params")
         query_bucket = kwargs.get("query_bucket")
+        bridge_id = kwargs.get("bridge_id")
 
         params = {
             "search": query,
@@ -70,70 +141,7 @@ class OpenAlexSearchTool(Tool):
             meta = data.get("meta", {})
             total_count = meta.get("count", 0)
 
-            papers = []
-            for work in results:
-                # 提取基本信息
-                title = work.get("title", "Unknown")
-
-                # 提取作者
-                authorships = work.get("authorships", [])
-                authors = []
-                for authorship in authorships[:10]:  # 最多取前10个作者
-                    author = authorship.get("author")
-                    if author and isinstance(author, dict):
-                        name = author.get("display_name", "Unknown")
-                        authors.append(name)
-
-                # 提取年份
-                publication_year = work.get("publication_year")
-
-                # 提取摘要
-                abstract = None
-                abstract_inverted = work.get("abstract_inverted_index")
-                if abstract_inverted:
-                    # 重建摘要（从倒排索引）
-                    words = [""] * 1000  # 预分配空间
-                    for word, positions in abstract_inverted.items():
-                        for pos in positions:
-                            if pos < len(words):
-                                words[pos] = word
-                    abstract = " ".join([w for w in words if w]).strip()
-
-                # 提取 venue
-                primary_location = work.get("primary_location", {})
-                if primary_location:
-                    source = primary_location.get("source", {})
-                    venue = source.get("display_name", "Unknown") if source else "Unknown"
-                else:
-                    venue = "Unknown"
-
-                # 提取引用数
-                cited_by_count = work.get("cited_by_count", 0)
-
-                # 提取 DOI
-                doi = work.get("doi", "")
-                if doi and doi.startswith("https://doi.org/"):
-                    doi = doi.replace("https://doi.org/", "")
-
-                # 提取 OpenAlex ID
-                openalex_id = work.get("id", "")
-
-                # 提取 URL
-                url = doi if doi else openalex_id
-
-                paper = {
-                    "id": openalex_id.split("/")[-1] if openalex_id else "",
-                    "source": "openalex",
-                    "title": title,
-                    "authors": authors if authors else ["Unknown"],
-                    "year": publication_year,
-                    "abstract": abstract or "",
-                    "venue": venue,
-                    "url": f"https://doi.org/{doi}" if doi else openalex_id,
-                    "citation_count": cited_by_count,
-                    "doi": doi,
-                }
-                papers.append(paper)
+            papers = filter_usable_papers([_work_to_paper(work) for work in results])
 
             # 格式化输出
             content_lines = [
@@ -163,7 +171,13 @@ class OpenAlexSearchTool(Tool):
             return ToolResult(
                 ok=True,
                 content="\n".join(content_lines),
-                data={"papers": papers, "total": total_count, "query": query, "query_bucket": query_bucket}
+                data={
+                    "papers": papers,
+                    "total": total_count,
+                    "query": query,
+                    "query_bucket": query_bucket,
+                    "bridge_id": bridge_id,
+                }
             )
 
         except Exception as e:
@@ -210,66 +224,19 @@ class OpenAlexGetWorkTool(Tool):
                 response.raise_for_status()
                 work = response.json()
 
-            # 提取信息（与搜索类似）
-            title = work.get("title", "Unknown")
-
-            authorships = work.get("authorships", [])
-            authors = []
-            for a in authorships:
-                author = a.get("author")
-                if author and isinstance(author, dict):
-                    name = author.get("display_name", "Unknown")
-                    authors.append(name)
-
-            publication_year = work.get("publication_year")
-
-            abstract = None
-            abstract_inverted = work.get("abstract_inverted_index")
-            if abstract_inverted:
-                words = [""] * 1000
-                for word, positions in abstract_inverted.items():
-                    for pos in positions:
-                        if pos < len(words):
-                            words[pos] = word
-                abstract = " ".join([w for w in words if w]).strip()
-
-            primary_location = work.get("primary_location", {})
-            if primary_location:
-                source = primary_location.get("source", {})
-                venue = source.get("display_name", "Unknown") if source else "Unknown"
-            else:
-                venue = "Unknown"
-
-            cited_by_count = work.get("cited_by_count", 0)
-
-            doi = work.get("doi", "")
-            if doi and doi.startswith("https://doi.org/"):
-                doi = doi.replace("https://doi.org/", "")
+            paper = _work_to_paper(work)
 
             # 格式化输出
             content_lines = [
-                f"标题: {title}",
-                f"作者: {', '.join(authors)}",
-                f"年份: {publication_year}",
-                f"发表于: {venue}",
-                f"引用数: {cited_by_count}",
+                f"标题: {paper['title']}",
+                f"作者: {', '.join(paper['authors'])}",
+                f"年份: {paper['year']}",
+                f"发表于: {paper['venue']}",
+                f"引用数: {paper['citation_count']}",
                 "",
                 "摘要:",
-                abstract[:500] + "..." if abstract and len(abstract) > 500 else (abstract or "无摘要")
+                paper["abstract"][:500] + "..." if paper["abstract"] and len(paper["abstract"]) > 500 else (paper["abstract"] or "无摘要")
             ]
-
-            paper = {
-                "id": work.get("id", "").split("/")[-1],
-                "source": "openalex",
-                "title": title,
-                "authors": authors,
-                "year": publication_year,
-                "abstract": abstract or "",
-                "venue": venue,
-                "url": f"https://doi.org/{doi}" if doi else work.get("id", ""),
-                "citation_count": cited_by_count,
-                "doi": doi,
-            }
 
             return ToolResult(
                 ok=True,

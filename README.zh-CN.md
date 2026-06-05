@@ -87,7 +87,8 @@ T1
 - 多阶段断点恢复
 - artifact 校验
 - T4 假设生成会同时落盘 `ideation/idea_scorecard.yaml`、`ideation/rejected_ideas.md`、`ideation/gate_decisions.json` 和 `ideation/idea_rationales.json`，记录每个 idea 的证据链和决策链
-- T3 论文阅读会在每篇 `paper_notes/*.md` 中记录 `## 12. Reading Coverage`；PDF 可用时必须覆盖到最后一页，只有完整页码覆盖且最终无截断时才能标记 `[FULL-TEXT]`，分块重读覆盖全篇是合法完成方式
+- T2 在 raw 检索池覆盖足够后，会先调用 `backfill_paper_abstracts` 清洗和补全 `literature/papers_raw.jsonl` 的摘要，再让 Scout LLM 做 `semantic_screen`；摘要回填只补 metadata，不替代 LLM 相关性判断
+- T3 论文阅读以 `queue_rank` 为工作单位：`lookup_paper_record(queue_rank=...)` 取单篇 metadata，`save_paper_note(queue_rank=..., content=...)` 自动生成 note 路径、即时校验并刷新 `literature/notes_manifest.json`；每篇 `paper_notes/*.md` 都必须记录 `## 12. Reading Coverage`，PDF 可用时必须覆盖到最后一页，只有完整页码覆盖且最终无截断时才能标记 `[FULL-TEXT]`
 - T3.5 文献综合会先通过 `build_synthesis_workbench` 从 `paper_notes/` 生成 `synthesis_workbench.json`、`synthesis_outline.md` 和 `synthesis_draft.md`，再产出 `synthesis.md`，避免完全依赖单次 prompt
 - T3.6 是可选综述论文支线：T3.5 后先问“是否撰写综述论文”，选择 yes 后按 taxonomy 规划、人工确认、逐 section 写作、拼装审阅、LaTeX 编译和导出 `survey_insights.json` 的方式执行；它不是把 `synthesis.md` 转成 TeX
 - 当前主链从 `T4.5` 进入外部实验链：`T5-HANDOFF -> T5-EXECUTOR-GATE -> T5-DRY-RUN/T5-EXTERNAL-WAIT -> T7-INGEST -> T7-AUDIT -> T7-POST-NOVELTY -> T7-CLAIMS`。ResearchOS 负责编译协议、选择执行器、生成 Codex/Claude/manual prompt、摄取结果、审计证据、实验后 novelty 复核和生成 result-to-claim；真实实验由外部执行器在隔离路径完成
@@ -485,8 +486,8 @@ ResearchOS 可以加载 MCP server 配置，并把 MCP tool 暴露给 agent。
 
 当前多个关键阶段都有恢复逻辑。例如：
 
-- T3 会基于已有且结构合格的 note 重建 pending deep-read queue；缺少 `Reading Coverage` 或 `[FULL-TEXT]` 页码不完整的旧 note 会继续留在待处理队列中
-- T3 的 pending queue/meta 会在成功、预算/步数暂停和校验修复暂停等退出路径刷新；`completed_note_count` 是结构合格 note 文件数，历史重复 stub 不会计入完成数，也不会在有效覆盖已满足时拖死整体验证
+- T3 会基于 `notes_manifest.json` 和已有且结构合格的 note 重建 pending deep-read queue；缺少 `Reading Coverage`、`Claims vs Evidence`、`Key Quotes`、CDR 字段或 `[FULL-TEXT]` 页码不完整的旧 note 会继续留在待处理队列中
+- T3 的 pending queue/meta 会在成功、预算/步数暂停和校验修复暂停等退出路径刷新；`completed_note_count` 是目录中结构合格 note 文件数，`completed_queue_entry_count` 是 deep-read queue 中已完成条目数，历史重复 stub 不会计入完成数，也不会在有效覆盖已满足时拖死整体验证
 - T3.5 会复用未过期的 `synthesis_workbench.json` / `synthesis_outline.md` / `synthesis_draft.md`，避免重跑时重复生成结构化脚手架
 - T3.6 会复用 `drafts/survey/survey_plan.json`、`survey_state.json`、`section_outlines/`、`sections/*.tex`、`survey_audit.json` 和 `survey_compile_report.json`；中断后会按 section 继续，不需要重写整个 survey
 - T4.5 已有合格 `novelty_audit.md` 和 `_mechanism_tuples/` 时会执行 resume prefinalize，跳过不必要的 LLM 续跑；`collision_cases.md` 仍只在 High/Medium Overlap 时条件要求
@@ -509,7 +510,10 @@ ResearchOS 可以加载 MCP server 配置，并把 MCP tool 暴露给 agent。
 
 - 只有 `run` / `resume` 才会完整体现这些 gate
 - `run-task` 只能单独执行某个阶段，不会继续推进完整状态机
-- 如果 `ask_human` 在非交互环境中拿不到输入，runtime 会暂停任务并写入 `state.yaml`，不会把空回答当作用户确认继续执行
+- `ask_human` 的 CLI 输入完成后用单独一行 `END` 或 Ctrl+D 提交；非空回答提交后会立即显示 `已收到输入，继续处理...` 和一整行 `-----` 分隔线，避免误以为终端卡住
+- 如果 `ask_human` 收到空回答，会最多重试 3 次；连续空回答或非交互环境拿不到输入时，runtime 才会暂停任务并写入 `state.yaml`
+- 每个 task/agent 开始时会输出一整行 `==== <task_id> | <agent_name> ==== ` 风格分隔线，便于在长输出中判断当前切换到了哪里
+- 只要同一轮会调用 `ask_human`，Agent 本轮正文会默认显示；如果模型把问题写成“请确认以上/这些方向”这类依赖前文的短句，runtime 会自动把本轮正文并入输入问题，避免用户只看到空输入框或缺上下文问题
 - 如果 Agent 文本里明确要求“请选择/请确认/请提供”等人工决策但忘记调用 `ask_human`，runtime 会自动桥接成 `ask_human` 并在问题开头解释原因；普通状态说明（例如“我来检查已有材料”）不会触发输入框
 - 预算扩限 gate 支持数字序号，也支持 `继续`、`确认`、`停止`、`stop` 等常用输入
 - `finish_task` 后输出校验多次失败会暂停为可恢复状态，并保留最后一次校验错误；后续可用 `resume` 继续定向修复，而不是直接进入不可恢复 `FAILED`
@@ -533,8 +537,10 @@ ResearchOS 可以加载 MCP server 配置，并把 MCP tool 暴露给 agent。
 
 - pipeline 基本可运行
 - 关键阶段已具备断点恢复
-- T2 正常路径由检索工具返回值触发 runtime 自动保存 raw，并由 runtime 确定性完成 dedup、verified、deep-read queue 和审计文件
-- T3 `[FULL-TEXT]` 校验支持分块重读覆盖全篇，例如 `1-4, 5-8, 9-10 / 10`，并要求 `Truncation` 明确说明最终无截断
+- T2 正常路径由检索工具返回值触发 runtime 自动保存 raw；Scout 会先对 `papers_raw.jsonl` 做机械摘要回填，再进行 LLM `semantic_screen`，最后由 runtime 确定性完成 dedup、verified、deep-read queue 和审计文件；启动时会用 `inspect_user_seeds` 区分真实 seed 与 `_DIR_GUIDE.md`/模板/空文件
+- T2 会把“检索式规划为空”和“搜索工具收到空 query”都当作硬错误：`expand_queries` / `detect_duplicate_queries` 返回 `empty_query_plan`，搜索工具返回 `empty_query`，`log_scout_progress` 不再允许把缺失 query/source/count 的状态说明写成 `检索 '' -> 0 篇`；`researchos.log` 会记录 search tool 的 `reported_paper_count`、`persisted_raw_delta`、`raw_count_after` 和 `append_status`
+- T3 `fetch_paper_pdf` 会从本地 literature metadata、OpenAlex OA locations、Unpaywall、arXiv 和 DOI fallback 解析候选 PDF；`[FULL-TEXT]` 校验仍只认 `extract_pdf_text` 完整页码覆盖和最终无截断，例如 `1-4, 5-8, 9-10 / 10`
+- T3 deep read 后会运行 Reader LLM abstract sweep，向 `literature/paper_notes_abstract/` 补充 abstract-only 轻量笔记，确定性模板只作为失败兜底
 - T3.5 已具备分阶段 synthesis workbench，而不是只靠一次 LLM prompt 直接写完整综述
 - T9 已经改成“编译失败则修复并重试”的投稿包阶段
 - provider 稳定性仍会影响长任务
@@ -593,8 +599,11 @@ pip install -e .
 
 1. CLI 最后的错误摘要
 2. `workspace/<name>/_runtime/logs/researchos.log`
-3. `workspace/<name>/_runtime/traces/*.jsonl`
-4. 对应 task 产物目录
+3. `workspace/<name>/_runtime/logs/researchos-debug.log`
+4. `workspace/<name>/_runtime/traces/*.jsonl`
+5. 对应 task 产物目录
+
+控制台默认保持简洁；`--quiet` 只显示状态、暂停、错误和最终结果，`--verbose` 显示更多 Agent 文本与 step 摘要。LiteLLM 的 INFO 噪音默认不会进入控制台或 `researchos.log`。
 
 ## 进一步阅读
 

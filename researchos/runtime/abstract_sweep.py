@@ -1,20 +1,26 @@
-"""T3 Abstract Sweep — 轻量补读模块。
+"""T3 Abstract Sweep — 摘要级轻量补读模块。
 
-在 deep read 完成后，从 verified/dedup 池中再扫一批论文，
-只基于 abstract 生成精简 evidence snippet，扩展下游候选覆盖。
-
-全确定性，不调 LLM；因此输出必须标为 review hint，不能作为机制结论。
+在 deep read 完成后，从 verified/dedup 池中再扫一批未被全文笔记覆盖的
+论文，优先调用 Reader LLM 基于 title/abstract 生成精简 evidence note。
+LLM 不可用时才退回确定性 fallback；无论哪种路径，输出都必须标为
+ABSTRACT-ONLY，不能作为全文机制结论。
 """
 
 from __future__ import annotations
 
 import csv
 import io
+import inspect
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from ..agents._common import load_jsonl
+from ..literature_identity import (
+    is_paper_note_file,
+    paper_note_match_keys,
+    record_is_covered,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -28,6 +34,9 @@ _DEFAULT_CONFIG = {
     "sources": ["papers_verified", "papers_dedup"],
     "exclude_already_read": True,
 }
+
+
+AbstractReader = Callable[[dict[str, Any], str], str | Awaitable[str]]
 
 
 def _resolve_config(raw: dict[str, Any] | None) -> dict[str, Any]:
@@ -53,17 +62,20 @@ def build_sweep_candidates(
     sources = cfg.get("sources", ["papers_verified", "papers_dedup"])
     exclude_read = cfg.get("exclude_already_read", True)
 
-    # 已有 full-text note 的 paper ID
-    read_ids: set[str] = set()
+    completed_keys: set[str] = set()
     if exclude_read:
         notes_dir = workspace / "literature" / "paper_notes"
         if notes_dir.exists():
-            read_ids = {p.stem for p in notes_dir.glob("*.md")}
+            for note_path in notes_dir.glob("*.md"):
+                if is_paper_note_file(note_path):
+                    completed_keys.update(paper_note_match_keys(note_path))
 
     # 已有 abstract note 的 paper ID（避免重复 sweep）
     abstract_dir = workspace / "literature" / "paper_notes_abstract"
     if abstract_dir.exists():
-        read_ids |= {p.stem for p in abstract_dir.glob("*.md")}
+        for note_path in abstract_dir.glob("*.md"):
+            if is_paper_note_file(note_path):
+                completed_keys.update(paper_note_match_keys(note_path))
 
     # 加载候选池
     pool: list[dict] = []
@@ -83,7 +95,13 @@ def build_sweep_candidates(
     candidates: list[dict] = []
     for record in pool:
         rid = _normalize_id(record)
-        if rid in read_ids:
+        if exclude_read and record_is_covered(record, completed_keys):
+            continue
+        if _is_duplicate_record(record):
+            continue
+        if _is_semantic_excluded(record):
+            continue
+        if not str(record.get("title") or "").strip():
             continue
         relevance = float(record.get("relevance_score", 0))
         if relevance < min_rel:
@@ -108,6 +126,33 @@ def _normalize_id(record: dict) -> str:
     if not raw:
         return ""
     return re.sub(r"[^a-zA-Z0-9_.-]", "_", raw.replace(":", "_").replace("/", "_")).strip("_")
+
+
+def _is_duplicate_record(record: dict[str, Any]) -> bool:
+    """Return true only for explicit duplicate markers."""
+
+    if record.get("duplicate_of") or record.get("is_duplicate") is True or record.get("duplicate") is True:
+        return True
+    status = str(record.get("dedup_status") or record.get("duplicate_status") or "").strip().casefold()
+    return status in {"duplicate", "merged_duplicate", "excluded_duplicate"}
+
+
+def _is_semantic_excluded(record: dict[str, Any]) -> bool:
+    """Skip records Scout explicitly screened out as unrelated/shared-keyword only."""
+
+    screen = record.get("semantic_screen")
+    if not isinstance(screen, dict):
+        return False
+    relation = str(
+        screen.get("relation_to_project")
+        or screen.get("relation")
+        or ""
+    ).strip().casefold()
+    if relation in {"shared_keyword_only", "unrelated"}:
+        return True
+    if screen.get("can_enter_deep_read") is False and not record.get("seed_priority"):
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +226,118 @@ LLM_REVIEW_REQUIRED. Abstract closing snippet:
 - Review status: LLM must inspect before using this paper for mechanism or novelty claims
 """
     return note
+
+
+def build_abstract_reader_prompt(paper: dict[str, Any]) -> str:
+    """Build the per-paper Reader LLM prompt for abstract-only note generation."""
+
+    title = str(paper.get("title") or "Unknown").strip()
+    paper_id = _normalize_id(paper)
+    authors = paper.get("authors", [])
+    if isinstance(authors, list):
+        author_text = ", ".join(
+            str(item.get("name") if isinstance(item, dict) else item).strip()
+            for item in authors[:8]
+            if str(item.get("name") if isinstance(item, dict) else item).strip()
+        )
+    else:
+        author_text = str(authors or "").strip()
+    abstract = str(paper.get("abstract") or "").strip()
+    metadata = {
+        "id": paper_id,
+        "title": title,
+        "authors": author_text or "Unknown",
+        "year": _extract_year(paper),
+        "venue": paper.get("venue") or "",
+        "doi_or_arxiv": paper.get("doi") or paper.get("arxiv_id") or paper.get("id") or "",
+        "relevance_score": paper.get("relevance_score", ""),
+        "semantic_screen": paper.get("semantic_screen", {}),
+        "source_bucket": paper.get("source_bucket") or paper.get("search_bucket") or "",
+        "why_relevant": paper.get("why_relevant") or "",
+    }
+    return (
+        "你是 ResearchOS Reader。请只基于下面的 title、metadata 和 abstract 做摘要级简读，"
+        "不要假装读过全文，不要补造实验数字、数据集或机制细节。\n\n"
+        "输出必须是 Markdown，并严格包含以下 section 标题：\n"
+        "## 1. Problem & Motivation\n"
+        "## 2. Method Summary\n"
+        "## A. 核心做法/视角\n"
+        "## B. 桥接点\n"
+        "## 3. Key Claimed Results\n"
+        "## Raw Abstract\n"
+        "## 13. Mechanism Claim\n"
+        "## Source\n\n"
+        "写作要求：\n"
+        "- 文件开头用 `# {title}`。\n"
+        "- 元数据中必须包含 `- **ID**: ...`、`- **Title**: ...` 和 `- **Status**: [ABSTRACT-ONLY]`。\n"
+        "- `## 13. Mechanism Claim` 里必须写 `- **Evidence type**: abstract_claim_hint`。\n"
+        "- 明确区分 abstract 声称、你的谨慎理解、以及需要全文验证的内容。\n"
+        "- 如果 abstract 没有结果或机制，不要编造，写 `not available from abstract`。\n\n"
+        f"Metadata:\n{metadata}\n\n"
+        f"Abstract:\n{abstract}\n"
+    )
+
+
+def normalize_abstract_reader_note(note: str, paper: dict[str, Any]) -> str:
+    """Repair shallow formatting omissions in an LLM abstract note."""
+
+    text = str(note or "").strip()
+    if not text:
+        return generate_abstract_note(paper)
+
+    title = str(paper.get("title") or "Unknown").strip()
+    paper_id = _normalize_id(paper)
+    metadata_lines: list[str] = []
+    if not text.lstrip().startswith("# "):
+        metadata_lines.append(f"# {title}")
+    if "- **ID**:" not in text:
+        metadata_lines.append(f"- **ID**: {paper_id}")
+    if "- **Title**:" not in text:
+        metadata_lines.append(f"- **Title**: {title}")
+    if "- **Status**:" not in text:
+        metadata_lines.append("- **Status**: [ABSTRACT-ONLY]")
+    if metadata_lines:
+        text = "\n".join(metadata_lines) + "\n\n" + text
+
+    required_sections = [
+        "## 1. Problem & Motivation",
+        "## 2. Method Summary",
+        "## A. 核心做法/视角",
+        "## B. 桥接点",
+        "## 3. Key Claimed Results",
+        "## Raw Abstract",
+        "## 13. Mechanism Claim",
+        "## Source",
+    ]
+    for heading in required_sections:
+        if heading not in text:
+            if heading == "## Raw Abstract":
+                text += f"\n\n{heading}\n{paper.get('abstract', '').strip() or '(no abstract available)'}"
+            elif heading == "## 13. Mechanism Claim":
+                text += (
+                    "\n\n## 13. Mechanism Claim\n"
+                    "- **Stated mechanism**: not available from abstract\n"
+                    "- **Evidence type**: abstract_claim_hint\n"
+                    "- **Supporting artifact**: abstract metadata only"
+                )
+            elif heading == "## Source":
+                text += (
+                    "\n\n## Source\n"
+                    "- Read from: abstract / metadata only\n"
+                    "- No PDF extraction performed\n"
+                    "- Review status: abstract-only LLM read; verify before using for mechanism claims"
+                )
+            else:
+                text += f"\n\n{heading}\nnot available from abstract"
+
+    if "[ABSTRACT-ONLY]" not in text:
+        text = text.replace("- **Status**:", "- **Status**: [ABSTRACT-ONLY] ", 1)
+    if "abstract_claim_hint" not in text:
+        text += "\n- **Evidence type**: abstract_claim_hint\n"
+    if "LLM_REVIEW_REQUIRED" in text:
+        text = text.replace("LLM_REVIEW_REQUIRED. ", "")
+        text = text.replace("LLM_REVIEW_REQUIRED", "abstract-only review")
+    return text.strip() + "\n"
 
 
 def _extract_year(paper: dict) -> int | None:
@@ -313,7 +470,33 @@ def run_abstract_sweep(
     workspace: Path,
     config: dict[str, Any] | None = None,
 ) -> dict:
-    """执行 abstract sweep，返回统计摘要。"""
+    """执行 deterministic fallback abstract sweep，返回统计摘要。"""
+
+    return _run_abstract_sweep_sync(workspace, config, abstract_reader=None)
+
+
+async def run_abstract_sweep_with_reader(
+    workspace: Path,
+    config: dict[str, Any] | None = None,
+    *,
+    abstract_reader: AbstractReader | None = None,
+) -> dict:
+    """执行 abstract sweep，可注入 Reader LLM callback。"""
+
+    return await _run_abstract_sweep_async(
+        workspace,
+        config,
+        abstract_reader=abstract_reader,
+    )
+
+
+def _run_abstract_sweep_sync(
+    workspace: Path,
+    config: dict[str, Any] | None = None,
+    *,
+    abstract_reader: None = None,
+) -> dict:
+    """Synchronous compatibility path used by tests/offline runs."""
 
     cfg = _resolve_config(config)
     if not cfg.get("enabled", False):
@@ -359,10 +542,128 @@ def run_abstract_sweep(
 
     return {
         "enabled": True,
+        "reader_mode": "deterministic_fallback",
         "candidates_found": len(candidates),
         "notes_generated": notes_generated,
+        "llm_notes_generated": 0,
+        "fallback_notes_generated": notes_generated,
         "output_dir": str(abstract_dir.relative_to(workspace)),
     }
+
+
+async def _run_abstract_sweep_async(
+    workspace: Path,
+    config: dict[str, Any] | None = None,
+    *,
+    abstract_reader: AbstractReader | None = None,
+) -> dict:
+    cfg = _resolve_config(config)
+    if not cfg.get("enabled", False):
+        return {"enabled": False, "candidates_found": 0, "notes_generated": 0}
+
+    candidates = build_sweep_candidates(workspace, cfg)
+    if not candidates:
+        return {"enabled": True, "candidates_found": 0, "notes_generated": 0}
+
+    abstract_dir = workspace / "literature" / "paper_notes_abstract"
+    abstract_dir.mkdir(parents=True, exist_ok=True)
+
+    comparison_path = workspace / "literature" / "comparison_table.csv"
+    bib_path = workspace / "literature" / "related_work.bib"
+
+    notes_generated = 0
+    llm_notes_generated = 0
+    fallback_notes_generated = 0
+    reader_errors: list[dict[str, str]] = []
+    rows_to_append: list[str] = []
+    bib_entries: list[str] = []
+
+    for paper in candidates:
+        paper_id = _normalize_id(paper)
+        if not paper_id:
+            continue
+
+        note_source = "deterministic_fallback"
+        if abstract_reader is not None:
+            prompt = build_abstract_reader_prompt(paper)
+            try:
+                note_raw = await _call_abstract_reader(abstract_reader, paper, prompt)
+                note = normalize_abstract_reader_note(note_raw, paper)
+                note_source = "reader_llm"
+                llm_notes_generated += 1
+            except Exception as exc:  # pragma: no cover - defensive fallback
+                note = generate_abstract_note(paper)
+                reader_errors.append({"paper_id": paper_id, "error": repr(exc)[:300]})
+                fallback_notes_generated += 1
+        else:
+            note = generate_abstract_note(paper)
+            fallback_notes_generated += 1
+
+        note += f"\n<!-- abstract_sweep_note_source: {note_source} -->\n"
+        note_path = abstract_dir / f"{paper_id}.md"
+        note_path.write_text(note, encoding="utf-8")
+
+        rows_to_append.append(generate_comparison_row(paper))
+        bib_entries.append(generate_bib_entry(paper))
+        notes_generated += 1
+
+    if rows_to_append:
+        _append_csv_rows(comparison_path, rows_to_append)
+    if bib_entries:
+        _append_bib_entries(bib_path, bib_entries)
+    _append_access_audit_summary(
+        workspace,
+        {
+            "notes_generated": notes_generated,
+            "llm_notes_generated": llm_notes_generated,
+            "fallback_notes_generated": fallback_notes_generated,
+            "reader_errors": len(reader_errors),
+        },
+    )
+
+    return {
+        "enabled": True,
+        "reader_mode": "reader_llm" if abstract_reader is not None else "deterministic_fallback",
+        "candidates_found": len(candidates),
+        "notes_generated": notes_generated,
+        "llm_notes_generated": llm_notes_generated,
+        "fallback_notes_generated": fallback_notes_generated,
+        "reader_errors": reader_errors[:10],
+        "output_dir": str(abstract_dir.relative_to(workspace)),
+    }
+
+
+async def _call_abstract_reader(
+    abstract_reader: AbstractReader,
+    paper: dict[str, Any],
+    prompt: str,
+) -> str:
+    try:
+        signature = inspect.signature(abstract_reader)
+        if len(signature.parameters) <= 1:
+            value = abstract_reader(paper)  # type: ignore[misc]
+        else:
+            value = abstract_reader(paper, prompt)
+    except (TypeError, ValueError):
+        value = abstract_reader(paper, prompt)
+    if inspect.isawaitable(value):
+        value = await value
+    return str(value or "")
+
+
+def _append_access_audit_summary(workspace: Path, summary: dict[str, Any]) -> None:
+    path = workspace / "literature" / "access_audit.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = (
+        "\n\n## T3 Abstract Sweep\n"
+        f"- abstract notes generated: {summary.get('notes_generated', 0)}\n"
+        f"- Reader LLM notes: {summary.get('llm_notes_generated', 0)}\n"
+        f"- deterministic fallback notes: {summary.get('fallback_notes_generated', 0)}\n"
+        f"- Reader errors: {summary.get('reader_errors', 0)}\n"
+        "- evidence level: ABSTRACT_ONLY / abstract_claim_hint; not full-text evidence\n"
+    )
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(line)
 
 
 def _append_csv_rows(path: Path, rows: list[str]) -> None:

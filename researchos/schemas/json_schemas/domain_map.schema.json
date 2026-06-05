@@ -7,6 +7,7 @@
   "required": [
     "semantics",
     "core",
+    "theory_bridge",
     "adjacent",
     "boundary",
     "citation_edges",
@@ -28,7 +29,27 @@
           "title": { "type": "string" },
           "degree": { "type": "integer", "minimum": 0 },
           "inbound_degree": { "type": "integer", "minimum": 0 },
+          "relation_to_project": { "type": "string" },
+          "semantic_role": { "type": "string" },
           "key_rationale_hint": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "theory_bridge": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "degree", "bridge_id", "relation_to_project", "why_theory_bridge"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "title": { "type": "string" },
+          "degree": { "type": "integer", "minimum": 0 },
+          "inbound_degree": { "type": "integer", "minimum": 0 },
+          "bridge_id": { "type": ["string", "null"] },
+          "relation_to_project": { "type": "string" },
+          "semantic_role": { "type": "string" },
+          "why_theory_bridge": { "type": "string" }
         },
         "additionalProperties": true
       }
@@ -46,6 +67,8 @@
             "type": "array",
             "items": { "type": "string" }
           },
+          "relation_to_project": { "type": "string" },
+          "semantic_role": { "type": "string" },
           "why_adjacent": { "type": "string" }
         },
         "additionalProperties": true
@@ -78,8 +101,12 @@
       "type": "object",
       "additionalProperties": {
         "type": "string",
-        "enum": ["core", "adjacent", "boundary", "snowball", "seed"]
+        "enum": ["core", "theory_bridge", "adjacent", "boundary", "snowball", "seed"]
       }
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": true
     },
     "warnings": {
       "type": "array",

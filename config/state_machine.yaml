@@ -55,6 +55,7 @@ states:
     mode: init
     outputs:
       project: project.yaml      # 项目配置文件
+      bridge_domain_plan: literature/bridge_domain_plan.json # T2 跨领域检索计划，可为空
       state: state.yaml          # 项目状态文件
     next_on_success: T2
     next_on_failure: failed
@@ -74,6 +75,7 @@ states:
       seed_constraints: user_seeds/seed_constraints.md # 种子约束（可选）
       seed_ideas: user_seeds/seed_ideas.md             # 种子想法（可选）
       seed_external_resources: user_seeds/seed_external_resources.jsonl  # 外部资源（可选）
+      bridge_domain_plan: literature/bridge_domain_plan.json # T1 交互生成的桥接领域计划（可空）
     outputs:
       papers_raw: literature/papers_raw.jsonl           # 原始检索结果
       papers_dedup: literature/papers_dedup.jsonl      # 去重后的论文列表
@@ -85,6 +87,27 @@ states:
       access_audit: literature/access_audit.md         # PDF/可读性审计清单
       search_log: literature/search_log.md             # 检索日志
       missing_areas: literature/missing_areas.md       # 识别的研究空白
+    next_on_success: T2-COVERAGE-GATE
+    next_on_failure: failed
+
+  # T2-COVERAGE-GATE 状态：T2 检索覆盖人工确认
+  # 用途：T2 会在 missing_areas.md 中给出补检/复核建议。这里把这些建议转成正式
+  # user gate，避免系统在有明显覆盖风险时不经确认直接进入 T3。
+  T2-COVERAGE-GATE:
+    agent: scout
+    mode: coverage_gate
+    extra:
+      immediate_gate: true
+    inputs:
+      search_log: literature/search_log.md
+      missing_areas: literature/missing_areas.md
+      domain_map: literature/domain_map.json
+      access_audit: literature/access_audit.md
+      deep_read_queue: literature/deep_read_queue.jsonl
+    outputs:
+      coverage_decision: literature/coverage_decision.json
+    gate:
+      type: t2_coverage_gate
     next_on_success: T3
     next_on_failure: failed
 

@@ -45,8 +45,11 @@ def test_pi_agent_init_mode_spec(pi_agent):
     assert "finish_task" in spec.tool_names
     assert spec.temperature == 0.3
     assert "" in spec.allowed_write_prefixes
+    assert "literature/" in spec.allowed_read_prefixes
+    assert "literature/" in spec.allowed_write_prefixes
     assert "user_seeds/" in spec.allowed_write_prefixes
     assert "evaluation/" in spec.allowed_write_prefixes
+    assert spec.structured_outputs["literature/bridge_domain_plan.json"] == "bridge_domain_plan"
 
 
 def test_pi_agent_system_prompt_init_mode(pi_agent, temp_workspace):
@@ -67,6 +70,10 @@ def test_pi_agent_system_prompt_init_mode(pi_agent, temp_workspace):
     assert "三轮对话" in prompt
     assert "discrete diffusion language models" in prompt
     assert "project.yaml" in prompt
+    assert "启动补充 gate" in prompt
+    assert "先结合该回答，再扫描" in prompt
+    assert "write_structured_file(path=\"literature/bridge_domain_plan.json\"" in prompt
+    assert "在任何 ask_human 之前，先调用" not in prompt
 
 
 def test_pi_agent_system_prompt_evaluate_mode(pi_agent, temp_workspace):

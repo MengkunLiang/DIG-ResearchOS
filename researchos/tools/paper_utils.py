@@ -248,17 +248,25 @@ def expand_queries(
     Returns:
         检索式列表
     """
-    queries = []
+    queries: list[str] = []
 
     # 1. 基础查询：主题本身
-    queries.append(topic)
+    topic = " ".join(str(topic or "").split())
+    if topic:
+        queries.append(topic)
 
     profile = domain_profile or {}
     if llm_queries:
         queries.extend(q for q in llm_queries if str(q).strip())
 
-    # 2. 从种子论文标题提取关键术语
+    # 2. 从种子论文标题提取机械 fallback 检索式。
+    # 如果 project topic 缺失但用户给了真实 seed paper，至少用 seed 标题
+    # 作为可追溯 query；领域扩展仍由 LLM 通过 llm_queries/domain_profile 提供。
     if seed_papers:
+        for paper in seed_papers[:5]:
+            title = " ".join(str(paper.get("title") or "").split())
+            if len(title) >= 4:
+                queries.append(title)
         for paper in seed_papers[:3]:  # 只用前 3 篇
             title = paper.get("title", "")
             # 提取标题中的关键短语（简单实现：提取大写开头的连续词）
@@ -290,13 +298,15 @@ def expand_queries(
             queries.append(f"{cleaned} {topic}")
 
     # 4. 添加年份限定（最近论文）。这是机械时间窗口，不是领域判断。
-    queries.append(f"{topic} {format_year_window(2, current_year=current_year)}")
-    queries.append(f"{topic} {format_year_window(2, current_year=current_year, lag_years=1)}")
+    if topic:
+        queries.append(f"{topic} {format_year_window(2, current_year=current_year)}")
+        queries.append(f"{topic} {format_year_window(2, current_year=current_year, lag_years=1)}")
 
     # 去重并限制数量
     unique_queries = []
     seen = set()
     for q in queries:
+        q = " ".join(str(q or "").split())
         q_lower = q.lower().strip()
         if q_lower and q_lower not in seen:
             seen.add(q_lower)

@@ -13,9 +13,10 @@ from typing import Any
 
 import yaml
 
-from ..tools.paper_enrichment import build_access_audit, build_deep_read_queue, enrich_papers
+from ..tools.paper_enrichment import apply_semantic_screening, build_access_audit, build_deep_read_queue, enrich_papers
 from ..tools.citation_graph import build_domain_map
 from ..tools.paper_save_tools import SavePapersDedupTool
+from ..literature_identity import stable_noopenalex_id
 from ..tools.paper_utils import (
     deduplicate_papers,
     filter_by_domain,
@@ -139,7 +140,11 @@ def _seed_to_recovery_paper(seed: dict[str, Any]) -> dict[str, Any]:
     arxiv_id = str(seed.get("arxiv_id", "")).strip()
     paper_id = f"arxiv:{arxiv_id}" if arxiv_id and not arxiv_id.startswith("arxiv:") else arxiv_id
     if not paper_id:
-        paper_id = str(seed.get("doi") or seed.get("title") or "seed-paper").strip()
+        paper_id = str(seed.get("doi") or seed.get("id") or "").strip()
+    canonical_id = paper_id if paper_id.startswith("arxiv:") else stable_noopenalex_id({**seed, "id": paper_id})
+    canonical_id_source = "arxiv_noopenalex" if paper_id.startswith("arxiv:") else "noopenalex_fallback"
+    if not paper_id:
+        paper_id = canonical_id
     url = str(seed.get("url") or "").strip()
     try:
         seed_year = int(seed["year"]) if seed.get("year") else None
@@ -147,8 +152,10 @@ def _seed_to_recovery_paper(seed: dict[str, Any]) -> dict[str, Any]:
         seed_year = None
     return {
         "id": paper_id,
-        "canonical_id": paper_id,
-        "preferred_id_source": "arxiv" if arxiv_id else "title",
+        "canonical_id": canonical_id,
+        "preferred_id_source": "arxiv" if arxiv_id else "doi" if seed.get("doi") else "seed_fallback",
+        "canonical_id_source": canonical_id_source,
+        "no_openalex_id": True,
         "source": "user_seed",
         "title": str(seed.get("title", "")).strip() or "Untitled seed paper",
         "authors": seed.get("authors") or ["Unknown"],
@@ -166,8 +173,8 @@ def _seed_to_recovery_paper(seed: dict[str, Any]) -> dict[str, Any]:
             "source_tool": "user_seed",
             "source_id": paper_id,
             "source_url": url,
-            "canonical_id": paper_id,
-            "id_source": "arxiv" if arxiv_id else "title",
+            "canonical_id": canonical_id,
+            "id_source": canonical_id_source,
         },
     }
 
@@ -225,7 +232,14 @@ def _build_recovered_verified_papers(
     local_pdf_dir = workspace_dir / "literature" / "pdfs"
     verified: list[dict[str, Any]] = []
     for paper in papers:
-        canonical_id = str(paper.get("canonical_id") or paper.get("id") or paper.get("title") or "").strip()
+        title = str(paper.get("title") or "").strip()
+        raw_id = str(paper.get("id") or "").strip()
+        raw_canonical_id = str(paper.get("canonical_id") or "").strip()
+        canonical_id = (
+            raw_canonical_id if raw_canonical_id and raw_canonical_id != title
+            else raw_id if raw_id and raw_id != title
+            else stable_noopenalex_id(paper)
+        )
         if not canonical_id:
             continue
         normalized_id = canonical_id.replace(":", "_").replace("/", "_").replace("\\", "_")
@@ -271,6 +285,23 @@ def _build_recovered_citation_edges(papers: list[dict[str, Any]]) -> list[dict[s
             }
         )
     return payload
+
+
+def _extract_existing_semantic_screenings(papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Recover Scout LLM semantic_screen fields already persisted in raw/dedup records."""
+
+    screenings: list[dict[str, Any]] = []
+    for paper in papers:
+        screen = paper.get("semantic_screen")
+        if not isinstance(screen, dict):
+            continue
+        screening = dict(screen)
+        for key in ("paper_id", "id", "canonical_id", "doi", "title"):
+            value = paper.get(key)
+            if value not in (None, ""):
+                screening.setdefault(key, value)
+        screenings.append(screening)
+    return screenings
 
 
 def _iter_t2_trace_paths(workspace_dir: Path) -> list[Path]:
@@ -574,7 +605,10 @@ async def finalize_t2_outputs(
     )
     final_papers = _select_final_papers(scored_papers)
     final_papers = _ensure_seed_papers(final_papers, scored_papers + raw_papers, workspace_dir)
+    raw_screenings = _extract_existing_semantic_screenings(raw_papers + dedup_papers + final_papers)
     enriched_papers = enrich_papers(final_papers, keywords, domain_profile=domain_profile)
+    if raw_screenings:
+        enriched_papers = apply_semantic_screening(enriched_papers, raw_screenings)
 
     policy = WorkspaceAccessPolicy(
         workspace_dir=workspace_dir,
@@ -619,6 +653,7 @@ async def finalize_t2_outputs(
         deep_read_target=24,
         deep_read_max=30,
         probe_pool=45,
+        citation_hub_slots=3,
     )
     queue_path = workspace_dir / "literature" / "deep_read_queue.jsonl"
     queue_meta_path = workspace_dir / "literature" / "deep_read_queue_meta.json"

@@ -13,7 +13,9 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, Field
 
+from .abstract_utils import clean_abstract
 from .base import Tool, ToolResult
+from .search_validation import clean_search_query, empty_query_result, filter_usable_papers
 
 
 def _normalize_paper(item: dict[str, Any]) -> dict[str, Any]:
@@ -26,7 +28,7 @@ def _normalize_paper(item: dict[str, Any]) -> dict[str, Any]:
         "title": item.get("title", ""),
         "authors": [author.get("name", "") for author in item.get("authors", [])],
         "year": item.get("year"),
-        "abstract": item.get("abstract", ""),
+        "abstract": clean_abstract(item.get("abstract")),
         "venue": item.get("venue", ""),
         "citationCount": item.get("citationCount", 0),
         "externalIds": external_ids,
@@ -46,7 +48,11 @@ class SemanticScholarSearchParams(BaseModel):
     limit: int = Field(default=10, description="返回结果数量（最多100）", ge=1, le=100)
     query_bucket: str | None = Field(
         default=None,
-        description="可选检索式桶标签，仅用于 ResearchOS 队列保护，不发送给 Semantic Scholar。",
+        description="可选检索式桶标签，仅作为 ResearchOS 召回意图/provenance，不发送给 Semantic Scholar，也不决定语义角色。",
+    )
+    bridge_id: str | None = Field(
+        default=None,
+        description="可选 bridge_domain_plan.json 中的 bridge_id；只记录召回意图，不代表语义角色。",
     )
     fields: str = Field(
         default="paperId,title,abstract,authors,year,venue,citationCount,url,externalIds",
@@ -80,9 +86,12 @@ class SemanticScholarSearchTool(Tool):
         self.base_url = "https://api.semanticscholar.org/graph/v1"
 
     async def execute(self, **kwargs) -> ToolResult:
-        query = kwargs["query"]
+        query = clean_search_query(kwargs["query"])
+        if not query:
+            return empty_query_result(self.name, kwargs.get("query"))
         limit = kwargs.get("limit", 10)
         query_bucket = kwargs.get("query_bucket")
+        bridge_id = kwargs.get("bridge_id")
         fields = kwargs.get("fields", "paperId,title,abstract,authors,year,venue,citationCount,url,externalIds")
 
         headers = {}
@@ -118,7 +127,7 @@ class SemanticScholarSearchTool(Tool):
                     response.raise_for_status()
                     data = response.json()
 
-                papers = [_normalize_paper(item) for item in data.get("data", [])]
+                papers = filter_usable_papers([_normalize_paper(item) for item in data.get("data", [])])
                 total = data.get("total", 0)
 
                 # 格式化输出
@@ -142,7 +151,13 @@ class SemanticScholarSearchTool(Tool):
                 return ToolResult(
                     ok=True,
                     content="\n".join(content_lines),
-                    data={"papers": papers, "total": total, "query": query, "query_bucket": query_bucket}
+                    data={
+                        "papers": papers,
+                        "total": total,
+                        "query": query,
+                        "query_bucket": query_bucket,
+                        "bridge_id": bridge_id,
+                    }
                 )
 
             except httpx.HTTPStatusError as e:

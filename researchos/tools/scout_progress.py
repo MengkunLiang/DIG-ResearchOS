@@ -96,7 +96,11 @@ class ScoutProgressLogger:
         self.log_step("write_file", detail)
 
     def log_finish(self, papers_raw: int, papers_dedup: int) -> None:
-        """记录完成。"""
+        """记录完成。
+
+        Deprecated for live Scout progress. Runtime validation should decide
+        task success. Kept for compatibility with old artifacts.
+        """
         self._ensure_log_dir()
         timestamp = self._timestamp()
         lines = [
@@ -105,6 +109,21 @@ class ScoutProgressLogger:
             f"  papers_dedup: {papers_dedup} 篇",
             f"  结束时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         ]
+        with open(self.log_file, "a", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+
+    def log_finish_requested(self, papers_raw: int, papers_dedup: int, detail: str = "") -> None:
+        """记录 Agent 请求收尾，不把它伪装成任务成功。"""
+        self._ensure_log_dir()
+        timestamp = self._timestamp()
+        lines = [
+            f"\n[{timestamp}] **FINISH_REQUESTED** Scout Agent 请求 runtime 收尾",
+            f"  papers_raw_current: {papers_raw} 篇",
+            f"  papers_dedup_current: {papers_dedup} 篇",
+            "  状态: waiting_for_runtime_finalize_and_validation",
+        ]
+        if detail:
+            lines.append(f"  说明: {detail}")
         with open(self.log_file, "a", encoding="utf-8") as f:
             f.write("\n".join(lines))
 

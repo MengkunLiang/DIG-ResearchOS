@@ -504,6 +504,19 @@ class AskHumanAgent(Agent):
         return "ask human"
 
 
+class T1StartupGateAgent(Agent):
+    def __init__(self):
+        super().__init__(
+            AgentSpec(name="pi", model_tier="medium", tool_names=["ask_human", "finish_task"])
+        )
+
+    def system_prompt(self, ctx):
+        return "You are a PI init test agent."
+
+    def initial_user_message(self, ctx):
+        return "start T1 init"
+
+
 class AlwaysInvalidAgent(Agent):
     def __init__(self):
         super().__init__(
@@ -1784,6 +1797,55 @@ async def test_runner_autobridges_text_question_to_ask_human_for_any_task(tmp_wo
 
 
 @pytest.mark.asyncio
+async def test_runner_keeps_agent_context_visible_for_context_dependent_ask_human(tmp_workspace, registry):
+    bridge_plan_text = (
+        "## 🌉 Bridge Domain Plan 选择\n\n"
+        "- b1: Causal discovery transfer\n"
+        "  why: 可迁移机制假设\n"
+        "  queries: causal discovery benchmark\n"
+        "- b2: Operations research robust optimization\n"
+        "  why: 可迁移约束建模\n"
+        "  queries: robust optimization uncertainty set\n"
+    )
+    llm = MockLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    content=bridge_plan_text,
+                    tool_calls=[
+                        FakeToolCall(
+                            name="ask_human",
+                            arguments={
+                                "question": "以上 2 个桥接方向将用于 T2。请选择重点交叉、删除或全部跳过。",
+                                "suggestions": ["重点: b1", "全部跳过"],
+                            },
+                            id="tc1",
+                        )
+                    ],
+                )
+            ),
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="finish_task", arguments={"summary": "done"}, id="tc2")]
+                )
+            ),
+        ]
+    )
+    human = MockHumanInterface(clarification_answer="重点: b1")
+    ctx = ExecutionContext(workspace_dir=tmp_workspace, project_id="p1", task_id="T1", run_id="r_visible_ask")
+    runner = AgentRunner(AskHumanAgent(), registry, llm, human)
+
+    result = await runner.run(ctx)
+
+    assert result.ok
+    question = human.calls[0][1]["question"]
+    assert "下面是 Agent 本轮生成的完整上下文" in question
+    assert "b1: Causal discovery transfer" in question
+    assert "b2: Operations research robust optimization" in question
+    assert "以上 2 个桥接方向" in question
+
+
+@pytest.mark.asyncio
 async def test_runner_does_not_autobridge_plain_status_text_with_which(tmp_workspace, registry):
     llm = MockLLMClient(
         responses=[
@@ -1806,6 +1868,107 @@ async def test_runner_does_not_autobridge_plain_status_text_with_which(tmp_works
     assert result.ok
     assert llm.call_count == 2
     assert not human.calls
+
+
+@pytest.mark.asyncio
+async def test_t1_pi_startup_gate_runs_before_first_llm_call(tmp_workspace, registry):
+    llm = MockLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="finish_task", arguments={"summary": "done"}, id="tc1")]
+                )
+            ),
+        ]
+    )
+    human = MockHumanInterface(clarification_answer="继续，扫描现有 user_seeds，并读取 seed_ideas。")
+    ctx = ExecutionContext(workspace_dir=tmp_workspace, project_id="p1", task_id="T1", run_id="r_t1_gate", mode="init")
+    runner = AgentRunner(T1StartupGateAgent(), registry, llm, human)
+
+    result = await runner.run(ctx)
+
+    assert result.ok
+    assert human.calls and human.calls[0][0] == "clarification"
+    assert "扫描 user_seeds" in human.calls[0][1]["question"]
+    gate_path = tmp_workspace / "_runtime" / "t1_startup_gate.json"
+    assert gate_path.exists()
+    gate = json.loads(gate_path.read_text(encoding="utf-8"))
+    assert gate["semantics"] == "t1_startup_material_supplement_gate"
+    assert gate["answer"] == "继续，扫描现有 user_seeds，并读取 seed_ideas。"
+    assert llm.call_count == 1
+    first_messages = llm.last_messages[0]
+    assert any("【T1 启动补充 gate 用户回答】" in str(message.get("content") or "") for message in first_messages)
+
+
+@pytest.mark.asyncio
+async def test_t1_pi_startup_gate_reuses_existing_record_on_resume(tmp_workspace, registry):
+    runtime_dir = tmp_workspace / "_runtime"
+    runtime_dir.mkdir(exist_ok=True)
+    (runtime_dir / "t1_startup_gate.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "t1_startup_material_supplement_gate",
+                "interaction_id": "human_existing",
+                "task_id": "T1",
+                "run_id": "old_run",
+                "created_at": "2026-06-04T00:00:00Z",
+                "answer": "已确认，继续读取现有 seeds。",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    llm = MockLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="finish_task", arguments={"summary": "done"}, id="tc1")]
+                )
+            ),
+        ]
+    )
+    human = MockHumanInterface(clarification_answer="")
+    ctx = ExecutionContext(
+        workspace_dir=tmp_workspace,
+        project_id="p1",
+        task_id="T1",
+        run_id="r_t1_gate_resume",
+        mode="init",
+        extra={"is_resume": True},
+    )
+    runner = AgentRunner(T1StartupGateAgent(), registry, llm, human)
+
+    result = await runner.run(ctx)
+
+    assert result.ok
+    assert not human.calls
+    assert llm.call_count == 1
+    first_messages = llm.last_messages[0]
+    assert any("已确认，继续读取现有 seeds" in str(message.get("content") or "") for message in first_messages)
+
+
+@pytest.mark.asyncio
+async def test_t1_pi_startup_gate_pauses_when_input_unavailable(tmp_workspace, registry):
+    llm = MockLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="finish_task", arguments={"summary": "should not run"}, id="tc1")]
+                )
+            ),
+        ]
+    )
+    human = MockHumanInterface(clarification_answer="")
+    ctx = ExecutionContext(workspace_dir=tmp_workspace, project_id="p1", task_id="T1", run_id="r_t1_gate_pause", mode="init")
+    runner = AgentRunner(T1StartupGateAgent(), registry, llm, human)
+
+    result = await runner.run(ctx)
+
+    assert not result.ok
+    assert result.stop_reason == AgentResult.STOP_INTERRUPTED
+    assert llm.call_count == 0
+    assert human.calls and human.calls[0][0] == "clarification"
 
 
 @pytest.mark.asyncio
@@ -2280,6 +2443,7 @@ def test_task_start_summary_includes_task_goal(tmp_workspace, registry, capsys):
     runner._print_task_start_summary(ctx, eff)
 
     out = capsys.readouterr().out
+    assert "== T9 | test ==" in out
     assert "任务: T9" in out
     assert "目标: 构建投稿包" in out
     assert "submission/bundle/main.pdf" in out

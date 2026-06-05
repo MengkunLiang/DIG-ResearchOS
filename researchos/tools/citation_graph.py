@@ -16,11 +16,21 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, Field
 
+from ..literature_identity import stable_noopenalex_id
+from .abstract_utils import abstract_from_openalex_index
 from .base import Tool, ToolResult
 from .workspace_policy import ToolAccessDenied, WorkspaceAccessPolicy
 
 
 DOMAIN_MAP_SEMANTICS = "domain_map_for_synthesis_and_ideation_not_final_gaps"
+CORE_OR_BRIDGE_RELATIONS = {
+    "mechanism_bridge",
+    "method_transfer",
+    "evaluation_or_metric_bridge",
+    "baseline_or_dataset_relevance",
+}
+ADJACENT_RELATIONS = CORE_OR_BRIDGE_RELATIONS | {"adjacent_application"}
+ADJACENT_ROLES = {"adjacent", "baseline", "dataset", "benchmark"}
 
 
 class FetchOutgoingCitationsParams(BaseModel):
@@ -151,7 +161,7 @@ class BuildDomainMapTool(Tool):
     name = "build_domain_map"
     description = (
         "Build literature/domain_map.json from verified papers and one-hop citation edges. "
-        "The output is a mechanical core/adjacent/boundary map for Reader/Ideation/Writer review, not final gaps."
+        "The output is a mechanical core/theory_bridge/adjacent/boundary map for Reader/Ideation/Writer review, not final gaps."
     )
     parameters_schema = BuildDomainMapParams
     timeout_seconds = 30.0
@@ -210,6 +220,7 @@ def build_domain_map(
             "version": "1.0",
             "semantics": DOMAIN_MAP_SEMANTICS,
             "core": [],
+            "theory_bridge": [],
             "adjacent": [],
             "boundary": [],
             "citation_edges": [],
@@ -235,26 +246,42 @@ def build_domain_map(
 
     bucket_assignments: dict[str, str] = {}
     core: list[dict[str, Any]] = []
+    theory_bridge: list[dict[str, Any]] = []
     adjacent: list[dict[str, Any]] = []
     boundary: list[dict[str, Any]] = []
-
-    degree_values = [degree[node["id"]] for node in nodes]
-    high_degree_threshold = max(2, sorted(degree_values, reverse=True)[min(2, len(degree_values) - 1)] if degree_values else 2)
 
     for node in nodes:
         node_id = node["id"]
         bucket = _normalize_source_bucket(node.get("source_bucket") or node.get("search_bucket") or node.get("query_bucket"))
         node_degree = int(degree[node_id])
-        if bucket in {"adjacent", "adjacent_field", "theory_bridge"}:
-            assignment = "adjacent"
-        elif bucket == "snowball":
-            assignment = "snowball"
-        elif bucket == "core" or node_degree >= high_degree_threshold:
-            assignment = "core"
-        elif bucket == "seed":
+        semantic_screen = node.get("semantic_screen") if isinstance(node.get("semantic_screen"), dict) else {}
+        role = str(semantic_screen.get("role") or "").strip()
+        relation = str(semantic_screen.get("relation_to_project") or "").strip()
+        can_enter_core = (
+            bool(semantic_screen.get("can_enter_core"))
+            and role == "core"
+            and relation in CORE_OR_BRIDGE_RELATIONS
+        )
+        can_enter_adjacent = (
+            bool(semantic_screen.get("can_enter_deep_read"))
+            and relation in ADJACENT_RELATIONS
+            and role in ADJACENT_ROLES
+        )
+        can_enter_theory_bridge = (
+            role == "theory_bridge"
+            and relation in CORE_OR_BRIDGE_RELATIONS
+        )
+        is_seed = bucket == "seed" or str(node.get("source") or "").casefold() == "user_seed"
+        if is_seed:
             assignment = "seed"
-        elif node_degree > 0:
+        elif can_enter_core:
+            assignment = "core"
+        elif can_enter_theory_bridge:
+            assignment = "theory_bridge"
+        elif can_enter_adjacent and node_degree > 0:
             assignment = "adjacent"
+        elif can_enter_adjacent and bucket == "snowball":
+            assignment = "snowball"
         else:
             assignment = "boundary"
         bucket_assignments[node_id] = assignment
@@ -263,16 +290,34 @@ def build_domain_map(
         node_id = node["id"]
         assignment = bucket_assignments[node_id]
         if assignment == "core":
+            semantic_screen = node.get("semantic_screen") if isinstance(node.get("semantic_screen"), dict) else {}
             core.append(
                 {
                     "id": node_id,
                     "title": node["title"],
                     "degree": int(degree[node_id]),
                     "inbound_degree": int(inbound[node_id]),
-                    "key_rationale_hint": node.get("key_rationale_hint") or "LLM_REVIEW_REQUIRED",
+                    "relation_to_project": semantic_screen.get("relation_to_project", ""),
+                    "semantic_role": semantic_screen.get("role", ""),
+                    "key_rationale_hint": semantic_screen.get("rationale") or node.get("key_rationale_hint") or "LLM_REVIEW_REQUIRED",
+                }
+            )
+        elif assignment == "theory_bridge":
+            semantic_screen = node.get("semantic_screen") if isinstance(node.get("semantic_screen"), dict) else {}
+            theory_bridge.append(
+                {
+                    "id": node_id,
+                    "title": node["title"],
+                    "degree": int(degree[node_id]),
+                    "inbound_degree": int(inbound[node_id]),
+                    "bridge_id": semantic_screen.get("bridge_id") or node.get("bridge_id"),
+                    "relation_to_project": semantic_screen.get("relation_to_project", ""),
+                    "semantic_role": semantic_screen.get("role", ""),
+                    "why_theory_bridge": semantic_screen.get("rationale") or "LLM_REVIEW_REQUIRED",
                 }
             )
         elif assignment in {"adjacent", "snowball", "seed"}:
+            semantic_screen = node.get("semantic_screen") if isinstance(node.get("semantic_screen"), dict) else {}
             bridges = sorted(
                 neighbor
                 for neighbor in adjacency.get(node_id, set())
@@ -284,20 +329,30 @@ def build_domain_map(
                     "title": node["title"],
                     "degree": int(degree[node_id]),
                     "bridges_to_core": bridges,
-                    "why_adjacent": node.get("why_relevant") or node.get("source_bucket") or "LLM_REVIEW_REQUIRED",
+                    "relation_to_project": semantic_screen.get("relation_to_project", ""),
+                    "semantic_role": semantic_screen.get("role", ""),
+                    "why_adjacent": semantic_screen.get("rationale") or node.get("why_relevant") or node.get("source_bucket") or "LLM_REVIEW_REQUIRED",
                 }
             )
         else:
+            semantic_screen = node.get("semantic_screen") if isinstance(node.get("semantic_screen"), dict) else {}
+            if semantic_screen:
+                note = "LLM semantic_screen did not allow core/theory_bridge; retained as boundary/backlog review material."
+            elif is_seed:
+                note = "Seed paper retained for Reader priority but not treated as automatic domain_map core."
+            else:
+                note = "No semantic_screen was available; non-seed paper is kept out of core/adjacent/theory_bridge until Scout LLM reviews it."
             boundary.append(
                 {
                     "id": node_id,
                     "title": node["title"],
                     "degree": int(degree[node_id]),
-                    "note": "Sparse or isolated in the current retrieved graph; LLM should review whether this is a boundary direction.",
+                    "note": note,
                 }
             )
 
     core.sort(key=lambda item: (-int(item.get("degree") or 0), str(item.get("title", "")).casefold()))
+    theory_bridge.sort(key=lambda item: (-int(item.get("degree") or 0), str(item.get("title", "")).casefold()))
     adjacent.sort(key=lambda item: (-int(item.get("degree") or 0), str(item.get("title", "")).casefold()))
     boundary.sort(key=lambda item: (-int(item.get("degree") or 0), str(item.get("title", "")).casefold()))
 
@@ -306,19 +361,32 @@ def build_domain_map(
         warnings.append("citation_edges_empty_or_unavailable")
     if not adjacent:
         warnings.append("no_adjacent_nodes_detected")
+    if not theory_bridge:
+        warnings.append("no_theory_bridge_nodes_detected")
 
     return {
         "version": "1.0",
         "semantics": DOMAIN_MAP_SEMANTICS,
         "core": core,
+        "theory_bridge": theory_bridge,
         "adjacent": adjacent,
         "boundary": boundary,
         "citation_edges": [[left, right] for left, right in edges],
         "bucket_assignments": bucket_assignments,
         "warnings": warnings,
+        "audit": {
+            "edges_total": len(edges),
+            "papers_total": len(nodes),
+            "papers_with_refs": sum(1 for node in nodes if node.get("referenced_works") or node.get("references")),
+            "papers_refs_unavailable": sum(1 for node in nodes if bool(node.get("refs_unavailable"))),
+            "papers_no_openalex_id": sum(1 for node in nodes if bool(node.get("no_openalex_id"))),
+            "screened_papers": sum(1 for node in nodes if isinstance(node.get("semantic_screen"), dict)),
+            "theory_bridge_ids": [item.get("id") for item in theory_bridge],
+        },
         "notes": [
             "Citation edges use outgoing references and related_works only when available.",
-            "Core/adjacent/boundary are mechanical review buckets, not final scholarly judgments.",
+            "Core/theory_bridge/adjacent require Scout LLM semantic_screen except seed retention; retrieval_intent is only a recall hint.",
+            "Core/theory_bridge/adjacent/boundary are review buckets, not final scholarly judgments.",
         ],
     }
 
@@ -408,7 +476,7 @@ def _openalex_work_to_paper(
         "title": title,
         "authors": authors or ["Unknown"],
         "year": work.get("publication_year"),
-        "abstract": _abstract_from_openalex(work.get("abstract_inverted_index")),
+        "abstract": abstract_from_openalex_index(work.get("abstract_inverted_index")),
         "venue": venue,
         "citation_count": int(work.get("cited_by_count") or 0),
         "doi": doi,
@@ -417,7 +485,8 @@ def _openalex_work_to_paper(
         "related_works": [_normalize_node_id(item) for item in work.get("related_works") or [] if item],
         "search_bucket": "snowball",
         "source_bucket": "adjacent" if source_bucket == "adjacent" else "snowball",
-        "adjacent_field": source_bucket == "adjacent",
+        "cross_domain_retrieval_candidate": source_bucket == "adjacent",
+        "adjacent_field": source_bucket == "adjacent",  # deprecated provenance alias
         "source_query": f"one-hop citation graph from {source_id}",
         "provenance": {
             "source_tool": "fetch_outgoing_citations",
@@ -429,22 +498,6 @@ def _openalex_work_to_paper(
             "snowball_edge_type": "related_work" if source_bucket == "adjacent" else "referenced_work",
         },
     }
-
-
-def _abstract_from_openalex(inverted_index: Any) -> str:
-    if not isinstance(inverted_index, dict) or not inverted_index:
-        return ""
-    positions: dict[int, str] = {}
-    for word, raw_positions in inverted_index.items():
-        if not isinstance(raw_positions, list):
-            continue
-        for raw_position in raw_positions:
-            try:
-                position = int(raw_position)
-            except (TypeError, ValueError):
-                continue
-            positions[position] = str(word)
-    return " ".join(positions[index] for index in sorted(positions)).strip()
 
 
 def _openalex_work_url(raw_id: str) -> str:
@@ -503,16 +556,23 @@ def _load_edge_payload(path: Path) -> list[Any]:
 
 
 def _paper_node(record: dict[str, Any]) -> dict[str, Any]:
+    title = str(record.get("title") or "").strip()
+    raw_id = str(record.get("id") or "").strip()
+    raw_canonical_id = str(record.get("canonical_id") or "").strip()
+    raw_paper_id = str(record.get("paper_id") or "").strip()
+    safe_raw_id = raw_id if raw_id and raw_id != title else ""
+    safe_canonical_id = raw_canonical_id if raw_canonical_id and raw_canonical_id != title else ""
+    safe_paper_id = raw_paper_id if raw_paper_id and raw_paper_id != title else ""
     paper_id = _normalize_node_id(
-        record.get("canonical_id")
-        or record.get("paper_id")
-        or record.get("id")
+        safe_canonical_id
+        or safe_paper_id
+        or safe_raw_id
         or record.get("doi")
-        or record.get("title")
+        or stable_noopenalex_id(record)
     )
     node = dict(record)
     node["id"] = paper_id
-    node["title"] = str(record.get("title") or paper_id).strip()
+    node["title"] = title or paper_id
     return node
 
 
@@ -596,8 +656,7 @@ def _resolve_node_id(
     normalized = _normalize_node_id(raw)
     if normalized in node_by_id:
         return normalized
-    title_key = _normalize_title_key(raw)
-    return title_to_id.get(title_key, "")
+    return ""
 
 
 def _normalize_node_id(value: Any) -> str:
@@ -610,10 +669,8 @@ def _normalize_node_id(value: Any) -> str:
         text = text.replace("https://doi.org/", "")
     text = text.replace("doi:", "")
     text = text.replace("arXiv:", "arxiv:")
-    text = text.replace("/", "_").replace(":", "_")
-    text = re.sub(r"\s+", "_", text)
-    text = re.sub(r"[^A-Za-z0-9_.-]+", "_", text)
-    return text.strip("_")
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
 
 def _normalize_title_key(value: Any) -> str:

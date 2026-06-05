@@ -73,7 +73,8 @@
 - **problem_reframing 候选**：至少 1 个，把问题本身换一种表述或评价视角。
 - **design_rationale_derivation 候选**：至少 1 个，从问题结构第一性原理地推导“设计应该是什么样”。
 - **cross_domain_analogy 候选**：鼓励作为主线候选，用模型自身知识和已有语料类比其它领域；不要触发新检索。
-  - 如果 `literature/synthesis_workbench.json` 中有 `adjacent_transfers`，优先把其中的 transfer seed 作为类比锚点；它只是素材，不是 provenance gate。
+  - 如果 `literature/synthesis_workbench.json` 中有 `bridge_transfer_drafts` 或 `adjacent_transfers`，优先把其中的 transfer seed 作为类比锚点；它只是素材，不是 provenance gate。
+  - 如果 `domain_map.theory_bridge` 非空，把它作为“可迁移机制/方法/评价协议/失败模式”的提示来思考。不要因为某材料来自 bridge query 就自动生成 idea；必须由你解释可迁移机制。
 {% if has_seed_ideas %}
 - **seed-derived 候选**：至少 1 个，直接吸收、修订或挑战用户 seed ideas。不要机械照抄 seed idea，要把它改写成可验证、可差异化的研究假设。
 {% else %}
@@ -168,6 +169,8 @@
       "title": "...",
       "generation_stage": "mainline | supplement",
       "idea_origin": "synthesis_gestalt | problem_reframing | design_rationale_derivation | cross_domain_analogy | free_reasoning | seed_refinement | survey_driven | evidence_driven | mechanism_challenge | reverse_operation | subgroup_failure | missing_area_exploration",
+      "cross_domain_source": "bridge_id 或 null；使用 bridge_transfer_drafts/domain_map.theory_bridge 时必须填 bridge_id",
+      "cross_domain_relation": "mechanism_bridge | method_transfer | evaluation_or_metric_bridge | baseline_or_dataset_relevance | adjacent_application | null",
       "constraint_status": "mainline | supplement | not_supported_by_current_evidence",
       "pitch": "...",
       "core_claim": "...",
@@ -290,6 +293,8 @@
       "corresponds_to": "Q1",
       "basis_summary": "来自Q1中关于XXX缺口的观察，以及comparison_table里YYY基线的共同短板",
       "idea_origin": "free_reasoning | seed_refinement | synthesis_gestalt | problem_reframing | design_rationale_derivation | cross_domain_analogy | mechanism_challenge | reverse_operation | subgroup_failure | missing_area_exploration | evidence_driven",
+      "cross_domain_source": "bridge_id 或 null；如果来自 bridge_transfer_drafts/domain_map.theory_bridge，填对应 bridge_id",
+      "cross_domain_relation": "mechanism_bridge | method_transfer | evaluation_or_metric_bridge | baseline_or_dataset_relevance | adjacent_application | null",
       "constraint_status": "mainline | supplement | not_supported_by_current_evidence",
       "basis_sources": [
         {"type": "synthesis", "ref": "Q1 / [p3]", "claim": "现有方法在长上下文下误差显著上升"},
@@ -417,6 +422,8 @@ counterfactual: "if it fails, metric does not improve"
   - `idea_origin`: 必填，取值如 `free_reasoning`、`seed_refinement`、`synthesis_gestalt`、`problem_reframing`、`design_rationale_derivation`、`cross_domain_analogy`、`evidence_driven`、`mechanism_challenge`、`reverse_operation`、`subgroup_failure`、`missing_area_exploration`
   - `constraint_status`: 必填，取值 `mainline` / `supplement` / `not_supported_by_current_evidence`
   - `seed_alignment`: 描述该 idea 与用户原始 seed ideas / constraints 的对齐程度。`direct` = 直接来自 seed idea，`partial` = 与 seed 相关但有偏移，`none` = 独立于 seed 的新方向
+  - `cross_domain_source`: 如果候选使用了 `bridge_transfer_drafts`、`domain_map.theory_bridge` 或 bridge-domain plan 作为类比素材，填对应 `bridge_id`；否则填 `null`
+  - `cross_domain_relation`: 如果 `cross_domain_source` 非空，填 `mechanism_bridge`、`method_transfer`、`evaluation_or_metric_bridge`、`baseline_or_dataset_relevance` 或 `adjacent_application`；否则填 `null`
 - `idea`: 核心内容，包括 id、title、pitch、core_claim、target_problem
   - 对 `decision.status=selected` 或带 `hypothesis_refs` 的 idea，`mechanism` / `prediction` / `counterfactual` 必须是具体知识判断，禁止 `see core_claim`、`qualitative: outperforms baseline`、`no clear counterfactual` 等占位语。
   - 对 `rejected` / `deferred` 候选，如果机制确实未成形，可以保留不完整字段，但必须在 `decision.rejection_reason` 中说明“机制未成形/无法形成可检验反事实”。

@@ -164,6 +164,22 @@
                 "type": ["string", "object", "null"],
                 "description": "Optional novelty grounding. 'none' is valid and can indicate high novelty with high risk."
               },
+              "cross_domain_source": {
+                "type": ["string", "null"],
+                "description": "Optional bridge_id if this idea was inspired by bridge_transfer_drafts, domain_map.theory_bridge, or the bridge-domain plan."
+              },
+              "cross_domain_relation": {
+                "type": ["string", "null"],
+                "enum": [
+                  "mechanism_bridge",
+                  "method_transfer",
+                  "evaluation_or_metric_bridge",
+                  "baseline_or_dataset_relevance",
+                  "adjacent_application",
+                  null
+                ],
+                "description": "Relation type for cross_domain_source. This is an LLM-authored provenance field, not a deterministic tool judgment."
+              },
               "constraint_status": {
                 "type": "string",
                 "enum": ["mainline", "supplement", "not_supported_by_current_evidence"]

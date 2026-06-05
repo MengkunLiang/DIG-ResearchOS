@@ -135,6 +135,17 @@ def test_multi_source_search_defaults_include_informs():
 
 
 @pytest.mark.asyncio
+async def test_multi_source_search_rejects_blank_query_with_tool_result():
+    tool = MultiSourceSearchTool(email="researcher@example.com")
+
+    result = await tool.execute(query="   ", max_results=5)
+
+    assert not result.ok
+    assert result.error == "empty_query"
+    assert "query 不能为空" in result.content
+
+
+@pytest.mark.asyncio
 async def test_multi_source_search_informs_branch_uses_crossref_prefix(monkeypatch):
     captured = {}
 

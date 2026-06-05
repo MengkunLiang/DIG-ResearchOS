@@ -62,6 +62,8 @@ class ScoutAgent(Agent):
                         "read_file",
                         "write_file",
                         "write_structured_file",
+                        "ask_human",
+                        "inspect_user_seeds",
                         "append_papers_raw",
                         "process_papers_raw",
                         "save_papers_raw",
@@ -76,6 +78,8 @@ class ScoutAgent(Agent):
                         "filter_by_domain",
                         "generate_search_log",
                         "enrich_papers",
+                        "backfill_paper_abstracts",
+                        "apply_semantic_screening",
                         "detect_duplicate_queries",
                         "analyze_dedup_rate",
                         "build_verified_papers",
@@ -121,14 +125,17 @@ class ScoutAgent(Agent):
         """渲染system prompt，传入项目信息和seed papers。"""
         project = load_project(ctx)
 
-        # 优先扫描 seeds/T2_scout/papers/ 目录中的 PDF 文件
-        seed_pdf_dir = ctx.workspace_dir / "seeds" / "T2_scout" / "papers"
-        if seed_pdf_dir.exists() and any(seed_pdf_dir.glob("*.pdf")):
-            seed_papers = scan_seed_papers(seed_pdf_dir)
-        else:
-            # 降级到旧的 user_seeds/seed_papers.jsonl
-            seed_papers_path = ctx.workspace_dir / "user_seeds" / "seed_papers.jsonl"
-            seed_papers = load_jsonl(seed_papers_path) if seed_papers_path.exists() else []
+        # 合并新旧 seed 来源。不要只看某一个目录；用户仍然常把 PDF 放在
+        # user_seeds/pdfs/，这些 PDF 必须在 T2 query 设计阶段可见。
+        seed_papers_path = ctx.workspace_dir / "user_seeds" / "seed_papers.jsonl"
+        seed_papers = load_jsonl(seed_papers_path) if seed_papers_path.exists() else []
+        for seed_pdf_dir in (
+            ctx.workspace_dir / "seeds" / "T2_scout" / "papers",
+            ctx.workspace_dir / "user_seeds" / "pdfs",
+        ):
+            if seed_pdf_dir.exists() and any(seed_pdf_dir.glob("*.pdf")):
+                seed_papers.extend(scan_seed_papers(seed_pdf_dir))
+        seed_papers = _dedupe_seed_papers(seed_papers)
 
         # 读取约束条件（支持新旧两种路径）
         seed_constraints_new = ctx.workspace_dir / "seeds" / "T2_scout" / "constraints.md"
@@ -145,6 +152,10 @@ class ScoutAgent(Agent):
         external_resources = _load_external_resources(
             ctx.workspace_dir / "user_seeds" / "seed_external_resources.jsonl"
         )
+        bridge_domain_plan = read_text_file(
+            ctx.workspace_dir / "literature" / "bridge_domain_plan.json",
+            default="",
+        )
 
         return render_prompt(
             self.spec.prompt_template,
@@ -158,6 +169,8 @@ class ScoutAgent(Agent):
             external_resources=external_resources[:10],
             external_resource_count=len(external_resources),
             has_external_resources=bool(external_resources),
+            bridge_domain_plan_preview=bridge_domain_plan[:3000],
+            has_bridge_domain_plan=bool(bridge_domain_plan.strip()),
             agent_guidance=load_agent_guidance("literature-scout"),
         )
 
@@ -170,6 +183,7 @@ class ScoutAgent(Agent):
             "研究方向已写入 project.yaml。"
             "如有用户种子论文会在 user_seeds/seed_papers.jsonl 里，"
             "也请参考 seed_ideas.md 和 seed_external_resources.jsonl。"
+            "如果 literature/bridge_domain_plan.json 存在，请把它作为跨领域召回计划使用；"
             "你负责完成高质量多源检索并让 raw 结果落盘；"
             "raw 数量足够只是必要条件，你还要判断 query/source/bucket 覆盖是否足够；"
             "覆盖足够后调用 finish_task，runtime 才会完成去重、metadata verification 和 deep_read_queue.jsonl，"
@@ -260,16 +274,16 @@ class ScoutAgent(Agent):
         protected_verified = [
             item
             for item in verified_records
-            if _is_protected_literature_bucket(item)
+            if _is_semantic_screened_protected_candidate(item)
         ]
-        if protected_verified and not any(_is_protected_literature_bucket(item) for item in queue_records):
-            return False, "verified 池包含 adjacent/theory/snowball 论文，但 deep_read_queue 未保留任何跨域/桥接候选"
+        if protected_verified and not any(_is_semantic_screened_protected_candidate(item) for item in queue_records):
+            return False, "verified 池包含 semantic_screen 允许的跨域/theory 候选，但 deep_read_queue 未保留任何对应候选"
         if protected_verified and not any(
-            _is_protected_literature_bucket(item)
+            _is_semantic_screened_protected_candidate(item)
             and str(item.get("target_bucket") or "") != "overflow"
             for item in queue_records
         ):
-            return False, "deep_read_queue 保留了跨域/桥接候选，但未放入 target/seed 阅读区"
+            return False, "deep_read_queue 保留了 semantic_screen 允许的跨域/theory 候选，但未放入 target/seed 阅读区"
 
         seed_in_queue = any(bool(item.get("seed_priority")) for item in queue_records)
         seed_path = ctx.workspace_dir / "user_seeds" / "seed_papers.jsonl"
@@ -286,7 +300,7 @@ class ScoutAgent(Agent):
             return False, f"domain_map.json 解析失败: {exc}"
         if domain_map.get("semantics") != "domain_map_for_synthesis_and_ideation_not_final_gaps":
             return False, "domain_map.json semantics 不正确"
-        for field in ("core", "adjacent", "boundary", "citation_edges", "bucket_assignments"):
+        for field in ("core", "theory_bridge", "adjacent", "boundary", "citation_edges", "bucket_assignments"):
             if field not in domain_map:
                 return False, f"domain_map.json 缺少字段: {field}"
         if not isinstance(domain_map.get("bucket_assignments"), dict):
@@ -351,11 +365,46 @@ def _load_external_resources(path: Path) -> list[dict[str, str]]:
     return resources
 
 
-def _is_protected_literature_bucket(record: dict[str, object]) -> bool:
-    if bool(record.get("adjacent_field")):
-        return True
-    bucket = str(record.get("search_bucket") or record.get("query_bucket") or "").strip().casefold()
-    bucket = bucket.replace("-", "_").replace(" ", "_")
-    source_bucket = str(record.get("source_bucket") or "").strip().casefold()
-    source_bucket = source_bucket.replace("-", "_").replace(" ", "_")
-    return bucket in {"adjacent_field", "theory_bridge"} or source_bucket in {"adjacent", "snowball"}
+def _dedupe_seed_papers(seed_papers: list[dict]) -> list[dict]:
+    """Deduplicate seed metadata from jsonl and PDF scans."""
+
+    deduped: list[dict] = []
+    seen: set[str] = set()
+    for paper in seed_papers:
+        if not isinstance(paper, dict):
+            continue
+        key = _seed_paper_key(paper)
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        deduped.append(paper)
+    return deduped
+
+
+def _seed_paper_key(paper: dict) -> str:
+    for field in ("doi", "arxiv_id", "title", "id"):
+        value = str(paper.get(field) or "").strip().casefold()
+        if value:
+            return " ".join(value.split())
+    return ""
+
+
+def _is_semantic_screened_protected_candidate(record: dict[str, object]) -> bool:
+    protected_relations = {
+        "mechanism_bridge",
+        "method_transfer",
+        "evaluation_or_metric_bridge",
+        "baseline_or_dataset_relevance",
+    }
+    screen = record.get("semantic_screen")
+    if isinstance(screen, dict):
+        relation = str(screen.get("relation_to_project") or "").strip()
+        role = str(screen.get("role") or "").strip()
+        retrieval_intent = str(record.get("retrieval_intent") or "").strip()
+        return (
+            bool(screen.get("can_enter_deep_read"))
+            and relation in protected_relations
+            and (role == "theory_bridge" or retrieval_intent == "cross_domain_bridge")
+        )
+    return False

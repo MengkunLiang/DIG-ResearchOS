@@ -59,3 +59,29 @@ async def test_lookup_paper_record_reports_missing_without_dumping_pool(tmp_path
     assert result.ok
     assert result.data["found"] is False
     assert "Known Paper" not in result.content
+
+
+@pytest.mark.asyncio
+async def test_lookup_paper_record_accepts_t3_queue_rank(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    literature = workspace / "literature"
+    literature.mkdir(parents=True)
+    (literature / "deep_read_queue.jsonl").write_text(
+        (
+            '{"paper_id":"noopenalex::496b8b9485c829bf",'
+            '"normalized_id":"noopenalex__496b8b9485c829bf",'
+            '"queue_rank":1,'
+            '"title":"Causal-Invariant Cross-Domain Out-of-Distribution Recommendation",'
+            '"abstract":"Queue abstract."}\n'
+        ),
+        encoding="utf-8",
+    )
+
+    policy = WorkspaceAccessPolicy(workspace, ["literature/"], [])
+    result = await LookupPaperRecordTool(policy).execute(queue_rank=1)
+
+    assert result.ok
+    assert result.data["found"] is True
+    assert result.data["record"]["paper_id"] == "noopenalex::496b8b9485c829bf"
+    assert result.data["matched_sources"] == ["literature/deep_read_queue.jsonl"]
+    assert "Causal-Invariant" in result.content

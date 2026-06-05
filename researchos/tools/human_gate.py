@@ -34,6 +34,9 @@ class HumanInterface(ABC):
 class CLIHumanInterface(HumanInterface):
     """最小命令行版本的人机接口实现。"""
 
+    CLARIFICATION_EMPTY_RETRIES = 3
+    SEPARATOR_WIDTH = 80
+
     async def ask_approval(self, *, tool_name: str, arguments: dict) -> bool:
         print("\n" + "═" * 60)
         print(f"工具请求批准: {tool_name}")
@@ -48,25 +51,38 @@ class CLIHumanInterface(HumanInterface):
     async def ask_clarification(
         self, *, question: str, suggestions: list[str] | None = None
     ) -> str:
+        print("\n" + "═" * self.SEPARATOR_WIDTH)
+        print("需要人工输入")
+        print("═" * self.SEPARATOR_WIDTH)
         print(question)
         if suggestions:
+            print("\n参考选项 / 建议：")
             print(json.dumps(suggestions, indent=2, ensure_ascii=False))
-        print("请输入回答（单行直接回车；多行请在最后输入单独一行 END，或按 Ctrl+D 提交）:")
+        print("-" * self.SEPARATOR_WIDTH)
+        for attempt in range(1, self.CLARIFICATION_EMPTY_RETRIES + 1):
+            print("请输入回答（输入完成后，在最后输入单独一行 END，或按 Ctrl+D 提交）:")
 
-        lines: list[str] = []
-        try:
-            while True:
-                line = input("> ")
-                if line.strip() == "END":
-                    break
-                lines.append(line)
-        except EOFError:
-            pass  # Ctrl+D 正常提交
+            lines: list[str] = []
+            try:
+                while True:
+                    line = input("> ")
+                    if line.strip() == "END":
+                        break
+                    lines.append(line)
+            except EOFError:
+                pass  # Ctrl+D 正常提交
 
-        answer = "\n".join(lines).strip()
-        if not answer:
-            raise HumanInputUnavailable("ask_human 收到空回答，任务已暂停等待明确输入。")
-        return answer
+            answer = "\n".join(lines).strip()
+            if answer:
+                print("已收到输入，继续处理...")
+                print("-" * self.SEPARATOR_WIDTH)
+                return answer
+
+            if attempt < self.CLARIFICATION_EMPTY_RETRIES:
+                print("未收到有效输入，请重新输入；如需主动中断请按 Ctrl+C。")
+
+        print("连续多次未收到有效输入，任务将暂停等待明确输入。")
+        raise HumanInputUnavailable("ask_human 连续收到空回答，任务已暂停等待明确输入。")
 
     async def present_gate(
         self, *, gate_id: str, presentation: dict, options: list[dict]

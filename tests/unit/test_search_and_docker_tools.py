@@ -62,6 +62,17 @@ async def test_search_papers_auto_falls_back_to_arxiv(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_search_papers_rejects_blank_query_with_tool_result():
+    tool = SearchPapersTool()
+
+    result = await tool.execute(query="   ", source="auto", max_results=5)
+
+    assert not result.ok
+    assert result.error == "empty_query"
+    assert "query 不能为空" in result.content
+
+
+@pytest.mark.asyncio
 async def test_fetch_paper_metadata_auto_detects_arxiv(monkeypatch):
     tool = FetchPaperMetadataTool()
 

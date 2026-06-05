@@ -379,10 +379,11 @@ profiles:
           max_context: 128000
 ```
 
-ResearchOS 调用 LiteLLM 时会自动补成 `openai/deepseek-v4-pro`。如果日志里看到
-`LiteLLM completion() model= deepseek-v4-pro; provider = openai` 后跟着 LiteLLM 的
-`Give Feedback / Get Help`，那只是 LiteLLM 的异常提示，不一定表示 ResearchOS 配置解析失败；
-应优先看 ResearchOS 最终错误里打印的 endpoint debug hint，确认 base URL、key、模型名三者匹配。
+ResearchOS 调用 LiteLLM 时会自动补成 `openai/deepseek-v4-pro`。runtime 默认会抑制
+LiteLLM 的 INFO 噪音；正常情况下，你应该在 `researchos.log` 中看到的是 `LLM_CALL` /
+`LLM_RESULT` 摘要，而不是 `LiteLLM completion() ...`。如果 provider 真正失败，应优先看
+ResearchOS 最终错误里打印的 endpoint debug hint，确认 base URL、key、模型名三者匹配。
+如果终端仍大量出现 LiteLLM INFO，通常是外部脚本或环境变量重新打开了 LiteLLM debug。
 
 ### 4.4 `profiles`
 

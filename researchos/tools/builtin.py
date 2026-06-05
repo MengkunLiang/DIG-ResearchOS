@@ -27,7 +27,7 @@ from .external_experiment import (
     SelectExternalExecutorTool,
     WaitForExternalExecutorResultTool,
 )
-from .filesystem import ListFilesTool, ReadFileTool, WriteFileTool
+from .filesystem import InspectUserSeedsTool, ListFilesTool, ReadFileTool, WriteFileTool
 from .finish_task import FinishTaskTool
 from .structured_file import WriteStructuredFileTool
 from .survey_tools import (
@@ -64,6 +64,7 @@ from .paper_lookup import LookupPaperRecordTool
 from .registry import ToolRegistry
 from .search_papers import FetchPaperMetadataTool, SearchPapersTool
 from .seed_paper_processor import ProcessSeedPaperTool
+from .save_paper_note import SavePaperNoteTool
 from .upload_seed_materials import UploadSeedCodeTool, UploadSeedDataTool, UploadSeedPdfTool
 from .web_fetch import WebFetchAllowlist, WebFetchTool
 from .paper_utils_tool import (
@@ -76,6 +77,8 @@ from .paper_utils_tool import (
 )
 from .reference_mining import MineReferenceProjectsTool
 from .paper_enrichment_tool import (
+    ApplySemanticScreeningTool,
+    BackfillPaperAbstractsTool,
     EnrichPapersTool,
     DetectDuplicateQueriesTool,
     AnalyzeDedupRateTool,
@@ -113,6 +116,7 @@ def register_builtin_tools(
     registry.register("write_structured_file", lambda ctx: WriteStructuredFileTool(ctx.policy))
     registry.register("append_file", lambda ctx: AppendFileTool(ctx.policy))
     registry.register("list_files", lambda ctx: ListFilesTool(ctx.policy))
+    registry.register("inspect_user_seeds", lambda ctx: InspectUserSeedsTool(ctx.policy))
     registry.register("finish_task", lambda ctx: FinishTaskTool())
     registry.register(
         "ask_human",
@@ -139,6 +143,7 @@ def register_builtin_tools(
     registry.register("extract_paper_sections", lambda ctx: ExtractSectionsTool(ctx.policy))
     registry.register("fetch_paper_pdf", lambda ctx: FetchPaperPdfTool(ctx.policy))
     registry.register("extract_pdf_text", lambda ctx: ExtractPdfTextTool(ctx.policy))
+    registry.register("save_paper_note", lambda ctx: SavePaperNoteTool(ctx.policy))
     registry.register("lookup_paper_record", lambda ctx: LookupPaperRecordTool(ctx.policy))
     registry.register("build_synthesis_workbench", lambda ctx: BuildSynthesisWorkbenchTool(ctx.policy))
     registry.register("build_manuscript_resource_index", lambda ctx: BuildManuscriptResourceIndexTool(ctx.policy))
@@ -209,6 +214,8 @@ def register_builtin_tools(
     registry.register("generate_search_log", lambda ctx: GenerateSearchLogTool(workspace_dir=str(ctx.policy.workspace_dir)))
     # 论文数据增强工具
     registry.register("enrich_papers", lambda ctx: EnrichPapersTool())
+    registry.register("backfill_paper_abstracts", lambda ctx: BackfillPaperAbstractsTool(ctx.policy))
+    registry.register("apply_semantic_screening", lambda ctx: ApplySemanticScreeningTool(ctx.policy))
     registry.register("detect_duplicate_queries", lambda ctx: DetectDuplicateQueriesTool())
     registry.register("analyze_dedup_rate", lambda ctx: AnalyzeDedupRateTool())
     registry.register("build_verified_papers", lambda ctx: BuildVerifiedPapersTool(ctx.policy))

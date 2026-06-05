@@ -29,6 +29,7 @@ agents:
     tools:
       allowed_read_prefixes:
       - ''
+      - literature/
       - user_seeds/
       - experiments/
       - ideation/
@@ -38,6 +39,7 @@ agents:
       - write_file
       - write_structured_file
       - list_files
+      - inspect_user_seeds
       - analyze_idea_concentration
       - compute_idea_novelty_signal
       - ask_human
@@ -45,12 +47,14 @@ agents:
       - process_seed_paper
       allowed_write_prefixes:
       - ''
+      - literature/
       - user_seeds/
       - evaluation/
     prompt:
       prompt_template: pi.j2
       structured_outputs:
         project.yaml: project
+        literature/bridge_domain_plan.json: bridge_domain_plan
     modes:
       init:
         description: 项目初始化
@@ -70,6 +74,8 @@ agents:
       - read_file
       - write_file
       - write_structured_file
+      - ask_human
+      - inspect_user_seeds
       - append_papers_raw
       - process_papers_raw
       - save_papers_raw
@@ -84,6 +90,8 @@ agents:
       - filter_by_domain
       - generate_search_log
       - enrich_papers
+      - backfill_paper_abstracts
+      - apply_semantic_screening
       - detect_duplicate_queries
       - analyze_dedup_rate
       - build_verified_papers
@@ -129,6 +137,7 @@ agents:
       - fetch_paper_pdf
       - extract_paper_sections
       - extract_pdf_text
+      - save_paper_note
       - build_synthesis_workbench
       - finish_task
       allowed_write_prefixes:

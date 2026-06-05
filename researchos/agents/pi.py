@@ -9,6 +9,7 @@ T7.5 (evaluate模式): 评估实验结果，决定后续路径
 from __future__ import annotations
 
 from datetime import datetime
+import json
 from pathlib import Path
 
 import yaml
@@ -40,6 +41,7 @@ class PIAgent(Agent):
                         "write_file",
                         "write_structured_file",
                         "list_files",
+                        "inspect_user_seeds",
                         "ask_human",
                         "finish_task",
                         "process_seed_paper",
@@ -51,15 +53,17 @@ class PIAgent(Agent):
                     "temperature": 0.3,
                     "allowed_read_prefixes": [
                         "",
+                        "literature/",
                         "user_seeds/",
                         "experiments/",
                         "ideation/",
                         "evaluation/",
                     ],
-                    "allowed_write_prefixes": ["", "user_seeds/", "evaluation/"],
+                    "allowed_write_prefixes": ["", "literature/", "user_seeds/", "evaluation/"],
                     "prompt_template": "pi.j2",
                     "structured_outputs": {
                         "project.yaml": "project",
+                        "literature/bridge_domain_plan.json": "bridge_domain_plan",
                     },
                 },
             )
@@ -105,8 +109,10 @@ class PIAgent(Agent):
                 (
                 f"请开始T1项目初始化流程。\n\n"
                 f"T1 的目标是把用户的研究意图整理成 project.yaml 和 user_seeds/ 下的种子文件。"
-                f"你必须先调用 list_files/read_file 检查 user_seeds/ 中已有材料，"
-                f"然后再调用 ask_human 进行分轮访谈；不要把“检查材料”这类状态说明当成问题。\n\n"
+                f"runtime 会在第一次 LLM 调用前先完成一次 T1 启动补充 gate；"
+                f"你收到 gate 回答后，必须先调用 list_files/read_file 检查 user_seeds/ 中已有材料，"
+                f"再继续后续分轮访谈。不要把“检查材料”这类状态说明当成问题，"
+                f"但任何需要用户选择、确认或补充的地方都必须调用 ask_human。\n\n"
                 f"分轮访谈要求：\n"
                 f"- 第1轮：明确研究边界与约束；ask_human 的 question 必须说明为什么需要回答，以及需要回答哪些字段。\n"
                 f"- 第2轮：收集已有基础（论文、想法、约束），并说明可直接引用已发现的 seed 文件。\n"
@@ -175,8 +181,42 @@ class PIAgent(Agent):
 
         # 3. seed 文件是可选的，不强制要求
         # 如果用户没有提供种子数据，Agent 可以不创建这些文件
-        # 这里只检查 project.yaml 和 state.yaml
+        # 这里只检查 project.yaml、state.yaml 和 bridge_domain_plan.json
 
+        ok, err = self._validate_bridge_domain_plan(ctx)
+        if not ok:
+            return False, err
+
+        return True, None
+
+    def _validate_bridge_domain_plan(self, ctx: ExecutionContext) -> tuple[bool, str | None]:
+        plan_path = ctx.workspace_dir / "literature" / "bridge_domain_plan.json"
+        if not plan_path.exists():
+            if "bridge_domain_plan" not in ctx.outputs_expected:
+                return True, None
+            return False, "缺少 literature/bridge_domain_plan.json；T1 必须写入空计划或用户确认后的桥接计划"
+        try:
+            plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return False, f"bridge_domain_plan.json 解析失败: {exc}"
+        if not isinstance(plan, dict) or plan.get("semantics") != "bridge_domain_plan":
+            return False, "bridge_domain_plan.json semantics 必须为 bridge_domain_plan"
+        domains = plan.get("bridge_domains")
+        if not isinstance(domains, list):
+            return False, "bridge_domain_plan.json bridge_domains 必须是数组"
+        for index, item in enumerate(domains, start=1):
+            if not isinstance(item, dict):
+                return False, f"bridge_domain_plan 第 {index} 项必须是对象"
+            priority = str(item.get("priority") or "").strip()
+            source = str(item.get("source") or "").strip()
+            if priority not in {"must_explore", "should_explore"}:
+                return False, f"bridge_domain_plan 第 {index} 项 priority 非法: {priority}"
+            if priority == "must_explore" and source != "user":
+                return False, "bridge_domain_plan 中 must_explore 只能来自用户主动选择(source=user)"
+            if not str(item.get("bridge_id") or "").strip():
+                return False, f"bridge_domain_plan 第 {index} 项缺少 bridge_id"
+            if not isinstance(item.get("queries") or [], list):
+                return False, f"bridge_domain_plan 第 {index} 项 queries 必须是数组"
         return True, None
 
     def _validate_evaluate_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:

@@ -55,17 +55,22 @@
 
 ### 2.1 `researchos.log`
 
-它记录的是：
+它是人类可读的统一运行时间线，一行一个事件，不写完整 prompt、完整 response 或大 JSON。典型事件包括：
 
-- startup summary
-- environment warnings
-- agent 启动/结束
-- tool crash
-- runtime error
-- validator failure
-- gate / resume / budget 相关信息
+- `RUN_START` / `RUN_END`
+- `TASK_START` / `TASK_END`
+- `STATE_TRANSITION`
+- `AGENT_STEP`
+- `LLM_CALL` / `LLM_RESULT`
+- `TOOL_CALL` / `TOOL_RESULT`
+- `FINISH_REQUESTED`
+- `FINALIZE_STARTED` / `FINALIZE_DONE`
+- `VALIDATION_PASS` / `VALIDATION_FAILED` / `VALIDATION_RETRY`
+- `ASK_HUMAN` / `HUMAN_GATE`
+- `PAUSED` / `RESUME`
+- `ERROR`
 
-它更像“系统运行日志”。
+它更像“人能直接读的运行时间线”。底层 Python/structlog 调试日志写在 `researchos-debug.log`；机器级完整细节仍在 `trace/*.jsonl`。
 
 ### 2.2 `trace/*.jsonl`
 
@@ -101,8 +106,9 @@ tail -n 80 ./workspace/local-test2/_runtime/logs/researchos.log
 
 如果看到：
 
-- `tool_crashed`
-- `Validation failed`
+- `ERROR`
+- `VALIDATION_FAILED`
+- `raw_persistence_mismatch`
 - `Budget exceeded`
 - `LLM failed`
 
@@ -140,7 +146,7 @@ tail -n 100 ./workspace/local-test2/_runtime/logs/researchos.log
 ### 4.3 看错误和警告
 
 ```bash
-grep -nE "ERROR|WARNING|tool_crashed|Validation failed|Budget exceeded|LLM failed" \
+grep -nE "ERROR|VALIDATION_FAILED|PAUSED|Budget exceeded|LLM failed|raw_persistence_mismatch" \
   ./workspace/local-test2/_runtime/logs/researchos.log
 ```
 
@@ -168,7 +174,7 @@ researchos trace T7_single_12345678 --workspace ./workspace/local-test2 --raw
 ### 4.7 直接 grep trace
 
 ```bash
-grep -n "tool_crashed" ./workspace/local-test2/_runtime/traces/T8-REVIEW-1_single_0b0655e0.jsonl
+grep -n "\"tool_result\"" ./workspace/local-test2/_runtime/traces/T8-REVIEW-1_single_0b0655e0.jsonl
 grep -n "\"tool_name\"" ./workspace/local-test2/_runtime/traces/T3_single_678acc5c.jsonl
 ```
 
@@ -176,60 +182,51 @@ grep -n "\"tool_name\"" ./workspace/local-test2/_runtime/traces/T3_single_678acc
 
 ## 5. 你会在日志里看到什么
 
-### 5.1 startup summary
+### 5.1 task / state summary
 
 典型会出现：
 
 ```text
-[startup] workspace=./workspace/local-test2
-[startup] state_machine=./config/state_machine.yaml
-[startup] gates=./config/gates.yaml
-[startup] model_routing=./config/model_routing.yaml
-[startup] mcp_servers=2 mcp_tools=0
+2026-06-04 17:42:10 | RUN_START | run_id=T2_single_xxx task=T2 agent=scout
+2026-06-04 17:42:10 | TASK_START | task=T2 agent=scout mode=scout
+2026-06-04 17:42:16 | TOOL_CALL | step=1 tool=openalex_search args={"query":"...","source":"openalex_search","max":20}
 ```
 
-它很有用，因为能帮你确认：
-
-- 当前用的是哪个 workspace
-- 当前读的是哪套配置
-- MCP 是否加载
+它能帮你确认当前 workspace、task、agent、状态跳转和工具调用。
 
 ### 5.2 LLM 路由信息
 
-你会看到类似：
+默认情况下，LiteLLM 的 INFO 噪音不会进入控制台或 `researchos.log`。ResearchOS 只记录紧凑的 `LLM_CALL` / `LLM_RESULT`，例如 profile、tier、model、endpoint、token 和 duration。只有 provider 连续超时、fallback 全失败或不可恢复错误时，CLI 和日志才会出现错误摘要。
 
-```text
-LiteLLM completion() model= deepseek-ai/DeepSeek-V4-Flash; provider = openai
-```
+如果你仍然看到 `LiteLLM completion() ...` 大量刷屏，优先检查是否有外部脚本手动打开了 LiteLLM debug，或运行环境中覆盖了 logging level。
 
-这是 provider/路由级日志，不一定表示错误。
+### 5.3 tool result
 
-真正需要关注的是：
+搜索工具的 `TOOL_RESULT` 会额外记录：
 
-- 是否 fallback 了
-- 是否连续 timeout
-- 是否 provider 忙
+- `query`
+- `source`
+- `reported_paper_count`
+- `persisted_raw_delta`
+- `raw_count_after`
+- `append_status`
 
-### 5.3 tool crash
+如果工具返回了论文但 raw 没有落盘，会出现 `raw_persistence_mismatch` 或 `raw_append_failed`，这比只看 `papers_raw.jsonl` 更容易定位问题。
 
-典型形式：
+T2 里需要特别区分三类“没有论文”的情况：
 
-```text
-{"tool": "read_file", "event": "tool_crashed", ...}
-```
+- `empty_query_plan`：`expand_queries` 或 `detect_duplicate_queries` 没有拿到任何非空检索式。这是上游 query 规划问题，应回到 `project.yaml`、真实 seed、`domain_profile` 和 `llm_queries`，必要时 `ask_human` 补研究边界。
+- `empty_query`：某个搜索工具实际收到空 query。这是工具调用参数错误，不是 API 正常返回 0 篇。
+- `reported_paper_count=0` 且 `query/source` 非空：这是某个真实检索式在某个 source 上没有命中，可以扩大/改写 query 或换 source。
 
-这通常说明：
-
-- tool 收到不合法输入
-- tool 本身抛异常
-- agent 用错了工具
+旧版 `scout_progress.md` 可能出现过 `检索 '' -> 0 篇 (来源: )`。这类记录通常不是 OpenAlex/Crossref/arXiv 真正执行了空检索，而是模型把普通状态说明误写成 `log_scout_progress(action="search_result", detail="...")`，旧工具把缺失的 `query/source/count` 默认成空字符串和 0。现在 `log_scout_progress(action="search_result")` 必须显式提供非空 `query`、非空 `source` 和 `count`，否则返回 `invalid_progress_event`。
 
 ### 5.4 validator failure
 
 典型形式：
 
 ```text
-Validation failed 5 times. Last reason: ...
+2026-06-04 17:45:02 | VALIDATION_FAILED | task=T3 step=71 reason="deep_read_queue 仅完成 7/11 篇..."
 ```
 
 这类问题要看两边：
@@ -242,8 +239,7 @@ Validation failed 5 times. Last reason: ...
 典型形式：
 
 ```text
-stop_reason: budget
-error: Budget exceeded on wall_seconds: 922/800
+2026-06-04 17:46:33 | PAUSED | task=T3 reason="Budget exceeded on wall_seconds: 922/800"
 ```
 
 这时需要判断：
@@ -418,7 +414,7 @@ researchos run-task T3 --workspace ./workspace/local-test2 --log-level DEBUG
 如果终端最后提示：
 
 ```text
-error: Validation failed 5 times. Last reason: ...
+Project paused: Validation failed 3 times. Last reason: ...
 ```
 
 你下一步应该是：
@@ -446,7 +442,7 @@ grep -n "T9" ./workspace/local-test2/_runtime/logs/researchos.log | tail -n 30
 查所有 tool crash：
 
 ```bash
-grep -n "tool_crashed" ./workspace/local-test2/_runtime/logs/researchos.log
+grep -n "ERROR" ./workspace/local-test2/_runtime/logs/researchos.log
 ```
 
 查所有预算问题：
@@ -458,13 +454,22 @@ grep -n "Budget exceeded" ./workspace/local-test2/_runtime/logs/researchos.log
 查所有 validator 失败：
 
 ```bash
-grep -n "Validation failed" ./workspace/local-test2/_runtime/logs/researchos.log
+grep -n "VALIDATION_FAILED" ./workspace/local-test2/_runtime/logs/researchos.log
 ```
 
 查所有 LLM 失败：
 
 ```bash
-grep -n "LLM failed" ./workspace/local-test2/_runtime/logs/researchos.log
+grep -nE "LLM failed|kind=llm_provider|LLM_CALL|LLM_RESULT" ./workspace/local-test2/_runtime/logs/researchos.log
+```
+
+查 T2 搜索是否落盘：
+
+```bash
+grep -nE "TOOL_RESULT.*(openalex_search|crossref_search|arxiv_search|multi_source_search|informs_search)" \
+  ./workspace/local-test2/_runtime/logs/researchos.log
+grep -nE "raw_persistence_mismatch|raw_append_failed|empty_query|empty_query_plan|invalid_progress_event" \
+  ./workspace/local-test2/_runtime/logs/researchos.log
 ```
 
 ---

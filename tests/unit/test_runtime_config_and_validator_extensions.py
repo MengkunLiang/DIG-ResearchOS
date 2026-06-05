@@ -80,6 +80,8 @@ def test_load_runtime_settings_reads_shared_runtime_options(tmp_path: Path):
               enable_trace: false
             ui:
               no_banner: true
+              quiet: true
+              verbose: false
             web_fetch:
               allowed_schemes: ["https"]
               allowed_hosts: ["example.com", "openalex.org"]
@@ -95,7 +97,7 @@ def test_load_runtime_settings_reads_shared_runtime_options(tmp_path: Path):
     assert settings.workspace.runtime_dir == ".runtime"
     assert settings.logging == LoggingSettings(level="DEBUG", json=False)
     assert settings.debug == DebugSettings(enable_trace=False)
-    assert settings.ui == UISettings(no_banner=True)
+    assert settings.ui == UISettings(no_banner=True, quiet=True, verbose=False)
     assert settings.web_fetch == WebFetchSettings(
         allowed_schemes=("https",),
         allowed_hosts=("example.com", "openalex.org"),
@@ -208,6 +210,16 @@ def test_validate_t2_artifacts_with_builtin_checker(tmp_path: Path):
         "verification_confidence": 0.95,
         "verification_title_similarity": 0.99,
         "verification_year_match": True,
+        "semantic_screen": {
+            "relation_to_project": "baseline_or_dataset_relevance",
+            "role": "core",
+            "confidence": "high",
+            "bridge_id": None,
+            "can_enter_core": True,
+            "can_enter_deep_read": True,
+            "rationale": "LLM screening allows this paper into the core review bucket.",
+            "evidence_fields_used": ["title", "abstract"],
+        },
     }
     (workspace / "literature" / "papers_verified.jsonl").write_text(
         json.dumps(verified_paper, ensure_ascii=False) + "\n",
@@ -238,6 +250,9 @@ def test_validate_t2_artifacts_with_builtin_checker(tmp_path: Path):
         "read_priority": 0.83,
         "queue_rank": 1,
         "target_bucket": "target",
+        "semantic_screen": verified_paper["semantic_screen"],
+        "semantic_role": "core",
+        "relation_to_project": "baseline_or_dataset_relevance",
     }
     (workspace / "literature" / "deep_read_queue.jsonl").write_text(
         json.dumps(deep_read_item, ensure_ascii=False) + "\n",
@@ -249,7 +264,17 @@ def test_validate_t2_artifacts_with_builtin_checker(tmp_path: Path):
             {
                 "version": "1.0",
                 "semantics": "domain_map_for_synthesis_and_ideation_not_final_gaps",
-                "core": [{"id": "paper-1", "title": "A Runtime Paper", "degree": 0}],
+                "core": [
+                    {
+                        "id": "paper-1",
+                        "title": "A Runtime Paper",
+                        "degree": 0,
+                        "relation_to_project": "baseline_or_dataset_relevance",
+                        "semantic_role": "core",
+                        "key_rationale_hint": "LLM screening allows this paper into the core review bucket.",
+                    }
+                ],
+                "theory_bridge": [],
                 "adjacent": [],
                 "boundary": [],
                 "citation_edges": [],

@@ -45,7 +45,7 @@ from .pydantic_compat import model_dump
 from .runtime.agent import AgentResult
 from .runtime.config_audit import build_config_audit_summary
 from .runtime.cli_ui import format_startup_summary, show_startup_banner
-from .runtime.config import RuntimeSettings, load_runtime_settings
+from .runtime.config import RuntimeSettings, UISettings, load_runtime_settings
 from .runtime.llm_client import LLMClient
 from .runtime.logger import configure_file_logging, configure_logging
 from .runtime.trace import render_trace_for_humans
@@ -211,11 +211,39 @@ def _configure_workspace_logging(
     workspace_dir: Path,
     runtime_settings: RuntimeSettings,
 ) -> None:
-    """把进程日志同时写入 workspace 内的 `_runtime/logs/`。"""
+    """把 Python/structlog 调试日志写入 debug log。
+
+    `_runtime/logs/researchos.log` 由 RunLogger 专门做人类时间线，不再承载
+    stdlib/structlog/LiteLLM 的普通 INFO。
+    """
 
     configure_file_logging(
-        runtime_settings.logs_dir(workspace_dir) / "researchos.log",
+        runtime_settings.logs_dir(workspace_dir) / "researchos-debug.log",
         level=args.log_level,
+    )
+
+
+def _runtime_settings_for_args(settings: RuntimeSettings, args: argparse.Namespace) -> RuntimeSettings:
+    """Apply CLI UI overrides without mutating the frozen settings object."""
+
+    quiet = (getattr(args, "quiet", False) is True) or settings.ui.quiet
+    verbose = (getattr(args, "verbose", False) is True) or settings.ui.verbose
+    if quiet and verbose:
+        verbose = False
+    if quiet == settings.ui.quiet and verbose == settings.ui.verbose:
+        return settings
+    return RuntimeSettings(
+        workspace=settings.workspace,
+        logging=settings.logging,
+        human_interface=settings.human_interface,
+        agent_behavior=settings.agent_behavior,
+        debug=settings.debug,
+        ui=UISettings(
+            no_banner=settings.ui.no_banner,
+            quiet=quiet,
+            verbose=verbose,
+        ),
+        web_fetch=settings.web_fetch,
     )
 
 
@@ -505,6 +533,7 @@ async def _prepare_runtime(args: argparse.Namespace, workspace_dir: Path) -> Pre
     register_builtin_task_checkers()
     skill_roots = _resolve_skill_roots(args, workspace_dir)
     runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
+    runtime_settings = _runtime_settings_for_args(runtime_settings, args)
     registry = _build_tool_registry(skill_roots, runtime_settings)
     mcp_server_count, mcp_tool_count = await _maybe_register_mcp_tools(args, registry)
     _validate_agent_tools(registry)
@@ -524,6 +553,7 @@ async def run_command(args: argparse.Namespace) -> int:
     """完整 pipeline 模式入口。"""
 
     runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
+    runtime_settings = _runtime_settings_for_args(runtime_settings, args)
     workspace_dir = Path(args.workspace).resolve()
     ensure_workspace_layout(workspace_dir, runtime_settings)
     _configure_workspace_logging(args, workspace_dir, runtime_settings)
@@ -572,6 +602,7 @@ async def run_task_command(args: argparse.Namespace) -> int:
     """单 task 模式入口。"""
 
     runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
+    runtime_settings = _runtime_settings_for_args(runtime_settings, args)
     workspace_dir = Path(args.workspace).resolve()
     ensure_workspace_layout(workspace_dir, runtime_settings)
     _configure_workspace_logging(args, workspace_dir, runtime_settings)
@@ -618,6 +649,7 @@ async def run_skill_command(args: argparse.Namespace) -> int:
     """独立运行一个 skill。"""
 
     runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
+    runtime_settings = _runtime_settings_for_args(runtime_settings, args)
     workspace_dir = Path(args.workspace).resolve()
     ensure_workspace_layout(workspace_dir, runtime_settings)
     _configure_workspace_logging(args, workspace_dir, runtime_settings)
@@ -687,6 +719,7 @@ async def selftest_command(args: argparse.Namespace) -> int:
     """LLM endpoint 自检。"""
 
     runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
+    runtime_settings = _runtime_settings_for_args(runtime_settings, args)
     _emit_startup_ui(
         args=args,
         runtime_settings=runtime_settings,
@@ -718,6 +751,7 @@ def init_workspace_command(args: argparse.Namespace) -> int:
     """初始化一个标准 workspace。"""
 
     runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
+    runtime_settings = _runtime_settings_for_args(runtime_settings, args)
     workspace_dir = Path(args.workspace).resolve()
     ensure_workspace_layout(workspace_dir, runtime_settings)
     _configure_workspace_logging(args, workspace_dir, runtime_settings)
@@ -947,6 +981,19 @@ def _add_shared_cli_options(
         action="store_true",
         default=False if use_defaults else default,
     )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        default=False if use_defaults else default,
+        help="只显示关键状态、暂停、错误和最终结果；完整时间线写入 _runtime/logs/researchos.log",
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        default=False if use_defaults else default,
+        help="显示更多工具摘要；仍不显示完整 prompt/response",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1025,7 +1072,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     list_skills_parser = subparsers.add_parser("list-skills", help="列出所有可用的 skills")
     _add_shared_cli_options(list_skills_parser, runtime_settings, use_defaults=False)
-    list_skills_parser.add_argument("--verbose", "-v", action="store_true", help="显示详细信息")
 
     return parser
 
@@ -1037,6 +1083,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     _emit_environment_warnings()
     runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
+    runtime_settings = _runtime_settings_for_args(runtime_settings, args)
     configure_logging(level=args.log_level, json_logs=runtime_settings.logging.json)
     if args.command == "init-workspace":
         return init_workspace_command(args)

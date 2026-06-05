@@ -6,12 +6,15 @@ import csv
 import json
 from pathlib import Path
 
+import pytest
+
 from researchos.runtime.abstract_sweep import (
     build_sweep_candidates,
     generate_abstract_note,
     generate_bib_entry,
     generate_comparison_row,
     run_abstract_sweep,
+    run_abstract_sweep_with_reader,
     _normalize_id,
     _split_sentences,
 )
@@ -259,6 +262,56 @@ def test_build_sweep_candidates_skips_no_abstract(tmp_path: Path):
     assert candidates[0]["id"] == "p2"
 
 
+def test_build_sweep_candidates_skips_duplicates_semantic_excludes_and_title_covered_notes(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    notes_dir = workspace / "literature" / "paper_notes"
+    notes_dir.mkdir(parents=True)
+    (notes_dir / "already_read_alias.md").write_text(
+        "# Transfer Learning on Heterogeneous Feature Spaces for Treatment Effects Estimation\n\n"
+        "- **Title**: Transfer Learning on Heterogeneous Feature Spaces for Treatment Effects Estimation\n",
+        encoding="utf-8",
+    )
+    _write_jsonl(
+        workspace / "literature" / "papers_verified.jsonl",
+        [
+            {
+                "id": "alias-id",
+                "title": "Transfer Learning on Heterogeneous Feature Spaces",
+                "abstract": "Covered by existing title note.",
+                "relevance_score": 0.9,
+            },
+            {
+                "id": "dup",
+                "title": "Duplicate Paper",
+                "abstract": "Duplicate.",
+                "relevance_score": 0.9,
+                "duplicate_of": "p0",
+            },
+            {
+                "id": "excluded",
+                "title": "Keyword Only Paper",
+                "abstract": "Excluded.",
+                "relevance_score": 0.9,
+                "semantic_screen": {"relation_to_project": "shared_keyword_only"},
+            },
+            {
+                "id": "keep",
+                "title": "Useful Abstract Candidate",
+                "abstract": "Useful abstract.",
+                "relevance_score": 0.8,
+                "semantic_screen": {"relation_to_project": "method_transfer", "can_enter_deep_read": True},
+            },
+        ],
+    )
+
+    candidates = build_sweep_candidates(
+        workspace,
+        {"lite_paper_num": 10, "min_relevance": 0.0, "sources": ["papers_verified"], "exclude_already_read": True},
+    )
+
+    assert [item["id"] for item in candidates] == ["keep"]
+
+
 # ---------------------------------------------------------------------------
 # run_abstract_sweep
 # ---------------------------------------------------------------------------
@@ -339,3 +392,72 @@ def test_run_abstract_sweep_no_candidates(tmp_path: Path):
     result = run_abstract_sweep(workspace, {"enabled": True, "lite_paper_num": 10, "min_relevance": 0.0, "sources": ["papers_dedup"], "exclude_already_read": True})
     assert result["candidates_found"] == 0
     assert result["notes_generated"] == 0
+
+
+@pytest.mark.asyncio
+async def test_run_abstract_sweep_with_reader_uses_llm_note_and_updates_audit(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    _write_jsonl(
+        workspace / "literature" / "papers_verified.jsonl",
+        [
+            {
+                "id": "p1",
+                "title": "Paper One",
+                "abstract": "Abstract text with a method and claimed result.",
+                "relevance_score": 0.9,
+                "year": 2024,
+                "venue": "ICML",
+            },
+        ],
+    )
+
+    async def fake_reader(paper: dict, prompt: str) -> str:
+        assert "Paper One" in prompt
+        return """# Paper One
+
+- **ID**: p1
+- **Title**: Paper One
+- **Status**: [ABSTRACT-ONLY]
+
+## 1. Problem & Motivation
+Reader LLM identified the abstract-level problem.
+
+## 2. Method Summary
+Reader LLM summarized the method.
+
+## A. 核心做法/视角
+Reader LLM extracted a viewpoint.
+
+## B. 桥接点
+Reader LLM identified a bridge.
+
+## 3. Key Claimed Results
+Reader LLM kept the result cautious.
+
+## Raw Abstract
+Abstract text with a method and claimed result.
+
+## 13. Mechanism Claim
+- **Stated mechanism**: abstract-only mechanism hint
+- **Evidence type**: abstract_claim_hint
+- **Supporting artifact**: abstract metadata only
+
+## Source
+- Read from: abstract / metadata only
+"""
+
+    result = await run_abstract_sweep_with_reader(
+        workspace,
+        {"enabled": True, "lite_paper_num": 10, "min_relevance": 0.0, "sources": ["papers_verified"], "exclude_already_read": True},
+        abstract_reader=fake_reader,
+    )
+
+    assert result["notes_generated"] == 1
+    assert result["llm_notes_generated"] == 1
+    assert result["fallback_notes_generated"] == 0
+    note = (workspace / "literature" / "paper_notes_abstract" / "p1.md").read_text(encoding="utf-8")
+    assert "Reader LLM summarized the method" in note
+    assert "LLM_REVIEW_REQUIRED" not in note
+    audit = (workspace / "literature" / "access_audit.md").read_text(encoding="utf-8")
+    assert "T3 Abstract Sweep" in audit
+    assert "Reader LLM notes: 1" in audit

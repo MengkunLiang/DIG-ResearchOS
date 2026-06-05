@@ -76,6 +76,8 @@ class UISettings:
     """CLI 展示相关配置。"""
 
     no_banner: bool = False
+    quiet: bool = False
+    verbose: bool = False
 
 
 @dataclass(frozen=True)
@@ -161,6 +163,8 @@ def load_runtime_settings(config_path: Path | None = None) -> RuntimeSettings:
         ),
         ui=UISettings(
             no_banner=bool(ui_block.get("no_banner", False)),
+            quiet=bool(ui_block.get("quiet", False)),
+            verbose=bool(ui_block.get("verbose", False)),
         ),
         web_fetch=WebFetchSettings(
             allowed_schemes=_normalize_csv_like_list(

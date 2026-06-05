@@ -57,6 +57,14 @@ ui:
   # false: 正常显示（可用 CLI `--no-banner` 临时覆盖）
   no_banner: false
 
+  # 控制台安静模式。true 时只显示状态跳转、暂停、错误和最终结果；
+  # 完整人类时间线仍写入 workspace/_runtime/logs/researchos.log。
+  quiet: false
+
+  # 控制台详细模式。true 时会额外显示 Agent 文本输出和 step token 摘要；
+  # 仍不会显示完整 prompt/response，完整机器 trace 在 _runtime/traces/*.jsonl。
+  verbose: false
+
 # 网页抓取 allowlist
 web_fetch:
   # 允许的协议列表

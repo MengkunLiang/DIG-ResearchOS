@@ -88,6 +88,19 @@ class WriteStructuredFileTool(Tool):
         data = kwargs["data"]
         schema_name = kwargs["schema_name"]
         format_type = kwargs["format"]
+        normalized_path = str(path).strip().lstrip("./")
+        if schema_name == "bridge_domain_plan" and normalized_path != "literature/bridge_domain_plan.json":
+            return ToolResult(
+                ok=False,
+                content=(
+                    "bridge_domain_plan 是 T1 给 T2 使用的正式跨领域召回计划，"
+                    "必须写入 literature/bridge_domain_plan.json；"
+                    f"当前 path={path!r} 不会被 T2 读取。请改用 "
+                    "write_structured_file(path='literature/bridge_domain_plan.json', "
+                    "schema_name='bridge_domain_plan', format='json', data=...)。"
+                ),
+                error="wrong_artifact_path",
+            )
 
         try:
             # 1. Schema 验证

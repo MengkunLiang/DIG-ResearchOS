@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://researchos.dev/schemas/bridge_domain_plan.schema.json",
+  "title": "Bridge Domain Plan",
+  "description": "T1 output used by T2 as a cross-domain retrieval plan. It records retrieval intent only, not final paper semantic roles.",
+  "type": "object",
+  "required": ["semantics", "source", "bridge_domains"],
+  "properties": {
+    "version": {
+      "type": "string"
+    },
+    "semantics": {
+      "type": "string",
+      "const": "bridge_domain_plan"
+    },
+    "source": {
+      "type": "string",
+      "enum": ["user", "auto", "mixed"]
+    },
+    "bridge_domains": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["bridge_id", "name", "why", "priority", "queries", "source"],
+        "properties": {
+          "bridge_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "why": {
+            "type": "string",
+            "minLength": 1
+          },
+          "priority": {
+            "type": "string",
+            "enum": ["must_explore", "should_explore"]
+          },
+          "queries": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "source": {
+            "type": "string",
+            "enum": ["user", "auto"]
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

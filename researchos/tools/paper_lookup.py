@@ -16,6 +16,7 @@ from typing import Any
 from pydantic import BaseModel, Field, model_validator
 
 from ..runtime.errors import ToolAccessDenied
+from ..runtime.t3_notes_manifest import find_queue_record_by_rank
 from .base import Tool, ToolResult
 from .workspace_policy import WorkspaceAccessPolicy
 
@@ -29,6 +30,11 @@ DEFAULT_PAPER_RECORD_SOURCES = [
 
 
 class LookupPaperRecordParams(BaseModel):
+    queue_rank: int | None = Field(
+        default=None,
+        ge=1,
+        description="T3 队列序号；提供后工具直接从 pending/full deep_read_queue 查对应论文",
+    )
     paper_id: str | None = Field(
         default=None,
         description="论文 ID，可为 DOI、arXiv、OpenAlex ID 或 normalized_id 文件名形式",
@@ -47,8 +53,8 @@ class LookupPaperRecordParams(BaseModel):
 
     @model_validator(mode="after")
     def _require_lookup_key(self) -> "LookupPaperRecordParams":
-        if not (self.paper_id or "").strip() and not (self.title or "").strip():
-            raise ValueError("paper_id 或 title 至少提供一个")
+        if self.queue_rank is None and not (self.paper_id or "").strip() and not (self.title or "").strip():
+            raise ValueError("queue_rank、paper_id 或 title 至少提供一个")
         return self
 
 
@@ -68,6 +74,32 @@ class LookupPaperRecordTool(Tool):
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         params = LookupPaperRecordParams(**kwargs)
+        if params.queue_rank is not None:
+            record, source = find_queue_record_by_rank(self.policy.workspace_dir, params.queue_rank)
+            if record is None:
+                return ToolResult(
+                    ok=True,
+                    content=f"No matching paper record found for queue_rank={params.queue_rank}.",
+                    data={
+                        "found": False,
+                        "query": {"queue_rank": params.queue_rank},
+                        "scanned": 0,
+                        "skipped_sources": [],
+                    },
+                )
+            content = _format_record(record, [(source or "queue_rank", record)])
+            return ToolResult(
+                ok=True,
+                content=content,
+                data={
+                    "found": True,
+                    "record": record,
+                    "matched_sources": [source],
+                    "match_count": 1,
+                    "scanned": params.queue_rank,
+                    "query": {"queue_rank": params.queue_rank},
+                },
+            )
         source_paths = params.sources or DEFAULT_PAPER_RECORD_SOURCES
         query_ids = _identifier_variants(params.paper_id or "")
         query_title = _normalize_title(params.title or "")

@@ -14,7 +14,6 @@ from __future__ import annotations
 import asyncio
 import os
 from datetime import datetime
-from html import unescape
 from typing import Any, Literal
 from urllib.parse import quote_plus
 import xml.etree.ElementTree as ET
@@ -27,18 +26,23 @@ except ModuleNotFoundError:
 from pydantic import BaseModel, Field
 
 from ..runtime.errors import ToolRuntimeError
+from .abstract_utils import clean_abstract
 from .base import Tool, ToolResult
 
 
 class MultiSourceSearchParams(BaseModel):
-    query: str = Field(..., min_length=1, description="搜索关键词")
+    query: str = Field(..., description="搜索关键词")
     max_results: int = Field(20, ge=1, le=100, description="最多返回多少篇论文")
     query_bucket: str | None = Field(
         None,
         description=(
-            "可选检索式桶标签，仅用于 ResearchOS 后续队列保护；例如 core, baseline, "
-            "evaluation, adjacent_field, theory_bridge。不会改变实际检索。"
+            "可选检索式桶标签，仅作为 ResearchOS 召回意图/provenance；例如 core, baseline, "
+            "evaluation, adjacent_field, theory_bridge。不会改变实际检索，也不决定语义角色。"
         ),
+    )
+    bridge_id: str | None = Field(
+        None,
+        description="可选 bridge_domain_plan.json 中的 bridge_id；只记录召回意图，不代表语义角色。",
     )
     sources: list[str] = Field(
         default=["crossref", "arxiv", "informs", "europepmc"],
@@ -67,6 +71,18 @@ class MultiSourceSearchTool(Tool):
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         params = MultiSourceSearchParams(**kwargs)
+        query = _clean_query(params.query)
+        if not query:
+            return ToolResult(
+                ok=False,
+                content=(
+                    "检索 query 不能为空。请先基于 project.yaml、seed papers/ideas "
+                    "和 domain_profile 设计具体检索式，再调用 multi_source_search。"
+                ),
+                error="empty_query",
+                data={"query": params.query},
+            )
+        params.query = query
 
         if httpx is None:
             return ToolResult(
@@ -94,6 +110,7 @@ class MultiSourceSearchTool(Tool):
                 else:
                     continue
 
+                papers = [paper for paper in papers if _is_usable_search_record(paper)]
                 source_stats[source] = len(papers)
                 all_papers.extend(papers)
 
@@ -125,6 +142,7 @@ class MultiSourceSearchTool(Tool):
                 "source_stats": source_stats,
                 "query": params.query,
                 "query_bucket": params.query_bucket,
+                "bridge_id": params.bridge_id,
             }
         )
 
@@ -159,19 +177,21 @@ class MultiSourceSearchTool(Tool):
                 # 提取DOI
                 doi = item.get("DOI", "")
 
-                papers.append({
+                paper = {
                     "id": f"doi:{doi}" if doi else item.get("title", [""])[0][:50],
                     "source": "crossref",
                     "title": item.get("title", [""])[0],
                     "authors": authors,
                     "year": year,
-                    "abstract": item.get("abstract", ""),
+                    "abstract": clean_abstract(item.get("abstract")),
                     "venue": item.get("container-title", [""])[0] if item.get("container-title") else "",
                     "doi": doi,
                     "citation_count": item.get("is-referenced-by-count", 0),
                     "url": f"https://doi.org/{doi}" if doi else "",
                     "externalIds": {"DOI": doi} if doi else {}
-                })
+                }
+                if _is_usable_search_record(paper):
+                    papers.append(paper)
 
             return papers
 
@@ -214,19 +234,21 @@ class MultiSourceSearchTool(Tool):
                 title = item.get("title", [""])[0] if item.get("title") else ""
                 venue = item.get("container-title", [""])[0] if item.get("container-title") else ""
 
-                papers.append({
+                paper = {
                     "id": f"doi:{doi}" if doi else title[:50],
                     "source": "informs_crossref",
                     "title": title,
                     "authors": authors,
                     "year": year,
-                    "abstract": item.get("abstract", ""),
+                    "abstract": clean_abstract(item.get("abstract")),
                     "venue": venue,
                     "doi": doi,
                     "citation_count": item.get("is-referenced-by-count", 0),
                     "url": f"https://doi.org/{doi}" if doi else item.get("URL", ""),
                     "externalIds": {"DOI": doi, "CrossrefPrefix": "10.1287"} if doi else {"CrossrefPrefix": "10.1287"},
-                })
+                }
+                if _is_usable_search_record(paper):
+                    papers.append(paper)
 
             return papers
 
@@ -250,7 +272,7 @@ class MultiSourceSearchTool(Tool):
             for entry in root.findall('atom:entry', ns):
                 def text(tag: str) -> str:
                     value = entry.findtext(tag, default="", namespaces=ns)
-                    return unescape(" ".join(value.split()))
+                    return clean_abstract(" ".join(value.split()))
 
                 authors = [
                     {"name": author.findtext("atom:name", default="", namespaces=ns)}
@@ -265,7 +287,7 @@ class MultiSourceSearchTool(Tool):
                 identifier = text("atom:id").rstrip("/").split("/")[-1]
                 summary = text("atom:summary")
 
-                papers.append({
+                paper = {
                     "id": f"arxiv:{identifier}",
                     "source": "arxiv",
                     "title": text("atom:title"),
@@ -277,7 +299,9 @@ class MultiSourceSearchTool(Tool):
                     "citation_count": 0,
                     "url": text("atom:id"),
                     "externalIds": {"ArXiv": identifier}
-                })
+                }
+                if _is_usable_search_record(paper):
+                    papers.append(paper)
 
             return papers
 
@@ -306,13 +330,13 @@ class MultiSourceSearchTool(Tool):
                 pmcid = item.get("pmcid", "")
                 paper_id = pmcid or pmid or doi
 
-                papers.append({
+                paper = {
                     "id": f"pmc:{paper_id}" if paper_id else item.get("title", "")[:50],
                     "source": "europepmc",
                     "title": item.get("title", ""),
                     "authors": authors,
                     "year": int(item.get("pubYear", 0)) if item.get("pubYear") else None,
-                    "abstract": item.get("abstractText", ""),
+                    "abstract": clean_abstract(item.get("abstractText")),
                     "venue": item.get("journalTitle", ""),
                     "doi": doi,
                     "citation_count": int(item.get("citedByCount", 0)),
@@ -322,7 +346,9 @@ class MultiSourceSearchTool(Tool):
                         "PMCID": pmcid,
                         "DOI": doi
                     }
-                })
+                }
+                if _is_usable_search_record(paper):
+                    papers.append(paper)
 
             return papers
 
@@ -368,7 +394,7 @@ class MultiSourceSearchTool(Tool):
                         doi = aid.get("value", "")
                         break
 
-                papers.append({
+                paper = {
                     "id": f"pubmed:{pmid}",
                     "source": "pubmed",
                     "title": item.get("title", ""),
@@ -380,7 +406,9 @@ class MultiSourceSearchTool(Tool):
                     "citation_count": 0,
                     "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
                     "externalIds": {"PMID": pmid, "DOI": doi}
-                })
+                }
+                if _is_usable_search_record(paper):
+                    papers.append(paper)
 
             return papers
 
@@ -429,3 +457,25 @@ class MultiSourceSearchTool(Tool):
             )
 
         return "\n".join(lines)
+
+
+def _clean_query(value: Any) -> str:
+    return " ".join(str(value or "").split())
+
+
+def _is_usable_search_record(paper: dict[str, Any]) -> bool:
+    """Drop empty aggregator records before schema validation/persistence.
+
+    Crossref occasionally returns DOI shell records with no title/authors/year.
+    Keeping them in the returned batch can make the runtime reject the whole
+    raw append. This filter is mechanical metadata hygiene, not relevance
+    judgment.
+    """
+
+    title = str(paper.get("title") or "").strip()
+    paper_id = str(paper.get("id") or paper.get("doi") or "").strip()
+    if not title:
+        return False
+    if title.casefold() in {"unknown", "untitled"} and not paper_id:
+        return False
+    return True

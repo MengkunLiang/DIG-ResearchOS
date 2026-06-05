@@ -16,8 +16,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from ..literature_identity import normalize_openalex_work_id, stable_noopenalex_id
 from ..schemas.validator import validate_record
+from .abstract_utils import clean_abstract
 from .base import Tool, ToolResult
+from .search_validation import is_usable_paper_metadata
 from .workspace_policy import ToolAccessDenied, WorkspaceAccessPolicy
 from ..runtime.errors import ToolRuntimeError
 
@@ -150,6 +153,35 @@ def _select_preferred_paper_id(paper: dict[str, Any]) -> tuple[str, str]:
     return "", "missing"
 
 
+def _select_canonical_literature_id(paper: dict[str, Any], readable_id: str) -> tuple[str, str, bool]:
+    """Select the graph/linkage id used across T2 artifacts.
+
+    ``id`` remains a readable source identifier for humans and PDF fetchers.
+    ``canonical_id`` is the association key. It must not silently fall back to
+    a raw title because citation graph edges cannot align against titles.
+    """
+
+    external_ids = paper.get("externalIds") if isinstance(paper.get("externalIds"), dict) else {}
+    provenance = paper.get("provenance") if isinstance(paper.get("provenance"), dict) else {}
+    for candidate in (
+        paper.get("canonical_id"),
+        paper.get("openalex_id"),
+        external_ids.get("OpenAlex"),
+        provenance.get("canonical_id"),
+        provenance.get("source_url"),
+        paper.get("url"),
+        paper.get("id"),
+        readable_id,
+    ):
+        work_id = normalize_openalex_work_id(candidate)
+        if work_id:
+            return work_id, "openalex", False
+    if str(readable_id or "").startswith("arxiv:"):
+        return readable_id, "arxiv_noopenalex", True
+    fallback = stable_noopenalex_id({**paper, "id": readable_id})
+    return fallback, "noopenalex_fallback", True
+
+
 def _ensure_provenance(
     paper: dict[str, Any],
     *,
@@ -184,6 +216,10 @@ def _transform_to_papers_raw(paper: dict[str, Any]) -> dict[str, Any]:
     """
     # 统一主 ID，避免同一篇论文在不同来源下反复变换标识。
     paper_id, id_source = _select_preferred_paper_id(paper)
+    canonical_id, canonical_id_source, no_openalex_id = _select_canonical_literature_id(paper, paper_id)
+    if not paper_id:
+        paper_id = canonical_id
+        id_source = "canonical_fallback"
 
     # 提取 source
     source = _infer_source(paper)
@@ -200,7 +236,7 @@ def _transform_to_papers_raw(paper: dict[str, Any]) -> dict[str, Any]:
     year = _normalize_year(paper.get("year"))
 
     # 提取 abstract
-    abstract = paper.get("abstract") or ""
+    abstract = clean_abstract(paper.get("abstract"))
 
     # 提取 URL
     url = paper.get("url") or paper.get("id", "")
@@ -214,15 +250,17 @@ def _transform_to_papers_raw(paper: dict[str, Any]) -> dict[str, Any]:
     external_ids = paper.get("externalIds") or {}
     provenance = _ensure_provenance(
         paper,
-        canonical_id=paper_id,
-        id_source=id_source,
+        canonical_id=canonical_id,
+        id_source=canonical_id_source,
         source_tool=source,
     )
 
     return {
         "id": paper_id,
-        "canonical_id": paper_id,
+        "canonical_id": canonical_id,
         "preferred_id_source": id_source,
+        "canonical_id_source": canonical_id_source,
+        "no_openalex_id": no_openalex_id,
         "source": source,
         "title": html.unescape(str(paper.get("title", "Unknown"))),
         "authors": authors,
@@ -242,6 +280,12 @@ def _passthrough_raw_annotations(paper: dict[str, Any]) -> dict[str, Any]:
     """Preserve non-claim routing annotations supplied by Scout/runtime."""
 
     allowed = (
+        "referenced_works",
+        "related_works",
+        "references",
+        "refs_unavailable",
+        "retrieval_intent",
+        "bridge_id",
         "search_bucket",
         "query_bucket",
         "source_bucket",
@@ -250,6 +294,12 @@ def _passthrough_raw_annotations(paper: dict[str, Any]) -> dict[str, Any]:
         "source_tool",
         "llm_annotation_applied",
         "domain_tags",
+        "semantic_screen",
+        "has_seed_pdf",
+        "seed_pdf_path",
+        "access_level_hint",
+        "access_score",
+        "access_score_estimate",
     )
     annotations: dict[str, Any] = {}
     for key in allowed:
@@ -514,28 +564,59 @@ class SavePapersRawTool(Tool):
         try:
             # 1. 转换数据格式
             transformed_papers = []
+            skipped_records: list[dict[str, Any]] = []
             for i, paper in enumerate(params.papers):
                 try:
                     transformed = _transform_to_papers_raw(paper)
-                    transformed_papers.append(transformed)
                 except Exception as e:
-                    return ToolResult(
-                        ok=False,
-                        content=f"❌ 数据转换失败（第 {i+1} 条记录）: {e}\n\n"
-                        f"原始数据: {paper}",
-                        error="transform_failed",
+                    skipped_records.append(
+                        {
+                            "index": i + 1,
+                            "reason": f"transform_failed: {e}",
+                            "title": str(paper.get("title") or "")[:200],
+                            "id": str(paper.get("id") or paper.get("doi") or "")[:200],
+                        }
                     )
+                    continue
 
-            # 2. Schema 验证
-            for i, paper in enumerate(transformed_papers):
-                ok, err = validate_record(paper, "papers_raw")
-                if not ok:
-                    return ToolResult(
-                        ok=False,
-                        content=f"❌ Schema 验证失败（第 {i+1} 条记录）:\n\n{err}\n\n"
-                        f"数据: {paper}",
-                        error="schema_validation_failed",
+                if not is_usable_paper_metadata(transformed):
+                    skipped_records.append(
+                        {
+                            "index": i + 1,
+                            "reason": "metadata_hygiene_failed: missing_or_unknown_title",
+                            "title": str(transformed.get("title") or "")[:200],
+                            "id": str(transformed.get("id") or transformed.get("doi") or "")[:200],
+                        }
                     )
+                    continue
+
+                ok, err = validate_record(transformed, "papers_raw")
+                if not ok:
+                    skipped_records.append(
+                        {
+                            "index": i + 1,
+                            "reason": f"schema_validation_failed: {err}",
+                            "title": str(transformed.get("title") or "")[:200],
+                            "id": str(transformed.get("id") or transformed.get("doi") or "")[:200],
+                        }
+                    )
+                    continue
+                transformed_papers.append(transformed)
+
+            if not transformed_papers:
+                return ToolResult(
+                    ok=False,
+                    content=(
+                        "❌ 没有可保存的有效论文记录；所有记录都因转换或 schema 校验失败被跳过。"
+                    ),
+                    error="no_valid_papers",
+                    data={
+                        "path": "literature/papers_raw.jsonl",
+                        "count": 0,
+                        "skipped_count": len(skipped_records),
+                        "skipped_records": skipped_records[:20],
+                    },
+                )
 
             # 3. 序列化为 JSONL
             lines = []
@@ -568,23 +649,32 @@ class SavePapersRawTool(Tool):
 
                 # 添加新论文（排除已存在的 id）
                 new_lines = []
+                appended_count = 0
                 for paper in transformed_papers:
                     if paper["id"] not in existing_ids:
                         new_lines.append(json.dumps(paper, ensure_ascii=False))
+                        appended_count += 1
 
                 final_content = "\n".join(existing_lines + new_lines) + "\n"
                 abs_path.write_text(final_content, encoding="utf-8")
             else:
                 # 覆盖模式
                 abs_path.write_text(content, encoding="utf-8")
+                appended_count = len(transformed_papers)
 
             return ToolResult(
                 ok=True,
-                content=f"✅ 成功保存 {len(transformed_papers)} 篇论文到 literature/papers_raw.jsonl\n"
-                f"（模式: {'追加' if params.append else '覆盖'}）",
+                content=(
+                    f"✅ 成功保存 {appended_count} 篇论文到 literature/papers_raw.jsonl\n"
+                    f"（模式: {'追加' if params.append else '覆盖'}；"
+                    f"有效输入 {len(transformed_papers)} 条，跳过坏记录 {len(skipped_records)} 条）"
+                ),
                 data={
                     "path": "literature/papers_raw.jsonl",
-                    "count": len(transformed_papers),
+                    "count": appended_count,
+                    "valid_input_count": len(transformed_papers),
+                    "skipped_count": len(skipped_records),
+                    "skipped_records": skipped_records[:20],
                     "mode": "append" if params.append else "overwrite",
                 },
             )

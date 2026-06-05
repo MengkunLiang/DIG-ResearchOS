@@ -19,6 +19,7 @@ from ..literature_identity import (
 )
 from ..agents._common import load_jsonl
 from ..runtime.agent_params import get_agent_mode_params
+from ..runtime.t3_notes_manifest import build_t3_notes_manifest, target_entries
 from ..tools.paper_enrichment import build_access_audit, build_deep_read_queue
 
 
@@ -134,14 +135,37 @@ def prepare_t3_resume_artifacts(workspace_dir: Path, *, refresh_reason: str | No
                 _write_jsonl(literature_dir / "access_audit.jsonl", audit_records)
                 access_audit_path.write_text(audit_markdown, encoding="utf-8")
 
-    # 核心恢复逻辑：pending queue 只保留“还没有 note 的论文”。
+    # 核心恢复逻辑：pending queue 只保留“尚未有结构合格 note 的论文”。
+    # 不能只按文件名裁剪：同名 note 若缺少必需结构，仍必须留在 pending
+    # 供 Reader 修补；而 alias/标题匹配到的合格 note 应被扣除。
+    manifest = build_t3_notes_manifest(
+        workspace_dir,
+        queue_records=queue_records,
+        source_queue=source_label,
+        write=True,
+    )
+    manifest_entries = manifest.get("entries") if isinstance(manifest.get("entries"), list) else []
     pending_records = [
         record
-        for record in queue_records
-        if not record_is_covered(record, completed_keys)
+        for record, entry in zip(queue_records, manifest_entries)
+        if (
+            (not isinstance(entry, dict) or entry.get("status") != "complete")
+            and not bool(record.get("triaged_out"))
+            and str(record.get("target_bucket") or "") != "overflow"
+        )
     ]
     pending_records = _re_rank_pending_queue(pending_records)
     _write_jsonl(pending_queue_path, pending_records)
+    incomplete_entries = [
+        entry
+        for entry in target_entries(manifest)
+        if isinstance(entry, dict) and entry.get("status") == "incomplete"
+    ]
+    missing_entries = [
+        entry
+        for entry in target_entries(manifest)
+        if isinstance(entry, dict) and entry.get("status") == "missing"
+    ]
     pending_meta_path.write_text(
         json.dumps(
             {
@@ -149,10 +173,34 @@ def prepare_t3_resume_artifacts(workspace_dir: Path, *, refresh_reason: str | No
                 "refresh_reason": refresh_reason or "resume_snapshot",
                 "original_queue_count": len(queue_records),
                 "completed_note_count": valid_note_file_count,
+                "completed_queue_entry_count": manifest.get("target_complete_count"),
                 "completed_note_key_count": len(completed_keys),
                 "pending_queue_count": len(pending_records),
                 "valid_note_file_count": valid_note_file_count,
                 "invalid_note_file_count": invalid_note_file_count,
+                "notes_manifest": "literature/notes_manifest.json",
+                "manifest_complete_count": manifest.get("complete_count"),
+                "manifest_incomplete_count": manifest.get("incomplete_count"),
+                "manifest_missing_count": manifest.get("missing_count"),
+                "manifest_target_complete_count": manifest.get("target_complete_count"),
+                "manifest_target_incomplete_count": manifest.get("target_incomplete_count"),
+                "manifest_target_missing_count": manifest.get("target_missing_count"),
+                "incomplete_examples": [
+                    {
+                        "queue_rank": entry.get("queue_rank"),
+                        "paper": entry.get("record_display_key"),
+                        "note_path": entry.get("note_path"),
+                        "validation_error": entry.get("validation_error"),
+                    }
+                    for entry in incomplete_entries[:8]
+                ],
+                "missing_examples": [
+                    {
+                        "queue_rank": entry.get("queue_rank"),
+                        "paper": entry.get("record_display_key"),
+                    }
+                    for entry in missing_entries[:8]
+                ],
             },
             ensure_ascii=False,
             indent=2,
@@ -166,4 +214,8 @@ def prepare_t3_resume_artifacts(workspace_dir: Path, *, refresh_reason: str | No
         "resume_queue_count": len(pending_records),
         "existing_note_count": valid_note_file_count,
         "existing_note_key_count": len(completed_keys),
+        "notes_manifest_path": "literature/notes_manifest.json",
+        "incomplete_note_count": len(incomplete_entries),
+        "missing_note_count": len(missing_entries),
+        "completed_queue_entry_count": manifest.get("target_complete_count"),
     }

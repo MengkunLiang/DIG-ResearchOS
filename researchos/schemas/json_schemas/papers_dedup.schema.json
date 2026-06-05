@@ -21,7 +21,7 @@
     },
     "preferred_id_source": {
       "type": "string",
-      "description": "Which identifier family won canonicalization (arxiv, doi, source_id, title)"
+      "description": "Readable id source family (arxiv, doi, source_id, seed_fallback, etc.); titles must not be used as citation graph ids"
     },
     "title": {
       "type": "string",

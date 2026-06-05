@@ -40,6 +40,8 @@ class _FakeAsyncClient:
     async def get(self, url: str, **kwargs):
         if "api.openalex.org/works/" in url:
             return self.responses["openalex"]
+        if "api.unpaywall.org/v2/" in url:
+            return self.responses["unpaywall"]
         if url in self.responses:
             return self.responses[url]
         raise RuntimeError(f"Unexpected URL: {url}")
@@ -167,6 +169,94 @@ def test_url_to_pdf_candidates_converts_arxiv_abs_link():
     candidates = FetchPaperPdfTool._url_to_pdf_candidates("https://arxiv.org/abs/2401.12345")
     assert "https://arxiv.org/abs/2401.12345" in candidates
     assert "https://arxiv.org/pdf/2401.12345.pdf" in candidates
+
+
+def test_fetch_paper_pdf_recovers_candidates_from_workspace_metadata(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    literature = workspace / "literature"
+    literature.mkdir()
+    (literature / "papers_verified.jsonl").write_text(
+        (
+            '{"id":"W1","canonical_id":"W1","title":"Paper With PDF",'
+            '"pdf_url":"https://example.org/full.pdf","doi":"10.1234/test",'
+            '"externalIds":{"ArXiv":"2401.12345"}}\n'
+        ),
+        encoding="utf-8",
+    )
+    policy = WorkspaceAccessPolicy(workspace, ["", "literature/"], [""])
+    tool = FetchPaperPdfTool(policy)
+
+    candidates = tool._workspace_metadata_pdf_candidates("W1")
+
+    assert "https://example.org/full.pdf" in candidates
+    assert "https://arxiv.org/pdf/2401.12345.pdf" in candidates
+    assert "https://doi.org/10.1234/test" in candidates
+
+
+def test_fetch_paper_pdf_recovers_open_access_pdf_metadata_variants(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    literature = workspace / "literature"
+    literature.mkdir()
+    (literature / "papers_verified.jsonl").write_text(
+        (
+            '{"id":"W2","canonical_id":"W2","title":"Paper With OA Metadata",'
+            '"openAccessPdf":{"url":"https://example.org/oa-landing","url_for_pdf":"https://example.org/oa.pdf"},'
+            '"oa_locations":[{"pdfUrl":"https://example.org/loc.pdf"}]}\n'
+        ),
+        encoding="utf-8",
+    )
+    policy = WorkspaceAccessPolicy(workspace, ["", "literature/"], [""])
+    tool = FetchPaperPdfTool(policy)
+
+    candidates = tool._workspace_metadata_pdf_candidates("W2")
+
+    assert "https://example.org/oa.pdf" in candidates
+    assert "https://example.org/oa-landing" in candidates
+    assert "https://example.org/loc.pdf" in candidates
+
+
+@pytest.mark.asyncio
+async def test_fetch_paper_pdf_uses_unpaywall_doi_candidates(monkeypatch, tmp_path: Path):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    policy = WorkspaceAccessPolicy(workspace, [""], [""])
+    tool = FetchPaperPdfTool(policy)
+
+    responses = {
+        "openalex": _FakeResponse(
+            headers={"content-type": "application/json"},
+            content=b"{}",
+            json_data={"best_oa_location": None, "primary_location": None, "locations": []},
+        ),
+        "unpaywall": _FakeResponse(
+            headers={"content-type": "application/json"},
+            content=b"{}",
+            json_data={
+                "best_oa_location": {
+                    "url_for_pdf": "https://example.org/unpaywall.pdf",
+                    "url": "https://example.org/landing",
+                }
+            },
+        ),
+        "https://example.org/unpaywall.pdf": _FakeResponse(),
+    }
+
+    import researchos.tools.paper_fetch as paper_fetch
+
+    monkeypatch.setattr(
+        paper_fetch.httpx,
+        "AsyncClient",
+        lambda *args, **kwargs: _FakeAsyncClient(responses, *args, **kwargs),
+    )
+
+    result = await tool.execute(paper_id="doi:10.1234/unpaywall", save_path="paper.pdf")
+
+    assert result.ok
+    assert result.data["url"] == "https://example.org/unpaywall.pdf"
+    assert (workspace / "paper.pdf").exists()
+    assert "full_text" not in result.data
 
 
 @pytest.mark.asyncio

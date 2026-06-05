@@ -155,9 +155,54 @@ async def test_grep_search_python_fallback_finds_matches(monkeypatch, tmp_worksp
 
 def test_build_domain_map_buckets_core_adjacent_and_boundary():
     papers = [
-        {"id": "W_core_a", "title": "Core A", "source_bucket": "core"},
-        {"id": "W_core_b", "title": "Core B", "source_bucket": "core"},
-        {"id": "W_adj", "title": "Adjacent Mechanism", "search_bucket": "adjacent_field"},
+        {
+            "id": "W_core_a",
+            "canonical_id": "W_core_a",
+            "title": "Core A",
+            "source_bucket": "core",
+            "semantic_screen": {
+                "relation_to_project": "baseline_or_dataset_relevance",
+                "role": "core",
+                "confidence": "high",
+                "bridge_id": None,
+                "can_enter_core": True,
+                "can_enter_deep_read": True,
+                "rationale": "LLM screening allows this paper into the core review bucket.",
+                "evidence_fields_used": ["title", "abstract"],
+            },
+        },
+        {
+            "id": "W_core_b",
+            "canonical_id": "W_core_b",
+            "title": "Core B",
+            "source_bucket": "core",
+            "semantic_screen": {
+                "relation_to_project": "baseline_or_dataset_relevance",
+                "role": "core",
+                "confidence": "high",
+                "bridge_id": None,
+                "can_enter_core": True,
+                "can_enter_deep_read": True,
+                "rationale": "LLM screening allows this paper into the core review bucket.",
+                "evidence_fields_used": ["title", "abstract"],
+            },
+        },
+        {
+            "id": "W_adj",
+            "canonical_id": "W_adj",
+            "title": "Adjacent Mechanism",
+            "search_bucket": "adjacent_field",
+            "semantic_screen": {
+                "relation_to_project": "adjacent_application",
+                "role": "adjacent",
+                "confidence": "medium",
+                "bridge_id": "b1",
+                "can_enter_core": False,
+                "can_enter_deep_read": True,
+                "rationale": "LLM screening says this can inform an adjacent probe.",
+                "evidence_fields_used": ["title", "citation_context"],
+            },
+        },
         {"id": "W_boundary", "title": "Sparse Boundary"},
     ]
 
@@ -173,15 +218,44 @@ def test_build_domain_map_buckets_core_adjacent_and_boundary():
     assert domain_map["bucket_assignments"]["W_core_a"] == "core"
     assert domain_map["bucket_assignments"]["W_adj"] == "adjacent"
     assert domain_map["bucket_assignments"]["W_boundary"] == "boundary"
+    assert domain_map["audit"]["screened_papers"] == 3
     adjacent = {item["id"]: item for item in domain_map["adjacent"]}
     assert adjacent["W_adj"]["bridges_to_core"] == ["W_core_a"]
 
 
 def test_build_domain_map_seed_bucket_does_not_force_core():
     papers = [
-        {"id": "W_seed_adj", "title": "Seed Adjacent Theory", "source_bucket": "adjacent_field"},
+        {
+            "id": "W_seed_adj",
+            "title": "Seed Adjacent Theory",
+            "source_bucket": "adjacent_field",
+            "semantic_screen": {
+                "relation_to_project": "adjacent_application",
+                "role": "adjacent",
+                "confidence": "medium",
+                "bridge_id": "b1",
+                "can_enter_core": False,
+                "can_enter_deep_read": True,
+                "rationale": "LLM screening keeps this as adjacent material.",
+                "evidence_fields_used": ["title"],
+            },
+        },
         {"id": "W_seed_boundary", "title": "Seed Boundary Probe", "source_bucket": "seed"},
-        {"id": "W_core", "title": "Core Method", "source_bucket": "core"},
+        {
+            "id": "W_core",
+            "title": "Core Method",
+            "source_bucket": "core",
+            "semantic_screen": {
+                "relation_to_project": "baseline_or_dataset_relevance",
+                "role": "core",
+                "confidence": "high",
+                "bridge_id": None,
+                "can_enter_core": True,
+                "can_enter_deep_read": True,
+                "rationale": "LLM screening allows this paper into the core review bucket.",
+                "evidence_fields_used": ["title"],
+            },
+        },
     ]
 
     domain_map = build_domain_map(
@@ -197,6 +271,105 @@ def test_build_domain_map_seed_bucket_does_not_force_core():
     assert "W_seed_boundary" not in core_ids
     assert "W_seed_boundary" in adjacent_ids or "W_seed_boundary" in boundary_ids
     assert domain_map["bucket_assignments"]["W_seed_boundary"] == "seed"
+
+
+def test_build_domain_map_does_not_promote_unscreened_or_keyword_only_bridge_hits():
+    papers = [
+        {
+            "id": "W_core",
+            "canonical_id": "W_core",
+            "title": "Screened Core",
+            "semantic_screen": {
+                "relation_to_project": "baseline_or_dataset_relevance",
+                "role": "core",
+                "confidence": "high",
+                "bridge_id": None,
+                "can_enter_core": True,
+                "can_enter_deep_read": True,
+                "rationale": "LLM screening allows this paper into the core review bucket.",
+                "evidence_fields_used": ["title"],
+            },
+        },
+        {
+            "id": "W_unscreened",
+            "canonical_id": "W_unscreened",
+            "title": "Unscreened Theory Query Hit",
+            "search_bucket": "theory_bridge",
+            "retrieval_intent": "cross_domain_bridge",
+        },
+        {
+            "id": "W_keyword",
+            "canonical_id": "W_keyword",
+            "title": "Shared Keyword Only Hit",
+            "search_bucket": "adjacent_field",
+            "retrieval_intent": "cross_domain_bridge",
+            "semantic_screen": {
+                "relation_to_project": "shared_keyword_only",
+                "role": "adjacent",
+                "confidence": "low",
+                "bridge_id": "b1",
+                "can_enter_core": False,
+                "can_enter_deep_read": False,
+                "rationale": "LLM screening says this only shares broad vocabulary.",
+                "evidence_fields_used": ["title"],
+            },
+        },
+    ]
+
+    domain_map = build_domain_map(
+        papers_verified=papers,
+        citation_edges=[
+            ["W_core", "W_unscreened"],
+            ["W_core", "W_keyword"],
+        ],
+    )
+
+    assert domain_map["bucket_assignments"]["W_unscreened"] == "boundary"
+    assert domain_map["bucket_assignments"]["W_keyword"] == "boundary"
+    assert "W_unscreened" not in {item["id"] for item in domain_map["adjacent"]}
+    assert "W_keyword" not in {item["id"] for item in domain_map["adjacent"]}
+
+
+def test_build_domain_map_does_not_resolve_edges_by_title_fallback():
+    papers = [
+        {
+            "id": "W_core",
+            "canonical_id": "W_core",
+            "title": "Screened Core",
+            "semantic_screen": {
+                "relation_to_project": "baseline_or_dataset_relevance",
+                "role": "core",
+                "confidence": "high",
+                "bridge_id": None,
+                "can_enter_core": True,
+                "can_enter_deep_read": True,
+                "rationale": "LLM screening allows this paper into the core review bucket.",
+                "evidence_fields_used": ["title"],
+            },
+        },
+        {
+            "id": "W_other",
+            "canonical_id": "W_other",
+            "title": "Title Only Target",
+            "semantic_screen": {
+                "relation_to_project": "method_transfer",
+                "role": "adjacent",
+                "confidence": "medium",
+                "bridge_id": "b1",
+                "can_enter_core": False,
+                "can_enter_deep_read": True,
+                "rationale": "LLM screening allows adjacent review.",
+                "evidence_fields_used": ["title"],
+            },
+        },
+    ]
+
+    domain_map = build_domain_map(
+        papers_verified=papers,
+        citation_edges=[["W_core", "Title Only Target"]],
+    )
+
+    assert domain_map["citation_edges"] == []
 
 
 def test_audit_writing_craft_warns_when_related_work_ignores_pre_t5_signals():

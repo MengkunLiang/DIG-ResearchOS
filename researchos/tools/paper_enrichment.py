@@ -9,8 +9,63 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import json
 
 from ..agents._common import load_jsonl, normalize_text_key
+from ..literature_identity import find_matching_seed_pdf, paper_record_match_keys
+from .citation_graph import (
+    _dedupe_edges,
+    _extract_edges,
+    _extract_record_edges,
+    _normalize_title_key,
+    _paper_node,
+)
+
+
+SCREEN_RELATIONS_FOR_DEEP_READ = {
+    "mechanism_bridge",
+    "method_transfer",
+    "evaluation_or_metric_bridge",
+    "baseline_or_dataset_relevance",
+}
+SCREEN_RELATIONS_ALLOWED_FOR_QUEUE = SCREEN_RELATIONS_FOR_DEEP_READ | {"adjacent_application"}
+SCREEN_RELATIONS = SCREEN_RELATIONS_ALLOWED_FOR_QUEUE | {"shared_keyword_only", "unrelated"}
+SCREEN_ROLES = {"core", "theory_bridge", "adjacent", "baseline", "dataset", "benchmark", "none"}
+DEEP_READ_TARGET_BUCKETS = {
+    "seed",
+    "target",  # legacy compatibility
+    "mainline_deep",
+    "bridge_deep",
+}
+DEEP_READ_TRIAGE_BUCKETS = {
+    "overflow",  # legacy compatibility
+    "mainline_screened",
+    "bridge_screened",
+}
+
+
+def apply_semantic_screening(
+    papers: list[dict[str, Any]],
+    screenings: list[dict[str, Any]] | dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Merge Agent-produced semantic screening into paper records.
+
+    This function deliberately does not infer relation/core/bridge labels. It
+    only validates and attaches structured judgments that the Scout LLM already
+    produced, keeping resume deterministic and auditable.
+    """
+
+    screening_lookup = _build_screening_lookup(screenings)
+    merged: list[dict[str, Any]] = []
+    for paper in papers:
+        record = dict(paper)
+        screening = _lookup_screening(record, screening_lookup)
+        if screening:
+            record["semantic_screen"] = _normalize_semantic_screen(screening)
+            if record["semantic_screen"].get("bridge_id"):
+                record["bridge_id"] = record["semantic_screen"]["bridge_id"]
+        merged.append(record)
+    return merged
 
 
 def enrich_papers(
@@ -60,6 +115,7 @@ def enrich_papers(
                 "access_score_estimate",
                 "relevance_rationale",
                 "screening_decision",
+                "semantic_screen",
             ):
                 if key in annotation and annotation[key] not in (None, ""):
                     paper[key] = annotation[key]
@@ -71,6 +127,8 @@ def enrich_papers(
                 paper["source_bucket"] = _normalize_source_bucket(source_bucket)
             if annotation.get("adjacent_field") is not None:
                 paper["adjacent_field"] = bool(annotation.get("adjacent_field"))
+            if annotation.get("cross_domain_retrieval_candidate") is not None:
+                paper["cross_domain_retrieval_candidate"] = bool(annotation.get("cross_domain_retrieval_candidate"))
             paper["llm_annotation_applied"] = True
 
         # 1. 转换 authors 格式
@@ -173,8 +231,15 @@ def enrich_papers(
             paper["search_bucket"] = _normalize_search_bucket(paper.get("query_bucket"))
         if paper.get("source_bucket"):
             paper["source_bucket"] = _normalize_source_bucket(paper.get("source_bucket"))
-        if _is_protected_search_bucket(paper):
-            paper["adjacent_field"] = True
+        if _is_cross_domain_retrieval_bucket(paper):
+            # This is recall provenance only. It must not be read as a semantic
+            # adjacent/core/theory decision; downstream admission requires
+            # Scout LLM's semantic_screen.
+            paper["cross_domain_retrieval_candidate"] = True
+
+        semantic_screen = paper.get("semantic_screen")
+        if isinstance(semantic_screen, dict):
+            paper["semantic_screen"] = _normalize_semantic_screen(semantic_screen)
 
         # 5. 确保 year 是整数；缺失年份保持 None，避免把未知年份伪装成真实发表年。
         if "year" in paper and paper["year"]:
@@ -236,6 +301,77 @@ def _annotation_keys(record: dict[str, Any]) -> set[str]:
     return {normalize_text_key(str(item)) for item in candidates if str(item or "").strip()}
 
 
+def _build_screening_lookup(
+    screenings: list[dict[str, Any]] | dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    if isinstance(screenings, dict):
+        iterable = []
+        for key, value in screenings.items():
+            if isinstance(value, dict):
+                item = dict(value)
+                item.setdefault("paper_id", key)
+                iterable.append(item)
+    else:
+        iterable = [item for item in screenings if isinstance(item, dict)]
+    lookup: dict[str, dict[str, Any]] = {}
+    for item in iterable:
+        for key in _annotation_keys(item):
+            lookup.setdefault(key, item)
+    return lookup
+
+
+def _lookup_screening(
+    paper: dict[str, Any],
+    lookup: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    for key in _annotation_keys(paper):
+        if key in lookup:
+            return lookup[key]
+    return {}
+
+
+def _normalize_semantic_screen(screening: dict[str, Any]) -> dict[str, Any]:
+    relation = str(screening.get("relation_to_project") or "").strip()
+    role = str(screening.get("role") or "").strip()
+    confidence = str(screening.get("confidence") or "low").strip()
+    normalized_relation = relation if relation in SCREEN_RELATIONS else "unrelated"
+    normalized_role = role if role in SCREEN_ROLES else "none"
+    requested_can_enter_core = bool(screening.get("can_enter_core"))
+    requested_can_enter_deep_read = bool(screening.get("can_enter_deep_read"))
+    normalized = {
+        "relation_to_project": normalized_relation,
+        "role": normalized_role,
+        "confidence": confidence if confidence in {"high", "medium", "low"} else "low",
+        "bridge_id": str(screening.get("bridge_id") or "").strip() or None,
+        "can_enter_core": (
+            requested_can_enter_core
+            and normalized_role == "core"
+            and normalized_relation in SCREEN_RELATIONS_FOR_DEEP_READ
+        ),
+        "can_enter_deep_read": requested_can_enter_deep_read and normalized_relation in SCREEN_RELATIONS_ALLOWED_FOR_QUEUE,
+        "rationale": str(screening.get("rationale") or "").strip(),
+        "evidence_fields_used": [
+            str(item)
+            for item in screening.get("evidence_fields_used") or []
+            if str(item).strip()
+        ],
+    }
+    warnings: list[str] = []
+    if relation and relation not in SCREEN_RELATIONS:
+        warnings.append(f"unknown_relation_to_project:{relation}")
+    if role and role not in SCREEN_ROLES:
+        warnings.append(f"unknown_role:{role}")
+    if requested_can_enter_core and normalized_role != "core":
+        warnings.append("can_enter_core_true_but_role_not_core")
+    if requested_can_enter_core and normalized_relation not in SCREEN_RELATIONS_FOR_DEEP_READ:
+        warnings.append("can_enter_core_true_but_relation_not_core_allowed")
+    if requested_can_enter_deep_read and normalized_relation not in SCREEN_RELATIONS_ALLOWED_FOR_QUEUE:
+        warnings.append("can_enter_deep_read_true_but_relation_not_queue_allowed")
+    if warnings:
+        normalized["normalization_warnings"] = warnings
+    return normalized
+
+
 def _normalize_search_bucket(raw: Any) -> str:
     value = str(raw or "").strip().casefold().replace(" ", "_").replace("-", "_")
     aliases = {
@@ -263,9 +399,7 @@ def _normalize_source_bucket(raw: Any) -> str:
     return aliases.get(value, value)
 
 
-def _is_protected_search_bucket(paper: dict[str, Any]) -> bool:
-    if bool(paper.get("adjacent_field")):
-        return True
+def _is_cross_domain_retrieval_bucket(paper: dict[str, Any]) -> bool:
     bucket = _normalize_search_bucket(paper.get("search_bucket") or paper.get("query_bucket"))
     source_bucket = _normalize_source_bucket(paper.get("source_bucket"))
     return bucket in {"adjacent_field", "theory_bridge"} or source_bucket in {"adjacent", "snowball"}
@@ -285,10 +419,16 @@ def build_deep_read_queue(
     papers: list[dict[str, Any]],
     workspace_dir: Path,
     *,
-    deep_read_min: int = 18,
-    deep_read_target: int = 24,
-    deep_read_max: int = 30,
+    deep_read_min: int = 35,
+    deep_read_target: int = 35,
+    deep_read_max: int = 45,
     probe_pool: int = 45,
+    cross_domain_slots: int | None = None,
+    citation_hub_slots: int | None = None,
+    mainline_screened_cap: int = 90,
+    bridge_deep_floor: int = 3,
+    bridge_screened_cap: int = 7,
+    bridge_pool_cap: int = 15,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """为 T3 构建 deep-read 队列。
 
@@ -308,6 +448,9 @@ def build_deep_read_queue(
     local_pdf_dir = workspace_dir / "literature" / "pdfs"
     verified_path = workspace_dir / "literature" / "papers_verified.jsonl"
     verified_records = load_jsonl(verified_path) if verified_path.exists() else []
+    bridge_plan = _load_bridge_domain_plan(workspace_dir)
+    confirmed_bridge_ids = _confirmed_bridge_ids(bridge_plan)
+    must_explore_bridge_ids = _must_explore_bridge_ids(bridge_plan)
 
     # 一旦 workspace 里已经存在 papers_verified，就必须优先把它当作权威池。
     # 这样即使上层 agent 误把 papers_dedup 传进来，也不会把未核验论文混进 T3 队列。
@@ -316,6 +459,7 @@ def build_deep_read_queue(
         verified_records=verified_records,
     )
     has_verified_pool = bool(verified_records)
+    citation_hub_index = identify_citation_hubs(authoritative_records, workspace_dir)
 
     seed_keys: set[str] = set()
     seed_titles: list[str] = []
@@ -341,11 +485,23 @@ def build_deep_read_queue(
         key_candidates = _paper_match_keys(paper)
         is_seed = any(candidate and candidate in seed_keys for candidate in key_candidates)
 
-        canonical_id = str(paper.get("canonical_id") or paper_id or title).strip()
+        canonical_id = str(paper.get("canonical_id") or paper_id or "").strip()
+        if not canonical_id or canonical_id == title:
+            canonical_id = _stable_noopenalex_queue_id(paper)
         normalized_id = _normalize_paper_filename(canonical_id)
-        has_local_pdf = bool(normalized_id and (local_pdf_dir / f"{normalized_id}.pdf").exists())
+        readable_normalized_id = _normalize_paper_filename(paper_id)
+        seed_pdf_path = find_matching_seed_pdf(paper, workspace_dir / "user_seeds" / "pdfs")
+        has_seed_pdf = seed_pdf_path is not None
+        has_local_pdf = bool(
+            (normalized_id and (local_pdf_dir / f"{normalized_id}.pdf").exists())
+            or (readable_normalized_id and (local_pdf_dir / f"{readable_normalized_id}.pdf").exists())
+            or has_seed_pdf
+        )
         access_est = float(paper.get("access_score_estimate", _estimate_access_score(paper)))
         access_score = max(access_est, 1.0 if has_local_pdf else access_est)
+        access_level_hint = str(paper.get("access_level_hint", _estimate_access_level_hint(paper)))
+        if has_seed_pdf:
+            access_level_hint = "FULL_TEXT_LOCAL"
         relevance_score = float(paper.get("relevance_score", 0.0))
         verification_confidence = float(paper.get("verification_confidence", 0.0))
         verification_bonus = 0.25 if verification_status in {"metadata_verified", "pdf_verified"} else 0.0
@@ -353,8 +509,37 @@ def build_deep_read_queue(
         meth_signal = float(paper.get("methodological_signal", 0.0))
         search_bucket = _normalize_search_bucket(paper.get("search_bucket") or paper.get("query_bucket"))
         source_bucket = _normalize_source_bucket(paper.get("source_bucket"))
-        protected_bucket = _is_protected_search_bucket(paper)
-        bucket_bonus = 0.12 if protected_bucket else 0.0
+        semantic_screen = paper.get("semantic_screen") if isinstance(paper.get("semantic_screen"), dict) else {}
+        relation = str(semantic_screen.get("relation_to_project") or "").strip()
+        semantic_role = str(semantic_screen.get("role") or "").strip()
+        can_enter_core = (
+            bool(semantic_screen.get("can_enter_core"))
+            and semantic_role == "core"
+            and relation in SCREEN_RELATIONS_FOR_DEEP_READ
+        )
+        can_enter_deep_read = (
+            bool(semantic_screen.get("can_enter_deep_read"))
+            and relation in SCREEN_RELATIONS_ALLOWED_FOR_QUEUE
+        )
+        bridge_sources = _bridge_sources_for_record(paper, semantic_screen)
+        raw_bridge_id = str(semantic_screen.get("bridge_id") or paper.get("bridge_id") or "").strip() or None
+        resolved_bridge_id = None if can_enter_core else raw_bridge_id
+        cross_domain_candidate = (
+            can_enter_deep_read
+            and relation in SCREEN_RELATIONS_FOR_DEEP_READ
+            and (
+                semantic_role == "theory_bridge"
+                or str(paper.get("retrieval_intent") or "") == "cross_domain_bridge"
+                or bool(raw_bridge_id)
+            )
+            and not can_enter_core
+        )
+        hub = _lookup_citation_hub(paper, canonical_id, citation_hub_index)
+        is_citation_hub = bool(hub) and (is_seed or can_enter_deep_read)
+        hub_type = str(hub.get("hub_type") or "") if hub else ""
+        hub_score = float(hub.get("hub_score") or 0.0) if hub else 0.0
+        protected_slot_bonus = 0.12 if cross_domain_candidate else 0.0
+        citation_hub_bonus = min(0.15, hub_score * 0.04) if is_citation_hub else 0.0
         read_priority = round(
             (1.0 if is_seed else 0.0) * 100.0
             + relevance_score * 0.50
@@ -374,11 +559,18 @@ def build_deep_read_queue(
             "access_score_estimate": round(access_est, 2),
             "access_score": round(access_score, 2),
             "evidence_level": paper.get("evidence_level", _estimate_evidence_level(paper)),
-            "access_level_hint": paper.get("access_level_hint", _estimate_access_level_hint(paper)),
+            "access_level_hint": access_level_hint,
             "seed_priority": is_seed,
             "has_local_pdf": has_local_pdf,
+            "has_seed_pdf": has_seed_pdf,
+            "seed_pdf_path": str(seed_pdf_path.relative_to(workspace_dir)) if seed_pdf_path else "",
             "why_relevant": paper.get("why_relevant", ""),
-            "queue_reason": "seed_paper" if is_seed else "ranked_candidate",
+            "queue_reason": (
+                "seed_paper" if is_seed
+                else "screened_cross_domain_candidate" if cross_domain_candidate
+                else "semantic_screen_deep_read_candidate" if can_enter_deep_read
+                else "backlog_not_screened_for_deep_read"
+            ),
             "normalized_id": normalized_id,
             "url": paper.get("url", ""),
             "doi": paper.get("doi", ""),
@@ -389,10 +581,38 @@ def build_deep_read_queue(
             "methodological_signal_hint": round(meth_signal, 2),
             "search_bucket": search_bucket,
             "source_bucket": source_bucket,
-            "adjacent_field": protected_bucket,
-            "protected_bucket_bonus": bucket_bonus,
+            "retrieval_intent": paper.get("retrieval_intent") or "primary",
+            "bridge_id": resolved_bridge_id,
+            "recalled_by_bridges": bridge_sources,
+            "contributed_bridges": bridge_sources if can_enter_core else [bid for bid in bridge_sources if bid != resolved_bridge_id],
+            "core_screen_passed": can_enter_core,
+            "semantic_role": semantic_role,
+            "relation_to_project": relation,
+            "semantic_screen": semantic_screen,
+            "cross_domain_retrieval_candidate": bool(paper.get("cross_domain_retrieval_candidate")),
+            "cross_domain_candidate": cross_domain_candidate,
+            "adjacent_field": cross_domain_candidate,  # deprecated compatibility alias
+            "protected_slot_bonus": protected_slot_bonus,
+            "protected_bucket_bonus": protected_slot_bonus,  # deprecated compatibility alias
+            "protected_slot": False,
+            "is_citation_hub": is_citation_hub,
+            "hub_type": hub_type,
+            "hub_score": round(hub_score, 4),
+            "citation_hub_bonus": round(citation_hub_bonus, 4),
+            "citation_hub_protected_slot": False,
+            "bridge_must_protected_slot": False,
+            "bridge_priority": _bridge_priority(resolved_bridge_id, bridge_plan),
         }
-        ranked_records.append(record)
+        if can_enter_core and raw_bridge_id:
+            record["identity_resolution"] = "core_screen_passed_mainline_home"
+        if is_citation_hub:
+            record["queue_reason"] = (
+                "citation_seed_neighbor"
+                if hub_type == "seed_neighbor"
+                else "citation_hub_deep_read_candidate"
+            )
+        if is_seed or can_enter_deep_read:
+            ranked_records.append(record)
 
     ranked_records.sort(
         key=lambda item: (
@@ -404,19 +624,59 @@ def build_deep_read_queue(
         )
     )
 
-    # --- protected bucket selection: preserve LLM-labeled adjacent/theory material ---
+    # --- protected slot selection: preserve LLM-screened cross-domain/theory material ---
     selected_count = min(len(ranked_records), max(probe_pool, deep_read_target, deep_read_min))
-    protected_target = min(
-        max(1, int(round(deep_read_target * 0.15))),
-        max(0, selected_count),
+    if cross_domain_slots is None:
+        cross_domain_slot_count = min(4, max(1, int(round(deep_read_target * 0.20)))) if deep_read_target > 0 else 0
+    else:
+        cross_domain_slot_count = max(0, int(cross_domain_slots))
+    cross_domain_slot_count = min(cross_domain_slot_count, max(0, selected_count))
+    if citation_hub_slots is None:
+        citation_hub_slot_count = min(3, max(1, int(round(deep_read_target * 0.12)))) if deep_read_target > 0 else 0
+    else:
+        citation_hub_slot_count = max(0, int(citation_hub_slots))
+    citation_hub_slot_count = min(citation_hub_slot_count, max(0, selected_count))
+    bridge_must_records = _select_must_explore_bridge_records(
+        ranked_records,
+        must_explore_bridge_ids=must_explore_bridge_ids,
+        floor=max(0, int(bridge_deep_floor)),
     )
+    for record in bridge_must_records:
+        record["protected_slot"] = True
+        record["bridge_must_protected_slot"] = True
+        record["promoted_reason"] = "must_explore_bridge_deep_floor"
+
     protected_records = [
         record
         for record in ranked_records
-        if record.get("adjacent_field") and not record.get("seed_priority")
-    ][:protected_target]
-    protected_ids = {id(record) for record in protected_records}
-    queue_records: list[dict[str, Any]] = list(protected_records)
+        if (
+            record.get("cross_domain_candidate")
+            and not record.get("seed_priority")
+            and id(record) not in {id(item) for item in bridge_must_records}
+        )
+    ][:cross_domain_slot_count]
+    for record in protected_records:
+        record["protected_slot"] = True
+    citation_hub_records = [
+        record
+        for record in ranked_records
+        if record.get("is_citation_hub")
+        and not record.get("seed_priority")
+        and id(record) not in {id(item) for item in [*bridge_must_records, *protected_records]}
+    ]
+    citation_hub_records.sort(
+        key=lambda item: (
+            _citation_hub_type_rank(str(item.get("hub_type") or "")),
+            -float(item.get("hub_score") or 0.0),
+            -float(item.get("read_priority") or 0.0),
+            str(item.get("title") or "").casefold(),
+        )
+    )
+    citation_hub_records = citation_hub_records[:citation_hub_slot_count]
+    for record in citation_hub_records:
+        record["citation_hub_protected_slot"] = True
+    protected_ids = {id(record) for record in [*bridge_must_records, *protected_records, *citation_hub_records]}
+    queue_records: list[dict[str, Any]] = [*bridge_must_records, *protected_records, *citation_hub_records]
 
     # --- venue diversity bonus: 动态选择，避免同一 venue 占据过多 queue 名额 ---
     venue_counts: dict[str, int] = {}
@@ -428,23 +688,33 @@ def build_deep_read_queue(
             break
         if id(record) in protected_ids:
             continue
+        if _bridge_pool_count(queue_records, str(record.get("bridge_id") or "")) >= bridge_pool_cap:
+            continue
         venue = record.get("venue", "unknown") or "unknown"
         same_venue = venue_counts.get(venue, 0)
         # 0 同 venue: 1.0, 1 个: 0.7, 2 个: 0.4, >=3 个: 0.0
         venue_bonus = max(0.0, 1.0 - same_venue * 0.3)
         record["venue_diversity_bonus"] = round(venue_bonus, 2)
         # 把 venue bonus 加入 read_priority 作为最终排序依据
-        record["final_priority"] = record["read_priority"] + 0.10 * venue_bonus + float(record.get("protected_bucket_bonus") or 0.0)
+        record["final_priority"] = record["read_priority"] + 0.10 * venue_bonus + float(record.get("protected_slot_bonus") or 0.0)
+        record["final_priority"] += float(record.get("citation_hub_bonus") or 0.0)
         queue_records.append(record)
         venue_counts[venue] = same_venue + 1
-    for record in protected_records:
+    for record in [*protected_records, *citation_hub_records]:
         venue_bonus = float(record.get("venue_diversity_bonus") or 0.0)
-        record["final_priority"] = record["read_priority"] + 0.10 * venue_bonus + float(record.get("protected_bucket_bonus") or 0.0)
+        record["final_priority"] = (
+            record["read_priority"]
+            + 0.10 * venue_bonus
+            + float(record.get("protected_slot_bonus") or 0.0)
+            + float(record.get("citation_hub_bonus") or 0.0)
+        )
 
     # 重新按 final_priority 排序（seed 不参与 venue bonus，保持 seed 最高优先）
     queue_records.sort(
         key=lambda item: (
             not item["seed_priority"],
+            not (item.get("hub_type") == "seed_neighbor" and item.get("citation_hub_protected_slot")),
+            not item.get("bridge_must_protected_slot"),
             id(item) not in protected_ids,
             -item["final_priority"],
             -item["relevance_score"],
@@ -454,28 +724,69 @@ def build_deep_read_queue(
     )
     for idx, record in enumerate(queue_records, start=1):
         record["queue_rank"] = idx
-        record["target_bucket"] = (
-            "seed" if record["seed_priority"] else "target"
-            if idx <= deep_read_target or id(record) in protected_ids
-            else "overflow"
-        )
+        active_target = idx <= deep_read_target or id(record) in protected_ids
+        record["triaged_out"] = not active_target
+        record["target_bucket"] = _target_bucket_for_record(record, active_target=active_target)
+        if record["triaged_out"]:
+            record.setdefault("triaged_reason", "probe_pool_triage_out")
+
+    _cap_bridge_screened_records(queue_records, bridge_screened_cap=bridge_screened_cap)
 
     metadata = {
         "deep_read_min": deep_read_min,
         "deep_read_target": deep_read_target,
         "deep_read_max": deep_read_max,
         "probe_pool": probe_pool,
+        "mainline_screened_cap": mainline_screened_cap,
+        "bridge_deep_floor": bridge_deep_floor,
+        "bridge_screened_cap": bridge_screened_cap,
+        "bridge_pool_cap": bridge_pool_cap,
         "source_pool": "papers_verified" if has_verified_pool else "caller_supplied_records",
         "queue_count": len(queue_records),
+        "target_entry_count": sum(1 for item in queue_records if not item.get("triaged_out")),
+        "triaged_out_count": sum(1 for item in queue_records if item.get("triaged_out")),
         "seed_total": len(seed_papers),
         "seed_titles": seed_titles[:20],
         "seed_in_queue": sum(1 for item in queue_records if item["seed_priority"]),
-        "protected_bucket_target": protected_target,
-        "protected_bucket_in_queue": sum(1 for item in queue_records if item.get("adjacent_field")),
+        "confirmed_bridge_ids": confirmed_bridge_ids,
+        "must_explore_bridge_ids": must_explore_bridge_ids,
+        "must_explore_bridge_target_counts": {
+            bridge_id: sum(
+                1
+                for item in queue_records
+                if item.get("bridge_id") == bridge_id
+                and item.get("target_bucket") == "bridge_deep"
+                and not item.get("triaged_out")
+            )
+            for bridge_id in must_explore_bridge_ids
+        },
+        "protected_slot_target": cross_domain_slot_count,
+        "protected_bucket_target": cross_domain_slot_count,  # deprecated alias for older workspace metadata
+        "cross_domain_slots": cross_domain_slot_count,
+        "citation_hub_slots": citation_hub_slot_count,
+        "citation_hubs_detected": len(citation_hub_index),
+        "citation_hub_in_queue": sum(1 for item in queue_records if item.get("is_citation_hub")),
+        "citation_hub_in_target": sum(
+            1
+            for item in queue_records
+            if item.get("is_citation_hub") and not item.get("triaged_out")
+        ),
+        "citation_hub_seed_neighbor_in_target": sum(
+            1
+            for item in queue_records
+            if item.get("hub_type") == "seed_neighbor" and not item.get("triaged_out")
+        ),
+        "protected_slot_in_queue": sum(1 for item in queue_records if item.get("cross_domain_candidate")),
+        "protected_bucket_in_queue": sum(1 for item in queue_records if item.get("cross_domain_candidate")),
+        "protected_slot_in_target": sum(
+            1
+            for item in queue_records
+            if item.get("cross_domain_candidate") and not item.get("triaged_out")
+        ),
         "protected_bucket_in_target": sum(
             1
             for item in queue_records
-            if item.get("adjacent_field") and item.get("target_bucket") != "overflow"
+            if item.get("cross_domain_candidate") and not item.get("triaged_out")
         ),
         "full_text_candidates": sum(
             1
@@ -487,8 +798,173 @@ def build_deep_read_queue(
             for item in queue_records
             if item["verification_status"] in {"metadata_verified", "pdf_verified"}
         ),
+        "screened_deep_read_candidates": sum(
+            1
+            for item in queue_records
+            if (
+                item.get("seed_priority")
+                or (
+                    item.get("semantic_screen", {}).get("can_enter_deep_read")
+                    and item.get("relation_to_project") in SCREEN_RELATIONS_ALLOWED_FOR_QUEUE
+                )
+            )
+        ),
     }
     return queue_records, metadata
+
+
+def identify_citation_hubs(
+    papers: list[dict[str, Any]],
+    workspace_dir: Path,
+) -> dict[str, dict[str, Any]]:
+    """Identify graph hubs from pool-internal citation edges.
+
+    This is purely structural. It does not decide whether a paper is relevant;
+    queue admission still requires seed priority or Scout LLM semantic_screen.
+    """
+
+    nodes = [_paper_node(record) for record in papers if isinstance(record, dict)]
+    nodes = [node for node in nodes if node.get("id")]
+    if not nodes:
+        return {}
+    node_by_id = {str(node["id"]): node for node in nodes}
+    title_to_id = {
+        _normalize_title_key(str(node.get("title") or "")): str(node["id"])
+        for node in nodes
+        if node.get("title")
+    }
+    edge_payload = _load_citation_edge_payload(workspace_dir / "literature" / "citation_edges.json")
+    edges = _extract_edges(edge_payload, node_by_id=node_by_id, title_to_id=title_to_id)
+    edges.extend(_extract_record_edges(nodes, node_by_id=node_by_id, title_to_id=title_to_id))
+    edges = _dedupe_edges(edges)
+    if not edges:
+        return {}
+
+    degree: dict[str, int] = {node_id: 0 for node_id in node_by_id}
+    inbound: dict[str, int] = {node_id: 0 for node_id in node_by_id}
+    neighbors: dict[str, set[str]] = {node_id: set() for node_id in node_by_id}
+    for left, right in edges:
+        if left not in node_by_id or right not in node_by_id:
+            continue
+        degree[left] += 1
+        degree[right] += 1
+        inbound[right] += 1
+        neighbors[left].add(right)
+        neighbors[right].add(left)
+
+    seed_ids = {
+        str(node["id"])
+        for node in nodes
+        if _node_is_seed(node)
+    }
+    hubs: dict[str, dict[str, Any]] = {}
+    for node_id, node in node_by_id.items():
+        node_degree = degree.get(node_id, 0)
+        node_inbound = inbound.get(node_id, 0)
+        if node_degree <= 0 and node_inbound <= 0:
+            continue
+        hub_type = ""
+        if any(neighbor in seed_ids for neighbor in neighbors.get(node_id, set())):
+            hub_type = "seed_neighbor"
+        elif node_inbound >= 2:
+            hub_type = "high_inbound"
+        else:
+            bridge_count = _neighbor_bucket_diversity(
+                neighbors.get(node_id, set()),
+                node_by_id=node_by_id,
+            )
+            if bridge_count >= 2:
+                hub_type = "bridge_node"
+        if not hub_type:
+            continue
+        score = float(node_inbound * 2 + node_degree)
+        if hub_type == "seed_neighbor":
+            score += 100.0
+        elif hub_type == "bridge_node":
+            score += 10.0
+        hubs[node_id] = {
+            "hub_type": hub_type,
+            "hub_score": round(score, 4),
+            "degree": node_degree,
+            "inbound_degree": node_inbound,
+            "neighbor_count": len(neighbors.get(node_id, set())),
+        }
+    return hubs
+
+
+def _load_citation_edge_payload(path: Path) -> list[Any]:
+    if not path.exists() or path.stat().st_size <= 0:
+        return []
+    text = path.read_text(encoding="utf-8")
+    if not text.strip():
+        return []
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        payload = []
+        for line in text.splitlines():
+            if not line.strip():
+                continue
+            try:
+                payload.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return payload
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        return [payload]
+    return []
+
+
+def _lookup_citation_hub(
+    paper: dict[str, Any],
+    canonical_id: str,
+    hub_index: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    for candidate in (
+        canonical_id,
+        paper.get("canonical_id"),
+        paper.get("paper_id"),
+        paper.get("id"),
+        paper.get("doi"),
+    ):
+        key = str(candidate or "").strip()
+        if key in hub_index:
+            return hub_index[key]
+    return {}
+
+
+def _node_is_seed(node: dict[str, Any]) -> bool:
+    source = str(node.get("source") or "").casefold()
+    bucket = _normalize_source_bucket(node.get("source_bucket") or node.get("search_bucket"))
+    return source == "user_seed" or bucket == "seed" or bool(node.get("seed_priority"))
+
+
+def _neighbor_bucket_diversity(
+    neighbor_ids: set[str],
+    *,
+    node_by_id: dict[str, dict[str, Any]],
+) -> int:
+    buckets: set[str] = set()
+    for neighbor_id in neighbor_ids:
+        node = node_by_id.get(neighbor_id)
+        if not node:
+            continue
+        screen = node.get("semantic_screen") if isinstance(node.get("semantic_screen"), dict) else {}
+        role = str(screen.get("role") or node.get("semantic_role") or "").strip()
+        bucket = role or _normalize_source_bucket(node.get("source_bucket") or node.get("search_bucket"))
+        if bucket:
+            buckets.add(bucket)
+    return len(buckets)
+
+
+def _citation_hub_type_rank(hub_type: str) -> int:
+    return {
+        "seed_neighbor": 0,
+        "bridge_node": 1,
+        "high_inbound": 2,
+    }.get(hub_type, 9)
 
 
 def _prefer_verified_records(
@@ -554,19 +1030,25 @@ def build_access_audit(
     for paper in papers:
         paper_id = str(paper.get("id", "")).strip()
         title = str(paper.get("title", "")).strip()
-        normalized_id = _normalize_paper_filename(paper_id or title)
-        has_local_pdf = bool(normalized_id and (local_pdf_dir / f"{normalized_id}.pdf").exists())
-        has_seed_pdf = False
-        if seed_pdf_dir.exists() and title:
-            title_key = normalize_text_key(title)
-            for path in seed_pdf_dir.glob("*.pdf"):
-                if title_key and title_key in normalize_text_key(path.stem):
-                    has_seed_pdf = True
-                    break
+        canonical_id = str(paper.get("canonical_id") or "").strip()
+        if not canonical_id or canonical_id == title:
+            canonical_id = _stable_noopenalex_queue_id(paper)
+        normalized_id = _normalize_paper_filename(canonical_id or paper_id)
+        readable_normalized_id = _normalize_paper_filename(paper_id)
+        seed_pdf_path = find_matching_seed_pdf(paper, seed_pdf_dir)
+        has_seed_pdf = seed_pdf_path is not None
+        has_local_pdf = bool(
+            (normalized_id and (local_pdf_dir / f"{normalized_id}.pdf").exists())
+            or (readable_normalized_id and (local_pdf_dir / f"{readable_normalized_id}.pdf").exists())
+            or has_seed_pdf
+        )
 
         access_est = float(paper.get("access_score_estimate", _estimate_access_score(paper)))
         evidence_level = str(paper.get("evidence_level", _estimate_evidence_level(paper)))
         access_level_hint = str(paper.get("access_level_hint", _estimate_access_level_hint(paper)))
+        if has_seed_pdf:
+            access_est = 1.0
+            access_level_hint = "FULL_TEXT_LOCAL"
         records.append(
             {
                 "paper_id": str(paper.get("canonical_id") or paper_id),
@@ -581,6 +1063,7 @@ def build_access_audit(
                 "verification_confidence": round(float(paper.get("verification_confidence", 0.0)), 2),
                 "has_local_pdf": has_local_pdf,
                 "has_seed_pdf": has_seed_pdf,
+                "seed_pdf_path": str(seed_pdf_path.relative_to(workspace_dir)) if seed_pdf_path else "",
                 "recommended_action": _recommended_action(
                     has_local_pdf=has_local_pdf,
                     has_seed_pdf=has_seed_pdf,
@@ -623,6 +1106,7 @@ def build_access_audit(
         f"- `PARTIAL_TEXT`: {evidence_counts['PARTIAL_TEXT']}",
         f"- `ABSTRACT_ONLY`: {evidence_counts['ABSTRACT_ONLY']}",
         f"- `METADATA_ONLY`: {evidence_counts['METADATA_ONLY']}",
+        f"- Access hint `FULL_TEXT_LOCAL`: {sum(1 for item in records if item['access_level_hint'] == 'FULL_TEXT_LOCAL')}",
         f"- Access hint `LIKELY_FULL_TEXT`: {access_hint_counts['LIKELY_FULL_TEXT']}",
         f"- Access hint `POSSIBLE_FULL_TEXT`: {access_hint_counts['POSSIBLE_FULL_TEXT']}",
         f"- Access hint `ABSTRACT_OR_METADATA`: {access_hint_counts['ABSTRACT_OR_METADATA']}",
@@ -731,10 +1215,10 @@ def _recommended_action(
         return "verify_metadata"
     if verification_status == "failed_verification":
         return "exclude_from_t3"
-    if has_local_pdf:
-        return "read_local_pdf"
     if has_seed_pdf:
         return "read_seed_pdf"
+    if has_local_pdf:
+        return "read_local_pdf"
     if access_level_hint in {"LIKELY_FULL_TEXT", "POSSIBLE_FULL_TEXT"}:
         return "probe_pdf"
     if evidence_level == "ABSTRACT_ONLY":
@@ -743,17 +1227,13 @@ def _recommended_action(
 
 
 def _paper_match_keys(paper: dict[str, Any]) -> set[str]:
-    external_ids = paper.get("externalIds") or {}
-    candidates = {
-        str(paper.get("id", "")),
-        str(paper.get("canonical_id", "")),
-        str(paper.get("title", "")),
-        str(paper.get("doi", "")),
-        str(paper.get("url", "")),
-        str(external_ids.get("ArXiv", "")),
-        str(external_ids.get("DOI", "")),
-    }
-    return {normalize_text_key(candidate) for candidate in candidates if str(candidate).strip()}
+    return {normalize_text_key(key) for key in paper_record_match_keys(paper)}
+
+
+def _stable_noopenalex_queue_id(record: dict[str, Any]) -> str:
+    from ..literature_identity import stable_noopenalex_id
+
+    return stable_noopenalex_id(record)
 
 
 def detect_duplicate_queries(queries: list[str], threshold: float = 0.7) -> dict[str, Any]:

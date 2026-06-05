@@ -18,6 +18,29 @@ from researchos.agents.scout import ScoutAgent
 from researchos.runtime.agent import ExecutionContext
 
 
+def _domain_map_fixture(
+    *,
+    core: list[dict] | None = None,
+    theory_bridge: list[dict] | None = None,
+    adjacent: list[dict] | None = None,
+    boundary: list[dict] | None = None,
+    citation_edges: list | None = None,
+    bucket_assignments: dict | None = None,
+    warnings: list[str] | None = None,
+) -> dict:
+    return {
+        "version": "1.0",
+        "semantics": "domain_map_for_synthesis_and_ideation_not_final_gaps",
+        "core": core or [],
+        "theory_bridge": theory_bridge or [],
+        "adjacent": adjacent or [],
+        "boundary": boundary or [],
+        "citation_edges": citation_edges or [],
+        "bucket_assignments": bucket_assignments or {},
+        "warnings": warnings or ["citation_edges_empty_or_unavailable"],
+    }
+
+
 @pytest.fixture
 def test_workspace(tmp_path):
     """创建测试workspace"""
@@ -75,6 +98,7 @@ def test_scout_agent_spec(scout_agent):
     assert spec.name == "scout"
     assert spec.model_tier == "medium"
     assert spec.temperature == 0.5
+    assert "inspect_user_seeds" in spec.tool_names
     assert "search_papers" in spec.tool_names
     assert "fetch_paper_metadata" in spec.tool_names
     assert "save_papers_dedup" in spec.tool_names
@@ -83,6 +107,7 @@ def test_scout_agent_spec(scout_agent):
     assert "build_deep_read_queue" in spec.tool_names
     assert "fetch_outgoing_citations" in spec.tool_names
     assert "build_domain_map" in spec.tool_names
+    assert "apply_semantic_screening" in spec.tool_names
     assert "elsevier_scopus_search" in spec.tool_names
     assert "informs_search" in spec.tool_names
     # MCP工具已移除，等MCP配置完成后再启用
@@ -97,6 +122,8 @@ def test_scout_system_prompt(scout_agent, execution_context):
     assert "Scout Agent" in prompt
     assert "discrete diffusion language models" in prompt
     assert "Step 1" in prompt
+    assert "inspect_user_seeds" in prompt
+    assert "_DIR_GUIDE.md" in prompt
     assert "Step 5" in prompt
     assert "MCP" in prompt
 
@@ -125,6 +152,18 @@ def test_scout_system_prompt_with_seed_papers(scout_agent, execution_context):
     prompt = scout_agent.system_prompt(execution_context)
     assert "2 篇" in prompt
     assert "Discrete Diffusion Models" in prompt
+
+
+def test_scout_system_prompt_counts_user_seed_pdfs(scout_agent, execution_context):
+    """旧路径 user_seeds/pdfs/ 的 PDF 也应进入 T2 seed prompt。"""
+    pdf_dir = execution_context.workspace_dir / "user_seeds" / "pdfs"
+    pdf_dir.mkdir(parents=True)
+    (pdf_dir / "Doe - 2024 - Memory Retrieval for Agents.pdf").write_bytes(b"%PDF-1.4\n")
+
+    prompt = scout_agent.system_prompt(execution_context)
+
+    assert "1 篇" in prompt
+    assert "Memory Retrieval for Agents" in prompt
 
 
 def test_scout_system_prompt_includes_seed_ideas(scout_agent, execution_context):
@@ -255,16 +294,10 @@ def test_validate_outputs_success(scout_agent, execution_context):
             }
             f.write(json.dumps(queue_record) + "\n")
 
-    (lit_dir / "domain_map.json").write_text(json.dumps({
-        "version": "1.0",
-        "semantics": "domain_map_for_synthesis_and_ideation_not_final_gaps",
-        "core": [{"id": "s2_0", "title": "Paper 0", "degree": 1, "key_rationale_hint": "LLM_REVIEW_REQUIRED"}],
-        "adjacent": [],
-        "boundary": [],
-        "citation_edges": [],
-        "bucket_assignments": {"s2_0": "core"},
-        "warnings": ["citation_edges_empty_or_unavailable"]
-    }, ensure_ascii=False))
+    (lit_dir / "domain_map.json").write_text(json.dumps(_domain_map_fixture(
+        core=[{"id": "s2_0", "title": "Paper 0", "degree": 1, "key_rationale_hint": "LLM_REVIEW_REQUIRED"}],
+        bucket_assignments={"s2_0": "core"},
+    ), ensure_ascii=False))
 
     # search_log.md
     (lit_dir / "access_audit.md").write_text("# Access Audit\n")
@@ -361,16 +394,10 @@ def test_validate_outputs_too_few_papers(scout_agent, execution_context):
 
     (lit_dir / "verification_failures.jsonl").write_text("", encoding="utf-8")
 
-    (lit_dir / "domain_map.json").write_text(json.dumps({
-        "version": "1.0",
-        "semantics": "domain_map_for_synthesis_and_ideation_not_final_gaps",
-        "core": [{"id": "s2_0", "title": "Paper 0", "degree": 1, "key_rationale_hint": "LLM_REVIEW_REQUIRED"}],
-        "adjacent": [],
-        "boundary": [],
-        "citation_edges": [],
-        "bucket_assignments": {"s2_0": "core"},
-        "warnings": ["citation_edges_empty_or_unavailable"]
-    }, ensure_ascii=False))
+    (lit_dir / "domain_map.json").write_text(json.dumps(_domain_map_fixture(
+        core=[{"id": "s2_0", "title": "Paper 0", "degree": 1, "key_rationale_hint": "LLM_REVIEW_REQUIRED"}],
+        bucket_assignments={"s2_0": "core"},
+    ), ensure_ascii=False))
 
     (lit_dir / "access_audit.md").write_text("# Access Audit\n")
     (lit_dir / "search_log.md").write_text("")
@@ -436,16 +463,7 @@ def test_validate_outputs_dedup_anomaly(scout_agent, execution_context):
     (lit_dir / "search_log.md").write_text("")
     (lit_dir / "missing_areas.md").write_text("")
 
-    (lit_dir / "domain_map.json").write_text(json.dumps({
-        "version": "1.0",
-        "semantics": "domain_map_for_synthesis_and_ideation_not_final_gaps",
-        "core": [],
-        "adjacent": [],
-        "boundary": [],
-        "citation_edges": [],
-        "bucket_assignments": {},
-        "warnings": ["test"]
-    }, ensure_ascii=False))
+    (lit_dir / "domain_map.json").write_text(json.dumps(_domain_map_fixture(warnings=["test"]), ensure_ascii=False))
 
     ok, err = scout_agent.validate_outputs(execution_context)
     assert not ok
@@ -486,16 +504,7 @@ def test_validate_outputs_missing_required_field(scout_agent, execution_context)
     (lit_dir / "search_log.md").write_text("")
     (lit_dir / "missing_areas.md").write_text("")
 
-    (lit_dir / "domain_map.json").write_text(json.dumps({
-        "version": "1.0",
-        "semantics": "domain_map_for_synthesis_and_ideation_not_final_gaps",
-        "core": [],
-        "adjacent": [],
-        "boundary": [],
-        "citation_edges": [],
-        "bucket_assignments": {},
-        "warnings": ["test"]
-    }, ensure_ascii=False))
+    (lit_dir / "domain_map.json").write_text(json.dumps(_domain_map_fixture(warnings=["test"]), ensure_ascii=False))
 
     ok, err = scout_agent.validate_outputs(execution_context)
     assert not ok

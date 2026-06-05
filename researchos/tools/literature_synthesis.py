@@ -190,6 +190,7 @@ class BuildSynthesisWorkbenchTool(Tool):
             "citation_graph_context": _build_citation_graph_context(domain_map),
             "domain_map_bucket_summary": _build_domain_map_bucket_summary(domain_map),
             "adjacent_transfers": _build_adjacent_transfers(domain_map, all_notes),
+            "bridge_transfer_drafts": _build_bridge_transfer_drafts(domain_map, all_notes),
             "trend_candidates": _build_trends(notes, llm_insights=insights),
             "research_question_candidates": _build_questions(notes, missing_areas, llm_insights=insights),
             "mechanism_claim_clusters": _build_mechanism_claim_clusters(all_notes),
@@ -614,6 +615,7 @@ def _build_citation_graph_context(domain_map: dict[str, Any]) -> dict[str, Any]:
         "domain_map_semantics": domain_map.get("semantics", ""),
         "citation_edges": domain_map.get("citation_edges", [])[:200],
         "core_ids": [item.get("id") for item in domain_map.get("core", []) if isinstance(item, dict)][:30],
+        "theory_bridge_ids": [item.get("id") for item in domain_map.get("theory_bridge", []) if isinstance(item, dict)][:30],
         "adjacent_ids": [item.get("id") for item in domain_map.get("adjacent", []) if isinstance(item, dict)][:30],
         "boundary_ids": [item.get("id") for item in domain_map.get("boundary", []) if isinstance(item, dict)][:30],
         "warnings": domain_map.get("warnings", []),
@@ -622,10 +624,11 @@ def _build_citation_graph_context(domain_map: dict[str, Any]) -> dict[str, Any]:
 
 def _build_domain_map_bucket_summary(domain_map: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(domain_map, dict) or not domain_map:
-        return {"core": 0, "adjacent": 0, "boundary": 0, "warnings": ["domain_map_missing"]}
+        return {"core": 0, "theory_bridge": 0, "adjacent": 0, "boundary": 0, "warnings": ["domain_map_missing"]}
     return {
         "semantics": "domain_map_bucket_counts_for_llm_review",
         "core": len(domain_map.get("core", []) or []),
+        "theory_bridge": len(domain_map.get("theory_bridge", []) or []),
         "adjacent": len(domain_map.get("adjacent", []) or []),
         "boundary": len(domain_map.get("boundary", []) or []),
         "edge_count": len(domain_map.get("citation_edges", []) or []),
@@ -641,7 +644,11 @@ def _build_adjacent_transfers(
 
     if not isinstance(domain_map, dict):
         return []
-    adjacent_nodes = [item for item in domain_map.get("adjacent", []) if isinstance(item, dict)]
+    adjacent_nodes = [
+        item
+        for item in [*(domain_map.get("adjacent", []) or []), *(domain_map.get("theory_bridge", []) or [])]
+        if isinstance(item, dict)
+    ]
     if not adjacent_nodes:
         return []
 
@@ -676,6 +683,55 @@ def _build_adjacent_transfers(
             }
         )
     return transfers
+
+
+def _build_bridge_transfer_drafts(
+    domain_map: dict[str, Any],
+    all_notes: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Expose theory_bridge transfer seeds for the Reader/Ideation LLM."""
+
+    if not isinstance(domain_map, dict):
+        return []
+    bridge_nodes = [item for item in domain_map.get("theory_bridge", []) if isinstance(item, dict)]
+    if not bridge_nodes:
+        return []
+
+    note_by_id = {note.get("paper_id"): note for note in all_notes if note.get("paper_id")}
+    title_to_note = {_normalize_title_key(note.get("title", "")): note for note in all_notes if note.get("title")}
+    drafts: list[dict[str, Any]] = []
+    for node in bridge_nodes[:12]:
+        node_id = str(node.get("id") or "").strip()
+        note = note_by_id.get(node_id) or note_by_id.get(_normalize_ref_id(node_id))
+        if note is None:
+            note = title_to_note.get(_normalize_title_key(node.get("title", "")))
+        mechanism = ""
+        bridge = ""
+        if note:
+            mechanism = (
+                str(note.get("core_approach_view") or "").strip()
+                or str(note.get("method_overview") or "").strip()
+                or str((note.get("mechanism_claim") or {}).get("stated_mechanism") or "").strip()
+            )
+            bridge = str(note.get("bridge_point") or "").strip()
+        rationale = str(node.get("why_theory_bridge") or node.get("why_adjacent") or "").strip()
+        drafts.append(
+            {
+                "bridge_id": node.get("bridge_id"),
+                "bridge_name": str(node.get("title") or node_id),
+                "source_papers": [node_id] if node_id else [],
+                "relation_to_project": node.get("relation_to_project", ""),
+                "transferable_mechanism": _shorten(mechanism, 280)
+                or "LLM_REVIEW_REQUIRED: infer transferable mechanism from note/metadata before use",
+                "how_it_maps_to_project": _shorten(bridge or rationale, 280)
+                or "LLM_REVIEW_REQUIRED: map this theory bridge to the target problem explicitly",
+                "why_potentially_novel": "LLM_REVIEW_REQUIRED: compare against core design rationales and nearest prior work; do not assume novelty from cross-domain origin alone",
+                "risk": "LLM_REVIEW_REQUIRED: identify mismatch, measurement, or construct-validity risk before ideation",
+                "evidence_level": str(note.get("evidence_level") if note else "metadata_or_domain_map_hint"),
+                "semantics": "bridge_transfer_seed_for_llm_review_not_claim",
+            }
+        )
+    return drafts
 
 
 def _build_trends(

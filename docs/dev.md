@@ -333,15 +333,17 @@ python -m researchos.cli run-skill paper-compile "compile the paper in ./workspa
 重点看：
 
 - `_runtime/logs/researchos.log`
+- `_runtime/logs/researchos-debug.log`
 - `_runtime/traces/*.jsonl`
 - `_runtime/resume/*.json`
 
 ### 5.3 典型排障顺序
 
 1. 先看 CLI 最后的错误摘要
-2. 再看 `_runtime/logs/researchos.log`
-3. 再看具体 `trace`
-4. 最后看 workspace 里哪些 artifact 实际落了盘
+2. 再看 `_runtime/logs/researchos.log` 的人类时间线
+3. 如果是底层异常，再看 `_runtime/logs/researchos-debug.log`
+4. 再看具体 `trace`
+5. 最后看 workspace 里哪些 artifact 实际落了盘
 
 ---
 

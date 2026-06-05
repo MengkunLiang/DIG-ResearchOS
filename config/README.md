@@ -48,6 +48,7 @@ python -m researchos.cli validate-config
 | Agent step/token/wall budget | `user_settings.yaml: budget.agents.<agent>.*` | 支持 `unlimited_budget: true` |
 | LLM timeout/retry/cooldown | `user_settings.yaml: runtime.timeouts` 和 `runtime.retry_policy` | 包含 provider 连续超时后的 cooldown |
 | budget escalation | `user_settings.yaml: runtime.budget_escalation` | 触顶后是否 ask_human 扩限 |
+| CLI quiet/verbose 默认值 | `runtime.yaml: ui.quiet/ui.verbose` | 只影响终端展示，不影响 `researchos.log` / trace |
 | 工具列表和读写权限 | `agent_params.yaml` | 能力声明，不是预算表 |
 | endpoint/API base/API key env | `model_routing.yaml` + `.env` | 路由候选定义与密钥分离 |
 | 状态机输入输出和分支 | `state_machine.yaml` | 默认不要在这里写 LLM/budget 参数 |
@@ -143,6 +144,16 @@ profiles:
 - `modes.<mode>.description/prompt/behavior/tools`
 
 兼容层仍能读取旧的 `llm` / `budget` 字段，但 checked-in 默认配置不再把它们放这里。不要把日常模型和预算参数写回 `agent_params.yaml`，否则又会出现多表参数冲突。
+
+### 日志与控制台
+
+- `runtime.yaml: ui.quiet=true`：控制台只显示状态跳转、暂停、错误和最终结果
+- `runtime.yaml: ui.verbose=true`：控制台额外显示 Agent 文本输出和 step token 摘要
+- `workspace/<name>/_runtime/logs/researchos.log`：统一人类时间线，由 runtime 写入，不受 quiet 影响
+- `workspace/<name>/_runtime/logs/researchos-debug.log`：底层 Python/structlog 调试日志
+- `workspace/<name>/_runtime/traces/*.jsonl`：机器级完整 trace
+
+LiteLLM INFO 默认被 runtime 压到 WARNING；正常情况下不会刷屏，也不会进入 `researchos.log`。
 
 ## `state_machine.yaml`
 

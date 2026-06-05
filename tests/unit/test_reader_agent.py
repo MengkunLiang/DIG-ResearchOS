@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -151,6 +152,7 @@ def test_reader_agent_spec(reader_agent):
     assert "lookup_paper_record" in spec.tool_names
     assert "fetch_paper_pdf" in spec.tool_names
     assert "extract_pdf_text" in spec.tool_names
+    assert "save_paper_note" in spec.tool_names
     assert spec.temperature == 0.5
     assert "literature/" in spec.allowed_read_prefixes
     assert "_runtime/resume/" in spec.allowed_read_prefixes
@@ -520,6 +522,61 @@ def test_validate_outputs_read_mode_missing_notes(reader_agent, temp_workspace):
     ok, err = reader_agent.validate_outputs(ctx)
     assert not ok
     assert "deep_read_queue" in err or "至少需要完成" in err
+
+
+def test_validate_outputs_read_mode_reports_matched_invalid_queue_note(reader_agent, temp_workspace):
+    """同名 note 存在但结构不合格时，应明确报结构问题，而不是让用户误以为没读。"""
+    queue_path = temp_workspace / "literature" / "deep_read_queue.jsonl"
+    records = [
+        {
+            "paper_id": f"paper{i}",
+            "normalized_id": f"paper{i}",
+            "title": f"Paper {i}",
+            "relevance_score": 0.8,
+            "access_score_estimate": 0.7,
+            "access_score": 0.7,
+            "evidence_level": "PARTIAL_TEXT",
+            "seed_priority": False,
+            "queue_rank": i + 1,
+            "read_priority": 0.8,
+            "target_bucket": "target",
+        }
+        for i in range(18)
+    ]
+    queue_path.write_text(
+        "\n".join(json.dumps(item, ensure_ascii=False) for item in records) + "\n",
+        encoding="utf-8",
+    )
+    notes_dir = temp_workspace / "literature" / "paper_notes"
+    for i in range(17):
+        (notes_dir / f"paper{i}.md").write_text(_structured_note(f"paper{i}"), encoding="utf-8")
+    (notes_dir / "paper17.md").write_text(
+        _structured_note("paper17").replace("\n## 10. Key Quotes\n> \"quote\"\n", "\n"),
+        encoding="utf-8",
+    )
+    (temp_workspace / "literature" / "comparison_table.csv").write_text(
+        "id,title,year\ntest1,Test Paper,2023\n",
+        encoding="utf-8",
+    )
+    (temp_workspace / "literature" / "related_work.bib").write_text(
+        "@article{test2023,\n  title={Test},\n  year={2023}\n}\n",
+        encoding="utf-8",
+    )
+
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T3",
+        run_id="test-run-invalid-matched-note",
+        mode="read",
+    )
+
+    ok, err = reader_agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "已匹配但结构不合格" in err
+    assert "paper17.md" in err
+    assert "## 10. Key Quotes" in err
 
 
 def test_validate_outputs_read_mode_requires_seed_queue_coverage(reader_agent, temp_workspace):

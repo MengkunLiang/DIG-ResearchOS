@@ -9,6 +9,7 @@ from __future__ import annotations
 """
 
 import os
+import json
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -20,6 +21,7 @@ except ModuleNotFoundError:
 
 from pydantic import BaseModel, Field
 
+from ..literature_identity import add_identity_key_variants, paper_record_match_keys
 from ..runtime.errors import ToolAccessDenied, ToolRuntimeError
 from .base import Tool, ToolResult
 from .workspace_policy import WorkspaceAccessPolicy
@@ -210,6 +212,7 @@ class FetchPaperPdfTool(Tool):
 
         paper_id = paper_id.strip()
         candidates: list[str] = []
+        candidates.extend(self._workspace_metadata_pdf_candidates(paper_id))
         doi = self._normalize_doi(paper_id)
 
         # arXiv格式: arxiv:2301.12345 或 2301.12345
@@ -225,6 +228,7 @@ class FetchPaperPdfTool(Tool):
             if arxiv_id_from_doi:
                 candidates.extend(self._arxiv_pdf_candidates(arxiv_id_from_doi))
             candidates.extend(await self._openalex_pdf_candidates(client, doi=doi))
+            candidates.extend(await self._unpaywall_pdf_candidates(client, doi))
             candidates.extend(self._doi_fallback_candidates(doi))
         elif paper_id.startswith("W") and paper_id[1:].isdigit():
             candidates.extend(await self._openalex_pdf_candidates(client, openalex_id=paper_id))
@@ -234,6 +238,159 @@ class FetchPaperPdfTool(Tool):
             candidates.extend(self._url_to_pdf_candidates(paper_id))
 
         return self._dedupe_candidates(candidates)
+
+    def _workspace_metadata_pdf_candidates(self, paper_id: str) -> list[str]:
+        """Use existing literature metadata to recover PDF URLs for aliased IDs.
+
+        Reader often calls this tool with a canonical id (OpenAlex/noopenalex)
+        while the raw record may already contain an arXiv URL, DOI, or pdf_url.
+        This helper only extracts mechanical URL candidates from local
+        artifacts; it does not change evidence level or relevance judgments.
+        """
+
+        lookup_keys: set[str] = set()
+        add_identity_key_variants(lookup_keys, paper_id)
+        if not lookup_keys:
+            return []
+
+        candidates: list[str] = []
+        for record in self._iter_workspace_paper_records():
+            record_keys = paper_record_match_keys(record)
+            for extra_key in ("paper_id", "normalized_id"):
+                add_identity_key_variants(record_keys, record.get(extra_key))
+            if not (lookup_keys & record_keys):
+                continue
+            candidates.extend(self._paper_record_pdf_candidates(record))
+        return candidates
+
+    def _iter_workspace_paper_records(self) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+        for rel_path in (
+            "literature/deep_read_queue.jsonl",
+            "literature/papers_verified.jsonl",
+            "literature/papers_dedup.jsonl",
+            "literature/papers_raw.jsonl",
+        ):
+            try:
+                path = self.policy.resolve_read(rel_path)
+            except ToolAccessDenied:
+                continue
+            if not path.exists():
+                continue
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(payload, dict):
+                    records.append(payload)
+        return records
+
+    def _paper_record_pdf_candidates(self, record: dict[str, Any]) -> list[str]:
+        candidates: list[str] = []
+
+        for key in (
+            "pdf_url",
+            "open_access_pdf_url",
+            "oa_pdf_url",
+            "best_pdf_url",
+            "full_text_url",
+            "pmc_pdf_url",
+            "url_for_pdf",
+            "landing_page_url",
+            "url",
+        ):
+            candidates.extend(self._value_to_pdf_candidates(record.get(key)))
+
+        for key in ("openAccessPdf", "open_access_pdf", "oa_pdf", "best_oa_location"):
+            candidates.extend(self._value_to_pdf_candidates(record.get(key)))
+
+        external_ids = record.get("externalIds") if isinstance(record.get("externalIds"), dict) else {}
+        arxiv_id = external_ids.get("ArXiv") or record.get("arxiv_id")
+        if isinstance(arxiv_id, str) and arxiv_id.strip():
+            candidates.extend(self._arxiv_pdf_candidates(arxiv_id.strip().replace("arxiv:", "")))
+
+        doi = str(record.get("doi") or external_ids.get("DOI") or "").strip()
+        if doi:
+            normalized_doi = self._normalize_doi(doi) or doi.replace("https://doi.org/", "")
+            arxiv_id_from_doi = self._arxiv_id_from_doi(normalized_doi)
+            if arxiv_id_from_doi:
+                candidates.extend(self._arxiv_pdf_candidates(arxiv_id_from_doi))
+            candidates.extend(self._doi_fallback_candidates(normalized_doi))
+
+        for location in self._iter_record_locations(record):
+            candidates.extend(self._location_pdf_candidates(location))
+
+        return candidates
+
+    @staticmethod
+    def _iter_record_locations(record: dict[str, Any]) -> list[dict[str, Any]]:
+        locations: list[dict[str, Any]] = []
+        for key in (
+            "best_oa_location",
+            "primary_location",
+            "openAccessPdf",
+            "open_access_pdf",
+            "oa_pdf",
+        ):
+            value = record.get(key)
+            if isinstance(value, dict):
+                locations.append(value)
+        for key in (
+            "locations",
+            "oa_locations",
+            "open_access_locations",
+            "openAccessLocations",
+            "open_access_pdfs",
+        ):
+            raw_locations = record.get(key)
+            if isinstance(raw_locations, list):
+                locations.extend(item for item in raw_locations if isinstance(item, dict))
+        return locations
+
+    @classmethod
+    def _value_to_pdf_candidates(cls, value: Any) -> list[str]:
+        if isinstance(value, str) and value.strip():
+            return cls._url_to_pdf_candidates(value.strip())
+        if isinstance(value, dict):
+            return cls._location_pdf_candidates(value)
+        if isinstance(value, list):
+            candidates: list[str] = []
+            for item in value:
+                candidates.extend(cls._value_to_pdf_candidates(item))
+            return candidates
+        return []
+
+    @classmethod
+    def _location_pdf_candidates(cls, location: dict[str, Any]) -> list[str]:
+        candidates: list[str] = []
+        for key in (
+            "pdf_url",
+            "url_for_pdf",
+            "pdfUrl",
+            "pdfURL",
+            "oa_pdf_url",
+            "best_pdf_url",
+            "full_text_url",
+            "pmc_pdf_url",
+        ):
+            value = location.get(key)
+            if isinstance(value, str) and value.strip():
+                candidates.extend(cls._url_to_pdf_candidates(value.strip()))
+        for key in (
+            "landing_page_url",
+            "url",
+            "source_url",
+            "host_page_url",
+            "downloadUrl",
+            "download_url",
+        ):
+            value = location.get(key)
+            if isinstance(value, str) and value.strip():
+                candidates.extend(cls._url_to_pdf_candidates(value.strip()))
+        return candidates
 
     @staticmethod
     def _looks_like_arxiv_id(paper_id: str) -> bool:
@@ -321,25 +478,53 @@ class FetchPaperPdfTool(Tool):
         work = response.json()
         candidates: list[str] = []
 
-        def add_location(location: dict[str, Any] | None) -> None:
-            if not isinstance(location, dict):
-                return
-            pdf_url = location.get("pdf_url")
-            landing_page_url = location.get("landing_page_url")
-            if isinstance(pdf_url, str) and pdf_url.strip():
-                candidates.append(pdf_url.strip())
-            if isinstance(landing_page_url, str) and landing_page_url.strip():
-                candidates.extend(self._url_to_pdf_candidates(landing_page_url.strip()))
-
-        add_location(work.get("best_oa_location"))
-        add_location(work.get("primary_location"))
-        for location in work.get("locations", []) or []:
-            add_location(location)
+        for key in ("best_oa_location", "primary_location", "openAccessPdf"):
+            value = work.get(key)
+            if isinstance(value, dict):
+                candidates.extend(self._location_pdf_candidates(value))
+        for key in ("locations", "oa_locations", "open_access_locations"):
+            for location in work.get(key, []) or []:
+                if isinstance(location, dict):
+                    candidates.extend(self._location_pdf_candidates(location))
 
         doi_value = work.get("doi")
         if isinstance(doi_value, str) and doi_value.startswith("https://doi.org/"):
             candidates.append(doi_value)
 
+        return candidates
+
+    async def _unpaywall_pdf_candidates(
+        self,
+        client: "httpx.AsyncClient",
+        doi: str,
+    ) -> list[str]:
+        """从 Unpaywall 按 DOI 查询开放获取 PDF 候选。"""
+
+        normalized_doi = self._normalize_doi(doi) or doi.strip()
+        if not normalized_doi:
+            return []
+        email = os.environ.get("RESEARCHER_EMAIL", "researcher@example.com")
+        try:
+            response = await client.get(
+                f"https://api.unpaywall.org/v2/{quote(normalized_doi, safe='')}",
+                params={"email": email},
+            )
+            response.raise_for_status()
+        except Exception:
+            return []
+
+        payload = response.json()
+        candidates: list[str] = []
+        for key in ("best_oa_location", "openAccessPdf"):
+            value = payload.get(key)
+            if isinstance(value, dict):
+                candidates.extend(self._location_pdf_candidates(value))
+        for key in ("oa_locations", "open_access_locations"):
+            for location in payload.get(key, []) or []:
+                if isinstance(location, dict):
+                    candidates.extend(self._location_pdf_candidates(location))
+        candidates.extend(self._value_to_pdf_candidates(payload.get("url_for_pdf")))
+        candidates.extend(self._value_to_pdf_candidates(payload.get("pdf_url")))
         return candidates
 
     @staticmethod

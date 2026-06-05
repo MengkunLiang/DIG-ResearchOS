@@ -15,6 +15,8 @@ from ..runtime.logger import get_logger
 
 _LOG = get_logger("filesystem")
 STRUCTURED_ONLY_WRITE_PATHS = {
+    "bridge_domain_plan.json": "bridge_domain_plan",
+    "literature/bridge_domain_plan.json": "bridge_domain_plan",
     "ideation/exp_plan.yaml": "exp_plan",
     "ideation/idea_rationales.json": "idea_rationales",
     "ideation/idea_scorecard.yaml": "idea_scorecard",
@@ -119,12 +121,17 @@ class WriteFileTool(Tool):
         normalized_path = path.strip().lstrip("./")
         if normalized_path in STRUCTURED_ONLY_WRITE_PATHS:
             schema_name = STRUCTURED_ONLY_WRITE_PATHS[normalized_path]
+            correct_path = (
+                "literature/bridge_domain_plan.json"
+                if normalized_path == "bridge_domain_plan.json"
+                else normalized_path
+            )
             output_format = "json" if normalized_path.endswith(".json") else "yaml"
             return ToolResult(
                 ok=False,
                 content=(
                     f"{normalized_path} 是结构化产物，不能用 write_file 写入。"
-                    f"请改用 write_structured_file(path='{normalized_path}', "
+                    f"请改用 write_structured_file(path='{correct_path}', "
                     f"schema_name='{schema_name}', format='{output_format}', data=...)。"
                 ),
                 error="structured_output_requires_write_structured_file",
@@ -389,6 +396,163 @@ class ListFilesTool(Tool):
                 for p in abs_path.glob(pattern)
                 if p != abs_path
             )
-            return ToolResult(ok=True, content="\n".join(items), data={"items": items})
+            data: dict[str, Any] = {"items": items}
+            content = "\n".join(items)
+            if rel_path.rstrip("/") in {"user_seeds", "user_seeds/pdfs"}:
+                seed_summary = _inspect_user_seed_dir(self.policy.workspace_dir, rel_path.rstrip("/"))
+                data["user_seed_inspection"] = seed_summary
+                content = _format_user_seed_listing(items, seed_summary)
+            return ToolResult(ok=True, content=content, data=data)
         except ToolAccessDenied as exc:
             return ToolResult(ok=False, content=str(exc), error="access_denied")
+
+
+class InspectUserSeedsParams(BaseModel):
+    path: str = Field("user_seeds", description="要检查的 seed 目录，通常为 user_seeds")
+
+
+class InspectUserSeedsTool(Tool):
+    name = "inspect_user_seeds"
+    description = (
+        "机械检查 user_seeds/ 中哪些是真实用户材料，哪些只是初始化 guide、template、"
+        "空文件或“暂无”占位。用于 T1 扫描前后避免把模板误判为 seed。"
+    )
+    parameters_schema = InspectUserSeedsParams
+    timeout_seconds = 10.0
+
+    def __init__(self, policy: WorkspaceAccessPolicy):
+        self.policy = policy
+
+    async def execute(self, **kwargs) -> ToolResult:
+        path = str(kwargs.get("path") or "user_seeds").strip().strip("/") or "user_seeds"
+        try:
+            abs_path = self.policy.resolve_read(path)
+            if not abs_path.exists():
+                return ToolResult(ok=False, content=f"Path not found: {path}", error="not_found")
+            if not abs_path.is_dir():
+                return ToolResult(ok=False, content=f"Path is not a directory: {path}", error="not_directory")
+            inspection = _inspect_user_seed_dir(self.policy.workspace_dir, path)
+            return ToolResult(ok=True, content=_format_user_seed_inspection(inspection), data=inspection)
+        except ToolAccessDenied as exc:
+            return ToolResult(ok=False, content=str(exc), error="access_denied")
+
+
+def _inspect_user_seed_dir(workspace_dir: Path, rel_path: str = "user_seeds") -> dict[str, Any]:
+    root = (workspace_dir / rel_path).resolve()
+    if not root.exists() or not root.is_dir():
+        return {
+            "path": rel_path,
+            "items_detailed": [],
+            "actual_material_count": 0,
+            "placeholder_count": 0,
+            "guide_or_template_count": 0,
+            "actual_material_paths": [],
+            "has_actual_user_material": False,
+        }
+
+    items: list[dict[str, Any]] = []
+    for path in sorted(p for p in root.rglob("*") if p.is_file()):
+        rel = path.relative_to(workspace_dir).as_posix()
+        detail = _classify_user_seed_file(path, rel)
+        items.append(detail)
+
+    actual_paths = [item["path"] for item in items if item["kind"] in {"user_material", "pdf"}]
+    return {
+        "path": rel_path,
+        "items_detailed": items,
+        "actual_material_count": len(actual_paths),
+        "placeholder_count": sum(1 for item in items if item["kind"] == "placeholder"),
+        "guide_or_template_count": sum(1 for item in items if item["kind"] in {"guide", "template"}),
+        "actual_material_paths": actual_paths,
+        "has_actual_user_material": bool(actual_paths),
+        "agent_instruction": (
+            "Only paths with kind=user_material or kind=pdf are real user seed materials. "
+            "Do not treat README.md, _DIR_GUIDE.md, *.example, empty files, or files containing only 暂无 placeholders as seeds."
+        ),
+    }
+
+
+def _classify_user_seed_file(path: Path, rel: str) -> dict[str, Any]:
+    name = path.name
+    lower_name = name.casefold()
+    size = path.stat().st_size
+    kind = "user_material"
+    reason = "non-placeholder content"
+
+    if lower_name in {"readme.md", "_dir_guide.md"} or name.startswith("_"):
+        kind = "guide"
+        reason = "workspace initialization guide"
+    elif lower_name.endswith(".example"):
+        kind = "template"
+        reason = "example template file"
+    elif lower_name.endswith(".pdf"):
+        kind = "pdf"
+        reason = "user-provided PDF seed"
+    elif size == 0:
+        kind = "placeholder"
+        reason = "empty file"
+    elif lower_name in {"seed_ideas.md", "seed_constraints.md"}:
+        text = _safe_read_text(path)
+        if _is_placeholder_markdown(text):
+            kind = "placeholder"
+            reason = "default markdown placeholder"
+    elif lower_name.endswith(".jsonl"):
+        text = _safe_read_text(path)
+        if not any(line.strip() and not line.lstrip().startswith("#") for line in text.splitlines()):
+            kind = "placeholder"
+            reason = "empty jsonl seed file"
+
+    return {
+        "path": rel,
+        "size": size,
+        "kind": kind,
+        "reason": reason,
+        "agent_hint": (
+            "real seed material" if kind in {"user_material", "pdf"}
+            else "not a user seed; ignore for material-count decisions"
+        ),
+    }
+
+
+def _safe_read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except Exception:
+        return ""
+
+
+def _is_placeholder_markdown(text: str) -> bool:
+    stripped_lines = []
+    for line in text.splitlines():
+        clean = line.strip()
+        if not clean or clean.startswith("#"):
+            continue
+        stripped_lines.append(clean)
+    if not stripped_lines:
+        return True
+    body = "\n".join(stripped_lines).strip()
+    return body in {"（暂无）", "(暂无)", "暂无", "none", "None", "N/A", "n/a"}
+
+
+def _format_user_seed_listing(items: list[str], inspection: dict[str, Any]) -> str:
+    base = "\n".join(items)
+    return base + "\n\n" + _format_user_seed_inspection(inspection)
+
+
+def _format_user_seed_inspection(inspection: dict[str, Any]) -> str:
+    lines = [
+        "[ResearchOS user_seeds inspection]",
+        f"- path: {inspection.get('path')}",
+        f"- actual_user_materials: {inspection.get('actual_material_count', 0)}",
+        f"- placeholders: {inspection.get('placeholder_count', 0)}",
+        f"- guides_or_templates: {inspection.get('guide_or_template_count', 0)}",
+        "- rule: kind=user_material 或 kind=pdf 才是真实 seed；guide/template/placeholder 不算 seed。",
+        "",
+        "| path | kind | size | reason |",
+        "|---|---|---:|---|",
+    ]
+    for item in inspection.get("items_detailed", []):
+        lines.append(
+            f"| {item.get('path')} | {item.get('kind')} | {item.get('size', 0)} | {item.get('reason')} |"
+        )
+    return "\n".join(lines)

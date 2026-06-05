@@ -16,6 +16,14 @@ class AskHumanParams(BaseModel):
     question: str = Field(..., min_length=1, description="要问用户的问题")
     suggestions: list[str] | None = Field(None, description="可选参考建议")
 
+    @field_validator("question", mode="before")
+    @classmethod
+    def _normalize_question(cls, value: object) -> str:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("ask_human.question 不能为空；必须把需要用户看的草案/候选/决策上下文写进 question")
+        return text
+
     @field_validator("suggestions", mode="before")
     @classmethod
     def _coerce_suggestions(cls, value: object) -> object:

@@ -19,6 +19,11 @@ from ..literature_identity import (
     paper_record_match_keys,
     record_is_covered,
 )
+from ..runtime.t3_notes_manifest import (
+    build_t3_notes_manifest,
+    format_completion_diagnostics,
+    target_entries,
+)
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec, get_agent_mode_params
 from ..runtime.prompts import render_prompt
@@ -52,6 +57,7 @@ class ReaderAgent(Agent):
                         "fetch_paper_pdf",
                         "extract_paper_sections",
                         "extract_pdf_text",
+                        "save_paper_note",
                         "build_synthesis_workbench",
                         "finish_task",
                     ],
@@ -254,37 +260,55 @@ class ReaderAgent(Agent):
         queue_count = len(queue_records)
 
         if queue_records:
+            manifest = build_t3_notes_manifest(
+                ctx.workspace_dir,
+                queue_records=queue_records,
+                source_queue="literature/deep_read_queue.jsonl",
+                write=True,
+            )
+            manifest_entries = target_entries(manifest)
+            queue_count_for_completion = len(manifest_entries) or queue_count
+            entry_by_rank = {
+                int(entry.get("queue_rank") or -1): entry
+                for entry in manifest_entries
+            }
             missing_seed_notes = [
-                display_record_key(item)
-                for item in queue_records
-                if item.get("seed_priority") and not record_is_covered(item, completed_note_keys)
+                _format_manifest_entry_for_error(entry_by_rank.get(int(item.get("queue_rank") or index)))
+                or display_record_key(item)
+                for index, item in enumerate(queue_records, start=1)
+                if item.get("seed_priority")
+                and not bool(entry_by_rank.get(int(item.get("queue_rank") or index), {}).get("status") == "complete")
             ]
             if missing_seed_notes:
                 return False, (
-                    "seed papers 尚未全部完成，缺少以下笔记: "
+                    "seed papers 尚未全部完成或对应 note 结构不合格: "
                     + ", ".join(missing_seed_notes[:5])
+                    + _manifest_diagnostic_suffix(manifest_entries)
                 )
 
-            covered_queue_count = sum(1 for item in queue_records if record_is_covered(item, completed_note_keys))
-            min_required = min(queue_count, min_required)
+            covered_queue_count = sum(1 for entry in manifest_entries if entry.get("status") == "complete")
+            min_required = min(queue_count_for_completion, min_required)
 
             if covered_queue_count < min_required:
                 return False, (
-                    f"deep_read_queue 仅完成 {covered_queue_count}/{queue_count} 篇，"
+                    f"deep_read_queue 仅完成 {covered_queue_count}/{queue_count_for_completion} 篇，"
                     f"至少需要完成 {min_required} 篇队列论文；当前目标阅读数为 {target_required}。"
+                    + _manifest_diagnostic_suffix(manifest_entries)
                 )
 
             missing_protected_notes = [
-                display_record_key(item)
-                for item in queue_records
+                _format_manifest_entry_for_error(entry_by_rank.get(int(item.get("queue_rank") or index)))
+                or display_record_key(item)
+                for index, item in enumerate(queue_records, start=1)
                 if _is_protected_queue_record(item)
                 and str(item.get("target_bucket") or "") != "overflow"
-                and not record_is_covered(item, completed_note_keys)
+                and not bool(entry_by_rank.get(int(item.get("queue_rank") or index), {}).get("status") == "complete")
             ]
             if missing_protected_notes:
                 return False, (
-                    "deep_read_queue 中的 adjacent/theory/snowball 保护论文尚未完成笔记: "
+                    "deep_read_queue 中 semantic_screen 允许的 protected-slot 论文尚未完成或结构不合格: "
                     + ", ".join(missing_protected_notes[:6])
+                    + _manifest_diagnostic_suffix(manifest_entries)
                 )
 
         # 动态确定最小笔记数：优先围绕 deep_read_queue，其次回退到 papers_dedup
@@ -430,20 +454,53 @@ def _invalid_note_summary(invalid_note_files: list[tuple[Path, str]]) -> str:
     return f"；另有 {len(invalid_note_files)} 个不合格/重复 note 未计入完成数: {examples}"
 
 
+def _manifest_diagnostic_suffix(entries: list[dict[str, object]]) -> str:
+    diagnostic = format_completion_diagnostics(entries)
+    return f"；{diagnostic}" if diagnostic else ""
+
+
+def _format_manifest_entry_for_error(entry: dict[str, object] | None) -> str:
+    if not entry:
+        return ""
+    status = str(entry.get("status") or "")
+    note_path = str(entry.get("note_path") or "")
+    key = str(entry.get("record_display_key") or "")
+    if status == "incomplete":
+        err = str(entry.get("validation_error") or "结构不合格")
+        return f"{key} ({note_path} 结构不合格: {err})"
+    if status == "missing":
+        return f"{key} (未找到 note)"
+    return key
+
+
 def _paper_match_keys(paper: dict[str, object]) -> set[str]:
     return paper_record_match_keys(paper)
 
 
 def _is_protected_queue_record(record: dict[str, object]) -> bool:
-    """Return true for T2 labels that should be read, not silently skipped."""
+    """Return true for LLM-screened bridge/theory queue entries that must be read."""
 
-    if bool(record.get("adjacent_field")):
+    if bool(record.get("protected_slot")):
         return True
-    bucket = str(record.get("search_bucket") or record.get("query_bucket") or "").strip().casefold()
-    bucket = bucket.replace("-", "_").replace(" ", "_")
-    source_bucket = str(record.get("source_bucket") or "").strip().casefold()
-    source_bucket = source_bucket.replace("-", "_").replace(" ", "_")
-    return bucket in {"adjacent_field", "theory_bridge"} or source_bucket in {"adjacent", "snowball"}
+    if bool(record.get("citation_hub_protected_slot")):
+        return True
+    protected_relations = {
+        "mechanism_bridge",
+        "method_transfer",
+        "evaluation_or_metric_bridge",
+        "baseline_or_dataset_relevance",
+    }
+    screen = record.get("semantic_screen")
+    if not isinstance(screen, dict):
+        return False
+    relation = str(screen.get("relation_to_project") or record.get("relation_to_project") or "").strip()
+    role = str(screen.get("role") or record.get("semantic_role") or "").strip()
+    retrieval_intent = str(record.get("retrieval_intent") or "").strip()
+    return (
+        bool(screen.get("can_enter_deep_read"))
+        and relation in protected_relations
+        and (role == "theory_bridge" or retrieval_intent == "cross_domain_bridge")
+    )
 
 
 def _paper_note_reference_ids(notes_dir: Path) -> set[str]:

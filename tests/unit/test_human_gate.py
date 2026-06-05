@@ -50,6 +50,79 @@ async def test_cli_gate_eof_pauses_instead_of_defaulting(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_ask_clarification_confirms_after_end_submission(monkeypatch, capsys):
+    answers = iter(["这是我的回答", "END"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+
+    human = CLIHumanInterface()
+    answer = await human.ask_clarification(question="请回答")
+
+    assert answer == "这是我的回答"
+    out = capsys.readouterr().out
+    assert "已收到输入，继续处理" in out
+    assert "-" * 80 in out
+
+
+@pytest.mark.asyncio
+async def test_ask_clarification_confirms_after_ctrl_d_submission(monkeypatch, capsys):
+    answers = iter(["这是我的回答"])
+
+    def fake_input(_prompt: str = "") -> str:
+        try:
+            return next(answers)
+        except StopIteration:
+            raise EOFError
+
+    monkeypatch.setattr("builtins.input", fake_input)
+
+    human = CLIHumanInterface()
+    answer = await human.ask_clarification(question="请回答")
+
+    assert answer == "这是我的回答"
+    out = capsys.readouterr().out
+    assert "已收到输入，继续处理" in out
+    assert "-" * 80 in out
+
+
+@pytest.mark.asyncio
+async def test_ask_clarification_reprompts_after_empty_submission(monkeypatch, capsys):
+    answers = iter([EOFError, "补充后的有效回答", "END"])
+
+    def fake_input(_prompt: str = "") -> str:
+        value = next(answers)
+        if value is EOFError:
+            raise EOFError
+        return value
+
+    monkeypatch.setattr("builtins.input", fake_input)
+
+    human = CLIHumanInterface()
+    answer = await human.ask_clarification(question="请回答")
+
+    assert answer == "补充后的有效回答"
+    out = capsys.readouterr().out
+    assert "未收到有效输入，请重新输入" in out
+    assert "已收到输入，继续处理" in out
+    assert "-" * 80 in out
+
+
+@pytest.mark.asyncio
+async def test_ask_clarification_pauses_after_repeated_empty_submissions(monkeypatch, capsys):
+    def fake_input(_prompt: str = "") -> str:
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", fake_input)
+
+    human = CLIHumanInterface()
+    with pytest.raises(HumanInputUnavailable):
+        await human.ask_clarification(question="请回答")
+
+    out = capsys.readouterr().out
+    assert out.count("未收到有效输入，请重新输入") == human.CLARIFICATION_EMPTY_RETRIES - 1
+    assert "连续多次未收到有效输入" in out
+
+
+@pytest.mark.asyncio
 async def test_t5_executor_gate_empty_input_defaults_to_mock(monkeypatch):
     answers = iter([""])
 

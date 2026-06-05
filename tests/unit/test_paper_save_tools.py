@@ -17,6 +17,7 @@ from researchos.tools.paper_save_tools import (
     _transform_to_papers_raw,
     _normalize_authors,
 )
+from researchos.runtime.t2_recovery import _seed_to_recovery_paper
 
 
 class TestNormalizeAuthors:
@@ -110,6 +111,9 @@ class TestTransformToPapersRaw:
         assert result["source"] == "openalex"
         assert result["authors"] == ["Author One", "Author Two"]
         assert result["citation_count"] == 50
+        assert result["canonical_id"] == "W123456"
+        assert result["canonical_id_source"] == "openalex"
+        assert result["no_openalex_id"] is False
 
     def test_minimal_paper(self):
         """测试最小数据格式转换。"""
@@ -118,9 +122,32 @@ class TestTransformToPapersRaw:
         }
         result = _transform_to_papers_raw(paper)
         assert result["title"] == "Minimal Paper"
-        assert result["id"] == ""
+        assert result["id"].startswith("noopenalex::")
+        assert result["canonical_id"].startswith("noopenalex::")
+        assert result["canonical_id"] != "Minimal Paper"
+        assert result["id"] == result["canonical_id"]
+        assert result["canonical_id_source"] == "noopenalex_fallback"
+        assert result["no_openalex_id"] is True
         assert result["authors"] == []
         assert result["year"] is None
+
+    def test_arxiv_without_openalex_keeps_readable_id_but_not_title_canonical(self):
+        """arXiv id can stay readable, but canonical fallback must never be a title."""
+        paper = {
+            "id": "2401.12345",
+            "source": "arxiv",
+            "title": "Readable arXiv Paper",
+            "authors": ["Author"],
+            "externalIds": {"ArXiv": "2401.12345"},
+        }
+
+        result = _transform_to_papers_raw(paper)
+
+        assert result["id"] == "arxiv:2401.12345"
+        assert result["canonical_id"] == "arxiv:2401.12345"
+        assert result["canonical_id"] != "Readable arXiv Paper"
+        assert result["canonical_id_source"] == "arxiv_noopenalex"
+        assert result["no_openalex_id"] is True
 
     def test_preserves_query_bucket_annotations(self):
         """Runtime/Scout routing labels should survive raw normalization."""
@@ -136,6 +163,39 @@ class TestTransformToPapersRaw:
         assert result["search_bucket"] == "adjacent_field"
         assert result["adjacent_field"] is True
         assert result["source_query"] == "queueing congestion learning"
+
+    def test_preserves_openalex_reference_payloads(self):
+        """OpenAlex reference fields must survive raw normalization for citation edges."""
+        paper = {
+            "id": "https://openalex.org/W123",
+            "source": "openalex",
+            "title": "OpenAlex Paper With References",
+            "authors": ["Ada"],
+            "year": 2025,
+            "referenced_works": ["W456", "W789"],
+            "related_works": ["W999"],
+            "refs_unavailable": False,
+        }
+        result = _transform_to_papers_raw(paper)
+        assert result["canonical_id"] == "W123"
+        assert result["referenced_works"] == ["W456", "W789"]
+        assert result["related_works"] == ["W999"]
+
+    def test_t2_recovery_seed_without_openalex_uses_stable_noopenalex_id(self):
+        seed = {
+            "title": "Seed Without External Identifier",
+            "authors": ["Ada"],
+            "year": 2026,
+            "abstract": "Seed abstract",
+        }
+
+        result = _seed_to_recovery_paper(seed)
+
+        assert result["id"].startswith("noopenalex::")
+        assert result["canonical_id"].startswith("noopenalex::")
+        assert result["canonical_id"] != "Seed Without External Identifier"
+        assert result["canonical_id_source"] == "noopenalex_fallback"
+        assert result["provenance"]["id_source"] == "noopenalex_fallback"
 
 
 class TestSavePapersRawTool:
@@ -256,6 +316,37 @@ class TestSavePapersRawTool:
         content = file_path.read_text(encoding="utf-8")
         lines = [l for l in content.splitlines() if l.strip()]
         assert len(lines) == 1
+
+    @pytest.mark.asyncio
+    async def test_save_skips_invalid_records_without_dropping_valid_batch(self, tool, workspace):
+        """单条空壳 metadata 不应让整批 search results 持久化失败。"""
+        papers = [
+            {
+                "id": "bad-empty-title",
+                "source": "crossref",
+                "title": "",
+                "authors": [],
+                "year": 2024,
+            },
+            {
+                "id": "good-paper",
+                "source": "openalex",
+                "title": "Valid Metadata Paper",
+                "authors": ["Ada"],
+                "year": 2025,
+                "abstract": "Useful abstract.",
+            },
+        ]
+
+        result = await tool.execute(papers=papers)
+
+        assert result.ok is True
+        assert result.data["count"] == 1
+        assert result.data["valid_input_count"] == 1
+        assert result.data["skipped_count"] == 1
+        content = (workspace / "literature" / "papers_raw.jsonl").read_text(encoding="utf-8")
+        assert "Valid Metadata Paper" in content
+        assert "bad-empty-title" not in content
 
 
 class TestSavePapersDedupTool:

@@ -167,7 +167,7 @@ project:
 4. Section-by-section argument：
    - Abstract: 压缩 problem_frame、design_rationale、artifact/evidence、contribution_type；不放正式引用
    - Introduction: 背景、problem frame、field-change argument、贡献、结果 headline
-   - Related Work: design-rationale competition、`domain_map.json` 引用图骨架、`synthesis_workbench.adjacent_transfers`、`nearest_prior_work` 和 citation-backed positioning
+   - Related Work: design-rationale competition、`domain_map.json` 引用图骨架、`synthesis_workbench.adjacent_transfers` / `bridge_transfer_drafts`、`domain_map.theory_bridge`、`nearest_prior_work` 和 citation-backed positioning
    - Method: artifact 为什么这样设计、设计原则、算法/流程、实现细节
    - Experiments: data_view、evaluation_mode、setup、baseline、metrics、main results、ablation、seed ensemble
    - Analysis: design_rationale evidence、alternative explanations、failure cases、sensitivity
@@ -325,7 +325,7 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 - 约束：所有数字逐一对照 artifacts；缺 seed/error bar/baseline 时写 TODO 或转 Conclusion Limitations；setup 必须说明外部执行器、result pack、raw/config/log/hash 和 integrity audit 边界。
 - Failure checklist：直接从 dataset 开头、表无 takeaway、ablation 与 method 对不上、数字来源不明，都必须修。
 {% elif section_id == "related_work" %}
-- Required Inputs：`paper_state.json`、`section_outlines/related_work.md`、`alignment_matrix.json` 的 related_gap / nearest_prior_work / counterfactual / novelty_signal、`synthesis.md`、`synthesis_workbench.json` 的 adjacent_transfers、`domain_map.json` 的 core/adjacent/citation_edges、`comparison_table.csv`、paper notes、`related_work.bib`。
+- Required Inputs：`paper_state.json`、`section_outlines/related_work.md`、`alignment_matrix.json` 的 related_gap / nearest_prior_work / counterfactual / novelty_signal、`synthesis.md`、`synthesis_workbench.json` 的 adjacent_transfers / bridge_transfer_drafts、`domain_map.json` 的 core / theory_bridge / adjacent / citation_edges、`comparison_table.csv`、paper notes、`related_work.bib`。
 - 使命：按 competing design rationale 定位本文，让每个 related gap 对应一条贡献。
 - 段落范式：每个 subsection 只写一个 rationale 流派；先概括共同 rationale，再列 2-4 篇代表工作，再写共同局限/tension，最后用 `% [Ci]` 对应本文贡献。
 - 约束：subsection 数约等于核心贡献数；citation key 全部来自 bib；不要第一次披露本文方法细节。

@@ -11,7 +11,9 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, Field
 
+from .abstract_utils import clean_abstract
 from .base import Tool, ToolResult
+from .search_validation import clean_search_query, empty_query_result, is_usable_paper_metadata
 
 
 class CrossRefSearchParams(BaseModel):
@@ -21,7 +23,11 @@ class CrossRefSearchParams(BaseModel):
     sort: str = Field(default="relevance", description="排序方式：relevance, score, updated, deposited, published")
     query_bucket: str | None = Field(
         default=None,
-        description="可选检索式桶标签，仅用于 ResearchOS 队列保护，不发送给 Crossref。",
+        description="可选检索式桶标签，仅作为 ResearchOS 召回意图/provenance，不发送给 Crossref，也不决定语义角色。",
+    )
+    bridge_id: str | None = Field(
+        default=None,
+        description="可选 bridge_domain_plan.json 中的 bridge_id；只记录召回意图，不代表语义角色。",
     )
 
 
@@ -46,10 +52,13 @@ class CrossRefSearchTool(Tool):
         self.base_url = "https://api.crossref.org"
 
     async def execute(self, **kwargs) -> ToolResult:
-        query = kwargs["query"]
+        query = clean_search_query(kwargs["query"])
+        if not query:
+            return empty_query_result(self.name, kwargs.get("query"))
         rows = kwargs.get("rows", 10)
         sort = kwargs.get("sort", "relevance")
         query_bucket = kwargs.get("query_bucket")
+        bridge_id = kwargs.get("bridge_id")
 
         params = {
             "query": query,
@@ -98,8 +107,8 @@ class CrossRefSearchTool(Tool):
                     if date_parts:
                         year = date_parts[0]
 
-                # 提取摘要（CrossRef 通常不提供摘要）
-                abstract = item.get("abstract", "")
+                # CrossRef 摘要若存在通常是 JATS/HTML，必须先清洗。
+                abstract = clean_abstract(item.get("abstract"))
 
                 # 提取 venue
                 container_title = item.get("container-title", [])
@@ -130,7 +139,8 @@ class CrossRefSearchTool(Tool):
                     "doi": doi,
                     "type": item_type,
                 }
-                papers.append(paper)
+                if is_usable_paper_metadata(paper):
+                    papers.append(paper)
 
             # 格式化输出
             content_lines = [
@@ -154,7 +164,13 @@ class CrossRefSearchTool(Tool):
             return ToolResult(
                 ok=True,
                 content="\n".join(content_lines),
-                data={"papers": papers, "total": total_results, "query": query, "query_bucket": query_bucket}
+                data={
+                    "papers": papers,
+                    "total": total_results,
+                    "query": query,
+                    "query_bucket": query_bucket,
+                    "bridge_id": bridge_id,
+                }
             )
 
         except Exception as e:
@@ -216,7 +232,7 @@ class CrossRefGetWorkTool(Tool):
                 if date_parts:
                     year = date_parts[0]
 
-            abstract = message.get("abstract", "")
+            abstract = clean_abstract(message.get("abstract"))
 
             container_title = message.get("container-title", [])
             venue = container_title[0] if container_title else "Unknown"

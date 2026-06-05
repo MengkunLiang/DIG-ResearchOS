@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from researchos.runtime.agent import Agent, AgentSpec, ExecutionContext
 from researchos.runtime.message import ToolCall
 from researchos.runtime.orchestrator import AgentRunner
+from researchos.runtime.run_logger import RunLogger
 from researchos.testing.mocks import FakeLLMMessage, FakeRawCompletion, FakeToolCall, MockHumanInterface, MockLLMClient
 from researchos.tools.base import Tool, ToolResult
 from researchos.tools.registry import ToolRegistry
@@ -490,6 +491,28 @@ async def test_t2_search_results_are_auto_persisted_to_papers_raw(tmp_workspace)
     assert "Runtime Auto Save for T2" in content
 
 
+def test_run_logger_marks_failed_search_error_as_append_status(tmp_workspace):
+    logger = RunLogger(tmp_workspace)
+
+    logger.tool_result(
+        "arxiv_search",
+        {"query": "   "},
+        ok=False,
+        content="query 不能为空",
+        data={"query": "   "},
+        error="empty_query",
+        duration_ms=1,
+        metadata={},
+        step=3,
+    )
+
+    run_log = (tmp_workspace / "_runtime" / "logs" / "researchos.log").read_text(encoding="utf-8")
+    assert "TOOL_RESULT" in run_log
+    assert "tool=arxiv_search" in run_log
+    assert "append_status=empty_query" in run_log
+    assert "append_status=no_papers" not in run_log
+
+
 @pytest.mark.asyncio
 async def test_t2_citation_snowball_candidates_are_auto_persisted(tmp_workspace):
     registry = ToolRegistry()
@@ -765,3 +788,12 @@ async def test_t2_finish_task_finalizes_from_raw(tmp_workspace):
     assert llm.call_count == 2
     assert (tmp_workspace / "literature" / "papers_verified.jsonl").exists()
     assert (tmp_workspace / "literature" / "deep_read_queue.jsonl").exists()
+    run_log = (tmp_workspace / "_runtime" / "logs" / "researchos.log").read_text(encoding="utf-8")
+    assert "TOOL_RESULT" in run_log
+    assert "tool=arxiv_search" in run_log
+    assert "reported_paper_count=120" in run_log
+    assert "persisted_raw_delta=120" in run_log
+    assert "raw_count_after=120" in run_log
+    assert "append_status=ok" in run_log
+    assert "FINISH_REQUESTED" in run_log
+    assert "VALIDATION_PASS" in run_log

@@ -32,6 +32,15 @@ from ._common import (
 from .guidance import load_agent_guidance
 
 
+CROSS_DOMAIN_RELATIONS = {
+    "mechanism_bridge",
+    "method_transfer",
+    "evaluation_or_metric_bridge",
+    "baseline_or_dataset_relevance",
+    "adjacent_application",
+}
+
+
 class IdeationAgent(Agent):
     """假设生成Agent。深度推理+两轮Gate确认。"""
 
@@ -260,6 +269,9 @@ class IdeationAgent(Agent):
                 continue
             idea = item.get("idea") or {}
             idea_id = str(idea.get("id") or f"#{i}")
+            ok, err = _validate_cross_domain_provenance(item.get("source") or {}, idea_id, "idea_scorecard.yaml source")
+            if not ok:
+                return False, err
             ok, err = _validate_soft_novelty_fields(item, idea_id)
             if not ok:
                 return False, err
@@ -564,6 +576,9 @@ def _validate_candidate_directions(ws: Path) -> tuple[bool, str | None]:
             return False, f"_candidate_directions.json 第{idx}条候选缺少 constraint_status"
         if len(basis) < 20:
             return False, f"_candidate_directions.json 第{idx}条候选 basis_summary 过短"
+        ok, err = _validate_cross_domain_provenance(candidate, idea_id, "_candidate_directions.json")
+        if not ok:
+            return False, err
         if origin in mainline_origins or status == "mainline":
             mainline_count += 1
         if origin in supplement_origins or status == "supplement":
@@ -639,6 +654,9 @@ def _validate_pass_stage_artifacts(ws: Path) -> tuple[bool, str | None]:
         pass1_ids.add(idea_id)
         if not str(candidate.get("idea_origin") or candidate.get("origin") or "").strip():
             return False, f"_pass1_forward_candidates.json 候选 {idea_id} 缺少 idea_origin"
+        ok, err = _validate_cross_domain_provenance(candidate, idea_id, "_pass1_forward_candidates.json")
+        if not ok:
+            return False, err
 
     reviews = pass2_data.get("reviews") if isinstance(pass2_data, dict) else None
     if not isinstance(reviews, list):
@@ -708,6 +726,38 @@ def _validate_pass_stage_artifacts(ws: Path) -> tuple[bool, str | None]:
     if missing_soft:
         return False, "_gate1_selection_brief.md 缺少软提示章节: " + ", ".join(missing_soft)
 
+    return True, None
+
+
+def _validate_cross_domain_provenance(record: dict, idea_id: str, label: str) -> tuple[bool, str | None]:
+    """Check optional bridge provenance without forcing every idea to be cross-domain."""
+
+    if not isinstance(record, dict):
+        return True, None
+    raw_source = record.get("cross_domain_source")
+    raw_relation = record.get("cross_domain_relation")
+    source = str(raw_source or "").strip()
+    relation = str(raw_relation or "").strip()
+    source_is_empty = source.casefold() in {"", "none", "null", "n/a"}
+    relation_is_empty = relation.casefold() in {"", "none", "null", "n/a"}
+
+    if source_is_empty and relation_is_empty:
+        return True, None
+    if source_is_empty and not relation_is_empty:
+        return False, (
+            f"{label} idea {idea_id} 填写了 cross_domain_relation={relation}，"
+            "但缺少 cross_domain_source/bridge_id，无法追踪跨域素材来源"
+        )
+    if relation_is_empty:
+        return False, (
+            f"{label} idea {idea_id} 填写了 cross_domain_source={source}，"
+            "但缺少 cross_domain_relation"
+        )
+    if relation not in CROSS_DOMAIN_RELATIONS:
+        return False, (
+            f"{label} idea {idea_id} 的 cross_domain_relation 非法: {relation}；"
+            f"合法值: {sorted(CROSS_DOMAIN_RELATIONS)}"
+        )
     return True, None
 
 

@@ -117,6 +117,22 @@ class _UnavailableGateHuman(HumanInterface):
         raise HumanInputUnavailable("stdin closed")
 
 
+class _AutoGateHuman(HumanInterface):
+    def __init__(self, option_id: str = "go") -> None:
+        self.option_id = option_id
+        self.gates: list[str] = []
+
+    async def ask_approval(self, *, tool_name: str, arguments: dict) -> bool:
+        return False
+
+    async def ask_clarification(self, *, question: str, suggestions: list[str] | None = None) -> str:
+        return ""
+
+    async def present_gate(self, *, gate_id: str, presentation: dict, options: list[dict]) -> dict:
+        self.gates.append(gate_id)
+        return {"option_id": self.option_id, "captured": {}}
+
+
 def test_single_task_runner_t36_alias_points_to_survey_gate():
     assert SingleTaskRunner._normalize_task_id("T3.6") == "T3.6-GATE-SURVEY"
     assert SingleTaskRunner._normalize_task_id("T3.6-SURVEY") == "T3.6-GATE-SURVEY"
@@ -226,6 +242,53 @@ async def test_complete_pipeline_pauses_when_pending_gate_input_unavailable(tmp_
     state_after = StateYaml.load_yaml(tmp_workspace / "state.yaml")
     assert state_after.status == "PAUSED"
     assert "stdin closed" in (state_after.last_error or "")
+
+
+@pytest.mark.asyncio
+async def test_complete_pipeline_presents_immediate_gate_without_prior_exit(tmp_workspace: Path):
+    config = tmp_workspace / "fsm.yaml"
+    gates = tmp_workspace / "gates.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: GATE
+        states:
+          GATE:
+            agent: hello
+            extra:
+              immediate_gate: true
+            gate: gate1
+          done:
+            terminal: true
+        """,
+    )
+    _write_yaml(
+        gates,
+        """
+        gates:
+          gate1:
+            options:
+              - id: go
+                label: Go
+                next: done
+        """,
+    )
+    human = _AutoGateHuman("go")
+    runner = CompletePipelineRunner(
+        workspace=tmp_workspace,
+        state_machine=StateMachine(config, gates),
+        llm_client=_hello_llm(),
+        tool_registry=_registry(),
+        human_interface=human,
+    )
+
+    exit_code = await runner.run(project_id="demo-project")
+
+    assert exit_code == 0
+    assert human.gates == ["gate1"]
+    state_after = StateYaml.load_yaml(tmp_workspace / "state.yaml")
+    assert state_after.status == "COMPLETED"
+    assert state_after.current_task == "done"
 
 
 def test_cli_run_task_command_dispatches(monkeypatch, tmp_path: Path):

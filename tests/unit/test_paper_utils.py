@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import pytest
+
+from researchos.tools.paper_enrichment_tool import DetectDuplicateQueriesTool
 from researchos.tools.paper_utils import expand_queries, filter_by_domain, score_papers
+from researchos.tools.paper_utils_tool import ExpandQueriesTool, LogScoutProgressTool
 from researchos.tools.semantic_scholar import _normalize_paper
 
 
@@ -26,6 +30,62 @@ def test_expand_queries_uses_llm_profile_without_builtin_ai_expansion():
     assert "cognitive psychology recall memory retrieval" in queries
     assert "LLM memory retrieval" not in queries
     assert "AI memory retrieval" not in queries
+
+
+def test_expand_queries_uses_seed_title_as_nonempty_fallback():
+    queries = expand_queries(
+        [{"title": "Transfer Learning on Heterogeneous Feature Spaces for Treatment Effects Estimation"}],
+        "",
+        max_queries=3,
+    )
+
+    assert queries
+    assert queries[0] == "Transfer Learning on Heterogeneous Feature Spaces for Treatment Effects Estimation"
+
+
+@pytest.mark.asyncio
+async def test_expand_queries_tool_rejects_empty_query_plan():
+    tool = ExpandQueriesTool()
+
+    result = await tool.execute(seed_papers=[], topic="   ", llm_queries=["", "  "], max_queries=5)
+
+    assert not result.ok
+    assert result.error == "empty_query_plan"
+    assert result.data["queries"] == []
+
+
+@pytest.mark.asyncio
+async def test_detect_duplicate_queries_rejects_all_blank_queries():
+    tool = DetectDuplicateQueriesTool()
+
+    result = await tool.execute(queries=["", "   "], threshold=0.7)
+
+    assert not result.ok
+    assert result.error == "empty_query_plan"
+
+
+@pytest.mark.asyncio
+async def test_log_scout_progress_rejects_empty_search_result(tmp_path):
+    tool = LogScoutProgressTool()
+    tool.set_workspace_dir(str(tmp_path))
+
+    result = await tool.execute(action="search_result", query=" ", source="", count=0)
+
+    assert not result.ok
+    assert result.error == "invalid_progress_event"
+    assert not (tmp_path / "literature" / "temp" / "scout_progress.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_log_scout_progress_allows_queries_without_detail(tmp_path):
+    tool = LogScoutProgressTool()
+    tool.set_workspace_dir(str(tmp_path))
+
+    result = await tool.execute(action="queries", queries=["causal retrieval"])
+
+    assert result.ok
+    progress = (tmp_path / "literature" / "temp" / "scout_progress.md").read_text(encoding="utf-8")
+    assert "causal retrieval" in progress
 
 
 def test_filter_by_domain_without_profile_keeps_all_papers():

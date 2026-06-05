@@ -3,12 +3,14 @@ from __future__ import annotations
 """AgentRunner 主循环。"""
 
 import asyncio
+from datetime import datetime, timezone
 import inspect
 import json
 from pathlib import Path
 import re
 import time
 from typing import TYPE_CHECKING, Callable
+from uuid import uuid4
 
 from ..pydantic_compat import model_dump
 from .agent import Agent, AgentResult, EffectiveConfig, ExecutionContext, resolve_effective_config
@@ -25,9 +27,10 @@ from .manuscript_recovery import (
 )
 from .message import Message, Role, ToolCall, is_empty_assistant
 from .t2_recovery import finalize_t2_outputs
-from .abstract_sweep import run_abstract_sweep
+from .abstract_sweep import run_abstract_sweep_with_reader
 from .t3_recovery import prepare_t3_resume_artifacts
 from .task_recovery import prepare_generic_resume_artifacts
+from .run_logger import RunLogger
 from .trace import NullTraceWriter, TraceWriter
 from ..tools.base import Tool, ToolResult
 from ..tools.workspace_policy import WorkspaceAccessPolicy
@@ -63,7 +66,7 @@ TOOL_CONTEXT_CONTENT_LIMITS = {
     "extract_paper_sections": 12000,
     "extract_pdf_text": 50000,
 }
-T2_PROTECTED_SEARCH_BUCKET_ALIASES = {
+T2_CROSS_DOMAIN_QUERY_BUCKET_ALIASES = {
     "adjacent": "adjacent_field",
     "adjacent-field": "adjacent_field",
     "adjacent_field": "adjacent_field",
@@ -82,7 +85,7 @@ def _normalize_t2_query_bucket(raw: object) -> str:
     value = str(raw or "").strip().casefold()
     if not value:
         return ""
-    return T2_PROTECTED_SEARCH_BUCKET_ALIASES.get(value, value.replace(" ", "_"))
+    return T2_CROSS_DOMAIN_QUERY_BUCKET_ALIASES.get(value, value.replace(" ", "_"))
 
 
 class HookExecutionError(RuntimeError):
@@ -194,6 +197,25 @@ class AgentRunner:
         else:
             trace = NullTraceWriter()
 
+        run_logger = RunLogger(
+            ctx.workspace_dir,
+            runtime_dir_name=self.runtime_settings.workspace.runtime_dir,
+            quiet=self.runtime_settings.ui.quiet,
+            verbose=self.runtime_settings.ui.verbose,
+        )
+        run_logger.event(
+            "RUN_START",
+            run_id=ctx.run_id,
+            task=ctx.task_id,
+            agent=self.agent.spec.name,
+            project_id=ctx.project_id,
+        )
+        run_logger.event(
+            "TASK_START",
+            task=ctx.task_id,
+            agent=self.agent.spec.name,
+            mode=ctx.mode or ctx.extra.get("phase"),
+        )
 
         self._print_task_start_summary(ctx, eff)
         last_model_used: str | None = None
@@ -236,6 +258,8 @@ class AgentRunner:
         tool_failure_cache: dict[tuple[str, str], Message] = {}
 
         try:
+            await self._maybe_run_t1_startup_gate(ctx, tool_map, messages, trace)
+
             # pre-hook 允许是同步或异步 callable；若返回 (ok, err) 且 ok=False，
             # 这里会统一转换成可读错误，而不是让 CLI 因 await 非协程直接崩溃。
             for hook in self.agent.spec.pre_hooks:
@@ -301,11 +325,21 @@ class AgentRunner:
             while not deterministic_pre_finalized:
                 # 每进入一轮 while，就代表一次“agent step”。
                 budget.tick_step()
+                run_logger.event(
+                    "AGENT_STEP",
+                    task=ctx.task_id,
+                    step=budget.steps,
+                    tokens=budget.tokens_in + budget.tokens_out,
+                    cost_usd=f"{budget.cost_usd:.4f}",
+                )
 
                 # 每5步输出一次进度
                 if budget.steps % 5 == 1 or budget.steps == 1:
                     step_limit = "unlimited" if budget.unlimited_budget else str(budget.max_steps)
-                    print(f"[Agent] 步骤 {budget.steps}/{step_limit} | Token: {budget.tokens_in + budget.tokens_out} | 成本: ${budget.cost_usd:.4f}", flush=True)
+                    self._emit(
+                        f"[Agent] 步骤 {budget.steps}/{step_limit} | Token: {budget.tokens_in + budget.tokens_out} | 成本: ${budget.cost_usd:.4f}",
+                        verbose_only=True,
+                    )
                 try:
                     budget.check()
                 except BudgetExceeded as exc:
@@ -326,6 +360,14 @@ class AgentRunner:
                 messages = self._maybe_truncate(messages, primary_binding)
 
                 try:
+                    run_logger.event(
+                        "LLM_CALL",
+                        task=ctx.task_id,
+                        step=budget.steps,
+                        tier=eff.llm_tier,
+                        profile=eff.llm_profile,
+                        tool_count=len(tool_schemas or []),
+                    )
                     llm_resp = await self.llm.chat(
                         messages=[item.to_openai_dict() for item in messages],
                         tools=tool_schemas or None,
@@ -340,6 +382,13 @@ class AgentRunner:
                         retry_base_delay=float(self.retry_policy.get("llm_retry_delay") or 2),
                     )
                 except LLMProviderError as exc:
+                    run_logger.event(
+                        "ERROR",
+                        task=ctx.task_id,
+                        step=budget.steps,
+                        kind="llm_provider",
+                        message=str(exc)[:300],
+                    )
                     if self._is_timeout_provider_error(exc):
                         cooldown_raw = self.retry_policy.get("llm_timeout_cooldown_seconds")
                         cooldown = 60.0 if cooldown_raw is None else float(cooldown_raw)
@@ -350,10 +399,10 @@ class AgentRunner:
                                 "LLM provider 连续超时，已暂停等待人工处理或稍后 resume；"
                                 f"最近错误: {exc}"
                             ) from exc
-                        print(
+                        self._emit(
                             "[Agent] LLM provider 连续超时，"
                             f"冷却 {cooldown:g}s 后继续尝试（第 {llm_timeout_cooldowns_used} 轮）",
-                            flush=True,
+                            important=True,
                         )
                         if cooldown > 0:
                             await asyncio.sleep(cooldown)
@@ -365,6 +414,16 @@ class AgentRunner:
                 last_model_used = llm_resp.model_used
                 last_endpoint_used = llm_resp.endpoint_used
                 budget.add_tokens(llm_resp.tokens_in, llm_resp.tokens_out, llm_resp.cost_usd)
+                run_logger.event(
+                    "LLM_RESULT",
+                    task=ctx.task_id,
+                    step=budget.steps,
+                    model=llm_resp.model_used,
+                    endpoint=llm_resp.endpoint_used,
+                    tokens_in=llm_resp.tokens_in,
+                    tokens_out=llm_resp.tokens_out,
+                    duration_ms=llm_resp.duration_ms,
+                )
                 assistant_msg = self._parse_llm_response(llm_resp, step=budget.steps)
                 trace.write_llm_response(llm_resp, assistant_msg)
 
@@ -387,9 +446,14 @@ class AgentRunner:
                 messages.append(assistant_msg)
                 trace.write_message(assistant_msg)
 
-                # 输出 Agent 的文本回复（如果有）
+                # 输出 Agent 的文本回复（如果有）。普通状态说明默认只在 verbose 显示；
+                # 但同一轮如果要 ask_human，正文通常包含用户必须看到的草案、
+                # 候选清单或决策上下文，不能被简洁模式吞掉。
                 if assistant_msg.content and assistant_msg.content.strip():
-                    print(f"\n[Agent 输出]\n{assistant_msg.content}\n", flush=True)
+                    self._emit(
+                        f"\n[Agent 输出]\n{assistant_msg.content}\n",
+                        verbose_only=not any(tc.name == "ask_human" for tc in assistant_msg.tool_calls),
+                    )
 
                 # 如果模型在文本里向用户提问/要求选择，但没有显式调用 ask_human，
                 # runtime 必须先等待人类输入。即便同一轮还混有 read/write 等工具，
@@ -440,10 +504,13 @@ class AgentRunner:
                         continue
 
                 nudge_count = 0
+                self._ensure_ask_human_questions_are_self_contained(assistant_msg)
                 # 输出工具调用信息
                 if len(assistant_msg.tool_calls) > 0:
                     tool_names = [tc.name for tc in assistant_msg.tool_calls]
-                    print(f"[Agent] 调用工具: {', '.join(tool_names)}", flush=True)
+                    self._emit(f"[Agent] 调用工具: {', '.join(tool_names)}")
+                    for tc in assistant_msg.tool_calls:
+                        run_logger.tool_call(tc.name, tc.arguments, step=budget.steps)
 
                 # 同一轮 assistant 发出的多个 tool call 可以并行执行，但回填顺序保持原顺序。
                 tool_msgs = await asyncio.gather(
@@ -456,6 +523,7 @@ class AgentRunner:
                             budget=budget,
                             step=budget.steps,
                             tool_failure_cache=tool_failure_cache,
+                            run_logger=run_logger,
                         )
                         for tc in assistant_msg.tool_calls
                     ]
@@ -476,14 +544,16 @@ class AgentRunner:
                 if pause_requested:
                     stop_reason = AgentResult.STOP_INTERRUPTED
                     error_msg = pause_reason
-                    print(f"[Agent] 任务暂停：{pause_reason}", flush=True)
+                    self._emit(f"[Agent] 任务暂停：{pause_reason}", important=True)
                     break
 
                 if finish_requested:
                     # finish_task 只是“请求结束”而不是直接结束。
                     # 真正能否成功结束，仍以 validate_outputs 为准。
-                    print(f"[Agent] Agent 请求完成任务，开始校验输出...", flush=True)
+                    self._emit("[Agent] Agent 请求完成任务，开始校验输出...")
+                    run_logger.event("FINISH_REQUESTED", task=ctx.task_id, step=budget.steps)
                     if ctx.task_id == "T2":
+                        run_logger.event("FINALIZE_STARTED", task=ctx.task_id, mode="t2_finish_finalize")
                         await self._finalize_t2_from_raw(
                             ctx,
                             mode="t2_finish_finalize",
@@ -491,13 +561,26 @@ class AgentRunner:
                             start_message="[Agent] T2 收到 finish_task，先基于 papers_raw 执行确定性收尾...",
                             success_message="[Agent] T2 确定性收尾成功，继续校验输出",
                         )
+                        run_logger.event("FINALIZE_DONE", task=ctx.task_id, mode="t2_finish_finalize")
                     ok, err = self.agent.validate_outputs(ctx)
                     if ok:
-                        print(f"[Agent] 输出校验通过，任务完成", flush=True)
+                        self._emit("[Agent] 输出校验通过，任务完成")
+                        run_logger.event("VALIDATION_PASS", task=ctx.task_id, step=budget.steps)
                         stop_reason = AgentResult.STOP_FINISHED
                         break
                     validation_fails += 1
-                    print(f"[Agent] 输出校验失败 ({validation_fails}/{validation_retry_limit}): {err}", flush=True)
+                    self._emit(
+                        f"[Agent] 输出校验失败 ({validation_fails}/{validation_retry_limit}): {err}",
+                        important=True,
+                    )
+                    run_logger.event(
+                        "VALIDATION_FAILED",
+                        task=ctx.task_id,
+                        step=budget.steps,
+                        failure=validation_fails,
+                        limit=validation_retry_limit,
+                        reason=err,
+                    )
                     if validation_fails >= validation_retry_limit:
                         (
                             extended,
@@ -512,6 +595,13 @@ class AgentRunner:
                             used_extensions=validation_extensions_used,
                         )
                         if extended:
+                            run_logger.event(
+                                "VALIDATION_RETRY",
+                                task=ctx.task_id,
+                                step=budget.steps,
+                                failure=validation_fails,
+                                new_limit=validation_retry_limit,
+                            )
                             feedback = Message.user(
                                 "用户选择继续修复输出校验问题。请只针对最后一次校验错误做最小修复，"
                                 "优先调用确定性工具或读取现有 artifact，不要重写已合格的大文件。"
@@ -550,16 +640,20 @@ class AgentRunner:
         except asyncio.CancelledError:
             stop_reason = AgentResult.STOP_INTERRUPTED
             error_msg = "Cancelled"
+            run_logger.event("PAUSED", task=ctx.task_id, reason=error_msg)
         except RecoverableRuntimePause as exc:
             stop_reason = AgentResult.STOP_INTERRUPTED
             error_msg = str(exc)
+            run_logger.event("PAUSED", task=ctx.task_id, reason=error_msg)
         except HookExecutionError as exc:
             stop_reason = AgentResult.STOP_ERROR
             error_msg = str(exc)
+            run_logger.event("ERROR", task=ctx.task_id, kind="hook", message=error_msg)
         except Exception as exc:  # pragma: no cover - safety net
             stop_reason = AgentResult.STOP_ERROR
             error_msg = f"Unexpected: {exc!r}"
             self.log.exception("agent_runner_crashed")
+            run_logger.event("ERROR", task=ctx.task_id, kind="runner_crash", message=error_msg)
         finally:
             stop_reason, error_msg = await self._maybe_finalize_t2_outputs(
                 ctx=ctx,
@@ -568,7 +662,7 @@ class AgentRunner:
             )
             self._refresh_resume_artifacts(ctx)
             self._maybe_refresh_t3_resume_artifacts(ctx, stop_reason)
-            self._maybe_run_t3_abstract_sweep(ctx, stop_reason)
+            await self._maybe_run_t3_abstract_sweep(ctx, stop_reason, eff)
             result = self._build_result(
                 ctx=ctx,
                 budget=budget,
@@ -586,6 +680,22 @@ class AgentRunner:
                 except Exception:  # pragma: no cover - logging path
                     self.log.exception("post_hook_failed")
             trace.close(result)
+            run_logger.event(
+                "TASK_END",
+                task=ctx.task_id,
+                ok=result.ok,
+                stop_reason=result.stop_reason,
+                error=result.error,
+                steps=result.steps_used,
+                tokens=result.tokens_in + result.tokens_out,
+            )
+            run_logger.event(
+                "RUN_END",
+                run_id=ctx.run_id,
+                task=ctx.task_id,
+                ok=result.ok,
+                stop_reason=result.stop_reason,
+            )
         return result
 
     async def _run_pre_hook(self, hook, ctx: ExecutionContext) -> None:
@@ -618,13 +728,33 @@ class AgentRunner:
         if len(ctx.outputs_expected) > 5:
             expected.append(f"...(+{len(ctx.outputs_expected) - 5})")
         step_limit = "unlimited" if eff.unlimited_budget else str(eff.max_steps)
-        print(
+        separator = self._centered_separator(f"{ctx.task_id} | {self.agent.spec.name}", width=80)
+        self._emit(
+            f"\n{separator}\n"
             "[Agent] 初始化完成 | "
             f"任务: {ctx.task_id} | Agent: {self.agent.spec.name} | 阶段: {phase} | "
             f"目标: {description} | 输出: {', '.join(expected) if expected else '未声明'} | "
-            f"模型层级: {eff.llm_tier} | 最大步数: {step_limit}",
-            flush=True,
+            f"模型层级: {eff.llm_tier} | 最大步数: {step_limit}\n"
+            f"{'=' * len(separator)}"
         )
+
+    @staticmethod
+    def _centered_separator(title: str, *, width: int = 80, fill: str = "=") -> str:
+        label = f" {title.strip()} "
+        if len(label) >= width:
+            return label
+        left = (width - len(label)) // 2
+        right = width - len(label) - left
+        return f"{fill * left}{label}{fill * right}"
+
+    def _emit(self, message: str, *, important: bool = False, verbose_only: bool = False) -> None:
+        """Print according to CLI verbosity while RunLogger keeps full timeline."""
+
+        if verbose_only and not self.runtime_settings.ui.verbose:
+            return
+        if self.runtime_settings.ui.quiet and not important:
+            return
+        print(message, flush=True)
 
     @staticmethod
     def _infer_task_description(ctx: ExecutionContext) -> str:
@@ -669,6 +799,118 @@ class AgentRunner:
         outcome = hook(ctx, result)
         if inspect.isawaitable(outcome):
             await outcome
+
+    async def _maybe_run_t1_startup_gate(
+        self,
+        ctx: ExecutionContext,
+        tool_map: dict[str, Tool],
+        messages: list[Message],
+        trace: TraceWriter,
+    ) -> None:
+        """T1 必须先给用户一次补充材料/确认窗口，再让 PI 扫描 seeds。
+
+        这是一个 runtime 级前置 gate，不依赖 LLM 是否记得调用 ask_human。
+        首次运行会写 `_runtime/t1_startup_gate.json`；resume 或重跑时复用该
+        artifact，把用户回答注入上下文，但不重复弹输入框。
+        """
+
+        if ctx.task_id != "T1" or self.agent.spec.name != "pi":
+            return
+        if (ctx.mode or "init") != "init":
+            return
+
+        gate_path = ctx.workspace_dir / "_runtime" / "t1_startup_gate.json"
+        existing = self._load_t1_startup_gate(gate_path)
+        if existing:
+            answer = str(existing.get("answer") or "").strip()
+            if answer:
+                ctx.extra["t1_startup_gate_answer"] = answer
+                ctx.extra["t1_startup_gate_path"] = str(gate_path)
+                note = Message.user(
+                    "【T1 启动补充 gate 已完成】\n"
+                    "下面是用户在扫描 user_seeds/ 之前补充或确认的信息。"
+                    "请先结合这段信息，再调用 list_files/read_file 扫描 user_seeds/。\n\n"
+                    f"{answer}",
+                    step=0,
+                )
+                messages.append(note)
+                trace.write_message(note)
+                return
+
+        if "ask_human" not in tool_map:
+            raise RecoverableRuntimePause(
+                "T1 启动补充 gate 需要 ask_human 工具，但当前 Agent 工具策略没有开放 ask_human。"
+            )
+
+        question = (
+            "【T1 启动补充 gate】\n"
+            "在 ResearchOS 扫描 user_seeds/ 之前，请先补充或确认初始化信息。\n\n"
+            "为什么需要回答：T1 会把你的研究边界、已有论文/想法/约束和外部资源写成 "
+            "project.yaml、user_seeds/* 与 literature/bridge_domain_plan.json；"
+            "这些 artifact 会直接影响后续 T2 检索、T3 阅读、T4 idea 生成和实验计划。"
+            "先确认一次可以避免系统用过期或缺失材料启动。\n\n"
+            "你可以回答：\n"
+            "1. 已经放入 user_seeds/ 的材料有哪些，是否可以直接扫描；\n"
+            "2. 还想补充的种子论文、arXiv/DOI、初步想法、硬约束、目标 venue、预算/GPU；\n"
+            "3. 外部资源，如数据集、benchmark、代码仓库、预训练模型；\n"
+            "4. 如果没有补充，直接回答“继续，扫描现有 user_seeds”。"
+        )
+        suggestions = [
+            "继续，扫描现有 user_seeds",
+            "我已补充 seed PDFs/seed_ideas/seed_constraints，请先读取这些文件",
+            "我要补充研究问题、目标 venue、预算/GPU 或外部资源",
+        ]
+
+        print("[Agent] T1 启动补充 gate：等待用户确认是否补充材料后再扫描 user_seeds/", flush=True)
+        result = await tool_map["ask_human"].execute(question=question, suggestions=suggestions)
+        if not result.ok:
+            reason = result.content or result.error or "T1 启动补充 gate 未获得用户输入"
+            raise RecoverableRuntimePause(str(reason))
+
+        data = result.data if isinstance(result.data, dict) else {}
+        answer = str(data.get("answer") or "").strip()
+        if not answer:
+            raise RecoverableRuntimePause("T1 启动补充 gate 收到空回答，已暂停等待明确输入。")
+
+        gate_path.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "version": "1.0",
+            "semantics": "t1_startup_material_supplement_gate",
+            "interaction_id": data.get("interaction_id") or f"t1_startup_{uuid4().hex[:12]}",
+            "task_id": ctx.task_id,
+            "run_id": ctx.run_id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "question": question,
+            "suggestions": suggestions,
+            "answer": answer,
+            "next_action": "scan_user_seeds_after_gate",
+        }
+        gate_path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        ctx.extra["t1_startup_gate_answer"] = answer
+        ctx.extra["t1_startup_gate_path"] = str(gate_path)
+
+        note = Message.user(
+            "【T1 启动补充 gate 用户回答】\n"
+            "必须先结合这段回答，再扫描 user_seeds/ 并继续后续分轮访谈：\n\n"
+            f"{answer}",
+            step=0,
+        )
+        messages.append(note)
+        trace.write_message(note)
+
+    @staticmethod
+    def _load_t1_startup_gate(path: Path) -> dict[str, object] | None:
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        if not isinstance(data, dict):
+            return None
+        if data.get("semantics") != "t1_startup_material_supplement_gate":
+            return None
+        return data
 
     async def _maybe_finalize_t2_outputs(
         self,
@@ -754,7 +996,12 @@ class AgentRunner:
         except Exception:  # pragma: no cover - refresh failure should not fail a completed T3
             self.log.exception("t3_resume_artifact_refresh_failed")
 
-    def _maybe_run_t3_abstract_sweep(self, ctx: ExecutionContext, stop_reason: str) -> None:
+    async def _maybe_run_t3_abstract_sweep(
+        self,
+        ctx: ExecutionContext,
+        stop_reason: str,
+        eff: EffectiveConfig,
+    ) -> None:
         """T3 deep read 成功后，自动运行 abstract sweep 补读。"""
 
         if ctx.task_id != "T3" or stop_reason != AgentResult.STOP_FINISHED:
@@ -767,13 +1014,45 @@ class AgentRunner:
                 return
 
             print("[Agent] T3 deep read 完成，开始 abstract sweep...", flush=True)
-            result = run_abstract_sweep(ctx.workspace_dir, sweep_config)
+
+            async def _reader_llm(_paper: dict[str, object], prompt: str) -> str:
+                llm_resp = await self.llm.chat(
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are ResearchOS Reader. Produce cautious abstract-only "
+                                "paper notes in the exact requested Markdown structure."
+                            ),
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    tools=None,
+                    temperature=0.2,
+                    tier=eff.llm_tier,
+                    profile=eff.llm_profile,
+                    model_override=eff.llm_model_override,
+                    endpoint_override=eff.llm_endpoint_override,
+                    max_context_override=eff.llm_max_context_override,
+                    timeout=int(self.global_timeout.get("llm_call") or 120),
+                    max_retries_per_model=max(1, int(self.retry_policy.get("llm_retries") or 2)),
+                    retry_base_delay=float(self.retry_policy.get("llm_retry_delay") or 2),
+                )
+                choice = llm_resp.raw.choices[0].message
+                return str(getattr(choice, "content", "") or "")
+
+            result = await run_abstract_sweep_with_reader(
+                ctx.workspace_dir,
+                sweep_config,
+                abstract_reader=_reader_llm,
+            )
             ctx.extra["abstract_sweep"] = result
 
             if result.get("notes_generated", 0) > 0:
                 print(
                     f"[Agent] Abstract sweep 完成：筛选 {result['candidates_found']} 篇候选，"
-                    f"生成 {result['notes_generated']} 篇 abstract note",
+                    f"生成 {result['notes_generated']} 篇 abstract note "
+                    f"（LLM {result.get('llm_notes_generated', 0)}，fallback {result.get('fallback_notes_generated', 0)}）",
                     flush=True,
                 )
             else:
@@ -1244,7 +1523,7 @@ class AgentRunner:
 
         print(success_message, flush=True)
         self._record_runtime_completion(ctx, mode, recovery)
-        self.log.info(f"{mode}_succeeded", recovery=recovery)
+        self.log.debug(f"{mode}_succeeded", recovery=recovery)
         return True
 
     def _record_runtime_completion(
@@ -1328,11 +1607,12 @@ class AgentRunner:
         step: int,
         budget: BudgetTracker | None = None,
         tool_failure_cache: dict[tuple[str, str], Message] | None = None,
+        run_logger: RunLogger | None = None,
     ) -> Message:
         started = time.time()
         tool = tool_map.get(tc.name)
         if tool is None:
-            return Message.tool(
+            tool_msg = Message.tool(
                 tool_call_id=tc.id,
                 name=tc.name,
                 content=f"ERROR: unknown tool '{tc.name}'. Available: {sorted(tool_map)}",
@@ -1340,6 +1620,19 @@ class AgentRunner:
                 step=step,
                 duration_ms=int((time.time() - started) * 1000),
             )
+            if run_logger is not None:
+                run_logger.tool_result(
+                    tc.name,
+                    tc.arguments,
+                    ok=False,
+                    content=tool_msg.content,
+                    data={},
+                    error="unknown_tool",
+                    duration_ms=tool_msg.duration_ms,
+                    metadata=tool_msg.metadata,
+                    step=step,
+                )
+            return tool_msg
 
         if tool.requires_human_approval:
             # 高风险工具先经过 HumanInterface 审批。
@@ -1347,7 +1640,7 @@ class AgentRunner:
             try:
                 approved = await self.human.ask_approval(tool_name=tc.name, arguments=tc.arguments)
             except HumanInputUnavailable as exc:
-                return Message.tool(
+                tool_msg = Message.tool(
                     tool_call_id=tc.id,
                     name=tc.name,
                     content=f"ERROR: approval input unavailable: {exc}",
@@ -1355,42 +1648,94 @@ class AgentRunner:
                     step=step,
                     metadata={"data": {"input_unavailable": True}, "error": "human_input_unavailable"},
                 )
+                if run_logger is not None:
+                    run_logger.tool_result(
+                        tc.name,
+                        tc.arguments,
+                        ok=False,
+                        content=tool_msg.content,
+                        data=tool_msg.metadata.get("data") or {},
+                        error="human_input_unavailable",
+                        duration_ms=tool_msg.duration_ms,
+                        metadata=tool_msg.metadata,
+                        step=step,
+                    )
+                return tool_msg
             except Exception as exc:
-                return Message.tool(
+                tool_msg = Message.tool(
                     tool_call_id=tc.id,
                     name=tc.name,
                     content=f"ERROR: approval failed: {exc!r}",
                     is_error=True,
                     step=step,
                 )
+                if run_logger is not None:
+                    run_logger.tool_result(
+                        tc.name,
+                        tc.arguments,
+                        ok=False,
+                        content=tool_msg.content,
+                        data={},
+                        error="approval_failed",
+                        duration_ms=tool_msg.duration_ms,
+                        metadata=tool_msg.metadata,
+                        step=step,
+                    )
+                return tool_msg
             finally:
                 if budget is not None:
                     budget.exclude_wall_time(time.time() - human_started)
             if not approved:
-                return Message.tool(
+                tool_msg = Message.tool(
                     tool_call_id=tc.id,
                     name=tc.name,
                     content="Rejected by human.",
                     is_error=True,
                     step=step,
                 )
+                if run_logger is not None:
+                    run_logger.tool_result(
+                        tc.name,
+                        tc.arguments,
+                        ok=False,
+                        content=tool_msg.content,
+                        data={},
+                        error="human_rejected",
+                        duration_ms=tool_msg.duration_ms,
+                        metadata=tool_msg.metadata,
+                        step=step,
+                    )
+                return tool_msg
 
         try:
             # 先用 pydantic schema 做参数校验。
             parsed = tool.parameters_schema(**tc.arguments)
         except Exception as exc:
-            return Message.tool(
+            tool_msg = Message.tool(
                 tool_call_id=tc.id,
                 name=tc.name,
                 content=f"Parameter validation error: {exc}",
                 is_error=True,
                 step=step,
             )
+            if run_logger is not None:
+                run_logger.tool_result(
+                    tc.name,
+                    tc.arguments,
+                    ok=False,
+                    content=tool_msg.content,
+                    data={},
+                    error="parameter_validation",
+                    duration_ms=tool_msg.duration_ms,
+                    metadata=tool_msg.metadata,
+                    step=step,
+                )
+            return tool_msg
 
         failure_cache_key = self._tool_failure_cache_key(tc.name, model_dump(parsed))
         if failure_cache_key and tool_failure_cache is not None and failure_cache_key in tool_failure_cache:
             cached = tool_failure_cache[failure_cache_key]
-            return Message.tool(
+            tool_msg = Message.tool(
                 tool_call_id=tc.id,
                 name=tc.name,
                 content=(
@@ -1409,6 +1754,19 @@ class AgentRunner:
                     "error": "cached_failure",
                 },
             )
+            if run_logger is not None:
+                run_logger.tool_result(
+                    tc.name,
+                    model_dump(parsed),
+                    ok=False,
+                    content=tool_msg.content,
+                    data=tool_msg.metadata.get("data") or {},
+                    error="cached_failure",
+                    duration_ms=tool_msg.duration_ms,
+                    metadata=tool_msg.metadata,
+                    step=step,
+                )
+            return tool_msg
 
         try:
             max_tool_timeout = self._timeout_for_tool(tc.name, tool)
@@ -1433,26 +1791,64 @@ class AgentRunner:
                 duration_ms=int((time.time() - started) * 1000),
             )
             self._remember_tool_failure(failure_cache_key, tool_msg, tool_failure_cache)
+            if run_logger is not None:
+                run_logger.tool_result(
+                    tc.name,
+                    model_dump(parsed),
+                    ok=False,
+                    content=tool_msg.content,
+                    data={},
+                    error="timeout",
+                    duration_ms=tool_msg.duration_ms,
+                    metadata=tool_msg.metadata,
+                    step=step,
+                )
             return tool_msg
         except ToolAccessDenied as exc:
-            return Message.tool(
+            tool_msg = Message.tool(
                 tool_call_id=tc.id,
                 name=tc.name,
                 content=f"Access denied: {exc}",
                 is_error=True,
                 step=step,
             )
+            if run_logger is not None:
+                run_logger.tool_result(
+                    tc.name,
+                    model_dump(parsed),
+                    ok=False,
+                    content=tool_msg.content,
+                    data={},
+                    error="access_denied",
+                    duration_ms=tool_msg.duration_ms,
+                    metadata=tool_msg.metadata,
+                    step=step,
+                )
+            return tool_msg
         except ToolError as exc:
-            return Message.tool(
+            tool_msg = Message.tool(
                 tool_call_id=tc.id,
                 name=tc.name,
                 content=f"Tool error: {exc}",
                 is_error=True,
                 step=step,
             )
+            if run_logger is not None:
+                run_logger.tool_result(
+                    tc.name,
+                    model_dump(parsed),
+                    ok=False,
+                    content=tool_msg.content,
+                    data={},
+                    error="tool_error",
+                    duration_ms=tool_msg.duration_ms,
+                    metadata=tool_msg.metadata,
+                    step=step,
+                )
+            return tool_msg
         except Exception as exc:
             self.log.exception("tool_crashed", tool=tc.name)
-            return Message.tool(
+            tool_msg = Message.tool(
                 tool_call_id=tc.id,
                 name=tc.name,
                 content=f"Tool crashed unexpectedly: {exc!r}",
@@ -1460,6 +1856,19 @@ class AgentRunner:
                 step=step,
                 duration_ms=int((time.time() - started) * 1000),
             )
+            if run_logger is not None:
+                run_logger.tool_result(
+                    tc.name,
+                    model_dump(parsed),
+                    ok=False,
+                    content=tool_msg.content,
+                    data={},
+                    error="tool_crashed",
+                    duration_ms=tool_msg.duration_ms,
+                    metadata=tool_msg.metadata,
+                    step=step,
+                )
+            return tool_msg
 
         auto_persist_metadata = await self._maybe_auto_persist_t2_search_result(
             ctx=ctx,
@@ -1491,6 +1900,18 @@ class AgentRunner:
         if not result.ok:
             self._remember_tool_failure(failure_cache_key, tool_msg, tool_failure_cache)
         self._record_tool_side_effect_metadata(ctx, tc.name, model_dump(parsed), result)
+        if run_logger is not None:
+            run_logger.tool_result(
+                tc.name,
+                model_dump(parsed),
+                ok=result.ok,
+                content=content,
+                data=result.data,
+                error=result.error,
+                duration_ms=tool_msg.duration_ms,
+                metadata=metadata,
+                step=step,
+            )
         return tool_msg
 
     @staticmethod
@@ -1577,6 +1998,65 @@ class AgentRunner:
             "请根据下面 Agent 原始请求作答；如果这是误触发，可以回答“继续”，runtime 会把回答记录为人工输入。\n\n"
             f"--- Agent 原始请求 ---\n{content}"
         )
+
+    @staticmethod
+    def _ensure_ask_human_questions_are_self_contained(message: Message) -> None:
+        """Make ask_human questions visible even when the model relies on prior text.
+
+        Models often print a long draft/choice list in assistant content, then call
+        ask_human with a short question like "请确认以上草案". In normal CLI mode
+        assistant content is not always shown, so the user would see an input box
+        without the actual draft. This keeps the human gate self-contained.
+        """
+
+        content = (message.content or "").strip()
+        if not content:
+            return
+        for tool_call in message.tool_calls:
+            if tool_call.name != "ask_human":
+                continue
+            raw_question = str(tool_call.arguments.get("question") or "").strip()
+            if not raw_question:
+                tool_call.arguments["question"] = content
+                continue
+            if AgentRunner._ask_human_question_depends_on_hidden_context(raw_question):
+                tool_call.arguments["question"] = (
+                    "下面是 Agent 本轮生成的完整上下文，请先阅读，再回答后面的人工输入问题。\n\n"
+                    f"{content}\n\n"
+                    "----- 需要你回答的问题 -----\n"
+                    f"{raw_question}"
+                )
+
+    @staticmethod
+    def _ask_human_question_depends_on_hidden_context(question: str) -> bool:
+        normalized = re.sub(r"\s+", "", question.strip().lower())
+        if not normalized:
+            return True
+        context_dependent_markers = (
+            "以上",
+            "上述",
+            "上面",
+            "前面",
+            "如上",
+            "以上草案",
+            "上述草案",
+            "以上project",
+            "以上`project.yaml`",
+            "以上5个",
+            "以上五个",
+            "这些方向",
+            "这些候选",
+            "请确认以上",
+            "请确认上述",
+            "请确认草案",
+            "请确认以上`project.yaml`草案",
+            "above",
+            "aforementioned",
+            "theabove",
+            "confirmtheabove",
+            "confirmthedraftabove",
+        )
+        return any(marker in normalized for marker in context_dependent_markers)
 
     @staticmethod
     def _record_tool_side_effect_metadata(
@@ -1773,16 +2253,21 @@ class AgentRunner:
             return {
                 "ok": False,
                 "error": save_result.error,
+                "raw_count_after": self._count_jsonl_records(
+                    ctx.workspace_dir / "literature" / "papers_raw.jsonl"
+                ),
                 "content_suffix": f"[Runtime] 自动保存 papers_raw 失败: {save_result.content}",
             }
 
         persisted_count = save_result.data.get("count", len(papers))
+        raw_count_after = self._count_jsonl_records(ctx.workspace_dir / "literature" / "papers_raw.jsonl")
         content_suffix = f"[Runtime] 已自动追加 {persisted_count} 篇到 literature/papers_raw.jsonl"
         if edge_persist and edge_persist.get("content_suffix"):
             content_suffix += "\n" + str(edge_persist["content_suffix"])
         return {
             "ok": True,
             "count": persisted_count,
+            "raw_count_after": raw_count_after,
             "mode": save_result.data.get("mode", "append"),
             "content_suffix": content_suffix,
         }
@@ -1863,8 +2348,9 @@ class AgentRunner:
         """Preserve explicit Scout query-bucket labels in raw paper records.
 
         The runtime does not infer academic relevance from keywords. It only
-        carries labels supplied by the LLM/tool metadata so deterministic queue
-        builders can protect adjacent-field and theory-bridge material.
+        carries labels supplied by the LLM/tool metadata as retrieval
+        provenance. Domain-map and deep-read admission still require Scout
+        LLM's semantic_screen.
         """
 
         bucket = _normalize_t2_query_bucket(
@@ -1873,8 +2359,13 @@ class AgentRunner:
             or result.data.get("search_bucket")
             or result.data.get("query_bucket")
         )
+        bridge_id = str(
+            tool_arguments.get("bridge_id")
+            or result.data.get("bridge_id")
+            or ""
+        ).strip()
         query = str(tool_arguments.get("query") or result.data.get("query") or "").strip()
-        if not bucket and not query:
+        if not bucket and not query and not bridge_id:
             return papers
 
         annotated: list[object] = []
@@ -1893,7 +2384,14 @@ class AgentRunner:
                 elif bucket in {"core", "snowball", "seed"}:
                     record["source_bucket"] = bucket
             if bucket in {"adjacent_field", "theory_bridge"}:
-                record.setdefault("adjacent_field", True)
+                record.setdefault("cross_domain_retrieval_candidate", True)
+                record.setdefault("adjacent_field", True)  # deprecated provenance alias
+                record.setdefault("retrieval_intent", "cross_domain_bridge")
+            elif bucket:
+                record.setdefault("retrieval_intent", "primary")
+            if bridge_id:
+                record.setdefault("bridge_id", bridge_id)
+                record.setdefault("retrieval_intent", "cross_domain_bridge")
             if query:
                 record.setdefault("source_query", query)
             record.setdefault("source_tool", tool_name)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 import inspect
+import logging
 import os
 from pathlib import Path
 import time
@@ -29,6 +30,29 @@ except Exception:  # pragma: no cover
 
 _log = get_logger("llm_client")
 DEFAULT_ROUTING_CONFIG_PATH = Path(__file__).parent.parent.parent / "config" / "model_routing.yaml"
+
+
+def suppress_litellm_info_logs() -> None:
+    """Keep LiteLLM INFO/debug chatter out of CLI and researchos.log."""
+
+    if litellm is not None:
+        try:
+            litellm.suppress_debug_info = True
+        except Exception:
+            pass
+        try:
+            litellm.set_verbose = False
+        except Exception:
+            pass
+    for name in (
+        "LiteLLM",
+        "litellm",
+        "litellm.utils",
+        "litellm.litellm_core_utils",
+        "httpx",
+        "httpcore",
+    ):
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def _dedupe_nonempty(values: list[str]) -> list[str]:
@@ -248,6 +272,7 @@ class LLMClient:
     """
 
     def __init__(self, routing_config_path: Path):
+        suppress_litellm_info_logs()
         if not routing_config_path.exists():
             raise ConfigurationError(f"Routing config not found: {routing_config_path}")
         self._load_env_file(routing_config_path)

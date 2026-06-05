@@ -25,11 +25,13 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "outputs": {
             "project": "project.yaml",
             "state": "state.yaml",
+            "bridge_domain_plan": "literature/bridge_domain_plan.json",
             # seed 文件是可选的，如果用户没有提供则可以不创建或创建空文件
         },
         "required_inputs": [],
         "schemas": {
             "project": "project",
+            "bridge_domain_plan": "bridge_domain_plan",
         },
     },
     "T2": {
@@ -39,6 +41,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "seed_constraints": "user_seeds/seed_constraints.md",
             "seed_ideas": "user_seeds/seed_ideas.md",
             "seed_external_resources": "user_seeds/seed_external_resources.jsonl",
+            "bridge_domain_plan": "literature/bridge_domain_plan.json",
         },
         "outputs": {
             "papers_raw": "literature/papers_raw.jsonl",
@@ -61,6 +64,20 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "deep_read_queue": "deep_read_queue",
             "domain_map": "domain_map",
         },
+    },
+    "T2-COVERAGE-GATE": {
+        "inputs": {
+            "search_log": "literature/search_log.md",
+            "missing_areas": "literature/missing_areas.md",
+            "domain_map": "literature/domain_map.json",
+            "access_audit": "literature/access_audit.md",
+            "deep_read_queue": "literature/deep_read_queue.jsonl",
+        },
+        "outputs": {
+            "coverage_decision": "literature/coverage_decision.json",
+        },
+        "required_inputs": ["search_log", "missing_areas", "domain_map", "deep_read_queue"],
+        "schemas": {},
     },
     "T3": {
         "inputs": {

@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import html
 import os
-import re
 from typing import Any
 
 import httpx
 from pydantic import BaseModel, Field
 
+from .abstract_utils import clean_abstract
 from .base import Tool, ToolResult
+from .search_validation import clean_search_query, empty_query_result, filter_usable_papers
 
 
 def _first(items: Any, default: str = "") -> str:
@@ -24,14 +25,6 @@ def _first(items: Any, default: str = "") -> str:
     if isinstance(items, str):
         return html.unescape(items)
     return html.unescape(default)
-
-
-def _clean_abstract(value: Any) -> str:
-    text = str(value or "")
-    if not text:
-        return ""
-    text = re.sub(r"<[^>]+>", " ", text)
-    return html.unescape(re.sub(r"\s+", " ", text).strip())
 
 
 def _parse_int(value: Any, default: int = 0) -> int:
@@ -83,7 +76,11 @@ class ElsevierScopusSearchParams(BaseModel):
     sort: str | None = Field(default=None, description="Scopus 排序参数，例如 -citedby-count")
     query_bucket: str | None = Field(
         default=None,
-        description="可选检索式桶标签，仅用于 ResearchOS 队列保护，不发送给 Scopus。",
+        description="可选检索式桶标签，仅作为 ResearchOS 召回意图/provenance，不发送给 Scopus，也不决定语义角色。",
+    )
+    bridge_id: str | None = Field(
+        default=None,
+        description="可选 bridge_domain_plan.json 中的 bridge_id；只记录召回意图，不代表语义角色。",
     )
 
 
@@ -97,7 +94,11 @@ class InformsSearchParams(BaseModel):
     sort: str = Field(default="relevance", description="Crossref 排序方式")
     query_bucket: str | None = Field(
         default=None,
-        description="可选检索式桶标签，仅用于 ResearchOS 队列保护，不发送给 Crossref/INFORMS。",
+        description="可选检索式桶标签，仅作为 ResearchOS 召回意图/provenance，不发送给 Crossref/INFORMS，也不决定语义角色。",
+    )
+    bridge_id: str | None = Field(
+        default=None,
+        description="可选 bridge_domain_plan.json 中的 bridge_id；只记录召回意图，不代表语义角色。",
     )
     journal_only: bool = Field(
         default=True,
@@ -143,6 +144,10 @@ class ElsevierScopusSearchTool(Tool):
             )
 
         params = ElsevierScopusSearchParams(**kwargs)
+        query = clean_search_query(params.query)
+        if not query:
+            return empty_query_result(self.name, params.query)
+        params.query = query
         request_params: dict[str, Any] = {
             "query": params.query,
             "count": params.count,
@@ -190,8 +195,7 @@ class ElsevierScopusSearchTool(Tool):
         entries = results.get("entry", [])
         if not isinstance(entries, list):
             entries = []
-        papers = [self._normalize_entry(entry) for entry in entries if isinstance(entry, dict)]
-        papers = [paper for paper in papers if paper.get("title")]
+        papers = filter_usable_papers([self._normalize_entry(entry) for entry in entries if isinstance(entry, dict)])
         total = _parse_int(results.get("opensearch:totalResults"), default=len(papers))
         return ToolResult(
             ok=True,
@@ -202,6 +206,7 @@ class ElsevierScopusSearchTool(Tool):
                 "source": "elsevier_scopus",
                 "query": params.query,
                 "query_bucket": params.query_bucket,
+                "bridge_id": params.bridge_id,
             },
         )
 
@@ -258,6 +263,10 @@ class InformsSearchTool(Tool):
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         params = InformsSearchParams(**kwargs)
+        query = clean_search_query(params.query)
+        if not query:
+            return empty_query_result(self.name, params.query)
+        params.query = query
         filters = ["prefix:10.1287"]
         if params.journal_only:
             filters.append("type:journal-article")
@@ -311,6 +320,7 @@ class InformsSearchTool(Tool):
                 "source": "informs_crossref",
                 "query": params.query,
                 "query_bucket": params.query_bucket,
+                "bridge_id": params.bridge_id,
             },
         )
 
@@ -334,7 +344,7 @@ class InformsSearchTool(Tool):
             "title": title,
             "authors": authors or ["Unknown"],
             "year": _year_from_crossref(item),
-            "abstract": _clean_abstract(item.get("abstract")),
+            "abstract": clean_abstract(item.get("abstract")),
             "venue": venue or "Unknown",
             "url": str(item.get("URL") or (f"https://doi.org/{doi}" if doi else "")).strip(),
             "citation_count": _parse_int(item.get("is-referenced-by-count"), default=0),

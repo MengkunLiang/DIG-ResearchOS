@@ -136,6 +136,42 @@ gates:
         label: "结束当前项目"
         next: done
 
+  # T2 检索覆盖确认门：
+  # T2 的 missing_areas.md 只提供 retrieval coverage hints，不是研究缺口结论。
+  # 这个 gate 把补检/复核建议交给用户决策，避免系统在覆盖不足时直接进入 T3。
+  t2_coverage_gate:
+    title: "T2 检索覆盖确认"
+    description: "Scout 已完成初步检索、验证、引用图和 deep-read queue。请确认是否按当前队列进入 T3，或回到 T2 扩检/调整。"
+    presentation:
+      search_log:
+        from_file: literature/search_log.md
+        max_chars: 3500
+      missing_areas:
+        from_file: literature/missing_areas.md
+        max_chars: 6000
+      domain_map:
+        from_file: literature/domain_map.json
+        max_chars: 4500
+      access_audit:
+        from_file: literature/access_audit.md
+        max_chars: 3500
+      deep_read_queue_preview:
+        from_file: literature/deep_read_queue.jsonl
+        max_chars: 3500
+    options:
+      - id: continue_to_t3
+        label: "进入 T3 精读"
+        next: T3
+      - id: rerun_t2_expand
+        label: "回到 T2 扩检/调整 query"
+        next: T2
+        extra:
+          allow_t2_failure_recovery: false
+          t2_user_requested_expansion: true
+      - id: stop_project
+        label: "结束当前项目"
+        next: done
+
   # T5 外部执行器选择门：
   # 真实实验启动前必须由用户显式选择执行器，完整 pipeline 不再默认使用 mock。
   t5_executor_gate:

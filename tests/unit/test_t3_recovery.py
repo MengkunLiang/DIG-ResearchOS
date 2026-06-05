@@ -10,6 +10,19 @@ from researchos.testing.mocks import MockHumanInterface, MockLLMClient
 from researchos.tools.registry import ToolRegistry
 
 
+def _screen() -> dict:
+    return {
+        "relation_to_project": "baseline_or_dataset_relevance",
+        "role": "baseline",
+        "confidence": "medium",
+        "bridge_id": None,
+        "can_enter_core": False,
+        "can_enter_deep_read": True,
+        "rationale": "LLM screening keeps this legacy dedup record eligible for T3 recovery.",
+        "evidence_fields_used": ["title", "abstract"],
+    }
+
+
 class _T3Agent(Agent):
     def __init__(self) -> None:
         super().__init__(AgentSpec(name="reader", model_tier="medium", tool_names=[]))
@@ -138,6 +151,7 @@ def test_prepare_t3_resume_artifacts_builds_pending_queue_from_dedup(tmp_path: P
                 "access_score_estimate": 0.8,
                 "access_score": 0.8,
                 "evidence_level": "PARTIAL_TEXT",
+                "semantic_screen": _screen(),
             },
             {
                 "id": "paper2",
@@ -148,6 +162,7 @@ def test_prepare_t3_resume_artifacts_builds_pending_queue_from_dedup(tmp_path: P
                 "access_score_estimate": 0.7,
                 "access_score": 0.7,
                 "evidence_level": "ABSTRACT_ONLY",
+                "semantic_screen": _screen(),
             },
         ],
     )

@@ -89,8 +89,8 @@ class ScorePapersTool(Tool):
 
 class ExpandQueriesParams(BaseModel):
     seed_papers: list[dict] = Field(default_factory=list, description="种子论文列表（可选，如果没有则传空列表）")
-    topic: str = Field(..., description="研究主题")
-    max_queries: int = Field(10, description="最大检索式数量")
+    topic: str = Field("", description="研究主题；如果为空，必须提供真实 seed 标题或 llm_queries")
+    max_queries: int = Field(10, ge=1, le=50, description="最大检索式数量")
     current_year: int | None = Field(
         None,
         description="可选：用于可复现测试的当前年份；默认使用运行时 UTC 年份",
@@ -132,6 +132,23 @@ class ExpandQueriesTool(Tool):
                 params.llm_queries,
                 params.domain_hints,
             )
+            if not result:
+                return ToolResult(
+                    ok=False,
+                    content=(
+                        "未能生成任何非空检索式。这通常表示 project.yaml 中研究主题为空、"
+                        "没有真实 seed paper 标题，且 Scout LLM 没有提供 llm_queries/domain_profile。"
+                        "请先基于用户材料归纳 domain_profile 并传入具体 llm_queries；"
+                        "如果材料不足，必须调用 ask_human 补充研究问题/边界，不能继续空 query 搜索。"
+                    ),
+                    error="empty_query_plan",
+                    data={
+                        "queries": [],
+                        "topic": params.topic,
+                        "seed_count": len(params.seed_papers),
+                        "llm_query_count": len(params.llm_queries or []),
+                    },
+                )
             return ToolResult(
                 ok=True,
                 content=f"生成 {len(result)} 条检索式",
@@ -239,7 +256,7 @@ class GenerateSearchLogTool(Tool):
 
 class LogScoutProgressParams(BaseModel):
     action: str = Field(..., description="操作类型: init|queries|search|search_result|dedup|score|write|finish")
-    detail: str = Field(..., description="操作详情")
+    detail: str = Field("", description="操作详情")
     query: str | None = Field(None, description="检索式（search 时使用）")
     count: int | None = Field(None, description="论文数量")
     source: str | None = Field(None, description="数据源（search 时使用）")
@@ -278,20 +295,51 @@ class LogScoutProgressTool(Tool):
             if action == "init":
                 logger.log_init(params.count, params.topic)
             elif action == "queries":
-                if params.queries:
-                    logger.log_queries_expanded(params.queries)
+                queries = [" ".join(str(item or "").split()) for item in (params.queries or [])]
+                queries = [item for item in queries if item]
+                if queries:
+                    logger.log_queries_expanded(queries)
                 else:
-                    return ToolResult(ok=False, content="queries 参数缺失", error="missing_param")
+                    return ToolResult(ok=False, content="queries 参数缺失或全为空", error="missing_param")
             elif action == "search":
-                logger.log_search_start(params.query or "", params.source)
+                query = _clean_progress_text(params.query)
+                source = _clean_progress_text(params.source)
+                if not query or not source:
+                    return ToolResult(
+                        ok=False,
+                        content="search 进度必须包含非空 query 和 source；空 query 表示上游检索式生成/传参有问题。",
+                        error="invalid_progress_event",
+                        data={"query": params.query, "source": params.source},
+                    )
+                logger.log_search_start(query, source)
             elif action == "search_result":
+                query = _clean_progress_text(params.query)
+                source = _clean_progress_text(params.source)
+                if not query or not source or params.count is None:
+                    return ToolResult(
+                        ok=False,
+                        content=(
+                            "search_result 进度必须包含非空 query、source 和显式 count；"
+                            "不能把普通状态说明记录成 `检索 '' -> 0 篇` 这类无法排障的事件。"
+                        ),
+                        error="invalid_progress_event",
+                        data={"query": params.query, "source": params.source, "count": params.count},
+                    )
                 logger.log_search_result(
-                    params.query or "",
+                    query,
                     params.count or 0,
-                    params.source or "",
+                    source,
                 )
             elif action == "search_error":
-                logger.log_search_error(params.query or "", params.detail)
+                query = _clean_progress_text(params.query)
+                if not query:
+                    return ToolResult(
+                        ok=False,
+                        content="search_error 进度必须包含失败的非空 query。",
+                        error="invalid_progress_event",
+                        data={"query": params.query},
+                    )
+                logger.log_search_error(query, params.detail)
             elif action == "dedup":
                 logger.log_dedup(params.before or 0, params.after or 0)
             elif action == "score":
@@ -299,10 +347,25 @@ class LogScoutProgressTool(Tool):
             elif action == "write":
                 logger.log_write_file(params.detail, params.count)
             elif action == "finish":
-                logger.log_finish(params.count or 0, params.after or 0)
+                raw_count = _safe_count_file(Path(self.workspace_dir) / "literature" / "papers_raw.jsonl")
+                dedup_count = _safe_count_file(Path(self.workspace_dir) / "literature" / "papers_dedup.jsonl")
+                logger.log_finish_requested(raw_count, dedup_count, params.detail)
             else:
                 logger.log_step(action, params.detail)
             content = logger.read_progress() or ""
             return ToolResult(ok=True, content=f"进度已记录，当前日志：\n{content[-500:]}")
         except Exception as e:
             return ToolResult(ok=False, content="", error=str(e))
+
+
+def _clean_progress_text(value: Any) -> str:
+    return " ".join(str(value or "").split())
+
+
+def _safe_count_file(path: Path) -> int:
+    if not path.exists():
+        return 0
+    try:
+        return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+    except OSError:
+        return 0

@@ -26,7 +26,7 @@ def policy(workspace_dir: Path) -> WorkspaceAccessPolicy:
     return WorkspaceAccessPolicy(
         workspace_dir=workspace_dir,
         allowed_read_prefixes=[""],
-        allowed_write_prefixes=["", "subdir/"],
+        allowed_write_prefixes=["", "subdir/", "literature/"],
     )
 
 
@@ -244,6 +244,64 @@ async def test_write_structured_file_creates_parent_dirs(tool: WriteStructuredFi
     project_file = workspace_dir / "subdir" / "nested" / "project.yaml"
     assert project_file.exists()
     assert project_file.parent.exists()
+
+
+@pytest.mark.asyncio
+async def test_write_structured_file_bridge_domain_plan_requires_literature_path(
+    tool: WriteStructuredFileTool,
+    workspace_dir: Path,
+):
+    """bridge_domain_plan 不能写到根目录，避免 T2 读取不到。"""
+    result = await tool.execute(
+        path="bridge_domain_plan.json",
+        schema_name="bridge_domain_plan",
+        format="json",
+        data={
+            "semantics": "bridge_domain_plan",
+            "source": "auto",
+            "bridge_domains": [],
+        },
+    )
+
+    assert not result.ok
+    assert result.error == "wrong_artifact_path"
+    assert "literature/bridge_domain_plan.json" in result.content
+    assert not (workspace_dir / "bridge_domain_plan.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_write_structured_file_bridge_domain_plan_valid_json(
+    tool: WriteStructuredFileTool,
+    workspace_dir: Path,
+):
+    """T1 可以用结构化工具写入正式 bridge_domain_plan。"""
+    result = await tool.execute(
+        path="literature/bridge_domain_plan.json",
+        schema_name="bridge_domain_plan",
+        format="json",
+        data={
+            "version": "1.0",
+            "semantics": "bridge_domain_plan",
+            "source": "mixed",
+            "bridge_domains": [
+                {
+                    "bridge_id": "b1",
+                    "name": "Causal robustness",
+                    "why": "May provide useful retrieval analogies.",
+                    "priority": "must_explore",
+                    "queries": ["causal robustness recommendation"],
+                    "source": "user",
+                }
+            ],
+        },
+    )
+
+    assert result.ok
+    plan_path = workspace_dir / "literature" / "bridge_domain_plan.json"
+    assert plan_path.exists()
+    data = json.loads(plan_path.read_text(encoding="utf-8"))
+    assert data["semantics"] == "bridge_domain_plan"
+    assert data["bridge_domains"][0]["bridge_id"] == "b1"
 
 
 @pytest.mark.asyncio

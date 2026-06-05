@@ -88,9 +88,10 @@
 {% endif %}
 
 ## 输出
-1. `literature/paper_notes/{id}.md`: 每篇论文的结构化笔记
+1. `literature/paper_notes/{id}.md`: 每篇论文的结构化笔记（新笔记优先用 `save_paper_note` 生成路径和刷新 manifest）
 2. `literature/comparison_table.csv`: 论文对比表（累积写入）
 3. `literature/related_work.bib`: BibTeX引用库（累积写入）
+4. `literature/notes_manifest.json`: runtime 自动刷新的 T3 完成度账本；你不要手写它
 
 如果只能基于 abstract/metadata 写 note，除 FULL/PARTIAL note 的主体字段外，还必须包含两个轻字段，供 T3.5 看见跨域桥接价值：
 - `## A. 核心做法/视角`：这篇 abstract 呈现出的核心方法、机制视角或评价视角；无法确认时明确写 `LLM_REVIEW_REQUIRED`。
@@ -111,30 +112,30 @@
 - **一次处理1篇**，完成一篇再处理下一篇
 - 不要并行处理多篇论文，避免context混淆
 - 每篇读完立即写note，不要累积在context中
-- **禁止整池读取 metadata**：处理单篇论文时，用 `lookup_paper_record(paper_id=..., title=...)`
-  查单条记录；不要用 `read_file` 分页读取整份 `papers_verified.jsonl` / `papers_dedup.jsonl`
+- **保存新 note 必须优先调用 `save_paper_note(queue_rank=..., content=...)`**：工具会从队列解析论文、生成 `paper_notes` 文件名、即时校验19节结构并刷新 `notes_manifest.json`。不要自己手抄 `noopenalex__...` 或手动拼文件名。
+- **禁止整池读取 metadata**：处理队列论文时优先用 `lookup_paper_record(queue_rank=...)`
+  查单条记录；只有没有 queue rank 时才用 `paper_id` / `title`。不要用 `read_file`
+  分页读取整份 `papers_verified.jsonl` / `papers_dedup.jsonl`
 {% if resume_mode or existing_note_count > 0 %}
 - **恢复运行优先**：先扫描 `literature/paper_notes/` 现有文件，建立“已完成论文ID集合”
 - **恢复时先修质量**：如果已有 note 的 `Key Results` 中存在包含数字但同一行没有 `[Evidence: ...]` 的结果，必须先修订该 note；这种 note 不能视为已完成
 - **恢复时先补阅读覆盖**：如果已有 note 缺少 `## 12. Reading Coverage`，或 `[FULL-TEXT]` note 没有记录完整页码覆盖与最终无截断（`none`/`无`/`final no truncation`/`最终未截断`），必须先修订；这种 note 不能视为已完成
 - **恢复时先补 CDR 字段**：如果已有 note 缺少 `## 13. Mechanism Claim` 或 `## 14. Design Rationale`-`## 19. Cross-Paper Tension`，必须先修订补充；这种 note 不能视为已完成
 - **先做账目对齐**：如果已有笔记对应的 `comparison_table.csv` 行或 `related_work.bib` 条目缺失，先补齐这些缺口
-- **只补未完成论文**：如果某篇论文的规范化ID已经有对应 `.md` 笔记，则直接跳过，不要重写
+- **只补未完成论文**：以 `notes_manifest.json` / `deep_read_queue_pending.jsonl` 为准；如果某篇论文已有结构合格 note，则直接跳过，不要重写。若同名 note 存在但结构不合格，应修补它而不是另建 alias 文件。
 - **避免重复追加**：不要为已完成论文重复写入 `comparison_table.csv` 或 `related_work.bib`
 - **保留已有产物**：不要把已有 `paper_notes/`、`comparison_table.csv`、`related_work.bib` 整体重写为空或重建
 {% endif %}
 
 ### 单篇论文处理流程
-1. 先用 `list_files` 盘点 `literature/paper_notes/` 中已有的 `.md` 文件，并把文件名 stem 视作已完成的规范化ID
+1. 先用 `list_files` 盘点 `literature/paper_notes/` 中已有的 `.md` 文件；如果存在 `literature/notes_manifest.json`，优先读取它判断哪些 queue rank 已完成、哪些 note 结构不合格
 2. 如果存在 `user_seeds/seed_papers.jsonl`，先读取其中的 seed papers，并在 `deep_read_queue.jsonl` 或 `papers_dedup.jsonl` 中按标题/ID匹配；把匹配成功的 seed papers 放到最前面
 3. 如果存在 `deep_read_queue_pending.jsonl`，优先使用它作为工作清单；否则回退到 `deep_read_queue.jsonl`；如果两者都不存在，再回退到 `papers_verified.jsonl`，最后才回退到 `papers_dedup.jsonl`
 4. 检查 `comparison_table.csv` 与 `related_work.bib` 是否落后于已有笔记；如果缺少某些已有论文的记录，先从已有 note 中提取必要信息并补齐
-5. 用 `lookup_paper_record` 读取当前待处理论文的 metadata；如果其规范化ID已完成，则跳过这篇，继续下一篇
+5. 用 `lookup_paper_record(queue_rank=<当前队列rank>)` 读取当前待处理论文的 metadata；如果 manifest 显示该 queue rank 已完成，则跳过这篇，继续下一篇
 6. 尝试获取全文：
-   - **ID规范化**：论文ID中的特殊字符（如 `:` `/`）在文件名中替换为 `_`
-     - 例如：`arxiv:2301.12345` → 文件名使用 `arxiv_2301.12345.pdf`
-     - 例如：`doi:10.1234/5678` → 文件名使用 `doi_10.1234_5678.pdf`
-   - 优先检查 `literature/pdfs/{normalized_id}.pdf` 是否存在
+   - **PDF路径检查**：优先使用 queue/lookup 返回的 `seed_pdf_path`，其次检查 `literature/pdfs/{normalized_id}.pdf` 或与 record ID 对应的 PDF
+   - `normalized_id` 只用于查找 PDF，不用于你手写 note 文件名；note 文件名由 `save_paper_note` 生成
    - 如果存在，必须使用 `extract_pdf_text` 覆盖 PDF 的全部页面；不能只读前几页或“足以写笔记”的章节就停止
    - `extract_pdf_text` 返回开头会包含 `total_pages`、`extracted_page_range`、`preview_truncated_by_max_chars`、`complete_pdf_read` 等覆盖信息
    - 短论文可一次读取：`extract_pdf_text(pdf_path=..., start_page=1, max_pages=null, max_chars=50000)`；只有当 `complete_pdf_read=true` 且未被 runtime 截断时，才可标记 **[FULL-TEXT]**
@@ -145,9 +146,10 @@
    - 如果全文无法获取或 PDF 解析失败，再基于 abstract 和 metadata 写保守笔记，并在 Status 中明确标注
    - 如果不存在，尝试使用 `fetch_paper_pdf` 下载（传入原始ID，如 `arxiv:2301.12345`、`10.1234/xxxx`、`W1234567890`）
      - `fetch_paper_pdf` 优先支持 arXiv，同时也会尝试从 OpenAlex 的开放获取位置、DOI 跳转链接里寻找 PDF
+     - 如果你传入的是 OpenAlex/canonical/noopenalex ID，工具会先回查 `deep_read_queue`、`papers_verified`、`papers_dedup` 和 `papers_raw` 中同一论文的 `pdf_url`、arXiv ID、DOI、OpenAlex OA location，再组成候选 URL；不需要你手抄整池 metadata
      - 对于闭源或无开放获取副本的论文，下载仍可能失败
    - 如果都失败，基于abstract和metadata生成笔记，并在笔记中标注 **[ABSTRACT-ONLY]**
-7. 按照模板写 `literature/paper_notes/{normalized_id}.md`（注意文件名也要规范化）
+7. 按照模板组织完整 markdown note，然后调用 `save_paper_note(queue_rank=<当前队列rank>, content=<完整note>)` 保存；不要自己选择 `{normalized_id}`。如果工具返回 `note_incomplete`，按返回的缺失字段修补同一篇 note 后再次调用 `save_paper_note`。
 8. 仅为这篇“新完成的论文”追加一行到 `literature/comparison_table.csv`
 9. 仅为这篇“新完成的论文”追加一条到 `literature/related_work.bib`
 
@@ -302,16 +304,16 @@ paper_id,Paper Title,2026,Venue,Method Family,DatasetOrSetting,Primary Metric,85
 
 1. **禁止编造数据**：如果PDF读不到，只基于abstract写笔记，并在Status字段标注 **[ABSTRACT-ONLY]**
 2. **verified 论文优先**：如果 `papers_verified.jsonl` 存在，优先从 verified 池和 queue 里读取；不要默认消费未核验 dedup 论文
-3. **单篇 metadata 查询**：需要论文详情时调用 `lookup_paper_record`；除非 queue 文件不存在且没有其他选择，不要读取完整 `papers_verified.jsonl` 或 `papers_dedup.jsonl`
+3. **单篇 metadata 查询**：需要论文详情时优先调用 `lookup_paper_record(queue_rank=...)`；除非 queue 文件不存在且没有其他选择，不要读取完整 `papers_verified.jsonl` 或 `papers_dedup.jsonl`
 4. **PDF可用必须全文覆盖**：只要本地存在 PDF 或 `fetch_paper_pdf` 下载成功，就必须用 `extract_pdf_text` 读到 `total_pages` 的最后一页；不能只读前 8-10 页
 5. **FULL-TEXT判定要严格**：只有所有页面都读过且最终没有未解决的 `preview_truncated_by_max_chars=true` / runtime 截断时，Status 才能写 **[FULL-TEXT]**；如果初次调用被截断，必须分块重读直到全篇覆盖并在 `Truncation` 说明已解决；否则写 **[PARTIAL-TEXT]**
 6. **section 只作辅助定位**：`extract_paper_sections` 可用于快速找方法、实验、结论等位置，但最终笔记应基于全文或明确标注为部分阅读
 7. **数字必须具体**：不能写"显著提升"、"大幅改进"，必须写具体数值
 8. **数字必须有证据锚点**：`Key Results` 中每一条包含数字的 bullet/表格行，必须在同一行包含精确格式 `[Evidence: ...]`；全文可写 `[Evidence: p.3]` / `[Evidence: Section 4.2]`，摘要笔记可写 `[Evidence: Abstract]`；没有证据就不要写成确定性数字
-9. **每篇读完立即写note**：写完 note 后只保留这篇论文的 ID/状态/一行表格信息，不要在回复中复述大段论文内容，避免token爆炸
+9. **每篇读完立即写note**：写完 note 后用 `save_paper_note` 落盘并检查工具返回；只保留这篇论文的 queue_rank/ID/状态/一行表格信息，不要在回复中复述大段论文内容，避免token爆炸
 10. **容错处理**：如果个别论文处理失败（PDF损坏、格式异常等），记录错误但继续处理下一篇
-11. **ID规范化**：论文ID中的特殊字符（如 `:` `/`）在文件名中替换为 `_`
-12. **恢复时禁止覆盖合格笔记**：如果已存在同名 `paper_notes/{normalized_id}.md` 且结构完整、Key Results 数字均带 `[Evidence: ...]`、Reading Coverage 合格，视为该论文已完成，不要重写；若证据格式或阅读覆盖记录不合格，应只修订该 note 的格式和证据锚点
+11. **ID规范化交给工具**：论文ID中的特殊字符、`noopenalex::...` 到文件名的转换由 `save_paper_note` / runtime 完成；你只需要使用队列里的 `queue_rank`
+12. **恢复时禁止覆盖合格笔记**：如果 `notes_manifest.json` 或恢复队列显示该 queue rank 已有结构合格 note，视为该论文已完成，不要重写；若同名 note 存在但证据格式或阅读覆盖记录不合格，应只修订该 note 的格式和证据锚点
 13. **恢复时禁止重复追加**：已有论文不要再次写入 comparison_table / BibTeX，避免重复行和重复引用
 14. **种子论文必须优先**：在同等情况下，seed papers 优先于普通高分论文；如果 seed paper 没进入 dedup，必须把它视为上游召回问题而不是直接忽略
 
@@ -354,7 +356,7 @@ paper_id,Paper Title,2026,Venue,Method Family,DatasetOrSetting,Primary Metric,85
 - `literature/paper_notes/`: 包含 {{ note_count }} 篇论文的结构化笔记（full-text 精读）
 - `literature/paper_notes_abstract/`: {% if abstract_note_count %}{{ abstract_note_count }} 篇 abstract-only 笔记（证据较弱）{% else %}abstract-only 笔记（如有，由 runtime 自动补读）{% endif %}
 - `literature/comparison_table.csv`: 论文对比表
-- `literature/domain_map.json`: T2 生成的引用图领域地图；用于把 citation_edges 作为客观骨架，并识别 core/adjacent/boundary 区域
+- `literature/domain_map.json`: T2 生成的引用图领域地图；用于把 citation_edges 作为客观骨架，并识别 core/theory_bridge/adjacent/boundary 区域
 {% if missing_areas %}
 - `literature/missing_areas.md`: T2 阶段生成的检索覆盖提示，不是最终研究缺口结论
 {% endif %}
@@ -404,10 +406,10 @@ paper_id,Paper Title,2026,Venue,Method Family,DatasetOrSetting,Primary Metric,85
 - 每个问题要关联具体论文
 - 说明为什么这个问题尚未解决；如果只来自 `missing_areas.md`，必须先写清楚它只是覆盖提示并说明你的复核依据
 
-#### 1e. 邻接领域可迁移机制
+#### 1e. 邻接/理论桥接可迁移机制
 读取 `literature/domain_map.json`，把 `citation_edges` 当作客观引用骨架，再叠加你对 paper notes 的 design_rationale 判断。
-- 重点查看 `domain_map.adjacent` 和 abstract-only notes 的 `## A. 核心做法/视角` / `## B. 桥接点`
-- 找出邻接领域中可能可迁移的机制、视角或评价模式
+- 重点查看 `domain_map.theory_bridge`、`domain_map.adjacent` 和 abstract-only notes 的 `## A. 核心做法/视角` / `## B. 桥接点`
+- 找出邻接领域或理论桥接材料中可能可迁移的机制、视角或评价模式
 - 这些只是 T4 的生成燃料，不是已经成立的研究缺口；证据不足时要说明“覆盖不足/需复核”
 
 ### 阶段 2：调用 build_synthesis_workbench
@@ -498,12 +500,12 @@ build_synthesis_workbench(
 - **Evidence boundary**：哪方证据更强，哪方只是 claim
 - **Idea fuel**：这个 tension 如何供 T4 Pass 1 生成问题重构或 design rationale
 
-### 5. 邻接领域可迁移机制 (Adjacent Transfers / Transferable Mechanisms)
-显式消费 `domain_map.adjacent`、`domain_map.citation_edges` 和 abstract-only note 的桥接字段，列出邻接领域可能迁移到本领域的 2-5 个机制/视角。
+### 5. 邻接领域与理论桥接可迁移机制 (Adjacent / Theory-Bridge Transfers)
+显式消费 `domain_map.theory_bridge`、`domain_map.adjacent`、`domain_map.citation_edges` 和 abstract-only note 的桥接字段，列出可能迁移到本领域的 2-5 个机制/视角。
 
 每个条目包含：
-- **Source field / papers**: 来自哪个邻接方向和哪些 paper IDs
-- **Mechanism or viewpoint**: 邻接领域的核心做法/视角
+- **Source field / papers**: 来自哪个邻接或 theory_bridge 方向和哪些 paper IDs
+- **Mechanism or viewpoint**: 邻接/理论桥接材料的核心做法、视角或评价模式
 - **Bridge to target domain**: 它与本项目主线的连接点
 - **Why not already used**: 本领域目前为什么可能没有充分使用；不确定时写“需复核”
 - **Transfer hypothesis hint**: 给 T4 的候选生成提示
@@ -531,8 +533,8 @@ build_synthesis_workbench(
 7. **面向T4**：记住这份综述是为T4 Ideation准备的，要突出创新机会
 8. **论文ID与文件名区分**：文件路径必须使用规范化 ID（特殊字符替换为下划线，例如 `arxiv_2301.12345.md`）；正文引用可以使用 `[arxiv:2301.12345]` 或 `[arxiv_2301.12345]`，validator 会做兼容匹配
 9. **证据强度区分**：`paper_notes/` 中的论文可能是 FULL/PARTIAL/ABSTRACT，必须看每篇 note 的 Status 和 Reading Coverage；`paper_notes_abstract/` 中的论文仅基于 abstract，evidence_type 为 `abstract_claim_hint`（旧产物可能是 `claimed_untested`），只能用于覆盖广度和补检线索，不能作为机制结论
-10. **CDR 输出对齐 T4 Pass 1**：`synthesis_workbench.json` 和最终 `synthesis.md` 必须包含 contribution_space / cross_paper_tensions / adjacent_transfers 素材；这些是生成燃料，不是 provenance gate
-11. **引用图骨架**：使用 `domain_map.citation_edges` 理解论文之间的关系，但不要把机械 core/adjacent/boundary bucket 当成最终学术结论；最终解释仍由你基于笔记和领域知识判断。
+10. **CDR 输出对齐 T4 Pass 1**：`synthesis_workbench.json` 和最终 `synthesis.md` 必须包含 contribution_space / cross_paper_tensions / adjacent_transfers / bridge_transfer_drafts 素材；这些是生成燃料，不是 provenance gate
+11. **引用图骨架**：使用 `domain_map.citation_edges` 理解论文之间的关系，但不要把 `core/theory_bridge/adjacent/boundary` review buckets 当成最终学术结论；最终解释仍由你基于笔记和领域知识判断。
 
 ## 完成标准
 

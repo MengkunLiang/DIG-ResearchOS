@@ -9,7 +9,6 @@ from __future__ import annotations
 """
 
 from datetime import datetime
-from html import unescape
 import os
 from typing import Any, Literal
 from urllib.parse import quote, quote_plus
@@ -22,17 +21,23 @@ except ModuleNotFoundError:  # pragma: no cover - 依赖是否安装取决于环
 from pydantic import BaseModel, Field
 
 from ..runtime.errors import ToolRuntimeError
+from .abstract_utils import clean_abstract
 from .base import Tool, ToolResult
+from .search_validation import clean_search_query, empty_query_result, filter_usable_papers
 
 
 class SearchPapersParams(BaseModel):
-    query: str = Field(..., min_length=1, description="搜索关键词")
+    query: str = Field(..., description="搜索关键词")
     year_from: int | None = Field(None, description="起始年份，如 2022")
     year_to: int | None = Field(None, description="截止年份")
     max_results: int = Field(20, ge=1, le=100, description="最多返回多少篇论文")
     query_bucket: str | None = Field(
         None,
-        description="可选检索式桶标签，仅用于后续队列保护，例如 core/baseline/adjacent_field/theory_bridge。",
+        description="可选检索式桶标签，仅作为召回意图/provenance，例如 core/baseline/adjacent_field/theory_bridge；不决定 core/bridge/target。",
+    )
+    bridge_id: str | None = Field(
+        None,
+        description="可选 bridge_domain_plan.json 中的 bridge_id；只作为召回意图记录，不代表论文语义角色。",
     )
     source: Literal["semantic_scholar", "arxiv", "auto"] = Field(
         "auto",
@@ -62,8 +67,14 @@ class SearchPapersTool(Tool):
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         params = SearchPapersParams(**kwargs)
+        query = clean_search_query(params.query)
+        if not query:
+            return empty_query_result(self.name, params.query)
+        params.query = query
         query_bucket = params.query_bucket
+        bridge_id = params.bridge_id
         params.query_bucket = None
+        params.bridge_id = None
         papers: list[dict[str, Any]] = []
         source_used = params.source
 
@@ -96,6 +107,8 @@ class SearchPapersTool(Tool):
                 raise ToolRuntimeError(self.name, exc) from exc
             source_used = "arxiv"
 
+        papers = filter_usable_papers(papers)
+
         return ToolResult(
             ok=True,
             content=self._format_papers(papers),
@@ -105,6 +118,7 @@ class SearchPapersTool(Tool):
                 "count": len(papers),
                 "query": params.query,
                 "query_bucket": query_bucket,
+                "bridge_id": bridge_id,
             },
         )
 
@@ -163,7 +177,7 @@ class SearchPapersTool(Tool):
             "title": item.get("title", ""),
             "authors": [author.get("name", "") for author in item.get("authors", [])],
             "year": item.get("year"),
-            "abstract": item.get("abstract", ""),
+            "abstract": clean_abstract(item.get("abstract")),
             "venue": item.get("venue", ""),
             "citationCount": item.get("citationCount", 0),
             "externalIds": external_ids,
@@ -174,7 +188,7 @@ class SearchPapersTool(Tool):
     def _normalize_arxiv_entry(entry: ET.Element, ns: dict[str, str]) -> dict[str, Any]:
         def text(tag: str) -> str:
             value = entry.findtext(tag, default="", namespaces=ns)
-            return unescape(" ".join(value.split()))
+            return clean_abstract(" ".join(value.split()))
 
         authors = [
             author.findtext("atom:name", default="", namespaces=ns)
