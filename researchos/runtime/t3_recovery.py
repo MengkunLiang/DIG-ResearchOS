@@ -45,7 +45,18 @@ def _is_complete_note(note_path: Path) -> bool:
         return False
 
 
-def _note_keys(notes_dir: Path) -> set[str]:
+def _note_paths(literature_dir: Path) -> list[Path]:
+    paths: list[Path] = []
+    notes_dir = literature_dir / "paper_notes"
+    if notes_dir.exists():
+        paths.extend(path for path in notes_dir.glob("*.md") if is_paper_note_file(path))
+    bridge_dir = literature_dir / "paper_notes_bridge"
+    if bridge_dir.exists():
+        paths.extend(path for path in bridge_dir.glob("**/*.md") if is_paper_note_file(path))
+    return sorted(paths)
+
+
+def _note_keys(literature_dir: Path) -> set[str]:
     """把已有且合格的 note 转换成可比对 key。
 
     T3 的 note 文件名有时是 `arxiv_2605..._Title.md`，而 queue 里可能是
@@ -54,11 +65,9 @@ def _note_keys(notes_dir: Path) -> set[str]:
     元数据和标题，给恢复器一组保守但更完整的匹配 key。
     """
 
-    if not notes_dir.exists():
-        return set()
     keys: set[str] = set()
-    for path in notes_dir.glob("*.md"):
-        if not (is_paper_note_file(path) and _is_complete_note(path)):
+    for path in _note_paths(literature_dir):
+        if not _is_complete_note(path):
             continue
         keys.update(paper_note_match_keys(path))
     return {key for key in keys if key}
@@ -79,18 +88,18 @@ def prepare_t3_resume_artifacts(workspace_dir: Path, *, refresh_reason: str | No
     """为 T3 恢复运行准备可直接消费的剩余队列和审计文件。"""
 
     literature_dir = workspace_dir / "literature"
-    notes_dir = literature_dir / "paper_notes"
-    completed_keys = _note_keys(notes_dir)
+    completed_keys = _note_keys(literature_dir)
+    note_paths = _note_paths(literature_dir)
     valid_note_file_count = sum(
         1
-        for path in notes_dir.glob("*.md")
-        if is_paper_note_file(path) and _is_complete_note(path)
-    ) if notes_dir.exists() else 0
+        for path in note_paths
+        if _is_complete_note(path)
+    )
     invalid_note_file_count = sum(
         1
-        for path in notes_dir.glob("*.md")
-        if is_paper_note_file(path) and not _is_complete_note(path)
-    ) if notes_dir.exists() else 0
+        for path in note_paths
+        if not _is_complete_note(path)
+    )
 
     queue_path = literature_dir / "deep_read_queue.jsonl"
     pending_queue_path = literature_dir / "deep_read_queue_pending.jsonl"
@@ -118,10 +127,14 @@ def prepare_t3_resume_artifacts(workspace_dir: Path, *, refresh_reason: str | No
             queue_records, metadata = build_deep_read_queue(
                 candidate_papers,
                 workspace_dir,
-                deep_read_min=int(mode_params.get("deep_read_min", 18)),
-                deep_read_target=int(mode_params.get("deep_read_target", 24)),
-                deep_read_max=int(mode_params.get("deep_read_max", 30)),
+                deep_read_min=int(mode_params.get("deep_read_min", 35)),
+                deep_read_target=int(mode_params.get("deep_read_target", 35)),
+                deep_read_max=int(mode_params.get("deep_read_max", 45)),
                 probe_pool=int(mode_params.get("probe_pool", 45)),
+                mainline_screened_cap=int(mode_params.get("mainline_screened_cap", 90)),
+                bridge_deep_floor=int(mode_params.get("bridge_deep_floor", 3)),
+                bridge_screened_cap=int(mode_params.get("bridge_screened_cap", 7)),
+                bridge_pool_cap=int(mode_params.get("bridge_pool_cap", 15)),
             )
             _write_jsonl(queue_path, queue_records)
             (literature_dir / "deep_read_queue_meta.json").write_text(

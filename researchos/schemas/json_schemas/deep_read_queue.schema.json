@@ -57,12 +57,36 @@
     "semantic_screen": { "type": "object" },
     "cross_domain_retrieval_candidate": { "type": "boolean" },
     "cross_domain_candidate": { "type": "boolean" },
+    "recalled_by_bridges": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "contributed_bridges": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "core_screen_passed": { "type": "boolean" },
+    "bridge_priority": { "type": "string" },
+    "bridge_must_protected_slot": { "type": "boolean" },
     "protected_slot_bonus": { "type": "number" },
     "adjacent_field": { "type": "boolean" },
     "protected_bucket_bonus": { "type": "number" },
     "protected_slot": { "type": "boolean" },
+    "triaged_out": { "type": "boolean" },
+    "triaged_reason": { "type": "string" },
     "queue_rank": { "type": "integer", "minimum": 1 },
-    "target_bucket": { "type": "string", "enum": ["seed", "target", "overflow"] }
+    "target_bucket": {
+      "type": "string",
+      "enum": [
+        "seed",
+        "target",
+        "overflow",
+        "mainline_deep",
+        "mainline_screened",
+        "bridge_deep",
+        "bridge_screened"
+      ]
+    }
   },
   "additionalProperties": true
 }

@@ -280,10 +280,20 @@ class ScoutAgent(Agent):
             return False, "verified 池包含 semantic_screen 允许的跨域/theory 候选，但 deep_read_queue 未保留任何对应候选"
         if protected_verified and not any(
             _is_semantic_screened_protected_candidate(item)
+            and not bool(item.get("triaged_out"))
             and str(item.get("target_bucket") or "") != "overflow"
             for item in queue_records
         ):
             return False, "deep_read_queue 保留了 semantic_screen 允许的跨域/theory 候选，但未放入 target/seed 阅读区"
+
+        ok, err = _validate_bridge_recall_and_screen_coverage(
+            ctx.workspace_dir,
+            raw_records=load_jsonl(raw_path) if raw_path.exists() else [],
+            verified_records=verified_records,
+            queue_records=queue_records,
+        )
+        if not ok:
+            return False, err
 
         seed_in_queue = any(bool(item.get("seed_priority")) for item in queue_records)
         seed_path = ctx.workspace_dir / "user_seeds" / "seed_papers.jsonl"
@@ -408,3 +418,119 @@ def _is_semantic_screened_protected_candidate(record: dict[str, object]) -> bool
             and (role == "theory_bridge" or retrieval_intent == "cross_domain_bridge")
         )
     return False
+
+
+def _validate_bridge_recall_and_screen_coverage(
+    workspace_dir: Path,
+    *,
+    raw_records: list[dict],
+    verified_records: list[dict],
+    queue_records: list[dict],
+) -> tuple[bool, str | None]:
+    plan_path = workspace_dir / "literature" / "bridge_domain_plan.json"
+    if not plan_path.exists():
+        return True, None
+    try:
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return False, f"bridge_domain_plan.json 解析失败，无法检查 T2 bridge 覆盖: {exc}"
+    if str(plan.get("source") or "").strip().casefold() == "none":
+        return True, None
+    domains = plan.get("bridge_domains") if isinstance(plan, dict) else []
+    if not isinstance(domains, list) or not domains:
+        return True, None
+    # The official bridge_domain_plan.json is written only after the T1 user
+    # gate. Therefore every entry in it is a confirmed bridge, regardless of
+    # whether its origin was user-provided, auto-suggested, or mixed.
+    confirmed = [
+        item
+        for item in domains
+        if isinstance(item, dict)
+        and str(item.get("bridge_id") or "").strip()
+    ]
+    if not confirmed:
+        return True, None
+
+    must_ids = {
+        str(item.get("bridge_id") or "").strip()
+        for item in confirmed
+        if str(item.get("priority") or "").strip() == "must_explore"
+    }
+    recalled_by_bridge = _bridge_hit_counts(raw_records)
+    screen_by_bridge = _bridge_screen_counts([*verified_records, *queue_records])
+    target_by_bridge = _bridge_target_counts(queue_records)
+
+    missing_recall = sorted(bridge_id for bridge_id in must_ids if recalled_by_bridge.get(bridge_id, 0) <= 0)
+    if missing_recall:
+        return False, (
+            "T2 bridge 召回层 FAIL：must_explore bridge 没有任何 raw 命中: "
+            + ", ".join(missing_recall)
+            + "。请为每个 must_explore bridge 使用带 bridge_id 的专属 query 重新检索。"
+        )
+
+    missing_screen = sorted(bridge_id for bridge_id in must_ids if screen_by_bridge.get(bridge_id, 0) <= 0)
+    if missing_screen:
+        return False, (
+            "T2 bridge screen 层 FAIL：must_explore bridge 有召回但没有任何 semantic_screen 允许进入 deep-read 的候选: "
+            + ", ".join(missing_screen)
+            + "。请让 Scout 基于标题/摘要/source_query 做语义筛选；不要只依赖 bridge_id。"
+        )
+
+    missing_target = sorted(bridge_id for bridge_id in must_ids if target_by_bridge.get(bridge_id, 0) <= 0)
+    if missing_target:
+        return False, (
+            "T2 bridge 队列层 FAIL：must_explore bridge 通过 screen 但没有进入非 triaged deep-read 目标: "
+            + ", ".join(missing_target)
+        )
+    return True, None
+
+
+def _record_bridge_ids(record: dict) -> set[str]:
+    ids: set[str] = set()
+    for key in ("bridge_id", "recalled_by_bridges", "contributed_bridges"):
+        value = record.get(key)
+        if isinstance(value, str):
+            values = [value]
+        elif isinstance(value, (list, tuple, set)):
+            values = [str(item) for item in value]
+        else:
+            values = []
+        for item in values:
+            bridge_id = str(item or "").strip()
+            if bridge_id:
+                ids.add(bridge_id)
+    screen = record.get("semantic_screen")
+    if isinstance(screen, dict):
+        bridge_id = str(screen.get("bridge_id") or "").strip()
+        if bridge_id:
+            ids.add(bridge_id)
+    return ids
+
+
+def _bridge_hit_counts(records: list[dict]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for record in records:
+        for bridge_id in _record_bridge_ids(record):
+            counts[bridge_id] = counts.get(bridge_id, 0) + 1
+    return counts
+
+
+def _bridge_screen_counts(records: list[dict]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for record in records:
+        if not _is_semantic_screened_protected_candidate(record):
+            continue
+        for bridge_id in _record_bridge_ids(record):
+            counts[bridge_id] = counts.get(bridge_id, 0) + 1
+    return counts
+
+
+def _bridge_target_counts(records: list[dict]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for record in records:
+        if bool(record.get("triaged_out")) or str(record.get("target_bucket") or "") == "overflow":
+            continue
+        for bridge_id in _record_bridge_ids(record):
+            if record.get("target_bucket") == "bridge_deep" or _is_semantic_screened_protected_candidate(record):
+                counts[bridge_id] = counts.get(bridge_id, 0) + 1
+    return counts

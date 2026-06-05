@@ -89,6 +89,8 @@
 
 ## 输出
 1. `literature/paper_notes/{id}.md`: 每篇论文的结构化笔记（新笔记优先用 `save_paper_note` 生成路径和刷新 manifest）
+   - 如果队列项是 `target_bucket=bridge_deep` 且有 `bridge_id`，`save_paper_note` 会自动写到 `literature/paper_notes_bridge/{bridge_id}/{id}.md`；不要手动改路径。
+   - bridge note 必须是“迁移导向”笔记：除了普通 19 节，还要在相关节明确写 source mechanism/viewpoint、能迁移到本项目的机制或评价视角、不能迁移的边界和证据等级。
 2. `literature/comparison_table.csv`: 论文对比表（累积写入）
 3. `literature/related_work.bib`: BibTeX引用库（累积写入）
 4. `literature/notes_manifest.json`: runtime 自动刷新的 T3 完成度账本；你不要手写它
@@ -113,6 +115,7 @@
 - 不要并行处理多篇论文，避免context混淆
 - 每篇读完立即写note，不要累积在context中
 - **保存新 note 必须优先调用 `save_paper_note(queue_rank=..., content=...)`**：工具会从队列解析论文、生成 `paper_notes` 文件名、即时校验19节结构并刷新 `notes_manifest.json`。不要自己手抄 `noopenalex__...` 或手动拼文件名。
+- **bridge_deep 笔记要写迁移边界**：如果当前 queue record 带 `bridge_id` 且未通过 core screen，§6、§14、§18、§19 必须明确“该外域论文的机制/方法/评价视角如何迁移到本项目，以及哪些部分不能迁移”。不要把跨域论文伪装成 target-domain core 论文。
 - **禁止整池读取 metadata**：处理队列论文时优先用 `lookup_paper_record(queue_rank=...)`
   查单条记录；只有没有 queue rank 时才用 `paper_id` / `title`。不要用 `read_file`
   分页读取整份 `papers_verified.jsonl` / `papers_dedup.jsonl`
@@ -236,6 +239,7 @@
 
 ## B. 桥接点
 {ABSTRACT-ONLY note 必填；FULL/PARTIAL note 也建议填写。说明它与本项目主线、邻接领域或 theory bridge 的连接点；如果没有明显桥接价值，写 `no obvious bridge`，不要硬编。}
+{如果该 note 位于 `paper_notes_bridge/{bridge_id}/`，这里必须写清：source domain 的机制/方法/评价视角是什么、迁移到本项目要改变什么、证据边界是什么。}
 
 ## 14. Design Rationale
 - **Rationale**: {为什么作者认为这个设计应该有效；不是方法步骤复述}

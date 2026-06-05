@@ -71,6 +71,11 @@ def cdr_schema_prompt_summary() -> str:
             "- supplement idea origins: "
             + ", ".join(str(item) for item in origins.get("supplement", []))
         )
+        if origins.get("bridge"):
+            lines.append(
+                "- bridge idea origins: "
+                + ", ".join(str(item) for item in origins.get("bridge", []))
+            )
     if responsibilities:
         lines.append("- manuscript section CDR responsibilities:")
         for section, responsibility in responsibilities.items():

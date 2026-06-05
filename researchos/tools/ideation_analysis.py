@@ -75,6 +75,7 @@ def analyze_ideation_coverage(
         "origin_problem_reframing": 0,
         "origin_design_rationale_derivation": 0,
         "origin_cross_domain_analogy": 0,
+        "origin_bridge_synthesis": 0,
         "origin_supplement": 0,
         "constraint_unsupported": 0,
         "has_mechanism_challenge": 0,
@@ -135,6 +136,8 @@ def analyze_ideation_coverage(
             source_stats["origin_design_rationale_derivation"] += 1
         elif idea_origin == "cross_domain_analogy":
             source_stats["origin_cross_domain_analogy"] += 1
+        elif idea_origin == "bridge_synthesis":
+            source_stats["origin_bridge_synthesis"] += 1
         if constraint_status == "supplement" or idea_origin in {
             "mechanism_challenge",
             "reverse_operation",
@@ -251,6 +254,7 @@ def analyze_ideation_coverage(
             "problem_reframing": source_stats["origin_problem_reframing"],
             "design_rationale_derivation": source_stats["origin_design_rationale_derivation"],
             "cross_domain_analogy": source_stats["origin_cross_domain_analogy"],
+            "bridge_synthesis": source_stats["origin_bridge_synthesis"],
             "supplement": source_stats["origin_supplement"],
             "mainline_total": _count_mainline_origins(source_stats),
             "constraint_unsupported": source_stats["constraint_unsupported"],

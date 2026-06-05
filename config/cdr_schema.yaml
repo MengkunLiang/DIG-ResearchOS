@@ -86,6 +86,9 @@ idea_origins:
     - "problem_reframing"
     - "design_rationale_derivation"
     - "cross_domain_analogy"
+    - "survey_driven"
+  bridge:
+    - "bridge_synthesis"
   supplement:
     - "mechanism_challenge"
     - "reverse_operation"

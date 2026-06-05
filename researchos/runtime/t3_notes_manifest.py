@@ -45,12 +45,11 @@ def build_t3_notes_manifest(
 
     workspace_dir = workspace_dir.resolve()
     literature_dir = workspace_dir / "literature"
-    notes_dir = literature_dir / "paper_notes"
     if queue_records is None:
         queue_records, source_queue = _load_default_queue(literature_dir)
     source_queue = source_queue or "provided_queue"
 
-    note_infos = _collect_note_infos(workspace_dir, notes_dir)
+    note_infos = _collect_note_infos(workspace_dir, literature_dir)
     entries: list[dict[str, Any]] = []
     matched_note_paths: set[str] = set()
 
@@ -232,27 +231,33 @@ def _load_default_queue(literature_dir: Path) -> tuple[list[dict[str, Any]], str
     return [], "none"
 
 
-def _collect_note_infos(workspace_dir: Path, notes_dir: Path) -> list[dict[str, Any]]:
-    if not notes_dir.exists():
-        return []
+def _collect_note_infos(workspace_dir: Path, literature_dir: Path) -> list[dict[str, Any]]:
+    note_roots = [
+        literature_dir / "paper_notes",
+        literature_dir / "paper_notes_bridge",
+    ]
     infos: list[dict[str, Any]] = []
-    for note_path in sorted(notes_dir.glob("*.md")):
-        if not is_paper_note_file(note_path):
+    for root in note_roots:
+        if not root.exists():
             continue
-        ok, err = _validate_note(note_path)
-        try:
-            rel_path = note_path.relative_to(workspace_dir).as_posix()
-        except ValueError:
-            rel_path = note_path.as_posix()
-        infos.append(
-            {
-                "path": note_path,
-                "rel_path": rel_path,
-                "valid": ok,
-                "validation_error": err or "",
-                "keys": paper_note_match_keys(note_path),
-            }
-        )
+        pattern = "**/*.md" if root.name == "paper_notes_bridge" else "*.md"
+        for note_path in sorted(root.glob(pattern)):
+            if not is_paper_note_file(note_path):
+                continue
+            ok, err = _validate_note(note_path)
+            try:
+                rel_path = note_path.relative_to(workspace_dir).as_posix()
+            except ValueError:
+                rel_path = note_path.as_posix()
+            infos.append(
+                {
+                    "path": note_path,
+                    "rel_path": rel_path,
+                    "valid": ok,
+                    "validation_error": err or "",
+                    "keys": paper_note_match_keys(note_path),
+                }
+            )
     return infos
 
 

@@ -649,10 +649,14 @@ async def finalize_t2_outputs(
     queue_records, queue_meta = build_deep_read_queue(
         verified_papers,
         workspace_dir,
-        deep_read_min=18,
-        deep_read_target=24,
-        deep_read_max=30,
+        deep_read_min=35,
+        deep_read_target=35,
+        deep_read_max=45,
         probe_pool=45,
+        mainline_screened_cap=90,
+        bridge_deep_floor=3,
+        bridge_screened_cap=7,
+        bridge_pool_cap=15,
         citation_hub_slots=3,
     )
     queue_path = workspace_dir / "literature" / "deep_read_queue.jsonl"

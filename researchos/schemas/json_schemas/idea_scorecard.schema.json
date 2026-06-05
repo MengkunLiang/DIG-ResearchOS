@@ -153,6 +153,7 @@
                   "problem_reframing",
                   "design_rationale_derivation",
                   "cross_domain_analogy",
+                  "bridge_synthesis",
                   "mechanism_challenge",
                   "reverse_operation",
                   "subgroup_failure",
@@ -166,7 +167,15 @@
               },
               "cross_domain_source": {
                 "type": ["string", "null"],
-                "description": "Optional bridge_id if this idea was inspired by bridge_transfer_drafts, domain_map.theory_bridge, or the bridge-domain plan."
+                "description": "Deprecated compatibility alias for a single bridge_id. Prefer cross_domain_sources."
+              },
+              "cross_domain_sources": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "description": "Optional bridge_id list when this idea was inspired by bridge_transfer_drafts, domain_map.theory_bridge, paper_notes_bridge, or the confirmed bridge-domain plan."
               },
               "cross_domain_relation": {
                 "type": ["string", "null"],
@@ -178,11 +187,11 @@
                   "adjacent_application",
                   null
                 ],
-                "description": "Relation type for cross_domain_source. This is an LLM-authored provenance field, not a deterministic tool judgment."
+                "description": "Relation type for cross_domain_sources. This is an LLM-authored provenance field, not a deterministic tool judgment."
               },
               "constraint_status": {
                 "type": "string",
-                "enum": ["mainline", "supplement", "not_supported_by_current_evidence"]
+                "enum": ["mainline", "supplement", "bridge", "not_supported_by_current_evidence"]
               }
             },
             "required": [

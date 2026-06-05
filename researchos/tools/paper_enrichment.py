@@ -405,6 +405,209 @@ def _is_cross_domain_retrieval_bucket(paper: dict[str, Any]) -> bool:
     return bucket in {"adjacent_field", "theory_bridge"} or source_bucket in {"adjacent", "snowball"}
 
 
+def _load_bridge_domain_plan(workspace_dir: Path) -> dict[str, Any]:
+    """Load the confirmed T1 bridge manifest if present.
+
+    The manifest is retrieval provenance only. This helper never invents
+    bridge domains and never decides paper relevance.
+    """
+
+    path = workspace_dir / "literature" / "bridge_domain_plan.json"
+    if not path.exists() or path.stat().st_size <= 0:
+        return {"semantics": "bridge_domain_plan", "source": "auto", "bridge_domains": []}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"semantics": "bridge_domain_plan", "source": "invalid", "bridge_domains": []}
+    if not isinstance(data, dict):
+        return {"semantics": "bridge_domain_plan", "source": "invalid", "bridge_domains": []}
+    domains = data.get("bridge_domains")
+    if not isinstance(domains, list):
+        data["bridge_domains"] = []
+    return data
+
+
+def _bridge_domains(plan: dict[str, Any]) -> list[dict[str, Any]]:
+    if str(plan.get("source") or "").strip().casefold() == "none":
+        return []
+    domains = plan.get("bridge_domains") if isinstance(plan, dict) else []
+    return [item for item in domains or [] if isinstance(item, dict) and str(item.get("bridge_id") or "").strip()]
+
+
+def _confirmed_bridge_ids(plan: dict[str, Any]) -> list[str]:
+    return [str(item.get("bridge_id") or "").strip() for item in _bridge_domains(plan)]
+
+
+def _must_explore_bridge_ids(plan: dict[str, Any]) -> list[str]:
+    return [
+        str(item.get("bridge_id") or "").strip()
+        for item in _bridge_domains(plan)
+        if str(item.get("priority") or "").strip() == "must_explore"
+    ]
+
+
+def _bridge_priority(bridge_id: str | None, plan: dict[str, Any]) -> str:
+    if not bridge_id:
+        return ""
+    for item in _bridge_domains(plan):
+        if str(item.get("bridge_id") or "").strip() == bridge_id:
+            return str(item.get("priority") or "").strip()
+    return ""
+
+
+def _bridge_sources_for_record(paper: dict[str, Any], semantic_screen: dict[str, Any]) -> list[str]:
+    """Collect bridge provenance supplied by search tools or Scout LLM."""
+
+    sources: list[str] = []
+    for key in ("bridge_id", "recalled_by_bridges", "contributed_bridges"):
+        raw = semantic_screen.get(key) if key == "bridge_id" else paper.get(key)
+        if isinstance(raw, str):
+            values = [raw]
+        elif isinstance(raw, (list, tuple, set)):
+            values = [str(item) for item in raw]
+        else:
+            values = []
+        for value in values:
+            bridge_id = str(value or "").strip()
+            if bridge_id and bridge_id not in sources:
+                sources.append(bridge_id)
+    return sources
+
+
+def _select_must_explore_bridge_records(
+    ranked_records: list[dict[str, Any]],
+    *,
+    must_explore_bridge_ids: list[str],
+    floor: int,
+) -> list[dict[str, Any]]:
+    """Reserve deep-read slots for confirmed must-explore bridges.
+
+    Admission still requires Scout LLM semantic_screen to allow deep read; this
+    function only prevents allowed bridge material from being squeezed out by
+    ordinary ranking.
+    """
+
+    if floor <= 0 or not must_explore_bridge_ids:
+        return []
+    selected: list[dict[str, Any]] = []
+    selected_ids: set[int] = set()
+    for bridge_id in must_explore_bridge_ids:
+        pool = [
+            record
+            for record in ranked_records
+            if record.get("bridge_id") == bridge_id
+            and record.get("cross_domain_candidate")
+            and not record.get("seed_priority")
+        ]
+        pool.sort(
+            key=lambda item: (
+                -float(item.get("read_priority") or 0.0),
+                -float(item.get("relevance_score") or 0.0),
+                -float(item.get("access_score") or 0.0),
+                str(item.get("title") or "").casefold(),
+            )
+        )
+        for record in pool[:floor]:
+            if id(record) in selected_ids:
+                continue
+            selected.append(record)
+            selected_ids.add(id(record))
+    return selected
+
+
+def _bridge_pool_count(records: list[dict[str, Any]], bridge_id: str) -> int:
+    if not bridge_id:
+        return 0
+    return sum(1 for record in records if str(record.get("bridge_id") or "") == bridge_id)
+
+
+def _target_bucket_for_record(record: dict[str, Any], *, active_target: bool) -> str:
+    if bool(record.get("seed_priority")):
+        return "seed"
+    if record.get("bridge_id") and record.get("cross_domain_candidate"):
+        return "bridge_deep" if active_target else "bridge_screened"
+    return "mainline_deep" if active_target else "mainline_screened"
+
+
+def _cap_bridge_screened_records(
+    queue_records: list[dict[str, Any]],
+    *,
+    bridge_screened_cap: int,
+) -> None:
+    """Keep only the top screened backlog per bridge while preserving rank.
+
+    This cap affects triaged bridge backlog only; active deep-read targets are
+    left untouched.
+    """
+
+    if bridge_screened_cap < 0:
+        return
+    by_bridge: dict[str, list[dict[str, Any]]] = {}
+    for record in queue_records:
+        if record.get("target_bucket") != "bridge_screened":
+            continue
+        bridge_id = str(record.get("bridge_id") or "").strip()
+        if not bridge_id:
+            continue
+        by_bridge.setdefault(bridge_id, []).append(record)
+    for bridge_id, records in by_bridge.items():
+        records.sort(
+            key=lambda item: (
+                -float(item.get("final_priority") or item.get("read_priority") or 0.0),
+                -float(item.get("relevance_score") or 0.0),
+                str(item.get("title") or "").casefold(),
+            )
+        )
+        for record in records[bridge_screened_cap:]:
+            record["triaged_out"] = True
+            record["target_bucket"] = "bridge_screened"
+            record["triaged_reason"] = "bridge_screened_cap_exceeded"
+
+
+def _cap_mainline_screened_records(
+    queue_records: list[dict[str, Any]],
+    *,
+    mainline_screened_cap: int,
+) -> None:
+    """Cap the retained mainline screened backlog for coverage/resume hygiene."""
+
+    if mainline_screened_cap < 0:
+        return
+    records = [
+        record
+        for record in queue_records
+        if record.get("target_bucket") == "mainline_screened"
+    ]
+    records.sort(
+        key=lambda item: (
+            -float(item.get("final_priority") or item.get("read_priority") or 0.0),
+            -float(item.get("relevance_score") or 0.0),
+            str(item.get("title") or "").casefold(),
+        )
+    )
+    for record in records[mainline_screened_cap:]:
+        record["triaged_out"] = True
+        record["target_bucket"] = "mainline_screened"
+        record["triaged_reason"] = "mainline_screened_cap_exceeded"
+
+
+def _final_priority(record: dict[str, Any]) -> float:
+    """Compute stable final priority for protected and ordinary queue records."""
+
+    if "final_priority" in record:
+        try:
+            return float(record.get("final_priority") or 0.0)
+        except (TypeError, ValueError):
+            pass
+    venue_bonus = float(record.get("venue_diversity_bonus") or 0.0)
+    return (
+        float(record.get("read_priority") or 0.0)
+        + 0.10 * venue_bonus
+        + float(record.get("protected_slot_bonus") or 0.0)
+        + float(record.get("citation_hub_bonus") or 0.0)
+    )
+
+
 def _as_str_list(value: Any) -> list[str]:
     if value is None:
         return []
@@ -626,6 +829,13 @@ def build_deep_read_queue(
 
     # --- protected slot selection: preserve LLM-screened cross-domain/theory material ---
     selected_count = min(len(ranked_records), max(probe_pool, deep_read_target, deep_read_min))
+    queue_retention_count = min(
+        len(ranked_records),
+        max(
+            selected_count,
+            int(mainline_screened_cap) + int(bridge_pool_cap) * max(1, len(confirmed_bridge_ids)),
+        ),
+    )
     if cross_domain_slots is None:
         cross_domain_slot_count = min(4, max(1, int(round(deep_read_target * 0.20)))) if deep_read_target > 0 else 0
     else:
@@ -684,7 +894,7 @@ def build_deep_read_queue(
         venue = record.get("venue", "unknown") or "unknown"
         venue_counts[venue] = venue_counts.get(venue, 0) + 1
     for record in ranked_records:
-        if len(queue_records) >= selected_count:
+        if len(queue_records) >= queue_retention_count:
             break
         if id(record) in protected_ids:
             continue
@@ -700,14 +910,8 @@ def build_deep_read_queue(
         record["final_priority"] += float(record.get("citation_hub_bonus") or 0.0)
         queue_records.append(record)
         venue_counts[venue] = same_venue + 1
-    for record in [*protected_records, *citation_hub_records]:
-        venue_bonus = float(record.get("venue_diversity_bonus") or 0.0)
-        record["final_priority"] = (
-            record["read_priority"]
-            + 0.10 * venue_bonus
-            + float(record.get("protected_slot_bonus") or 0.0)
-            + float(record.get("citation_hub_bonus") or 0.0)
-        )
+    for record in [*bridge_must_records, *protected_records, *citation_hub_records]:
+        record["final_priority"] = _final_priority(record)
 
     # 重新按 final_priority 排序（seed 不参与 venue bonus，保持 seed 最高优先）
     queue_records.sort(
@@ -716,20 +920,28 @@ def build_deep_read_queue(
             not (item.get("hub_type") == "seed_neighbor" and item.get("citation_hub_protected_slot")),
             not item.get("bridge_must_protected_slot"),
             id(item) not in protected_ids,
-            -item["final_priority"],
+            -_final_priority(item),
             -item["relevance_score"],
             -item["access_score"],
             str(item["title"]).casefold(),
         )
     )
+    target_goal = max(0, int(deep_read_min), int(deep_read_target))
+    target_cap = max(target_goal, int(deep_read_max))
+    active_target_limit = min(
+        len(queue_records),
+        target_cap,
+        max(target_goal, len(protected_ids)),
+    )
     for idx, record in enumerate(queue_records, start=1):
         record["queue_rank"] = idx
-        active_target = idx <= deep_read_target or id(record) in protected_ids
+        active_target = idx <= active_target_limit
         record["triaged_out"] = not active_target
         record["target_bucket"] = _target_bucket_for_record(record, active_target=active_target)
         if record["triaged_out"]:
             record.setdefault("triaged_reason", "probe_pool_triage_out")
 
+    _cap_mainline_screened_records(queue_records, mainline_screened_cap=mainline_screened_cap)
     _cap_bridge_screened_records(queue_records, bridge_screened_cap=bridge_screened_cap)
 
     metadata = {
@@ -743,8 +955,28 @@ def build_deep_read_queue(
         "bridge_pool_cap": bridge_pool_cap,
         "source_pool": "papers_verified" if has_verified_pool else "caller_supplied_records",
         "queue_count": len(queue_records),
+        "queue_retention_count": queue_retention_count,
+        "active_target_limit": active_target_limit,
         "target_entry_count": sum(1 for item in queue_records if not item.get("triaged_out")),
         "triaged_out_count": sum(1 for item in queue_records if item.get("triaged_out")),
+        "mainline_screened_retained": sum(
+            1 for item in queue_records if item.get("target_bucket") == "mainline_screened"
+        ),
+        "mainline_screened_cap_exceeded": sum(
+            1
+            for item in queue_records
+            if item.get("target_bucket") == "mainline_screened"
+            and item.get("triaged_reason") == "mainline_screened_cap_exceeded"
+        ),
+        "bridge_screened_retained": sum(
+            1 for item in queue_records if item.get("target_bucket") == "bridge_screened"
+        ),
+        "bridge_screened_cap_exceeded": sum(
+            1
+            for item in queue_records
+            if item.get("target_bucket") == "bridge_screened"
+            and item.get("triaged_reason") == "bridge_screened_cap_exceeded"
+        ),
         "seed_total": len(seed_papers),
         "seed_titles": seed_titles[:20],
         "seed_in_queue": sum(1 for item in queue_records if item["seed_priority"]),

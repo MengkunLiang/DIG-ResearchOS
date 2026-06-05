@@ -14,15 +14,60 @@ import hashlib
 from typing import Any
 
 
+GUIDE_OR_TEMPLATE_NAMES = {
+    "readme.md",
+    "_dir_guide.md",
+    "dir_guide.md",
+    "guide.md",
+    "template.md",
+}
+
+
+def is_workspace_guide_or_template(path: Path) -> bool:
+    """Return true for files created as workspace guides or examples.
+
+    ResearchOS workspaces intentionally contain `_DIR_GUIDE.md`, README files,
+    `.example` templates, and empty placeholder seed files. Those files are
+    useful to humans but must not count as seed material, notes, or validated
+    research artifacts.
+    """
+
+    name = path.name.strip()
+    lower_name = name.casefold()
+    if not name:
+        return True
+    if lower_name in GUIDE_OR_TEMPLATE_NAMES:
+        return True
+    if name.startswith("_"):
+        return True
+    if lower_name.endswith(".example"):
+        return True
+    if lower_name.endswith(".example.md") or lower_name.endswith(".template.md"):
+        return True
+    return False
+
+
+def is_placeholder_text(text: str) -> bool:
+    """Return true for default empty/placeholder markdown or jsonl content."""
+
+    stripped_lines = []
+    for line in str(text or "").splitlines():
+        clean = line.strip()
+        if not clean or clean.startswith("#"):
+            continue
+        stripped_lines.append(clean)
+    if not stripped_lines:
+        return True
+    body = "\n".join(stripped_lines).strip()
+    return body.casefold() in {"（暂无）", "(暂无)", "暂无", "none", "n/a", "null"}
+
+
 def is_paper_note_file(path: Path) -> bool:
     """Return true for real T3 paper note files, not directory guides/docs."""
 
     if not path.is_file() or path.suffix.lower() != ".md":
         return False
-    name = path.name.strip().lower()
-    if name.startswith("_"):
-        return False
-    if name in {"readme.md", "dir_guide.md"}:
+    if is_workspace_guide_or_template(path):
         return False
     return True
 

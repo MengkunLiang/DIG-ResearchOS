@@ -40,6 +40,7 @@ from ..tools.human_gate import HumanInputUnavailable, HumanInterface
 from ..tools.paper_save_tools import SavePapersRawTool
 from ..tools.registry import ToolBuildContext, ToolRegistry
 from .agent_params import get_agent_mode_params, get_budget_escalation_policy, get_global_timeout, get_retry_policy
+from ..literature_identity import is_paper_note_file
 
 if TYPE_CHECKING:
     from ..tools.workspace_policy import WorkspaceAccessPolicy
@@ -1424,14 +1425,17 @@ class AgentRunner:
         if not bool(mode_params.get("prebuild_workbench_before_llm", False)):
             return False
         notes_dir = ctx.workspace_dir / "literature" / "paper_notes"
-        if not notes_dir.exists() or not any(notes_dir.glob("*.md")):
+        bridge_notes_dir = ctx.workspace_dir / "literature" / "paper_notes_bridge"
+        note_files = [path for path in notes_dir.glob("*.md") if is_paper_note_file(path)] if notes_dir.exists() else []
+        if bridge_notes_dir.exists():
+            note_files.extend(path for path in bridge_notes_dir.glob("**/*.md") if is_paper_note_file(path))
+        if not note_files:
             return False
         staged_outputs = [
             ctx.workspace_dir / "literature" / "synthesis_workbench.json",
             ctx.workspace_dir / "literature" / "synthesis_outline.md",
             ctx.workspace_dir / "literature" / "synthesis_draft.md",
         ]
-        note_files = [path for path in notes_dir.glob("*.md") if path.is_file()]
         if all(path.exists() and path.stat().st_size > 0 for path in staged_outputs):
             newest_note_mtime = max((path.stat().st_mtime for path in note_files), default=0)
             oldest_staged_mtime = min(path.stat().st_mtime for path in staged_outputs)

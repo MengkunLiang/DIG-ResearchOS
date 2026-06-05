@@ -702,10 +702,9 @@ def test_validate_t4_artifacts_reports_bad_hypothesis_ref(tmp_path: Path):
 
     ok, errors = validator.validate_task_artifacts(workspace, "T4")
 
-    # 简化版validator只检查文件存在，所以会通过
-    # TODO: 实现深度内容校验来检测hypothesis引用错误
-    assert ok
-    assert errors is None
+    assert not ok
+    assert errors is not None
+    assert "hypothesis_ref 'H2' 不存在" in errors
 
 
 def test_validate_t7_artifacts_happy_path(tmp_path: Path):

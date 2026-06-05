@@ -15,6 +15,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from ..literature_identity import is_paper_note_file
 from ..time_utils import recent_year_from
 from ..runtime.errors import ToolAccessDenied
 from .base import Tool, ToolResult
@@ -158,14 +159,18 @@ class BuildSynthesisWorkbenchTool(Tool):
                 error="not_found",
             )
 
-        notes = [_parse_note(path) for path in sorted(notes_dir.glob("*.md"))[: params.max_notes]]
+        note_paths = _iter_note_paths(notes_dir)
+        notes = [_parse_note(path) for path in note_paths[: params.max_notes]]
         notes = [note for note in notes if note.get("paper_id")]
 
         # 读取 abstract-only notes（可选目录）
         abstract_dir = notes_dir.parent / "paper_notes_abstract"
         abstract_notes: list[dict] = []
         if abstract_dir.exists() and abstract_dir.is_dir():
-            abstract_notes = [_parse_note(path, evidence_level="ABSTRACT_ONLY") for path in sorted(abstract_dir.glob("*.md"))]
+            abstract_notes = [
+                _parse_note(path, evidence_level="ABSTRACT_ONLY")
+                for path in sorted(path for path in abstract_dir.glob("*.md") if is_paper_note_file(path))
+            ]
             abstract_notes = [note for note in abstract_notes if note.get("paper_id")]
 
         if not notes and not abstract_notes:
@@ -410,6 +415,14 @@ def _read_json(path: Path) -> dict[str, Any]:
     except Exception:
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def _iter_note_paths(notes_dir: Path) -> list[Path]:
+    paths = [path for path in notes_dir.glob("*.md") if is_paper_note_file(path)]
+    bridge_dir = notes_dir.parent / "paper_notes_bridge"
+    if bridge_dir.exists() and bridge_dir.is_dir():
+        paths.extend(path for path in bridge_dir.glob("**/*.md") if is_paper_note_file(path))
+    return sorted(paths)
 
 
 def _build_method_families(

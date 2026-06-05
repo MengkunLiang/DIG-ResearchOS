@@ -598,6 +598,8 @@ states:
       pass2_grounding_review: ideation/_pass2_grounding_review.json # Pass2 文献接地/风险审阅
       candidate_directions: ideation/_candidate_directions.json # 主线与补充候选方向池
       gate1_selection_brief: ideation/_gate1_selection_brief.md # Gate1 全量候选选择简报
+    optional_outputs:
+      bridge_coverage_review: ideation/bridge_coverage_review.json # 已确认 bridge 候选的上桌/裁决/逃生舱记录
     next_on_success: T4.5
     next_on_failure: T4  # 允许失败后重试
 

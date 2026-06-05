@@ -520,13 +520,16 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "pass2_grounding_review": "ideation/_pass2_grounding_review.json",
             "candidate_directions": "ideation/_candidate_directions.json",
             "gate1_selection_brief": "ideation/_gate1_selection_brief.md",
+            "bridge_coverage_review": "ideation/bridge_coverage_review.json",
         },
+        "optional_outputs": ["bridge_coverage_review"],
         "required_inputs": ["project", "synthesis", "domain_map", "synthesis_workbench"],
         "schemas": {
             "exp_plan": "exp_plan",
             "idea_rationales": "idea_rationales",
             "idea_scorecard": "idea_scorecard",
             "gate_decisions": "gate_decisions",
+            "bridge_coverage_review": "bridge_coverage_review",
         },
     },
     "T4.5": {

@@ -1176,10 +1176,14 @@ class BuildVerifiedPapersTool(Tool):
 
 class BuildDeepReadQueueParams(BaseModel):
     papers: list[dict[str, Any]] = Field(..., description="去重并增强后的论文列表")
-    deep_read_min: int = Field(18, description="最低有效 deep-read 数")
-    deep_read_target: int = Field(24, description="目标 deep-read 数")
-    deep_read_max: int = Field(30, description="最大 deep-read 数")
+    deep_read_min: int = Field(35, description="最低有效 deep-read 数")
+    deep_read_target: int = Field(35, description="目标 deep-read 数")
+    deep_read_max: int = Field(45, description="最大 deep-read/probe 队列数")
     probe_pool: int = Field(45, description="实际先 probe 的候选数")
+    mainline_screened_cap: int = Field(90, description="主线筛读候选 cap；只用于 coverage/triage 记账，不等于 T3 必读数。")
+    bridge_deep_floor: int = Field(3, description="每个 must_explore bridge 通过 screen 后的 deep-read 保底数。")
+    bridge_screened_cap: int = Field(7, description="每个 bridge 保留的 screened triage 记录上限。")
+    bridge_pool_cap: int = Field(15, description="每个 bridge 在 deep_read_queue 中保留的候选上限。")
     cross_domain_slots: int | None = Field(
         default=None,
         description="由 semantic_screen 允许的跨领域/theory_bridge 候选整体保护名额；None 时按 runtime 默认值自动计算。",
@@ -1225,6 +1229,10 @@ class BuildDeepReadQueueTool(Tool):
                 probe_pool=params.probe_pool,
                 cross_domain_slots=params.cross_domain_slots,
                 citation_hub_slots=params.citation_hub_slots,
+                mainline_screened_cap=params.mainline_screened_cap,
+                bridge_deep_floor=params.bridge_deep_floor,
+                bridge_screened_cap=params.bridge_screened_cap,
+                bridge_pool_cap=params.bridge_pool_cap,
             )
             queue_path = self.policy.resolve_write("literature/deep_read_queue.jsonl")
             queue_path.parent.mkdir(parents=True, exist_ok=True)

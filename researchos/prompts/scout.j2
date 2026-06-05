@@ -160,10 +160,14 @@ detect_duplicate_queries(
 - 这些 bucket 只是**召回意图**，不是论文质量判断，也不是 core/theory_bridge 准入结论。
 
 **bridge_domain_plan 使用方式（如存在）**：
-- 对 `priority=must_explore` 的 bridge domain，至少设计 1 条带 `bridge_id` 的 query；
-- 对 `priority=should_explore` 的 bridge domain，按预算选择性设计 query；
+- `bridge_domain_plan.json` 是 T1 已确认清单；如果 `bridge_domains=[]` 或 `source=none`，本轮不做 bridge 专属召回。
+- 对 `priority=must_explore` 的 bridge domain，至少设计 3 条带 `bridge_id` 的专属 query，并尽量覆盖该 bridge 的机制词、方法词和评价/应用词；
+- 对 `priority=should_explore` 的 bridge domain，至少设计 1 条带 `bridge_id` 的 query；预算不足时可以少查，但要在 `search_log.md` 说明；
 - 调用检索工具时传入 `query_bucket="theory_bridge"` 或 `query_bucket="adjacent_field"`，并传入对应 `bridge_id`；
 - `bridge_id` 只用于 provenance 和后续用户审阅，不允许直接决定论文进入 `domain_map.theory_bridge`。
+- finish 前必须完成两道门：
+  - 召回层：每个 `must_explore` bridge 的 raw 结果里至少有一篇带对应 `bridge_id`/`recalled_by_bridges` 的命中；
+  - screen 层：每个 `must_explore` bridge 至少有一篇候选经你基于 title/abstract/source_query 的 `semantic_screen` 判定可进入 deep-read。
 
 **当前可用工具**：
 - `multi_source_search`: 多源论文搜索工具（推荐）

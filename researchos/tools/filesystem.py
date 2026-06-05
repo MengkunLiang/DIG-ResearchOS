@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from .base import Tool, ToolResult
 from .workspace_policy import WorkspaceAccessPolicy
+from ..literature_identity import is_placeholder_text, is_workspace_guide_or_template
 from ..runtime.errors import ToolAccessDenied, ToolRuntimeError
 from ..runtime.logger import get_logger
 
@@ -479,12 +480,9 @@ def _classify_user_seed_file(path: Path, rel: str) -> dict[str, Any]:
     kind = "user_material"
     reason = "non-placeholder content"
 
-    if lower_name in {"readme.md", "_dir_guide.md"} or name.startswith("_"):
+    if is_workspace_guide_or_template(path):
         kind = "guide"
         reason = "workspace initialization guide"
-    elif lower_name.endswith(".example"):
-        kind = "template"
-        reason = "example template file"
     elif lower_name.endswith(".pdf"):
         kind = "pdf"
         reason = "user-provided PDF seed"
@@ -493,12 +491,12 @@ def _classify_user_seed_file(path: Path, rel: str) -> dict[str, Any]:
         reason = "empty file"
     elif lower_name in {"seed_ideas.md", "seed_constraints.md"}:
         text = _safe_read_text(path)
-        if _is_placeholder_markdown(text):
+        if is_placeholder_text(text):
             kind = "placeholder"
             reason = "default markdown placeholder"
     elif lower_name.endswith(".jsonl"):
         text = _safe_read_text(path)
-        if not any(line.strip() and not line.lstrip().startswith("#") for line in text.splitlines()):
+        if is_placeholder_text(text) or not any(line.strip() and not line.lstrip().startswith("#") for line in text.splitlines()):
             kind = "placeholder"
             reason = "empty jsonl seed file"
 
@@ -519,19 +517,6 @@ def _safe_read_text(path: Path) -> str:
         return path.read_text(encoding="utf-8")
     except Exception:
         return ""
-
-
-def _is_placeholder_markdown(text: str) -> bool:
-    stripped_lines = []
-    for line in text.splitlines():
-        clean = line.strip()
-        if not clean or clean.startswith("#"):
-            continue
-        stripped_lines.append(clean)
-    if not stripped_lines:
-        return True
-    body = "\n".join(stripped_lines).strip()
-    return body in {"（暂无）", "(暂无)", "暂无", "none", "None", "N/A", "n/a"}
 
 
 def _format_user_seed_listing(items: list[str], inspection: dict[str, Any]) -> str:

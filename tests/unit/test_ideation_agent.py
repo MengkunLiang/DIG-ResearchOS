@@ -16,7 +16,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-from researchos.agents.ideation import IdeationAgent
+from researchos.agents.ideation import (
+    IdeationAgent,
+    _validate_bridge_coverage_review,
+    _validate_candidate_directions,
+)
 from researchos.runtime.agent import ExecutionContext
 
 
@@ -1432,3 +1436,163 @@ def test_validate_outputs_rejects_candidate_pool_deleting_pass1(
     ok, err = ideation_agent.validate_outputs(ctx)
     assert not ok
     assert "不能因 Pass2 筛选删除" in err and "D2" in err
+
+
+def test_candidate_directions_rejects_zero_bridge_candidate_when_plan_confirmed(temp_workspace):
+    """T1 已确认 bridge 清单时，T4 不能完全漏掉 bridge_synthesis 候选。"""
+    (temp_workspace / "literature" / "bridge_domain_plan.json").write_text(
+        json.dumps(
+            {
+                "semantics": "bridge_domain_plan",
+                "source": "user",
+                "bridge_domains": [
+                    {
+                        "bridge_id": "b1",
+                        "name": "Mechanism transfer",
+                        "why": "User confirmed this bridge.",
+                        "priority": "must_explore",
+                        "queries": ["mechanism transfer"],
+                        "source": "user",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    write_valid_idea_rationales(temp_workspace)
+
+    ok, err = _validate_candidate_directions(temp_workspace)
+
+    assert not ok
+    assert "零 bridge_synthesis 候选" in err
+
+
+def test_bridge_missing_must_can_use_escape_hatch_warning(temp_workspace):
+    """must_explore 覆盖不足是 WARN/逃生舱语义，不应迫使 LLM 硬编 idea。"""
+    (temp_workspace / "literature" / "bridge_domain_plan.json").write_text(
+        json.dumps(
+            {
+                "semantics": "bridge_domain_plan",
+                "source": "mixed",
+                "bridge_domains": [
+                    {
+                        "bridge_id": "b1",
+                        "name": "Mechanism transfer",
+                        "why": "User confirmed this bridge.",
+                        "priority": "must_explore",
+                        "queries": ["mechanism transfer"],
+                        "source": "user",
+                    },
+                    {
+                        "bridge_id": "b2",
+                        "name": "Evaluation transfer",
+                        "why": "User confirmed this as optional bridge.",
+                        "priority": "should_explore",
+                        "queries": ["evaluation transfer"],
+                        "source": "user",
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    write_valid_idea_rationales(temp_workspace)
+    candidate_path = temp_workspace / "ideation" / "_candidate_directions.json"
+    candidate_data = json.loads(candidate_path.read_text(encoding="utf-8"))
+    bridge_candidate = {
+        "id": "B2",
+        "title": "Evaluation bridge candidate",
+        "generation_stage": "bridge",
+        "idea_origin": "bridge_synthesis",
+        "constraint_status": "bridge",
+        "pitch": "Use an evaluation protocol from the confirmed optional bridge.",
+        "core_claim": "Evaluation transfer can expose a hidden failure mode.",
+        "target_problem": "Current evaluation misses a transfer-sensitive failure mode.",
+        "mechanism": "Changing the evaluation protocol reveals failures hidden by aggregate metrics.",
+        "prediction": "Under the transferred protocol, the target system will show larger subgroup gaps.",
+        "counterfactual": "If the failure is not protocol-sensitive, subgroup gaps should remain stable.",
+        "mechanism_family": "evaluation transfer",
+        "basis_summary": "Bridge notes suggest an evaluation protocol that can transfer as a diagnostic, while b1 lacks enough completed notes.",
+        "cross_domain_sources": ["b2"],
+        "cross_domain_relation": "evaluation_or_metric_bridge",
+        "pass2_screening": {
+            "screening_recommendation": "proceed",
+            "visible_to_gate": True,
+            "selection_warning": "Bridge candidate is visible but optional.",
+        },
+        "gate_visibility": "visible",
+        "can_select_despite_risk": True,
+    }
+    candidate_data["candidates"].append(bridge_candidate)
+    candidate_path.write_text(json.dumps(candidate_data, ensure_ascii=False, indent=2), encoding="utf-8")
+    pass1_path = temp_workspace / "ideation" / "_pass1_forward_candidates.json"
+    pass1_data = json.loads(pass1_path.read_text(encoding="utf-8"))
+    pass1_data["candidates"].append(bridge_candidate)
+    pass1_path.write_text(json.dumps(pass1_data, ensure_ascii=False, indent=2), encoding="utf-8")
+    pass2_path = temp_workspace / "ideation" / "_pass2_grounding_review.json"
+    pass2_data = json.loads(pass2_path.read_text(encoding="utf-8"))
+    pass2_data["reviews"].append(
+        {
+            "idea_id": "B2",
+            "screening_recommendation": "proceed",
+            "visible_to_gate": True,
+            "counterfactual_check": "survives_weakened",
+            "counterfactual_note": "Bridge protocol transfer has some independent rationale but needs stronger evidence.",
+            "nearest_prior_work": {"work": "Bridge Evaluation Paper", "distance": "distant"},
+            "novelty_signal": "adjacent_zone",
+            "selection_warning": "Optional bridge candidate.",
+        }
+    )
+    pass2_path.write_text(json.dumps(pass2_data, ensure_ascii=False, indent=2), encoding="utf-8")
+    (temp_workspace / "ideation" / "bridge_coverage_review.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "bridge_candidate_visibility_and_escape_hatch_review",
+                "source_bridge_plan": "literature/bridge_domain_plan.json",
+                "bridge_reviews": [
+                    {
+                        "bridge_id": "b1",
+                        "priority": "must_explore",
+                        "candidate_ids": [],
+                        "visible_to_gate": False,
+                        "forced_surfaced": False,
+                        "selected_into_hypotheses": False,
+                        "decision_summary": "No bridge_synthesis candidate was generated because completed notes lacked transferable mechanisms.",
+                        "escape_hatch": {
+                            "status": "no_candidate_available",
+                            "reason": "No completed bridge note gives enough mechanism evidence for b1.",
+                            "falsification_or_kill_criteria": "If later notes still lack a transferable mechanism, keep b1 out of hypotheses.",
+                            "can_revisit_if": "Revisit after T2/T3 adds at least one complete b1 bridge note.",
+                        },
+                    },
+                    {
+                        "bridge_id": "b2",
+                        "priority": "should_explore",
+                        "candidate_ids": ["B2"],
+                        "visible_to_gate": True,
+                        "forced_surfaced": False,
+                        "selected_into_hypotheses": False,
+                        "decision_summary": "B2 is visible to Gate1 but not selected by default.",
+                        "escape_hatch": {
+                            "status": "deferred",
+                            "reason": "Optional bridge candidate awaits user selection.",
+                            "falsification_or_kill_criteria": "Drop if pilot cannot instantiate the transferred protocol.",
+                            "can_revisit_if": "Revisit if user selects bridge evaluation framing.",
+                        },
+                    },
+                ],
+                "warnings": ["must_explore bridge b1 did not have enough material for a visible candidate"],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    ok, err = _validate_candidate_directions(temp_workspace)
+    assert ok, err
+    ok, err = _validate_bridge_coverage_review(temp_workspace)
+    assert ok, err

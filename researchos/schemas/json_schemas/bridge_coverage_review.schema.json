@@ -1,0 +1,95 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://researchos.dev/schemas/bridge_coverage_review.schema.json",
+  "title": "Bridge Coverage Review",
+  "description": "T4 audit artifact for bridge-domain candidates. It records Gate1 visibility and escape-hatch decisions; it does not force a bridge idea into final hypotheses.",
+  "type": "object",
+  "required": ["version", "semantics", "bridge_reviews"],
+  "properties": {
+    "version": {
+      "type": "string"
+    },
+    "semantics": {
+      "type": "string",
+      "const": "bridge_candidate_visibility_and_escape_hatch_review"
+    },
+    "source_bridge_plan": {
+      "type": "string"
+    },
+    "bridge_reviews": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "bridge_id",
+          "priority",
+          "candidate_ids",
+          "visible_to_gate",
+          "selected_into_hypotheses",
+          "decision_summary",
+          "escape_hatch"
+        ],
+        "properties": {
+          "bridge_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "priority": {
+            "type": "string",
+            "enum": ["must_explore", "should_explore"]
+          },
+          "candidate_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "visible_to_gate": {
+            "type": "boolean"
+          },
+          "forced_surfaced": {
+            "type": "boolean"
+          },
+          "selected_into_hypotheses": {
+            "type": "boolean"
+          },
+          "decision_summary": {
+            "type": "string",
+            "minLength": 1
+          },
+          "escape_hatch": {
+            "type": "object",
+            "required": ["status", "reason", "falsification_or_kill_criteria", "can_revisit_if"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["not_needed_selected", "deferred", "rejected", "merged", "no_candidate_available"]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "falsification_or_kill_criteria": {
+                "type": "string",
+                "minLength": 1
+              },
+              "can_revisit_if": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": true
+}

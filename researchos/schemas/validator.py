@@ -446,11 +446,19 @@ def register_builtin_task_checkers():
     def check_t3(workspace_dir: Path) -> tuple[bool, str | None]:
         """T3 note checker：复用 Reader 的单篇笔记结构和证据锚点规则。"""
         notes_dir = workspace_dir / "literature" / "paper_notes"
-        if not notes_dir.exists():
-            return False, "literature/paper_notes not found"
-        note_files = sorted(notes_dir.glob("*.md"))
+        bridge_notes_dir = workspace_dir / "literature" / "paper_notes_bridge"
+        if not notes_dir.exists() and not bridge_notes_dir.exists():
+            return False, "literature/paper_notes or literature/paper_notes_bridge not found"
+
+        from ..literature_identity import is_paper_note_file
+
+        note_files = []
+        if notes_dir.exists():
+            note_files.extend(path for path in notes_dir.glob("*.md") if is_paper_note_file(path))
+        if bridge_notes_dir.exists():
+            note_files.extend(path for path in bridge_notes_dir.glob("**/*.md") if is_paper_note_file(path))
         if not note_files:
-            return False, "literature/paper_notes has no markdown notes"
+            return False, "T3 has no real markdown paper notes; guides/templates/placeholders are ignored"
 
         from ..agents.reader import ReaderAgent
         from ..runtime.agent import ExecutionContext
@@ -528,6 +536,21 @@ def register_builtin_task_checkers():
             extra={"artifact_validation": True},
         )
         return ExperimenterAgent(mode=mode).validate_outputs(ctx)
+
+    def check_ideation_phase(workspace_dir: Path) -> tuple[bool, str | None]:
+        """T4 checker：复用 IdeationAgent 的 schema、anchor、Gate 和 bridge 条件校验。"""
+        from ..agents.ideation import IdeationAgent
+        from ..orchestration.task_io_contract import resolve_outputs
+        from ..runtime.agent import ExecutionContext
+
+        ctx = ExecutionContext(
+            workspace_dir=workspace_dir,
+            project_id="validator",
+            task_id="T4",
+            run_id="validator",
+            outputs_expected=resolve_outputs(workspace_dir, "T4"),
+        )
+        return IdeationAgent().validate_outputs(ctx)
 
     def check_reviewer_phase(workspace_dir: Path, task_id: str) -> tuple[bool, str | None]:
         from ..agents.reviewer import ReviewerAgent
@@ -616,6 +639,7 @@ def register_builtin_task_checkers():
 
     register_task_checker("HELLO", check_hello)
     register_task_checker("T3", check_t3)
+    register_task_checker("T4", check_ideation_phase)
     register_task_checker("T5", lambda workspace_dir: check_experimenter_phase(workspace_dir, "T5"))
     register_task_checker("T7", lambda workspace_dir: check_experimenter_phase(workspace_dir, "T7"))
     register_task_checker("T8-REVIEW-1", lambda workspace_dir: check_reviewer_phase(workspace_dir, "T8-REVIEW-1"))

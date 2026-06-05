@@ -79,6 +79,7 @@ class IdeationAgent(Agent):
                         "ideation/idea_rationales.json": "idea_rationales",
                         "ideation/idea_scorecard.yaml": "idea_scorecard",
                         "ideation/gate_decisions.json": "gate_decisions",
+                        "ideation/bridge_coverage_review.json": "bridge_coverage_review",
                     },
                 },
             )
@@ -93,6 +94,7 @@ class IdeationAgent(Agent):
         seed_ideas = read_text_file(ws / "user_seeds" / "seed_ideas.md", default="")
         comparison_table = read_text_file(ws / "literature" / "comparison_table.csv", default="")
         domain_map = read_text_file(ws / "literature" / "domain_map.json", default="")
+        bridge_domain_plan = read_text_file(ws / "literature" / "bridge_domain_plan.json", default="")
         synthesis_workbench = read_text_file(ws / "literature" / "synthesis_workbench.json", default="")
         survey_insights = read_text_file(ws / "ideation" / "survey_insights.json", default="")
 
@@ -105,9 +107,11 @@ class IdeationAgent(Agent):
             seed_ideas=seed_ideas[:2000],
             comparison_table_preview=comparison_table[:1000],
             domain_map_preview=domain_map[:2500],
+            bridge_domain_plan_preview=bridge_domain_plan[:2500],
             synthesis_workbench_preview=synthesis_workbench[:3000],
             survey_insights_preview=survey_insights[:3000],
             has_domain_map=bool(domain_map.strip()),
+            has_bridge_domain_plan=bool(bridge_domain_plan.strip()),
             has_synthesis_workbench=bool(synthesis_workbench.strip()),
             has_survey_insights=bool(survey_insights.strip()),
             has_seed_ideas=bool(seed_ideas.strip()),
@@ -254,6 +258,9 @@ class IdeationAgent(Agent):
         if not ok:
             return False, err
         ok, err = _validate_candidate_directions(ws)
+        if not ok:
+            return False, err
+        ok, err = _validate_bridge_coverage_review(ws)
         if not ok:
             return False, err
 
@@ -555,8 +562,14 @@ def _validate_candidate_directions(ws: Path) -> tuple[bool, str | None]:
         "missing_area_exploration",
         "gap_exploration",
     ])
+    bridge_origins = set(origins.get("bridge") or ["bridge_synthesis"])
+    bridge_plan = _load_bridge_plan(ws)
+    confirmed_bridge_ids = set(_confirmed_bridge_ids(bridge_plan))
+    must_bridge_ids = set(_must_explore_bridge_ids(bridge_plan))
     mainline_count = 0
     supplement_count = 0
+    bridge_candidate_count = 0
+    bridge_covered_ids: set[str] = set()
     ids: set[str] = set()
     for idx, candidate in enumerate(candidates, start=1):
         if not isinstance(candidate, dict):
@@ -583,6 +596,14 @@ def _validate_candidate_directions(ws: Path) -> tuple[bool, str | None]:
             mainline_count += 1
         if origin in supplement_origins or status == "supplement":
             supplement_count += 1
+        if origin in bridge_origins or status == "bridge":
+            bridge_candidate_count += 1
+            bridge_covered_ids.update(_cross_domain_sources(candidate))
+            if not _cross_domain_sources(candidate):
+                return False, (
+                    f"_candidate_directions.json bridge_synthesis 候选 {idea_id} "
+                    "必须填写 cross_domain_sources，不能只写笼统跨域灵感"
+                )
         pass2 = candidate.get("pass2_screening") or {}
         if pass2:
             visible = pass2.get("visible_to_gate")
@@ -596,6 +617,31 @@ def _validate_candidate_directions(ws: Path) -> tuple[bool, str | None]:
             return False, (
                 f"_candidate_directions.json 第{idx}条 unsupported 候选必须对应四类补充通道，"
                 "不能把主线候选标成无证据"
+            )
+
+    if confirmed_bridge_ids and bridge_candidate_count == 0:
+        return False, (
+            "_candidate_directions.json 零 bridge_synthesis 候选；"
+            "T1 已确认 bridge_domain_plan 时，T4 必须至少把一个桥接综合候选放到 Gate1 桌面。"
+        )
+    missing_must = sorted(must_bridge_ids - bridge_covered_ids)
+    if missing_must:
+        coverage_path = ws / "ideation" / "bridge_coverage_review.json"
+        if not coverage_path.exists():
+            return False, (
+                "_candidate_directions.json 未覆盖全部 must_explore bridge，且缺少 "
+                "ideation/bridge_coverage_review.json 记录 WARN/逃生舱: "
+                f"{missing_must}"
+            )
+        try:
+            coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return False, f"bridge_coverage_review.json 解析失败: {exc}"
+        warnings = " ".join(str(item) for item in coverage.get("warnings") or [])
+        if not all(bridge_id in warnings for bridge_id in missing_must):
+            return False, (
+                "bridge_coverage_review.json 必须显式记录未覆盖的 must_explore bridge WARN: "
+                f"{missing_must}"
             )
 
     if mainline_count < 2:
@@ -734,23 +780,29 @@ def _validate_cross_domain_provenance(record: dict, idea_id: str, label: str) ->
 
     if not isinstance(record, dict):
         return True, None
-    raw_source = record.get("cross_domain_source")
+    sources = _cross_domain_sources(record)
+    raw_source = sources[0] if sources else record.get("cross_domain_source")
     raw_relation = record.get("cross_domain_relation")
     source = str(raw_source or "").strip()
     relation = str(raw_relation or "").strip()
     source_is_empty = source.casefold() in {"", "none", "null", "n/a"}
     relation_is_empty = relation.casefold() in {"", "none", "null", "n/a"}
+    origin = str(record.get("idea_origin") or record.get("origin") or "").strip()
 
+    if origin == "bridge_synthesis" and not sources:
+        return False, (
+            f"{label} idea {idea_id} 是 bridge_synthesis，必须填写非空 cross_domain_sources 数组"
+        )
     if source_is_empty and relation_is_empty:
         return True, None
     if source_is_empty and not relation_is_empty:
         return False, (
             f"{label} idea {idea_id} 填写了 cross_domain_relation={relation}，"
-            "但缺少 cross_domain_source/bridge_id，无法追踪跨域素材来源"
+            "但缺少 cross_domain_sources/bridge_id，无法追踪跨域素材来源"
         )
     if relation_is_empty:
         return False, (
-            f"{label} idea {idea_id} 填写了 cross_domain_source={source}，"
+            f"{label} idea {idea_id} 填写了 cross_domain_sources={sources or [source]}，"
             "但缺少 cross_domain_relation"
         )
     if relation not in CROSS_DOMAIN_RELATIONS:
@@ -759,6 +811,114 @@ def _validate_cross_domain_provenance(record: dict, idea_id: str, label: str) ->
             f"合法值: {sorted(CROSS_DOMAIN_RELATIONS)}"
         )
     return True, None
+
+
+def _validate_bridge_coverage_review(ws: Path) -> tuple[bool, str | None]:
+    bridge_plan = _load_bridge_plan(ws)
+    confirmed_bridge_ids = set(_confirmed_bridge_ids(bridge_plan))
+    review_path = ws / "ideation" / "bridge_coverage_review.json"
+    if not confirmed_bridge_ids:
+        return True, None
+    if not review_path.exists():
+        return False, (
+            "缺少 ideation/bridge_coverage_review.json；T1 已确认 bridge domain 时，"
+            "T4 必须记录 bridge_synthesis 候选是否上桌、是否进入 hypotheses 以及逃生舱理由"
+        )
+    try:
+        review = json.loads(review_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return False, f"bridge_coverage_review.json 解析失败: {exc}"
+    ok, err = validate_record(review, "bridge_coverage_review")
+    if not ok:
+        return False, f"bridge_coverage_review.json 不符合schema: {err}"
+    reviews = review.get("bridge_reviews")
+    if not isinstance(reviews, list):
+        return False, "bridge_coverage_review.json bridge_reviews 必须是数组"
+    by_bridge = {
+        str(item.get("bridge_id") or "").strip(): item
+        for item in reviews
+        if isinstance(item, dict) and str(item.get("bridge_id") or "").strip()
+    }
+    missing_reviews = sorted(confirmed_bridge_ids - set(by_bridge))
+    if missing_reviews:
+        return False, f"bridge_coverage_review.json 缺少 bridge review: {missing_reviews}"
+    must_bridge_ids = set(_must_explore_bridge_ids(bridge_plan))
+    for bridge_id in sorted(must_bridge_ids):
+        item = by_bridge.get(bridge_id) or {}
+        escape = item.get("escape_hatch") if isinstance(item.get("escape_hatch"), dict) else {}
+        escape_status = str(escape.get("status") or "").strip()
+        if not item.get("visible_to_gate") and not item.get("candidate_ids"):
+            if escape_status != "no_candidate_available":
+                return False, (
+                    f"must_explore bridge {bridge_id} 没有可见 Gate1 候选；"
+                    "如果确实缺少可用素材，必须在 escape_hatch.status 写 no_candidate_available，"
+                    "并记录 reason / kill criteria / can_revisit_if，交给用户在 Gate1 裁决"
+                )
+            warnings = " ".join(str(item) for item in review.get("warnings") or [])
+            if bridge_id not in warnings:
+                return False, (
+                    f"must_explore bridge {bridge_id} 未上桌但 warnings 未显式记录。"
+                    "must_explore 不足是 WARN/逃生舱语义，不能静默跳过"
+                )
+        if not str(escape.get("reason") or "").strip():
+            return False, f"bridge {bridge_id} 缺少 escape_hatch.reason"
+        if not str(escape.get("falsification_or_kill_criteria") or "").strip():
+            return False, f"bridge {bridge_id} 缺少证伪/kill criteria"
+    return True, None
+
+
+def _load_bridge_plan(ws: Path) -> dict:
+    path = ws / "literature" / "bridge_domain_plan.json"
+    if not path.exists():
+        return {"bridge_domains": []}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"bridge_domains": []}
+    return data if isinstance(data, dict) else {"bridge_domains": []}
+
+
+def _bridge_domains(plan: dict) -> list[dict]:
+    if str(plan.get("source") or "").strip().casefold() == "none":
+        return []
+    domains = plan.get("bridge_domains") if isinstance(plan, dict) else []
+    return [
+        item for item in domains or []
+        if isinstance(item, dict) and str(item.get("bridge_id") or "").strip()
+    ]
+
+
+def _confirmed_bridge_ids(plan: dict) -> list[str]:
+    return [str(item.get("bridge_id") or "").strip() for item in _bridge_domains(plan)]
+
+
+def _must_explore_bridge_ids(plan: dict) -> list[str]:
+    return [
+        str(item.get("bridge_id") or "").strip()
+        for item in _bridge_domains(plan)
+        if str(item.get("priority") or "").strip() == "must_explore"
+    ]
+
+
+def _cross_domain_sources(record: dict) -> list[str]:
+    if not isinstance(record, dict):
+        return []
+    raw = record.get("cross_domain_sources")
+    if isinstance(raw, str):
+        values = [raw]
+    elif isinstance(raw, (list, tuple, set)):
+        values = [str(item) for item in raw]
+    else:
+        values = []
+    legacy = str(record.get("cross_domain_source") or "").strip()
+    if legacy and legacy.casefold() not in {"none", "null", "n/a"}:
+        values.append(legacy)
+    sources: list[str] = []
+    for value in values:
+        source = str(value or "").strip()
+        if source and source.casefold() not in {"none", "null", "n/a"} and source not in sources:
+            sources.append(source)
+    return sources
 
 
 def _validate_pass2_soft_diagnostics(review: dict, idea_id: str) -> tuple[bool, str | None]:

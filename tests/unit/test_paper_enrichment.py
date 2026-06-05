@@ -661,9 +661,11 @@ def test_build_deep_read_queue_protected_slot_cannot_be_sorted_to_overflow(tmp_p
     )
 
     bridge = next(item for item in queue if item["paper_id"] == "theory-bridge-low-score")
-    assert bridge["target_bucket"] == "target"
+    assert bridge["target_bucket"] == "bridge_deep"
+    assert bridge["triaged_out"] is False
     assert meta["protected_slot_in_target"] >= 1
-    assert len(queue) == 6
+    assert meta["target_entry_count"] == 3
+    assert len(queue) == 11
 
 
 def test_apply_semantic_screening_sanitizes_invalid_admission_flags():
@@ -850,7 +852,232 @@ def test_build_deep_read_queue_protects_semantically_screened_citation_hub(tmp_p
     assert by_id["W_neighbor"]["is_citation_hub"] is True
     assert by_id["W_neighbor"]["hub_type"] == "seed_neighbor"
     assert by_id["W_neighbor"]["citation_hub_protected_slot"] is True
-    assert by_id["W_neighbor"]["target_bucket"] == "target"
+    assert by_id["W_neighbor"]["target_bucket"] == "mainline_deep"
     assert "W_bad" not in by_id
     assert meta["citation_hub_slots"] == 1
     assert meta["citation_hub_in_target"] >= 1
+
+
+def test_build_deep_read_queue_ignores_empty_bridge_plan_source_none(tmp_path):
+    workspace = tmp_path / "ws"
+    (workspace / "literature").mkdir(parents=True, exist_ok=True)
+    (workspace / "user_seeds").mkdir(parents=True, exist_ok=True)
+    (workspace / "literature" / "bridge_domain_plan.json").write_text(
+        json.dumps(
+            {
+                "semantics": "bridge_domain_plan",
+                "source": "none",
+                "bridge_domains": [
+                    {
+                        "bridge_id": "b_skip",
+                        "name": "Skipped bridge",
+                        "why": "User skipped cross-domain exploration.",
+                        "priority": "must_explore",
+                        "queries": ["skipped query"],
+                        "source": "user",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    papers = [
+        {
+            "id": "core",
+            "title": "Core Paper",
+            "source": "openalex",
+            "year": 2026,
+            "abstract": "core target-domain paper",
+            "relevance_score": 0.99,
+            "verification_status": "metadata_verified",
+            "verification_confidence": 0.95,
+            "semantic_screen": _screen(
+                relation="baseline_or_dataset_relevance",
+                role="core",
+                can_enter_core=True,
+            ),
+        },
+        {
+            "id": "bridge",
+            "title": "Skipped Bridge Hit",
+            "source": "openalex",
+            "year": 2026,
+            "abstract": "bridge paper",
+            "relevance_score": 0.01,
+            "verification_status": "metadata_verified",
+            "verification_confidence": 0.9,
+            "bridge_id": "b_skip",
+            "retrieval_intent": "cross_domain_bridge",
+            "semantic_screen": _screen(
+                relation="method_transfer",
+                role="theory_bridge",
+                bridge_id="b_skip",
+            ),
+        },
+    ]
+
+    queue, meta = build_deep_read_queue(
+        enrich_papers(papers),
+        workspace,
+        deep_read_min=1,
+        deep_read_target=1,
+        deep_read_max=2,
+        probe_pool=1,
+        cross_domain_slots=0,
+    )
+
+    by_id = {item["paper_id"]: item for item in queue}
+    assert meta["must_explore_bridge_ids"] == []
+    assert by_id["bridge"]["bridge_must_protected_slot"] is False
+    assert by_id["bridge"]["target_bucket"] == "bridge_screened"
+    assert by_id["bridge"]["triaged_out"] is True
+
+
+def test_build_deep_read_queue_reserves_must_explore_bridge_floor(tmp_path):
+    workspace = tmp_path / "ws"
+    (workspace / "literature").mkdir(parents=True, exist_ok=True)
+    (workspace / "user_seeds").mkdir(parents=True, exist_ok=True)
+    (workspace / "literature" / "bridge_domain_plan.json").write_text(
+        json.dumps(
+            {
+                "semantics": "bridge_domain_plan",
+                "source": "user",
+                "bridge_domains": [
+                    {
+                        "bridge_id": "b1",
+                        "name": "Mechanism transfer",
+                        "why": "Confirmed by the user for bridge exploration.",
+                        "priority": "must_explore",
+                        "queries": ["mechanism transfer"],
+                        "source": "user",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    papers = [
+        {
+            "id": f"core-{idx}",
+            "title": f"Core Paper {idx}",
+            "source": "openalex",
+            "year": 2026,
+            "abstract": "core target-domain paper",
+            "relevance_score": 0.99 - idx * 0.01,
+            "verification_status": "metadata_verified",
+            "verification_confidence": 0.95,
+            "semantic_screen": _screen(
+                relation="baseline_or_dataset_relevance",
+                role="core",
+                can_enter_core=True,
+            ),
+        }
+        for idx in range(6)
+    ]
+    papers.extend(
+        {
+            "id": f"bridge-{idx}",
+            "title": f"Bridge Paper {idx}",
+            "source": "openalex",
+            "year": 2025,
+            "abstract": "low-score but semantically screened bridge material",
+            "relevance_score": 0.05 - idx * 0.005,
+            "verification_status": "metadata_verified",
+            "verification_confidence": 0.9,
+            "bridge_id": "b1",
+            "retrieval_intent": "cross_domain_bridge",
+            "semantic_screen": _screen(
+                relation="method_transfer",
+                role="theory_bridge",
+                bridge_id="b1",
+            ),
+        }
+        for idx in range(4)
+    )
+
+    queue, meta = build_deep_read_queue(
+        enrich_papers(papers),
+        workspace,
+        deep_read_min=2,
+        deep_read_target=2,
+        deep_read_max=5,
+        probe_pool=5,
+        cross_domain_slots=0,
+        bridge_deep_floor=3,
+    )
+
+    protected = [
+        item
+        for item in queue
+        if item.get("bridge_id") == "b1" and item.get("bridge_must_protected_slot")
+    ]
+    assert len(protected) == 3
+    assert all(item["target_bucket"] == "bridge_deep" for item in protected)
+    assert all(not item["triaged_out"] for item in protected)
+    assert meta["must_explore_bridge_target_counts"]["b1"] == 3
+
+
+def test_build_deep_read_queue_protected_records_do_not_exceed_deep_read_max(tmp_path):
+    workspace = tmp_path / "ws"
+    (workspace / "literature").mkdir(parents=True, exist_ok=True)
+    (workspace / "user_seeds").mkdir(parents=True, exist_ok=True)
+    (workspace / "literature" / "bridge_domain_plan.json").write_text(
+        json.dumps(
+            {
+                "semantics": "bridge_domain_plan",
+                "source": "user",
+                "bridge_domains": [
+                    {
+                        "bridge_id": "b1",
+                        "name": "Mechanism transfer",
+                        "why": "Confirmed bridge direction.",
+                        "priority": "must_explore",
+                        "queries": ["bridge mechanism"],
+                        "source": "user",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    papers = [
+        {
+            "id": f"bridge-{idx}",
+            "title": f"Bridge Paper {idx}",
+            "source": "openalex",
+            "year": 2026,
+            "abstract": "semantically screened bridge paper",
+            "relevance_score": 0.8 - idx * 0.01,
+            "verification_status": "metadata_verified",
+            "verification_confidence": 0.9,
+            "bridge_id": "b1",
+            "retrieval_intent": "cross_domain_bridge",
+            "semantic_screen": _screen(
+                relation="method_transfer",
+                role="theory_bridge",
+                bridge_id="b1",
+            ),
+        }
+        for idx in range(12)
+    ]
+
+    queue, meta = build_deep_read_queue(
+        enrich_papers(papers),
+        workspace,
+        deep_read_min=3,
+        deep_read_target=3,
+        deep_read_max=5,
+        probe_pool=12,
+        cross_domain_slots=4,
+        citation_hub_slots=0,
+        bridge_deep_floor=4,
+    )
+
+    active = [item for item in queue if not item.get("triaged_out")]
+    assert len(active) == 5
+    assert meta["active_target_limit"] == 5
+    assert meta["target_entry_count"] == 5
+    assert any(item["target_bucket"] == "bridge_screened" for item in queue if item.get("triaged_out"))

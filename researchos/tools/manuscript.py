@@ -16,6 +16,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, Field
 
+from ..literature_identity import is_paper_note_file
 from .base import Tool, ToolResult
 from .manuscript_registries import (
     build_claim_ledger_seed,
@@ -1055,9 +1056,17 @@ def build_resource_index(workspace: Path, *, include_previews: bool = True) -> d
         if path.exists():
             artifacts.append(_artifact_entry(workspace, path, include_preview=include_previews))
 
-    for pattern in [
+    note_patterns = [
         "literature/paper_notes/*.md",
         "literature/paper_notes_abstract/*.md",
+        "literature/paper_notes_bridge/**/*.md",
+    ]
+    for pattern in note_patterns:
+        for path in sorted(workspace.glob(pattern)):
+            if is_paper_note_file(path):
+                artifacts.append(_artifact_entry(workspace, path, include_preview=False))
+
+    for pattern in [
         "experiments/runs/**/*",
         "experiments/configs/**/*",
         "experiments/code/**/*",

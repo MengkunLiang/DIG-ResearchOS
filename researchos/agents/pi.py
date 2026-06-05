@@ -204,6 +204,11 @@ class PIAgent(Agent):
         domains = plan.get("bridge_domains")
         if not isinstance(domains, list):
             return False, "bridge_domain_plan.json bridge_domains 必须是数组"
+        plan_source = str(plan.get("source") or "").strip()
+        if not domains and plan_source not in {"none", "auto", "user", "mixed"}:
+            return False, f"bridge_domain_plan 空计划 source 非法: {plan_source}"
+        if domains and plan_source == "none":
+            return False, "bridge_domain_plan source=none 时 bridge_domains 必须为空"
         for index, item in enumerate(domains, start=1):
             if not isinstance(item, dict):
                 return False, f"bridge_domain_plan 第 {index} 项必须是对象"
@@ -211,12 +216,18 @@ class PIAgent(Agent):
             source = str(item.get("source") or "").strip()
             if priority not in {"must_explore", "should_explore"}:
                 return False, f"bridge_domain_plan 第 {index} 项 priority 非法: {priority}"
-            if priority == "must_explore" and source != "user":
-                return False, "bridge_domain_plan 中 must_explore 只能来自用户主动选择(source=user)"
+            if source not in {"user", "auto"}:
+                return False, (
+                    "bridge_domain_plan 是已确认桥接清单，条目 source 只能记录候选来源 user/auto；"
+                    "是否确认由正式写入 literature/bridge_domain_plan.json 表示，用户选择不交叉时写 source=none 的空计划"
+                )
             if not str(item.get("bridge_id") or "").strip():
                 return False, f"bridge_domain_plan 第 {index} 项缺少 bridge_id"
-            if not isinstance(item.get("queries") or [], list):
+            queries = item.get("queries") or []
+            if not isinstance(queries, list):
                 return False, f"bridge_domain_plan 第 {index} 项 queries 必须是数组"
+            if not [query for query in queries if str(query).strip()]:
+                return False, f"bridge_domain_plan 第 {index} 项 queries 不能为空；T2 需要专属 bridge query"
         return True, None
 
     def _validate_evaluate_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:

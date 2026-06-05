@@ -649,6 +649,16 @@ def _prepare_manuscript_workspace(workspace: Path) -> None:
 @pytest.mark.asyncio
 async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: Path):
     _prepare_manuscript_workspace(tmp_workspace)
+    notes_dir = tmp_workspace / "literature" / "paper_notes"
+    notes_dir.mkdir(parents=True, exist_ok=True)
+    (notes_dir / "_DIR_GUIDE.md").write_text("# Guide\n", encoding="utf-8")
+    (notes_dir / "core_note.md").write_text("# Core note\n- **ID**: core_note\n", encoding="utf-8")
+    abstract_dir = tmp_workspace / "literature" / "paper_notes_abstract"
+    abstract_dir.mkdir(parents=True, exist_ok=True)
+    (abstract_dir / "README.md").write_text("# README\n", encoding="utf-8")
+    bridge_dir = tmp_workspace / "literature" / "paper_notes_bridge" / "b1"
+    bridge_dir.mkdir(parents=True, exist_ok=True)
+    (bridge_dir / "bridge_note.md").write_text("# Bridge note\n- **ID**: bridge_note\n", encoding="utf-8")
     policy = WorkspaceAccessPolicy(tmp_workspace, ["", "drafts/", "literature/", "ideation/"], ["drafts/"])
 
     index_tool = BuildManuscriptResourceIndexTool(policy)
@@ -657,8 +667,13 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
     index_path = tmp_workspace / "drafts" / "manuscript_resource_index.json"
     assert index_path.exists()
     resource_index = json.loads(index_path.read_text(encoding="utf-8"))
+    artifact_paths = {item["path"] for item in resource_index["artifacts"]}
     assert "smith2024" in resource_index["bib_keys"]
     assert any(item["path"] == "experiments/results_summary.json" for item in resource_index["artifacts"])
+    assert "literature/paper_notes/core_note.md" in artifact_paths
+    assert "literature/paper_notes_bridge/b1/bridge_note.md" in artifact_paths
+    assert "literature/paper_notes/_DIR_GUIDE.md" not in artifact_paths
+    assert "literature/paper_notes_abstract/README.md" not in artifact_paths
     assert any(item.get("metric_id") == "m_external_acc" for item in resource_index["result_metrics"])
 
     plan_tool = PlanManuscriptSectionsTool(policy)
@@ -1099,11 +1114,19 @@ async def test_build_synthesis_workbench_writes_staged_outputs(tmp_workspace: Pa
     literature = tmp_workspace / "literature"
     notes_dir = literature / "paper_notes"
     notes_dir.mkdir(parents=True)
+    (notes_dir / "_DIR_GUIDE.md").write_text("# Guide\n", encoding="utf-8")
+    (notes_dir / "README.md").write_text("# README\n", encoding="utf-8")
     for index in range(6):
         (notes_dir / f"paper_{index}.md").write_text(
             _note(f"paper_{index}", family_hint="LightGCN graph contrastive"),
             encoding="utf-8",
         )
+    bridge_dir = literature / "paper_notes_bridge" / "b1"
+    bridge_dir.mkdir(parents=True)
+    (bridge_dir / "bridge_note.md").write_text(
+        _note("bridge_note", family_hint="Bridge transfer"),
+        encoding="utf-8",
+    )
     (literature / "comparison_table.csv").write_text(
         "id,title,year,venue,method_family,dataset,key_metric,metric_value\n"
         "paper_0,Paper 0,2025,TestConf,Graph,Dataset,Accuracy,88.1\n",
@@ -1120,6 +1143,10 @@ async def test_build_synthesis_workbench_writes_staged_outputs(tmp_workspace: Pa
     assert (literature / "synthesis_outline.md").exists()
     assert (literature / "synthesis_draft.md").exists()
     assert not (literature / "synthesis.md").exists()
+    workbench = json.loads((literature / "synthesis_workbench.json").read_text(encoding="utf-8"))
+    assert "bridge_note" in workbench["paper_ids"]
+    assert "_DIR_GUIDE" not in workbench["paper_ids"]
+    assert "README" not in workbench["paper_ids"]
     draft = (literature / "synthesis_draft.md").read_text(encoding="utf-8")
     assert "This is not a final literature synthesis" in draft
     assert "[paper_0]" in draft

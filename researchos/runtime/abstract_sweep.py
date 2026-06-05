@@ -69,6 +69,11 @@ def build_sweep_candidates(
             for note_path in notes_dir.glob("*.md"):
                 if is_paper_note_file(note_path):
                     completed_keys.update(paper_note_match_keys(note_path))
+        bridge_notes_dir = workspace / "literature" / "paper_notes_bridge"
+        if bridge_notes_dir.exists():
+            for note_path in bridge_notes_dir.glob("**/*.md"):
+                if is_paper_note_file(note_path):
+                    completed_keys.update(paper_note_match_keys(note_path))
 
     # 已有 abstract note 的 paper ID（避免重复 sweep）
     abstract_dir = workspace / "literature" / "paper_notes_abstract"

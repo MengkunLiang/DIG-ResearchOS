@@ -32,6 +32,17 @@
 {{ domain_map_preview }}
 
 {% endif %}
+{% if has_bridge_domain_plan %}
+### T1 已确认 Bridge Domain Plan（bridge_domain_plan.json 预览）
+{{ bridge_domain_plan_preview }}
+
+说明：这个文件是用户在 T1 明确确认后的 bridge 清单。若 `source=none` 或
+`bridge_domains=[]`，表示用户选择不交叉，本阶段不要强行生成 bridge idea。
+若存在 bridge_domains，则它们只是“跨域召回/迁移思考素材”，不是最终语义角色；
+必须结合 `literature/paper_notes_bridge/`、`literature/paper_notes/` 中的实际笔记和
+`synthesis_workbench.json` 判断是否形成可检验 idea。
+
+{% endif %}
 {% if has_synthesis_workbench %}
 ### 结构化综述工作台（synthesis_workbench.json 预览）
 {{ synthesis_workbench_preview }}
@@ -154,6 +165,23 @@
 
 这四个补充候选可以和主线候选合并，但不能覆盖掉主线自由推理/seed-derived/问题重构/设计论证推导/跨域类比候选。`source` 中建议记录 `idea_origin`（如 `synthesis_gestalt`、`problem_reframing`、`design_rationale_derivation`、`cross_domain_analogy`、`free_reasoning`、`seed_refinement`、`survey_driven`、`mechanism_challenge`、`reverse_operation`、`subgroup_failure`、`missing_area_exploration`）。
 
+{% if has_bridge_domain_plan %}
+### Step 2.55: Bridge synthesis 候选（仅对 T1 已确认桥接清单启用）
+
+如果 `literature/bridge_domain_plan.json` 中 `source != "none"` 且 `bridge_domains` 非空，
+必须把已确认 bridge 当作单独素材通道审阅：
+
+- 优先读取 `literature/paper_notes_bridge/{bridge_id}/` 下对应 bridge 的迁移导向笔记；
+- 同时检查 `literature/paper_notes/` 中 `contributed_bridges` 或正文明确提到该 bridge 的核心论文；
+- 可参考 `synthesis_workbench.json` 的 `bridge_transfer_drafts` / `adjacent_transfers`，但不能把工具 hint 当成结论；
+- 对每个有足够素材的 bridge，生成至少 1 个 `idea_origin="bridge_synthesis"` 的候选，并写入 `cross_domain_sources` 数组；
+- 对 `priority=must_explore` 但没有足够素材形成候选的 bridge，不要硬编 idea；在 `ideation/bridge_coverage_review.json` 中写 `escape_hatch.status="no_candidate_available"`，说明缺少哪些证据、怎样证伪、何时可重访，并把它列入 `warnings`。
+
+Bridge 候选的语义是“必须上 Gate1 桌面供用户看见”，不是“必须进入 hypotheses.md”。Gate1 之后只有用户选择、重构或合并后的方向才进入最终假设。
+
+如果 `source="none"` 或 `bridge_domains=[]`，写一个空的 `bridge_coverage_review.json` 或在必要时说明 no bridge selected，不要让 T3/T4/T8 后续强制使用 bridge。
+{% endif %}
+
 ### Step 2.6: 保存 Pass 1 原始候选池
 
 在做 Pass 2 文献接地之前，必须先把 Pass 1 + 四类补充后形成的完整候选池写入 `ideation/_pass1_forward_candidates.json`。这个文件是“原始发散结果”，不能在 Pass 2 中被覆盖、删减或重写成只剩推荐候选。
@@ -168,10 +196,10 @@
       "id": "D1",
       "title": "...",
       "generation_stage": "mainline | supplement",
-      "idea_origin": "synthesis_gestalt | problem_reframing | design_rationale_derivation | cross_domain_analogy | free_reasoning | seed_refinement | survey_driven | evidence_driven | mechanism_challenge | reverse_operation | subgroup_failure | missing_area_exploration",
-      "cross_domain_source": "bridge_id 或 null；使用 bridge_transfer_drafts/domain_map.theory_bridge 时必须填 bridge_id",
+      "idea_origin": "synthesis_gestalt | problem_reframing | design_rationale_derivation | cross_domain_analogy | free_reasoning | seed_refinement | survey_driven | evidence_driven | bridge_synthesis | mechanism_challenge | reverse_operation | subgroup_failure | missing_area_exploration",
+      "cross_domain_sources": ["bridge_id；使用 bridge_transfer_drafts/domain_map.theory_bridge/paper_notes_bridge 时必须填，可为空数组"],
       "cross_domain_relation": "mechanism_bridge | method_transfer | evaluation_or_metric_bridge | baseline_or_dataset_relevance | adjacent_application | null",
-      "constraint_status": "mainline | supplement | not_supported_by_current_evidence",
+      "constraint_status": "mainline | supplement | bridge | not_supported_by_current_evidence",
       "pitch": "...",
       "core_claim": "...",
       "mechanism": "...",
@@ -292,10 +320,10 @@
       "can_select_despite_risk": true,
       "corresponds_to": "Q1",
       "basis_summary": "来自Q1中关于XXX缺口的观察，以及comparison_table里YYY基线的共同短板",
-      "idea_origin": "free_reasoning | seed_refinement | synthesis_gestalt | problem_reframing | design_rationale_derivation | cross_domain_analogy | mechanism_challenge | reverse_operation | subgroup_failure | missing_area_exploration | evidence_driven",
-      "cross_domain_source": "bridge_id 或 null；如果来自 bridge_transfer_drafts/domain_map.theory_bridge，填对应 bridge_id",
+      "idea_origin": "free_reasoning | seed_refinement | synthesis_gestalt | problem_reframing | design_rationale_derivation | cross_domain_analogy | bridge_synthesis | mechanism_challenge | reverse_operation | subgroup_failure | missing_area_exploration | evidence_driven",
+      "cross_domain_sources": ["bridge_id；如果来自 bridge_transfer_drafts/domain_map.theory_bridge/paper_notes_bridge，填对应 bridge_id；否则为空数组"],
       "cross_domain_relation": "mechanism_bridge | method_transfer | evaluation_or_metric_bridge | baseline_or_dataset_relevance | adjacent_application | null",
-      "constraint_status": "mainline | supplement | not_supported_by_current_evidence",
+      "constraint_status": "mainline | supplement | bridge | not_supported_by_current_evidence",
       "basis_sources": [
         {"type": "synthesis", "ref": "Q1 / [p3]", "claim": "现有方法在长上下文下误差显著上升"},
         {"type": "missing_areas", "ref": "missing_areas.md", "claim": "缺少低预算可验证的机制实验"}
@@ -419,11 +447,11 @@ counterfactual: "if it fails, metric does not improve"
 
 初版中每个idea必须先填好：
 - `source`: 从哪里来，包括 synthesis section、missing area、seed idea、supporting papers、trigger observation、seed_alignment
-  - `idea_origin`: 必填，取值如 `free_reasoning`、`seed_refinement`、`synthesis_gestalt`、`problem_reframing`、`design_rationale_derivation`、`cross_domain_analogy`、`evidence_driven`、`mechanism_challenge`、`reverse_operation`、`subgroup_failure`、`missing_area_exploration`
-  - `constraint_status`: 必填，取值 `mainline` / `supplement` / `not_supported_by_current_evidence`
+  - `idea_origin`: 必填，取值如 `free_reasoning`、`seed_refinement`、`synthesis_gestalt`、`problem_reframing`、`design_rationale_derivation`、`cross_domain_analogy`、`evidence_driven`、`bridge_synthesis`、`mechanism_challenge`、`reverse_operation`、`subgroup_failure`、`missing_area_exploration`
+  - `constraint_status`: 必填，取值 `mainline` / `supplement` / `bridge` / `not_supported_by_current_evidence`
   - `seed_alignment`: 描述该 idea 与用户原始 seed ideas / constraints 的对齐程度。`direct` = 直接来自 seed idea，`partial` = 与 seed 相关但有偏移，`none` = 独立于 seed 的新方向
-  - `cross_domain_source`: 如果候选使用了 `bridge_transfer_drafts`、`domain_map.theory_bridge` 或 bridge-domain plan 作为类比素材，填对应 `bridge_id`；否则填 `null`
-  - `cross_domain_relation`: 如果 `cross_domain_source` 非空，填 `mechanism_bridge`、`method_transfer`、`evaluation_or_metric_bridge`、`baseline_or_dataset_relevance` 或 `adjacent_application`；否则填 `null`
+  - `cross_domain_sources`: 如果候选使用了 `bridge_transfer_drafts`、`domain_map.theory_bridge`、`paper_notes_bridge/` 或 bridge-domain plan 作为类比素材，填对应 `bridge_id` 数组；否则填空数组
+  - `cross_domain_relation`: 如果 `cross_domain_sources` 非空，填 `mechanism_bridge`、`method_transfer`、`evaluation_or_metric_bridge`、`baseline_or_dataset_relevance` 或 `adjacent_application`；否则填 `null`
 - `idea`: 核心内容，包括 id、title、pitch、core_claim、target_problem
   - 对 `decision.status=selected` 或带 `hypothesis_refs` 的 idea，`mechanism` / `prediction` / `counterfactual` 必须是具体知识判断，禁止 `see core_claim`、`qualitative: outperforms baseline`、`no clear counterfactual` 等占位语。
   - 对 `rejected` / `deferred` 候选，如果机制确实未成形，可以保留不完整字段，但必须在 `decision.rejection_reason` 中说明“机制未成形/无法形成可检验反事实”。

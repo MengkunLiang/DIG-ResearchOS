@@ -91,9 +91,9 @@ class ReaderAgent(Agent):
             "seed_priority_titles": [],
             "seed_papers_in_dedup_count": 0,
             "seed_papers_missing_from_dedup_count": 0,
-            "deep_read_min": 18,
-            "deep_read_target": 24,
-            "deep_read_max": 30,
+            "deep_read_min": 35,
+            "deep_read_target": 35,
+            "deep_read_max": 45,
             "probe_pool": 45,
             "queue_count": 0,
             "queue_preview": [],
@@ -117,8 +117,8 @@ class ReaderAgent(Agent):
             seed_path = ctx.workspace_dir / "user_seeds" / "seed_papers.jsonl"
             seed_papers = load_jsonl(seed_path) if seed_path.exists() else []
             mode_params = get_agent_mode_params("reader", "read")
-            notes_dir = ctx.workspace_dir / "literature" / "paper_notes"
-            existing_notes = sorted(path.stem for path in notes_dir.glob("*.md")) if notes_dir.exists() else []
+            existing_note_paths = _iter_paper_note_paths(ctx.workspace_dir / "literature")
+            existing_notes = sorted(path.stem for path in existing_note_paths)
             comparison_table_path = ctx.workspace_dir / "literature" / "comparison_table.csv"
             related_work_path = ctx.workspace_dir / "literature" / "related_work.bib"
             comparison_row_count = 0
@@ -145,9 +145,9 @@ class ReaderAgent(Agent):
             context_vars["existing_note_preview"] = existing_notes[:20]
             context_vars["existing_comparison_row_count"] = comparison_row_count
             context_vars["existing_bib_entry_count"] = bib_entry_count
-            context_vars["deep_read_min"] = int(mode_params.get("deep_read_min", 18))
-            context_vars["deep_read_target"] = int(mode_params.get("deep_read_target", 24))
-            context_vars["deep_read_max"] = int(mode_params.get("deep_read_max", 30))
+            context_vars["deep_read_min"] = int(mode_params.get("deep_read_min", 35))
+            context_vars["deep_read_target"] = int(mode_params.get("deep_read_target", 35))
+            context_vars["deep_read_max"] = int(mode_params.get("deep_read_max", 45))
             context_vars["probe_pool"] = int(mode_params.get("probe_pool", 45))
             # pending queue 是恢复运行时真正还需要处理的工作清单；只要文件存在，就优先信任它。
             active_queue = pending_queue_papers if pending_queue_path.exists() else queue_papers
@@ -163,13 +163,16 @@ class ReaderAgent(Agent):
             context_vars["seed_papers_missing_from_dedup_count"] = seed_missing_count
             context_vars["resume_mode"] = context_vars["resume_mode"] or bool(existing_notes)
         elif mode == "synthesize":
-            notes_dir = ctx.workspace_dir / "literature" / "paper_notes"
-            note_files = sorted(notes_dir.glob("*.md")) if notes_dir.exists() else []
+            note_files = _iter_paper_note_paths(ctx.workspace_dir / "literature")
             note_count = len(note_files)
             context_vars["note_count"] = note_count
             context_vars["note_id_preview"] = [path.stem for path in note_files[:30]]
             abstract_dir = ctx.workspace_dir / "literature" / "paper_notes_abstract"
-            abstract_count = len(list(abstract_dir.glob("*.md"))) if abstract_dir.exists() else 0
+            abstract_count = (
+                len([path for path in abstract_dir.glob("*.md") if is_paper_note_file(path)])
+                if abstract_dir.exists()
+                else 0
+            )
             context_vars["abstract_note_count"] = abstract_count
             missing_areas_path = ctx.workspace_dir / "literature" / "missing_areas.md"
             context_vars["missing_areas"] = read_text_file(missing_areas_path, default="")
@@ -185,8 +188,7 @@ class ReaderAgent(Agent):
     def initial_user_message(self, ctx: ExecutionContext) -> str:
         """根据mode返回不同的初始消息。"""
         if (ctx.mode or "read") == "read":
-            notes_dir = ctx.workspace_dir / "literature" / "paper_notes"
-            existing_note_count = len(list(notes_dir.glob("*.md"))) if notes_dir.exists() else 0
+            existing_note_count = len(_iter_paper_note_paths(ctx.workspace_dir / "literature"))
             if existing_note_count > 0 or ctx.extra.get("is_resume"):
                 return prepend_resume_prefix(
                     ctx,
@@ -235,11 +237,13 @@ class ReaderAgent(Agent):
 
     def _validate_read_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:
         """校验T3 read模式的输出。"""
-        notes_dir = ctx.workspace_dir / "literature" / "paper_notes"
-        if not notes_dir.exists():
-            return False, "缺少literature/paper_notes目录"
+        literature_dir = ctx.workspace_dir / "literature"
+        notes_dir = literature_dir / "paper_notes"
+        bridge_notes_dir = literature_dir / "paper_notes_bridge"
+        if not notes_dir.exists() and not bridge_notes_dir.exists():
+            return False, "缺少 literature/paper_notes 或 literature/paper_notes_bridge 目录"
 
-        note_files = [path for path in notes_dir.glob("*.md") if is_paper_note_file(path)]
+        note_files = _iter_paper_note_paths(literature_dir)
         valid_note_files: list[Path] = []
         invalid_note_files: list[tuple[Path, str]] = []
         for note_path in note_files:
@@ -253,8 +257,8 @@ class ReaderAgent(Agent):
             completed_note_keys.update(_paper_note_match_keys(note_path))
 
         mode_params = get_agent_mode_params("reader", "read")
-        min_required = int(mode_params.get("deep_read_min", 18))
-        target_required = int(mode_params.get("deep_read_target", 24))
+        min_required = int(mode_params.get("deep_read_min", 35))
+        target_required = int(mode_params.get("deep_read_target", 35))
         queue_path = ctx.workspace_dir / "literature" / "deep_read_queue.jsonl"
         queue_records = load_jsonl(queue_path) if queue_path.exists() else []
         queue_count = len(queue_records)
@@ -277,6 +281,7 @@ class ReaderAgent(Agent):
                 or display_record_key(item)
                 for index, item in enumerate(queue_records, start=1)
                 if item.get("seed_priority")
+                and not bool(item.get("triaged_out"))
                 and not bool(entry_by_rank.get(int(item.get("queue_rank") or index), {}).get("status") == "complete")
             ]
             if missing_seed_notes:
@@ -301,6 +306,7 @@ class ReaderAgent(Agent):
                 or display_record_key(item)
                 for index, item in enumerate(queue_records, start=1)
                 if _is_protected_queue_record(item)
+                and not bool(item.get("triaged_out"))
                 and str(item.get("target_bucket") or "") != "overflow"
                 and not bool(entry_by_rank.get(int(item.get("queue_rank") or index), {}).get("status") == "complete")
             ]
@@ -359,7 +365,7 @@ class ReaderAgent(Agent):
         # 校验 abstract sweep notes（可选目录）
         abstract_dir = ctx.workspace_dir / "literature" / "paper_notes_abstract"
         if abstract_dir.exists():
-            for note_path in sorted(abstract_dir.glob("*.md")):
+            for note_path in sorted(path for path in abstract_dir.glob("*.md") if is_paper_note_file(path)):
                 ok, err = _validate_abstract_note_structure(note_path)
                 if not ok:
                     return False, f"[abstract sweep] {err}"
@@ -415,7 +421,7 @@ class ReaderAgent(Agent):
         elif domain_map_exists:
             return False, "缺少 literature/synthesis_workbench.json"
 
-        note_ids = _paper_note_reference_ids(ctx.workspace_dir / "literature" / "paper_notes")
+        note_ids = _paper_note_reference_ids(ctx.workspace_dir / "literature")
         known_refs = _known_note_refs_in_content(content, note_ids)
         if note_ids and len(known_refs) < min(5, len(note_ids)):
             return False, (
@@ -503,10 +509,19 @@ def _is_protected_queue_record(record: dict[str, object]) -> bool:
     )
 
 
-def _paper_note_reference_ids(notes_dir: Path) -> set[str]:
-    if not notes_dir.exists():
-        return set()
-    ids = {path.stem for path in notes_dir.glob("*.md") if is_paper_note_file(path)}
+def _iter_paper_note_paths(literature_dir: Path) -> list[Path]:
+    paths: list[Path] = []
+    notes_dir = literature_dir / "paper_notes"
+    if notes_dir.exists():
+        paths.extend(path for path in notes_dir.glob("*.md") if is_paper_note_file(path))
+    bridge_dir = literature_dir / "paper_notes_bridge"
+    if bridge_dir.exists():
+        paths.extend(path for path in bridge_dir.glob("**/*.md") if is_paper_note_file(path))
+    return sorted(paths)
+
+
+def _paper_note_reference_ids(literature_dir: Path) -> set[str]:
+    ids = {path.stem for path in _iter_paper_note_paths(literature_dir)}
     normalized: set[str] = set()
     for paper_id in ids:
         normalized.add(paper_id)

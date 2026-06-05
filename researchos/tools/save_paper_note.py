@@ -73,7 +73,7 @@ class SavePaperNoteTool(Tool):
                 content=f"queue_rank={params.queue_rank} 的记录缺少可用 ID/title，无法生成 note 文件名。",
                 error="missing_record_identity",
             )
-        rel_path = f"literature/paper_notes/{note_id}.md"
+        rel_path = _note_rel_path(record, note_id)
         try:
             abs_path = self.policy.resolve_write(rel_path)
         except ToolAccessDenied as exc:
@@ -141,6 +141,17 @@ def _validate_note(path: Path) -> tuple[bool, str | None]:
         return _validate_note_structure(path)
     except Exception as exc:  # pragma: no cover - defensive fallback
         return False, f"{path.name} note validation crashed: {exc}"
+
+
+def _note_rel_path(record: dict[str, Any], note_id: str) -> str:
+    bridge_id = str(record.get("bridge_id") or "").strip()
+    target_bucket = str(record.get("target_bucket") or "").strip()
+    core_passed = bool(record.get("core_screen_passed"))
+    if bridge_id and target_bucket == "bridge_deep" and not core_passed:
+        safe_bridge_id = "".join(ch if ch.isalnum() or ch in {"_", "-", "."} else "_" for ch in bridge_id).strip("._-")
+        safe_bridge_id = safe_bridge_id or "unknown_bridge"
+        return f"literature/paper_notes_bridge/{safe_bridge_id}/{note_id}.md"
+    return f"literature/paper_notes/{note_id}.md"
 
 
 def _find_manifest_entry(

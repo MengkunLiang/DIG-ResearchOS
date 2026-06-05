@@ -162,10 +162,14 @@ agents:
             exclude_already_read: true
         description: 深度阅读
         expected_notes_ratio: 0.8
-        deep_read_min: 18
-        deep_read_target: 24
-        deep_read_max: 30
+        deep_read_min: 35
+        deep_read_target: 35
+        deep_read_max: 45
         probe_pool: 45
+        mainline_screened_cap: 90
+        bridge_deep_floor: 3
+        bridge_screened_cap: 7
+        bridge_pool_cap: 15
       synthesize:
         prompt:
           expected_length_min: 1000
@@ -203,6 +207,7 @@ agents:
         ideation/idea_rationales.json: idea_rationales
         ideation/idea_scorecard.yaml: idea_scorecard
         ideation/gate_decisions.json: gate_decisions
+        ideation/bridge_coverage_review.json: bridge_coverage_review
       expected_outputs:
         hypothesis_count: 3
         risk_count: 3

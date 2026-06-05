@@ -15,7 +15,7 @@
     },
     "source": {
       "type": "string",
-      "enum": ["user", "auto", "mixed"]
+      "enum": ["user", "auto", "mixed", "none"]
     },
     "bridge_domains": {
       "type": "array",
