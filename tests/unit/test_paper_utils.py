@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from researchos.tools.paper_enrichment_tool import DetectDuplicateQueriesTool
-from researchos.tools.paper_utils import expand_queries, filter_by_domain, score_papers
+from researchos.tools.paper_utils import deduplicate_papers, expand_queries, filter_by_domain, generate_search_log, score_papers
 from researchos.tools.paper_utils_tool import ExpandQueriesTool, LogScoutProgressTool
 from researchos.tools.semantic_scholar import _normalize_paper
 
@@ -14,6 +14,107 @@ def test_expand_queries_uses_dynamic_recent_year_windows():
     assert "adaptive retrieval 2026-2028" in queries
     assert "adaptive retrieval 2025-2027" in queries
     assert "adaptive retrieval 2024-2026" not in queries
+
+
+def test_generate_search_log_shows_bucket_bridge_source_and_snowball():
+    log = generate_search_log(
+        raw_count=12,
+        dedup_count=8,
+        queries=["core query", "bridge query", "Crossref one-hop references from Seed"],
+        query_results={"core query": 5, "bridge query": 7},
+        search_records=[
+            {
+                "query": "core query",
+                "query_bucket": "core",
+                "tool_name": "crossref_search",
+                "result_count": 5,
+                "persisted_count": 5,
+            },
+            {
+                "query": "bridge query",
+                "query_bucket": "theory_bridge",
+                "bridge_id": "b2",
+                "tool_name": "multi_source_search",
+                "result_count": 7,
+                "persisted_count": 6,
+            },
+            {
+                "query": "Crossref one-hop references from Seed",
+                "query_bucket": "snowball",
+                "tool_name": "crossref_snowball_backfill",
+                "result_count": 1,
+                "persisted_count": 1,
+            },
+        ],
+        bridge_plan={
+            "semantics": "bridge_domain_plan",
+            "bridge_domains": [
+                {
+                    "bridge_id": "b2",
+                    "priority": "should_explore",
+                    "queries": ["bridge query"],
+                },
+                {
+                    "bridge_id": "b_missing",
+                    "priority": "should_explore",
+                    "queries": ["missing bridge query"],
+                },
+            ],
+        },
+    )
+
+    assert "## Bucket 覆盖" in log
+    assert "## Bridge Domain Query 覆盖" in log
+    assert "## Bridge Domain Plan 覆盖" in log
+    assert "| theory_bridge |" in log
+    assert "| b2 |" in log
+    assert "| b_missing | should_explore | missing bridge query | 0 | 0 | missing |" in log
+    assert "crossref_snowball_backfill" in log
+    assert "Crossref one-hop references from Seed" in log
+
+
+def test_deduplicate_papers_merges_bridge_citation_and_pdf_provenance():
+    deduped = deduplicate_papers(
+        [
+            {
+                "id": "core",
+                "doi": "10.1234/test",
+                "title": "Shared Paper",
+                "abstract": "short",
+                "source": "crossref",
+                "source_query": "core query",
+                "search_bucket": "core",
+                "externalIds": {"DOI": "10.1234/test"},
+            },
+            {
+                "id": "bridge",
+                "doi": "https://doi.org/10.1234/test",
+                "title": "Shared Paper",
+                "abstract": "longer abstract with useful bridge context",
+                "source": "arxiv",
+                "source_query": "bridge query",
+                "search_bucket": "theory_bridge",
+                "bridge_id": "b2",
+                "pdf_url": "https://arxiv.org/pdf/2401.00001.pdf",
+                "externalIds": {"ArXiv": "2401.00001"},
+                "references": [{"doi": "10.9999/ref"}],
+            },
+        ]
+    )
+
+    assert len(deduped) == 1
+    paper = deduped[0]
+    assert paper["abstract"] == "longer abstract with useful bridge context"
+    assert paper["source"] == "crossref+arxiv"
+    assert paper["externalIds"]["DOI"] == "10.1234/test"
+    assert paper["externalIds"]["ArXiv"] == "2401.00001"
+    assert paper["references"] == [{"doi": "10.9999/ref"}]
+    assert paper["recalled_by_bridges"] == ["b2"]
+    assert "core query" in paper["source_queries"]
+    assert "bridge query" in paper["source_queries"]
+    assert "core" in paper["search_buckets"]
+    assert "theory_bridge" in paper["search_buckets"]
+    assert paper["pdf_url"] == "https://arxiv.org/pdf/2401.00001.pdf"
 
 
 def test_expand_queries_uses_llm_profile_without_builtin_ai_expansion():

@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from difflib import SequenceMatcher
 from pathlib import Path
+from collections import Counter, defaultdict
 from typing import Any
 
 from ..time_utils import current_utc_year, format_year_window
@@ -57,7 +58,7 @@ def deduplicate_papers(
     doi_dedup: bool = True,
     title_threshold: float = 0.95,
 ) -> list[dict[str, Any]]:
-    """去重论文列表。
+    """去重论文列表，并合并重复记录的 mechanical provenance。
 
     Args:
         papers: 论文列表
@@ -70,34 +71,195 @@ def deduplicate_papers(
     if not papers:
         return []
 
-    result = []
-    seen_dois = set()
-    seen_titles = []
+    result: list[dict[str, Any]] = []
+    doi_to_index: dict[str, int] = {}
+    seen_titles: list[tuple[str, int]] = []
 
     for paper in papers:
+        if not isinstance(paper, dict):
+            continue
         # DOI 精确去重
+        duplicate_index: int | None = None
         if doi_dedup and paper.get("doi"):
-            doi = paper["doi"].strip().lower()
-            if doi and doi in seen_dois:
-                continue
-            if doi:
-                seen_dois.add(doi)
+            doi = _normalize_doi_key(paper.get("doi"))
+            if doi and doi in doi_to_index:
+                duplicate_index = doi_to_index[doi]
 
         # 标题相似度去重
         title = paper.get("title", "").strip()
         if not title:
             continue
 
-        is_duplicate = False
-        for seen_title in seen_titles:
-            similarity = SequenceMatcher(None, title.lower(), seen_title.lower()).ratio()
-            if similarity >= title_threshold:
-                is_duplicate = True
-                break
+        if duplicate_index is None:
+            for seen_title, seen_index in seen_titles:
+                similarity = SequenceMatcher(None, title.lower(), seen_title.lower()).ratio()
+                if similarity >= title_threshold:
+                    duplicate_index = seen_index
+                    break
 
-        if not is_duplicate:
-            seen_titles.append(title)
-            result.append(paper)
+        if duplicate_index is not None:
+            result[duplicate_index] = _merge_duplicate_paper_records(
+                result[duplicate_index],
+                paper,
+            )
+            merged_doi = _normalize_doi_key(result[duplicate_index].get("doi"))
+            if merged_doi:
+                doi_to_index.setdefault(merged_doi, duplicate_index)
+            continue
+
+        index = len(result)
+        result.append(dict(paper))
+        if doi_dedup:
+            doi = _normalize_doi_key(paper.get("doi"))
+            if doi:
+                doi_to_index.setdefault(doi, index)
+        seen_titles.append((title, index))
+
+    return result
+
+
+def _normalize_doi_key(value: Any) -> str:
+    doi = str(value or "").strip().casefold()
+    for prefix in ("doi:", "https://doi.org/", "http://doi.org/", "https://dx.doi.org/"):
+        if doi.startswith(prefix):
+            doi = doi[len(prefix):]
+            break
+    return doi
+
+
+def _merge_duplicate_paper_records(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    """Merge duplicate paper records without adding scholarly judgment.
+
+    The merge only preserves factual/provenance metadata: identifiers, search
+    buckets, bridge sources, references, abstracts, and open-access/PDF hints.
+    It deliberately does not decide relevance or change semantic_screen unless
+    the existing record lacks one.
+    """
+
+    merged = dict(existing)
+    for key, value in incoming.items():
+        if value in (None, "", [], {}):
+            continue
+        current = merged.get(key)
+        if current in (None, "", [], {}):
+            merged[key] = value
+            continue
+
+        if key == "abstract":
+            if len(str(value)) > len(str(current)):
+                merged[key] = value
+        elif key == "citation_count":
+            try:
+                merged[key] = max(int(current or 0), int(value or 0))
+            except (TypeError, ValueError):
+                pass
+        elif key == "externalIds" and isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = {
+                **current,
+                **{k: v for k, v in value.items() if v not in (None, "", [], {})},
+            }
+        elif key in {
+            "references",
+            "referenced_works",
+            "related_works",
+            "locations",
+            "oa_locations",
+            "open_access_locations",
+            "openAccessLocations",
+            "open_access_pdfs",
+            "recalled_by_bridges",
+            "contributed_bridges",
+        } and isinstance(current, list) and isinstance(value, list):
+            merged[key] = _dedupe_list_payload([*current, *value])
+        elif key in {
+            "openAccessPdf",
+            "open_access_pdf",
+            "oa_pdf",
+            "open_access",
+            "best_oa_location",
+            "primary_location",
+        } and isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = {**current, **{k: v for k, v in value.items() if v not in (None, "", [], {})}}
+        elif key in {"bridge_id", "search_bucket", "query_bucket", "source_bucket", "source_query", "source_tool"}:
+            plural_key = {
+                "bridge_id": "bridge_ids",
+                "search_bucket": "search_buckets",
+                "query_bucket": "query_buckets",
+                "source_bucket": "source_buckets",
+                "source_query": "source_queries",
+                "source_tool": "source_tools",
+            }[key]
+            _append_unique_scalar(merged, plural_key, current)
+            _append_unique_scalar(merged, plural_key, value)
+            if key == "bridge_id":
+                _append_unique_scalar(merged, "recalled_by_bridges", current)
+                _append_unique_scalar(merged, "recalled_by_bridges", value)
+        elif key in {"citation_snowball_source_id", "citation_snowball_source_title"}:
+            _append_unique_scalar(merged, f"{key}s", current)
+            _append_unique_scalar(merged, f"{key}s", value)
+        elif key in {
+            "pdf_url",
+            "open_access_pdf_url",
+            "oa_pdf_url",
+            "best_pdf_url",
+            "full_text_url",
+            "pmc_pdf_url",
+            "url_for_pdf",
+            "landing_page_url",
+        }:
+            _append_unique_scalar(merged, f"{key}s", current)
+            _append_unique_scalar(merged, f"{key}s", value)
+        elif key == "source":
+            sources = [item for item in str(current).split("+") if item]
+            incoming_source = str(value)
+            if incoming_source and incoming_source not in sources:
+                sources.append(incoming_source)
+                merged[key] = "+".join(sources)
+
+    _normalize_merged_bridge_fields(merged)
+    return merged
+
+
+def _append_unique_scalar(record: dict[str, Any], key: str, value: Any) -> None:
+    values = record.get(key)
+    if not isinstance(values, list):
+        values = []
+    if isinstance(value, (list, tuple, set)):
+        candidates = [str(item).strip() for item in value]
+    else:
+        candidates = [str(value or "").strip()]
+    for candidate in candidates:
+        if candidate and candidate not in values:
+            values.append(candidate)
+    if values:
+        record[key] = values
+
+
+def _normalize_merged_bridge_fields(record: dict[str, Any]) -> None:
+    bridge_ids: list[str] = []
+    for key in ("bridge_id", "bridge_ids", "recalled_by_bridges", "contributed_bridges"):
+        value = record.get(key)
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            bridge_id = str(item or "").strip()
+            if bridge_id and bridge_id not in bridge_ids:
+                bridge_ids.append(bridge_id)
+    if bridge_ids:
+        record.setdefault("bridge_id", bridge_ids[0])
+        record["recalled_by_bridges"] = bridge_ids
+
+
+def _dedupe_list_payload(items: list[Any]) -> list[Any]:
+    seen: set[str] = set()
+    result: list[Any] = []
+    for item in items:
+        key = str(item)
+        if isinstance(item, dict):
+            key = str(item.get("doi") or item.get("id") or item.get("url") or item.get("title") or item)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
 
     return result
 
@@ -397,6 +559,8 @@ def generate_search_log(
     dedup_count: int,
     queries: list[str],
     query_results: dict[str, int] | None = None,
+    search_records: list[dict[str, Any]] | None = None,
+    bridge_plan: dict[str, Any] | None = None,
 ) -> str:
     """生成检索日志（基于实际数据，不允许编造）。
 
@@ -405,20 +569,129 @@ def generate_search_log(
         dedup_count: 去重后数量
         queries: 使用的检索式列表
         query_results: 每个检索式的结果数量（可选）
+        search_records: 结构化检索记录（可选），包含 query/tool/bucket/bridge_id/source_stats
+        bridge_plan: 已确认的 bridge_domain_plan.json（可选），用于展示计划覆盖，不做语义判断
 
     Returns:
         Markdown 格式的检索日志
     """
     log = "# T2 Scout 检索日志\n\n"
 
+    records = _normalize_search_records(search_records, queries, query_results)
+
     # 检索式
     log += "## 检索式\n\n"
-    for i, query in enumerate(queries, 1):
-        if query_results and query in query_results:
-            count = query_results[query]
-            log += f"{i}. \"{query}\" → {count} 篇\n"
-        else:
-            log += f"{i}. \"{query}\"\n"
+    if records:
+        log += "| # | Query | Bucket | Bridge | Tool/Source | Results | Persisted |\n"
+        log += "|---:|---|---|---|---|---:|---:|\n"
+        for i, record in enumerate(records, 1):
+            query = _md_cell(record.get("query") or "")
+            bucket = _md_cell(record.get("query_bucket") or record.get("search_bucket") or "unspecified")
+            bridge_id = _md_cell(record.get("bridge_id") or "-")
+            tool = _md_cell(record.get("tool_name") or record.get("source_tool") or record.get("source") or "-")
+            count = int(record.get("result_count") or record.get("count") or 0)
+            persisted = int(record.get("persisted_count") or 0)
+            log += f"| {i} | {query} | {bucket} | {bridge_id} | {tool} | {count} | {persisted} |\n"
+    else:
+        for i, query in enumerate(queries, 1):
+            if query_results and query in query_results:
+                count = query_results[query]
+                log += f"{i}. \"{query}\" → {count} 篇\n"
+            else:
+                log += f"{i}. \"{query}\"\n"
+
+    if records:
+        log += "\n## Bucket 覆盖\n\n"
+        bucket_counts: Counter[str] = Counter()
+        bucket_results: Counter[str] = Counter()
+        bucket_persisted: Counter[str] = Counter()
+        for record in records:
+            bucket = str(record.get("query_bucket") or record.get("search_bucket") or "unspecified")
+            bucket_counts[bucket] += 1
+            bucket_results[bucket] += int(record.get("result_count") or record.get("count") or 0)
+            bucket_persisted[bucket] += int(record.get("persisted_count") or 0)
+        log += "| Bucket | Query Calls | Results | Persisted |\n"
+        log += "|---|---:|---:|---:|\n"
+        for bucket, call_count in sorted(bucket_counts.items()):
+            log += f"| {_md_cell(bucket)} | {call_count} | {bucket_results[bucket]} | {bucket_persisted[bucket]} |\n"
+
+        bridge_records = [record for record in records if str(record.get("bridge_id") or "").strip()]
+        if bridge_records:
+            log += "\n## Bridge Domain Query 覆盖\n\n"
+            bridge_counts: Counter[str] = Counter()
+            bridge_results: Counter[str] = Counter()
+            bridge_persisted: Counter[str] = Counter()
+            bridge_queries: dict[str, list[str]] = defaultdict(list)
+            for record in bridge_records:
+                bridge_id = str(record.get("bridge_id") or "").strip()
+                bridge_counts[bridge_id] += 1
+                bridge_results[bridge_id] += int(record.get("result_count") or record.get("count") or 0)
+                bridge_persisted[bridge_id] += int(record.get("persisted_count") or 0)
+                query = str(record.get("query") or "").strip()
+                if query and query not in bridge_queries[bridge_id]:
+                    bridge_queries[bridge_id].append(query)
+            log += "| Bridge | Query Calls | Results | Persisted | Queries |\n"
+            log += "|---|---:|---:|---:|---|\n"
+            for bridge_id in sorted(bridge_counts):
+                query_preview = "; ".join(bridge_queries[bridge_id][:4])
+                if len(bridge_queries[bridge_id]) > 4:
+                    query_preview += f"; ... (+{len(bridge_queries[bridge_id]) - 4})"
+                log += (
+                    f"| {_md_cell(bridge_id)} | {bridge_counts[bridge_id]} | "
+                    f"{bridge_results[bridge_id]} | {bridge_persisted[bridge_id]} | "
+                    f"{_md_cell(query_preview)} |\n"
+                )
+
+        planned_bridges = _normalize_bridge_plan_entries(bridge_plan)
+        if planned_bridges:
+            bridge_counts = Counter()
+            bridge_results = Counter()
+            bridge_persisted = Counter()
+            bridge_queries: dict[str, list[str]] = defaultdict(list)
+            for record in records:
+                bridge_id = str(record.get("bridge_id") or "").strip()
+                if not bridge_id:
+                    continue
+                bridge_counts[bridge_id] += 1
+                bridge_results[bridge_id] += int(record.get("result_count") or record.get("count") or 0)
+                bridge_persisted[bridge_id] += int(record.get("persisted_count") or 0)
+                query = str(record.get("query") or "").strip()
+                if query and query not in bridge_queries[bridge_id]:
+                    bridge_queries[bridge_id].append(query)
+
+            log += "\n## Bridge Domain Plan 覆盖\n\n"
+            log += "| Bridge | Priority | Planned Queries | Actual Query Calls | Persisted | Status |\n"
+            log += "|---|---|---|---:|---:|---|\n"
+            for bridge in planned_bridges:
+                bridge_id = str(bridge.get("bridge_id") or "").strip()
+                priority = str(bridge.get("priority") or "unspecified").strip() or "unspecified"
+                planned_queries = bridge.get("queries") if isinstance(bridge.get("queries"), list) else []
+                planned_preview = "; ".join(str(item).strip() for item in planned_queries[:3] if str(item).strip())
+                if len(planned_queries) > 3:
+                    planned_preview += f"; ... (+{len(planned_queries) - 3})"
+                calls = bridge_counts[bridge_id]
+                persisted = bridge_persisted[bridge_id]
+                status = "covered" if persisted > 0 else "missing"
+                if priority == "skip":
+                    status = "skipped_by_user"
+                log += (
+                    f"| {_md_cell(bridge_id)} | {_md_cell(priority)} | {_md_cell(planned_preview)} | "
+                    f"{calls} | {persisted} | {status} |\n"
+                )
+
+        log += "\n## Source/Tool 覆盖\n\n"
+        source_counts: Counter[str] = Counter()
+        source_results: Counter[str] = Counter()
+        source_persisted: Counter[str] = Counter()
+        for record in records:
+            source = str(record.get("tool_name") or record.get("source_tool") or record.get("source") or "unknown")
+            source_counts[source] += 1
+            source_results[source] += int(record.get("result_count") or record.get("count") or 0)
+            source_persisted[source] += int(record.get("persisted_count") or 0)
+        log += "| Tool/Source | Calls | Results | Persisted |\n"
+        log += "|---|---:|---:|---:|\n"
+        for source, call_count in sorted(source_counts.items()):
+            log += f"| {_md_cell(source)} | {call_count} | {source_results[source]} | {source_persisted[source]} |\n"
 
     # 统计数据
     log += "\n## 检索统计\n\n"
@@ -427,3 +700,59 @@ def generate_search_log(
     log += f"- 去重率: {(1 - dedup_count / max(1, raw_count)) * 100:.1f}%\n"
 
     return log
+
+
+def _normalize_search_records(
+    search_records: list[dict[str, Any]] | None,
+    queries: list[str],
+    query_results: dict[str, int] | None,
+) -> list[dict[str, Any]]:
+    if search_records:
+        normalized: list[dict[str, Any]] = []
+        for record in search_records:
+            if not isinstance(record, dict):
+                continue
+            query = " ".join(str(record.get("query") or "").split())
+            if not query and not record.get("bridge_id") and not record.get("query_bucket"):
+                continue
+            item = dict(record)
+            item["query"] = query or "[unknown query]"
+            normalized.append(item)
+        return normalized
+
+    if not query_results:
+        return []
+    records = []
+    for query in queries:
+        records.append(
+            {
+                "query": query,
+                "result_count": int(query_results.get(query, 0)),
+                "persisted_count": int(query_results.get(query, 0)),
+            }
+        )
+    return records
+
+
+def _normalize_bridge_plan_entries(bridge_plan: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(bridge_plan, dict):
+        return []
+    if str(bridge_plan.get("source") or "").strip().casefold() == "none":
+        return []
+    domains = bridge_plan.get("bridge_domains")
+    if not isinstance(domains, list):
+        return []
+    entries: list[dict[str, Any]] = []
+    for item in domains:
+        if not isinstance(item, dict):
+            continue
+        bridge_id = str(item.get("bridge_id") or "").strip()
+        if not bridge_id:
+            continue
+        entries.append(item)
+    return entries
+
+
+def _md_cell(value: Any) -> str:
+    text = " ".join(str(value or "").split())
+    return text.replace("|", "/") or "-"

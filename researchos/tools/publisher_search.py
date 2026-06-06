@@ -258,7 +258,13 @@ class InformsSearchTool(Tool):
     timeout_seconds = 30.0
 
     def __init__(self, email: str | None = None) -> None:
-        self.email = email or os.environ.get("RESEARCHER_EMAIL") or "researchos@example.com"
+        self.email = (
+            email
+            or os.environ.get("RESEARCHER_EMAIL")
+            or os.environ.get("CROSSREF_MAILTO")
+            or os.environ.get("OPENALEX_MAILTO")
+            or "researcher@example.com"
+        )
         self.base_url = "https://api.crossref.org/works"
 
     async def execute(self, **kwargs: Any) -> ToolResult:

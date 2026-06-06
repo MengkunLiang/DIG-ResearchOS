@@ -504,6 +504,24 @@ class AskHumanAgent(Agent):
         return "ask human"
 
 
+class AskHumanWriteAgent(Agent):
+    def __init__(self):
+        super().__init__(
+            AgentSpec(
+                name="ask-human-write-test",
+                model_tier="medium",
+                tool_names=["ask_human", "write_file", "finish_task"],
+                allowed_write_prefixes=[""],
+            )
+        )
+
+    def system_prompt(self, ctx):
+        return "You ask for human input and may write files."
+
+    def initial_user_message(self, ctx):
+        return "ask human before writing"
+
+
 class T1StartupGateAgent(Agent):
     def __init__(self):
         super().__init__(
@@ -1999,6 +2017,47 @@ async def test_runner_autobridge_blocks_other_tools_when_text_asks_human(tmp_wor
     assert llm.call_count == 1
     assert human.calls and human.calls[0][0] == "clarification"
     assert not (tmp_workspace / "should_not_exist.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_runner_explicit_ask_human_blocks_sibling_tools_until_next_turn(tmp_workspace, registry):
+    llm = MockLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[
+                        FakeToolCall(
+                            name="ask_human",
+                            arguments={"question": "请确认是否写文件", "suggestions": ["确认"]},
+                            id="tc1",
+                        ),
+                        FakeToolCall(
+                            name="write_file",
+                            arguments={"path": "should_not_exist.txt", "content": "bad"},
+                            id="tc2",
+                        ),
+                    ]
+                )
+            ),
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="finish_task", arguments={"summary": "done"}, id="tc3")]
+                )
+            ),
+        ]
+    )
+    human = MockHumanInterface(clarification_answer="确认")
+    ctx = ExecutionContext(workspace_dir=tmp_workspace, project_id="p1", task_id="T4", run_id="r_explicit_human_barrier")
+    runner = AgentRunner(AskHumanWriteAgent(), registry, llm, human)
+
+    result = await runner.run(ctx)
+
+    assert result.ok
+    assert llm.call_count == 2
+    assert human.calls and human.calls[0][0] == "clarification"
+    assert not (tmp_workspace / "should_not_exist.txt").exists()
+    trace = (tmp_workspace / "_runtime" / "traces" / "r_explicit_human_barrier.jsonl").read_text(encoding="utf-8")
+    assert "延后执行同轮其它工具: write_file" in trace
 
 
 @pytest.mark.asyncio

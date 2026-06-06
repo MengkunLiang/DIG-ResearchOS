@@ -717,9 +717,11 @@ trace 记录：
 - `_runtime/logs/researchos-debug.log`：Python logging / structlog 的底层调试输出，受 `runtime.yaml: logging.level/json` 控制。
 - `_runtime/traces/*.jsonl`：机器级完整 trace，包含消息、LLM response、tool result 等细节，用于复盘单次 run。
 
-CLI 默认只显示 task/tool/validation 摘要；`--quiet` 只显示状态跳转、暂停、错误和最终结果；`--verbose` 会额外显示 Agent 文本输出和 step token 摘要。LiteLLM 的 INFO 输出默认被压到 WARNING，正常情况下不会污染控制台或 `researchos.log`。如果 T2 搜索工具返回论文但 raw 没落盘，`researchos.log` 的 `TOOL_RESULT` 会显示 `reported_paper_count`、`persisted_raw_delta`、`raw_count_after` 和 `append_status=raw_persistence_mismatch/raw_append_failed`。如果检索式规划为空，会记录 `empty_query_plan`；如果搜索工具实际收到空 query，会记录 `empty_query`，二者都不是普通 0 结果。T2 raw 覆盖足够后还应看到 `backfill_paper_abstracts` 的工具调用摘要；如果摘要缺失率异常高，应先检查该工具的 `filled/remaining/by_source`，再检查 `semantic_screen` 是否基于补全后的 raw 池执行。
+CLI 默认只显示 task/tool/validation 摘要；`--quiet` 只显示状态跳转、暂停、错误和最终结果；`--verbose` 会额外显示 Agent 文本输出和 step token 摘要。LiteLLM 的 INFO 输出默认被压到 WARNING，正常情况下不会污染控制台或 `researchos.log`。如果 T2 搜索工具返回论文但 raw 没落盘，`researchos.log` 的 `TOOL_RESULT` 会显示 `reported_paper_count`、`persisted_raw_delta`、`merged_raw_count`、`retained_raw_count`、`raw_count_after` 和 `append_status=raw_persistence_mismatch/raw_append_failed`。如果检索式规划为空，会记录 `empty_query_plan`；如果搜索工具实际收到空 query，会记录 `empty_query`，二者都不是普通 0 结果。
 
-人工输入轮次是一个例外：如果同一轮包含 `ask_human`，Agent 本轮正文会在默认 CLI 模式显示，因为正文常包含 `project.yaml` 草案、Bridge Domain Plan 候选或其它用户必须看见的决策上下文。`ask_human.question` 也会被参数校验拒绝空白；如果模型仍写出“请确认以上/上述草案/这些方向”等依赖隐藏上下文的短问题，runner 会把本轮 Agent 正文自动并入 question，再显示输入框。
+T2 finalize 的 `search_log.md` 是人类排障入口：`## 检索式` 表展示 Query、Bucket、Bridge、Tool/Source、Results、Persisted；`## Bridge Domain Query 覆盖` 展示每个 bridge 的实际 query 与落盘量；`## Bridge Domain Plan 覆盖` 展示正式 bridge plan 中每个 bridge 是 covered、missing 还是 skipped。trace 缺失时，runtime 会从 `papers_raw.jsonl` 的 `source_queries/search_buckets/recalled_by_bridges/source_tools` 重建这些表。T2 raw 覆盖足够后还应看到 OpenAlex DOI/OA 详情补全、Crossref DOI 详情补全和 Crossref citation snowball 的统计；如果摘要、references 或 PDF/OA hint 异常少，应先检查这些统计中的 attempted/failed/filled，再看上游搜索工具是否保留了 DOI/OpenAlex ID。
+
+人工输入轮次是一个例外：如果同一轮包含 `ask_human`，Agent 本轮正文会在默认 CLI 模式显示，因为正文常包含 `project.yaml` 草案、Bridge Domain Plan 候选或其它用户必须看见的决策上下文。`ask_human.question` 也会被参数校验拒绝空白；如果模型仍写出“请确认以上/上述草案/这些方向”等依赖隐藏上下文的短问题，runner 会把本轮 Agent 正文自动并入 question，再显示输入框。同一轮如果同时包含 `ask_human` 和其它 tool call，runner 会先只执行 `ask_human`，把其它工具延后到下一轮模型响应；这避免用户尚未回答时并发执行写文件、检索或 `finish_task`。
 
 ---
 

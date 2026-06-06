@@ -134,6 +134,40 @@ def test_multi_source_search_defaults_include_informs():
     assert "informs" in params.sources
 
 
+def test_multi_source_search_dedup_merges_pdf_and_external_ids():
+    tool = MultiSourceSearchTool(email="researcher@example.com")
+
+    papers = tool._deduplicate_papers(
+        [
+            {
+                "id": "doi:10.1234/example",
+                "source": "crossref",
+                "title": "Shared Metadata Paper",
+                "authors": [{"name": "Ada"}],
+                "doi": "10.1234/example",
+                "abstract": "",
+                "externalIds": {"DOI": "10.1234/example"},
+            },
+            {
+                "id": "arxiv:2401.12345",
+                "source": "arxiv",
+                "title": "Shared Metadata Paper",
+                "authors": [{"name": "Ada"}],
+                "abstract": "Richer abstract from arXiv.",
+                "pdf_url": "https://arxiv.org/pdf/2401.12345.pdf",
+                "externalIds": {"ArXiv": "2401.12345"},
+            },
+        ]
+    )
+
+    assert len(papers) == 1
+    assert papers[0]["doi"] == "10.1234/example"
+    assert papers[0]["pdf_url"] == "https://arxiv.org/pdf/2401.12345.pdf"
+    assert papers[0]["externalIds"]["DOI"] == "10.1234/example"
+    assert papers[0]["externalIds"]["ArXiv"] == "2401.12345"
+    assert papers[0]["abstract"] == "Richer abstract from arXiv."
+
+
 @pytest.mark.asyncio
 async def test_multi_source_search_rejects_blank_query_with_tool_result():
     tool = MultiSourceSearchTool(email="researcher@example.com")

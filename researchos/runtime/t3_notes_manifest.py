@@ -71,6 +71,32 @@ def build_t3_notes_manifest(
             "seed_priority": bool(record.get("seed_priority")),
             "protected_slot": bool(record.get("protected_slot") or record.get("citation_hub_protected_slot")),
             "triaged_out": bool(record.get("triaged_out")),
+            "read_disposition": str(record.get("read_disposition") or ""),
+            "read_disposition_reason": str(record.get("read_disposition_reason") or ""),
+            "queue_reason": str(record.get("queue_reason") or ""),
+            "bridge_id": str(record.get("bridge_id") or ""),
+            "recalled_by_bridges": [
+                str(item)
+                for item in record.get("recalled_by_bridges") or []
+                if str(item).strip()
+            ],
+            "contributed_bridges": [
+                str(item)
+                for item in record.get("contributed_bridges") or []
+                if str(item).strip()
+            ],
+            "core_screen_passed": bool(record.get("core_screen_passed")),
+            "semantic_role": str(record.get("semantic_role") or ""),
+            "relation_to_project": str(record.get("relation_to_project") or ""),
+            "is_citation_hub": bool(record.get("is_citation_hub")),
+            "hub_type": str(record.get("hub_type") or ""),
+            "hub_score": float(record.get("hub_score") or 0.0),
+            "citation_hub_protected_slot": bool(record.get("citation_hub_protected_slot")),
+            "has_abstract": bool(record.get("has_abstract")),
+            "abstract_chars": int(record.get("abstract_chars") or 0),
+            "reference_hint_count": int(record.get("reference_hint_count") or 0),
+            "has_pdf_url_hint": bool(record.get("has_pdf_url_hint")),
+            "pdf_url_hint_count": int(record.get("pdf_url_hint_count") or 0),
             "note_status": status,
             "status": status,
             "note_path": note_path,

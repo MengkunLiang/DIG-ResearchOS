@@ -28,6 +28,34 @@ from pydantic import BaseModel, Field
 from ..runtime.errors import ToolRuntimeError
 from .abstract_utils import clean_abstract
 from .base import Tool, ToolResult
+from .openalex_api import _researcher_email as _openalex_researcher_email
+from .openalex_api import _work_to_paper as _openalex_work_to_paper
+
+
+def _extract_crossref_references(item: dict[str, Any], limit: int = 80) -> list[dict[str, str]]:
+    """Extract DOI/title aliases from Crossref references for local graph matching."""
+
+    references: list[dict[str, str]] = []
+    for ref in item.get("reference") or []:
+        if not isinstance(ref, dict):
+            continue
+        doi = str(ref.get("DOI") or ref.get("doi") or "").strip()
+        title = str(ref.get("article-title") or ref.get("unstructured") or "").strip()
+        year = str(ref.get("year") or "").strip()
+        if not doi and not title:
+            continue
+        record: dict[str, str] = {}
+        if doi:
+            record["doi"] = doi.removeprefix("https://doi.org/").removeprefix("http://doi.org/")
+            record["id"] = record["doi"]
+        if title:
+            record["title"] = title
+        if year:
+            record["year"] = year
+        references.append(record)
+        if len(references) >= limit:
+            break
+    return references
 
 
 class MultiSourceSearchParams(BaseModel):
@@ -45,7 +73,7 @@ class MultiSourceSearchParams(BaseModel):
         description="可选 bridge_domain_plan.json 中的 bridge_id；只记录召回意图，不代表语义角色。",
     )
     sources: list[str] = Field(
-        default=["crossref", "arxiv", "informs", "europepmc"],
+        default=["openalex", "crossref", "arxiv", "informs", "europepmc"],
         description="要使用的数据源列表，按优先级排序"
     )
 
@@ -99,6 +127,8 @@ class MultiSourceSearchTool(Tool):
             try:
                 if source == "crossref":
                     papers = await self._search_crossref(params.query, params.max_results)
+                elif source == "openalex":
+                    papers = await self._search_openalex(params.query, params.max_results)
                 elif source == "arxiv":
                     papers = await self._search_arxiv(params.query, params.max_results)
                 elif source == "europepmc":
@@ -146,6 +176,24 @@ class MultiSourceSearchTool(Tool):
             }
         )
 
+    async def _search_openalex(self, query: str, max_results: int) -> list[dict]:
+        """搜索 OpenAlex，保留 OpenAlex ID、引用边和开放获取位置。"""
+        url = "https://api.openalex.org/works"
+        params = {
+            "search": query,
+            "per-page": max_results,
+            "mailto": _openalex_researcher_email(),
+        }
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(url, params=params)
+            response.raise_for_status()
+
+            data = response.json()
+            results = data.get("results", [])
+            papers = [_openalex_work_to_paper(work) for work in results if isinstance(work, dict)]
+            return [paper for paper in papers if _is_usable_search_record(paper)]
+
     async def _search_crossref(self, query: str, max_results: int) -> list[dict]:
         """搜索Crossref（DOI元数据）"""
         url = f"https://api.crossref.org/works?query={quote_plus(query)}&rows={max_results}&mailto={self.email}"
@@ -190,6 +238,13 @@ class MultiSourceSearchTool(Tool):
                     "url": f"https://doi.org/{doi}" if doi else "",
                     "externalIds": {"DOI": doi} if doi else {}
                 }
+                references = _extract_crossref_references(item)
+                if references:
+                    paper["references"] = references
+                    paper["referenced_works"] = references
+                    paper["reference_count"] = item.get("reference-count", len(references))
+                else:
+                    paper["reference_count"] = item.get("reference-count", 0)
                 if _is_usable_search_record(paper):
                     papers.append(paper)
 
@@ -247,6 +302,13 @@ class MultiSourceSearchTool(Tool):
                     "url": f"https://doi.org/{doi}" if doi else item.get("URL", ""),
                     "externalIds": {"DOI": doi, "CrossrefPrefix": "10.1287"} if doi else {"CrossrefPrefix": "10.1287"},
                 }
+                references = _extract_crossref_references(item)
+                if references:
+                    paper["references"] = references
+                    paper["referenced_works"] = references
+                    paper["reference_count"] = item.get("reference-count", len(references))
+                else:
+                    paper["reference_count"] = item.get("reference-count", 0)
                 if _is_usable_search_record(paper):
                     papers.append(paper)
 
@@ -298,6 +360,7 @@ class MultiSourceSearchTool(Tool):
                     "doi": "",
                     "citation_count": 0,
                     "url": text("atom:id"),
+                    "pdf_url": f"https://arxiv.org/pdf/{identifier}.pdf",
                     "externalIds": {"ArXiv": identifier}
                 }
                 if _is_usable_search_record(paper):
@@ -347,6 +410,12 @@ class MultiSourceSearchTool(Tool):
                         "DOI": doi
                     }
                 }
+                full_text_urls = _extract_europepmc_full_text_urls(item)
+                if full_text_urls:
+                    paper["full_text_url"] = full_text_urls[0]
+                    paper["open_access_locations"] = [{"url": url} for url in full_text_urls]
+                if pmcid:
+                    paper["pmc_pdf_url"] = f"https://europepmc.org/articles/{pmcid}?pdf=render"
                 if _is_usable_search_record(paper):
                     papers.append(paper)
 
@@ -413,27 +482,25 @@ class MultiSourceSearchTool(Tool):
             return papers
 
     def _deduplicate_papers(self, papers: list[dict]) -> list[dict]:
-        """去重论文（基于DOI和标题）"""
-        seen_dois = set()
-        seen_titles = set()
-        unique = []
+        """去重论文（基于 DOI 和标题），并合并后续来源的更完整 metadata。"""
+
+        unique: list[dict] = []
+        index: dict[str, int] = {}
 
         for paper in papers:
-            # DOI去重
-            doi = paper.get("doi", "").strip().lower()
-            if doi and doi in seen_dois:
+            keys = _paper_identity_keys(paper)
+            existing_idx = next((index[key] for key in keys if key in index), None)
+            if existing_idx is None:
+                index_pos = len(unique)
+                unique.append(dict(paper))
+                for key in keys:
+                    index.setdefault(key, index_pos)
                 continue
-            if doi:
-                seen_dois.add(doi)
 
-            # 标题去重
-            title = paper.get("title", "").strip().lower()
-            if title in seen_titles:
-                continue
-            if title:
-                seen_titles.add(title)
-
-            unique.append(paper)
+            merged = _merge_paper_records(unique[existing_idx], paper)
+            unique[existing_idx] = merged
+            for key in _paper_identity_keys(merged):
+                index.setdefault(key, existing_idx)
 
         return unique
 
@@ -461,6 +528,102 @@ class MultiSourceSearchTool(Tool):
 
 def _clean_query(value: Any) -> str:
     return " ".join(str(value or "").split())
+
+
+def _paper_identity_keys(paper: dict[str, Any]) -> list[str]:
+    keys: list[str] = []
+    doi = str(paper.get("doi") or (paper.get("externalIds") or {}).get("DOI") or "").strip().casefold()
+    doi = doi.removeprefix("https://doi.org/").removeprefix("http://doi.org/").removeprefix("doi:")
+    if doi:
+        keys.append(f"doi:{doi}")
+    arxiv_id = str((paper.get("externalIds") or {}).get("ArXiv") or "").strip().casefold()
+    if arxiv_id:
+        keys.append(f"arxiv:{arxiv_id.removeprefix('arxiv:')}")
+    title = " ".join(str(paper.get("title") or "").casefold().split())
+    if title:
+        keys.append(f"title:{title}")
+    return keys
+
+
+def _merge_paper_records(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    """Merge duplicate records without losing richer PDF/OA/reference metadata."""
+
+    merged = dict(existing)
+    for key, value in incoming.items():
+        if value in (None, "", []):
+            continue
+        current = merged.get(key)
+        if current in (None, "", []):
+            merged[key] = value
+            continue
+        if key == "externalIds" and isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = {**current, **{k: v for k, v in value.items() if v not in (None, "", [])}}
+        elif key in {
+            "references",
+            "referenced_works",
+            "related_works",
+            "locations",
+            "oa_locations",
+            "open_access_locations",
+            "openAccessLocations",
+            "open_access_pdfs",
+        }:
+            if isinstance(current, list) and isinstance(value, list):
+                merged[key] = _dedupe_list_payload([*current, *value])
+        elif key in {
+            "openAccessPdf",
+            "open_access_pdf",
+            "oa_pdf",
+            "open_access",
+            "best_oa_location",
+            "primary_location",
+        } and isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = {**current, **{k: v for k, v in value.items() if v not in (None, "", [])}}
+        elif key == "citation_count":
+            try:
+                merged[key] = max(int(current or 0), int(value or 0))
+            except (TypeError, ValueError):
+                pass
+        elif key == "abstract":
+            if len(str(value)) > len(str(current)):
+                merged[key] = value
+        elif key == "source":
+            sources = [item for item in str(current).split("+") if item]
+            incoming_source = str(value)
+            if incoming_source and incoming_source not in sources:
+                sources.append(incoming_source)
+                merged[key] = "+".join(sources)
+    return merged
+
+
+def _dedupe_list_payload(items: list[Any]) -> list[Any]:
+    seen: set[str] = set()
+    result: list[Any] = []
+    for item in items:
+        key = json_key = str(item)
+        if isinstance(item, dict):
+            key = str(item.get("doi") or item.get("id") or item.get("url") or item.get("title") or item)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result
+
+
+def _extract_europepmc_full_text_urls(item: dict[str, Any]) -> list[str]:
+    urls: list[str] = []
+    raw = item.get("fullTextUrlList")
+    if isinstance(raw, dict):
+        raw_urls = raw.get("fullTextUrl") or []
+    else:
+        raw_urls = raw if isinstance(raw, list) else []
+    for entry in raw_urls:
+        if not isinstance(entry, dict):
+            continue
+        url = str(entry.get("url") or "").strip()
+        if url:
+            urls.append(url)
+    return urls
 
 
 def _is_usable_search_record(paper: dict[str, Any]) -> bool:

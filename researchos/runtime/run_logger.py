@@ -123,6 +123,7 @@ class RunLogger:
                 "source": tool_name,
                 "max": arguments.get("max_results") or arguments.get("per_page") or arguments.get("rows"),
                 "bucket": arguments.get("query_bucket") or arguments.get("search_bucket"),
+                "bridge": arguments.get("bridge_id"),
             }
         if tool_name in {"read_file", "write_file", "write_structured_file", "append_file"}:
             return {"path": arguments.get("path")}
@@ -153,10 +154,14 @@ class RunLogger:
             auto_persist = metadata.get("auto_persist_raw")
             if isinstance(auto_persist, dict):
                 persisted_delta = auto_persist.get("count")
+                merged_count = auto_persist.get("merged_count")
+                retained_count = auto_persist.get("retained_count")
                 append_status = "ok" if auto_persist.get("ok") else "raw_append_failed"
                 raw_count_after = auto_persist.get("raw_count_after")
             else:
                 persisted_delta = 0
+                merged_count = 0
+                retained_count = 0
                 append_status = error or ("no_papers" if ok and not papers else "auto_persist_missing")
                 raw_count_after = None
             reported_count = len(papers) if isinstance(papers, list) else data.get("count") or data.get("total") or 0
@@ -169,8 +174,12 @@ class RunLogger:
             return {
                 "query": data.get("query") or arguments.get("query") or "",
                 "source": tool_name,
+                "bucket": arguments.get("query_bucket") or arguments.get("search_bucket") or data.get("query_bucket"),
+                "bridge": arguments.get("bridge_id") or data.get("bridge_id"),
                 "reported_paper_count": reported_count,
                 "persisted_raw_delta": persisted_delta,
+                "merged_raw_count": merged_count,
+                "retained_raw_count": retained_count,
                 "raw_count_after": raw_count_after,
                 "append_status": append_status,
                 "error": error,
@@ -179,6 +188,7 @@ class RunLogger:
             return {
                 "path": data.get("path"),
                 "persisted_raw_delta": data.get("count"),
+                "merged_raw_count": data.get("merged_count"),
                 "valid_input_count": data.get("valid_input_count"),
                 "skipped_count": data.get("skipped_count"),
                 "append_status": "ok" if ok else error or "failed",

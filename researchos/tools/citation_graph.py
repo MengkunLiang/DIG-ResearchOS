@@ -9,9 +9,11 @@ LLM agents use the resulting domain map as a review scaffold.
 
 from collections import Counter, defaultdict
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from pydantic import BaseModel, Field
@@ -19,6 +21,7 @@ from pydantic import BaseModel, Field
 from ..literature_identity import stable_noopenalex_id
 from .abstract_utils import abstract_from_openalex_index
 from .base import Tool, ToolResult
+from .crossref_api import _extract_crossref_references
 from .workspace_policy import ToolAccessDenied, WorkspaceAccessPolicy
 
 
@@ -31,6 +34,14 @@ CORE_OR_BRIDGE_RELATIONS = {
 }
 ADJACENT_RELATIONS = CORE_OR_BRIDGE_RELATIONS | {"adjacent_application"}
 ADJACENT_ROLES = {"adjacent", "baseline", "dataset", "benchmark"}
+
+
+def _researcher_email() -> str:
+    return (
+        os.environ.get("RESEARCHER_EMAIL")
+        or os.environ.get("OPENALEX_MAILTO")
+        or "researcher@example.com"
+    ).strip()
 
 
 class FetchOutgoingCitationsParams(BaseModel):
@@ -88,6 +99,15 @@ class FetchOutgoingCitationsTool(Tool):
         params = FetchOutgoingCitationsParams(**kwargs)
         work_url = _openalex_work_url(params.openalex_id_or_doi)
         if not work_url:
+            if _identifier_doi(params.openalex_id_or_doi):
+                async with httpx.AsyncClient(timeout=20.0) as client:
+                    fallback = await _crossref_citation_fallback(
+                        client,
+                        params,
+                        warnings=["openalex_identifier_unavailable"],
+                    )
+                    if fallback is not None:
+                        return fallback
             return ToolResult(
                 ok=False,
                 content=f"Unsupported OpenAlex/DOI identifier: {params.openalex_id_or_doi}",
@@ -96,7 +116,7 @@ class FetchOutgoingCitationsTool(Tool):
 
         try:
             async with httpx.AsyncClient(timeout=20.0) as client:
-                response = await client.get(work_url, params={"mailto": "researchos@example.com"})
+                response = await client.get(work_url, params={"mailto": _researcher_email()})
                 if response.status_code == 404:
                     return ToolResult(
                         ok=True,
@@ -127,6 +147,14 @@ class FetchOutgoingCitationsTool(Tool):
                     max_candidate_papers=params.max_candidate_papers,
                 )
         except Exception as exc:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                fallback = await _crossref_citation_fallback(
+                    client,
+                    params,
+                    warnings=[f"openalex_fetch_failed: {type(exc).__name__}"],
+                )
+                if fallback is not None:
+                    return fallback
             return ToolResult(
                 ok=True,
                 content=f"Could not fetch citation graph from OpenAlex; returned empty edges with warning: {exc}",
@@ -155,6 +183,124 @@ class FetchOutgoingCitationsTool(Tool):
             ),
             data=data,
         )
+
+
+async def _crossref_citation_fallback(
+    client: "httpx.AsyncClient",
+    params: FetchOutgoingCitationsParams,
+    *,
+    warnings: list[str],
+) -> ToolResult | None:
+    """Return DOI reference aliases when OpenAlex citation fetch is unavailable."""
+
+    doi = _identifier_doi(params.openalex_id_or_doi)
+    if not doi:
+        return None
+    try:
+        response = await client.get(
+            f"https://api.crossref.org/works/{quote(doi, safe='')}",
+            headers=_crossref_headers(),
+        )
+        response.raise_for_status()
+        message = response.json().get("message", {})
+    except Exception:
+        return None
+
+    references = _extract_crossref_references(message, limit=params.max_refs)
+    refs = [
+        str(ref.get("doi") or ref.get("id") or "").strip()
+        for ref in references
+        if str(ref.get("doi") or ref.get("id") or "").strip()
+    ][: params.max_refs]
+    source_title = _first_list_value(message.get("title")) or doi
+    source_id = _normalize_node_id(doi)
+    papers = [
+        paper
+        for paper in (
+            _crossref_reference_to_paper(ref, source_id=source_id, source_title=source_title)
+            for ref in references[: params.max_candidate_papers]
+        )
+        if paper
+    ]
+    data = {
+        "source_id": source_id,
+        "referenced_works": refs,
+        "related_works": [],
+        "papers": papers,
+        "query_bucket": "snowball",
+        "warnings": [*warnings, "crossref_reference_fallback"],
+        "fallback_source": "crossref",
+    }
+    return ToolResult(
+        ok=True,
+        content=(
+            "OpenAlex citation graph unavailable; Crossref fallback returned "
+            f"{len(refs)} referenced DOI aliases and {len(papers)} lightweight "
+            f"snowball candidates for {source_id}."
+        ),
+        data=data,
+    )
+
+
+def _crossref_reference_to_paper(
+    reference: dict[str, str],
+    *,
+    source_id: str,
+    source_title: str,
+) -> dict[str, Any] | None:
+    doi = str(reference.get("doi") or reference.get("id") or "").strip()
+    title = str(reference.get("title") or "").strip()
+    if not doi or not title:
+        return None
+    year = None
+    if str(reference.get("year") or "").strip().isdigit():
+        year = int(str(reference.get("year")).strip())
+    return {
+        "id": f"doi:{doi}",
+        "source": "crossref_reference_snowball",
+        "title": title,
+        "authors": ["Unknown"],
+        "year": year,
+        "abstract": "",
+        "venue": "",
+        "citation_count": 0,
+        "doi": doi,
+        "url": f"https://doi.org/{doi}",
+        "externalIds": {"DOI": doi},
+        "search_bucket": "snowball",
+        "source_bucket": "snowball",
+        "source_query": f"Crossref references from {source_title}",
+        "source_tool": "fetch_outgoing_citations_crossref_fallback",
+        "citation_snowball_source_id": source_id,
+        "citation_snowball_source_title": source_title,
+        "provenance": {
+            "source_tool": "fetch_outgoing_citations_crossref_fallback",
+            "source_id": doi,
+            "source_url": f"https://doi.org/{doi}",
+            "snowball_source_id": source_id,
+            "id_source": "doi",
+        },
+    }
+
+
+def _crossref_headers() -> dict[str, str]:
+    return {"User-Agent": f"ResearchOS/0.1.0 (mailto:{_researcher_email()})"}
+
+
+def _identifier_doi(raw_id: Any) -> str:
+    value = str(raw_id or "").strip()
+    lower = value.casefold()
+    for prefix in ("doi:", "https://doi.org/", "http://doi.org/", "https://dx.doi.org/"):
+        if lower.startswith(prefix):
+            value = value[len(prefix):].strip()
+            break
+    return value if value.startswith("10.") else ""
+
+
+def _first_list_value(value: Any) -> str:
+    if isinstance(value, list) and value:
+        return str(value[0] or "").strip()
+    return str(value or "").strip()
 
 
 class BuildDomainMapTool(Tool):
@@ -229,9 +375,22 @@ def build_domain_map(
         }
 
     node_by_id = {node["id"]: node for node in nodes}
+    alias_to_id = _build_node_alias_index(nodes)
     title_to_id = {_normalize_title_key(node["title"]): node["id"] for node in nodes if node.get("title")}
-    edges = _extract_edges(citation_edges or [], node_by_id=node_by_id, title_to_id=title_to_id)
-    edges.extend(_extract_record_edges(nodes, node_by_id=node_by_id, title_to_id=title_to_id))
+    edges = _extract_edges(
+        citation_edges or [],
+        node_by_id=node_by_id,
+        title_to_id=title_to_id,
+        alias_to_id=alias_to_id,
+    )
+    edges.extend(
+        _extract_record_edges(
+            nodes,
+            node_by_id=node_by_id,
+            title_to_id=title_to_id,
+            alias_to_id=alias_to_id,
+        )
+    )
     edges = _dedupe_edges(edges)
 
     degree: Counter[str] = Counter()
@@ -422,7 +581,7 @@ async def _fetch_neighbor_papers(
         if not work_url:
             continue
         try:
-            response = await client.get(work_url, params={"mailto": "researchos@example.com"})
+            response = await client.get(work_url, params={"mailto": _researcher_email()})
             if response.status_code == 404:
                 continue
             response.raise_for_status()
@@ -511,6 +670,8 @@ def _openalex_work_url(raw_id: str) -> str:
         return value.replace("https://openalex.org/", f"{base}/")
     if value.startswith("W"):
         return f"{base}/{value}"
+    if value.casefold().startswith("doi:"):
+        value = value.split(":", 1)[1].strip()
     if value.startswith("10."):
         return f"{base}/https://doi.org/{value}"
     if value.startswith("https://doi.org/"):
@@ -581,12 +742,23 @@ def _extract_edges(
     *,
     node_by_id: dict[str, dict[str, Any]],
     title_to_id: dict[str, str],
+    alias_to_id: dict[str, str] | None = None,
 ) -> list[tuple[str, str]]:
     edges: list[tuple[str, str]] = []
     for item in payload:
         if isinstance(item, (list, tuple)) and len(item) >= 2:
-            left = _resolve_node_id(item[0], node_by_id=node_by_id, title_to_id=title_to_id)
-            right = _resolve_node_id(item[1], node_by_id=node_by_id, title_to_id=title_to_id)
+            left = _resolve_node_id(
+                item[0],
+                node_by_id=node_by_id,
+                title_to_id=title_to_id,
+                alias_to_id=alias_to_id,
+            )
+            right = _resolve_node_id(
+                item[1],
+                node_by_id=node_by_id,
+                title_to_id=title_to_id,
+                alias_to_id=alias_to_id,
+            )
             if left and right and left != right:
                 edges.append((left, right))
             continue
@@ -596,12 +768,18 @@ def _extract_edges(
             item.get("source_id") or item.get("source") or item.get("paper_id") or item.get("id"),
             node_by_id=node_by_id,
             title_to_id=title_to_id,
+            alias_to_id=alias_to_id,
         )
         if not source:
             continue
         for key in ("referenced_works", "related_works", "references", "related"):
             for target_raw in item.get(key) or []:
-                target = _resolve_node_id(target_raw, node_by_id=node_by_id, title_to_id=title_to_id)
+                target = _resolve_node_id(
+                    target_raw,
+                    node_by_id=node_by_id,
+                    title_to_id=title_to_id,
+                    alias_to_id=alias_to_id,
+                )
                 if target and target != source:
                     edges.append((source, target))
     return edges
@@ -612,13 +790,19 @@ def _extract_record_edges(
     *,
     node_by_id: dict[str, dict[str, Any]],
     title_to_id: dict[str, str],
+    alias_to_id: dict[str, str] | None = None,
 ) -> list[tuple[str, str]]:
     edges: list[tuple[str, str]] = []
     for node in nodes:
         source = node["id"]
         for key in ("referenced_works", "related_works", "references", "related"):
             for target_raw in node.get(key) or []:
-                target = _resolve_node_id(target_raw, node_by_id=node_by_id, title_to_id=title_to_id)
+                target = _resolve_node_id(
+                    target_raw,
+                    node_by_id=node_by_id,
+                    title_to_id=title_to_id,
+                    alias_to_id=alias_to_id,
+                )
                 if target and target != source:
                     edges.append((source, target))
     return edges
@@ -643,10 +827,18 @@ def _resolve_node_id(
     *,
     node_by_id: dict[str, dict[str, Any]],
     title_to_id: dict[str, str],
+    alias_to_id: dict[str, str] | None = None,
+    allow_title_alias: bool = False,
 ) -> str:
     if isinstance(value, dict):
         for key in ("canonical_id", "paper_id", "id", "doi", "title"):
-            resolved = _resolve_node_id(value.get(key), node_by_id=node_by_id, title_to_id=title_to_id)
+            resolved = _resolve_node_id(
+                value.get(key),
+                node_by_id=node_by_id,
+                title_to_id=title_to_id,
+                alias_to_id=alias_to_id,
+                allow_title_alias=(key == "title"),
+            )
             if resolved:
                 return resolved
         return ""
@@ -656,7 +848,45 @@ def _resolve_node_id(
     normalized = _normalize_node_id(raw)
     if normalized in node_by_id:
         return normalized
+    aliases = alias_to_id or {}
+    if normalized in aliases:
+        return aliases[normalized]
+    if allow_title_alias:
+        title_key = _normalize_title_key(raw)
+        if title_key in title_to_id:
+            return title_to_id[title_key]
+        if title_key in aliases:
+            return aliases[title_key]
     return ""
+
+
+def _build_node_alias_index(nodes: list[dict[str, Any]]) -> dict[str, str]:
+    """Map DOI/title/source aliases back to each node's canonical graph id."""
+
+    aliases: dict[str, str] = {}
+    for node in nodes:
+        node_id = str(node.get("id") or "").strip()
+        if not node_id:
+            continue
+        external_ids = node.get("externalIds") if isinstance(node.get("externalIds"), dict) else {}
+        candidates = [
+            node_id,
+            node.get("canonical_id"),
+            node.get("paper_id"),
+            node.get("doi"),
+            external_ids.get("DOI"),
+            external_ids.get("OpenAlex"),
+            external_ids.get("ArXiv"),
+            node.get("url"),
+        ]
+        for candidate in candidates:
+            raw = str(candidate or "").strip()
+            if not raw:
+                continue
+            normalized = _normalize_node_id(raw)
+            if normalized:
+                aliases.setdefault(normalized, node_id)
+    return aliases
 
 
 def _normalize_node_id(value: Any) -> str:

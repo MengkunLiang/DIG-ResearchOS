@@ -26,6 +26,10 @@ class _FakeResponse:
             raise RuntimeError("No JSON data")
         return self._json_data
 
+    @property
+    def text(self) -> str:
+        return self.content.decode("utf-8", errors="ignore")
+
 
 class _FakeAsyncClient:
     def __init__(self, responses: dict[str, _FakeResponse], *args, **kwargs):
@@ -257,6 +261,54 @@ async def test_fetch_paper_pdf_uses_unpaywall_doi_candidates(monkeypatch, tmp_pa
     assert result.data["url"] == "https://example.org/unpaywall.pdf"
     assert (workspace / "paper.pdf").exists()
     assert "full_text" not in result.data
+
+
+@pytest.mark.asyncio
+async def test_fetch_paper_pdf_follows_citation_pdf_url_from_landing_html(monkeypatch, tmp_path: Path):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    policy = WorkspaceAccessPolicy(workspace, [""], [""])
+    tool = FetchPaperPdfTool(policy)
+
+    landing_html = (
+        b"<html><head>"
+        b'<meta name="citation_pdf_url" content="/downloads/paper.pdf">'
+        b"</head></html>"
+    )
+    responses = {
+        "openalex": _FakeResponse(
+            headers={"content-type": "application/json"},
+            content=b"{}",
+            json_data={"best_oa_location": None, "primary_location": None, "locations": []},
+        ),
+        "unpaywall": _FakeResponse(
+            headers={"content-type": "application/json"},
+            content=b"{}",
+            json_data={},
+        ),
+        "https://doi.org/10.1234/html": _FakeResponse(
+            content=landing_html,
+            headers={"content-type": "text/html; charset=utf-8"},
+        ),
+        "https://doi.org/downloads/paper.pdf": _FakeResponse(),
+    }
+
+    import researchos.tools.paper_fetch as paper_fetch
+
+    monkeypatch.setattr(
+        paper_fetch.httpx,
+        "AsyncClient",
+        lambda *args, **kwargs: _FakeAsyncClient(responses, *args, **kwargs),
+    )
+
+    result = await tool.execute(paper_id="doi:10.1234/html", save_path="paper.pdf")
+
+    assert result.ok
+    assert result.data["url"] == "https://doi.org/downloads/paper.pdf"
+    assert "https://doi.org/downloads/paper.pdf" in result.data["candidates_tried"]
+    assert (workspace / "paper.pdf").exists()
+    attempts = (workspace / "literature" / "pdf_fetch_attempts.jsonl").read_text(encoding="utf-8")
+    assert '"ok": true' in attempts
 
 
 @pytest.mark.asyncio

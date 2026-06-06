@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import httpx
@@ -21,6 +22,14 @@ def _normalize_openalex_id(value: Any) -> str:
     if text.startswith("https://openalex.org/") or text.startswith("https://api.openalex.org/works/"):
         return text.rstrip("/").split("/")[-1]
     return text
+
+
+def _researcher_email() -> str:
+    return (
+        os.environ.get("RESEARCHER_EMAIL")
+        or os.environ.get("OPENALEX_MAILTO")
+        or "researcher@example.com"
+    ).strip()
 
 
 def _work_to_paper(work: dict[str, Any]) -> dict[str, Any]:
@@ -51,7 +60,7 @@ def _work_to_paper(work: dict[str, Any]) -> dict[str, Any]:
     refs = [_normalize_openalex_id(item) for item in work.get("referenced_works") or [] if item]
     related = [_normalize_openalex_id(item) for item in work.get("related_works") or [] if item]
 
-    return {
+    paper = {
         "id": openalex_id,
         "canonical_id": openalex_id,
         "canonical_id_source": "openalex",
@@ -65,6 +74,7 @@ def _work_to_paper(work: dict[str, Any]) -> dict[str, Any]:
         "url": f"https://doi.org/{doi}" if doi else openalex_url,
         "citation_count": int(work.get("cited_by_count") or 0),
         "doi": doi,
+        "externalIds": {"OpenAlex": openalex_id, **({"DOI": doi} if doi else {})},
         "referenced_works": refs,
         "related_works": related,
         "refs_unavailable": not bool(refs),
@@ -76,6 +86,17 @@ def _work_to_paper(work: dict[str, Any]) -> dict[str, Any]:
             "id_source": "openalex",
         },
     }
+    for key in ("best_oa_location", "primary_location", "locations", "open_access"):
+        value = work.get(key)
+        if value not in (None, "", []):
+            paper[key] = value
+    best_oa = work.get("best_oa_location")
+    if isinstance(best_oa, dict):
+        pdf_url = str(best_oa.get("pdf_url") or best_oa.get("url_for_pdf") or "").strip()
+        if pdf_url:
+            paper["pdf_url"] = pdf_url
+            paper["open_access_pdf_url"] = pdf_url
+    return paper
 
 
 class OpenAlexSearchParams(BaseModel):
@@ -125,7 +146,7 @@ class OpenAlexSearchTool(Tool):
         params = {
             "search": query,
             "per-page": per_page,
-            "mailto": "researchos@example.com",  # 礼貌使用
+            "mailto": _researcher_email(),  # 礼貌使用
         }
 
         if filter_params:
@@ -216,7 +237,7 @@ class OpenAlexGetWorkTool(Tool):
         else:
             url = f"{self.base_url}/works/{work_id}"
 
-        params = {"mailto": "researchos@example.com"}
+        params = {"mailto": _researcher_email()}
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:

@@ -201,6 +201,14 @@ class GenerateSearchLogParams(BaseModel):
     dedup_count: int = Field(..., description="去重后数量")
     queries: list[str] = Field(..., description="使用的检索式列表")
     query_results: dict[str, int] | None = Field(None, description="每个检索式的结果数量（可选）")
+    search_records: list[dict[str, Any]] | None = Field(
+        None,
+        description="结构化检索记录，可包含 query/tool_name/query_bucket/bridge_id/result_count/persisted_count。",
+    )
+    bridge_plan: dict[str, Any] | None = Field(
+        None,
+        description="可选 bridge_domain_plan.json 内容；用于展示 bridge plan 覆盖状态，不做语义判断。",
+    )
 
 
 class GenerateSearchLogTool(Tool):
@@ -231,6 +239,8 @@ class GenerateSearchLogTool(Tool):
                 params.dedup_count,
                 params.queries,
                 params.query_results,
+                params.search_records,
+                params.bridge_plan,
             )
             # 直接写入文件
             if self.workspace_dir:

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -147,6 +148,23 @@ class TestTransformToPapersRaw:
         assert result["canonical_id"] == "arxiv:2401.12345"
         assert result["canonical_id"] != "Readable arXiv Paper"
         assert result["canonical_id_source"] == "arxiv_noopenalex"
+        assert result["no_openalex_id"] is True
+
+    def test_doi_without_openalex_uses_doi_canonical(self):
+        """DOI-only records should align across raw, citation edges, queue, and notes."""
+        paper = {
+            "id": "doi:10.1234/example",
+            "source": "crossref",
+            "title": "DOI Only Paper",
+            "authors": ["Author"],
+            "doi": "10.1234/example",
+        }
+
+        result = _transform_to_papers_raw(paper)
+
+        assert result["id"] == "doi:10.1234/example"
+        assert result["canonical_id"] == "doi:10.1234/example"
+        assert result["canonical_id_source"] == "doi_noopenalex"
         assert result["no_openalex_id"] is True
 
     def test_preserves_query_bucket_annotations(self):
@@ -472,6 +490,64 @@ class TestAppendPapersRawTool:
         assert len(lines) == 2
         assert "Paper 1" in lines[0]
         assert "Paper 2" in lines[1]
+
+    @pytest.mark.asyncio
+    async def test_append_merges_duplicate_raw_provenance(self, tool, workspace):
+        """重复论文追加时要合并 bridge/citation/PDF provenance，不能静默跳过。"""
+        result1 = await tool.execute(
+            papers=[
+                {
+                    "id": "doi:10.1234/test",
+                    "source": "crossref",
+                    "title": "Shared Paper",
+                    "authors": ["Ada"],
+                    "doi": "10.1234/test",
+                    "source_query": "core query",
+                    "search_bucket": "core",
+                    "source_tool": "crossref_search",
+                    "abstract": "",
+                }
+            ],
+            append=True,
+        )
+        assert result1.ok
+
+        result2 = await tool.execute(
+            papers=[
+                {
+                    "id": "arxiv:2401.00001",
+                    "source": "arxiv",
+                    "title": "Shared Paper",
+                    "authors": ["Ada"],
+                    "doi": "10.1234/test",
+                    "source_query": "bridge query",
+                    "search_bucket": "theory_bridge",
+                    "bridge_id": "b2",
+                    "source_tool": "multi_source_search",
+                    "abstract": "Richer abstract",
+                    "pdf_url": "https://arxiv.org/pdf/2401.00001.pdf",
+                    "references": [{"doi": "10.9999/ref"}],
+                }
+            ],
+            append=True,
+        )
+
+        assert result2.ok
+        assert result2.data["count"] == 0
+        assert result2.data["merged_count"] == 1
+        records = [
+            json.loads(line)
+            for line in (workspace / "literature" / "papers_raw.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        assert len(records) == 1
+        record = records[0]
+        assert record["abstract"] == "Richer abstract"
+        assert record["recalled_by_bridges"] == ["b2"]
+        assert "core query" in record["source_queries"]
+        assert "bridge query" in record["source_queries"]
+        assert record["pdf_urls"] == ["https://arxiv.org/pdf/2401.00001.pdf"]
+        assert record["references"] == [{"doi": "10.9999/ref"}]
 
 
 class TestProcessPapersRawTool:

@@ -126,6 +126,22 @@ def test_manifest_distinguishes_complete_incomplete_and_missing_notes(tmp_path: 
                 "queue_rank": 1,
                 "target_bucket": "seed",
                 "seed_priority": True,
+                "queue_reason": "seed_paper",
+                "bridge_id": "b1",
+                "recalled_by_bridges": ["b1", "b2"],
+                "contributed_bridges": ["b2"],
+                "core_screen_passed": True,
+                "semantic_role": "core",
+                "relation_to_project": "method_transfer",
+                "is_citation_hub": True,
+                "hub_type": "seed_neighbor",
+                "hub_score": 101.0,
+                "citation_hub_protected_slot": True,
+                "has_abstract": True,
+                "abstract_chars": 1200,
+                "reference_hint_count": 8,
+                "has_pdf_url_hint": True,
+                "pdf_url_hint_count": 2,
             },
             {
                 "paper_id": "noopenalex::d110124f0b8ea8d7",
@@ -163,6 +179,16 @@ def test_manifest_distinguishes_complete_incomplete_and_missing_notes(tmp_path: 
     assert manifest["missing_count"] == 1
     assert [entry["status"] for entry in entries] == ["complete", "incomplete", "missing"]
     assert entries[0]["note_path"] == "literature/paper_notes/noopenalex__496b8b9485c829bf.md"
+    assert entries[0]["queue_reason"] == "seed_paper"
+    assert entries[0]["bridge_id"] == "b1"
+    assert entries[0]["recalled_by_bridges"] == ["b1", "b2"]
+    assert entries[0]["contributed_bridges"] == ["b2"]
+    assert entries[0]["core_screen_passed"] is True
+    assert entries[0]["is_citation_hub"] is True
+    assert entries[0]["hub_type"] == "seed_neighbor"
+    assert entries[0]["has_abstract"] is True
+    assert entries[0]["reference_hint_count"] == 8
+    assert entries[0]["has_pdf_url_hint"] is True
     assert "## 10. Key Quotes" in entries[1]["validation_error"]
     diagnostic = format_completion_diagnostics(entries)
     assert "已匹配但结构不合格" in diagnostic

@@ -85,3 +85,54 @@ async def test_lookup_paper_record_accepts_t3_queue_rank(tmp_path: Path):
     assert result.data["record"]["paper_id"] == "noopenalex::496b8b9485c829bf"
     assert result.data["matched_sources"] == ["literature/deep_read_queue.jsonl"]
     assert "Causal-Invariant" in result.content
+
+
+@pytest.mark.asyncio
+async def test_lookup_paper_record_queue_rank_merges_verified_and_raw_metadata(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    literature = workspace / "literature"
+    literature.mkdir(parents=True)
+    (literature / "deep_read_queue.jsonl").write_text(
+        (
+            '{"paper_id":"doi:10.1234/test",'
+            '"normalized_id":"doi_10.1234_test",'
+            '"queue_rank":1,'
+            '"title":"Thin Queue Paper"}\n'
+        ),
+        encoding="utf-8",
+    )
+    (literature / "papers_verified.jsonl").write_text(
+        (
+            '{"id":"doi:10.1234/test",'
+            '"canonical_id":"doi:10.1234/test",'
+            '"title":"Thin Queue Paper",'
+            '"abstract":"Verified abstract with enough detail for Reader.",'
+            '"doi":"10.1234/test",'
+            '"externalIds":{"DOI":"10.1234/test"},'
+            '"references":[{"doi":"10.9999/ref"}],'
+            '"verification_status":"metadata_verified"}\n'
+        ),
+        encoding="utf-8",
+    )
+    (literature / "papers_raw.jsonl").write_text(
+        (
+            '{"id":"doi:10.1234/test",'
+            '"title":"Thin Queue Paper",'
+            '"pdf_url":"https://example.org/paper.pdf",'
+            '"openAccessPdf":{"url_for_pdf":"https://example.org/oa.pdf"}}\n'
+        ),
+        encoding="utf-8",
+    )
+
+    policy = WorkspaceAccessPolicy(workspace, ["literature/"], [])
+    result = await LookupPaperRecordTool(policy).execute(queue_rank=1)
+
+    assert result.ok
+    assert result.data["found"] is True
+    assert result.data["match_count"] == 3
+    record = result.data["record"]
+    assert record["abstract"] == "Verified abstract with enough detail for Reader."
+    assert record["pdf_url"] == "https://example.org/paper.pdf"
+    assert record["references"] == [{"doi": "10.9999/ref"}]
+    assert "pdf/oa candidates" in result.content
+    assert "reference hints: 1" in result.content

@@ -27,7 +27,7 @@ from .manuscript_recovery import (
 )
 from .message import Message, Role, ToolCall, is_empty_assistant
 from .t2_recovery import finalize_t2_outputs
-from .abstract_sweep import run_abstract_sweep_with_reader
+from .abstract_sweep import run_abstract_sweep, run_abstract_sweep_with_reader
 from .t3_recovery import prepare_t3_resume_artifacts
 from .task_recovery import prepare_generic_resume_artifacts
 from .run_logger import RunLogger
@@ -506,6 +506,18 @@ class AgentRunner:
 
                 nudge_count = 0
                 self._ensure_ask_human_questions_are_self_contained(assistant_msg)
+                if any(tc.name == "ask_human" for tc in assistant_msg.tool_calls):
+                    ask_call = next(tc for tc in assistant_msg.tool_calls if tc.name == "ask_human")
+                    blocked_tools = [tc.name for tc in assistant_msg.tool_calls if tc.name != "ask_human"]
+                    if blocked_tools:
+                        assistant_msg.tool_calls = [ask_call]
+                        human_barrier_note = Message.user(
+                            "[Runtime] 本轮包含 ask_human，已先等待用户输入；"
+                            f"延后执行同轮其它工具: {', '.join(blocked_tools)}。",
+                            step=budget.steps,
+                        )
+                        messages.append(human_barrier_note)
+                        trace.write_message(human_barrier_note)
                 # 输出工具调用信息
                 if len(assistant_msg.tool_calls) > 0:
                     tool_names = [tc.name for tc in assistant_msg.tool_calls]
@@ -1003,9 +1015,22 @@ class AgentRunner:
         stop_reason: str,
         eff: EffectiveConfig,
     ) -> None:
-        """T3 deep read 成功后，自动运行 abstract sweep 补读。"""
+        """T3 退出后自动运行/恢复 abstract sweep 补读。
 
-        if ctx.task_id != "T3" or stop_reason != AgentResult.STOP_FINISHED:
+        finished 路径使用 Reader LLM 生成轻量笔记；max_steps/budget/interrupt
+        路径只用确定性 fallback，避免中断后又发起长 LLM 补读，但仍保证
+        shallow/backlog 论文不会因为任务被取消而永远没有 abstract note。
+        """
+
+        if ctx.task_id != "T3":
+            return
+        allowed_stop_reasons = {
+            AgentResult.STOP_FINISHED,
+            AgentResult.STOP_MAX_STEPS,
+            AgentResult.STOP_BUDGET,
+            AgentResult.STOP_INTERRUPTED,
+        }
+        if stop_reason not in allowed_stop_reasons:
             return
 
         try:
@@ -1014,7 +1039,24 @@ class AgentRunner:
             if not sweep_config.get("enabled", False):
                 return
 
-            print("[Agent] T3 deep read 完成，开始 abstract sweep...", flush=True)
+            if stop_reason == AgentResult.STOP_FINISHED:
+                print("[Agent] T3 deep read 完成，开始 abstract sweep...", flush=True)
+            else:
+                print(
+                    f"[Agent] T3 以 {stop_reason} 退出，使用 deterministic abstract sweep 刷新浅层笔记覆盖...",
+                    flush=True,
+                )
+
+            if stop_reason != AgentResult.STOP_FINISHED:
+                result = run_abstract_sweep(ctx.workspace_dir, sweep_config)
+                ctx.extra["abstract_sweep"] = result
+                if result.get("notes_generated", 0) > 0:
+                    print(
+                        f"[Agent] Abstract sweep fallback 完成：筛选 {result['candidates_found']} 篇候选，"
+                        f"生成 {result['notes_generated']} 篇 abstract note",
+                        flush=True,
+                    )
+                return
 
             async def _reader_llm(_paper: dict[str, object], prompt: str) -> str:
                 llm_resp = await self.llm.chat(
@@ -2263,14 +2305,21 @@ class AgentRunner:
                 "content_suffix": f"[Runtime] 自动保存 papers_raw 失败: {save_result.content}",
             }
 
-        persisted_count = save_result.data.get("count", len(papers))
+        raw_delta = int(save_result.data.get("count", 0) or 0)
+        merged_count = int(save_result.data.get("merged_count", 0) or 0)
+        retained_count = raw_delta + merged_count
         raw_count_after = self._count_jsonl_records(ctx.workspace_dir / "literature" / "papers_raw.jsonl")
-        content_suffix = f"[Runtime] 已自动追加 {persisted_count} 篇到 literature/papers_raw.jsonl"
+        content_suffix = (
+            f"[Runtime] 已自动保留 {retained_count} 篇到 literature/papers_raw.jsonl"
+            f"（新增 {raw_delta}，合并重复 {merged_count}）"
+        )
         if edge_persist and edge_persist.get("content_suffix"):
             content_suffix += "\n" + str(edge_persist["content_suffix"])
         return {
             "ok": True,
-            "count": persisted_count,
+            "count": raw_delta,
+            "merged_count": merged_count,
+            "retained_count": retained_count,
             "raw_count_after": raw_count_after,
             "mode": save_result.data.get("mode", "append"),
             "content_suffix": content_suffix,
@@ -2380,6 +2429,8 @@ class AgentRunner:
             record = dict(paper)
             if bucket and not record.get("search_bucket"):
                 record["search_bucket"] = bucket
+            if bucket and not record.get("query_bucket"):
+                record["query_bucket"] = bucket
             if bucket and not record.get("source_bucket"):
                 if bucket == "adjacent_field":
                     record["source_bucket"] = "adjacent"
@@ -2399,6 +2450,18 @@ class AgentRunner:
             if query:
                 record.setdefault("source_query", query)
             record.setdefault("source_tool", tool_name)
+            provenance = record.get("provenance")
+            if not isinstance(provenance, dict):
+                provenance = {}
+            provenance.setdefault("source_tool", tool_name)
+            if query:
+                provenance.setdefault("source_query", query)
+            if bucket:
+                provenance.setdefault("query_bucket", bucket)
+                provenance.setdefault("search_bucket", bucket)
+            if bridge_id:
+                provenance.setdefault("bridge_id", bridge_id)
+            record["provenance"] = provenance
             annotated.append(record)
         return annotated
 

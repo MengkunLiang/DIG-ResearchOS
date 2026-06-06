@@ -178,6 +178,10 @@ def _select_canonical_literature_id(paper: dict[str, Any], readable_id: str) -> 
             return work_id, "openalex", False
     if str(readable_id or "").startswith("arxiv:"):
         return readable_id, "arxiv_noopenalex", True
+    doi = str(paper.get("doi") or external_ids.get("DOI") or "").strip()
+    if doi:
+        doi = doi.replace("https://doi.org/", "").replace("http://doi.org/", "").removeprefix("doi:")
+        return f"doi:{doi}", "doi_noopenalex", True
     fallback = stable_noopenalex_id({**paper, "id": readable_id})
     return fallback, "noopenalex_fallback", True
 
@@ -203,6 +207,10 @@ def _ensure_provenance(
     provenance.setdefault("canonical_id", canonical_id)
     provenance.setdefault("id_source", id_source)
     provenance.setdefault("fetched_at", _now_iso())
+    for key in ("source_query", "source_tool", "query_bucket", "search_bucket", "bridge_id"):
+        value = paper.get(key)
+        if value not in (None, "", []):
+            provenance.setdefault(key, value)
     return provenance
 
 
@@ -284,6 +292,7 @@ def _passthrough_raw_annotations(paper: dict[str, Any]) -> dict[str, Any]:
         "related_works",
         "references",
         "refs_unavailable",
+        "reference_count",
         "retrieval_intent",
         "bridge_id",
         "search_bucket",
@@ -292,6 +301,9 @@ def _passthrough_raw_annotations(paper: dict[str, Any]) -> dict[str, Any]:
         "adjacent_field",
         "source_query",
         "source_tool",
+        "citation_snowball_source_id",
+        "citation_snowball_source_title",
+        "fallback_source",
         "llm_annotation_applied",
         "domain_tags",
         "semantic_screen",
@@ -300,6 +312,25 @@ def _passthrough_raw_annotations(paper: dict[str, Any]) -> dict[str, Any]:
         "access_level_hint",
         "access_score",
         "access_score_estimate",
+        "pdf_url",
+        "open_access_pdf_url",
+        "oa_pdf_url",
+        "best_pdf_url",
+        "full_text_url",
+        "pmc_pdf_url",
+        "url_for_pdf",
+        "landing_page_url",
+        "openAccessPdf",
+        "open_access_pdf",
+        "oa_pdf",
+        "open_access",
+        "best_oa_location",
+        "primary_location",
+        "locations",
+        "oa_locations",
+        "open_access_locations",
+        "openAccessLocations",
+        "open_access_pdfs",
     )
     annotations: dict[str, Any] = {}
     for key in allowed:
@@ -307,6 +338,145 @@ def _passthrough_raw_annotations(paper: dict[str, Any]) -> dict[str, Any]:
         if value not in (None, "", []):
             annotations[key] = value
     return annotations
+
+
+def _raw_record_identity_keys(record: dict[str, Any]) -> list[str]:
+    keys: list[str] = []
+    external_ids = record.get("externalIds") if isinstance(record.get("externalIds"), dict) else {}
+    for key, value in (
+        ("id", record.get("id")),
+        ("canonical", record.get("canonical_id")),
+        ("doi", record.get("doi") or external_ids.get("DOI")),
+        ("arxiv", external_ids.get("ArXiv")),
+    ):
+        text = str(value or "").strip().casefold()
+        if not text:
+            continue
+        text = text.removeprefix("https://doi.org/").removeprefix("http://doi.org/").removeprefix("doi:")
+        keys.append(f"{key}:{text}")
+    title = " ".join(str(record.get("title") or "").casefold().split())
+    if title and title not in {"unknown", "untitled"}:
+        keys.append(f"title:{title}")
+    return keys
+
+
+def _append_unique_scalar(record: dict[str, Any], key: str, value: Any) -> None:
+    values = record.get(key)
+    if not isinstance(values, list):
+        values = []
+    candidates = value if isinstance(value, (list, tuple, set)) else [value]
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        if text and text not in values:
+            values.append(text)
+    if values:
+        record[key] = values
+
+
+def _dedupe_list_payload(items: list[Any]) -> list[Any]:
+    seen: set[str] = set()
+    result: list[Any] = []
+    for item in items:
+        key = str(item)
+        if isinstance(item, dict):
+            key = str(item.get("doi") or item.get("id") or item.get("url") or item.get("title") or item)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result
+
+
+def _merge_raw_records(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    """Merge duplicate raw records so later bridge/citation/PDF provenance is not lost."""
+
+    merged = dict(existing)
+    for key, value in incoming.items():
+        if value in (None, "", [], {}):
+            continue
+        current = merged.get(key)
+        if key in {"bridge_id", "search_bucket", "query_bucket", "source_bucket", "source_query", "source_tool"}:
+            plural_key = {
+                "bridge_id": "recalled_by_bridges",
+                "search_bucket": "search_buckets",
+                "query_bucket": "query_buckets",
+                "source_bucket": "source_buckets",
+                "source_query": "source_queries",
+                "source_tool": "source_tools",
+            }[key]
+            if current not in (None, "", [], {}):
+                _append_unique_scalar(merged, plural_key, current)
+            _append_unique_scalar(merged, plural_key, value)
+            if current in (None, "", [], {}):
+                merged[key] = value
+            if key == "bridge_id":
+                if current not in (None, "", [], {}):
+                    _append_unique_scalar(merged, "recalled_by_bridges", current)
+                _append_unique_scalar(merged, "recalled_by_bridges", value)
+            continue
+        if key in {"citation_snowball_source_id", "citation_snowball_source_title"}:
+            _append_unique_scalar(merged, f"{key}s", current)
+            _append_unique_scalar(merged, f"{key}s", value)
+            continue
+        if key in {
+            "pdf_url",
+            "open_access_pdf_url",
+            "oa_pdf_url",
+            "best_pdf_url",
+            "full_text_url",
+            "pmc_pdf_url",
+            "url_for_pdf",
+            "landing_page_url",
+        }:
+            if current not in (None, "", [], {}):
+                _append_unique_scalar(merged, f"{key}s", current)
+            _append_unique_scalar(merged, f"{key}s", value)
+            if current in (None, "", [], {}):
+                merged[key] = value
+            continue
+        if key in {
+            "openAccessPdf",
+            "open_access_pdf",
+            "oa_pdf",
+            "open_access",
+            "best_oa_location",
+            "primary_location",
+        } and isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = {**current, **{k: v for k, v in value.items() if v not in (None, "", [], {})}}
+            continue
+        if current in (None, "", [], {}):
+            merged[key] = value
+            continue
+        if key == "abstract":
+            if len(str(value)) > len(str(current)):
+                merged[key] = value
+        elif key == "citation_count":
+            try:
+                merged[key] = max(int(current or 0), int(value or 0))
+            except (TypeError, ValueError):
+                pass
+        elif key in {"externalIds", "provenance"} and isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = {**current, **{k: v for k, v in value.items() if v not in (None, "", [], {})}}
+        elif key in {
+            "references",
+            "referenced_works",
+            "related_works",
+            "locations",
+            "oa_locations",
+            "open_access_locations",
+            "openAccessLocations",
+            "open_access_pdfs",
+            "recalled_by_bridges",
+            "contributed_bridges",
+        } and isinstance(current, list) and isinstance(value, list):
+            merged[key] = _dedupe_list_payload([*current, *value])
+        elif key == "source":
+            sources = [item for item in str(current).split("+") if item]
+            incoming_source = str(value)
+            if incoming_source and incoming_source not in sources:
+                sources.append(incoming_source)
+                merged[key] = "+".join(sources)
+    return merged
 
 
 # ============================================================================
@@ -365,19 +535,55 @@ class AppendPapersRawTool(Tool):
             abs_path = self.policy.resolve_write("literature/papers_raw.jsonl")
             abs_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # 追加到文件
-            with abs_path.open("a", encoding="utf-8") as f:
-                for paper in params.papers:
-                    line = json.dumps(paper, ensure_ascii=False)
-                    f.write(line + "\n")
+            existing_records: list[dict[str, Any]] = []
+            index: dict[str, int] = {}
+            if abs_path.exists():
+                for line in abs_path.read_text(encoding="utf-8").splitlines():
+                    if not line.strip():
+                        continue
+                    try:
+                        existing = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(existing, dict):
+                        continue
+                    record_index = len(existing_records)
+                    existing_records.append(existing)
+                    for key in _raw_record_identity_keys(existing):
+                        index.setdefault(key, record_index)
 
-            count = len(params.papers)
+            appended_count = 0
+            merged_count = 0
+            for paper in params.papers:
+                keys = _raw_record_identity_keys(paper)
+                existing_index = next((index[key] for key in keys if key in index), None)
+                if existing_index is None:
+                    record_index = len(existing_records)
+                    existing_records.append(paper)
+                    for key in keys:
+                        index.setdefault(key, record_index)
+                    appended_count += 1
+                    continue
+                existing_records[existing_index] = _merge_raw_records(existing_records[existing_index], paper)
+                for key in _raw_record_identity_keys(existing_records[existing_index]):
+                    index.setdefault(key, existing_index)
+                merged_count += 1
+
+            abs_path.write_text(
+                "\n".join(json.dumps(paper, ensure_ascii=False) for paper in existing_records)
+                + ("\n" if existing_records else ""),
+                encoding="utf-8",
+            )
             return ToolResult(
                 ok=True,
-                content=f"✅ 追加 {count} 篇论文到 literature/papers_raw.jsonl",
+                content=(
+                    f"✅ 追加 {appended_count} 篇论文到 literature/papers_raw.jsonl"
+                    f"（合并重复 {merged_count} 条）"
+                ),
                 data={
                     "path": "literature/papers_raw.jsonl",
-                    "count": count,
+                    "count": appended_count,
+                    "merged_count": merged_count,
                 },
             )
 
@@ -633,45 +839,61 @@ class SavePapersRawTool(Tool):
             abs_path.parent.mkdir(parents=True, exist_ok=True)
 
             if params.append and abs_path.exists():
-                # 追加模式：读取现有数据，过滤掉已存在的 id，然后追加
+                # 追加模式：读取现有数据；重复论文合并 provenance，而不是静默跳过。
                 import json
 
-                existing_ids = set()
-                existing_lines = []
+                existing_records: list[dict[str, Any]] = []
+                index: dict[str, int] = {}
                 for line in abs_path.read_text(encoding="utf-8").splitlines():
                     if line.strip():
                         try:
                             existing = json.loads(line)
-                            existing_ids.add(existing.get("id"))
-                            existing_lines.append(line)
+                            if not isinstance(existing, dict):
+                                continue
+                            record_index = len(existing_records)
+                            existing_records.append(existing)
+                            for key in _raw_record_identity_keys(existing):
+                                index.setdefault(key, record_index)
                         except json.JSONDecodeError:
                             pass
 
-                # 添加新论文（排除已存在的 id）
-                new_lines = []
                 appended_count = 0
+                merged_count = 0
                 for paper in transformed_papers:
-                    if paper["id"] not in existing_ids:
-                        new_lines.append(json.dumps(paper, ensure_ascii=False))
+                    keys = _raw_record_identity_keys(paper)
+                    existing_index = next((index[key] for key in keys if key in index), None)
+                    if existing_index is None:
+                        record_index = len(existing_records)
+                        existing_records.append(paper)
+                        for key in keys:
+                            index.setdefault(key, record_index)
                         appended_count += 1
+                        continue
+                    existing_records[existing_index] = _merge_raw_records(existing_records[existing_index], paper)
+                    for key in _raw_record_identity_keys(existing_records[existing_index]):
+                        index.setdefault(key, existing_index)
+                    merged_count += 1
 
-                final_content = "\n".join(existing_lines + new_lines) + "\n"
+                final_content = "\n".join(json.dumps(item, ensure_ascii=False) for item in existing_records) + "\n"
                 abs_path.write_text(final_content, encoding="utf-8")
             else:
                 # 覆盖模式
                 abs_path.write_text(content, encoding="utf-8")
                 appended_count = len(transformed_papers)
+                merged_count = 0
 
             return ToolResult(
                 ok=True,
                 content=(
                     f"✅ 成功保存 {appended_count} 篇论文到 literature/papers_raw.jsonl\n"
                     f"（模式: {'追加' if params.append else '覆盖'}；"
-                    f"有效输入 {len(transformed_papers)} 条，跳过坏记录 {len(skipped_records)} 条）"
+                    f"有效输入 {len(transformed_papers)} 条，合并重复 {merged_count} 条，"
+                    f"跳过坏记录 {len(skipped_records)} 条）"
                 ),
                 data={
                     "path": "literature/papers_raw.jsonl",
                     "count": appended_count,
+                    "merged_count": merged_count,
                     "valid_input_count": len(transformed_papers),
                     "skipped_count": len(skipped_records),
                     "skipped_records": skipped_records[:20],

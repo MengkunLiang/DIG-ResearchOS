@@ -23,6 +23,7 @@ from ..agents._common import normalize_text_key
 from ..literature_identity import find_matching_seed_pdf, normalize_loose_identity_key
 from .base import Tool, ToolResult
 from .abstract_utils import clean_abstract, abstract_from_openalex_index
+from .crossref_api import _extract_crossref_references
 from .paper_enrichment import (
     apply_semantic_screening,
     build_access_audit,
@@ -44,6 +45,29 @@ def _title_similarity(a: str, b: str) -> float:
     if left == right:
         return 1.0
     return SequenceMatcher(None, left, right).ratio()
+
+
+def _researcher_email() -> str:
+    """Return a configured contact email, if the user provided one."""
+
+    return (
+        os.environ.get("RESEARCHER_EMAIL")
+        or os.environ.get("OPENALEX_MAILTO")
+        or ""
+    ).strip()
+
+
+def _openalex_params(**extra: Any) -> dict[str, Any]:
+    params = {key: value for key, value in extra.items() if value not in (None, "")}
+    email = _researcher_email()
+    if email:
+        params["mailto"] = email
+    return params
+
+
+def _crossref_headers() -> dict[str, str]:
+    email = _researcher_email() or "researcher@example.com"
+    return {"User-Agent": f"ResearchOS/0.1.0 (mailto:{email})"}
 
 
 class EnrichPapersParams(BaseModel):
@@ -490,7 +514,7 @@ class BackfillPaperAbstractsTool(Tool):
         try:
             response = await client.get(
                 f"https://api.openalex.org/works/{quote(lookup, safe=':/')}",
-                params={"mailto": "researchos@example.com"},
+                params=_openalex_params(),
             )
             response.raise_for_status()
             return abstract_from_openalex_index(response.json().get("abstract_inverted_index"))
@@ -501,7 +525,7 @@ class BackfillPaperAbstractsTool(Tool):
         try:
             response = await client.get(
                 f"https://api.crossref.org/works/{quote(doi, safe='')}",
-                headers={"User-Agent": "ResearchOS/0.1.0 (mailto:researchos@example.com)"},
+                headers=_crossref_headers(),
             )
             response.raise_for_status()
             return clean_abstract(response.json().get("message", {}).get("abstract"))
@@ -561,7 +585,7 @@ class BackfillPaperAbstractsTool(Tool):
         try:
             response = await client.get(
                 "https://api.openalex.org/works",
-                params={"search": title, "per-page": 3, "mailto": "researchos@example.com"},
+                params=_openalex_params(search=title, **{"per-page": 3}),
             )
             response.raise_for_status()
             for work in response.json().get("results", []):
@@ -952,8 +976,60 @@ class BuildVerifiedPapersTool(Tool):
         verified_record["verification_confidence"] = round(min(1.0, max(similarity, 0.9 if year_match else similarity)), 2)
         verified_record["verification_title_similarity"] = round(similarity, 2)
         verified_record["verification_year_match"] = year_match
+        self._merge_reference_metadata(verified_record, reference)
         await self._backfill_verified_abstract(client, verified_record, reference)
         return verified_record, None
+
+    @staticmethod
+    def _merge_reference_metadata(
+        verified_record: dict[str, Any],
+        reference: dict[str, Any],
+    ) -> None:
+        """Preserve mechanical metadata discovered during verification."""
+
+        if not reference:
+            return
+        for key in (
+            "referenced_works",
+            "related_works",
+            "references",
+            "reference_count",
+            "refs_unavailable",
+            "pdf_url",
+            "open_access_pdf_url",
+            "oa_pdf_url",
+            "best_pdf_url",
+            "full_text_url",
+            "pmc_pdf_url",
+            "url_for_pdf",
+            "landing_page_url",
+            "openAccessPdf",
+            "open_access_pdf",
+            "oa_pdf",
+            "best_oa_location",
+            "primary_location",
+            "locations",
+            "oa_locations",
+            "open_access_locations",
+            "openAccessLocations",
+            "open_access_pdfs",
+            "openalex_id",
+            "semantic_scholar_id",
+            "arxiv_id",
+        ):
+            value = reference.get(key)
+            if value not in (None, "", []):
+                verified_record.setdefault(key, value)
+        external_ids = reference.get("externalIds")
+        if isinstance(external_ids, dict) and external_ids:
+            merged = dict(verified_record.get("externalIds") or {})
+            for key, value in external_ids.items():
+                if value not in (None, "", []):
+                    merged.setdefault(key, value)
+            verified_record["externalIds"] = merged
+        doi = str(reference.get("doi") or "").strip()
+        if doi and not str(verified_record.get("doi") or "").strip():
+            verified_record["doi"] = doi
 
     async def _backfill_verified_abstract(
         self,
@@ -1095,35 +1171,136 @@ class BuildVerifiedPapersTool(Tool):
         client: "httpx.AsyncClient",
         doi: str,
     ) -> dict[str, Any] | None:
-        response = await client.get(f"https://api.crossref.org/works/{quote(doi, safe='')}")
+        response = await client.get(
+            f"https://api.crossref.org/works/{quote(doi, safe='')}",
+            headers=_crossref_headers(),
+        )
         response.raise_for_status()
         item = response.json().get("message", {})
         title = item.get("title", [""])
-        date_parts = item.get("published", {}).get("date-parts", [[]])
+        published = (
+            item.get("published-print")
+            or item.get("published-online")
+            or item.get("published")
+            or item.get("issued")
+            or item.get("created")
+        )
+        date_parts = (published or {}).get("date-parts", [[]]) if isinstance(published, dict) else [[]]
         year = date_parts[0][0] if date_parts and date_parts[0] else None
-        return {
+        references = _extract_crossref_references(item)
+        payload = {
             "source": "crossref",
             "title": title[0] if title else "",
             "year": year,
             "abstract": clean_abstract(item.get("abstract", "")),
             "doi": item.get("DOI", doi),
+            "reference_count": item.get("reference-count", len(references)),
         }
+        if references:
+            payload["references"] = references
+            payload["referenced_works"] = references
+        return payload
+
+    @staticmethod
+    def _openalex_location_metadata(item: dict[str, Any]) -> dict[str, Any]:
+        metadata: dict[str, Any] = {}
+        for key in ("best_oa_location", "primary_location", "locations", "open_access"):
+            value = item.get(key)
+            if value not in (None, "", []):
+                metadata[key] = value
+        for location_key in ("best_oa_location", "primary_location"):
+            location = item.get(location_key)
+            if not isinstance(location, dict):
+                continue
+            pdf_url = (
+                location.get("pdf_url")
+                or location.get("url_for_pdf")
+                or location.get("pdfUrl")
+                or location.get("pdfURL")
+            )
+            if pdf_url and not metadata.get("open_access_pdf_url"):
+                metadata["open_access_pdf_url"] = pdf_url
+            landing = location.get("landing_page_url") or location.get("url")
+            if landing and not metadata.get("landing_page_url"):
+                metadata["landing_page_url"] = landing
+        return metadata
+
+    @staticmethod
+    def _s2_reference_aliases(items: Any, limit: int = 80) -> list[dict[str, str]]:
+        references: list[dict[str, str]] = []
+        if not isinstance(items, list):
+            return references
+        for item in items[:limit]:
+            if not isinstance(item, dict):
+                continue
+            external_ids = item.get("externalIds") if isinstance(item.get("externalIds"), dict) else {}
+            doi = str(external_ids.get("DOI") or item.get("doi") or "").strip()
+            title = str(item.get("title") or "").strip()
+            paper_id = str(item.get("paperId") or item.get("id") or "").strip()
+            if not doi and not title and not paper_id:
+                continue
+            record: dict[str, str] = {}
+            if doi:
+                record["doi"] = doi.removeprefix("https://doi.org/").removeprefix("http://doi.org/")
+                record["id"] = record["doi"]
+            elif paper_id:
+                record["id"] = paper_id
+            if title:
+                record["title"] = title
+            references.append(record)
+        return references
+
+    @staticmethod
+    def _openalex_external_ids(item: dict[str, Any], doi: str) -> dict[str, str]:
+        external_ids: dict[str, str] = {}
+        openalex_id = str(item.get("id") or "").strip()
+        if openalex_id:
+            external_ids["OpenAlex"] = openalex_id.rstrip("/").split("/")[-1]
+        if doi:
+            external_ids["DOI"] = doi
+        return external_ids
+
+    @staticmethod
+    def _normalize_openalex_refs(values: Any) -> list[str]:
+        refs: list[str] = []
+        if not isinstance(values, list):
+            return refs
+        for item in values:
+            text = str(item or "").strip()
+            if not text:
+                continue
+            if text.startswith("https://openalex.org/") or text.startswith("https://api.openalex.org/works/"):
+                text = text.rstrip("/").split("/")[-1]
+            refs.append(text)
+        return refs
 
     async def _fetch_openalex_metadata(
         self,
         client: "httpx.AsyncClient",
         work_id: str,
     ) -> dict[str, Any] | None:
-        response = await client.get(f"https://api.openalex.org/works/{quote(work_id, safe=':/')}")
+        response = await client.get(
+            f"https://api.openalex.org/works/{quote(work_id, safe=':/')}",
+            params=_openalex_params(),
+        )
         response.raise_for_status()
         item = response.json()
-        return {
+        doi = str(item.get("doi") or "").removeprefix("https://doi.org/")
+        referenced_works = self._normalize_openalex_refs(item.get("referenced_works"))
+        related_works = self._normalize_openalex_refs(item.get("related_works"))
+        payload = {
             "source": "openalex",
             "title": item.get("title", ""),
             "year": item.get("publication_year"),
             "abstract": abstract_from_openalex_index(item.get("abstract_inverted_index")),
-            "doi": str(item.get("doi") or "").removeprefix("https://doi.org/"),
+            "doi": doi,
+            "referenced_works": referenced_works,
+            "related_works": related_works,
+            "refs_unavailable": not bool(referenced_works),
+            "externalIds": self._openalex_external_ids(item, doi),
+            **self._openalex_location_metadata(item),
         }
+        return payload
 
     async def _fetch_semantic_scholar_metadata(
         self,
@@ -1132,19 +1309,35 @@ class BuildVerifiedPapersTool(Tool):
     ) -> dict[str, Any] | None:
         if not paper_id:
             return None
+        headers = {"x-api-key": os.environ.get("S2_API_KEY", "")}
+        headers = {key: value for key, value in headers.items() if value}
         response = await client.get(
             f"https://api.semanticscholar.org/graph/v1/paper/{quote(paper_id, safe='')}",
-            params={"fields": "title,year,abstract,externalIds"},
+            params={
+                "fields": (
+                    "title,year,abstract,externalIds,openAccessPdf,"
+                    "references.paperId,references.title,references.externalIds,"
+                    "citations.paperId,citations.title,citations.externalIds"
+                )
+            },
+            headers=headers,
         )
         response.raise_for_status()
         item = response.json()
         external_ids = item.get("externalIds") or {}
+        references = self._s2_reference_aliases(item.get("references"))
+        citations = self._s2_reference_aliases(item.get("citations"), limit=40)
         return {
             "source": "semantic_scholar",
             "title": item.get("title", ""),
             "year": item.get("year"),
             "abstract": clean_abstract(item.get("abstract", "")),
             "doi": external_ids.get("DOI", ""),
+            "externalIds": external_ids,
+            "references": references,
+            "referenced_works": references,
+            "related_works": citations,
+            "openAccessPdf": item.get("openAccessPdf") or {},
         }
 
     async def _fetch_arxiv_metadata(

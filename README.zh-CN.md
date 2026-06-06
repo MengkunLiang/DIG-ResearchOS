@@ -87,7 +87,9 @@ T1
 - 多阶段断点恢复
 - artifact 校验
 - T4 假设生成会同时落盘 `ideation/idea_scorecard.yaml`、`ideation/rejected_ideas.md`、`ideation/gate_decisions.json` 和 `ideation/idea_rationales.json`，记录每个 idea 的证据链和决策链
-- T2 在 raw 检索池覆盖足够后，会先调用 `backfill_paper_abstracts` 清洗和补全 `literature/papers_raw.jsonl` 的摘要，再让 Scout LLM 优先对 seed 邻域、bridge/must_explore 和高优先级主线候选做 `semantic_screen`；摘要回填只补 metadata，不替代 LLM 相关性判断。runtime 收尾会要求 `papers_verified.jsonl` 中每篇论文都有 deep_read 或 shallow_read/backlog 去向，不能因为缺少 `semantic_screen` 被静默丢弃。
+- T2 正常路径由检索工具返回值触发 runtime 自动保存 raw。Scout 负责设计 query 和 LLM `semantic_screen`，`expand_queries` 只做机械合并/去重，不内置领域知识。runtime 收尾会做 OpenAlex DOI/OA 详情补全、Crossref DOI 详情补全和 bounded citation snowball，再确定性生成 dedup、verified、deep-read/shallow-read queue 和审计文件；每篇 `papers_verified.jsonl` 论文都必须有 deep_read 或 shallow_read/backlog 去向，不能因为缺少 `semantic_screen` 被静默丢弃。
+- T2 不再把重复 raw 命中静默跳过：同一论文来自 core query、bridge query、OpenAlex、Crossref、arXiv、citation snowball 时，会合并 `source_queries`、`search_buckets`、`recalled_by_bridges`、references、OpenAlex OA/PDF hints 和 snowball 来源。`search_log.md` 会展示 Query、Bucket、Bridge、Tool/Source、Results、Persisted，并单独列出 Bridge Domain Query/Plan 覆盖表。
+- citation graph 会转成实际 T3 证据链：OpenAlex/Crossref references 写入 `citation_edges.json`，Crossref one-hop snowball 候选进入 raw/dedup/verified/queue；结构 hub 会占用小额 `citation_hub_slots` 保护槽或以普通 ranking 进入 active target。缺少 semantic screen 的 hub 会标记 `citation_hub_needs_reader_screening=true`，由 T3 Reader 复核；已有 LLM screen 明确排除的 hub 不强制 deep-read。
 - T3 论文阅读以 `queue_rank` 为工作单位：`lookup_paper_record(queue_rank=...)` 取单篇 metadata，`save_paper_note(queue_rank=..., content=...)` 自动生成 note 路径、即时校验并刷新 `literature/notes_manifest.json`；每篇 `paper_notes/*.md` 都必须记录 `## 12. Reading Coverage`，PDF 可用时必须覆盖到最后一页，只有完整页码覆盖且最终无截断时才能标记 `[FULL-TEXT]`
 - T3.5 文献综合会先通过 `build_synthesis_workbench` 从 `paper_notes/` 生成 `synthesis_workbench.json`、`synthesis_outline.md` 和 `synthesis_draft.md`，再产出 `synthesis.md`，避免完全依赖单次 prompt
 - T3.6 是可选综述论文支线：T3.5 后先问“是否撰写综述论文”，选择 yes 后按 taxonomy 规划、人工确认、逐 section 写作、拼装审阅、LaTeX 编译和导出 `survey_insights.json` 的方式执行；它不是把 `synthesis.md` 转成 TeX
@@ -525,6 +527,7 @@ ResearchOS 可以加载 MCP server 配置，并把 MCP tool 暴露给 agent。
 - 如果 `ask_human` 收到空回答，会最多重试 3 次；连续空回答或非交互环境拿不到输入时，runtime 才会暂停任务并写入 `state.yaml`
 - 每个 task/agent 开始时会输出一整行 `==== <task_id> | <agent_name> ==== ` 风格分隔线，便于在长输出中判断当前切换到了哪里
 - 只要同一轮会调用 `ask_human`，Agent 本轮正文会默认显示；如果模型把问题写成“请确认以上/这些方向”这类依赖前文的短句，runtime 会自动把本轮正文并入输入问题，避免用户只看到空输入框或缺上下文问题
+- 如果同一轮同时包含 `ask_human` 和其它工具，runtime 会先只执行 `ask_human`，并把同轮其它工具延后到下一次模型响应，避免“还没等用户输入就继续写文件/搜索/finish”的并发执行问题
 - 如果 Agent 文本里明确要求“请选择/请确认/请提供”等人工决策但忘记调用 `ask_human`，runtime 会自动桥接成 `ask_human` 并在问题开头解释原因；普通状态说明（例如“我来检查已有材料”）不会触发输入框
 - 预算扩限 gate 支持数字序号，也支持 `继续`、`确认`、`停止`、`stop` 等常用输入
 - `finish_task` 后输出校验多次失败会暂停为可恢复状态，并保留最后一次校验错误；后续可用 `resume` 继续定向修复，而不是直接进入不可恢复 `FAILED`

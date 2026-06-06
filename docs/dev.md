@@ -443,6 +443,10 @@ python -m researchos.cli run \
 - `papers_verified` 是否生成
 - `verification_failures` 是否合理
 - `deep_read_queue` 是否确实优先 seed 和高可读性论文
+- `search_log.md` 是否展示 Query / Bucket / Bridge / Tool / Results / Persisted 表，以及 Bridge Domain Query/Plan 覆盖表
+- OpenAlex DOI/OA 详情补全、Crossref DOI 详情补全、Crossref citation snowball 的 `attempted/filled/failed/raw_persisted` 是否合理
+- `deep_read_queue_meta.json` 中 `verified_disposition_coverage` 是否为 `1.0`，`queue_with_pdf_url_hints`、`queue_with_reference_hints`、`citation_hub_in_target` 是否符合预期
+- 如果 search tool 返回很多论文但 raw/dedup/verified 很少，优先检查 raw merge、hidden cap、schema skipped records 和 `researchos.log` 的 `retained_raw_count`
 
 ### 7.2 T3 重点看什么
 

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import httpx
@@ -14,6 +15,45 @@ from pydantic import BaseModel, Field
 from .abstract_utils import clean_abstract
 from .base import Tool, ToolResult
 from .search_validation import clean_search_query, empty_query_result, is_usable_paper_metadata
+
+
+def _researcher_email() -> str:
+    return (
+        os.environ.get("RESEARCHER_EMAIL")
+        or os.environ.get("CROSSREF_MAILTO")
+        or os.environ.get("OPENALEX_MAILTO")
+        or "researcher@example.com"
+    ).strip()
+
+
+def _crossref_headers() -> dict[str, str]:
+    return {"User-Agent": f"ResearchOS/0.1.0 (mailto:{_researcher_email()})"}
+
+
+def _extract_crossref_references(item: dict[str, Any], limit: int = 80) -> list[dict[str, str]]:
+    """Extract lightweight reference aliases from a Crossref work payload."""
+
+    references: list[dict[str, str]] = []
+    for ref in item.get("reference") or []:
+        if not isinstance(ref, dict):
+            continue
+        doi = str(ref.get("DOI") or ref.get("doi") or "").strip()
+        title = str(ref.get("article-title") or ref.get("unstructured") or "").strip()
+        year = str(ref.get("year") or "").strip()
+        if not doi and not title:
+            continue
+        record: dict[str, str] = {}
+        if doi:
+            record["doi"] = doi.removeprefix("https://doi.org/").removeprefix("http://doi.org/")
+            record["id"] = record["doi"]
+        if title:
+            record["title"] = title
+        if year:
+            record["year"] = year
+        references.append(record)
+        if len(references) >= limit:
+            break
+    return references
 
 
 class CrossRefSearchParams(BaseModel):
@@ -66,9 +106,7 @@ class CrossRefSearchTool(Tool):
             "sort": sort,
         }
 
-        headers = {
-            "User-Agent": "ResearchOS/0.1.0 (mailto:researchos@example.com)"  # 礼貌使用
-        }
+        headers = _crossref_headers()
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -139,6 +177,13 @@ class CrossRefSearchTool(Tool):
                     "doi": doi,
                     "type": item_type,
                 }
+                references = _extract_crossref_references(item)
+                if references:
+                    paper["references"] = references
+                    paper["referenced_works"] = references
+                    paper["reference_count"] = item.get("reference-count", len(references))
+                else:
+                    paper["reference_count"] = item.get("reference-count", 0)
                 if is_usable_paper_metadata(paper):
                     papers.append(paper)
 
@@ -198,9 +243,7 @@ class CrossRefGetWorkTool(Tool):
     async def execute(self, **kwargs) -> ToolResult:
         doi = kwargs["doi"]
 
-        headers = {
-            "User-Agent": "ResearchOS/0.1.0 (mailto:researchos@example.com)"
-        }
+        headers = _crossref_headers()
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -270,6 +313,13 @@ class CrossRefGetWorkTool(Tool):
                 "citation_count": citation_count,
                 "doi": doi,
             }
+            references = _extract_crossref_references(message)
+            if references:
+                paper["references"] = references
+                paper["referenced_works"] = references
+                paper["reference_count"] = message.get("reference-count", len(references))
+            else:
+                paper["reference_count"] = message.get("reference-count", 0)
 
             return ToolResult(
                 ok=True,

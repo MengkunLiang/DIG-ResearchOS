@@ -26,6 +26,7 @@ DEFAULT_PAPER_RECORD_SOURCES = [
     "literature/deep_read_queue_pending.jsonl",
     "literature/deep_read_queue.jsonl",
     "literature/papers_dedup.jsonl",
+    "literature/papers_raw.jsonl",
 ]
 
 
@@ -87,16 +88,32 @@ class LookupPaperRecordTool(Tool):
                         "skipped_sources": [],
                     },
                 )
-            content = _format_record(record, [(source or "queue_rank", record)])
+            source_label = source or "queue_rank"
+            matches, skipped_sources, scanned = self._find_matches_for_record(
+                record,
+                params.sources or DEFAULT_PAPER_RECORD_SOURCES,
+                source_label=source_label,
+            )
+            if not matches:
+                matches = [(source_label, record)]
+            merged = _merge_records(matches)
+            abstract = str(merged.get("abstract") or "").strip()
+            if len(abstract) > params.max_abstract_chars:
+                merged["abstract"] = (
+                    abstract[: params.max_abstract_chars]
+                    + f"\n[... abstract truncated, full length: {len(abstract)} chars]"
+                )
+            content = _format_record(merged, matches)
             return ToolResult(
                 ok=True,
                 content=content,
                 data={
                     "found": True,
-                    "record": record,
-                    "matched_sources": [source],
-                    "match_count": 1,
-                    "scanned": params.queue_rank,
+                    "record": merged,
+                    "matched_sources": [source for source, _ in matches],
+                    "match_count": len(matches),
+                    "scanned": scanned,
+                    "skipped_sources": skipped_sources,
                     "query": {"queue_rank": params.queue_rank},
                 },
             )
@@ -156,6 +173,40 @@ class LookupPaperRecordTool(Tool):
                 "scanned": scanned,
             },
         )
+
+    def _find_matches_for_record(
+        self,
+        record: dict[str, Any],
+        source_paths: list[str],
+        *,
+        source_label: str,
+    ) -> tuple[list[tuple[str, dict[str, Any]]], list[str], int]:
+        """Return queue record plus richer matching records from local pools."""
+
+        query_ids = _record_identifier_variants(record)
+        query_title = _normalize_title(str(record.get("title") or ""))
+        matches: list[tuple[str, dict[str, Any]]] = [(source_label, record)]
+        skipped_sources: list[str] = []
+        scanned = 0
+        seen_sources = {source_label}
+
+        for rel_path in source_paths:
+            if rel_path in seen_sources:
+                continue
+            try:
+                abs_path = self.policy.resolve_read(rel_path)
+            except ToolAccessDenied:
+                skipped_sources.append(rel_path)
+                continue
+            if not abs_path.exists() or not abs_path.is_file():
+                skipped_sources.append(rel_path)
+                continue
+            for candidate in _iter_jsonl(abs_path):
+                scanned += 1
+                if _record_matches(candidate, query_ids=query_ids, query_title=query_title):
+                    matches.append((rel_path, candidate))
+
+        return matches, skipped_sources, scanned
 
 
 def _iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
@@ -249,10 +300,43 @@ def _merge_records(matches: list[tuple[str, dict[str, Any]]]) -> dict[str, Any]:
         for key, value in record.items():
             if value in (None, "", [], {}):
                 continue
-            if key not in merged or merged[key] in (None, "", [], {}):
+            current = merged.get(key)
+            if key not in merged or current in (None, "", [], {}):
                 merged[key] = value
+            elif key == "abstract" and len(str(value)) > len(str(current)):
+                merged[key] = value
+            elif key == "externalIds" and isinstance(current, dict) and isinstance(value, dict):
+                merged[key] = {
+                    **current,
+                    **{k: v for k, v in value.items() if v not in (None, "", [], {})},
+                }
+            elif key in {
+                "references",
+                "referenced_works",
+                "related_works",
+                "locations",
+                "oa_locations",
+                "open_access_locations",
+                "openAccessLocations",
+                "open_access_pdfs",
+            } and isinstance(current, list) and isinstance(value, list):
+                merged[key] = _dedupe_list_payload([*current, *value])
         merged.setdefault("_lookup_sources", []).append(source)
     return merged
+
+
+def _dedupe_list_payload(items: list[Any]) -> list[Any]:
+    seen: set[str] = set()
+    result: list[Any] = []
+    for item in items:
+        key = str(item)
+        if isinstance(item, dict):
+            key = str(item.get("doi") or item.get("id") or item.get("url") or item.get("title") or item)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result
 
 
 def _format_record(record: dict[str, Any], matches: list[tuple[str, dict[str, Any]]]) -> str:
@@ -269,7 +353,48 @@ def _format_record(record: dict[str, Any], matches: list[tuple[str, dict[str, An
         f"- verification: {record.get('verification_status') or ''} confidence={record.get('verification_confidence') or ''}",
         f"- access/evidence: {record.get('evidence_level') or ''} access={record.get('access_score') or record.get('access_score_estimate') or ''}",
     ]
+    pdf_candidates = _record_pdf_candidate_summary(record)
+    if pdf_candidates:
+        lines.append(f"- pdf/oa candidates: {', '.join(pdf_candidates[:5])}")
+    reference_count = _record_reference_count(record)
+    if reference_count:
+        lines.append(f"- reference hints: {reference_count}")
     abstract = str(record.get("abstract") or "").strip()
     if abstract:
         lines.extend(["", "Abstract:", abstract])
     return "\n".join(lines)
+
+
+def _record_pdf_candidate_summary(record: dict[str, Any]) -> list[str]:
+    values: list[str] = []
+    for key in (
+        "pdf_url",
+        "open_access_pdf_url",
+        "oa_pdf_url",
+        "best_pdf_url",
+        "full_text_url",
+        "pmc_pdf_url",
+        "url_for_pdf",
+        "landing_page_url",
+    ):
+        value = str(record.get(key) or "").strip()
+        if value:
+            values.append(f"{key}={value}")
+    external_ids = record.get("externalIds") if isinstance(record.get("externalIds"), dict) else {}
+    arxiv_id = str(external_ids.get("ArXiv") or record.get("arxiv_id") or "").strip()
+    if arxiv_id:
+        values.append(f"arxiv_pdf=https://arxiv.org/pdf/{arxiv_id.removeprefix('arxiv:')}.pdf")
+    return values
+
+
+def _record_reference_count(record: dict[str, Any]) -> int:
+    count = 0
+    for key in ("references", "referenced_works", "related_works"):
+        value = record.get(key)
+        if isinstance(value, list):
+            count = max(count, len(value))
+    try:
+        count = max(count, int(record.get("reference_count") or 0))
+    except (TypeError, ValueError):
+        pass
+    return count

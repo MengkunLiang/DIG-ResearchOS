@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import os
 import json
+import re
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urljoin
 
 try:
     import httpx
@@ -126,6 +127,7 @@ class FetchPaperPdfTool(Tool):
                 response = None
                 pdf_url = None
                 candidate_errors: list[dict[str, Any]] = []
+                discovered_candidates: list[str] = []
                 for candidate in pdf_candidates:
                     try:
                         response = await client.get(candidate)
@@ -154,12 +156,22 @@ class FetchPaperPdfTool(Tool):
                         continue
 
                     if not self._looks_like_pdf(response, candidate):
+                        html_candidates = self._extract_pdf_links_from_html(response, candidate)
+                        new_candidates = [
+                            item
+                            for item in html_candidates
+                            if item not in pdf_candidates and item not in discovered_candidates
+                        ]
+                        if new_candidates:
+                            discovered_candidates.extend(new_candidates)
+                            pdf_candidates.extend(new_candidates[:5])
                         candidate_errors.append(
                             {
                                 "url": candidate,
                                 "error": "not_pdf",
                                 "status_code": getattr(response, "status_code", None),
                                 "content_type": response.headers.get("content-type", ""),
+                                "discovered_pdf_links": new_candidates[:5],
                             }
                         )
                         continue
@@ -168,6 +180,13 @@ class FetchPaperPdfTool(Tool):
                     break
 
                 if response is None or pdf_url is None:
+                    self._record_fetch_attempt(
+                        params.paper_id,
+                        params.save_path,
+                        ok=False,
+                        candidates=pdf_candidates,
+                        candidate_errors=candidate_errors,
+                    )
                     error_summary = self._format_candidate_errors(candidate_errors)
                     return ToolResult(
                         ok=False,
@@ -184,6 +203,15 @@ class FetchPaperPdfTool(Tool):
                         },
                     )
 
+            self._record_fetch_attempt(
+                params.paper_id,
+                params.save_path,
+                ok=True,
+                candidates=pdf_candidates,
+                candidate_errors=candidate_errors,
+                url=pdf_url,
+                size=len(response.content),
+            )
             return ToolResult(
                 ok=True,
                 content=f"Downloaded PDF to {params.save_path} ({len(response.content)} bytes)",
@@ -195,6 +223,7 @@ class FetchPaperPdfTool(Tool):
                 },
             )
         except Exception as exc:
+            self._record_fetch_attempt(params.paper_id, params.save_path, ok=False, error=str(exc))
             if httpx is not None and isinstance(exc, httpx.HTTPError):
                 return ToolResult(
                     ok=False,
@@ -435,10 +464,15 @@ class FetchPaperPdfTool(Tool):
 
     @staticmethod
     def _doi_fallback_candidates(doi: str) -> list[str]:
-        return [
+        candidates = [
             f"https://doi.org/{doi}",
             f"https://dx.doi.org/{doi}",
         ]
+        doi_lower = doi.lower()
+        if doi_lower.startswith("10.18653/v1/"):
+            anthology_id = doi.split("/", 1)[1]
+            candidates.append(f"https://aclanthology.org/{anthology_id}.pdf")
+        return candidates
 
     @classmethod
     def _url_to_pdf_candidates(cls, url: str) -> list[str]:
@@ -448,6 +482,69 @@ class FetchPaperPdfTool(Tool):
         if "arxiv.org/html/" in url:
             candidates.append(url.replace("/html/", "/pdf/") + ".pdf")
         return candidates
+
+    @classmethod
+    def _extract_pdf_links_from_html(cls, response: "httpx.Response", base_url: str) -> list[str]:
+        content_type = response.headers.get("content-type", "").casefold()
+        raw_text = getattr(response, "text", None)
+        if raw_text is None:
+            raw_content = getattr(response, "content", b"")
+            raw_text = raw_content.decode("utf-8", errors="ignore") if isinstance(raw_content, bytes) else str(raw_content)
+        if "html" not in content_type and not raw_text[:200].lstrip().lower().startswith("<"):
+            return []
+        html = raw_text[:300_000]
+        candidates: list[str] = []
+        patterns = [
+            r'<meta[^>]+name=["\']citation_pdf_url["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+name=["\']citation_pdf_url["\']',
+            r'<link[^>]+type=["\']application/pdf["\'][^>]+href=["\']([^"\']+)["\']',
+            r'<a[^>]+href=["\']([^"\']+\.pdf(?:\?[^"\']*)?)["\']',
+        ]
+        for pattern in patterns:
+            for match in re.finditer(pattern, html, flags=re.IGNORECASE):
+                url = urljoin(base_url, match.group(1).strip())
+                if url:
+                    candidates.extend(cls._url_to_pdf_candidates(url))
+        return cls._dedupe_candidates(candidates)
+
+    def _record_fetch_attempt(
+        self,
+        paper_id: str,
+        save_path: str,
+        *,
+        ok: bool,
+        candidates: list[str] | None = None,
+        candidate_errors: list[dict[str, Any]] | None = None,
+        url: str | None = None,
+        size: int | None = None,
+        error: str | None = None,
+    ) -> None:
+        payload = {
+            "paper_id": paper_id,
+            "save_path": save_path,
+            "ok": ok,
+            "url": url or "",
+            "size": size,
+            "error": error or "",
+            "candidate_count": len(candidates or []),
+            "candidate_errors": (candidate_errors or [])[:10],
+        }
+        try:
+            path = self.policy.resolve_write("literature/pdf_fetch_attempts.jsonl")
+        except ToolAccessDenied:
+            # Diagnostic attempts are runtime metadata, not the PDF artifact
+            # requested by the agent.  If a narrow tool policy only allows the
+            # target save path, still keep the attempt log inside the workspace
+            # so failed PDF resolution is debuggable after the run.
+            path = self.policy.workspace_dir / "literature" / "pdf_fetch_attempts.jsonl"
+        except Exception:
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        except Exception:
+            return
 
     async def _openalex_pdf_candidates(
         self,
@@ -467,7 +564,13 @@ class FetchPaperPdfTool(Tool):
             identifier = openalex_id or ""
 
         url = f"https://api.openalex.org/works/{quote(identifier, safe=':/')}"
-        params = {"mailto": os.environ.get("RESEARCHER_EMAIL", "researcher@example.com")}
+        params = {
+            "mailto": (
+                os.environ.get("RESEARCHER_EMAIL")
+                or os.environ.get("OPENALEX_MAILTO")
+                or "researcher@example.com"
+            )
+        }
 
         try:
             response = await client.get(url, params=params)

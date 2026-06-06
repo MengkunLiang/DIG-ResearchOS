@@ -14,6 +14,7 @@ import json
 from ..agents._common import load_jsonl, normalize_text_key
 from ..literature_identity import find_matching_seed_pdf, paper_record_match_keys
 from .citation_graph import (
+    _build_node_alias_index,
     _dedupe_edges,
     _extract_edges,
     _extract_record_edges,
@@ -545,6 +546,8 @@ def _can_enter_active_target(record: dict[str, Any]) -> bool:
 
     if bool(record.get("seed_priority")):
         return True
+    if bool(record.get("is_citation_hub")) and bool(record.get("citation_hub_protected_slot")):
+        return True
     if bool(record.get("cross_domain_candidate")):
         return True
     if bool(record.get("semantic_screen", {}).get("can_enter_deep_read")):
@@ -785,9 +788,14 @@ def build_deep_read_queue(
             and not can_enter_deep_read
         )
         hub = _lookup_citation_hub(paper, canonical_id, citation_hub_index)
-        is_citation_hub = bool(hub) and (is_seed or can_enter_deep_read)
+        is_citation_hub = bool(hub) and (
+            is_seed
+            or can_enter_deep_read
+            or (not has_semantic_screen and not semantic_screen_excluded_candidate)
+        )
         hub_type = str(hub.get("hub_type") or "") if hub else ""
         hub_score = float(hub.get("hub_score") or 0.0) if hub else 0.0
+        citation_hub_needs_reader_screening = bool(is_citation_hub and not has_semantic_screen and not is_seed)
         protected_slot_bonus = 0.12 if cross_domain_candidate else 0.0
         citation_hub_bonus = min(0.15, hub_score * 0.04) if is_citation_hub else 0.0
         read_priority = round(
@@ -856,6 +864,7 @@ def build_deep_read_queue(
             "hub_score": round(hub_score, 4),
             "citation_hub_bonus": round(citation_hub_bonus, 4),
             "citation_hub_protected_slot": False,
+            "citation_hub_needs_reader_screening": citation_hub_needs_reader_screening,
             "bridge_must_protected_slot": False,
             "bridge_priority": _bridge_priority(resolved_bridge_id, bridge_plan),
         }
@@ -865,8 +874,11 @@ def build_deep_read_queue(
             record["queue_reason"] = (
                 "citation_seed_neighbor"
                 if hub_type == "seed_neighbor"
+                else "citation_hub_needs_reader_screening"
+                if citation_hub_needs_reader_screening
                 else "citation_hub_deep_read_candidate"
             )
+        record.update(_queue_evidence_hints(paper))
         if (
             is_seed
             or can_enter_deep_read
@@ -1115,6 +1127,9 @@ def build_deep_read_queue(
             for item in queue_records
             if item.get("access_level_hint") in {"LIKELY_FULL_TEXT", "POSSIBLE_FULL_TEXT"}
         ),
+        "queue_with_abstract_hints": sum(1 for item in queue_records if item.get("has_abstract")),
+        "queue_with_reference_hints": sum(1 for item in queue_records if int(item.get("reference_hint_count") or 0) > 0),
+        "queue_with_pdf_url_hints": sum(1 for item in queue_records if item.get("has_pdf_url_hint")),
         "verified_candidates": sum(
             1
             for item in queue_records
@@ -1135,6 +1150,61 @@ def build_deep_read_queue(
     return queue_records, metadata
 
 
+def _queue_evidence_hints(paper: dict[str, Any]) -> dict[str, Any]:
+    """Small evidence availability hints for queue/debugging.
+
+    The queue remains a compact scheduling artifact. Full abstracts, PDF
+    locations, and reference payloads stay in verified/dedup/raw and are merged
+    by lookup_paper_record(queue_rank=...).
+    """
+
+    abstract = str(paper.get("abstract") or "").strip()
+    reference_count = 0
+    for key in ("references", "referenced_works", "related_works"):
+        value = paper.get(key)
+        if isinstance(value, list):
+            reference_count = max(reference_count, len(value))
+    try:
+        reference_count = max(reference_count, int(paper.get("reference_count") or 0))
+    except (TypeError, ValueError):
+        pass
+
+    pdf_hint_count = 0
+    for key in (
+        "pdf_url",
+        "open_access_pdf_url",
+        "oa_pdf_url",
+        "best_pdf_url",
+        "full_text_url",
+        "pmc_pdf_url",
+        "url_for_pdf",
+        "landing_page_url",
+    ):
+        if str(paper.get(key) or "").strip():
+            pdf_hint_count += 1
+    for key in (
+        "openAccessPdf",
+        "open_access_pdf",
+        "oa_pdf",
+        "best_oa_location",
+        "primary_location",
+    ):
+        if isinstance(paper.get(key), dict) and paper.get(key):
+            pdf_hint_count += 1
+    for key in ("locations", "oa_locations", "open_access_locations", "openAccessLocations", "open_access_pdfs"):
+        value = paper.get(key)
+        if isinstance(value, list):
+            pdf_hint_count += len([item for item in value if item])
+
+    return {
+        "has_abstract": bool(abstract),
+        "abstract_chars": len(abstract),
+        "reference_hint_count": reference_count,
+        "has_pdf_url_hint": pdf_hint_count > 0,
+        "pdf_url_hint_count": pdf_hint_count,
+    }
+
+
 def identify_citation_hubs(
     papers: list[dict[str, Any]],
     workspace_dir: Path,
@@ -1150,14 +1220,27 @@ def identify_citation_hubs(
     if not nodes:
         return {}
     node_by_id = {str(node["id"]): node for node in nodes}
+    alias_to_id = _build_node_alias_index(nodes)
     title_to_id = {
         _normalize_title_key(str(node.get("title") or "")): str(node["id"])
         for node in nodes
         if node.get("title")
     }
     edge_payload = _load_citation_edge_payload(workspace_dir / "literature" / "citation_edges.json")
-    edges = _extract_edges(edge_payload, node_by_id=node_by_id, title_to_id=title_to_id)
-    edges.extend(_extract_record_edges(nodes, node_by_id=node_by_id, title_to_id=title_to_id))
+    edges = _extract_edges(
+        edge_payload,
+        node_by_id=node_by_id,
+        title_to_id=title_to_id,
+        alias_to_id=alias_to_id,
+    )
+    edges.extend(
+        _extract_record_edges(
+            nodes,
+            node_by_id=node_by_id,
+            title_to_id=title_to_id,
+            alias_to_id=alias_to_id,
+        )
+    )
     edges = _dedupe_edges(edges)
     if not edges:
         return {}
@@ -1357,12 +1440,11 @@ def build_access_audit(
             canonical_id = _stable_noopenalex_queue_id(paper)
         normalized_id = _normalize_paper_filename(canonical_id or paper_id)
         readable_normalized_id = _normalize_paper_filename(paper_id)
-        seed_pdf_path = find_matching_seed_pdf(paper, seed_pdf_dir)
+        seed_pdf_path = find_matching_seed_pdf(paper, seed_pdf_dir) if _can_use_seed_pdf(paper) else None
         has_seed_pdf = seed_pdf_path is not None
-        has_local_pdf = bool(
+        has_literature_pdf = bool(
             (normalized_id and (local_pdf_dir / f"{normalized_id}.pdf").exists())
             or (readable_normalized_id and (local_pdf_dir / f"{readable_normalized_id}.pdf").exists())
-            or has_seed_pdf
         )
 
         access_est = float(paper.get("access_score_estimate", _estimate_access_score(paper)))
@@ -1383,11 +1465,11 @@ def build_access_audit(
                 "access_level_hint": access_level_hint,
                 "verification_status": str(paper.get("verification_status", "retrieved")),
                 "verification_confidence": round(float(paper.get("verification_confidence", 0.0)), 2),
-                "has_local_pdf": has_local_pdf,
+                "has_local_pdf": has_literature_pdf,
                 "has_seed_pdf": has_seed_pdf,
                 "seed_pdf_path": str(seed_pdf_path.relative_to(workspace_dir)) if seed_pdf_path else "",
                 "recommended_action": _recommended_action(
-                    has_local_pdf=has_local_pdf,
+                    has_local_pdf=has_literature_pdf,
                     has_seed_pdf=has_seed_pdf,
                     evidence_level=evidence_level,
                     access_level_hint=access_level_hint,
@@ -1481,15 +1563,15 @@ def _estimate_access_score(paper: dict[str, Any]) -> float:
     if has_arxiv:
         score += 0.45
     if doi:
-        score += 0.15
+        score += 0.05
     if url:
-        score += 0.1
+        score += 0.05
         if url.casefold().endswith(".pdf"):
-            score += 0.15
+            score += 0.25
     if abstract:
         score += 0.2
-    if paper.get("pdf_url"):
-        score += 0.25
+    if _has_explicit_pdf_signal(paper):
+        score += 0.35
 
     return round(min(1.0, score), 2)
 
@@ -1511,13 +1593,67 @@ def _estimate_access_level_hint(paper: dict[str, Any]) -> str:
     """基于 metadata 给出可读性 hint，不代表最终阅读证据等级。"""
 
     access_score = float(paper.get("access_score_estimate", _estimate_access_score(paper)))
-    if access_score >= 0.8:
+    has_direct_pdf = _has_explicit_pdf_signal(paper)
+    has_arxiv = (
+        str(paper.get("source", "")).casefold() == "arxiv"
+        or str(paper.get("id", "")).startswith("arxiv:")
+        or bool((paper.get("externalIds") or {}).get("ArXiv"))
+        or "arxiv.org" in str(paper.get("url", "")).casefold()
+    )
+    if (has_direct_pdf or has_arxiv) and access_score >= 0.8:
         return "LIKELY_FULL_TEXT"
-    if access_score >= 0.55:
+    if has_direct_pdf or has_arxiv:
         return "POSSIBLE_FULL_TEXT"
     if str(paper.get("abstract", "")).strip():
         return "ABSTRACT_OR_METADATA"
     return "METADATA_ONLY"
+
+
+def _has_explicit_pdf_signal(paper: dict[str, Any]) -> bool:
+    for key in (
+        "pdf_url",
+        "open_access_pdf_url",
+        "oa_pdf_url",
+        "best_pdf_url",
+        "full_text_url",
+        "pmc_pdf_url",
+        "url_for_pdf",
+    ):
+        value = str(paper.get(key) or "").strip()
+        if value and (value.casefold().endswith(".pdf") or "pdf" in value.casefold()):
+            return True
+    for key in (
+        "best_oa_location",
+        "primary_location",
+        "openAccessPdf",
+        "open_access_pdf",
+        "oa_pdf",
+    ):
+        value = paper.get(key)
+        if isinstance(value, dict) and any(
+            str(value.get(url_key) or "").strip()
+            for url_key in ("pdf_url", "url_for_pdf", "oa_pdf_url", "best_pdf_url")
+        ):
+            return True
+    for key in ("locations", "oa_locations", "open_access_locations", "openAccessLocations"):
+        values = paper.get(key)
+        if isinstance(values, list):
+            for item in values:
+                if isinstance(item, dict) and any(
+                    str(item.get(url_key) or "").strip()
+                    for url_key in ("pdf_url", "url_for_pdf", "oa_pdf_url", "best_pdf_url")
+                ):
+                    return True
+    return False
+
+
+def _can_use_seed_pdf(paper: dict[str, Any]) -> bool:
+    return bool(
+        paper.get("seed_priority")
+        or paper.get("has_seed_pdf")
+        or str(paper.get("source") or "").casefold() == "user_seed"
+        or str(paper.get("target_bucket") or "").casefold() == "seed"
+    )
 
 
 def _normalize_paper_filename(identifier: str) -> str:
