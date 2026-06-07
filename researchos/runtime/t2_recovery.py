@@ -36,7 +36,9 @@ from ..tools.paper_utils import (
     generate_search_log,
     score_papers,
 )
+from ..tools.scout_progress import ScoutProgressLogger
 from ..tools.workspace_policy import WorkspaceAccessPolicy
+from .t2_config import T2FinalizeConfig, load_deep_read_queue_config, load_t2_finalize_config
 from ..time_utils import current_utc_year, format_year_window, recent_year_from
 
 try:
@@ -59,10 +61,7 @@ SEARCH_TOOL_NAMES = frozenset(
     }
 )
 
-T2_ACTIVE_POOL_MAX = 120
-T2_BRIDGE_ACTIVE_POOL_CAP_PER_BRIDGE = 15
-T2_SCREENED_ACTIVE_POOL_CAP = 60
-T2_SNOWBALL_ACTIVE_POOL_CAP = 12
+_DEFAULT_T2_FINALIZE_CONFIG = T2FinalizeConfig()
 
 _STOPWORDS = {
     "a",
@@ -208,7 +207,8 @@ def _select_active_candidate_pool(
     scored_papers: list[dict[str, Any]],
     workspace_dir: Path,
     *,
-    max_count: int = T2_ACTIVE_POOL_MAX,
+    config: T2FinalizeConfig | None = None,
+    max_count: int | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     """Split the recovered pool into an active T2 pool and a backlog.
 
@@ -220,10 +220,17 @@ def _select_active_candidate_pool(
     writing the rest to `papers_backlog.jsonl` for audit/revisit.
     """
 
+    cfg = config or _DEFAULT_T2_FINALIZE_CONFIG
+    resolved_max_count = max_count if max_count is not None else cfg.active_pool_max
     if not scored_papers:
-        return [], [], {"active_pool_max": max_count, "input_count": 0, "active_count": 0, "backlog_count": 0}
+        return [], [], {
+            "active_pool_max": resolved_max_count,
+            "input_count": 0,
+            "active_count": 0,
+            "backlog_count": 0,
+        }
 
-    max_count = max(1, int(max_count))
+    max_count = max(1, int(resolved_max_count))
     bridge_plan = _load_bridge_domain_plan(workspace_dir)
     confirmed_bridges = [
         str(item.get("bridge_id") or "").strip()
@@ -308,7 +315,7 @@ def _select_active_candidate_pool(
     add_records(seeds, "seed")
 
     screened = [paper for paper in scored_papers if not is_seed(paper) and is_screened_deep(paper)]
-    add_records(screened, "semantic_screen_deep_read", limit=T2_SCREENED_ACTIVE_POOL_CAP)
+    add_records(screened, "semantic_screen_deep_read", limit=cfg.screened_active_pool_cap)
 
     for bridge_id in confirmed_bridges:
         bridge_pool = [
@@ -318,12 +325,12 @@ def _select_active_candidate_pool(
             and not is_screened_deep(paper)
             and bridge_id in bridge_ids(paper)
         ]
-        add_records(bridge_pool, f"bridge_recall:{bridge_id}", limit=T2_BRIDGE_ACTIVE_POOL_CAP_PER_BRIDGE)
+        add_records(bridge_pool, f"bridge_recall:{bridge_id}", limit=cfg.bridge_active_pool_cap_per_bridge)
 
     add_records(
         [paper for paper in scored_papers if not is_seed(paper) and is_snowball(paper)],
         "citation_snowball",
-        limit=T2_SNOWBALL_ACTIVE_POOL_CAP,
+        limit=cfg.snowball_active_pool_cap,
     )
     add_records(scored_papers, "metadata_priority_fill")
 
@@ -347,9 +354,9 @@ def _select_active_candidate_pool(
         "backlog_count": len(backlog),
         "selection_reasons": dict(selection_reasons),
         "confirmed_bridge_ids": confirmed_bridges,
-        "bridge_active_pool_cap_per_bridge": T2_BRIDGE_ACTIVE_POOL_CAP_PER_BRIDGE,
-        "screened_active_pool_cap": T2_SCREENED_ACTIVE_POOL_CAP,
-        "snowball_active_pool_cap": T2_SNOWBALL_ACTIVE_POOL_CAP,
+        "bridge_active_pool_cap_per_bridge": cfg.bridge_active_pool_cap_per_bridge,
+        "screened_active_pool_cap": cfg.screened_active_pool_cap,
+        "snowball_active_pool_cap": cfg.snowball_active_pool_cap,
     }
     return selected, backlog, metadata
 
@@ -376,6 +383,17 @@ def _write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     content = "\n".join(json.dumps(record, ensure_ascii=False) for record in records)
     path.write_text(content + ("\n" if content else ""), encoding="utf-8")
+
+
+def _log_t2_progress(workspace_dir: Path, config: T2FinalizeConfig, event: str, **fields: Any) -> None:
+    """Best-effort update for `literature/temp/scout_progress.md`."""
+
+    if not config.progress_enabled:
+        return
+    try:
+        ScoutProgressLogger(workspace_dir, config.progress_file).log_runtime_event(event, **fields)
+    except Exception:
+        return
 
 
 def _candidate_record_identity_keys(record: dict[str, Any]) -> set[str]:
@@ -438,10 +456,12 @@ def _cap_active_pool_after_seed_repair(
     workspace_dir: Path,
     active_pool_meta: dict[str, Any],
     *,
-    max_count: int = T2_ACTIVE_POOL_MAX,
+    max_count: int | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     """Keep seed repair from accidentally bypassing the T2 active pool cap."""
 
+    if max_count is None:
+        max_count = int(active_pool_meta.get("active_pool_max") or _DEFAULT_T2_FINALIZE_CONFIG.active_pool_max)
     max_count = max(1, int(max_count))
     if len(active_records) <= max_count:
         backlog_records = _dedupe_backlog_against_active_and_backlog(
@@ -1205,6 +1225,7 @@ async def _expand_crossref_snowball_candidates(
     refs_per_source: int = 8,
     max_candidates: int = 40,
     max_concurrency: int = 6,
+    title_match_threshold: float = 0.90,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Add bounded one-hop DOI reference candidates from Crossref metadata.
 
@@ -1380,7 +1401,7 @@ async def _expand_crossref_snowball_candidates(
                 if similarity > best_similarity:
                     best_similarity = similarity
                     best_paper = _openalex_work_to_paper(work)
-            if not best_paper or best_similarity < 0.90:
+            if not best_paper or best_similarity < title_match_threshold:
                 stats["failed"] = int(stats["failed"]) + 1
                 return
             source_id = str(source.get("canonical_id") or source.get("id") or source.get("doi") or "").strip()
@@ -2361,14 +2382,34 @@ async def finalize_t2_outputs(
     """根据现有 raw 结果，确定性补齐 T2 产物。"""
 
     workspace_dir = workspace_dir.resolve()
+    t2_config = load_t2_finalize_config()
+    queue_config = load_deep_read_queue_config()
     raw_path = workspace_dir / "literature" / "papers_raw.jsonl"
     raw_papers = _load_jsonl(raw_path)
     if not raw_papers:
+        if t2_config.progress_update_on_finalize:
+            _log_t2_progress(
+                workspace_dir,
+                t2_config,
+                "finalize_failed",
+                reason="papers_raw_missing_or_empty",
+                raw_count=0,
+            )
         return {
             "ok": False,
             "reason": "papers_raw_missing_or_empty",
             "raw_count": 0,
         }
+    if t2_config.progress_update_on_finalize:
+        _log_t2_progress(
+            workspace_dir,
+            t2_config,
+            "finalize_started",
+            raw_count=len(raw_papers),
+            active_pool_max=t2_config.active_pool_max,
+            deep_read_target=queue_config.deep_read_target,
+            deep_read_max=queue_config.deep_read_max,
+        )
 
     project = _load_project(workspace_dir)
     keywords = _normalize_keywords(project)
@@ -2379,7 +2420,11 @@ async def finalize_t2_outputs(
         allowed_write_prefixes=["literature/", "literature/temp/"],
     )
 
-    dedup_papers = deduplicate_papers(raw_papers, doi_dedup=True, title_threshold=0.95)
+    dedup_papers = deduplicate_papers(
+        raw_papers,
+        doi_dedup=True,
+        title_threshold=t2_config.dedup_title_threshold,
+    )
     if domain_profile:
         dedup_papers = filter_by_domain(
             dedup_papers,
@@ -2405,20 +2450,54 @@ async def finalize_t2_outputs(
     dedup_papers, pre_backfill_backlog_papers, active_pool_meta = _select_active_candidate_pool(
         provisional_scored_papers,
         workspace_dir,
+        config=t2_config,
     )
+    if t2_config.progress_update_on_finalize:
+        _log_t2_progress(
+            workspace_dir,
+            t2_config,
+            "active_pool_pre_backfill",
+            input_count=active_pool_meta.get("input_count"),
+            active_count=active_pool_meta.get("active_count"),
+            backlog_count=active_pool_meta.get("backlog_count"),
+            active_pool_max=active_pool_meta.get("active_pool_max"),
+        )
 
-    openalex_title_backfill = await _backfill_recovered_openalex_title_metadata(dedup_papers)
-    openalex_backfill = await _backfill_recovered_openalex_metadata(dedup_papers)
-    multisource_abstract_backfill = await _backfill_recovered_multisource_abstracts(dedup_papers, policy)
-    metadata_backfill = await _backfill_recovered_crossref_metadata(dedup_papers)
+    openalex_title_backfill = await _backfill_recovered_openalex_title_metadata(
+        dedup_papers,
+        max_concurrency=t2_config.metadata_backfill_max_concurrency,
+    )
+    openalex_backfill = await _backfill_recovered_openalex_metadata(
+        dedup_papers,
+        max_concurrency=t2_config.metadata_backfill_max_concurrency,
+    )
+    multisource_abstract_backfill = await _backfill_recovered_multisource_abstracts(
+        dedup_papers,
+        policy,
+        title_match_threshold=t2_config.abstract_backfill_title_match_threshold,
+        max_concurrency=t2_config.abstract_backfill_max_concurrency,
+    )
+    metadata_backfill = await _backfill_recovered_crossref_metadata(
+        dedup_papers,
+        max_concurrency=t2_config.metadata_backfill_max_concurrency,
+    )
     raw_papers_for_snowball_dedup = _load_jsonl(raw_path)
     openalex_snowball_candidates, openalex_citation_backfill = await _expand_openalex_snowball_candidates(
         dedup_papers,
         existing_papers=raw_papers_for_snowball_dedup,
+        max_sources=t2_config.snowball_max_sources,
+        refs_per_source=t2_config.snowball_refs_per_source,
+        max_candidates=t2_config.snowball_max_candidates,
+        max_concurrency=t2_config.snowball_max_concurrency,
     )
     crossref_snowball_candidates, citation_backfill = await _expand_crossref_snowball_candidates(
         dedup_papers,
         existing_papers=raw_papers_for_snowball_dedup,
+        max_sources=t2_config.snowball_max_sources,
+        refs_per_source=t2_config.snowball_refs_per_source,
+        max_candidates=t2_config.snowball_max_candidates,
+        max_concurrency=t2_config.snowball_max_concurrency,
+        title_match_threshold=t2_config.snowball_title_match_threshold,
     )
     snowball_candidates = [*openalex_snowball_candidates, *crossref_snowball_candidates]
     await _persist_snowball_candidates(
@@ -2436,15 +2515,29 @@ async def finalize_t2_outputs(
         dedup_papers = deduplicate_papers(
             [*dedup_papers, *snowball_candidates],
             doi_dedup=True,
-            title_threshold=0.95,
+            title_threshold=t2_config.dedup_title_threshold,
         )
         if snowball_candidates:
             # Newly resolved snowball records may have DOI/title only; run the
             # same mechanical repair once more before scoring/verification.
-            post_snowball_title_backfill = await _backfill_recovered_openalex_title_metadata(dedup_papers)
-            post_snowball_openalex_backfill = await _backfill_recovered_openalex_metadata(dedup_papers)
-            post_snowball_abstract_backfill = await _backfill_recovered_multisource_abstracts(dedup_papers, policy)
-            post_snowball_crossref_backfill = await _backfill_recovered_crossref_metadata(dedup_papers)
+            post_snowball_title_backfill = await _backfill_recovered_openalex_title_metadata(
+                dedup_papers,
+                max_concurrency=t2_config.metadata_backfill_max_concurrency,
+            )
+            post_snowball_openalex_backfill = await _backfill_recovered_openalex_metadata(
+                dedup_papers,
+                max_concurrency=t2_config.metadata_backfill_max_concurrency,
+            )
+            post_snowball_abstract_backfill = await _backfill_recovered_multisource_abstracts(
+                dedup_papers,
+                policy,
+                title_match_threshold=t2_config.abstract_backfill_title_match_threshold,
+                max_concurrency=t2_config.abstract_backfill_max_concurrency,
+            )
+            post_snowball_crossref_backfill = await _backfill_recovered_crossref_metadata(
+                dedup_papers,
+                max_concurrency=t2_config.metadata_backfill_max_concurrency,
+            )
         else:
             post_snowball_title_backfill = {"enabled": True, "candidate_count": 0, "attempted": 0}
             post_snowball_openalex_backfill = {"enabled": True, "candidate_count": 0, "attempted": 0}
@@ -2468,16 +2561,25 @@ async def finalize_t2_outputs(
         ),
         reverse=True,
     )
-    final_papers, backlog_papers, active_pool_meta = _select_active_candidate_pool(scored_papers, workspace_dir)
+    final_papers, backlog_papers, active_pool_meta = _select_active_candidate_pool(
+        scored_papers,
+        workspace_dir,
+        config=t2_config,
+    )
     active_pool_meta["pre_backfill_active_count"] = len(dedup_papers)
     active_pool_meta["pre_backfill_backlog_count"] = len(pre_backfill_backlog_papers)
     final_papers = _ensure_seed_papers(final_papers, scored_papers + raw_papers, workspace_dir)
-    final_papers = deduplicate_papers(final_papers, doi_dedup=True, title_threshold=0.95)
+    final_papers = deduplicate_papers(
+        final_papers,
+        doi_dedup=True,
+        title_threshold=t2_config.dedup_title_threshold,
+    )
     final_papers, backlog_papers, active_pool_meta = _cap_active_pool_after_seed_repair(
         final_papers,
         backlog_papers,
         workspace_dir,
         active_pool_meta,
+        max_count=t2_config.active_pool_max,
     )
     raw_screenings = _extract_existing_semantic_screenings(raw_papers + dedup_papers + final_papers)
     enriched_papers = enrich_papers(final_papers, keywords, domain_profile=domain_profile)
@@ -2491,9 +2593,29 @@ async def finalize_t2_outputs(
     _write_jsonl(backlog_path, backlog_papers)
     active_pool_meta["active_count"] = len(enriched_papers)
     active_pool_meta["backlog_count"] = len(backlog_papers)
+    if t2_config.progress_update_on_finalize:
+        _log_t2_progress(
+            workspace_dir,
+            t2_config,
+            "active_pool_final",
+            input_count=active_pool_meta.get("input_count"),
+            active_count=active_pool_meta.get("active_count"),
+            backlog_count=active_pool_meta.get("backlog_count"),
+            active_pool_max=active_pool_meta.get("active_pool_max"),
+            selection_reasons=json.dumps(active_pool_meta.get("selection_reasons") or {}, ensure_ascii=False, sort_keys=True),
+        )
 
     save_result = await SavePapersDedupTool(policy).execute(papers=enriched_papers, append=False)
     if not save_result.ok:
+        if t2_config.progress_update_on_finalize:
+            _log_t2_progress(
+                workspace_dir,
+                t2_config,
+                "finalize_failed",
+                reason="save_papers_dedup_failed",
+                raw_count=len(raw_papers),
+                active_count=len(enriched_papers),
+            )
         return {
             "ok": False,
             "reason": "save_papers_dedup_failed",
@@ -2537,15 +2659,15 @@ async def finalize_t2_outputs(
     queue_records, queue_meta = build_deep_read_queue(
         verified_papers,
         workspace_dir,
-        deep_read_min=35,
-        deep_read_target=35,
-        deep_read_max=45,
-        probe_pool=45,
-        mainline_screened_cap=90,
-        bridge_deep_floor=3,
-        bridge_screened_cap=7,
-        bridge_pool_cap=15,
-        citation_hub_slots=3,
+        deep_read_min=queue_config.deep_read_min,
+        deep_read_target=queue_config.deep_read_target,
+        deep_read_max=queue_config.deep_read_max,
+        probe_pool=queue_config.probe_pool,
+        mainline_screened_cap=queue_config.mainline_screened_cap,
+        bridge_deep_floor=queue_config.bridge_deep_floor,
+        bridge_screened_cap=queue_config.bridge_screened_cap,
+        bridge_pool_cap=queue_config.bridge_pool_cap,
+        citation_hub_slots=queue_config.citation_hub_slots,
     )
     queue_path = workspace_dir / "literature" / "deep_read_queue.jsonl"
     queue_meta_path = workspace_dir / "literature" / "deep_read_queue_meta.json"
@@ -2555,7 +2677,11 @@ async def finalize_t2_outputs(
         encoding="utf-8",
     )
 
-    audit_records, audit_markdown = build_access_audit(verified_papers, workspace_dir, top_n=50)
+    audit_records, audit_markdown = build_access_audit(
+        verified_papers,
+        workspace_dir,
+        top_n=t2_config.access_audit_top_n,
+    )
     access_audit_path = workspace_dir / "literature" / "access_audit.md"
     access_audit_jsonl_path = workspace_dir / "literature" / "access_audit.jsonl"
     _write_jsonl(access_audit_jsonl_path, audit_records)
@@ -2625,6 +2751,18 @@ async def finalize_t2_outputs(
         f"selection_reasons={active_pool_meta.get('selection_reasons')}; "
         "`papers_raw.jsonl` 保留全量检索审计，`papers_dedup.jsonl`/`papers_verified.jsonl` "
         "只保存本轮 active 候选池，超额候选写入 `papers_backlog.jsonl` 供 abstract sweep 或人工回捞。\n"
+    )
+    search_log += (
+        "- T2/T3 阈值配置来源: "
+        "`config/agent_params.yaml` 中 `agents.scout.behavior.t2_finalize` "
+        "和 `agents.reader.modes.read.behavior`；"
+        f"finish_finalize_min_raw={t2_config.finish_finalize_min_raw}, "
+        f"active_pool_max={t2_config.active_pool_max}, "
+        f"dedup_title_threshold={t2_config.dedup_title_threshold}, "
+        f"snowball_max_candidates={t2_config.snowball_max_candidates}, "
+        f"deep_read_target={queue_config.deep_read_target}, "
+        f"deep_read_max={queue_config.deep_read_max}, "
+        f"mainline_screened_cap={queue_config.mainline_screened_cap}。\n"
     )
     search_log += (
         "- OpenAlex 标题兜底补全: "
@@ -2741,12 +2879,26 @@ async def finalize_t2_outputs(
         encoding="utf-8",
     )
 
+    if t2_config.progress_update_on_finalize:
+        _log_t2_progress(
+            workspace_dir,
+            t2_config,
+            "finalize_done",
+            raw_count=len(raw_papers),
+            active_count=len(enriched_papers),
+            backlog_count=len(backlog_papers),
+            queue_count=len(queue_records),
+            query_count=len(queries),
+        )
+
     return {
         "ok": True,
         "raw_count": len(raw_papers),
         "dedup_count": len(enriched_papers),
         "backlog_count": len(backlog_papers),
         "active_pool": active_pool_meta,
+        "t2_finalize_config": t2_config.to_dict(),
+        "deep_read_queue_config": queue_config.to_dict(),
         "query_count": len(queries),
         "trace_count": trace_count,
         "openalex_backfill": openalex_backfill,

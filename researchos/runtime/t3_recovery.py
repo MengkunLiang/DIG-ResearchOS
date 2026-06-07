@@ -18,7 +18,7 @@ from ..literature_identity import (
     record_is_covered,
 )
 from ..agents._common import load_jsonl
-from ..runtime.agent_params import get_agent_mode_params
+from ..runtime.t2_config import load_deep_read_queue_config
 from ..runtime.t3_notes_manifest import build_t3_notes_manifest, target_entries
 from ..tools.paper_enrichment import build_access_audit, build_deep_read_queue
 
@@ -130,18 +130,19 @@ def prepare_t3_resume_artifacts(workspace_dir: Path, *, refresh_reason: str | No
             candidate_papers = []
 
         if candidate_papers:
-            mode_params = get_agent_mode_params("reader", "read")
+            queue_config = load_deep_read_queue_config()
             queue_records, metadata = build_deep_read_queue(
                 candidate_papers,
                 workspace_dir,
-                deep_read_min=int(mode_params.get("deep_read_min", 35)),
-                deep_read_target=int(mode_params.get("deep_read_target", 35)),
-                deep_read_max=int(mode_params.get("deep_read_max", 45)),
-                probe_pool=int(mode_params.get("probe_pool", 45)),
-                mainline_screened_cap=int(mode_params.get("mainline_screened_cap", 90)),
-                bridge_deep_floor=int(mode_params.get("bridge_deep_floor", 3)),
-                bridge_screened_cap=int(mode_params.get("bridge_screened_cap", 7)),
-                bridge_pool_cap=int(mode_params.get("bridge_pool_cap", 15)),
+                deep_read_min=queue_config.deep_read_min,
+                deep_read_target=queue_config.deep_read_target,
+                deep_read_max=queue_config.deep_read_max,
+                probe_pool=queue_config.probe_pool,
+                mainline_screened_cap=queue_config.mainline_screened_cap,
+                bridge_deep_floor=queue_config.bridge_deep_floor,
+                bridge_screened_cap=queue_config.bridge_screened_cap,
+                bridge_pool_cap=queue_config.bridge_pool_cap,
+                citation_hub_slots=queue_config.citation_hub_slots,
             )
             _write_jsonl(queue_path, queue_records)
             (literature_dir / "deep_read_queue_meta.json").write_text(

@@ -32,6 +32,7 @@ from .paper_enrichment import (
     detect_duplicate_queries,
     analyze_dedup_rate,
 )
+from ..runtime.t2_config import load_deep_read_queue_config
 from .workspace_policy import ToolAccessDenied, WorkspaceAccessPolicy
 
 
@@ -1398,14 +1399,14 @@ class BuildVerifiedPapersTool(Tool):
 
 class BuildDeepReadQueueParams(BaseModel):
     papers: list[dict[str, Any]] = Field(..., description="去重并增强后的论文列表")
-    deep_read_min: int = Field(35, description="最低有效 deep-read 数")
-    deep_read_target: int = Field(35, description="目标 deep-read 数")
-    deep_read_max: int = Field(45, description="最大 deep-read/probe 队列数")
-    probe_pool: int = Field(45, description="实际先 probe 的候选数")
-    mainline_screened_cap: int = Field(90, description="主线筛读候选 cap；只用于 coverage/triage 记账，不等于 T3 必读数。")
-    bridge_deep_floor: int = Field(3, description="每个 must_explore bridge 通过 screen 后的 deep-read 保底数。")
-    bridge_screened_cap: int = Field(7, description="每个 bridge 保留的 screened triage 记录上限。")
-    bridge_pool_cap: int = Field(15, description="每个 bridge 在 deep_read_queue 中保留的候选上限。")
+    deep_read_min: int | None = Field(None, description="最低有效 deep-read 数；省略时读取 reader read mode config。")
+    deep_read_target: int | None = Field(None, description="目标 deep-read 数；省略时读取 reader read mode config。")
+    deep_read_max: int | None = Field(None, description="最大 deep-read/probe 队列数；省略时读取 reader read mode config。")
+    probe_pool: int | None = Field(None, description="实际先 probe 的候选数；省略时读取 reader read mode config。")
+    mainline_screened_cap: int | None = Field(None, description="主线筛读候选 cap；省略时读取 reader read mode config。")
+    bridge_deep_floor: int | None = Field(None, description="每个 must_explore bridge 通过 screen 后的 deep-read 保底数。")
+    bridge_screened_cap: int | None = Field(None, description="每个 bridge 保留的 screened triage 记录上限。")
+    bridge_pool_cap: int | None = Field(None, description="每个 bridge 在 deep_read_queue 中保留的候选上限。")
     cross_domain_slots: int | None = Field(
         default=None,
         description="由 semantic_screen 允许的跨领域/theory_bridge 候选整体保护名额；None 时按 runtime 默认值自动计算。",
@@ -1440,21 +1441,30 @@ class BuildDeepReadQueueTool(Tool):
 
     async def execute(self, **kwargs):
         params = BuildDeepReadQueueParams(**kwargs)
+        queue_config = load_deep_read_queue_config()
 
         try:
             queue_records, metadata = build_deep_read_queue(
                 params.papers,
                 self.policy.workspace_dir,
-                deep_read_min=params.deep_read_min,
-                deep_read_target=params.deep_read_target,
-                deep_read_max=params.deep_read_max,
-                probe_pool=params.probe_pool,
+                deep_read_min=params.deep_read_min if params.deep_read_min is not None else queue_config.deep_read_min,
+                deep_read_target=params.deep_read_target if params.deep_read_target is not None else queue_config.deep_read_target,
+                deep_read_max=params.deep_read_max if params.deep_read_max is not None else queue_config.deep_read_max,
+                probe_pool=params.probe_pool if params.probe_pool is not None else queue_config.probe_pool,
                 cross_domain_slots=params.cross_domain_slots,
-                citation_hub_slots=params.citation_hub_slots,
-                mainline_screened_cap=params.mainline_screened_cap,
-                bridge_deep_floor=params.bridge_deep_floor,
-                bridge_screened_cap=params.bridge_screened_cap,
-                bridge_pool_cap=params.bridge_pool_cap,
+                citation_hub_slots=params.citation_hub_slots
+                if params.citation_hub_slots is not None
+                else queue_config.citation_hub_slots,
+                mainline_screened_cap=params.mainline_screened_cap
+                if params.mainline_screened_cap is not None
+                else queue_config.mainline_screened_cap,
+                bridge_deep_floor=params.bridge_deep_floor
+                if params.bridge_deep_floor is not None
+                else queue_config.bridge_deep_floor,
+                bridge_screened_cap=params.bridge_screened_cap
+                if params.bridge_screened_cap is not None
+                else queue_config.bridge_screened_cap,
+                bridge_pool_cap=params.bridge_pool_cap if params.bridge_pool_cap is not None else queue_config.bridge_pool_cap,
             )
             queue_path = self.policy.resolve_write("literature/deep_read_queue.jsonl")
             queue_path.parent.mkdir(parents=True, exist_ok=True)

@@ -28,6 +28,7 @@ from .manuscript_recovery import (
 from .message import Message, Role, ToolCall, is_empty_assistant
 from .t2_recovery import finalize_t2_outputs
 from .abstract_sweep import run_abstract_sweep, run_abstract_sweep_with_reader
+from .t2_config import load_t2_finalize_config
 from .t3_recovery import prepare_t3_resume_artifacts
 from .task_recovery import prepare_generic_resume_artifacts
 from .run_logger import RunLogger
@@ -41,6 +42,7 @@ from ..tools.paper_save_tools import SavePapersRawTool
 from ..tools.registry import ToolBuildContext, ToolRegistry
 from .agent_params import get_agent_mode_params, get_budget_escalation_policy, get_global_timeout, get_retry_policy
 from ..literature_identity import is_paper_note_file
+from ..tools.scout_progress import ScoutProgressLogger
 
 if TYPE_CHECKING:
     from ..tools.workspace_policy import WorkspaceAccessPolicy
@@ -59,7 +61,6 @@ T2_AUTO_PERSIST_SEARCH_TOOLS = frozenset(
         "fetch_outgoing_citations",
     }
 )
-T2_FINISH_FINALIZE_MIN_RAW = 30
 TOOL_FAILURE_CACHE_NAMES = frozenset({"fetch_paper_pdf"})
 TOOL_CONTEXT_CONTENT_LIMITS = {
     # PDF 文本工具是 T3 上下文膨胀的主要来源。工具自身也有上限，这里再加
@@ -1679,11 +1680,12 @@ class AgentRunner:
 
     @staticmethod
     def _t2_finish_finalize_min_raw(ctx: ExecutionContext) -> int:
-        raw_value = ctx.extra.get("t2_finish_finalize_min_raw", T2_FINISH_FINALIZE_MIN_RAW)
+        config_default = load_t2_finalize_config().finish_finalize_min_raw
+        raw_value = ctx.extra.get("t2_finish_finalize_min_raw", config_default)
         try:
             value = int(raw_value)
         except (TypeError, ValueError):
-            return T2_FINISH_FINALIZE_MIN_RAW
+            return config_default
         return max(10, value)
 
     @staticmethod
@@ -1992,6 +1994,20 @@ class AgentRunner:
             tool_arguments=model_dump(parsed),
             result=result,
         )
+        if ctx.task_id == "T2" and tc.name in T2_AUTO_PERSIST_SEARCH_TOOLS and not result.ok:
+            t2_config = load_t2_finalize_config()
+            self._log_t2_search_progress(
+                ctx,
+                t2_config,
+                tool_name=tc.name,
+                tool_arguments=model_dump(parsed),
+                result=result,
+                paper_count=0,
+                persisted_delta=0,
+                merged_count=0,
+                raw_count_after=self._count_jsonl_records(ctx.workspace_dir / "literature" / "papers_raw.jsonl"),
+                append_status=str(result.error or "failed"),
+            )
         content = result.content
         metadata = {"data": result.data, "error": result.error}
         content, cap_metadata = self._cap_tool_content_for_context(tc.name, content)
@@ -2345,6 +2361,7 @@ class AgentRunner:
         if ctx.task_id != "T2" or tool_name not in T2_AUTO_PERSIST_SEARCH_TOOLS or not result.ok:
             return None
 
+        t2_config = load_t2_finalize_config()
         papers = result.data.get("papers")
         edge_persist = self._persist_t2_citation_edges_if_present(
             ctx=ctx,
@@ -2353,6 +2370,18 @@ class AgentRunner:
             result=result,
         )
         if not isinstance(papers, list) or not papers:
+            self._log_t2_search_progress(
+                ctx,
+                t2_config,
+                tool_name=tool_name,
+                tool_arguments=tool_arguments,
+                result=result,
+                paper_count=0,
+                persisted_delta=0,
+                merged_count=0,
+                raw_count_after=self._count_jsonl_records(ctx.workspace_dir / "literature" / "papers_raw.jsonl"),
+                append_status="no_papers" if result.ok else str(result.error or "failed"),
+            )
             return edge_persist
 
         papers = self._annotate_t2_search_bucket(
@@ -2365,12 +2394,25 @@ class AgentRunner:
         save_tool = SavePapersRawTool(policy)
         save_result = await save_tool.execute(papers=papers, append=True)
         if not save_result.ok:
+            raw_count_after = self._count_jsonl_records(
+                ctx.workspace_dir / "literature" / "papers_raw.jsonl"
+            )
+            self._log_t2_search_progress(
+                ctx,
+                t2_config,
+                tool_name=tool_name,
+                tool_arguments=tool_arguments,
+                result=result,
+                paper_count=len(papers),
+                persisted_delta=0,
+                merged_count=0,
+                raw_count_after=raw_count_after,
+                append_status="raw_append_failed",
+            )
             return {
                 "ok": False,
                 "error": save_result.error,
-                "raw_count_after": self._count_jsonl_records(
-                    ctx.workspace_dir / "literature" / "papers_raw.jsonl"
-                ),
+                "raw_count_after": raw_count_after,
                 "content_suffix": f"[Runtime] 自动保存 papers_raw 失败: {save_result.content}",
             }
 
@@ -2384,6 +2426,18 @@ class AgentRunner:
         )
         if edge_persist and edge_persist.get("content_suffix"):
             content_suffix += "\n" + str(edge_persist["content_suffix"])
+        self._log_t2_search_progress(
+            ctx,
+            t2_config,
+            tool_name=tool_name,
+            tool_arguments=tool_arguments,
+            result=result,
+            paper_count=len(papers),
+            persisted_delta=raw_delta,
+            merged_count=merged_count,
+            raw_count_after=raw_count_after,
+            append_status="ok",
+        )
         return {
             "ok": True,
             "count": raw_delta,
@@ -2393,6 +2447,55 @@ class AgentRunner:
             "mode": save_result.data.get("mode", "append"),
             "content_suffix": content_suffix,
         }
+
+    @staticmethod
+    def _log_t2_search_progress(
+        ctx: ExecutionContext,
+        t2_config: object,
+        *,
+        tool_name: str,
+        tool_arguments: dict[str, object],
+        result: ToolResult,
+        paper_count: int,
+        persisted_delta: int,
+        merged_count: int,
+        raw_count_after: int | None,
+        append_status: str,
+    ) -> None:
+        if not getattr(t2_config, "progress_enabled", True) or not getattr(
+            t2_config,
+            "progress_update_on_tool_results",
+            True,
+        ):
+            return
+        query = str(
+            result.data.get("query")
+            or tool_arguments.get("query")
+            or tool_arguments.get("search_query")
+            or ""
+        ).strip()
+        if not query:
+            query = "[query unavailable]"
+        try:
+            ScoutProgressLogger(
+                ctx.workspace_dir,
+                str(getattr(t2_config, "progress_file", "") or "literature/temp/scout_progress.md"),
+            ).log_runtime_event(
+                "search_result",
+                query=query,
+                source=tool_name,
+                bucket=tool_arguments.get("query_bucket")
+                or tool_arguments.get("search_bucket")
+                or result.data.get("query_bucket"),
+                bridge=tool_arguments.get("bridge_id") or result.data.get("bridge_id"),
+                reported_paper_count=paper_count,
+                persisted_raw_delta=persisted_delta,
+                merged_raw_count=merged_count,
+                raw_count_after=raw_count_after,
+                append_status=append_status,
+            )
+        except Exception:
+            return
 
     def _persist_t2_citation_edges_if_present(
         self,

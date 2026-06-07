@@ -221,6 +221,8 @@ T2 里需要特别区分三类“没有论文”的情况：
 
 旧版 `scout_progress.md` 可能出现过 `检索 '' -> 0 篇 (来源: )`。这类记录通常不是 OpenAlex/Crossref/arXiv 真正执行了空检索，而是模型把普通状态说明误写成 `log_scout_progress(action="search_result", detail="...")`，旧工具把缺失的 `query/source/count` 默认成空字符串和 0。现在 `log_scout_progress(action="search_result")` 必须显式提供非空 `query`、非空 `source` 和 `count`，否则返回 `invalid_progress_event`。
 
+`literature/temp/scout_progress.md` 现在也由 runtime 自动追加关键进度，不只依赖 Scout LLM 主动调用工具。T2 搜索工具自动保存 raw 后会写 `runtime_search_result`，T2 deterministic finalize 会写 `runtime_finalize_started`、`runtime_active_pool_pre_backfill`、`runtime_active_pool_final`、`runtime_finalize_done` 或 `runtime_finalize_failed`。如果这个文件不更新，优先检查 `config/agent_params.yaml -> agents.scout.behavior.progress.enabled/update_on_tool_results/update_on_finalize`。
+
 ### 5.4 validator failure
 
 典型形式：
@@ -470,6 +472,8 @@ grep -nE "TOOL_RESULT.*(openalex_search|crossref_search|arxiv_search|multi_sourc
   ./workspace/local-test2/_runtime/logs/researchos.log
 grep -nE "raw_persistence_mismatch|raw_append_failed|empty_query|empty_query_plan|invalid_progress_event" \
   ./workspace/local-test2/_runtime/logs/researchos.log
+grep -nE "runtime_search_result|runtime_active_pool|runtime_finalize" \
+  ./workspace/local-test2/literature/temp/scout_progress.md
 ```
 
 ---

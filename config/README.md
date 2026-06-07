@@ -149,6 +149,41 @@ profiles:
 
 兼容层仍能读取旧的 `llm` / `budget` 字段，但 checked-in 默认配置不再把它们放这里。不要把日常模型和预算参数写回 `agent_params.yaml`，否则又会出现多表参数冲突。
 
+### T2/T3 文献流程参数表
+
+这些参数只在一个位置配置，runtime、validator、resume 和工具默认值都从这里读取；不要再在 `state_machine.yaml` 或 prompt expected outputs 里重复写同一个阈值。
+代码中函数签名保留的数值只作配置缺失/损坏时的 fallback；正常 CLI 进程会从本表读取。修改 YAML 后重新运行命令即可生效。
+
+| 参数 | 默认值 | 位置 | 作用 |
+| --- | --- | --- | --- |
+| `finish_finalize_min_raw` | `30` | `agents.scout.behavior.t2_finalize` | Scout 调用 `finish_task` 后，runtime 至少看到多少 raw 才执行确定性收尾；下限为 10 |
+| `active_pool_max` | `120` | `agents.scout.behavior.t2_finalize` | `papers_dedup.jsonl` / `papers_verified.jsonl` 的 active candidate pool 上限；超额进入 `papers_backlog.jsonl` |
+| `screened_active_pool_cap` | `60` | `agents.scout.behavior.t2_finalize` | `semantic_screen.can_enter_deep_read=true` 候选在 active pool 中的优先保留上限 |
+| `bridge_active_pool_cap_per_bridge` | `15` | `agents.scout.behavior.t2_finalize` | 每个 confirmed bridge 在 active pool 中的召回保留上限 |
+| `snowball_active_pool_cap` | `12` | `agents.scout.behavior.t2_finalize` | citation snowball 候选在 active pool 中的优先保留上限 |
+| `dedup_title_threshold` | `0.95` | `agents.scout.behavior.t2_finalize` | raw、snowball 和最终 active pool 去重时的标题相似度阈值 |
+| `access_audit_top_n` | `50` | `agents.scout.behavior.t2_finalize` | `access_audit.md` 展示的 top 论文数量 |
+| `metadata_backfill_max_concurrency` | `6` | `agents.scout.behavior.t2_finalize` | OpenAlex/Crossref/title metadata 回填并发上限 |
+| `abstract_backfill_title_match_threshold` | `0.88` | `agents.scout.behavior.t2_finalize` | 多源摘要回填的标题匹配阈值 |
+| `abstract_backfill_max_concurrency` | `6` | `agents.scout.behavior.t2_finalize` | 多源摘要回填并发上限 |
+| `snowball_max_sources` | `12` | `agents.scout.behavior.t2_finalize` | citation snowball 最多从多少个高置信来源扩展 |
+| `snowball_refs_per_source` | `8` | `agents.scout.behavior.t2_finalize` | 每个 snowball 来源最多解析多少条引用/相关工作 |
+| `snowball_max_candidates` | `40` | `agents.scout.behavior.t2_finalize` | 每轮 OpenAlex/Crossref snowball 最多尝试解析多少个候选 |
+| `snowball_max_concurrency` | `6` | `agents.scout.behavior.t2_finalize` | snowball metadata 解析并发上限 |
+| `snowball_title_match_threshold` | `0.90` | `agents.scout.behavior.t2_finalize` | Crossref 引用标题转 OpenAlex 候选时的最低标题相似度 |
+| `progress.enabled` | `true` | `agents.scout.behavior.progress` | 是否写 `literature/temp/scout_progress.md` |
+| `progress.update_on_tool_results` | `true` | `agents.scout.behavior.progress` | 搜索工具自动落盘 raw 后是否同步写 progress |
+| `progress.update_on_finalize` | `true` | `agents.scout.behavior.progress` | T2 deterministic finalize 开始、active/backlog 切分、完成/失败时是否同步写 progress |
+| `deep_read_min` | `35` | `agents.reader.modes.read.behavior` | T3 validator 最少需要完成的结构合格 deep-read note 数 |
+| `deep_read_target` | `35` | `agents.reader.modes.read.behavior` | T3 目标精读数，会写入 prompt、queue meta 和校验提示 |
+| `deep_read_max` | `45` | `agents.reader.modes.read.behavior` | active deep-read target 上限，保护位也在该上限内计数 |
+| `probe_pool` | `45` | `agents.reader.modes.read.behavior` | T3 优先 probe 的候选池大小 |
+| `mainline_screened_cap` | `90` | `agents.reader.modes.read.behavior` | 主线 shallow/screened backlog 在 `deep_read_queue.jsonl` 中保留的上限 |
+| `bridge_deep_floor` | `3` | `agents.reader.modes.read.behavior` | 每个 must_explore bridge 通过 screen 后的 active deep-read 保底 |
+| `bridge_screened_cap` | `7` | `agents.reader.modes.read.behavior` | 每个 bridge 的 shallow/screened backlog 保留上限 |
+| `bridge_pool_cap` | `15` | `agents.reader.modes.read.behavior` | 每个 bridge 在 deep-read queue 中保留的候选总上限 |
+| `citation_hub_slots` | `3` | `agents.reader.modes.read.behavior` | citation graph 枢纽节点保护槽，仍需 Reader 复核 |
+
 当前 Reader 的 `modes.read.behavior.abstract_sweep` 默认用于覆盖 T3 deep read 后尚未读完的 active verified 论文，并从 `papers_backlog.jsonl` 中补一部分低成本摘要笔记：
 
 - `expected_notes_ratio: 1.0` 是无 queue 旧 workspace 的 fallback 比例，表示输入池默认必须 100% 有笔记；新主流程仍优先用 `deep_read_queue` 区分 active deep-read 和 shallow/backlog。
@@ -162,11 +197,9 @@ profiles:
 
 ### T2 metadata / citation backfill 参数归属
 
-T2 的 active pool 选择、OpenAlex DOI/OA 详情补全、Crossref DOI 详情补全、多源摘要回填、OpenAlex/Crossref citation snowball、raw cache merge 是 runtime deterministic finalize 的一部分。它们的默认 cap 和重试策略属于工具实现默认，不是日常用户需要调的 LLM budget。
+T2 的 OpenAlex DOI/OA 详情补全、Crossref DOI 详情补全、多源摘要回填、raw cache merge 是 deterministic finalize 的机械步骤；active pool、snowball 进入 active 的配额和 progress 开关在上表的 `agents.scout.behavior.t2_finalize/progress`。Scout 的模型只负责 query 设计和语义筛选，不负责手写这些阈值。
 
-- 日常用户不要在 `agent_params.yaml` 里加 T2 `llm` / `budget` 参数来影响这些回填；Scout 的模型只负责 query 设计和语义筛选。
-- 质量排障优先看 `literature/search_log.md` 和 `_runtime/logs/researchos.log`，尤其是 active/backlog 规模、`eligible/candidate/attempted/skipped_by_cap/failed/remaining_missing_*`、`raw_persisted/raw_merged`、`skipped_existing_snowball_records` 和 `T2 raw 元数据缓存回写`。
-- 如果将来需要把 snowball cap 或 backfill cap 暴露给用户，应新增到单一的 runtime/search 配置入口，而不是同时写入 `agent_params.yaml` 和 `state_machine.yaml`。
+质量排障优先看 `literature/temp/scout_progress.md`、`literature/search_log.md` 和 `_runtime/logs/researchos.log`，尤其是 active/backlog 规模、`eligible/candidate/attempted/skipped_by_cap/failed/remaining_missing_*`、`raw_persisted/raw_merged`、`skipped_existing_snowball_records` 和 `T2 raw 元数据缓存回写`。
 
 ### 日志与控制台
 

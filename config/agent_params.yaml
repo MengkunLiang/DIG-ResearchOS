@@ -121,7 +121,28 @@ agents:
       expected_outputs:
         papers_raw_min: 30
         papers_dedup_min: 15
-        papers_dedup_max: 120
+    behavior:
+      t2_finalize:
+        finish_finalize_min_raw: 30
+        active_pool_max: 120
+        screened_active_pool_cap: 60
+        bridge_active_pool_cap_per_bridge: 15
+        snowball_active_pool_cap: 12
+        dedup_title_threshold: 0.95
+        access_audit_top_n: 50
+        metadata_backfill_max_concurrency: 6
+        abstract_backfill_title_match_threshold: 0.88
+        abstract_backfill_max_concurrency: 6
+        snowball_max_sources: 12
+        snowball_refs_per_source: 8
+        snowball_max_candidates: 40
+        snowball_max_concurrency: 6
+        snowball_title_match_threshold: 0.90
+      progress:
+        enabled: true
+        file: literature/temp/scout_progress.md
+        update_on_tool_results: true
+        update_on_finalize: true
   reader:
     tools:
       allowed_read_prefixes:
@@ -174,6 +195,7 @@ agents:
         bridge_deep_floor: 3
         bridge_screened_cap: 7
         bridge_pool_cap: 15
+        citation_hub_slots: 3
       synthesize:
         prompt:
           expected_length_min: 1000

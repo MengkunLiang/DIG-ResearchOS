@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from researchos.runtime.agent_params import clear_cache
 from researchos.runtime.t2_recovery import (
     _backfill_recovered_crossref_metadata,
     _backfill_recovered_openalex_metadata,
@@ -830,3 +831,144 @@ async def test_finalize_t2_outputs_caps_active_pool_and_writes_backlog(monkeypat
     search_log = (workspace / "literature" / "search_log.md").read_text(encoding="utf-8")
     assert "T2 active candidate pool" in search_log
     assert "papers_backlog.jsonl" in search_log
+    progress = (workspace / "literature" / "temp" / "scout_progress.md").read_text(encoding="utf-8")
+    assert "runtime_finalize_started" in progress
+    assert "runtime_active_pool_final" in progress
+    assert "runtime_finalize_done" in progress
+
+
+@pytest.mark.asyncio
+async def test_finalize_t2_outputs_uses_agent_params_for_pool_and_queue(monkeypatch, tmp_path: Path):
+    config_path = tmp_path / "agent_params.yaml"
+    config_path.write_text(
+        """
+agents:
+  scout:
+    behavior:
+      t2_finalize:
+        finish_finalize_min_raw: 10
+        active_pool_max: 20
+        screened_active_pool_cap: 5
+        bridge_active_pool_cap_per_bridge: 2
+        snowball_active_pool_cap: 1
+        dedup_title_threshold: 0.96
+        access_audit_top_n: 8
+        metadata_backfill_max_concurrency: 2
+        abstract_backfill_title_match_threshold: 0.87
+        abstract_backfill_max_concurrency: 2
+        snowball_max_sources: 2
+        snowball_refs_per_source: 3
+        snowball_max_candidates: 4
+        snowball_max_concurrency: 2
+        snowball_title_match_threshold: 0.92
+      progress:
+        enabled: true
+        update_on_tool_results: true
+        update_on_finalize: true
+  reader:
+    modes:
+      read:
+        behavior:
+          abstract_sweep:
+            enabled: true
+        deep_read_min: 12
+        deep_read_target: 12
+        deep_read_max: 14
+        probe_pool: 14
+        mainline_screened_cap: 18
+        bridge_deep_floor: 1
+        bridge_screened_cap: 2
+        bridge_pool_cap: 3
+        citation_hub_slots: 1
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("RESEARCHOS_AGENT_PARAMS", str(config_path))
+    clear_cache()
+
+    workspace = tmp_path / "configured-ws"
+    (workspace / "literature").mkdir(parents=True)
+    (workspace / "project.yaml").write_text(
+        "research_direction: configured cap regression\nkeywords: [configured, cap]\n",
+        encoding="utf-8",
+    )
+    _write_jsonl(
+        workspace / "literature" / "papers_raw.jsonl",
+        [
+            {
+                "id": f"paper-{idx}",
+                "canonical_id": f"paper-{idx}",
+                "source": "openalex",
+                "source_tool": "multi_source_search",
+                "source_query": "configured cap",
+                "search_bucket": "core",
+                "title": f"Configured Paper {idx:03d} Unique {idx}",
+                "authors": ["A. Researcher"],
+                "year": 2025,
+                "abstract": f"Abstract for configured paper {idx}.",
+                "venue": "Test Venue",
+                "citation_count": idx,
+                "relevance_score": 0.1,
+            }
+            for idx in range(45)
+        ],
+    )
+
+    import researchos.runtime.t2_recovery as t2_recovery
+
+    async def _no_openalex_backfill(*args, **kwargs):
+        return {
+            "enabled": True,
+            "candidate_count": 0,
+            "attempted": 0,
+            "openalex_id_filled": 0,
+            "abstract_filled": 0,
+            "references_filled": 0,
+            "pdf_hints_filled": 0,
+            "failed": 0,
+        }
+
+    async def _no_metadata_backfill(*args, **kwargs):
+        return {"enabled": True, "candidate_count": 0, "attempted": 0, "abstract_filled": 0, "references_filled": 0, "failed": 0}
+
+    async def _no_snowball(*args, **kwargs):
+        return [], {"enabled": True, "source_candidates": 0, "sources_used": 0, "reference_dois_seen": 0, "attempted": 0, "added": 0, "failed": 0}
+
+    monkeypatch.setattr(t2_recovery, "_backfill_recovered_openalex_metadata", _no_openalex_backfill)
+    monkeypatch.setattr(
+        t2_recovery,
+        "_backfill_recovered_openalex_title_metadata",
+        lambda *args, **kwargs: _no_openalex_backfill(*args, **kwargs),
+    )
+    monkeypatch.setattr(t2_recovery, "_backfill_recovered_crossref_metadata", _no_metadata_backfill)
+    monkeypatch.setattr(t2_recovery, "_backfill_recovered_multisource_abstracts", _no_metadata_backfill)
+    monkeypatch.setattr(t2_recovery, "_expand_openalex_snowball_candidates", _no_snowball)
+    monkeypatch.setattr(t2_recovery, "_expand_crossref_snowball_candidates", _no_snowball)
+
+    try:
+        result = await finalize_t2_outputs(workspace, trace_paths=[])
+    finally:
+        clear_cache()
+
+    assert result["ok"] is True
+    assert result["dedup_count"] == 20
+    assert result["backlog_count"] == 25
+    assert result["t2_finalize_config"]["active_pool_max"] == 20
+    assert result["deep_read_queue_config"]["deep_read_target"] == 12
+
+    queue_meta = json.loads((workspace / "literature" / "deep_read_queue_meta.json").read_text(encoding="utf-8"))
+    assert queue_meta["deep_read_target"] == 12
+    assert queue_meta["deep_read_max"] == 14
+    assert queue_meta["mainline_screened_cap"] == 18
+
+    search_log = (workspace / "literature" / "search_log.md").read_text(encoding="utf-8")
+    assert "finish_finalize_min_raw=10" in search_log
+    assert "active_pool_max=20" in search_log
+    assert "dedup_title_threshold=0.96" in search_log
+    assert "snowball_max_candidates=4" in search_log
+    assert "deep_read_target=12" in search_log
+    assert "mainline_screened_cap=18" in search_log
+
+    progress = (workspace / "literature" / "temp" / "scout_progress.md").read_text(encoding="utf-8")
+    assert "active_pool_max=20" in progress
+    assert "deep_read_target=12" in progress

@@ -10,6 +10,7 @@ from researchos.runtime.agent_params import (
     get_global_timeout,
     get_retry_policy,
 )
+from researchos.runtime.t2_config import load_t2_finalize_config
 
 
 def test_build_agent_spec_supports_direct_llm_model_and_endpoint(tmp_path, monkeypatch):
@@ -161,6 +162,63 @@ agents:
     assert spec.max_tokens_total == 98765
     assert spec.allowed_write_prefixes == ["drafts/", "revisions/"]
     assert spec.prompt_template == "writer_custom.j2"
+
+    clear_cache()
+
+
+def test_t2_finalize_config_is_single_source_and_clamps_active_pool(tmp_path, monkeypatch):
+    config_path = tmp_path / "agent_params.yaml"
+    config_path.write_text(
+        """
+agents:
+  scout:
+    behavior:
+      t2_finalize:
+        finish_finalize_min_raw: 3
+        active_pool_max: 5
+        screened_active_pool_cap: 2
+        bridge_active_pool_cap_per_bridge: 1
+        snowball_active_pool_cap: 0
+        dedup_title_threshold: 1.2
+        access_audit_top_n: 7
+        metadata_backfill_max_concurrency: 3
+        abstract_backfill_title_match_threshold: -0.5
+        abstract_backfill_max_concurrency: 4
+        snowball_max_sources: 2
+        snowball_refs_per_source: 3
+        snowball_max_candidates: 9
+        snowball_max_concurrency: 2
+        snowball_title_match_threshold: 0.91
+      progress:
+        enabled: false
+        file: literature/custom_progress.md
+        update_on_tool_results: false
+        update_on_finalize: false
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("RESEARCHOS_AGENT_PARAMS", str(config_path))
+    clear_cache()
+
+    cfg = load_t2_finalize_config()
+
+    assert cfg.finish_finalize_min_raw == 10
+    assert cfg.active_pool_max == 10
+    assert cfg.screened_active_pool_cap == 2
+    assert cfg.bridge_active_pool_cap_per_bridge == 1
+    assert cfg.snowball_active_pool_cap == 0
+    assert cfg.dedup_title_threshold == 1.0
+    assert cfg.access_audit_top_n == 7
+    assert cfg.metadata_backfill_max_concurrency == 3
+    assert cfg.abstract_backfill_title_match_threshold == 0.0
+    assert cfg.abstract_backfill_max_concurrency == 4
+    assert cfg.snowball_max_sources == 2
+    assert cfg.snowball_refs_per_source == 3
+    assert cfg.snowball_max_candidates == 9
+    assert cfg.snowball_max_concurrency == 2
+    assert cfg.snowball_title_match_threshold == 0.91
+    assert cfg.progress_enabled is False
+    assert cfg.progress_file == "literature/custom_progress.md"
 
     clear_cache()
 

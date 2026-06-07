@@ -1,22 +1,25 @@
-"""Scout Agent 进度日志工具。
+"""Scout/T2 human-readable progress log.
 
-在每次工具调用后自动记录中间进度，便于用户了解检索状态。
-日志写入 `literature/temp/scout_progress.md`，工具层追加，用户无需手动调用。
+Agent calls to `log_scout_progress` and runtime T2 hooks both append compact
+events here so users can inspect search/finalize progress without reading the
+full trace.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 
 class ScoutProgressLogger:
     """Scout Agent 进度日志写入器。"""
 
-    def __init__(self, workspace_dir: Path):
+    def __init__(self, workspace_dir: Path, relative_log_file: str | None = None):
         self.workspace_dir = Path(workspace_dir)
-        self.log_dir = self.workspace_dir / "literature" / "temp"
-        self.log_file = self.log_dir / "scout_progress.md"
+        rel_path = (relative_log_file or "literature/temp/scout_progress.md").strip().lstrip("./")
+        self.log_file = self.workspace_dir / rel_path
+        self.log_dir = self.log_file.parent
 
     def _ensure_log_dir(self) -> None:
         """确保日志目录存在。"""
@@ -38,6 +41,25 @@ class ScoutProgressLogger:
         entry = f"\n[{timestamp}] **{step}**: {detail}"
         with open(self.log_file, "a", encoding="utf-8") as f:
             f.write(entry)
+
+    def log_runtime_event(self, event: str, **fields: Any) -> None:
+        """记录 runtime 自动进度事件。
+
+        这些事件不依赖 LLM 主动调用 `log_scout_progress`，用于展示 raw 自动落盘、
+        deterministic finalize、active/backlog 切分和 validation 失败等关键状态。
+        """
+
+        compact_fields = []
+        for key, value in fields.items():
+            if value is None or value == "":
+                continue
+            text = str(value)
+            text = " ".join(text.split())
+            if len(text) > 180:
+                text = text[:177] + "..."
+            compact_fields.append(f"{key}={text}")
+        detail = " ".join(compact_fields) if compact_fields else "ok"
+        self.log_step(f"runtime_{event}", detail)
 
     def log_init(self, total_queries: int | None = None, topic: str | None = None) -> None:
         """记录初始化。"""

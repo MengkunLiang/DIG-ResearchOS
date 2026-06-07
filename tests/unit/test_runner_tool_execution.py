@@ -114,6 +114,20 @@ class SearchTool(Tool):
         )
 
 
+class FailingSearchTool(Tool):
+    name = "arxiv_search"
+    description = "failed search"
+    parameters_schema = SearchParams
+
+    async def execute(self, **kwargs):
+        return ToolResult(
+            ok=False,
+            content="query 不能为空",
+            error="empty_query",
+            data={"query": kwargs.get("query", "")},
+        )
+
+
 class CitationParams(BaseModel):
     openalex_id_or_doi: str
 
@@ -511,6 +525,41 @@ def test_run_logger_marks_failed_search_error_as_append_status(tmp_workspace):
     assert "tool=arxiv_search" in run_log
     assert "append_status=empty_query" in run_log
     assert "append_status=no_papers" not in run_log
+
+
+@pytest.mark.asyncio
+async def test_t2_failed_search_updates_scout_progress(tmp_workspace):
+    from researchos.tools.finish_task import FinishTaskTool
+
+    registry = ToolRegistry()
+    registry.register("arxiv_search", lambda ctx: FailingSearchTool())
+    registry.register("fetch_outgoing_citations", lambda ctx: CitationSnowballTool())
+    registry.register("finish_task", lambda ctx: FinishTaskTool())
+    llm = MockLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[
+                        FakeToolCall(name="arxiv_search", arguments={"query": "   "}, id="tc1")
+                    ]
+                )
+            )
+        ]
+    )
+    runner = AgentRunner(T2SearchAgent(), registry, llm, MockHumanInterface())
+
+    await runner.run(
+        ExecutionContext(
+            workspace_dir=tmp_workspace,
+            project_id="p1",
+            task_id="T2",
+            run_id="T2_failed_search_progress",
+        )
+    )
+
+    progress = (tmp_workspace / "literature" / "temp" / "scout_progress.md").read_text(encoding="utf-8")
+    assert "runtime_search_result" in progress
+    assert "append_status=empty_query" in progress
 
 
 @pytest.mark.asyncio

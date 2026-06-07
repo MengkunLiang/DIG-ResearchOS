@@ -16,7 +16,7 @@ from __future__ import annotations
 
 输出：
 - literature/papers_raw.jsonl: 原始检索结果
-- literature/papers_dedup.jsonl: 去重后论文池（15-120篇）
+- literature/papers_dedup.jsonl: active candidate pool（上限见 agents.scout.behavior.t2_finalize.active_pool_max）
 - literature/deep_read_queue.jsonl: T3精读队列
 - literature/search_log.md: 检索审计日志
 - literature/missing_areas.md: 缺口分析
@@ -29,6 +29,7 @@ import json
 
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
+from ..runtime.t2_config import load_t2_finalize_config
 from ..runtime.prompts import render_prompt
 from ..literature_identity import paper_record_match_keys
 from ..tools.pdf_metadata import scan_seed_papers
@@ -189,7 +190,7 @@ class ScoutAgent(Agent):
             "你负责完成高质量多源检索并让 raw 结果落盘；"
             "raw 数量足够只是必要条件，你还要判断 query/source/bucket 覆盖是否足够；"
             "覆盖足够后调用 finish_task，runtime 才会完成去重、metadata verification 和 deep_read_queue.jsonl，"
-            "最终 papers_dedup 控制在 10-120 篇。"
+            "最终 papers_dedup 会按 config/agent_params.yaml 的 agents.scout.behavior.t2_finalize.active_pool_max 控制 active pool。"
             ),
         )
 
@@ -210,11 +211,12 @@ class ScoutAgent(Agent):
                     return False, f"papers_dedup 第 {i+1} 行缺少字段: {field}"
 
         # 3. 校验papers_dedup数量和schema
+        t2_config = load_t2_finalize_config()
         ok, err = validate_jsonl_schema(
             dedup_path,
             "papers_dedup",
             min_count=10,  # 降低要求：10篇高质量论文优于15篇低质量论文
-            max_count=120,  # 太多说明没按relevance裁剪
+            max_count=t2_config.active_pool_max,
         )
         if not ok:
             return False, err

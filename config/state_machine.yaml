@@ -65,10 +65,6 @@ states:
   # Agent：scout（文献侦察员）
   T2:
     agent: scout
-    extra:
-      # Scout 判断检索覆盖足够并调用 finish_task 后，runtime 才执行
-      # raw -> dedup/verified/queue/audit 的机械收尾。冷启动检索不会仅凭 raw_count 自动结束。
-      t2_finish_finalize_min_raw: 30
     inputs:
       project: project.yaml                            # 项目配置
       seed_papers: user_seeds/seed_papers.jsonl        # 种子论文（可选）
@@ -79,7 +75,7 @@ states:
       bridge_domain_plan: literature/bridge_domain_plan.json # T1 交互生成的桥接领域计划（可空）
     outputs:
       papers_raw: literature/papers_raw.jsonl           # 原始检索结果
-      papers_dedup: literature/papers_dedup.jsonl      # active candidate pool（最多 120）
+      papers_dedup: literature/papers_dedup.jsonl      # active candidate pool（上限见 agent_params.yaml）
       papers_verified: literature/papers_verified.jsonl # active pool 中已做 metadata verification 的论文
       papers_backlog: literature/papers_backlog.jsonl   # active pool 外的保留候选
       verification_failures: literature/verification_failures.jsonl # verification 失败清单

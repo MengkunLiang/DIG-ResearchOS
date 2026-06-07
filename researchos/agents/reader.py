@@ -28,6 +28,7 @@ from ..runtime.t3_notes_manifest import (
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec, get_agent_mode_params
 from ..runtime.prompts import render_prompt
+from ..runtime.t2_config import load_deep_read_queue_config
 from ._common import (
     cdr_schema_prompt_summary,
     load_project,
@@ -79,6 +80,7 @@ class ReaderAgent(Agent):
         """根据mode渲染不同的system prompt。"""
         mode = ctx.mode or "read"
         project = load_project(ctx)
+        queue_config = load_deep_read_queue_config()
         context_vars = {
             "project": project,
             "verified_paper_count": 0,
@@ -92,10 +94,10 @@ class ReaderAgent(Agent):
             "seed_priority_titles": [],
             "seed_papers_in_dedup_count": 0,
             "seed_papers_missing_from_dedup_count": 0,
-            "deep_read_min": 35,
-            "deep_read_target": 35,
-            "deep_read_max": 45,
-            "probe_pool": 45,
+            "deep_read_min": queue_config.deep_read_min,
+            "deep_read_target": queue_config.deep_read_target,
+            "deep_read_max": queue_config.deep_read_max,
+            "probe_pool": queue_config.probe_pool,
             "queue_count": 0,
             "queue_preview": [],
             "resume_queue_path": "",
@@ -117,7 +119,6 @@ class ReaderAgent(Agent):
             pending_queue_papers = load_jsonl(pending_queue_path) if pending_queue_path.exists() else []
             seed_path = ctx.workspace_dir / "user_seeds" / "seed_papers.jsonl"
             seed_papers = load_jsonl(seed_path) if seed_path.exists() else []
-            mode_params = get_agent_mode_params("reader", "read")
             existing_note_paths = _iter_paper_note_paths(ctx.workspace_dir / "literature")
             existing_notes = sorted(path.stem for path in existing_note_paths)
             comparison_table_path = ctx.workspace_dir / "literature" / "comparison_table.csv"
@@ -146,10 +147,10 @@ class ReaderAgent(Agent):
             context_vars["existing_note_preview"] = existing_notes[:20]
             context_vars["existing_comparison_row_count"] = comparison_row_count
             context_vars["existing_bib_entry_count"] = bib_entry_count
-            context_vars["deep_read_min"] = int(mode_params.get("deep_read_min", 35))
-            context_vars["deep_read_target"] = int(mode_params.get("deep_read_target", 35))
-            context_vars["deep_read_max"] = int(mode_params.get("deep_read_max", 45))
-            context_vars["probe_pool"] = int(mode_params.get("probe_pool", 45))
+            context_vars["deep_read_min"] = queue_config.deep_read_min
+            context_vars["deep_read_target"] = queue_config.deep_read_target
+            context_vars["deep_read_max"] = queue_config.deep_read_max
+            context_vars["probe_pool"] = queue_config.probe_pool
             # pending queue 是恢复运行时真正还需要处理的工作清单；只要文件存在，就优先信任它。
             active_queue = pending_queue_papers if pending_queue_path.exists() else queue_papers
             context_vars["queue_count"] = len(active_queue)
@@ -257,9 +258,9 @@ class ReaderAgent(Agent):
         for note_path in valid_note_files:
             completed_note_keys.update(_paper_note_match_keys(note_path))
 
-        mode_params = get_agent_mode_params("reader", "read")
-        min_required = int(mode_params.get("deep_read_min", 35))
-        target_required = int(mode_params.get("deep_read_target", 35))
+        queue_config = load_deep_read_queue_config()
+        min_required = queue_config.deep_read_min
+        target_required = queue_config.deep_read_target
         queue_path = ctx.workspace_dir / "literature" / "deep_read_queue.jsonl"
         queue_records = load_jsonl(queue_path) if queue_path.exists() else []
         queue_count = len(queue_records)
@@ -322,6 +323,7 @@ class ReaderAgent(Agent):
         # 默认 expected_notes_ratio=1.0；旧 workspace 没有 queue 时也不能再按 80% 静默放过。
         dedup_path = ctx.workspace_dir / "literature" / "papers_dedup.jsonl"
         verified_path = ctx.workspace_dir / "literature" / "papers_verified.jsonl"
+        mode_params = get_agent_mode_params("reader", "read")
         expected_notes_ratio = _expected_notes_ratio(mode_params.get("expected_notes_ratio", 1.0))
         if not queue_count and verified_path.exists():
             verified_papers = load_jsonl(verified_path)

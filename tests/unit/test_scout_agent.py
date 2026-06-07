@@ -207,7 +207,7 @@ def test_scout_initial_user_message(scout_agent, execution_context):
     msg = scout_agent.initial_user_message(execution_context)
     assert "T2" in msg
     assert "文献普查" in msg
-    assert "10-120" in msg
+    assert "agents.scout.behavior.t2_finalize.active_pool_max" in msg
     assert "metadata verification" in msg
     assert "deep_read_queue.jsonl" in msg
 
