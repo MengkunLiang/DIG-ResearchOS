@@ -457,7 +457,7 @@ python -m researchos.cli run \
 - 是否只复用结构合格的已有 `paper_notes`
 - 是否正确生成 `deep_read_queue_pending.jsonl`
 - PDF 可用的 note 是否包含 `## 12. Reading Coverage`
-- `[FULL-TEXT]` note 的 `Pages read` 是否类似 `1-N / N` 或 `1-4, 5-8, 9-N / N`，且 `Truncation` 明确最终无截断
+- `[FULL-TEXT]` note 的 `Pages read` 是否类似 `1-N / N` 或 `1-4, 5-8, 9-N / N`，且 `Truncation` 明确最终无截断；`all pages` 这类无总页数/范围的描述不能通过
 - `comparison_table.csv` 是否持续可追加
 - `related_work.bib` 是否没有粘连/损坏
 
@@ -467,6 +467,7 @@ python -m researchos.cli run \
 - `T5-EXECUTOR-GATE` 是否写出 executor_selection，并且 AGENTS/CLAUDE/prompt 不再包含 `UNSET`
 - `T5-EXTERNAL-WAIT` 缺 result pack 时是否 PAUSED，写回后 resume 是否生成 wait_acceptance_report
 - `T5-DRY-RUN` 是否写出 `mock_only=true` 的 result pack、status、run manifest、raw/config/log
+- 真实 executor 路径是否绑定 `executor_selection.json`；如果选择 `codex_cli` / `claude_code_window` / `manual`，旧的 `mock_only/dry_run` result pack 必须被拒绝
 - `T7-INGEST` 是否把 result pack 规范化成 `results_summary.json`、`run_records.jsonl` 和 `evidence_index.json`
 - `T7-AUDIT` 是否检查 artifact 存在、sha256、metric source、run manifest 和 required baseline coverage
 - `T7-POST-NOVELTY` 是否写出 post_experiment novelty/collision 复核
@@ -487,6 +488,7 @@ legacy `T5/T7` 显式调试时再检查已有代码目录、Docker digest 和内
 - 最终是否产出 `main.pdf`
 - `migration_report.md` 是否明确记录编译结果和修复过程
 - `submission/bundle/bundle_manifest.json` 是否证明 bundle 仍对应当前 `drafts/paper.tex` 和 `literature/related_work.bib`
+- `prepare_submission_bundle` 是否已重写 `\bibliography{...}` / `\addbibresource{...}` 到 bundle-local references，并把 read policy 允许且后缀为 `.pdf/.png/.jpg/.jpeg/.svg` 的 `\includegraphics{drafts/...}`、`experiments/...`、`evaluation/...`、`figures/...` 路径复制并重写到 `submission/bundle/figures/`；目标文件名必须带内容 hash，避免静默覆盖
 - `compile_report.json.attempts` / `attempt_count` 是否记录真实编译历史；same-hash source failure 是否要求先改 TeX/依赖；成功缓存是否同时匹配 main.tex、依赖 fingerprint、PDF/log hash、mtime 和 size
 - resume 到 T9 时，如果已有合法 bundle，是否通过 `t9_submission_prefinalize` 在环境检查和 LLM 前直接完成
 

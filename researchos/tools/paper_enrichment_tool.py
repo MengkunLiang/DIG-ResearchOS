@@ -70,6 +70,43 @@ def _crossref_headers() -> dict[str, str]:
     return {"User-Agent": f"ResearchOS/0.1.0 (mailto:{email})"}
 
 
+def _first_text(value: Any, default: str = "") -> str:
+    if isinstance(value, list):
+        for item in value:
+            text = str(item or "").strip()
+            if text:
+                return text
+        return default
+    if isinstance(value, str):
+        return value.strip()
+    if value in (None, "", [], {}):
+        return default
+    return str(value).strip()
+
+
+def _safe_int(value: Any, default: int | None = None) -> int | None:
+    try:
+        if value in (None, "", [], {}):
+            return default
+        return int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return default
+
+
+def _year_from_crossref_payload(payload: dict[str, Any]) -> int | None:
+    published = (
+        payload.get("published-print")
+        or payload.get("published-online")
+        or payload.get("published")
+        or payload.get("issued")
+        or payload.get("created")
+    )
+    date_parts = (published or {}).get("date-parts") if isinstance(published, dict) else None
+    if not isinstance(date_parts, list) or not date_parts or not isinstance(date_parts[0], list) or not date_parts[0]:
+        return None
+    return _safe_int(date_parts[0][0], None)
+
+
 class EnrichPapersParams(BaseModel):
     """enrich_papers 工具的参数。"""
     papers: list[dict[str, Any]] = Field(
@@ -1177,20 +1214,12 @@ class BuildVerifiedPapersTool(Tool):
         )
         response.raise_for_status()
         item = response.json().get("message", {})
-        title = item.get("title", [""])
-        published = (
-            item.get("published-print")
-            or item.get("published-online")
-            or item.get("published")
-            or item.get("issued")
-            or item.get("created")
-        )
-        date_parts = (published or {}).get("date-parts", [[]]) if isinstance(published, dict) else [[]]
-        year = date_parts[0][0] if date_parts and date_parts[0] else None
+        title = _first_text(item.get("title"))
+        year = _year_from_crossref_payload(item)
         references = _extract_crossref_references(item)
         payload = {
             "source": "crossref",
-            "title": title[0] if title else "",
+            "title": title,
             "year": year,
             "abstract": clean_abstract(item.get("abstract", "")),
             "doi": item.get("DOI", doi),

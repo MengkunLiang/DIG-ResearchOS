@@ -23,6 +23,56 @@ from ..runtime.logger import get_logger
 _LOG = get_logger("seed_paper_processor")
 
 
+def _first_text(value: Any, default: str = "") -> str:
+    if isinstance(value, list):
+        for item in value:
+            text = str(item or "").strip()
+            if text:
+                return text
+        return default
+    if isinstance(value, str):
+        return value.strip()
+    if value in (None, "", [], {}):
+        return default
+    return str(value).strip()
+
+
+def _safe_int(value: Any) -> int | None:
+    try:
+        if value in (None, "", [], {}):
+            return None
+        return int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return None
+
+
+def _year_from_crossref_payload(message: dict[str, Any]) -> int | None:
+    published = message.get("published-print") or message.get("published-online") or message.get("published") or message.get("issued")
+    date_parts = (published or {}).get("date-parts") if isinstance(published, dict) else None
+    if not isinstance(date_parts, list) or not date_parts or not isinstance(date_parts[0], list) or not date_parts[0]:
+        return None
+    return _safe_int(date_parts[0][0])
+
+
+def _crossref_author_names(message: dict[str, Any]) -> list[str]:
+    raw_authors = message.get("author") or []
+    if not isinstance(raw_authors, list):
+        return []
+    names: list[str] = []
+    for author in raw_authors[:10]:
+        if isinstance(author, str):
+            name = author.strip()
+        elif isinstance(author, dict):
+            given = str(author.get("given") or "").strip()
+            family = str(author.get("family") or "").strip()
+            name = f"{given} {family}".strip() or str(author.get("name") or "").strip()
+        else:
+            name = str(author).strip()
+        if name:
+            names.append(name)
+    return names
+
+
 class ProcessSeedPaperParams(BaseModel):
     """处理种子论文参数"""
 
@@ -347,16 +397,9 @@ class ProcessSeedPaperTool(Tool):
                 data = response.json()
                 message = data["message"]
 
-                title = message["title"][0] if message.get("title") else doi
-                authors = [
-                    f"{a.get('given', '')} {a.get('family', '')}".strip()
-                    for a in message.get("author", [])
-                ]
-                year = None
-                if message.get("published-print"):
-                    year = message["published-print"]["date-parts"][0][0]
-                elif message.get("published-online"):
-                    year = message["published-online"]["date-parts"][0][0]
+                title = _first_text(message.get("title"), doi)
+                authors = _crossref_author_names(message)
+                year = _year_from_crossref_payload(message)
 
                 paper_info = {
                     "title": title,

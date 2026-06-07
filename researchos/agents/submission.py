@@ -137,7 +137,14 @@ class SubmissionAgent(Agent):
                     "max_wall_seconds": 300,
                     "max_validation_retries": 3,
                     "temperature": 0.3,
-                    "allowed_read_prefixes": ["", "drafts/", "literature/", "experiments/"],
+                    "allowed_read_prefixes": [
+                        "",
+                        "drafts/",
+                        "literature/",
+                        "experiments/",
+                        "evaluation/",
+                        "figures/",
+                    ],
                     "allowed_write_prefixes": ["submission/"],
                     "prompt_template": "submission.j2",
                     "pre_hooks": [check_submission_compile_environment]

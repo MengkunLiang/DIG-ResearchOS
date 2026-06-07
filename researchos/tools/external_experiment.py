@@ -83,6 +83,76 @@ def _artifact_record(workspace: Path, rel_path: str, *, role: str, kind: str = "
     return record
 
 
+def _executor_selection_payload(workspace: Path) -> tuple[dict[str, Any], str]:
+    path = workspace / "external_executor" / "executor_selection.json"
+    selection = _read_json(path)
+    return selection, _sha256(path) if path.exists() and path.is_file() else ""
+
+
+def _selection_selected_executor(selection: dict[str, Any]) -> str:
+    return str(selection.get("selected_executor") or "").strip()
+
+
+def _is_mock_executor(executor: str) -> bool:
+    return executor == "mock_dry_run"
+
+
+VALID_EXTERNAL_EXECUTORS = {"mock_dry_run", "codex_cli", "claude_code_window", "manual"}
+
+
+def _validate_executor_identity_binding(
+    *,
+    selected_executor: str,
+    result_pack: dict[str, Any],
+    status: dict[str, Any],
+    manifest: dict[str, Any],
+) -> list[str]:
+    issues: list[str] = []
+    if selected_executor not in VALID_EXTERNAL_EXECUTORS:
+        issues.append(
+            "executor_selection.selected_executor invalid or not finalized: "
+            f"{selected_executor or '<missing>'}"
+        )
+        return issues
+    for label, payload, key_options in (
+        ("result_pack", result_pack, ("executor",)),
+        ("executor_status", status, ("executor", "executor_type")),
+        ("run_manifest", manifest, ("executor",)),
+    ):
+        value = ""
+        for key in key_options:
+            value = str(payload.get(key) or "").strip()
+            if value:
+                break
+        if not value:
+            issues.append(f"{label} executor missing; must match executor_selection")
+        elif value != selected_executor:
+            issues.append(f"{label} executor does not match executor_selection: {value} != {selected_executor}")
+    return issues
+
+
+def _external_binding_fingerprint_issues(workspace: Path, payload: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    required = {
+        "executor_selection_ref": "selection_sha256",
+        "result_pack_ref": "result_pack_sha256",
+        "executor_status_ref": "executor_status_sha256",
+    }
+    for rel_key, hash_key in required.items():
+        rel = str(payload.get(rel_key) or "").strip()
+        expected_hash = str(payload.get(hash_key) or "").strip()
+        if not rel or not expected_hash:
+            issues.append(f"external binding missing {rel_key}/{hash_key}")
+            continue
+        path = workspace / rel
+        if not path.exists() or not path.is_file():
+            issues.append(f"external binding source missing: {rel}")
+            continue
+        if _sha256(path) != expected_hash:
+            issues.append(f"external binding hash mismatch: {rel}")
+    return issues
+
+
 def _extract_exp_plan_metrics(exp_plan: dict[str, Any]) -> list[str]:
     metrics: list[str] = []
     for exp in exp_plan.get("experiments", []) or []:
@@ -291,6 +361,8 @@ def validate_external_executor_ready(
         return report
     result_pack = _read_json(workspace / result_pack_rel)
     status = _read_json(workspace / status_rel)
+    selection, selection_hash = _executor_selection_payload(workspace)
+    selected_executor = _selection_selected_executor(selection)
     manifest_rel = str(result_pack.get("run_manifest") or status.get("run_manifest") or "external_executor/run_manifest.json")
     manifest = _read_json(workspace / manifest_rel)
     allowed_paths_path = workspace / "external_executor" / "allowed_paths.txt"
@@ -302,6 +374,27 @@ def validate_external_executor_ready(
         issues.append("result_pack semantics invalid")
     if status.get("semantics") != "external_executor_status":
         issues.append("executor_status semantics invalid")
+    if selection.get("semantics") != "external_executor_selection" or not selected_executor:
+        issues.append("executor_selection.json missing or semantics invalid")
+    else:
+        issues.extend(
+            _validate_executor_identity_binding(
+                selected_executor=selected_executor,
+                result_pack=result_pack,
+                status=status,
+                manifest=manifest,
+            )
+        )
+        if _is_mock_executor(selected_executor):
+            if result_pack.get("mock_only") is not True or result_pack.get("dry_run") is not True:
+                issues.append("mock_dry_run selection requires result_pack.mock_only=true and dry_run=true")
+        else:
+            if result_pack.get("mock_only") is True or result_pack.get("dry_run") is True:
+                issues.append("real external executor selection cannot ingest mock_only/dry_run result_pack")
+            if status.get("mock_only") is True or status.get("dry_run") is True:
+                issues.append("real external executor selection cannot ingest mock_only/dry_run executor_status")
+    if status.get("accepted") is True:
+        issues.append("executor_status.accepted cannot be true; external executor done is not ResearchOS accepted")
     current_state = status.get("current_state") or status.get("status")
     allowed_terminal_states = {"done", "COMPLETED"}
     if allow_partial_results:
@@ -355,8 +448,8 @@ def validate_external_executor_ready(
         manifest_runs = manifest.get("runs")
         if not isinstance(runs, list) or not runs:
             issues.append("real result_pack must include non-empty runs")
-        if manifest_runs is not None and (not isinstance(manifest_runs, list) or not manifest_runs):
-            issues.append("real run_manifest.runs must be non-empty when present")
+        if not isinstance(manifest_runs, list) or not manifest_runs:
+            issues.append("real run_manifest.runs must be non-empty")
     if issues:
         report = {
             "version": "1.0",
@@ -364,6 +457,9 @@ def validate_external_executor_ready(
             "ok": False,
             "message": "WAITING_EXTERNAL: external result pack exists but is not valid: " + "; ".join(issues),
             "issues": issues,
+            "selected_executor": selected_executor,
+            "executor_selection": "external_executor/executor_selection.json" if selection else "",
+            "selection_sha256": selection_hash,
         }
         _write_wait_rejection_report(workspace, report)
         return report
@@ -375,6 +471,11 @@ def validate_external_executor_ready(
         "result_pack": result_pack_rel,
         "executor_status": status_rel,
         "run_manifest": manifest_rel,
+        "executor_selection": "external_executor/executor_selection.json" if selection else "",
+        "selected_executor": selected_executor,
+        "selection_sha256": selection_hash,
+        "result_pack_sha256": _sha256(workspace / result_pack_rel),
+        "executor_status_sha256": _sha256(workspace / status_rel),
         "dry_run": bool(result_pack.get("dry_run")),
         "mock_only": bool(result_pack.get("mock_only")),
         "partial_results_allowed": allow_partial_results,
@@ -1218,6 +1319,7 @@ class MockExternalDryRunTool(Tool):
                 "version": "1.0",
                 "semantics": "external_executor_status",
                 "run_id": "mock_dry_run",
+                "executor": executor_type,
                 "status": "done",
                 "accepted": False,
                 "dry_run": True,
@@ -1282,6 +1384,13 @@ class IngestExternalResultsTool(Tool):
                 "semantics": "external_executor_results_summary",
                 "source": "external_executor",
                 "run_id": result_pack.get("run_id"),
+                "selected_executor": readiness.get("selected_executor") or result_pack.get("executor"),
+                "executor_selection_ref": readiness.get("executor_selection"),
+                "result_pack_ref": params.result_pack_path,
+                "executor_status_ref": params.status_path,
+                "selection_sha256": readiness.get("selection_sha256"),
+                "result_pack_sha256": readiness.get("result_pack_sha256"),
+                "executor_status_sha256": readiness.get("executor_status_sha256"),
                 "dry_run": bool(result_pack.get("dry_run")),
                 "mock_only": bool(result_pack.get("mock_only")),
                 "evidence_grade": str(result_pack.get("evidence_grade") or ("mock_only" if result_pack.get("mock_only") else "external_unverified")),
@@ -1300,6 +1409,12 @@ class IngestExternalResultsTool(Tool):
                 "semantics": "external_experiment_evidence_index",
                 "result_pack": params.result_pack_path,
                 "run_manifest": result_pack.get("run_manifest"),
+                "executor_selection_ref": readiness.get("executor_selection"),
+                "result_pack_ref": params.result_pack_path,
+                "executor_status_ref": params.status_path,
+                "selection_sha256": readiness.get("selection_sha256"),
+                "result_pack_sha256": readiness.get("result_pack_sha256"),
+                "executor_status_sha256": readiness.get("executor_status_sha256"),
                 "metrics": metrics,
                 "baseline_coverage": result_pack.get("baseline_coverage") or {},
                 "artifacts": result_pack.get("artifacts", []),
@@ -1312,6 +1427,13 @@ class IngestExternalResultsTool(Tool):
                 "ok": True,
                 "dry_run": bool(result_pack.get("dry_run")),
                 "mock_only": bool(result_pack.get("mock_only")),
+                "selected_executor": summary["selected_executor"],
+                "executor_selection_ref": readiness.get("executor_selection"),
+                "result_pack_ref": params.result_pack_path,
+                "executor_status_ref": params.status_path,
+                "selection_sha256": readiness.get("selection_sha256"),
+                "result_pack_sha256": readiness.get("result_pack_sha256"),
+                "executor_status_sha256": readiness.get("executor_status_sha256"),
                 "evidence_grade": summary["evidence_grade"],
                 "metric_count": len(metrics),
                 "results_summary": params.results_summary_path,
@@ -1339,6 +1461,19 @@ class AuditExperimentIntegrityTool(Tool):
             summary = _read_json(self.policy.resolve_read(params.results_summary_path))
             evidence = _read_json(self.policy.resolve_read(params.evidence_index_path))
             issues: list[dict[str, Any]] = []
+            binding_payload = dict(summary)
+            for key in (
+                "executor_selection_ref",
+                "result_pack_ref",
+                "executor_status_ref",
+                "selection_sha256",
+                "result_pack_sha256",
+                "executor_status_sha256",
+            ):
+                if not binding_payload.get(key):
+                    binding_payload[key] = evidence.get(key)
+            for issue in _external_binding_fingerprint_issues(self.policy.workspace_dir, binding_payload):
+                issues.append({"level": "FAIL", "code": "external_binding_fingerprint", "detail": issue})
             if summary.get("mock_only"):
                 issues.append({"level": "WARN", "code": "mock_only", "detail": "Dry-run result is not publishable evidence."})
             if not summary.get("metrics"):
@@ -1408,6 +1543,13 @@ class AuditExperimentIntegrityTool(Tool):
                 "evidence_grade": str(summary.get("evidence_grade") or ("mock_only" if summary.get("mock_only") else "audited_external")),
                 "issues": issues,
                 "evidence_index": params.evidence_index_path,
+                "selected_executor": summary.get("selected_executor"),
+                "executor_selection_ref": binding_payload.get("executor_selection_ref"),
+                "result_pack_ref": binding_payload.get("result_pack_ref"),
+                "executor_status_ref": binding_payload.get("executor_status_ref"),
+                "selection_sha256": binding_payload.get("selection_sha256"),
+                "result_pack_sha256": binding_payload.get("result_pack_sha256"),
+                "executor_status_sha256": binding_payload.get("executor_status_sha256"),
                 "artifact_count": len(evidence.get("artifacts", []) or []),
                 "checked_artifacts": len(evidence_artifacts),
                 "required_baseline_coverage": baseline_coverage,
@@ -1588,10 +1730,11 @@ class AuditPaperClaimsTool(Tool):
                 for metric in pack.get("metrics", []) or []
                 if isinstance(metric, dict) and metric.get("value") is not None
             }
+            known_numeric_values = _known_numeric_metric_values(pack)
             issues = []
             for number in _extract_substantive_numbers(paper):
-                if number not in known_values:
-                    issues.append({"level": "FAIL", "number": number, "issue": "number_not_in_evidence_pack"})
+                if not _number_supported_by_evidence(number, known_values, known_numeric_values):
+                    issues.append({"level": "FAIL", "number": number["raw"], "issue": "number_not_in_evidence_pack"})
             if pack.get("mock_only"):
                 issues.append({"level": "FAIL", "issue": "mock_only_evidence_pack", "detail": "Dry-run evidence cannot support paper claims."})
             forbidden_violations = _detect_forbidden_wording_violations(paper, result_to_claim)
@@ -1701,21 +1844,58 @@ def _format_iteration_log(summary: dict[str, Any], audit: dict[str, Any], claims
     return "\n".join(lines) + "\n"
 
 
-def _extract_substantive_numbers(text: str) -> list[str]:
+def _known_numeric_metric_values(pack: dict[str, Any]) -> list[float]:
+    values: list[float] = []
+    for metric in pack.get("metrics", []) or []:
+        if not isinstance(metric, dict):
+            continue
+        value = metric.get("value")
+        try:
+            values.append(float(value))
+        except (TypeError, ValueError):
+            continue
+    return values
+
+
+def _number_supported_by_evidence(
+    number: dict[str, Any],
+    known_values: set[str],
+    known_numeric_values: list[float],
+) -> bool:
+    raw = str(number.get("raw") or "")
+    if raw in known_values:
+        return True
+    value = number.get("value")
+    if not isinstance(value, (int, float)):
+        return False
+    candidates = [float(value)]
+    if number.get("percent"):
+        candidates.append(float(value) / 100.0)
+    for candidate in candidates:
+        for known in known_numeric_values:
+            if abs(candidate - known) <= max(1e-6, abs(known) * 0.005):
+                return True
+    return False
+
+
+def _extract_substantive_numbers(text: str) -> list[dict[str, Any]]:
     import re
 
-    numbers = re.findall(r"(?<![A-Za-z])\d+(?:\.\d+)?", text)
-    result: list[str] = []
-    for num in numbers:
+    result: list[dict[str, Any]] = []
+    pattern = re.compile(r"(?<![A-Za-z0-9])[-+]?\d+(?:\.\d+)?(?:e[-+]?\d+)?%?", re.IGNORECASE)
+    for match in pattern.finditer(text or ""):
+        raw = match.group(0)
+        num = raw.rstrip("%")
         try:
             value = float(num)
         except Exception:
             continue
+        is_percent = raw.endswith("%")
         if value in {0.0, 1.0} or 1900 <= value <= 2100:
             continue
-        if value.is_integer() and 1 <= value <= 20:
+        if not is_percent and abs(value).is_integer() and 1 <= abs(value) <= 20:
             continue
-        result.append(num)
+        result.append({"raw": raw, "value": value, "percent": is_percent})
     return result
 
 

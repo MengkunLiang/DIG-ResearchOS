@@ -88,7 +88,7 @@ async def test_survey_tools_build_state_assemble_audit_and_export(tmp_path: Path
     sections_dir = ws / "drafts" / "survey" / "sections"
     sections_dir.mkdir(parents=True)
     section_text = {
-        "background": "\\section{Background and Scope}\nThis survey defines scope using prior work \\citep{p1}.",
+        "background": "\\section{Background and Scope}\nThis survey defines scope using prior work \\citep[see][]{p1}.",
         "taxonomy": "\\section{Taxonomy}\nThe taxonomy separates perturbation and routing mechanisms \\citep{p1,p2}.",
         "theme_1": "\\section{Perturbation Mechanisms}\nThis theme compares perturbation mechanisms across papers \\citep{p1,p2}.",
         "theme_2": "\\section{Routing Mechanisms}\nThis theme compares routing mechanisms and their evidence \\citep{p3}.",

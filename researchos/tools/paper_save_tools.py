@@ -35,6 +35,7 @@ def _normalize_authors(authors: Any) -> list[str]:
     """标准化 authors 字段为字符串列表。
 
     处理多种输入格式：
+    - 单个字符串: "John Doe"
     - 字符串列表: ["John Doe", "Jane Smith"]
     - 对象列表: [{"name": "John Doe"}]
     - 混合格式
@@ -42,13 +43,32 @@ def _normalize_authors(authors: Any) -> list[str]:
     if not authors:
         return []
 
-    result = []
+    if isinstance(authors, str):
+        name = authors.strip()
+        return [name] if name else []
+    if not isinstance(authors, list):
+        name = str(authors).strip()
+        return [name] if name else []
+
+    result: list[str] = []
     for author in authors:
         if isinstance(author, str):
-            result.append(author)
+            name = author.strip()
+            if name:
+                result.append(name)
         elif isinstance(author, dict):
             # 尝试多个可能的 name 字段
-            name = author.get("name") or author.get("display_name") or ""
+            name = (
+                author.get("name")
+                or author.get("display_name")
+                or author.get("author_name")
+                or author.get("full_name")
+                or ""
+            )
+            if name:
+                result.append(str(name).strip())
+        else:
+            name = str(author).strip()
             if name:
                 result.append(name)
     return result
@@ -79,6 +99,28 @@ def _normalize_year(year: Any) -> int | None:
             return int(float(year))
         except (ValueError, TypeError):
             return None
+    return None
+
+
+def _extract_year_from_paper(paper: dict[str, Any]) -> int | None:
+    """Extract publication year across common API payload shapes."""
+
+    for key in ("year", "publication_year", "published_year", "pubYear"):
+        year = _normalize_year(paper.get(key))
+        if year is not None:
+            return year
+    for key in ("published", "published-print", "published-online", "issued", "created"):
+        value = paper.get(key)
+        if isinstance(value, dict):
+            parts = value.get("date-parts")
+            if isinstance(parts, list) and parts and isinstance(parts[0], list) and parts[0]:
+                year = _normalize_year(parts[0][0])
+                if year is not None:
+                    return year
+        else:
+            year = _normalize_year(value)
+            if year is not None:
+                return year
     return None
 
 
@@ -241,7 +283,7 @@ def _transform_to_papers_raw(paper: dict[str, Any]) -> dict[str, Any]:
     )
 
     # 标准化年份
-    year = _normalize_year(paper.get("year"))
+    year = _extract_year_from_paper(paper)
 
     # 提取 abstract
     abstract = clean_abstract(paper.get("abstract"))
@@ -252,7 +294,7 @@ def _transform_to_papers_raw(paper: dict[str, Any]) -> dict[str, Any]:
     # 提取 DOI。很多源（尤其 Semantic Scholar）只放在 externalIds.DOI；
     # 必须提升到顶层，后续 dedup/PDF fetch/OpenAlex/Crossref backfill 才能统一识别。
     external_ids = paper.get("externalIds") or {}
-    doi = paper.get("doi") or external_ids.get("DOI") or ""
+    doi = str(paper.get("doi") or external_ids.get("DOI") or "").strip()
     if doi.startswith("https://doi.org/"):
         doi = doi.replace("https://doi.org/", "")
     if doi.startswith("http://doi.org/"):

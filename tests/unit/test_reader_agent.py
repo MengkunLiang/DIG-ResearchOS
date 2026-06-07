@@ -467,6 +467,40 @@ def test_validate_note_structure_rejects_full_text_partial_page_coverage(tmp_pat
     assert "FULL-TEXT" in err
 
 
+def test_validate_note_structure_rejects_full_text_all_pages_without_numeric_total(tmp_path):
+    """泛化的 all pages 不能替代可核验的页码范围。"""
+    note_path = tmp_path / "all_pages_without_total.md"
+    note_path.write_text(
+        _structured_note("all_pages_without_total").replace(
+            "- **Pages read**: 1-10 / 10",
+            "- **Pages read**: all pages",
+        ),
+        encoding="utf-8",
+    )
+
+    ok, err = _validate_note_structure(note_path)
+
+    assert not ok
+    assert "FULL-TEXT" in err
+
+
+def test_validate_note_structure_rejects_full_text_missing_first_page(tmp_path):
+    """FULL-TEXT 必须从第一页覆盖到最后一页。"""
+    note_path = tmp_path / "missing_first_page.md"
+    note_path.write_text(
+        _structured_note("missing_first_page").replace(
+            "- **Pages read**: 1-10 / 10",
+            "- **Pages read**: 2-10 / 10",
+        ),
+        encoding="utf-8",
+    )
+
+    ok, err = _validate_note_structure(note_path)
+
+    assert not ok
+    assert "FULL-TEXT" in err
+
+
 def test_validate_note_structure_accepts_chunked_full_text_reread(tmp_path):
     """分块重读覆盖完整 PDF 时，FULL-TEXT 不应被 Truncation 误判。"""
     note_path = tmp_path / "chunked_coverage.md"

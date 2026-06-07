@@ -192,6 +192,7 @@ class TestScoutAgent:
                     "version": "1.0",
                     "semantics": "domain_map_for_synthesis_and_ideation_not_final_gaps",
                     "core": [{"paper_id": "test1", "why": "core target paper"}],
+                    "theory_bridge": [],
                     "adjacent": [],
                     "boundary": [],
                     "citation_edges": [],

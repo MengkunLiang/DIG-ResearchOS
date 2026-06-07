@@ -236,6 +236,109 @@ async def test_prepare_submission_bundle_rewrites_bibliography(temp_workspace):
     assert manifest["source"]["paper_path"] == "drafts/paper.tex"
 
 
+@pytest.mark.asyncio
+async def test_prepare_submission_bundle_rewrites_biblatex_resource(temp_workspace):
+    (temp_workspace / "drafts" / "paper.tex").write_text(
+        "\\documentclass{article}\n\\usepackage{biblatex}\n"
+        "\\addbibresource{related_work.bib}\n\\begin{document}\n"
+        "Body \\parencite{test}.\n\\printbibliography\n\\end{document}\n",
+        encoding="utf-8",
+    )
+    (temp_workspace / "literature" / "related_work.bib").write_text("@article{test,title={T}}\n", encoding="utf-8")
+    policy = WorkspaceAccessPolicy(temp_workspace, ["", "drafts/", "literature/"], ["submission/"])
+
+    result = await PrepareSubmissionBundleTool(policy).execute()
+
+    assert result.ok
+    main_tex = (temp_workspace / "submission" / "bundle" / "main.tex").read_text(encoding="utf-8")
+    assert "\\addbibresource{references.bib}" in main_tex
+    assert "\\addbibresource{related_work.bib}" not in main_tex
+
+
+@pytest.mark.asyncio
+async def test_prepare_submission_bundle_copies_and_rewrites_referenced_figures(temp_workspace):
+    (temp_workspace / "drafts" / "figures" / "a.pdf").write_bytes(b"%PDF-1.4 fake\n")
+    exp_fig_dir = temp_workspace / "experiments" / "runs"
+    exp_fig_dir.mkdir(parents=True, exist_ok=True)
+    (exp_fig_dir / "b.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (temp_workspace / "drafts" / "paper.tex").write_text(
+        "\\documentclass{article}\n\\begin{document}\n"
+        "\\includegraphics[width=.5\\linewidth]{drafts/figures/a.pdf}\n"
+        "\\includegraphics{experiments/runs/b.png}\n"
+        "\\bibliography{related_work}\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    (temp_workspace / "literature" / "related_work.bib").write_text("@article{test,title={T}}\n", encoding="utf-8")
+    policy = WorkspaceAccessPolicy(temp_workspace, ["", "drafts/", "literature/", "experiments/"], ["submission/"])
+
+    result = await PrepareSubmissionBundleTool(policy).execute()
+
+    assert result.ok
+    main_tex = (temp_workspace / "submission" / "bundle" / "main.tex").read_text(encoding="utf-8")
+    assert "drafts/figures/a.pdf" not in main_tex
+    assert "experiments/runs/b.png" not in main_tex
+    manifest = json.loads((temp_workspace / "submission" / "bundle" / "bundle_manifest.json").read_text(encoding="utf-8"))
+    source_paths = {item["source_path"] for item in manifest["bundle"]["copied_figures"]}
+    assert {"drafts/figures/a.pdf", "experiments/runs/b.png"}.issubset(source_paths)
+    dest_paths = {item["dest_path"] for item in manifest["bundle"]["copied_figures"]}
+    assert len(dest_paths) == len(source_paths)
+    for dest in dest_paths:
+        assert dest.startswith("submission/bundle/figures/")
+        assert Path(dest).suffix in {".pdf", ".png"}
+        assert Path(dest).relative_to("submission/bundle").as_posix() in main_tex
+        assert (temp_workspace / dest).exists()
+
+
+@pytest.mark.asyncio
+async def test_prepare_submission_bundle_does_not_copy_non_graphics_include(temp_workspace):
+    (temp_workspace / "drafts" / "paper.tex").write_text(
+        "\\documentclass{article}\n\\begin{document}\n"
+        "\\includegraphics{config/user_settings.yaml}\n"
+        "\\bibliography{related_work}\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    (temp_workspace / "literature" / "related_work.bib").write_text("@article{test,title={T}}\n", encoding="utf-8")
+    (temp_workspace / "config").mkdir(parents=True, exist_ok=True)
+    (temp_workspace / "config" / "user_settings.yaml").write_text("secret: should-not-copy\n", encoding="utf-8")
+    policy = WorkspaceAccessPolicy(temp_workspace, ["", "drafts/", "literature/"], ["submission/"])
+
+    result = await PrepareSubmissionBundleTool(policy).execute()
+
+    assert result.ok
+    manifest = json.loads((temp_workspace / "submission" / "bundle" / "bundle_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["bundle"]["copied_figures"] == []
+    assert not list((temp_workspace / "submission" / "bundle" / "figures").glob("*.yaml"))
+
+
+@pytest.mark.asyncio
+async def test_prepare_submission_bundle_avoids_figure_name_collisions(temp_workspace):
+    (temp_workspace / "drafts" / "figures" / "a_b.png").write_bytes(b"\x89PNG\r\n\x1a\nfirst")
+    nested = temp_workspace / "drafts" / "figures" / "a"
+    nested.mkdir(parents=True, exist_ok=True)
+    (nested / "b.png").write_bytes(b"\x89PNG\r\n\x1a\nsecond")
+    (temp_workspace / "drafts" / "paper.tex").write_text(
+        "\\documentclass{article}\n\\begin{document}\n"
+        "\\includegraphics{drafts/figures/a_b.png}\n"
+        "\\includegraphics{drafts/figures/a/b.png}\n"
+        "\\bibliography{related_work}\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    (temp_workspace / "literature" / "related_work.bib").write_text("@article{test,title={T}}\n", encoding="utf-8")
+    policy = WorkspaceAccessPolicy(temp_workspace, ["", "drafts/", "literature/"], ["submission/"])
+
+    result = await PrepareSubmissionBundleTool(policy).execute()
+
+    assert result.ok
+    manifest = json.loads((temp_workspace / "submission" / "bundle" / "bundle_manifest.json").read_text(encoding="utf-8"))
+    copied = manifest["bundle"]["copied_figures"]
+    selected = [item for item in copied if item.get("source_path") in {"drafts/figures/a_b.png", "drafts/figures/a/b.png"}]
+    assert len(selected) == 2
+    assert len({item["dest_path"] for item in selected}) == 2
+
+
 def test_writer_prompt_defaults_suggested_style_when_not_injected(temp_workspace):
     """writer.j2 must not crash if an older render path omits suggested_style."""
 
@@ -1016,6 +1119,77 @@ def test_writer_validate_outputs_draft_success(temp_workspace):
     assert err is None
 
 
+def test_writer_validate_outputs_self_check_requires_audit_topics(temp_workspace):
+    agent = WriterAgent(mode="self_check")
+    ctx = MockExecutionContext("self_check", temp_workspace, {"phase": "self_check"})
+    (temp_workspace / "drafts" / "self_check.md").write_text(
+        "# Self Check\n\n"
+        "This is a long but generic manuscript self-check paragraph. "
+        "It repeats that the paper is readable and organized, and it says the draft is generally coherent. "
+        "It does not enumerate the actual audit topics required by the ResearchOS writing chain. " * 4,
+        encoding="utf-8",
+    )
+
+    ok, err = agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "number/citation/claim/revision" in (err or "")
+
+
+def test_writer_validate_outputs_self_check_accepts_required_audit_topics(temp_workspace):
+    agent = WriterAgent(mode="self_check")
+    ctx = MockExecutionContext("self_check", temp_workspace, {"phase": "self_check"})
+    (temp_workspace / "drafts" / "self_check.md").write_text(
+        "# Self Check\n\n"
+        "## Number Audit\nAll numeric claims were checked against result artifacts.\n\n"
+        "## Citation Audit\nAll citation keys were checked against related_work.bib.\n\n"
+        "## Claim Evidence Audit\nClaim support and evidence boundaries were checked before writing.\n\n"
+        "## Revision TODO\nRemaining revision tasks are listed for reviewer follow-up.\n\n"
+        + ("Detailed note. " * 30),
+        encoding="utf-8",
+    )
+
+    ok, err = agent.validate_outputs(ctx)
+
+    assert ok, err
+
+
+def test_writer_validate_outputs_revise_requires_high_medium_patch_id_response(temp_workspace):
+    agent = WriterAgent(mode="revise")
+    ctx = MockExecutionContext("revise", temp_workspace, {"phase": "revise", "round": 1})
+    _write_valid_draft_artifacts(temp_workspace)
+    state = json.loads((temp_workspace / "drafts" / "paper_state.json").read_text(encoding="utf-8"))
+    for section in state["sections"].values():
+        section["status"] = "revised"
+    (temp_workspace / "drafts" / "paper_state.json").write_text(json.dumps(state), encoding="utf-8")
+    (temp_workspace / "drafts" / "patches").mkdir(parents=True, exist_ok=True)
+    (temp_workspace / "drafts" / "patches" / "round_1_patches.json").write_text(
+        json.dumps(
+            {
+                "semantics": "mechanical_review_issue_locations_not_final_revision_decisions",
+                "patches": [
+                    {
+                        "patch_id": "P1",
+                        "target_section": "introduction",
+                        "severity": "high",
+                        "specific_issue": "Missing evidence boundary.",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (temp_workspace / "drafts" / "revision_response_round_1.md").write_text(
+        "# Revision Response\n\nResolved: the issue was addressed in prose, but this response omits the patch id.",
+        encoding="utf-8",
+    )
+
+    ok, err = agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "P1" in (err or "")
+
+
 def test_writer_validate_outputs_both_rejects_annotation_only_variants(temp_workspace):
     agent = WriterAgent()
     ctx = MockExecutionContext("draft", temp_workspace, {"phase": "draft"})
@@ -1242,7 +1416,7 @@ def test_writer_validate_outputs_draft_invalid_citations(temp_workspace):
 \section{Introduction}
 Some text \cite{nonexistent2024}.
 \section{Related Work}
-Related text.
+More text \citep[see][]{alsoMissing2025}.
 \section{Method}
 More text.
 \section{Experiments}
@@ -1259,6 +1433,7 @@ Done.
     ok, err = agent.validate_outputs(ctx)
     assert not ok
     assert "nonexistent2024" in err
+    assert "alsoMissing2025" in err
 
 
 # ══════════════════════════════════════════════════════

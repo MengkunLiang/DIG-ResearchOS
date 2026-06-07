@@ -133,11 +133,10 @@ def enrich_papers(
             paper["llm_annotation_applied"] = True
 
         # 1. 转换 authors 格式
-        authors = paper.get("authors", [])
-        if authors and isinstance(authors[0], dict):
-            # 从对象数组转为字符串数组
-            paper["authors"] = [a.get("name", "Unknown") for a in authors]
-        elif not authors:
+        authors = _normalize_author_names(paper.get("authors", []))
+        if authors:
+            paper["authors"] = authors
+        else:
             paper["authors"] = ["Unknown"]
 
         # 2. 保守推断 source_type。除 arXiv/workshop 这类直接 metadata 外，
@@ -254,6 +253,33 @@ def enrich_papers(
         enriched.append(paper)
 
     return enriched
+
+
+def _normalize_author_names(authors: Any) -> list[str]:
+    if not authors:
+        return []
+    if isinstance(authors, str):
+        return [authors.strip()] if authors.strip() else []
+    if not isinstance(authors, list):
+        text = str(authors).strip()
+        return [text] if text else []
+    names: list[str] = []
+    for author in authors:
+        if isinstance(author, str):
+            name = author.strip()
+        elif isinstance(author, dict):
+            name = str(
+                author.get("name")
+                or author.get("display_name")
+                or author.get("author_name")
+                or author.get("full_name")
+                or ""
+            ).strip()
+        else:
+            name = str(author).strip()
+        if name:
+            names.append(name)
+    return names
 
 
 def _build_annotation_lookup(

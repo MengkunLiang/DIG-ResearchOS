@@ -161,7 +161,7 @@ agents:
             - papers_dedup
             exclude_already_read: true
             include_metadata_only: true
-            exclude_semantic_excluded: false
+            exclude_semantic_excluded: true
         description: 深度阅读
         expected_notes_ratio: 1.0
         deep_read_min: 35
@@ -515,6 +515,8 @@ agents:
       - drafts/
       - literature/
       - experiments/
+      - evaluation/
+      - figures/
       tool_names:
       - read_file
       - list_files

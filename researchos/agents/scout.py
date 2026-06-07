@@ -408,12 +408,11 @@ def _is_semantic_screened_protected_candidate(record: dict[str, object]) -> bool
     screen = record.get("semantic_screen")
     if isinstance(screen, dict):
         relation = str(screen.get("relation_to_project") or "").strip()
-        role = str(screen.get("role") or "").strip()
-        retrieval_intent = str(record.get("retrieval_intent") or "").strip()
+        has_bridge_identity = bool(_record_bridge_ids(record))
         return (
             bool(screen.get("can_enter_deep_read"))
             and relation in protected_relations
-            and (role == "theory_bridge" or retrieval_intent == "cross_domain_bridge")
+            and has_bridge_identity
         )
     return False
 

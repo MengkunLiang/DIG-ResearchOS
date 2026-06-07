@@ -116,6 +116,12 @@ def test_generate_abstract_note_includes_metadata():
     assert "2023" in note
 
 
+def test_generate_abstract_note_normalizes_dict_authors():
+    note = generate_abstract_note(_sample_paper(authors=[{"name": "Alice Smith"}, {"display_name": "Bob Jones"}]))
+    assert "Alice Smith, Bob Jones" in note
+    assert "{'name'" not in note
+
+
 def test_generate_abstract_note_handles_no_abstract():
     paper = _sample_paper(abstract="")
     note = generate_abstract_note(paper)
@@ -163,6 +169,12 @@ def test_generate_bib_entry_article_type():
     entry = generate_bib_entry(paper)
     assert entry.startswith("@article{")
     assert "journal = {JMLR 2023}" in entry
+
+
+def test_generate_bib_entry_normalizes_dict_authors():
+    entry = generate_bib_entry(_sample_paper(authors=[{"name": "Alice Smith"}, {"display_name": "Bob Jones"}]))
+    assert "author = {Alice Smith and Bob Jones}" in entry
+    assert "{'name'" not in entry
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +272,36 @@ def test_build_sweep_candidates_filters_by_relevance(tmp_path: Path):
     assert candidates[0]["id"] == "p1"
 
 
+def test_build_sweep_candidates_excludes_semantic_excluded_by_default(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    _write_jsonl(
+        workspace / "literature" / "papers_dedup.jsonl",
+        [
+            {
+                "id": "excluded",
+                "title": "Shared Keyword Only",
+                "abstract": "metadata",
+                "relevance_score": 0.9,
+                "semantic_screen": {"relation_to_project": "shared_keyword_only", "can_enter_deep_read": False},
+            },
+            {
+                "id": "included",
+                "title": "Transferable Method",
+                "abstract": "metadata",
+                "relevance_score": 0.8,
+                "semantic_screen": {"relation_to_project": "method_transfer", "can_enter_deep_read": True},
+            },
+        ],
+    )
+
+    candidates = build_sweep_candidates(
+        workspace,
+        {"lite_paper_num": 10, "min_relevance": 0.0, "sources": ["papers_dedup"], "exclude_already_read": True},
+    )
+
+    assert [item["id"] for item in candidates] == ["included"]
+
+
 def test_build_sweep_candidates_sorts_by_relevance_desc(tmp_path: Path):
     workspace = tmp_path / "ws"
     _write_jsonl(
@@ -321,7 +363,7 @@ def test_build_sweep_candidates_can_skip_metadata_only_when_configured(tmp_path:
     assert [item["id"] for item in candidates] == ["p2"]
 
 
-def test_build_sweep_candidates_skips_duplicates_but_keeps_semantic_excludes_by_default(tmp_path: Path):
+def test_build_sweep_candidates_skips_duplicates_and_semantic_excludes_by_default(tmp_path: Path):
     workspace = tmp_path / "ws"
     notes_dir = workspace / "literature" / "paper_notes"
     notes_dir.mkdir(parents=True)
@@ -368,10 +410,10 @@ def test_build_sweep_candidates_skips_duplicates_but_keeps_semantic_excludes_by_
         {"lite_paper_num": 10, "min_relevance": 0.0, "sources": ["papers_verified"], "exclude_already_read": True},
     )
 
-    assert [item["id"] for item in candidates] == ["excluded", "keep"]
+    assert [item["id"] for item in candidates] == ["keep"]
 
 
-def test_build_sweep_candidates_can_skip_semantic_excludes_when_configured(tmp_path: Path):
+def test_build_sweep_candidates_can_keep_semantic_excludes_when_configured(tmp_path: Path):
     workspace = tmp_path / "ws"
     _write_jsonl(
         workspace / "literature" / "papers_verified.jsonl",
@@ -400,11 +442,11 @@ def test_build_sweep_candidates_can_skip_semantic_excludes_when_configured(tmp_p
             "min_relevance": 0.0,
             "sources": ["papers_verified"],
             "exclude_already_read": True,
-            "exclude_semantic_excluded": True,
+            "exclude_semantic_excluded": False,
         },
     )
 
-    assert [item["id"] for item in candidates] == ["keep"]
+    assert [item["id"] for item in candidates] == ["excluded", "keep"]
 
 
 # ---------------------------------------------------------------------------

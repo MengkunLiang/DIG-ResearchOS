@@ -30,6 +30,11 @@ class TestNormalizeAuthors:
         result = _normalize_authors(authors)
         assert result == ["John Doe", "Jane Smith"]
 
+    def test_single_string(self):
+        """单个字符串作者不能被当作可迭代字符拆开。"""
+        result = _normalize_authors("John Doe")
+        assert result == ["John Doe"]
+
     def test_object_list(self):
         """对象列表应提取 name 字段。"""
         authors = [{"name": "John Doe"}, {"display_name": "Jane Smith"}]
@@ -180,6 +185,46 @@ class TestTransformToPapersRaw:
 
         assert result["doi"] == "10.1234/external"
         assert result["canonical_id"] == "doi:10.1234/external"
+
+    def test_non_string_doi_does_not_crash_transform(self):
+        paper = {
+            "id": "numeric-doi-record",
+            "source": "publisher",
+            "title": "Numeric DOI Metadata Edge Case",
+            "authors": "Single Author",
+            "doi": 101234,
+        }
+
+        result = _transform_to_papers_raw(paper)
+
+        assert result["authors"] == ["Single Author"]
+        assert result["doi"] == "101234"
+
+    def test_publication_year_aliases_are_preserved(self):
+        paper = {
+            "id": "openalex-year",
+            "source": "openalex",
+            "title": "Publication Year Paper",
+            "authors": ["Author"],
+            "publication_year": 2024,
+        }
+
+        result = _transform_to_papers_raw(paper)
+
+        assert result["year"] == 2024
+
+    def test_crossref_date_parts_year_is_preserved(self):
+        paper = {
+            "id": "crossref-year",
+            "source": "crossref",
+            "title": "Crossref Year Paper",
+            "authors": ["Author"],
+            "issued": {"date-parts": [[2023, 5, 1]]},
+        }
+
+        result = _transform_to_papers_raw(paper)
+
+        assert result["year"] == 2023
 
     def test_preserves_query_bucket_annotations(self):
         """Runtime/Scout routing labels should survive raw normalization."""

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from researchos.tools.crossref_api import CrossRefSearchTool
 from researchos.tools.multi_source_search import MultiSourceSearchParams, MultiSourceSearchTool
 from researchos.tools.publisher_search import ElsevierScopusSearchTool, InformsSearchTool
 
@@ -166,6 +167,123 @@ def test_multi_source_search_dedup_merges_pdf_and_external_ids():
     assert papers[0]["externalIds"]["DOI"] == "10.1234/example"
     assert papers[0]["externalIds"]["ArXiv"] == "2401.12345"
     assert papers[0]["abstract"] == "Richer abstract from arXiv."
+
+
+def test_multi_source_search_format_accepts_string_and_dict_authors():
+    content = MultiSourceSearchTool._format_papers(
+        [
+            {
+                "title": "OpenAlex Style Paper",
+                "authors": ["Ada Lovelace", "Grace Hopper"],
+                "year": 2025,
+                "source": "openalex",
+                "citation_count": 3,
+            },
+            {
+                "title": "Crossref Style Paper",
+                "authors": [{"name": "Alan Turing"}, {"display_name": "Katherine Johnson"}],
+                "year": 2024,
+                "source": "crossref",
+                "citation_count": 1,
+            },
+        ],
+        {"openalex": 1, "crossref": 1},
+    )
+
+    assert "OpenAlex Style Paper" in content
+    assert "Ada Lovelace, Grace Hopper" in content
+    assert "Crossref Style Paper" in content
+    assert "Alan Turing, Katherine Johnson" in content
+
+
+@pytest.mark.asyncio
+async def test_multi_source_search_crossref_tolerates_heterogeneous_metadata(monkeypatch):
+    class _FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "message": {
+                    "items": [
+                        {
+                            "DOI": "10.5555/heterogeneous",
+                            "title": "String Title Paper",
+                            "author": ["Ada Lovelace", {"given": "Grace", "family": "Hopper"}],
+                            "published": {"date-parts": [["not-a-year"]]},
+                            "container-title": "String Venue",
+                            "is-referenced-by-count": "7",
+                        }
+                    ]
+                }
+            }
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url):
+            return _FakeResponse()
+
+    monkeypatch.setattr("researchos.tools.multi_source_search.httpx.AsyncClient", _FakeClient)
+
+    tool = MultiSourceSearchTool(email="researcher@example.com")
+    papers = await tool._search_crossref("heterogeneous metadata", 5)
+
+    assert papers[0]["title"] == "String Title Paper"
+    assert papers[0]["authors"] == [{"name": "Ada Lovelace"}, {"name": "Grace Hopper"}]
+    assert papers[0]["year"] is None
+    assert papers[0]["venue"] == "String Venue"
+    assert papers[0]["citation_count"] == 7
+
+
+@pytest.mark.asyncio
+async def test_crossref_search_uses_issued_year_when_published_missing(monkeypatch):
+    class _FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "message": {
+                    "total-results": 1,
+                    "items": [
+                        {
+                            "DOI": "10.5555/issued",
+                            "title": ["Issued Only Paper"],
+                            "author": [{"given": "Ada", "family": "Lovelace"}],
+                            "issued": {"date-parts": [[2026, 2, 1]]},
+                            "container-title": ["Issued Venue"],
+                        }
+                    ],
+                }
+            }
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, **kwargs):
+            return _FakeResponse()
+
+    monkeypatch.setattr("researchos.tools.crossref_api.httpx.AsyncClient", _FakeClient)
+
+    result = await CrossRefSearchTool().execute(query="issued only", rows=1)
+
+    assert result.ok
+    assert result.data["papers"][0]["year"] == 2026
 
 
 @pytest.mark.asyncio

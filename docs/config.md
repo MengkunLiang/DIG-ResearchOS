@@ -542,7 +542,7 @@ agents:
 - `lite_paper_num: null` 表示不设固定数量上限。
 - `min_relevance: 0.0` 表示不靠 metadata priority hint 丢弃剩余 verified 论文。
 - `include_metadata_only: true` 表示缺摘要但有标题的论文也会生成 metadata-only 轻量 note。
-- `exclude_semantic_excluded: false` 表示 LLM screen 为 `shared_keyword_only/unrelated` 的论文也会保留为排除线索，而不是静默消失。
+- `exclude_semantic_excluded: true` 表示 LLM screen 为 `shared_keyword_only/unrelated` 或 `can_enter_deep_read=false` 的论文默认不写入 abstract sweep note/BibTeX/comparison table，避免被后续 synthesis/writer 当作可用证据；需要排除线索复核时可显式设为 `false`。
 
 这和 T2 的 `deep_read_queue` 100% verified 去向覆盖配套：active deep-read 由 T3 精读，剩余 shallow/backlog 由 abstract sweep 生成弱证据提示。
 

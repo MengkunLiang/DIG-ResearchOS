@@ -22,6 +22,31 @@ from .user_settings import (
     should_apply_default_user_settings,
 )
 
+
+def _pre_suppress_litellm_import_logs() -> None:
+    """Suppress LiteLLM import-time provider probes before importing litellm.
+
+    LiteLLM can emit Bedrock/SageMaker preload warnings during module import,
+    before ResearchOS has a chance to call `configure_logging`.  Those warnings
+    are not actionable for normal OpenAI-compatible routes and they make even
+    config-only CLI commands look broken, so suppress them at the boundary.
+    """
+
+    os.environ.setdefault("LITELLM_LOG", "ERROR")
+    os.environ.setdefault("LITELLM_VERBOSE", "False")
+    for name in (
+        "LiteLLM",
+        "litellm",
+        "litellm.utils",
+        "litellm.litellm_core_utils",
+        "httpx",
+        "httpcore",
+    ):
+        logging.getLogger(name).setLevel(logging.ERROR if name.lower().startswith("litellm") else logging.WARNING)
+
+
+_pre_suppress_litellm_import_logs()
+
 try:  # pragma: no cover - optional import exercised in integration use
     import litellm
 except Exception:  # pragma: no cover
@@ -52,7 +77,7 @@ def suppress_litellm_info_logs() -> None:
         "httpx",
         "httpcore",
     ):
-        logging.getLogger(name).setLevel(logging.WARNING)
+        logging.getLogger(name).setLevel(logging.ERROR if name.lower().startswith("litellm") else logging.WARNING)
 
 
 def _dedupe_nonempty(values: list[str]) -> list[str]:

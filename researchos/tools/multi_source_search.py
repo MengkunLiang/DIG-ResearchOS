@@ -215,33 +215,25 @@ class MultiSourceSearchTool(Tool):
             papers = []
             for item in items:
                 # 提取作者
-                authors = []
-                for author in item.get("author", []):
-                    given = author.get("given", "")
-                    family = author.get("family", "")
-                    name = f"{given} {family}".strip() or "Unknown"
-                    authors.append({"name": name})
+                authors = [{"name": name} for name in _crossref_author_names(item)]
 
                 # 提取年份
-                year = None
-                if "published" in item:
-                    date_parts = item["published"].get("date-parts", [[]])[0]
-                    if date_parts:
-                        year = date_parts[0]
+                year = _year_from_crossref_item(item)
 
                 # 提取DOI
-                doi = item.get("DOI", "")
+                doi = str(item.get("DOI") or "").strip()
+                title = _first_text(item.get("title"))
 
                 paper = {
-                    "id": f"doi:{doi}" if doi else item.get("title", [""])[0][:50],
+                    "id": f"doi:{doi}" if doi else title[:50],
                     "source": "crossref",
-                    "title": item.get("title", [""])[0],
+                    "title": title,
                     "authors": authors,
                     "year": year,
                     "abstract": clean_abstract(item.get("abstract")),
-                    "venue": item.get("container-title", [""])[0] if item.get("container-title") else "",
+                    "venue": _first_text(item.get("container-title")),
                     "doi": doi,
-                    "citation_count": item.get("is-referenced-by-count", 0),
+                    "citation_count": _safe_int(item.get("is-referenced-by-count"), 0),
                     "url": f"https://doi.org/{doi}" if doi else "",
                     "externalIds": {"DOI": doi} if doi else {}
                 }
@@ -274,27 +266,11 @@ class MultiSourceSearchTool(Tool):
 
             papers = []
             for item in items:
-                authors = []
-                for author in item.get("author", []):
-                    given = author.get("given", "")
-                    family = author.get("family", "")
-                    name = f"{given} {family}".strip() or "Unknown"
-                    authors.append({"name": name})
-
-                year = None
-                published = (
-                    item.get("published-print")
-                    or item.get("published-online")
-                    or item.get("published")
-                    or item.get("issued")
-                )
-                date_parts = (published or {}).get("date-parts", [[]])[0]
-                if date_parts:
-                    year = date_parts[0]
-
-                doi = item.get("DOI", "")
-                title = item.get("title", [""])[0] if item.get("title") else ""
-                venue = item.get("container-title", [""])[0] if item.get("container-title") else ""
+                authors = [{"name": name} for name in _crossref_author_names(item)]
+                year = _year_from_crossref_item(item)
+                doi = str(item.get("DOI") or "").strip()
+                title = _first_text(item.get("title"))
+                venue = _first_text(item.get("container-title"))
 
                 paper = {
                     "id": f"doi:{doi}" if doi else title[:50],
@@ -305,8 +281,8 @@ class MultiSourceSearchTool(Tool):
                     "abstract": clean_abstract(item.get("abstract")),
                     "venue": venue,
                     "doi": doi,
-                    "citation_count": item.get("is-referenced-by-count", 0),
-                    "url": f"https://doi.org/{doi}" if doi else item.get("URL", ""),
+                    "citation_count": _safe_int(item.get("is-referenced-by-count"), 0),
+                    "url": f"https://doi.org/{doi}" if doi else str(item.get("URL") or ""),
                     "externalIds": {"DOI": doi, "CrossrefPrefix": "10.1287"} if doi else {"CrossrefPrefix": "10.1287"},
                 }
                 references = _extract_crossref_references(item)
@@ -389,27 +365,28 @@ class MultiSourceSearchTool(Tool):
             papers = []
             for item in results:
                 # 提取作者
-                author_string = item.get("authorString", "")
+                author_string = str(item.get("authorString") or "")
                 authors = [{"name": name.strip()} for name in author_string.split(",") if name.strip()]
 
                 # 提取DOI
-                doi = item.get("doi", "")
+                doi = str(item.get("doi") or "").strip()
 
                 # 提取ID
-                pmid = item.get("pmid", "")
-                pmcid = item.get("pmcid", "")
+                pmid = str(item.get("pmid") or "").strip()
+                pmcid = str(item.get("pmcid") or "").strip()
                 paper_id = pmcid or pmid or doi
+                title = str(item.get("title") or "").strip()
 
                 paper = {
-                    "id": f"pmc:{paper_id}" if paper_id else item.get("title", "")[:50],
+                    "id": f"pmc:{paper_id}" if paper_id else title[:50],
                     "source": "europepmc",
-                    "title": item.get("title", ""),
+                    "title": title,
                     "authors": authors,
-                    "year": int(item.get("pubYear", 0)) if item.get("pubYear") else None,
+                    "year": _safe_int(item.get("pubYear"), None),
                     "abstract": clean_abstract(item.get("abstractText")),
-                    "venue": item.get("journalTitle", ""),
+                    "venue": str(item.get("journalTitle") or ""),
                     "doi": doi,
-                    "citation_count": int(item.get("citedByCount", 0)),
+                    "citation_count": _safe_int(item.get("citedByCount"), 0),
                     "url": f"https://europepmc.org/article/MED/{pmid}" if pmid else "",
                     "externalIds": {
                         "PMID": pmid,
@@ -460,24 +437,27 @@ class MultiSourceSearchTool(Tool):
                     continue
 
                 # 提取作者
-                authors = [{"name": author.get("name", "")} for author in item.get("authors", [])]
+                authors = [{"name": name} for name in _pubmed_author_names(item)]
 
                 # 提取DOI
                 article_ids = item.get("articleids", [])
                 doi = ""
                 for aid in article_ids:
+                    if not isinstance(aid, dict):
+                        continue
                     if aid.get("idtype") == "doi":
-                        doi = aid.get("value", "")
+                        doi = str(aid.get("value") or "").strip()
                         break
+                title = str(item.get("title") or "").strip()
 
                 paper = {
                     "id": f"pubmed:{pmid}",
                     "source": "pubmed",
-                    "title": item.get("title", ""),
+                    "title": title,
                     "authors": authors,
-                    "year": int(item.get("pubdate", "").split()[0]) if item.get("pubdate") else None,
+                    "year": _year_from_pubdate(item.get("pubdate")),
                     "abstract": "",  # PubMed summary不包含abstract
-                    "venue": item.get("source", ""),
+                    "venue": str(item.get("source") or ""),
                     "doi": doi,
                     "citation_count": 0,
                     "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
@@ -520,8 +500,9 @@ class MultiSourceSearchTool(Tool):
         lines = [f"检索到 {len(papers)} 篇论文（数据源统计: {source_stats}）\n"]
 
         for i, paper in enumerate(papers, 1):
-            authors = ", ".join(a.get("name", "") for a in paper.get("authors", [])[:3])
-            if len(paper.get("authors", [])) > 3:
+            author_list = _normalize_author_names_for_display(paper.get("authors", []))
+            authors = ", ".join(author_list[:3])
+            if len(author_list) > 3:
                 authors += " et al."
 
             lines.append(
@@ -531,6 +512,123 @@ class MultiSourceSearchTool(Tool):
             )
 
         return "\n".join(lines)
+
+
+def _normalize_author_names_for_display(authors: Any) -> list[str]:
+    """Normalize heterogeneous API author payloads for human-readable summaries."""
+
+    if not authors:
+        return []
+    if isinstance(authors, str):
+        return [authors.strip()] if authors.strip() else []
+    if not isinstance(authors, list):
+        return [str(authors).strip()] if str(authors).strip() else []
+
+    names: list[str] = []
+    for item in authors:
+        if isinstance(item, str):
+            name = item.strip()
+        elif isinstance(item, dict):
+            name = str(
+                item.get("name")
+                or item.get("display_name")
+                or item.get("author_name")
+                or item.get("full_name")
+                or ""
+            ).strip()
+        else:
+            name = str(item).strip()
+        if name:
+            names.append(name)
+    return names
+
+
+def _first_text(value: Any, default: str = "") -> str:
+    if isinstance(value, list):
+        for item in value:
+            text = str(item or "").strip()
+            if text:
+                return text
+        return default
+    if isinstance(value, str):
+        return value.strip()
+    if value in (None, "", [], {}):
+        return default
+    return str(value).strip()
+
+
+def _safe_int(value: Any, default: int | None = 0) -> int | None:
+    try:
+        if value in (None, "", [], {}):
+            return default
+        return int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return default
+
+
+def _year_from_date_parts(raw: Any) -> int | None:
+    if not isinstance(raw, list) or not raw:
+        return None
+    first = raw[0]
+    if not isinstance(first, list) or not first:
+        return None
+    return _safe_int(first[0], None)
+
+
+def _year_from_crossref_item(item: dict[str, Any]) -> int | None:
+    published = (
+        item.get("published-print")
+        or item.get("published-online")
+        or item.get("published")
+        or item.get("issued")
+        or item.get("created")
+    )
+    if not isinstance(published, dict):
+        return None
+    return _year_from_date_parts(published.get("date-parts"))
+
+
+def _year_from_pubdate(value: Any) -> int | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    return _safe_int(text.split()[0], None)
+
+
+def _crossref_author_names(item: dict[str, Any]) -> list[str]:
+    names: list[str] = []
+    authors = item.get("author") or []
+    if not isinstance(authors, list):
+        return names
+    for author in authors[:10]:
+        if isinstance(author, str):
+            name = author.strip()
+        elif isinstance(author, dict):
+            given = str(author.get("given") or "").strip()
+            family = str(author.get("family") or "").strip()
+            name = f"{given} {family}".strip() or str(author.get("name") or "").strip()
+        else:
+            name = str(author).strip()
+        if name:
+            names.append(name)
+    return names
+
+
+def _pubmed_author_names(item: dict[str, Any]) -> list[str]:
+    names: list[str] = []
+    authors = item.get("authors") or []
+    if not isinstance(authors, list):
+        return names
+    for author in authors[:10]:
+        if isinstance(author, str):
+            name = author.strip()
+        elif isinstance(author, dict):
+            name = str(author.get("name") or "").strip()
+        else:
+            name = str(author).strip()
+        if name:
+            names.append(name)
+    return names
 
 
 def _clean_query(value: Any) -> str:

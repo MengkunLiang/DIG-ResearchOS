@@ -559,11 +559,15 @@ class FetchPaperPdfTool(Tool):
             return []
 
         if doi is not None:
-            identifier = f"https://doi.org/{doi}"
+            normalized_doi = self._normalize_doi(doi) or doi.strip()
+            if not normalized_doi:
+                return []
+            url = f"https://api.openalex.org/works/doi:{quote(normalized_doi, safe='')}"
         else:
-            identifier = openalex_id or ""
-
-        url = f"https://api.openalex.org/works/{quote(identifier, safe=':/')}"
+            identifier = str(openalex_id or "").strip()
+            if not identifier:
+                return []
+            url = f"https://api.openalex.org/works/{quote(identifier, safe=':/')}"
         params = {
             "mailto": (
                 os.environ.get("RESEARCHER_EMAIL")

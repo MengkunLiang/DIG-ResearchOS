@@ -23,6 +23,21 @@ from researchos.tools.external_experiment import (
 from researchos.tools.workspace_policy import WorkspaceAccessPolicy
 
 
+def _write_executor_selection(ws: Path, selected_executor: str) -> None:
+    (ws / "external_executor").mkdir(parents=True, exist_ok=True)
+    (ws / "external_executor" / "executor_selection.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "external_executor_selection",
+                "selected_executor": selected_executor,
+                "real_experiment_allowed": selected_executor != "mock_dry_run",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def _write_minimal_workspace(ws: Path) -> None:
     (ws / "ideation").mkdir(parents=True)
     (ws / "literature").mkdir(parents=True)
@@ -113,12 +128,24 @@ async def test_external_experiment_mock_dry_run_to_claim_audit(tmp_path: Path):
     summary = json.loads((tmp_path / "experiments" / "results_summary.json").read_text(encoding="utf-8"))
     assert summary["source"] == "external_executor"
     assert summary["quality_status"] == "mock_only"
+    assert summary["selected_executor"] == "mock_dry_run"
+    assert summary["executor_selection_ref"] == "external_executor/executor_selection.json"
+    assert summary["result_pack_ref"] == "external_executor/result_pack.json"
+    assert summary["executor_status_ref"] == "external_executor/executor_status.json"
+    assert summary["selection_sha256"] == _sha256(tmp_path / "external_executor" / "executor_selection.json")
+    assert summary["result_pack_sha256"] == _sha256(tmp_path / "external_executor" / "result_pack.json")
+    assert summary["executor_status_sha256"] == _sha256(tmp_path / "external_executor" / "executor_status.json")
+    evidence_index = json.loads((tmp_path / "experiments" / "evidence_index.json").read_text(encoding="utf-8"))
+    assert evidence_index["result_pack_sha256"] == summary["result_pack_sha256"]
+    ingest_report = json.loads((tmp_path / "experiments" / "ingest_report.json").read_text(encoding="utf-8"))
+    assert ingest_report["selection_sha256"] == summary["selection_sha256"]
 
     audit = await AuditExperimentIntegrityTool(policy).execute()
     assert audit.ok
     audit_data = json.loads((tmp_path / "experiments" / "integrity_audit.json").read_text(encoding="utf-8"))
     assert audit_data["status"] == "mock_only"
     assert audit_data["required_baseline_coverage"]["status"] == "mock_only"
+    assert audit_data["result_pack_sha256"] == summary["result_pack_sha256"]
     assert (tmp_path / "experiments" / "experiment_fairness_review.md").exists()
 
     post_novelty = await BuildPostExperimentNoveltyCheckTool(policy).execute()
@@ -202,6 +229,121 @@ async def test_paper_claim_audit_fails_unsupported_experiment_number(tmp_path: P
 
 
 @pytest.mark.asyncio
+async def test_paper_claim_audit_fails_unsupported_small_integer_percentage(tmp_path: Path):
+    (tmp_path / "drafts").mkdir(parents=True)
+    (tmp_path / "drafts" / "paper.tex").write_text(
+        "\\documentclass{article}\\begin{document}"
+        "\\section{Experiments} The method improves accuracy by 15%."
+        "\\end{document}",
+        encoding="utf-8",
+    )
+    (tmp_path / "drafts" / "experiment_evidence_pack.json").write_text(
+        json.dumps(
+            {
+                "semantics": "normalized_experiment_evidence_pack",
+                "mock_only": False,
+                "metrics": [{"name": "accuracy_delta", "value": 0.04}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "drafts" / "result_to_claim.json").write_text(
+        json.dumps(
+            {
+                "semantics": "mechanical_result_to_claim_map_not_final_scientific_judgment",
+                "claim_mappings": [],
+                "global_must_not_claim": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = WorkspaceAccessPolicy(tmp_path, ["", "drafts/"], ["drafts/"])
+
+    result = await AuditPaperClaimsTool(policy).execute()
+
+    assert result.ok
+    audit = json.loads((tmp_path / "drafts" / "paper_claim_audit.json").read_text(encoding="utf-8"))
+    assert audit["summary"]["fail_count"] == 1
+    assert audit["issues"][0]["number"] == "15%"
+
+
+@pytest.mark.asyncio
+async def test_paper_claim_audit_accepts_percentage_equivalent_metric(tmp_path: Path):
+    (tmp_path / "drafts").mkdir(parents=True)
+    (tmp_path / "drafts" / "paper.tex").write_text(
+        "\\documentclass{article}\\begin{document}"
+        "\\section{Experiments} The final accuracy is 92.3%."
+        "\\end{document}",
+        encoding="utf-8",
+    )
+    (tmp_path / "drafts" / "experiment_evidence_pack.json").write_text(
+        json.dumps(
+            {
+                "semantics": "normalized_experiment_evidence_pack",
+                "mock_only": False,
+                "metrics": [{"name": "accuracy", "value": 0.923}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "drafts" / "result_to_claim.json").write_text(
+        json.dumps(
+            {
+                "semantics": "mechanical_result_to_claim_map_not_final_scientific_judgment",
+                "claim_mappings": [],
+                "global_must_not_claim": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = WorkspaceAccessPolicy(tmp_path, ["", "drafts/"], ["drafts/"])
+
+    result = await AuditPaperClaimsTool(policy).execute()
+
+    assert result.ok
+    audit = json.loads((tmp_path / "drafts" / "paper_claim_audit.json").read_text(encoding="utf-8"))
+    assert audit["summary"]["fail_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_paper_claim_audit_preserves_negative_metric_sign(tmp_path: Path):
+    (tmp_path / "drafts").mkdir(parents=True)
+    (tmp_path / "drafts" / "paper.tex").write_text(
+        "\\documentclass{article}\\begin{document}"
+        "\\section{Experiments} The treatment effect estimate is -0.20."
+        "\\end{document}",
+        encoding="utf-8",
+    )
+    (tmp_path / "drafts" / "experiment_evidence_pack.json").write_text(
+        json.dumps(
+            {
+                "semantics": "normalized_experiment_evidence_pack",
+                "mock_only": False,
+                "metrics": [{"name": "effect", "value": -0.2}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "drafts" / "result_to_claim.json").write_text(
+        json.dumps(
+            {
+                "semantics": "mechanical_result_to_claim_map_not_final_scientific_judgment",
+                "claim_mappings": [],
+                "global_must_not_claim": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    policy = WorkspaceAccessPolicy(tmp_path, ["", "drafts/"], ["drafts/"])
+
+    result = await AuditPaperClaimsTool(policy).execute()
+
+    assert result.ok
+    audit = json.loads((tmp_path / "drafts" / "paper_claim_audit.json").read_text(encoding="utf-8"))
+    assert audit["summary"]["fail_count"] == 0
+
+
+@pytest.mark.asyncio
 async def test_experimenter_validates_external_modes(tmp_path: Path):
     _write_minimal_workspace(tmp_path)
     policy = WorkspaceAccessPolicy(
@@ -242,10 +384,130 @@ def test_external_wait_rejects_missing_referenced_artifact(tmp_path: Path):
     assert (tmp_path / "external_executor" / "wait_rejection_report.md").exists()
 
 
+def test_external_wait_rejects_stale_mock_pack_after_real_executor_selection(tmp_path: Path):
+    _write_minimal_workspace(tmp_path)
+    policy = WorkspaceAccessPolicy(
+        tmp_path,
+        ["", "ideation/", "literature/", "external_executor/", "experiments/", "drafts/", "novelty/", "resources/"],
+        ["external_executor/", "experiments/", "drafts/", "novelty/"],
+    )
+
+    import asyncio
+
+    asyncio.run(BuildExperimentHandoffPackTool(policy).execute())
+    asyncio.run(SelectExternalExecutorTool(policy).execute(selected_executor="mock_dry_run"))
+    asyncio.run(MockExternalDryRunTool(policy).execute())
+    asyncio.run(SelectExternalExecutorTool(policy).execute(selected_executor="codex_cli"))
+
+    readiness = validate_external_executor_ready(
+        tmp_path,
+        "external_executor/result_pack.json",
+        "external_executor/executor_status.json",
+    )
+
+    assert readiness["ok"] is False
+    assert readiness["selected_executor"] == "codex_cli"
+    assert any("mock_only/dry_run result_pack" in issue for issue in readiness["issues"])
+
+
+def test_external_wait_rejects_unfinalized_or_missing_executor_binding(tmp_path: Path):
+    _write_minimal_workspace(tmp_path)
+    ext = tmp_path / "external_executor"
+    ext.mkdir(parents=True)
+    _write_executor_selection(tmp_path, "UNSET")
+    raw = ext / "raw_results" / "real.json"
+    raw.parent.mkdir(parents=True)
+    raw.write_text('{"metric": 0.8}\n', encoding="utf-8")
+    (ext / "allowed_paths.txt").write_text(
+        "rw  external_executor/raw_results/\n"
+        "rw  external_executor/result_pack.json\n"
+        "rw  external_executor/executor_status.json\n"
+        "rw  external_executor/run_manifest.json\n",
+        encoding="utf-8",
+    )
+    (ext / "run_manifest.json").write_text(
+        json.dumps(
+            {
+                "semantics": "external_executor_run_manifest",
+                "run_id": "real",
+                "raw_results": ["external_executor/raw_results/real.json"],
+                "configs": [],
+                "logs": [],
+                "runs": [{"run_id": "real"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (ext / "result_pack.json").write_text(
+        json.dumps(
+            {
+                "semantics": "external_executor_result_pack",
+                "run_id": "real",
+                "dry_run": False,
+                "mock_only": False,
+                "metrics": [
+                    {
+                        "metric_id": "m1",
+                        "name": "task_score",
+                        "value": 0.8,
+                        "source_artifact": "external_executor/raw_results/real.json",
+                    }
+                ],
+                "artifacts": [{"path": "external_executor/raw_results/real.json", "sha256": _sha256(raw)}],
+                "runs": [{"run_id": "real"}],
+                "run_manifest": "external_executor/run_manifest.json",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (ext / "executor_status.json").write_text(
+        json.dumps({"semantics": "external_executor_status", "status": "done"}),
+        encoding="utf-8",
+    )
+
+    readiness = validate_external_executor_ready(
+        tmp_path,
+        "external_executor/result_pack.json",
+        "external_executor/executor_status.json",
+    )
+
+    assert readiness["ok"] is False
+    assert any("invalid or not finalized" in issue for issue in readiness["issues"])
+
+
+def test_external_wait_rejects_status_self_acceptance(tmp_path: Path):
+    _write_minimal_workspace(tmp_path)
+    policy = WorkspaceAccessPolicy(
+        tmp_path,
+        ["", "ideation/", "literature/", "external_executor/", "experiments/", "drafts/", "novelty/", "resources/"],
+        ["external_executor/", "experiments/", "drafts/", "novelty/"],
+    )
+
+    import asyncio
+
+    asyncio.run(BuildExperimentHandoffPackTool(policy).execute())
+    asyncio.run(SelectExternalExecutorTool(policy).execute(selected_executor="mock_dry_run"))
+    asyncio.run(MockExternalDryRunTool(policy).execute())
+    status_path = tmp_path / "external_executor" / "executor_status.json"
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    status["accepted"] = True
+    status_path.write_text(json.dumps(status), encoding="utf-8")
+
+    readiness = validate_external_executor_ready(
+        tmp_path,
+        "external_executor/result_pack.json",
+        "external_executor/executor_status.json",
+    )
+
+    assert readiness["ok"] is False
+    assert any("accepted cannot be true" in issue for issue in readiness["issues"])
+
+
 def test_external_wait_rejects_path_outside_allowed_paths(tmp_path: Path):
     _write_minimal_workspace(tmp_path)
     ext = tmp_path / "external_executor"
     ext.mkdir(parents=True)
+    _write_executor_selection(tmp_path, "manual")
     (ext / "allowed_paths.txt").write_text(
         "rw  external_executor/raw_results/\n"
         "rw  external_executor/configs/\n"
@@ -294,7 +556,7 @@ def test_external_wait_rejects_path_outside_allowed_paths(tmp_path: Path):
         encoding="utf-8",
     )
     (ext / "executor_status.json").write_text(
-        json.dumps({"semantics": "external_executor_status", "status": "done"}),
+        json.dumps({"semantics": "external_executor_status", "executor": "manual", "status": "done"}),
         encoding="utf-8",
     )
 
@@ -312,6 +574,7 @@ def test_external_wait_rejects_missing_allowed_paths(tmp_path: Path):
     _write_minimal_workspace(tmp_path)
     ext = tmp_path / "external_executor"
     ext.mkdir(parents=True)
+    _write_executor_selection(tmp_path, "manual")
     raw = ext / "raw_results" / "real.json"
     raw.parent.mkdir(parents=True)
     raw.write_text('{"metric": 0.8}\n', encoding="utf-8")
@@ -360,7 +623,7 @@ def test_external_wait_rejects_missing_allowed_paths(tmp_path: Path):
         encoding="utf-8",
     )
     (ext / "executor_status.json").write_text(
-        json.dumps({"semantics": "external_executor_status", "status": "done"}),
+        json.dumps({"semantics": "external_executor_status", "executor": "manual", "status": "done"}),
         encoding="utf-8",
     )
 
@@ -378,6 +641,7 @@ def test_external_wait_rejects_partial_results_by_default(tmp_path: Path):
     _write_minimal_workspace(tmp_path)
     ext = tmp_path / "external_executor"
     ext.mkdir(parents=True, exist_ok=True)
+    _write_executor_selection(tmp_path, "manual")
     raw = ext / "raw_results" / "real.json"
     raw.parent.mkdir(parents=True, exist_ok=True)
     raw.write_text('{"metric": 0.8}\n', encoding="utf-8")
@@ -437,7 +701,7 @@ def test_external_wait_rejects_partial_results_by_default(tmp_path: Path):
         encoding="utf-8",
     )
     (ext / "executor_status.json").write_text(
-        json.dumps({"semantics": "external_executor_status", "current_state": "PARTIAL_RESULTS_READY"}),
+        json.dumps({"semantics": "external_executor_status", "executor": "manual", "current_state": "PARTIAL_RESULTS_READY"}),
         encoding="utf-8",
     )
 
@@ -464,6 +728,7 @@ async def test_ingest_external_results_revalidates_wait_contract(tmp_path: Path)
     _write_minimal_workspace(tmp_path)
     ext = tmp_path / "external_executor"
     ext.mkdir(parents=True)
+    _write_executor_selection(tmp_path, "manual")
     raw = ext / "raw_results" / "real.json"
     raw.parent.mkdir(parents=True)
     raw.write_text('{"metric": 0.8}\n', encoding="utf-8")
@@ -505,7 +770,7 @@ async def test_ingest_external_results_revalidates_wait_contract(tmp_path: Path)
         encoding="utf-8",
     )
     (ext / "executor_status.json").write_text(
-        json.dumps({"semantics": "external_executor_status", "status": "done"}),
+        json.dumps({"semantics": "external_executor_status", "executor": "manual", "status": "done"}),
         encoding="utf-8",
     )
     policy = WorkspaceAccessPolicy(
@@ -519,6 +784,32 @@ async def test_ingest_external_results_revalidates_wait_contract(tmp_path: Path)
     assert result.ok is False
     assert result.error == "external_result_not_ready"
     assert not (tmp_path / "experiments" / "results_summary.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_t7_ingest_validator_rejects_stale_external_binding(tmp_path: Path):
+    _write_minimal_workspace(tmp_path)
+    policy = WorkspaceAccessPolicy(
+        tmp_path,
+        ["", "ideation/", "literature/", "external_executor/", "experiments/", "drafts/", "novelty/", "resources/"],
+        ["external_executor/", "experiments/", "drafts/", "novelty/"],
+    )
+    agent = ExperimenterAgent()
+
+    await BuildExperimentHandoffPackTool(policy).execute()
+    await SelectExternalExecutorTool(policy).execute(selected_executor="mock_dry_run")
+    await MockExternalDryRunTool(policy).execute()
+    await IngestExternalResultsTool(policy).execute()
+    result_pack_path = tmp_path / "external_executor" / "result_pack.json"
+    result_pack = json.loads(result_pack_path.read_text(encoding="utf-8"))
+    result_pack["limitations"].append("tampered after ingest")
+    result_pack_path.write_text(json.dumps(result_pack), encoding="utf-8")
+
+    ctx = ExecutionContext(tmp_path, "p", "T7-INGEST", "r", mode="result_ingest")
+    ok, err = agent.validate_outputs(ctx)
+
+    assert ok is False
+    assert "hash" in (err or "")
 
 
 @pytest.mark.asyncio

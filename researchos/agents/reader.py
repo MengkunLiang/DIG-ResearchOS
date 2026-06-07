@@ -844,11 +844,8 @@ def _pages_read_covers_full_pdf(pages_line: str) -> bool:
     normalized = pages_line.strip()
     lowered = normalized.lower()
     negative_tokens = ("partial", "incomplete", "部分", "未完成", "未覆盖", "不完整")
-    positive_tokens = ("all", "complete", "full", "全部", "完整", "全篇")
     if any(token in lowered or token in normalized for token in negative_tokens):
         return False
-    if any(token in lowered for token in positive_tokens) or any(token in normalized for token in positive_tokens):
-        return True
 
     total_page = _extract_total_page_count(normalized)
     if total_page is None or total_page <= 0:

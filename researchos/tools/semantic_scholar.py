@@ -26,7 +26,7 @@ def _normalize_paper(item: dict[str, Any]) -> dict[str, Any]:
         "id": item.get("paperId") or external_ids.get("CorpusId") or item.get("title"),
         "source": "semantic_scholar",
         "title": item.get("title", ""),
-        "authors": [author.get("name", "") for author in item.get("authors", [])],
+        "authors": _normalize_author_names(item.get("authors", [])),
         "year": item.get("year"),
         "abstract": clean_abstract(item.get("abstract")),
         "venue": item.get("venue", ""),
@@ -50,6 +50,33 @@ def _normalize_paper(item: dict[str, Any]) -> dict[str, Any]:
         normalized["citations"] = citations
         normalized["citation_edges_inbound_hints"] = citations
     return normalized
+
+
+def _normalize_author_names(authors: Any) -> list[str]:
+    if not authors:
+        return []
+    if isinstance(authors, str):
+        return [authors.strip()] if authors.strip() else []
+    if not isinstance(authors, list):
+        text = str(authors).strip()
+        return [text] if text else []
+    names: list[str] = []
+    for author in authors:
+        if isinstance(author, str):
+            name = author.strip()
+        elif isinstance(author, dict):
+            name = str(
+                author.get("name")
+                or author.get("display_name")
+                or author.get("author_name")
+                or author.get("full_name")
+                or ""
+            ).strip()
+        else:
+            name = str(author).strip()
+        if name:
+            names.append(name)
+    return names
 
 
 def _normalize_s2_edges(items: Any, limit: int = 80) -> list[dict[str, Any]]:

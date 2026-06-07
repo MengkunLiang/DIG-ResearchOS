@@ -162,7 +162,7 @@ T8 的 section-by-section 不是把一次整篇写作拆成几个短文件。除
 
 ### T8-REVISE-1 / T8-REVISE-2
 
-Writer 先调用 `build_manuscript_revision_patches(round_num=N)`，把本轮综合 review 和 `round_N_sections/*.md` 转成 `drafts/patches/round_N_patches.json`。Patch list 只定位 issue，不替代 LLM 判断。Writer 按 High -> Medium -> Low 顺序处理 patch：能定位到章节的问题先改 `drafts/sections/<section>.tex`，每改完一章调用 `update_manuscript_section_state(status="revised")`；global issue 优先拆到多个章节。全部修订后重新调用 `assemble_manuscript` 拼装 `paper.tex`，刷新 `manuscript_audit.md`，并写 `drafts/revision_response_round_N.md` 记录 resolved/unresolved/deferred。无法解决的问题必须说明原因和风险，不允许只写“已修订”。
+Writer 先调用 `build_manuscript_revision_patches(round_num=N)`，把本轮综合 review 和 `round_N_sections/*.md` 转成 `drafts/patches/round_N_patches.json`。Patch list 只定位 issue，不替代 LLM 判断。Writer 按 High -> Medium -> Low 顺序处理 patch：能定位到章节的问题先改 `drafts/sections/<section>.tex`，每改完一章调用 `update_manuscript_section_state(status="revised")`；global issue 优先拆到多个章节。全部修订后重新调用 `assemble_manuscript` 拼装 `paper.tex`，刷新 `manuscript_audit.md`，并写 `drafts/revision_response_round_N.md` 记录 resolved/unresolved/deferred。validator 会要求 High/Medium patch_id 在 response 中逐条出现；无法解决的问题必须说明原因和风险，不允许只写“已修订”。
 
 ## 5. 事实一致性与数字漂移协议
 
@@ -956,7 +956,8 @@ T8 输出 `drafts/paper.tex` 后，T9 负责投稿模板迁移和编译。T9 不
 
 - 进入 LLM 前检查本机 `latexmk` 或 Docker 统一镜像。
 - 首先调用 `prepare_submission_bundle`，把 `drafts/paper.tex` 复制为 `submission/bundle/main.tex`，把 `literature/related_work.bib` 复制为 `submission/bundle/references.bib`，并把主稿中的 `\bibliography{...}` 统一改写为 `\bibliography{references}`。这一步是机械路径修复，不应靠 LLM 临场判断 bib 文件名。
-- `prepare_submission_bundle` 还会把 `drafts/figures/` 中被主稿引用的图表复制到 `submission/bundle/figures/`，避免 bundle 内编译找不到图片。
+- `prepare_submission_bundle` 还会解析 `\includegraphics{...}`，把主稿引用且被 SubmissionAgent read policy 允许的 `drafts/figures/`、`figures/`、`experiments/`、`evaluation/` 等 workspace 内图表复制到 `submission/bundle/figures/`，并把 TeX 路径重写成 bundle-local `figures/...`。它只复制 `.pdf/.png/.jpg/.jpeg/.svg` 文件，目标文件名包含内容 hash，避免非图片文件泄露或同名图表静默覆盖。
+- 如果主稿使用 biblatex，`prepare_submission_bundle` 会把 `\addbibresource{...}` 重写为 `\addbibresource{references.bib}`；BibTeX 路径仍重写为 `\bibliography{references}`。
 - 优先调用 `latex_compile` 编译 `submission/bundle/main.tex`。
 - 编译失败时读 log，修复再重试。
 - 每次 `latex_compile` 都会在投稿主文件场景写入 `submission/compile_report.json`。

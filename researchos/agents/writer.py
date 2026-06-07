@@ -20,6 +20,7 @@ from ..tools.manuscript import (
     CORE_SECTIONS,
     SECTION_TITLES,
     SECTION_WRITING_SEQUENCE,
+    _extract_latex_cites,
     has_formal_citation,
     normalize_section_id,
 )
@@ -462,13 +463,7 @@ class WriterAgent(Agent):
             if bib_path.exists():
                 bib_text = bib_path.read_text(encoding="utf-8", errors="replace")
                 bib_keys = set(re.findall(r"@\w+\{([^,\s]+)", bib_text))
-                cited = set(
-                    re.findall(
-                        r"\\(?:cite|citep|citet|citealp|citealt|citeauthor|citeyear|parencite|textcite)\{([^}]+)\}",
-                        paper,
-                    )
-                )
-                cited = {k.strip() for chunk in cited for k in chunk.split(",")}
+                cited = _extract_latex_cites(paper)
                 missing_cites = cited - bib_keys
                 if missing_cites:
                     return False, f"paper.tex 引用了不存在的BibTeX key: {missing_cites}"
@@ -508,6 +503,20 @@ class WriterAgent(Agent):
             check = read_text_file(ws / "drafts" / "self_check.md", default="")
             if len(check) < 200:
                 return False, f"self_check.md 过短({len(check)}字符)"
+            lowered = check.lower()
+            required_topics = {
+                "number": ("number", "数字"),
+                "citation": ("citation", "引用"),
+                "claim": ("claim", "证据", "主张"),
+                "revision": ("revision", "todo", "修订", "待办"),
+            }
+            missing_topics = [
+                label
+                for label, tokens in required_topics.items()
+                if not any(token in lowered or token in check for token in tokens)
+            ]
+            if missing_topics:
+                return False, "self_check.md 必须覆盖 number/citation/claim/revision 自查主题: " + ", ".join(missing_topics)
             return True, None
 
         return True, None
@@ -752,6 +761,16 @@ def _validate_revision_artifacts(ws: Path, round_num: int) -> tuple[bool, str | 
         return False, f"revise phase 必须生成非空 revision response: {response_path.relative_to(ws)}"
     if "resolved" not in response.lower() and "已解决" not in response and "未解决" not in response:
         return False, f"{response_path.relative_to(ws)} 必须记录 resolved/unresolved 修订状态"
+    response_lower = response.lower()
+    required_patch_ids = [
+        str(item.get("patch_id") or item.get("id") or "").strip()
+        for item in patch_items
+        if isinstance(item, dict)
+        and str(item.get("severity") or "").strip().lower() in {"high", "medium"}
+    ]
+    missing_patch_ids = [patch_id for patch_id in required_patch_ids if patch_id and patch_id.lower() not in response_lower]
+    if missing_patch_ids:
+        return False, f"{response_path.relative_to(ws)} 必须逐条回应 high/medium patch_id: {missing_patch_ids}"
     return True, None
 
 

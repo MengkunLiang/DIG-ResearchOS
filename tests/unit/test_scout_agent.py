@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 import yaml
 
-from researchos.agents.scout import ScoutAgent
+from researchos.agents.scout import ScoutAgent, _bridge_screen_counts
 from researchos.runtime.agent import ExecutionContext
 
 
@@ -312,6 +312,23 @@ def test_validate_outputs_success(scout_agent, execution_context):
     ok, err = scout_agent.validate_outputs(execution_context)
     assert ok
     assert err is None
+
+
+def test_bridge_screen_counts_accepts_screened_baseline_bridge_candidate():
+    records = [
+        {
+            "id": "bridge-baseline",
+            "bridge_id": "b1",
+            "retrieval_intent": "cross_domain_bridge",
+            "semantic_screen": {
+                "relation_to_project": "baseline_or_dataset_relevance",
+                "role": "baseline",
+                "can_enter_deep_read": True,
+            },
+        }
+    ]
+
+    assert _bridge_screen_counts(records)["b1"] == 1
 
 
 def test_validate_outputs_too_few_papers(scout_agent, execution_context):

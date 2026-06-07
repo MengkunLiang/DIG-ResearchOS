@@ -36,7 +36,7 @@ _DEFAULT_CONFIG = {
     "sources": ["papers_verified", "papers_dedup"],
     "exclude_already_read": True,
     "include_metadata_only": True,
-    "exclude_semantic_excluded": False,
+    "exclude_semantic_excluded": True,
 }
 
 
@@ -149,6 +149,39 @@ def _normalize_id(record: dict) -> str:
     return re.sub(r"[^a-zA-Z0-9_.-]", "_", raw.replace(":", "_").replace("/", "_")).strip("_")
 
 
+def _normalize_author_names(authors: Any, *, limit: int | None = None) -> list[str]:
+    """Normalize heterogeneous author payloads for notes and BibTeX."""
+
+    if not authors:
+        return []
+    if isinstance(authors, str):
+        items: list[Any] = [authors]
+    elif isinstance(authors, list):
+        items = authors
+    else:
+        items = [authors]
+
+    names: list[str] = []
+    for item in items:
+        if isinstance(item, str):
+            name = item.strip()
+        elif isinstance(item, dict):
+            name = str(
+                item.get("name")
+                or item.get("display_name")
+                or item.get("author_name")
+                or item.get("full_name")
+                or ""
+            ).strip()
+        else:
+            name = str(item).strip()
+        if name:
+            names.append(name)
+        if limit is not None and len(names) >= limit:
+            break
+    return names
+
+
 def _sweep_identity_keys(record: dict[str, Any]) -> set[str]:
     keys = paper_record_match_keys(record)
     rid = _normalize_id(record)
@@ -195,10 +228,10 @@ def generate_abstract_note(paper: dict) -> str:
     paper_id = _normalize_id(paper)
     year = _extract_year(paper)
     venue = paper.get("venue", "").strip() or "unknown"
-    authors = paper.get("authors", [])
-    if isinstance(authors, list) and authors:
-        author_str = ", ".join(str(a) for a in authors[:5])
-        if len(authors) > 5:
+    author_names = _normalize_author_names(paper.get("authors", []))
+    if author_names:
+        author_str = ", ".join(author_names[:5])
+        if len(author_names) > 5:
             author_str += " et al."
     else:
         author_str = "Unknown"
@@ -262,15 +295,7 @@ def build_abstract_reader_prompt(paper: dict[str, Any]) -> str:
 
     title = str(paper.get("title") or "Unknown").strip()
     paper_id = _normalize_id(paper)
-    authors = paper.get("authors", [])
-    if isinstance(authors, list):
-        author_text = ", ".join(
-            str(item.get("name") if isinstance(item, dict) else item).strip()
-            for item in authors[:8]
-            if str(item.get("name") if isinstance(item, dict) else item).strip()
-        )
-    else:
-        author_text = str(authors or "").strip()
+    author_text = ", ".join(_normalize_author_names(paper.get("authors", []), limit=8))
     abstract = str(paper.get("abstract") or "").strip()
     metadata = {
         "id": paper_id,
@@ -455,9 +480,9 @@ def generate_bib_entry(paper: dict) -> str:
     title = paper.get("title", "Unknown").strip()
     year = _extract_year(paper) or "XXXX"
     venue = paper.get("venue", "").strip()
-    authors = paper.get("authors", [])
-    if isinstance(authors, list) and authors:
-        author_str = " and ".join(str(a) for a in authors[:10])
+    author_names = _normalize_author_names(paper.get("authors", []), limit=10)
+    if author_names:
+        author_str = " and ".join(author_names)
     else:
         author_str = "Unknown"
 

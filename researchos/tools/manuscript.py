@@ -830,13 +830,14 @@ class PrepareSubmissionBundleTool(Tool):
             tex = paper_path.read_text(encoding="utf-8")
             tex = rewrite_bibliography_to_references(tex, Path(params.references_filename).stem)
             bundle_dir.mkdir(parents=True, exist_ok=True)
-            main_path.write_text(tex, encoding="utf-8")
             references_path.write_text(bib_path.read_text(encoding="utf-8"), encoding="utf-8")
-            copied_figures = _copy_submission_figures(
+            copied_figures, tex = _copy_submission_figures(
                 self.policy,
+                tex=tex,
                 bundle_dir=params.bundle_dir.rstrip("/"),
                 enabled=params.copy_figures,
             )
+            main_path.write_text(tex, encoding="utf-8")
             manifest = build_submission_bundle_manifest(
                 self.policy.workspace_dir,
                 paper_path=paper_path,
@@ -2949,7 +2950,12 @@ def _extract_bib_keys(path: Path) -> list[str]:
 
 def _extract_latex_cites(text: str) -> set[str]:
     keys: set[str] = set()
-    for chunk in re.findall(r"\\(?:cite|citep|citet|citealp|citealt|citeauthor|citeyear|parencite|textcite)\{([^}]+)\}", text):
+    for match in _LATEX_CITATION_COMMAND_RE.finditer(text or ""):
+        command = match.group(0)
+        brace_match = re.search(r"\{([^}]+)\}\s*$", command)
+        if not brace_match:
+            continue
+        chunk = brace_match.group(1)
         keys.update(key.strip() for key in chunk.split(",") if key.strip())
     return keys
 
@@ -3155,6 +3161,16 @@ def rewrite_bibliography_to_references(tex: str, bib_stem: str = "references") -
     """Rewrite LaTeX bibliography commands to the bundle-local bibliography basename."""
 
     target = bib_stem.strip() or "references"
+    biblatex_target = f"{target}.bib"
+    if re.search(r"\\addbibresource(?:\[[^\]]*\])?\{[^}]*\}", tex):
+        tex = re.sub(
+            r"\\addbibresource(?:\[[^\]]*\])?\{[^}]*\}",
+            f"\\\\addbibresource{{{biblatex_target}}}",
+            tex,
+        )
+        if "\\bibliography{" in tex:
+            tex = re.sub(r"\\bibliography\{[^}]*\}", "", tex)
+        return tex
     if re.search(r"\\bibliography\{[^}]*\}", tex):
         return re.sub(r"\\bibliography\{[^}]*\}", f"\\\\bibliography{{{target}}}", tex)
     insertion = f"\n\\bibliographystyle{{plain}}\n\\bibliography{{{target}}}\n"
@@ -3171,35 +3187,129 @@ def extract_bibliography_stems(tex: str) -> list[str]:
             stem = item.strip()
             if stem:
                 stems.append(Path(stem).name)
+    for chunk in re.findall(r"\\addbibresource(?:\[[^\]]*\])?\{([^}]+)\}", tex):
+        stem = Path(chunk.strip()).name
+        if stem.endswith(".bib"):
+            stem = stem[:-4]
+        if stem:
+            stems.append(stem)
     return list(dict.fromkeys(stems))
 
 
 def _copy_submission_figures(
     policy: WorkspaceAccessPolicy,
     *,
+    tex: str,
     bundle_dir: str,
     enabled: bool,
-) -> list[dict[str, str]]:
+) -> tuple[list[dict[str, str]], str]:
     if not enabled:
-        return []
+        return [], tex
     copied: list[dict[str, str]] = []
+    copied_by_source: dict[str, str] = {}
+
+    for rel_source in _extract_includegraphics_paths(tex):
+        source_path = _resolve_graphics_source(policy, rel_source)
+        if source_path is None:
+            continue
+        dst_rel = _copy_figure_to_bundle(policy, source_path, bundle_dir=bundle_dir)
+        copied_by_source[source_path.relative_to(policy.workspace_dir).as_posix()] = dst_rel
+        copied.append({"source_path": source_path.relative_to(policy.workspace_dir).as_posix(), "dest_path": dst_rel})
+        tex = _rewrite_includegraphics_path(tex, rel_source, Path(dst_rel).relative_to(Path(bundle_dir)).as_posix())
+
     for rel_dir in ("drafts/figures", "figures"):
         src_dir = policy.workspace_dir / rel_dir
         if not src_dir.exists() or not src_dir.is_dir():
             continue
         for src in sorted(path for path in src_dir.rglob("*") if path.is_file()):
-            rel_under_figures = src.relative_to(src_dir).as_posix()
-            dst_rel = f"{bundle_dir}/figures/{rel_under_figures}"
-            dst = policy.resolve_write(dst_rel)
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            dst.write_bytes(src.read_bytes())
-            copied.append(
-                {
-                    "source_path": _rel_path(policy.workspace_dir, src),
-                    "dest_path": dst_rel,
-                }
-            )
-    return copied
+            source_rel = _rel_path(policy.workspace_dir, src)
+            if source_rel in copied_by_source:
+                continue
+            dst_rel = _copy_figure_to_bundle(policy, src, bundle_dir=bundle_dir)
+            copied_by_source[source_rel] = dst_rel
+            copied.append({"source_path": source_rel, "dest_path": dst_rel})
+    return copied, tex
+
+
+def _extract_includegraphics_paths(tex: str) -> list[str]:
+    paths: list[str] = []
+    pattern = re.compile(r"\\includegraphics(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}")
+    for match in pattern.finditer(tex or ""):
+        value = match.group(1).strip()
+        if value:
+            paths.append(value)
+    return list(dict.fromkeys(paths))
+
+
+_ALLOWED_GRAPHICS_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".svg"}
+
+
+def _resolve_graphics_source(policy: WorkspaceAccessPolicy, latex_path: str) -> Path | None:
+    workspace = policy.workspace_dir
+    value = latex_path.strip()
+    if not value or value.startswith(("http://", "https://")):
+        return None
+    candidates: list[Path] = []
+    raw = Path(value)
+    if raw.is_absolute():
+        candidates.append(raw)
+    else:
+        candidates.extend(
+            [
+                workspace / value,
+                workspace / "drafts" / value,
+                workspace / "experiments" / value,
+                workspace / "evaluation" / value,
+                workspace / "figures" / value,
+            ]
+        )
+    if raw.suffix:
+        suffix_candidates = candidates
+    else:
+        suffix_candidates = []
+        for candidate in candidates:
+            suffix_candidates.append(candidate)
+            for suffix in sorted(_ALLOWED_GRAPHICS_SUFFIXES):
+                suffix_candidates.append(candidate.with_suffix(suffix))
+    for candidate in suffix_candidates:
+        try:
+            resolved = candidate.resolve()
+            source_rel = resolved.relative_to(workspace.resolve()).as_posix()
+        except ValueError:
+            continue
+        if resolved.suffix.lower() not in _ALLOWED_GRAPHICS_SUFFIXES:
+            continue
+        try:
+            checked = policy.resolve_read(source_rel)
+        except ToolAccessDenied:
+            continue
+        if checked.exists() and checked.is_file():
+            return resolved
+    return None
+
+
+def _copy_figure_to_bundle(policy: WorkspaceAccessPolicy, src: Path, *, bundle_dir: str) -> str:
+    workspace = policy.workspace_dir
+    source_rel = src.relative_to(workspace).as_posix()
+    digest = _sha256_path(src)[:12]
+    stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", source_rel).strip("_")
+    suffix = src.suffix.lower()
+    safe_stem = stem[:160].removesuffix(suffix) if suffix and stem.lower().endswith(suffix) else stem[:160]
+    safe_name = f"{safe_stem}_{digest}{suffix}"
+    if not safe_name:
+        safe_name = f"figure_{digest}{suffix}"
+    dst_rel = f"{bundle_dir}/figures/{safe_name}"
+    dst = policy.resolve_write(dst_rel)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_bytes(src.read_bytes())
+    return dst_rel
+
+
+def _rewrite_includegraphics_path(tex: str, original: str, replacement: str) -> str:
+    pattern = re.compile(
+        r"(\\includegraphics(?:\s*\[[^\]]*\])?\s*\{)" + re.escape(original) + r"(\})"
+    )
+    return pattern.sub(r"\1" + replacement + r"\2", tex)
 
 
 def build_submission_bundle_manifest(

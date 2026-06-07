@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from researchos.agents.submission import SubmissionAgent
+from researchos.tools.latex_compile import _compile_dependency_fingerprint
 
 
 def _sha256_file(path: Path) -> str:
@@ -185,10 +186,40 @@ class TestSubmissionAgentValidateOutputs:
             "This is pdfTeX, Version test\nOutput written on main.pdf (1 page).\n",
             encoding="utf-8",
         )
+        source_paper = standard_workspace / "drafts" / "paper.tex"
+        source_paper.write_text((bundle / "main.tex").read_text(encoding="utf-8"), encoding="utf-8")
+        source_bib = standard_workspace / "literature" / "related_work.bib"
+        source_bib.write_text((bundle / "references.bib").read_text(encoding="utf-8"), encoding="utf-8")
         main_tex = bundle / "main.tex"
         main_pdf = bundle / "main.pdf"
         main_log = bundle / "main.log"
+        (bundle / "bundle_manifest.json").write_text(
+            json.dumps(
+                {
+                    "version": "1.0",
+                    "semantics": "submission_bundle_source_fingerprint",
+                    "source": {
+                        "paper_path": "drafts/paper.tex",
+                        "paper_sha256": _sha256_file(source_paper),
+                        "bib_path": "literature/related_work.bib",
+                        "bib_sha256": _sha256_file(source_bib),
+                    },
+                    "bundle": {
+                        "main_tex_path": "submission/bundle/main.tex",
+                        "main_tex_sha256": _sha256_file(main_tex),
+                        "references_bib_path": "submission/bundle/references.bib",
+                        "references_bib_sha256": _sha256_file(bundle / "references.bib"),
+                        "copied_figures": [],
+                    },
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         compile_report = standard_workspace / "submission" / "compile_report.json"
+        dependency_fingerprint = _compile_dependency_fingerprint(standard_workspace, main_tex)
         compile_report.write_text(
             json.dumps(
                 {
@@ -201,11 +232,18 @@ class TestSubmissionAgentValidateOutputs:
                     "main_tex_sha256": _sha256_file(main_tex),
                     "pdf_sha256": _sha256_file(main_pdf),
                     "log_sha256": _sha256_file(main_log),
+                    "dependency_fingerprint": dependency_fingerprint,
                     "pdf_mtime": main_pdf.stat().st_mtime,
                     "log_mtime": main_log.stat().st_mtime,
                     "pdf_size": main_pdf.stat().st_size,
                     "log_size": main_log.stat().st_size,
-                    "attempts": [{"success": True, "exit_code": 0}],
+                    "attempts": [
+                        {
+                            "success": True,
+                            "exit_code": 0,
+                            "dependency_fingerprint_hash": dependency_fingerprint["hash"],
+                        }
+                    ],
                 },
                 ensure_ascii=False,
                 indent=2,

@@ -56,6 +56,64 @@ def _extract_crossref_references(item: dict[str, Any], limit: int = 80) -> list[
     return references
 
 
+def _first_text(value: Any, default: str = "Unknown") -> str:
+    if isinstance(value, list):
+        for item in value:
+            text = str(item or "").strip()
+            if text:
+                return text
+        return default
+    if isinstance(value, str):
+        return value.strip() or default
+    if value in (None, "", [], {}):
+        return default
+    return str(value).strip()
+
+
+def _safe_int(value: Any, default: int | None = 0) -> int | None:
+    try:
+        if value in (None, "", [], {}):
+            return default
+        return int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return default
+
+
+def _year_from_crossref_item(item: dict[str, Any]) -> int | None:
+    published = (
+        item.get("published-print")
+        or item.get("published-online")
+        or item.get("published")
+        or item.get("issued")
+        or item.get("created")
+    )
+    if not isinstance(published, dict):
+        return None
+    date_parts = published.get("date-parts")
+    if not isinstance(date_parts, list) or not date_parts or not isinstance(date_parts[0], list) or not date_parts[0]:
+        return None
+    return _safe_int(date_parts[0][0], None)
+
+
+def _crossref_author_names(item: dict[str, Any]) -> list[str]:
+    authors = item.get("author") or []
+    if not isinstance(authors, list):
+        return []
+    names: list[str] = []
+    for author in authors[:10]:
+        if isinstance(author, str):
+            name = author.strip()
+        elif isinstance(author, dict):
+            given = str(author.get("given") or "").strip()
+            family = str(author.get("family") or "").strip()
+            name = f"{given} {family}".strip() or str(author.get("name") or "").strip()
+        else:
+            name = str(author).strip()
+        if name:
+            names.append(name)
+    return names
+
+
 class CrossRefSearchParams(BaseModel):
     """搜索 CrossRef 的参数"""
     query: str = Field(..., description="搜索查询字符串")
@@ -125,41 +183,28 @@ class CrossRefSearchTool(Tool):
             papers = []
             for item in items:
                 # 提取基本信息
-                title_list = item.get("title", [])
-                title = title_list[0] if title_list else "Unknown"
+                title = _first_text(item.get("title"))
 
                 # 提取作者
-                authors = []
-                author_list = item.get("author", [])
-                for author in author_list[:10]:  # 最多取前10个作者
-                    given = author.get("given", "")
-                    family = author.get("family", "")
-                    name = f"{given} {family}".strip() if given or family else "Unknown"
-                    authors.append(name)
+                authors = _crossref_author_names(item)
 
                 # 提取年份
-                published = item.get("published-print") or item.get("published-online") or item.get("created")
-                year = None
-                if published and "date-parts" in published:
-                    date_parts = published["date-parts"][0]
-                    if date_parts:
-                        year = date_parts[0]
+                year = _year_from_crossref_item(item)
 
                 # CrossRef 摘要若存在通常是 JATS/HTML，必须先清洗。
                 abstract = clean_abstract(item.get("abstract"))
 
                 # 提取 venue
-                container_title = item.get("container-title", [])
-                venue = container_title[0] if container_title else "Unknown"
+                venue = _first_text(item.get("container-title"))
 
                 # 提取引用数（CrossRef 不直接提供，但有 is-referenced-by-count）
-                citation_count = item.get("is-referenced-by-count", 0)
+                citation_count = _safe_int(item.get("is-referenced-by-count"), 0)
 
                 # 提取 DOI
-                doi = item.get("DOI", "")
+                doi = str(item.get("DOI") or "").strip()
 
                 # 提取 URL
-                url = item.get("URL", f"https://doi.org/{doi}" if doi else "")
+                url = str(item.get("URL") or (f"https://doi.org/{doi}" if doi else ""))
 
                 # 提取类型
                 item_type = item.get("type", "")
@@ -257,30 +302,17 @@ class CrossRefGetWorkTool(Tool):
             message = data.get("message", {})
 
             # 提取信息
-            title_list = message.get("title", [])
-            title = title_list[0] if title_list else "Unknown"
+            title = _first_text(message.get("title"))
 
-            author_list = message.get("author", [])
-            authors = []
-            for author in author_list:
-                given = author.get("given", "")
-                family = author.get("family", "")
-                name = f"{given} {family}".strip() if given or family else "Unknown"
-                authors.append(name)
+            authors = _crossref_author_names(message)
 
-            published = message.get("published-print") or message.get("published-online") or message.get("created")
-            year = None
-            if published and "date-parts" in published:
-                date_parts = published["date-parts"][0]
-                if date_parts:
-                    year = date_parts[0]
+            year = _year_from_crossref_item(message)
 
             abstract = clean_abstract(message.get("abstract"))
 
-            container_title = message.get("container-title", [])
-            venue = container_title[0] if container_title else "Unknown"
+            venue = _first_text(message.get("container-title"))
 
-            citation_count = message.get("is-referenced-by-count", 0)
+            citation_count = _safe_int(message.get("is-referenced-by-count"), 0)
 
             url = message.get("URL", f"https://doi.org/{doi}")
 

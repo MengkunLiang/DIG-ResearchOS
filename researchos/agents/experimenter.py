@@ -665,9 +665,39 @@ def _validate_external_ingest(ws: Path) -> tuple[bool, str | None]:
         return False, err
     if report.get("semantics") != "external_result_ingest_report" or report.get("ok") is not True:
         return False, "experiments/ingest_report.json 必须是 ok=true 的 ingest report"
+    ok, err = _validate_external_binding_fingerprints(ws, summary, evidence, report)
+    if not ok:
+        return False, err
     run_records = (ws / "experiments" / "run_records.jsonl").read_text(encoding="utf-8", errors="replace")
     if "external_executor_result_pack" not in run_records:
         return False, "experiments/run_records.jsonl 必须保存原始 external_executor_result_pack"
+    return True, None
+
+
+def _validate_external_binding_fingerprints(
+    ws: Path,
+    summary: dict[str, Any],
+    evidence: dict[str, Any],
+    report: dict[str, Any],
+) -> tuple[bool, str | None]:
+    required = {
+        "executor_selection_ref": "selection_sha256",
+        "result_pack_ref": "result_pack_sha256",
+        "executor_status_ref": "executor_status_sha256",
+    }
+    for rel_key, hash_key in required.items():
+        rel = str(summary.get(rel_key) or evidence.get(rel_key) or report.get(rel_key) or "").strip()
+        expected_hash = str(summary.get(hash_key) or evidence.get(hash_key) or report.get(hash_key) or "").strip()
+        if not rel or not expected_hash:
+            return False, f"T7 external binding 缺少外部执行器绑定字段: {rel_key}/{hash_key}"
+        path = ws / rel
+        if not path.exists() or not path.is_file():
+            return False, f"T7 external binding 绑定的外部源文件不存在: {rel}"
+        if _sha256_file(path) != expected_hash:
+            return False, f"T7 external binding 外部源文件 hash 不匹配: {rel}"
+    selected = str(summary.get("selected_executor") or report.get("selected_executor") or "").strip()
+    if selected not in {"mock_dry_run", "codex_cli", "claude_code_window", "manual"}:
+        return False, "T7 external binding 缺少合法 selected_executor"
     return True, None
 
 
@@ -688,6 +718,18 @@ def _validate_external_integrity_audit(ws: Path) -> tuple[bool, str | None]:
         return False, "integrity_audit 必须包含 required_baseline_coverage"
     if coverage.get("status") not in {"complete", "incomplete", "missing", "no_required_baselines", "mock_only"}:
         return False, "required_baseline_coverage.status 不正确"
+    summary, err = _read_json_artifact(ws, "experiments/results_summary.json")
+    if err:
+        return False, err
+    evidence, err = _read_json_artifact(ws, "experiments/evidence_index.json")
+    if err:
+        return False, err
+    report, err = _read_json_artifact(ws, "experiments/ingest_report.json")
+    if err:
+        return False, err
+    ok, err = _validate_external_binding_fingerprints(ws, summary, evidence, {**report, **audit})
+    if not ok:
+        return False, err
     fairness = ws / "experiments" / "experiment_fairness_review.md"
     if not fairness.exists() or fairness.stat().st_size <= 0:
         return False, "缺少 experiments/experiment_fairness_review.md"

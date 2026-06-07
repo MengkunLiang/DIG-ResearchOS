@@ -15,6 +15,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from .base import Tool, ToolResult
+from .manuscript import _extract_latex_cites
 from .workspace_policy import ToolAccessDenied, WorkspaceAccessPolicy
 
 
@@ -630,10 +631,7 @@ def _bib_keys_optional(policy: WorkspaceAccessPolicy, rel_path: str) -> set[str]
 
 
 def _cited_keys(text: str) -> set[str]:
-    keys: set[str] = set()
-    for chunk in re.findall(r"\\(?:cite|citep|citet|parencite|textcite)\{([^}]+)\}", text):
-        keys.update(key.strip() for key in chunk.split(",") if key.strip())
-    return keys
+    return _extract_latex_cites(text)
 
 
 def _check(name: str, passed: bool, detail: str, *, level_if_fail: str = "FAIL") -> dict[str, Any]:

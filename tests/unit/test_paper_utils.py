@@ -278,3 +278,16 @@ def test_semantic_scholar_normalizer_returns_common_shape():
     assert paper["year"] is None
     assert paper["doi"] == "10.1234/test"
     assert paper["provenance"]["source_tool"] == "semantic_scholar_search"
+
+
+def test_semantic_scholar_normalizer_accepts_string_authors():
+    paper = _normalize_paper(
+        {
+            "paperId": "S2-strings",
+            "title": "A Paper With String Authors",
+            "authors": ["Ada Lovelace", {"display_name": "Grace Hopper"}],
+            "externalIds": {"DOI": "10.1234/strings"},
+        }
+    )
+
+    assert paper["authors"] == ["Ada Lovelace", "Grace Hopper"]

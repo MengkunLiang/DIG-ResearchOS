@@ -107,6 +107,21 @@ def test_search_papers_normalizers_preserve_doi_and_arxiv_pdf_url():
     assert arxiv["pdf_url"] == "https://arxiv.org/pdf/2401.12345v2.pdf"
 
 
+def test_search_papers_normalizers_accept_string_authors():
+    s2 = SearchPapersTool._normalize_s2_paper(
+        {
+            "paperId": "S2-string-authors",
+            "title": "S2 String Authors",
+            "authors": ["Ada Lovelace", {"name": "Grace Hopper"}],
+            "externalIds": {"DOI": "10.1234/string-authors"},
+        }
+    )
+    content = SearchPapersTool._format_papers([s2])
+
+    assert s2["authors"] == ["Ada Lovelace", "Grace Hopper"]
+    assert "Ada Lovelace, Grace Hopper" in content
+
+
 @pytest.mark.asyncio
 async def test_fetch_paper_metadata_auto_detects_arxiv(monkeypatch):
     tool = FetchPaperMetadataTool()

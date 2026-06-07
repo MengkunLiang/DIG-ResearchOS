@@ -107,6 +107,62 @@ def _load_bridge_domain_plan(workspace_dir: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _first_text(value: Any, default: str = "") -> str:
+    if isinstance(value, list):
+        for item in value:
+            text = str(item or "").strip()
+            if text:
+                return text
+        return default
+    if isinstance(value, str):
+        return value.strip()
+    if value in (None, "", [], {}):
+        return default
+    return str(value).strip()
+
+
+def _safe_int(value: Any, default: int | None = None) -> int | None:
+    try:
+        if value in (None, "", [], {}):
+            return default
+        return int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return default
+
+
+def _year_from_crossref_payload(payload: dict[str, Any]) -> int | None:
+    issued = (
+        payload.get("published-print")
+        or payload.get("published-online")
+        or payload.get("published")
+        or payload.get("issued")
+        or payload.get("created")
+    )
+    parts = issued.get("date-parts") if isinstance(issued, dict) else None
+    if not isinstance(parts, list) or not parts or not isinstance(parts[0], list) or not parts[0]:
+        return None
+    return _safe_int(parts[0][0], None)
+
+
+def _crossref_author_dicts(payload: dict[str, Any]) -> list[dict[str, str]]:
+    raw_authors = payload.get("author") or []
+    if not isinstance(raw_authors, list):
+        return []
+    authors: list[dict[str, str]] = []
+    for author in raw_authors[:10]:
+        if isinstance(author, str):
+            name = author.strip()
+        elif isinstance(author, dict):
+            given = str(author.get("given") or "").strip()
+            family = str(author.get("family") or "").strip()
+            name = f"{given} {family}".strip() or str(author.get("name") or "").strip()
+        else:
+            name = str(author).strip()
+        if name:
+            authors.append({"name": name})
+    return authors
+
+
 def _normalize_keywords(project: dict[str, Any]) -> list[str]:
     raw_keywords = project.get("keywords") or []
     keywords = [str(item).strip() for item in raw_keywords if str(item).strip()]
@@ -589,21 +645,13 @@ async def _backfill_recovered_crossref_metadata(
                     paper["referenced_works"] = references
             paper["reference_count"] = message.get("reference-count", len(references))
 
-            title_list = message.get("title")
-            if isinstance(title_list, list) and title_list and not str(paper.get("title") or "").strip():
-                paper["title"] = str(title_list[0] or "").strip()
-            issued = (
-                message.get("published-print")
-                or message.get("published-online")
-                or message.get("published")
-                or message.get("issued")
-            )
-            parts = issued.get("date-parts", [[]]) if isinstance(issued, dict) else [[]]
-            if not paper.get("year") and parts and parts[0]:
-                try:
-                    paper["year"] = int(parts[0][0])
-                except (TypeError, ValueError):
-                    pass
+            title = _first_text(message.get("title"))
+            if title and not str(paper.get("title") or "").strip():
+                paper["title"] = title
+            if not paper.get("year"):
+                year = _year_from_crossref_payload(message)
+                if year is not None:
+                    paper["year"] = year
 
     async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
         await asyncio.gather(*(_one(client, paper) for paper in candidates))
@@ -773,42 +821,18 @@ def _crossref_message_to_snowball_paper(
     source_record: dict[str, Any],
     ref_doi: str,
 ) -> dict[str, Any] | None:
-    title_list = message.get("title")
-    title = str(title_list[0] if isinstance(title_list, list) and title_list else "").strip()
+    title = _first_text(message.get("title"))
     if not title:
         return None
 
-    authors: list[dict[str, str]] = []
-    for author in message.get("author") or []:
-        if not isinstance(author, dict):
-            continue
-        given = str(author.get("given") or "").strip()
-        family = str(author.get("family") or "").strip()
-        name = f"{given} {family}".strip() or "Unknown"
-        authors.append({"name": name})
-        if len(authors) >= 10:
-            break
-
-    issued = (
-        message.get("published-print")
-        or message.get("published-online")
-        or message.get("published")
-        or message.get("issued")
-    )
-    parts = issued.get("date-parts", [[]]) if isinstance(issued, dict) else [[]]
-    year = None
-    if parts and parts[0]:
-        try:
-            year = int(parts[0][0])
-        except (TypeError, ValueError):
-            year = None
+    authors = _crossref_author_dicts(message)
+    year = _year_from_crossref_payload(message)
 
     doi = str(message.get("DOI") or ref_doi or "").strip()
     references = _extract_crossref_references(message)
     source_id = str(source_record.get("canonical_id") or source_record.get("id") or source_record.get("doi") or "").strip()
     source_title = str(source_record.get("title") or source_id or "unknown source").strip()
-    container = message.get("container-title")
-    venue = str(container[0] if isinstance(container, list) and container else "").strip()
+    venue = _first_text(message.get("container-title"))
     paper: dict[str, Any] = {
         "id": f"doi:{doi}" if doi else title,
         "source": "crossref_snowball",
@@ -818,7 +842,7 @@ def _crossref_message_to_snowball_paper(
         "abstract": clean_abstract(message.get("abstract")),
         "venue": venue,
         "doi": doi,
-        "citation_count": int(message.get("is-referenced-by-count") or 0),
+        "citation_count": _safe_int(message.get("is-referenced-by-count"), 0) or 0,
         "url": str(message.get("URL") or (f"https://doi.org/{doi}" if doi else "")),
         "externalIds": {"DOI": doi} if doi else {},
         "references": references,

@@ -429,6 +429,23 @@ def test_enrich_papers_preserves_unknown_year_as_none():
     assert papers[0]["year"] is None
 
 
+def test_enrich_papers_normalizes_mixed_author_payloads():
+    papers = enrich_papers(
+        [
+            {
+                "id": "mixed-authors",
+                "title": "Mixed Author Payload Paper",
+                "source": "openalex",
+                "authors": ["Ada Lovelace", {"name": "Grace Hopper"}, {"display_name": "Katherine Johnson"}],
+                "year": 2025,
+                "abstract": "A paper with heterogeneous upstream author payloads.",
+            }
+        ]
+    )
+
+    assert papers[0]["authors"] == ["Ada Lovelace", "Grace Hopper", "Katherine Johnson"]
+
+
 def test_enrich_papers_prefers_llm_annotations_over_fallbacks():
     papers = enrich_papers(
         [

@@ -155,7 +155,7 @@ profiles:
 - `lite_paper_num: null` 表示不设固定 40 篇上限，尽量覆盖所有剩余候选。
 - `min_relevance: 0.0` 表示不靠 metadata priority hint 丢弃候选。
 - `include_metadata_only: true` 表示缺摘要但有标题的论文也会生成 metadata-only 轻量 note。
-- `exclude_semantic_excluded: false` 表示 `shared_keyword_only/unrelated` 也会保留为排除线索，而不是静默消失。
+- `exclude_semantic_excluded: true` 表示 Scout 已明确判为 `shared_keyword_only/unrelated` 或禁止 deep-read 的论文默认不再进入 abstract note、BibTeX 和 comparison table，避免污染 T3.5/T8 语料；如需做排除线索复核，可在项目配置中显式设为 `false`。
 
 这组参数只控制机械覆盖行为；论文是否能作为学术证据仍由 Reader/Writer 的 LLM 判断和 evidence level 控制。
 

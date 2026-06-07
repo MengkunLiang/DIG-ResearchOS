@@ -34,6 +34,7 @@ class _FakeResponse:
 class _FakeAsyncClient:
     def __init__(self, responses: dict[str, _FakeResponse], *args, **kwargs):
         self.responses = responses
+        self.requested_urls: list[str] = []
 
     async def __aenter__(self):
         return self
@@ -42,6 +43,7 @@ class _FakeAsyncClient:
         return False
 
     async def get(self, url: str, **kwargs):
+        self.requested_urls.append(url)
         if "api.openalex.org/works/" in url:
             return self.responses["openalex"]
         if "api.unpaywall.org/v2/" in url:
@@ -105,6 +107,43 @@ async def test_fetch_paper_pdf_downloads_from_openalex_oa_location(monkeypatch, 
     assert result.ok
     assert (workspace / "paper.pdf").exists()
     assert result.data["url"] == "https://example.org/paper.pdf"
+
+
+@pytest.mark.asyncio
+async def test_fetch_paper_pdf_queries_openalex_doi_endpoint_with_escaped_slash(monkeypatch, tmp_path: Path):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    policy = WorkspaceAccessPolicy(workspace, [""], [""])
+    tool = FetchPaperPdfTool(policy)
+
+    clients: list[_FakeAsyncClient] = []
+    responses = {
+        "openalex": _FakeResponse(
+            headers={"content-type": "application/json"},
+            content=b"{}",
+            json_data={
+                "best_oa_location": {"pdf_url": "https://example.org/paper.pdf"},
+                "primary_location": None,
+                "locations": [],
+            },
+        ),
+        "https://example.org/paper.pdf": _FakeResponse(),
+    }
+
+    import researchos.tools.paper_fetch as paper_fetch
+
+    def _client(*args, **kwargs):
+        client = _FakeAsyncClient(responses, *args, **kwargs)
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(paper_fetch.httpx, "AsyncClient", _client)
+
+    result = await tool.execute(paper_id="doi:10.1145/3477495.3532058", save_path="paper.pdf")
+
+    assert result.ok
+    requested = "\n".join(clients[0].requested_urls)
+    assert "/works/doi:10.1145%2F3477495.3532058" in requested
 
 
 @pytest.mark.asyncio

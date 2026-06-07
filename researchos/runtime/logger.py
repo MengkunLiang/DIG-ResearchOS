@@ -52,7 +52,7 @@ def _suppress_noisy_library_loggers() -> None:
         "httpx",
         "httpcore",
     ):
-        logging.getLogger(name).setLevel(logging.WARNING)
+        logging.getLogger(name).setLevel(logging.ERROR if name.lower().startswith("litellm") else logging.WARNING)
 
 
 def configure_logging(level: str = "INFO", json_logs: bool = True) -> None:

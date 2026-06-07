@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from researchos.agents.writer import WriterAgent
+from researchos.tools.manuscript import build_paper_state_input_fingerprints
 
 
 CORE_SECTIONS = [
@@ -113,6 +114,19 @@ def _write_paper_state_and_sections(workspace: Path, *, short_section: bool = Fa
             {
                 "version": "1.0",
                 "semantics": "shared_state_for_section_by_section_writing_not_final_claims",
+                "input_fingerprints": build_paper_state_input_fingerprints(
+                    workspace,
+                    {
+                        "outline": "drafts/outline.md",
+                        "resource_index": "drafts/resource_index.json",
+                        "section_plan": "drafts/section_plan.json",
+                        "evidence_plan": "drafts/evidence_plan.json",
+                        "figure_table_plan": "drafts/figure_table_plan.json",
+                        "alignment_matrix": "drafts/alignment_matrix.json",
+                        "related_work_bib": "literature/related_work.bib",
+                        "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
+                    },
+                ),
                 "section_order": CORE_SECTIONS,
                 "sections": sections,
                 "shared_facts": {

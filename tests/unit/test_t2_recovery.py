@@ -325,6 +325,46 @@ async def test_crossref_backfill_merges_references_when_openalex_refs_exist(monk
 
 
 @pytest.mark.asyncio
+async def test_crossref_backfill_accepts_string_title_and_issued_year(monkeypatch):
+    papers = [
+        {
+            "id": "doi:10.1111/source",
+            "canonical_id": "doi:10.1111/source",
+            "doi": "10.1111/source",
+            "title": "",
+            "abstract": "",
+        }
+    ]
+
+    class _IssuedCrossrefClient(_FakeCrossrefClient):
+        async def get(self, url: str, **kwargs):
+            return _FakeCrossrefResponse(
+                {
+                    "message": {
+                        "DOI": "10.1111/source",
+                        "title": "String Title From Crossref",
+                        "issued": {"date-parts": [[2026, 1, 1]]},
+                        "abstract": "<jats:p>Recovered abstract.</jats:p>",
+                    }
+                }
+            )
+
+    import researchos.runtime.t2_recovery as t2_recovery
+
+    monkeypatch.setattr(
+        t2_recovery.httpx,
+        "AsyncClient",
+        lambda *args, **kwargs: _IssuedCrossrefClient(*args, **kwargs),
+    )
+
+    stats = await _backfill_recovered_crossref_metadata(papers)
+
+    assert stats["abstract_filled"] == 1
+    assert papers[0]["title"] == "String Title From Crossref"
+    assert papers[0]["year"] == 2026
+
+
+@pytest.mark.asyncio
 async def test_openalex_title_backfill_repairs_title_only_seed_metadata(monkeypatch):
     papers = [
         {
