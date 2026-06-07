@@ -69,6 +69,45 @@ def _write_yaml(path: Path, content: str) -> None:
     path.write_text(textwrap.dedent(content).strip() + "\n", encoding="utf-8")
 
 
+def _write_t2_source_workspace(source: Path) -> None:
+    (source / "user_seeds" / "pdfs").mkdir(parents=True)
+    (source / "literature").mkdir(parents=True)
+    (source / "project.yaml").write_text("project_id: copied-project\n", encoding="utf-8")
+    (source / "user_seeds" / "seed_papers.jsonl").write_text(
+        '{"title":"Seed Paper"}\n',
+        encoding="utf-8",
+    )
+    (source / "user_seeds" / "seed_constraints.md").write_text("constraints\n", encoding="utf-8")
+    (source / "user_seeds" / "seed_ideas.md").write_text("ideas\n", encoding="utf-8")
+    (source / "user_seeds" / "seed_external_resources.jsonl").write_text("", encoding="utf-8")
+    (source / "user_seeds" / "pdfs" / "seed.pdf").write_bytes(b"%PDF")
+    (source / "literature" / "bridge_domain_plan.json").write_text(
+        '{"source":"none","bridge_domains":[]}\n',
+        encoding="utf-8",
+    )
+    StateYaml(
+        project_id="copied-project",
+        current_task="T2",
+        status="PAUSED",
+        history=[
+            TaskHistoryEntry(
+                task="T1",
+                run_id="t1_done",
+                status="DONE",
+                started_at="2026-01-01T00:00:00+00:00",
+                finished_at="2026-01-01T00:01:00+00:00",
+            ),
+            TaskHistoryEntry(
+                task="T2",
+                run_id="t2_old",
+                status="INTERRUPTED",
+                started_at="2026-01-01T00:02:00+00:00",
+                finished_at="2026-01-01T00:03:00+00:00",
+            ),
+        ],
+    ).dump_yaml(source / "state.yaml")
+
+
 def _hello_llm() -> MockLLMClient:
     """构造一组能驱动 HelloAgent 完成任务的 mock LLM 响应。"""
 
@@ -335,42 +374,7 @@ def test_cli_run_task_command_dispatches(monkeypatch, tmp_path: Path):
 def test_cli_run_from_start_task_initializes_pipeline_state(monkeypatch, tmp_path: Path):
     source = tmp_path / "source"
     workspace = tmp_path / "workspace"
-    (source / "user_seeds" / "pdfs").mkdir(parents=True)
-    (source / "literature").mkdir()
-    (source / "project.yaml").write_text("project_id: copied-project\n", encoding="utf-8")
-    (source / "user_seeds" / "seed_papers.jsonl").write_text(
-        '{"title":"Seed Paper"}\n',
-        encoding="utf-8",
-    )
-    (source / "user_seeds" / "seed_constraints.md").write_text("constraints\n", encoding="utf-8")
-    (source / "user_seeds" / "seed_ideas.md").write_text("ideas\n", encoding="utf-8")
-    (source / "user_seeds" / "seed_external_resources.jsonl").write_text("", encoding="utf-8")
-    (source / "user_seeds" / "pdfs" / "seed.pdf").write_bytes(b"%PDF")
-    (source / "literature" / "bridge_domain_plan.json").write_text(
-        '{"source":"none","bridge_domains":[]}\n',
-        encoding="utf-8",
-    )
-    StateYaml(
-        project_id="copied-project",
-        current_task="T2",
-        status="PAUSED",
-        history=[
-            TaskHistoryEntry(
-                task="T1",
-                run_id="t1_done",
-                status="DONE",
-                started_at="2026-01-01T00:00:00+00:00",
-                finished_at="2026-01-01T00:01:00+00:00",
-            ),
-            TaskHistoryEntry(
-                task="T2",
-                run_id="t2_old",
-                status="INTERRUPTED",
-                started_at="2026-01-01T00:02:00+00:00",
-                finished_at="2026-01-01T00:03:00+00:00",
-            ),
-        ],
-    ).dump_yaml(source / "state.yaml")
+    _write_t2_source_workspace(source)
 
     async def fake_prepare_runtime(args, workspace_dir):
         return PreparedRuntime(
@@ -408,6 +412,71 @@ def test_cli_run_from_start_task_initializes_pipeline_state(monkeypatch, tmp_pat
     )
 
     assert exit_code == 0
+
+
+def test_cli_run_from_defaults_to_t2(monkeypatch, tmp_path: Path):
+    source = tmp_path / "source"
+    workspace = tmp_path / "workspace"
+    _write_t2_source_workspace(source)
+
+    async def fake_prepare_runtime(args, workspace_dir):
+        return PreparedRuntime(
+            skill_roots=[],
+            registry=ToolRegistry(),
+            llm_client=object(),
+        )
+
+    async def fake_run(self, *, project_id: str, resume: bool = False):
+        state = StateYaml.load_yaml(self.workspace / "state.yaml")
+        assert state.current_task == "T2"
+        assert (self.workspace / "user_seeds" / "seed_papers.jsonl").exists()
+        assert not (self.workspace / "literature" / "papers_raw.jsonl").exists()
+        return 0
+
+    monkeypatch.setattr("researchos.cli.install_signal_handlers", lambda: None)
+    monkeypatch.setattr("researchos.cli._prepare_runtime", fake_prepare_runtime)
+    monkeypatch.setattr("researchos.cli.CompletePipelineRunner.run", fake_run)
+
+    exit_code = main(
+        [
+            "--no-banner",
+            "--workspace",
+            str(workspace),
+            "run",
+            "--from",
+            str(source),
+        ]
+    )
+
+    assert exit_code == 0
+
+
+def test_cli_run_from_refuses_existing_target_state(tmp_path: Path, capsys):
+    source = tmp_path / "source"
+    workspace = tmp_path / "workspace"
+    _write_t2_source_workspace(source)
+    workspace.mkdir()
+    StateYaml(project_id="existing", current_task="T3", status="PAUSED").dump_yaml(workspace / "state.yaml")
+
+    exit_code = main(
+        [
+            "--no-banner",
+            "--workspace",
+            str(workspace),
+            "run",
+            "--from",
+            str(source),
+            "--start-task",
+            "T2",
+            "--skip-startup-selftest",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "目标 workspace 已存在 state.yaml" in captured.out
+    state = StateYaml.load_yaml(workspace / "state.yaml")
+    assert state.current_task == "T3"
 
 
 def test_cli_run_task_plain_t7_reports_retired(monkeypatch, tmp_path: Path, capsys):

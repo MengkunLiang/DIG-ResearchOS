@@ -3417,6 +3417,20 @@ researchos run-task T9 --workspace ./workspace/local-test2
 - 识别已完成与未完成的 artifact
 - 只补剩余工作
 
+跨 workspace 重跑不是 `resume`。如果旧 workspace 的 T2 出了问题，但 T1、用户 seed 和
+bridge plan 仍可信，应创建新 workspace 并从 T2 启动完整主链：
+
+```bash
+researchos run \
+  --workspace ./workspace/new-test5-t2-redo \
+  --from ./workspace/new-test5 \
+  --start-task T2
+```
+
+省略 `--start-task` 时，`run --from` 默认从 `T2` 开始。它只复制目标 task 的前置输入，
+不会复制旧 T2 输出；目标 workspace 已有 `state.yaml` 时会拒绝覆盖。单 task 调试才用
+`run-task <TASK> --from <workspace>`。
+
 ## 7.2 预算扩限 gate
 
 当前系统支持预算触顶时不立即死停，而是先问是否扩限继续。

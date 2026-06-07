@@ -299,6 +299,28 @@ python -m researchos.cli run --workspace ./workspace/local-test2
 python -m researchos.cli resume --workspace ./workspace/local-test2
 ```
 
+`resume` 只恢复同一个 workspace 中已经暂停/中断的状态。如果你想保留旧 workspace
+的 T1、用户 seed、PDF 和 bridge plan，但丢弃旧 T2 检索结果，从 T2 重新跑完整后续主链，
+请新建一个目标 workspace，用 `run --from`：
+
+```bash
+python -m researchos.cli run \
+  --workspace ./workspace/new-test5-t2-redo \
+  --from ./workspace/new-test5 \
+  --start-task T2
+```
+
+也可以省略 `--start-task`，此时 `run --from` 默认从 `T2` 开始：
+
+```bash
+python -m researchos.cli run \
+  --workspace ./workspace/new-test5-t2-redo \
+  --from ./workspace/new-test5
+```
+
+注意：目标 workspace 不能已有 `state.yaml`。这个命令只复制 T2 的前置输入，不复制
+旧的 `papers_raw.jsonl`、`papers_verified.jsonl`、`deep_read_queue.jsonl` 等 T2 输出。
+
 ## 常见使用方式
 
 ### 场景 1：完整跑一个项目
