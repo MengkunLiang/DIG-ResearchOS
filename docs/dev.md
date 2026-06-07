@@ -440,13 +440,13 @@ python -m researchos.cli run \
 
 ### 7.1 T2 重点看什么
 
-- `papers_raw` 和 `papers_dedup` 是否分离
-- `papers_verified` 是否生成
+- `papers_raw` 和 active `papers_dedup` 是否分离；raw 可以很大，`papers_dedup`/`papers_verified` 应控制在 active pool 上限内
+- `papers_verified` 和 `papers_backlog` 是否生成；backlog 用来解释 active pool 之外的候选，没有静默丢弃
 - `verification_failures` 是否合理
 - `deep_read_queue` 是否确实优先 seed 和高可读性论文
-- `search_log.md` 是否展示 Query / Bucket / Bridge / Tool / Results / Persisted 表，以及 Bridge Domain Query/Plan 覆盖表
-- OpenAlex 标题兜底补全、OpenAlex DOI/OA 详情补全、Crossref DOI 详情补全、多源摘要回填的 `eligible/candidate/attempted/skipped_by_cap/filled/failed/remaining_missing_*` 是否合理；这些是 all-eligible metadata/abstract backfill
-- OpenAlex/Crossref citation snowball 的 `reference_items_seen`、`non_doi_references_skipped`、`reference_openalex_ids_seen`、`title_references_resolved`、`skipped_by_refs_per_source_cap`、`skipped_by_max_candidates_cap`、`raw_persisted/raw_merged` 是否合理；snowball 是 bounded one-hop，不是全量引用扩展
+- `search_log.md` 是否展示 Query / Bucket / Bridge / Tool / Calls / Results / Persisted 表，以及 Bridge Domain Query/Plan 覆盖表；重复 query 应合并到 Calls
+- OpenAlex 标题兜底补全、OpenAlex DOI/OA 详情补全、Crossref DOI 详情补全、多源摘要回填的 `eligible/candidate/attempted/skipped_by_cap/filled/failed/remaining_missing_*` 是否合理；这些只面向 active pool，不是全 raw 池补全
+- OpenAlex/Crossref citation snowball 的 `reference_items_seen`、`non_doi_references_skipped`、`reference_openalex_ids_seen`、`title_references_resolved`、`skipped_by_refs_per_source_cap`、`skipped_by_max_candidates_cap`、`skipped_existing_snowball_records`、`raw_persisted/raw_merged` 是否合理；snowball 是 bounded one-hop，不是全量引用扩展，重复 finalize 不应继续增长 raw
 - `deep_read_queue_meta.json` 中 `verified_disposition_coverage` 是否为 `1.0`，`queue_with_pdf_url_hints`、`queue_with_reference_hints`、`citation_hub_in_target`、`must_explore_bridge_diagnostics` 是否符合预期
 - `deep_read_queue.jsonl` 是否保留短 provenance：`source_query/source_queries`、`source_tool/source_tools`、`search_buckets`、`openalex_id`、citation snowball 来源；摘要全文仍应通过 `lookup_paper_record` 从 verified/raw 合并读取
 - 如果 search tool 返回很多论文但 raw/dedup/verified 很少，优先检查 raw merge、hidden cap、schema skipped records 和 `researchos.log` 的 `retained_raw_count`

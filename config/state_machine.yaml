@@ -79,8 +79,9 @@ states:
       bridge_domain_plan: literature/bridge_domain_plan.json # T1 交互生成的桥接领域计划（可空）
     outputs:
       papers_raw: literature/papers_raw.jsonl           # 原始检索结果
-      papers_dedup: literature/papers_dedup.jsonl      # 去重后的论文列表
-      papers_verified: literature/papers_verified.jsonl # 已做 metadata verification 的论文
+      papers_dedup: literature/papers_dedup.jsonl      # active candidate pool（最多 120）
+      papers_verified: literature/papers_verified.jsonl # active pool 中已做 metadata verification 的论文
+      papers_backlog: literature/papers_backlog.jsonl   # active pool 外的保留候选
       verification_failures: literature/verification_failures.jsonl # verification 失败清单
       citation_edges: literature/citation_edges.json     # 一跳出引/related_works 边，供 domain_map 与下游复用
       deep_read_queue: literature/deep_read_queue.jsonl # T3 精读队列
@@ -123,6 +124,7 @@ states:
       project: project.yaml                             # 输入：项目配置
       papers_dedup: literature/papers_dedup.jsonl       # 输入：去重论文列表
       papers_verified: literature/papers_verified.jsonl # 输入：已核验论文列表（优先）
+      papers_backlog: literature/papers_backlog.jsonl   # 输入：active pool 外的轻量补读候选
       deep_read_queue_pending: literature/deep_read_queue_pending.jsonl # 输入：恢复运行时的剩余精读队列（优先）
       deep_read_queue: literature/deep_read_queue.jsonl # 输入：精读队列（优先）
       domain_map: literature/domain_map.json             # 输入：T2 引用图领域地图（邻接/边界提示）

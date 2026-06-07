@@ -12,6 +12,7 @@ from difflib import SequenceMatcher
 import json
 import os
 from pathlib import Path
+import re
 from typing import Any
 from urllib.parse import quote
 
@@ -28,7 +29,7 @@ from ..tools.paper_save_tools import (
     _merge_raw_records,
     _raw_record_identity_keys,
 )
-from ..literature_identity import stable_noopenalex_id
+from ..literature_identity import normalize_loose_identity_key, paper_record_match_keys, stable_noopenalex_id
 from ..tools.paper_utils import (
     deduplicate_papers,
     filter_by_domain,
@@ -57,6 +58,11 @@ SEARCH_TOOL_NAMES = frozenset(
         "fetch_outgoing_citations",
     }
 )
+
+T2_ACTIVE_POOL_MAX = 120
+T2_BRIDGE_ACTIVE_POOL_CAP_PER_BRIDGE = 15
+T2_SCREENED_ACTIVE_POOL_CAP = 60
+T2_SNOWBALL_ACTIVE_POOL_CAP = 12
 
 _STOPWORDS = {
     "a",
@@ -198,25 +204,285 @@ def _project_domain_profile(project: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
-def _select_final_papers(scored_papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return the recovered paper pool without relevance-score exclusion.
+def _select_active_candidate_pool(
+    scored_papers: list[dict[str, Any]],
+    workspace_dir: Path,
+    *,
+    max_count: int = T2_ACTIVE_POOL_MAX,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    """Split the recovered pool into an active T2 pool and a backlog.
 
-    Deep reading is capped later by ``build_deep_read_queue``. T2 recovery
-    should not silently drop verified papers here, because overflow papers are
-    still useful for shallow abstract notes and resume/backlog decisions.
+    `papers_raw.jsonl` is the complete audit trail. `papers_dedup.jsonl` is the
+    active candidate pool consumed by T3/T3.5, and Scout validation caps it at
+    120. Older recovery code kept every verified paper in `papers_dedup`, which
+    made the validator fail and pushed hundreds of weak bridge hits into later
+    LLM stages. This selector keeps seeds and high-signal material active while
+    writing the rest to `papers_backlog.jsonl` for audit/revisit.
     """
 
-    return scored_papers
+    if not scored_papers:
+        return [], [], {"active_pool_max": max_count, "input_count": 0, "active_count": 0, "backlog_count": 0}
+
+    max_count = max(1, int(max_count))
+    bridge_plan = _load_bridge_domain_plan(workspace_dir)
+    confirmed_bridges = [
+        str(item.get("bridge_id") or "").strip()
+        for item in (bridge_plan.get("bridge_domains") if isinstance(bridge_plan.get("bridge_domains"), list) else [])
+        if isinstance(item, dict) and str(item.get("bridge_id") or "").strip()
+    ]
+    seed_key_sets = [paper_record_match_keys(seed) for seed in _load_seed_papers(workspace_dir)]
+
+    selected: list[dict[str, Any]] = []
+    selected_keys: set[str] = set()
+    selection_reasons: Counter[str] = Counter()
+
+    def record_keys(record: dict[str, Any]) -> set[str]:
+        keys = paper_record_match_keys(record)
+        title_key = normalize_loose_identity_key(_paper_title_text(record.get("title")))
+        if title_key:
+            keys.add(f"title:{title_key}")
+        year = str(record.get("year") or "").strip()
+        if title_key and year:
+            keys.add(f"title_year:{title_key}|{year}")
+        return {key for key in keys if key}
+
+    def is_seed(record: dict[str, Any]) -> bool:
+        if bool(record.get("seed_priority")) or str(record.get("source") or "") == "user_seed":
+            return True
+        keys = record_keys(record)
+        return any(keys and seed_keys and keys & seed_keys for seed_keys in seed_key_sets)
+
+    def bridge_ids(record: dict[str, Any]) -> list[str]:
+        values: list[str] = []
+        for key in ("bridge_id", "recalled_by_bridges", "contributed_bridges"):
+            raw = record.get(key)
+            candidates = raw if isinstance(raw, list) else [raw]
+            for item in candidates:
+                text = str(item or "").strip()
+                if text and text not in values:
+                    values.append(text)
+        screen = record.get("semantic_screen") if isinstance(record.get("semantic_screen"), dict) else {}
+        text = str(screen.get("bridge_id") or "").strip()
+        if text and text not in values:
+            values.append(text)
+        return values
+
+    def is_screened_deep(record: dict[str, Any]) -> bool:
+        screen = record.get("semantic_screen") if isinstance(record.get("semantic_screen"), dict) else {}
+        return bool(screen.get("can_enter_deep_read"))
+
+    def is_snowball(record: dict[str, Any]) -> bool:
+        return (
+            str(record.get("retrieval_intent") or "").strip() == "citation_snowball"
+            or str(record.get("search_bucket") or record.get("source_bucket") or "").strip() == "snowball"
+            or bool(record.get("citation_snowball_source_id") or record.get("citation_snowball_source_ids"))
+        )
+
+    def rank_key(record: dict[str, Any]) -> tuple[Any, ...]:
+        return (
+            -float(record.get("relevance_score", 0.0) or 0.0),
+            -int(record.get("citation_count", 0) or 0),
+            -int(record.get("year", 0) or 0),
+            _paper_title_text(record.get("title")).casefold(),
+        )
+
+    def add_records(records: list[dict[str, Any]], reason: str, *, limit: int | None = None) -> None:
+        added = 0
+        for record in sorted(records, key=rank_key):
+            if len(selected) >= max_count:
+                break
+            if limit is not None and added >= max(0, int(limit)):
+                break
+            keys = record_keys(record)
+            if keys and selected_keys & keys:
+                continue
+            active = dict(record)
+            active["t2_pool_role"] = "active"
+            active["active_pool_reason"] = reason
+            selected.append(active)
+            selected_keys.update(keys)
+            selection_reasons[reason] += 1
+            added += 1
+
+    seeds = [paper for paper in scored_papers if is_seed(paper)]
+    add_records(seeds, "seed")
+
+    screened = [paper for paper in scored_papers if not is_seed(paper) and is_screened_deep(paper)]
+    add_records(screened, "semantic_screen_deep_read", limit=T2_SCREENED_ACTIVE_POOL_CAP)
+
+    for bridge_id in confirmed_bridges:
+        bridge_pool = [
+            paper
+            for paper in scored_papers
+            if not is_seed(paper)
+            and not is_screened_deep(paper)
+            and bridge_id in bridge_ids(paper)
+        ]
+        add_records(bridge_pool, f"bridge_recall:{bridge_id}", limit=T2_BRIDGE_ACTIVE_POOL_CAP_PER_BRIDGE)
+
+    add_records(
+        [paper for paper in scored_papers if not is_seed(paper) and is_snowball(paper)],
+        "citation_snowball",
+        limit=T2_SNOWBALL_ACTIVE_POOL_CAP,
+    )
+    add_records(scored_papers, "metadata_priority_fill")
+
+    backlog: list[dict[str, Any]] = []
+    for record in scored_papers:
+        keys = record_keys(record)
+        if keys and selected_keys & keys:
+            continue
+        item = dict(record)
+        item["t2_pool_role"] = "backlog"
+        item["triaged_out"] = True
+        item["triaged_reason"] = "t2_active_pool_cap_exceeded"
+        item["read_disposition"] = "backlog"
+        item["read_disposition_reason"] = "retained_in_papers_backlog_for_audit_or_later_revisit"
+        backlog.append(item)
+
+    metadata = {
+        "active_pool_max": max_count,
+        "input_count": len(scored_papers),
+        "active_count": len(selected),
+        "backlog_count": len(backlog),
+        "selection_reasons": dict(selection_reasons),
+        "confirmed_bridge_ids": confirmed_bridges,
+        "bridge_active_pool_cap_per_bridge": T2_BRIDGE_ACTIVE_POOL_CAP_PER_BRIDGE,
+        "screened_active_pool_cap": T2_SCREENED_ACTIVE_POOL_CAP,
+        "snowball_active_pool_cap": T2_SNOWBALL_ACTIVE_POOL_CAP,
+    }
+    return selected, backlog, metadata
 
 
 def _normalize_match_key(value: Any) -> str:
     return " ".join(str(value or "").casefold().split())
 
 
+def _paper_title_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        for item in value:
+            text = _paper_title_text(item)
+            if text:
+                return text
+        return ""
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
 def _write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     content = "\n".join(json.dumps(record, ensure_ascii=False) for record in records)
     path.write_text(content + ("\n" if content else ""), encoding="utf-8")
+
+
+def _candidate_record_identity_keys(record: dict[str, Any]) -> set[str]:
+    keys = set(paper_record_match_keys(record))
+    title_key = normalize_loose_identity_key(_paper_title_text(record.get("title")))
+    if title_key:
+        keys.add(f"title:{title_key}")
+        year = str(record.get("year") or "").strip()
+        if year:
+            keys.add(f"title_year:{title_key}|{year}")
+    return {key for key in keys if key}
+
+
+def _candidate_pool_identity_keys(records: list[dict[str, Any]]) -> set[str]:
+    keys: set[str] = set()
+    for record in records:
+        keys.update(_candidate_record_identity_keys(record))
+    return keys
+
+
+def _is_seed_like_recovered_record(record: dict[str, Any], seed_key_sets: list[set[str]]) -> bool:
+    if bool(record.get("seed_priority")) or str(record.get("source") or "") == "user_seed":
+        return True
+    keys = _candidate_record_identity_keys(record)
+    return any(keys and seed_keys and keys & seed_keys for seed_keys in seed_key_sets)
+
+
+def _as_active_pool_backlog_record(record: dict[str, Any]) -> dict[str, Any]:
+    item = dict(record)
+    item["t2_pool_role"] = "backlog"
+    item["triaged_out"] = True
+    item["triaged_reason"] = "t2_active_pool_cap_exceeded"
+    item["read_disposition"] = "backlog"
+    item["read_disposition_reason"] = "retained_in_papers_backlog_for_audit_or_later_revisit"
+    return item
+
+
+def _dedupe_backlog_against_active_and_backlog(
+    *,
+    active_records: list[dict[str, Any]],
+    backlog_records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    active_keys = _candidate_pool_identity_keys(active_records)
+    seen_backlog_keys: set[str] = set()
+    result: list[dict[str, Any]] = []
+    for record in backlog_records:
+        keys = _candidate_record_identity_keys(record)
+        if keys and active_keys & keys:
+            continue
+        if keys and seen_backlog_keys & keys:
+            continue
+        result.append(record)
+        seen_backlog_keys.update(keys)
+    return result
+
+
+def _cap_active_pool_after_seed_repair(
+    active_records: list[dict[str, Any]],
+    backlog_records: list[dict[str, Any]],
+    workspace_dir: Path,
+    active_pool_meta: dict[str, Any],
+    *,
+    max_count: int = T2_ACTIVE_POOL_MAX,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    """Keep seed repair from accidentally bypassing the T2 active pool cap."""
+
+    max_count = max(1, int(max_count))
+    if len(active_records) <= max_count:
+        backlog_records = _dedupe_backlog_against_active_and_backlog(
+            active_records=active_records,
+            backlog_records=backlog_records,
+        )
+        active_pool_meta["active_count"] = len(active_records)
+        active_pool_meta["backlog_count"] = len(backlog_records)
+        return active_records, backlog_records, active_pool_meta
+
+    seed_key_sets = [_candidate_record_identity_keys(seed) for seed in _load_seed_papers(workspace_dir)]
+    seed_records = [
+        record
+        for record in active_records
+        if _is_seed_like_recovered_record(record, seed_key_sets)
+    ]
+    non_seed_records = [
+        record
+        for record in active_records
+        if not _is_seed_like_recovered_record(record, seed_key_sets)
+    ]
+    if len(seed_records) >= max_count:
+        capped_active = seed_records[:max_count]
+        overflow = [*seed_records[max_count:], *non_seed_records]
+    else:
+        remaining = max_count - len(seed_records)
+        capped_active = [*seed_records, *non_seed_records[:remaining]]
+        overflow = non_seed_records[remaining:]
+
+    repaired_backlog = [
+        *(_as_active_pool_backlog_record(record) for record in overflow),
+        *backlog_records,
+    ]
+    repaired_backlog = _dedupe_backlog_against_active_and_backlog(
+        active_records=capped_active,
+        backlog_records=repaired_backlog,
+    )
+    active_pool_meta["seed_repair_overflow_count"] = len(overflow)
+    active_pool_meta["active_count"] = len(capped_active)
+    active_pool_meta["backlog_count"] = len(repaired_backlog)
+    return capped_active, repaired_backlog, active_pool_meta
 
 
 def _merge_enriched_records_back_to_raw(raw_path: Path, enriched: list[dict[str, Any]]) -> dict[str, Any]:
@@ -866,9 +1132,75 @@ def _crossref_message_to_snowball_paper(
     return paper
 
 
+def _is_citation_snowball_record(paper: dict[str, Any]) -> bool:
+    source_tools = {
+        str(item or "").strip()
+        for item in [
+            paper.get("source_tool"),
+            paper.get("source"),
+            *((paper.get("source_tools") or []) if isinstance(paper.get("source_tools"), list) else []),
+        ]
+        if str(item or "").strip()
+    }
+    return (
+        str(paper.get("retrieval_intent") or "").strip() == "citation_snowball"
+        or str(paper.get("search_bucket") or paper.get("source_bucket") or "").strip() == "snowball"
+        or bool(paper.get("citation_snowball_source_id") or paper.get("citation_snowball_source_ids"))
+        or any(source_tool.endswith("snowball_backfill") for source_tool in source_tools)
+        or "crossref_reference_title_openalex_backfill" in source_tools
+    )
+
+
+def _existing_snowball_record_count(papers: list[dict[str, Any]], source_tools: set[str]) -> int:
+    known_snowball_tools = {
+        "openalex_snowball_backfill",
+        "crossref_snowball_backfill",
+        "crossref_reference_title_openalex_backfill",
+    }
+    count = 0
+    for paper in papers:
+        paper_source_tools = {
+            str(item or "").strip()
+            for item in [
+                paper.get("source_tool"),
+                paper.get("source"),
+                *((paper.get("source_tools") or []) if isinstance(paper.get("source_tools"), list) else []),
+            ]
+            if str(item or "").strip()
+        }
+        if paper_source_tools & source_tools:
+            count += 1
+            continue
+        if (
+            _is_citation_snowball_record(paper)
+            and not (paper_source_tools & known_snowball_tools)
+            and any(source_tool in known_snowball_tools or source_tool.endswith("snowball_backfill") for source_tool in source_tools)
+        ):
+            count += 1
+    return count
+
+
+def _is_allowed_snowball_source(paper: dict[str, Any]) -> bool:
+    """Only expand citation neighbors from high-confidence source papers.
+
+    Snowballing from every metadata fallback paper turns broad query noise into
+    more noise. Keep it tied to user seeds or Scout's semantic_screen decisions.
+    """
+
+    if _is_citation_snowball_record(paper):
+        return False
+    if bool(paper.get("seed_priority")) or str(paper.get("source") or "") == "user_seed":
+        return True
+    if str(paper.get("active_pool_reason") or "") == "seed":
+        return True
+    screen = paper.get("semantic_screen") if isinstance(paper.get("semantic_screen"), dict) else {}
+    return bool(screen.get("can_enter_deep_read"))
+
+
 async def _expand_crossref_snowball_candidates(
     papers: list[dict[str, Any]],
     *,
+    existing_papers: list[dict[str, Any]] | None = None,
     max_sources: int = 12,
     refs_per_source: int = 8,
     max_candidates: int = 40,
@@ -903,9 +1235,24 @@ async def _expand_crossref_snowball_candidates(
         stats["reason"] = "httpx_missing"
         return [], stats
 
-    existing_dois = {_record_doi(paper).casefold() for paper in papers if _record_doi(paper)}
+    known_papers = [*papers, *(existing_papers or [])]
+    existing_snowball_records = _existing_snowball_record_count(
+        known_papers,
+        {"crossref_snowball_backfill", "crossref_reference_title_openalex_backfill"},
+    )
+    if existing_snowball_records > 0:
+        stats["skipped_existing_snowball_records"] = existing_snowball_records
+        stats["raw_persist_ok"] = True
+        stats["raw_persisted"] = 0
+        stats["raw_merged"] = 0
+        stats["raw_persisted_or_merged"] = 0
+        return [], stats
+
+    existing_dois = {_record_doi(paper).casefold() for paper in known_papers if _record_doi(paper)}
     selected_sources: list[dict[str, Any]] = []
     for paper in papers:
+        if not _is_allowed_snowball_source(paper):
+            continue
         refs = paper.get("referenced_works") or paper.get("references") or []
         if not isinstance(refs, list) or not refs:
             continue
@@ -926,7 +1273,7 @@ async def _expand_crossref_snowball_candidates(
     title_ref_jobs: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
     seen_ref_dois: set[str] = set()
     seen_ref_titles: set[str] = set()
-    existing_titles = {_normalize_match_key(paper.get("title")) for paper in papers if _normalize_match_key(paper.get("title"))}
+    existing_titles = {_normalize_match_key(paper.get("title")) for paper in known_papers if _normalize_match_key(paper.get("title"))}
     hit_max_candidates_cap = False
     for source in selected_sources:
         refs = source.get("referenced_works") or source.get("references") or []
@@ -1082,6 +1429,7 @@ def _normalize_openalex_ref_id(value: Any) -> str:
 async def _expand_openalex_snowball_candidates(
     papers: list[dict[str, Any]],
     *,
+    existing_papers: list[dict[str, Any]] | None = None,
     max_sources: int = 12,
     refs_per_source: int = 8,
     max_candidates: int = 40,
@@ -1117,11 +1465,22 @@ async def _expand_openalex_snowball_candidates(
         stats["reason"] = "httpx_missing"
         return [], stats
 
-    existing_openalex_ids = {_record_openalex_id(paper) for paper in papers if _record_openalex_id(paper)}
+    known_papers = [*papers, *(existing_papers or [])]
+    existing_snowball_records = _existing_snowball_record_count(known_papers, {"openalex_snowball_backfill"})
+    if existing_snowball_records > 0:
+        stats["skipped_existing_snowball_records"] = existing_snowball_records
+        stats["raw_persist_ok"] = True
+        stats["raw_persisted"] = 0
+        stats["raw_merged"] = 0
+        stats["raw_persisted_or_merged"] = 0
+        return [], stats
+
+    existing_openalex_ids = {_record_openalex_id(paper) for paper in known_papers if _record_openalex_id(paper)}
     selected_sources = [
         paper
         for paper in papers
         if isinstance(paper.get("referenced_works"), list) or isinstance(paper.get("related_works"), list)
+        if _is_allowed_snowball_source(paper)
     ]
     selected_sources.sort(
         key=lambda paper: (
@@ -1721,6 +2080,68 @@ def _raw_values(value: Any) -> list[str]:
     return [str(value).strip()] if str(value).strip() else []
 
 
+def _normalize_query_audit_key(value: Any) -> str:
+    return " ".join(re.sub(r"[^0-9a-z]+", " ", str(value or "").casefold()).split())
+
+
+def _dedupe_query_list(queries: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for query in queries:
+        text = " ".join(str(query or "").split())
+        if not text:
+            continue
+        key = _normalize_query_audit_key(text)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(text)
+    return result
+
+
+def _dedupe_search_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    order: list[tuple[str, str, str, str]] = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        query = " ".join(str(record.get("query") or "").split())
+        bucket = str(record.get("query_bucket") or record.get("search_bucket") or "").strip()
+        bridge_id = str(record.get("bridge_id") or "").strip()
+        tool = str(record.get("tool_name") or record.get("source_tool") or record.get("source") or "").strip()
+        if not query and not bucket and not bridge_id and not tool:
+            continue
+        # Only keep bridge attribution for bridge-like query buckets. Provenance
+        # lists from merged raw rows otherwise create false bridge/query pairs.
+        if bucket not in {"theory_bridge", "adjacent_field", "snowball"}:
+            bridge_id = ""
+        key = (_normalize_query_audit_key(query), bucket, bridge_id, tool)
+        if key not in grouped:
+            item = dict(record)
+            item["query"] = query or "[unknown query]"
+            item["query_bucket"] = bucket
+            item["bridge_id"] = bridge_id
+            item["tool_name"] = tool
+            item["duplicate_call_count"] = int(item.get("duplicate_call_count") or 1)
+            grouped[key] = item
+            order.append(key)
+            continue
+        existing = grouped[key]
+        existing["duplicate_call_count"] = int(existing.get("duplicate_call_count") or 1) + int(record.get("duplicate_call_count") or 1)
+        existing["result_count"] = int(existing.get("result_count") or existing.get("count") or 0) + int(record.get("result_count") or record.get("count") or 0)
+        existing["persisted_count"] = int(existing.get("persisted_count") or 0) + int(record.get("persisted_count") or 0)
+        source_stats = record.get("source_stats") if isinstance(record.get("source_stats"), dict) else {}
+        if source_stats:
+            merged_stats = existing.get("source_stats") if isinstance(existing.get("source_stats"), dict) else {}
+            for source, value in source_stats.items():
+                try:
+                    merged_stats[source] = int(merged_stats.get(source) or 0) + int(value or 0)
+                except (TypeError, ValueError):
+                    merged_stats.setdefault(source, value)
+            existing["source_stats"] = merged_stats
+    return [grouped[key] for key in order]
+
+
 def _raw_bridge_value_at(
     bridge_ids: list[str],
     buckets: list[str],
@@ -1736,7 +2157,11 @@ def _raw_bridge_value_at(
         if len(queries) <= 1 and len(buckets) <= 1:
             return bridge_ids[0]
         return ""
-    if idx < len(bridge_ids):
+    # Merged raw records may carry several source_queries/search_buckets and a
+    # separate set of recalled bridge ids. If list lengths no longer align, do
+    # not guess the bridge for this row; a wrong bridge id in search_log is worse
+    # than an unspecified one because it can drive repeated bridge queries.
+    if len(bridge_ids) in {len(queries), len(buckets)} and idx < len(bridge_ids):
         return bridge_ids[idx]
     return ""
 
@@ -1967,12 +2392,34 @@ async def finalize_t2_outputs(
     # the highest-priority papers with the weakest metadata.
     dedup_papers = _ensure_seed_papers(dedup_papers, dedup_papers + raw_papers, workspace_dir)
 
+    provisional_scored_papers = score_papers(dedup_papers, keywords)
+    provisional_scored_papers = sorted(
+        provisional_scored_papers,
+        key=lambda paper: (
+            float(paper.get("relevance_score", 0.0)),
+            int(paper.get("citation_count", 0) or 0),
+            int(paper.get("year", 0) or 0),
+        ),
+        reverse=True,
+    )
+    dedup_papers, pre_backfill_backlog_papers, active_pool_meta = _select_active_candidate_pool(
+        provisional_scored_papers,
+        workspace_dir,
+    )
+
     openalex_title_backfill = await _backfill_recovered_openalex_title_metadata(dedup_papers)
     openalex_backfill = await _backfill_recovered_openalex_metadata(dedup_papers)
     multisource_abstract_backfill = await _backfill_recovered_multisource_abstracts(dedup_papers, policy)
     metadata_backfill = await _backfill_recovered_crossref_metadata(dedup_papers)
-    openalex_snowball_candidates, openalex_citation_backfill = await _expand_openalex_snowball_candidates(dedup_papers)
-    crossref_snowball_candidates, citation_backfill = await _expand_crossref_snowball_candidates(dedup_papers)
+    raw_papers_for_snowball_dedup = _load_jsonl(raw_path)
+    openalex_snowball_candidates, openalex_citation_backfill = await _expand_openalex_snowball_candidates(
+        dedup_papers,
+        existing_papers=raw_papers_for_snowball_dedup,
+    )
+    crossref_snowball_candidates, citation_backfill = await _expand_crossref_snowball_candidates(
+        dedup_papers,
+        existing_papers=raw_papers_for_snowball_dedup,
+    )
     snowball_candidates = [*openalex_snowball_candidates, *crossref_snowball_candidates]
     await _persist_snowball_candidates(
         policy,
@@ -2013,7 +2460,7 @@ async def finalize_t2_outputs(
     # Sort for deterministic queue priority only. `relevance_score` is a
     # metadata priority hint and is not used as an exclusion threshold.
     scored_papers = sorted(
-        scored_papers,
+        [*scored_papers, *pre_backfill_backlog_papers],
         key=lambda paper: (
             float(paper.get("relevance_score", 0.0)),
             int(paper.get("citation_count", 0) or 0),
@@ -2021,12 +2468,29 @@ async def finalize_t2_outputs(
         ),
         reverse=True,
     )
-    final_papers = _select_final_papers(scored_papers)
+    final_papers, backlog_papers, active_pool_meta = _select_active_candidate_pool(scored_papers, workspace_dir)
+    active_pool_meta["pre_backfill_active_count"] = len(dedup_papers)
+    active_pool_meta["pre_backfill_backlog_count"] = len(pre_backfill_backlog_papers)
     final_papers = _ensure_seed_papers(final_papers, scored_papers + raw_papers, workspace_dir)
+    final_papers = deduplicate_papers(final_papers, doi_dedup=True, title_threshold=0.95)
+    final_papers, backlog_papers, active_pool_meta = _cap_active_pool_after_seed_repair(
+        final_papers,
+        backlog_papers,
+        workspace_dir,
+        active_pool_meta,
+    )
     raw_screenings = _extract_existing_semantic_screenings(raw_papers + dedup_papers + final_papers)
     enriched_papers = enrich_papers(final_papers, keywords, domain_profile=domain_profile)
     if raw_screenings:
         enriched_papers = apply_semantic_screening(enriched_papers, raw_screenings)
+
+    backlog_papers = enrich_papers(backlog_papers, keywords, domain_profile=domain_profile) if backlog_papers else []
+    if raw_screenings and backlog_papers:
+        backlog_papers = apply_semantic_screening(backlog_papers, raw_screenings)
+    backlog_path = workspace_dir / "literature" / "papers_backlog.jsonl"
+    _write_jsonl(backlog_path, backlog_papers)
+    active_pool_meta["active_count"] = len(enriched_papers)
+    active_pool_meta["backlog_count"] = len(backlog_papers)
 
     save_result = await SavePapersDedupTool(policy).execute(papers=enriched_papers, append=False)
     if not save_result.ok:
@@ -2132,8 +2596,11 @@ async def finalize_t2_outputs(
             if not existing.get("source") and item.get("source"):
                 existing["source"] = item.get("source")
 
+    search_records = _dedupe_search_records(search_records)
     if not queries:
         queries = [str(item.get("query") or "") for item in search_records if str(item.get("query") or "").strip()]
+    else:
+        queries = _dedupe_query_list(queries)
     if not queries:
         queries = ["[Recovered] 原始 query 历史不可用"]
         query_results = None
@@ -2149,6 +2616,16 @@ async def finalize_t2_outputs(
     search_log += "\n## 说明\n\n"
     search_log += "- 此文件由 runtime 基于当前 `papers_raw.jsonl` 和可解析的 T2 trace 自动重建。\n"
     search_log += f"- 解析到的 T2 trace 数量: {trace_count}\n"
+    search_log += (
+        "- T2 active candidate pool: "
+        f"input={active_pool_meta.get('input_count')}, "
+        f"active={active_pool_meta.get('active_count')}, "
+        f"backlog={active_pool_meta.get('backlog_count')}, "
+        f"max={active_pool_meta.get('active_pool_max')}, "
+        f"selection_reasons={active_pool_meta.get('selection_reasons')}; "
+        "`papers_raw.jsonl` 保留全量检索审计，`papers_dedup.jsonl`/`papers_verified.jsonl` "
+        "只保存本轮 active 候选池，超额候选写入 `papers_backlog.jsonl` 供 abstract sweep 或人工回捞。\n"
+    )
     search_log += (
         "- OpenAlex 标题兜底补全: "
         f"enabled={openalex_title_backfill.get('enabled')}, "
@@ -2268,6 +2745,8 @@ async def finalize_t2_outputs(
         "ok": True,
         "raw_count": len(raw_papers),
         "dedup_count": len(enriched_papers),
+        "backlog_count": len(backlog_papers),
+        "active_pool": active_pool_meta,
         "query_count": len(queries),
         "trace_count": trace_count,
         "openalex_backfill": openalex_backfill,
@@ -2284,6 +2763,7 @@ async def finalize_t2_outputs(
         "paths": {
             "papers_dedup": str(workspace_dir / "literature" / "papers_dedup.jsonl"),
             "papers_verified": str(verified_path),
+            "papers_backlog": str(backlog_path),
             "verification_failures": str(failures_path),
             "deep_read_queue": str(queue_path),
             "domain_map": str(domain_map_path),

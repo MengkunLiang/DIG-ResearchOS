@@ -568,13 +568,18 @@ class TestAppendPapersRawTool:
         assert result.ok is True
         assert "追加 2 篇" in result.content
 
-        # 验证文件内容（原始格式，不过滤）
+        # 验证文件内容已经规范化为 papers_raw schema。
         file_path = workspace / "literature" / "papers_raw.jsonl"
         assert file_path.exists()
-        content = file_path.read_text(encoding="utf-8")
-        assert "Paper 1" in content
-        assert "Paper 2" in content
-        assert '{"name": "Author 1"}' in content  # 原始格式保留
+        records = [
+            json.loads(line)
+            for line in file_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        assert records[0]["title"] == "Paper 1"
+        assert records[0]["authors"] == ["Author 1"]
+        assert records[1]["title"] == "Paper 2"
+        assert records[1]["authors"] == ["Author 2"]
 
     @pytest.mark.asyncio
     async def test_append_multiple_batches(self, tool, workspace):

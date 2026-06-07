@@ -536,15 +536,16 @@ agents:
 
 原则是：不依赖学术知识、可机械执行或可验证的运行参数放 `behavior`；需要知识判断、写作策略、审稿标准、idea 推理的内容仍放 prompt/skill guidance，让 LLM 发挥能力。
 
-`reader.modes.read.behavior.abstract_sweep` 当前默认是全量补读取向：
+`reader.modes.read.behavior.abstract_sweep` 当前默认是有上限的轻量补读取向：
 
 - `expected_notes_ratio: 1.0` 表示无 `deep_read_queue` 的旧 workspace fallback 也按输入池 100% 校验，不再按 80% 放行。
-- `lite_paper_num: null` 表示不设固定数量上限。
-- `min_relevance: 0.0` 表示不靠 metadata priority hint 丢弃剩余 verified 论文。
+- `lite_paper_num: 120` 表示每轮最多补 120 篇 abstract-only / metadata-only note，避免 backlog 爆量拖垮 T3。
+- `sources: [papers_verified, papers_dedup, papers_backlog]` 表示优先覆盖 active verified/dedup，再从 backlog 中补读尚未覆盖的候选。
+- `min_relevance: 0.0` 表示不靠 metadata priority hint 丢弃剩余候选。
 - `include_metadata_only: true` 表示缺摘要但有标题的论文也会生成 metadata-only 轻量 note。
 - `exclude_semantic_excluded: true` 表示 LLM screen 为 `shared_keyword_only/unrelated` 或 `can_enter_deep_read=false` 的论文默认不写入 abstract sweep note/BibTeX/comparison table，避免被后续 synthesis/writer 当作可用证据；需要排除线索复核时可显式设为 `false`。
 
-这和 T2 的 `deep_read_queue` 100% verified 去向覆盖配套：active deep-read 由 T3 精读，剩余 shallow/backlog 由 abstract sweep 生成弱证据提示。
+这和 T2 的 active pool/backlog 分层配套：active deep-read 由 T3 精读，active shallow 和一部分 backlog 由 abstract sweep 生成弱证据提示。
 
 ### 5.5 当前值得注意的字段
 

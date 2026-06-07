@@ -116,6 +116,7 @@ class ScoutAgent(Agent):
                     "structured_outputs": {
                         "literature/papers_dedup.jsonl": "papers_dedup",
                         "literature/papers_verified.jsonl": "papers_verified",
+                        "literature/papers_backlog.jsonl": "papers_dedup",
                         "literature/papers_raw.jsonl": "papers_raw",
                     },
                 },

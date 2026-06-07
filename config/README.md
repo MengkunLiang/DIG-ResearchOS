@@ -149,10 +149,11 @@ profiles:
 
 兼容层仍能读取旧的 `llm` / `budget` 字段，但 checked-in 默认配置不再把它们放这里。不要把日常模型和预算参数写回 `agent_params.yaml`，否则又会出现多表参数冲突。
 
-当前 Reader 的 `modes.read.behavior.abstract_sweep` 默认用于覆盖 T3 deep read 后尚未读完的 verified 论文：
+当前 Reader 的 `modes.read.behavior.abstract_sweep` 默认用于覆盖 T3 deep read 后尚未读完的 active verified 论文，并从 `papers_backlog.jsonl` 中补一部分低成本摘要笔记：
 
 - `expected_notes_ratio: 1.0` 是无 queue 旧 workspace 的 fallback 比例，表示输入池默认必须 100% 有笔记；新主流程仍优先用 `deep_read_queue` 区分 active deep-read 和 shallow/backlog。
-- `lite_paper_num: null` 表示不设固定 40 篇上限，尽量覆盖所有剩余候选。
+- `lite_paper_num: 120` 表示每轮最多做 120 篇 abstract-only / metadata-only 轻量补读，避免几百篇 backlog 把 T3 拖成长期 LLM 消耗。
+- `sources: [papers_verified, papers_dedup, papers_backlog]` 表示优先覆盖 active pool，再从 backlog 补读尚未覆盖且有 title/abstract/metadata 的候选。
 - `min_relevance: 0.0` 表示不靠 metadata priority hint 丢弃候选。
 - `include_metadata_only: true` 表示缺摘要但有标题的论文也会生成 metadata-only 轻量 note。
 - `exclude_semantic_excluded: true` 表示 Scout 已明确判为 `shared_keyword_only/unrelated` 或禁止 deep-read 的论文默认不再进入 abstract note、BibTeX 和 comparison table，避免污染 T3.5/T8 语料；如需做排除线索复核，可在项目配置中显式设为 `false`。
@@ -161,10 +162,10 @@ profiles:
 
 ### T2 metadata / citation backfill 参数归属
 
-T2 的 OpenAlex DOI/OA 详情补全、Crossref DOI 详情补全、多源摘要回填、OpenAlex/Crossref citation snowball、raw cache merge 是 runtime deterministic finalize 的一部分。它们的默认 cap 和重试策略属于工具实现默认，不是日常用户需要调的 LLM budget。
+T2 的 active pool 选择、OpenAlex DOI/OA 详情补全、Crossref DOI 详情补全、多源摘要回填、OpenAlex/Crossref citation snowball、raw cache merge 是 runtime deterministic finalize 的一部分。它们的默认 cap 和重试策略属于工具实现默认，不是日常用户需要调的 LLM budget。
 
 - 日常用户不要在 `agent_params.yaml` 里加 T2 `llm` / `budget` 参数来影响这些回填；Scout 的模型只负责 query 设计和语义筛选。
-- 质量排障优先看 `literature/search_log.md` 和 `_runtime/logs/researchos.log`，尤其是 `eligible/candidate/attempted/skipped_by_cap/failed/remaining_missing_*`、`raw_persisted/raw_merged`、`T2 raw 元数据缓存回写`。
+- 质量排障优先看 `literature/search_log.md` 和 `_runtime/logs/researchos.log`，尤其是 active/backlog 规模、`eligible/candidate/attempted/skipped_by_cap/failed/remaining_missing_*`、`raw_persisted/raw_merged`、`skipped_existing_snowball_records` 和 `T2 raw 元数据缓存回写`。
 - 如果将来需要把 snowball cap 或 backfill cap 暴露给用户，应新增到单一的 runtime/search 配置入口，而不是同时写入 `agent_params.yaml` 和 `state_machine.yaml`。
 
 ### 日志与控制台

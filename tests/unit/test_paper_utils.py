@@ -117,6 +117,60 @@ def test_deduplicate_papers_merges_bridge_citation_and_pdf_provenance():
     assert paper["pdf_url"] == "https://arxiv.org/pdf/2401.00001.pdf"
 
 
+def test_deduplicate_papers_uses_loose_title_normalization_across_sources():
+    deduped = deduplicate_papers(
+        [
+            {
+                "id": "crossref-1",
+                "title": "Federated Fine-Tuning of Large Language Models with Privacy Preservation and Cross-Domain Semantic Alignment",
+                "authors": ["A"],
+                "year": 2025,
+                "source": "crossref",
+                "source_query": "core query",
+            },
+            {
+                "id": "openalex-1",
+                "title": "Federated Fine‐Tuning of Large Language Models with Privacy Preservation and Cross‐Domain Semantic Alignment",
+                "authors": ["A"],
+                "year": 2025,
+                "source": "openalex",
+                "source_query": "bridge query",
+            },
+        ]
+    )
+
+    assert len(deduped) == 1
+    assert "crossref" in deduped[0]["source"]
+    assert "openalex" in deduped[0]["source"]
+    assert "core query" in deduped[0]["source_queries"]
+    assert "bridge query" in deduped[0]["source_queries"]
+
+
+def test_deduplicate_papers_tolerates_non_string_title_payloads():
+    deduped = deduplicate_papers(
+        [
+            {
+                "id": "crossref-list-title",
+                "title": ["Robust Cross Domain Transfer"],
+                "authors": ["A"],
+                "year": 2025,
+                "source": "crossref",
+            },
+            {
+                "id": "openalex-string-title",
+                "title": "Robust Cross Domain Transfer",
+                "authors": ["A"],
+                "year": 2025,
+                "source": "openalex",
+            },
+        ]
+    )
+
+    assert len(deduped) == 1
+    assert "crossref" in deduped[0]["source"]
+    assert "openalex" in deduped[0]["source"]
+
+
 def test_expand_queries_uses_llm_profile_without_builtin_ai_expansion():
     queries = expand_queries(
         [],

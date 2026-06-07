@@ -31,9 +31,9 @@ from ..tools.paper_utils import deduplicate_papers
 
 _DEFAULT_CONFIG = {
     "enabled": False,
-    "lite_paper_num": None,
+    "lite_paper_num": 120,
     "min_relevance": 0.0,
-    "sources": ["papers_verified", "papers_dedup"],
+    "sources": ["papers_verified", "papers_dedup", "papers_backlog"],
     "exclude_already_read": True,
     "include_metadata_only": True,
     "exclude_semantic_excluded": True,
@@ -58,7 +58,7 @@ def build_sweep_candidates(
     workspace: Path,
     config: dict[str, Any] | None = None,
 ) -> list[dict]:
-    """从 papers_verified/papers_dedup 中筛选 abstract sweep 候选。"""
+    """从 verified/dedup/backlog 中筛选 abstract sweep 候选。"""
 
     cfg = _resolve_config(config)
     lite_raw = cfg.get("lite_paper_num")

@@ -102,6 +102,20 @@ def _normalize_year(year: Any) -> int | None:
     return None
 
 
+def _first_text(value: Any, default: str = "") -> str:
+    if isinstance(value, str):
+        return html.unescape(value.strip())
+    if isinstance(value, list):
+        for item in value:
+            text = _first_text(item)
+            if text:
+                return text
+        return default
+    if value is None:
+        return default
+    return html.unescape(str(value).strip())
+
+
 def _extract_year_from_paper(paper: dict[str, Any]) -> int | None:
     """Extract publication year across common API payload shapes."""
 
@@ -289,7 +303,7 @@ def _transform_to_papers_raw(paper: dict[str, Any]) -> dict[str, Any]:
     abstract = clean_abstract(paper.get("abstract"))
 
     # 提取 URL
-    url = paper.get("url") or paper.get("id", "")
+    url = _first_text(paper.get("url") or paper.get("id", ""))
 
     # 提取 DOI。很多源（尤其 Semantic Scholar）只放在 externalIds.DOI；
     # 必须提升到顶层，后续 dedup/PDF fetch/OpenAlex/Crossref backfill 才能统一识别。
@@ -315,11 +329,11 @@ def _transform_to_papers_raw(paper: dict[str, Any]) -> dict[str, Any]:
         "canonical_id_source": canonical_id_source,
         "no_openalex_id": no_openalex_id,
         "source": source,
-        "title": html.unescape(str(paper.get("title", "Unknown"))),
+        "title": _first_text(paper.get("title"), "Unknown"),
         "authors": authors,
         "year": year,
         "abstract": abstract,
-        "venue": html.unescape(str(paper.get("venue", ""))),
+        "venue": _first_text(paper.get("venue")),
         "citation_count": citation_count,
         "doi": doi,
         "url": url,
@@ -558,15 +572,16 @@ class AppendPapersRawParams(BaseModel):
 class AppendPapersRawTool(Tool):
     """流式追加论文到 papers_raw.jsonl。
 
-    LLM 检索到论文后立即调用此工具追加到文件。
-    **不进行任何数据转换或验证**，只做简单的 JSONL 追加。
-    这样 LLM 不需要处理数据格式，可以专注检索。
+    LLM 检索到论文后立即调用此工具追加到文件。工具会先把上游异构
+    metadata 规范化为 papers_raw schema，再按 DOI/OpenAlex/arXiv/title
+    合并重复记录，避免 raw 文件写入 dict authors、list title 等后续阶段
+    无法处理的格式。
 
     流程：
     1. LLM 调用搜索 API
     2. LLM 立即调用 append_papers_raw 追加结果
     3. 重复步骤 1-2 直到检索完成
-    4. 最后调用 process_papers_raw 批量转换和验证
+    4. 最后调用 finish_task，由 runtime deterministic finalize 生成 T2 产物
 
     示例用法：
     ```
@@ -579,8 +594,8 @@ class AppendPapersRawTool(Tool):
     name = "append_papers_raw"
     description = (
         "流式追加论文到 literature/papers_raw.jsonl。"
-        "不做任何数据转换，只追加原始 JSON。"
-        "LLM 检索到论文后立即调用，专注检索不处理数据。"
+        "会规范化为 papers_raw schema 并合并重复 provenance。"
+        "LLM 检索到论文后立即调用，专注检索不手工处理数据。"
     )
     parameters_schema = AppendPapersRawParams
     timeout_seconds = 10.0
@@ -614,9 +629,38 @@ class AppendPapersRawTool(Tool):
                     for key in _raw_record_identity_keys(existing):
                         index.setdefault(key, record_index)
 
+            transformed_papers: list[dict[str, Any]] = []
+            skipped_records: list[dict[str, Any]] = []
+            for idx, paper in enumerate(params.papers):
+                try:
+                    transformed = _transform_to_papers_raw(paper)
+                except Exception as exc:
+                    skipped_records.append({"index": idx, "reason": f"transform_failed: {exc}"})
+                    continue
+                ok, err = validate_record(transformed, "papers_raw")
+                if not ok:
+                    skipped_records.append(
+                        {
+                            "index": idx,
+                            "reason": f"schema_validation_failed: {err}",
+                            "title": str(transformed.get("title") or "")[:200],
+                            "id": str(transformed.get("id") or transformed.get("doi") or "")[:200],
+                        }
+                    )
+                    continue
+                transformed_papers.append(transformed)
+
+            if not transformed_papers:
+                return ToolResult(
+                    ok=False,
+                    content="没有可追加的有效 papers_raw 记录",
+                    error="no_valid_papers",
+                    data={"skipped_records": skipped_records[:20], "skipped_count": len(skipped_records)},
+                )
+
             appended_count = 0
             merged_count = 0
-            for paper in params.papers:
+            for paper in transformed_papers:
                 keys = _raw_record_identity_keys(paper)
                 existing_index = next((index[key] for key in keys if key in index), None)
                 if existing_index is None:
@@ -640,12 +684,15 @@ class AppendPapersRawTool(Tool):
                 ok=True,
                 content=(
                     f"✅ 追加 {appended_count} 篇论文到 literature/papers_raw.jsonl"
-                    f"（合并重复 {merged_count} 条）"
+                    f"（合并重复 {merged_count} 条，跳过无效 {len(skipped_records)} 条）"
                 ),
                 data={
                     "path": "literature/papers_raw.jsonl",
                     "count": appended_count,
                     "merged_count": merged_count,
+                    "valid_input_count": len(transformed_papers),
+                    "skipped_count": len(skipped_records),
+                    "skipped_records": skipped_records[:20],
                 },
             )
 

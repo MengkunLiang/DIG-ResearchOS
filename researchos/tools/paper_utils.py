@@ -14,7 +14,7 @@ from collections import Counter, defaultdict
 from typing import Any
 
 from ..time_utils import current_utc_year, format_year_window
-from ..literature_identity import paper_record_match_keys
+from ..literature_identity import normalize_loose_identity_key, paper_record_match_keys
 
 # ---------------------------------------------------------------------------
 # Methodological signal keywords
@@ -45,7 +45,7 @@ def compute_methodological_signal(paper: dict[str, Any]) -> float:
     被 T3/T4 看到的位置；它不是领域相关性判断，也不代表论文一定重要。
     Returns 0.0 ~ 1.0。
     """
-    text = (paper.get("title", "") + " " + paper.get("abstract", "")).lower()
+    text = f"{_paper_text(paper.get('title'))} {_paper_text(paper.get('abstract'))}".lower()
     hits = sum(1 for kw in METHODOLOGICAL_KEYWORDS if kw in text)
     if hits == 0:
         return 0.0
@@ -88,13 +88,16 @@ def deduplicate_papers(
                     break
 
         # 标题相似度去重
-        title = paper.get("title", "").strip()
+        title = _paper_title_text(paper.get("title"))
         if not title:
             continue
+        title_key = _normalized_title_for_dedup(title)
 
         if duplicate_index is None:
             for seen_title, seen_index in seen_titles:
-                similarity = SequenceMatcher(None, title.lower(), seen_title.lower()).ratio()
+                if not title_key or not seen_title:
+                    continue
+                similarity = SequenceMatcher(None, title_key, seen_title).ratio()
                 if similarity >= title_threshold:
                     duplicate_index = seen_index
                     break
@@ -113,9 +116,50 @@ def deduplicate_papers(
         if doi_dedup:
             for key in _dedup_identity_keys(paper):
                 identity_to_index.setdefault(key, index)
-        seen_titles.append((title, index))
+        seen_titles.append((title_key, index))
 
     return result
+
+
+def _paper_title_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        for item in value:
+            text = _paper_title_text(item)
+            if text:
+                return text
+        return ""
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _paper_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return " ".join(text for item in value if (text := _paper_text(item)))
+    if isinstance(value, dict):
+        return " ".join(text for item in value.values() if (text := _paper_text(item)))
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _normalized_title_for_dedup(title: Any) -> str:
+    """Normalize titles before fuzzy matching.
+
+    Raw API titles differ mostly by punctuation, Unicode dashes, HTML entities,
+    or capitalization. Matching on the loose normalized title keeps DOI/arXiv
+    exact matching as the primary key while still merging obvious same-title
+    records across Crossref/OpenAlex/arXiv.
+    """
+
+    key = normalize_loose_identity_key(str(title or ""))
+    if len(key) < 12 or len(key.split()) < 3:
+        return ""
+    return key
 
 
 def _dedup_identity_keys(paper: dict[str, Any]) -> set[str]:
@@ -132,7 +176,13 @@ def _dedup_identity_keys(paper: dict[str, Any]) -> set[str]:
     doi = _normalize_doi_key(paper.get("doi") or external_ids.get("DOI"))
     if doi:
         keys.add(f"doi:{doi}")
-    for candidate in (paper.get("canonical_id"), paper.get("id"), paper.get("paperId"), external_ids.get("OpenAlex"), paper.get("openalex_id")):
+    for candidate in (
+        paper.get("canonical_id"),
+        paper.get("id"),
+        paper.get("paperId"),
+        external_ids.get("OpenAlex"),
+        paper.get("openalex_id"),
+    ):
         value = str(candidate or "").strip()
         if value.startswith("https://openalex.org/") or value.startswith("https://api.openalex.org/works/"):
             value = value.rstrip("/").split("/")[-1]
@@ -141,10 +191,21 @@ def _dedup_identity_keys(paper: dict[str, Any]) -> set[str]:
     arxiv = str(external_ids.get("ArXiv") or paper.get("arxiv_id") or "").strip().casefold()
     if arxiv:
         keys.add(f"arxiv:{arxiv.removeprefix('arxiv:')}")
+    corpus_id = str(
+        external_ids.get("CorpusId")
+        or external_ids.get("CorpusID")
+        or paper.get("corpusId")
+        or paper.get("CorpusId")
+        or ""
+    ).strip()
+    if corpus_id:
+        keys.add(f"semantic_scholar_corpus:{corpus_id.casefold()}")
     # Keep compatibility with the shared matcher for exact identifier tokens.
     for key in paper_record_match_keys(paper):
-        if key.startswith(("doi ", "doi:", "arxiv ", "arxiv:")) or key.startswith("w") and key[1:].isdigit():
+        if key.startswith(("doi ", "doi:", "arxiv ", "arxiv:")):
             keys.add(key)
+        elif key.startswith("w") and key[1:].isdigit():
+            keys.add(f"openalex:{key.upper()}")
     return {key for key in keys if key}
 
 
@@ -383,8 +444,8 @@ def score_papers(
             scores["citation"] = 0.4
 
         # 4. keyword 匹配度
-        title = paper.get("title", "").lower()
-        abstract = paper.get("abstract", "").lower()
+        title = _paper_text(paper.get("title")).lower()
+        abstract = _paper_text(paper.get("abstract")).lower()
         text = f"{title} {abstract}"
 
         matched_keywords = sum(1 for kw in keywords if kw.lower() in text)
@@ -456,11 +517,11 @@ def expand_queries(
     # 作为可追溯 query；领域扩展仍由 LLM 通过 llm_queries/domain_profile 提供。
     if seed_papers:
         for paper in seed_papers[:5]:
-            title = " ".join(str(paper.get("title") or "").split())
+            title = " ".join(_paper_title_text(paper.get("title")).split())
             if len(title) >= 4:
                 queries.append(title)
         for paper in seed_papers[:3]:  # 只用前 3 篇
-            title = paper.get("title", "")
+            title = _paper_title_text(paper.get("title"))
             # 提取标题中的关键短语（简单实现：提取大写开头的连续词）
             key_phrases = re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b", title)
             for phrase in key_phrases[:2]:  # 每篇论文最多 2 个短语
@@ -612,16 +673,17 @@ def generate_search_log(
     # 检索式
     log += "## 检索式\n\n"
     if records:
-        log += "| # | Query | Bucket | Bridge | Tool/Source | Results | Persisted |\n"
-        log += "|---:|---|---|---|---|---:|---:|\n"
+        log += "| # | Query | Bucket | Bridge | Tool/Source | Calls | Results | Persisted |\n"
+        log += "|---:|---|---|---|---|---:|---:|---:|\n"
         for i, record in enumerate(records, 1):
             query = _md_cell(record.get("query") or "")
             bucket = _md_cell(record.get("query_bucket") or record.get("search_bucket") or "unspecified")
             bridge_id = _md_cell(record.get("bridge_id") or "-")
             tool = _md_cell(record.get("tool_name") or record.get("source_tool") or record.get("source") or "-")
+            calls = int(record.get("duplicate_call_count") or record.get("call_count") or 1)
             count = int(record.get("result_count") or record.get("count") or 0)
             persisted = int(record.get("persisted_count") or 0)
-            log += f"| {i} | {query} | {bucket} | {bridge_id} | {tool} | {count} | {persisted} |\n"
+            log += f"| {i} | {query} | {bucket} | {bridge_id} | {tool} | {calls} | {count} | {persisted} |\n"
     else:
         for i, query in enumerate(queries, 1):
             if query_results and query in query_results:
@@ -637,7 +699,7 @@ def generate_search_log(
         bucket_persisted: Counter[str] = Counter()
         for record in records:
             bucket = str(record.get("query_bucket") or record.get("search_bucket") or "unspecified")
-            bucket_counts[bucket] += 1
+            bucket_counts[bucket] += int(record.get("duplicate_call_count") or record.get("call_count") or 1)
             bucket_results[bucket] += int(record.get("result_count") or record.get("count") or 0)
             bucket_persisted[bucket] += int(record.get("persisted_count") or 0)
         log += "| Bucket | Query Calls | Results | Persisted |\n"
@@ -654,7 +716,7 @@ def generate_search_log(
             bridge_queries: dict[str, list[str]] = defaultdict(list)
             for record in bridge_records:
                 bridge_id = str(record.get("bridge_id") or "").strip()
-                bridge_counts[bridge_id] += 1
+                bridge_counts[bridge_id] += int(record.get("duplicate_call_count") or record.get("call_count") or 1)
                 bridge_results[bridge_id] += int(record.get("result_count") or record.get("count") or 0)
                 bridge_persisted[bridge_id] += int(record.get("persisted_count") or 0)
                 query = str(record.get("query") or "").strip()
@@ -682,7 +744,7 @@ def generate_search_log(
                 bridge_id = str(record.get("bridge_id") or "").strip()
                 if not bridge_id:
                     continue
-                bridge_counts[bridge_id] += 1
+                bridge_counts[bridge_id] += int(record.get("duplicate_call_count") or record.get("call_count") or 1)
                 bridge_results[bridge_id] += int(record.get("result_count") or record.get("count") or 0)
                 bridge_persisted[bridge_id] += int(record.get("persisted_count") or 0)
                 query = str(record.get("query") or "").strip()
@@ -715,7 +777,7 @@ def generate_search_log(
         source_persisted: Counter[str] = Counter()
         for record in records:
             source = str(record.get("tool_name") or record.get("source_tool") or record.get("source") or "unknown")
-            source_counts[source] += 1
+            source_counts[source] += int(record.get("duplicate_call_count") or record.get("call_count") or 1)
             source_results[source] += int(record.get("result_count") or record.get("count") or 0)
             source_persisted[source] += int(record.get("persisted_count") or 0)
         log += "| Tool/Source | Calls | Results | Persisted |\n"

@@ -225,6 +225,10 @@ def test_validate_t2_artifacts_with_builtin_checker(tmp_path: Path):
         json.dumps(verified_paper, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+    (workspace / "literature" / "papers_backlog.jsonl").write_text(
+        "",
+        encoding="utf-8",
+    )
     (workspace / "literature" / "verification_failures.jsonl").write_text(
         "",
         encoding="utf-8",

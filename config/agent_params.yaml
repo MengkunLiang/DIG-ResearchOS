@@ -116,6 +116,7 @@ agents:
       structured_outputs:
         literature/papers_dedup.jsonl: papers_dedup
         literature/papers_verified.jsonl: papers_verified
+        literature/papers_backlog.jsonl: papers_dedup
         literature/papers_raw.jsonl: papers_raw
       expected_outputs:
         papers_raw_min: 30
@@ -154,11 +155,12 @@ agents:
         behavior:
           abstract_sweep:
             enabled: true
-            lite_paper_num: null
+            lite_paper_num: 120
             min_relevance: 0.0
             sources:
             - papers_verified
             - papers_dedup
+            - papers_backlog
             exclude_already_read: true
             include_metadata_only: true
             exclude_semantic_excluded: true

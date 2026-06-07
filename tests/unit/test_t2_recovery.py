@@ -9,6 +9,10 @@ from researchos.runtime.t2_recovery import (
     _backfill_recovered_crossref_metadata,
     _backfill_recovered_openalex_metadata,
     _backfill_recovered_openalex_title_metadata,
+    _cap_active_pool_after_seed_repair,
+    _dedupe_search_records,
+    _expand_crossref_snowball_candidates,
+    _expand_openalex_snowball_candidates,
     _merge_enriched_records_back_to_raw,
     _openalex_detail_url,
     _search_records_from_raw,
@@ -40,6 +44,206 @@ def test_search_records_from_raw_keeps_single_bridge_on_bridge_bucket_only():
     by_query = {record["query"]: record for record in records}
     assert by_query["core query"]["bridge_id"] == ""
     assert by_query["bridge query"]["bridge_id"] == "b2"
+
+
+def test_search_records_from_raw_does_not_guess_bridge_when_provenance_lists_misaligned():
+    records = _search_records_from_raw(
+        [
+            {
+                "title": "Merged Record",
+                "source_queries": ["core query", "another core query", "bridge query"],
+                "search_buckets": ["core", "core", "theory_bridge"],
+                "source_tools": ["openalex_search", "openalex_search", "multi_source_search"],
+                "recalled_by_bridges": ["b1", "b2"],
+            }
+        ]
+    )
+
+    by_query = {record["query"]: record for record in records}
+    assert by_query["core query"]["bridge_id"] == ""
+    assert by_query["another core query"]["bridge_id"] == ""
+    assert by_query["bridge query"]["bridge_id"] == ""
+
+
+def test_dedupe_search_records_merges_normalized_duplicate_queries_and_counts_calls():
+    records = _dedupe_search_records(
+        [
+            {
+                "query": "cross domain uplift modeling",
+                "query_bucket": "core",
+                "bridge_id": "b1",
+                "tool_name": "openalex_search",
+                "result_count": 20,
+                "persisted_count": 20,
+            },
+            {
+                "query": "Cross-domain uplift modeling",
+                "query_bucket": "core",
+                "bridge_id": "b2",
+                "tool_name": "openalex_search",
+                "result_count": 5,
+                "persisted_count": 4,
+            },
+            {
+                "query": "cross domain uplift modeling",
+                "query_bucket": "theory_bridge",
+                "bridge_id": "b2",
+                "tool_name": "openalex_search",
+                "result_count": 3,
+                "persisted_count": 2,
+            },
+        ]
+    )
+
+    assert len(records) == 2
+    core = next(record for record in records if record["query_bucket"] == "core")
+    assert core["bridge_id"] == ""
+    assert core["duplicate_call_count"] == 2
+    assert core["result_count"] == 25
+    assert core["persisted_count"] == 24
+    bridge = next(record for record in records if record["query_bucket"] == "theory_bridge")
+    assert bridge["bridge_id"] == "b2"
+
+
+def test_cap_active_pool_after_seed_repair_preserves_seed_and_moves_overflow_to_backlog(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    _write_jsonl(
+        workspace / "user_seeds" / "seed_papers.jsonl",
+        [
+            {
+                "id": "seed-special",
+                "canonical_id": "seed-special",
+                "title": "Seed Special Paper",
+            }
+        ],
+    )
+    active_records = [
+        {
+            "id": "seed-special",
+            "canonical_id": "seed-special",
+            "title": "Seed Special Paper",
+            "source": "user_seed",
+            "seed_priority": True,
+        },
+        *[
+            {
+                "id": f"paper-{idx}",
+                "canonical_id": f"paper-{idx}",
+                "title": f"Overflow Paper {idx}",
+                "source": "openalex",
+            }
+            for idx in range(125)
+        ],
+    ]
+
+    active, backlog, meta = _cap_active_pool_after_seed_repair(
+        active_records,
+        [],
+        workspace,
+        {"active_pool_max": 120},
+    )
+
+    assert len(active) == 120
+    assert len(backlog) == 6
+    assert any(record.get("title") == "Seed Special Paper" for record in active)
+    assert all(record.get("t2_pool_role") == "backlog" for record in backlog)
+    assert all(record.get("triaged_out") is True for record in backlog)
+    assert meta["seed_repair_overflow_count"] == 6
+
+
+@pytest.mark.asyncio
+async def test_crossref_snowball_uses_existing_raw_pool_for_idempotence():
+    candidates, stats = await _expand_crossref_snowball_candidates(
+        [
+                {
+                    "id": "source",
+                    "title": "Source Paper",
+                    "doi": "10.1111/source",
+                    "seed_priority": True,
+                    "references": [{"doi": "10.2222/ref", "title": "Existing Ref"}],
+                }
+        ],
+        existing_papers=[{"id": "doi:10.2222/ref", "title": "Existing Ref", "doi": "10.2222/ref"}],
+    )
+
+    assert candidates == []
+    assert stats["attempted"] == 0
+    assert stats["skipped_existing_or_duplicate_reference_dois"] == 1
+
+
+@pytest.mark.asyncio
+async def test_openalex_snowball_uses_existing_raw_pool_for_idempotence():
+    candidates, stats = await _expand_openalex_snowball_candidates(
+        [
+                {
+                    "id": "W_source",
+                    "canonical_id": "W_source",
+                    "title": "Source Paper",
+                    "seed_priority": True,
+                    "referenced_works": ["https://openalex.org/W456"],
+                }
+        ],
+        existing_papers=[{"id": "W456", "canonical_id": "W456", "title": "Existing Ref"}],
+    )
+
+    assert candidates == []
+    assert stats["attempted"] == 0
+    assert stats["skipped_existing_or_duplicate_openalex_ids"] == 1
+
+
+@pytest.mark.asyncio
+async def test_openalex_snowball_detects_existing_plural_source_tools():
+    candidates, stats = await _expand_openalex_snowball_candidates(
+        [
+                {
+                    "id": "W_source",
+                    "canonical_id": "W_source",
+                    "title": "Source Paper",
+                    "seed_priority": True,
+                    "referenced_works": ["https://openalex.org/W456"],
+                }
+        ],
+        existing_papers=[
+            {
+                "id": "merged-record",
+                "canonical_id": "merged-record",
+                "title": "Merged Snowball Record",
+                "source_tool": "multi_source_search",
+                "source_tools": ["multi_source_search", "openalex_snowball_backfill"],
+            }
+        ],
+    )
+
+    assert candidates == []
+    assert stats["attempted"] == 0
+    assert stats["skipped_existing_snowball_records"] == 1
+
+
+@pytest.mark.asyncio
+async def test_crossref_snowball_detects_existing_generic_snowball_record():
+    candidates, stats = await _expand_crossref_snowball_candidates(
+        [
+                {
+                    "id": "source",
+                    "title": "Source Paper",
+                    "doi": "10.1111/source",
+                    "seed_priority": True,
+                    "references": [{"doi": "10.2222/ref", "title": "Existing Ref"}],
+                }
+        ],
+        existing_papers=[
+            {
+                "id": "merged-snowball",
+                "title": "Merged Snowball Record",
+                "retrieval_intent": "citation_snowball",
+                "citation_snowball_source_ids": ["source"],
+            }
+        ],
+    )
+
+    assert candidates == []
+    assert stats["attempted"] == 0
+    assert stats["skipped_existing_snowball_records"] == 1
 
 
 def test_openalex_detail_url_uses_cheap_doi_lookup_endpoint():
@@ -457,6 +661,7 @@ async def test_finalize_t2_outputs_persists_crossref_snowball_and_structured_log
                 "doi": "10.1111/source",
                 "venue": "Source Venue",
                 "citation_count": 2,
+                "seed_priority": True,
             }
         ],
     )
@@ -514,7 +719,7 @@ async def test_finalize_t2_outputs_persists_crossref_snowball_and_structured_log
 
 
 @pytest.mark.asyncio
-async def test_finalize_t2_outputs_does_not_hidden_cap_verified_pool(monkeypatch, tmp_path: Path):
+async def test_finalize_t2_outputs_caps_active_pool_and_writes_backlog(monkeypatch, tmp_path: Path):
     workspace = tmp_path / "ws"
     (workspace / "literature").mkdir(parents=True)
     (workspace / "project.yaml").write_text(
@@ -594,21 +799,34 @@ async def test_finalize_t2_outputs_does_not_hidden_cap_verified_pool(monkeypatch
         lambda *args, **kwargs: _no_openalex_backfill(*args, **kwargs),
     )
     monkeypatch.setattr(t2_recovery, "_backfill_recovered_crossref_metadata", _no_metadata_backfill)
+    monkeypatch.setattr(t2_recovery, "_backfill_recovered_multisource_abstracts", _no_metadata_backfill)
+    monkeypatch.setattr(t2_recovery, "_expand_openalex_snowball_candidates", _no_snowball)
     monkeypatch.setattr(t2_recovery, "_expand_crossref_snowball_candidates", _no_snowball)
 
     result = await finalize_t2_outputs(workspace, trace_paths=[])
 
     assert result["ok"] is True
-    assert result["dedup_count"] == 151
+    assert result["dedup_count"] == 120
+    assert result["backlog_count"] == 31
 
     verified_records = [
         json.loads(line)
         for line in (workspace / "literature" / "papers_verified.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
-    assert len(verified_records) == 151
+    assert len(verified_records) == 120
     assert any(record.get("title") == "Seed Paper Zero" for record in verified_records)
+    backlog_records = [
+        json.loads(line)
+        for line in (workspace / "literature" / "papers_backlog.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(backlog_records) == 31
+    assert all(record.get("t2_pool_role") == "backlog" for record in backlog_records)
 
     queue_meta = json.loads((workspace / "literature" / "deep_read_queue_meta.json").read_text(encoding="utf-8"))
-    assert queue_meta["verified_pool_count"] == 151
+    assert queue_meta["verified_pool_count"] == 120
     assert queue_meta["verified_disposition_coverage"] == 1.0
+    search_log = (workspace / "literature" / "search_log.md").read_text(encoding="utf-8")
+    assert "T2 active candidate pool" in search_log
+    assert "papers_backlog.jsonl" in search_log
