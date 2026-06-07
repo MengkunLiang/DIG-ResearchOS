@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import os
 from pathlib import Path
 
@@ -9,8 +11,17 @@ import pytest
 from researchos.tools.base import ToolResult
 from researchos.tools.docker_exec import DockerExecTool, check_docker_environment
 from researchos.tools.latex_compile import LatexCompileTool
+from researchos.tools.latex_compile import _compile_dependency_fingerprint
 from researchos.tools.search_papers import FetchPaperMetadataTool, SearchPapersTool
 from researchos.tools.workspace_policy import WorkspaceAccessPolicy
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 @pytest.fixture
@@ -70,6 +81,30 @@ async def test_search_papers_rejects_blank_query_with_tool_result():
     assert not result.ok
     assert result.error == "empty_query"
     assert "query 不能为空" in result.content
+
+
+def test_search_papers_normalizers_preserve_doi_and_arxiv_pdf_url():
+    s2 = SearchPapersTool._normalize_s2_paper(
+        {
+            "paperId": "S2",
+            "title": "S2 Paper",
+            "externalIds": {"DOI": "10.1234/s2"},
+        }
+    )
+    assert s2["doi"] == "10.1234/s2"
+
+    import xml.etree.ElementTree as ET
+
+    xml = """<entry xmlns=\"http://www.w3.org/2005/Atom\">
+      <id>https://arxiv.org/abs/2401.12345v2</id>
+      <title>Arxiv Paper</title>
+      <summary>Summary</summary>
+      <published>2024-01-01T00:00:00Z</published>
+      <author><name>Alice</name></author>
+    </entry>"""
+    entry = ET.fromstring(xml)
+    arxiv = SearchPapersTool._normalize_arxiv_entry(entry, {"atom": "http://www.w3.org/2005/Atom"})
+    assert arxiv["pdf_url"] == "https://arxiv.org/pdf/2401.12345v2.pdf"
 
 
 @pytest.mark.asyncio
@@ -288,3 +323,196 @@ async def test_latex_compile_writes_survey_compile_report(tmp_workspace: Path):
     report_path = survey_dir / "survey_compile_report.json"
     assert report_path.exists()
     assert '"tex_path": "drafts/survey/survey.tex"' in report_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_latex_compile_skips_repeated_failure_for_same_tex(tmp_workspace: Path, monkeypatch):
+    bundle = tmp_workspace / "submission" / "bundle"
+    bundle.mkdir(parents=True)
+    tex_path = bundle / "main.tex"
+    tex_path.write_text("\\documentclass{article}\\begin{document}Broken", encoding="utf-8")
+
+    class _FailingDockerTool:
+        policy = WorkspaceAccessPolicy(tmp_workspace, ["", "submission/"], ["", "submission/"])
+        calls = 0
+
+        async def execute(self, **kwargs):
+            self.calls += 1
+            return ToolResult(ok=False, content="latex failed", error="nonzero_exit", data={"exit_code": 1})
+
+    docker = _FailingDockerTool()
+    tool = LatexCompileTool(docker)
+    monkeypatch.setattr(tool, "_is_running_in_container", lambda: False)
+    monkeypatch.setattr("researchos.tools.latex_compile.shutil.which", lambda _name: None)
+
+    first = await tool.execute(tex_path="submission/bundle/main.tex")
+    second = await tool.execute(tex_path="submission/bundle/main.tex")
+
+    assert not first.ok
+    assert not second.ok
+    assert second.error == "cached_compile_failure_same_tex"
+    assert docker.calls == 1
+    report = json.loads((tmp_workspace / "submission" / "compile_report.json").read_text(encoding="utf-8"))
+    assert report["attempt_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_latex_compile_attempt_history_appends_after_tex_changes(tmp_workspace: Path, monkeypatch):
+    bundle = tmp_workspace / "submission" / "bundle"
+    bundle.mkdir(parents=True)
+    tex_path = bundle / "main.tex"
+    tex_path.write_text("\\documentclass{article}\\begin{document}Broken 1", encoding="utf-8")
+
+    class _FailingDockerTool:
+        policy = WorkspaceAccessPolicy(tmp_workspace, ["", "submission/"], ["", "submission/"])
+
+        async def execute(self, **kwargs):
+            return ToolResult(ok=False, content="latex failed", error="nonzero_exit", data={"exit_code": 1})
+
+    tool = LatexCompileTool(_FailingDockerTool())
+    monkeypatch.setattr(tool, "_is_running_in_container", lambda: False)
+    monkeypatch.setattr("researchos.tools.latex_compile.shutil.which", lambda _name: None)
+
+    await tool.execute(tex_path="submission/bundle/main.tex")
+    tex_path.write_text("\\documentclass{article}\\begin{document}Broken 2", encoding="utf-8")
+    await tool.execute(tex_path="submission/bundle/main.tex")
+
+    report = json.loads((tmp_workspace / "submission" / "compile_report.json").read_text(encoding="utf-8"))
+    assert report["attempt_count"] == 2
+    hashes = {attempt["main_tex_sha256"] for attempt in report["attempts"]}
+    assert len(hashes) == 2
+
+
+@pytest.mark.asyncio
+async def test_latex_compile_cached_success_requires_matching_log_and_hashes(tmp_workspace: Path, monkeypatch):
+    bundle = tmp_workspace / "submission" / "bundle"
+    bundle.mkdir(parents=True)
+    tex_path = bundle / "main.tex"
+    pdf_path = bundle / "main.pdf"
+    log_path = bundle / "main.log"
+    tex_path.write_text("\\documentclass{article}\\begin{document}OK\\end{document}", encoding="utf-8")
+    (bundle / "references.bib").write_text("@article{a,title={A}}\n", encoding="utf-8")
+    pdf_path.write_bytes(b"%PDF-1.4\nmock pdf body\n%%EOF")
+    log_path.write_text("clean log", encoding="utf-8")
+    dependency_fingerprint = _compile_dependency_fingerprint(tmp_workspace, tex_path)
+    report = {
+        "version": "1.0",
+        "semantics": "latex_compile_attempt_report",
+        "tex_path": "submission/bundle/main.tex",
+        "requested_engine": "pdflatex",
+        "bibtex": True,
+        "output_dir": None,
+        "success": True,
+        "error": None,
+        "main_tex_sha256": _sha256_file(tex_path),
+        "main_tex_mtime": tex_path.stat().st_mtime,
+        "dependency_fingerprint": dependency_fingerprint,
+        "pdf_path": "submission/bundle/main.pdf",
+        "pdf_sha256": _sha256_file(pdf_path),
+        "pdf_size": pdf_path.stat().st_size,
+        "pdf_mtime": pdf_path.stat().st_mtime,
+        "log_path": "submission/bundle/main.log",
+        "log_sha256": "stale-log-hash",
+        "log_size": log_path.stat().st_size,
+        "log_mtime": log_path.stat().st_mtime,
+        "attempts": [
+            {
+                "success": True,
+                "exit_code": 0,
+                "main_tex_sha256": _sha256_file(tex_path),
+                "dependency_fingerprint_hash": dependency_fingerprint["hash"],
+            }
+        ],
+    }
+    (tmp_workspace / "submission" / "compile_report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    class _DockerTool:
+        policy = WorkspaceAccessPolicy(tmp_workspace, ["", "submission/"], ["", "submission/"])
+        calls = 0
+
+        async def execute(self, **kwargs):
+            self.calls += 1
+            return ToolResult(ok=True, content="compiled", data={"exit_code": 0})
+
+    docker = _DockerTool()
+    tool = LatexCompileTool(docker)
+    monkeypatch.setattr(tool, "_is_running_in_container", lambda: False)
+    monkeypatch.setattr("researchos.tools.latex_compile.shutil.which", lambda _name: None)
+
+    result = await tool.execute(tex_path="submission/bundle/main.tex")
+
+    assert result.ok
+    assert docker.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_latex_compile_cached_success_invalidated_by_bib_dependency(tmp_workspace: Path, monkeypatch):
+    bundle = tmp_workspace / "submission" / "bundle"
+    bundle.mkdir(parents=True)
+    tex_path = bundle / "main.tex"
+    pdf_path = bundle / "main.pdf"
+    log_path = bundle / "main.log"
+    bib_path = bundle / "references.bib"
+    tex_path.write_text(
+        "\\documentclass{article}\\begin{document}OK\\\\cite{a}\\bibliography{references}\\end{document}",
+        encoding="utf-8",
+    )
+    bib_path.write_text("@article{a,title={A}}\n", encoding="utf-8")
+    pdf_path.write_bytes(b"%PDF-1.4\nmock pdf body\n%%EOF")
+    log_path.write_text("clean log", encoding="utf-8")
+    old_dependency_fingerprint = _compile_dependency_fingerprint(tmp_workspace, tex_path)
+    report = {
+        "version": "1.0",
+        "semantics": "latex_compile_attempt_report",
+        "tex_path": "submission/bundle/main.tex",
+        "requested_engine": "pdflatex",
+        "bibtex": True,
+        "output_dir": None,
+        "success": True,
+        "error": None,
+        "main_tex_sha256": _sha256_file(tex_path),
+        "main_tex_mtime": tex_path.stat().st_mtime,
+        "dependency_fingerprint": old_dependency_fingerprint,
+        "pdf_path": "submission/bundle/main.pdf",
+        "pdf_sha256": _sha256_file(pdf_path),
+        "pdf_size": pdf_path.stat().st_size,
+        "pdf_mtime": pdf_path.stat().st_mtime,
+        "log_path": "submission/bundle/main.log",
+        "log_sha256": _sha256_file(log_path),
+        "log_size": log_path.stat().st_size,
+        "log_mtime": log_path.stat().st_mtime,
+        "attempts": [
+            {
+                "success": True,
+                "exit_code": 0,
+                "main_tex_sha256": _sha256_file(tex_path),
+                "dependency_fingerprint_hash": old_dependency_fingerprint["hash"],
+            }
+        ],
+    }
+    (tmp_workspace / "submission" / "compile_report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    bib_path.write_text("@article{a,title={Changed}}\n", encoding="utf-8")
+
+    class _DockerTool:
+        policy = WorkspaceAccessPolicy(tmp_workspace, ["", "submission/"], ["", "submission/"])
+        calls = 0
+
+        async def execute(self, **kwargs):
+            self.calls += 1
+            return ToolResult(ok=True, content="compiled", data={"exit_code": 0})
+
+    docker = _DockerTool()
+    tool = LatexCompileTool(docker)
+    monkeypatch.setattr(tool, "_is_running_in_container", lambda: False)
+    monkeypatch.setattr("researchos.tools.latex_compile.shutil.which", lambda _name: None)
+
+    result = await tool.execute(tex_path="submission/bundle/main.tex")
+
+    assert result.ok
+    assert docker.calls == 1

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -643,6 +644,38 @@ def _validate_paper_state(ws: Path) -> tuple[bool, str | None]:
         return False, "paper_state.json shared_facts.result_metrics 必须是列表"
     if not isinstance(shared.get("alignment_matrix"), list):
         return False, "paper_state.json shared_facts.alignment_matrix 必须是列表"
+    ok, err = _validate_paper_state_input_fingerprints(ws, state)
+    if not ok:
+        return False, err
+    return True, None
+
+
+def _validate_paper_state_input_fingerprints(ws: Path, state: dict) -> tuple[bool, str | None]:
+    fingerprints = state.get("input_fingerprints")
+    if not isinstance(fingerprints, dict) or not fingerprints:
+        return False, "paper_state.json 缺少 input_fingerprints，必须重新初始化 manuscript state"
+    for label, item in fingerprints.items():
+        if not isinstance(item, dict):
+            return False, f"paper_state.json input_fingerprints.{label} 必须是对象"
+        rel = str(item.get("path") or "").strip()
+        if not rel:
+            return False, f"paper_state.json input_fingerprints.{label} 缺少 path"
+        expected_exists = bool(item.get("exists"))
+        path = ws / rel
+        if expected_exists and not path.exists():
+            return False, f"paper_state input 已不存在: {rel}"
+        if not expected_exists:
+            # Optional artifacts such as related_work.bib or evidence packs may
+            # be created after a lightweight test/helper state. They should be
+            # picked up by later validators instead of blocking unrelated
+            # checks. Inputs that existed when paper_state was created are
+            # still hash-bound below.
+            continue
+        expected_hash = str(item.get("sha256") or "").strip()
+        if not expected_hash:
+            return False, f"paper_state input_fingerprints.{label} 缺少 sha256"
+        if path.is_file() and _sha256_file(path) != expected_hash:
+            return False, f"paper_state 对应的 {label} 已过期，必须重新初始化 manuscript state"
     return True, None
 
 
@@ -831,6 +864,9 @@ def _validate_paper_claim_audit_if_needed(ws: Path) -> tuple[bool, str | None]:
         return False, f"存在 experiment_evidence_pack 时必须生成合法 paper_claim_audit.json: {err}"
     if audit.get("semantics") != "paper_claim_audit_against_experiment_evidence_pack":
         return False, "paper_claim_audit.json semantics 不正确"
+    ok, err = _validate_paper_claim_audit_fingerprints(ws, audit)
+    if not ok:
+        return False, err
     summary = audit.get("summary")
     if not isinstance(summary, dict):
         return False, "paper_claim_audit.json 缺少 summary"
@@ -847,6 +883,49 @@ def _validate_paper_claim_audit_if_needed(ws: Path) -> tuple[bool, str | None]:
     if not isinstance(audit.get("issues"), list):
         return False, "paper_claim_audit.json issues 必须是列表"
     return True, None
+
+
+def _validate_paper_claim_audit_fingerprints(ws: Path, audit: dict) -> tuple[bool, str | None]:
+    fingerprints = audit.get("input_fingerprints")
+    if not isinstance(fingerprints, dict):
+        return False, "paper_claim_audit.json 缺少 input_fingerprints，必须刷新 claim audit"
+    checks = [
+        ("paper", "paper_path", "paper_sha256", "drafts/paper.tex", "text"),
+        ("evidence_pack", "evidence_pack_path", "evidence_pack_sha256", "drafts/experiment_evidence_pack.json", "json"),
+        ("result_to_claim", "result_to_claim_path", "result_to_claim_sha256", "drafts/result_to_claim.json", "json"),
+    ]
+    for label, path_key, hash_key, default_rel, mode in checks:
+        rel = str(fingerprints.get(path_key) or default_rel).strip()
+        expected = str(fingerprints.get(hash_key) or "").strip()
+        if not expected:
+            return False, f"paper_claim_audit.json 缺少 {hash_key}，必须刷新 claim audit"
+        path = ws / rel
+        if not path.exists():
+            return False, f"paper_claim_audit input 不存在: {rel}"
+        if mode == "json":
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                return False, f"paper_claim_audit input JSON 无效: {rel}: {exc}"
+            actual = _sha256_json(data)
+        else:
+            actual = _sha256_text(path.read_text(encoding="utf-8", errors="replace"))
+        if actual != expected:
+            return False, f"paper_claim_audit.json 对应的 {label} 已过期，必须重新运行 audit_paper_claims"
+    return True, None
+
+
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    return _sha256_text(path.read_text(encoding="utf-8", errors="replace"))
+
+
+def _sha256_json(data) -> str:
+    payload = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return _sha256_text(payload)
 
 
 def _parse_writing_style(text: str) -> dict[str, str]:

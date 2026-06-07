@@ -207,6 +207,8 @@ def test_prepare_t3_resume_artifacts_filters_existing_queue(tmp_path: Path):
     assert info["resume_queue_count"] == 1
     assert pending_records[0]["paper_id"] == "paper2"
     assert pending_records[0]["queue_rank"] == 1
+    assert pending_records[0]["pending_queue_rank"] == 1
+    assert pending_records[0]["original_queue_rank"] == 2
 
 
 def test_prepare_t3_resume_artifacts_matches_note_internal_ids_and_titles(tmp_path: Path):

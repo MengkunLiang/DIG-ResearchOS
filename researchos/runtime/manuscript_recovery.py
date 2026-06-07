@@ -16,6 +16,7 @@ from ..tools.manuscript import (
     AuditWritingCraftTool,
     InitializeManuscriptStateTool,
 )
+from ..tools.external_experiment import AuditPaperClaimsTool
 from ..tools.workspace_policy import WorkspaceAccessPolicy
 
 
@@ -198,6 +199,19 @@ async def refresh_t8_manuscript_outputs(
     )
     if not craft_audit.ok:
         return False, craft_audit.content or craft_audit.error or "T8 craft audit 刷新失败"
+
+    if (
+        (workspace_dir / "drafts" / "experiment_evidence_pack.json").exists()
+        and (workspace_dir / "drafts" / "result_to_claim.json").exists()
+    ):
+        paper_claim_audit = await AuditPaperClaimsTool(policy).execute(
+            paper_path="drafts/paper.tex",
+            evidence_pack_path="drafts/experiment_evidence_pack.json",
+            result_to_claim_path="drafts/result_to_claim.json",
+            output_path="drafts/paper_claim_audit.md",
+        )
+        if not paper_claim_audit.ok:
+            return False, paper_claim_audit.content or paper_claim_audit.error or "T8 paper claim audit 刷新失败"
 
     return True, None
 

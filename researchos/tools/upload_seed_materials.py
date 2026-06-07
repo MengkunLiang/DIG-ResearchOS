@@ -12,6 +12,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from ..literature_identity import canonical_note_id, is_workspace_guide_or_template
 from ..runtime.errors import ToolRuntimeError
 from ..runtime.logger import get_logger
 from .base import Tool, ToolResult
@@ -65,11 +66,34 @@ class UploadSeedPdfTool(Tool):
                 error="not_a_file",
             )
 
+        if is_workspace_guide_or_template(source):
+            return ToolResult(
+                ok=False,
+                content=f"不能上传 workspace 说明/模板文件作为 seed PDF: {source.name}",
+                error="invalid_seed_file",
+            )
+
         if source.suffix.lower() != ".pdf":
             return ToolResult(
                 ok=False,
                 content=f"文件不是 PDF 格式: {source.suffix}",
                 error="invalid_format",
+            )
+        try:
+            if not source.read_bytes()[:5].startswith(b"%PDF"):
+                return ToolResult(
+                    ok=False,
+                    content="文件扩展名为 PDF，但文件头不是 %PDF。",
+                    error="invalid_pdf_header",
+                )
+        except OSError as exc:
+            return ToolResult(ok=False, content=f"无法读取 PDF: {exc}", error="read_failed")
+        safe_paper_id = canonical_note_id(params.paper_id)
+        if not safe_paper_id or safe_paper_id != params.paper_id or "/" in params.paper_id or "\\" in params.paper_id:
+            return ToolResult(
+                ok=False,
+                content="paper_id 只能包含文件名安全字符，不能包含路径分隔符。",
+                error="invalid_paper_id",
             )
 
         # 创建目标目录
@@ -77,7 +101,7 @@ class UploadSeedPdfTool(Tool):
         target_dir.mkdir(parents=True, exist_ok=True)
 
         # 复制文件
-        target_file = target_dir / f"{params.paper_id}.pdf"
+        target_file = target_dir / f"{safe_paper_id}.pdf"
         try:
             shutil.copy2(source, target_file)
         except Exception as exc:
@@ -87,22 +111,22 @@ class UploadSeedPdfTool(Tool):
             "upload_seed_pdf",
             source=str(source),
             target=str(target_file.relative_to(self.policy.workspace_dir)),
-            paper_id=params.paper_id,
+            paper_id=safe_paper_id,
         )
 
         # 保存元数据（如果提供）
         if params.metadata:
             import json
 
-            metadata_file = target_dir / f"{params.paper_id}.json"
+            metadata_file = target_dir / f"{safe_paper_id}.json"
             metadata_file.write_text(json.dumps(params.metadata, indent=2, ensure_ascii=False))
 
         return ToolResult(
             ok=True,
-            content=f"PDF 已上传: user_seeds/pdfs/{params.paper_id}.pdf",
+            content=f"PDF 已上传: user_seeds/pdfs/{safe_paper_id}.pdf",
             data={
-                "pdf_path": f"user_seeds/pdfs/{params.paper_id}.pdf",
-                "paper_id": params.paper_id,
+                "pdf_path": f"user_seeds/pdfs/{safe_paper_id}.pdf",
+                "paper_id": safe_paper_id,
                 "size_bytes": target_file.stat().st_size,
             },
         )

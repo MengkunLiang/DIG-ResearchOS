@@ -14,6 +14,14 @@ from researchos.tools.paper_enrichment_tool import BackfillPaperAbstractsTool, B
 from researchos.tools.workspace_policy import WorkspaceAccessPolicy
 
 
+def _write_jsonl(path, records):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(json.dumps(record, ensure_ascii=False) for record in records) + ("\n" if records else ""),
+        encoding="utf-8",
+    )
+
+
 class _FakeMetadataResponse:
     def __init__(self, payload: dict | None = None, *, text: str = "") -> None:
         self._payload = payload or {}
@@ -319,6 +327,90 @@ def test_build_deep_read_queue_prioritizes_seed_and_access(tmp_path):
     assert queue[0]["has_local_pdf"] is True
     assert meta["seed_in_queue"] == 1
     assert meta["queue_count"] == 2
+
+
+def test_build_deep_read_queue_removes_duplicate_identity_aliases(tmp_path):
+    workspace = tmp_path / "ws"
+    (workspace / "literature").mkdir(parents=True, exist_ok=True)
+    (workspace / "user_seeds").mkdir(parents=True, exist_ok=True)
+
+    papers = enrich_papers(
+        [
+            {
+                "id": "W123",
+                "canonical_id": "W123",
+                "title": "Alias Duplicate Paper",
+                "doi": "10.1234/alias",
+                "source": "openalex",
+                "year": 2025,
+                "abstract": "OpenAlex metadata.",
+                "relevance_score": 0.9,
+                "verification_status": "metadata_verified",
+                "verification_confidence": 0.9,
+                "semantic_screen": _screen(),
+            },
+            {
+                "id": "doi:10.1234/alias",
+                "canonical_id": "doi:10.1234/alias",
+                "title": "Alias Duplicate Paper",
+                "doi": "10.1234/alias",
+                "source": "crossref",
+                "year": 2025,
+                "abstract": "Crossref metadata.",
+                "relevance_score": 0.8,
+                "verification_status": "metadata_verified",
+                "verification_confidence": 0.9,
+                "semantic_screen": _screen(),
+            },
+        ]
+    )
+
+    queue, meta = build_deep_read_queue(
+        papers,
+        workspace,
+        deep_read_min=1,
+        deep_read_target=2,
+        deep_read_max=2,
+        probe_pool=2,
+    )
+
+    assert len(queue) == 1
+    assert queue[0]["title"] == "Alias Duplicate Paper"
+    assert meta["duplicate_queue_candidates_removed"] == 1
+
+
+def test_build_deep_read_queue_dedupes_external_openalex_alias(tmp_path):
+    workspace = tmp_path / "ws"
+    (workspace / "literature").mkdir(parents=True)
+    records = [
+        {
+            "id": "S2-alias",
+            "canonical_id": "S2-alias",
+            "externalIds": {"OpenAlex": "W12345"},
+            "title": "Alias Title Variant A",
+            "authors": ["Ada"],
+            "year": 2025,
+            "abstract": "A",
+            "verification_status": "metadata_verified",
+            "verification_confidence": 0.9,
+        },
+        {
+            "id": "W12345",
+            "canonical_id": "W12345",
+            "title": "Alias Title Variant B",
+            "authors": ["Ada"],
+            "year": 2025,
+            "abstract": "B",
+            "verification_status": "metadata_verified",
+            "verification_confidence": 0.9,
+        },
+    ]
+    _write_jsonl(workspace / "literature" / "papers_verified.jsonl", records)
+
+    queue, meta = build_deep_read_queue(records, workspace, deep_read_min=1, deep_read_target=1, deep_read_max=2)
+
+    assert len(queue) == 1
+    assert meta["duplicate_queue_candidates_removed"] == 1
 
 
 def test_enrich_papers_preserves_unknown_year_as_none():
@@ -1113,6 +1205,93 @@ def test_build_deep_read_queue_reserves_must_explore_bridge_floor(tmp_path):
     assert all(item["target_bucket"] == "bridge_deep" for item in protected)
     assert all(not item["triaged_out"] for item in protected)
     assert meta["must_explore_bridge_target_counts"]["b1"] == 3
+    assert meta["must_explore_bridge_diagnostics"]["b1"]["bridge_deep_active"] == 3
+
+
+def test_build_deep_read_queue_keeps_short_retrieval_provenance(tmp_path):
+    workspace = tmp_path / "ws"
+    (workspace / "literature").mkdir(parents=True, exist_ok=True)
+    paper = {
+        "id": "doi:10.1234/prov",
+        "canonical_id": "doi:10.1234/prov",
+        "title": "Provenance Paper",
+        "source": "crossref",
+        "source_query": "causal transfer recommendation",
+        "source_tool": "multi_source_search",
+        "search_bucket": "core",
+        "year": 2026,
+        "abstract": "A paper with enough abstract metadata.",
+        "doi": "10.1234/prov",
+        "verification_status": "metadata_verified",
+        "verification_confidence": 0.9,
+        "semantic_screen": _screen(
+            relation="baseline_or_dataset_relevance",
+            role="core",
+            can_enter_core=True,
+        ),
+    }
+
+    queue, meta = build_deep_read_queue(
+        enrich_papers([paper]),
+        workspace,
+        deep_read_min=1,
+        deep_read_target=1,
+        deep_read_max=1,
+        probe_pool=1,
+    )
+
+    assert queue[0]["source_query"] == "causal transfer recommendation"
+    assert queue[0]["source_tool"] == "multi_source_search"
+    assert queue[0]["search_buckets"] == ["core"]
+    assert queue[0]["has_abstract"] is True
+    assert meta["queue_with_abstract_hints"] == 1
+
+
+def test_must_explore_bridge_diagnostics_exposes_unscreened_backlog(tmp_path):
+    workspace = tmp_path / "ws"
+    (workspace / "literature").mkdir(parents=True, exist_ok=True)
+    (workspace / "literature" / "bridge_domain_plan.json").write_text(
+        json.dumps(
+            {
+                "semantics": "bridge_domain_plan",
+                "source": "user",
+                "bridge_domains": [
+                    {"bridge_id": "b1", "priority": "must_explore", "queries": ["bridge"]}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    papers = [
+        {
+            "id": "bridge-unscreened",
+            "title": "Unscreened Bridge Paper",
+            "source": "openalex",
+            "year": 2026,
+            "abstract": "Bridge candidate awaiting reader screening.",
+            "verification_status": "metadata_verified",
+            "verification_confidence": 0.9,
+            "bridge_id": "b1",
+            "retrieval_intent": "cross_domain_bridge",
+            "search_bucket": "theory_bridge",
+        }
+    ]
+
+    queue, meta = build_deep_read_queue(
+        enrich_papers(papers),
+        workspace,
+        deep_read_min=1,
+        deep_read_target=1,
+        deep_read_max=1,
+        probe_pool=1,
+        bridge_deep_floor=1,
+    )
+
+    diag = meta["must_explore_bridge_diagnostics"]["b1"]
+    assert diag["recalled_or_contributed"] == 1
+    assert diag["bridge_deep_active"] == 0
+    assert diag["missing_semantic_screen"] == 1
+    assert meta["must_explore_bridge_warnings"]
 
 
 def test_build_deep_read_queue_protected_records_do_not_exceed_deep_read_max(tmp_path):

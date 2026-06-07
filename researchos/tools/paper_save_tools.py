@@ -249,13 +249,16 @@ def _transform_to_papers_raw(paper: dict[str, Any]) -> dict[str, Any]:
     # 提取 URL
     url = paper.get("url") or paper.get("id", "")
 
-    # 提取 DOI
-    doi = paper.get("doi") or ""
+    # 提取 DOI。很多源（尤其 Semantic Scholar）只放在 externalIds.DOI；
+    # 必须提升到顶层，后续 dedup/PDF fetch/OpenAlex/Crossref backfill 才能统一识别。
+    external_ids = paper.get("externalIds") or {}
+    doi = paper.get("doi") or external_ids.get("DOI") or ""
     if doi.startswith("https://doi.org/"):
         doi = doi.replace("https://doi.org/", "")
-
-    # 提取 externalIds
-    external_ids = paper.get("externalIds") or {}
+    if doi.startswith("http://doi.org/"):
+        doi = doi.replace("http://doi.org/", "")
+    if doi.startswith("doi:"):
+        doi = doi.removeprefix("doi:")
     provenance = _ensure_provenance(
         paper,
         canonical_id=canonical_id,
@@ -331,6 +334,23 @@ def _passthrough_raw_annotations(paper: dict[str, Any]) -> dict[str, Any]:
         "open_access_locations",
         "openAccessLocations",
         "open_access_pdfs",
+        "pdf_urls",
+        "open_access_pdf_urls",
+        "oa_pdf_urls",
+        "best_pdf_urls",
+        "full_text_urls",
+        "pmc_pdf_urls",
+        "url_for_pdfs",
+        "landing_page_urls",
+        "source_queries",
+        "source_tools",
+        "search_buckets",
+        "query_buckets",
+        "source_buckets",
+        "citation_snowball_source_ids",
+        "citation_snowball_source_titles",
+        "recalled_by_bridges",
+        "contributed_bridges",
     )
     annotations: dict[str, Any] = {}
     for key in allowed:
@@ -995,36 +1015,57 @@ class SavePapersDedupTool(Tool):
             abs_path.parent.mkdir(parents=True, exist_ok=True)
 
             if params.append and abs_path.exists():
-                # 追加模式
-                existing_ids = set()
-                existing_lines = []
+                # 追加模式也必须合并同一论文的后续 metadata，避免旧调用路径
+                # 静默跳过 abstract/PDF/references/semantic_screen 等增强字段。
+                existing_records: list[dict[str, Any]] = []
+                index: dict[str, int] = {}
                 for line in abs_path.read_text(encoding="utf-8").splitlines():
                     if line.strip():
                         try:
                             existing = json.loads(line)
-                            existing_ids.add(existing.get("id"))
-                            existing_lines.append(line)
+                            if not isinstance(existing, dict):
+                                continue
+                            row = len(existing_records)
+                            existing_records.append(existing)
+                            for key in _raw_record_identity_keys(existing):
+                                index.setdefault(key, row)
                         except json.JSONDecodeError:
                             pass
 
-                # 添加新论文
-                new_lines = []
+                appended_count = 0
+                merged_count = 0
                 for paper in transformed_papers:
-                    if paper["id"] not in existing_ids:
-                        new_lines.append(json.dumps(paper, ensure_ascii=False))
+                    keys = _raw_record_identity_keys(paper)
+                    match_idx = next((index[key] for key in keys if key in index), None)
+                    if match_idx is None:
+                        match_idx = len(existing_records)
+                        existing_records.append(paper)
+                        appended_count += 1
+                    else:
+                        before = json.dumps(existing_records[match_idx], ensure_ascii=False, sort_keys=True)
+                        existing_records[match_idx] = _merge_raw_records(existing_records[match_idx], paper)
+                        after = json.dumps(existing_records[match_idx], ensure_ascii=False, sort_keys=True)
+                        if after != before:
+                            merged_count += 1
+                    for key in _raw_record_identity_keys(existing_records[match_idx]):
+                        index.setdefault(key, match_idx)
 
-                final_content = "\n".join(existing_lines + new_lines) + "\n"
+                final_content = "\n".join(json.dumps(item, ensure_ascii=False) for item in existing_records) + "\n"
                 abs_path.write_text(final_content, encoding="utf-8")
             else:
                 abs_path.write_text(content, encoding="utf-8")
+                appended_count = len(transformed_papers)
+                merged_count = 0
 
             return ToolResult(
                 ok=True,
                 content=f"✅ 成功保存 {len(transformed_papers)} 篇去重后论文到 literature/papers_dedup.jsonl\n"
-                f"（模式: {'追加' if params.append else '覆盖'}）",
+                f"（模式: {'追加' if params.append else '覆盖'}；新增 {appended_count}，合并 {merged_count}）",
                 data={
                     "path": "literature/papers_dedup.jsonl",
-                    "count": len(transformed_papers),
+                    "count": appended_count,
+                    "merged_count": merged_count,
+                    "valid_input_count": len(transformed_papers),
                     "mode": "append" if params.append else "overwrite",
                 },
             )

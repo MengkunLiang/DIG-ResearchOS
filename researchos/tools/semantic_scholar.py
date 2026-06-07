@@ -22,7 +22,7 @@ def _normalize_paper(item: dict[str, Any]) -> dict[str, Any]:
     """Normalize Semantic Scholar output to the common paper shape."""
 
     external_ids = item.get("externalIds") or {}
-    return {
+    normalized = {
         "id": item.get("paperId") or external_ids.get("CorpusId") or item.get("title"),
         "source": "semantic_scholar",
         "title": item.get("title", ""),
@@ -40,6 +40,43 @@ def _normalize_paper(item: dict[str, Any]) -> dict[str, Any]:
             "source_url": item.get("url") or "",
         },
     }
+    references = _normalize_s2_edges(item.get("references"))
+    citations = _normalize_s2_edges(item.get("citations"))
+    if references:
+        normalized["references"] = references
+        normalized["referenced_works"] = references
+        normalized["reference_count"] = len(references)
+    if citations:
+        normalized["citations"] = citations
+        normalized["citation_edges_inbound_hints"] = citations
+    return normalized
+
+
+def _normalize_s2_edges(items: Any, limit: int = 80) -> list[dict[str, Any]]:
+    edges: list[dict[str, Any]] = []
+    if not isinstance(items, list):
+        return edges
+    for item in items[:limit]:
+        if not isinstance(item, dict):
+            continue
+        external_ids = item.get("externalIds") if isinstance(item.get("externalIds"), dict) else {}
+        paper_id = str(item.get("paperId") or external_ids.get("OpenAlex") or external_ids.get("DOI") or "").strip()
+        title = str(item.get("title") or "").strip()
+        if not paper_id and not title:
+            continue
+        edge: dict[str, Any] = {}
+        if paper_id:
+            edge["id"] = paper_id
+        if title:
+            edge["title"] = title
+        doi = str(external_ids.get("DOI") or "").strip()
+        if doi:
+            edge["doi"] = doi
+        openalex = str(external_ids.get("OpenAlex") or "").strip()
+        if openalex:
+            edge["openalex_id"] = openalex
+        edges.append(edge)
+    return edges
 
 
 class SemanticScholarSearchParams(BaseModel):

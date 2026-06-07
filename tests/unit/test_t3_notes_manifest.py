@@ -8,6 +8,7 @@ import pytest
 from researchos.runtime.t3_notes_manifest import (
     build_t3_notes_manifest,
     format_completion_diagnostics,
+    find_queue_record_by_rank,
     target_entries,
 )
 from researchos.tools.save_paper_note import SavePaperNoteTool
@@ -110,6 +111,34 @@ method
 - **Competing rationale**: No prior completed note is available in this fixture.
 - **Idea fuel**: Revisit after more papers are read.
 """
+
+
+def test_find_queue_record_by_rank_does_not_fallback_when_pending_exists(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    _write_jsonl(
+        workspace / "literature" / "deep_read_queue.jsonl",
+        [
+            {"queue_rank": 1, "paper_id": "full-1", "title": "Full One"},
+            {"queue_rank": 2, "paper_id": "full-2", "title": "Full Two"},
+        ],
+    )
+    _write_jsonl(
+        workspace / "literature" / "deep_read_queue_pending.jsonl",
+        [{"queue_rank": 1, "original_queue_rank": 2, "paper_id": "full-2", "title": "Full Two"}],
+    )
+
+    record, source = find_queue_record_by_rank(workspace, 2)
+
+    assert record is None
+    assert source == ""
+
+    record, source = find_queue_record_by_rank(
+        workspace,
+        2,
+        queue_path="literature/deep_read_queue.jsonl",
+    )
+    assert record["paper_id"] == "full-2"
+    assert source == "literature/deep_read_queue.jsonl"
 
 
 def test_manifest_distinguishes_complete_incomplete_and_missing_notes(tmp_path: Path):
@@ -226,6 +255,58 @@ async def test_save_paper_note_uses_queue_rank_and_refreshes_manifest(tmp_path: 
     assert (workspace / result.data["path"]).exists()
     manifest = json.loads((workspace / "literature" / "notes_manifest.json").read_text(encoding="utf-8"))
     assert manifest["complete_count"] == 1
+    assert manifest["entries"][0]["status"] == "complete"
+
+
+@pytest.mark.asyncio
+async def test_save_paper_note_refreshes_manifest_against_pending_queue(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    (workspace / "literature" / "paper_notes").mkdir(parents=True)
+    _write_jsonl(
+        workspace / "literature" / "deep_read_queue.jsonl",
+        [
+            {
+                "paper_id": "paper1",
+                "normalized_id": "paper1",
+                "title": "Already Done Paper",
+                "queue_rank": 1,
+                "target_bucket": "target",
+            },
+            {
+                "paper_id": "paper2",
+                "normalized_id": "paper2",
+                "title": "Pending Paper",
+                "queue_rank": 2,
+                "target_bucket": "target",
+            },
+        ],
+    )
+    _write_jsonl(
+        workspace / "literature" / "deep_read_queue_pending.jsonl",
+        [
+            {
+                "paper_id": "paper2",
+                "normalized_id": "paper2",
+                "title": "Pending Paper",
+                "queue_rank": 1,
+                "pending_queue_rank": 1,
+                "original_queue_rank": 2,
+                "target_bucket": "target",
+            }
+        ],
+    )
+    policy = WorkspaceAccessPolicy(workspace, ["", "literature/"], ["literature/"])
+    tool = SavePaperNoteTool(policy)
+
+    result = await tool.execute(queue_rank=1, content=_valid_note("paper2"))
+
+    assert result.ok, result.content
+    assert result.data["path"] == "literature/paper_notes/paper2.md"
+    assert result.data["pending_queue_rank"] == 1
+    assert result.data["original_queue_rank"] == 2
+    manifest = json.loads((workspace / "literature" / "notes_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["source_queue"] == "literature/deep_read_queue_pending.jsonl"
+    assert manifest["entries"][0]["paper_id"] == "paper2"
     assert manifest["entries"][0]["status"] == "complete"
 
 

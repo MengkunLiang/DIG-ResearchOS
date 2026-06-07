@@ -456,6 +456,40 @@ def _bridge_priority(bridge_id: str | None, plan: dict[str, Any]) -> str:
     return ""
 
 
+def _must_explore_bridge_diagnostics(
+    queue_records: list[dict[str, Any]],
+    must_explore_bridge_ids: list[str],
+) -> dict[str, dict[str, int]]:
+    diagnostics: dict[str, dict[str, int]] = {}
+    for bridge_id in must_explore_bridge_ids:
+        related = [
+            item
+            for item in queue_records
+            if item.get("bridge_id") == bridge_id
+            or bridge_id in (item.get("recalled_by_bridges") or [])
+            or bridge_id in (item.get("contributed_bridges") or [])
+        ]
+        diagnostics[bridge_id] = {
+            "recalled_or_contributed": len(related),
+            "active_target": sum(1 for item in related if not item.get("triaged_out")),
+            "bridge_deep_active": sum(
+                1
+                for item in related
+                if item.get("target_bucket") == "bridge_deep" and not item.get("triaged_out")
+            ),
+            "bridge_screened_backlog": sum(
+                1
+                for item in related
+                if item.get("target_bucket") == "bridge_screened" or item.get("unscreened_bridge_backlog_candidate")
+            ),
+            "missing_semantic_screen": sum(1 for item in related if not item.get("semantic_screen")),
+            "semantic_screen_excluded": sum(1 for item in related if item.get("semantic_screen_excluded_candidate")),
+            "has_abstract": sum(1 for item in related if item.get("has_abstract")),
+            "has_pdf_url_hint": sum(1 for item in related if item.get("has_pdf_url_hint")),
+        }
+    return diagnostics
+
+
 def _bridge_sources_for_record(paper: dict[str, Any], semantic_screen: dict[str, Any]) -> list[str]:
     """Collect bridge provenance supplied by search tools or Scout LLM."""
 
@@ -685,10 +719,12 @@ def build_deep_read_queue(
 
     # 一旦 workspace 里已经存在 papers_verified，就必须优先把它当作权威池。
     # 这样即使上层 agent 误把 papers_dedup 传进来，也不会把未核验论文混进 T3 队列。
-    authoritative_records = _prefer_verified_records(
+    authoritative_records, duplicate_prefer_verified_removed = _prefer_verified_records(
         candidate_records=papers,
         verified_records=verified_records,
     )
+    authoritative_records, duplicate_queue_candidates_removed = _dedupe_records_for_queue(authoritative_records)
+    duplicate_queue_candidates_removed += duplicate_prefer_verified_removed
     has_verified_pool = bool(verified_records)
     citation_hub_index = identify_citation_hubs(authoritative_records, workspace_dir)
 
@@ -1023,6 +1059,7 @@ def build_deep_read_queue(
     _cap_mainline_screened_records(queue_records, mainline_screened_cap=mainline_screened_cap)
     _cap_bridge_screened_records(queue_records, bridge_screened_cap=bridge_screened_cap)
 
+    must_explore_bridge_diagnostics = _must_explore_bridge_diagnostics(queue_records, must_explore_bridge_ids)
     metadata = {
         "deep_read_min": deep_read_min,
         "deep_read_target": deep_read_target,
@@ -1039,6 +1076,7 @@ def build_deep_read_queue(
         "target_entry_count": sum(1 for item in queue_records if not item.get("triaged_out")),
         "triaged_out_count": sum(1 for item in queue_records if item.get("triaged_out")),
         "verified_pool_count": len(authoritative_records),
+        "duplicate_queue_candidates_removed": duplicate_queue_candidates_removed,
         "verified_disposition_count": len(queue_records),
         "verified_disposition_coverage": round(
             len(queue_records) / max(1, len(authoritative_records)),
@@ -1080,6 +1118,17 @@ def build_deep_read_queue(
             )
             for bridge_id in must_explore_bridge_ids
         },
+        "must_explore_bridge_diagnostics": must_explore_bridge_diagnostics,
+        "must_explore_bridge_warnings": [
+            (
+                f"{bridge_id}: recalled={diag['recalled_or_contributed']} "
+                f"but active_bridge_deep={diag['bridge_deep_active']}; "
+                f"missing_semantic_screen={diag['missing_semantic_screen']}, "
+                f"semantic_screen_excluded={diag['semantic_screen_excluded']}"
+            )
+            for bridge_id, diag in must_explore_bridge_diagnostics.items()
+            if diag["recalled_or_contributed"] > 0 and diag["bridge_deep_active"] <= 0
+        ],
         "protected_slot_target": cross_domain_slot_count,
         "protected_bucket_target": cross_domain_slot_count,  # deprecated alias for older workspace metadata
         "cross_domain_slots": cross_domain_slot_count,
@@ -1155,7 +1204,9 @@ def _queue_evidence_hints(paper: dict[str, Any]) -> dict[str, Any]:
 
     The queue remains a compact scheduling artifact. Full abstracts, PDF
     locations, and reference payloads stay in verified/dedup/raw and are merged
-    by lookup_paper_record(queue_rank=...).
+    by lookup_paper_record(queue_rank=...). Short provenance fields are kept
+    here because they are required for resume/debugging and do not inflate the
+    Reader context materially.
     """
 
     abstract = str(paper.get("abstract") or "").strip()
@@ -1196,13 +1247,81 @@ def _queue_evidence_hints(paper: dict[str, Any]) -> dict[str, Any]:
         if isinstance(value, list):
             pdf_hint_count += len([item for item in value if item])
 
-    return {
+    external_ids = paper.get("externalIds") if isinstance(paper.get("externalIds"), dict) else {}
+    provenance = paper.get("provenance") if isinstance(paper.get("provenance"), dict) else {}
+    source_queries = _short_unique_values(
+        paper.get("source_queries"),
+        paper.get("source_query"),
+        provenance.get("source_query"),
+        limit=8,
+    )
+    source_tools = _short_unique_values(
+        paper.get("source_tools"),
+        paper.get("source_tool"),
+        provenance.get("source_tool"),
+        paper.get("source"),
+        limit=8,
+    )
+    search_buckets = _short_unique_values(
+        paper.get("search_buckets"),
+        paper.get("query_buckets"),
+        paper.get("search_bucket"),
+        paper.get("query_bucket"),
+        provenance.get("search_bucket"),
+        provenance.get("query_bucket"),
+        limit=8,
+    )
+    citation_source_ids = _short_unique_values(
+        paper.get("citation_snowball_source_ids"),
+        paper.get("citation_snowball_source_id"),
+        provenance.get("snowball_source_id"),
+        limit=6,
+    )
+
+    hints = {
         "has_abstract": bool(abstract),
         "abstract_chars": len(abstract),
         "reference_hint_count": reference_count,
         "has_pdf_url_hint": pdf_hint_count > 0,
         "pdf_url_hint_count": pdf_hint_count,
     }
+    if source_queries:
+        hints["source_query"] = source_queries[0]
+        hints["source_queries"] = source_queries
+    if source_tools:
+        hints["source_tool"] = source_tools[0]
+        hints["source_tools"] = source_tools
+    if search_buckets:
+        hints["search_buckets"] = search_buckets
+    openalex_id = str(paper.get("openalex_id") or external_ids.get("OpenAlex") or "").strip()
+    if openalex_id:
+        hints["openalex_id"] = openalex_id
+    arxiv_id = str(paper.get("arxiv_id") or external_ids.get("ArXiv") or "").strip()
+    if arxiv_id:
+        hints["arxiv_id"] = arxiv_id
+    if citation_source_ids:
+        hints["citation_snowball_source_id"] = citation_source_ids[0]
+        hints["citation_snowball_source_ids"] = citation_source_ids
+    return hints
+
+
+def _short_unique_values(*values: Any, limit: int = 8, max_chars: int = 240) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        if value in (None, "", [], {}):
+            continue
+        items = value if isinstance(value, (list, tuple, set)) else [value]
+        for item in items:
+            text = " ".join(str(item or "").split())
+            if not text:
+                continue
+            if len(text) > max_chars:
+                text = text[: max_chars - 3].rstrip() + "..."
+            if text not in result:
+                result.append(text)
+            if len(result) >= limit:
+                return result
+    return result
 
 
 def identify_citation_hubs(
@@ -1376,7 +1495,7 @@ def _prefer_verified_records(
     *,
     candidate_records: list[dict[str, Any]],
     verified_records: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], int]:
     """优先把候选池收敛到 workspace 内已核验过的论文记录。
 
     设计原因：
@@ -1386,7 +1505,7 @@ def _prefer_verified_records(
     """
 
     if not verified_records:
-        return candidate_records
+        return candidate_records, 0
 
     verified_by_key: dict[str, dict[str, Any]] = {}
     for record in verified_records:
@@ -1395,6 +1514,7 @@ def _prefer_verified_records(
 
     matched_records: list[dict[str, Any]] = []
     seen_ids: set[int] = set()
+    duplicate_removed = 0
     for paper in candidate_records:
         matched = None
         for key in _paper_match_keys(paper):
@@ -1405,13 +1525,37 @@ def _prefer_verified_records(
             continue
         matched_identity = id(matched)
         if matched_identity in seen_ids:
+            duplicate_removed += 1
             continue
         seen_ids.add(matched_identity)
         matched_records.append(matched)
 
     # 如果上层传入的候选集完全对不上，直接回退到完整 verified 池，
     # 避免因为调用参数不理想而意外生成空队列。
-    return matched_records or verified_records
+    return (matched_records or verified_records), duplicate_removed
+
+
+def _dedupe_records_for_queue(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    """Final identity guard before building T3's reading queue.
+
+    Upstream raw/dedup merging handles the common cases, but verified pools can
+    still contain alias variants from OpenAlex/arXiv/DOI/title-only sources.
+    T3 should never spend deep-read budget twice on the same paper. This helper
+    removes duplicate queue candidates using the shared identity-key set; it
+    does not infer scholarly relevance or merge semantic judgments.
+    """
+
+    kept: list[dict[str, Any]] = []
+    seen_keys: set[str] = set()
+    removed = 0
+    for record in records:
+        keys = _paper_match_keys(record)
+        if keys and any(key in seen_keys for key in keys):
+            removed += 1
+            continue
+        kept.append(record)
+        seen_keys.update(keys)
+    return kept, removed
 
 
 def build_access_audit(

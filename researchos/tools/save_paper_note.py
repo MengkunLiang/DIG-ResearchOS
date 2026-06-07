@@ -17,8 +17,10 @@ from ..runtime.errors import ToolAccessDenied, ToolRuntimeError
 from ..runtime.t3_notes_manifest import (
     build_t3_notes_manifest,
     find_queue_record_by_rank,
+    load_jsonl,
 )
 from ..literature_identity import record_note_id
+from ..literature_identity import display_record_key
 from .base import Tool, ToolResult
 from .workspace_policy import WorkspaceAccessPolicy
 
@@ -83,7 +85,7 @@ class SavePaperNoteTool(Tool):
         if abs_path.exists() and not params.allow_overwrite_complete:
             existing_complete, existing_err = _validate_note(abs_path)
             if existing_complete:
-                manifest = build_t3_notes_manifest(self.policy.workspace_dir, write=True)
+                manifest = _build_manifest_for_source_queue(self.policy.workspace_dir, source_queue)
                 return ToolResult(
                     ok=True,
                     content=(
@@ -93,7 +95,11 @@ class SavePaperNoteTool(Tool):
                     data={
                         "path": rel_path,
                         "queue_rank": params.queue_rank,
+                        "original_queue_rank": record.get("original_queue_rank") or record.get("queue_rank") or params.queue_rank,
+                        "pending_queue_rank": record.get("pending_queue_rank") or params.queue_rank,
                         "source_queue": source_queue,
+                        "resolved_paper_id": record.get("paper_id") or record.get("canonical_id") or record.get("id") or "",
+                        "record_display_key": display_record_key(record),
                         "status": "already_complete",
                         "validation_error": "",
                     },
@@ -106,12 +112,16 @@ class SavePaperNoteTool(Tool):
             raise ToolRuntimeError("save_paper_note", exc) from exc
 
         ok, err = _validate_note(abs_path)
-        manifest = build_t3_notes_manifest(self.policy.workspace_dir, write=True)
+        manifest = _build_manifest_for_source_queue(self.policy.workspace_dir, source_queue)
         entry = _find_manifest_entry(manifest, rel_path, params.queue_rank)
         data = {
             "path": rel_path,
             "queue_rank": params.queue_rank,
+            "original_queue_rank": record.get("original_queue_rank") or record.get("queue_rank") or params.queue_rank,
+            "pending_queue_rank": record.get("pending_queue_rank") or params.queue_rank,
             "source_queue": source_queue,
+            "resolved_paper_id": record.get("paper_id") or record.get("canonical_id") or record.get("id") or "",
+            "record_display_key": display_record_key(record),
             "status": "complete" if ok else "incomplete",
             "validation_error": err or "",
             "manifest_path": "literature/notes_manifest.json",
@@ -154,6 +164,27 @@ def _note_rel_path(record: dict[str, Any], note_id: str) -> str:
     return f"literature/paper_notes/{note_id}.md"
 
 
+def _build_manifest_for_source_queue(workspace_dir: Path, source_queue: str) -> dict[str, Any]:
+    """Refresh notes manifest against the queue that was just consumed.
+
+    On resume, Reader sees ``deep_read_queue_pending.jsonl`` where rank 1 means
+    "first unfinished paper", not rank 1 of the original full queue. Building
+    the manifest against the same source queue keeps tool feedback and pending
+    progress coherent. T3 final validation still passes the full queue
+    explicitly when it needs full-task completion accounting.
+    """
+
+    queue_path = workspace_dir / source_queue if source_queue else None
+    if queue_path is not None and queue_path.exists() and queue_path.is_file():
+        return build_t3_notes_manifest(
+            workspace_dir,
+            queue_records=load_jsonl(queue_path),
+            source_queue=source_queue,
+            write=True,
+        )
+    return build_t3_notes_manifest(workspace_dir, write=True)
+
+
 def _find_manifest_entry(
     manifest: dict[str, Any],
     rel_path: str,
@@ -166,6 +197,8 @@ def _find_manifest_entry(
         if not isinstance(entry, dict):
             continue
         if entry.get("note_path") == rel_path:
+            return entry
+        if rel_path in (entry.get("matched_note_paths") or []):
             return entry
     for entry in entries:
         if isinstance(entry, dict) and int(entry.get("queue_rank") or -1) == queue_rank:

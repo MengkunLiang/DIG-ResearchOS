@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
+from difflib import SequenceMatcher
 import json
 import os
 from pathlib import Path
@@ -21,7 +22,12 @@ from ..tools.citation_graph import build_domain_map
 from ..tools.abstract_utils import clean_abstract
 from ..tools.crossref_api import _extract_crossref_references
 from ..tools.openalex_api import _work_to_paper as _openalex_work_to_paper
-from ..tools.paper_save_tools import SavePapersDedupTool, SavePapersRawTool
+from ..tools.paper_save_tools import (
+    SavePapersDedupTool,
+    SavePapersRawTool,
+    _merge_raw_records,
+    _raw_record_identity_keys,
+)
 from ..literature_identity import stable_noopenalex_id
 from ..tools.paper_utils import (
     deduplicate_papers,
@@ -157,6 +163,60 @@ def _write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
     path.write_text(content + ("\n" if content else ""), encoding="utf-8")
 
 
+def _merge_enriched_records_back_to_raw(raw_path: Path, enriched: list[dict[str, Any]]) -> dict[str, Any]:
+    """Persist deterministic T2 metadata repairs back to papers_raw.jsonl.
+
+    T2 finalize starts from raw on every resume. If OpenAlex/Crossref/PDF/citation
+    repairs only live in dedup/verified, a later finalize can regress whenever a
+    network call fails. This merge keeps raw as the durable metadata cache while
+    preserving search provenance already accumulated there.
+    """
+
+    existing: list[dict[str, Any]] = []
+    index: dict[str, int] = {}
+    if raw_path.exists():
+        for line in raw_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(record, dict):
+                continue
+            row = len(existing)
+            existing.append(record)
+            for key in _raw_record_identity_keys(record):
+                index.setdefault(key, row)
+
+    merged_count = 0
+    appended_count = 0
+    for record in enriched:
+        if not isinstance(record, dict):
+            continue
+        keys = _raw_record_identity_keys(record)
+        match_idx = next((index[key] for key in keys if key in index), None)
+        if match_idx is None:
+            match_idx = len(existing)
+            existing.append(dict(record))
+            appended_count += 1
+        else:
+            before = json.dumps(existing[match_idx], ensure_ascii=False, sort_keys=True)
+            existing[match_idx] = _merge_raw_records(existing[match_idx], record)
+            after = json.dumps(existing[match_idx], ensure_ascii=False, sort_keys=True)
+            if after != before:
+                merged_count += 1
+        for key in _raw_record_identity_keys(existing[match_idx]):
+            index.setdefault(key, match_idx)
+
+    _write_jsonl(raw_path, existing)
+    return {
+        "raw_cache_records_after": len(existing),
+        "raw_cache_records_merged": merged_count,
+        "raw_cache_records_appended": appended_count,
+    }
+
+
 def _researcher_email() -> str:
     return (
         os.environ.get("RESEARCHER_EMAIL")
@@ -230,6 +290,33 @@ def _record_has_pdf_hint(record: dict[str, Any]) -> bool:
     return False
 
 
+def _openalex_detail_url(identifier: str) -> str:
+    """Build a cheap OpenAlex detail endpoint for a work id or DOI.
+
+    OpenAlex accepts DOI lookups as ``/works/doi:10.x%2F...``. Passing a full
+    ``https://doi.org/...`` URL to ``/works/{id}`` can be treated as an
+    expensive search-like request and hit paid-budget rate limits, which in
+    practice prevents DOI records from receiving OA/PDF/reference backfill.
+    """
+
+    value = str(identifier or "").strip()
+    if not value:
+        return "https://api.openalex.org/works/"
+    if value.startswith("https://openalex.org/") or value.startswith("https://api.openalex.org/works/"):
+        value = value.rstrip("/").split("/")[-1]
+    if value.startswith("W") and value[1:].isdigit():
+        return f"https://api.openalex.org/works/{quote(value, safe='')}"
+
+    doi = (
+        value.removeprefix("https://doi.org/")
+        .removeprefix("http://doi.org/")
+        .removeprefix("doi:")
+    )
+    if doi.startswith("10."):
+        return f"https://api.openalex.org/works/doi:{quote(doi, safe='')}"
+    return f"https://api.openalex.org/works/{quote(value, safe='')}"
+
+
 def _merge_openalex_metadata(target: dict[str, Any], openalex_paper: dict[str, Any]) -> dict[str, bool]:
     filled = {
         "openalex_id": False,
@@ -259,6 +346,10 @@ def _merge_openalex_metadata(target: dict[str, Any], openalex_paper: dict[str, A
         target["_abstract_backfilled_from"] = "openalex_recovery"
         target.pop("_missing_abstract", None)
         filled["abstract"] = True
+
+    incoming_doi = _record_doi(openalex_paper)
+    if incoming_doi and not _record_doi(target):
+        target["doi"] = incoming_doi
 
     for key in ("year", "venue", "doi", "url"):
         if target.get(key) in (None, "", [], {}) and openalex_paper.get(key) not in (None, "", [], {}):
@@ -313,7 +404,7 @@ def _merge_openalex_metadata(target: dict[str, Any], openalex_paper: dict[str, A
 async def _backfill_recovered_openalex_metadata(
     papers: list[dict[str, Any]],
     *,
-    max_papers: int = 120,
+    max_papers: int | None = None,
     max_concurrency: int = 8,
 ) -> dict[str, Any]:
     """Bounded OpenAlex repair for DOI/OpenAlex records.
@@ -326,7 +417,7 @@ async def _backfill_recovered_openalex_metadata(
     if httpx is None:
         return {"enabled": False, "reason": "httpx_missing"}
 
-    candidates: list[dict[str, Any]] = []
+    eligible: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     for paper in papers:
         doi = _record_doi(paper)
@@ -338,17 +429,22 @@ async def _backfill_recovered_openalex_metadata(
             continue
         needs_openalex = not openalex_id
         needs_abstract = not clean_abstract(paper.get("abstract"))
-        needs_refs = not (paper.get("referenced_works") or paper.get("references"))
+        needs_refs = not (paper.get("referenced_works") or paper.get("related_works"))
         needs_pdf = not _record_has_pdf_hint(paper)
         if not (needs_openalex or needs_abstract or needs_refs or needs_pdf):
             continue
         seen_ids.add(identifier.casefold())
-        candidates.append(paper)
-        if len(candidates) >= max_papers:
-            break
+        eligible.append(paper)
+
+    candidates = (
+        eligible
+        if max_papers is None or max_papers < 0
+        else eligible[: max(0, int(max_papers))]
+    )
 
     stats: dict[str, Any] = {
         "enabled": True,
+        "eligible_count": len(eligible),
         "candidate_count": len(candidates),
         "attempted": 0,
         "openalex_id_filled": 0,
@@ -356,8 +452,10 @@ async def _backfill_recovered_openalex_metadata(
         "references_filled": 0,
         "pdf_hints_filled": 0,
         "failed": 0,
+        "skipped_by_cap": max(0, len(eligible) - len(candidates)),
     }
     if not candidates:
+        stats.update(_openalex_backfill_remaining_stats(eligible))
         return stats
 
     semaphore = asyncio.Semaphore(max_concurrency)
@@ -366,7 +464,7 @@ async def _backfill_recovered_openalex_metadata(
         doi = _record_doi(paper)
         openalex_id = _record_openalex_id(paper)
         identifier = openalex_id or f"https://doi.org/{doi}"
-        url = f"https://api.openalex.org/works/{quote(identifier, safe=':/')}"
+        url = _openalex_detail_url(identifier)
         async with semaphore:
             stats["attempted"] = int(stats["attempted"]) + 1
             try:
@@ -391,13 +489,14 @@ async def _backfill_recovered_openalex_metadata(
 
     async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
         await asyncio.gather(*(_one(client, paper) for paper in candidates))
+    stats.update(_openalex_backfill_remaining_stats(eligible))
     return stats
 
 
 async def _backfill_recovered_crossref_metadata(
     papers: list[dict[str, Any]],
     *,
-    max_papers: int = 120,
+    max_papers: int | None = None,
     max_concurrency: int = 8,
 ) -> dict[str, Any]:
     """Bounded DOI metadata repair for deterministic T2 recovery/finalize.
@@ -410,31 +509,41 @@ async def _backfill_recovered_crossref_metadata(
     if httpx is None:
         return {"enabled": False, "reason": "httpx_missing"}
 
-    candidates: list[dict[str, Any]] = []
+    eligible: list[dict[str, Any]] = []
     seen_dois: set[str] = set()
     for paper in papers:
         doi = _record_doi(paper)
         if not doi or doi.casefold() in seen_dois:
             continue
         needs_abstract = not clean_abstract(paper.get("abstract"))
-        needs_refs = not (paper.get("referenced_works") or paper.get("references"))
+        # Crossref references are DOI/title aliases. They are complementary to
+        # OpenAlex `referenced_works` W-id graph edges and should be fetched
+        # even when OpenAlex already supplied graph edges.
+        needs_refs = not paper.get("references")
         if not needs_abstract and not needs_refs:
             continue
         seen_dois.add(doi.casefold())
-        candidates.append(paper)
-        if len(candidates) >= max_papers:
-            break
+        eligible.append(paper)
+
+    candidates = (
+        eligible
+        if max_papers is None or max_papers < 0
+        else eligible[: max(0, int(max_papers))]
+    )
 
     stats: dict[str, Any] = {
         "enabled": True,
+        "eligible_count": len(eligible),
         "candidate_count": len(candidates),
         "attempted": 0,
         "abstract_filled": 0,
         "references_filled": 0,
         "failed": 0,
-        "skipped_after_cap": max(0, len(seen_dois) - len(candidates)),
+        "skipped_by_cap": max(0, len(eligible) - len(candidates)),
+        "skipped_after_cap": max(0, len(eligible) - len(candidates)),
     }
     if not candidates:
+        stats.update(_crossref_backfill_remaining_stats(eligible))
         return stats
 
     semaphore = asyncio.Semaphore(max_concurrency)
@@ -467,10 +576,17 @@ async def _backfill_recovered_crossref_metadata(
                 stats["abstract_filled"] = int(stats["abstract_filled"]) + 1
 
             references = _extract_crossref_references(message)
-            if references and not (paper.get("referenced_works") or paper.get("references")):
-                paper["references"] = references
-                paper["referenced_works"] = references
-                stats["references_filled"] = int(stats["references_filled"]) + 1
+            if references:
+                current_refs = paper.get("references") if isinstance(paper.get("references"), list) else []
+                merged_refs = _dedupe_reference_payload([*current_refs, *references])
+                if len(merged_refs) > len(current_refs):
+                    paper["references"] = merged_refs
+                    stats["references_filled"] = int(stats["references_filled"]) + 1
+                # Keep OpenAlex W ids in referenced_works and Crossref DOI/title
+                # aliases in references. If referenced_works is empty, expose
+                # the Crossref aliases there too for legacy graph consumers.
+                if not paper.get("referenced_works"):
+                    paper["referenced_works"] = references
             paper["reference_count"] = message.get("reference-count", len(references))
 
             title_list = message.get("title")
@@ -491,6 +607,163 @@ async def _backfill_recovered_crossref_metadata(
 
     async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
         await asyncio.gather(*(_one(client, paper) for paper in candidates))
+    stats.update(_crossref_backfill_remaining_stats(eligible))
+    return stats
+
+
+def _openalex_backfill_remaining_stats(papers: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "remaining_without_openalex_id": sum(1 for paper in papers if not _record_openalex_id(paper)),
+        "remaining_missing_abstract": sum(1 for paper in papers if not clean_abstract(paper.get("abstract"))),
+        "remaining_missing_references": sum(
+            1 for paper in papers if not (paper.get("referenced_works") or paper.get("references"))
+        ),
+        "remaining_missing_pdf_hints": sum(1 for paper in papers if not _record_has_pdf_hint(paper)),
+    }
+
+
+def _crossref_backfill_remaining_stats(papers: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "remaining_missing_abstract": sum(1 for paper in papers if not clean_abstract(paper.get("abstract"))),
+        "remaining_missing_references": sum(1 for paper in papers if not paper.get("references")),
+    }
+
+
+def _dedupe_reference_payload(items: list[Any]) -> list[Any]:
+    seen: set[str] = set()
+    merged: list[Any] = []
+    for item in items:
+        if item in (None, "", [], {}):
+            continue
+        if isinstance(item, dict):
+            key = str(item.get("doi") or item.get("DOI") or item.get("id") or item.get("openalex_id") or item.get("title") or item).strip().casefold()
+        else:
+            key = str(item).strip().casefold()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    return merged
+
+
+async def _backfill_recovered_openalex_title_metadata(
+    papers: list[dict[str, Any]],
+    *,
+    title_match_threshold: float = 0.92,
+    max_papers: int | None = None,
+    max_concurrency: int = 6,
+) -> dict[str, Any]:
+    """Backfill OpenAlex metadata for title-only records.
+
+    DOI/OpenAlex detail lookup covers records that already carry a stable
+    identifier. Seed PDFs and some search tools often only provide a title,
+    which used to leave the highest-priority papers with no abstract, DOI, PDF
+    hints, or citation edges. This helper does a conservative title search and
+    only merges fields when the top OpenAlex title is a high-confidence match.
+    It is still mechanical metadata acquisition, not relevance judgment.
+    """
+
+    if httpx is None:
+        return {"enabled": False, "reason": "httpx_missing"}
+
+    eligible: list[dict[str, Any]] = []
+    seen_titles: set[str] = set()
+    for paper in papers:
+        title = str(paper.get("title") or "").strip()
+        title_key = _normalize_match_key(title)
+        if not title_key or title_key in {"unknown", "untitled", "untitled seed paper"}:
+            continue
+        if title_key in seen_titles:
+            continue
+        seen_titles.add(title_key)
+        needs_identifier = not (_record_doi(paper) or _record_openalex_id(paper))
+        if not needs_identifier:
+            continue
+        needs_abstract = not clean_abstract(paper.get("abstract"))
+        needs_refs = not (paper.get("referenced_works") or paper.get("references"))
+        needs_pdf = not _record_has_pdf_hint(paper)
+        if needs_abstract or needs_refs or needs_pdf:
+            eligible.append(paper)
+
+    candidates = (
+        eligible
+        if max_papers is None or max_papers < 0
+        else eligible[: max(0, int(max_papers))]
+    )
+    stats: dict[str, Any] = {
+        "enabled": True,
+        "eligible_count": len(eligible),
+        "candidate_count": len(candidates),
+        "attempted": 0,
+        "matched": 0,
+        "doi_filled": 0,
+        "openalex_id_filled": 0,
+        "abstract_filled": 0,
+        "references_filled": 0,
+        "pdf_hints_filled": 0,
+        "failed": 0,
+        "skipped_low_similarity": 0,
+        "skipped_by_cap": max(0, len(eligible) - len(candidates)),
+    }
+    if not candidates:
+        stats.update(_openalex_backfill_remaining_stats(eligible))
+        return stats
+
+    semaphore = asyncio.Semaphore(max_concurrency)
+
+    async def _one(client: "httpx.AsyncClient", paper: dict[str, Any]) -> None:
+        title = str(paper.get("title") or "").strip()
+        title_key = _normalize_match_key(title)
+        async with semaphore:
+            stats["attempted"] = int(stats["attempted"]) + 1
+            try:
+                response = await client.get(
+                    "https://api.openalex.org/works",
+                    params={"search": title, "per-page": 3, "mailto": _researcher_email()},
+                )
+                response.raise_for_status()
+                results = response.json().get("results", [])
+            except Exception:
+                stats["failed"] = int(stats["failed"]) + 1
+                failures = paper.setdefault("_metadata_backfill_failures", [])
+                if isinstance(failures, list):
+                    failures.append("openalex_title_search_failed")
+                return
+
+            best_work: dict[str, Any] | None = None
+            best_similarity = 0.0
+            for work in results if isinstance(results, list) else []:
+                if not isinstance(work, dict):
+                    continue
+                candidate_title = str(work.get("title") or "").strip()
+                similarity = SequenceMatcher(None, title_key, _normalize_match_key(candidate_title)).ratio()
+                if similarity > best_similarity:
+                    best_similarity = similarity
+                    best_work = work
+
+            if not best_work or best_similarity < title_match_threshold:
+                stats["skipped_low_similarity"] = int(stats["skipped_low_similarity"]) + 1
+                return
+
+            had_doi = bool(_record_doi(paper))
+            filled = _merge_openalex_metadata(paper, _openalex_work_to_paper(best_work))
+            if not had_doi and _record_doi(paper):
+                stats["doi_filled"] = int(stats["doi_filled"]) + 1
+            if filled["openalex_id"]:
+                stats["openalex_id_filled"] = int(stats["openalex_id_filled"]) + 1
+            if filled["abstract"]:
+                stats["abstract_filled"] = int(stats["abstract_filled"]) + 1
+            if filled["references"]:
+                stats["references_filled"] = int(stats["references_filled"]) + 1
+            if filled["pdf_hints"]:
+                stats["pdf_hints_filled"] = int(stats["pdf_hints_filled"]) + 1
+            paper["_metadata_backfilled_from_title"] = "openalex"
+            paper["_metadata_title_match_similarity"] = round(best_similarity, 4)
+            stats["matched"] = int(stats["matched"]) + 1
+
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+        await asyncio.gather(*(_one(client, paper) for paper in candidates))
+    stats.update(_openalex_backfill_remaining_stats(eligible))
     return stats
 
 
@@ -589,7 +862,15 @@ async def _expand_crossref_snowball_candidates(
         "enabled": httpx is not None,
         "source_candidates": 0,
         "sources_used": 0,
+        "reference_items_seen": 0,
         "reference_dois_seen": 0,
+        "reference_titles_seen": 0,
+        "title_references_resolved": 0,
+        "non_doi_references_skipped": 0,
+        "skipped_existing_or_duplicate_reference_dois": 0,
+        "skipped_existing_or_duplicate_reference_titles": 0,
+        "skipped_by_refs_per_source_cap": 0,
+        "skipped_by_max_candidates_cap": 0,
         "attempted": 0,
         "added": 0,
         "failed": 0,
@@ -617,13 +898,26 @@ async def _expand_crossref_snowball_candidates(
     selected_sources = selected_sources[:max_sources]
     stats["sources_used"] = len(selected_sources)
 
-    ref_jobs: list[tuple[str, dict[str, Any]]] = []
+    doi_ref_jobs: list[tuple[str, dict[str, Any]]] = []
+    title_ref_jobs: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
     seen_ref_dois: set[str] = set()
+    seen_ref_titles: set[str] = set()
+    existing_titles = {_normalize_match_key(paper.get("title")) for paper in papers if _normalize_match_key(paper.get("title"))}
+    hit_max_candidates_cap = False
     for source in selected_sources:
         refs = source.get("referenced_works") or source.get("references") or []
         per_source_count = 0
+        skipped_after_source_cap = False
         for ref in refs:
+            stats["reference_items_seen"] = int(stats["reference_items_seen"]) + 1
+            if per_source_count >= refs_per_source:
+                skipped_after_source_cap = True
+                continue
+            if len(doi_ref_jobs) + len(title_ref_jobs) >= max_candidates:
+                hit_max_candidates_cap = True
+                continue
             if not isinstance(ref, dict):
+                stats["non_doi_references_skipped"] = int(stats["non_doi_references_skipped"]) + 1
                 continue
             doi = str(ref.get("doi") or ref.get("DOI") or ref.get("id") or "").strip()
             doi = (
@@ -632,26 +926,45 @@ async def _expand_crossref_snowball_candidates(
                 .removeprefix("doi:")
             )
             if not doi or not doi.startswith("10."):
+                title_key = _normalize_match_key(ref.get("title") or ref.get("article-title") or ref.get("unstructured"))
+                if title_key:
+                    stats["reference_titles_seen"] = int(stats["reference_titles_seen"]) + 1
+                    if title_key in existing_titles or title_key in seen_ref_titles:
+                        stats["skipped_existing_or_duplicate_reference_titles"] = int(
+                            stats["skipped_existing_or_duplicate_reference_titles"]
+                        ) + 1
+                        continue
+                    seen_ref_titles.add(title_key)
+                    title_ref_jobs.append((title_key, ref, source))
+                    per_source_count += 1
+                    continue
+                stats["non_doi_references_skipped"] = int(stats["non_doi_references_skipped"]) + 1
                 continue
             doi_key = doi.casefold()
             if doi_key in existing_dois or doi_key in seen_ref_dois:
+                stats["skipped_existing_or_duplicate_reference_dois"] = int(
+                    stats["skipped_existing_or_duplicate_reference_dois"]
+                ) + 1
                 continue
             seen_ref_dois.add(doi_key)
-            ref_jobs.append((doi, source))
+            doi_ref_jobs.append((doi, source))
             per_source_count += 1
-            if per_source_count >= refs_per_source or len(ref_jobs) >= max_candidates:
-                break
-        if len(ref_jobs) >= max_candidates:
-            break
+        if skipped_after_source_cap:
+            stats["skipped_by_refs_per_source_cap"] = int(stats["skipped_by_refs_per_source_cap"]) + 1
+    if hit_max_candidates_cap:
+        stats["skipped_by_max_candidates_cap"] = max(
+            int(stats["skipped_by_max_candidates_cap"]),
+            max(0, int(stats["reference_items_seen"]) - max_candidates),
+        )
 
-    stats["reference_dois_seen"] = len(ref_jobs)
-    if not ref_jobs:
+    stats["reference_dois_seen"] = len(doi_ref_jobs)
+    if not doi_ref_jobs and not title_ref_jobs:
         return [], stats
 
     semaphore = asyncio.Semaphore(max_concurrency)
     added: list[dict[str, Any]] = []
 
-    async def _one(client: "httpx.AsyncClient", doi: str, source: dict[str, Any]) -> None:
+    async def _one_doi(client: "httpx.AsyncClient", doi: str, source: dict[str, Any]) -> None:
         async with semaphore:
             stats["attempted"] = int(stats["attempted"]) + 1
             try:
@@ -671,9 +984,308 @@ async def _expand_crossref_snowball_candidates(
             added.append(paper)
             stats["added"] = int(stats["added"]) + 1
 
+    async def _one_title(client: "httpx.AsyncClient", title_key: str, ref: dict[str, Any], source: dict[str, Any]) -> None:
+        title = str(ref.get("title") or ref.get("article-title") or ref.get("unstructured") or "").strip()
+        if not title:
+            stats["failed"] = int(stats["failed"]) + 1
+            return
+        async with semaphore:
+            stats["attempted"] = int(stats["attempted"]) + 1
+            try:
+                response = await client.get(
+                    "https://api.openalex.org/works",
+                    params={"search": title, "per-page": 3, "mailto": _researcher_email()},
+                )
+                response.raise_for_status()
+                results = response.json().get("results", [])
+            except Exception:
+                stats["failed"] = int(stats["failed"]) + 1
+                return
+            best_paper: dict[str, Any] | None = None
+            best_similarity = 0.0
+            for work in results if isinstance(results, list) else []:
+                candidate_title = str(work.get("title") or "").strip() if isinstance(work, dict) else ""
+                similarity = SequenceMatcher(None, title_key, _normalize_match_key(candidate_title)).ratio()
+                if similarity > best_similarity:
+                    best_similarity = similarity
+                    best_paper = _openalex_work_to_paper(work)
+            if not best_paper or best_similarity < 0.90:
+                stats["failed"] = int(stats["failed"]) + 1
+                return
+            source_id = str(source.get("canonical_id") or source.get("id") or source.get("doi") or "").strip()
+            source_title = str(source.get("title") or source_id or "unknown source").strip()
+            best_paper["source"] = "openalex_title_snowball"
+            best_paper["source_tool"] = "crossref_reference_title_openalex_backfill"
+            best_paper["retrieval_intent"] = "citation_snowball"
+            best_paper["search_bucket"] = "snowball"
+            best_paper["source_bucket"] = "snowball"
+            best_paper["source_query"] = f"OpenAlex title match for Crossref reference from {source_title}"
+            best_paper["citation_snowball_source_id"] = source_id
+            best_paper["citation_snowball_source_title"] = source_title
+            best_paper["citation_snowball_match_similarity"] = round(best_similarity, 4)
+            provenance = best_paper.get("provenance") if isinstance(best_paper.get("provenance"), dict) else {}
+            provenance.update(
+                {
+                    "source_tool": "crossref_reference_title_openalex_backfill",
+                    "snowball_source_id": source_id,
+                    "snowball_source_title": source_title,
+                    "reference_title": title,
+                    "title_match_similarity": round(best_similarity, 4),
+                }
+            )
+            best_paper["provenance"] = provenance
+            added.append(best_paper)
+            stats["title_references_resolved"] = int(stats["title_references_resolved"]) + 1
+            stats["added"] = int(stats["added"]) + 1
+
     async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
-        await asyncio.gather(*(_one(client, doi, source) for doi, source in ref_jobs))
+        await asyncio.gather(
+            *(_one_doi(client, doi, source) for doi, source in doi_ref_jobs),
+            *(_one_title(client, title_key, ref, source) for title_key, ref, source in title_ref_jobs),
+        )
     return added, stats
+
+
+def _normalize_openalex_ref_id(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if text.startswith("https://openalex.org/") or text.startswith("https://api.openalex.org/works/"):
+        text = text.rstrip("/").split("/")[-1]
+    return text if text.startswith("W") and text[1:].isdigit() else ""
+
+
+async def _expand_openalex_snowball_candidates(
+    papers: list[dict[str, Any]],
+    *,
+    max_sources: int = 12,
+    refs_per_source: int = 8,
+    max_candidates: int = 40,
+    max_concurrency: int = 6,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Add bounded one-hop OpenAlex reference/related-work candidates.
+
+    OpenAlex detail backfill often gives `referenced_works`/`related_works`
+    even when Crossref reference DOI aliases are sparse. Resolving a small,
+    deterministic one-hop set prevents the citation graph from becoming a
+    decorative artifact: useful graph neighbors can enter the verified pool,
+    then T3/T3.5/T8 can see them as evidence candidates. This function only
+    acquires metadata; queue admission still depends on seed priority,
+    Scout semantic_screen, or explicit backlog/abstract-sweep rules.
+    """
+
+    stats: dict[str, Any] = {
+        "enabled": httpx is not None,
+        "source_candidates": 0,
+        "sources_used": 0,
+        "reference_items_seen": 0,
+        "reference_openalex_ids_seen": 0,
+        "related_openalex_ids_seen": 0,
+        "non_openalex_references_skipped": 0,
+        "skipped_existing_or_duplicate_openalex_ids": 0,
+        "skipped_by_refs_per_source_cap": 0,
+        "skipped_by_max_candidates_cap": 0,
+        "attempted": 0,
+        "added": 0,
+        "failed": 0,
+    }
+    if httpx is None:
+        stats["reason"] = "httpx_missing"
+        return [], stats
+
+    existing_openalex_ids = {_record_openalex_id(paper) for paper in papers if _record_openalex_id(paper)}
+    selected_sources = [
+        paper
+        for paper in papers
+        if isinstance(paper.get("referenced_works"), list) or isinstance(paper.get("related_works"), list)
+    ]
+    selected_sources.sort(
+        key=lambda paper: (
+            not bool(paper.get("seed_priority") or paper.get("source") == "user_seed"),
+            not bool(isinstance(paper.get("semantic_screen"), dict) and paper["semantic_screen"].get("can_enter_deep_read")),
+            -float(paper.get("relevance_score", 0.0) or 0.0),
+            str(paper.get("title") or "").casefold(),
+        )
+    )
+    stats["source_candidates"] = len(selected_sources)
+    selected_sources = selected_sources[:max_sources]
+    stats["sources_used"] = len(selected_sources)
+
+    jobs: list[tuple[str, str, dict[str, Any]]] = []
+    seen_work_ids: set[str] = set()
+    hit_max_candidates_cap = False
+    for source in selected_sources:
+        refs: list[tuple[str, Any]] = []
+        refs.extend(("referenced_work", item) for item in (source.get("referenced_works") or []))
+        refs.extend(("related_work", item) for item in (source.get("related_works") or []))
+        per_source_count = 0
+        skipped_after_source_cap = False
+        for edge_type, ref in refs:
+            stats["reference_items_seen"] = int(stats["reference_items_seen"]) + 1
+            if per_source_count >= refs_per_source:
+                skipped_after_source_cap = True
+                continue
+            if len(jobs) >= max_candidates:
+                hit_max_candidates_cap = True
+                continue
+            if isinstance(ref, dict):
+                raw_ref_id = ref.get("id") or ref.get("openalex_id")
+            else:
+                raw_ref_id = ref
+            work_id = _normalize_openalex_ref_id(raw_ref_id)
+            if not work_id:
+                stats["non_openalex_references_skipped"] = int(stats["non_openalex_references_skipped"]) + 1
+                continue
+            if edge_type == "related_work":
+                stats["related_openalex_ids_seen"] = int(stats["related_openalex_ids_seen"]) + 1
+            else:
+                stats["reference_openalex_ids_seen"] = int(stats["reference_openalex_ids_seen"]) + 1
+            if work_id in existing_openalex_ids or work_id in seen_work_ids:
+                stats["skipped_existing_or_duplicate_openalex_ids"] = int(
+                    stats["skipped_existing_or_duplicate_openalex_ids"]
+                ) + 1
+                continue
+            seen_work_ids.add(work_id)
+            jobs.append((work_id, edge_type, source))
+            per_source_count += 1
+        if skipped_after_source_cap:
+            stats["skipped_by_refs_per_source_cap"] = int(stats["skipped_by_refs_per_source_cap"]) + 1
+    if hit_max_candidates_cap:
+        stats["skipped_by_max_candidates_cap"] = max(
+            int(stats["skipped_by_max_candidates_cap"]),
+            max(0, int(stats["reference_items_seen"]) - max_candidates),
+        )
+    if not jobs:
+        return [], stats
+
+    semaphore = asyncio.Semaphore(max_concurrency)
+    added: list[dict[str, Any]] = []
+
+    async def _one(client: "httpx.AsyncClient", work_id: str, edge_type: str, source: dict[str, Any]) -> None:
+        async with semaphore:
+            stats["attempted"] = int(stats["attempted"]) + 1
+            try:
+                response = await client.get(
+                    f"https://api.openalex.org/works/{work_id}",
+                    params={"mailto": _researcher_email()},
+                )
+                response.raise_for_status()
+                paper = _openalex_work_to_paper(response.json())
+            except Exception:
+                stats["failed"] = int(stats["failed"]) + 1
+                return
+            if not paper or not str(paper.get("title") or "").strip():
+                stats["failed"] = int(stats["failed"]) + 1
+                return
+            source_id = str(source.get("canonical_id") or source.get("id") or source.get("doi") or "").strip()
+            source_title = str(source.get("title") or source_id or "unknown source").strip()
+            paper["source"] = "openalex_snowball"
+            paper["source_tool"] = "openalex_snowball_backfill"
+            paper["retrieval_intent"] = "citation_snowball"
+            paper["search_bucket"] = "snowball"
+            paper["source_bucket"] = "snowball"
+            paper["source_query"] = f"OpenAlex one-hop {edge_type} from {source_title}"
+            paper["citation_snowball_source_id"] = source_id
+            paper["citation_snowball_source_title"] = source_title
+            provenance = paper.get("provenance") if isinstance(paper.get("provenance"), dict) else {}
+            provenance.update(
+                {
+                    "source_tool": "openalex_snowball_backfill",
+                    "snowball_source_id": source_id,
+                    "snowball_source_title": source_title,
+                    "snowball_edge_type": edge_type,
+                }
+            )
+            paper["provenance"] = provenance
+            added.append(paper)
+            stats["added"] = int(stats["added"]) + 1
+
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+        await asyncio.gather(*(_one(client, work_id, edge_type, source) for work_id, edge_type, source in jobs))
+    return added, stats
+
+
+async def _backfill_recovered_multisource_abstracts(
+    papers: list[dict[str, Any]],
+    policy: WorkspaceAccessPolicy,
+    *,
+    title_match_threshold: float = 0.88,
+    max_concurrency: int = 6,
+) -> dict[str, Any]:
+    """Use the same multi-source abstract repair as the Scout tool in finalize.
+
+    This keeps T2 recovery/finalize from depending on the LLM remembering to
+    call `backfill_paper_abstracts` before semantic screening. The helper only
+    fills missing abstracts; it does not change relevance, source_type, queue
+    admission, or any knowledge-bearing judgment.
+    """
+
+    if httpx is None:
+        return {"enabled": False, "reason": "httpx_missing"}
+
+    missing = [paper for paper in papers if not clean_abstract(paper.get("abstract"))]
+    by_source: dict[str, int] = {}
+    stats: dict[str, Any] = {
+        "enabled": True,
+        "candidate_count": len(missing),
+        "attempted_single": 0,
+        "filled": 0,
+        "remaining_missing_abstract": len(missing),
+        "by_source": by_source,
+    }
+    if not missing:
+        return stats
+
+    from ..tools.paper_enrichment_tool import BackfillPaperAbstractsTool
+
+    helper = BackfillPaperAbstractsTool(policy)
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        await helper._s2_batch_backfill(client, missing, by_source)
+        still_missing = [paper for paper in missing if not clean_abstract(paper.get("abstract"))]
+        semaphore = asyncio.Semaphore(max_concurrency)
+
+        async def _one(paper: dict[str, Any]) -> None:
+            async with semaphore:
+                await helper._backfill_single(
+                    client,
+                    paper,
+                    by_source,
+                    title_threshold=title_match_threshold,
+                    enable_title_fallback=True,
+                )
+
+        stats["attempted_single"] = len(still_missing)
+        if still_missing:
+            await asyncio.gather(*(_one(paper) for paper in still_missing))
+
+    stats["filled"] = sum(by_source.values())
+    stats["remaining_missing_abstract"] = sum(1 for paper in papers if not clean_abstract(paper.get("abstract")))
+    return stats
+
+
+async def _persist_snowball_candidates(
+    policy: WorkspaceAccessPolicy,
+    candidates: list[dict[str, Any]],
+    stats: dict[str, Any],
+) -> dict[str, Any]:
+    """Persist one snowball source and attach accurate raw append stats."""
+
+    if not candidates:
+        stats["raw_persist_ok"] = True
+        stats["raw_persisted"] = 0
+        stats["raw_merged"] = 0
+        stats["raw_persisted_or_merged"] = 0
+        return stats
+    raw_save_result = await SavePapersRawTool(policy).execute(papers=candidates, append=True)
+    raw_persisted = int((raw_save_result.data or {}).get("count") or 0) if raw_save_result.ok else 0
+    raw_merged = int((raw_save_result.data or {}).get("merged_count") or 0) if raw_save_result.ok else 0
+    stats["raw_persist_ok"] = bool(raw_save_result.ok)
+    stats["raw_persisted"] = raw_persisted
+    stats["raw_merged"] = raw_merged
+    stats["raw_persisted_or_merged"] = raw_persisted + raw_merged
+    if not raw_save_result.ok:
+        stats["raw_persist_error"] = raw_save_result.error or raw_save_result.content
+    return stats
 
 
 def _load_seed_papers(workspace_dir: Path) -> list[dict[str, Any]]:
@@ -846,6 +1458,58 @@ def _build_recovered_citation_edges(papers: list[dict[str, Any]]) -> list[dict[s
     return payload
 
 
+def _merge_citation_edge_payload(existing: list[Any], recovered: list[dict[str, Any]]) -> list[Any]:
+    """Merge live citation edges with recovered metadata edges without losing direction."""
+
+    merged: list[Any] = []
+    seen_pairs: set[tuple[str, str]] = set()
+    seen_objects: set[str] = set()
+
+    def _add(item: Any) -> None:
+        if isinstance(item, (list, tuple)) and len(item) >= 2:
+            left, right = str(item[0] or "").strip(), str(item[1] or "").strip()
+            if not left or not right or left == right:
+                return
+            key = (left, right)
+            if key in seen_pairs:
+                return
+            seen_pairs.add(key)
+            merged.append([left, right])
+            return
+        if isinstance(item, dict):
+            source = str(item.get("source_id") or item.get("source") or item.get("paper_id") or item.get("id") or "").strip()
+            targets: list[str] = []
+            for field in ("referenced_works", "related_works", "references", "related"):
+                value = item.get(field)
+                if isinstance(value, list):
+                    for target in value:
+                        if isinstance(target, dict):
+                            target_id = str(target.get("canonical_id") or target.get("paper_id") or target.get("id") or target.get("doi") or target.get("title") or "").strip()
+                        else:
+                            target_id = str(target or "").strip()
+                        if target_id:
+                            targets.append(target_id)
+            if source and targets:
+                object_key = json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
+                if object_key not in seen_objects:
+                    seen_objects.add(object_key)
+                    merged.append(item)
+                for target in targets:
+                    if target and target != source:
+                        seen_pairs.add((source, target))
+                return
+            object_key = json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
+            if object_key not in seen_objects:
+                seen_objects.add(object_key)
+                merged.append(item)
+            return
+
+    for payload in (existing, recovered):
+        for item in payload:
+            _add(item)
+    return merged
+
+
 def _extract_existing_semantic_screenings(papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Recover Scout LLM semantic_screen fields already persisted in raw/dedup records."""
 
@@ -915,6 +1579,10 @@ def extract_t2_search_history(trace_paths: list[Path]) -> tuple[list[str], dict[
                         continue
                     arguments = tool_call.get("arguments") or {}
                     query = str(arguments.get("query", "")).strip()
+                    if not query and tool_name == "fetch_outgoing_citations":
+                        identifier = str(arguments.get("openalex_id_or_doi") or "").strip()
+                        if identifier:
+                            query = f"citation:{identifier}"
                     pending_queries[str(tool_call.get("id", ""))] = {
                         "query": query,
                         "tool_name": tool_name,
@@ -937,6 +1605,10 @@ def extract_t2_search_history(trace_paths: list[Path]) -> tuple[list[str], dict[
             tool_call_id = str(payload.get("tool_call_id", ""))
             pending = pending_queries.get(tool_call_id, {})
             query = str(pending.get("query") or data.get("query") or "").strip()
+            if not query and payload.get("name") == "fetch_outgoing_citations":
+                identifier = str(data.get("source_id") or data.get("openalex_id_or_doi") or "").strip()
+                if identifier:
+                    query = f"citation:{identifier}"
             if not query:
                 continue
             if query not in query_results:
@@ -1265,22 +1937,53 @@ async def finalize_t2_outputs(
             target_domain=str(domain_profile.get("target_domain") or domain_profile.get("domain") or "profile"),
             domain_profile=domain_profile,
         )
+    # Seed records may be absent from papers_raw or may only contain a local
+    # PDF/title. Insert them before deterministic metadata repair so DOI/arXiv
+    # and title-based backfill can improve seed abstracts instead of leaving
+    # the highest-priority papers with the weakest metadata.
+    dedup_papers = _ensure_seed_papers(dedup_papers, dedup_papers + raw_papers, workspace_dir)
 
+    openalex_title_backfill = await _backfill_recovered_openalex_title_metadata(dedup_papers)
     openalex_backfill = await _backfill_recovered_openalex_metadata(dedup_papers)
+    multisource_abstract_backfill = await _backfill_recovered_multisource_abstracts(dedup_papers, policy)
     metadata_backfill = await _backfill_recovered_crossref_metadata(dedup_papers)
-    snowball_candidates, citation_backfill = await _expand_crossref_snowball_candidates(dedup_papers)
+    openalex_snowball_candidates, openalex_citation_backfill = await _expand_openalex_snowball_candidates(dedup_papers)
+    crossref_snowball_candidates, citation_backfill = await _expand_crossref_snowball_candidates(dedup_papers)
+    snowball_candidates = [*openalex_snowball_candidates, *crossref_snowball_candidates]
+    await _persist_snowball_candidates(
+        policy,
+        openalex_snowball_candidates,
+        openalex_citation_backfill,
+    )
+    await _persist_snowball_candidates(
+        policy,
+        crossref_snowball_candidates,
+        citation_backfill,
+    )
     if snowball_candidates:
-        raw_save_result = await SavePapersRawTool(policy).execute(papers=snowball_candidates, append=True)
-        citation_backfill["raw_persist_ok"] = bool(raw_save_result.ok)
-        citation_backfill["raw_persisted"] = int((raw_save_result.data or {}).get("count") or 0) if raw_save_result.ok else 0
-        if not raw_save_result.ok:
-            citation_backfill["raw_persist_error"] = raw_save_result.error or raw_save_result.content
         raw_papers = _load_jsonl(raw_path)
         dedup_papers = deduplicate_papers(
             [*dedup_papers, *snowball_candidates],
             doi_dedup=True,
             title_threshold=0.95,
         )
+        if snowball_candidates:
+            # Newly resolved snowball records may have DOI/title only; run the
+            # same mechanical repair once more before scoring/verification.
+            post_snowball_title_backfill = await _backfill_recovered_openalex_title_metadata(dedup_papers)
+            post_snowball_openalex_backfill = await _backfill_recovered_openalex_metadata(dedup_papers)
+            post_snowball_abstract_backfill = await _backfill_recovered_multisource_abstracts(dedup_papers, policy)
+            post_snowball_crossref_backfill = await _backfill_recovered_crossref_metadata(dedup_papers)
+        else:
+            post_snowball_title_backfill = {"enabled": True, "candidate_count": 0, "attempted": 0}
+            post_snowball_openalex_backfill = {"enabled": True, "candidate_count": 0, "attempted": 0}
+            post_snowball_abstract_backfill = {"enabled": True, "candidate_count": 0, "filled": 0}
+            post_snowball_crossref_backfill = {"enabled": True, "candidate_count": 0, "attempted": 0}
+    else:
+        post_snowball_title_backfill = {"enabled": True, "candidate_count": 0, "attempted": 0}
+        post_snowball_openalex_backfill = {"enabled": True, "candidate_count": 0, "attempted": 0}
+        post_snowball_abstract_backfill = {"enabled": True, "candidate_count": 0, "filled": 0}
+        post_snowball_crossref_backfill = {"enabled": True, "candidate_count": 0, "attempted": 0}
 
     scored_papers = score_papers(dedup_papers, keywords)
     # Sort for deterministic queue priority only. `relevance_score` is a
@@ -1315,9 +2018,20 @@ async def finalize_t2_outputs(
     failures_path = workspace_dir / "literature" / "verification_failures.jsonl"
     _write_jsonl(verified_path, verified_papers)
     _write_jsonl(failures_path, [])
+    raw_cache_merge = _merge_enriched_records_back_to_raw(raw_path, enriched_papers)
+    raw_papers = _load_jsonl(raw_path)
 
-    citation_edges = _build_recovered_citation_edges(verified_papers)
+    recovered_citation_edges = _build_recovered_citation_edges(verified_papers)
     citation_edges_path = workspace_dir / "literature" / "citation_edges.json"
+    existing_citation_edges: list[Any] = []
+    if citation_edges_path.exists():
+        try:
+            loaded_edges = json.loads(citation_edges_path.read_text(encoding="utf-8"))
+            if isinstance(loaded_edges, list):
+                existing_citation_edges = loaded_edges
+        except Exception:
+            existing_citation_edges = []
+    citation_edges = _merge_citation_edge_payload(existing_citation_edges, recovered_citation_edges)
     citation_edges_path.write_text(
         json.dumps(citation_edges, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
@@ -1412,34 +2126,107 @@ async def finalize_t2_outputs(
     search_log += "- 此文件由 runtime 基于当前 `papers_raw.jsonl` 和可解析的 T2 trace 自动重建。\n"
     search_log += f"- 解析到的 T2 trace 数量: {trace_count}\n"
     search_log += (
+        "- OpenAlex 标题兜底补全: "
+        f"enabled={openalex_title_backfill.get('enabled')}, "
+        f"eligible={openalex_title_backfill.get('eligible_count')}, "
+        f"candidate={openalex_title_backfill.get('candidate_count')}, "
+        f"attempted={openalex_title_backfill.get('attempted')}, "
+        f"matched={openalex_title_backfill.get('matched')}, "
+        f"doi_filled={openalex_title_backfill.get('doi_filled')}, "
+        f"openalex_id_filled={openalex_title_backfill.get('openalex_id_filled')}, "
+        f"abstract_filled={openalex_title_backfill.get('abstract_filled')}, "
+        f"references_filled={openalex_title_backfill.get('references_filled')}, "
+        f"pdf_hints_filled={openalex_title_backfill.get('pdf_hints_filled')}, "
+        f"skipped_low_similarity={openalex_title_backfill.get('skipped_low_similarity')}, "
+        f"failed={openalex_title_backfill.get('failed')}, "
+        f"remaining_missing_abstract={openalex_title_backfill.get('remaining_missing_abstract')}, "
+        f"remaining_missing_pdf_hints={openalex_title_backfill.get('remaining_missing_pdf_hints')}\n"
+    )
+    search_log += (
         "- OpenAlex DOI/OA 详情补全: "
         f"enabled={openalex_backfill.get('enabled')}, "
+        f"eligible={openalex_backfill.get('eligible_count')}, "
         f"candidate={openalex_backfill.get('candidate_count')}, "
         f"attempted={openalex_backfill.get('attempted')}, "
+        f"skipped_by_cap={openalex_backfill.get('skipped_by_cap')}, "
         f"openalex_id_filled={openalex_backfill.get('openalex_id_filled')}, "
         f"abstract_filled={openalex_backfill.get('abstract_filled')}, "
         f"references_filled={openalex_backfill.get('references_filled')}, "
         f"pdf_hints_filled={openalex_backfill.get('pdf_hints_filled')}, "
-        f"failed={openalex_backfill.get('failed')}\n"
+        f"failed={openalex_backfill.get('failed')}, "
+        f"remaining_missing_abstract={openalex_backfill.get('remaining_missing_abstract')}, "
+        f"remaining_missing_pdf_hints={openalex_backfill.get('remaining_missing_pdf_hints')}\n"
+    )
+    search_log += (
+        "- 多源摘要回填: "
+        f"enabled={multisource_abstract_backfill.get('enabled')}, "
+        f"candidate={multisource_abstract_backfill.get('candidate_count')}, "
+        f"attempted_single={multisource_abstract_backfill.get('attempted_single')}, "
+        f"filled={multisource_abstract_backfill.get('filled')}, "
+        f"remaining_missing_abstract={multisource_abstract_backfill.get('remaining_missing_abstract')}, "
+        f"by_source={multisource_abstract_backfill.get('by_source')}\n"
     )
     search_log += (
         "- Crossref DOI 详情补全: "
         f"enabled={metadata_backfill.get('enabled')}, "
+        f"eligible={metadata_backfill.get('eligible_count')}, "
         f"candidate={metadata_backfill.get('candidate_count')}, "
         f"attempted={metadata_backfill.get('attempted')}, "
+        f"skipped_by_cap={metadata_backfill.get('skipped_by_cap')}, "
         f"abstract_filled={metadata_backfill.get('abstract_filled')}, "
         f"references_filled={metadata_backfill.get('references_filled')}, "
-        f"failed={metadata_backfill.get('failed')}\n"
+        f"failed={metadata_backfill.get('failed')}, "
+        f"remaining_missing_abstract={metadata_backfill.get('remaining_missing_abstract')}, "
+        f"remaining_missing_references={metadata_backfill.get('remaining_missing_references')}\n"
+    )
+    search_log += (
+        "- OpenAlex citation snowball 补全: "
+        f"enabled={openalex_citation_backfill.get('enabled')}, "
+        f"sources_used={openalex_citation_backfill.get('sources_used')}, "
+        f"reference_items_seen={openalex_citation_backfill.get('reference_items_seen')}, "
+        f"reference_openalex_ids_seen={openalex_citation_backfill.get('reference_openalex_ids_seen')}, "
+        f"related_openalex_ids_seen={openalex_citation_backfill.get('related_openalex_ids_seen')}, "
+        f"non_openalex_references_skipped={openalex_citation_backfill.get('non_openalex_references_skipped')}, "
+        f"skipped_by_refs_per_source_cap={openalex_citation_backfill.get('skipped_by_refs_per_source_cap')}, "
+        f"skipped_by_max_candidates_cap={openalex_citation_backfill.get('skipped_by_max_candidates_cap')}, "
+        f"attempted={openalex_citation_backfill.get('attempted')}, "
+        f"added={openalex_citation_backfill.get('added')}, "
+        f"raw_persisted_or_merged={openalex_citation_backfill.get('raw_persisted_or_merged')}, "
+        f"failed={openalex_citation_backfill.get('failed')}\n"
     )
     search_log += (
         "- Crossref citation snowball 补全: "
         f"enabled={citation_backfill.get('enabled')}, "
         f"sources_used={citation_backfill.get('sources_used')}, "
+        f"reference_items_seen={citation_backfill.get('reference_items_seen')}, "
         f"reference_dois_seen={citation_backfill.get('reference_dois_seen')}, "
+        f"reference_titles_seen={citation_backfill.get('reference_titles_seen')}, "
+        f"title_references_resolved={citation_backfill.get('title_references_resolved')}, "
+        f"non_doi_references_skipped={citation_backfill.get('non_doi_references_skipped')}, "
+        f"skipped_existing_or_duplicate_reference_titles={citation_backfill.get('skipped_existing_or_duplicate_reference_titles')}, "
+        f"skipped_by_refs_per_source_cap={citation_backfill.get('skipped_by_refs_per_source_cap')}, "
+        f"skipped_by_max_candidates_cap={citation_backfill.get('skipped_by_max_candidates_cap')}, "
         f"attempted={citation_backfill.get('attempted')}, "
         f"added={citation_backfill.get('added')}, "
         f"raw_persisted={citation_backfill.get('raw_persisted')}, "
         f"failed={citation_backfill.get('failed')}\n"
+    )
+    search_log += (
+        "- Snowball 后二次补全: "
+        f"title_attempted={post_snowball_title_backfill.get('attempted')}, "
+        f"title_matched={post_snowball_title_backfill.get('matched')}, "
+        f"openalex_attempted={post_snowball_openalex_backfill.get('attempted')}, "
+        f"openalex_refs_filled={post_snowball_openalex_backfill.get('references_filled')}, "
+        f"abstract_filled={post_snowball_abstract_backfill.get('filled')}, "
+        f"crossref_attempted={post_snowball_crossref_backfill.get('attempted')}, "
+        f"crossref_refs_filled={post_snowball_crossref_backfill.get('references_filled')}, "
+        f"crossref_abstract_filled={post_snowball_crossref_backfill.get('abstract_filled')}\n"
+    )
+    search_log += (
+        "- T2 raw 元数据缓存回写: "
+        f"records_after={raw_cache_merge.get('raw_cache_records_after')}, "
+        f"merged={raw_cache_merge.get('raw_cache_records_merged')}, "
+        f"appended={raw_cache_merge.get('raw_cache_records_appended')}\n"
     )
     if query_results is None:
         search_log += "- 本次未能恢复可靠的 query 历史，因此只保留了总量统计。\n"
@@ -1460,8 +2247,16 @@ async def finalize_t2_outputs(
         "query_count": len(queries),
         "trace_count": trace_count,
         "openalex_backfill": openalex_backfill,
+        "openalex_title_backfill": openalex_title_backfill,
+        "multisource_abstract_backfill": multisource_abstract_backfill,
         "metadata_backfill": metadata_backfill,
+        "openalex_citation_backfill": openalex_citation_backfill,
+        "post_snowball_title_backfill": post_snowball_title_backfill,
+        "post_snowball_openalex_backfill": post_snowball_openalex_backfill,
+        "post_snowball_abstract_backfill": post_snowball_abstract_backfill,
+        "post_snowball_crossref_backfill": post_snowball_crossref_backfill,
         "citation_backfill": citation_backfill,
+        "raw_cache_merge": raw_cache_merge,
         "paths": {
             "papers_dedup": str(workspace_dir / "literature" / "papers_dedup.jsonl"),
             "papers_verified": str(verified_path),

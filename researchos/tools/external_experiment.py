@@ -30,6 +30,15 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _sha256_json(data: Any) -> str:
+    payload = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return _sha256_text(payload)
+
+
 def _read_json(path: Path) -> dict[str, Any]:
     if not path.exists() or path.stat().st_size <= 0:
         return {}
@@ -258,7 +267,13 @@ def patch_external_executor_files_with_selection(workspace: Path, selection: dic
         _write_json(workspace / "external_executor" / "job_state.json", job_state)
 
 
-def validate_external_executor_ready(workspace: Path, result_pack_rel: str, status_rel: str) -> dict[str, Any]:
+def validate_external_executor_ready(
+    workspace: Path,
+    result_pack_rel: str,
+    status_rel: str,
+    *,
+    allow_partial_results: bool = False,
+) -> dict[str, Any]:
     missing = [rel for rel in (result_pack_rel, status_rel) if not (workspace / rel).exists()]
     if missing:
         report = {
@@ -288,8 +303,20 @@ def validate_external_executor_ready(workspace: Path, result_pack_rel: str, stat
     if status.get("semantics") != "external_executor_status":
         issues.append("executor_status semantics invalid")
     current_state = status.get("current_state") or status.get("status")
-    if current_state not in {"done", "COMPLETED", "PARTIAL_RESULTS_READY"}:
-        issues.append("executor_status current_state/status is not done/COMPLETED/PARTIAL_RESULTS_READY")
+    allowed_terminal_states = {"done", "COMPLETED"}
+    if allow_partial_results:
+        allowed_terminal_states.add("PARTIAL_RESULTS_READY")
+    if current_state not in allowed_terminal_states:
+        if current_state == "PARTIAL_RESULTS_READY" and not allow_partial_results:
+            issues.append(
+                "executor_status is PARTIAL_RESULTS_READY, but partial external results are disabled; "
+                "finish the external run or enable allow_partial_results explicitly."
+            )
+        else:
+            issues.append(
+                "executor_status current_state/status is not "
+                + "/".join(sorted(allowed_terminal_states))
+            )
     job_state = _read_json(workspace / "external_executor" / "job_state.json")
     allowed_states = job_state.get("allowed_states") if isinstance(job_state, dict) else None
     if allowed_states:
@@ -350,6 +377,7 @@ def validate_external_executor_ready(workspace: Path, result_pack_rel: str, stat
         "run_manifest": manifest_rel,
         "dry_run": bool(result_pack.get("dry_run")),
         "mock_only": bool(result_pack.get("mock_only")),
+        "partial_results_allowed": allow_partial_results,
     }
     return report
 
@@ -725,6 +753,10 @@ class WaitForExternalExecutorResultParams(BaseModel):
     result_pack_path: str = Field(default="external_executor/result_pack.json")
     status_path: str = Field(default="external_executor/executor_status.json")
     output_path: str = Field(default="external_executor/wait_acceptance_report.json")
+    allow_partial_results: bool = Field(
+        default=False,
+        description="默认不允许 PARTIAL_RESULTS_READY 进入 T7；只有显式打开时才接受部分结果。",
+    )
 
 
 class BuildPostExperimentNoveltyCheckParams(BaseModel):
@@ -1005,7 +1037,12 @@ class WaitForExternalExecutorResultTool(Tool):
     async def execute(self, **kwargs: Any) -> ToolResult:
         params = WaitForExternalExecutorResultParams(**kwargs)
         try:
-            report = validate_external_executor_ready(self.policy.workspace_dir, params.result_pack_path, params.status_path)
+            report = validate_external_executor_ready(
+                self.policy.workspace_dir,
+                params.result_pack_path,
+                params.status_path,
+                allow_partial_results=params.allow_partial_results,
+            )
             if not report["ok"]:
                 return ToolResult(ok=False, content=report["message"], error="external_executor_not_ready", data=report)
             _write_json(self.policy.resolve_write(params.output_path), report)
@@ -1554,7 +1591,7 @@ class AuditPaperClaimsTool(Tool):
             issues = []
             for number in _extract_substantive_numbers(paper):
                 if number not in known_values:
-                    issues.append({"level": "WARN", "number": number, "issue": "number_not_in_evidence_pack"})
+                    issues.append({"level": "FAIL", "number": number, "issue": "number_not_in_evidence_pack"})
             if pack.get("mock_only"):
                 issues.append({"level": "FAIL", "issue": "mock_only_evidence_pack", "detail": "Dry-run evidence cannot support paper claims."})
             forbidden_violations = _detect_forbidden_wording_violations(paper, result_to_claim)
@@ -1566,6 +1603,14 @@ class AuditPaperClaimsTool(Tool):
             audit = {
                 "version": "1.0",
                 "semantics": "paper_claim_audit_against_experiment_evidence_pack",
+                "input_fingerprints": {
+                    "paper_path": params.paper_path,
+                    "paper_sha256": _sha256_text(paper),
+                    "evidence_pack_path": params.evidence_pack_path,
+                    "evidence_pack_sha256": _sha256_json(pack),
+                    "result_to_claim_path": params.result_to_claim_path,
+                    "result_to_claim_sha256": _sha256_json(result_to_claim),
+                },
                 "summary": {
                     "fail_count": sum(1 for item in issues if item["level"] == "FAIL"),
                     "warn_count": sum(1 for item in issues if item["level"] == "WARN"),

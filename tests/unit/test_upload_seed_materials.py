@@ -20,7 +20,7 @@ async def test_upload_seed_pdf_success(tmp_workspace: Path):
     """测试成功上传 PDF 文件。"""
     # 创建测试 PDF 文件
     test_pdf = tmp_workspace.parent / "test.pdf"
-    test_pdf.write_text("Fake PDF content", encoding="utf-8")
+    test_pdf.write_bytes(b"%PDF-1.4\nFake PDF content\n%%EOF")
 
     policy = WorkspaceAccessPolicy(tmp_workspace, [""], [""])
     tool = UploadSeedPdfTool(policy)
@@ -35,6 +35,23 @@ async def test_upload_seed_pdf_success(tmp_workspace: Path):
     assert "arxiv_2401.12345.pdf" in result.content
     assert (tmp_workspace / "user_seeds" / "pdfs" / "arxiv_2401.12345.pdf").exists()
     assert (tmp_workspace / "user_seeds" / "pdfs" / "arxiv_2401.12345.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_upload_seed_pdf_rejects_path_traversal_paper_id(tmp_workspace: Path):
+    test_pdf = tmp_workspace.parent / "test.pdf"
+    test_pdf.write_bytes(b"%PDF-1.4\nFake PDF content\n%%EOF")
+    policy = WorkspaceAccessPolicy(tmp_workspace, [""], [""])
+    tool = UploadSeedPdfTool(policy)
+
+    result = await tool.execute(
+        source_path=str(test_pdf),
+        paper_id="../../literature/hijack",
+    )
+
+    assert not result.ok
+    assert result.error == "invalid_paper_id"
+    assert not (tmp_workspace / "literature" / "hijack.pdf").exists()
 
 
 @pytest.mark.asyncio

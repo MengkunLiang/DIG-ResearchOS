@@ -213,12 +213,18 @@ def find_queue_record_by_rank(
     if queue_path and queue_path != "auto":
         rel_paths.append(queue_path)
     else:
-        rel_paths.extend([
-            "literature/deep_read_queue_pending.jsonl",
-            "literature/deep_read_queue.jsonl",
-            "literature/papers_verified.jsonl",
-            "literature/papers_dedup.jsonl",
-        ])
+        pending_path = literature_dir / "deep_read_queue_pending.jsonl"
+        if pending_path.exists():
+            # Pending queue ranks are re-numbered for resume. If a pending file
+            # exists, an implicit queue_rank must not silently fall back to the
+            # full queue, whose ranks refer to the original T2 queue.
+            rel_paths.append("literature/deep_read_queue_pending.jsonl")
+        else:
+            rel_paths.extend([
+                "literature/deep_read_queue.jsonl",
+                "literature/papers_verified.jsonl",
+                "literature/papers_dedup.jsonl",
+            ])
     for rel_path in rel_paths:
         path = workspace_dir / rel_path
         if not path.exists():
@@ -250,7 +256,7 @@ def load_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def _load_default_queue(literature_dir: Path) -> tuple[list[dict[str, Any]], str]:
-    for rel_name in ("deep_read_queue.jsonl", "deep_read_queue_pending.jsonl", "papers_verified.jsonl", "papers_dedup.jsonl"):
+    for rel_name in ("deep_read_queue_pending.jsonl", "deep_read_queue.jsonl", "papers_verified.jsonl", "papers_dedup.jsonl"):
         path = literature_dir / rel_name
         if path.exists():
             return load_jsonl(path), f"literature/{rel_name}"

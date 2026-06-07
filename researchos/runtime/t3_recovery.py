@@ -74,12 +74,19 @@ def _note_keys(literature_dir: Path) -> set[str]:
 
 
 def _re_rank_pending_queue(queue_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """重排剩余队列的 rank，避免恢复时出现断裂序号。"""
+    """重排剩余队列的 rank，避免恢复时出现断裂序号。
+
+    ``queue_rank`` 是 Reader 在当前 pending queue 里看到的序号；
+    ``original_queue_rank`` 保留 full queue 中的稳定序号，供日志、manifest
+    和用户排障时对齐，避免 resume 后 rank 语义漂移。
+    """
 
     pending: list[dict[str, Any]] = []
     for idx, record in enumerate(queue_records, start=1):
         updated = dict(record)
+        updated.setdefault("original_queue_rank", record.get("original_queue_rank") or record.get("queue_rank") or idx)
         updated["queue_rank"] = idx
+        updated["pending_queue_rank"] = idx
         pending.append(updated)
     return pending
 
@@ -183,6 +190,11 @@ def prepare_t3_resume_artifacts(workspace_dir: Path, *, refresh_reason: str | No
         json.dumps(
             {
                 "source_queue": source_label,
+                "resume_queue_path": "literature/deep_read_queue_pending.jsonl",
+                "rank_semantics": (
+                    "queue_rank in deep_read_queue_pending.jsonl is the current resume rank; "
+                    "original_queue_rank points back to literature/deep_read_queue.jsonl."
+                ),
                 "refresh_reason": refresh_reason or "resume_snapshot",
                 "original_queue_count": len(queue_records),
                 "completed_note_count": valid_note_file_count,

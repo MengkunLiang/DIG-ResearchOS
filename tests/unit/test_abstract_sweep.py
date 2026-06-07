@@ -208,6 +208,43 @@ def test_build_sweep_candidates_excludes_existing_abstract_notes(tmp_path: Path)
     assert candidates[0]["id"] == "paper1"
 
 
+def test_build_sweep_candidates_dedupes_cross_source_aliases(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    _write_jsonl(
+        workspace / "literature" / "papers_verified.jsonl",
+        [
+            {
+                "id": "S2-alias",
+                "canonical_id": "S2-alias",
+                "externalIds": {"OpenAlex": "W123"},
+                "title": "Alias Paper Variant A",
+                "abstract": "short",
+                "relevance_score": 0.8,
+            }
+        ],
+    )
+    _write_jsonl(
+        workspace / "literature" / "papers_dedup.jsonl",
+        [
+            {
+                "id": "W123",
+                "canonical_id": "W123",
+                "title": "Alias Paper Variant B",
+                "abstract": "longer abstract from another source",
+                "relevance_score": 0.7,
+            }
+        ],
+    )
+
+    candidates = build_sweep_candidates(
+        workspace,
+        {"lite_paper_num": 10, "min_relevance": 0.0, "sources": ["papers_verified", "papers_dedup"], "exclude_already_read": True},
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["abstract"] == "longer abstract from another source"
+
+
 def test_build_sweep_candidates_filters_by_relevance(tmp_path: Path):
     workspace = tmp_path / "ws"
     _write_jsonl(

@@ -61,6 +61,13 @@ class LatexCompileTool(Tool):
             params=params,
             started_at=started_at,
         )
+        cached = _cached_compile_result_if_redundant(
+            self.docker.policy.workspace_dir,
+            params=params,
+            report_base=report_base,
+        )
+        if cached is not None:
+            return cached
 
         # 容器内模式或宿主机已有 TeX：直接调用 latexmk。
         if self._is_running_in_container() or shutil.which("latexmk"):
@@ -315,6 +322,77 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+_COMPILE_GENERATED_SUFFIXES = {
+    ".aux",
+    ".bbl",
+    ".bcf",
+    ".blg",
+    ".fls",
+    ".fdb_latexmk",
+    ".log",
+    ".out",
+    ".pdf",
+    ".run.xml",
+    ".synctex.gz",
+    ".toc",
+}
+
+
+def _compile_dependency_fingerprint(workspace: Path, tex_abs: Path) -> dict[str, Any]:
+    """Fingerprint non-generated files next to the TeX entry point.
+
+    LaTeX output depends on more than `main.tex`: bibliography, local style
+    files, included section files, and figures can all change without the main
+    source hash changing. For a submission bundle, hashing every non-generated
+    file in the bundle is conservative and cheap.
+    """
+
+    base_dir = tex_abs.parent
+    files: list[dict[str, Any]] = []
+    if base_dir.exists():
+        for path in sorted(item for item in base_dir.rglob("*") if item.is_file()):
+            if _is_generated_compile_artifact(path):
+                continue
+            try:
+                rel = path.relative_to(workspace).as_posix()
+            except ValueError:
+                rel = path.as_posix()
+            files.append(
+                {
+                    "path": rel,
+                    "sha256": _sha256_file(path),
+                    "size": path.stat().st_size,
+                }
+            )
+    digest_payload = json.dumps(
+        [{"path": item["path"], "sha256": item["sha256"], "size": item["size"]} for item in files],
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return {
+        "semantics": "latex_compile_dependency_fingerprint",
+        "scope": _rel_to_workspace(workspace, base_dir),
+        "hash": hashlib.sha256(digest_payload.encode("utf-8")).hexdigest(),
+        "file_count": len(files),
+        "files": files,
+    }
+
+
+def _is_generated_compile_artifact(path: Path) -> bool:
+    name = path.name
+    suffix = path.suffix.lower()
+    if suffix in _COMPILE_GENERATED_SUFFIXES:
+        return True
+    return any(name.lower().endswith(item) for item in _COMPILE_GENERATED_SUFFIXES if item.startswith("."))
+
+
+def _rel_to_workspace(workspace: Path, path: Path) -> str:
+    try:
+        return path.relative_to(workspace).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
 def _compile_report_base(
     *,
     tex_abs: Path,
@@ -324,6 +402,7 @@ def _compile_report_base(
 ) -> dict[str, Any]:
     tex_rel = tex_abs.relative_to(workspace).as_posix()
     log_path = tex_abs.with_suffix(".log")
+    dependency_fingerprint = _compile_dependency_fingerprint(workspace, tex_abs)
     return {
         "_workspace": workspace.as_posix(),
         "version": "1.0",
@@ -335,6 +414,7 @@ def _compile_report_base(
         "started_at": started_at,
         "main_tex_sha256": _sha256_file(tex_abs) if tex_abs.exists() else "",
         "main_tex_mtime": tex_abs.stat().st_mtime if tex_abs.exists() else 0,
+        "dependency_fingerprint": dependency_fingerprint,
         "log_path": log_path.relative_to(workspace).as_posix(),
     }
 
@@ -362,6 +442,11 @@ def _finalize_compile_report(
             "attempts": [
                 {
                     "engine": engine,
+                    "requested_engine": base.get("requested_engine"),
+                    "bibtex": base.get("bibtex"),
+                    "output_dir": base.get("output_dir"),
+                    "main_tex_sha256": base.get("main_tex_sha256"),
+                    "dependency_fingerprint_hash": (base.get("dependency_fingerprint") or {}).get("hash"),
                     "exit_code": exit_code,
                     "success": success,
                     "started_at": base.get("started_at"),
@@ -399,6 +484,7 @@ def _finalize_compile_report(
                 report["log_sha256"] = ""
                 report["log_mtime"] = 0
                 report["log_size"] = 0
+    report["attempt_count"] = len(report.get("attempts") or [])
     return report
 
 
@@ -415,6 +501,7 @@ def _write_compile_report_for_known_target(workspace: Path, tex_path: str, repor
             report["pdf_path"] = Path(pdf_rel).relative_to(workspace).as_posix()
         except ValueError:
             pass
+    report = _merge_compile_report_attempts(report_path, report)
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -428,3 +515,227 @@ def _compile_report_target_for_tex(tex_path: str) -> str:
     if normalized == "drafts/survey/survey.tex":
         return "drafts/survey/survey_compile_report.json"
     return ""
+
+
+def _load_compile_report(workspace: Path, tex_path: str) -> tuple[Path | None, dict[str, Any]]:
+    report_rel = _compile_report_target_for_tex(tex_path)
+    if not report_rel:
+        return None, {}
+    report_path = workspace / report_rel
+    if not report_path.exists() or report_path.stat().st_size <= 0:
+        return report_path, {}
+    try:
+        data = json.loads(report_path.read_text(encoding="utf-8"))
+    except Exception:
+        return report_path, {}
+    return report_path, data if isinstance(data, dict) else {}
+
+
+def _cached_compile_result_if_redundant(
+    workspace: Path,
+    *,
+    params: LatexCompileParams,
+    report_base: dict[str, Any],
+) -> ToolResult | None:
+    """Avoid rerunning identical LaTeX compiles.
+
+    If the source hash and compile options are unchanged, a previous successful
+    PDF can be reused and a previous source-level failure should not be repeated
+    until the TeX changes. Environment wait failures are not cached because the
+    user may install TeX/Docker without editing the file.
+    """
+
+    _, existing = _load_compile_report(workspace, params.tex_path)
+    if not existing:
+        return None
+    if not _same_compile_input(existing, report_base):
+        return None
+
+    pdf_rel = str(existing.get("pdf_path") or "").strip()
+    if bool(existing.get("success")) and pdf_rel and (workspace / pdf_rel).exists():
+        cache_ok, cache_err = _cached_success_artifacts_match(workspace, existing, report_base)
+        if not cache_ok:
+            _LOG.info("latex_cached_success_invalidated", reason=cache_err, tex_path=params.tex_path)
+            return None
+        return ToolResult(
+            ok=True,
+            content=(
+                "LaTeX compile skipped: existing PDF matches unchanged main.tex. "
+                f"PDF: {pdf_rel}"
+            ),
+            data={
+                "pdf_path": pdf_rel,
+                "cached": True,
+                "compile_report": existing,
+            },
+        )
+
+    attempts_for_hash = _attempts_for_compile_input(existing, report_base)
+    max_attempts = _max_compile_attempts_for_tex(params.tex_path)
+    if len(attempts_for_hash) >= max_attempts:
+        return ToolResult(
+            ok=False,
+            content=(
+                "LaTeX compile attempt limit reached for unchanged main.tex "
+                f"({len(attempts_for_hash)}/{max_attempts}). Edit the TeX source before retrying."
+            ),
+            error="compile_attempt_limit_exceeded",
+            data={
+                "cached": True,
+                "compile_report": existing,
+                "attempt_count_for_current_tex": len(attempts_for_hash),
+                "max_compile_attempts": max_attempts,
+            },
+        )
+
+    error = str(existing.get("error") or "")
+    if error in {"nonzero_exit", "pdf_missing", "timeout"}:
+        return ToolResult(
+            ok=False,
+            content=(
+                "LaTeX compile skipped: previous compile failed for the same main.tex hash "
+                f"with error={error}. Edit the TeX source before retrying."
+            ),
+            error="cached_compile_failure_same_tex",
+            data={
+                "cached": True,
+                "compile_report": existing,
+                "attempt_count_for_current_tex": len(attempts_for_hash),
+                "max_compile_attempts": max_attempts,
+            },
+        )
+    return None
+
+
+def _cached_success_artifacts_match(
+    workspace: Path,
+    report: dict[str, Any],
+    base: dict[str, Any],
+) -> tuple[bool, str | None]:
+    if report.get("semantics") != "latex_compile_attempt_report":
+        return False, "semantics"
+    tex_rel = str(report.get("tex_path") or "").strip()
+    pdf_rel = str(report.get("pdf_path") or "").strip()
+    log_rel = str(report.get("log_path") or "").strip()
+    if not tex_rel or not pdf_rel or not log_rel:
+        return False, "missing tex/pdf/log path"
+    tex_path = workspace / tex_rel
+    pdf_path = workspace / pdf_rel
+    log_path = workspace / log_rel
+    for path, label in ((tex_path, "tex"), (pdf_path, "pdf"), (log_path, "log")):
+        if not path.exists():
+            return False, f"{label} missing"
+    if str(report.get("main_tex_sha256") or "") != str(base.get("main_tex_sha256") or ""):
+        return False, "main_tex_sha256"
+    if _dependency_hash(report) != _dependency_hash(base):
+        return False, "dependency_fingerprint"
+    if str(report.get("pdf_sha256") or "") != _sha256_file(pdf_path):
+        return False, "pdf_sha256"
+    log_hash = str(report.get("log_sha256") or "")
+    if not log_hash or log_hash != _sha256_file(log_path):
+        return False, "log_sha256"
+    if int(report.get("pdf_size") or 0) != pdf_path.stat().st_size:
+        return False, "pdf_size"
+    if int(report.get("log_size") or 0) != log_path.stat().st_size:
+        return False, "log_size"
+    if float(report.get("pdf_mtime") or 0) < tex_path.stat().st_mtime:
+        return False, "pdf_mtime"
+    if float(report.get("log_mtime") or 0) < tex_path.stat().st_mtime:
+        return False, "log_mtime"
+    attempts = report.get("attempts")
+    if not isinstance(attempts, list) or not attempts:
+        return False, "attempts"
+    last_attempt = attempts[-1]
+    if not isinstance(last_attempt, dict) or last_attempt.get("success") is not True:
+        return False, "last_attempt"
+    return True, None
+
+
+def _same_compile_input(report: dict[str, Any], base: dict[str, Any]) -> bool:
+    return (
+        str(report.get("main_tex_sha256") or "") == str(base.get("main_tex_sha256") or "")
+        and _dependency_hash(report) == _dependency_hash(base)
+        and str(report.get("requested_engine") or "") == str(base.get("requested_engine") or "")
+        and bool(report.get("bibtex")) == bool(base.get("bibtex"))
+        and str(report.get("output_dir") or "") == str(base.get("output_dir") or "")
+    )
+
+
+def _dependency_hash(report: dict[str, Any]) -> str:
+    fingerprint = report.get("dependency_fingerprint")
+    if isinstance(fingerprint, dict):
+        return str(fingerprint.get("hash") or "")
+    return str(report.get("dependency_fingerprint_hash") or "")
+
+
+def _attempts_for_compile_input(report: dict[str, Any], base: dict[str, Any]) -> list[dict[str, Any]]:
+    attempts = report.get("attempts") if isinstance(report.get("attempts"), list) else []
+    current_hash = str(base.get("main_tex_sha256") or "")
+    current_dependency_hash = _dependency_hash(base)
+    current_engine = str(base.get("requested_engine") or "")
+    current_bibtex = bool(base.get("bibtex"))
+    current_output_dir = str(base.get("output_dir") or "")
+    matches: list[dict[str, Any]] = []
+    for attempt in attempts:
+        if not isinstance(attempt, dict):
+            continue
+        attempt_hash = str(attempt.get("main_tex_sha256") or report.get("main_tex_sha256") or "")
+        attempt_dependency_hash = str(
+            attempt.get("dependency_fingerprint_hash")
+            or _dependency_hash(report)
+            or ""
+        )
+        attempt_engine = str(attempt.get("requested_engine") or attempt.get("engine") or report.get("requested_engine") or "")
+        attempt_bibtex = bool(attempt.get("bibtex", report.get("bibtex")))
+        attempt_output_dir = str(attempt.get("output_dir") or report.get("output_dir") or "")
+        if _is_environment_compile_error(str(attempt.get("error") or report.get("error") or "")):
+            continue
+        if (
+            attempt_hash == current_hash
+            and attempt_dependency_hash == current_dependency_hash
+            and attempt_engine == current_engine
+            and attempt_bibtex == current_bibtex
+            and attempt_output_dir == current_output_dir
+        ):
+            matches.append(attempt)
+    return matches
+
+
+def _is_environment_compile_error(error: str) -> bool:
+    return error in {
+        "waiting_environment",
+        "waiting_environment_docker",
+        "waiting_environment_latexmk_missing",
+        "docker_command_not_found",
+        "docker_daemon_unavailable",
+        "docker_image_missing",
+        "image_not_allowed",
+    } or error.startswith("waiting_environment_")
+
+
+def _max_compile_attempts_for_tex(tex_path: str) -> int:
+    default = 10 if tex_path.strip().lstrip("./") == "submission/bundle/main.tex" else 4
+    try:
+        from ..runtime.agent_params import get_agent_params
+
+        params = get_agent_params("submission")
+        return max(1, int(params.get("max_compile_attempts") or default))
+    except Exception:
+        return default
+
+
+def _merge_compile_report_attempts(report_path: Path, report: dict[str, Any]) -> dict[str, Any]:
+    if not report_path.exists() or report_path.stat().st_size <= 0:
+        return report
+    try:
+        existing = json.loads(report_path.read_text(encoding="utf-8"))
+    except Exception:
+        return report
+    if not isinstance(existing, dict):
+        return report
+    old_attempts = existing.get("attempts") if isinstance(existing.get("attempts"), list) else []
+    new_attempts = report.get("attempts") if isinstance(report.get("attempts"), list) else []
+    merged = dict(report)
+    merged["attempts"] = [*old_attempts, *new_attempts]
+    merged["attempt_count"] = len(merged["attempts"])
+    return merged

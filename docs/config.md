@@ -567,7 +567,9 @@ agents:
 
 当前用于：
 
-- T9 编译失败后的“诊断-修复-重试”轮数上限
+- T9 编译失败后的“诊断-修复-重试”上限
+- 该上限按当前 TeX + dependency fingerprint 计数；同一 fingerprint 的源级失败不会无限重编译，必须先修改 TeX 或依赖
+- Docker/latexmk 不可用等环境失败不作为 source-level attempt 上限
 
 预算现在见 `user_settings.yaml` 的 `budget.*` 段；timeout、retry 和扩限策略见 `runtime.*` 段。
 

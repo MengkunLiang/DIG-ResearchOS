@@ -140,6 +140,10 @@ profiles:
 - `prompt.prompt_template`
 - `prompt.structured_outputs`
 - `prompt.expected_outputs`
+- `behavior.*`，例如 `submission.behavior.max_compile_attempts`
+
+`submission.behavior.max_compile_attempts` 控制 T9 对当前 TeX + dependency fingerprint
+的 LaTeX 编译尝试上限。它不是普通 LLM budget；日常预算仍在 `user_settings.yaml: budget.*`。
 - `behavior.*`
 - `modes.<mode>.description/prompt/behavior/tools`
 
@@ -154,6 +158,14 @@ profiles:
 - `exclude_semantic_excluded: false` 表示 `shared_keyword_only/unrelated` 也会保留为排除线索，而不是静默消失。
 
 这组参数只控制机械覆盖行为；论文是否能作为学术证据仍由 Reader/Writer 的 LLM 判断和 evidence level 控制。
+
+### T2 metadata / citation backfill 参数归属
+
+T2 的 OpenAlex DOI/OA 详情补全、Crossref DOI 详情补全、多源摘要回填、OpenAlex/Crossref citation snowball、raw cache merge 是 runtime deterministic finalize 的一部分。它们的默认 cap 和重试策略属于工具实现默认，不是日常用户需要调的 LLM budget。
+
+- 日常用户不要在 `agent_params.yaml` 里加 T2 `llm` / `budget` 参数来影响这些回填；Scout 的模型只负责 query 设计和语义筛选。
+- 质量排障优先看 `literature/search_log.md` 和 `_runtime/logs/researchos.log`，尤其是 `eligible/candidate/attempted/skipped_by_cap/failed/remaining_missing_*`、`raw_persisted/raw_merged`、`T2 raw 元数据缓存回写`。
+- 如果将来需要把 snowball cap 或 backfill cap 暴露给用户，应新增到单一的 runtime/search 配置入口，而不是同时写入 `agent_params.yaml` 和 `state_machine.yaml`。
 
 ### 日志与控制台
 

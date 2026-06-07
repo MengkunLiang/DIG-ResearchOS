@@ -8,6 +8,7 @@ claim selection, and venue-aware framing.
 """
 
 import csv
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -637,6 +638,19 @@ class InitializeManuscriptStateTool(Tool):
                 section_outline_dir=params.section_outline_dir,
                 target_venue=params.target_venue,
             )
+            state["input_fingerprints"] = build_paper_state_input_fingerprints(
+                ws,
+                {
+                    "outline": params.outline_path,
+                    "resource_index": params.resource_index_path,
+                    "section_plan": params.section_plan_path,
+                    "evidence_plan": params.evidence_plan_path,
+                    "figure_table_plan": params.figure_table_plan_path,
+                    "alignment_matrix": params.alignment_matrix_path,
+                    "related_work_bib": "literature/related_work.bib",
+                    "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
+                },
+            )
             state_path = self.policy.resolve_write(params.state_output_path)
             outline_dir = self.policy.resolve_write(
                 f"{params.section_outline_dir.rstrip('/')}/_manifest.txt"
@@ -812,6 +826,7 @@ class PrepareSubmissionBundleTool(Tool):
             references_path = self.policy.resolve_write(
                 f"{params.bundle_dir.rstrip('/')}/{params.references_filename}"
             )
+            manifest_path = self.policy.resolve_write(f"{params.bundle_dir.rstrip('/')}/bundle_manifest.json")
             tex = paper_path.read_text(encoding="utf-8")
             tex = rewrite_bibliography_to_references(tex, Path(params.references_filename).stem)
             bundle_dir.mkdir(parents=True, exist_ok=True)
@@ -821,6 +836,18 @@ class PrepareSubmissionBundleTool(Tool):
                 self.policy,
                 bundle_dir=params.bundle_dir.rstrip("/"),
                 enabled=params.copy_figures,
+            )
+            manifest = build_submission_bundle_manifest(
+                self.policy.workspace_dir,
+                paper_path=paper_path,
+                bib_path=bib_path,
+                main_path=main_path,
+                references_path=references_path,
+                copied_figures=copied_figures,
+            )
+            manifest_path.write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
             )
         except ToolAccessDenied as exc:
             return ToolResult(ok=False, content=str(exc), error="access_denied")
@@ -840,6 +867,7 @@ class PrepareSubmissionBundleTool(Tool):
                 "main_tex": f"{params.bundle_dir.rstrip('/')}/{params.main_filename}",
                 "references_bib": f"{params.bundle_dir.rstrip('/')}/{params.references_filename}",
                 "copied_figures": copied_figures,
+                "bundle_manifest": f"{params.bundle_dir.rstrip('/')}/bundle_manifest.json",
             },
         )
 
@@ -1663,6 +1691,7 @@ def build_paper_state(
         "semantics": "shared_state_for_section_by_section_writing_not_final_claims",
         "target_venue": target_venue,
         "outline": outline_path,
+        "input_fingerprints": {},
         "section_order": SECTION_WRITING_SEQUENCE,
         "sections": sections,
         "current_section": None,
@@ -1690,6 +1719,20 @@ def build_paper_state(
         ],
         "revision_log": [],
     }
+
+
+def build_paper_state_input_fingerprints(
+    workspace: Path,
+    paths: dict[str, str],
+) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for label, rel in paths.items():
+        path = workspace / rel
+        item: dict[str, Any] = {"path": rel, "exists": path.exists()}
+        if path.exists() and path.is_file():
+            item["sha256"] = _sha256_path(path)
+        out[label] = item
+    return out
 
 
 def build_section_outlines(
@@ -3136,10 +3179,10 @@ def _copy_submission_figures(
     *,
     bundle_dir: str,
     enabled: bool,
-) -> list[str]:
+) -> list[dict[str, str]]:
     if not enabled:
         return []
-    copied: list[str] = []
+    copied: list[dict[str, str]] = []
     for rel_dir in ("drafts/figures", "figures"):
         src_dir = policy.workspace_dir / rel_dir
         if not src_dir.exists() or not src_dir.is_dir():
@@ -3150,5 +3193,92 @@ def _copy_submission_figures(
             dst = policy.resolve_write(dst_rel)
             dst.parent.mkdir(parents=True, exist_ok=True)
             dst.write_bytes(src.read_bytes())
-            copied.append(dst_rel)
+            copied.append(
+                {
+                    "source_path": _rel_path(policy.workspace_dir, src),
+                    "dest_path": dst_rel,
+                }
+            )
     return copied
+
+
+def build_submission_bundle_manifest(
+    workspace: Path,
+    *,
+    paper_path: Path,
+    bib_path: Path,
+    main_path: Path,
+    references_path: Path,
+    copied_figures: list[str | dict[str, str]],
+) -> dict[str, Any]:
+    """Fingerprint the source artifacts used to prepare a T9 bundle.
+
+    A compiled bundle can be internally self-consistent while still being
+    stale relative to the current `drafts/paper.tex` or bibliography. The
+    manifest gives T9 validators a mechanical freshness contract.
+    """
+
+    return {
+        "version": "1.0",
+        "semantics": "submission_bundle_source_fingerprint",
+        "source": {
+            "paper_path": _rel_path(workspace, paper_path),
+            "paper_sha256": _sha256_path(paper_path),
+            "bib_path": _rel_path(workspace, bib_path),
+            "bib_sha256": _sha256_path(bib_path),
+        },
+        "bundle": {
+            "main_tex_path": _rel_path(workspace, main_path),
+            "main_tex_sha256": _sha256_path(main_path),
+            "references_bib_path": _rel_path(workspace, references_path),
+            "references_bib_sha256": _sha256_path(references_path),
+            "copied_figures": _submission_figure_manifest_entries(workspace, copied_figures),
+        },
+    }
+
+
+def _submission_figure_manifest_entries(
+    workspace: Path,
+    copied_figures: list[str | dict[str, str]],
+) -> list[dict[str, str]]:
+    entries: list[dict[str, str]] = []
+    for item in copied_figures:
+        if isinstance(item, dict):
+            source_rel = str(item.get("source_path") or "").strip()
+            dest_rel = str(item.get("dest_path") or item.get("path") or "").strip()
+        else:
+            source_rel = ""
+            dest_rel = str(item or "").strip()
+        if not dest_rel:
+            continue
+        dest = workspace / dest_rel
+        if not dest.exists():
+            continue
+        entry = {
+            "path": dest_rel,  # backward-compatible bundle path
+            "dest_path": dest_rel,
+            "dest_sha256": _sha256_path(dest),
+            "sha256": _sha256_path(dest),  # backward-compatible bundle hash
+        }
+        if source_rel:
+            source = workspace / source_rel
+            if source.exists():
+                entry["source_path"] = source_rel
+                entry["source_sha256"] = _sha256_path(source)
+        entries.append(entry)
+    return entries
+
+
+def _sha256_path(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _rel_path(workspace: Path, path: Path) -> str:
+    try:
+        return path.resolve().relative_to(workspace.resolve()).as_posix()
+    except ValueError:
+        return path.as_posix()

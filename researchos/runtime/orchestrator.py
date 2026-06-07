@@ -261,32 +261,52 @@ class AgentRunner:
         try:
             await self._maybe_run_t1_startup_gate(ctx, tool_map, messages, trace)
 
+            t9_pre_finalized = await self._maybe_finalize_t9_submission_before_hooks(ctx)
+            if t9_pre_finalized:
+                deterministic_pre_finalized = True
+                stop_reason = AgentResult.STOP_FINISHED
+                error_msg = None
+            else:
+                deterministic_pre_finalized = False
+
             # pre-hook 允许是同步或异步 callable；若返回 (ok, err) 且 ok=False，
             # 这里会统一转换成可读错误，而不是让 CLI 因 await 非协程直接崩溃。
-            for hook in self.agent.spec.pre_hooks:
-                await self._run_pre_hook(hook, ctx)
+            if not deterministic_pre_finalized:
+                for hook in self.agent.spec.pre_hooks:
+                    await self._run_pre_hook(hook, ctx)
 
-            t2_pre_finalized = await self._maybe_finalize_t2_before_llm(ctx)
+            t2_pre_finalized = False
+            if not deterministic_pre_finalized:
+                t2_pre_finalized = await self._maybe_finalize_t2_before_llm(ctx)
             t3_pre_finalized = False
-            if not t2_pre_finalized:
+            if not (deterministic_pre_finalized or t2_pre_finalized):
                 t3_pre_finalized = await self._maybe_finalize_t3_before_llm(ctx)
             t4_pre_finalized = False
             t35_prepared = False
-            if not (t2_pre_finalized or t3_pre_finalized):
+            if not (deterministic_pre_finalized or t2_pre_finalized or t3_pre_finalized):
                 t35_prepared = await self._maybe_prepare_t35_before_llm(ctx, policy)
-            if not (t2_pre_finalized or t3_pre_finalized):
+            if not (deterministic_pre_finalized or t2_pre_finalized or t3_pre_finalized):
                 t4_pre_finalized = await self._maybe_finalize_t4_before_llm(ctx)
             t45_pre_finalized = False
-            if not (t2_pre_finalized or t3_pre_finalized or t4_pre_finalized):
+            if not (deterministic_pre_finalized or t2_pre_finalized or t3_pre_finalized or t4_pre_finalized):
                 t45_pre_finalized = await self._maybe_finalize_t45_before_llm(ctx)
             external_wait_pre_finalized = False
-            if not (t2_pre_finalized or t3_pre_finalized or t4_pre_finalized or t45_pre_finalized):
+            if not (deterministic_pre_finalized or t2_pre_finalized or t3_pre_finalized or t4_pre_finalized or t45_pre_finalized):
                 external_wait_pre_finalized = await self._maybe_finalize_external_wait_before_llm(ctx)
             paper_claim_audit_pre_finalized = False
-            if not (t2_pre_finalized or t3_pre_finalized or t4_pre_finalized or t45_pre_finalized or external_wait_pre_finalized):
+            if not (
+                deterministic_pre_finalized
+                or t2_pre_finalized
+                or t3_pre_finalized
+                or t4_pre_finalized
+                or t45_pre_finalized
+                or external_wait_pre_finalized
+            ):
                 paper_claim_audit_pre_finalized = await self._maybe_finalize_paper_claim_audit_before_llm(ctx, policy)
             t8_section_plan_pre_finalized = False
             if not (
+                deterministic_pre_finalized
+                or
                 t2_pre_finalized
                 or t3_pre_finalized
                 or t4_pre_finalized
@@ -300,6 +320,8 @@ class AgentRunner:
                 )
             t8_manuscript_pre_finalized = False
             if not (
+                deterministic_pre_finalized
+                or
                 t2_pre_finalized
                 or t3_pre_finalized
                 or t4_pre_finalized
@@ -309,16 +331,16 @@ class AgentRunner:
                 or t8_section_plan_pre_finalized
             ):
                 t8_manuscript_pre_finalized = await self._maybe_finalize_t8_manuscript_before_llm(ctx)
-            deterministic_pre_finalized = (
-                t2_pre_finalized
-                or t3_pre_finalized
-                or t4_pre_finalized
-                or t45_pre_finalized
-                or external_wait_pre_finalized
-                or paper_claim_audit_pre_finalized
-                or t8_section_plan_pre_finalized
-                or t8_manuscript_pre_finalized
-            )
+            deterministic_pre_finalized = deterministic_pre_finalized or (
+                    t2_pre_finalized
+                    or t3_pre_finalized
+                    or t4_pre_finalized
+                    or t45_pre_finalized
+                    or external_wait_pre_finalized
+                    or paper_claim_audit_pre_finalized
+                    or t8_section_plan_pre_finalized
+                    or t8_manuscript_pre_finalized
+                )
             if deterministic_pre_finalized:
                 stop_reason = AgentResult.STOP_FINISHED
                 error_msg = None
@@ -1275,6 +1297,53 @@ class AgentRunner:
             "external_wait_prefinalize",
             {"outputs": ["external_executor/wait_acceptance_report.json"]},
             action_type="external_wait_prefinalize",
+        )
+        return True
+
+    async def _maybe_finalize_t9_submission_before_hooks(self, ctx: ExecutionContext) -> bool:
+        """Finish T9 from an already valid submission bundle before hooks/LLM.
+
+        T9's compile-environment pre-hook is necessary when the bundle still
+        needs work, but it should not block resume if the current workspace
+        already contains a validator-clean `submission/bundle`. This also
+        avoids launching the SubmissionAgent LLM merely to rediscover that the
+        existing PDF/report are already valid.
+        """
+
+        if ctx.task_id != "T9" or self.agent.spec.name != "submission":
+            return False
+
+        bundle_dir = ctx.workspace_dir / "submission" / "bundle"
+        required = [
+            bundle_dir / "main.tex",
+            bundle_dir / "references.bib",
+            bundle_dir / "main.pdf",
+            bundle_dir / "main.log",
+            ctx.workspace_dir / "submission" / "compile_report.json",
+            ctx.workspace_dir / "submission" / "migration_report.md",
+        ]
+        if any(not path.exists() or path.stat().st_size <= 0 for path in required):
+            return False
+
+        ok, err = self.agent.validate_outputs(ctx)
+        if not ok:
+            self.log.info("t9_submission_prefinalize_skipped", reason=err)
+            return False
+
+        print("[Agent] T9 检测到已有投稿包且校验通过，跳过环境检查和 LLM 续跑", flush=True)
+        self._record_runtime_completion(
+            ctx,
+            "t9_submission_prefinalize",
+            {
+                "outputs": [
+                    "submission/bundle/main.tex",
+                    "submission/bundle/main.pdf",
+                    "submission/bundle/main.log",
+                    "submission/compile_report.json",
+                    "submission/migration_report.md",
+                ],
+            },
+            action_type="t9_submission_prefinalize",
         )
         return True
 
@@ -2371,7 +2440,7 @@ class AgentRunner:
                 left, right = str(item[0] or ""), str(item[1] or "")
                 if not left or not right or left == right:
                     continue
-                key = tuple(sorted((left, right)))
+                key = (left, right)
                 if key in seen:
                     continue
                 seen.add(key)
@@ -2642,6 +2711,8 @@ class AgentRunner:
             message = "Agent 成功完成（T4.5 resume 确定性收尾）"
         elif ok and metadata.get("completion_mode") == "t8_section_plan_prefinalize":
             message = "Agent 成功完成（T8 section-plan 确定性修复/收尾）"
+        elif ok and metadata.get("completion_mode") == "t9_submission_prefinalize":
+            message = "Agent 成功完成（T9 已有投稿包确定性收尾）"
         return AgentResult(
             ok=ok,
             message=message,

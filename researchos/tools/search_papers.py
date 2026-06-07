@@ -180,6 +180,7 @@ class SearchPapersTool(Tool):
             "abstract": clean_abstract(item.get("abstract")),
             "venue": item.get("venue", ""),
             "citationCount": item.get("citationCount", 0),
+            "doi": external_ids.get("DOI", ""),
             "externalIds": external_ids,
             "url": item.get("url"),
         }
@@ -209,6 +210,8 @@ class SearchPapersTool(Tool):
             "abstract": summary,
             "venue": "arXiv",
             "citationCount": 0,
+            "doi": "",
+            "pdf_url": f"https://arxiv.org/pdf/{identifier}.pdf",
             "externalIds": {"ArXiv": identifier},
             "url": text("atom:id"),
         }

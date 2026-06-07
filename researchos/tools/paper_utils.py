@@ -14,6 +14,7 @@ from collections import Counter, defaultdict
 from typing import Any
 
 from ..time_utils import current_utc_year, format_year_window
+from ..literature_identity import paper_record_match_keys
 
 # ---------------------------------------------------------------------------
 # Methodological signal keywords
@@ -72,7 +73,7 @@ def deduplicate_papers(
         return []
 
     result: list[dict[str, Any]] = []
-    doi_to_index: dict[str, int] = {}
+    identity_to_index: dict[str, int] = {}
     seen_titles: list[tuple[str, int]] = []
 
     for paper in papers:
@@ -80,10 +81,11 @@ def deduplicate_papers(
             continue
         # DOI 精确去重
         duplicate_index: int | None = None
-        if doi_dedup and paper.get("doi"):
-            doi = _normalize_doi_key(paper.get("doi"))
-            if doi and doi in doi_to_index:
-                duplicate_index = doi_to_index[doi]
+        if doi_dedup:
+            for key in _dedup_identity_keys(paper):
+                if key in identity_to_index:
+                    duplicate_index = identity_to_index[key]
+                    break
 
         # 标题相似度去重
         title = paper.get("title", "").strip()
@@ -102,20 +104,48 @@ def deduplicate_papers(
                 result[duplicate_index],
                 paper,
             )
-            merged_doi = _normalize_doi_key(result[duplicate_index].get("doi"))
-            if merged_doi:
-                doi_to_index.setdefault(merged_doi, duplicate_index)
+            for key in _dedup_identity_keys(result[duplicate_index]):
+                identity_to_index.setdefault(key, duplicate_index)
             continue
 
         index = len(result)
         result.append(dict(paper))
         if doi_dedup:
-            doi = _normalize_doi_key(paper.get("doi"))
-            if doi:
-                doi_to_index.setdefault(doi, index)
+            for key in _dedup_identity_keys(paper):
+                identity_to_index.setdefault(key, index)
         seen_titles.append((title, index))
 
     return result
+
+
+def _dedup_identity_keys(paper: dict[str, Any]) -> set[str]:
+    """Return conservative exact identity keys for deduplication.
+
+    This intentionally excludes loose title-only keys; near-title matching is
+    handled separately by `title_threshold`. Including DOI/OpenAlex/arXiv/S2
+    aliases here prevents the same paper from surviving as two records when
+    one source stores the identifier under `externalIds`.
+    """
+
+    keys: set[str] = set()
+    external_ids = paper.get("externalIds") if isinstance(paper.get("externalIds"), dict) else {}
+    doi = _normalize_doi_key(paper.get("doi") or external_ids.get("DOI"))
+    if doi:
+        keys.add(f"doi:{doi}")
+    for candidate in (paper.get("canonical_id"), paper.get("id"), paper.get("paperId"), external_ids.get("OpenAlex"), paper.get("openalex_id")):
+        value = str(candidate or "").strip()
+        if value.startswith("https://openalex.org/") or value.startswith("https://api.openalex.org/works/"):
+            value = value.rstrip("/").split("/")[-1]
+        if value.startswith("W") and value[1:].isdigit():
+            keys.add(f"openalex:{value}")
+    arxiv = str(external_ids.get("ArXiv") or paper.get("arxiv_id") or "").strip().casefold()
+    if arxiv:
+        keys.add(f"arxiv:{arxiv.removeprefix('arxiv:')}")
+    # Keep compatibility with the shared matcher for exact identifier tokens.
+    for key in paper_record_match_keys(paper):
+        if key.startswith(("doi ", "doi:", "arxiv ", "arxiv:")) or key.startswith("w") and key[1:].isdigit():
+            keys.add(key)
+    return {key for key in keys if key}
 
 
 def _normalize_doi_key(value: Any) -> str:

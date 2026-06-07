@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 
 import pytest
@@ -7,6 +8,7 @@ import yaml
 from researchos.agents.ideation import IdeationAgent
 from researchos.agents.novelty_auditor import NoveltyAuditorAgent
 from researchos.agents.reader import ReaderAgent
+from researchos.agents.submission import SubmissionAgent
 from researchos.agents.writer import WriterAgent
 from researchos.runtime.agent import (
     Agent,
@@ -20,12 +22,123 @@ from researchos.runtime.errors import LLMProviderError
 from researchos.runtime.orchestrator import AgentRunner
 from researchos.testing.mocks import FakeLLMMessage, FakeRawCompletion, FakeToolCall, MockHumanInterface, MockLLMClient
 from researchos.tools.human_gate import HumanInputUnavailable
+from researchos.tools.latex_compile import _compile_dependency_fingerprint
+from researchos.tools.manuscript import build_paper_state_input_fingerprints
 from researchos.tools.builtin import register_builtin_tools
 from researchos.tools.registry import ToolRegistry
 
 
 def _long_text(seed: str, repeat: int = 90) -> str:
     return (seed + " ") * repeat
+
+
+def _sha256_file(path):
+    h = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _write_valid_t9_bundle(workspace):
+    bundle = workspace / "submission" / "bundle"
+    bundle.mkdir(parents=True, exist_ok=True)
+    (workspace / "drafts").mkdir(parents=True, exist_ok=True)
+    (workspace / "literature").mkdir(parents=True, exist_ok=True)
+    main_tex = bundle / "main.tex"
+    main_pdf = bundle / "main.pdf"
+    main_log = bundle / "main.log"
+    references_bib = bundle / "references.bib"
+    source_tex = workspace / "drafts" / "paper.tex"
+    source_bib = workspace / "literature" / "related_work.bib"
+    tex = "\\documentclass{article}\\begin{document}Done\\end{document}"
+    bib = "@article{test,title={Test}}\n"
+    source_tex.write_text(tex, encoding="utf-8")
+    source_bib.write_text(bib, encoding="utf-8")
+    main_tex.write_text(tex, encoding="utf-8")
+    references_bib.write_text(bib, encoding="utf-8")
+    (bundle / "bundle_manifest.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "submission_bundle_source_fingerprint",
+                "source": {
+                    "paper_path": "drafts/paper.tex",
+                    "paper_sha256": _sha256_file(source_tex),
+                    "bib_path": "literature/related_work.bib",
+                    "bib_sha256": _sha256_file(source_bib),
+                },
+                "bundle": {
+                    "main_tex_path": "submission/bundle/main.tex",
+                    "main_tex_sha256": _sha256_file(main_tex),
+                    "references_bib_path": "submission/bundle/references.bib",
+                    "references_bib_sha256": _sha256_file(references_bib),
+                    "copied_figures": [],
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    main_pdf.write_bytes(b"%PDF-1.4\nmock pdf body\n%%EOF")
+    main_log.write_text("This is a clean compile log.", encoding="utf-8")
+    dependency_fingerprint = _compile_dependency_fingerprint(workspace, main_tex)
+    report = {
+        "version": "1.0",
+        "semantics": "latex_compile_attempt_report",
+        "tex_path": "submission/bundle/main.tex",
+        "requested_engine": "pdflatex",
+        "bibtex": True,
+        "output_dir": None,
+        "started_at": "2026-05-28T00:00:00+00:00",
+        "finished_at": "2026-05-28T00:00:01+00:00",
+        "engine": "docker",
+        "exit_code": 0,
+        "success": True,
+        "error": None,
+        "main_tex_sha256": _sha256_file(main_tex),
+        "main_tex_mtime": main_tex.stat().st_mtime,
+        "dependency_fingerprint": dependency_fingerprint,
+        "log_path": "submission/bundle/main.log",
+        "log_sha256": _sha256_file(main_log),
+        "log_mtime": main_log.stat().st_mtime,
+        "log_size": main_log.stat().st_size,
+        "pdf_path": "submission/bundle/main.pdf",
+        "pdf_sha256": _sha256_file(main_pdf),
+        "pdf_size": main_pdf.stat().st_size,
+        "pdf_mtime": main_pdf.stat().st_mtime,
+        "attempts": [
+            {
+                "engine": "docker",
+                "exit_code": 0,
+                "success": True,
+                "dependency_fingerprint_hash": dependency_fingerprint.get("hash", ""),
+                "error": None,
+            }
+        ],
+    }
+    (workspace / "submission" / "compile_report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (workspace / "submission" / "migration_report.md").write_text(
+        "# 投稿迁移报告\n\n"
+        "## 迁移摘要\n\n"
+        "- 源文件: drafts/paper.tex\n"
+        "- 目标模板: neurips2026\n"
+        "- 迁移状态: 成功\n"
+        "- 编译状态: 成功\n"
+        "- 匿名化检查: 通过\n\n"
+        "## 文件清单\n\n"
+        "- main.tex\n"
+        "- references.bib\n\n"
+        "## 投稿检查清单\n\n"
+        "- [x] 主论文\n"
+        "- [x] 参考文献\n",
+        encoding="utf-8",
+    )
 
 
 def _write_t4_stage_visibility_artifacts(ideation_dir):
@@ -243,6 +356,24 @@ def _write_t4_stage_visibility_artifacts(ideation_dir):
     )
 
 
+def _paper_state_input_fingerprints(workspace):
+    return build_paper_state_input_fingerprints(
+        workspace,
+        {
+            "outline": "drafts/outline.md",
+            "resource_index": "drafts/manuscript_resource_index.json",
+            "section_plan": "drafts/section_plan.json",
+            "evidence_plan": "drafts/evidence_plan.json",
+            "figure_table_plan": "drafts/figure_table_plan.json",
+            "alignment_matrix": "drafts/alignment_matrix.json",
+            "related_work_bib": "literature/related_work.bib",
+            "results_summary": "experiments/results_summary.json",
+            "evidence_pack": "drafts/experiment_evidence_pack.json",
+            "result_to_claim": "drafts/result_to_claim.json",
+        },
+    )
+
+
 def write_valid_t8_section_plan_inputs(workspace):
     drafts = workspace / "drafts"
     drafts.mkdir(parents=True, exist_ok=True)
@@ -423,6 +554,7 @@ def write_valid_t8_revise_artifacts(workspace):
     state = {
         "version": "1.0",
         "semantics": "shared_state_for_section_by_section_writing_not_final_claims",
+        "input_fingerprints": _paper_state_input_fingerprints(workspace),
         "section_order": list(SECTION_WRITING_SEQUENCE),
         "sections": {
             section_id: {"status": "pending", "file": f"drafts/sections/{section_id}.tex"}
@@ -2438,6 +2570,42 @@ async def test_t8_revise_prefinalize_refreshes_audits_and_skips_llm(tmp_workspac
     craft = json.loads((tmp_workspace / "drafts" / "craft_audit.json").read_text(encoding="utf-8"))
     failed = [item for item in craft["checks"] if item["level"] == "FAIL" and not item["passed"]]
     assert failed == []
+
+
+@pytest.mark.asyncio
+async def test_t9_prefinalize_skips_llm_and_environment_hook_when_bundle_valid(tmp_workspace, registry, monkeypatch):
+    _write_valid_t9_bundle(tmp_workspace)
+    llm = MockLLMClient(responses=[])
+    ctx = ExecutionContext(
+        workspace_dir=tmp_workspace,
+        project_id="p1",
+        task_id="T9",
+        run_id="r_t9_prefinalize",
+        outputs_expected={
+            "bundle": tmp_workspace / "submission" / "bundle",
+            "compile_report": tmp_workspace / "submission" / "compile_report.json",
+            "migration_report": tmp_workspace / "submission" / "migration_report.md",
+        },
+    )
+
+    def _blocked_environment(*args, **kwargs):
+        raise AssertionError("T9 pre-hook should not run when bundle already validates")
+
+    monkeypatch.setattr(
+        "researchos.agents.submission.check_docker_environment",
+        _blocked_environment,
+    )
+    monkeypatch.setattr(
+        "researchos.agents.submission.shutil.which",
+        lambda _name: None,
+    )
+    runner = AgentRunner(SubmissionAgent(), registry, llm, MockHumanInterface())
+
+    result = await runner.run(ctx)
+
+    assert result.ok
+    assert result.metadata["completion_mode"] == "t9_submission_prefinalize"
+    assert llm.call_count == 0
 
 
 @pytest.mark.asyncio

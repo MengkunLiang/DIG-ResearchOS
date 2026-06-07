@@ -76,6 +76,13 @@ class MultiSourceSearchParams(BaseModel):
         default=["openalex", "crossref", "arxiv", "informs", "europepmc"],
         description="要使用的数据源列表，按优先级排序"
     )
+    try_all_sources: bool = Field(
+        default=True,
+        description=(
+            "默认尝试所有配置的数据源，再去重截断。设为 false 时允许达到 "
+            "max_results 后提前停止，用于显式节省 API 调用。"
+        ),
+    )
 
 
 class MultiSourceSearchTool(Tool):
@@ -144,10 +151,10 @@ class MultiSourceSearchTool(Tool):
                 source_stats[source] = len(papers)
                 all_papers.extend(papers)
 
-                # 如果已经获取足够的论文，可以提前停止；默认源中的 INFORMS
-                # 必须至少尝试一次，避免被 Crossref/arXiv 提前截断。
-                remaining_sources = params.sources[idx + 1:]
-                if len(all_papers) >= params.max_results and "informs" not in remaining_sources:
+                # 默认尝试所有源。这样同一篇论文若在 OpenAlex/Crossref/arXiv/
+                # Europe PMC 等多个源出现，后续去重合并能保留 DOI、摘要、
+                # PDF/OA hint 和 references，不会因为早停而损失 metadata。
+                if not params.try_all_sources and len(all_papers) >= params.max_results:
                     break
 
                 # 避免速率限制：每个数据源之间间隔2秒

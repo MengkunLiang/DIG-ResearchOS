@@ -17,8 +17,10 @@ from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec, get_agent_params
 from ..runtime.prompts import render_prompt
 from ..tools.docker_exec import check_docker_environment, get_default_image, load_project_config
+from ..tools.latex_compile import _compile_dependency_fingerprint
 from ..tools.manuscript import extract_bibliography_stems
 from ._common import load_project, prepend_resume_prefix, read_text_file
+from .writer import _validate_paper_claim_audit_if_needed
 
 
 def _sha256_file(path: Path) -> str:
@@ -189,6 +191,10 @@ class SubmissionAgent(Agent):
         if missing:
             return False, f"bundle缺少必需文件: {missing}"
 
+        ok, err = _validate_bundle_manifest(ws)
+        if not ok:
+            return False, err
+
         # 编译成功后必须留下 PDF，避免“只写报告不真正编译通过”的假成功。
         main_tex = bundle_dir / "main.tex"
         bibliography_stems = extract_bibliography_stems(read_text_file(main_tex))
@@ -240,6 +246,9 @@ class SubmissionAgent(Agent):
         ok, err = _validate_evidence_audit_trace(report_text, ws)
         if not ok:
             return False, err
+        ok, err = _validate_paper_claim_audit_if_needed(ws)
+        if not ok:
+            return False, err
 
         # 报告必须明确声明编译成功，避免把失败尝试误判为通过。
         if not _migration_report_declares_current_compile_success(report_text):
@@ -267,6 +276,69 @@ def _validate_evidence_audit_trace(report_text: str, ws: Path) -> tuple[bool, st
         filename = Path(rel).name.lower()
         if rel.lower() not in lowered and filename not in lowered:
             return False, f"migration_report.md 必须记录 evidence audit artifact: {rel}"
+    return True, None
+
+
+def _validate_bundle_manifest(ws: Path) -> tuple[bool, str | None]:
+    manifest_path = ws / "submission" / "bundle" / "bundle_manifest.json"
+    manifest, manifest_err = _load_json(manifest_path)
+    if manifest_err:
+        return False, f"submission/bundle/bundle_manifest.json 校验失败: {manifest_err}"
+    if (manifest or {}).get("semantics") != "submission_bundle_source_fingerprint":
+        return False, "submission/bundle/bundle_manifest.json semantics 不正确"
+
+    source = manifest.get("source") if isinstance(manifest.get("source"), dict) else {}
+    bundle = manifest.get("bundle") if isinstance(manifest.get("bundle"), dict) else {}
+    for label, rel_key, hash_key in (
+        ("源论文", "paper_path", "paper_sha256"),
+        ("源参考文献", "bib_path", "bib_sha256"),
+    ):
+        rel = str(source.get(rel_key) or "").strip()
+        expected_hash = str(source.get(hash_key) or "").strip()
+        if not rel or not expected_hash:
+            return False, f"bundle_manifest.source 缺少 {rel_key}/{hash_key}"
+        path = ws / rel
+        if not path.exists():
+            return False, f"bundle_manifest 指向的{label}不存在: {rel}"
+        if _sha256_file(path) != expected_hash:
+            return False, f"bundle_manifest 中的{label} hash 与当前文件不一致，需重新准备投稿包"
+
+    for label, rel_key, hash_key in (
+        ("bundle main.tex", "main_tex_path", "main_tex_sha256"),
+        ("bundle references.bib", "references_bib_path", "references_bib_sha256"),
+    ):
+        rel = str(bundle.get(rel_key) or "").strip()
+        expected_hash = str(bundle.get(hash_key) or "").strip()
+        if not rel or not expected_hash:
+            return False, f"bundle_manifest.bundle 缺少 {rel_key}/{hash_key}"
+        path = ws / rel
+        if not path.exists():
+            return False, f"bundle_manifest 指向的 {label} 不存在: {rel}"
+        if _sha256_file(path) != expected_hash:
+            return False, f"bundle_manifest 中的 {label} hash 与当前文件不一致"
+
+    figures = bundle.get("copied_figures") or []
+    if isinstance(figures, list):
+        for item in figures:
+            if not isinstance(item, dict):
+                continue
+            source_rel = str(item.get("source_path") or "").strip()
+            source_hash = str(item.get("source_sha256") or "").strip()
+            if source_rel and source_hash:
+                source_path = ws / source_rel
+                if not source_path.exists():
+                    return False, f"bundle_manifest 指向的 source figure 不存在: {source_rel}"
+                if _sha256_file(source_path) != source_hash:
+                    return False, f"bundle_manifest 中的 source figure hash 与当前文件不一致: {source_rel}"
+            rel = str(item.get("dest_path") or item.get("path") or "").strip()
+            expected_hash = str(item.get("dest_sha256") or item.get("sha256") or "").strip()
+            if not rel or not expected_hash:
+                continue
+            path = ws / rel
+            if not path.exists():
+                return False, f"bundle_manifest 指向的 figure 不存在: {rel}"
+            if _sha256_file(path) != expected_hash:
+                return False, f"bundle_manifest 中的 figure hash 与当前文件不一致: {rel}"
     return True, None
 
 
@@ -300,6 +372,16 @@ def _validate_compile_report(report: dict, ws: Path) -> tuple[bool, str | None]:
 
     if report.get("main_tex_sha256") != _sha256_file(main_tex):
         return False, "compile_report.main_tex_sha256 与当前 main.tex 不一致，需重新编译"
+    dependency = _compile_dependency_fingerprint(ws, main_tex)
+    report_dependency = report.get("dependency_fingerprint") if isinstance(report.get("dependency_fingerprint"), dict) else {}
+    report_dependency_hash = str(report_dependency.get("hash") or report.get("dependency_fingerprint_hash") or "").strip()
+    if not report_dependency_hash:
+        return False, "compile_report.dependency_fingerprint 缺失，需重新编译"
+    if report_dependency_hash != dependency.get("hash"):
+        return False, "compile_report.dependency_fingerprint 与当前 bundle 依赖不一致，需重新编译"
+    attempt_dependency_hash = str(last_attempt.get("dependency_fingerprint_hash") or "").strip()
+    if attempt_dependency_hash and attempt_dependency_hash != dependency.get("hash"):
+        return False, "compile_report 最后一次 attempt 的 dependency_fingerprint_hash 过期，需重新编译"
     if report.get("pdf_sha256") != _sha256_file(main_pdf):
         return False, "compile_report.pdf_sha256 与当前 main.pdf 不一致"
     log_hash = report.get("log_sha256")

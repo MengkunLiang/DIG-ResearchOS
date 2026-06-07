@@ -18,6 +18,7 @@ from researchos.runtime.agent_params import get_agent_params
 from researchos.runtime.prompts import render_prompt
 from researchos.tools.manuscript import CORE_SECTIONS
 from researchos.tools.manuscript import PrepareSubmissionBundleTool
+from researchos.tools.latex_compile import _compile_dependency_fingerprint
 from researchos.tools.workspace_policy import WorkspaceAccessPolicy
 
 
@@ -77,11 +78,21 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def _sha256_text_payload(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _sha256_json_payload(data) -> str:
+    payload = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return _sha256_text_payload(payload)
+
+
 def _write_compile_report(workspace: Path, *, success: bool = True) -> None:
     bundle_dir = workspace / "submission" / "bundle"
     main_tex = bundle_dir / "main.tex"
     main_pdf = bundle_dir / "main.pdf"
     main_log = bundle_dir / "main.log"
+    dependency_fingerprint = _compile_dependency_fingerprint(workspace, main_tex) if main_tex.exists() else {}
     report = {
         "version": "1.0",
         "semantics": "latex_compile_attempt_report",
@@ -97,6 +108,7 @@ def _write_compile_report(workspace: Path, *, success: bool = True) -> None:
         "error": None if success else "nonzero_exit",
         "main_tex_sha256": _sha256_file(main_tex) if main_tex.exists() else "",
         "main_tex_mtime": main_tex.stat().st_mtime if main_tex.exists() else 0,
+        "dependency_fingerprint": dependency_fingerprint,
         "log_path": "submission/bundle/main.log",
         "log_sha256": _sha256_file(main_log) if main_log.exists() else "",
         "log_mtime": main_log.stat().st_mtime if main_log.exists() else 0,
@@ -112,12 +124,81 @@ def _write_compile_report(workspace: Path, *, success: bool = True) -> None:
                 "success": success,
                 "started_at": "2026-05-28T00:00:00+00:00",
                 "finished_at": "2026-05-28T00:00:01+00:00",
+                "main_tex_sha256": _sha256_file(main_tex) if main_tex.exists() else "",
+                "dependency_fingerprint_hash": dependency_fingerprint.get("hash", ""),
                 "error": None if success else "nonzero_exit",
             }
         ],
     }
     (workspace / "submission" / "compile_report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_bundle_manifest(workspace: Path) -> None:
+    bundle_dir = workspace / "submission" / "bundle"
+    source_paper = workspace / "drafts" / "paper.tex"
+    source_bib = workspace / "literature" / "related_work.bib"
+    source_paper.parent.mkdir(parents=True, exist_ok=True)
+    source_bib.parent.mkdir(parents=True, exist_ok=True)
+    main_tex = bundle_dir / "main.tex"
+    references_bib = bundle_dir / "references.bib"
+    if not source_paper.exists():
+        source_paper.write_text(main_tex.read_text(encoding="utf-8"), encoding="utf-8")
+    if not source_bib.exists():
+        source_bib.write_text(references_bib.read_text(encoding="utf-8"), encoding="utf-8")
+    manifest = {
+        "version": "1.0",
+        "semantics": "submission_bundle_source_fingerprint",
+        "source": {
+            "paper_path": "drafts/paper.tex",
+            "paper_sha256": _sha256_file(source_paper),
+            "bib_path": "literature/related_work.bib",
+            "bib_sha256": _sha256_file(source_bib),
+        },
+        "bundle": {
+            "main_tex_path": "submission/bundle/main.tex",
+            "main_tex_sha256": _sha256_file(main_tex),
+            "references_bib_path": "submission/bundle/references.bib",
+            "references_bib_sha256": _sha256_file(references_bib),
+            "copied_figures": [],
+        },
+    }
+    (bundle_dir / "bundle_manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_valid_paper_claim_audit(workspace: Path) -> None:
+    paper_path = workspace / "drafts" / "paper.tex"
+    evidence_path = workspace / "drafts" / "experiment_evidence_pack.json"
+    result_path = workspace / "drafts" / "result_to_claim.json"
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    audit = {
+        "version": "1.0",
+        "semantics": "paper_claim_audit_against_experiment_evidence_pack",
+        "input_fingerprints": {
+            "paper_path": "drafts/paper.tex",
+            "paper_sha256": _sha256_text_payload(paper_path.read_text(encoding="utf-8")),
+            "evidence_pack_path": "drafts/experiment_evidence_pack.json",
+            "evidence_pack_sha256": _sha256_json_payload(evidence),
+            "result_to_claim_path": "drafts/result_to_claim.json",
+            "result_to_claim_sha256": _sha256_json_payload(result),
+        },
+        "summary": {"fail_count": 0, "warn_count": 0},
+        "issues": [],
+        "unsupported_strong_claims": [],
+        "forbidden_wording_violations": [],
+    }
+    (workspace / "drafts" / "paper_claim_audit.md").write_text(
+        "# Paper Claim Audit\n\n- No unsupported claims detected.\n",
+        encoding="utf-8",
+    )
+    (workspace / "drafts" / "paper_claim_audit.json").write_text(
+        json.dumps(audit, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
 
@@ -148,6 +229,11 @@ async def test_prepare_submission_bundle_rewrites_bibliography(temp_workspace):
     assert "\\bibliography{references}" in main_tex
     assert "\\bibliography{related_work}" not in main_tex
     assert (temp_workspace / "submission" / "bundle" / "references.bib").exists()
+    manifest = json.loads(
+        (temp_workspace / "submission" / "bundle" / "bundle_manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["semantics"] == "submission_bundle_source_fingerprint"
+    assert manifest["source"]["paper_path"] == "drafts/paper.tex"
 
 
 def test_writer_prompt_defaults_suggested_style_when_not_injected(temp_workspace):
@@ -699,11 +785,29 @@ def _write_valid_paper_state(workspace: Path) -> None:
             f"# Section Outline: {section_id}\n\n## Purpose\n" + ("Detailed outline. " * 10),
             encoding="utf-8",
         )
+    fingerprint_paths = {
+        "outline": "drafts/outline.md",
+        "resource_index": "drafts/resource_index.json",
+        "section_plan": "drafts/section_plan.json",
+        "evidence_plan": "drafts/evidence_plan.json",
+        "figure_table_plan": "drafts/figure_table_plan.json",
+        "alignment_matrix": "drafts/alignment_matrix.json",
+        "related_work_bib": "literature/related_work.bib",
+        "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
+    }
+    input_fingerprints = {}
+    for label, rel in fingerprint_paths.items():
+        path = workspace / rel
+        item = {"path": rel, "exists": path.exists()}
+        if path.exists() and path.is_file():
+            item["sha256"] = _sha256_file(path)
+        input_fingerprints[label] = item
     (workspace / "drafts" / "paper_state.json").write_text(
         json.dumps(
             {
                 "version": "1.0",
                 "semantics": "shared_state_for_section_by_section_writing_not_final_claims",
+                "input_fingerprints": input_fingerprints,
                 "section_order": list(sections),
                 "sections": sections,
                 "shared_facts": {
@@ -1367,8 +1471,13 @@ def test_submission_validate_outputs_success(temp_workspace):
     # 创建bundle目录和必需文件
     bundle_dir = temp_workspace / "submission" / "bundle"
     bundle_dir.mkdir(parents=True, exist_ok=True)
-    (bundle_dir / "main.tex").write_text(r"\documentclass{article}\begin{document}\end{document}")
-    (bundle_dir / "references.bib").write_text("@article{test,}")
+    main = r"\documentclass{article}\begin{document}\end{document}"
+    bib = "@article{test,}"
+    (bundle_dir / "main.tex").write_text(main)
+    (bundle_dir / "references.bib").write_text(bib)
+    (temp_workspace / "drafts" / "paper.tex").write_text(main)
+    (temp_workspace / "literature" / "related_work.bib").write_text(bib)
+    _write_bundle_manifest(temp_workspace)
     (bundle_dir / "main.pdf").write_bytes(b"%PDF-1.4\nmock pdf body\n%%EOF")
     (bundle_dir / "main.log").write_text("This is a clean compile log.")
     _write_compile_report(temp_workspace)
@@ -1404,11 +1513,57 @@ def test_submission_validate_outputs_success(temp_workspace):
     assert err is None
 
 
+def test_submission_validate_outputs_rejects_stale_source_manifest(temp_workspace):
+    agent = SubmissionAgent()
+    ctx = MockExecutionContext("submission", temp_workspace)
+    _write_valid_submission_bundle(temp_workspace)
+    (temp_workspace / "submission" / "migration_report.md").write_text(
+        _valid_migration_report(),
+        encoding="utf-8",
+    )
+
+    (temp_workspace / "drafts" / "paper.tex").write_text(
+        r"\documentclass{article}\begin{document}Changed source\end{document}",
+        encoding="utf-8",
+    )
+
+    ok, err = agent.validate_outputs(ctx)
+    assert not ok
+    assert "bundle_manifest" in (err or "")
+    assert "源论文" in (err or "")
+
+
+def test_submission_validate_outputs_rejects_stale_compile_dependency(temp_workspace):
+    agent = SubmissionAgent()
+    ctx = MockExecutionContext("submission", temp_workspace)
+    _write_valid_submission_bundle(temp_workspace)
+    (temp_workspace / "submission" / "migration_report.md").write_text(
+        _valid_migration_report(),
+        encoding="utf-8",
+    )
+
+    (temp_workspace / "submission" / "bundle" / "references.bib").write_text(
+        "@article{test,title={Changed}}\n",
+        encoding="utf-8",
+    )
+    _write_bundle_manifest(temp_workspace)
+
+    ok, err = agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "dependency_fingerprint" in (err or "")
+
+
 def _write_valid_submission_bundle(workspace: Path) -> None:
     bundle_dir = workspace / "submission" / "bundle"
     bundle_dir.mkdir(parents=True, exist_ok=True)
-    (bundle_dir / "main.tex").write_text(r"\documentclass{article}\begin{document}\end{document}")
-    (bundle_dir / "references.bib").write_text("@article{test,}")
+    main = r"\documentclass{article}\begin{document}\end{document}"
+    bib = "@article{test,}"
+    (bundle_dir / "main.tex").write_text(main)
+    (bundle_dir / "references.bib").write_text(bib)
+    (workspace / "drafts" / "paper.tex").write_text(main)
+    (workspace / "literature" / "related_work.bib").write_text(bib)
+    _write_bundle_manifest(workspace)
     (bundle_dir / "main.pdf").write_bytes(b"%PDF-1.4\nmock pdf body\n%%EOF")
     (bundle_dir / "main.log").write_text("This is a clean compile log.")
     _write_compile_report(workspace)
@@ -1461,7 +1616,46 @@ def test_submission_requires_evidence_audit_trace_when_present(temp_workspace):
     )
 
     ok, err = agent.validate_outputs(ctx)
+    assert not ok
+    assert "input_fingerprints" in (err or "")
+
+    _write_valid_paper_claim_audit(temp_workspace)
+
+    ok, err = agent.validate_outputs(ctx)
     assert ok, err
+
+
+def test_writer_paper_claim_audit_requires_current_input_fingerprints(temp_workspace):
+    agent = WriterAgent(mode="paper_claim_audit")
+    ctx = MockExecutionContext("paper_claim_audit", temp_workspace)
+    (temp_workspace / "drafts" / "paper.tex").write_text(
+        "\\documentclass{article}\\begin{document}No unsupported numbers.\\end{document}",
+        encoding="utf-8",
+    )
+    (temp_workspace / "drafts" / "experiment_evidence_pack.json").write_text(
+        json.dumps({"semantics": "normalized_experiment_evidence_pack", "metrics": []}),
+        encoding="utf-8",
+    )
+    (temp_workspace / "drafts" / "result_to_claim.json").write_text(
+        json.dumps({"semantics": "mechanical_result_to_claim_map_not_final_scientific_judgment", "claim_mappings": []}),
+        encoding="utf-8",
+    )
+    (temp_workspace / "drafts" / "paper_claim_audit.md").write_text("# Paper Claim Audit\n", encoding="utf-8")
+    (temp_workspace / "drafts" / "paper_claim_audit.json").write_text(
+        json.dumps(
+            {
+                "semantics": "paper_claim_audit_against_experiment_evidence_pack",
+                "summary": {"fail_count": 0, "warn_count": 0},
+                "issues": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    ok, err = agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "input_fingerprints" in (err or "")
 
 
 def test_submission_validate_outputs_rejects_missing_bibliography_basename(temp_workspace):
@@ -1472,6 +1666,7 @@ def test_submission_validate_outputs_rejects_missing_bibliography_basename(temp_
         r"\documentclass{article}\begin{document}\bibliographystyle{plain}\bibliography{related_work}\end{document}",
         encoding="utf-8",
     )
+    _write_bundle_manifest(temp_workspace)
     _write_compile_report(temp_workspace)
     (temp_workspace / "submission" / "migration_report.md").write_text(_valid_migration_report(), encoding="utf-8")
 
@@ -1513,6 +1708,7 @@ def test_submission_validate_outputs_missing_pdf(temp_workspace):
     bundle_dir.mkdir(parents=True, exist_ok=True)
     (bundle_dir / "main.tex").write_text(r"\documentclass{article}\begin{document}\end{document}")
     (bundle_dir / "references.bib").write_text("@article{test,}")
+    _write_bundle_manifest(temp_workspace)
 
     report_content = """# 投稿迁移报告
 
@@ -1543,6 +1739,7 @@ def test_submission_validate_outputs_compile_not_marked_success(temp_workspace):
     (bundle_dir / "references.bib").write_text("@article{test,}")
     (bundle_dir / "main.pdf").write_bytes(b"%PDF-1.4\nmock pdf body\n%%EOF")
     (bundle_dir / "main.log").write_text("This is a clean compile log.")
+    _write_bundle_manifest(temp_workspace)
     _write_compile_report(temp_workspace)
 
     report_content = """# 投稿迁移报告
@@ -1578,6 +1775,7 @@ def test_submission_validate_outputs_rejects_non_pdf_payload(temp_workspace):
     (bundle_dir / "references.bib").write_text("@article{test,}")
     (bundle_dir / "main.pdf").write_bytes(b"this is not a pdf even if the filename says pdf")
     (bundle_dir / "main.log").write_text("This is a clean compile log.")
+    _write_bundle_manifest(temp_workspace)
     _write_compile_report(temp_workspace)
     (temp_workspace / "submission" / "migration_report.md").write_text(
         "# 投稿迁移报告\n\n"
@@ -1606,6 +1804,7 @@ def test_submission_validate_outputs_rejects_tiny_pdf_placeholder(temp_workspace
     (bundle_dir / "references.bib").write_text("@article{test,}")
     (bundle_dir / "main.pdf").write_bytes(b"%PDF-1.4\n")
     (bundle_dir / "main.log").write_text("This is a clean compile log.")
+    _write_bundle_manifest(temp_workspace)
     _write_compile_report(temp_workspace)
     (temp_workspace / "submission" / "migration_report.md").write_text(
         "# 投稿迁移报告\n\n"
@@ -1634,6 +1833,7 @@ def test_submission_validate_outputs_fatal_log_detected(temp_workspace):
     (bundle_dir / "references.bib").write_text("@article{test,}")
     (bundle_dir / "main.pdf").write_bytes(b"%PDF-1.4\nmock pdf body\n%%EOF")
     (bundle_dir / "main.log").write_text("! Emergency stop.\nFatal error occurred")
+    _write_bundle_manifest(temp_workspace)
     _write_compile_report(temp_workspace)
 
     report_content = """# 投稿迁移报告
@@ -1678,6 +1878,7 @@ def test_submission_validate_outputs_undefined_reference_log_detected(temp_works
         "LaTeX Warning: There were undefined references.\n"
         "LaTeX Warning: Citation `missing2024' on page 1 undefined."
     )
+    _write_bundle_manifest(temp_workspace)
     _write_compile_report(temp_workspace)
     (temp_workspace / "submission" / "migration_report.md").write_text(
         "# 投稿迁移报告\n\n"
@@ -1705,6 +1906,7 @@ def test_submission_validate_outputs_should_require_compile_log_evidence(temp_wo
     (bundle_dir / "main.tex").write_text(r"\documentclass{article}\begin{document}\end{document}")
     (bundle_dir / "references.bib").write_text("@article{test,}")
     (bundle_dir / "main.pdf").write_bytes(b"%PDF-1.4\nmock pdf body\n%%EOF")
+    _write_bundle_manifest(temp_workspace)
     (temp_workspace / "submission" / "migration_report.md").write_text(
         "# 投稿迁移报告\n\n"
         "## 迁移摘要\n"
@@ -1732,6 +1934,7 @@ def test_submission_validate_outputs_should_not_accept_historical_compile_succes
     (bundle_dir / "references.bib").write_text("@article{test,}")
     (bundle_dir / "main.pdf").write_bytes(b"%PDF-1.4\nmock pdf body\n%%EOF")
     (bundle_dir / "main.log").write_text("This is a clean compile log.")
+    _write_bundle_manifest(temp_workspace)
     _write_compile_report(temp_workspace)
     (temp_workspace / "submission" / "migration_report.md").write_text(
         "# 投稿迁移报告\n\n"
@@ -1763,6 +1966,7 @@ def test_submission_validate_outputs_report_too_short(temp_workspace):
     (bundle_dir / "references.bib").write_text("@article{test,}")
     (bundle_dir / "main.pdf").write_bytes(b"%PDF-1.4\nmock pdf body\n%%EOF")
     (bundle_dir / "main.log").write_text("This is a clean compile log.")
+    _write_bundle_manifest(temp_workspace)
     _write_compile_report(temp_workspace)
 
     # 创建过短的报告
@@ -1785,6 +1989,7 @@ def test_submission_validate_outputs_rejects_stale_pdf(temp_workspace):
     (bundle_dir / "main.tex").write_text(r"\documentclass{article}\begin{document}\end{document}")
     (bundle_dir / "references.bib").write_text("@article{test,}")
     (bundle_dir / "main.log").write_text("This is a clean compile log.")
+    _write_bundle_manifest(temp_workspace)
     _write_compile_report(temp_workspace)
     old_time = (bundle_dir / "main.tex").stat().st_mtime - 5
     os.utime(pdf_path, (old_time, old_time))

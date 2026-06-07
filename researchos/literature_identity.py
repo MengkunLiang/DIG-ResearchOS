@@ -212,12 +212,16 @@ def paper_record_match_keys(record: dict[str, Any]) -> set[str]:
         record.get("normalized_id"),
         record.get("paper_id"),
         record.get("id"),
+        record.get("paperId"),
         record.get("canonical_id"),
+        record.get("openalex_id"),
         record.get("title"),
         record.get("doi"),
         record.get("url"),
         external_ids.get("ArXiv"),
         external_ids.get("DOI"),
+        external_ids.get("OpenAlex"),
+        external_ids.get("CorpusId"),
     ]
     keys: set[str] = set()
     for candidate in candidates:

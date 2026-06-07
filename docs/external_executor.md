@@ -64,6 +64,11 @@ researchos resume --workspace ./workspace/<project>
 
 runtime 会重新检查；通过后写 `external_executor/wait_acceptance_report.json` 并进入 `T7-INGEST`。
 
+`PARTIAL_RESULTS_READY` 默认不能通过外部等待。`check_external_executor_wait`
+的默认 `allow_partial_results=false`；如果外部执行器只写回部分结果，runtime 会写
+`external_executor/wait_rejection_report.md` 并保持可恢复暂停。只有显式允许 partial 的调试路径
+才可放行，并且后续 result-to-claim 必须把相关 claim 降级或标记为不能强 claim。
+
 ## 证据规则
 
 每个 metric 必须能追溯到 raw file、config、run id、log 和 sha256。mock/dry-run 必须带：

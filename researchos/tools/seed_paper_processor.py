@@ -15,6 +15,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from ..literature_identity import is_workspace_guide_or_template
 from .base import Tool, ToolResult
 from .workspace_policy import WorkspaceAccessPolicy
 from ..runtime.logger import get_logger
@@ -100,6 +101,33 @@ class ProcessSeedPaperTool(Tool):
                 content=f"PDF 文件不存在: {params.value}",
                 error="pdf_not_found",
             )
+        if not pdf_path.is_file():
+            return ToolResult(
+                ok=False,
+                content=f"PDF 路径不是文件: {params.value}",
+                error="not_a_file",
+            )
+        if is_workspace_guide_or_template(pdf_path):
+            return ToolResult(
+                ok=False,
+                content=f"不能把 workspace 说明/模板文件作为 seed PDF: {pdf_path.name}",
+                error="invalid_seed_file",
+            )
+        if pdf_path.suffix.lower() != ".pdf":
+            return ToolResult(
+                ok=False,
+                content=f"文件不是 PDF 格式: {pdf_path.suffix}",
+                error="invalid_format",
+            )
+        try:
+            if not pdf_path.read_bytes()[:5].startswith(b"%PDF"):
+                return ToolResult(
+                    ok=False,
+                    content="文件扩展名为 PDF，但文件头不是 %PDF。",
+                    error="invalid_pdf_header",
+                )
+        except OSError as exc:
+            return ToolResult(ok=False, content=f"无法读取 PDF: {exc}", error="read_failed")
 
         # 提取元数据
         metadata = await self._extract_pdf_metadata(pdf_path)

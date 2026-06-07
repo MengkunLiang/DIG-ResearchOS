@@ -435,6 +435,7 @@ python -m researchos.cli run \
 | `T8-SELF-CHECK` | 作者自查完成 | `drafts/self_check.md` |
 | `T8-REVIEW-1/2` | 审稿意见生成 | `drafts/review_rounds/round_1.md`, `round_2.md` |
 | `T8-REVISE-1/2` | 主稿按审稿意见修订 | `drafts/paper.tex` |
+| `T8-PAPER-CLAIM-AUDIT` | T9 前实验 claim、数字和证据边界审计通过 | `drafts/paper_claim_audit.md`, `drafts/paper_claim_audit.json`, `drafts/result_to_claim.json`, `drafts/experiment_evidence_pack.json` |
 | `T9` | bundle 生成且编译成功 | `submission/bundle/main.tex`, `main.pdf`, `migration_report.md` |
 
 ### 7.1 T2 重点看什么
@@ -444,9 +445,12 @@ python -m researchos.cli run \
 - `verification_failures` 是否合理
 - `deep_read_queue` 是否确实优先 seed 和高可读性论文
 - `search_log.md` 是否展示 Query / Bucket / Bridge / Tool / Results / Persisted 表，以及 Bridge Domain Query/Plan 覆盖表
-- OpenAlex DOI/OA 详情补全、Crossref DOI 详情补全、Crossref citation snowball 的 `attempted/filled/failed/raw_persisted` 是否合理
-- `deep_read_queue_meta.json` 中 `verified_disposition_coverage` 是否为 `1.0`，`queue_with_pdf_url_hints`、`queue_with_reference_hints`、`citation_hub_in_target` 是否符合预期
+- OpenAlex 标题兜底补全、OpenAlex DOI/OA 详情补全、Crossref DOI 详情补全、多源摘要回填的 `eligible/candidate/attempted/skipped_by_cap/filled/failed/remaining_missing_*` 是否合理；这些是 all-eligible metadata/abstract backfill
+- OpenAlex/Crossref citation snowball 的 `reference_items_seen`、`non_doi_references_skipped`、`reference_openalex_ids_seen`、`title_references_resolved`、`skipped_by_refs_per_source_cap`、`skipped_by_max_candidates_cap`、`raw_persisted/raw_merged` 是否合理；snowball 是 bounded one-hop，不是全量引用扩展
+- `deep_read_queue_meta.json` 中 `verified_disposition_coverage` 是否为 `1.0`，`queue_with_pdf_url_hints`、`queue_with_reference_hints`、`citation_hub_in_target`、`must_explore_bridge_diagnostics` 是否符合预期
+- `deep_read_queue.jsonl` 是否保留短 provenance：`source_query/source_queries`、`source_tool/source_tools`、`search_buckets`、`openalex_id`、citation snowball 来源；摘要全文仍应通过 `lookup_paper_record` 从 verified/raw 合并读取
 - 如果 search tool 返回很多论文但 raw/dedup/verified 很少，优先检查 raw merge、hidden cap、schema skipped records 和 `researchos.log` 的 `retained_raw_count`
+- `papers_raw.jsonl` 是可恢复 metadata cache。finalize 后应看到 `search_log.md` 的 `T2 raw 元数据缓存回写`，并确认 `raw_cache_records_merged/appended` 合理；否则 resume/re-finalize 可能重新依赖网络回填。
 
 ### 7.2 T3 重点看什么
 
@@ -482,6 +486,9 @@ legacy `T5/T7` 显式调试时再检查已有代码目录、Docker digest 和内
 - 编译失败后是否修复并重试
 - 最终是否产出 `main.pdf`
 - `migration_report.md` 是否明确记录编译结果和修复过程
+- `submission/bundle/bundle_manifest.json` 是否证明 bundle 仍对应当前 `drafts/paper.tex` 和 `literature/related_work.bib`
+- `compile_report.json.attempts` / `attempt_count` 是否记录真实编译历史；same-hash source failure 是否要求先改 TeX/依赖；成功缓存是否同时匹配 main.tex、依赖 fingerprint、PDF/log hash、mtime 和 size
+- resume 到 T9 时，如果已有合法 bundle，是否通过 `t9_submission_prefinalize` 在环境检查和 LLM 前直接完成
 
 ---
 
@@ -689,7 +696,7 @@ pip install -e .
 检查：
 
 - `config/model_routing.yaml` 是否有 fallback
-- `agent_params.yaml` 顶层 `retry_policy.llm_retries` 是否过大
+- `config/user_settings.yaml: runtime.retry_policy.llm_retries` 是否过大
 - 是否误用了只含一个候选的 profile
 
 ### 13.3 任务中断后从头跑

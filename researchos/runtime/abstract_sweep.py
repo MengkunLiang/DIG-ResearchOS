@@ -18,9 +18,11 @@ from typing import Any, Awaitable, Callable
 from ..agents._common import load_jsonl
 from ..literature_identity import (
     is_paper_note_file,
+    paper_record_match_keys,
     paper_note_match_keys,
     record_is_covered,
 )
+from ..tools.paper_utils import deduplicate_papers
 
 
 # ---------------------------------------------------------------------------
@@ -93,18 +95,22 @@ def build_sweep_candidates(
                 completed_keys.update(paper_note_match_keys(note_path))
 
     # 加载候选池
-    pool: list[dict] = []
-    seen_ids: set[str] = set()
+    raw_pool: list[dict] = []
     for source_name in sources:
         path = workspace / "literature" / f"{source_name}.jsonl"
         if not path.exists():
             continue
-        for record in load_jsonl(path):
-            rid = _normalize_id(record)
-            if not rid or rid in seen_ids:
-                continue
-            seen_ids.add(rid)
-            pool.append(record)
+        raw_pool.extend(load_jsonl(path))
+    pool: list[dict] = []
+    seen_keys: set[str] = set()
+    for record in deduplicate_papers(raw_pool, doi_dedup=True, title_threshold=0.95):
+        keys = _sweep_identity_keys(record)
+        if not keys:
+            continue
+        if seen_keys & keys:
+            continue
+        seen_keys.update(keys)
+        pool.append(record)
 
     # 筛选
     candidates: list[dict] = []
@@ -141,6 +147,14 @@ def _normalize_id(record: dict) -> str:
     if not raw:
         return ""
     return re.sub(r"[^a-zA-Z0-9_.-]", "_", raw.replace(":", "_").replace("/", "_")).strip("_")
+
+
+def _sweep_identity_keys(record: dict[str, Any]) -> set[str]:
+    keys = paper_record_match_keys(record)
+    rid = _normalize_id(record)
+    if rid:
+        keys.add(rid.casefold())
+    return {key for key in keys if key}
 
 
 def _is_duplicate_record(record: dict[str, Any]) -> bool:

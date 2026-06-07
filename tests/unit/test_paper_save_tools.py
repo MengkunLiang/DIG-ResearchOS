@@ -167,6 +167,20 @@ class TestTransformToPapersRaw:
         assert result["canonical_id_source"] == "doi_noopenalex"
         assert result["no_openalex_id"] is True
 
+    def test_external_ids_doi_is_promoted_to_top_level(self):
+        paper = {
+            "id": "S2-paper",
+            "source": "semantic_scholar",
+            "title": "External DOI Paper",
+            "authors": ["Author"],
+            "externalIds": {"DOI": "10.1234/external"},
+        }
+
+        result = _transform_to_papers_raw(paper)
+
+        assert result["doi"] == "10.1234/external"
+        assert result["canonical_id"] == "doi:10.1234/external"
+
     def test_preserves_query_bucket_annotations(self):
         """Runtime/Scout routing labels should survive raw normalization."""
         paper = {
@@ -424,6 +438,53 @@ class TestSavePapersDedupTool:
         content = file_path.read_text(encoding="utf-8")
         assert "Paper 1" in content
         assert "Paper 2" in content
+
+    @pytest.mark.asyncio
+    async def test_save_dedup_append_merges_duplicate_metadata(self, tool, workspace):
+        """旧 append 路径也必须合并增强字段，不能只按 id 静默跳过。"""
+        result1 = await tool.execute(
+            papers=[
+                {
+                    "id": "doi:10.1234/shared",
+                    "title": "Shared Dedup Paper",
+                    "authors": ["Ada"],
+                    "doi": "10.1234/shared",
+                    "abstract": "Short.",
+                    "references": [],
+                }
+            ],
+            append=False,
+        )
+        assert result1.ok
+
+        result2 = await tool.execute(
+            papers=[
+                {
+                    "id": "W999",
+                    "title": "Shared Dedup Paper",
+                    "authors": ["Ada"],
+                    "doi": "10.1234/shared",
+                    "abstract": "A much richer backfilled abstract.",
+                    "externalIds": {"OpenAlex": "W999", "DOI": "10.1234/shared"},
+                    "references": [{"doi": "10.8888/ref"}],
+                    "pdf_url": "https://example.org/shared.pdf",
+                }
+            ],
+            append=True,
+        )
+
+        assert result2.ok
+        assert result2.data["count"] == 0
+        assert result2.data["merged_count"] == 1
+        records = [
+            json.loads(line)
+            for line in (workspace / "literature" / "papers_dedup.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        assert len(records) == 1
+        assert records[0]["abstract"] == "A much richer backfilled abstract."
+        assert records[0]["references"] == [{"doi": "10.8888/ref"}]
+        assert records[0]["pdf_urls"] == ["https://example.org/shared.pdf"]
 
 
 # ============================================================================

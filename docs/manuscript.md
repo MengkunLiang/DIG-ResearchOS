@@ -30,7 +30,7 @@ T8-STYLE-GATE
  -> T9
 ```
 
-`T8-PAPER-CLAIM-AUDIT` 是 T9 前的最终 evidence gate：它读取 `paper.tex`、`experiment_evidence_pack.json` 和 `result_to_claim.json`，检查正文数字和强 claim 是否能追溯到实验审计。旧入口 `T8` 和旧报告中的 `next_task: T8-WRITE` 会优先映射到 `T8-STYLE-GATE`；只有 `drafts/writing_style.json` 已存在且合法时，才直接进入 `T8-RESOURCE`。旧 `T8-SECTIONS` 只作为兼容入口，不再是主链正文写作节点。旧 `T8-SEC-LIMITATIONS` 已移除，limitations 必须写进 Conclusion 的 `\subsection{Limitations}`。
+`T8-PAPER-CLAIM-AUDIT` 是 T9 前的最终 evidence gate：它读取 `paper.tex`、`experiment_evidence_pack.json` 和 `result_to_claim.json`，检查正文数字和强 claim 是否能追溯到实验审计。未在 evidence pack 中出现的实验数字是 FAIL，不是软提示；mock-only evidence、forbidden wording、unsupported strong claim 也会阻断进入 T9。`paper_claim_audit.json` 会写 `input_fingerprints`，绑定当前 paper/evidence/result-to-claim 的 hash；resume 或 deterministic manuscript refresh 时会同步刷新该 audit，避免旧审计放行新正文。旧入口 `T8` 和旧报告中的 `next_task: T8-WRITE` 会优先映射到 `T8-STYLE-GATE`；只有 `drafts/writing_style.json` 已存在且合法时，才直接进入 `T8-RESOURCE`。旧 `T8-SECTIONS` 只作为兼容入口，不再是主链正文写作节点。旧 `T8-SEC-LIMITATIONS` 已移除，limitations 必须写进 Conclusion 的 `\subsection{Limitations}`。
 
 当前 Reviewer 链路是“单节点 section-aware”：`T8-REVIEW-N` 在一次 ReviewerAgent 调用里要求先写所有 `round_N_sections/*.md`，再写 `round_N.md`。这已经比整篇凭印象审稿强，但还不是“每个 section 一次独立 LLM 调用”。如果要把审稿做到和 Writer 一样严格，应采用本文 13.1.1 的 per-section Reviewer 状态机设计。
 
@@ -960,10 +960,15 @@ T8 输出 `drafts/paper.tex` 后，T9 负责投稿模板迁移和编译。T9 不
 - 优先调用 `latex_compile` 编译 `submission/bundle/main.tex`。
 - 编译失败时读 log，修复再重试。
 - 每次 `latex_compile` 都会在投稿主文件场景写入 `submission/compile_report.json`。
+- `prepare_submission_bundle` 会写 `submission/bundle/bundle_manifest.json`，记录当前
+  `drafts/paper.tex`、`literature/related_work.bib`、bundle 内 `main.tex/references.bib`
+  和 copied figures 的 hash。T9 validator 和 prefinalize 必须用它确认 bundle 没有相对源文件过期。
 - `main.pdf` 必须是真 PDF 文件，不能是占位文本。
 - `main.pdf` 不能早于 `main.tex`。
 - `main.log` 不能残留 fatal error、undefined references 或 unresolved citations。
-- validator 会校验 `compile_report.json` 的 `semantics=latex_compile_attempt_report`、最后一次 attempt 成功、`tex_path/pdf_path/log_path` 指向当前 bundle，并用 `main_tex_sha256`、`pdf_sha256`、`log_sha256`、mtime 和 size 证明 PDF/log 来自当前 `main.tex`。
+- validator 会校验 `compile_report.json` 的 `semantics=latex_compile_attempt_report`、最后一次 attempt 成功、`tex_path/pdf_path/log_path` 指向当前 bundle，并用 `main_tex_sha256`、依赖 fingerprint、`pdf_sha256`、`log_sha256`、mtime 和 size 证明 PDF/log 来自当前 `main.tex` 和当前 bundle 依赖。
+- resume 到 T9 时，如果 bundle manifest、compile report、PDF/log 和 migration report 已全部通过 validator，runtime 会在编译环境检查和 LLM 前直接 `t9_submission_prefinalize` 完成。
+- `latex_compile` 会复用同一 TeX + dependency fingerprint 的成功 PDF；如果同一 fingerprint 的源级失败已经达到上限，会要求先改 TeX 或依赖。Docker/latexmk 不可用这类环境失败不计入 source-level attempt 上限。
 
 当前机器的 Docker Root Dir 已配置为 `/mnt/data/Docker`。宿主机没有 `latexmk` 时，T9 会走 Docker 镜像 `researchos/system:latest`；Docker 命令、daemon 或镜像不可用时，T9 以 `WAITING_ENVIRONMENT` 暂停，修好环境后可直接 `resume`。
 

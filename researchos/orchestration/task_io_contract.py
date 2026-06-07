@@ -1491,6 +1491,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "paper": "drafts/paper.tex",
             "related_work_bib": "literature/related_work.bib",
             "paper_claim_audit": "drafts/paper_claim_audit.md",
+            "paper_claim_audit_json": "drafts/paper_claim_audit.json",
             "result_to_claim": "drafts/result_to_claim.json",
             "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
         },

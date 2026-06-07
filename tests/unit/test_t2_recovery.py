@@ -6,7 +6,11 @@ from pathlib import Path
 import pytest
 
 from researchos.runtime.t2_recovery import (
+    _backfill_recovered_crossref_metadata,
     _backfill_recovered_openalex_metadata,
+    _backfill_recovered_openalex_title_metadata,
+    _merge_enriched_records_back_to_raw,
+    _openalex_detail_url,
     _search_records_from_raw,
     finalize_t2_outputs,
 )
@@ -36,6 +40,71 @@ def test_search_records_from_raw_keeps_single_bridge_on_bridge_bucket_only():
     by_query = {record["query"]: record for record in records}
     assert by_query["core query"]["bridge_id"] == ""
     assert by_query["bridge query"]["bridge_id"] == "b2"
+
+
+def test_openalex_detail_url_uses_cheap_doi_lookup_endpoint():
+    assert _openalex_detail_url("https://doi.org/10.1145/3477495.3532058").endswith(
+        "/works/doi:10.1145%2F3477495.3532058"
+    )
+    assert _openalex_detail_url("doi:10.1145/3477495.3532058").endswith(
+        "/works/doi:10.1145%2F3477495.3532058"
+    )
+    assert _openalex_detail_url("W4224983022").endswith("/works/W4224983022")
+
+
+def test_merge_citation_edges_preserves_existing_directed_edges():
+    from researchos.runtime.t2_recovery import _merge_citation_edge_payload
+
+    merged = _merge_citation_edge_payload(
+        [["A", "B"], ["B", "A"]],
+        [{"source_id": "A", "referenced_works": ["C"], "source": "recovered_existing_metadata"}],
+    )
+
+    assert ["A", "B"] in merged
+    assert ["B", "A"] in merged
+    assert any(isinstance(item, dict) and item.get("source_id") == "A" for item in merged)
+
+
+def test_merge_enriched_records_back_to_raw_persists_metadata_cache(tmp_path):
+    raw_path = tmp_path / "literature" / "papers_raw.jsonl"
+    _write_jsonl(
+        raw_path,
+        [
+            {
+                "id": "doi:10.1234/source",
+                "title": "Source Paper",
+                "doi": "10.1234/source",
+                "source_query": "core query",
+                "search_bucket": "core",
+            }
+        ],
+    )
+
+    result = _merge_enriched_records_back_to_raw(
+        raw_path,
+        [
+            {
+                "id": "W123",
+                "title": "Source Paper",
+                "doi": "10.1234/source",
+                "abstract": "Backfilled abstract.",
+                "externalIds": {"OpenAlex": "W123", "DOI": "10.1234/source"},
+                "referenced_works": ["W456"],
+                "pdf_url": "https://example.org/paper.pdf",
+                "source_query": "bridge query",
+                "search_bucket": "theory_bridge",
+            }
+        ],
+    )
+
+    records = [json.loads(line) for line in raw_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert result["raw_cache_records_merged"] == 1
+    assert len(records) == 1
+    assert records[0]["abstract"] == "Backfilled abstract."
+    assert records[0]["referenced_works"] == ["W456"]
+    assert records[0]["pdf_urls"] == ["https://example.org/paper.pdf"]
+    assert "core query" in records[0]["source_queries"]
+    assert "bridge query" in records[0]["source_queries"]
 
 
 class _FakeCrossrefResponse:
@@ -139,6 +208,44 @@ class _FakeOpenAlexClient:
         )
 
 
+class _FakeOpenAlexTitleClient:
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def get(self, url: str, **kwargs):
+        assert url.endswith("/works")
+        params = kwargs.get("params") or {}
+        assert params.get("search") == "Title Only Seed Paper"
+        return _FakeCrossrefResponse(
+            {
+                "results": [
+                    {
+                        "id": "https://openalex.org/W999",
+                        "title": "Title Only Seed Paper",
+                        "authorships": [{"author": {"display_name": "Seed Author"}}],
+                        "publication_year": 2026,
+                        "doi": "https://doi.org/10.9999/seed",
+                        "cited_by_count": 12,
+                        "abstract_inverted_index": {"Seed": [0], "abstract": [1], "recovered": [2]},
+                        "referenced_works": ["https://openalex.org/W111"],
+                        "related_works": ["https://openalex.org/W222"],
+                        "primary_location": {
+                            "source": {"display_name": "Seed Venue"},
+                            "pdf_url": "https://example.org/seed.pdf",
+                        },
+                        "best_oa_location": {"pdf_url": "https://example.org/seed.pdf"},
+                    }
+                ]
+            }
+        )
+
+
 @pytest.mark.asyncio
 async def test_openalex_backfill_adds_id_refs_abstract_and_pdf_hints(monkeypatch):
     papers = [
@@ -181,11 +288,108 @@ async def test_openalex_backfill_adds_id_refs_abstract_and_pdf_hints(monkeypatch
     assert stats["references_filled"] == 1
     assert stats["pdf_hints_filled"] == 1
     assert papers[0]["canonical_id"] == "W123"
+    assert papers[0]["doi"] == "10.1111/openalex"
     assert papers[0]["externalIds"]["OpenAlex"] == "W123"
     assert papers[0]["referenced_works"] == ["W456"]
     assert papers[0]["related_works"] == ["W789"]
     assert papers[0]["pdf_url"] == "https://example.org/openalex.pdf"
     assert papers[0]["open_access"]["is_oa"] is True
+
+
+@pytest.mark.asyncio
+async def test_crossref_backfill_merges_references_when_openalex_refs_exist(monkeypatch):
+    papers = [
+        {
+            "id": "doi:10.1111/source",
+            "canonical_id": "W_source",
+            "title": "Source Paper",
+            "doi": "10.1111/source",
+            "abstract": "Already has abstract.",
+            "referenced_works": ["W_openalex_ref"],
+        }
+    ]
+
+    import researchos.runtime.t2_recovery as t2_recovery
+
+    monkeypatch.setattr(
+        t2_recovery.httpx,
+        "AsyncClient",
+        lambda *args, **kwargs: _FakeCrossrefClient(*args, **kwargs),
+    )
+
+    stats = await _backfill_recovered_crossref_metadata(papers)
+
+    assert stats["references_filled"] == 1
+    assert papers[0]["referenced_works"] == ["W_openalex_ref"]
+    assert any(ref.get("doi") == "10.2222/ref" for ref in papers[0]["references"])
+
+
+@pytest.mark.asyncio
+async def test_openalex_title_backfill_repairs_title_only_seed_metadata(monkeypatch):
+    papers = [
+        {
+            "id": "seed-title-only",
+            "canonical_id": "seed-title-only",
+            "source": "user_seed",
+            "title": "Title Only Seed Paper",
+            "authors": ["Seed Author"],
+            "abstract": "",
+        }
+    ]
+
+    import researchos.runtime.t2_recovery as t2_recovery
+
+    monkeypatch.setattr(
+        t2_recovery.httpx,
+        "AsyncClient",
+        lambda *args, **kwargs: _FakeOpenAlexTitleClient(*args, **kwargs),
+    )
+
+    stats = await _backfill_recovered_openalex_title_metadata(papers)
+
+    assert stats["eligible_count"] == 1
+    assert stats["matched"] == 1
+    assert stats["doi_filled"] == 1
+    assert stats["openalex_id_filled"] == 1
+    assert stats["abstract_filled"] == 1
+    assert stats["references_filled"] == 1
+    assert stats["pdf_hints_filled"] == 1
+    assert papers[0]["canonical_id"] == "W999"
+    assert papers[0]["doi"] == "10.9999/seed"
+    assert papers[0]["abstract"] == "Seed abstract recovered"
+    assert papers[0]["pdf_url"] == "https://example.org/seed.pdf"
+    assert papers[0]["_metadata_backfilled_from_title"] == "openalex"
+
+
+@pytest.mark.asyncio
+async def test_backfill_stats_report_skipped_by_cap_and_remaining(monkeypatch):
+    papers = [
+        {
+            "id": f"doi:10.1111/{idx}",
+            "canonical_id": f"doi:10.1111/{idx}",
+            "title": f"Paper {idx}",
+            "doi": f"10.1111/{idx}",
+            "abstract": "",
+        }
+        for idx in range(3)
+    ]
+
+    import researchos.runtime.t2_recovery as t2_recovery
+
+    monkeypatch.setattr(
+        t2_recovery.httpx,
+        "AsyncClient",
+        lambda *args, **kwargs: _FakeOpenAlexClient(*args, **kwargs),
+    )
+
+    stats = await _backfill_recovered_openalex_metadata(papers, max_papers=1)
+
+    assert stats["eligible_count"] == 3
+    assert stats["candidate_count"] == 1
+    assert stats["attempted"] == 1
+    assert stats["skipped_by_cap"] == 2
+    assert "remaining_missing_abstract" in stats
+    assert "remaining_missing_pdf_hints" in stats
 
 
 @pytest.mark.asyncio
@@ -344,6 +548,11 @@ async def test_finalize_t2_outputs_does_not_hidden_cap_verified_pool(monkeypatch
         return [], {"enabled": True, "source_candidates": 0, "sources_used": 0, "reference_dois_seen": 0, "attempted": 0, "added": 0, "failed": 0}
 
     monkeypatch.setattr(t2_recovery, "_backfill_recovered_openalex_metadata", _no_openalex_backfill)
+    monkeypatch.setattr(
+        t2_recovery,
+        "_backfill_recovered_openalex_title_metadata",
+        lambda *args, **kwargs: _no_openalex_backfill(*args, **kwargs),
+    )
     monkeypatch.setattr(t2_recovery, "_backfill_recovered_crossref_metadata", _no_metadata_backfill)
     monkeypatch.setattr(t2_recovery, "_expand_crossref_snowball_candidates", _no_snowball)
 

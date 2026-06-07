@@ -814,7 +814,7 @@ def _dedupe_edges(edges: list[tuple[str, str]]) -> list[tuple[str, str]]:
     for left, right in edges:
         if not left or not right or left == right:
             continue
-        key = tuple(sorted((left, right)))
+        key = (left, right)
         if key in seen:
             continue
         seen.add(key)
