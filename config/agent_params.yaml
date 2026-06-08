@@ -185,6 +185,11 @@ agents:
             exclude_already_read: true
             include_metadata_only: true
             exclude_semantic_excluded: true
+            metadata_triage_report: literature/metadata_triage.md
+            priority_weights:
+              relevance: 0.70
+              resource: 0.20
+              year: 0.10
         description: 深度阅读
         expected_notes_ratio: 1.0
         deep_read_min: 35

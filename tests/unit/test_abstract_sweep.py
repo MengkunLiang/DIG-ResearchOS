@@ -8,11 +8,14 @@ from pathlib import Path
 
 import pytest
 
+from researchos.time_utils import current_utc_year
 from researchos.runtime.abstract_sweep import (
+    build_metadata_triage_prompt,
     build_sweep_candidates,
     generate_abstract_note,
     generate_bib_entry,
     generate_comparison_row,
+    normalize_metadata_triage_report,
     normalize_abstract_reader_note,
     repair_abstract_sweep_notes,
     run_abstract_sweep,
@@ -407,6 +410,50 @@ def test_build_sweep_candidates_sorts_by_relevance_desc(tmp_path: Path):
     assert [c["id"] for c in candidates] == ["p2", "p3", "p1"]
 
 
+def test_build_sweep_candidates_uses_resource_and_year_priority(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    current_year = current_utc_year()
+    _write_jsonl(
+        workspace / "literature" / "papers_dedup.jsonl",
+        [
+            {
+                "id": "metadata_old",
+                "title": "Metadata Old",
+                "abstract": "",
+                "relevance_score": 0.9,
+                "year": current_year - 20,
+                "access_level_hint": "METADATA_ONLY",
+            },
+            {
+                "id": "fulltext_recent",
+                "title": "Full Text Recent",
+                "abstract": "has abstract",
+                "relevance_score": 0.8,
+                "year": current_year,
+                "access_level_hint": "FULL_TEXT_LOCAL",
+            },
+        ],
+    )
+
+    candidates = build_sweep_candidates(
+        workspace,
+        {
+            "lite_paper_num": 10,
+            "min_relevance": 0.0,
+            "sources": ["papers_dedup"],
+            "exclude_already_read": True,
+            "priority_weights": {"relevance": 0.7, "resource": 0.2, "year": 0.1},
+        },
+    )
+
+    assert [c["id"] for c in candidates] == ["fulltext_recent", "metadata_old"]
+    components = candidates[0]["abstract_sweep_score_components"]
+    assert components["relevance"] == 0.8
+    assert components["resource"] == 1.0
+    assert components["year"] == 1.0
+    assert components["weight_relevance"] == 0.7
+
+
 def test_build_sweep_candidates_respects_lite_paper_num(tmp_path: Path):
     workspace = tmp_path / "ws"
     records = [{"id": f"p{i}", "title": f"P{i}", "abstract": f"a{i}", "relevance_score": 0.5 + i * 0.01} for i in range(20)]
@@ -427,7 +474,8 @@ def test_build_sweep_candidates_keeps_metadata_only_by_default(tmp_path: Path):
     )
 
     candidates = build_sweep_candidates(workspace, {"lite_paper_num": 10, "min_relevance": 0.0, "sources": ["papers_dedup"], "exclude_already_read": True})
-    assert [item["id"] for item in candidates] == ["p1", "p2"]
+    assert {item["id"] for item in candidates} == {"p1", "p2"}
+    assert candidates[0]["id"] == "p2"  # abstract/resource availability can outrank pure metadata.
 
 
 def test_build_sweep_candidates_can_skip_metadata_only_when_configured(tmp_path: Path):
@@ -613,6 +661,35 @@ def test_run_abstract_sweep_appends_to_bib(tmp_path: Path):
     assert "Paper One" in bib_content
 
 
+def test_run_abstract_sweep_routes_metadata_only_to_triage_report(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    _write_jsonl(
+        workspace / "literature" / "papers_dedup.jsonl",
+        [
+            {"id": "p1", "title": "Metadata Paper", "abstract": "", "relevance_score": 0.9, "year": 2024, "venue": "ICML"},
+        ],
+    )
+
+    result = run_abstract_sweep(
+        workspace,
+        {"enabled": True, "lite_paper_num": 10, "min_relevance": 0.0, "sources": ["papers_dedup"], "exclude_already_read": True},
+    )
+
+    assert result["notes_generated"] == 0
+    assert result["fallback_notes_generated"] == 0
+    assert result["metadata_triage_count"] == 1
+    assert result["metadata_triage_report"] == "literature/metadata_triage.md"
+    assert not (workspace / "literature" / "paper_notes_abstract" / "p1.md").exists()
+
+    report = (workspace / "literature" / "metadata_triage.md").read_text(encoding="utf-8")
+    assert "Metadata-only Literature Triage" in report
+    assert "Metadata Paper" in report
+    assert "Do not cite these metadata-only candidates" in report
+
+    assert not (workspace / "literature" / "comparison_table.csv").exists()
+    assert not (workspace / "literature" / "related_work.bib").exists()
+
+
 def test_run_abstract_sweep_no_candidates(tmp_path: Path):
     workspace = tmp_path / "ws"
     # No papers at all
@@ -691,7 +768,7 @@ Abstract text with a method and claimed result.
 
 
 @pytest.mark.asyncio
-async def test_run_abstract_sweep_with_reader_skips_llm_for_missing_abstract(tmp_path: Path):
+async def test_run_abstract_sweep_with_reader_routes_missing_abstract_to_metadata_triage(tmp_path: Path):
     workspace = tmp_path / "ws"
     _write_jsonl(
         workspace / "literature" / "papers_verified.jsonl",
@@ -708,7 +785,28 @@ async def test_run_abstract_sweep_with_reader_skips_llm_for_missing_abstract(tmp
     )
 
     async def should_not_call_reader(paper: dict, prompt: str) -> str:
-        raise AssertionError("metadata-only records should use deterministic fallback")
+        raise AssertionError("metadata-only records should not create per-paper abstract notes")
+
+    async def fake_triage_reader(papers: list[dict], prompt: str) -> str:
+        assert len(papers) == 1
+        assert "Metadata Only Paper" in prompt
+        return """# Metadata-only Literature Triage
+
+## Metadata-only Triage Summary
+One metadata-only candidate requires resource upgrade.
+
+## Likely Useful To Upgrade
+- `p1` may be useful, based on metadata-only title/venue.
+
+## Low Evidence / Defer
+- No claims can be made from this record.
+
+## Resource Acquisition Suggestions
+- Search DOI/OpenAlex/venue pages before using it.
+
+## Do Not Use As Evidence
+- Do not cite as mechanism or result evidence.
+"""
 
     result = await run_abstract_sweep_with_reader(
         workspace,
@@ -721,11 +819,66 @@ async def test_run_abstract_sweep_with_reader_skips_llm_for_missing_abstract(tmp
             "include_metadata_only": True,
         },
         abstract_reader=should_not_call_reader,
+        metadata_triage_reader=fake_triage_reader,
+    )
+
+    assert result["notes_generated"] == 0
+    assert result["llm_notes_generated"] == 0
+    assert result["fallback_notes_generated"] == 0
+    assert result["metadata_triage_count"] == 1
+    assert result["metadata_triage_llm"] == 1
+    assert not (workspace / "literature" / "paper_notes_abstract" / "p1.md").exists()
+    report = (workspace / "literature" / "metadata_triage.md").read_text(encoding="utf-8")
+    assert "metadata-only title/venue" in report
+    assert "metadata_triage_source: reader_llm" in report
+
+
+@pytest.mark.asyncio
+async def test_run_abstract_sweep_with_reader_batches_multiple_metadata_only_records(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    _write_jsonl(
+        workspace / "literature" / "papers_verified.jsonl",
+        [
+            {"id": "p1", "title": "Metadata One", "abstract": "", "relevance_score": 0.9, "year": 2024},
+            {"id": "p2", "title": "Metadata Two", "abstract": "", "relevance_score": 0.8, "year": 2023},
+            {"id": "p3", "title": "Abstract Paper", "abstract": "Real abstract. Method.", "relevance_score": 0.7, "year": 2024},
+        ],
+    )
+    calls = {"triage": 0}
+
+    async def fake_note_reader(paper: dict, prompt: str) -> str:
+        return generate_abstract_note(paper)
+
+    async def fake_triage_reader(papers: list[dict], prompt: str) -> str:
+        calls["triage"] += 1
+        assert [paper["id"] for paper in papers] == ["p1", "p2"]
+        assert "Metadata One" in prompt
+        assert "Metadata Two" in prompt
+        return normalize_metadata_triage_report("## Metadata-only Triage Summary\nBatch reviewed.", papers)
+
+    result = await run_abstract_sweep_with_reader(
+        workspace,
+        {"enabled": True, "lite_paper_num": 10, "min_relevance": 0.0, "sources": ["papers_verified"], "exclude_already_read": True},
+        abstract_reader=fake_note_reader,
+        metadata_triage_reader=fake_triage_reader,
     )
 
     assert result["notes_generated"] == 1
-    assert result["llm_notes_generated"] == 0
-    assert result["fallback_notes_generated"] == 1
-    note = (workspace / "literature" / "paper_notes_abstract" / "p1.md").read_text(encoding="utf-8")
-    assert "ABSTRACT-ONLY" in note
-    assert "- **Stated mechanism**:" in note
+    assert result["llm_notes_generated"] == 1
+    assert result["metadata_triage_count"] == 2
+    assert result["metadata_triage_llm"] == 1
+    assert calls["triage"] == 1
+    assert (workspace / "literature" / "paper_notes_abstract" / "p3.md").exists()
+    assert not (workspace / "literature" / "paper_notes_abstract" / "p1.md").exists()
+    assert not (workspace / "literature" / "paper_notes_abstract" / "p2.md").exists()
+
+
+def test_metadata_triage_prompt_and_normalizer_mark_non_evidence():
+    papers = [{"id": "p1", "title": "Metadata Only", "abstract": "", "relevance_score": 0.8}]
+    prompt = build_metadata_triage_prompt(papers)
+    assert "不要假装读过摘要或全文" in prompt
+    assert "Metadata Only" in prompt
+
+    report = normalize_metadata_triage_report("Short note.", papers)
+    assert "## Metadata-only Triage Summary" in report
+    assert "## Do Not Use As Evidence" in report

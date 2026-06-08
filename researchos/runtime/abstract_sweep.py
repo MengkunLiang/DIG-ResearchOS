@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from ..agents._common import load_jsonl
+from ..time_utils import current_utc_year
 from ..literature_identity import (
     is_paper_note_file,
     paper_record_match_keys,
@@ -37,10 +38,17 @@ _DEFAULT_CONFIG = {
     "exclude_already_read": True,
     "include_metadata_only": True,
     "exclude_semantic_excluded": True,
+    "metadata_triage_report": "literature/metadata_triage.md",
+    "priority_weights": {
+        "relevance": 0.70,
+        "resource": 0.20,
+        "year": 0.10,
+    },
 }
 
 
 AbstractReader = Callable[[dict[str, Any], str], str | Awaitable[str]]
+MetadataTriageReader = Callable[[list[dict[str, Any]], str], str | Awaitable[str]]
 
 
 def _resolve_config(raw: dict[str, Any] | None) -> dict[str, Any]:
@@ -124,16 +132,110 @@ def build_sweep_candidates(
             continue
         if not str(record.get("title") or "").strip():
             continue
-        relevance = float(record.get("relevance_score", 0))
+        relevance = _coerce_float(record.get("relevance_score"), 0.0)
         if relevance < min_rel:
             continue
         if not include_metadata_only and not record.get("abstract", "").strip():
             continue
-        candidates.append(record)
+        enriched = dict(record)
+        score, components = _sweep_priority(record, cfg)
+        enriched["abstract_sweep_score"] = round(score, 4)
+        enriched["abstract_sweep_score_components"] = components
+        candidates.append(enriched)
 
-    # 按 relevance_score 降序
-    candidates.sort(key=lambda r: float(r.get("relevance_score", 0)), reverse=True)
+    candidates.sort(
+        key=lambda r: (
+            -float(r.get("abstract_sweep_score") or 0.0),
+            -float(r.get("relevance_score") or 0.0),
+            -float((r.get("abstract_sweep_score_components") or {}).get("resource", 0.0)),
+            -float((r.get("abstract_sweep_score_components") or {}).get("year", 0.0)),
+            str(r.get("title") or ""),
+        )
+    )
     return candidates if lite_num is None else candidates[:lite_num]
+
+
+def _sweep_priority(record: dict[str, Any], config: dict[str, Any] | None = None) -> tuple[float, dict[str, float]]:
+    """Score abstract sweep candidates by relevance, resource availability, and recency."""
+
+    weights = _priority_weights(config)
+    relevance = max(0.0, min(1.0, _coerce_float(record.get("relevance_score"), 0.0)))
+    resource = _resource_availability_score(record)
+    year = _year_recency_score(record)
+    score = weights["relevance"] * relevance + weights["resource"] * resource + weights["year"] * year
+    return score, {
+        "relevance": round(relevance, 4),
+        "resource": round(resource, 4),
+        "year": round(year, 4),
+        "weight_relevance": round(weights["relevance"], 4),
+        "weight_resource": round(weights["resource"], 4),
+        "weight_year": round(weights["year"], 4),
+    }
+
+
+def _priority_weights(config: dict[str, Any] | None = None) -> dict[str, float]:
+    raw = (config or {}).get("priority_weights") or _DEFAULT_CONFIG["priority_weights"]
+    if not isinstance(raw, dict):
+        raw = _DEFAULT_CONFIG["priority_weights"]
+    relevance = max(0.0, _coerce_float(raw.get("relevance"), 0.70))
+    resource = max(0.0, _coerce_float(raw.get("resource"), 0.20))
+    year = max(0.0, _coerce_float(raw.get("year"), 0.10))
+    total = relevance + resource + year
+    if total <= 0:
+        return {"relevance": 0.70, "resource": 0.20, "year": 0.10}
+    return {
+        "relevance": relevance / total,
+        "resource": resource / total,
+        "year": year / total,
+    }
+
+
+def _coerce_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _resource_availability_score(record: dict[str, Any]) -> float:
+    score = 0.0
+    for field in ("access_score", "access_score_estimate"):
+        score = max(score, _coerce_float(record.get(field), 0.0))
+
+    hint = str(record.get("access_level_hint") or "").strip().upper()
+    score = max(
+        score,
+        {
+            "FULL_TEXT_LOCAL": 1.0,
+            "LIKELY_FULL_TEXT": 0.85,
+            "POSSIBLE_FULL_TEXT": 0.65,
+            "ABSTRACT_OR_METADATA": 0.35,
+            "METADATA_ONLY": 0.15,
+        }.get(hint, 0.0),
+    )
+    if str(record.get("abstract") or "").strip():
+        score = max(score, 0.45)
+    if record.get("has_local_pdf") or record.get("has_seed_pdf"):
+        score = max(score, 1.0)
+    if any(record.get(key) for key in ("open_access_pdf_url", "pdf_url", "arxiv_id")):
+        score = max(score, 0.85)
+    return max(0.0, min(1.0, score))
+
+
+def _year_recency_score(record: dict[str, Any]) -> float:
+    year = _extract_year(record)
+    if year is None:
+        return 0.0
+    current = current_utc_year()
+    if year >= current - 2:
+        return 1.0
+    if year >= current - 5:
+        return 0.8
+    if year >= current - 10:
+        return 0.5
+    if year >= current - 20:
+        return 0.25
+    return 0.1
 
 
 def _normalize_id(record: dict) -> str:
@@ -329,6 +431,95 @@ def build_abstract_reader_prompt(paper: dict[str, Any]) -> str:
         "- 如果 abstract 没有结果或机制，不要编造，写 `not available from abstract`。\n\n"
         f"Metadata:\n{metadata}\n\n"
         f"Abstract:\n{abstract}\n"
+    )
+
+
+def build_metadata_triage_prompt(papers: list[dict[str, Any]]) -> str:
+    """Build a batch LLM prompt for metadata-only candidates."""
+
+    lines = []
+    for idx, paper in enumerate(papers, 1):
+        components = paper.get("abstract_sweep_score_components") or {}
+        lines.append(
+            "\n".join(
+                [
+                    f"{idx}. id={_normalize_id(paper)}",
+                    f"   title={str(paper.get('title') or '').strip()}",
+                    f"   year={_extract_year(paper) or 'unknown'} venue={paper.get('venue') or 'unknown'}",
+                    f"   doi_or_arxiv={paper.get('doi') or paper.get('arxiv_id') or paper.get('id') or ''}",
+                    f"   source={paper.get('source') or paper.get('source_bucket') or paper.get('search_bucket') or ''}",
+                    f"   access_hint={paper.get('access_level_hint') or ''} access_score={paper.get('access_score') or paper.get('access_score_estimate') or ''}",
+                    f"   sweep_score={paper.get('abstract_sweep_score') or ''} components={components}",
+                    f"   why_relevant={paper.get('why_relevant') or ''}",
+                ]
+            )
+        )
+    return (
+        "你是 ResearchOS Reader。下面是一批没有 abstract/full text 的 metadata-only 论文候选。"
+        "请只基于 title/year/venue/DOI/source/access_hint 做批量 triage，不要假装读过摘要或全文，"
+        "不要编造方法细节、实验结果或机制。\n\n"
+        "输出 Markdown，必须包含这些标题：\n"
+        "## Metadata-only Triage Summary\n"
+        "## Likely Useful To Upgrade\n"
+        "## Low Evidence / Defer\n"
+        "## Resource Acquisition Suggestions\n"
+        "## Do Not Use As Evidence\n\n"
+        "每条建议要引用候选 id 或标题，并说明是基于 metadata-only 判断。"
+        "如果某条只是标题相似但资源弱，请明确建议先获取 abstract/PDF 后再决定。\n\n"
+        "Candidates:\n"
+        + "\n\n".join(lines)
+    )
+
+
+def normalize_metadata_triage_report(report: str, papers: list[dict[str, Any]]) -> str:
+    """Repair metadata triage report format without making evidence claims."""
+
+    text = str(report or "").strip()
+    if not text:
+        text = _generate_metadata_triage_fallback(papers)
+    required = [
+        "## Metadata-only Triage Summary",
+        "## Likely Useful To Upgrade",
+        "## Low Evidence / Defer",
+        "## Resource Acquisition Suggestions",
+        "## Do Not Use As Evidence",
+    ]
+    if not text.startswith("# "):
+        text = "# Metadata-only Literature Triage\n\n" + text
+    for heading in required:
+        if heading not in text:
+            text += f"\n\n{heading}\nmetadata-only review required; no abstract/full text available."
+    if "Metadata-only" not in text and "metadata-only" not in text:
+        text += "\n\n> Scope: metadata-only triage; not evidence for mechanisms or claims.\n"
+    return text.strip() + "\n"
+
+
+def _generate_metadata_triage_fallback(papers: list[dict[str, Any]]) -> str:
+    rows = []
+    for paper in papers:
+        rows.append(
+            "- `{}` — {} ({}, {}), access={}, score={}".format(
+                _normalize_id(paper),
+                str(paper.get("title") or "Unknown").strip(),
+                _extract_year(paper) or "unknown",
+                paper.get("venue") or "unknown",
+                paper.get("access_level_hint") or "unknown",
+                paper.get("abstract_sweep_score") or "",
+            )
+        )
+    return (
+        "# Metadata-only Literature Triage\n\n"
+        "## Metadata-only Triage Summary\n"
+        "The following candidates lacked abstracts/full text during T3 abstract sweep. "
+        "They are retained only as resource-acquisition or upgrade candidates.\n\n"
+        "## Likely Useful To Upgrade\n"
+        + ("\n".join(rows) if rows else "- No metadata-only candidates.\n")
+        + "\n\n## Low Evidence / Defer\n"
+        "- Defer any claim-level use until abstract or PDF evidence is acquired.\n\n"
+        "## Resource Acquisition Suggestions\n"
+        "- Try DOI/OpenAlex/venue/arXiv/manual lookup for high-score candidates first.\n\n"
+        "## Do Not Use As Evidence\n"
+        "- Do not cite these metadata-only candidates as support for mechanisms, datasets, or results.\n"
     )
 
 
@@ -615,6 +806,7 @@ async def run_abstract_sweep_with_reader(
     config: dict[str, Any] | None = None,
     *,
     abstract_reader: AbstractReader | None = None,
+    metadata_triage_reader: MetadataTriageReader | None = None,
 ) -> dict:
     """执行 abstract sweep，可注入 Reader LLM callback。"""
 
@@ -622,6 +814,7 @@ async def run_abstract_sweep_with_reader(
         workspace,
         config,
         abstract_reader=abstract_reader,
+        metadata_triage_reader=metadata_triage_reader,
     )
 
 
@@ -651,10 +844,14 @@ def _run_abstract_sweep_sync(
     notes_generated = 0
     rows_to_append: list[str] = []
     bib_entries: list[str] = []
+    metadata_only_papers: list[dict[str, Any]] = []
 
     for paper in candidates:
         paper_id = _normalize_id(paper)
         if not paper_id:
+            continue
+        if not str(paper.get("abstract") or "").strip():
+            metadata_only_papers.append(paper)
             continue
 
         # 生成并写入 abstract note
@@ -675,6 +872,31 @@ def _run_abstract_sweep_sync(
     if bib_entries:
         _append_bib_entries(bib_path, bib_entries)
 
+    metadata_report_path = ""
+    if metadata_only_papers:
+        report_rel = str(cfg.get("metadata_triage_report") or "literature/metadata_triage.md")
+        report_path = workspace / report_rel
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report = normalize_metadata_triage_report("", metadata_only_papers)
+        report += (
+            "\n<!-- metadata_triage_source: deterministic_fallback; "
+            f"candidate_count: {len(metadata_only_papers)} -->\n"
+        )
+        report_path.write_text(report, encoding="utf-8")
+        metadata_report_path = report_rel
+
+    _append_access_audit_summary(
+        workspace,
+        {
+            "notes_generated": notes_generated,
+            "llm_notes_generated": 0,
+            "fallback_notes_generated": notes_generated,
+            "metadata_triage_count": len(metadata_only_papers),
+            "metadata_triage_llm": 0,
+            "reader_errors": 0,
+        },
+    )
+
     return {
         "enabled": True,
         "reader_mode": "deterministic_fallback",
@@ -682,6 +904,9 @@ def _run_abstract_sweep_sync(
         "notes_generated": notes_generated,
         "llm_notes_generated": 0,
         "fallback_notes_generated": notes_generated,
+        "metadata_triage_count": len(metadata_only_papers),
+        "metadata_triage_llm": 0,
+        "metadata_triage_report": metadata_report_path,
         "output_dir": str(abstract_dir.relative_to(workspace)),
     }
 
@@ -691,6 +916,7 @@ async def _run_abstract_sweep_async(
     config: dict[str, Any] | None = None,
     *,
     abstract_reader: AbstractReader | None = None,
+    metadata_triage_reader: MetadataTriageReader | None = None,
 ) -> dict:
     cfg = _resolve_config(config)
     if not cfg.get("enabled", False):
@@ -709,9 +935,12 @@ async def _run_abstract_sweep_async(
     notes_generated = 0
     llm_notes_generated = 0
     fallback_notes_generated = 0
+    metadata_triage_count = 0
+    metadata_triage_llm = 0
     reader_errors: list[dict[str, str]] = []
     rows_to_append: list[str] = []
     bib_entries: list[str] = []
+    metadata_only_papers: list[dict[str, Any]] = []
 
     for paper in candidates:
         paper_id = _normalize_id(paper)
@@ -720,7 +949,11 @@ async def _run_abstract_sweep_async(
 
         note_source = "deterministic_fallback"
         has_abstract = bool(str(paper.get("abstract") or "").strip())
-        if abstract_reader is not None and has_abstract:
+        if not has_abstract:
+            metadata_only_papers.append(paper)
+            metadata_triage_count += 1
+            continue
+        if abstract_reader is not None:
             prompt = build_abstract_reader_prompt(paper)
             try:
                 note_raw = await _call_abstract_reader(abstract_reader, paper, prompt)
@@ -743,6 +976,28 @@ async def _run_abstract_sweep_async(
         bib_entries.append(generate_bib_entry(paper))
         notes_generated += 1
 
+    metadata_report_path = ""
+    if metadata_only_papers:
+        report_rel = str(cfg.get("metadata_triage_report") or "literature/metadata_triage.md")
+        report_path = workspace / report_rel
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_source = "deterministic_fallback"
+        if metadata_triage_reader is not None:
+            prompt = build_metadata_triage_prompt(metadata_only_papers)
+            try:
+                report_raw = await _call_metadata_triage_reader(metadata_triage_reader, metadata_only_papers, prompt)
+                report = normalize_metadata_triage_report(report_raw, metadata_only_papers)
+                report_source = "reader_llm"
+                metadata_triage_llm = 1
+            except Exception as exc:  # pragma: no cover - defensive fallback
+                report = normalize_metadata_triage_report("", metadata_only_papers)
+                reader_errors.append({"paper_id": "metadata_triage", "error": repr(exc)[:300]})
+        else:
+            report = normalize_metadata_triage_report("", metadata_only_papers)
+        report += f"\n<!-- metadata_triage_source: {report_source}; candidate_count: {len(metadata_only_papers)} -->\n"
+        report_path.write_text(report, encoding="utf-8")
+        metadata_report_path = report_rel
+
     if rows_to_append:
         _append_csv_rows(comparison_path, rows_to_append)
     if bib_entries:
@@ -753,17 +1008,27 @@ async def _run_abstract_sweep_async(
             "notes_generated": notes_generated,
             "llm_notes_generated": llm_notes_generated,
             "fallback_notes_generated": fallback_notes_generated,
+            "metadata_triage_count": metadata_triage_count,
+            "metadata_triage_llm": metadata_triage_llm,
             "reader_errors": len(reader_errors),
         },
     )
 
     return {
         "enabled": True,
-        "reader_mode": "reader_llm" if abstract_reader is not None else "deterministic_fallback",
+        "reader_mode": _reader_mode(
+            abstract_reader=abstract_reader,
+            metadata_triage_reader=metadata_triage_reader,
+            llm_notes_generated=llm_notes_generated,
+            metadata_triage_llm=metadata_triage_llm,
+        ),
         "candidates_found": len(candidates),
         "notes_generated": notes_generated,
         "llm_notes_generated": llm_notes_generated,
         "fallback_notes_generated": fallback_notes_generated,
+        "metadata_triage_count": metadata_triage_count,
+        "metadata_triage_llm": metadata_triage_llm,
+        "metadata_triage_report": metadata_report_path,
         "reader_errors": reader_errors[:10],
         "output_dir": str(abstract_dir.relative_to(workspace)),
     }
@@ -787,6 +1052,24 @@ async def _call_abstract_reader(
     return str(value or "")
 
 
+async def _call_metadata_triage_reader(
+    metadata_triage_reader: MetadataTriageReader,
+    papers: list[dict[str, Any]],
+    prompt: str,
+) -> str:
+    try:
+        signature = inspect.signature(metadata_triage_reader)
+        if len(signature.parameters) <= 1:
+            value = metadata_triage_reader(papers)  # type: ignore[misc]
+        else:
+            value = metadata_triage_reader(papers, prompt)
+    except (TypeError, ValueError):
+        value = metadata_triage_reader(papers, prompt)
+    if inspect.isawaitable(value):
+        value = await value
+    return str(value or "")
+
+
 def _append_access_audit_summary(workspace: Path, summary: dict[str, Any]) -> None:
     path = workspace / "literature" / "access_audit.md"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -795,11 +1078,31 @@ def _append_access_audit_summary(workspace: Path, summary: dict[str, Any]) -> No
         f"- abstract notes generated: {summary.get('notes_generated', 0)}\n"
         f"- Reader LLM notes: {summary.get('llm_notes_generated', 0)}\n"
         f"- deterministic fallback notes: {summary.get('fallback_notes_generated', 0)}\n"
+        f"- metadata-only triage candidates: {summary.get('metadata_triage_count', 0)}\n"
+        f"- metadata-only triage LLM batches: {summary.get('metadata_triage_llm', 0)}\n"
         f"- Reader errors: {summary.get('reader_errors', 0)}\n"
         "- evidence level: ABSTRACT_ONLY / abstract_claim_hint; not full-text evidence\n"
     )
     with path.open("a", encoding="utf-8") as handle:
         handle.write(line)
+
+
+def _reader_mode(
+    *,
+    abstract_reader: AbstractReader | None,
+    metadata_triage_reader: MetadataTriageReader | None,
+    llm_notes_generated: int,
+    metadata_triage_llm: int,
+) -> str:
+    if llm_notes_generated > 0 and metadata_triage_llm > 0:
+        return "reader_llm+metadata_triage_llm"
+    if llm_notes_generated > 0:
+        return "reader_llm"
+    if metadata_triage_llm > 0:
+        return "metadata_triage_llm"
+    if abstract_reader is not None or metadata_triage_reader is not None:
+        return "llm_callback_no_outputs"
+    return "deterministic_fallback"
 
 
 def _append_csv_rows(path: Path, rows: list[str]) -> None:

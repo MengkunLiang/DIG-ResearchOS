@@ -1109,18 +1109,46 @@ class AgentRunner:
                 choice = llm_resp.raw.choices[0].message
                 return str(getattr(choice, "content", "") or "")
 
+            async def _metadata_triage_llm(_papers: list[dict[str, object]], prompt: str) -> str:
+                llm_resp = await self.llm.chat(
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are ResearchOS Reader. Triage metadata-only literature candidates as a batch. "
+                                "Never claim to have read abstracts or full text, and never produce evidence claims."
+                            ),
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    tools=None,
+                    temperature=0.1,
+                    tier=eff.llm_tier,
+                    profile=eff.llm_profile,
+                    model_override=eff.llm_model_override,
+                    endpoint_override=eff.llm_endpoint_override,
+                    max_context_override=eff.llm_max_context_override,
+                    timeout=int(self.global_timeout.get("llm_call") or 120),
+                    max_retries_per_model=max(1, int(self.retry_policy.get("llm_retries") or 2)),
+                    retry_base_delay=float(self.retry_policy.get("llm_retry_delay") or 2),
+                )
+                choice = llm_resp.raw.choices[0].message
+                return str(getattr(choice, "content", "") or "")
+
             result = await run_abstract_sweep_with_reader(
                 ctx.workspace_dir,
                 sweep_config,
                 abstract_reader=_reader_llm,
+                metadata_triage_reader=_metadata_triage_llm,
             )
             ctx.extra["abstract_sweep"] = result
 
-            if result.get("notes_generated", 0) > 0:
+            if result.get("notes_generated", 0) > 0 or result.get("metadata_triage_count", 0) > 0:
                 print(
                     f"[Agent] Abstract sweep 完成：筛选 {result['candidates_found']} 篇候选，"
                     f"生成 {result['notes_generated']} 篇 abstract note "
-                    f"（LLM {result.get('llm_notes_generated', 0)}，fallback {result.get('fallback_notes_generated', 0)}）",
+                    f"（LLM {result.get('llm_notes_generated', 0)}，fallback {result.get('fallback_notes_generated', 0)}），"
+                    f"metadata-only 批量 triage {result.get('metadata_triage_count', 0)} 篇",
                     flush=True,
                 )
             else:

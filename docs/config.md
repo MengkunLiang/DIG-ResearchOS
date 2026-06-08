@@ -576,13 +576,15 @@ agents:
 `reader.modes.read.behavior.abstract_sweep` 当前默认是有上限的轻量补读取向：
 
 - `expected_notes_ratio: 1.0` 表示无 `deep_read_queue` 的旧 workspace fallback 也按输入池 100% 校验，不再按 80% 放行。
-- `lite_paper_num: 120` 表示每轮最多补 120 篇 abstract-only / metadata-only note，避免 backlog 爆量拖垮 T3。
+- `lite_paper_num: 120` 表示每轮最多处理 120 篇 abstract sweep 候选，包含有 abstract 的逐篇 note 和 metadata-only 的批量 triage；这是候选预算 cap，不是最终相关性判断。
 - `sources: [papers_verified, papers_dedup, papers_backlog]` 表示优先覆盖 active verified/dedup，再从 backlog 中补读尚未覆盖的候选。
 - `min_relevance: 0.0` 表示不靠 metadata priority hint 丢弃剩余候选。
-- `include_metadata_only: true` 表示缺摘要但有标题的论文也会生成 metadata-only 轻量 note；这类记录不调用 Reader LLM，只走确定性 fallback，并保持 `ABSTRACT_ONLY / abstract_claim_hint` 弱证据标记。
+- `priority_weights` 默认 `relevance/resource/year = 0.70/0.20/0.10`，用于在候选预算内排序：`relevance_score` 仍是检索/元数据优先级提示，资源可获得性和发表年限只影响“先读谁/先补谁”。
+- `include_metadata_only: true` 表示缺摘要但有标题的论文会进入 `literature/metadata_triage.md` 批量 triage；正常完成路径调用 Reader LLM 做 metadata-only 审阅，中断/LLM 失败时用确定性 fallback。它不会生成逐篇 note、BibTeX 或 comparison evidence。
+- `metadata_triage_report: literature/metadata_triage.md` 是 metadata-only triage report 路径；该报告只能作为补资源/升级阅读线索，不能进入 claim evidence。
 - `exclude_semantic_excluded: true` 表示 LLM screen 为 `shared_keyword_only/unrelated` 或 `can_enter_deep_read=false` 的论文默认不写入 abstract sweep note/BibTeX/comparison table，避免被后续 synthesis/writer 当作可用证据；需要排除线索复核时可显式设为 `false`。
 
-这和 T2 的 active pool/backlog 分层配套：active deep-read 由 T3 精读，active shallow 和一部分 backlog 由 abstract sweep 生成弱证据提示。
+这和 T2 的 active pool/backlog 分层配套：active deep-read 由 T3 精读，active shallow 和一部分 backlog 由 abstract sweep 生成弱证据提示或 metadata-only 补资源线索。
 
 ### 5.5 当前值得注意的字段
 

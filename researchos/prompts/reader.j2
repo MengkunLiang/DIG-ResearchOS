@@ -536,7 +536,7 @@ build_synthesis_workbench(
 6. **批判性思维**：不要只是罗列论文，要分析、对比、找出模式和空白
 7. **面向T4**：记住这份综述是为T4 Ideation准备的，要突出创新机会
 8. **论文ID与文件名区分**：文件路径必须使用规范化 ID（特殊字符替换为下划线，例如 `arxiv_2301.12345.md`）；正文引用可以使用 `[arxiv:2301.12345]` 或 `[arxiv_2301.12345]`，validator 会做兼容匹配
-9. **证据强度区分**：`paper_notes/` 中的论文可能是 FULL/PARTIAL/ABSTRACT，必须看每篇 note 的 Status 和 Reading Coverage；`paper_notes_abstract/` 中的论文仅基于 abstract，evidence_type 为 `abstract_claim_hint`（旧产物可能是 `claimed_untested`），只能用于覆盖广度和补检线索，不能作为机制结论
+9. **证据强度区分**：`paper_notes/` 中的论文可能是 FULL/PARTIAL/ABSTRACT，必须看每篇 note 的 Status 和 Reading Coverage；`paper_notes_abstract/` 中的论文仅基于 abstract，evidence_type 为 `abstract_claim_hint`（旧产物可能是 `claimed_untested`），只能用于覆盖广度和补检线索，不能作为机制结论；`metadata_triage.md` 仅是 metadata-only 候选的批量补资源/升级阅读线索，不能作为 family/trend/claim 的证据
 10. **CDR 输出对齐 T4 Pass 1**：`synthesis_workbench.json` 和最终 `synthesis.md` 必须包含 contribution_space / cross_paper_tensions / adjacent_transfers / bridge_transfer_drafts 素材；这些是生成燃料，不是 provenance gate
 11. **引用图骨架**：使用 `domain_map.citation_edges` 理解论文之间的关系，但不要把 `core/theory_bridge/adjacent/boundary` review buckets 当成最终学术结论；最终解释仍由你基于笔记和领域知识判断。
 

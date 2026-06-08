@@ -130,7 +130,11 @@ states:
       paper_notes_dir: literature/paper_notes           # 论文笔记目录
       comparison_table: literature/comparison_table.csv # 方法对比表
       related_work_bib: literature/related_work.bib     # 相关工作引用
+    optional_outputs:
       # paper_notes_abstract_dir 由 orchestrator hook 自动生成，不列入 required outputs
+      # metadata_triage_report 由 orchestrator hook 自动生成，仅作缺资源候选的补取/升级线索
+      paper_notes_abstract_dir: literature/paper_notes_abstract
+      metadata_triage_report: literature/metadata_triage.md
     next_on_success: T3.5
     next_on_failure: failed
 
@@ -147,6 +151,8 @@ states:
       comparison_table: literature/comparison_table.csv # 输入：对比表
       missing_areas: literature/missing_areas.md        # 输入：研究空白
       domain_map: literature/domain_map.json             # 输入：引用图领域地图
+      paper_notes_abstract_dir: literature/paper_notes_abstract # 输入：摘要级弱证据提示
+      metadata_triage_report: literature/metadata_triage.md # 输入：metadata-only 候选补资源线索，不作 claim 证据
     outputs:
       synthesis: literature/synthesis.md                # 文献综述
       synthesis_workbench: literature/synthesis_workbench.json # 结构化证据工作台

@@ -187,13 +187,15 @@ profiles:
 当前 Reader 的 `modes.read.behavior.abstract_sweep` 默认用于覆盖 T3 deep read 后尚未读完的 active verified 论文，并从 `papers_backlog.jsonl` 中补一部分低成本摘要笔记：
 
 - `expected_notes_ratio: 1.0` 是无 queue 旧 workspace 的 fallback 比例，表示输入池默认必须 100% 有笔记；新主流程仍优先用 `deep_read_queue` 区分 active deep-read 和 shallow/backlog。
-- `lite_paper_num: 120` 表示每轮最多做 120 篇 abstract-only / metadata-only 轻量补读，避免几百篇 backlog 把 T3 拖成长期 LLM 消耗。
+- `lite_paper_num: 120` 表示每轮最多处理 120 篇 abstract sweep 候选，包含有 abstract 的逐篇 note 和 metadata-only 的批量 triage；这是候选预算 cap，不是最终相关性判断。
 - `sources: [papers_verified, papers_dedup, papers_backlog]` 表示优先覆盖 active pool，再从 backlog 补读尚未覆盖且有 title/abstract/metadata 的候选。
 - `min_relevance: 0.0` 表示不靠 metadata priority hint 丢弃候选。
-- `include_metadata_only: true` 表示缺摘要但有标题的论文也会生成 metadata-only 轻量 note；这类记录不调用 Reader LLM，只走确定性 fallback，并保持 `ABSTRACT_ONLY / abstract_claim_hint` 弱证据标记。
+- `priority_weights` 默认 `relevance/resource/year = 0.70/0.20/0.10`，用于在候选预算内排序：`relevance_score` 仍是检索/元数据优先级提示，资源可获得性和发表年限只影响“先读谁/先补谁”。
+- `include_metadata_only: true` 表示缺摘要但有标题的论文会进入 `literature/metadata_triage.md` 批量 triage；正常完成路径调用 Reader LLM 做 metadata-only 审阅，中断/LLM 失败时用确定性 fallback。它不会生成逐篇 note、BibTeX 或 comparison evidence。
+- `metadata_triage_report: literature/metadata_triage.md` 是 metadata-only triage report 路径；该报告只能作为补资源/升级阅读线索，不能进入 claim evidence。
 - `exclude_semantic_excluded: true` 表示 Scout 已明确判为 `shared_keyword_only/unrelated` 或禁止 deep-read 的论文默认不再进入 abstract note、BibTeX 和 comparison table，避免污染 T3.5/T8 语料；如需做排除线索复核，可在项目配置中显式设为 `false`。
 
-这组参数只控制机械覆盖行为；论文是否能作为学术证据仍由 Reader/Writer 的 LLM 判断和 evidence level 控制。
+这组参数只控制阅读/补资源优先级；论文是否能作为学术证据仍由 Reader/Writer 的 LLM 判断、evidence level 和 claim audit 控制。
 
 ### T2 metadata / citation backfill 参数归属
 

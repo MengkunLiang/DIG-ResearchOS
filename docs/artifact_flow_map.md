@@ -15,6 +15,7 @@ T2
 T3
   literature/paper_notes/*.md
   literature/paper_notes_abstract/*.md
+  literature/metadata_triage.md
   literature/comparison_table.csv
   literature/related_work.bib
 
