@@ -1,3 +1,9 @@
+# Venue style detection map.
+#
+# T8 style gate / writer 可以用这些关键词判断用户希望偏 IS 论文风格还是
+# CCF-A/CS 论文风格。这里只是关键词提示，不是强制投稿模板。
+# - is: 命中这些词时倾向 information systems / management information systems 写法。
+# - ccf_a_default: 没有明确 venue 时是否默认兼容 CCF-A/CS 写法。
 is:
   - misq
   - mis quarterly

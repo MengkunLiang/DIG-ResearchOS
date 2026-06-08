@@ -37,10 +37,10 @@
 
 一句话理解：
 
-- `user_settings.yaml`：唯一的日常参数入口，`llm.*` 管模型，`budget.*` 管预算，`runtime.*` 管 timeout/retry/budget escalation
+- `user_settings.yaml`：模型、预算、timeout/retry/budget escalation 的日常入口，`llm.*` 管模型，`budget.*` 管预算，`runtime.*` 管运行时扩限和重试
 - `runtime.yaml`：workspace、日志、UI、human interface、web_fetch、Docker 镜像等 runtime 基础行为
 - `model_routing.yaml`：endpoint/profile/fallback 候选定义
-- `agent_params.yaml`：agent capability registry，包含工具、权限、prompt/schema、behavior、mode 说明
+- `agent_params.yaml`：agent capability registry，包含工具、权限、prompt/schema、behavior、mode 说明；T2/T3 文献流程机械阈值也只在这里配置
 - `state_machine.yaml`：任务图
 - `gates.yaml`：human gate 展示与分支
 - `mcp*.yaml`：MCP server 描述
@@ -87,7 +87,7 @@
 注意：
 
 - `.env` 适合放密钥
-- `user_settings.yaml` 才是运行参数主入口
+- `user_settings.yaml` 是模型/预算/超时主入口；T2/T3 文献流程阈值看 `agent_params.yaml` 的 `behavior` 块
 
 ---
 

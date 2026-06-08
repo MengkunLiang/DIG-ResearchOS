@@ -1,6 +1,7 @@
 # ResearchOS Agent Capability Registry
 #
-# 日常参数不要改这里。请改 config/user_settings.yaml。
+# 模型、预算、timeout 等日常运行参数不要改这里，请改 config/user_settings.yaml。
+# T2/T3 文献流程机械阈值、工具权限、prompt/schema 能力声明在这里维护。
 #
 # 本文件只保留 agent 能力声明：
 # - tools: 可用工具与 workspace 读写权限
@@ -122,26 +123,48 @@ agents:
         papers_raw_min: 30
         papers_dedup_min: 15
     behavior:
+      # T2 deterministic finalize 参数：
+      # Scout LLM 负责 query/semantic_screen；runtime 用这里的阈值做去重、资源补全、
+      # active/backlog 切分、citation snowball 和 deep_read_queue 构建。
       t2_finalize:
+        # finish_task 后至少要有多少 raw 才允许 deterministic finalize；过低说明检索没展开。
         finish_finalize_min_raw: 30
+        # active candidate pool 上限；超过的去 papers_backlog.jsonl，不静默丢弃。
         active_pool_max: 120
+        # semantic_screen 通过的主线候选在 active pool 的优先保留上限。
         screened_active_pool_cap: 60
+        # 每个 confirmed bridge 最多保留多少 active 候选。
         bridge_active_pool_cap_per_bridge: 15
+        # citation snowball 候选在 active pool 的保护上限。
         snowball_active_pool_cap: 12
+        # 标题去重阈值；越高越保守，越低越容易合并近似标题。
         dedup_title_threshold: 0.95
+        # access_audit.md 展示 top N，方便排查 PDF/摘要/DOI 获取情况。
         access_audit_top_n: 50
+        # OpenAlex/Crossref/title metadata 回填并发；过高可能触发外部 API 限流。
         metadata_backfill_max_concurrency: 6
+        # 多源摘要 title 匹配阈值；越高越少误配，越低越能补到但风险更高。
         abstract_backfill_title_match_threshold: 0.88
+        # Semantic Scholar / Europe PMC 等摘要回填并发。
         abstract_backfill_max_concurrency: 6
+        # citation snowball 最多从多少个高置信来源论文展开。
         snowball_max_sources: 12
+        # 每个来源最多看多少条 references/related works。
         snowball_refs_per_source: 8
+        # 每轮最多尝试解析多少个 snowball 候选，防止引用图爆炸。
         snowball_max_candidates: 40
+        # snowball metadata 解析并发。
         snowball_max_concurrency: 6
+        # Crossref 引用标题转 OpenAlex 候选的最低标题相似度。
         snowball_title_match_threshold: 0.90
       progress:
+        # 是否维护 literature/temp/scout_progress.md。
         enabled: true
+        # T2 人类可读进度文件路径。
         file: literature/temp/scout_progress.md
+        # search tool 写入 raw 后是否立即刷新进度。
         update_on_tool_results: true
+        # deterministic finalize 开始/完成/失败时是否刷新进度。
         update_on_finalize: true
   reader:
     tools:
@@ -174,32 +197,57 @@ agents:
             comparison_table_required: true
             related_work_bib_required: true
         behavior:
+          # T3 后置 abstract sweep：
+          # 先尽最大可能消费 T2 已补好的 abstract/PDF metadata；
+          # 有 abstract 的候选逐篇 Reader LLM 轻读；
+          # 仍然只有 metadata 的候选进入 metadata_triage.md 批量 LLM triage。
           abstract_sweep:
+            # false 可完全关闭 T3 后置轻量补读。
             enabled: true
+            # 每轮最多处理多少个候选；含 abstract note 和 metadata-only triage，总 cap。
             lite_paper_num: 120
+            # 最低 relevance_score hint；0.0 表示不靠该 hint 丢弃候选。
             min_relevance: 0.0
+            # 候选来源优先级；verified/dedup 是 active pool，backlog 是保留候选。
             sources:
             - papers_verified
             - papers_dedup
             - papers_backlog
+            # 跳过 paper_notes/、paper_notes_bridge/、paper_notes_abstract/ 已覆盖论文。
             exclude_already_read: true
+            # true 表示无 abstract 但有标题的候选也会进入批量 triage report；
+            # false 则完全跳过这类 metadata-only 候选。
             include_metadata_only: true
+            # 跳过 Scout 明确判为 shared_keyword_only/unrelated 或 can_enter_deep_read=false 的候选。
             exclude_semantic_excluded: true
+            # metadata-only 批量报告；只作补资源/升级阅读线索，不进入 BibTeX/comparison evidence。
             metadata_triage_report: literature/metadata_triage.md
+            # abstract sweep 排序权重；relevance 是 T2 priority hint，resource 表示可验证资源，
+            # year 表示新近性。权重会自动归一化。
             priority_weights:
               relevance: 0.70
               resource: 0.20
               year: 0.10
         description: 深度阅读
+        # 旧 workspace 没有 deep_read_queue 时的 fallback 覆盖比例；新流程优先用 queue。
         expected_notes_ratio: 1.0
+        # T3 validator 至少需要多少篇结构合格 deep-read note。
         deep_read_min: 35
+        # T3 prompt 和 queue meta 中展示的目标精读数。
         deep_read_target: 35
+        # active deep-read 上限；seed/bridge/citation hub 保护位也计入这个上限。
         deep_read_max: 45
+        # Reader 优先 probe 的候选池大小。
         probe_pool: 45
+        # 主线 shallow/screened backlog 在 deep_read_queue.jsonl 中保留的上限。
         mainline_screened_cap: 90
+        # 每个 must_explore bridge 的 active deep-read 保底。
         bridge_deep_floor: 3
+        # 每个 bridge 的 shallow/screened backlog 保留上限。
         bridge_screened_cap: 7
+        # 每个 bridge 在 queue 中保留的总候选上限。
         bridge_pool_cap: 15
+        # citation graph 枢纽保护槽，仍需 semantic_screen/Reader 复核。
         citation_hub_slots: 3
       synthesize:
         prompt:

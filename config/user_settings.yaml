@@ -1,6 +1,6 @@
 # ResearchOS 日常配置入口
 #
-# 普通使用只改这份文件和 .env。底层完整表仍保留，但不是日常参数入口：
+# 普通模型、预算、timeout/retry 设置只改这份文件和 .env。底层完整表仍保留：
 # - agent_params.yaml: agent 工具、权限、prompt、schema、behavior 能力声明
 # - model_routing.yaml: endpoint/profile/fallback 候选定义
 # - state_machine.yaml: 流程拓扑、节点输入输出和 gate 分支
@@ -15,16 +15,29 @@
 # agent_params.yaml/model_routing.yaml 能力默认 > Python fallback。
 
 llm:
+  # 默认路由 profile 名称；必须能在 model_routing.yaml 的 profiles 下找到。
+  # 改这里可以整体切 DeepSeek / SiliconFlow / mixed 等路由策略。
   default_profile: deepseek
+
+  # 可选：把 endpoint/profile 增量覆盖写在这里。
+  # 日常推荐直接改 model_routing.yaml 中的候选链；这里保持空，避免两张表重复。
   endpoints: {}
   profiles: {}
+
+  # 所有 agent 的 LLM 默认值。
+  # profile 和 default_profile 都设为 deepseek 是有意保持一致：
+  # - default_profile 影响 model_routing 的兜底路由；
+  # - defaults.profile 注入到没有单独配置 profile 的 AgentSpec。
   defaults:
     profile: deepseek
-    tier: medium
-    max_context: 128000
-    temperature: 0.3
+    tier: medium          # heavy / medium / light；实际模型由 model_routing.yaml 决定。
+    max_context: 128000   # runtime 的安全上下文预算；不是 provider 真实极限。
+    temperature: 0.3      # 默认较保守，写作/idea 类 agent 会单独提高。
+
+  # 每个 agent 的 LLM 覆盖。这里只放模型运行参数，不放 step/token 预算。
   agents:
     pi:
+      # T1 项目初始化需要理解用户目标和桥接领域，默认 heavy。
       tier: heavy
       temperature: 0.3
       modes:
@@ -32,51 +45,65 @@ llm:
           tier: heavy
           temperature: 0.2
     scout:
+      # T2 主要做 query 规划和语义筛选；检索/补资源由工具和 runtime 做。
       tier: medium
       max_context: 1280000
       temperature: 0.5
     reader:
+      # T3/T3.5 文献阅读和综合；精读质量受 prompt 与工具约束共同影响。
       tier: medium
       temperature: 0.5
     ideation:
+      # T4 需要更开放的生成；profile 若不存在，validate-config 会提示。
       profile: ideation_deep
       tier: heavy
       temperature: 0.75
     novelty_auditor:
+      # T4.5 新颖性审计偏保守，避免过度乐观。
       tier: heavy
       temperature: 0.3
     experimenter:
+      # T5-T7 现在主要做外部执行器 handoff/ingest/audit，不直接长跑实验。
       tier: medium
       temperature: 0.3
     writer:
+      # T8 写作链需要长上下文，但正文仍按 section 分块生成。
       tier: heavy
       max_context: 1280000
       temperature: 0.7
     survey_writer:
+      # T3.6 可选综述支线，介于审慎综述和结构化写作之间。
       tier: heavy
       temperature: 0.55
     reviewer:
+      # Reviewer/审稿式检查保持低温，优先找问题。
       tier: heavy
       temperature: 0.3
     submission:
+      # T9 投稿包和 LaTeX 修复以机械检查为主，低温。
       tier: medium
       max_context: 12800000
       temperature: 0.3
     hello:
+      # Smoke test 固定轻量模型，便于快速自检。
       tier: medium
       model: deepseek-v4-flash
       endpoint: deepseek
       temperature: 0.3
     novelty:
+      # 兼容旧 novelty agent 名称；正式 T4.5 使用 novelty_auditor。
       tier: medium
       max_context: 1280000
       temperature: 0.3
 
 budget:
   defaults:
+    # true 表示不因 token/step/wall budget 自动失败；仍会记录用量。
+    # 如果设为 false，达到 max_* 时会进入 pause/gate 逻辑。
     unlimited_budget: true
   agents:
     pi:
+      # T1 有交互和配置校验；重试高一点，step 不需要太多。
       max_validation_retries: 10
       max_tokens_total: 1000000
       max_steps: 40
@@ -85,179 +112,223 @@ budget:
         evaluate:
           max_tokens_total: 80000
     scout:
+      # T2 检索覆盖可消耗较多上下文；真正论文数量由 agent_params.yaml 的 t2_finalize 控制。
       max_validation_retries: 3
       max_tokens_total: 50000000
       max_steps: 300
       max_wall_seconds: 36000
     reader:
+      # reader 基础预算；read/synthesize mode 会单独覆盖。
       max_validation_retries: 10
       max_tokens_total: 600000
       max_steps: 200
       max_wall_seconds: 50000
       modes:
         read:
+          # T3 精读可能调用多轮工具和 LLM；队列规模不在这里配。
           max_tokens_total: 20000000
           max_steps: 200
         synthesize:
+          # T3.5 生成 synthesis/workbench，通常比 T3 精读少。
           max_tokens_total: 15000000
           max_steps: 100
     ideation:
+      # T4 多轮 idea/gate/风险分析。
       max_validation_retries: 10
       max_tokens_total: 2000000
       max_steps: 150
       max_wall_seconds: 12000
     novelty_auditor:
+      # T4.5 novelty/collision 审计可能需要搜索和多轮修正。
       max_validation_retries: 10
       max_tokens_total: 600000
       max_steps: 1000
       max_wall_seconds: 80000
     experimenter:
+      # T5-T7 外部执行器链的总预算；各 mode 单独限制更窄。
       max_validation_retries: 10
       max_tokens_total: 60000000
       max_steps: 2000
       max_wall_seconds: 144000
       modes:
         pilot:
+          # 旧 pilot 兼容模式；当前主链更偏 handoff/dry-run。
           max_validation_retries: 2
           max_tokens_total: 1000000
           max_steps: 1000
           max_wall_seconds: 72000
         full:
+          # 旧 full 兼容模式；真实长实验应交给外部执行器。
           max_validation_retries: 5
           max_tokens_total: 30000000
           max_steps: 5000
           max_wall_seconds: 144000
         handoff:
+          # T5-HANDOFF：编译外部执行协议和 prompt。
           max_validation_retries: 2
           max_tokens_total: 1000000
           max_steps: 40
           max_wall_seconds: 3600
         executor_gate:
+          # T5-EXECUTOR-GATE：选择 mock/codex/claude/manual。
           max_validation_retries: 1
           max_tokens_total: 100000
           max_steps: 10
           max_wall_seconds: 600
         external_wait:
+          # T5-EXTERNAL-WAIT：不跑 LLM，不跑实验，只检查外部 result_pack。
           max_validation_retries: 1
           max_tokens_total: 100000
           max_steps: 5
           max_wall_seconds: 600
         dry_run:
+          # Mock dry-run，只验证 handoff/result pack 协议。
           max_validation_retries: 2
           max_tokens_total: 500000
           max_steps: 30
           max_wall_seconds: 1800
         result_ingest:
+          # T7-INGEST：摄取外部结果。
           max_validation_retries: 2
           max_tokens_total: 500000
           max_steps: 30
           max_wall_seconds: 1800
         integrity_audit:
+          # 实验诚信审计：检查 manifest/logs/results 是否一致。
           max_validation_retries: 2
           max_tokens_total: 500000
           max_steps: 30
           max_wall_seconds: 1800
         post_novelty:
+          # 结果后 novelty/collision 复核。
           max_validation_retries: 2
           max_tokens_total: 500000
           max_steps: 20
           max_wall_seconds: 1800
         result_to_claim:
+          # 把 result_pack 映射到可写入论文的 claim/evidence。
           max_validation_retries: 2
           max_tokens_total: 1000000
           max_steps: 40
           max_wall_seconds: 3600
     writer:
+      # T8 写作总预算；正文按 style/resource/outline/section/self_check/revise 分阶段。
       max_validation_retries: 3
       max_tokens_total: 10000000
       max_steps: 1500
       max_wall_seconds: 240000
       modes:
         style_gate:
+          # 人工选择/确认写作风格。
           max_tokens_total: 2000000
           max_steps: 20
         resource_index:
+          # 建立写作资源索引和 evidence plan。
           max_tokens_total: 50000000
           max_steps: 100
         outline:
+          # 生成全局大纲，不写正文。
           max_tokens_total: 100000000
           max_steps: 300
         section_plan:
+          # 为每个 section 建局部大纲和状态。
           max_tokens_total: 30000000
           max_steps: 80
         section_drafts:
+          # 旧批量入口，保留兼容；实际使用 section_draft。
           max_tokens_total: 10000000
           max_steps: 20
         section_draft:
+          # 单个 section 草稿；避免一个 LLM call 写完整 paper。
           max_tokens_total: 50000000
           max_steps: 80
         draft:
+          # 拼装 paper.tex 与机械审计。
           max_tokens_total: 100000000
           max_steps: 180
         self_check:
+          # 作者自查整篇论文。
           max_tokens_total: 100000000
           max_steps: 200
         revise:
+          # 按 review patch 做 section-level 修订。
           max_tokens_total: 1500000
           max_steps: 300
         paper_claim_audit:
+          # T9 前最终 claim/evidence 审计。
           max_tokens_total: 500000
           max_steps: 20
     survey_writer:
+      # T3.6 可选综述支线预算；不影响主线 T4/T8。
       max_validation_retries: 3
       max_tokens_total: 20000000
       max_steps: 160
       max_wall_seconds: 36000
       modes:
         survey_gate:
+          # 是否撰写综述论文的人类 gate。
           max_tokens_total: 2000000
           max_steps: 20
         survey_plan:
+          # 设计 taxonomy 和章节大纲。
           max_tokens_total: 40000000
           max_steps: 120
         outline_gate:
+          # 人工确认/调整 taxonomy 大纲。
           max_tokens_total: 5000000
           max_steps: 40
         corpus_gate:
+          # 人工选择保守/完整素材范围。
           max_tokens_total: 3000000
           max_steps: 30
         survey_expand:
+          # 一次性定向补检计划，不回到 T2 无限循环。
           max_tokens_total: 10000000
           max_steps: 80
         survey_state:
+          # 初始化 survey_state 与 section outline。
           max_tokens_total: 10000000
           max_steps: 40
         survey_section:
+          # 单个 survey section 写作。
           max_tokens_total: 50000000
           max_steps: 100
         survey_assemble:
+          # 拼装 survey.tex。
           max_tokens_total: 10000000
           max_steps: 60
         survey_review:
+          # 综述模式审阅与定向修订。
           max_tokens_total: 20000000
           max_steps: 100
         survey_compile:
+          # 编译 survey.tex。
           max_tokens_total: 5000000
           max_steps: 40
         survey_feed:
+          # 导出给 T4 的 survey insights。
           max_tokens_total: 5000000
           max_steps: 40
     reviewer:
+      # 独立 reviewer agent 预算。
       max_validation_retries: 10
       max_tokens_total: 600000000
       max_steps: 200
       max_wall_seconds: 12000
     submission:
+      # T9 投稿包/LaTeX 修复；LaTeX 编译尝试次数在 agent_params.yaml behavior 中配置。
       max_validation_retries: 10
       max_tokens_total: 500000000
       max_steps: 30000
       max_wall_seconds: 80000
     hello:
+      # HELLO smoke test。
       max_validation_retries: 3
       max_tokens_total: 10000
       max_steps: 5
       max_wall_seconds: 60
     novelty:
+      # 兼容旧 novelty agent 名称。
       max_validation_retries: 10
       max_tokens_total: 600000
       max_steps: 1000
@@ -265,9 +336,11 @@ budget:
 
 runtime:
   global_budget:
+    # 成本预算用于记录/告警；unlimited_budget=true 时不会直接因预算触顶失败。
     default_max_budget_usd: 100.0
     warning_threshold: 0.7
     critical_threshold: 0.9
+    # 仅用于 budget report 的阶段比例，不改变状态机拓扑。
     stage_allocation:
       T1_init: 0.05
       T2_scout: 0.1
@@ -278,29 +351,42 @@ runtime:
       T8_write: 0.08
       T9_submission: 0.02
   timeouts:
+    # 单个 agent 运行的兜底 wall-clock 上限。
     max_agent_runtime: 7200
+    # 普通工具调用上限；长 Docker/LaTeX 使用下面专门字段。
     max_tool_call: 180
+    # Docker 构建/运行这类长操作上限。
     docker_operation: 7200
+    # TeX 编译上限。
     latex_compile: 1800
+    # 单次 LLM call timeout；provider 连续 timeout 后按 retry_policy cooldown。
     llm_call: 90
   retry_policy:
+    # 每个候选模型最多尝试次数；不是整个任务 step 数。
     llm_retries: 10
     llm_retry_delay: 1
+    # 全候选连续 timeout 后等待多少秒再继续。
     llm_timeout_cooldown_seconds: 60
+    # 0 表示不自动 pause，持续 cooldown+重试；设为正数可在多轮 cooldown 后转人工 gate。
     llm_timeout_pause_after_cooldowns: 0
     tool_retries: 5
     tool_retry_delay: 1
     validation_retries: 3
+    # 这些错误不会自动重试，避免无意义消耗。
     no_retry_errors:
     - AuthenticationError
     - PermissionDenied
     - BudgetExceeded
   budget_escalation:
+    # 预算/step/validation 触顶时是否进入 ask_human 扩限 gate。
     enabled: true
+    # 空列表表示所有 task 都可触发；填 task id 则只允许这些 task。
     tasks: []
+    # null 表示不限制扩限次数；生产环境可设整数。
     max_extensions_per_run: null
     steps_increase_ratio: 0.25
     token_increase_ratio: 0.5
     wall_seconds_increase_ratio: 0.5
     max_validation_extensions_per_run: null
+    # validation retry 扩限时一次增加多少次。
     validation_retry_increase: 2

@@ -1,6 +1,6 @@
 # ResearchOS 配置系统
 
-本目录按“单一参数所有权”组织。普通使用只需要改 `user_settings.yaml` 和 `.env`；其他 YAML 是能力、路由或拓扑表，不要把同一个参数在多张表里重复配置。
+本目录按“单一参数所有权”组织。普通模型/预算/超时只改 `user_settings.yaml` 和 `.env`；文献流程的机械阈值只改 `agent_params.yaml` 中对应 `behavior` 块。不要把同一个参数在多张表里重复配置。
 
 ## 文件职责
 
@@ -9,7 +9,7 @@
 | `user_settings.yaml` | `llm.*` 模型参数、`budget.*` 预算参数、`runtime.*` timeout/retry/budget escalation | 是，日常参数唯一入口 |
 | `runtime.yaml` | workspace、日志、UI、human interface、web_fetch allowlist、Docker 镜像与执行环境基础设置 | 偶尔 |
 | `model_routing.yaml` | endpoint、profile、primary/fallback 候选链、上下文截断策略 | 只在新增 provider/model/fallback 时改 |
-| `agent_params.yaml` | agent capability registry：工具、读写权限、prompt/schema、behavior、mode 说明 | 开发 agent/tool 时改 |
+| `agent_params.yaml` | agent capability registry：工具、读写权限、prompt/schema、behavior、mode 说明；T2/T3 机械阈值的唯一配置处 | 开发 agent/tool 或调整文献流程阈值时改 |
 | `state_machine.yaml` | 状态机拓扑、输入输出、gate、分支、节点 extra | 改流程时改 |
 | `gates.yaml` | human gate 展示、选项和附加上下文 | 改 gate 时改 |
 | `mcp.yaml` / `mcp.example.yaml` | MCP server 描述 | 需要 MCP 时改 |
@@ -49,6 +49,7 @@ python -m researchos.cli validate-config
 | LLM timeout/retry/cooldown | `user_settings.yaml: runtime.timeouts` 和 `runtime.retry_policy` | 包含 provider 连续超时后的 cooldown |
 | budget escalation | `user_settings.yaml: runtime.budget_escalation` | 触顶后是否 ask_human 扩限 |
 | CLI quiet/verbose 默认值 | `runtime.yaml: ui.quiet/ui.verbose` | 只影响终端展示，不影响 `researchos.log` / trace |
+| T2/T3 文献流程阈值 | `agent_params.yaml: agents.scout.behavior.t2_finalize` / `agents.reader.modes.read.behavior` | active pool、去重、补资源并发、snowball、deep-read queue、abstract sweep |
 | 工具列表和读写权限 | `agent_params.yaml` | 能力声明，不是预算表 |
 | endpoint/API base/API key env | `model_routing.yaml` + `.env` | 路由候选定义与密钥分离 |
 | 状态机输入输出和分支 | `state_machine.yaml` | 默认不要在这里写 LLM/budget 参数 |
@@ -140,11 +141,9 @@ profiles:
 - `prompt.prompt_template`
 - `prompt.structured_outputs`
 - `prompt.expected_outputs`
-- `behavior.*`，例如 `submission.behavior.max_compile_attempts`
+- `behavior.*`，例如 `scout.behavior.t2_finalize`、`reader.modes.read.behavior.abstract_sweep`、`submission.behavior.max_compile_attempts`
 
-`submission.behavior.max_compile_attempts` 控制 T9 对当前 TeX + dependency fingerprint
-的 LaTeX 编译尝试上限。它不是普通 LLM budget；日常预算仍在 `user_settings.yaml: budget.*`。
-- `behavior.*`
+`submission.behavior.max_compile_attempts` 控制 T9 对当前 TeX + dependency fingerprint 的 LaTeX 编译尝试上限。它不是普通 LLM budget；日常预算仍在 `user_settings.yaml: budget.*`。
 - `modes.<mode>.description/prompt/behavior/tools`
 
 兼容层仍能读取旧的 `llm` / `budget` 字段，但 checked-in 默认配置不再把它们放这里。不要把日常模型和预算参数写回 `agent_params.yaml`，否则又会出现多表参数冲突。
