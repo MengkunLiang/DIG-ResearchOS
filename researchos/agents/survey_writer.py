@@ -296,12 +296,16 @@ def _validate_survey_plan(path: Path) -> tuple[bool, str | None]:
     data, err = _load_json(path)
     if err:
         return False, err
+    ws = path.parents[2] if len(path.parents) >= 3 else path.parent
     taxonomy = data.get("taxonomy")
     if not isinstance(taxonomy, dict):
         return False, "survey_plan.json 缺少 taxonomy 对象"
     tree = taxonomy.get("tree")
     if not isinstance(tree, list) or not tree:
         return False, "survey_plan.json taxonomy.tree 必须是非空数组"
+    ok, evidence_err = _validate_survey_plan_evidence_strength(ws, data)
+    if not ok:
+        return False, evidence_err
     outline = data.get("outline")
     if not isinstance(outline, list) or len(outline) < 5:
         return False, "survey_plan.json outline 至少需要 5 个章节"
@@ -313,6 +317,45 @@ def _validate_survey_plan(path: Path) -> tuple[bool, str | None]:
     if not isinstance(selfcheck, dict):
         return False, "survey_plan.json 缺少 coverage_selfcheck"
     return True, None
+
+
+def _validate_survey_plan_evidence_strength(ws: Path, data: dict) -> tuple[bool, str | None]:
+    weak_ids = _survey_weak_evidence_ids(ws)
+    if not weak_ids:
+        return True, None
+    upgrade_topics = {
+        str(item.get("paper_or_topic") or item.get("paper_id") or item.get("topic") or "").strip()
+        for item in data.get("resource_upgrade_needs") or []
+        if isinstance(item, dict)
+    }
+    used_ids: set[str] = set()
+    taxonomy = data.get("taxonomy") if isinstance(data.get("taxonomy"), dict) else {}
+    for item in taxonomy.get("tree") or []:
+        if isinstance(item, dict):
+            used_ids.update(str(pid).strip() for pid in item.get("paper_ids") or [] if str(pid).strip())
+    for item in data.get("outline") or []:
+        if isinstance(item, dict):
+            used_ids.update(str(pid).strip() for pid in item.get("paper_ids") or [] if str(pid).strip())
+    illegal = sorted(pid for pid in used_ids if pid in weak_ids and pid not in upgrade_topics)
+    if illegal:
+        return False, (
+            "survey_plan.json 把 abstract-only/metadata-only 材料挂为 taxonomy/section 核心 paper_ids；"
+            "这些 ID 必须先移入 resource_upgrade_needs，不能作为综述核心证据: "
+            f"{illegal}"
+        )
+    return True, None
+
+
+def _survey_weak_evidence_ids(ws: Path) -> set[str]:
+    weak: set[str] = set()
+    abstract_dir = ws / "literature" / "paper_notes_abstract"
+    if abstract_dir.exists():
+        weak.update(path.stem for path in abstract_dir.glob("*.md") if path.is_file())
+    metadata_triage = ws / "literature" / "metadata_triage.md"
+    if metadata_triage.exists():
+        text = metadata_triage.read_text(encoding="utf-8", errors="replace")
+        weak.update(match.group(1).strip() for match in re.finditer(r"`([^`]+)`", text) if match.group(1).strip())
+    return weak
 
 
 def _validate_survey_state(ws: Path) -> tuple[bool, str | None]:

@@ -80,6 +80,7 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - `literature/comparison_table.csv`
 - `literature/paper_notes/`
 - `literature/paper_notes_abstract/`（如果存在）
+- `literature/metadata_triage.md`（如果存在；只作为补资源/升级阅读线索，不能分类为综述核心证据）
 - `literature/related_work.bib`
 
 任务：
@@ -88,6 +89,7 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 3. 用 domain_map.citation_edges/domain buckets 梳理 evolution narrative：奠基工作、主要分支、当前前沿、邻接转折。
 4. 规划章节级 outline。必须包含 background、taxonomy、comparison、challenges、future；可以有 theme_* 主题章。
 5. 做 coverage_selfcheck：unclassified_papers、empty_classes、corpus_sufficiency、classes_needing_more_lit。
+6. 显式区分 evidence strength：FULL/PARTIAL notes 可作为综述主体证据；abstract-only 只能作为覆盖和趋势线索；metadata-only triage 只能进入 `resource_upgrade_needs`，不能挂到 taxonomy paper_ids 里。
 
 写 `drafts/survey/survey_plan.json`，结构：
 ```json
@@ -114,7 +116,10 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
     "empty_classes": [],
     "corpus_sufficiency": "sufficient | needs_expansion",
     "classes_needing_more_lit": []
-  }
+  },
+  "resource_upgrade_needs": [
+    {"paper_or_topic": "...", "reason": "metadata_only | abstract_only | missing_pdf", "suggested_action": "..."}
+  ]
 }
 ```
 

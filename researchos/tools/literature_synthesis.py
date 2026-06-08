@@ -96,6 +96,13 @@ class BuildSynthesisWorkbenchParams(BaseModel):
         default="literature/missing_areas.md",
         description="Relative workspace path to missing_areas.md.",
     )
+    metadata_triage: str = Field(
+        default="literature/metadata_triage.md",
+        description=(
+            "Relative workspace path to metadata-only triage report. This is "
+            "resource-acquisition guidance, not evidence for synthesis claims."
+        ),
+    )
     domain_map_path: str = Field(
         default="literature/domain_map.json",
         description="Relative workspace path to T2 domain_map.json.",
@@ -147,6 +154,7 @@ class BuildSynthesisWorkbenchTool(Tool):
             notes_dir = self.policy.resolve_read(params.notes_dir)
             comparison_path = self.policy.resolve_read(params.comparison_table)
             missing_path = self.policy.resolve_read(params.missing_areas)
+            metadata_triage_path = self.policy.resolve_read(params.metadata_triage)
             domain_map_path = self.policy.resolve_read(params.domain_map_path)
             output_dir = self.policy.resolve_write(params.output_dir)
         except ToolAccessDenied as exc:
@@ -178,14 +186,25 @@ class BuildSynthesisWorkbenchTool(Tool):
 
         comparison_rows = _read_comparison_rows(comparison_path) if comparison_path.exists() else []
         missing_areas = missing_path.read_text(encoding="utf-8", errors="replace") if missing_path.exists() else ""
+        metadata_triage = metadata_triage_path.read_text(encoding="utf-8", errors="replace") if metadata_triage_path.exists() else ""
         domain_map = _read_json(domain_map_path) if domain_map_path.exists() else {}
         insights = params.llm_insights
         families = _build_method_families(notes, abstract_notes, llm_insights=insights)
         all_notes = notes + abstract_notes
+        weak_evidence = _build_weak_evidence_resource_upgrade(
+            abstract_notes,
+            metadata_triage,
+        )
         workbench = {
             "note_count": len(notes),
             "abstract_note_count": len(abstract_notes),
             "total_note_count": len(all_notes),
+            "weak_evidence_summary": {
+                "semantics": weak_evidence.get("semantics"),
+                "abstract_only_count": weak_evidence.get("abstract_only_count", 0),
+                "metadata_triage_available": weak_evidence.get("metadata_triage_available", False),
+                "allowed_use": "prompt_visible_guardrail_not_claim_evidence",
+            },
             "paper_ids": [note["paper_id"] for note in all_notes],
             "method_families": families,
             "shared_assumption_candidates": _build_shared_assumptions(notes, llm_insights=insights),
@@ -199,6 +218,7 @@ class BuildSynthesisWorkbenchTool(Tool):
             "trend_candidates": _build_trends(notes, llm_insights=insights),
             "research_question_candidates": _build_questions(notes, missing_areas, llm_insights=insights),
             "mechanism_claim_clusters": _build_mechanism_claim_clusters(all_notes),
+            "weak_evidence_and_resource_upgrade": weak_evidence,
             "notes": notes,
         }
         # Backward-compatible alias. Treat as mechanical mechanism-claim
@@ -451,9 +471,17 @@ def _build_method_families(
             {
                 "name": label,
                 "paper_ids": [note["paper_id"] for note in members[:8]],
+                "full_or_partial_paper_ids": [note["paper_id"] for note in full_members[:8]],
+                "abstract_only_paper_ids": [note["paper_id"] for note in abs_members[:8]],
                 "representative_titles": [note["title"] for note in full_members[:4]],
                 "core_observations": _top_snippets(full_members or members, "method_overview", limit=3),
                 "result_observations": _top_snippets(full_members or members, "key_results", limit=3),
+                "evidence_levels": sorted({str(note.get("evidence_level") or "FULL_TEXT") for note in members}),
+                "allowed_use": (
+                    "family_hint_with_full_or_partial_evidence"
+                    if full_members
+                    else "weak_family_hint_requires_resource_upgrade_before_claim_use"
+                ),
                 "_abstract_count": len(abs_members),
             }
         )
@@ -557,6 +585,7 @@ def _build_contribution_space(
         by_artifact.setdefault(artifact_type or "unknown", []).append(paper_id)
         rationale = (note.get("design_rationale") or {}).get("rationale", "")
         if rationale:
+            evidence_level = str(note.get("evidence_level") or "FULL_TEXT")
             rationale_snippets.append(
                 {
                     "paper_id": paper_id,
@@ -564,6 +593,12 @@ def _build_contribution_space(
                     "weakness": _shorten((note.get("design_rationale") or {}).get("rationale_weakness", ""), 180),
                     "contribution_type": contribution or "unknown",
                     "artifact_type": artifact_type or "unknown",
+                    "evidence_level": evidence_level,
+                    "allowed_use": (
+                        "design_rationale_hint_requires_full_text_verification"
+                        if evidence_level == "ABSTRACT_ONLY"
+                        else "design_rationale_hint_from_deep_note_not_final_claim"
+                    ),
                 }
             )
 
@@ -689,9 +724,14 @@ def _build_adjacent_transfers(
                 "source_papers": [node_id] if node_id else [],
                 "bridges_to_core": node.get("bridges_to_core", []),
                 "why_unused_in_target": "LLM_REVIEW_REQUIRED: compare this adjacent mechanism with core target-domain design rationales",
-                "transfer_hypothesis_hint": _shorten(bridge or node.get("why_adjacent", ""), 260)
+            "transfer_hypothesis_hint": _shorten(bridge or node.get("why_adjacent", ""), 260)
                 or "LLM_REVIEW_REQUIRED: formulate a transfer hypothesis only after reading the note.",
                 "evidence_level": str(note.get("evidence_level") if note else "metadata_or_domain_map_hint"),
+                "allowed_use": (
+                    "weak_transfer_seed_requires_resource_upgrade_before_claim_use"
+                    if note and str(note.get("evidence_level") or "") == "ABSTRACT_ONLY"
+                    else "transfer_seed_for_llm_review_not_claim"
+                ),
                 "semantics": "adjacent_transfer_seed_for_llm_review_not_claim",
             }
         )
@@ -741,6 +781,11 @@ def _build_bridge_transfer_drafts(
                 "why_potentially_novel": "LLM_REVIEW_REQUIRED: compare against core design rationales and nearest prior work; do not assume novelty from cross-domain origin alone",
                 "risk": "LLM_REVIEW_REQUIRED: identify mismatch, measurement, or construct-validity risk before ideation",
                 "evidence_level": str(note.get("evidence_level") if note else "metadata_or_domain_map_hint"),
+                "allowed_use": (
+                    "weak_bridge_seed_requires_resource_upgrade_before_claim_use"
+                    if note and str(note.get("evidence_level") or "") == "ABSTRACT_ONLY"
+                    else "bridge_seed_for_llm_review_not_claim"
+                ),
                 "semantics": "bridge_transfer_seed_for_llm_review_not_claim",
             }
         )
@@ -905,11 +950,18 @@ def _build_mechanism_claim_clusters(all_notes: list[dict[str, Any]]) -> list[dic
             "mechanism": cluster["representative_mechanism"],
             "paper_count": len(papers),
             "paper_ids": [p["paper_id"] for p in papers[:6]],
+            "full_or_partial_paper_ids": [p["paper_id"] for p in papers if p["evidence_level"] != "ABSTRACT_ONLY"][:6],
+            "abstract_only_paper_ids": [p["paper_id"] for p in papers if p["evidence_level"] == "ABSTRACT_ONLY"][:6],
             "evidence_types": evidence_types,
             "evidence_strength_hint": "llm_review_required",
             "has_untested_claims": weak_hint_count > 0,
             "weak_evidence_hint_count": weak_hint_count,
             "abstract_only_count": abstract_only_count,
+            "allowed_use": (
+                "mechanism_cluster_hint_with_deep_note_support"
+                if abstract_only_count < len(papers)
+                else "weak_mechanism_cluster_hint_requires_resource_upgrade_before_claim_use"
+            ),
             "challengeable_hint": weak_hint_count > 0 or len(papers) == 1,
             "challengeable": weak_hint_count > 0 or len(papers) == 1,
             "requires_llm_judgment": True,
@@ -918,6 +970,38 @@ def _build_mechanism_claim_clusters(all_notes: list[dict[str, Any]]) -> list[dic
 
     consensus.sort(key=lambda c: (not c["challengeable_hint"], -c["paper_count"]))
     return consensus[:10]
+
+
+def _build_weak_evidence_resource_upgrade(
+    abstract_notes: list[dict[str, Any]],
+    metadata_triage: str,
+) -> dict[str, Any]:
+    """Expose weak-evidence material as upgrade guidance, not claim evidence."""
+
+    abstract_items = [
+        {
+            "paper_id": note.get("paper_id"),
+            "title": note.get("title", ""),
+            "bridge_point": _shorten(note.get("bridge_point", ""), 220),
+            "core_approach_view": _shorten(note.get("core_approach_view", ""), 220),
+            "evidence_level": "ABSTRACT_ONLY",
+            "allowed_use": "coverage_hint_or_upgrade_candidate_not_mechanism_evidence",
+        }
+        for note in abstract_notes[:40]
+    ]
+    triage_text = str(metadata_triage or "").strip()
+    return {
+        "semantics": "weak_evidence_and_resource_upgrade_not_claim_evidence",
+        "abstract_only_count": len(abstract_notes),
+        "abstract_only_examples": abstract_items[:12],
+        "metadata_triage_available": bool(triage_text),
+        "metadata_triage_excerpt": _shorten(triage_text, 1800) if triage_text else "",
+        "use_rules": [
+            "paper_notes_abstract may inform coverage breadth, bridge hints, or upgrade priorities.",
+            "metadata_triage.md is metadata-only and must not support mechanisms, trends, or claims.",
+            "T4 may use these items only as idea fuel with explicit weak-evidence status or as resource-acquisition tasks.",
+        ],
+    }
 
 
 def _build_domain_consensus(all_notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1003,6 +1087,16 @@ def _render_outline(workbench: dict[str, Any], missing_areas: str) -> str:
         challengeable = [c for c in mechanism_clusters if c.get("challengeable_hint") or c.get("challengeable")]
         for item in challengeable[:5]:
             lines.append(f"- [review hint] {item['mechanism'][:100]} ({item['paper_count']} papers)")
+    weak_evidence = workbench.get("weak_evidence_and_resource_upgrade") or {}
+    if weak_evidence:
+        lines.extend(["", "## Weak Evidence / Resource Upgrade"])
+        lines.append(
+            "- abstract-only notes: "
+            f"{weak_evidence.get('abstract_only_count', 0)}; "
+            f"metadata triage available: {weak_evidence.get('metadata_triage_available', False)}"
+        )
+        for item in (weak_evidence.get("abstract_only_examples") or [])[:5]:
+            lines.append(f"- [{item.get('paper_id')}] {item.get('title')} — {item.get('bridge_point')}")
     lines.extend(["", "## Research Questions"])
     for item in workbench["research_question_candidates"]:
         lines.append(f"- {item['id']}: {item['question']}")
@@ -1074,6 +1168,26 @@ def _render_draft_guidance(workbench: dict[str, Any]) -> str:
     if not workbench.get("adjacent_transfers"):
         lines.append("- No adjacent-transfer seed was detected; Reader LLM should explain coverage limits instead of inventing one.")
 
+    weak_evidence = workbench.get("weak_evidence_and_resource_upgrade") or {}
+    lines.extend(["", "## Weak Evidence And Resource Upgrade To Review", ""])
+    if weak_evidence:
+        lines.append(
+            "- Scope: abstract-only notes and metadata-only triage are upgrade/coverage hints, not claim evidence."
+        )
+        lines.append(
+            f"- abstract-only candidates: {weak_evidence.get('abstract_only_count', 0)}; "
+            f"metadata triage available: {weak_evidence.get('metadata_triage_available', False)}"
+        )
+        for item in (weak_evidence.get("abstract_only_examples") or [])[:8]:
+            lines.append(
+                f"- [{item.get('paper_id')}] {item.get('title')} | "
+                f"allowed use: {item.get('allowed_use')}"
+            )
+        if weak_evidence.get("metadata_triage_excerpt"):
+            lines.append("- metadata triage excerpt: " + _shorten(weak_evidence.get("metadata_triage_excerpt"), 600))
+    else:
+        lines.append("- No weak-evidence upgrade material was detected.")
+
     lines.extend(
         [
             "",
@@ -1081,6 +1195,7 @@ def _render_draft_guidance(workbench: dict[str, Any]) -> str:
             "",
             "- Re-read `synthesis_workbench.json` and the most important paper notes before writing final claims.",
             "- Treat all heuristic fields as hints, not conclusions.",
+            "- Do not use `metadata_triage.md` as evidence; use it only to mark resource acquisition or upgrade needs.",
             "- Write `literature/synthesis.md` with explicit paper-ID evidence and no unsupported template prose.",
         ]
     )

@@ -634,6 +634,8 @@ def _cap_bridge_screened_records(
     for record in queue_records:
         if record.get("target_bucket") != "bridge_screened":
             continue
+        if record.get("triaged_reason") == "bridge_pool_cap_exceeded":
+            continue
         bridge_id = str(record.get("bridge_id") or "").strip()
         if not bridge_id:
             continue
@@ -650,6 +652,95 @@ def _cap_bridge_screened_records(
             record["triaged_out"] = True
             record["target_bucket"] = "bridge_screened"
             record["triaged_reason"] = "bridge_screened_cap_exceeded"
+
+
+def _cap_bridge_pool_records(
+    queue_records: list[dict[str, Any]],
+    *,
+    bridge_pool_cap: int,
+) -> dict[str, Any]:
+    """Cap each bridge's non-deferred queue footprint without dropping rows.
+
+    `deep_read_queue.jsonl` is also the verified-pool disposition ledger, so we
+    keep every verified paper visible. The cap only determines which bridge
+    records remain eligible for active/shallow reading by default. Overflow is
+    marked as a deferred, triaged-out record that can be recovered manually or
+    by a later targeted run.
+    """
+
+    if bridge_pool_cap < 0:
+        return {
+            "enabled": False,
+            "reason": "bridge_pool_cap_negative_unbounded",
+            "cap": bridge_pool_cap,
+            "deferred_count": 0,
+            "overflow_protected_count": 0,
+            "per_bridge": {},
+        }
+    by_bridge: dict[str, list[dict[str, Any]]] = {}
+    for record in queue_records:
+        bridge_id = str(record.get("bridge_id") or "").strip()
+        if not bridge_id:
+            continue
+        by_bridge.setdefault(bridge_id, []).append(record)
+
+    per_bridge: dict[str, dict[str, int]] = {}
+    deferred_count = 0
+    overflow_protected_count = 0
+    for bridge_id, records in by_bridge.items():
+        records.sort(
+            key=lambda item: (
+                bool(item.get("triaged_out")),
+                not item.get("bridge_must_protected_slot"),
+                not item.get("protected_slot"),
+                not item.get("citation_hub_protected_slot"),
+                -float(item.get("final_priority") or item.get("read_priority") or 0.0),
+                -float(item.get("relevance_score") or 0.0),
+                str(item.get("title") or "").casefold(),
+            )
+        )
+        retained = 0
+        deferred = 0
+        protected_overflow = 0
+        for record in records:
+            protected_active = (
+                not bool(record.get("triaged_out"))
+                and (
+                    record.get("bridge_must_protected_slot")
+                    or record.get("protected_slot")
+                    or record.get("citation_hub_protected_slot")
+                )
+            )
+            if retained < bridge_pool_cap or protected_active:
+                retained += 1
+                if retained > bridge_pool_cap and protected_active:
+                    protected_overflow += 1
+                continue
+            record["triaged_out"] = True
+            record["target_bucket"] = "bridge_screened"
+            record["triaged_reason"] = "bridge_pool_cap_exceeded"
+            record["read_disposition"] = "deferred"
+            record["read_disposition_reason"] = (
+                "bridge_pool_cap_exceeded_retained_for_coverage_accounting_or_manual_revisit"
+            )
+            deferred += 1
+        deferred_count += deferred
+        overflow_protected_count += protected_overflow
+        per_bridge[bridge_id] = {
+            "input_count": len(records),
+            "cap": bridge_pool_cap,
+            "retained_or_protected_count": retained,
+            "deferred_count": deferred,
+            "protected_overflow_count": protected_overflow,
+        }
+
+    return {
+        "enabled": True,
+        "cap": bridge_pool_cap,
+        "deferred_count": deferred_count,
+        "overflow_protected_count": overflow_protected_count,
+        "per_bridge": per_bridge,
+    }
 
 
 def _cap_mainline_screened_records(
@@ -1083,6 +1174,7 @@ def build_deep_read_queue(
         )
 
     _cap_mainline_screened_records(queue_records, mainline_screened_cap=mainline_screened_cap)
+    bridge_pool_cap_meta = _cap_bridge_pool_records(queue_records, bridge_pool_cap=bridge_pool_cap)
     _cap_bridge_screened_records(queue_records, bridge_screened_cap=bridge_screened_cap)
 
     must_explore_bridge_diagnostics = _must_explore_bridge_diagnostics(queue_records, must_explore_bridge_ids)
@@ -1095,6 +1187,10 @@ def build_deep_read_queue(
         "bridge_deep_floor": bridge_deep_floor,
         "bridge_screened_cap": bridge_screened_cap,
         "bridge_pool_cap": bridge_pool_cap,
+        "bridge_pool_cap_meta": bridge_pool_cap_meta,
+        "bridge_pool_cap_exceeded": sum(
+            1 for item in queue_records if item.get("triaged_reason") == "bridge_pool_cap_exceeded"
+        ),
         "source_pool": "papers_verified" if has_verified_pool else "caller_supplied_records",
         "queue_count": len(queue_records),
         "queue_retention_count": queue_retention_count,

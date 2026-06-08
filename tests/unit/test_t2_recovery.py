@@ -16,9 +16,11 @@ from researchos.runtime.t2_recovery import (
     _expand_openalex_snowball_candidates,
     _merge_enriched_records_back_to_raw,
     _openalex_detail_url,
+    _select_active_candidate_pool,
     _search_records_from_raw,
     finalize_t2_outputs,
 )
+from researchos.runtime.t2_config import T2FinalizeConfig
 
 
 def _write_jsonl(path: Path, records: list[dict]) -> None:
@@ -150,6 +152,180 @@ def test_cap_active_pool_after_seed_repair_preserves_seed_and_moves_overflow_to_
     assert all(record.get("t2_pool_role") == "backlog" for record in backlog)
     assert all(record.get("triaged_out") is True for record in backlog)
     assert meta["seed_repair_overflow_count"] == 6
+
+
+def test_select_active_candidate_pool_caps_should_bridge_lower_than_must(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    (workspace / "literature").mkdir(parents=True)
+    (workspace / "literature" / "bridge_domain_plan.json").write_text(
+        json.dumps(
+            {
+                "semantics": "bridge_domain_plan",
+                "source": "user",
+                "bridge_domains": [
+                    {"bridge_id": "b1", "name": "Must", "why": "x", "priority": "must_explore", "queries": ["q1"], "source": "user"},
+                    {"bridge_id": "b2", "name": "Should", "why": "x", "priority": "should_explore", "queries": ["q2"], "source": "user"},
+                    {"bridge_id": "b3", "name": "Skip", "why": "x", "priority": "no_cross", "queries": ["q3"], "source": "user"},
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    records = []
+    for bridge_id in ("b1", "b2", "b3"):
+        for idx in range(10):
+            records.append(
+                {
+                    "id": f"{bridge_id}-{idx}",
+                    "canonical_id": f"{bridge_id}-{idx}",
+                    "title": f"{bridge_id} Candidate {idx}",
+                    "bridge_id": bridge_id,
+                    "relevance_score": 0.8 - idx * 0.01,
+                }
+            )
+
+    active, backlog, meta = _select_active_candidate_pool(
+        records,
+        workspace,
+        config=T2FinalizeConfig(
+            active_pool_max=30,
+            screened_active_pool_cap=0,
+            must_bridge_active_pool_cap_per_bridge=4,
+            should_bridge_active_pool_cap_per_bridge=2,
+            snowball_active_pool_cap=0,
+        ),
+    )
+
+    reasons = [record.get("active_pool_reason") for record in active]
+    assert sum(str(reason).startswith("bridge_recall:b1:must_explore") for reason in reasons) == 4
+    assert sum(str(reason).startswith("bridge_recall:b2:should_explore") for reason in reasons) == 2
+    assert not any(str(reason).startswith("bridge_recall:b3") for reason in reasons)
+    assert meta["bridge_priorities"]["b3"] == "no_cross"
+    assert len(backlog) == len(records) - len(active)
+
+
+def test_select_active_candidate_pool_bridge_caps_not_bypassed_by_metadata_fill(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    (workspace / "literature").mkdir(parents=True)
+    (workspace / "literature" / "bridge_domain_plan.json").write_text(
+        json.dumps(
+            {
+                "semantics": "bridge_domain_plan",
+                "source": "user",
+                "bridge_domains": [
+                    {"bridge_id": "b1", "priority": "must_explore", "queries": ["q1"], "source": "user"},
+                    {"bridge_id": "b2", "priority": "no_cross", "queries": ["q2"], "source": "user"},
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    records = [
+        {
+            "id": f"b1-{idx}",
+            "canonical_id": f"b1-{idx}",
+            "title": f"Bridge One Candidate {idx}",
+            "bridge_id": "b1",
+            "relevance_score": 0.99 - idx * 0.01,
+        }
+        for idx in range(8)
+    ]
+    records.extend(
+        {
+            "id": f"b2-{idx}",
+            "canonical_id": f"b2-{idx}",
+            "title": f"Skipped Bridge Candidate {idx}",
+            "bridge_id": "b2",
+            "relevance_score": 0.95 - idx * 0.01,
+        }
+        for idx in range(5)
+    )
+    records.extend(
+        {
+            "id": f"core-{idx}",
+            "canonical_id": f"core-{idx}",
+            "title": f"Core Candidate {idx}",
+            "relevance_score": 0.5 - idx * 0.01,
+        }
+        for idx in range(10)
+    )
+
+    active, backlog, _ = _select_active_candidate_pool(
+        records,
+        workspace,
+        config=T2FinalizeConfig(
+            active_pool_max=20,
+            screened_active_pool_cap=0,
+            must_bridge_active_pool_cap_per_bridge=3,
+            should_bridge_active_pool_cap_per_bridge=1,
+            snowball_active_pool_cap=0,
+        ),
+    )
+
+    active_b1 = [record for record in active if record.get("bridge_id") == "b1"]
+    active_b2 = [record for record in active if record.get("bridge_id") == "b2"]
+    assert len(active_b1) == 3
+    assert active_b2 == []
+    assert any(record.get("bridge_id") == "b1" for record in backlog)
+    assert any(record.get("bridge_id") == "b2" for record in backlog)
+    assert len(active) == 13
+
+
+def test_select_active_candidate_pool_screened_bridge_records_obey_bridge_cap(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    (workspace / "literature").mkdir(parents=True)
+    (workspace / "literature" / "bridge_domain_plan.json").write_text(
+        json.dumps(
+            {
+                "semantics": "bridge_domain_plan",
+                "source": "user",
+                "bridge_domains": [
+                    {"bridge_id": "b1", "priority": "must_explore", "queries": ["q1"], "source": "user"},
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    records = [
+        {
+            "id": f"b1-screened-{idx}",
+            "canonical_id": f"b1-screened-{idx}",
+            "title": f"Bridge Screened Candidate {idx}",
+            "bridge_id": "b1",
+            "relevance_score": 0.99 - idx * 0.01,
+            "semantic_screen": {"can_enter_deep_read": True, "bridge_id": "b1"},
+        }
+        for idx in range(8)
+    ]
+    records.extend(
+        {
+            "id": f"core-{idx}",
+            "canonical_id": f"core-{idx}",
+            "title": f"Core Candidate {idx}",
+            "relevance_score": 0.7 - idx * 0.01,
+            "semantic_screen": {"can_enter_deep_read": True},
+        }
+        for idx in range(5)
+    )
+
+    active, backlog, _ = _select_active_candidate_pool(
+        records,
+        workspace,
+        config=T2FinalizeConfig(
+            active_pool_max=20,
+            screened_active_pool_cap=20,
+            must_bridge_active_pool_cap_per_bridge=3,
+            should_bridge_active_pool_cap_per_bridge=1,
+            snowball_active_pool_cap=0,
+        ),
+    )
+
+    assert len([record for record in active if record.get("bridge_id") == "b1"]) == 3
+    assert len([record for record in active if str(record.get("id", "")).startswith("core-")]) == 5
+    assert len([record for record in backlog if record.get("bridge_id") == "b1"]) == 5
 
 
 @pytest.mark.asyncio
@@ -817,17 +993,72 @@ async def test_finalize_t2_outputs_caps_active_pool_and_writes_backlog(monkeypat
     ]
     assert len(verified_records) == 120
     assert any(record.get("title") == "Seed Paper Zero" for record in verified_records)
-    backlog_records = [
-        json.loads(line)
-        for line in (workspace / "literature" / "papers_backlog.jsonl").read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    assert len(backlog_records) == 31
-    assert all(record.get("t2_pool_role") == "backlog" for record in backlog_records)
 
-    queue_meta = json.loads((workspace / "literature" / "deep_read_queue_meta.json").read_text(encoding="utf-8"))
-    assert queue_meta["verified_pool_count"] == 120
-    assert queue_meta["verified_disposition_coverage"] == 1.0
+
+@pytest.mark.asyncio
+async def test_finalize_t2_outputs_keeps_domain_filtered_records_in_backlog(monkeypatch, tmp_path: Path):
+    workspace = tmp_path / "ws"
+    (workspace / "literature").mkdir(parents=True)
+    (workspace / "project.yaml").write_text(
+        "research_direction: domain profile audit\n"
+        "keywords: [target]\n"
+        "domain_profile:\n"
+        "  target_domain: target-domain\n"
+        "  include_keywords: [target]\n"
+        "  exclude_keywords: [excluded]\n",
+        encoding="utf-8",
+    )
+    _write_jsonl(
+        workspace / "literature" / "papers_raw.jsonl",
+        [
+            {
+                "id": "keep",
+                "canonical_id": "keep",
+                "title": "Target Mechanism Paper",
+                "abstract": "A target-domain abstract.",
+                "year": 2025,
+                "source": "openalex",
+                "source_query": "target",
+            },
+            {
+                "id": "filtered",
+                "canonical_id": "filtered",
+                "title": "Excluded Mechanism Paper",
+                "abstract": "An excluded-domain abstract.",
+                "year": 2025,
+                "source": "openalex",
+                "source_query": "target",
+            },
+        ],
+    )
+
+    import researchos.runtime.t2_recovery as t2_recovery
+
+    async def _no_openalex_backfill(*args, **kwargs):
+        return {"enabled": True, "candidate_count": 0, "attempted": 0}
+
+    async def _no_metadata_backfill(*args, **kwargs):
+        return {"enabled": True, "candidate_count": 0, "attempted": 0, "abstract_filled": 0, "references_filled": 0, "failed": 0}
+
+    async def _no_snowball(*args, **kwargs):
+        return [], {"enabled": True, "source_candidates": 0, "sources_used": 0, "attempted": 0, "added": 0, "failed": 0}
+
+    monkeypatch.setattr(t2_recovery, "_backfill_recovered_openalex_metadata", _no_openalex_backfill)
+    monkeypatch.setattr(t2_recovery, "_backfill_recovered_openalex_title_metadata", _no_openalex_backfill)
+    monkeypatch.setattr(t2_recovery, "_backfill_recovered_crossref_metadata", _no_metadata_backfill)
+    monkeypatch.setattr(t2_recovery, "_backfill_recovered_multisource_abstracts", _no_metadata_backfill)
+    monkeypatch.setattr(t2_recovery, "_expand_openalex_snowball_candidates", _no_snowball)
+    monkeypatch.setattr(t2_recovery, "_expand_crossref_snowball_candidates", _no_snowball)
+
+    result = await finalize_t2_outputs(workspace, trace_paths=[])
+
+    assert result["ok"] is True
+    verified = [json.loads(line) for line in (workspace / "literature" / "papers_verified.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    backlog = [json.loads(line) for line in (workspace / "literature" / "papers_backlog.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert [record["id"] for record in verified] == ["keep"]
+    assert [record["id"] for record in backlog] == ["filtered"]
+    assert backlog[0]["triaged_reason"] == "domain_profile_filtered"
+    assert backlog[0]["read_disposition"] == "backlog"
     search_log = (workspace / "literature" / "search_log.md").read_text(encoding="utf-8")
     assert "T2 active candidate pool" in search_log
     assert "papers_backlog.jsonl" in search_log

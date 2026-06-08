@@ -1225,6 +1225,70 @@ def test_build_deep_read_queue_reserves_must_explore_bridge_floor(tmp_path):
     assert meta["must_explore_bridge_diagnostics"]["b1"]["bridge_deep_active"] == 3
 
 
+def test_build_deep_read_queue_enforces_bridge_pool_cap_without_dropping_verified(tmp_path):
+    workspace = tmp_path / "ws"
+    (workspace / "literature").mkdir(parents=True, exist_ok=True)
+    (workspace / "user_seeds").mkdir(parents=True, exist_ok=True)
+    (workspace / "literature" / "bridge_domain_plan.json").write_text(
+        json.dumps(
+            {
+                "semantics": "bridge_domain_plan",
+                "source": "user",
+                "bridge_domains": [
+                    {
+                        "bridge_id": "b1",
+                        "name": "Mechanism transfer",
+                        "priority": "should_explore",
+                        "queries": ["mechanism transfer"],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    papers = [
+        {
+            "id": f"bridge-{idx}",
+            "title": f"Bridge Pool Candidate {idx}",
+            "source": "openalex",
+            "year": 2025,
+            "abstract": "semantically screened bridge material",
+            "relevance_score": 0.9 - idx * 0.01,
+            "verification_status": "metadata_verified",
+            "verification_confidence": 0.9,
+            "bridge_id": "b1",
+            "retrieval_intent": "cross_domain_bridge",
+            "semantic_screen": _screen(
+                relation="method_transfer",
+                role="theory_bridge",
+                bridge_id="b1",
+            ),
+        }
+        for idx in range(6)
+    ]
+
+    queue, meta = build_deep_read_queue(
+        enrich_papers(papers),
+        workspace,
+        deep_read_min=1,
+        deep_read_target=2,
+        deep_read_max=3,
+        probe_pool=3,
+        bridge_pool_cap=3,
+        bridge_screened_cap=10,
+    )
+
+    assert len(queue) == len(papers)
+    assert meta["verified_disposition_coverage"] == 1.0
+    assert meta["bridge_pool_cap_exceeded"] == 3
+    assert meta["bridge_pool_cap_meta"]["per_bridge"]["b1"]["deferred_count"] == 3
+    deferred = [item for item in queue if item.get("triaged_reason") == "bridge_pool_cap_exceeded"]
+    assert len(deferred) == 3
+    assert all(item["read_disposition"] == "deferred" for item in deferred)
+    assert all(item["target_bucket"] == "bridge_screened" for item in deferred)
+
+
 def test_build_deep_read_queue_keeps_short_retrieval_provenance(tmp_path):
     workspace = tmp_path / "ws"
     (workspace / "literature").mkdir(parents=True, exist_ok=True)

@@ -551,6 +551,92 @@ def test_build_sweep_candidates_skips_duplicates_and_semantic_excludes_by_defaul
     assert [item["id"] for item in candidates] == ["keep"]
 
 
+def test_build_sweep_candidates_skips_queue_deferred_records(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    _write_jsonl(
+        workspace / "literature" / "papers_backlog.jsonl",
+        [
+            {
+                "id": "bridge-overflow",
+                "title": "Bridge Overflow",
+                "abstract": "This bridge record exceeded the per-bridge queue cap.",
+                "relevance_score": 0.99,
+            },
+            {
+                "id": "ordinary-shallow",
+                "title": "Ordinary Shallow",
+                "abstract": "This shallow record remains eligible for abstract sweep.",
+                "relevance_score": 0.8,
+            },
+        ],
+    )
+    _write_jsonl(
+        workspace / "literature" / "deep_read_queue.jsonl",
+        [
+            {
+                "paper_id": "bridge-overflow",
+                "id": "bridge-overflow",
+                "title": "Bridge Overflow",
+                "read_disposition": "deferred",
+                "triaged_reason": "bridge_pool_cap_exceeded",
+                "target_bucket": "bridge_screened",
+                "triaged_out": True,
+            },
+            {
+                "paper_id": "ordinary-shallow",
+                "id": "ordinary-shallow",
+                "title": "Ordinary Shallow",
+                "read_disposition": "shallow_read",
+                "target_bucket": "mainline_screened",
+                "triaged_out": True,
+            },
+        ],
+    )
+
+    candidates = build_sweep_candidates(
+        workspace,
+        {"lite_paper_num": 10, "min_relevance": 0.0, "sources": ["papers_backlog"], "exclude_already_read": True},
+    )
+
+    assert [item["id"] for item in candidates] == ["ordinary-shallow"]
+
+
+def test_build_sweep_candidates_skips_t2_backlog_overflow_records(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    _write_jsonl(
+        workspace / "literature" / "papers_backlog.jsonl",
+        [
+            {
+                "id": "overflow",
+                "title": "Overflow Candidate",
+                "abstract": "This candidate exceeded the active pool cap.",
+                "relevance_score": 0.95,
+                "t2_pool_role": "backlog",
+                "read_disposition": "backlog",
+                "triaged_reason": "t2_active_pool_cap_exceeded",
+                "triaged_out": True,
+            },
+            {
+                "id": "domain-filtered",
+                "title": "Domain Filtered Candidate",
+                "abstract": "This candidate was excluded by domain profile.",
+                "relevance_score": 0.94,
+                "t2_pool_role": "backlog",
+                "read_disposition": "backlog",
+                "triaged_reason": "domain_profile_filtered",
+                "triaged_out": True,
+            },
+        ],
+    )
+
+    candidates = build_sweep_candidates(
+        workspace,
+        {"lite_paper_num": 10, "min_relevance": 0.0, "sources": ["papers_backlog"], "exclude_already_read": True},
+    )
+
+    assert candidates == []
+
+
 def test_build_sweep_candidates_can_keep_semantic_excludes_when_configured(tmp_path: Path):
     workspace = tmp_path / "ws"
     _write_jsonl(

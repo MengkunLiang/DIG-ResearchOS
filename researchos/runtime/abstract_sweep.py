@@ -34,7 +34,7 @@ _DEFAULT_CONFIG = {
     "enabled": False,
     "lite_paper_num": 120,
     "min_relevance": 0.0,
-    "sources": ["papers_verified", "papers_dedup", "papers_backlog"],
+    "sources": ["papers_verified", "papers_dedup"],
     "exclude_already_read": True,
     "include_metadata_only": True,
     "exclude_semantic_excluded": True,
@@ -81,6 +81,7 @@ def build_sweep_candidates(
     exclude_read = cfg.get("exclude_already_read", True)
     include_metadata_only = bool(cfg.get("include_metadata_only", True))
     exclude_semantic_excluded = bool(cfg.get("exclude_semantic_excluded", False))
+    queue_disposition = _load_queue_disposition(workspace)
 
     completed_keys: set[str] = set()
     if exclude_read:
@@ -126,6 +127,11 @@ def build_sweep_candidates(
         rid = _normalize_id(record)
         if exclude_read and record_is_covered(record, completed_keys):
             continue
+        disposition = _lookup_queue_disposition(record, queue_disposition)
+        if _is_deferred_by_queue_disposition(disposition):
+            continue
+        if _is_deferred_by_queue_disposition(_record_disposition(record)):
+            continue
         if _is_duplicate_record(record):
             continue
         if exclude_semantic_excluded and _is_semantic_excluded(record):
@@ -153,6 +159,56 @@ def build_sweep_candidates(
         )
     )
     return candidates if lite_num is None else candidates[:lite_num]
+
+
+def _load_queue_disposition(workspace: Path) -> dict[str, dict[str, Any]]:
+    """Load T3 queue disposition hints keyed by paper identity variants."""
+
+    path = workspace / "literature" / "deep_read_queue.jsonl"
+    if not path.exists():
+        return {}
+    lookup: dict[str, dict[str, Any]] = {}
+    for record in load_jsonl(path):
+        disposition = {
+            "read_disposition": str(record.get("read_disposition") or ""),
+            "triaged_reason": str(record.get("triaged_reason") or ""),
+            "target_bucket": str(record.get("target_bucket") or ""),
+            "triaged_out": bool(record.get("triaged_out")),
+        }
+        for key in _sweep_identity_keys(record):
+            lookup.setdefault(key, disposition)
+    return lookup
+
+
+def _lookup_queue_disposition(
+    record: dict[str, Any],
+    lookup: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    if not lookup:
+        return {}
+    for key in _sweep_identity_keys(record):
+        if key in lookup:
+            return lookup[key]
+    return {}
+
+
+def _record_disposition(record: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "read_disposition": str(record.get("read_disposition") or ""),
+        "triaged_reason": str(record.get("triaged_reason") or ""),
+        "target_bucket": str(record.get("target_bucket") or ""),
+        "triaged_out": bool(record.get("triaged_out")),
+    }
+
+
+def _is_deferred_by_queue_disposition(disposition: dict[str, Any]) -> bool:
+    if not disposition:
+        return False
+    reason = str(disposition.get("triaged_reason") or "")
+    if reason in {"bridge_pool_cap_exceeded", "t2_active_pool_cap_exceeded", "domain_profile_filtered"}:
+        return True
+    read_disposition = str(disposition.get("read_disposition") or "")
+    return read_disposition in {"deferred", "backlog"}
 
 
 def _sweep_priority(record: dict[str, Any], config: dict[str, Any] | None = None) -> tuple[float, dict[str, float]]:

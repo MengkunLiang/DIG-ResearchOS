@@ -41,6 +41,36 @@ CROSS_DOMAIN_RELATIONS = {
 }
 
 
+def _weak_evidence_prompt_summary(synthesis_workbench_text: str) -> str:
+    """Extract weak-evidence guardrails from synthesis_workbench for prompt visibility."""
+
+    try:
+        data = json.loads(synthesis_workbench_text) if synthesis_workbench_text.strip() else {}
+    except Exception:
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    weak = data.get("weak_evidence_and_resource_upgrade")
+    if not isinstance(weak, dict) or not weak:
+        return ""
+    examples = weak.get("abstract_only_examples") if isinstance(weak.get("abstract_only_examples"), list) else []
+    lines = [
+        "semantics: weak_evidence_and_resource_upgrade_not_claim_evidence",
+        f"abstract_only_count: {weak.get('abstract_only_count', 0)}",
+        f"metadata_triage_available: {weak.get('metadata_triage_available', False)}",
+        "allowed_use: coverage_hint_or_upgrade_candidate_not_mechanism_evidence",
+        "rule: weak-only ideas must be not_supported_by_current_evidence, deferred, or resource-upgrade tasks; never selected claims.",
+    ]
+    for item in examples[:6]:
+        if not isinstance(item, dict):
+            continue
+        paper_id = str(item.get("paper_id") or "").strip()
+        title = str(item.get("title") or "").strip()
+        allowed_use = str(item.get("allowed_use") or "").strip()
+        lines.append(f"- {paper_id}: {title} | {allowed_use}")
+    return "\n".join(lines)
+
+
 class IdeationAgent(Agent):
     """假设生成Agent。深度推理+两轮Gate确认。"""
 
@@ -97,6 +127,7 @@ class IdeationAgent(Agent):
         bridge_domain_plan = read_text_file(ws / "literature" / "bridge_domain_plan.json", default="")
         synthesis_workbench = read_text_file(ws / "literature" / "synthesis_workbench.json", default="")
         survey_insights = read_text_file(ws / "ideation" / "survey_insights.json", default="")
+        weak_evidence_summary = _weak_evidence_prompt_summary(synthesis_workbench)
 
         return render_prompt(
             self.spec.prompt_template,
@@ -109,6 +140,7 @@ class IdeationAgent(Agent):
             domain_map_preview=domain_map[:2500],
             bridge_domain_plan_preview=bridge_domain_plan[:2500],
             synthesis_workbench_preview=synthesis_workbench[:3000],
+            weak_evidence_summary=weak_evidence_summary,
             survey_insights_preview=survey_insights[:3000],
             has_domain_map=bool(domain_map.strip()),
             has_bridge_domain_plan=bool(bridge_domain_plan.strip()),
@@ -292,6 +324,17 @@ class IdeationAgent(Agent):
             decision = item.get("decision") or {}
             status = str(decision.get("status") or "").strip().lower()
             has_hypothesis_refs = bool(item.get("hypothesis_refs"))
+            source = item.get("source") if isinstance(item.get("source"), dict) else {}
+            constraint_status = str(
+                source.get("constraint_status")
+                or idea.get("constraint_status")
+                or ""
+            ).strip().lower()
+            if constraint_status == "not_supported_by_current_evidence" and (status == "selected" or has_hypothesis_refs):
+                return False, (
+                    f"idea_scorecard.yaml idea {idea_id} 仅有弱证据或补资源语义，"
+                    "不能被 selected，也不能绑定最终 hypothesis_refs"
+                )
             if status == "selected" or has_hypothesis_refs:
                 cdr_tuple = idea.get("cdr_tuple") if isinstance(idea, dict) else {}
                 if not isinstance(cdr_tuple, dict):
@@ -613,11 +656,13 @@ def _validate_candidate_directions(ws: Path) -> tuple[bool, str | None]:
                     f"_candidate_directions.json 候选 {idea_id} 被 Pass2 隐藏；"
                     "Pass2 只能标风险，不能从 Gate1 删除候选"
                 )
-        if status == "not_supported_by_current_evidence" and origin not in supplement_origins:
-            return False, (
-                f"_candidate_directions.json 第{idx}条 unsupported 候选必须对应四类补充通道，"
-                "不能把主线候选标成无证据"
-            )
+        if status == "not_supported_by_current_evidence":
+            pass2 = candidate.get("pass2_screening") or {}
+            if pass2 and str(pass2.get("screening_recommendation") or "").strip() == "proceed":
+                return False, (
+                    f"_candidate_directions.json 第{idx}条 unsupported 候选不能在 Pass2 标为 proceed；"
+                    "只能可见上桌、暂缓、淘汰或作为资源升级计划"
+                )
 
     if confirmed_bridge_ids and bridge_candidate_count == 0:
         return False, (

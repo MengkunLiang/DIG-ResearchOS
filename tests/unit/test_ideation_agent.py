@@ -22,6 +22,7 @@ from researchos.agents.ideation import (
     _validate_candidate_directions,
 )
 from researchos.runtime.agent import ExecutionContext
+from researchos.schemas.validator import validate_record
 
 
 @pytest.fixture
@@ -821,10 +822,9 @@ def test_ideation_initial_user_message(ideation_agent, temp_workspace):
     assert "Gate" in msg or "两轮" in msg
 
 
-def test_validate_outputs_success(ideation_agent, temp_workspace):
-    """测试输出校验（成功场景）。"""
+def _write_valid_t4_outputs(workspace: Path) -> None:
     # 创建project.yaml
-    project_path = temp_workspace / "project.yaml"
+    project_path = workspace / "project.yaml"
     project_data = {
         "research_direction": "Test",
         "constraints": {"max_budget_usd": 1000},
@@ -832,7 +832,7 @@ def test_validate_outputs_success(ideation_agent, temp_workspace):
     project_path.write_text(yaml.dump(project_data))
 
     # 创建hypotheses.md（带anchor）
-    hyp_path = temp_workspace / "ideation" / "hypotheses.md"
+    hyp_path = workspace / "ideation" / "hypotheses.md"
     hyp_content = """# 研究假设
 
 ## H1: 第一个假设
@@ -863,7 +863,7 @@ def test_validate_outputs_success(ideation_agent, temp_workspace):
     hyp_path.write_text(hyp_content)
 
     # 创建exp_plan.yaml（符合schema）
-    plan_path = temp_workspace / "ideation" / "exp_plan.yaml"
+    plan_path = workspace / "ideation" / "exp_plan.yaml"
     plan_data = {
         "goal": "验证假设H1",
         "experiments": [
@@ -900,7 +900,7 @@ def test_validate_outputs_success(ideation_agent, temp_workspace):
     plan_path.write_text(yaml.dump(plan_data))
 
     # 创建risks.md（至少3条风险）
-    risks_path = temp_workspace / "ideation" / "risks.md"
+    risks_path = workspace / "ideation" / "risks.md"
     risks_content = """# Top 3 风险
 
 ## 风险1: 数据不足
@@ -922,7 +922,12 @@ def test_validate_outputs_success(ideation_agent, temp_workspace):
 - **Kill Criteria**: 如果1周内无法复现
 """
     risks_path.write_text(risks_content)
-    write_valid_idea_rationales(temp_workspace, refs=["H1", "H2"])
+    write_valid_idea_rationales(workspace, refs=["H1", "H2"])
+
+
+def test_validate_outputs_success(ideation_agent, temp_workspace):
+    """测试输出校验（成功场景）。"""
+    _write_valid_t4_outputs(temp_workspace)
 
     ctx = ExecutionContext(
         workspace_dir=temp_workspace,
@@ -1596,3 +1601,77 @@ def test_bridge_missing_must_can_use_escape_hatch_warning(temp_workspace):
     assert ok, err
     ok, err = _validate_bridge_coverage_review(temp_workspace)
     assert ok, err
+
+
+def test_idea_scorecard_schema_accepts_survey_driven_origin(temp_workspace):
+    write_valid_idea_rationales(temp_workspace)
+    data = yaml.safe_load((temp_workspace / "ideation" / "idea_scorecard.yaml").read_text(encoding="utf-8"))
+    data["ideas"][1]["source"]["idea_origin"] = "survey_driven"
+    data["ideas"][1]["source"]["trigger_observation"] = "T3.6 taxonomy exposed a mechanism-level design split."
+
+    ok, err = validate_record(data, "idea_scorecard")
+
+    assert ok, err
+
+
+def test_unsupported_candidate_can_be_visible_but_not_pass2_proceed(temp_workspace):
+    write_valid_idea_rationales(temp_workspace)
+    candidate_path = temp_workspace / "ideation" / "_candidate_directions.json"
+    data = json.loads(candidate_path.read_text(encoding="utf-8"))
+    data["candidates"].append(
+        {
+            "id": "U1",
+            "title": "Weak evidence candidate",
+            "generation_stage": "mainline",
+            "idea_origin": "survey_driven",
+            "constraint_status": "not_supported_by_current_evidence",
+            "pitch": "A weak survey hint that needs resource upgrade.",
+            "core_claim": "Weak hint may become useful after full-text acquisition.",
+            "target_problem": "The current evidence is abstract-only.",
+            "mechanism": "Not yet supported by current evidence.",
+            "prediction": "No strong prediction until resources are upgraded.",
+            "counterfactual": "No strong counterfactual until resources are upgraded.",
+            "mechanism_family": "weak evidence",
+            "basis_summary": "Only weak_evidence_and_resource_upgrade and metadata triage currently support this direction.",
+            "pass2_screening": {
+                "screening_recommendation": "defer_recommended",
+                "visible_to_gate": True,
+                "selection_warning": "Resource upgrade required.",
+            },
+            "gate_visibility": "visible",
+            "can_select_despite_risk": False,
+        }
+    )
+    candidate_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    ok, err = _validate_candidate_directions(temp_workspace)
+
+    assert ok, err
+
+    data["candidates"][-1]["pass2_screening"]["screening_recommendation"] = "proceed"
+    candidate_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    ok, err = _validate_candidate_directions(temp_workspace)
+
+    assert not ok
+    assert "unsupported 候选不能在 Pass2 标为 proceed" in err
+
+
+def test_validate_outputs_rejects_selected_unsupported_scorecard_idea(ideation_agent, temp_workspace):
+    _write_valid_t4_outputs(temp_workspace)
+    scorecard_path = temp_workspace / "ideation" / "idea_scorecard.yaml"
+    scorecard = yaml.safe_load(scorecard_path.read_text(encoding="utf-8"))
+    scorecard["ideas"][0]["source"]["constraint_status"] = "not_supported_by_current_evidence"
+    scorecard_path.write_text(yaml.safe_dump(scorecard, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T4",
+        run_id="test-unsupported-selected",
+        mode=None,
+    )
+
+    ok, err = ideation_agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "仅有弱证据" in err

@@ -16,11 +16,14 @@ from .agent_params import get_agent_mode_params
 class T2FinalizeConfig:
     active_pool_max: int = 120
     bridge_active_pool_cap_per_bridge: int = 15
+    must_bridge_active_pool_cap_per_bridge: int = 15
+    should_bridge_active_pool_cap_per_bridge: int = 5
     screened_active_pool_cap: int = 60
     snowball_active_pool_cap: int = 12
     finish_finalize_min_raw: int = 30
     dedup_title_threshold: float = 0.95
     access_audit_top_n: int = 50
+    pre_active_light_backfill_max: int = 220
     metadata_backfill_max_concurrency: int = 6
     abstract_backfill_title_match_threshold: float = 0.88
     abstract_backfill_max_concurrency: int = 6
@@ -119,6 +122,16 @@ def load_t2_finalize_config() -> T2FinalizeConfig:
             defaults.bridge_active_pool_cap_per_bridge,
             minimum=0,
         ),
+        must_bridge_active_pool_cap_per_bridge=_as_int(
+            finalize.get("must_bridge_active_pool_cap_per_bridge"),
+            finalize.get("bridge_active_pool_cap_per_bridge", defaults.must_bridge_active_pool_cap_per_bridge),
+            minimum=0,
+        ),
+        should_bridge_active_pool_cap_per_bridge=_as_int(
+            finalize.get("should_bridge_active_pool_cap_per_bridge"),
+            defaults.should_bridge_active_pool_cap_per_bridge,
+            minimum=0,
+        ),
         screened_active_pool_cap=_as_int(
             finalize.get("screened_active_pool_cap"),
             defaults.screened_active_pool_cap,
@@ -141,6 +154,11 @@ def load_t2_finalize_config() -> T2FinalizeConfig:
             maximum=1.0,
         ),
         access_audit_top_n=_as_int(finalize.get("access_audit_top_n"), defaults.access_audit_top_n, minimum=1),
+        pre_active_light_backfill_max=_as_int(
+            finalize.get("pre_active_light_backfill_max"),
+            defaults.pre_active_light_backfill_max,
+            minimum=0,
+        ),
         metadata_backfill_max_concurrency=_as_int(
             finalize.get("metadata_backfill_max_concurrency"),
             defaults.metadata_backfill_max_concurrency,

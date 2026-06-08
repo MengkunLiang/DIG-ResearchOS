@@ -133,14 +133,22 @@ agents:
         active_pool_max: 120
         # semantic_screen 通过的主线候选在 active pool 的优先保留上限。
         screened_active_pool_cap: 60
-        # 每个 confirmed bridge 最多保留多少 active 候选。
+        # 兼容旧字段：未设置 must_bridge_active_pool_cap_per_bridge 时作为 must 默认值。
         bridge_active_pool_cap_per_bridge: 15
+        # 每个 priority=must_explore bridge 最多保留多少 active 候选。
+        must_bridge_active_pool_cap_per_bridge: 15
+        # 每个 priority=should_explore bridge 最多保留多少 active 候选；默认明显低于 must，
+        # 避免 bridge 扩散挤掉 core 主线。priority=no_cross/skip 不保留。
+        should_bridge_active_pool_cap_per_bridge: 5
         # citation snowball 候选在 active pool 的保护上限。
         snowball_active_pool_cap: 12
         # 标题去重阈值；越高越保守，越低越容易合并近似标题。
         dedup_title_threshold: 0.95
         # access_audit.md 展示 top N，方便排查 PDF/摘要/DOI 获取情况。
         access_audit_top_n: 50
+        # active/backlog 切分前先对全 dedup 池前 N 篇做轻量标题/DOI/OA/摘要补全。
+        # 0 表示关闭；-1 表示不限量。避免只有早选 active 才拿到资源补全导致排序偏。
+        pre_active_light_backfill_max: 220
         # OpenAlex/Crossref/title metadata 回填并发；过高可能触发外部 API 限流。
         metadata_backfill_max_concurrency: 6
         # 多源摘要 title 匹配阈值；越高越少误配，越低越能补到但风险更高。
@@ -208,11 +216,11 @@ agents:
             lite_paper_num: 120
             # 最低 relevance_score hint；0.0 表示不靠该 hint 丢弃候选。
             min_relevance: 0.0
-            # 候选来源优先级；verified/dedup 是 active pool，backlog 是保留候选。
+            # 候选来源优先级；verified/dedup 是 active pool。papers_backlog 是审计/人工回捞池，
+            # 默认不自动扫，显式加入 sources 时仍会跳过 t2_active_pool_cap_exceeded/domain_profile_filtered。
             sources:
             - papers_verified
             - papers_dedup
-            - papers_backlog
             # 跳过 paper_notes/、paper_notes_bridge/、paper_notes_abstract/ 已覆盖论文。
             exclude_already_read: true
             # true 表示无 abstract 但有标题的候选也会进入批量 triage report；

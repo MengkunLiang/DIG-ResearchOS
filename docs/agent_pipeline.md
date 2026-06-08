@@ -674,7 +674,7 @@ T2 的日常预算和模型路由以 `config/user_settings.yaml` 为入口；che
 | `papers_raw` | `literature/papers_raw.jsonl` | 原始检索命中结果，去重前；保留 `canonical_id`、`referenced_works`、`retrieval_intent`、`bridge_id` 和可选 `semantic_screen` |
 | `papers_dedup` | `literature/papers_dedup.jsonl` | 去重、打分和 enrich 后的 active candidate pool；关联主键是 `canonical_id`，不是标题 |
 | `papers_verified` | `literature/papers_verified.jsonl` | active pool 中通过 metadata verification 的可信论文池；T3 队列只从这里取 |
-| `papers_backlog` | `literature/papers_backlog.jsonl` | active pool 外的保留候选；用于 abstract sweep、人工回捞和排障，不算 T3 必读 |
+| `papers_backlog` | `literature/papers_backlog.jsonl` | active pool 外的保留候选；默认不自动进入 T3 abstract sweep，用于覆盖审计、人工回捞和排障，不算 T3 必读 |
 | `verification_failures` | `literature/verification_failures.jsonl` | verification 失败或元数据不一致的样本 |
 | `citation_edges` | `literature/citation_edges.json` | T2 收集到的一跳出引 / related works 边；恢复路径只使用已落盘 metadata，不额外联网 |
 | `domain_map` | `literature/domain_map.json` | 引用图领域地图：core / theory_bridge / adjacent / boundary、citation_edges、bucket_assignments 和 audit；不是最终研究缺口 |
@@ -974,7 +974,7 @@ raw 数量只是完成 T2 的必要条件，不是充分条件；Scout 必须先
 
 ### T2 怎样控制候选池规模
 
-`papers_raw.jsonl` 是全量检索审计池，可以超过 active 上限；`papers_dedup.jsonl` 不是全量 raw 的简单去重结果，而是本轮 active candidate pool。默认 active 上限是 `config/agent_params.yaml -> agents.scout.behavior.t2_finalize.active_pool_max = 120`，超出 active pool 的候选写入 `literature/papers_backlog.jsonl`，带 `t2_pool_role=backlog`、`triaged_out=true` 和 `triaged_reason=t2_active_pool_cap_exceeded`，用于后续 abstract sweep、人工回捞或排障，不会被静默丢弃。
+`papers_raw.jsonl` 是全量检索审计池，可以超过 active 上限；`papers_dedup.jsonl` 不是全量 raw 的简单去重结果，而是本轮 active candidate pool。默认 active 上限是 `config/agent_params.yaml -> agents.scout.behavior.t2_finalize.active_pool_max = 120`，超出 active pool 的候选写入 `literature/papers_backlog.jsonl`，带 `t2_pool_role=backlog`、`triaged_out=true` 和 `triaged_reason=t2_active_pool_cap_exceeded`，用于覆盖审计、人工回捞或排障，不会被静默丢弃，也不会被普通 T3 abstract sweep 自动读回。
 
 T2 deterministic finalize 中影响候选规模和 API 消耗的机械阈值都在 `agents.scout.behavior.t2_finalize`：包括 `dedup_title_threshold`、`metadata_backfill_max_concurrency`、`abstract_backfill_title_match_threshold`、`snowball_max_sources`、`snowball_refs_per_source`、`snowball_max_candidates`、`snowball_title_match_threshold` 和 `access_audit_top_n`。这些字段会写进 `search_log.md` 的配置来源说明，方便排障时确认本轮用的是哪组参数。
 
@@ -982,9 +982,11 @@ active pool 默认选择顺序：
 
 - 用户 seed
 - `semantic_screen.can_enter_deep_read=true` 的高置信候选
-- confirmed bridge 的召回候选，默认每个 bridge 最多 `bridge_active_pool_cap_per_bridge` 篇
+- confirmed bridge 的召回候选会按人工确认的 priority 分配 active 名额：`must_explore` 默认每个 bridge 最多 `must_bridge_active_pool_cap_per_bridge` 篇，`should_explore` 默认最多 `should_bridge_active_pool_cap_per_bridge` 篇；`no_cross` / `skip` / `source=none` 的 bridge 只保留为决策记录，不强制进入 T3/T4
 - citation snowball 候选，默认最多 `snowball_active_pool_cap` 篇
 - 其余按 `metadata/search priority hint` 补足到 `active_pool_max`
+
+Bridge cap 是候选级硬边界：同一 confirmed bridge 的候选即使同时命中 `semantic_screen.can_enter_deep_read=true`、citation snowball 或 metadata priority fill，也不能绕过 `must/should_bridge_active_pool_cap_per_bridge`。`no_cross/skip` bridge 的召回记录只留在 raw/backlog 审计链，不会靠后续 fill 自动进入 active pool。若 `project.yaml` 启用了 `domain_profile`，被 profile 排除的候选也会写入 `papers_backlog.jsonl` 并标记 `triaged_reason=domain_profile_filtered`，而不是从 raw 到 active/backlog 之间静默消失。
 
 `literature/temp/scout_progress.md` 会由 runtime 在搜索工具自动落盘 raw、deterministic finalize 开始、active/backlog 切分、完成/失败时自动追加进度；它不再只依赖 Scout LLM 主动调用 `log_scout_progress`。`search_log.md` 会写 `T2 active candidate pool: input=..., active=..., backlog=..., selection_reasons=...`。如果看到 raw 很大但 `papers_dedup=active_pool_max`，这是正常分层；如果 `papers_dedup > active_pool_max`，才是 finalize/validator 错误。爆量排障顺序是先看 `## Bucket 覆盖` 和 `## Source/Tool 覆盖`：若 core/theory_bridge/adjacent 的 Query Calls 很高，通常是 query 或 bridge 扩展重复；若 `OpenAlex/Crossref citation snowball` 的 `raw_persisted` 很高，才说明 citation 扩张过多。
 
@@ -1100,10 +1102,10 @@ active pool 默认选择顺序：
 | `mainline_screened_cap` | `90` | 主线 shallow/screened backlog 保留上限 |
 | `bridge_deep_floor` | `3` | 每个 must_explore bridge 通过 screen 后的 active deep-read 保底 |
 | `bridge_screened_cap` | `7` | 每个 bridge 的 shallow/screened backlog 保留上限 |
-| `bridge_pool_cap` | `15` | 每个 bridge 在 queue 中保留的候选总上限 |
+| `bridge_pool_cap` | `15` | 每个 bridge 在 queue 中默认保留的候选总上限；超额不删除，标为 deferred 并保留覆盖账本 |
 | `citation_hub_slots` | `3` | citation graph 枢纽保护槽 |
 
-`deep_read_target` 是 T3 默认应读目标，`deep_read_max` 是保护位和高优先级 seed/bridge/citation hub 合并后的 active 上限；保护项会占用 active 名额，而不是无限额外追加。`deep_read_queue.jsonl` 同时是 active verified 池的阅读处置账本：非 `triaged_out` 记录是 T3 active deep-read 目标，`triaged_out=true` 记录仍写入队列并标为 `read_disposition=shallow_read`，后续由 abstract sweep 生成 abstract-only 轻量笔记；缺摘要的 metadata-only 候选进入 `metadata_triage.md` 批量报告或供人工回捞。T2 不允许出现 active `papers_verified` 中的论文既没有 deep-read 目标、也没有 shallow/backlog 去向；active pool 之外的候选保存在 `papers_backlog.jsonl`，不计入 T3 必读完成数。无 `deep_read_queue` 的旧 workspace fallback 仍使用 `expected_notes_ratio=1.0`，默认要求输入池 100% 覆盖。
+`deep_read_target` 是 T3 默认应读目标，`deep_read_max` 是保护位和高优先级 seed/bridge/citation hub 合并后的 active 上限；保护项会占用 active 名额，而不是无限额外追加。`deep_read_queue.jsonl` 同时是 active verified 池的阅读处置账本：非 `triaged_out` 记录是 T3 active deep-read 目标，`triaged_out=true` 记录仍写入队列。普通 shallow 记录标为 `read_disposition=shallow_read`，后续由 abstract sweep 生成 abstract-only 轻量笔记；超过 `bridge_pool_cap` 的 bridge 记录标为 `read_disposition=deferred` 与 `triaged_reason=bridge_pool_cap_exceeded`，默认不进入轻读证据，但保留覆盖账本和人工回捞路径。缺摘要的 metadata-only 候选进入 `metadata_triage.md` 批量报告或供人工回捞。T2 不允许出现 active `papers_verified` 中的论文既没有 deep-read 目标、也没有 shallow/deferred/backlog 去向；active pool 之外的候选保存在 `papers_backlog.jsonl`，不计入 T3 必读完成数。无 `deep_read_queue` 的旧 workspace fallback 仍使用 `expected_notes_ratio=1.0`，默认要求输入池 100% 覆盖。
 
 当前排序和处置的核心思想是：
 
@@ -1569,7 +1571,7 @@ T8/T9 会直接消费它，而不是重新从 note 手工抽引用。
 
 ### T3 的 Abstract Sweep（轻量补读）
 
-Deep read 完成后，orchestrator 自动运行 abstract sweep，从 active verified/dedup 和 `papers_backlog` 中补读尚未被 `paper_notes/` 或 `paper_notes_abstract/` 覆盖的候选。它只基于 title/abstract/metadata 做轻量补读，不是全文证据。含 abstract 的论文写入 `literature/paper_notes_abstract/`；只有 title/year/venue/DOI 等 metadata 的候选不再逐篇伪装成 note，而是批量写入 `literature/metadata_triage.md`，作为资源补取和升级阅读线索。
+Deep read 完成后，orchestrator 自动运行 abstract sweep，默认只从 active verified/dedup 中补读尚未被 `paper_notes/` 或 `paper_notes_abstract/` 覆盖的候选。它只基于 title/abstract/metadata 做轻量补读，不是全文证据。含 abstract 的论文写入 `literature/paper_notes_abstract/`；只有 title/year/venue/DOI 等 metadata 的候选不再逐篇伪装成 note，而是批量写入 `literature/metadata_triage.md`，作为资源补取和升级阅读线索。`papers_backlog.jsonl` 是覆盖账本和人工/显式回捞池，默认不被自动扫回证据链。
 
 配置在 `config/agent_params.yaml` 的 `reader.modes.read.behavior.abstract_sweep`：
 
@@ -1582,7 +1584,7 @@ reader:
           enabled: true
           lite_paper_num: 120     # 每轮最多补 120 篇，避免 backlog 爆量拖垮 T3
           min_relevance: 0.0      # 默认不按 metadata hint 丢弃
-          sources: [papers_verified, papers_dedup, papers_backlog]
+          sources: [papers_verified, papers_dedup]
           exclude_already_read: true
           include_metadata_only: true
           exclude_semantic_excluded: true
@@ -1597,6 +1599,7 @@ reader:
 
 - 跳过 `paper_notes/` 已覆盖的论文，匹配使用 ID、canonical_id、DOI、arXiv、title overlap 等多 key，不只看文件名
 - 跳过 `paper_notes_abstract/` 已覆盖的论文
+- 跳过 `deep_read_queue.jsonl` 或候选自身已标为 `read_disposition=deferred/backlog`、`triaged_reason=bridge_pool_cap_exceeded/t2_active_pool_cap_exceeded/domain_profile_filtered` 的记录；这些记录保留在覆盖账本中，但默认不进入 abstract-only 证据链
 - 跳过 explicit duplicate；默认跳过 semantic exclude / `shared_keyword_only/unrelated` / `can_enter_deep_read=false`，避免已排除论文重新进入 BibTeX、comparison table 和 T8 写作语料。需要排除线索复核时可显式设为 `exclude_semantic_excluded: false`
 - 保留缺摘要但有 title 的 metadata-only 候选，但只进入批量 triage report，不写入 per-paper note / BibTeX / comparison table
 - 如果 T3 已经完成全文/部分全文 note，abstract sweep 不再重复写一个 abstract note
@@ -1792,18 +1795,19 @@ Reader 读取工具生成的 `synthesis_workbench.json`、`synthesis_outline.md`
 | `note_count` | full-text note 数量 |
 | `abstract_note_count` | abstract-only note 数量 |
 | `total_note_count` | 总 note 数量 |
+| `weak_evidence_summary` | 靠前展示的弱证据摘要，确保 T4 prompt 截断时仍能看到 `abstract-only/metadata-only` 只能作补资源或弱 idea fuel |
 | `paper_ids` | 所有论文 ID 列表 |
-| `method_families` | 方法家族聚类（最多 5 个），每个包含 `name`、`paper_ids`、`representative_titles`、`core_observations`、`result_observations`、`_abstract_count`。当 LLM 提供 `llm_insights.family_classifications` 时，家族名称和成员分配由 LLM 决定；否则回退为 `LLM_REVIEW_REQUIRED: {method_text}` 占位 |
+| `method_families` | 方法家族聚类（最多 5 个），每个包含 `name`、`paper_ids`、`full_or_partial_paper_ids`、`abstract_only_paper_ids`、`representative_titles`、`core_observations`、`result_observations`、`evidence_levels`、`allowed_use` 和 `_abstract_count`。当 LLM 提供 `llm_insights.family_classifications` 时，家族名称和成员分配由 LLM 决定；否则回退为 `LLM_REVIEW_REQUIRED: {method_text}` 占位 |
 | `shared_assumption_candidates` | 共同假设候选，每个包含 `assumption`、`why_questionable`、`supporting_papers`。当 LLM 提供 `llm_insights.shared_assumptions` 时直接使用 LLM 分析；否则从 note 的 Limitations/Gaps 段落提取 review hint |
 | `mechanism_claim_clusters` | 机械聚合的机制 claim cluster hint（见下文） |
 | `domain_consensus` | 兼容旧代码的 alias；语义同 `mechanism_claim_clusters`，不要当成已验证领域共识 |
 | `metric_landscape_hints` | 指标/效率上下文 hint，不是 opportunity map；T4 机会生成应优先消费 contribution_space 和 tensions |
-| `contribution_space` | CDR 贡献空间 hint：按 contribution_type、artifact 类型、design_rationale snippets 组织，供 LLM 复核 |
+| `contribution_space` | CDR 贡献空间 hint：按 contribution_type、artifact 类型、design_rationale snippets 组织，snippet 会带 `evidence_level/allowed_use`，供 LLM 复核 |
 | `cross_paper_tensions` | 跨论文矛盾/设计论证竞争素材；是 T4 Pass 1 的生成燃料，不是 provenance gate |
 | `citation_graph_context` | T2 domain_map 的引用图上下文，包含 citation_edges、core/theory_bridge/adjacent/boundary ID 和 warnings；是客观骨架 hint，不是最终综述结构 |
 | `domain_map_bucket_summary` | core/theory_bridge/adjacent/boundary 数量和 edge_count，供 LLM 判断语料是否有足够邻接覆盖 |
-| `adjacent_transfers` | 从 `domain_map.adjacent` 与 note A/B 字段生成的邻接迁移 seed，每项含 mechanism/source_papers/why_unused_in_target/transfer_hypothesis_hint；必须由 LLM 复核，不是成型 idea |
-| `bridge_transfer_drafts` | 从 `domain_map.theory_bridge` 生成的半成型交叉 seed，每项含 `bridge_id`、`bridge_name`、`transferable_mechanism`、`how_it_maps_to_project`、`why_potentially_novel`、`risk`；这是 T4 的 idea fuel，不是最终 idea |
+| `adjacent_transfers` | 从 `domain_map.adjacent` 与 note A/B 字段生成的邻接迁移 seed，每项含 mechanism/source_papers/why_unused_in_target/transfer_hypothesis_hint/evidence_level/allowed_use；必须由 LLM 复核，不是成型 idea |
+| `bridge_transfer_drafts` | 从 `domain_map.theory_bridge` 生成的半成型交叉 seed，每项含 `bridge_id`、`bridge_name`、`transferable_mechanism`、`how_it_maps_to_project`、`why_potentially_novel`、`risk`、`evidence_level/allowed_use`；这是 T4 的 idea fuel，不是最终 idea |
 | `trend_candidates` | 技术趋势候选。当 LLM 提供 `llm_insights.trends` 时直接使用；否则回退为 chronological evidence hint |
 | `research_question_candidates` | 可操作研究问题候选。当 LLM 提供 `llm_insights.research_questions` 时直接使用；否则从 note 的 questions/gaps 段落提取 review hint |
 | `notes` | 原始 note 解析结果 |
@@ -2141,7 +2145,7 @@ Agent 调用 `export_survey_for_ideation`，导出：
 - `ideation/survey_insights.json`
 - `drafts/survey/survey_summary.md`
 
-`survey_insights.json` 的语义是 `survey_insights_optional_ideation_fuel_not_gate`。T4 可以读取 taxonomy、challenge_hints、future_direction_hints，生成 `idea_origin=survey_driven` 候选或补强主线推理；但 survey insights 不是 gate，不强迫 T4 只按 survey 生成 idea。
+`survey_insights.json` 的语义是 `survey_insights_optional_ideation_fuel_not_gate`。T4 可以读取 taxonomy、challenge_hints、future_direction_hints，生成 `idea_origin=survey_driven` 候选或补强主线推理；`resource_upgrade_needs` 会从 `survey_plan.json` 和 `survey_state.shared_facts` 合并规范化导出，用于提醒 T4 哪些 abstract-only / metadata-only 材料只能作为补资源或升级阅读任务，不能作为 selected hypothesis 的强证据。但 survey insights 不是 gate，不强迫 T4 只按 survey 生成 idea。T4 validator 允许 weak-only 候选可见上桌并标 `constraint_status=not_supported_by_current_evidence`，但禁止这类候选被 `selected` 或绑定最终 `hypothesis_refs`。
 
 ### 续跑语义
 

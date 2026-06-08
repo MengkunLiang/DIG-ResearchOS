@@ -54,6 +54,13 @@ def _survey_plan() -> dict:
             "corpus_sufficiency": "sufficient",
             "classes_needing_more_lit": [],
         },
+        "resource_upgrade_needs": [
+            {
+                "paper_or_topic": "abstract_note",
+                "reason": "abstract_only",
+                "suggested_action": "Acquire PDF before using it as mechanism evidence.",
+            }
+        ],
     }
 
 
@@ -83,6 +90,19 @@ async def test_survey_tools_build_state_assemble_audit_and_export(tmp_path: Path
     assert state["semantics"] == "survey_state_for_taxonomy_driven_section_writing_not_final_claims"
     assert state["sections"]["theme_1"]["title"] == "Perturbation Mechanisms"
     assert state["sections"]["theme_3"]["status"] == "skipped"
+    assert state["shared_facts"]["resource_upgrade_needs"][0]["allowed_use"] == "resource_upgrade_hint_not_survey_or_idea_evidence"
+    state["shared_facts"]["resource_upgrade_needs"].append(
+        {
+            "paper_or_topic": "state_added_need",
+            "reason": "review_found_weak_evidence",
+            "suggested_action": "Acquire full text before T4 selection.",
+            "allowed_use": "resource_upgrade_hint_not_survey_or_idea_evidence",
+        }
+    )
+    (ws / "drafts" / "survey" / "survey_state.json").write_text(
+        json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     assert (ws / "drafts" / "survey" / "section_outlines" / "theme_1.md").exists()
 
     sections_dir = ws / "drafts" / "survey" / "sections"
@@ -121,6 +141,10 @@ async def test_survey_tools_build_state_assemble_audit_and_export(tmp_path: Path
     insights = json.loads((ws / "ideation" / "survey_insights.json").read_text(encoding="utf-8"))
     assert insights["semantics"] == "survey_insights_optional_ideation_fuel_not_gate"
     assert insights["taxonomy"]["dimension"] == "mechanism families"
+    assert insights["resource_upgrade_needs"][0]["paper_or_topic"] == "abstract_note"
+    assert any(item["paper_or_topic"] == "state_added_need" for item in insights["resource_upgrade_needs"])
+    summary = (ws / "drafts" / "survey" / "survey_summary.md").read_text(encoding="utf-8")
+    assert "Resource Upgrade Needs" in summary
 
 
 def test_survey_writer_registry_and_phase():
@@ -147,6 +171,39 @@ def test_survey_writer_compile_validation_accepts_success_report(tmp_path: Path)
     agent = SurveyWriterAgent(mode="survey_compile")
     ctx = type("Ctx", (), {"workspace_dir": ws, "mode": "survey_compile", "extra": {}})()
     ok, err = agent.validate_outputs(ctx)
+    assert ok, err
+
+
+def test_survey_writer_plan_validation_rejects_weak_evidence_as_core_paper(tmp_path: Path):
+    ws = tmp_path
+    (ws / "drafts" / "survey").mkdir(parents=True)
+    (ws / "literature" / "paper_notes_abstract").mkdir(parents=True)
+    (ws / "literature" / "paper_notes_abstract" / "weak_note.md").write_text(
+        "# Weak Note\n\n- **ID**: weak_note\n- **Status**: [ABSTRACT-ONLY]\n",
+        encoding="utf-8",
+    )
+    plan = _survey_plan()
+    plan["taxonomy"]["tree"][0]["paper_ids"].append("weak_note")
+    _write_json(ws / "drafts" / "survey" / "survey_plan.json", plan)
+    agent = SurveyWriterAgent(mode="survey_plan")
+    ctx = type("Ctx", (), {"workspace_dir": ws, "mode": "survey_plan", "extra": {}})()
+
+    ok, err = agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "abstract-only/metadata-only" in err
+
+    plan["resource_upgrade_needs"].append(
+        {
+            "paper_or_topic": "weak_note",
+            "reason": "abstract_only",
+            "suggested_action": "Acquire full text before using as survey evidence.",
+        }
+    )
+    _write_json(ws / "drafts" / "survey" / "survey_plan.json", plan)
+
+    ok, err = agent.validate_outputs(ctx)
+
     assert ok, err
 
 

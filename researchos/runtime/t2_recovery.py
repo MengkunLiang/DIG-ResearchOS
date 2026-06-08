@@ -112,6 +112,17 @@ def _load_bridge_domain_plan(workspace_dir: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _bridge_priorities_from_plan(plan: dict[str, Any]) -> dict[str, str]:
+    domains = plan.get("bridge_domains") if isinstance(plan, dict) else []
+    if not isinstance(domains, list):
+        return {}
+    return {
+        str(item.get("bridge_id") or "").strip(): str(item.get("priority") or "should_explore").strip()
+        for item in domains
+        if isinstance(item, dict) and str(item.get("bridge_id") or "").strip()
+    }
+
+
 def _first_text(value: Any, default: str = "") -> str:
     if isinstance(value, list):
         for item in value:
@@ -237,11 +248,18 @@ def _select_active_candidate_pool(
         for item in (bridge_plan.get("bridge_domains") if isinstance(bridge_plan.get("bridge_domains"), list) else [])
         if isinstance(item, dict) and str(item.get("bridge_id") or "").strip()
     ]
+    bridge_priorities = _bridge_priorities_from_plan(bridge_plan)
+    skipped_bridge_ids = {
+        bridge_id
+        for bridge_id, priority in bridge_priorities.items()
+        if priority in {"no_cross", "skip", "defer", "drop"}
+    }
     seed_key_sets = [paper_record_match_keys(seed) for seed in _load_seed_papers(workspace_dir)]
 
     selected: list[dict[str, Any]] = []
     selected_keys: set[str] = set()
     selection_reasons: Counter[str] = Counter()
+    bridge_active_counts: Counter[str] = Counter()
 
     def record_keys(record: dict[str, Any]) -> set[str]:
         keys = paper_record_match_keys(record)
@@ -293,9 +311,17 @@ def _select_active_candidate_pool(
             _paper_title_text(record.get("title")).casefold(),
         )
 
-    def add_records(records: list[dict[str, Any]], reason: str, *, limit: int | None = None) -> None:
+    def add_records(
+        records: list[dict[str, Any]],
+        reason: str,
+        *,
+        limit: int | None = None,
+        predicate: Any | None = None,
+    ) -> None:
         added = 0
         for record in sorted(records, key=rank_key):
+            if predicate is not None and not predicate(record):
+                continue
             if len(selected) >= max_count:
                 break
             if limit is not None and added >= max(0, int(limit)):
@@ -308,16 +334,54 @@ def _select_active_candidate_pool(
             active["active_pool_reason"] = reason
             selected.append(active)
             selected_keys.update(keys)
+            for bridge_id in bridge_ids(active):
+                bridge_active_counts[bridge_id] += 1
             selection_reasons[reason] += 1
             added += 1
+
+    def bridge_cap_allows(record: dict[str, Any]) -> bool:
+        if is_seed(record):
+            return True
+        ids = [bridge_id for bridge_id in bridge_ids(record) if bridge_id in bridge_priorities]
+        if not ids:
+            return True
+        for bridge_id in ids:
+            priority = bridge_priorities.get(bridge_id) or "should_explore"
+            if bridge_id in skipped_bridge_ids:
+                return False
+            cap = (
+                cfg.must_bridge_active_pool_cap_per_bridge
+                if priority == "must_explore"
+                else cfg.should_bridge_active_pool_cap_per_bridge
+            )
+            if cap <= 0 or bridge_active_counts[bridge_id] >= cap:
+                return False
+        return True
 
     seeds = [paper for paper in scored_papers if is_seed(paper)]
     add_records(seeds, "seed")
 
     screened = [paper for paper in scored_papers if not is_seed(paper) and is_screened_deep(paper)]
-    add_records(screened, "semantic_screen_deep_read", limit=cfg.screened_active_pool_cap)
+    add_records(
+        screened,
+        "semantic_screen_deep_read",
+        limit=cfg.screened_active_pool_cap,
+        predicate=bridge_cap_allows,
+    )
 
     for bridge_id in confirmed_bridges:
+        priority = bridge_priorities.get(bridge_id) or "should_explore"
+        if priority in {"no_cross", "skip", "defer", "drop"}:
+            selection_reasons[f"bridge_skipped:{bridge_id}:{priority}"] += 0
+            continue
+        cap = (
+            cfg.must_bridge_active_pool_cap_per_bridge
+            if priority == "must_explore"
+            else cfg.should_bridge_active_pool_cap_per_bridge
+        )
+        if cap <= 0:
+            selection_reasons[f"bridge_no_active_slots:{bridge_id}:{priority}"] += 0
+            continue
         bridge_pool = [
             paper
             for paper in scored_papers
@@ -325,14 +389,15 @@ def _select_active_candidate_pool(
             and not is_screened_deep(paper)
             and bridge_id in bridge_ids(paper)
         ]
-        add_records(bridge_pool, f"bridge_recall:{bridge_id}", limit=cfg.bridge_active_pool_cap_per_bridge)
+        add_records(bridge_pool, f"bridge_recall:{bridge_id}:{priority}", limit=cap, predicate=bridge_cap_allows)
 
     add_records(
         [paper for paper in scored_papers if not is_seed(paper) and is_snowball(paper)],
         "citation_snowball",
         limit=cfg.snowball_active_pool_cap,
+        predicate=bridge_cap_allows,
     )
-    add_records(scored_papers, "metadata_priority_fill")
+    add_records(scored_papers, "metadata_priority_fill", predicate=bridge_cap_allows)
 
     backlog: list[dict[str, Any]] = []
     for record in scored_papers:
@@ -354,7 +419,11 @@ def _select_active_candidate_pool(
         "backlog_count": len(backlog),
         "selection_reasons": dict(selection_reasons),
         "confirmed_bridge_ids": confirmed_bridges,
+        "bridge_priorities": bridge_priorities,
         "bridge_active_pool_cap_per_bridge": cfg.bridge_active_pool_cap_per_bridge,
+        "must_bridge_active_pool_cap_per_bridge": cfg.must_bridge_active_pool_cap_per_bridge,
+        "should_bridge_active_pool_cap_per_bridge": cfg.should_bridge_active_pool_cap_per_bridge,
+        "skipped_bridge_ids": sorted(skipped_bridge_ids),
         "screened_active_pool_cap": cfg.screened_active_pool_cap,
         "snowball_active_pool_cap": cfg.snowball_active_pool_cap,
     }
@@ -429,6 +498,39 @@ def _as_active_pool_backlog_record(record: dict[str, Any]) -> dict[str, Any]:
     item["read_disposition"] = "backlog"
     item["read_disposition_reason"] = "retained_in_papers_backlog_for_audit_or_later_revisit"
     return item
+
+
+def _domain_filter_backlog_record(record: dict[str, Any], domain_profile: dict[str, Any]) -> dict[str, Any]:
+    item = dict(record)
+    item["t2_pool_role"] = "backlog"
+    item["triaged_out"] = True
+    item["triaged_reason"] = "domain_profile_filtered"
+    item["read_disposition"] = "backlog"
+    item["read_disposition_reason"] = "excluded_from_active_pool_by_domain_profile_retained_for_audit"
+    item.setdefault("domain_filter", {})
+    if isinstance(item["domain_filter"], dict):
+        item["domain_filter"].update(
+            {
+                "profile_driven": True,
+                "filtered_out": True,
+                "target_domain": str(domain_profile.get("target_domain") or domain_profile.get("domain") or "profile"),
+            }
+        )
+    return item
+
+
+def _filter_records_by_identity(
+    records: list[dict[str, Any]],
+    excluded_records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    excluded_keys = _candidate_pool_identity_keys(excluded_records)
+    if not excluded_keys:
+        return records
+    return [
+        record
+        for record in records
+        if not (_candidate_record_identity_keys(record) & excluded_keys)
+    ]
 
 
 def _dedupe_backlog_against_active_and_backlog(
@@ -1667,6 +1769,66 @@ async def _backfill_recovered_multisource_abstracts(
     return stats
 
 
+async def _pre_active_light_backfill(
+    papers: list[dict[str, Any]],
+    policy: WorkspaceAccessPolicy,
+    config: T2FinalizeConfig,
+) -> dict[str, Any]:
+    """Best-effort metadata repair before active/backlog selection.
+
+    This pass is intentionally bounded and non-semantic. It gives near-frontier
+    raw/dedup candidates a fair chance to receive DOI/OpenAlex/abstract/OA
+    hints before `papers_dedup.jsonl` is capped into the active pool. Expensive
+    citation snowball still runs only after active selection.
+    """
+
+    limit = int(config.pre_active_light_backfill_max)
+    if limit == 0 or not papers:
+        return {
+            "enabled": False,
+            "reason": "disabled_or_empty",
+            "input_count": len(papers),
+            "candidate_count": 0,
+        }
+    candidates = papers if limit < 0 else papers[: max(0, limit)]
+    if not candidates:
+        return {
+            "enabled": False,
+            "reason": "empty_candidate_slice",
+            "input_count": len(papers),
+            "candidate_count": 0,
+        }
+
+    title_stats = await _backfill_recovered_openalex_title_metadata(
+        candidates,
+        max_concurrency=config.metadata_backfill_max_concurrency,
+    )
+    openalex_stats = await _backfill_recovered_openalex_metadata(
+        candidates,
+        max_concurrency=config.metadata_backfill_max_concurrency,
+    )
+    abstract_stats = await _backfill_recovered_multisource_abstracts(
+        candidates,
+        policy,
+        title_match_threshold=config.abstract_backfill_title_match_threshold,
+        max_concurrency=config.abstract_backfill_max_concurrency,
+    )
+    return {
+        "enabled": True,
+        "input_count": len(papers),
+        "candidate_count": len(candidates),
+        "skipped_by_cap": max(0, len(papers) - len(candidates)),
+        "openalex_title_backfill": title_stats,
+        "openalex_detail_backfill": openalex_stats,
+        "multisource_abstract_backfill": abstract_stats,
+        "abstract_after": sum(1 for paper in candidates if clean_abstract(paper.get("abstract"))),
+        "pdf_hint_after": sum(1 for paper in candidates if _record_has_pdf_hint(paper)),
+        "reference_hint_after": sum(
+            1 for paper in candidates if paper.get("referenced_works") or paper.get("references")
+        ),
+    }
+
+
 async def _persist_snowball_candidates(
     policy: WorkspaceAccessPolicy,
     candidates: list[dict[str, Any]],
@@ -2425,21 +2587,52 @@ async def finalize_t2_outputs(
         doi_dedup=True,
         title_threshold=t2_config.dedup_title_threshold,
     )
+    domain_filtered_backlog: list[dict[str, Any]] = []
     if domain_profile:
+        pre_domain_filter_papers = dedup_papers
         dedup_papers = filter_by_domain(
             dedup_papers,
             target_domain=str(domain_profile.get("target_domain") or domain_profile.get("domain") or "profile"),
             domain_profile=domain_profile,
         )
+        kept_keys: set[str] = set()
+        for paper in dedup_papers:
+            kept_keys.update(paper_record_match_keys(paper))
+            title_key = normalize_loose_identity_key(_paper_title_text(paper.get("title")))
+            if title_key:
+                kept_keys.add(f"title:{title_key}")
+        for paper in pre_domain_filter_papers:
+            keys = set(paper_record_match_keys(paper))
+            title_key = normalize_loose_identity_key(_paper_title_text(paper.get("title")))
+            if title_key:
+                keys.add(f"title:{title_key}")
+            if keys and keys & kept_keys:
+                continue
+            domain_filtered_backlog.append(_domain_filter_backlog_record(paper, domain_profile))
     # Seed records may be absent from papers_raw or may only contain a local
     # PDF/title. Insert them before deterministic metadata repair so DOI/arXiv
     # and title-based backfill can improve seed abstracts instead of leaving
     # the highest-priority papers with the weakest metadata.
     dedup_papers = _ensure_seed_papers(dedup_papers, dedup_papers + raw_papers, workspace_dir)
 
-    provisional_scored_papers = score_papers(dedup_papers, keywords)
+    pre_active_scored_papers = score_papers(dedup_papers, keywords)
+    pre_active_scored_papers = sorted(
+        pre_active_scored_papers,
+        key=lambda paper: (
+            float(paper.get("relevance_score", 0.0)),
+            int(paper.get("citation_count", 0) or 0),
+            int(paper.get("year", 0) or 0),
+        ),
+        reverse=True,
+    )
+    pre_active_light_backfill = await _pre_active_light_backfill(
+        pre_active_scored_papers,
+        policy,
+        t2_config,
+    )
+    pre_active_scored_papers = score_papers(pre_active_scored_papers, keywords)
     provisional_scored_papers = sorted(
-        provisional_scored_papers,
+        pre_active_scored_papers,
         key=lambda paper: (
             float(paper.get("relevance_score", 0.0)),
             int(paper.get("citation_count", 0) or 0),
@@ -2517,6 +2710,8 @@ async def finalize_t2_outputs(
             doi_dedup=True,
             title_threshold=t2_config.dedup_title_threshold,
         )
+        if domain_filtered_backlog:
+            dedup_papers = _filter_records_by_identity(dedup_papers, domain_filtered_backlog)
         if snowball_candidates:
             # Newly resolved snowball records may have DOI/title only; run the
             # same mechanical repair once more before scoring/verification.
@@ -2568,12 +2763,15 @@ async def finalize_t2_outputs(
     )
     active_pool_meta["pre_backfill_active_count"] = len(dedup_papers)
     active_pool_meta["pre_backfill_backlog_count"] = len(pre_backfill_backlog_papers)
+    active_pool_meta["domain_profile_filtered_count"] = len(domain_filtered_backlog)
     final_papers = _ensure_seed_papers(final_papers, scored_papers + raw_papers, workspace_dir)
+    final_papers = _filter_records_by_identity(final_papers, domain_filtered_backlog)
     final_papers = deduplicate_papers(
         final_papers,
         doi_dedup=True,
         title_threshold=t2_config.dedup_title_threshold,
     )
+    backlog_papers = [*backlog_papers, *domain_filtered_backlog]
     final_papers, backlog_papers, active_pool_meta = _cap_active_pool_after_seed_repair(
         final_papers,
         backlog_papers,
@@ -2750,7 +2948,8 @@ async def finalize_t2_outputs(
         f"max={active_pool_meta.get('active_pool_max')}, "
         f"selection_reasons={active_pool_meta.get('selection_reasons')}; "
         "`papers_raw.jsonl` 保留全量检索审计，`papers_dedup.jsonl`/`papers_verified.jsonl` "
-        "只保存本轮 active 候选池，超额候选写入 `papers_backlog.jsonl` 供 abstract sweep 或人工回捞。\n"
+        "只保存本轮 active 候选池，超额或 domain-profile 排除候选写入 "
+        "`papers_backlog.jsonl` 供审计或人工/显式回捞，不会被普通 abstract sweep 自动读回。\n"
     )
     search_log += (
         "- T2/T3 阈值配置来源: "
@@ -2759,10 +2958,23 @@ async def finalize_t2_outputs(
         f"finish_finalize_min_raw={t2_config.finish_finalize_min_raw}, "
         f"active_pool_max={t2_config.active_pool_max}, "
         f"dedup_title_threshold={t2_config.dedup_title_threshold}, "
+        f"pre_active_light_backfill_max={t2_config.pre_active_light_backfill_max}, "
+        f"must_bridge_cap={t2_config.must_bridge_active_pool_cap_per_bridge}, "
+        f"should_bridge_cap={t2_config.should_bridge_active_pool_cap_per_bridge}, "
         f"snowball_max_candidates={t2_config.snowball_max_candidates}, "
         f"deep_read_target={queue_config.deep_read_target}, "
         f"deep_read_max={queue_config.deep_read_max}, "
         f"mainline_screened_cap={queue_config.mainline_screened_cap}。\n"
+    )
+    search_log += (
+        "- Active 切分前轻量补全: "
+        f"enabled={pre_active_light_backfill.get('enabled')}, "
+        f"input={pre_active_light_backfill.get('input_count')}, "
+        f"candidate={pre_active_light_backfill.get('candidate_count')}, "
+        f"skipped_by_cap={pre_active_light_backfill.get('skipped_by_cap')}, "
+        f"abstract_after={pre_active_light_backfill.get('abstract_after')}, "
+        f"pdf_hint_after={pre_active_light_backfill.get('pdf_hint_after')}, "
+        f"reference_hint_after={pre_active_light_backfill.get('reference_hint_after')}\n"
     )
     search_log += (
         "- OpenAlex 标题兜底补全: "
@@ -2902,6 +3114,7 @@ async def finalize_t2_outputs(
         "query_count": len(queries),
         "trace_count": trace_count,
         "openalex_backfill": openalex_backfill,
+        "pre_active_light_backfill": pre_active_light_backfill,
         "openalex_title_backfill": openalex_title_backfill,
         "multisource_abstract_backfill": multisource_abstract_backfill,
         "metadata_backfill": metadata_backfill,

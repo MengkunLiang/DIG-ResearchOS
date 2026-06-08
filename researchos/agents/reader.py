@@ -183,6 +183,11 @@ class ReaderAgent(Agent):
                 comparison_table_path,
                 default="",
             )[:1200]
+            metadata_triage_path = ctx.workspace_dir / "literature" / "metadata_triage.md"
+            context_vars["metadata_triage_preview"] = read_text_file(
+                metadata_triage_path,
+                default="",
+            )[:1200]
             context_vars["agent_guidance"] = load_agent_guidance("literature-synthesis")
 
         return render_prompt(self.spec.prompt_template, ctx, **context_vars)

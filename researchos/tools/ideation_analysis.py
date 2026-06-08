@@ -136,6 +136,8 @@ def analyze_ideation_coverage(
             source_stats["origin_design_rationale_derivation"] += 1
         elif idea_origin == "cross_domain_analogy":
             source_stats["origin_cross_domain_analogy"] += 1
+        elif idea_origin == "survey_driven":
+            source_stats["origin_survey_driven"] += 1
         elif idea_origin == "bridge_synthesis":
             source_stats["origin_bridge_synthesis"] += 1
         if constraint_status == "supplement" or idea_origin in {

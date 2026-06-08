@@ -86,6 +86,7 @@ class AuditSurveyCoverageParams(BaseModel):
 
 class ExportSurveyForIdeationParams(BaseModel):
     survey_plan_path: str = Field(default="drafts/survey/survey_plan.json")
+    survey_state_path: str = Field(default="drafts/survey/survey_state.json")
     survey_audit_path: str = Field(default="drafts/survey/survey_audit.json")
     survey_tex_path: str = Field(default="drafts/survey/survey.tex")
     insights_output_path: str = Field(default="ideation/survey_insights.json")
@@ -158,6 +159,7 @@ class BuildSurveyStateTool(Tool):
                 "taxonomy_classes": _taxonomy_classes(plan),
                 "evolution_narrative": str(plan.get("evolution_narrative") or ""),
                 "coverage_selfcheck": plan.get("coverage_selfcheck") or {},
+                "resource_upgrade_needs": _resource_upgrade_needs(plan),
                 "expansion_summary": expansion.get("summary", "") if isinstance(expansion, dict) else "",
             },
             "revision_log": [],
@@ -356,6 +358,7 @@ class ExportSurveyForIdeationTool(Tool):
         params = ExportSurveyForIdeationParams(**kwargs)
         try:
             plan = _read_json(self.policy.resolve_read(params.survey_plan_path))
+            state = _read_optional_json(self.policy, params.survey_state_path)
             audit = _read_optional_json(self.policy, params.survey_audit_path)
             tex = self.policy.resolve_read(params.survey_tex_path).read_text(encoding="utf-8", errors="replace")
             insights_path = self.policy.resolve_write(params.insights_output_path)
@@ -368,6 +371,10 @@ class ExportSurveyForIdeationTool(Tool):
             "taxonomy": plan.get("taxonomy") or {},
             "evolution_narrative": plan.get("evolution_narrative") or "",
             "coverage_selfcheck": plan.get("coverage_selfcheck") or {},
+            "resource_upgrade_needs": _merge_resource_upgrade_needs(
+                _resource_upgrade_needs(plan),
+                _resource_upgrade_needs(state.get("shared_facts") if isinstance(state.get("shared_facts"), dict) else state),
+            ),
             "outline": plan.get("outline") or [],
             "challenge_hints": _extract_section_hints(tex, "challenge"),
             "future_direction_hints": _extract_section_hints(tex, "future"),
@@ -388,6 +395,7 @@ class ExportSurveyForIdeationTool(Tool):
             "",
             f"- Taxonomy dimension: {((plan.get('taxonomy') or {}).get('dimension') if isinstance(plan.get('taxonomy'), dict) else '')}",
             f"- Outline sections: {len(plan.get('outline') or [])}",
+            f"- Resource upgrade needs: {len(insights['resource_upgrade_needs'])}",
             f"- Audit passed: {insights['audit_summary']['passed']}",
             "",
             "## Challenge Hints",
@@ -395,6 +403,16 @@ class ExportSurveyForIdeationTool(Tool):
             "",
             "## Future Direction Hints",
             *[f"- {item}" for item in insights["future_direction_hints"][:8]],
+            "",
+            "## Resource Upgrade Needs",
+            *[
+                "- {paper_or_topic}: {reason} -> {suggested_action}".format(
+                    paper_or_topic=item.get("paper_or_topic") or item.get("topic") or "unknown",
+                    reason=item.get("reason") or "unspecified",
+                    suggested_action=item.get("suggested_action") or "acquire stronger evidence before use",
+                )
+                for item in insights["resource_upgrade_needs"][:8]
+            ],
             "",
         ]
         summary_path.write_text("\n".join(summary), encoding="utf-8")
@@ -544,6 +562,51 @@ def _taxonomy_classes(plan: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(tree, list):
         return []
     return [item for item in tree if isinstance(item, dict)]
+
+
+def _resource_upgrade_needs(plan: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return normalized weak-evidence upgrade needs from an LLM survey plan."""
+
+    raw = plan.get("resource_upgrade_needs")
+    if not isinstance(raw, list):
+        return []
+    needs: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        paper_or_topic = str(item.get("paper_or_topic") or item.get("topic") or item.get("paper_id") or "").strip()
+        reason = str(item.get("reason") or "").strip()
+        suggested_action = str(item.get("suggested_action") or item.get("action") or "").strip()
+        if not (paper_or_topic or reason or suggested_action):
+            continue
+        needs.append(
+            {
+                "paper_or_topic": paper_or_topic or "unspecified",
+                "reason": reason or "weak_evidence",
+                "suggested_action": suggested_action or "acquire abstract/PDF before using as evidence",
+                "allowed_use": "resource_upgrade_hint_not_survey_or_idea_evidence",
+            }
+        )
+    return needs
+
+
+def _merge_resource_upgrade_needs(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for group in groups:
+        for item in group or []:
+            if not isinstance(item, dict):
+                continue
+            key = (
+                str(item.get("paper_or_topic") or "").casefold().strip(),
+                str(item.get("reason") or "").casefold().strip(),
+                str(item.get("suggested_action") or "").casefold().strip(),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(dict(item))
+    return merged
 
 
 def _corpus_scope(decision: dict[str, Any]) -> str:

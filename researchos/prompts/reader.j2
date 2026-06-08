@@ -359,6 +359,7 @@ paper_id,Paper Title,2026,Venue,Method Family,DatasetOrSetting,Primary Metric,85
 ## 输入
 - `literature/paper_notes/`: 包含 {{ note_count }} 篇论文的结构化笔记（full-text 精读）
 - `literature/paper_notes_abstract/`: {% if abstract_note_count %}{{ abstract_note_count }} 篇 abstract-only 笔记（证据较弱）{% else %}abstract-only 笔记（如有，由 runtime 自动补读）{% endif %}
+- `literature/metadata_triage.md`: metadata-only 候选的批量补资源/升级阅读线索；不是 family、trend、mechanism 或 claim 的证据
 - `literature/comparison_table.csv`: 论文对比表
 - `literature/domain_map.json`: T2 生成的引用图领域地图；用于把 citation_edges 作为客观骨架，并识别 core/theory_bridge/adjacent/boundary 区域
 {% if missing_areas %}
@@ -370,6 +371,11 @@ paper_id,Paper Title,2026,Venue,Method Family,DatasetOrSetting,Primary Metric,85
 ```csv
 {{ comparison_table_preview }}
 ```
+{% endif %}
+{% if metadata_triage_preview %}
+
+### metadata_triage.md 预览（metadata-only，不能作为证据）
+{{ metadata_triage_preview }}
 {% endif %}
 {% if note_id_preview %}
 - 已发现的 paper note ID（前 {{ note_id_preview|length }} 个）：`{{ note_id_preview|join('`, `') }}`
@@ -460,7 +466,7 @@ build_synthesis_workbench(
 
 然后由你直接写 `literature/synthesis.md`。如果工具产物中的候选分类、假设或问题不合理，必须改写；不要为了迎合工具输出而保留错误结论。
 
-## synthesis.md 必需章节（缺一不可）
+## synthesis.md 必需章节（6 个，缺一不可）
 
 ### 1. 方法家族分类 (Method Families)
 将所有论文按方法聚类成 3-5 个家族。每个家族包含：
@@ -542,7 +548,7 @@ build_synthesis_workbench(
 
 ## 完成标准
 
-- synthesis.md 包含全部5个必需章节
+- synthesis.md 包含全部6个必需章节
 - 每个章节有实质性内容（不是空壳）
 - 长度在3000-8000字之间
 - 完成后调用 `finish_task`

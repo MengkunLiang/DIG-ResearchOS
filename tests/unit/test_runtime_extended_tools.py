@@ -1153,6 +1153,53 @@ async def test_build_synthesis_workbench_writes_staged_outputs(tmp_workspace: Pa
 
 
 @pytest.mark.asyncio
+async def test_build_synthesis_workbench_exposes_weak_evidence_upgrade_channel(tmp_workspace: Path):
+    literature = tmp_workspace / "literature"
+    notes_dir = literature / "paper_notes"
+    notes_dir.mkdir(parents=True)
+    (notes_dir / "full_note.md").write_text(
+        _note("full_note", family_hint="Full evidence"),
+        encoding="utf-8",
+    )
+    abstract_dir = literature / "paper_notes_abstract"
+    abstract_dir.mkdir(parents=True)
+    (abstract_dir / "abstract_note.md").write_text(
+        _note("abstract_note", family_hint="Abstract-only")
+        .replace("- **Status**: [FULL-TEXT]", "- **Status**: [ABSTRACT-ONLY]")
+        + "\n## B. 桥接点\nAbstract-only bridge hint; verify with full text.\n",
+        encoding="utf-8",
+    )
+    (literature / "metadata_triage.md").write_text(
+        "# Metadata-only Literature Triage\n\n"
+        "## Resource Acquisition Suggestions\n"
+        "- `meta_paper` needs DOI/OpenAlex/PDF lookup before evidence use.\n",
+        encoding="utf-8",
+    )
+    policy = WorkspaceAccessPolicy(tmp_workspace, ["", "literature/"], ["", "literature/"])
+    tool = BuildSynthesisWorkbenchTool(policy)
+
+    result = await tool.execute(write_final=False)
+
+    assert result.ok, result.content
+    workbench = json.loads((literature / "synthesis_workbench.json").read_text(encoding="utf-8"))
+    weak = workbench["weak_evidence_and_resource_upgrade"]
+    assert workbench["weak_evidence_summary"]["allowed_use"] == "prompt_visible_guardrail_not_claim_evidence"
+    assert weak["semantics"] == "weak_evidence_and_resource_upgrade_not_claim_evidence"
+    assert weak["abstract_only_count"] == 1
+    assert weak["metadata_triage_available"] is True
+    assert "meta_paper" in weak["metadata_triage_excerpt"]
+    family = next(item for item in workbench["method_families"] if item["_abstract_count"] == 1)
+    assert "allowed_use" in family
+    assert "abstract_only_paper_ids" in family
+    snippets = workbench["contribution_space"]["design_rationale_snippets"]
+    assert all("allowed_use" in item and "evidence_level" in item for item in snippets)
+    outline = (literature / "synthesis_outline.md").read_text(encoding="utf-8")
+    draft = (literature / "synthesis_draft.md").read_text(encoding="utf-8")
+    assert "Weak Evidence / Resource Upgrade" in outline
+    assert "Do not use `metadata_triage.md` as evidence" in draft
+
+
+@pytest.mark.asyncio
 async def test_build_synthesis_workbench_uses_domain_map_for_adjacent_transfers(tmp_workspace: Path):
     literature = tmp_workspace / "literature"
     notes_dir = literature / "paper_notes"
