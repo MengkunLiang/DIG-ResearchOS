@@ -1047,6 +1047,8 @@ class AgentRunner:
 
         if ctx.task_id != "T3":
             return
+        if ctx.extra.get("skip_t3_abstract_sweep"):
+            return
         allowed_stop_reasons = {
             AgentResult.STOP_FINISHED,
             AgentResult.STOP_MAX_STEPS,
@@ -1183,6 +1185,7 @@ class AgentRunner:
             return False
 
         print("[Agent] T3 检测到已有 deep-read 产物且校验通过，跳过 LLM 续跑", flush=True)
+        ctx.extra["skip_t3_abstract_sweep"] = True
         self._record_runtime_completion(
             ctx,
             "t3_resume_prefinalize",

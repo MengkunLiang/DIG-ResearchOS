@@ -2458,6 +2458,7 @@ async def test_t3_resume_prefinalize_skips_llm_when_artifacts_validate(tmp_works
     assert result.ok
     assert result.metadata["completion_mode"] == "t3_resume_prefinalize"
     assert llm.call_count == 0
+    assert ctx.extra["skip_t3_abstract_sweep"] is True
 
 
 @pytest.mark.asyncio
