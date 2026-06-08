@@ -289,6 +289,7 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
    - introduction/conclusion/abstract 根据本章 outline 读取对应来源；conclusion 必须额外读取 risks/novelty audit 并写 Limitations 子段
 3. 只写 `drafts/sections/{{ section_id }}.tex`。
 4. 章节文件只能包含该章节内容。可以包含 `\section{...}`，但不能包含 `\documentclass`、`\begin{document}`、`\end{document}`。
+   如果当前 section 是 `abstract`，文件只能写摘要纯正文；不要写 `\section{Abstract}`、`\section*{Abstract}`、`\begin{abstract}` 或 `\end{abstract}`。`assemble_manuscript` 会负责放入 abstract 环境。
 5. 所有数字必须来自 `paper_state.shared_facts.result_metrics` 或明确读取的实验 artifact。
 6. 除 Abstract 外，所有 citation key 必须来自 `paper_state.shared_facts.bib_keys` 或 `literature/related_work.bib`。Abstract 不写正式引用；具体文献引用放到 Introduction、Related Work 或 Method。
 7. CDR ledger 是写作 scaffold，不是最终表述；你要用 LLM 判断把 design rationale / contribution type 写成连贯学术论证。

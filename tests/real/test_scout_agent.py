@@ -142,8 +142,8 @@ class TestScoutAgent:
         from researchos.runtime.agent import ExecutionContext
 
         lit_dir = standard_workspace / "literature"
-        raw_records = [_paper_record(i) for i in range(1, 13)]
-        dedup_records = [_paper_record(i) for i in range(1, 11)]
+        raw_records = [_paper_record(i) for i in range(1, 19)]
+        dedup_records = [_paper_record(i) for i in range(1, 16)]
         verified_records = []
         for record in dedup_records:
             verified = dict(record)

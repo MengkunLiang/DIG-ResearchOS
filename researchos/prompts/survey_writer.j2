@@ -244,10 +244,12 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 写作原则：
 - 这是一个独立 section，不要写其它 section。
 - 不要包含 `\documentclass`、`\begin{document}`、`\end{document}`。
+- 如果当前 section 是 `abstract`，文件只能写摘要纯正文；不要写 `\section{Abstract}`、`\section*{Abstract}`、`\begin{abstract}` 或 `\end{abstract}`。`assemble_survey` 会负责放入 abstract 环境。
 - 如果 section_id 是 `theme_1`-`theme_4` 且 survey_state 标记 skipped，直接调用 `update_survey_section_state(section_id="{{ section_id }}", status="skipped")` 并 finish。
 - 组织方式必须围绕 taxonomy，不要按 synthesis.md 的 design_rationale fuel 结构硬转写。
 - 每段要有具体学术功能：定义边界、解释演进、比较机制、指出 tension、总结挑战或提出方向。
 - 引用必须来自 `related_work.bib`。不确定 citation key 时，不要编造。
+- `abstract` 不写任何正式引用；具体 prior work attribution 放到 Introduction 或正文综述章节。
 - 对 abstract-only 文献，要标注 evidence 边界，不把 abstract claim 写成已验证机制。
 - 避免 "this section reviews..." 这类空话；直接进入内容。
 

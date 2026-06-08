@@ -105,8 +105,10 @@ def _write_paper_state_and_sections(workspace: Path, *, short_section: bool = Fa
         section_path = workspace / "drafts" / "sections" / f"{section_id}.tex"
         section_path.parent.mkdir(parents=True, exist_ok=True)
         body = "Short." if short_section and section_id == "methodology" else ("Substantive section content. " * 6)
+        if section_id == "abstract":
+            body = "This abstract summarizes the paper without formal citations or section headings. " * 3
         section_path.write_text(
-            f"\\section{{{section_id.replace('_', ' ').title()}}}\n{body}",
+            body if section_id == "abstract" else f"\\section{{{section_id.replace('_', ' ').title()}}}\n{body}",
             encoding="utf-8",
         )
     (workspace / "drafts" / "paper_state.json").write_text(
@@ -159,6 +161,7 @@ def _write_valid_draft_support(workspace: Path, *, short_section: bool = False) 
                     {"name": "matrix_row_count", "level": "PASS", "passed": True},
                     {"name": "intro_contribution_count", "level": "PASS", "passed": True},
                     {"name": "abstract_no_cite", "level": "PASS", "passed": True},
+                    {"name": "abstract_no_section_heading", "level": "PASS", "passed": True},
                     {"name": "no_internal_label_leakage", "level": "PASS", "passed": True},
                     {"name": "no_placeholder_tokens", "level": "PASS", "passed": True},
                     {"name": "number_traceability", "level": "PASS", "passed": True},

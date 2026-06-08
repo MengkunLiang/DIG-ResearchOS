@@ -20,6 +20,8 @@ from ..tools.manuscript import (
     CORE_SECTIONS,
     SECTION_TITLES,
     SECTION_WRITING_SEQUENCE,
+    _internal_label_leakages,
+    _placeholder_hits,
     _extract_latex_cites,
     craft_audit_input_fingerprints,
     has_formal_citation,
@@ -702,8 +704,22 @@ def _validate_single_section(ws: Path, section_id: str) -> tuple[bool, str | Non
         return False, f"章节草稿过短: {section_id}"
     if "\\documentclass" in text or "\\begin{document}" in text or "\\end{document}" in text:
         return False, f"章节草稿不能包含整篇LaTeX wrapper: {section_id}"
+    placeholder_hits = _placeholder_hits(text)
+    if placeholder_hits:
+        return False, f"章节草稿 {section_id} 仍包含 planning placeholder: {', '.join(placeholder_hits[:8])}"
+    cids = _known_alignment_cids(ws)
+    internal_hits = _internal_label_leakages(text, cids)
+    if internal_hits:
+        return False, (
+            f"章节草稿 {section_id} 暴露内部 alignment/CID 标记: "
+            + ", ".join(internal_hits[:8])
+        )
     if section_id == "abstract" and has_formal_citation(text):
         return False, "Abstract 不应包含正式引用；请把作者-年份、数字引用或 LaTeX citation command 放到 Introduction 或 Related Work"
+    if section_id == "abstract" and re.search(r"\\(?:begin|end)\{abstract\}", text, flags=re.IGNORECASE):
+        return False, "Abstract 章节文件应只包含摘要正文，不应包含 \\begin{abstract} 或 \\end{abstract}"
+    if section_id == "abstract" and re.search(r"\\(?:section|subsection)\*?\{", text, flags=re.IGNORECASE):
+        return False, "Abstract 章节文件应只包含摘要正文，不应包含 \\section 或 \\subsection 标题"
     foreign_headers = _find_foreign_section_headers(text, section_id)
     if foreign_headers:
         return False, (
@@ -721,6 +737,25 @@ def _validate_single_section(ws: Path, section_id: str) -> tuple[bool, str | Non
         if entry.get("status") not in {"written", "revised"}:
             return False, f"paper_state.json 中 {section_id} 尚未标记为 written/revised"
     return True, None
+
+
+def _known_alignment_cids(ws: Path) -> list[str]:
+    cids: list[str] = []
+    for rel in ("drafts/alignment_matrix.json", "drafts/paper_state.json"):
+        data, err = _load_json_file(ws / rel)
+        if err or not isinstance(data, dict):
+            continue
+        rows = data.get("rows")
+        if not isinstance(rows, list):
+            shared = data.get("shared_facts") if isinstance(data.get("shared_facts"), dict) else {}
+            rows = shared.get("alignment_matrix") if isinstance(shared, dict) else []
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, dict):
+                continue
+            cid = str(row.get("cid") or "").strip().upper()
+            if re.fullmatch(r"C\d+", cid) and cid not in cids:
+                cids.append(cid)
+    return cids
 
 
 def _find_foreign_section_headers(text: str, section_id: str) -> list[str]:
@@ -850,6 +885,7 @@ def _validate_required_craft_checks(ws: Path) -> tuple[bool, str | None]:
         "matrix_row_count",
         "intro_contribution_count",
         "abstract_no_cite",
+        "abstract_no_section_heading",
         "no_internal_label_leakage",
         "no_placeholder_tokens",
         "number_traceability",

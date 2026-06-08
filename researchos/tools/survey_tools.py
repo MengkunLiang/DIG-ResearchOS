@@ -16,7 +16,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from .base import Tool, ToolResult
-from .manuscript import _extract_latex_cites
+from .manuscript import _extract_latex_cites, has_formal_citation
 from .workspace_policy import ToolAccessDenied, WorkspaceAccessPolicy
 
 
@@ -33,6 +33,20 @@ SURVEY_SECTION_SEQUENCE = [
     "introduction",
     "conclusion",
     "abstract",
+]
+
+SURVEY_BODY_ASSEMBLY_ORDER = [
+    "introduction",
+    "background",
+    "taxonomy",
+    "theme_1",
+    "theme_2",
+    "theme_3",
+    "theme_4",
+    "comparison",
+    "challenges",
+    "future",
+    "conclusion",
 ]
 
 SURVEY_SECTION_TITLES = {
@@ -313,24 +327,42 @@ class AssembleSurveyTool(Tool):
         ]
         included: list[str] = []
         missing: list[str] = []
-        for section_id in state.get("write_order") or SURVEY_SECTION_SEQUENCE:
+
+        active_sections = _active_survey_sections(state)
+        if "abstract" in active_sections:
+            abstract_text, abstract_missing = _read_survey_section_text(
+                self.policy,
+                state,
+                "abstract",
+            )
+            if abstract_missing:
+                missing.append(abstract_missing)
+            elif abstract_text.strip():
+                pieces.append("\\begin{abstract}\n" + _strip_survey_section_heading(abstract_text, "abstract").strip() + "\n\\end{abstract}")
+                included.append("abstract")
+            else:
+                missing.append("drafts/survey/sections/abstract.tex")
+
+        body_order = [
+            section_id for section_id in SURVEY_BODY_ASSEMBLY_ORDER if section_id in active_sections
+        ]
+        body_order.extend(
+            section_id
+            for section_id in active_sections
+            if section_id not in body_order and section_id != "abstract"
+        )
+        for section_id in body_order:
             entry = (state.get("sections") or {}).get(section_id, {})
             if isinstance(entry, dict) and entry.get("status") == "skipped":
                 continue
-            file_rel = str(entry.get("file") or f"drafts/survey/sections/{section_id}.tex")
-            try:
-                file_path = self.policy.resolve_read(file_rel)
-            except ToolAccessDenied:
-                missing.append(file_rel)
+            text, missing_rel = _read_survey_section_text(self.policy, state, section_id)
+            if missing_rel:
+                missing.append(missing_rel)
                 continue
-            if not file_path.exists():
-                missing.append(file_rel)
-                continue
-            text = file_path.read_text(encoding="utf-8", errors="replace").strip()
             if not text:
-                missing.append(file_rel)
+                missing.append(f"drafts/survey/sections/{section_id}.tex")
                 continue
-            pieces.append(text)
+            pieces.append(text.strip())
             included.append(section_id)
         pieces.extend(["\\bibliographystyle{plainnat}", "\\bibliography{references}", "\\end{document}", ""])
         output_path.write_text("\n\n".join(pieces), encoding="utf-8")
@@ -389,6 +421,37 @@ class AuditSurveyCoverageTool(Tool):
         checks.append(_check("has_comparative_analysis", "Comparative" in tex or "comparison" in tex.lower(), "Survey should include cross-paper comparison."))
         checks.append(_check("has_open_challenges", "Challenge" in tex or "Open" in tex, "Survey should include open challenges."))
         checks.append(_check("has_future_directions", "Future" in tex or "direction" in tex.lower(), "Survey should include future directions."))
+        abstract_text = _extract_survey_abstract(tex)
+        checks.append(_check("has_abstract_environment", bool(abstract_text.strip()), "Survey should place abstract text in a LaTeX abstract environment."))
+        checks.append(
+            _check(
+                "abstract_no_formal_citation",
+                not has_formal_citation(abstract_text),
+                "Survey abstract must not contain LaTeX citations, author-year citations, or numeric citations.",
+            )
+        )
+        abstract_section_heading = bool(re.search(r"\\section\*?\{\s*Abstract\s*\}", tex, flags=re.IGNORECASE))
+        checks.append(
+            _check(
+                "no_abstract_section_heading",
+                not abstract_section_heading,
+                "Abstract should be in \\begin{abstract}...\\end{abstract}, not as a body section.",
+            )
+        )
+        intro_pos = _survey_section_position(tex, "Introduction")
+        trailing_body_positions = [
+            pos
+            for title in ("Background and Scope", "Taxonomy", "Comparative Analysis", "Open Challenges", "Future Directions", "Conclusion")
+            for pos in [_survey_section_position(tex, title)]
+            if pos >= 0
+        ]
+        checks.append(
+            _check(
+                "introduction_before_body_sections",
+                intro_pos < 0 or not trailing_body_positions or intro_pos < min(trailing_body_positions),
+                "Introduction should appear before the main body sections even though it is written late.",
+            )
+        )
         active_sections = [
             sid
             for sid, entry in (state.get("sections") or {}).items()
@@ -404,6 +467,19 @@ class AuditSurveyCoverageTool(Tool):
         checks.append(_check("empty_taxonomy_classes_declared", not empty_classes, f"Plan still reports empty classes: {empty_classes}", level_if_fail="WARN"))
         placeholder_hits = sorted(set(re.findall(r"\b(?:TODO|TBD|LLM_REVIEW_REQUIRED|PLACEHOLDER)\b", tex)))
         checks.append(_check("no_placeholder_tokens", not placeholder_hits, f"Placeholder tokens found: {placeholder_hits}"))
+        internal_hits = _survey_internal_alignment_hits(tex)
+        checks.append(
+            _check(
+                "no_internal_alignment_labels",
+                not internal_hits,
+                (
+                    "Survey TeX should not expose internal ResearchOS labels such as C1/CID; "
+                    f"hits={internal_hits[:8]}"
+                    if internal_hits
+                    else "No internal ResearchOS labels detected."
+                ),
+            )
+        )
         missing_cites = sorted(cited - bib_keys) if bib_keys else []
         checks.append(_check("all_citations_in_bib", not missing_cites, f"Citation keys missing from bib: {missing_cites}"))
         checks.append(_check("has_multiple_citations", len(cited) >= 3, f"Only {len(cited)} unique citation keys found.", level_if_fail="WARN"))
@@ -915,6 +991,64 @@ def _copy_bibliography_for_survey(
     target_path.write_text(bib_path.read_text(encoding="utf-8", errors="replace"), encoding="utf-8")
 
 
+def _active_survey_sections(state: dict[str, Any]) -> list[str]:
+    order = state.get("write_order") if isinstance(state.get("write_order"), list) else SURVEY_SECTION_SEQUENCE
+    sections = state.get("sections") if isinstance(state.get("sections"), dict) else {}
+    active: list[str] = []
+    for section_id in order:
+        sid = str(section_id)
+        entry = sections.get(sid) if isinstance(sections, dict) else {}
+        if isinstance(entry, dict) and entry.get("status") == "skipped":
+            continue
+        if sid not in active:
+            active.append(sid)
+    return active
+
+
+def _read_survey_section_text(
+    policy: WorkspaceAccessPolicy,
+    state: dict[str, Any],
+    section_id: str,
+) -> tuple[str, str]:
+    entry = (state.get("sections") or {}).get(section_id, {})
+    file_rel = str(entry.get("file") or f"drafts/survey/sections/{section_id}.tex") if isinstance(entry, dict) else f"drafts/survey/sections/{section_id}.tex"
+    try:
+        file_path = policy.resolve_read(file_rel)
+    except ToolAccessDenied:
+        return "", file_rel
+    if not file_path.exists():
+        return "", file_rel
+    text = file_path.read_text(encoding="utf-8", errors="replace").strip()
+    text = _strip_survey_document_wrappers(text)
+    return text, ""
+
+
+def _strip_survey_document_wrappers(text: str) -> str:
+    cleaned = re.sub(r"\\documentclass(?:\[[^\]]*\])?\{[^}]+\}", "", text or "", flags=re.IGNORECASE)
+    cleaned = re.sub(r"\\usepackage(?:\[[^\]]*\])?\{[^}]+\}", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\\begin\{document\}", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\\end\{document\}", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.strip()
+
+
+def _strip_survey_section_heading(text: str, section_id: str) -> str:
+    title = re.escape(SURVEY_SECTION_TITLES.get(section_id, section_id))
+    aliases = [title]
+    if section_id == "abstract":
+        aliases.append("Abstract")
+    pattern = r"^\s*\\section\*?\{\s*(?:" + "|".join(dict.fromkeys(aliases)) + r")\s*\}\s*"
+    text = re.sub(pattern, "", text or "", count=1, flags=re.IGNORECASE).strip()
+    if section_id == "abstract":
+        match = re.fullmatch(
+            r"\s*\\begin\{abstract\}(.*?)\\end\{abstract\}\s*",
+            text,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        if match:
+            text = match.group(1)
+    return (text or "").strip()
+
+
 def _bib_keys_optional(policy: WorkspaceAccessPolicy, rel_path: str) -> set[str]:
     try:
         path = policy.resolve_read(rel_path)
@@ -928,6 +1062,40 @@ def _bib_keys_optional(policy: WorkspaceAccessPolicy, rel_path: str) -> set[str]
 
 def _cited_keys(text: str) -> set[str]:
     return _extract_latex_cites(text)
+
+
+def _extract_survey_abstract(tex: str) -> str:
+    match = re.search(r"\\begin\{abstract\}(.*?)\\end\{abstract\}", tex or "", flags=re.DOTALL | re.IGNORECASE)
+    return match.group(1).strip() if match else ""
+
+
+def _survey_section_position(tex: str, title: str) -> int:
+    pattern = r"\\section\*?\{\s*" + re.escape(title) + r"\s*\}"
+    match = re.search(pattern, tex or "", flags=re.IGNORECASE)
+    return match.start() if match else -1
+
+
+def _survey_internal_alignment_hits(text: str) -> list[str]:
+    patterns = [
+        r"%\s*\[[^\]]*\bC\d+\b[^\]]*\]",
+        r"\[\s*C\d+(?:\s*,\s*C\d+)*\s*\]",
+        r"\bC\d+\s*[:：]",
+        r"\bC\d+\s*[\.)]",
+        r"\bC\d+\s+(?:is|are|shows?|supports?|contribution|claim|gap|motivation|rationale|experiment|analysis)\b",
+        r"\b(?:contribution|claim|gap|motivation|rationale|experiment|analysis)\s+C\d+\b",
+        r"\bCID\s*(?:-|:|：)?\s*C?\d+\b",
+        r"\binternal alignment (?:id|lane)\s*(?:-|:|：)?\s*C?\d+\b",
+        r"\bResearchOS\s+(?:alignment|trace|CID)\b",
+    ]
+    hits: list[str] = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, text or "", flags=re.IGNORECASE):
+            value = re.sub(r"\s+", " ", match.group(0)).strip()
+            if value and value not in hits:
+                hits.append(value[:120])
+            if len(hits) >= 20:
+                return hits
+    return hits
 
 
 def _check(name: str, passed: bool, detail: str, *, level_if_fail: str = "FAIL") -> dict[str, Any]:

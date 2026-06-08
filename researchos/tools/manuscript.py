@@ -1934,7 +1934,7 @@ def assemble_sections(
 
     title = title or _extract_title(outline_text) or "ResearchOS Manuscript Draft"
     body_parts = []
-    abstract = section_texts.get("abstract", "").strip()
+    abstract = _strip_abstract_section_markup(section_texts.get("abstract", "")).strip()
     for name in ["introduction", "related_work", "methodology", "experiments", "analysis", "conclusion"]:
         text = section_texts.get(name, "").strip()
         if not text:
@@ -2083,7 +2083,8 @@ def audit_writing_craft(
     experiments = section_texts.get("experiments", "")
     analysis = section_texts.get("analysis", "")
     conclusion = section_texts.get("conclusion", "")
-    abstract = section_texts.get("abstract", "")
+    raw_abstract = section_texts.get("abstract", "")
+    abstract = _strip_abstract_section_markup(raw_abstract)
     contribution_count = _count_intro_contributions(intro)
     gap_count = _count_intro_gaps(intro)
 
@@ -2133,6 +2134,12 @@ def audit_writing_craft(
         "FAIL",
         not has_formal_citation(abstract),
         "Abstract must not contain formal citations; cite prior work in Introduction or Related Work.",
+    )
+    add(
+        "abstract_no_section_heading",
+        "FAIL",
+        not re.search(r"\\(?:section|subsection)\*?\{", raw_abstract, flags=re.IGNORECASE),
+        "Abstract text should be plain abstract prose, not a section/subsection heading.",
     )
     internal_label_hits = _internal_label_leakages(paper, cids)
     add(
@@ -2645,6 +2652,27 @@ def _read_section_texts(section_dir: Path) -> dict[str, str]:
                 texts[section_id] = _strip_document_wrappers(path.read_text(encoding="utf-8", errors="replace"))
                 break
     return texts
+
+
+def _strip_abstract_section_markup(text: str) -> str:
+    """Normalize abstract section files into prose for the LaTeX abstract environment."""
+
+    cleaned = _strip_document_wrappers(text or "")
+    cleaned = re.sub(
+        r"^\s*\\section\*?\{\s*Abstract\s*\}\s*",
+        "",
+        cleaned,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    match = re.fullmatch(
+        r"\s*\\begin\{abstract\}(.*?)\\end\{abstract\}\s*",
+        cleaned,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    if match:
+        cleaned = match.group(1)
+    return cleaned.strip()
 
 
 def _read_section_texts_from_paper(paper: str) -> dict[str, str]:

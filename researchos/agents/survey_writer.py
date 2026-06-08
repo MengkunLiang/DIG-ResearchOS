@@ -16,9 +16,9 @@ from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
 from ..tools.latex_compile import _compile_dependency_fingerprint
-from ..literature_identity import is_placeholder_text
+from ..literature_identity import is_paper_note_file, is_placeholder_text
 from ..tools.manuscript import _extract_latex_cites, _extract_bib_keys, has_formal_citation
-from ..tools.survey_tools import SURVEY_SECTION_SEQUENCE, SURVEY_SECTION_TITLES
+from ..tools.survey_tools import SURVEY_SECTION_SEQUENCE, SURVEY_SECTION_TITLES, _survey_internal_alignment_hits
 from ._common import ensure_seed_outline_profile, load_jsonl, load_project, prepend_resume_prefix, read_text_file
 
 
@@ -466,7 +466,7 @@ def _survey_weak_evidence_ids(ws: Path) -> set[str]:
     weak: set[str] = set()
     abstract_dir = ws / "literature" / "paper_notes_abstract"
     if abstract_dir.exists():
-        weak.update(path.stem for path in abstract_dir.glob("*.md") if path.is_file())
+        weak.update(path.stem for path in abstract_dir.glob("*.md") if is_paper_note_file(path))
     metadata_triage = ws / "literature" / "metadata_triage.md"
     if metadata_triage.exists():
         text = metadata_triage.read_text(encoding="utf-8", errors="replace")
@@ -523,8 +523,18 @@ def _validate_survey_section(ws: Path, section_id: str) -> tuple[bool, str | Non
     placeholder_hits = _placeholder_hits(text)
     if placeholder_hits:
         return False, f"survey section {section_id} 仍包含 planning placeholder: {', '.join(placeholder_hits[:8])}"
+    internal_hits = _survey_internal_alignment_hits(text)
+    if internal_hits:
+        return False, (
+            f"survey section {section_id} 暴露内部 ResearchOS/CID 标记: "
+            + ", ".join(internal_hits[:8])
+        )
     if section_id == "abstract" and has_formal_citation(text):
         return False, "survey abstract 不应包含正式引用命令、作者-年份括号引用或数字引用"
+    if section_id == "abstract" and re.search(r"\\(?:begin|end)\{abstract\}", text, flags=re.IGNORECASE):
+        return False, "survey abstract 文件应只包含摘要正文，不应包含 \\begin{abstract} 或 \\end{abstract}"
+    if section_id == "abstract" and re.search(r"\\(?:section|subsection)\*?\{", text, flags=re.IGNORECASE):
+        return False, "survey abstract 文件应只包含摘要正文，不应包含 \\section 或 \\subsection 标题"
     bib_keys = set(_extract_bib_keys(ws / "literature" / "related_work.bib"))
     cited = _extract_latex_cites(text)
     if cited and bib_keys:

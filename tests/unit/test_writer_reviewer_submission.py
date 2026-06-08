@@ -540,6 +540,7 @@ def _write_passing_craft_audit(workspace: Path) -> None:
         {"name": "matrix_row_count", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "intro_contribution_count", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "abstract_no_cite", "level": "PASS", "passed": True, "detail": "ok"},
+        {"name": "abstract_no_section_heading", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "no_internal_label_leakage", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "no_placeholder_tokens", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "number_traceability", "level": "PASS", "passed": True, "detail": "ok"},
@@ -592,8 +593,11 @@ def _write_valid_draft_artifacts(workspace: Path) -> None:
     section_dir.mkdir(parents=True, exist_ok=True)
     for name in CORE_SECTIONS:
         state["sections"][name]["status"] = "written"
+        body = f"\\section{{{name.replace('_', ' ').title()}}}\n" + ("Substantive section content. " * 6)
+        if name == "abstract":
+            body = "This is an abstract without formal citations or section headings. " * 3
         (section_dir / f"{name}.tex").write_text(
-            f"\\section{{{name.replace('_', ' ').title()}}}\n" + ("Substantive section content. " * 6),
+            body,
             encoding="utf-8",
         )
     (workspace / "drafts" / "paper_state.json").write_text(json.dumps(state), encoding="utf-8")
@@ -772,6 +776,30 @@ def test_writer_validate_outputs_abstract_rejects_formal_citations(temp_workspac
 
     assert not ok
     assert "正式引用" in err
+
+
+def test_writer_validate_outputs_abstract_rejects_environment_markup(temp_workspace):
+    agent = WriterAgent()
+    ctx = MockExecutionContext(
+        "section_draft",
+        temp_workspace,
+        {"phase": "section_draft", "section_id": "abstract"},
+    )
+    _write_valid_paper_state(temp_workspace)
+    state = json.loads((temp_workspace / "drafts" / "paper_state.json").read_text(encoding="utf-8"))
+    state["sections"]["abstract"]["status"] = "written"
+    (temp_workspace / "drafts" / "paper_state.json").write_text(json.dumps(state), encoding="utf-8")
+    section_dir = temp_workspace / "drafts" / "sections"
+    section_dir.mkdir(parents=True, exist_ok=True)
+    (section_dir / "abstract.tex").write_text(
+        "\\begin{abstract}This abstract is long enough but incorrectly includes the abstract environment.\\end{abstract}",
+        encoding="utf-8",
+    )
+
+    ok, err = agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "begin{abstract}" in (err or "")
 
 
 def test_craft_audit_rejects_natural_language_placeholder_token(temp_workspace):
@@ -1334,8 +1362,11 @@ def test_writer_validate_outputs_revise_requires_audit(temp_workspace):
         "conclusion",
     ]:
         state["sections"][name]["status"] = "revised"
+        body = f"\\section{{{name.replace('_', ' ').title()}}}\n" + ("Substantive section content. " * 6)
+        if name == "abstract":
+            body = "This abstract summarizes the revised paper without section headings. " * 3
         (section_dir / f"{name}.tex").write_text(
-            f"\\section{{{name.replace('_', ' ').title()}}}\n" + ("Substantive section content. " * 6),
+            body,
             encoding="utf-8",
         )
     (temp_workspace / "drafts" / "paper_state.json").write_text(json.dumps(state), encoding="utf-8")
@@ -1395,8 +1426,11 @@ def test_writer_validate_outputs_revise_requires_patch_list(temp_workspace):
         "conclusion",
     ]:
         state["sections"][name]["status"] = "revised"
+        body = f"\\section{{{name.replace('_', ' ').title()}}}\n" + ("Substantive section content. " * 6)
+        if name == "abstract":
+            body = "This abstract summarizes the revised paper without section headings. " * 3
         (section_dir / f"{name}.tex").write_text(
-            f"\\section{{{name.replace('_', ' ').title()}}}\n" + ("Substantive section content. " * 6),
+            body,
             encoding="utf-8",
         )
     (temp_workspace / "drafts" / "paper_state.json").write_text(json.dumps(state), encoding="utf-8")
@@ -1432,8 +1466,11 @@ def test_writer_validate_outputs_draft_missing_documentclass(temp_workspace):
         "conclusion",
     ]:
         state["sections"][name]["status"] = "written"
+        body = f"\\section{{{name.replace('_', ' ').title()}}}\n" + ("Substantive section content. " * 6)
+        if name == "abstract":
+            body = "This abstract summarizes the paper without section headings. " * 3
         (section_dir / f"{name}.tex").write_text(
-            f"\\section{{{name.replace('_', ' ').title()}}}\n" + ("Substantive section content. " * 6),
+            body,
             encoding="utf-8",
         )
     (temp_workspace / "drafts" / "paper_state.json").write_text(json.dumps(state), encoding="utf-8")
@@ -1470,8 +1507,11 @@ def test_writer_validate_outputs_draft_invalid_citations(temp_workspace):
         "conclusion",
     ]:
         state["sections"][name]["status"] = "written"
+        body = f"\\section{{{name.replace('_', ' ').title()}}}\n" + ("Substantive section content. " * 6)
+        if name == "abstract":
+            body = "This abstract summarizes the paper without section headings. " * 3
         (section_dir / f"{name}.tex").write_text(
-            f"\\section{{{name.replace('_', ' ').title()}}}\n" + ("Substantive section content. " * 6),
+            body,
             encoding="utf-8",
         )
     (temp_workspace / "drafts" / "paper_state.json").write_text(json.dumps(state), encoding="utf-8")

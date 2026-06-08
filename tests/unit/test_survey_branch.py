@@ -179,7 +179,7 @@ async def _build_valid_survey_chain(ws: Path) -> None:
             "The survey concludes with open challenges and future directions. "
             "It summarizes the taxonomy without overstating weak or abstract-only evidence."
         ),
-        "abstract": "\\section*{Abstract}\nA taxonomy-driven survey of mechanisms.",
+        "abstract": "A taxonomy-driven survey of mechanisms.",
     }
     for section_id, text in section_text.items():
         (sections_dir / f"{section_id}.tex").write_text(text, encoding="utf-8")
@@ -236,7 +236,7 @@ async def test_survey_tools_build_state_assemble_audit_and_export(tmp_path: Path
         "future": "\\section{Future Directions}\nFuture directions include adjacent transfers and better evaluation \\citep{p3}.",
         "introduction": "\\section{Introduction}\nThis survey motivates a taxonomy-driven reading of the field \\citep{p1}.",
         "conclusion": "\\section{Conclusion}\nThe survey concludes with open challenges and future directions.",
-        "abstract": "\\section*{Abstract}\nA taxonomy-driven survey of mechanisms.",
+        "abstract": "A taxonomy-driven survey of mechanisms.",
     }
     for section_id, text in section_text.items():
         (sections_dir / f"{section_id}.tex").write_text(text, encoding="utf-8")
@@ -248,6 +248,9 @@ async def test_survey_tools_build_state_assemble_audit_and_export(tmp_path: Path
     tex = (ws / "drafts" / "survey" / "survey.tex").read_text(encoding="utf-8")
     assert "\\documentclass" in tex
     assert "Perturbation Mechanisms" in tex
+    assert "\\begin{abstract}" in tex
+    assert "\\section*{Abstract}" not in tex
+    assert tex.index("\\begin{abstract}") < tex.index("\\section{Introduction}")
     assert (ws / "drafts" / "survey" / "references.bib").exists()
 
     result = await AuditSurveyCoverageTool(policy).execute()
@@ -264,6 +267,26 @@ async def test_survey_tools_build_state_assemble_audit_and_export(tmp_path: Path
     assert any(item["paper_or_topic"] == "state_added_need" for item in insights["resource_upgrade_needs"])
     summary = (ws / "drafts" / "survey" / "survey_summary.md").read_text(encoding="utf-8")
     assert "Resource Upgrade Needs" in summary
+
+
+@pytest.mark.asyncio
+async def test_survey_assemble_strips_legacy_abstract_wrappers(tmp_path: Path):
+    ws = tmp_path
+    await _build_valid_survey_chain(ws)
+    abstract_path = ws / "drafts" / "survey" / "sections" / "abstract.tex"
+    abstract_path.write_text(
+        "\\section*{Abstract}\n\\begin{abstract}\nA legacy abstract source with nested wrapper markup.\\end{abstract}",
+        encoding="utf-8",
+    )
+
+    result = await AssembleSurveyTool(_policy(ws)).execute()
+
+    assert result.ok, result.content
+    tex = (ws / "drafts" / "survey" / "survey.tex").read_text(encoding="utf-8")
+    assert tex.count("\\begin{abstract}") == 1
+    assert tex.count("\\end{abstract}") == 1
+    assert "\\section*{Abstract}" not in tex
+    assert "A legacy abstract source with nested wrapper markup." in tex
 
 
 def test_survey_writer_registry_and_phase():
@@ -363,6 +386,8 @@ async def test_survey_writer_compile_validation_accepts_success_report(tmp_path:
     (ws / "drafts" / "survey" / "survey.tex").write_text(
         (
             "\\documentclass{article}\\begin{document}"
+            "\\begin{abstract}A taxonomy-driven survey of mechanisms.\\end{abstract}"
+            "\\section{Introduction} Introduction \\citep{p1}."
             "\\section{Taxonomy} Taxonomy \\citep{p1}."
             "\\section{Comparative Analysis} Comparative analysis \\citep{p2}."
             "\\section{Open Challenges} Open challenges."
@@ -443,13 +468,31 @@ async def test_t36_section_validation_rejects_dirty_abstract_and_bad_cites(tmp_p
 
     abstract_path = ws / "drafts" / "survey" / "sections" / "abstract.tex"
     abstract_path.write_text(
-        "\\section*{Abstract}\nThis survey cites prior work \\citep{p1} in the abstract.",
+        "This survey cites prior work \\citep{p1} in the abstract.",
         encoding="utf-8",
     )
     await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="abstract")
     ok, err = agent.validate_outputs(_survey_ctx(ws, "survey_section", section_id="abstract"))
     assert not ok
     assert "abstract" in (err or "") and "引用" in (err or "")
+
+    abstract_path.write_text(
+        "\\section*{Abstract}\nThis is a long enough abstract without formal citation commands but with an invalid section heading.",
+        encoding="utf-8",
+    )
+    await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="abstract")
+    ok, err = agent.validate_outputs(_survey_ctx(ws, "survey_section", section_id="abstract"))
+    assert not ok
+    assert "section" in (err or "") or "标题" in (err or "")
+
+    abstract_path.write_text(
+        "\\begin{abstract}\nThis is long enough prose but it incorrectly includes a LaTeX abstract environment.\\end{abstract}",
+        encoding="utf-8",
+    )
+    await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="abstract")
+    ok, err = agent.validate_outputs(_survey_ctx(ws, "survey_section", section_id="abstract"))
+    assert not ok
+    assert "begin{abstract}" in (err or "") or "摘要正文" in (err or "")
 
     section_path = ws / "drafts" / "survey" / "sections" / "theme_1.tex"
     section_path.write_text(
@@ -463,6 +506,17 @@ async def test_t36_section_validation_rejects_dirty_abstract_and_bad_cites(tmp_p
     ok, err = agent.validate_outputs(_survey_ctx(ws, "survey_section", section_id="theme_1"))
     assert not ok
     assert "placeholder" in (err or "")
+
+    section_path.write_text(
+        "\\section{Perturbation Mechanisms}\n"
+        "C1 is an internal ResearchOS alignment label and should not appear in polished survey prose. "
+        "This deliberately long section text lets the validator reach the internal-label check.",
+        encoding="utf-8",
+    )
+    await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="theme_1")
+    ok, err = agent.validate_outputs(_survey_ctx(ws, "survey_section", section_id="theme_1"))
+    assert not ok
+    assert "CID" in (err or "") or "内部" in (err or "")
 
     section_path.write_text(
         "\\section{Perturbation Mechanisms}\n"
@@ -569,6 +623,8 @@ async def test_survey_writer_compile_validation_rejects_stale_audit_after_compil
     tex.write_text(
         (
             "\\documentclass{article}\\begin{document}"
+            "\\begin{abstract}A taxonomy-driven survey of mechanisms.\\end{abstract}"
+            "\\section{Introduction} Introduction \\citep{p1}."
             "\\section{Taxonomy} Taxonomy \\citep{p1}."
             "\\section{Comparative Analysis} Comparative analysis \\citep{p2}."
             "\\section{Open Challenges} Open challenges."

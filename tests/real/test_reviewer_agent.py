@@ -5,11 +5,49 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
 from researchos.agents.reviewer import ReviewerAgent
+from researchos.tools.manuscript import review_round_input_fingerprints
+
+
+def _write_reviewable_paper(workspace: Path) -> None:
+    paper = workspace / "drafts" / "paper.tex"
+    paper.parent.mkdir(parents=True, exist_ok=True)
+    paper.write_text(
+        "\\documentclass{article}\\begin{document}"
+        "\\begin{abstract}A concise abstract without formal citations.\\end{abstract}"
+        "\\section{Introduction} Introduction content."
+        "\\section{Related Work} Related work content."
+        "\\section{Method} Method content."
+        "\\section{Experiments} Experiments content."
+        "\\section{Analysis} Analysis content."
+        "\\section{Conclusion}\\subsection{Limitations} Bounded evidence."
+        "\\end{document}",
+        encoding="utf-8",
+    )
+
+
+def _write_review_fingerprints(workspace: Path, round_num: int = 1) -> None:
+    path = workspace / "drafts" / "review_rounds" / f"round_{round_num}_fingerprints.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "review_round_input_fingerprints",
+                "round": round_num,
+                "input_fingerprints": review_round_input_fingerprints(workspace),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 class TestReviewerAgent:
@@ -39,9 +77,7 @@ class TestReviewerAgent:
         """测试 system prompt 生成。"""
         from researchos.runtime.agent import ExecutionContext
 
-        # 创建 paper.md
-        paper = standard_workspace / "drafts" / "paper.md"
-        paper.write_text("# Paper\n\nContent...", encoding="utf-8")
+        _write_reviewable_paper(standard_workspace)
 
         agent = ReviewerAgent()
         ctx = ExecutionContext(
@@ -81,10 +117,6 @@ class TestReviewerAgentValidateOutputs:
         """测试无文件时的验证。"""
         from researchos.runtime.agent import ExecutionContext
 
-        # 创建 paper.md
-        paper = standard_workspace / "drafts" / "paper.md"
-        paper.write_text("# Paper\n\nContent..." * 50, encoding="utf-8")
-
         agent = ReviewerAgent()
         ctx = ExecutionContext(
             workspace_dir=standard_workspace,
@@ -97,16 +129,13 @@ class TestReviewerAgentValidateOutputs:
 
         ok, err = agent.validate_outputs(ctx)
         assert ok is False
-        # 当文件不存在时，read_text_file 返回空字符串，长度为 0
-        assert "过短" in err or "short" in err.lower()
+        assert "paper.tex" in err
 
     def test_validate_outputs_too_short(self, standard_workspace: Path, project_yaml: Path):
         """测试反馈过短时的验证。"""
         from researchos.runtime.agent import ExecutionContext
 
-        # 创建 paper.md
-        paper = standard_workspace / "drafts" / "paper.md"
-        paper.write_text("# Paper\n\nContent..." * 50, encoding="utf-8")
+        _write_reviewable_paper(standard_workspace)
 
         # 创建过短的 feedback.md
         review_rounds = standard_workspace / "drafts" / "review_rounds"
@@ -133,9 +162,7 @@ class TestReviewerAgentValidateOutputs:
         """测试缺少必需章节时的验证。"""
         from researchos.runtime.agent import ExecutionContext
 
-        # 创建 paper.md
-        paper = standard_workspace / "drafts" / "paper.md"
-        paper.write_text("# Paper\n\nContent..." * 50, encoding="utf-8")
+        _write_reviewable_paper(standard_workspace)
 
         # 创建缺少必需章节的 feedback
         review_rounds = standard_workspace / "drafts" / "review_rounds"
@@ -168,9 +195,7 @@ class TestReviewerAgentValidateOutputs:
         """测试成功验证。"""
         from researchos.runtime.agent import ExecutionContext
 
-        # 创建 paper.md
-        paper = standard_workspace / "drafts" / "paper.md"
-        paper.write_text("# Paper\n\nContent..." * 50, encoding="utf-8")
+        _write_reviewable_paper(standard_workspace)
 
         # 创建完整的 feedback
         review_rounds = standard_workspace / "drafts" / "review_rounds"
@@ -218,6 +243,7 @@ class TestReviewerAgentValidateOutputs:
                 "## Writing Craft Check\nThe prose is acceptable for this test fixture.\n",
                 encoding="utf-8",
             )
+        _write_review_fingerprints(standard_workspace, round_num=1)
 
         agent = ReviewerAgent()
         ctx = ExecutionContext(
