@@ -29,7 +29,7 @@ import json
 
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
-from ..runtime.t2_config import load_t2_finalize_config
+from ..runtime.t2_config import detect_manuscript_profile, load_t2_finalize_config
 from ..runtime.prompts import render_prompt
 from ..literature_identity import paper_record_match_keys
 from ..tools.pdf_metadata import scan_seed_papers
@@ -42,6 +42,7 @@ from ..tools.paper_utils import (
 )
 from .guidance import load_agent_guidance
 from ._common import (
+    ensure_seed_outline_profile,
     load_project,
     load_jsonl,
     prepend_resume_prefix,
@@ -66,6 +67,7 @@ class ScoutAgent(Agent):
                         "write_structured_file",
                         "ask_human",
                         "inspect_user_seeds",
+                        "normalize_seed_outline",
                         "append_papers_raw",
                         "process_papers_raw",
                         "save_papers_raw",
@@ -112,7 +114,7 @@ class ScoutAgent(Agent):
                         "seeds/",
                         "_runtime/resume/",
                     ],
-                    "allowed_write_prefixes": ["literature/", "literature/temp/"],
+                    "allowed_write_prefixes": ["literature/", "literature/temp/", "user_seeds/"],
                     "prompt_template": "scout.j2",
                     "structured_outputs": {
                         "literature/papers_dedup.jsonl": "papers_dedup",
@@ -126,6 +128,7 @@ class ScoutAgent(Agent):
 
     def system_prompt(self, ctx: ExecutionContext) -> str:
         """渲染system prompt，传入项目信息和seed papers。"""
+        ensure_seed_outline_profile(ctx.workspace_dir)
         project = load_project(ctx)
 
         # 合并新旧 seed 来源。不要只看某一个目录；用户仍然常把 PDF 放在
@@ -152,6 +155,10 @@ class ScoutAgent(Agent):
             ctx.workspace_dir / "user_seeds" / "seed_ideas.md",
             default="",
         )
+        seed_outline_profile = read_text_file(
+            ctx.workspace_dir / "user_seeds" / "seed_outline_profile.json",
+            default="",
+        )
         external_resources = _load_external_resources(
             ctx.workspace_dir / "user_seeds" / "seed_external_resources.jsonl"
         )
@@ -169,6 +176,9 @@ class ScoutAgent(Agent):
             seed_constraints=seed_constraints[:1000],  # 限制长度
             seed_ideas=seed_ideas[:2000],
             has_seed_ideas=bool(seed_ideas.strip()),
+            seed_outline_profile_preview=seed_outline_profile[:6000],
+            has_seed_outline_profile=bool(seed_outline_profile.strip()),
+            manuscript_profile=detect_manuscript_profile(ctx.workspace_dir),
             external_resources=external_resources[:10],
             external_resource_count=len(external_resources),
             has_external_resources=bool(external_resources),
@@ -211,7 +221,7 @@ class ScoutAgent(Agent):
                     return False, f"papers_dedup 第 {i+1} 行缺少字段: {field}"
 
         # 3. 校验papers_dedup数量和schema
-        t2_config = load_t2_finalize_config()
+        t2_config = load_t2_finalize_config(ctx.workspace_dir)
         ok, err = validate_jsonl_schema(
             dedup_path,
             "papers_dedup",

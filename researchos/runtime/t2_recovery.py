@@ -2544,8 +2544,8 @@ async def finalize_t2_outputs(
     """根据现有 raw 结果，确定性补齐 T2 产物。"""
 
     workspace_dir = workspace_dir.resolve()
-    t2_config = load_t2_finalize_config()
-    queue_config = load_deep_read_queue_config()
+    t2_config = load_t2_finalize_config(workspace_dir)
+    queue_config = load_deep_read_queue_config(workspace_dir)
     raw_path = workspace_dir / "literature" / "papers_raw.jsonl"
     raw_papers = _load_jsonl(raw_path)
     if not raw_papers:

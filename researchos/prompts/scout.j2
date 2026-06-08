@@ -48,6 +48,18 @@ T2 的后半段现在由 runtime 确定性处理：
 - 研究方向: {{ project.get('research_direction', '未指定') }}
 - 关键词: {{ project.get('keywords', []) | join(', ') if project.get('keywords') else '未指定' }}
 - 目标会议: {{ project.get('target_venue', '未指定') }}
+- 文献流程 profile: {{ manuscript_profile }}
+
+{% if has_seed_outline_profile %}
+## 用户 seed outline profile（结构化种子提纲）
+{{ seed_outline_profile_preview }}
+
+使用规则：
+- 这是用户提供的研究范围、综述框架、关键词和 query/taxonomy prior。
+- `representative_literature_directions` 不是已验证 citation，不能写入 `seed_papers.jsonl`，不能在 T3.6/T8 里直接引用。
+- `query_profile.search_languages`、`query_profile.query_variants`、`framework.perspectives` 和 `framework.risk_generation_chain` 必须进入检索式设计。
+- governance/regulation/standard 类内容是外部资源，后续需要官方来源验证；它们不是论文池中的 scholarly paper。
+{% endif %}
 
 {% if agent_guidance %}
 {{ agent_guidance }}
@@ -101,6 +113,7 @@ core / theory_bridge / deep-read target，必须由你后续逐论文输出 `sem
 ### Step 1: 读取项目配置和扩展检索式
 - 用 `read_file` 读取 project.yaml 确认研究方向
 - 先调用 `inspect_user_seeds(path="user_seeds")`，只把 `kind=user_material` 或 `kind=pdf` 当作真实用户 seed。`README.md`、`_DIR_GUIDE.md`、`*.example`、空文件、只有“暂无”的 markdown 只是初始化文件；如果 inspection 显示 `actual_user_materials=0`，不要说“发现 user_seeds/ 中有实际文件”，也不要基于这些占位文件生成 seed query。
+- 如果 inspection 发现真实 Markdown seed outline，而当前没有 `user_seeds/seed_outline_profile.json`，必须调用 `normalize_seed_outline(path="<该 Markdown 路径>")`，再读取 `seed_outline_profile.json`。不要把 outline 里的“代表性文献方向”当作 seed papers；只能作为 query terms、taxonomy prior 和 external resource hints。
 - 先由你归纳一个 `domain_profile`，再使用 `expand_queries` 工具做机械合并和去重。`domain_profile` 至少包含：
   - `domain`: 你理解的目标研究领域
   - `include_keywords`: 应保留的核心概念、方法、任务、数据集或术语
@@ -123,6 +136,7 @@ core / theory_bridge / deep-read target，必须由你后续逐论文输出 `sem
 - 真实 seed 的判断以 `inspect_user_seeds` 为准；普通 `list_files` 只能用于列目录，不能替代 seed inspection。
 - 如果 `seed_ideas.md` 非空，必须把其中的核心机制或问题表述吸收到检索式设计中
 - 如果 `seed_external_resources.jsonl` 非空，必须优先把其中出现的数据集、baseline repo、tool、pretrained model 名称作为检索锚点或补充关键词
+- 如果 `seed_outline_profile.json` 非空，必须把其中的中英关键词、代表性方向、风险链条、理论/技术/管理/治理视角和治理框架资源转成检索覆盖计划。综述 profile 下不要只查英文 CS/ML；需要覆盖 management/IS/OR、human-AI decision-making、AI governance/model risk management、XAI/fairness/accountability、中文“智能算法风险/管理决策/算法治理”等角度。
 - 不要逐字照抄种子想法，而是把它转成更适合学术检索的 query
 - 如果存在 `seed_papers.jsonl`，这些 seed papers 不是普通参考信息，而是**必须保留到最终候选池的高优先级论文**
 - 对于 `role=anchor` 的 seed paper，除非完全无法确认 metadata，否则不要在最终 `papers_dedup.jsonl` 中丢失它
@@ -249,6 +263,11 @@ detect_duplicate_queries(
    - domain_profile 仍用于解释结果和过滤噪声，而不是决定是否完全跳过 INFORMS。
    - runtime 会在 active/backlog 切分前对前置候选做一轮轻量 metadata/abstract/OA hint 补全，再按配置选择 active pool；你不需要为了“补资源公平性”手工读取整池 JSONL。
 
+   **中文与治理资料注意事项**：
+   - OpenAlex/Crossref/arXiv 对中文管理学文献覆盖不完整。中文 query 返回少时，要在 `search_log.md` / `missing_areas.md` 说明来源限制，并优先用中英双语关键词继续查 OpenAlex、Crossref、Semantic Scholar、INFORMS/Scopus（如可用）。
+   - 当前系统没有 CNKI/万方官方 API；不要伪造中文论文 metadata。用户可把中文论文 PDF 或 DOI/题录放入 `user_seeds/`，T2/T3 会按 seed 处理。
+   - EU AI Act、NIST AI RMF、ISO/IEC 42001/23894、中国算法推荐/生成式 AI 管理规定等应作为 `seed_external_resources` / web/official-source verification 线索，不作为 `papers_dedup.jsonl` 的学术论文。
+
 2. **备选策略：使用 multi_source_search**
    - 如果直接 API 工具失败，可以使用 multi_source_search
    - 每条检索式调用: `multi_source_search(query="...", max_results=30, sources=["crossref", "arxiv", "informs", "europepmc"])`
@@ -285,10 +304,11 @@ detect_duplicate_queries(
    - 使用同义词和相关概念（不要重复相同关键词）
    - 包含上下游技术、评价设置、baseline 家族和相邻领域，但这些都必须由你从项目语境推断
    - 不要照抄本 prompt 的占位形式；要把占位符替换成当前项目的真实术语
+   - 如果 `manuscript_profile=survey`，query 数量可以更宽，但必须按 taxonomy 分桶，避免只堆叠同义句。至少覆盖：理论基础、技术风险机制、管理/组织决策、人机协同/行为偏差、治理/合规/审计、风险链条各阶段、中文/英文双语 query。
 
 3. **检索数量控制**：
    - 每条检索式从每个数据源获取 10-20 篇论文
-   - 总原始结果控制在 100-200 篇
+   - research article 默认总原始结果控制在 100-200 篇；survey profile 可以更宽，但必须在 log 中说明 taxonomy bucket 覆盖，runtime 会按 profile active/backlog 参数裁剪
    - **目标去重率：50-70%**（如果 >80% 说明检索式重复度太高）
 
 4. **容错处理**：

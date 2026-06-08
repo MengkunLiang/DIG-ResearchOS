@@ -589,6 +589,27 @@ agents:
 
 这和 T2 的 active pool/backlog 分层配套：active deep-read 由 T3 精读，active shallow 由 abstract sweep 生成弱证据提示或 metadata-only 补资源线索；active pool 外的 backlog 默认只做覆盖审计和人工/显式回捞。
 
+#### research article vs survey profile
+
+上表默认值是 `research_article` profile。runtime 会根据 workspace 自动选择文献流程 profile：
+
+- `project.yaml.metadata.manuscript_type/project_type/article_type/paper_type`
+- 或 `user_seeds/seed_outline_profile.json` 的 `manuscript_type/project_type`
+
+字段包含 `survey`、`综述`、`review` 或 `taxonomy-driven` 时启用 `behavior_profiles.survey`。综述版会放宽覆盖参数，但仍保持 active/backlog 和证据等级边界：
+
+| 参数组 | research_article 默认 | survey 默认 | 作用 |
+| --- | --- | --- | --- |
+| `t2_finalize.active_pool_max` | `120` | `180` | 综述需要更宽 taxonomy 覆盖，超额仍进入 backlog |
+| `t2_finalize.screened_active_pool_cap` | `60` | `90` | 保留更多 semantic-screened 候选 |
+| `t2_finalize.pre_active_light_backfill_max` | `220` | `360` | 切 active/backlog 前补更多 DOI/OA/摘要 hint |
+| `t2_finalize.snowball_max_sources` | `12` | `18` | 从更多高置信来源做 bounded one-hop citation snowball |
+| `reader.deep_read_min/target/max` | `35/35/45` | `45/55/65` | 综述需要更多结构化 deep-read note 支撑 taxonomy |
+| `reader.abstract_sweep.lite_paper_num` | `120` | `180` | 综述轻读覆盖更宽，供 T3.6 taxonomy plan 看到边界材料 |
+| `reader.abstract_sweep.sources` | `verified,dedup` | `verified,dedup,backlog` | survey 可显式扫描 backlog，但 deferred/backlog 排除语义仍会被尊重 |
+
+用户 Markdown 种子提纲经 `normalize_seed_outline` 生成的 `seed_outline_profile.json` 会自动把算法风险综述这类任务识别为 `survey`。其中 `representative_literature_directions` 不是 citation，也不会写入 `seed_papers.jsonl`；它只影响 query 设计、taxonomy 先验和补检缺口。
+
 ### 5.5 当前值得注意的字段
 
 #### `submission.behavior.enforce_anonymization_precheck`

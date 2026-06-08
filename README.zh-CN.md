@@ -323,6 +323,23 @@ python -m researchos.cli run \
 注意：目标 workspace 不能已有 `state.yaml`。这个命令只复制 T2 的前置输入，不复制
 旧的 `papers_raw.jsonl`、`papers_verified.jsonl`、`deep_read_queue.jsonl` 等 T2 输出。
 
+### 7. 使用综述种子提纲
+
+如果你把中文综述提纲放进 `user_seeds/`，例如：
+
+```bash
+cp /mnt/data/reference/算法风险综述_种子提纲.md \
+  ./workspace/algorithm-risk-survey/user_seeds/算法风险综述_种子提纲.md
+```
+
+T1/T2/T3.6 会把它规范化为 `user_seeds/seed_outline_profile.json`，并派生
+`seed_ideas.md`、`seed_constraints.md` 和 `seed_external_resources.jsonl`。
+提纲中的 `representative_literature_directions` 只是检索方向和 taxonomy 先验，
+不是已验证 citation，也不会写入 `seed_papers.jsonl`。T2 会据此启用 `survey`
+文献流程 profile，覆盖中英文 query、管理/IS/OR、human-AI decision-making、
+AI governance/model risk management、XAI/fairness/accountability 等角度；T3.6
+会把 `framework`、`sections` 和 `query_profile` 作为综述 taxonomy/scope 的强先验。
+
 ## 常见使用方式
 
 ### 场景 1：完整跑一个项目
@@ -404,6 +421,19 @@ python -m researchos.cli run \
 ```
 
 这里 `run --from` 会复制 `T2` 的前置输入，不复制旧 T2 检索产物。若省略 `--start-task`，默认从 `T2` 开始。
+
+如果 T2 已经可信，只想丢弃旧 T3 阅读结果并从 T3 继续完整主链：
+
+```bash
+python -m researchos.cli run \
+  --workspace ./workspace/new-test5-t3-redo \
+  --from ./workspace/new-test5 \
+  --start-task T3
+```
+
+这会复制 T3 的声明输入，包括 `project.yaml`、T2 文献池、`deep_read_queue.jsonl`、
+`domain_map.json`、`access_audit.md`、`missing_areas.md` 和可选 seed profile；不会复制旧的
+`paper_notes/`、`comparison_table.csv` 或 `related_work.bib`。
 
 说明：
 
@@ -591,6 +621,7 @@ ResearchOS 可以加载 MCP server 配置，并把 MCP tool 暴露给 agent。
 
 - T4 Gate1 已拆成状态机级 `T4-GATE1` immediate gate；Gate2/计划确认仍在 T4 agent 内通过 artifact 与人类反馈记录完成。
 - T3.6 complete 素材范围当前是一次性补检计划和 LLM 审阅记录，不会自动回到 T2/T3 做无限检索；需要真正扩大语料时，应由用户确认后单独补跑检索/阅读。T3.6 taxonomy plan 会把 metadata-only 材料放入 resource upgrade needs，而不是当作综述核心证据。
+- 中文管理学文献目前依赖 OpenAlex/Crossref/Semantic Scholar/INFORMS/Scopus 可用覆盖和用户 seed；系统没有内置 CNKI/万方官方 API，不能伪造中文论文 metadata。法规、标准和治理框架（如 EU AI Act、NIST AI RMF、ISO/IEC 42001/23894、中国算法治理规定）会进入 `seed_external_resources.jsonl` 作为 official-source verification 线索，不进入 `papers_dedup.jsonl`，正文引用前必须由官方来源或已检索文献支撑。
 - T4.5 novelty 审计仍依赖 LLM 生成搜索策略，但非通过 verdict 已进入人工决策 gate，避免自动拒绝或死循环回退。
 - 长任务仍受 provider 稳定性、速率限制和 PDF 解析质量影响。
 - Docker / LaTeX / 本地 HTTP 测试依赖宿主环境权限；沙箱环境可能无法覆盖全部集成路径。

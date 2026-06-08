@@ -16,7 +16,7 @@ from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
 from ..tools.survey_tools import SURVEY_SECTION_SEQUENCE, SURVEY_SECTION_TITLES
-from ._common import load_project, prepend_resume_prefix, read_text_file
+from ._common import ensure_seed_outline_profile, load_jsonl, load_project, prepend_resume_prefix, read_text_file
 
 
 class SurveyWriterAgent(Agent):
@@ -51,6 +51,7 @@ class SurveyWriterAgent(Agent):
                     "allowed_read_prefixes": [
                         "",
                         "literature/",
+                        "user_seeds/",
                         "drafts/survey/",
                         "ideation/",
                         "_runtime/resume/",
@@ -70,6 +71,7 @@ class SurveyWriterAgent(Agent):
 
     def system_prompt(self, ctx: ExecutionContext) -> str:
         ws = ctx.workspace_dir
+        ensure_seed_outline_profile(ws)
         project = load_project(ctx)
         phase = self._phase(ctx)
         section_id = self._section_id(ctx)
@@ -78,6 +80,11 @@ class SurveyWriterAgent(Agent):
             if section_id
             else ""
         )
+        seed_outline_profile = read_text_file(ws / "user_seeds" / "seed_outline_profile.json", default="")
+        seed_ideas = read_text_file(ws / "user_seeds" / "seed_ideas.md", default="")
+        seed_constraints = read_text_file(ws / "user_seeds" / "seed_constraints.md", default="")
+        seed_papers = load_jsonl(ws / "user_seeds" / "seed_papers.jsonl")
+        external_resources = load_jsonl(ws / "user_seeds" / "seed_external_resources.jsonl")
         return render_prompt(
             self.spec.prompt_template,
             ctx,
@@ -95,6 +102,17 @@ class SurveyWriterAgent(Agent):
             survey_audit_preview=read_text_file(ws / "drafts" / "survey" / "survey_audit.md", default="")[:3000],
             section_outline_preview=section_outline[:5000],
             related_work_preview=read_text_file(ws / "literature" / "related_work.bib", default="")[:3000],
+            seed_outline_profile_preview=seed_outline_profile[:7000],
+            has_seed_outline_profile=bool(seed_outline_profile.strip()),
+            seed_ideas_preview=seed_ideas[:3000],
+            has_seed_ideas=bool(seed_ideas.strip()),
+            seed_constraints_preview=seed_constraints[:2000],
+            has_seed_constraints=bool(seed_constraints.strip()),
+            seed_papers_preview=seed_papers[:10],
+            seed_paper_count=len(seed_papers),
+            external_resources_preview=external_resources[:12],
+            external_resource_count=len(external_resources),
+            has_external_resources=bool(external_resources),
         )
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:

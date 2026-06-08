@@ -8,8 +8,9 @@ import yaml
 
 from researchos.agents.registry import get_agent_by_id
 from researchos.agents.survey_writer import SurveyWriterAgent
+from researchos.orchestration.task_io_contract import TASK_IO_CONTRACTS
 from researchos.orchestration.state_machine import StateMachine
-from researchos.runtime.agent import AgentResult
+from researchos.runtime.agent import AgentResult, ExecutionContext
 from researchos.schemas.validator import validate_task_artifacts
 from researchos.schemas.state import StateYaml
 from researchos.tools.survey_tools import (
@@ -151,6 +152,69 @@ def test_survey_writer_registry_and_phase():
     agent = get_agent_by_id("survey_writer", mode="survey_section")
     assert isinstance(agent, SurveyWriterAgent)
     assert agent._mode == "survey_section"
+
+
+def test_survey_writer_prompt_includes_seed_outline_profile_as_taxonomy_prior(tmp_path: Path):
+    ws = tmp_path
+    (ws / "user_seeds").mkdir(parents=True)
+    (ws / "literature").mkdir()
+    (ws / "project.yaml").write_text(
+        "project_id: p\nresearch_direction: 智能算法风险综述\ntarget_venue: 中文综述\n",
+        encoding="utf-8",
+    )
+    _write_json(
+        ws / "user_seeds" / "seed_outline_profile.json",
+        {
+            "semantics": "user_seed_outline_profile",
+            "manuscript_type": "survey",
+            "framework": {
+                "taxonomy_hint": "理论 / 技术 / 管理 / 治理 × 场景 -> 数据 -> 模型 -> 决策 -> 反馈",
+                "risk_generation_chain": ["场景", "数据", "模型", "决策", "反馈"],
+                "perspectives": ["理论", "技术", "管理", "治理"],
+            },
+            "representative_literature_directions": [
+                {"direction": "bounded rationality", "use_as": "query_direction_not_verified_citation"}
+            ],
+            "literature_seed_policy": {"directions_are_verified_citations": False},
+        },
+    )
+    (ws / "user_seeds" / "seed_external_resources.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "regulation",
+                "name": "EU AI Act",
+                "source": "official_source_lookup_required",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    ctx = ExecutionContext(
+        workspace_dir=ws,
+        project_id="p",
+        task_id="T3.6-PLAN",
+        run_id="r1",
+        mode="survey_plan",
+    )
+
+    prompt = SurveyWriterAgent(mode="survey_plan").system_prompt(ctx)
+
+    assert "seed_outline_profile.json" in prompt
+    assert "taxonomy hint" in prompt or "taxonomy" in prompt
+    assert "理论 / 技术 / 管理 / 治理" in prompt
+    assert "不是已验证 citation" in prompt
+    assert "不得直接引用" in prompt
+    assert "EU AI Act" in prompt
+
+
+def test_t36_contract_exposes_seed_outline_inputs_to_non_compile_nodes():
+    seed_keys = {"seed_outline_profile", "seed_ideas", "seed_constraints", "seed_external_resources"}
+    for task_id, contract in TASK_IO_CONTRACTS.items():
+        if not task_id.startswith("T3.6-") or task_id == "T3.6-COMPILE":
+            continue
+        inputs = set((contract.get("inputs") or {}).keys())
+        assert seed_keys <= inputs, task_id
 
 
 def test_survey_writer_compile_validation_accepts_success_report(tmp_path: Path):

@@ -13,6 +13,14 @@ from __future__ import annotations
 from pathlib import Path
 
 
+OPTIONAL_SEED_SURVEY_INPUTS: dict[str, str] = {
+    "seed_outline_profile": "user_seeds/seed_outline_profile.json",
+    "seed_ideas": "user_seeds/seed_ideas.md",
+    "seed_constraints": "user_seeds/seed_constraints.md",
+    "seed_external_resources": "user_seeds/seed_external_resources.jsonl",
+}
+
+
 TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
     "HELLO": {
         "inputs": {},
@@ -41,6 +49,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "seed_pdfs": "user_seeds/pdfs",
             "seed_constraints": "user_seeds/seed_constraints.md",
             "seed_ideas": "user_seeds/seed_ideas.md",
+            "seed_outline_profile": "user_seeds/seed_outline_profile.json",
             "seed_external_resources": "user_seeds/seed_external_resources.jsonl",
             "bridge_domain_plan": "literature/bridge_domain_plan.json",
         },
@@ -93,6 +102,9 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "domain_map": "literature/domain_map.json",
             "access_audit": "literature/access_audit.md",
             "missing_areas": "literature/missing_areas.md",
+            "seed_outline_profile": "user_seeds/seed_outline_profile.json",
+            "seed_constraints": "user_seeds/seed_constraints.md",
+            "seed_external_resources": "user_seeds/seed_external_resources.jsonl",
         },
         "outputs": {
             "paper_notes_dir": "literature/paper_notes",
@@ -131,6 +143,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "synthesis_workbench": "literature/synthesis_workbench.json",
             "domain_map": "literature/domain_map.json",
             "comparison_table": "literature/comparison_table.csv",
+            **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"survey_decision": "drafts/survey/decision.json"},
         "required_inputs": ["project", "synthesis", "synthesis_workbench", "domain_map"],
@@ -146,6 +159,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "paper_notes_dir": "literature/paper_notes",
             "paper_notes_abstract_dir": "literature/paper_notes_abstract",
             "related_work_bib": "literature/related_work.bib",
+            **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"survey_plan": "drafts/survey/survey_plan.json"},
         "required_inputs": [
@@ -162,6 +176,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "inputs": {
             "project": "project.yaml",
             "survey_plan": "drafts/survey/survey_plan.json",
+            **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {
             "survey_plan": "drafts/survey/survey_plan.json",
@@ -176,6 +191,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "survey_plan": "drafts/survey/survey_plan.json",
             "paper_notes_dir": "literature/paper_notes",
             "paper_notes_abstract_dir": "literature/paper_notes_abstract",
+            **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"corpus_decision": "drafts/survey/corpus_decision.json"},
         "required_inputs": ["project", "survey_plan"],
@@ -188,6 +204,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "corpus_decision": "drafts/survey/corpus_decision.json",
             "domain_map": "literature/domain_map.json",
             "papers_verified": "literature/papers_verified.jsonl",
+            **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"survey_expansion": "drafts/survey/survey_expansion.json"},
         "required_inputs": ["project", "survey_plan", "corpus_decision"],
@@ -204,6 +221,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "domain_map": "literature/domain_map.json",
             "comparison_table": "literature/comparison_table.csv",
             "related_work_bib": "literature/related_work.bib",
+            **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {
             "survey_state": "drafts/survey/survey_state.json",
@@ -221,6 +239,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "domain_map": "literature/domain_map.json",
             "comparison_table": "literature/comparison_table.csv",
             "related_work_bib": "literature/related_work.bib",
+            **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"section": "drafts/survey/sections/background.tex"},
         "required_inputs": ["project", "survey_state", "section_outline", "synthesis", "related_work_bib"],
@@ -235,6 +254,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "synthesis_workbench": "literature/synthesis_workbench.json",
             "domain_map": "literature/domain_map.json",
             "related_work_bib": "literature/related_work.bib",
+            **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"section": "drafts/survey/sections/taxonomy.tex"},
         "required_inputs": ["project", "survey_state", "section_outline", "survey_plan", "domain_map", "related_work_bib"],
@@ -253,6 +273,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "paper_notes_dir": "literature/paper_notes",
             "paper_notes_abstract_dir": "literature/paper_notes_abstract",
             "related_work_bib": "literature/related_work.bib",
+            **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"section": "drafts/survey/sections/theme_1.tex"},
         "required_inputs": ["project", "survey_state", "survey_plan", "section_outline", "synthesis", "related_work_bib"],
@@ -271,6 +292,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "paper_notes_dir": "literature/paper_notes",
             "paper_notes_abstract_dir": "literature/paper_notes_abstract",
             "related_work_bib": "literature/related_work.bib",
+            **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"section": "drafts/survey/sections/theme_2.tex"},
         "required_inputs": ["project", "survey_state", "survey_plan", "section_outline", "synthesis", "related_work_bib"],
@@ -289,6 +311,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "paper_notes_dir": "literature/paper_notes",
             "paper_notes_abstract_dir": "literature/paper_notes_abstract",
             "related_work_bib": "literature/related_work.bib",
+            **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"section": "drafts/survey/sections/theme_3.tex"},
         "required_inputs": ["project", "survey_state", "survey_plan", "section_outline", "synthesis", "related_work_bib"],
@@ -307,6 +330,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "paper_notes_dir": "literature/paper_notes",
             "paper_notes_abstract_dir": "literature/paper_notes_abstract",
             "related_work_bib": "literature/related_work.bib",
+            **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"section": "drafts/survey/sections/theme_4.tex"},
         "required_inputs": ["project", "survey_state", "survey_plan", "section_outline", "synthesis", "related_work_bib"],
@@ -320,6 +344,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "comparison_table": "literature/comparison_table.csv",
             "synthesis_workbench": "literature/synthesis_workbench.json",
             "related_work_bib": "literature/related_work.bib",
+            **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"section": "drafts/survey/sections/comparison.tex"},
         "required_inputs": ["project", "survey_state", "section_outline", "comparison_table", "related_work_bib"],
@@ -334,6 +359,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "synthesis_workbench": "literature/synthesis_workbench.json",
             "domain_map": "literature/domain_map.json",
             "related_work_bib": "literature/related_work.bib",
+            **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"section": "drafts/survey/sections/challenges.tex"},
         "required_inputs": ["project", "survey_state", "section_outline", "synthesis", "related_work_bib"],
@@ -347,6 +373,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "synthesis_workbench": "literature/synthesis_workbench.json",
             "domain_map": "literature/domain_map.json",
             "related_work_bib": "literature/related_work.bib",
+            **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"section": "drafts/survey/sections/future.tex"},
         "required_inputs": ["project", "survey_state", "section_outline", "synthesis_workbench", "domain_map", "related_work_bib"],
@@ -363,6 +390,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "challenges_section": "drafts/survey/sections/challenges.tex",
             "future_section": "drafts/survey/sections/future.tex",
             "related_work_bib": "literature/related_work.bib",
+            **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"section": "drafts/survey/sections/introduction.tex"},
         "required_inputs": [
@@ -384,6 +412,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "section_outline": "drafts/survey/section_outlines/conclusion.md",
             "challenges_section": "drafts/survey/sections/challenges.tex",
             "future_section": "drafts/survey/sections/future.tex",
+            **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"section": "drafts/survey/sections/conclusion.tex"},
         "required_inputs": ["project", "survey_state", "section_outline", "challenges_section", "future_section"],
@@ -400,6 +429,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "challenges_section": "drafts/survey/sections/challenges.tex",
             "future_section": "drafts/survey/sections/future.tex",
             "conclusion_section": "drafts/survey/sections/conclusion.tex",
+            **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"section": "drafts/survey/sections/abstract.tex"},
         "required_inputs": [
@@ -422,6 +452,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "sections_dir": "drafts/survey/sections",
             "survey_plan": "drafts/survey/survey_plan.json",
             "related_work_bib": "literature/related_work.bib",
+            **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {
             "survey_tex": "drafts/survey/survey.tex",
@@ -444,6 +475,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "domain_map": "literature/domain_map.json",
             "comparison_table": "literature/comparison_table.csv",
             "related_work_bib": "literature/related_work.bib",
+            **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {
             "survey_review": "drafts/survey/survey_review.md",
@@ -489,6 +521,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "survey_tex": "drafts/survey/survey.tex",
             "survey_audit_json": "drafts/survey/survey_audit.json",
             "survey_compile_report": "drafts/survey/survey_compile_report.json",
+            **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {
             "survey_insights": "ideation/survey_insights.json",
@@ -551,6 +584,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         },
         "outputs": {
             "gate1_user_selection": "ideation/_gate1_user_selection.json",
+            "bridge_coverage_review": "ideation/bridge_coverage_review.json",
         },
         "optional_outputs": ["bridge_coverage_review"],
         "required_inputs": [

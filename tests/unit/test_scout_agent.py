@@ -110,10 +110,12 @@ def test_scout_agent_spec(scout_agent):
     assert "apply_semantic_screening" in spec.tool_names
     assert "elsevier_scopus_search" in spec.tool_names
     assert "informs_search" in spec.tool_names
+    assert "normalize_seed_outline" in spec.tool_names
     # MCP工具已移除，等MCP配置完成后再启用
     # assert "mcp_semantic_scholar_search" in spec.tool_names
     # assert "mcp_arxiv_search" in spec.tool_names
     assert "literature/" in spec.allowed_write_prefixes
+    assert "user_seeds/" in spec.allowed_write_prefixes
 
 
 def test_scout_system_prompt(scout_agent, execution_context):
@@ -200,6 +202,45 @@ def test_scout_system_prompt_includes_external_resources(scout_agent, execution_
     assert "用户提供的外部资源" in prompt
     assert "AgentMemoryBench" in prompt
     assert "huggingface:org/agent-memory-bench" in prompt
+
+
+def test_scout_prompt_consumes_seed_outline_profile_as_query_prior(scout_agent, execution_context):
+    profile_path = execution_context.workspace_dir / "user_seeds" / "seed_outline_profile.json"
+    profile_path.write_text(
+        json.dumps(
+            {
+                "semantics": "user_seed_outline_profile",
+                "manuscript_type": "survey",
+                "title": "从数据智能到决策风险：面向管理决策的智能算法风险研究综述",
+                "framework": {
+                    "risk_generation_chain": ["场景", "数据", "模型", "决策", "反馈"],
+                    "perspectives": ["理论", "技术", "管理", "治理"],
+                    "taxonomy_hint": "理论 / 技术 / 管理 / 治理 × 场景 -> 数据 -> 模型 -> 决策 -> 反馈",
+                },
+                "representative_literature_directions": [
+                    {"direction": "bounded rationality", "use_as": "query_direction_not_verified_citation"},
+                    {"direction": "AI governance", "use_as": "query_direction_not_verified_citation"},
+                ],
+                "query_profile": {
+                    "search_languages": ["zh", "en"],
+                    "query_variants": ["智能算法风险 管理决策 综述", "algorithmic risk managerial decision-making survey"],
+                },
+                "literature_seed_policy": {"directions_are_verified_citations": False},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    prompt = scout_agent.system_prompt(execution_context)
+
+    assert "文献流程 profile: survey" in prompt
+    assert "用户 seed outline profile" in prompt
+    assert "representative_literature_directions" in prompt
+    assert "不是已验证 citation" in prompt
+    assert "不能写入 `seed_papers.jsonl`" in prompt
+    assert "智能算法风险/管理决策/算法治理" in prompt
+    assert "management/IS/OR" in prompt
 
 
 def test_scout_initial_user_message(scout_agent, execution_context):

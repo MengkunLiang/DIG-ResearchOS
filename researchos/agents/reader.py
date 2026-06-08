@@ -26,11 +26,12 @@ from ..runtime.t3_notes_manifest import (
     target_entries,
 )
 from ..runtime.agent import Agent, ExecutionContext
-from ..runtime.agent_params import build_agent_spec, get_agent_mode_params
+from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
-from ..runtime.t2_config import load_deep_read_queue_config
+from ..runtime.t2_config import get_effective_reader_read_params, load_deep_read_queue_config
 from ._common import (
     cdr_schema_prompt_summary,
+    ensure_seed_outline_profile,
     load_project,
     load_jsonl,
     normalize_text_key,
@@ -80,9 +81,22 @@ class ReaderAgent(Agent):
         """根据mode渲染不同的system prompt。"""
         mode = ctx.mode or "read"
         project = load_project(ctx)
-        queue_config = load_deep_read_queue_config()
+        ensure_seed_outline_profile(ctx.workspace_dir)
+        seed_outline_profile = read_text_file(
+            ctx.workspace_dir / "user_seeds" / "seed_outline_profile.json",
+            default="",
+        )
+        seed_constraints = read_text_file(
+            ctx.workspace_dir / "user_seeds" / "seed_constraints.md",
+            default="",
+        )
+        queue_config = load_deep_read_queue_config(ctx.workspace_dir)
         context_vars = {
             "project": project,
+            "seed_outline_profile_preview": seed_outline_profile[:6000],
+            "has_seed_outline_profile": bool(seed_outline_profile.strip()),
+            "seed_constraints_preview": seed_constraints[:1500],
+            "has_seed_constraints": bool(seed_constraints.strip()),
             "verified_paper_count": 0,
             "verified_paper_preview": [],
             "existing_note_count": 0,
@@ -263,7 +277,7 @@ class ReaderAgent(Agent):
         for note_path in valid_note_files:
             completed_note_keys.update(_paper_note_match_keys(note_path))
 
-        queue_config = load_deep_read_queue_config()
+        queue_config = load_deep_read_queue_config(ctx.workspace_dir)
         min_required = queue_config.deep_read_min
         target_required = queue_config.deep_read_target
         queue_path = ctx.workspace_dir / "literature" / "deep_read_queue.jsonl"
@@ -328,7 +342,7 @@ class ReaderAgent(Agent):
         # 默认 expected_notes_ratio=1.0；旧 workspace 没有 queue 时也不能再按 80% 静默放过。
         dedup_path = ctx.workspace_dir / "literature" / "papers_dedup.jsonl"
         verified_path = ctx.workspace_dir / "literature" / "papers_verified.jsonl"
-        mode_params = get_agent_mode_params("reader", "read")
+        mode_params = get_effective_reader_read_params(ctx.workspace_dir)
         expected_notes_ratio = _expected_notes_ratio(mode_params.get("expected_notes_ratio", 1.0))
         if not queue_count and verified_path.exists():
             verified_papers = load_jsonl(verified_path)

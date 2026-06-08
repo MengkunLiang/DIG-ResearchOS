@@ -64,6 +64,7 @@ from .paper_lookup import LookupPaperRecordTool
 from .registry import ToolRegistry
 from .search_papers import FetchPaperMetadataTool, SearchPapersTool
 from .seed_paper_processor import ProcessSeedPaperTool
+from .seed_outline import NormalizeSeedOutlineTool
 from .save_paper_note import SavePaperNoteTool
 from .upload_seed_materials import UploadSeedCodeTool, UploadSeedDataTool, UploadSeedPdfTool
 from .web_fetch import WebFetchAllowlist, WebFetchTool
@@ -117,6 +118,7 @@ def register_builtin_tools(
     registry.register("append_file", lambda ctx: AppendFileTool(ctx.policy))
     registry.register("list_files", lambda ctx: ListFilesTool(ctx.policy))
     registry.register("inspect_user_seeds", lambda ctx: InspectUserSeedsTool(ctx.policy))
+    registry.register("normalize_seed_outline", lambda ctx: NormalizeSeedOutlineTool(ctx.policy))
     registry.register("finish_task", lambda ctx: FinishTaskTool())
     registry.register(
         "ask_human",

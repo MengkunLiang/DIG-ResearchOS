@@ -10,6 +10,22 @@
 ## 项目研究方向
 {{ project.get('research_direction', project.get('direction', '未指定')) }}
 
+{% if has_seed_outline_profile %}
+## 用户 seed outline profile（阅读维度先验）
+{{ seed_outline_profile_preview }}
+
+使用规则：
+- 这是用户提供的综述范围、taxonomy hint、关键词和治理/外部资源线索；
+- `representative_literature_directions` 不是已验证 citation，不能在 note 或 BibTeX 中当作论文引用；
+- 深读时要围绕 `framework`、`sections`、`query_profile` 记录论文对理论/技术/管理/治理视角以及风险生成链条的支撑或缺口；
+- 如果某个方向只有 abstract/metadata 或未被召回，要在 note/triage 中标明证据等级，不要补写不存在的贡献。
+{% endif %}
+
+{% if has_seed_constraints %}
+## 用户 seed constraints 预览
+{{ seed_constraints_preview }}
+{% endif %}
+
 ## 你的任务
 精读 workspace/literature/papers_verified.jsonl / papers_dedup.jsonl 中的 {{ paper_count }} 篇论文，并优先围绕 deep-read 队列产出结构化笔记。
 {% if resume_mode or existing_note_count > 0 %}
@@ -47,6 +63,9 @@
 - `literature/pdfs/`: 可能包含部分论文的PDF文件
 {% if seed_paper_count > 0 %}
 - `user_seeds/seed_papers.jsonl`: 用户明确指定的种子论文，必须最高优先级处理
+{% endif %}
+{% if has_seed_outline_profile %}
+- `user_seeds/seed_outline_profile.json`: 用户综述/研究提纲的结构化 profile，只作阅读维度和覆盖检查先验，不是论文证据
 {% endif %}
 
 {% if seed_paper_count > 0 %}

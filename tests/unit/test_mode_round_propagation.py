@@ -357,9 +357,18 @@ class TestTaskIOContractCompleteness:
             contract_inputs = dict(contract.get("inputs", {}))
 
             if declared_inputs != contract_inputs:
-                # 这是一个警告，不是错误（因为 single_task 使用 resolve_inputs）
-                # 但应该保持一致
-                pass
+                assert declared_inputs == contract_inputs, f"{task_id}: inputs do not match task_io_contract"
+
+            declared_outputs = dict(node.outputs or {})
+            declared_outputs.update(dict(node.optional_outputs or {}))
+            contract_outputs = dict(contract.get("outputs", {}))
+            assert declared_outputs == contract_outputs, f"{task_id}: outputs do not match task_io_contract"
+
+            declared_optional = dict(node.optional_outputs or {})
+            contract_optional = set(contract.get("optional_outputs", []))
+            assert set(declared_optional) == contract_optional, (
+                f"{task_id}: optional_outputs do not match task_io_contract"
+            )
 
     def test_pre_t5_and_t8_required_contracts_cover_shared_artifacts(self):
         """Pre-T5/T8 single-task contracts must not silently drop shared artifacts."""

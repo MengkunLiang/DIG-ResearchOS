@@ -512,9 +512,10 @@ researchos run-task HELLO --workspace ./workspace/dev-smoke
 | --- | --- | --- | --- |
 | - | `project.yaml` | 否 | T1 之前通常还没有 |
 | - | `user_seeds/seed_papers.jsonl` | 否 | 用户手工提供的种子论文 |
+| - | `user_seeds/seed_outline_profile.json` | 否 | 用户 Markdown 综述/研究提纲规范化后的结构化 profile；由 `normalize_seed_outline` 或 runtime helper 生成 |
 | - | `user_seeds/seed_ideas.md` | 否 | 用户已有的想法 |
 | - | `user_seeds/seed_constraints.md` | 否 | 预算、硬件、目标 venue 等约束 |
-| - | `user_seeds/seed_external_resources.jsonl` | 否 | 数据集、模型、代码库、repo 等外部资源 |
+| - | `user_seeds/seed_external_resources.jsonl` | 否 | 数据集、模型、代码库、repo、法规、标准、治理框架等外部资源 |
 | - | `user_seeds/bridge_domains.yaml` | 否 | 可选预置桥接领域；T1 会展示给用户确认，不直接升级为 must_explore |
 
 除了文件输入，T1 还会接收 CLI 层的主题参数，例如：
@@ -565,7 +566,7 @@ T1 的本质不是“自由聊天”，而是一个结构化初始化阶段：
 
 `PIAgent(init)` 启动时，`AgentRunner` 会先于第一次 LLM 调用执行一次 runtime 级 `T1 启动补充 gate`：调用 `ask_human` 询问用户是否还要补充 seed PDFs、arXiv/DOI、初步想法、硬约束、目标 venue、预算/GPU 或外部资源。这个 gate 的目的，是在系统扫描 `user_seeds/` 之前给用户一次明确补充/确认机会，避免后续 T2/T3/T4 基于过期或缺失材料启动。回答会写入 `_runtime/t1_startup_gate.json` 和 `_runtime/human_interactions.jsonl`；resume 时如果该文件已经存在，runtime 会复用回答并注入上下文，不会重复弹窗。若输入不可用或回答为空，run 会进入可恢复暂停，不会继续让模型假装用户已经确认。
 
-启动 gate 完成后，`PIAgent(init)` 才从 CLI / `ExecutionContext.extra` 读取用户主题，并调用 `list_files` 和 `read_file` 检查 workspace 中已经存在的 `user_seeds/seed_papers.jsonl`、`user_seeds/seed_ideas.md`、`user_seeds/seed_constraints.md` 和 `user_seeds/seed_external_resources.jsonl`。这一步只是收集上下文，不应该再额外弹输入框；如果日志里出现“我来检查已有材料”，那只是状态说明。任何真正需要用户选择、确认或补充的地方，仍必须调用 `ask_human`，不能只在普通文本里提问然后继续执行。
+启动 gate 完成后，`PIAgent(init)` 才从 CLI / `ExecutionContext.extra` 读取用户主题，并调用 `inspect_user_seeds`、`list_files` 和 `read_file` 检查 workspace 中已经存在的 `user_seeds/seed_papers.jsonl`、`user_seeds/seed_ideas.md`、`user_seeds/seed_constraints.md`、`user_seeds/seed_external_resources.jsonl` 和用户 Markdown 提纲。若发现类似 `/mnt/data/reference/算法风险综述_种子提纲.md` 这类 seed outline，必须先规范化为 `user_seeds/seed_outline_profile.json`；runtime 也有 deterministic helper 兜底。规范化只派生 seed ideas、constraints 和 external resources，不会把 `representative_literature_directions` 写成 `seed_papers.jsonl`。这一步只是收集上下文，不应该再额外弹输入框；如果日志里出现“我来检查已有材料”，那只是状态说明。任何真正需要用户选择、确认或补充的地方，仍必须调用 `ask_human`，不能只在普通文本里提问然后继续执行。
 
 随后它会通过 `ask_human` 分轮访谈。每个 `ask_human.question` 必须说明三件事：当前处于 T1 第几轮、为什么需要用户回答、用户应该补哪些字段。草案确认和 Bridge Domain Plan 选择必须把 `project.yaml` 草案或候选方向清单直接写进 `question`，不能只写“请确认以上”。如果模型仍写了依赖前文的短问题，runner 会把同一轮 Agent 正文自动并入输入问题，避免用户只看到输入框却看不到草案/候选。典型轮次是：
 
@@ -826,6 +827,7 @@ T2 首先会读取：
 
 - `project.yaml`
 - `seed_papers.jsonl`
+- `seed_outline_profile.json`
 - `seed_constraints.md`
 - `seed_ideas.md`
 - `seed_external_resources.jsonl`
@@ -836,6 +838,11 @@ T2 首先会读取：
 - keywords
 - query anchors
 - constraint hints
+
+`seed_outline_profile.json` 来自用户 Markdown 种子提纲。它的 `framework`、`sections`、
+`query_profile` 和 `representative_literature_directions` 只作为 query/taxonomy prior；
+`representative_literature_directions` 不是已验证 citation，不能写入 `seed_papers.jsonl`，
+也不能在 T3.6/T8 中直接引用。
 
 #### Step 2：query 扩展
 
@@ -925,6 +932,15 @@ fetch_outgoing_citations(openalex_id_or_doi=<OpenAlex ID 或 DOI>, max_refs=60)
 ### 实际执行过程
 
 `ScoutAgent` 运行时先读 `project.yaml` 获取 `research_direction`、`keywords`、`target_venue` 和约束；随后必须调用 `inspect_user_seeds(path="user_seeds")`。这个工具只把 `kind=user_material` 和 `kind=pdf` 计为真实用户 seed，`README.md`、`_DIR_GUIDE.md`、`*.example`、空文件、只有“暂无”的 `seed_ideas.md` / `seed_constraints.md` 都只是初始化占位，不能说成“发现实际文件”。普通 `list_files` 只用于列目录，不能替代 seed inspection。之后才读取 `user_seeds/seed_papers.jsonl`、`seed_ideas.md`、`seed_constraints.md`、`seed_external_resources.jsonl`；如果存在 `seeds/T2_scout/papers/*.pdf` 或旧路径 `user_seeds/pdfs/*.pdf`，也会用 `scan_seed_papers` 抽取本地 PDF seed metadata，并与 JSONL seed 按 DOI/arXiv/title/id 去重合并。
+
+如果 inspection 发现真实 Markdown seed outline，而 `user_seeds/seed_outline_profile.json`
+尚不存在，Scout 会调用 `normalize_seed_outline`，runtime 也会在 prompt 渲染前做一次兜底规范化。
+综述 profile 下，query 设计必须覆盖中英文检索、管理/IS/OR、human-AI decision-making、
+AI governance/model risk management、XAI/fairness/accountability 和中文“智能算法风险/
+管理决策/算法治理”等角度。当前没有 CNKI/万方官方 API；中文文献覆盖不足时应写入
+`search_log.md`/`missing_areas.md`，并要求用户提供中文 PDF、DOI 或题录作为 seed。
+EU AI Act、NIST AI RMF、ISO/IEC 标准和中国算法治理法规属于 external resources /
+official-source verification 线索，不是 scholarly paper，不应进入 `papers_dedup.jsonl`。
 
 随后 prompt 会注入 `literature-scout` guidance，要求 LLM 先归纳 `domain_profile`：目标领域、include/exclude concepts、歧义词、相关子领域、候选 venue/category 和多角度 query。`expand_queries` 只负责把 LLM 设计的 query、seed 标题短语和时间窗口合并去重，不再内置“memory/retrieval/agent 属于 AI/CS”这类学科判断；如果需要领域过滤，`filter_by_domain` 也必须接收 LLM 提供的 `domain_profile`，否则不做过滤。之后用 `detect_duplicate_queries` 检查 query 是否只是同义重复。
 
@@ -1978,6 +1994,8 @@ T3.5
 | `paper_notes_dir` | `literature/paper_notes/` | deep-read 证据 |
 | `paper_notes_abstract_dir` | `literature/paper_notes_abstract/` | abstract-only 桥接提示，不能当 FULL-TEXT 证据 |
 | `related_work_bib` | `literature/related_work.bib` | survey section 引用 key 来源 |
+| `seed_outline_profile` | `user_seeds/seed_outline_profile.json` | 用户综述提纲规范化 profile；提供 taxonomy/scope/query 先验，不是 citation 来源 |
+| `seed_external_resources` | `user_seeds/seed_external_resources.jsonl` | 法规、标准、治理框架、数据集或 repo 等外部资源线索；正文引用前需验证来源 |
 
 ### 输出文件
 
@@ -2014,9 +2032,15 @@ T3.5
 
 #### `T3.6-PLAN`
 
-LLM 读取 `synthesis.md`、`synthesis_workbench.json`、`domain_map.json`、`comparison_table.csv`、`paper_notes/`、`paper_notes_abstract/` 和 `.bib`。它要选择 taxonomy 主轴，构建 2-4 层 taxonomy tree，给每个 class 绑定 paper IDs，并写 evolution narrative。
+LLM 读取 `synthesis.md`、`synthesis_workbench.json`、`domain_map.json`、`comparison_table.csv`、`paper_notes/`、`paper_notes_abstract/`、`.bib` 和可选 `seed_outline_profile.json`。它要选择 taxonomy 主轴，构建 2-4 层 taxonomy tree，给每个 class 绑定 paper IDs，并写 evolution narrative。
 
 这里需要 LLM 学术判断，不能由 tool 硬编码 taxonomy。`domain_map` 只提供 citation/evolution hint，`adjacent_transfers` 只提供邻接迁移素材，不能被当成最终分类结论。
+
+如果存在 seed outline profile，`framework`、`sections`、`query_profile` 和
+`manuscript_type=survey` 是强先验：例如“四类视角 × 风险生成链条”应作为默认 taxonomy
+候选，除非已读文献证据显示需要调整。profile 中的代表性文献方向未被 T2/T3 具体论文覆盖时，
+必须写入 `coverage_selfcheck.classes_needing_more_lit` 或 `resource_upgrade_needs`，不得伪造
+paper id 或 citation key。
 
 输出 `survey_plan.json` 至少包含：
 

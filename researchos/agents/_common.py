@@ -5,12 +5,23 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import yaml
+
+from ..literature_identity import is_placeholder_text, is_workspace_guide_or_template
+from ..tools.seed_outline import (
+    build_seed_outline_profile,
+    looks_like_seed_outline,
+    _merge_external_resources,
+    _merge_markdown_seed_file,
+    _seed_constraints_markdown,
+    _seed_ideas_markdown,
+)
 
 if TYPE_CHECKING:
     from ..runtime.agent import ExecutionContext
@@ -234,6 +245,112 @@ def write_text_file(path: Path, content: str) -> None:
     """写入文本文件，自动创建父目录。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def ensure_seed_outline_profile(workspace_dir: Path) -> dict | None:
+    """Deterministically normalize a real Markdown seed outline if needed.
+
+    This is a runtime safety net for T1/T2/T3.6 prompts. Agents are still told to
+    call `normalize_seed_outline`, but a model miss should not make a user's
+    substantial Chinese survey outline invisible to literature search/writing.
+    Representative literature directions remain query/taxonomy priors only.
+    """
+
+    user_seeds = workspace_dir / "user_seeds"
+    profile_path = user_seeds / "seed_outline_profile.json"
+    if profile_path.exists():
+        try:
+            data = json.loads(profile_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            data = None
+        if isinstance(data, dict):
+            outline_path = _profile_source_outline_path(data, workspace_dir)
+            if outline_path is None:
+                outline_path = find_seed_outline_markdown(user_seeds)
+            if outline_path is None or not _seed_outline_profile_is_stale(data, outline_path, workspace_dir):
+                _ensure_seed_outline_derived_files(user_seeds, data)
+                return data
+
+    outline_path = find_seed_outline_markdown(user_seeds)
+    if outline_path is None:
+        return None
+
+    text = outline_path.read_text(encoding="utf-8", errors="replace")
+    rel_path = outline_path.relative_to(workspace_dir).as_posix()
+    profile = build_seed_outline_profile(text, source_path=rel_path)
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    profile_path.write_text(json.dumps(profile, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    _ensure_seed_outline_derived_files(user_seeds, profile)
+    return profile
+
+
+def _seed_outline_profile_is_stale(data: dict, outline_path: Path, workspace_dir: Path) -> bool:
+    """Return true when the stored profile no longer matches the source outline."""
+
+    try:
+        rel_path = outline_path.relative_to(workspace_dir).as_posix()
+    except ValueError:
+        rel_path = outline_path.as_posix()
+    source_path = str(data.get("source_path") or "")
+    if source_path and source_path != rel_path:
+        return True
+    source_hash = str(data.get("source_sha256") or "")
+    if not source_hash:
+        return False
+    text = outline_path.read_text(encoding="utf-8", errors="replace")
+    current_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return current_hash != source_hash
+
+
+def _ensure_seed_outline_derived_files(user_seeds: Path, profile: dict) -> None:
+    """Ensure seed-outline-derived helper files exist without duplicating them."""
+
+    _merge_seed_outline_markdown(user_seeds / "seed_ideas.md", _seed_ideas_markdown(profile))
+    _merge_seed_outline_markdown(user_seeds / "seed_constraints.md", _seed_constraints_markdown(profile))
+    _merge_external_resources(user_seeds / "seed_external_resources.jsonl", profile.get("external_resources") or [])
+
+
+def find_seed_outline_markdown(user_seeds_dir: Path) -> Path | None:
+    """Find the first real Markdown seed outline under `user_seeds/`."""
+
+    if not user_seeds_dir.exists():
+        return None
+    candidates: list[Path] = []
+    for path in sorted(user_seeds_dir.glob("*.md")):
+        if is_workspace_guide_or_template(path) or path.name.endswith(".example"):
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if is_placeholder_text(text):
+            continue
+        if "seed_outline_profile: derived" in text:
+            continue
+        if looks_like_seed_outline(text):
+            candidates.append(path)
+    return candidates[0] if candidates else None
+
+
+def _profile_source_outline_path(data: dict, workspace_dir: Path) -> Path | None:
+    source_path = str(data.get("source_path") or "").strip()
+    if not source_path:
+        return None
+    path = (workspace_dir / source_path).resolve()
+    if not path.exists() or path.suffix.lower() != ".md":
+        return None
+    try:
+        path.relative_to(workspace_dir.resolve())
+    except ValueError:
+        return None
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if is_placeholder_text(text) or "seed_outline_profile: derived" in text:
+        return None
+    if not looks_like_seed_outline(text):
+        return None
+    return path
+
+
+def _merge_seed_outline_markdown(path: Path, addition: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _merge_markdown_seed_file(path, addition, marker="seed_outline_profile")
 
 
 def build_resume_prefix(ctx: "ExecutionContext") -> str:

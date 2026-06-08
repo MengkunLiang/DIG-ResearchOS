@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from researchos.runtime.agent_params import (
@@ -10,7 +11,12 @@ from researchos.runtime.agent_params import (
     get_global_timeout,
     get_retry_policy,
 )
-from researchos.runtime.t2_config import load_t2_finalize_config
+from researchos.runtime.t2_config import (
+    detect_manuscript_profile,
+    get_effective_reader_read_params,
+    load_deep_read_queue_config,
+    load_t2_finalize_config,
+)
 
 
 def test_build_agent_spec_supports_direct_llm_model_and_endpoint(tmp_path, monkeypatch):
@@ -219,6 +225,85 @@ agents:
     assert cfg.snowball_title_match_threshold == 0.91
     assert cfg.progress_enabled is False
     assert cfg.progress_file == "literature/custom_progress.md"
+
+    clear_cache()
+
+
+def test_survey_behavior_profile_overrides_t2_and_t3_from_workspace(tmp_path, monkeypatch):
+    config_path = tmp_path / "agent_params.yaml"
+    workspace = tmp_path / "workspace"
+    (workspace / "user_seeds").mkdir(parents=True)
+    (workspace / "project.yaml").write_text(
+        "project_id: p\nmetadata:\n  manuscript_type: survey\n",
+        encoding="utf-8",
+    )
+    (workspace / "user_seeds" / "seed_outline_profile.json").write_text(
+        json.dumps({"manuscript_type": "survey", "project_type": "survey"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    config_path.write_text(
+        """
+agents:
+  scout:
+    behavior:
+      t2_finalize:
+        active_pool_max: 120
+        screened_active_pool_cap: 60
+        snowball_max_sources: 12
+      behavior_profiles:
+        survey:
+          t2_finalize:
+            active_pool_max: 180
+            screened_active_pool_cap: 90
+            snowball_max_sources: 18
+  reader:
+    modes:
+      read:
+        behavior:
+          deep_read_min: 35
+          deep_read_target: 35
+          deep_read_max: 45
+          abstract_sweep:
+            lite_paper_num: 120
+            sources:
+              - papers_verified
+              - papers_dedup
+          behavior_profiles:
+            survey:
+              deep_read_min: 45
+              deep_read_target: 55
+              deep_read_max: 65
+              abstract_sweep:
+                lite_paper_num: 180
+                sources:
+                  - papers_verified
+                  - papers_dedup
+                  - papers_backlog
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("RESEARCHOS_AGENT_PARAMS", str(config_path))
+    clear_cache()
+
+    assert detect_manuscript_profile(workspace) == "survey"
+    default_t2 = load_t2_finalize_config()
+    survey_t2 = load_t2_finalize_config(workspace)
+    default_t3 = load_deep_read_queue_config()
+    survey_t3 = load_deep_read_queue_config(workspace)
+    survey_reader_params = get_agent_mode_params("reader", "read")
+    effective_reader_params = get_effective_reader_read_params(workspace)
+
+    assert default_t2.active_pool_max == 120
+    assert survey_t2.active_pool_max == 180
+    assert survey_t2.screened_active_pool_cap == 90
+    assert survey_t2.snowball_max_sources == 18
+    assert default_t3.deep_read_min == 35
+    assert survey_t3.deep_read_min == 45
+    assert survey_t3.deep_read_target == 55
+    assert survey_t3.deep_read_max == 65
+    assert survey_reader_params["abstract_sweep"]["lite_paper_num"] == 120
+    assert effective_reader_params["abstract_sweep"]["lite_paper_num"] == 180
+    assert "papers_backlog" in effective_reader_params["abstract_sweep"]["sources"]
 
     clear_cache()
 

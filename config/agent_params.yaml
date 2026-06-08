@@ -41,6 +41,7 @@ agents:
       - write_structured_file
       - list_files
       - inspect_user_seeds
+      - normalize_seed_outline
       - analyze_idea_concentration
       - compute_idea_novelty_signal
       - ask_human
@@ -77,6 +78,7 @@ agents:
       - write_structured_file
       - ask_human
       - inspect_user_seeds
+      - normalize_seed_outline
       - append_papers_raw
       - process_papers_raw
       - save_papers_raw
@@ -112,6 +114,7 @@ agents:
       - log_scout_progress
       allowed_write_prefixes:
       - literature/
+      - user_seeds/
     prompt:
       prompt_template: scout.j2
       structured_outputs:
@@ -174,6 +177,24 @@ agents:
         update_on_tool_results: true
         # deterministic finalize 开始/完成/失败时是否刷新进度。
         update_on_finalize: true
+      behavior_profiles:
+        # runtime 会根据 workspace 自动选择 profile：
+        # - project.yaml 的 metadata.manuscript_type/project_type/article_type/paper_type
+        # - 或 user_seeds/seed_outline_profile.json 的 manuscript_type/project_type
+        # 命中 survey/综述/review 时启用本段；否则使用上面的 research_article 默认值。
+        survey:
+          t2_finalize:
+            # 综述任务需要更宽的候选池覆盖 taxonomy、治理资料和跨学科概念。
+            # 超额候选仍进入 papers_backlog.jsonl，不会静默丢弃。
+            active_pool_max: 180
+            screened_active_pool_cap: 90
+            access_audit_top_n: 80
+            pre_active_light_backfill_max: 360
+            # 综述更依赖引用/规范/综述链路，适度放宽 one-hop snowball。
+            snowball_active_pool_cap: 20
+            snowball_max_sources: 18
+            snowball_refs_per_source: 10
+            snowball_max_candidates: 70
   reader:
     tools:
       allowed_read_prefixes:
@@ -257,6 +278,25 @@ agents:
         bridge_pool_cap: 15
         # citation graph 枢纽保护槽，仍需 semantic_screen/Reader 复核。
         citation_hub_slots: 3
+        behavior_profiles:
+          survey:
+            # 综述版需要更多深读覆盖 taxonomy 主类，但仍保留 active/backlog 分层。
+            deep_read_min: 45
+            deep_read_target: 55
+            deep_read_max: 65
+            probe_pool: 70
+            mainline_screened_cap: 130
+            bridge_deep_floor: 3
+            bridge_screened_cap: 10
+            bridge_pool_cap: 18
+            citation_hub_slots: 5
+            abstract_sweep:
+              # 综述版轻读覆盖更宽，方便 T3.6 taxonomy plan 看到边界材料。
+              lite_paper_num: 180
+              sources:
+              - papers_verified
+              - papers_dedup
+              - papers_backlog
       synthesize:
         prompt:
           expected_length_min: 1000
@@ -549,6 +589,7 @@ agents:
       allowed_read_prefixes:
       - ''
       - literature/
+      - user_seeds/
       - drafts/survey/
       - ideation/
       - _runtime/resume/

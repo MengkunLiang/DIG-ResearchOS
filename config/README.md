@@ -199,6 +199,28 @@ profiles:
 
 这组参数只控制阅读/补资源优先级；论文是否能作为学术证据仍由 Reader/Writer 的 LLM 判断、evidence level 和 claim audit 控制。
 
+#### `behavior_profiles.survey`
+
+默认 T2/T3 参数等同 `research_article`。runtime 会从 workspace 自动选择 profile：
+
+- `project.yaml.metadata.manuscript_type/project_type/article_type/paper_type`
+- `user_seeds/seed_outline_profile.json` 的 `manuscript_type/project_type`
+
+命中 `survey` / `综述` / `review` / `taxonomy-driven` 时，启用
+`agents.scout.behavior.behavior_profiles.survey` 与
+`agents.reader.modes.read.behavior.behavior_profiles.survey`。当前 survey profile 主要放宽：
+
+| 项 | research_article | survey |
+| --- | --- | --- |
+| T2 active pool | `active_pool_max=120` | `180` |
+| T2 screened cap | `screened_active_pool_cap=60` | `90` |
+| T2 pre-active backfill | `pre_active_light_backfill_max=220` | `360` |
+| T2 citation snowball | `snowball_max_sources=12, max_candidates=40` | `18, 70` |
+| T3 deep-read | `35/35/45` | `45/55/65` |
+| T3 abstract sweep | `lite_paper_num=120` | `180`，并可扫描 `papers_backlog` |
+
+用户 Markdown 综述提纲经 `normalize_seed_outline` 生成 `seed_outline_profile.json` 后会自动触发 survey profile。提纲里的 `representative_literature_directions` 只是 query/taxonomy prior，不是已验证 citation，不会写入 `seed_papers.jsonl`。
+
 ### T2 metadata / citation backfill 参数归属
 
 T2 的 OpenAlex DOI/OA 详情补全、Crossref DOI 详情补全、多源摘要回填、raw cache merge 是 deterministic finalize 的机械步骤。runtime 会先对排序后的 dedup 候选执行一轮 bounded light backfill，再切 active/backlog，随后只对 active 做更完整的详情补全和 citation snowball。active pool、bridge priority、snowball 进入 active 的配额和 progress 开关在上表的 `agents.scout.behavior.t2_finalize/progress`。Scout 的模型只负责 query 设计和语义筛选，不负责手写这些阈值。

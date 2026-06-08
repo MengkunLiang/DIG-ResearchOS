@@ -9,6 +9,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from .base import Tool, ToolResult
+from .seed_outline import looks_like_seed_outline
 from .workspace_policy import WorkspaceAccessPolicy
 from ..literature_identity import is_placeholder_text, is_workspace_guide_or_template
 from ..runtime.errors import ToolAccessDenied, ToolRuntimeError
@@ -494,6 +495,14 @@ def _classify_user_seed_file(path: Path, rel: str) -> dict[str, Any]:
         if is_placeholder_text(text):
             kind = "placeholder"
             reason = "default markdown placeholder"
+    elif lower_name.endswith(".md"):
+        text = _safe_read_text(path)
+        if is_placeholder_text(text):
+            kind = "placeholder"
+            reason = "default markdown placeholder"
+        elif looks_like_seed_outline(text):
+            kind = "user_material"
+            reason = "seed outline markdown; call normalize_seed_outline before downstream use"
     elif lower_name.endswith(".jsonl"):
         text = _safe_read_text(path)
         if is_placeholder_text(text) or not any(line.strip() and not line.lstrip().startswith("#") for line in text.splitlines()):

@@ -258,6 +258,44 @@ python -m researchos.cli run --workspace ./workspace/local-test2
 python -m researchos.cli resume --workspace ./workspace/local-test2
 ```
 
+`resume` only continues a paused/interrupted state in the same workspace. If you
+want to keep upstream artifacts from another workspace but restart the full
+state machine from a later task, create a new target workspace and use
+`run --from --start-task`:
+
+```bash
+python -m researchos.cli run \
+  --workspace ./workspace/new-test5-t2-redo \
+  --from ./workspace/new-test5 \
+  --start-task T2
+
+python -m researchos.cli run \
+  --workspace ./workspace/new-test5-t3-redo \
+  --from ./workspace/new-test5 \
+  --start-task T3
+```
+
+When `--start-task` is omitted, `run --from` defaults to `T2`. The target
+workspace must not already contain `state.yaml`; ResearchOS copies only the
+declared inputs for the chosen start task, not stale outputs from the old task.
+
+### 7. Survey Seed Outline
+
+For a survey project, place a Markdown seed outline under `user_seeds/`:
+
+```bash
+cp /mnt/data/reference/算法风险综述_种子提纲.md \
+  ./workspace/algorithm-risk-survey/user_seeds/算法风险综述_种子提纲.md
+```
+
+T1/T2/T3/T3.6 normalize it into
+`user_seeds/seed_outline_profile.json` and derived `seed_ideas.md`,
+`seed_constraints.md`, and `seed_external_resources.jsonl`.
+`representative_literature_directions` are query/taxonomy priors only; they are
+not verified citations and are never written to `seed_papers.jsonl`. A survey
+profile widens T2/T3 literature coverage via `config/agent_params.yaml`
+`behavior_profiles.survey`.
+
 ## Typical Usage Patterns
 
 ### Full project run

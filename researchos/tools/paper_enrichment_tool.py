@@ -1441,7 +1441,7 @@ class BuildDeepReadQueueTool(Tool):
 
     async def execute(self, **kwargs):
         params = BuildDeepReadQueueParams(**kwargs)
-        queue_config = load_deep_read_queue_config()
+        queue_config = load_deep_read_queue_config(self.policy.workspace_dir)
 
         try:
             queue_records, metadata = build_deep_read_queue(

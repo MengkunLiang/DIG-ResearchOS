@@ -7,7 +7,11 @@ of scattering them across validators, recovery paths, and prompts.
 """
 
 from dataclasses import asdict, dataclass
+from copy import deepcopy
+from pathlib import Path
 from typing import Any
+
+import yaml
 
 from .agent_params import get_agent_mode_params
 
@@ -101,12 +105,96 @@ def _as_bool(value: Any, default: bool) -> bool:
     return bool(value)
 
 
-def load_t2_finalize_config() -> T2FinalizeConfig:
+def detect_manuscript_profile(workspace_dir: Path | str | None = None) -> str:
+    """Return the literature-flow profile for a workspace.
+
+    `research_article` is the conservative default.  A workspace can opt into
+    the broader survey profile either through `project.yaml: metadata` or
+    through `user_seeds/seed_outline_profile.json`.
+    """
+
+    if workspace_dir is None:
+        return "research_article"
+    workspace = Path(workspace_dir)
+    candidates: list[str] = []
+
+    project_path = workspace / "project.yaml"
+    if project_path.exists():
+        try:
+            project = yaml.safe_load(project_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            project = {}
+        if isinstance(project, dict):
+            metadata = project.get("metadata") if isinstance(project.get("metadata"), dict) else {}
+            for key in ("manuscript_type", "project_type", "article_type", "paper_type"):
+                candidates.append(str(metadata.get(key) or project.get(key) or ""))
+            candidates.append(str(project.get("research_direction") or ""))
+            candidates.extend(str(item) for item in project.get("keywords") or [] if item is not None)
+
+    outline_profile_path = workspace / "user_seeds" / "seed_outline_profile.json"
+    if outline_profile_path.exists():
+        try:
+            import json
+
+            profile = json.loads(outline_profile_path.read_text(encoding="utf-8"))
+        except Exception:
+            profile = {}
+        if isinstance(profile, dict):
+            for key in ("manuscript_type", "project_type"):
+                candidates.append(str(profile.get(key) or ""))
+            intent = profile.get("writing_intent")
+            if isinstance(intent, dict):
+                candidates.append(str(intent.get("primary_output") or ""))
+            candidates.append(str(profile.get("title") or ""))
+
+    joined = " ".join(candidates).casefold()
+    if any(token in joined for token in ("survey", "综述", "review", "taxonomy-driven")):
+        return "survey"
+    return "research_article"
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = deepcopy(base)
+    for key, value in override.items():
+        if isinstance(merged.get(key), dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = deepcopy(value)
+    return merged
+
+
+def _apply_behavior_profile(
+    params: dict[str, Any],
+    *,
+    workspace_dir: Path | str | None,
+) -> dict[str, Any]:
+    profile_name = detect_manuscript_profile(workspace_dir)
+    profiles = params.get("behavior_profiles")
+    if not isinstance(profiles, dict):
+        return params
+    profile_cfg = profiles.get(profile_name)
+    if not isinstance(profile_cfg, dict):
+        return params
+    merged = _deep_merge(params, profile_cfg)
+    merged["selected_behavior_profile"] = profile_name
+    return merged
+
+
+def get_effective_reader_read_params(workspace_dir: Path | str | None = None) -> dict[str, Any]:
+    try:
+        params = get_agent_mode_params("reader", "read")
+    except Exception:
+        params = {}
+    return _apply_behavior_profile(params, workspace_dir=workspace_dir)
+
+
+def load_t2_finalize_config(workspace_dir: Path | str | None = None) -> T2FinalizeConfig:
     defaults = T2FinalizeConfig()
     try:
         params = get_agent_mode_params("scout", None)
     except Exception:
         params = {}
+    params = _apply_behavior_profile(params, workspace_dir=workspace_dir)
 
     finalize = params.get("t2_finalize")
     if not isinstance(finalize, dict):
@@ -210,12 +298,9 @@ def load_t2_finalize_config() -> T2FinalizeConfig:
     )
 
 
-def load_deep_read_queue_config() -> DeepReadQueueConfig:
+def load_deep_read_queue_config(workspace_dir: Path | str | None = None) -> DeepReadQueueConfig:
     defaults = DeepReadQueueConfig()
-    try:
-        params = get_agent_mode_params("reader", "read")
-    except Exception:
-        params = {}
+    params = get_effective_reader_read_params(workspace_dir)
     return DeepReadQueueConfig(
         deep_read_min=_as_int(params.get("deep_read_min"), defaults.deep_read_min, minimum=0),
         deep_read_target=_as_int(params.get("deep_read_target"), defaults.deep_read_target, minimum=1),

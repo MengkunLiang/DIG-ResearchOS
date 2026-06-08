@@ -130,7 +130,7 @@ def prepare_t3_resume_artifacts(workspace_dir: Path, *, refresh_reason: str | No
             candidate_papers = []
 
         if candidate_papers:
-            queue_config = load_deep_read_queue_config()
+            queue_config = load_deep_read_queue_config(workspace_dir)
             queue_records, metadata = build_deep_read_queue(
                 candidate_papers,
                 workspace_dir,

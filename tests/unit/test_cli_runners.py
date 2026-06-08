@@ -80,6 +80,10 @@ def _write_t2_source_workspace(source: Path) -> None:
     (source / "user_seeds" / "seed_constraints.md").write_text("constraints\n", encoding="utf-8")
     (source / "user_seeds" / "seed_ideas.md").write_text("ideas\n", encoding="utf-8")
     (source / "user_seeds" / "seed_external_resources.jsonl").write_text("", encoding="utf-8")
+    (source / "user_seeds" / "seed_outline_profile.json").write_text(
+        '{"semantics":"user_seed_outline_profile","manuscript_type":"survey"}\n',
+        encoding="utf-8",
+    )
     (source / "user_seeds" / "pdfs" / "seed.pdf").write_bytes(b"%PDF")
     (source / "literature" / "bridge_domain_plan.json").write_text(
         '{"source":"none","bridge_domains":[]}\n',
@@ -106,6 +110,34 @@ def _write_t2_source_workspace(source: Path) -> None:
             ),
         ],
     ).dump_yaml(source / "state.yaml")
+
+
+def _write_t3_source_workspace(source: Path) -> None:
+    _write_t2_source_workspace(source)
+    (source / "literature" / "papers_dedup.jsonl").write_text(
+        '{"id":"paper1","title":"Paper 1"}\n',
+        encoding="utf-8",
+    )
+    (source / "literature" / "papers_verified.jsonl").write_text(
+        '{"id":"paper1","title":"Paper 1","verification_status":"metadata_verified"}\n',
+        encoding="utf-8",
+    )
+    (source / "literature" / "papers_backlog.jsonl").write_text(
+        '{"id":"paper2","title":"Paper 2"}\n',
+        encoding="utf-8",
+    )
+    (source / "literature" / "deep_read_queue.jsonl").write_text(
+        '{"paper_id":"paper1","title":"Paper 1","queue_rank":1}\n',
+        encoding="utf-8",
+    )
+    (source / "literature" / "domain_map.json").write_text(
+        '{"semantics":"domain_map_for_synthesis_and_ideation_not_final_gaps"}\n',
+        encoding="utf-8",
+    )
+    (source / "literature" / "access_audit.md").write_text("# Access Audit\n", encoding="utf-8")
+    (source / "literature" / "missing_areas.md").write_text("# Missing Areas\n", encoding="utf-8")
+    (source / "literature" / "paper_notes").mkdir(parents=True)
+    (source / "literature" / "paper_notes" / "old.md").write_text("# Old Note\n", encoding="utf-8")
 
 
 def _hello_llm() -> MockLLMClient:
@@ -445,6 +477,51 @@ def test_cli_run_from_defaults_to_t2(monkeypatch, tmp_path: Path):
             "run",
             "--from",
             str(source),
+        ]
+    )
+
+    assert exit_code == 0
+
+
+def test_cli_run_from_start_task_t3_copies_t3_inputs_not_old_notes(monkeypatch, tmp_path: Path):
+    source = tmp_path / "source"
+    workspace = tmp_path / "workspace"
+    _write_t3_source_workspace(source)
+
+    async def fake_prepare_runtime(args, workspace_dir):
+        return PreparedRuntime(
+            skill_roots=[],
+            registry=ToolRegistry(),
+            llm_client=object(),
+        )
+
+    async def fake_run(self, *, project_id: str, resume: bool = False):
+        state = StateYaml.load_yaml(self.workspace / "state.yaml")
+        assert state.current_task == "T3"
+        assert (self.workspace / "project.yaml").exists()
+        assert (self.workspace / "literature" / "papers_dedup.jsonl").exists()
+        assert (self.workspace / "literature" / "deep_read_queue.jsonl").exists()
+        assert (self.workspace / "literature" / "domain_map.json").exists()
+        assert (self.workspace / "user_seeds" / "seed_outline_profile.json").exists()
+        assert not (self.workspace / "literature" / "paper_notes" / "old.md").exists()
+        assert not (self.workspace / "literature" / "comparison_table.csv").exists()
+        assert not (self.workspace / "literature" / "related_work.bib").exists()
+        return 0
+
+    monkeypatch.setattr("researchos.cli.install_signal_handlers", lambda: None)
+    monkeypatch.setattr("researchos.cli._prepare_runtime", fake_prepare_runtime)
+    monkeypatch.setattr("researchos.cli.CompletePipelineRunner.run", fake_run)
+
+    exit_code = main(
+        [
+            "--no-banner",
+            "--workspace",
+            str(workspace),
+            "run",
+            "--from",
+            str(source),
+            "--start-task",
+            "T3",
         ]
     )
 

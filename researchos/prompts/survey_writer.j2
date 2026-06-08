@@ -15,6 +15,40 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 
 ## 关键输入预览
 
+{% if has_seed_outline_profile %}
+### user_seeds/seed_outline_profile.json 预览
+{{ seed_outline_profile_preview }}
+
+这是用户提供的综述意图、taxonomy hint、代表性文献方向和治理/外部资源线索。使用规则：
+- 可以把 `framework`、`sections`、`query_profile` 作为 survey taxonomy 和 scope 的强先验；
+- `representative_literature_directions` 不是已验证 citation，只能帮助确定应覆盖的主题，不得直接引用；
+- governance/regulation/standard 只能作为外部资源线索，必须在正文中以已验证官方来源或已检索文献支撑。
+{% endif %}
+
+{% if has_seed_ideas %}
+### seed_ideas.md 预览
+{{ seed_ideas_preview }}
+{% endif %}
+
+{% if has_seed_constraints %}
+### seed_constraints.md 预览
+{{ seed_constraints_preview }}
+{% endif %}
+
+{% if seed_paper_count > 0 %}
+### seed_papers.jsonl 预览（{{ seed_paper_count }} 篇）
+{% for p in seed_papers_preview %}
+- {{ p.get('title', p.get('id', 'untitled')) }}{% if p.get('year') %} ({{ p.get('year') }}){% endif %}
+{% endfor %}
+{% endif %}
+
+{% if has_external_resources %}
+### seed_external_resources.jsonl 预览（{{ external_resource_count }} 项）
+{% for r in external_resources_preview %}
+- [{{ r.get('type', 'resource') }}] {{ r.get('name', 'unnamed') }}: {{ r.get('source', 'source missing') }}
+{% endfor %}
+{% endif %}
+
 ### synthesis.md 预览
 {{ synthesis_preview }}
 
@@ -82,14 +116,17 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - `literature/paper_notes_abstract/`（如果存在）
 - `literature/metadata_triage.md`（如果存在；只作为补资源/升级阅读线索，不能分类为综述核心证据）
 - `literature/related_work.bib`
+- `user_seeds/seed_outline_profile.json`（如果存在；作为用户 taxonomy/scope 先验，不是 citation 来源）
+- `user_seeds/seed_ideas.md`、`seed_constraints.md`、`seed_external_resources.jsonl`（如果存在）
 
 任务：
-1. 选择一个适合读者理解的 taxonomy 主轴。候选主轴包括 design_rationale、artifact type、data/evaluation view、problem subtask、temporal evolution；可以组合，但必须说明为什么。
+1. 选择一个适合读者理解的 taxonomy 主轴。候选主轴包括 design_rationale、artifact type、data/evaluation view、problem subtask、temporal evolution；可以组合，但必须说明为什么。如果存在 seed outline profile，必须优先检查用户给出的 taxonomy hint 是否合理；例如“四类视角 × 风险生成链条”这类框架应作为默认候选，除非证据显示需要调整。
 2. 构建 2-4 层 taxonomy tree，每个类挂 paper_ids。分类要尽量 MECE；不确定时在 coverage_selfcheck 中标明。
 3. 用 domain_map.citation_edges/domain buckets 梳理 evolution narrative：奠基工作、主要分支、当前前沿、邻接转折。
 4. 规划章节级 outline。必须包含 background、taxonomy、comparison、challenges、future；可以有 theme_* 主题章。
 5. 做 coverage_selfcheck：unclassified_papers、empty_classes、corpus_sufficiency、classes_needing_more_lit。
 6. 显式区分 evidence strength：FULL/PARTIAL notes 可作为综述主体证据；abstract-only 只能作为覆盖和趋势线索；metadata-only triage 只能进入 `resource_upgrade_needs`，不能挂到 taxonomy paper_ids 里。
+7. 如果 seed outline profile 的代表性方向没有被 T2/T3 具体论文覆盖，写入 `coverage_selfcheck.classes_needing_more_lit` 或 `resource_upgrade_needs`，不要伪造代表论文。
 
 写 `drafts/survey/survey_plan.json`，结构：
 ```json

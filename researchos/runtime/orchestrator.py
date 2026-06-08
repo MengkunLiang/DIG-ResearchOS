@@ -28,7 +28,7 @@ from .manuscript_recovery import (
 from .message import Message, Role, ToolCall, is_empty_assistant
 from .t2_recovery import finalize_t2_outputs
 from .abstract_sweep import run_abstract_sweep, run_abstract_sweep_with_reader
-from .t2_config import load_t2_finalize_config
+from .t2_config import get_effective_reader_read_params, load_t2_finalize_config
 from .t3_recovery import prepare_t3_resume_artifacts
 from .task_recovery import prepare_generic_resume_artifacts
 from .run_logger import RunLogger
@@ -1085,7 +1085,7 @@ class AgentRunner:
             return
 
         try:
-            mode_params = get_agent_mode_params("reader", "read")
+            mode_params = get_effective_reader_read_params(ctx.workspace_dir)
             sweep_config = mode_params.get("abstract_sweep", {})
             if not sweep_config.get("enabled", False):
                 return
@@ -1848,7 +1848,7 @@ class AgentRunner:
 
     @staticmethod
     def _t2_finish_finalize_min_raw(ctx: ExecutionContext) -> int:
-        config_default = load_t2_finalize_config().finish_finalize_min_raw
+        config_default = load_t2_finalize_config(ctx.workspace_dir).finish_finalize_min_raw
         raw_value = ctx.extra.get("t2_finish_finalize_min_raw", config_default)
         try:
             value = int(raw_value)
@@ -2163,7 +2163,7 @@ class AgentRunner:
             result=result,
         )
         if ctx.task_id == "T2" and tc.name in T2_AUTO_PERSIST_SEARCH_TOOLS and not result.ok:
-            t2_config = load_t2_finalize_config()
+            t2_config = load_t2_finalize_config(ctx.workspace_dir)
             self._log_t2_search_progress(
                 ctx,
                 t2_config,
@@ -2529,7 +2529,7 @@ class AgentRunner:
         if ctx.task_id != "T2" or tool_name not in T2_AUTO_PERSIST_SEARCH_TOOLS or not result.ok:
             return None
 
-        t2_config = load_t2_finalize_config()
+        t2_config = load_t2_finalize_config(ctx.workspace_dir)
         papers = result.data.get("papers")
         edge_persist = self._persist_t2_citation_edges_if_present(
             ctx=ctx,

@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -74,6 +75,43 @@ def test_pi_agent_system_prompt_init_mode(pi_agent, temp_workspace):
     assert "先结合该回答，再扫描" in prompt
     assert "write_structured_file(path=\"literature/bridge_domain_plan.json\"" in prompt
     assert "在任何 ask_human 之前，先调用" not in prompt
+
+
+def test_pi_agent_system_prompt_init_mode_includes_seed_outline_profile(pi_agent, temp_workspace):
+    (temp_workspace / "user_seeds").mkdir()
+    (temp_workspace / "user_seeds" / "seed_outline_profile.json").write_text(
+        json.dumps(
+            {
+                "semantics": "user_seed_outline_profile",
+                "manuscript_type": "survey",
+                "framework": {
+                    "taxonomy_hint": "理论 / 技术 / 管理 / 治理 × 场景 -> 数据 -> 模型 -> 决策 -> 反馈"
+                },
+                "representative_literature_directions": [
+                    {"direction": "algorithm auditing", "use_as": "query_direction_not_verified_citation"}
+                ],
+                "literature_seed_policy": {"directions_are_verified_citations": False},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test-project",
+        task_id="T1",
+        run_id="test-run-1",
+        mode="init",
+        extra={"user_topic": "智能算法风险综述"},
+    )
+
+    prompt = pi_agent.system_prompt(ctx)
+
+    assert "当前 workspace 已有结构化 seed outline profile 预览" in prompt
+    assert "manuscript_type" in prompt
+    assert "survey" in prompt
+    assert "algorithm auditing" in prompt
+    assert "不要把 `representative_literature_directions`" in prompt
 
 
 def test_pi_agent_system_prompt_evaluate_mode(pi_agent, temp_workspace):

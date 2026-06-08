@@ -249,13 +249,33 @@ researchos run \
 
 `run --from` 不复制旧 T2 输出，只复制目标 start task 的输入；`run-task --from` 则只运行一个 task，不推进完整状态机。
 
-### 4.6 查看状态
+如果 T2 结果可信、只想从 T3 重新阅读：
+
+```bash
+researchos run \
+  --workspace ./workspace/new-test5-t3-redo \
+  --from ./workspace/new-test5 \
+  --start-task T3
+```
+
+### 4.6 使用综述种子提纲
+
+```bash
+cp /mnt/data/reference/算法风险综述_种子提纲.md \
+  ./workspace/algorithm-risk-survey/user_seeds/算法风险综述_种子提纲.md
+```
+
+系统会生成 `user_seeds/seed_outline_profile.json`，并把提纲中的框架、关键词和代表性方向
+用于 T2 检索覆盖、T3 阅读维度和 T3.6 综述 taxonomy。`representative_literature_directions`
+只是 query/taxonomy prior，不是 citation，也不会被写入 `seed_papers.jsonl`。
+
+### 4.7 查看状态
 
 ```bash
 researchos status --workspace ./workspace/local-test2
 ```
 
-### 4.7 查看 trace
+### 4.8 查看 trace
 
 ```bash
 researchos trace T7_single_12345678 --workspace ./workspace/local-test2

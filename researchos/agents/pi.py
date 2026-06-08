@@ -17,7 +17,7 @@ import yaml
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
-from ._common import prepend_resume_prefix, read_text_file
+from ._common import ensure_seed_outline_profile, prepend_resume_prefix, read_text_file
 from ..schemas.validator import validate_record
 
 
@@ -42,6 +42,7 @@ class PIAgent(Agent):
                         "write_structured_file",
                         "list_files",
                         "inspect_user_seeds",
+                        "normalize_seed_outline",
                         "ask_human",
                         "finish_task",
                         "process_seed_paper",
@@ -78,9 +79,22 @@ class PIAgent(Agent):
         context_vars = {}
 
         if mode == "init":
+            ensure_seed_outline_profile(ctx.workspace_dir)
+            seed_outline_profile = read_text_file(
+                ctx.workspace_dir / "user_seeds" / "seed_outline_profile.json",
+                default="",
+            )
+            seed_external_resources = read_text_file(
+                ctx.workspace_dir / "user_seeds" / "seed_external_resources.jsonl",
+                default="",
+            )
             # T1模式：用户topic从extra中获取
             # 注意：必须显式传递 user_topic，因为模板中直接使用 {{ user_topic }}
             context_vars["user_topic"] = ctx.extra.get("user_topic", "")
+            context_vars["seed_outline_profile_preview"] = seed_outline_profile[:6000]
+            context_vars["has_seed_outline_profile"] = bool(seed_outline_profile.strip())
+            context_vars["seed_external_resources_preview"] = seed_external_resources[:2000]
+            context_vars["has_seed_external_resources"] = bool(seed_external_resources.strip())
         elif mode == "evaluate":
             # T7.5模式：读取实验结果
             results_path = ctx.workspace_dir / "experiments" / "results_summary.json"
@@ -324,8 +338,32 @@ class PIAgent(Agent):
         """验证seed_external_resources.jsonl格式（§10.1-10.2）。"""
         import json
 
-        VALID_TYPES = {"dataset", "baseline_repo", "pretrained_model", "docker_image", "tool", "script", "other"}
-        VALID_SOURCE_PREFIXES = {"huggingface:", "github:", "docker:", "pip:", "url:", "local:"}
+        VALID_TYPES = {
+            "dataset",
+            "baseline_repo",
+            "pretrained_model",
+            "docker_image",
+            "tool",
+            "script",
+            "regulation",
+            "standard",
+            "governance_framework",
+            "model_risk_management",
+            "official_report",
+            "web_resource",
+            "other",
+        }
+        VALID_SOURCE_PREFIXES = {
+            "huggingface:",
+            "github:",
+            "docker:",
+            "pip:",
+            "url:",
+            "local:",
+            "doi:",
+            "official:",
+            "official_source_lookup_required",
+        }
 
         try:
             content = path.read_text(encoding="utf-8").strip()

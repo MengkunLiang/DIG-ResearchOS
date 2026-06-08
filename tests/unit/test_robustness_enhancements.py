@@ -88,6 +88,22 @@ class TestExternalResources:
         assert ok
         assert err is None
 
+    def test_validate_external_resources_accepts_governance_and_standard_resources(self, tmp_path):
+        """综述种子提纲派生的法规/标准/治理框架资源应合法。"""
+        agent = PIAgent()
+
+        resources_file = tmp_path / "seed_external_resources.jsonl"
+        resources_file.write_text(
+            '{"type": "regulation", "name": "EU AI Act", "source": "official_source_lookup_required"}\n'
+            '{"type": "governance_framework", "name": "NIST AI RMF", "source": "official:nist"}\n'
+            '{"type": "standard", "name": "ISO/IEC 42001", "source": "official:iso"}\n',
+            encoding="utf-8",
+        )
+
+        ok, err = agent._validate_external_resources(resources_file)
+
+        assert ok, err
+
     def test_validate_external_resources_invalid_type(self, tmp_path):
         """测试检测非法的资源类型"""
         agent = PIAgent()

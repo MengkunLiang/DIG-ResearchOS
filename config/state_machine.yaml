@@ -71,6 +71,7 @@ states:
       seed_pdfs: user_seeds/pdfs                       # 种子 PDF（可选）
       seed_constraints: user_seeds/seed_constraints.md # 种子约束（可选）
       seed_ideas: user_seeds/seed_ideas.md             # 种子想法（可选）
+      seed_outline_profile: user_seeds/seed_outline_profile.json # 结构化 seed outline（可选）
       seed_external_resources: user_seeds/seed_external_resources.jsonl  # 外部资源（可选）
       bridge_domain_plan: literature/bridge_domain_plan.json # T1 交互生成的桥接领域计划（可空）
     outputs:
@@ -126,6 +127,9 @@ states:
       domain_map: literature/domain_map.json             # 输入：T2 引用图领域地图（邻接/边界提示）
       access_audit: literature/access_audit.md          # 输入：可读性审计
       missing_areas: literature/missing_areas.md        # 输入：研究空白
+      seed_outline_profile: user_seeds/seed_outline_profile.json # 可选：结构化种子提纲，作为阅读维度先验
+      seed_constraints: user_seeds/seed_constraints.md  # 可选：用户阅读/范围约束
+      seed_external_resources: user_seeds/seed_external_resources.jsonl # 可选：法规/标准/外部资源线索
     outputs:
       paper_notes_dir: literature/paper_notes           # 论文笔记目录
       comparison_table: literature/comparison_table.csv # 方法对比表
@@ -177,6 +181,10 @@ states:
       synthesis_workbench: literature/synthesis_workbench.json
       domain_map: literature/domain_map.json
       comparison_table: literature/comparison_table.csv
+      seed_outline_profile: user_seeds/seed_outline_profile.json
+      seed_ideas: user_seeds/seed_ideas.md
+      seed_constraints: user_seeds/seed_constraints.md
+      seed_external_resources: user_seeds/seed_external_resources.jsonl
     outputs:
       survey_decision: drafts/survey/decision.json
     next_on_success: __parse_from_output__
@@ -196,6 +204,10 @@ states:
       paper_notes_dir: literature/paper_notes
       paper_notes_abstract_dir: literature/paper_notes_abstract
       related_work_bib: literature/related_work.bib
+      seed_outline_profile: user_seeds/seed_outline_profile.json
+      seed_ideas: user_seeds/seed_ideas.md
+      seed_constraints: user_seeds/seed_constraints.md
+      seed_external_resources: user_seeds/seed_external_resources.jsonl
     outputs:
       survey_plan: drafts/survey/survey_plan.json
     next_on_success: T3.6-GATE-OUTLINE
@@ -209,6 +221,10 @@ states:
     inputs:
       project: project.yaml
       survey_plan: drafts/survey/survey_plan.json
+      seed_outline_profile: user_seeds/seed_outline_profile.json
+      seed_ideas: user_seeds/seed_ideas.md
+      seed_constraints: user_seeds/seed_constraints.md
+      seed_external_resources: user_seeds/seed_external_resources.jsonl
     outputs:
       survey_plan: drafts/survey/survey_plan.json
       outline_decision: drafts/survey/outline_decision.json
@@ -228,6 +244,10 @@ states:
       survey_plan: drafts/survey/survey_plan.json
       paper_notes_dir: literature/paper_notes
       paper_notes_abstract_dir: literature/paper_notes_abstract
+      seed_outline_profile: user_seeds/seed_outline_profile.json
+      seed_ideas: user_seeds/seed_ideas.md
+      seed_constraints: user_seeds/seed_constraints.md
+      seed_external_resources: user_seeds/seed_external_resources.jsonl
     outputs:
       corpus_decision: drafts/survey/corpus_decision.json
     next_on_success: __parse_from_output__
@@ -244,6 +264,10 @@ states:
       corpus_decision: drafts/survey/corpus_decision.json
       domain_map: literature/domain_map.json
       papers_verified: literature/papers_verified.jsonl
+      seed_outline_profile: user_seeds/seed_outline_profile.json
+      seed_ideas: user_seeds/seed_ideas.md
+      seed_constraints: user_seeds/seed_constraints.md
+      seed_external_resources: user_seeds/seed_external_resources.jsonl
     outputs:
       survey_expansion: drafts/survey/survey_expansion.json
     next_on_success: T3.6-STATE
@@ -264,6 +288,10 @@ states:
       domain_map: literature/domain_map.json
       comparison_table: literature/comparison_table.csv
       related_work_bib: literature/related_work.bib
+      seed_outline_profile: user_seeds/seed_outline_profile.json
+      seed_ideas: user_seeds/seed_ideas.md
+      seed_constraints: user_seeds/seed_constraints.md
+      seed_external_resources: user_seeds/seed_external_resources.jsonl
     outputs:
       survey_state: drafts/survey/survey_state.json
       survey_section_outlines_dir: drafts/survey/section_outlines
@@ -283,6 +311,10 @@ states:
       domain_map: literature/domain_map.json
       comparison_table: literature/comparison_table.csv
       related_work_bib: literature/related_work.bib
+      seed_outline_profile: user_seeds/seed_outline_profile.json
+      seed_ideas: user_seeds/seed_ideas.md
+      seed_constraints: user_seeds/seed_constraints.md
+      seed_external_resources: user_seeds/seed_external_resources.jsonl
     outputs:
       section: drafts/survey/sections/background.tex
     next_on_success: T3.6-SEC-TAXONOMY
@@ -301,6 +333,10 @@ states:
       synthesis_workbench: literature/synthesis_workbench.json
       domain_map: literature/domain_map.json
       related_work_bib: literature/related_work.bib
+      seed_outline_profile: user_seeds/seed_outline_profile.json
+      seed_ideas: user_seeds/seed_ideas.md
+      seed_constraints: user_seeds/seed_constraints.md
+      seed_external_resources: user_seeds/seed_external_resources.jsonl
     outputs:
       section: drafts/survey/sections/taxonomy.tex
     next_on_success: T3.6-SEC-THEME-1
@@ -323,6 +359,10 @@ states:
       paper_notes_dir: literature/paper_notes
       paper_notes_abstract_dir: literature/paper_notes_abstract
       related_work_bib: literature/related_work.bib
+      seed_outline_profile: user_seeds/seed_outline_profile.json
+      seed_ideas: user_seeds/seed_ideas.md
+      seed_constraints: user_seeds/seed_constraints.md
+      seed_external_resources: user_seeds/seed_external_resources.jsonl
     outputs:
       section: drafts/survey/sections/theme_1.tex
     next_on_success: T3.6-SEC-THEME-2
@@ -345,6 +385,10 @@ states:
       paper_notes_dir: literature/paper_notes
       paper_notes_abstract_dir: literature/paper_notes_abstract
       related_work_bib: literature/related_work.bib
+      seed_outline_profile: user_seeds/seed_outline_profile.json
+      seed_ideas: user_seeds/seed_ideas.md
+      seed_constraints: user_seeds/seed_constraints.md
+      seed_external_resources: user_seeds/seed_external_resources.jsonl
     outputs:
       section: drafts/survey/sections/theme_2.tex
     next_on_success: T3.6-SEC-THEME-3
@@ -367,6 +411,10 @@ states:
       paper_notes_dir: literature/paper_notes
       paper_notes_abstract_dir: literature/paper_notes_abstract
       related_work_bib: literature/related_work.bib
+      seed_outline_profile: user_seeds/seed_outline_profile.json
+      seed_ideas: user_seeds/seed_ideas.md
+      seed_constraints: user_seeds/seed_constraints.md
+      seed_external_resources: user_seeds/seed_external_resources.jsonl
     outputs:
       section: drafts/survey/sections/theme_3.tex
     next_on_success: T3.6-SEC-THEME-4
@@ -389,6 +437,10 @@ states:
       paper_notes_dir: literature/paper_notes
       paper_notes_abstract_dir: literature/paper_notes_abstract
       related_work_bib: literature/related_work.bib
+      seed_outline_profile: user_seeds/seed_outline_profile.json
+      seed_ideas: user_seeds/seed_ideas.md
+      seed_constraints: user_seeds/seed_constraints.md
+      seed_external_resources: user_seeds/seed_external_resources.jsonl
     outputs:
       section: drafts/survey/sections/theme_4.tex
     next_on_success: T3.6-SEC-COMPARISON
@@ -406,6 +458,10 @@ states:
       comparison_table: literature/comparison_table.csv
       synthesis_workbench: literature/synthesis_workbench.json
       related_work_bib: literature/related_work.bib
+      seed_outline_profile: user_seeds/seed_outline_profile.json
+      seed_ideas: user_seeds/seed_ideas.md
+      seed_constraints: user_seeds/seed_constraints.md
+      seed_external_resources: user_seeds/seed_external_resources.jsonl
     outputs:
       section: drafts/survey/sections/comparison.tex
     next_on_success: T3.6-SEC-CHALLENGES
@@ -424,6 +480,10 @@ states:
       synthesis_workbench: literature/synthesis_workbench.json
       domain_map: literature/domain_map.json
       related_work_bib: literature/related_work.bib
+      seed_outline_profile: user_seeds/seed_outline_profile.json
+      seed_ideas: user_seeds/seed_ideas.md
+      seed_constraints: user_seeds/seed_constraints.md
+      seed_external_resources: user_seeds/seed_external_resources.jsonl
     outputs:
       section: drafts/survey/sections/challenges.tex
     next_on_success: T3.6-SEC-FUTURE
@@ -441,6 +501,10 @@ states:
       synthesis_workbench: literature/synthesis_workbench.json
       domain_map: literature/domain_map.json
       related_work_bib: literature/related_work.bib
+      seed_outline_profile: user_seeds/seed_outline_profile.json
+      seed_ideas: user_seeds/seed_ideas.md
+      seed_constraints: user_seeds/seed_constraints.md
+      seed_external_resources: user_seeds/seed_external_resources.jsonl
     outputs:
       section: drafts/survey/sections/future.tex
     next_on_success: T3.6-SEC-INTRO
@@ -461,6 +525,10 @@ states:
       challenges_section: drafts/survey/sections/challenges.tex
       future_section: drafts/survey/sections/future.tex
       related_work_bib: literature/related_work.bib
+      seed_outline_profile: user_seeds/seed_outline_profile.json
+      seed_ideas: user_seeds/seed_ideas.md
+      seed_constraints: user_seeds/seed_constraints.md
+      seed_external_resources: user_seeds/seed_external_resources.jsonl
     outputs:
       section: drafts/survey/sections/introduction.tex
     next_on_success: T3.6-SEC-CONCLUSION
@@ -477,6 +545,10 @@ states:
       section_outline: drafts/survey/section_outlines/conclusion.md
       challenges_section: drafts/survey/sections/challenges.tex
       future_section: drafts/survey/sections/future.tex
+      seed_outline_profile: user_seeds/seed_outline_profile.json
+      seed_ideas: user_seeds/seed_ideas.md
+      seed_constraints: user_seeds/seed_constraints.md
+      seed_external_resources: user_seeds/seed_external_resources.jsonl
     outputs:
       section: drafts/survey/sections/conclusion.tex
     next_on_success: T3.6-SEC-ABSTRACT
@@ -497,6 +569,10 @@ states:
       challenges_section: drafts/survey/sections/challenges.tex
       future_section: drafts/survey/sections/future.tex
       conclusion_section: drafts/survey/sections/conclusion.tex
+      seed_outline_profile: user_seeds/seed_outline_profile.json
+      seed_ideas: user_seeds/seed_ideas.md
+      seed_constraints: user_seeds/seed_constraints.md
+      seed_external_resources: user_seeds/seed_external_resources.jsonl
     outputs:
       section: drafts/survey/sections/abstract.tex
     next_on_success: T3.6-ASSEMBLE
@@ -512,6 +588,10 @@ states:
       sections_dir: drafts/survey/sections
       survey_plan: drafts/survey/survey_plan.json
       related_work_bib: literature/related_work.bib
+      seed_outline_profile: user_seeds/seed_outline_profile.json
+      seed_ideas: user_seeds/seed_ideas.md
+      seed_constraints: user_seeds/seed_constraints.md
+      seed_external_resources: user_seeds/seed_external_resources.jsonl
     outputs:
       survey_tex: drafts/survey/survey.tex
       survey_audit: drafts/survey/survey_audit.md
@@ -536,6 +616,10 @@ states:
       domain_map: literature/domain_map.json
       comparison_table: literature/comparison_table.csv
       related_work_bib: literature/related_work.bib
+      seed_outline_profile: user_seeds/seed_outline_profile.json
+      seed_ideas: user_seeds/seed_ideas.md
+      seed_constraints: user_seeds/seed_constraints.md
+      seed_external_resources: user_seeds/seed_external_resources.jsonl
     outputs:
       survey_review: drafts/survey/survey_review.md
       survey_review_actions: drafts/survey/survey_review_actions.json
@@ -575,6 +659,10 @@ states:
       survey_tex: drafts/survey/survey.tex
       survey_audit_json: drafts/survey/survey_audit.json
       survey_compile_report: drafts/survey/survey_compile_report.json
+      seed_outline_profile: user_seeds/seed_outline_profile.json
+      seed_ideas: user_seeds/seed_ideas.md
+      seed_constraints: user_seeds/seed_constraints.md
+      seed_external_resources: user_seeds/seed_external_resources.jsonl
     outputs:
       survey_insights: ideation/survey_insights.json
       survey_summary: drafts/survey/survey_summary.md
@@ -630,6 +718,9 @@ states:
       bridge_coverage_review: ideation/bridge_coverage_review.json
     outputs:
       gate1_user_selection: ideation/_gate1_user_selection.json
+      bridge_coverage_review: ideation/bridge_coverage_review.json
+    optional_outputs:
+      bridge_coverage_review: ideation/bridge_coverage_review.json
     next_on_success: T4
     next_on_failure: failed
 

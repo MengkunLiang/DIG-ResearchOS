@@ -210,6 +210,49 @@ def test_reader_system_prompt_read_mode_includes_seed_priority(reader_agent, tem
     assert "尚未在 `papers_dedup.jsonl` 中匹配到" in prompt
 
 
+def test_reader_system_prompt_read_mode_includes_seed_outline_profile(reader_agent, temp_workspace):
+    (temp_workspace / "project.yaml").write_text("direction: 智能算法风险综述\n", encoding="utf-8")
+    (temp_workspace / "literature" / "papers_dedup.jsonl").write_text(
+        '{"id": "paper1", "title": "Algorithm Auditing for Management Decisions"}\n',
+        encoding="utf-8",
+    )
+    (temp_workspace / "user_seeds").mkdir(exist_ok=True)
+    (temp_workspace / "user_seeds" / "seed_outline_profile.json").write_text(
+        json.dumps(
+            {
+                "semantics": "user_seed_outline_profile",
+                "manuscript_type": "survey",
+                "framework": {
+                    "risk_generation_chain": ["场景", "数据", "模型", "决策", "反馈"],
+                    "perspectives": ["理论", "技术", "管理", "治理"],
+                    "taxonomy_hint": "理论 / 技术 / 管理 / 治理 × 场景 -> 数据 -> 模型 -> 决策 -> 反馈",
+                },
+                "representative_literature_directions": [
+                    {"direction": "algorithm auditing", "use_as": "query_direction_not_verified_citation"}
+                ],
+                "literature_seed_policy": {"directions_are_verified_citations": False},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T3",
+        run_id="test-run-1",
+        mode="read",
+    )
+
+    prompt = reader_agent.system_prompt(ctx)
+
+    assert "用户 seed outline profile" in prompt
+    assert "阅读维度先验" in prompt
+    assert "不是已验证 citation" in prompt
+    assert "理论/技术/管理/治理" in prompt or "理论" in prompt
+    assert "风险生成链条" in prompt
+
+
 def test_reader_system_prompt_synthesize_mode(reader_agent, temp_workspace):
     """测试synthesize模式的system prompt生成。"""
     # 创建project.yaml
