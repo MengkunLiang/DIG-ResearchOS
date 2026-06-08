@@ -168,6 +168,9 @@ states:
   T3.6-GATE-SURVEY:
     agent: survey_writer
     mode: survey_gate
+    extra:
+      immediate_gate: true
+    gate: t36_survey_gate
     inputs:
       project: project.yaml
       synthesis: literature/synthesis.md
@@ -217,6 +220,9 @@ states:
   T3.6-GATE-CORPUS:
     agent: survey_writer
     mode: corpus_gate
+    extra:
+      immediate_gate: true
+    gate: t36_corpus_gate
     inputs:
       project: project.yaml
       survey_plan: drafts/survey/survey_plan.json
@@ -607,6 +613,25 @@ states:
       bridge_coverage_review: ideation/bridge_coverage_review.json # 已确认 bridge 候选的上桌/裁决/逃生舱记录
     next_on_success: T4.5
     next_on_failure: T4  # 允许失败后重试
+
+  # T4-GATE1 状态：候选 idea 池人工选择
+  # 用途：T4 一旦生成 Pass1/Pass2/_candidate_directions/_gate1_selection_brief，
+  # runtime 会先暂停到这里，让用户选择、合并、重构或要求重分析。
+  T4-GATE1:
+    agent: ideation
+    extra:
+      immediate_gate: true
+    gate: t4_gate1_selection_gate
+    inputs:
+      candidate_directions: ideation/_candidate_directions.json
+      gate1_selection_brief: ideation/_gate1_selection_brief.md
+      pass1_forward_candidates: ideation/_pass1_forward_candidates.json
+      pass2_grounding_review: ideation/_pass2_grounding_review.json
+      bridge_coverage_review: ideation/bridge_coverage_review.json
+    outputs:
+      gate1_user_selection: ideation/_gate1_user_selection.json
+    next_on_success: T4
+    next_on_failure: failed
 
   # T4.5 状态：新颖性审计（Novelty Auditing）
   # 用途：评估研究假设的新颖性和可行性

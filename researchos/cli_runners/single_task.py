@@ -123,7 +123,8 @@ class SingleTaskRunner:
             return 3
 
         print(f"[进度] 加载 Agent: {self.task_id}", flush=True)
-        task_node = self._load_task_node()
+        state_machine = self._load_state_machine()
+        task_node = state_machine.nodes.get(self.task_id) if state_machine is not None else None
         agent = self._build_agent(task_node)
         if agent is None:
             print(f"Unknown or unimplemented task: {self.task_id}")
@@ -194,8 +195,12 @@ class SingleTaskRunner:
         print(f"[进度] 准备执行上下文 (run_id: {ctx.run_id})", flush=True)
         state_path = self.workspace / "state.yaml"
 
-        if task_node is not None and StateMachine(_DEFAULT_STATE_MACHINE_PATH, _DEFAULT_GATES_PATH).should_pause_for_immediate_gate(state):
-            return await self._run_immediate_gate_task(state, state_path)
+        if (
+            task_node is not None
+            and state_machine is not None
+            and state_machine.should_pause_for_immediate_gate(state)
+        ):
+            return await self._run_immediate_gate_task(state, state_path, state_machine)
 
         state = self._record_started(state, ctx.run_id)
         state.dump_yaml(state_path)
@@ -234,7 +239,12 @@ class SingleTaskRunner:
 
         print(f"\n[进度] Agent 执行完成，开始校验输出产物...")
         io_spec = get_task_io(self.task_id)
-        ok, errors = validate_task_artifacts(
+        skip_runtime_artifact_validation = (
+            result.ok
+            and self.task_id == "T4"
+            and (result.metadata or {}).get("completion_mode") == "t4_gate1_ready"
+        )
+        ok, errors = (True, None) if skip_runtime_artifact_validation else validate_task_artifacts(
             self.workspace,
             self.task_id,
             declared_outputs=io_spec["outputs"],
@@ -258,8 +268,12 @@ class SingleTaskRunner:
         self._print_result(result)
         return 0 if result.ok else 5
 
-    async def _run_immediate_gate_task(self, state: StateYaml, state_path: Path) -> int:
-        state_machine = StateMachine(_DEFAULT_STATE_MACHINE_PATH, _DEFAULT_GATES_PATH)
+    async def _run_immediate_gate_task(
+        self,
+        state: StateYaml,
+        state_path: Path,
+        state_machine: StateMachine,
+    ) -> int:
         state = state_machine.pause_for_immediate_gate(state, workspace_dir=self.workspace)
         state.dump_yaml(state_path)
         try:
@@ -295,14 +309,13 @@ class SingleTaskRunner:
                 shutil.copy2(src, dst)
             print(f"copied: {rel_path}")
 
-    def _load_task_node(self):
+    def _load_state_machine(self):
         if not _DEFAULT_STATE_MACHINE_PATH.exists():
             return None
         try:
-            state_machine = StateMachine(_DEFAULT_STATE_MACHINE_PATH)
+            return StateMachine(_DEFAULT_STATE_MACHINE_PATH, _DEFAULT_GATES_PATH)
         except Exception:
             return None
-        return state_machine.nodes.get(self.task_id)
 
     def _build_agent(self, task_node):
         if task_node is not None and task_node.agent is not None:

@@ -45,7 +45,8 @@ T1
             -> T3.6-SEC-* section-by-section
             -> T3.6-ASSEMBLE -> T3.6-REVIEW -> T3.6-COMPILE -> T3.6-FEED -> T4
  -> T4
- -> T4.5
+    -> candidate pool ready: T4-GATE1 -> user chooses/selects/merges/reanalyzes -> T4
+    -> final hypotheses ready: T4.5
     -> pass*: T5-HANDOFF
     -> reframe/drop/unknown: T4.5-HUMAN-REVIEW -> user chooses T5-HANDOFF/T4/done
  -> T5-HANDOFF
@@ -92,7 +93,8 @@ T1
 - citation graph 会转成实际 T3 证据链：OpenAlex/Crossref references 写入 `citation_edges.json`，bounded one-hop snowball 候选进入 raw，并在 active pool 仍有名额时进入 verified/queue；结构 hub 会占用小额 `citation_hub_slots` 保护槽或以普通 ranking 进入 active target。缺少 semantic screen 的 hub 会标记 `citation_hub_needs_reader_screening=true`，由 T3 Reader 复核；已有 LLM screen 明确排除的 hub 不强制 deep-read。
 - T3 论文阅读以当前队列的 `queue_rank` 为工作单位：`lookup_paper_record(queue_rank=...)` 取单篇 metadata，`save_paper_note(queue_rank=..., content=...)` 自动生成 note 路径、即时校验并刷新 `literature/notes_manifest.json`。resume 时 `deep_read_queue_pending.jsonl` 会把当前待读项重排为 1..N，同时保留 `original_queue_rank` 指回完整 `deep_read_queue.jsonl`，避免 pending rank 和原始 rank 混淆导致重复阅读。每篇 `paper_notes/*.md` 都必须记录 `## 12. Reading Coverage`，PDF 可用时必须覆盖到最后一页，只有完整页码覆盖且最终无截断时才能标记 `[FULL-TEXT]`
 - T3.5 文献综合会先通过 `build_synthesis_workbench` 从 `paper_notes/`、`paper_notes_abstract/` 和 `metadata_triage.md` 生成 `synthesis_workbench.json`、`synthesis_outline.md` 和 `synthesis_draft.md`，再产出 `synthesis.md`。`abstract-only` 字段会带 `evidence_level/allowed_use`，`weak_evidence_summary` 会靠前展示给 T4；`metadata_triage.md` 只作为补资源/升级阅读线索，不能作为 family、trend、mechanism 或 claim 证据。
-- T3.6 是可选综述论文支线：T3.5 后先问“是否撰写综述论文”，选择 yes 后按 taxonomy 规划、人工确认、逐 section 写作、拼装审阅、LaTeX 编译和导出 `survey_insights.json` 的方式执行；它不是把 `synthesis.md` 转成 TeX。`survey_insights.json` 会合并 `survey_plan` 与 `survey_state.shared_facts` 中的 `resource_upgrade_needs`，把 taxonomy/challenge/future hints 传给 T4。T4 可以生成 `survey_driven` 候选，但 weak-only 候选必须标 `not_supported_by_current_evidence`，不能被选中或绑定最终 hypothesis。
+- T3.6 是可选综述论文支线：T3.5 后通过状态机级 immediate gate 问“是否撰写综述论文”，选择 yes 后按 taxonomy 规划、人工确认、逐 section 写作、拼装审阅、LaTeX 编译和导出 `survey_insights.json` 的方式执行；它不是把 `synthesis.md` 转成 TeX。`decision.json` 或 `corpus_decision.json` 缺失/损坏时会回到对应 gate，不会静默跳过。`survey_insights.json` 会合并 `survey_plan` 与 `survey_state.shared_facts` 中的 `resource_upgrade_needs`，把 taxonomy/challenge/future hints 传给 T4。T4 可以生成 `survey_driven` 候选，但 weak-only 候选必须标 `not_supported_by_current_evidence`，不能被选中或绑定最终 hypothesis。
+- T4 现在有正式状态机 Gate1：先由 `IdeationAgent` 生成 `_pass1_forward_candidates.json`、`_pass2_grounding_review.json`、`_candidate_directions.json` 和 `_gate1_selection_brief.md`；runtime 校验候选池后转入 `T4-GATE1`，把用户选择写入 `ideation/_gate1_user_selection.json`，再回到 T4 生成最终 `hypotheses.md`、`exp_plan.yaml`、scorecard、决策链和风险。最终 T4 产物必须晚于 Gate1 选择，避免 resume 时复用未吸收用户选择的旧文件。
 - 当前主链从 `T4.5` 进入外部实验链：`T5-HANDOFF -> T5-EXECUTOR-GATE -> T5-DRY-RUN/T5-EXTERNAL-WAIT -> T7-INGEST -> T7-AUDIT -> T7-POST-NOVELTY -> T7-CLAIMS`。ResearchOS 负责编译协议、选择执行器、生成 Codex/Claude/manual prompt、摄取结果、审计证据、实验后 novelty 复核和生成 result-to-claim；真实实验由外部执行器在隔离路径完成。`PARTIAL_RESULTS_READY` 默认不能通过 `T5-EXTERNAL-WAIT` 进入 T7，除非显式允许 partial，并且后续 claim 必须降级处理。
 - 旧 `T5`/`T6`/`T7` 仅保留为 legacy 兼容节点；普通 `run-task T5/T6/T7` 会报 retired，显式旧内部实验调试需使用 `LEGACY-* --allow-legacy`
 - T4.5 的非通过或不确定 verdict 不会自动拒绝，也不会自动回 T4，而是进入人工决策 gate；用户可以选择继续外部实验链、回 T4 重构或结束
@@ -587,7 +589,7 @@ ResearchOS 可以加载 MCP server 配置，并把 MCP tool 暴露给 agent。
 
 ## 已知限制
 
-- T4 的两轮 idea gate 目前仍主要通过 `ask_human` 和 artifact 记录完成，尚未完全拆成状态机级正式 gate。
+- T4 Gate1 已拆成状态机级 `T4-GATE1` immediate gate；Gate2/计划确认仍在 T4 agent 内通过 artifact 与人类反馈记录完成。
 - T3.6 complete 素材范围当前是一次性补检计划和 LLM 审阅记录，不会自动回到 T2/T3 做无限检索；需要真正扩大语料时，应由用户确认后单独补跑检索/阅读。T3.6 taxonomy plan 会把 metadata-only 材料放入 resource upgrade needs，而不是当作综述核心证据。
 - T4.5 novelty 审计仍依赖 LLM 生成搜索策略，但非通过 verdict 已进入人工决策 gate，避免自动拒绝或死循环回退。
 - 长任务仍受 provider 稳定性、速率限制和 PDF 解析质量影响。

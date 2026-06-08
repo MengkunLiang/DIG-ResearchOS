@@ -308,6 +308,120 @@ def test_t36_state_machine_routes_survey_yes_no_and_corpus_scope(tmp_path: Path)
     assert sm._parse_t36_corpus_decision(tmp_path) == "T3.6-STATE"
 
 
+def test_t36_missing_gate_decisions_route_back_to_human_gates(tmp_path: Path):
+    sm_config = {
+        "initial_state": "T3.6-GATE-SURVEY",
+        "states": {
+            "T3.6-GATE-SURVEY": {
+                "agent": "survey_writer",
+                "mode": "survey_gate",
+                "outputs": {"survey_decision": "drafts/survey/decision.json"},
+                "next_on_success": "__parse_from_output__",
+            },
+            "T3.6-PLAN": {
+                "agent": "survey_writer",
+                "mode": "survey_plan",
+                "outputs": {"survey_plan": "drafts/survey/survey_plan.json"},
+                "next_on_success": "done",
+            },
+            "T3.6-GATE-CORPUS": {
+                "agent": "survey_writer",
+                "mode": "corpus_gate",
+                "outputs": {"corpus_decision": "drafts/survey/corpus_decision.json"},
+                "next_on_success": "__parse_from_output__",
+            },
+            "T3.6-EXPAND": {
+                "agent": "survey_writer",
+                "mode": "survey_expand",
+                "outputs": {"survey_expansion": "drafts/survey/survey_expansion.json"},
+                "next_on_success": "done",
+            },
+            "T3.6-STATE": {
+                "agent": "survey_writer",
+                "mode": "survey_state",
+                "outputs": {"survey_state": "drafts/survey/survey_state.json"},
+                "next_on_success": "done",
+            },
+            "T4": {"agent": "ideation", "outputs": {"hypotheses": "ideation/hypotheses.md"}, "next_on_success": "done"},
+            "done": {"terminal": True},
+            "failed": {"terminal": True},
+        },
+    }
+    config = tmp_path / "state_machine.yaml"
+    config.write_text(yaml.safe_dump(sm_config), encoding="utf-8")
+    sm = StateMachine(config)
+
+    assert sm._parse_t36_survey_decision(tmp_path) == "T3.6-GATE-SURVEY"
+    assert sm._parse_t36_corpus_decision(tmp_path) == "T3.6-GATE-CORPUS"
+
+    (tmp_path / "drafts" / "survey").mkdir(parents=True)
+    (tmp_path / "drafts" / "survey" / "decision.json").write_text("{bad json", encoding="utf-8")
+    (tmp_path / "drafts" / "survey" / "corpus_decision.json").write_text("[]", encoding="utf-8")
+
+    assert sm._parse_t36_survey_decision(tmp_path) == "T3.6-GATE-SURVEY"
+    assert sm._parse_t36_corpus_decision(tmp_path) == "T3.6-GATE-CORPUS"
+
+
+def test_t36_immediate_gates_persist_decisions(tmp_path: Path):
+    sm_config = {
+        "initial_state": "T3.6-GATE-SURVEY",
+        "states": {
+            "T3.6-GATE-SURVEY": {
+                "agent": "survey_writer",
+                "mode": "survey_gate",
+                "extra": {"immediate_gate": True},
+                "outputs": {"survey_decision": "drafts/survey/decision.json"},
+                "gate": "t36_survey_gate",
+            },
+            "T3.6-GATE-CORPUS": {
+                "agent": "survey_writer",
+                "mode": "corpus_gate",
+                "extra": {"immediate_gate": True},
+                "outputs": {"corpus_decision": "drafts/survey/corpus_decision.json"},
+                "gate": "t36_corpus_gate",
+            },
+            "T3.6-PLAN": {"agent": "survey_writer", "next_on_success": "done"},
+            "T3.6-EXPAND": {"agent": "survey_writer", "next_on_success": "done"},
+            "T3.6-STATE": {"agent": "survey_writer", "next_on_success": "done"},
+            "T4": {"agent": "ideation", "next_on_success": "done"},
+            "done": {"terminal": True},
+        },
+    }
+    gates = {
+        "gates": {
+            "t36_survey_gate": {
+                "options": [
+                    {"id": "yes", "label": "写", "next": "T3.6-PLAN"},
+                    {"id": "no", "label": "跳过", "next": "T4"},
+                ]
+            },
+            "t36_corpus_gate": {
+                "options": [
+                    {"id": "complete", "label": "补检", "next": "T3.6-EXPAND"},
+                    {"id": "conservative", "label": "保守", "next": "T3.6-STATE"},
+                ]
+            },
+        }
+    }
+    config = tmp_path / "state_machine.yaml"
+    gates_path = tmp_path / "gates.yaml"
+    config.write_text(yaml.safe_dump(sm_config), encoding="utf-8")
+    gates_path.write_text(yaml.safe_dump(gates), encoding="utf-8")
+    sm = StateMachine(config, gates_path)
+
+    state = StateYaml(project_id="p1", current_task="T3.6-GATE-SURVEY", status="RUNNING")
+    state = sm.pause_for_immediate_gate(state, workspace_dir=tmp_path)
+    state = sm.resolve_pending_gate(state, {"option_id": "yes", "captured": {}}, workspace_dir=tmp_path)
+    assert state.current_task == "T3.6-PLAN"
+    assert json.loads((tmp_path / "drafts" / "survey" / "decision.json").read_text(encoding="utf-8"))["write_survey"] is True
+
+    state = StateYaml(project_id="p1", current_task="T3.6-GATE-CORPUS", status="RUNNING")
+    state = sm.pause_for_immediate_gate(state, workspace_dir=tmp_path)
+    state = sm.resolve_pending_gate(state, {"option_id": "complete", "captured": {}}, workspace_dir=tmp_path)
+    assert state.current_task == "T3.6-EXPAND"
+    assert json.loads((tmp_path / "drafts" / "survey" / "corpus_decision.json").read_text(encoding="utf-8"))["scope"] == "complete"
+
+
 def test_t45_reframe_and_drop_pause_for_human_gate(tmp_path: Path):
     sm_config = {
         "initial_state": "T4.5",

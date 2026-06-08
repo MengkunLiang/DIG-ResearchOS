@@ -184,13 +184,40 @@ abstract-only/metadata-only 项只能作为补资源、升级阅读或低证据 
 - 同时检查 `literature/paper_notes/` 中 `contributed_bridges` 或正文明确提到该 bridge 的核心论文；
 - 可参考 `synthesis_workbench.json` 的 `bridge_transfer_drafts` / `adjacent_transfers`，但不能把工具 hint 当成结论；
 - 对每个 `priority=must_explore` 且有足够素材的 bridge，生成至少 1 个 `idea_origin="bridge_synthesis"` 的候选，并写入 `cross_domain_sources` 数组；
-- 对 `priority=should_explore` 的 bridge，只在已有 T3/T3.5 证据足够时生成候选；证据不足时写入 bridge_coverage_review 的 deferred/low_evidence，不要硬编；
+- 对 `priority=should_explore` 的 bridge，只在已有 T3/T3.5 证据足够时生成候选；证据不足时写入 bridge_coverage_review 的 `escape_hatch.status="deferred"`，并在 `reason` 里说明 low evidence，不要硬编；
 - 对 `priority=no_cross` / `skip` 或 `source="none"` 的 bridge，不生成 bridge_synthesis 候选，也不要让 T4 因 bridge coverage 自动回退；
 - 对 `priority=must_explore` 但没有足够素材形成候选的 bridge，不要硬编 idea；在 `ideation/bridge_coverage_review.json` 中写 `escape_hatch.status="no_candidate_available"`，说明缺少哪些证据、怎样证伪、何时可重访，并把它列入 `warnings`。
 
 Bridge 候选的语义是“必须上 Gate1 桌面供用户看见”，不是“必须进入 hypotheses.md”。Gate1 之后只有用户选择、重构或合并后的方向才进入最终假设。
 
-如果 `source="none"` 或 `bridge_domains=[]`，写一个空的 `bridge_coverage_review.json` 或在必要时说明 no bridge selected，不要让 T3/T4/T8 后续强制使用 bridge。
+如果 `source="none"` 或 `bridge_domains=[]`，可以不写 `bridge_coverage_review.json`；如果写，必须使用下面的当前 schema，不要写旧字段 `bridge_domains`。
+
+`ideation/bridge_coverage_review.json` 必须符合当前 schema：
+```json
+{
+  "version": "1.0",
+  "semantics": "bridge_candidate_visibility_and_escape_hatch_review",
+  "source_bridge_plan": "literature/bridge_domain_plan.json",
+  "bridge_reviews": [
+    {
+      "bridge_id": "b1",
+      "priority": "must_explore | should_explore",
+      "candidate_ids": ["D1"],
+      "visible_to_gate": true,
+      "forced_surfaced": true,
+      "selected_into_hypotheses": false,
+      "decision_summary": "This bridge is visible at Gate1 but not automatically selected.",
+      "escape_hatch": {
+        "status": "not_needed_selected | deferred | rejected | merged | no_candidate_available",
+        "reason": "低证据、证据不足或暂缓原因写在这里；不要把 low_evidence 写成 status。",
+        "falsification_or_kill_criteria": "When to drop or falsify this bridge.",
+        "can_revisit_if": "When this bridge can be revisited."
+      }
+    }
+  ],
+  "warnings": []
+}
+```
 {% endif %}
 
 ### Step 2.6: 保存 Pass 1 原始候选池
@@ -451,7 +478,7 @@ counterfactual: "if it fails, metric does not improve"
 
 `_gate1_selection_brief.md` 不替代 `ask_human`，但它保证用户和后续 resume 都能看到完整候选池。
 
-写 brief 前可以调用 `analyze_idea_concentration(scorecard_path="ideation/idea_scorecard.yaml")`，把 `human_hint` 粘贴到“集中度提示”。该工具不返回 pass/fail，只帮助用户看见候选是否过度集中在同一篇论文或同一类 design rationale 上。
+写 brief 前如需集中度提示，应基于 `_candidate_directions.json` 自行总结候选 origin/family 分布；不要在 `idea_scorecard.yaml` 尚未初始化时调用 `analyze_idea_concentration(scorecard_path="ideation/idea_scorecard.yaml")`。
 
 ### Step 3.5: 初始化 idea scorecard
 根据候选方向写入 `ideation/idea_scorecard.yaml` 的初版。这个文件是T4最重要的证据链/决策链产物之一，必须记录所有候选idea，不只是最后选中的idea。

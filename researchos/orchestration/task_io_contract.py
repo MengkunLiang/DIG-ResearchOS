@@ -541,6 +541,26 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "bridge_coverage_review": "bridge_coverage_review",
         },
     },
+    "T4-GATE1": {
+        "inputs": {
+            "candidate_directions": "ideation/_candidate_directions.json",
+            "gate1_selection_brief": "ideation/_gate1_selection_brief.md",
+            "pass1_forward_candidates": "ideation/_pass1_forward_candidates.json",
+            "pass2_grounding_review": "ideation/_pass2_grounding_review.json",
+            "bridge_coverage_review": "ideation/bridge_coverage_review.json",
+        },
+        "outputs": {
+            "gate1_user_selection": "ideation/_gate1_user_selection.json",
+        },
+        "optional_outputs": ["bridge_coverage_review"],
+        "required_inputs": [
+            "candidate_directions",
+            "gate1_selection_brief",
+            "pass1_forward_candidates",
+            "pass2_grounding_review",
+        ],
+        "schemas": {},
+    },
     "T4.5": {
         "inputs": {
             "project": "project.yaml",

@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import os
 
 import pytest
 import yaml
@@ -2464,6 +2465,30 @@ async def test_t3_resume_prefinalize_skips_llm_when_artifacts_validate(tmp_works
 @pytest.mark.asyncio
 async def test_t4_resume_prefinalize_skips_llm_when_artifacts_validate(tmp_workspace, registry):
     write_valid_t4_artifacts(tmp_workspace)
+    selection_path = tmp_workspace / "ideation" / "_gate1_user_selection.json"
+    selection_path.write_text(
+        json.dumps(
+            {
+                "semantics": "t4_gate1_user_selection_for_candidate_pool",
+                "selected_option": "select_or_reframe",
+                "captured": {"selection": "D1"},
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    newer = selection_path.stat().st_mtime + 10
+    for path in [
+        tmp_workspace / "ideation" / "hypotheses.md",
+        tmp_workspace / "ideation" / "exp_plan.yaml",
+        tmp_workspace / "ideation" / "risks.md",
+        tmp_workspace / "ideation" / "idea_scorecard.yaml",
+        tmp_workspace / "ideation" / "idea_rationales.json",
+        tmp_workspace / "ideation" / "gate_decisions.json",
+        tmp_workspace / "ideation" / "rejected_ideas.md",
+    ]:
+        os.utime(path, (newer, newer))
     llm = MockLLMClient(responses=[])
     ctx = ExecutionContext(
         workspace_dir=tmp_workspace,
@@ -2488,6 +2513,89 @@ async def test_t4_resume_prefinalize_skips_llm_when_artifacts_validate(tmp_works
 
     assert result.ok
     assert result.metadata["completion_mode"] == "t4_resume_prefinalize"
+    assert llm.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_t4_resume_prefinalize_refuses_final_outputs_older_than_gate1_selection(tmp_workspace, registry):
+    write_valid_t4_artifacts(tmp_workspace)
+    selection_path = tmp_workspace / "ideation" / "_gate1_user_selection.json"
+    selection_path.write_text(
+        json.dumps(
+            {
+                "semantics": "t4_gate1_user_selection_for_candidate_pool",
+                "selected_option": "merge",
+                "captured": {"merge_plan": "D1+D1b"},
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    newer = selection_path.stat().st_mtime + 10
+    for path in [
+        tmp_workspace / "ideation" / "hypotheses.md",
+        tmp_workspace / "ideation" / "exp_plan.yaml",
+        tmp_workspace / "ideation" / "risks.md",
+        tmp_workspace / "ideation" / "idea_scorecard.yaml",
+        tmp_workspace / "ideation" / "idea_rationales.json",
+        tmp_workspace / "ideation" / "gate_decisions.json",
+        tmp_workspace / "ideation" / "rejected_ideas.md",
+    ]:
+        path.touch()
+        os.utime(path, (newer - 20, newer - 20))
+    os.utime(selection_path, (newer, newer))
+    llm = MockLLMClient(responses=[])
+    ctx = ExecutionContext(
+        workspace_dir=tmp_workspace,
+        project_id="p1",
+        task_id="T4",
+        run_id="r_t4_stale_after_gate1",
+        outputs_expected={
+            "hypotheses": tmp_workspace / "ideation" / "hypotheses.md",
+            "exp_plan": tmp_workspace / "ideation" / "exp_plan.yaml",
+            "risks": tmp_workspace / "ideation" / "risks.md",
+            "idea_scorecard": tmp_workspace / "ideation" / "idea_scorecard.yaml",
+            "idea_rationales": tmp_workspace / "ideation" / "idea_rationales.json",
+            "gate_decisions": tmp_workspace / "ideation" / "gate_decisions.json",
+            "rejected_ideas": tmp_workspace / "ideation" / "rejected_ideas.md",
+            "family_distribution": tmp_workspace / "ideation" / "_family_distribution.md",
+            "candidate_directions": tmp_workspace / "ideation" / "_candidate_directions.json",
+        },
+    )
+    runner = AgentRunner(IdeationAgent(), registry, llm, MockHumanInterface())
+
+    result = await runner.run(ctx)
+
+    assert not result.ok
+    assert result.metadata.get("completion_mode") != "t4_resume_prefinalize"
+    assert "All candidates failed" in (result.error or "") or "No mock responses left" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_t4_gate1_prefinalize_skips_llm_when_candidate_pool_ready(tmp_workspace, registry):
+    ideation_dir = tmp_workspace / "ideation"
+    ideation_dir.mkdir(parents=True)
+    _write_t4_stage_visibility_artifacts(ideation_dir)
+    llm = MockLLMClient(responses=[])
+    ctx = ExecutionContext(
+        workspace_dir=tmp_workspace,
+        project_id="p1",
+        task_id="T4",
+        run_id="r_t4_gate1_prefinalize",
+        outputs_expected={
+            "candidate_directions": ideation_dir / "_candidate_directions.json",
+            "gate1_selection_brief": ideation_dir / "_gate1_selection_brief.md",
+            "pass1_forward_candidates": ideation_dir / "_pass1_forward_candidates.json",
+            "pass2_grounding_review": ideation_dir / "_pass2_grounding_review.json",
+        },
+    )
+    runner = AgentRunner(IdeationAgent(), registry, llm, MockHumanInterface())
+
+    result = await runner.run(ctx)
+
+    assert result.ok
+    assert result.metadata["completion_mode"] == "t4_gate1_ready"
     assert llm.call_count == 0
 
 

@@ -552,6 +552,12 @@ legacy `T5/T7` 显式调试时再检查已有代码目录、Docker digest 和内
 - `researchos/orchestration/state_machine.py`
 - `researchos/orchestration/task_io_contract.py`
 
+#### T4 Gate1 中间态
+
+T4 有一个正式的中间完成态：`completion_mode=t4_gate1_ready`。当 `IdeationAgent` 已经写好 `_pass1_forward_candidates.json`、`_pass2_grounding_review.json`、`_candidate_directions.json` 和 `_gate1_selection_brief.md`，但还没有用户选择时，runner 会跳过完整 T4 artifact 校验，状态机转入 `T4-GATE1` immediate gate。
+
+调试时不要把这个状态当作 T4 最终完成。`T4-GATE1` 会写 `ideation/_gate1_user_selection.json`，随后回到 T4 生成最终 `hypotheses.md`、`exp_plan.yaml`、`idea_scorecard.yaml` 和 `gate_decisions.json`。T4 的 resume prefinalize 只有在这些最终产物晚于 `_gate1_user_selection.json` 时才会复用，避免形式上经过 Gate1、实际上复用旧假设。
+
 ---
 
 ## 9. 技能（skills）开发与调试

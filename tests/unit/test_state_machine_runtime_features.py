@@ -352,6 +352,85 @@ def test_gate_option_extra_flows_into_task_context(tmp_workspace):
     assert state.task_context["chosen_direction"] == 2
 
 
+def test_t4_gate1_completion_mode_routes_to_immediate_gate(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    gates = tmp_workspace / "gates.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T4
+        states:
+          T4:
+            agent: ideation
+            outputs:
+              hypotheses: ideation/hypotheses.md
+            next_on_success: T4.5
+          T4-GATE1:
+            agent: ideation
+            extra:
+              immediate_gate: true
+            gate: t4_gate1_selection_gate
+            outputs:
+              gate1_user_selection: ideation/_gate1_user_selection.json
+            next_on_success: T4
+          T4.5:
+            agent: novelty_auditor
+            outputs:
+              novelty_audit: ideation/novelty_audit.md
+          done:
+            terminal: true
+        """,
+    )
+    _write_yaml(
+        gates,
+        """
+        gates:
+          t4_gate1_selection_gate:
+            presentation:
+              brief:
+                literal: choose candidate
+            options:
+              - id: merge
+                label: Merge
+                next: T4
+        """,
+    )
+    sm = StateMachine(config, gates)
+    state = sm.create_initial_state("p1")
+    state = sm.start_task(state, "run_t4")
+    result = AgentResult(
+        ok=True,
+        message="gate1 ready",
+        outputs_produced={},
+        steps_used=1,
+        tokens_in=1,
+        tokens_out=1,
+        cost_usd=0.0,
+        duration_seconds=0.1,
+        stop_reason=AgentResult.STOP_FINISHED,
+        metadata={"completion_mode": "t4_gate1_ready"},
+    )
+
+    state = sm.advance(state, result, workspace_dir=tmp_workspace)
+
+    assert state.current_task == "T4-GATE1"
+    assert state.status == "RUNNING"
+    assert sm.should_pause_for_immediate_gate(state) is True
+
+    state = sm.pause_for_immediate_gate(state, workspace_dir=tmp_workspace)
+    state = sm.resolve_pending_gate(
+        state,
+        {"option_id": "merge", "captured": {"merge_plan": "D1+D3"}},
+        workspace_dir=tmp_workspace,
+    )
+
+    assert state.current_task == "T4"
+    decision = json.loads((tmp_workspace / "ideation" / "_gate1_user_selection.json").read_text(encoding="utf-8"))
+    assert decision["semantics"] == "t4_gate1_user_selection_for_candidate_pool"
+    assert decision["selected_option"] == "merge"
+    assert decision["captured"]["merge_plan"] == "D1+D3"
+
+
 def test_t5_executor_gate_persists_selection_and_patches_executor_files(tmp_workspace):
     config = tmp_workspace / "fsm.yaml"
     gates = tmp_workspace / "gates.yaml"

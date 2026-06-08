@@ -32,6 +32,7 @@ from .t2_config import load_t2_finalize_config
 from .t3_recovery import prepare_t3_resume_artifacts
 from .task_recovery import prepare_generic_resume_artifacts
 from .run_logger import RunLogger
+from ..agents.ideation import validate_t4_gate1_ready
 from .trace import NullTraceWriter, TraceWriter
 from ..tools.base import Tool, ToolResult
 from ..tools.workspace_policy import WorkspaceAccessPolicy
@@ -288,11 +289,27 @@ class AgentRunner:
                 t35_prepared = await self._maybe_prepare_t35_before_llm(ctx, policy)
             if not (deterministic_pre_finalized or t2_pre_finalized or t3_pre_finalized):
                 t4_pre_finalized = await self._maybe_finalize_t4_before_llm(ctx)
-            t45_pre_finalized = False
+            t4_gate1_pre_finalized = False
             if not (deterministic_pre_finalized or t2_pre_finalized or t3_pre_finalized or t4_pre_finalized):
+                t4_gate1_pre_finalized = await self._maybe_finalize_t4_gate1_before_llm(ctx)
+            t45_pre_finalized = False
+            if not (
+                deterministic_pre_finalized
+                or t2_pre_finalized
+                or t3_pre_finalized
+                or t4_pre_finalized
+                or t4_gate1_pre_finalized
+            ):
                 t45_pre_finalized = await self._maybe_finalize_t45_before_llm(ctx)
             external_wait_pre_finalized = False
-            if not (deterministic_pre_finalized or t2_pre_finalized or t3_pre_finalized or t4_pre_finalized or t45_pre_finalized):
+            if not (
+                deterministic_pre_finalized
+                or t2_pre_finalized
+                or t3_pre_finalized
+                or t4_pre_finalized
+                or t4_gate1_pre_finalized
+                or t45_pre_finalized
+            ):
                 external_wait_pre_finalized = await self._maybe_finalize_external_wait_before_llm(ctx)
             paper_claim_audit_pre_finalized = False
             if not (
@@ -300,6 +317,7 @@ class AgentRunner:
                 or t2_pre_finalized
                 or t3_pre_finalized
                 or t4_pre_finalized
+                or t4_gate1_pre_finalized
                 or t45_pre_finalized
                 or external_wait_pre_finalized
             ):
@@ -311,6 +329,7 @@ class AgentRunner:
                 t2_pre_finalized
                 or t3_pre_finalized
                 or t4_pre_finalized
+                or t4_gate1_pre_finalized
                 or t45_pre_finalized
                 or external_wait_pre_finalized
                 or paper_claim_audit_pre_finalized
@@ -326,6 +345,7 @@ class AgentRunner:
                 t2_pre_finalized
                 or t3_pre_finalized
                 or t4_pre_finalized
+                or t4_gate1_pre_finalized
                 or t45_pre_finalized
                 or external_wait_pre_finalized
                 or paper_claim_audit_pre_finalized
@@ -336,6 +356,7 @@ class AgentRunner:
                     t2_pre_finalized
                     or t3_pre_finalized
                     or t4_pre_finalized
+                    or t4_gate1_pre_finalized
                     or t45_pre_finalized
                     or external_wait_pre_finalized
                     or paper_claim_audit_pre_finalized
@@ -692,6 +713,11 @@ class AgentRunner:
             run_logger.event("ERROR", task=ctx.task_id, kind="runner_crash", message=error_msg)
         finally:
             stop_reason, error_msg = await self._maybe_finalize_t2_outputs(
+                ctx=ctx,
+                stop_reason=stop_reason,
+                error_msg=error_msg,
+            )
+            stop_reason, error_msg = self._maybe_finalize_t4_gate1_outputs(
                 ctx=ctx,
                 stop_reason=stop_reason,
                 error_msg=error_msg,
@@ -1252,6 +1278,8 @@ class AgentRunner:
         ]
         if any(not path.exists() or path.stat().st_size <= 0 for path in expected_paths):
             return False
+        if not self._t4_final_outputs_follow_gate1(ctx):
+            return False
 
         ok, err = self.agent.validate_outputs(ctx)
         if not ok:
@@ -1270,6 +1298,115 @@ class AgentRunner:
             },
             action_type="t4_resume_prefinalize",
         )
+        return True
+
+    async def _maybe_finalize_t4_gate1_before_llm(self, ctx: ExecutionContext) -> bool:
+        """T4 resume: if Gate1 artifacts are ready, stop before another long LLM run."""
+
+        if ctx.task_id != "T4":
+            return False
+        if self._t4_gate1_user_selection_exists(ctx):
+            return False
+        ok, err = validate_t4_gate1_ready(ctx.workspace_dir)
+        if not ok:
+            self.log.info("t4_gate1_prefinalize_skipped", reason=err)
+            return False
+        print("[Agent] T4 检测到 Gate1 候选池已就绪，转入人工选择 Gate", flush=True)
+        self._record_runtime_completion(
+            ctx,
+            "t4_gate1_ready",
+            {
+                "outputs": [
+                    "ideation/_pass1_forward_candidates.json",
+                    "ideation/_pass2_grounding_review.json",
+                    "ideation/_candidate_directions.json",
+                    "ideation/_gate1_selection_brief.md",
+                    "ideation/bridge_coverage_review.json",
+                ],
+            },
+            action_type="t4_gate1_ready",
+        )
+        return True
+
+    def _maybe_finalize_t4_gate1_outputs(
+        self,
+        *,
+        ctx: ExecutionContext,
+        stop_reason: str,
+        error_msg: str | None,
+    ) -> tuple[str, str | None]:
+        """Convert a partial/failed T4 run into a Gate1-ready success when possible."""
+
+        if ctx.task_id != "T4" or self._t4_gate1_user_selection_exists(ctx):
+            return stop_reason, error_msg
+        if ctx.extra.get("completion_mode") in {"t4_resume_prefinalize", "t4_gate1_ready"}:
+            return stop_reason, error_msg
+        ok, err = validate_t4_gate1_ready(ctx.workspace_dir)
+        if not ok:
+            self.log.info("t4_gate1_finalize_skipped", reason=err)
+            return stop_reason, error_msg
+        print("[Agent] T4 Gate1 候选池已就绪，暂停进入人工选择 Gate", flush=True)
+        self._record_runtime_completion(
+            ctx,
+            "t4_gate1_ready",
+            {
+                "outputs": [
+                    "ideation/_pass1_forward_candidates.json",
+                    "ideation/_pass2_grounding_review.json",
+                    "ideation/_candidate_directions.json",
+                    "ideation/_gate1_selection_brief.md",
+                    "ideation/bridge_coverage_review.json",
+                ],
+            },
+            action_type="t4_gate1_ready",
+        )
+        return AgentResult.STOP_FINISHED, None
+
+    @staticmethod
+    def _t4_gate1_user_selection_exists(ctx: ExecutionContext) -> bool:
+        path = ctx.workspace_dir / "ideation" / "_gate1_user_selection.json"
+        return path.exists() and path.stat().st_size > 0
+
+    def _t4_final_outputs_follow_gate1(self, ctx: ExecutionContext) -> bool:
+        """Require final T4 artifacts to be produced after the formal Gate1 choice.
+
+        A previous or interrupted T4 run may already have written final hypotheses
+        before the user made a Gate1 decision. Reusing those files on resume would
+        make the new formal gate cosmetic only, so final artifacts are considered
+        reusable only when either Gate1 is not ready yet, or a recorded selection
+        exists and the downstream final artifacts are newer than that selection.
+        """
+
+        selection_path = ctx.workspace_dir / "ideation" / "_gate1_user_selection.json"
+        if not selection_path.exists() or selection_path.stat().st_size <= 0:
+            ok, _ = validate_t4_gate1_ready(ctx.workspace_dir)
+            if ok:
+                self.log.info("t4_resume_prefinalize_skipped", reason="gate1_selection_missing")
+                return False
+            return True
+
+        selection_mtime = selection_path.stat().st_mtime
+        final_paths = [
+            ctx.workspace_dir / "ideation" / "hypotheses.md",
+            ctx.workspace_dir / "ideation" / "exp_plan.yaml",
+            ctx.workspace_dir / "ideation" / "risks.md",
+            ctx.workspace_dir / "ideation" / "idea_scorecard.yaml",
+            ctx.workspace_dir / "ideation" / "idea_rationales.json",
+            ctx.workspace_dir / "ideation" / "gate_decisions.json",
+            ctx.workspace_dir / "ideation" / "rejected_ideas.md",
+        ]
+        stale_paths = [
+            str(path.relative_to(ctx.workspace_dir))
+            for path in final_paths
+            if path.exists() and path.stat().st_mtime <= selection_mtime
+        ]
+        if stale_paths:
+            self.log.info(
+                "t4_resume_prefinalize_skipped",
+                reason="final_outputs_older_than_gate1_selection",
+                stale_paths=stale_paths,
+            )
+            return False
         return True
 
     async def _maybe_finalize_t45_before_llm(self, ctx: ExecutionContext) -> bool:
@@ -2841,6 +2978,8 @@ class AgentRunner:
             message = "Agent 成功完成（T3 resume 确定性收尾）"
         elif ok and metadata.get("completion_mode") == "t4_resume_prefinalize":
             message = "Agent 成功完成（T4 resume 确定性收尾）"
+        elif ok and metadata.get("completion_mode") == "t4_gate1_ready":
+            message = "Agent 成功完成（T4 Gate1 候选池已就绪）"
         elif ok and metadata.get("completion_mode") == "t45_resume_prefinalize":
             message = "Agent 成功完成（T4.5 resume 确定性收尾）"
         elif ok and metadata.get("completion_mode") == "t8_section_plan_prefinalize":

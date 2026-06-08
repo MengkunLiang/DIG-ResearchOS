@@ -54,6 +54,90 @@ gates:
     config:
       min_novelty_score: 0.6
 
+  # T3.6 综述支线入口：
+  # 这是 runtime 级人工 gate，不需要先调用 LLM。synthesis.md 继续作为 T4 idea fuel；
+  # 只有用户明确选择 yes 时，才启动 taxonomy-driven survey 分支。
+  t36_survey_gate:
+    title: "T3.6 是否撰写综述论文"
+    description: "T3.5 的 synthesis.md 已完成，它主要服务于后续 idea 生成。这里询问是否额外撰写一篇 taxonomy-driven professional survey paper；这不是把 synthesis.md 转成 TeX。"
+    presentation:
+      synthesis_preview:
+        from_file: literature/synthesis.md
+        max_chars: 2500
+      weak_evidence_preview:
+        from_file: literature/metadata_triage.md
+        max_chars: 1200
+    options:
+      - id: "no"
+        label: "不写综述，进入 T4"
+        next: T4
+      - id: "yes"
+        label: "撰写综述论文"
+        next: T3.6-PLAN
+
+  # T3.6 综述语料范围确认：
+  # conservative 只使用现有 T2/T3 语料；complete 只做一次性定向补检计划，
+  # 不自动回到 T2/T3 无限循环。
+  t36_corpus_gate:
+    title: "T3.6 综述素材范围"
+    description: "请确认综述写作使用现有语料，还是生成一次性定向补检计划来补 taxonomy 空类或弱类。"
+    presentation:
+      survey_plan:
+        from_file: drafts/survey/survey_plan.json
+        max_chars: 5000
+      current_notes:
+        from_dir: literature/paper_notes
+        glob: "*.md"
+        max_items: 20
+      abstract_notes:
+        from_dir: literature/paper_notes_abstract
+        glob: "*.md"
+        max_items: 20
+    options:
+      - id: conservative
+        label: "使用现有语料"
+        next: T3.6-STATE
+      - id: complete
+        label: "生成一次性补检计划"
+        next: T3.6-EXPAND
+
+  # T4 Gate1 候选方向选择：
+  # 候选池已经写入 artifact，runtime 在这里暂停，让用户选择、合并、重构或要求重分析。
+  t4_gate1_selection_gate:
+    title: "T4 Gate1 候选方向选择"
+    description: "T4 已生成 Pass1/Pass2 候选池和选择简报。请查看全量候选、风险、bridge 覆盖和合并建议后决定下一步。"
+    presentation:
+      gate1_selection_brief:
+        from_file: ideation/_gate1_selection_brief.md
+        max_chars: 9000
+      candidate_directions:
+        from_file: ideation/_candidate_directions.json
+        max_chars: 7000
+      bridge_coverage_review:
+        from_file: ideation/bridge_coverage_review.json
+        max_chars: 3500
+    options:
+      - id: select_or_reframe
+        label: "按说明选择/重构"
+        next: T4
+        collect_input:
+          - selection
+      - id: merge
+        label: "合并多个候选"
+        next: T4
+        collect_input:
+          - merge_plan
+      - id: new_idea
+        label: "补充新想法"
+        next: T4
+        collect_input:
+          - new_idea
+      - id: reanalyze
+        label: "重新分析候选池"
+        next: T4
+        collect_input:
+          - feedback
+
   # 投稿匿名化门控：检查论文匿名化完整性
   # forbidden_patterns 是逻辑标签，不一定是简单字符串匹配；
   # 实际检查逻辑取决于对应 Gate 实现。

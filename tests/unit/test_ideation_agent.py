@@ -20,6 +20,7 @@ from researchos.agents.ideation import (
     IdeationAgent,
     _validate_bridge_coverage_review,
     _validate_candidate_directions,
+    validate_t4_gate1_ready,
 )
 from researchos.runtime.agent import ExecutionContext
 from researchos.schemas.validator import validate_record
@@ -1601,6 +1602,75 @@ def test_bridge_missing_must_can_use_escape_hatch_warning(temp_workspace):
     assert ok, err
     ok, err = _validate_bridge_coverage_review(temp_workspace)
     assert ok, err
+
+
+def test_legacy_bridge_coverage_review_is_normalized_for_resume(temp_workspace):
+    """旧 T4 partial artifact 用 bridge_domains/low_evidence 时，resume 应自动迁移。"""
+    (temp_workspace / "literature" / "bridge_domain_plan.json").write_text(
+        json.dumps(
+            {
+                "semantics": "bridge_domain_plan",
+                "source": "user",
+                "bridge_domains": [
+                    {
+                        "bridge_id": "b1",
+                        "name": "Mechanism transfer",
+                        "why": "User confirmed this bridge.",
+                        "priority": "must_explore",
+                        "queries": ["mechanism transfer"],
+                        "source": "user",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    review_path = temp_workspace / "ideation" / "bridge_coverage_review.json"
+    review_path.write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "bridge_coverage_review_for_gate1_visibility",
+                "bridge_domains": [
+                    {
+                        "bridge_id": "b1",
+                        "summary": "No completed bridge note provides a transferable mechanism.",
+                        "candidates_generated": [],
+                        "visible_to_gate": False,
+                        "escape_hatch": {
+                            "status": "low_evidence",
+                            "reason": "Bridge-specific evidence is too weak for a candidate.",
+                        },
+                    }
+                ],
+                "warnings": ["must_explore bridge b1 lacks enough evidence for a visible candidate"],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    ok, err = _validate_bridge_coverage_review(temp_workspace)
+
+    assert ok, err
+    normalized = json.loads(review_path.read_text(encoding="utf-8"))
+    assert normalized["semantics"] == "bridge_candidate_visibility_and_escape_hatch_review"
+    assert "bridge_domains" not in normalized
+    assert normalized["bridge_reviews"][0]["bridge_id"] == "b1"
+    assert normalized["bridge_reviews"][0]["escape_hatch"]["status"] == "no_candidate_available"
+
+
+def test_validate_t4_gate1_ready_accepts_candidate_pool_without_final_outputs(temp_workspace):
+    write_valid_idea_rationales(temp_workspace)
+
+    ok, err = validate_t4_gate1_ready(temp_workspace)
+
+    assert ok, err
+
+    assert not (temp_workspace / "ideation" / "hypotheses.md").exists()
+    assert not (temp_workspace / "ideation" / "exp_plan.yaml").exists()
 
 
 def test_idea_scorecard_schema_accepts_survey_driven_origin(temp_workspace):

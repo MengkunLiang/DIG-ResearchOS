@@ -198,7 +198,12 @@ class CompletePipelineRunner:
             state.dump_yaml(state_path)
             return state
 
-        ok, errors = validate_task_artifacts(
+        skip_runtime_artifact_validation = (
+            result.ok
+            and ctx.task_id == "T4"
+            and (result.metadata or {}).get("completion_mode") == "t4_gate1_ready"
+        )
+        ok, errors = (True, None) if skip_runtime_artifact_validation else validate_task_artifacts(
             self.workspace,
             ctx.task_id,
             declared_outputs=node.outputs or None,

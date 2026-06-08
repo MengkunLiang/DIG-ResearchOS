@@ -699,6 +699,26 @@ def _validate_candidate_directions(ws: Path) -> tuple[bool, str | None]:
     return True, None
 
 
+def validate_t4_gate1_ready(ws: Path) -> tuple[bool, str | None]:
+    """Validate the T4 pre-human-decision artifact set.
+
+    This is intentionally narrower than ``IdeationAgent.validate_outputs``:
+    it checks that the candidate pool is ready for a human Gate1 decision,
+    without requiring final hypotheses, exp_plan, scorecard decisions, or risks.
+    """
+
+    ok, err = _validate_pass_stage_artifacts(ws)
+    if not ok:
+        return False, err
+    ok, err = _validate_candidate_directions(ws)
+    if not ok:
+        return False, err
+    ok, err = _validate_bridge_coverage_review(ws)
+    if not ok:
+        return False, err
+    return True, None
+
+
 def _validate_pass_stage_artifacts(ws: Path) -> tuple[bool, str | None]:
     """Validate that T4 exposes both generation and grounding stages to Gate1."""
 
@@ -873,6 +893,10 @@ def _validate_bridge_coverage_review(ws: Path) -> tuple[bool, str | None]:
         review = json.loads(review_path.read_text(encoding="utf-8"))
     except Exception as exc:
         return False, f"bridge_coverage_review.json 解析失败: {exc}"
+    normalized = _normalize_bridge_coverage_review_for_schema(review, bridge_plan)
+    if normalized is not review:
+        review = normalized
+        review_path.write_text(json.dumps(review, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     ok, err = validate_record(review, "bridge_coverage_review")
     if not ok:
         return False, f"bridge_coverage_review.json 不符合schema: {err}"
@@ -910,6 +934,110 @@ def _validate_bridge_coverage_review(ws: Path) -> tuple[bool, str | None]:
         if not str(escape.get("falsification_or_kill_criteria") or "").strip():
             return False, f"bridge {bridge_id} 缺少证伪/kill criteria"
     return True, None
+
+
+def _normalize_bridge_coverage_review_for_schema(review: dict, bridge_plan: dict) -> dict:
+    """Migrate older T4 bridge review drafts into the current schema.
+
+    Earlier prompts asked for ``bridge_domains`` and semantics
+    ``bridge_coverage_review_for_gate1_visibility``. The schema now requires
+    ``bridge_reviews`` and an explicit escape-hatch contract. Normalizing here
+    lets existing workspaces resume without hand-editing partial T4 artifacts.
+    """
+
+    if not isinstance(review, dict):
+        return review
+    if review.get("semantics") == "bridge_candidate_visibility_and_escape_hatch_review" and isinstance(
+        review.get("bridge_reviews"), list
+    ):
+        return review
+
+    legacy_items = review.get("bridge_reviews")
+    if not isinstance(legacy_items, list):
+        legacy_items = review.get("bridge_domains")
+    if not isinstance(legacy_items, list):
+        return review
+
+    priority_by_bridge = {
+        str(item.get("bridge_id") or "").strip(): str(item.get("priority") or "should_explore").strip()
+        for item in _bridge_domains(bridge_plan)
+        if isinstance(item, dict)
+    }
+    normalized_reviews: list[dict] = []
+    for item in legacy_items:
+        if not isinstance(item, dict):
+            continue
+        bridge_id = str(item.get("bridge_id") or "").strip()
+        if not bridge_id:
+            continue
+        candidate_ids = item.get("candidate_ids")
+        if not isinstance(candidate_ids, list):
+            candidate_ids = item.get("candidates_generated")
+        if not isinstance(candidate_ids, list):
+            candidate_ids = []
+        candidate_ids = [str(candidate).strip() for candidate in candidate_ids if str(candidate).strip()]
+        escape = item.get("escape_hatch") if isinstance(item.get("escape_hatch"), dict) else {}
+        legacy_status = str(escape.get("status") or "").strip()
+        status = _normalize_bridge_escape_status(legacy_status, bool(candidate_ids))
+        reason = (
+            str(escape.get("reason") or "").strip()
+            or str(escape.get("note") or "").strip()
+            or str(item.get("summary") or "").strip()
+            or str(item.get("decision_summary") or "").strip()
+            or "Legacy bridge review normalized during resume."
+        )
+        normalized_reviews.append(
+            {
+                "bridge_id": bridge_id,
+                "priority": priority_by_bridge.get(bridge_id) or str(item.get("priority") or "should_explore"),
+                "candidate_ids": candidate_ids,
+                "visible_to_gate": bool(item.get("visible_to_gate", bool(candidate_ids))),
+                "forced_surfaced": bool(item.get("forced_surfaced", False)),
+                "selected_into_hypotheses": bool(item.get("selected_into_hypotheses", False)),
+                "decision_summary": str(item.get("decision_summary") or item.get("summary") or reason),
+                "escape_hatch": {
+                    "status": status,
+                    "reason": reason,
+                    "falsification_or_kill_criteria": str(
+                        escape.get("falsification_or_kill_criteria")
+                        or escape.get("kill_criteria")
+                        or "Drop this bridge if Gate1 or T4.5 cannot identify a testable transferable mechanism."
+                    ),
+                    "can_revisit_if": str(
+                        escape.get("can_revisit_if")
+                        or "Revisit if later T2/T3 evidence adds stronger bridge-specific notes or the user selects this framing."
+                    ),
+                },
+            }
+        )
+
+    normalized = dict(review)
+    normalized["version"] = str(normalized.get("version") or "1.0")
+    normalized["semantics"] = "bridge_candidate_visibility_and_escape_hatch_review"
+    normalized.setdefault("source_bridge_plan", "literature/bridge_domain_plan.json")
+    normalized["bridge_reviews"] = normalized_reviews
+    normalized.pop("bridge_domains", None)
+    return normalized
+
+
+def _normalize_bridge_escape_status(raw_status: str, has_candidate: bool) -> str:
+    status = raw_status.strip().casefold()
+    aliases = {
+        "well_covered": "deferred",
+        "partial_coverage": "deferred",
+        "not_enough_evidence": "no_candidate_available",
+        "no_candidate": "no_candidate_available",
+        "no_candidate_available": "no_candidate_available",
+        "not_needed_selected": "not_needed_selected",
+        "deferred": "deferred",
+        "rejected": "rejected",
+        "merged": "merged",
+    }
+    if status in aliases:
+        return aliases[status]
+    if status == "low_evidence":
+        return "deferred" if has_candidate else "no_candidate_available"
+    return "deferred" if has_candidate else "no_candidate_available"
 
 
 def _load_bridge_plan(ws: Path) -> dict:

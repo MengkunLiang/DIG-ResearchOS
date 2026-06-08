@@ -462,6 +462,13 @@ class StateMachine:
                 state.status = "FAILED"
             return state
 
+        if (
+            state.current_task == "T4"
+            and (result.metadata or {}).get("completion_mode") == "t4_gate1_ready"
+            and "T4-GATE1" in self.nodes
+        ):
+            return self._transition_to_next(state, "T4-GATE1", workspace_dir=workspace_dir)
+
         if node.gate:
             gate_id = self._gate_id_for_node(node)
             gate_spec = self._find_gate(gate_id)
@@ -610,6 +617,56 @@ class StateMachine:
 
         if workspace_dir is None or not (node.extra or {}).get("immediate_gate"):
             return
+        if node.task_id == "T3.6-GATE-SURVEY":
+            option_id = str(gate_result.get("option_id") or gate_result.get("key") or "")
+            write_survey = option_id in {"yes", "write_survey", "survey", "撰写综述"}
+            payload = {
+                "write_survey": write_survey,
+                "user_answer": option_id,
+                "selected_option": option_id,
+                "note": (
+                    "taxonomy-driven survey, not synthesis-to-tex"
+                    if write_survey
+                    else "skip survey branch and continue T4"
+                ),
+                "decided_at": _now_iso(),
+            }
+            path = workspace_dir / "drafts" / "survey" / "decision.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            return
+        if node.task_id == "T3.6-GATE-CORPUS":
+            option_id = str(gate_result.get("option_id") or gate_result.get("key") or "")
+            scope = "complete" if option_id in {"complete", "full", "expand", "补检", "完整"} else "conservative"
+            payload = {
+                "scope": scope,
+                "selected_option": option_id,
+                "note": (
+                    "one-shot targeted survey expansion plan"
+                    if scope == "complete"
+                    else "use existing T2/T3 corpus only"
+                ),
+                "decided_at": _now_iso(),
+            }
+            path = workspace_dir / "drafts" / "survey" / "corpus_decision.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            return
+        if node.task_id == "T4-GATE1":
+            option_id = str(gate_result.get("option_id") or gate_result.get("key") or "")
+            payload = {
+                "semantics": "t4_gate1_user_selection_for_candidate_pool",
+                "task_id": node.task_id,
+                "gate_id": self._gate_id_for_node(node),
+                "selected_option": option_id,
+                "captured": gate_result.get("captured") or {},
+                "next_task": next_task,
+                "decided_at": _now_iso(),
+            }
+            path = workspace_dir / "ideation" / "_gate1_user_selection.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            return
         if node.task_id == "T5-EXECUTOR-GATE":
             if next_task == "T5-HANDOFF":
                 outputs = node.outputs or {}
@@ -741,7 +798,7 @@ class StateMachine:
         path = workspace_dir / "drafts" / "survey" / "decision.json"
         data = self._read_json_dict(path)
         if data is None:
-            return "T4" if "T4" in self.nodes else "failed"
+            return "T3.6-GATE-SURVEY" if "T3.6-GATE-SURVEY" in self.nodes else "failed"
         decision = data.get("write_survey")
         if isinstance(decision, str):
             decision = decision.strip().lower() in {"yes", "true", "1", "write", "survey", "撰写", "是"}
@@ -755,7 +812,7 @@ class StateMachine:
         path = workspace_dir / "drafts" / "survey" / "corpus_decision.json"
         data = self._read_json_dict(path)
         if data is None:
-            return "T3.6-STATE" if "T3.6-STATE" in self.nodes else "T4"
+            return "T3.6-GATE-CORPUS" if "T3.6-GATE-CORPUS" in self.nodes else "failed"
         scope = str(data.get("scope") or data.get("corpus_scope") or "").strip().lower()
         if scope in {"complete", "full", "expand", "完整", "补检", "定向补检"}:
             return "T3.6-EXPAND" if "T3.6-EXPAND" in self.nodes else "T3.6-STATE"
