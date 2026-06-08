@@ -370,6 +370,9 @@ class ReaderAgent(Agent):
         # 校验 abstract sweep notes（可选目录）
         abstract_dir = ctx.workspace_dir / "literature" / "paper_notes_abstract"
         if abstract_dir.exists():
+            from ..runtime.abstract_sweep import repair_abstract_sweep_notes
+
+            repair_abstract_sweep_notes(ctx.workspace_dir)
             for note_path in sorted(path for path in abstract_dir.glob("*.md") if is_paper_note_file(path)):
                 ok, err = _validate_abstract_note_structure(note_path)
                 if not ok:
@@ -571,7 +574,7 @@ def _validate_note_structure(note_path: Path) -> tuple[bool, str | None]:
         "## 19. Cross-Paper Tension",
     ]
     for marker in required_markers:
-        if marker not in content:
+        if not _has_required_marker(content, marker):
             return False, f"{note_path.name} 缺少必要结构: {marker}"
 
     ok, err = _validate_key_results_evidence(note_path, content)
@@ -583,7 +586,7 @@ def _validate_note_structure(note_path: Path) -> tuple[bool, str | None]:
     is_abstract_only = "ABSTRACT-ONLY" in status_text
     if is_abstract_only:
         for marker in ("## A. 核心做法/视角", "## B. 桥接点"):
-            if marker not in content:
+            if not _has_required_marker(content, marker):
                 return False, f"{note_path.name} ABSTRACT-ONLY note 缺少必要轻字段: {marker}"
     if not is_abstract_only and "Evidence Source" not in content and "| Claim | Evidence | Strength |" not in content:
         return False, f"{note_path.name} 缺少 evidence 锚点，无法支撑全文类结论"
@@ -716,7 +719,7 @@ def _validate_abstract_note_structure(note_path: Path) -> tuple[bool, str | None
         "## Source",
     ]
     for marker in required_markers:
-        if marker not in content:
+        if not _has_required_marker(content, marker):
             return False, f"{note_path.name} 缺少必要结构: {marker}"
 
     # Status 必须是 ABSTRACT-ONLY
@@ -736,6 +739,14 @@ def _validate_abstract_note_structure(note_path: Path) -> tuple[bool, str | None
             return False, f"{note_path.name} abstract note 的 Evidence type 必须为 abstract_claim_hint"
 
     return True, None
+
+
+def _has_required_marker(content: str, marker: str) -> bool:
+    """Check required markers without treating deeper headings as valid."""
+
+    if marker.startswith("## "):
+        return re.search(rf"(?m)^{re.escape(marker)}\s*$", content) is not None
+    return marker in content
 
 
 def _validate_cdr_note_fields(

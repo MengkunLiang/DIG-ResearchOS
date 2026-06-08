@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from researchos.agents.reader import ReaderAgent, _validate_note_structure
+from researchos.agents.reader import ReaderAgent, _validate_abstract_note_structure, _validate_note_structure
 from researchos.literature_identity import paper_note_match_keys
 from researchos.runtime.agent import ExecutionContext
 
@@ -325,6 +325,48 @@ def test_validate_outputs_read_mode_success(reader_agent, temp_workspace):
 
     ok, err = reader_agent.validate_outputs(ctx)
     assert ok, f"Validation failed: {err}"
+
+
+def test_validate_abstract_note_rejects_nested_ab_bridge_headings(temp_workspace):
+    """`### A/B` must not satisfy the required abstract-only `## A/B` sections."""
+
+    note_path = temp_workspace / "literature" / "paper_notes_abstract" / "bad.md"
+    note_path.parent.mkdir(parents=True, exist_ok=True)
+    note_path.write_text(
+        """# Bad
+
+- **ID**: bad
+- **Status**: [ABSTRACT-ONLY]
+
+## 1. Problem & Motivation
+Problem.
+
+## 2. Method Summary
+Method.
+
+### A. 核心做法/视角
+View.
+
+### B. 桥接点
+Bridge.
+
+## 3. Key Claimed Results
+Result.
+
+## 13. Mechanism Claim
+- **Stated mechanism**: not available from abstract
+- **Evidence type**: abstract_claim_hint
+- **Supporting artifact**: abstract metadata only
+
+## Source
+- Read from: abstract / metadata only
+""",
+        encoding="utf-8",
+    )
+
+    ok, err = _validate_abstract_note_structure(note_path)
+    assert not ok
+    assert "## A. 核心做法/视角" in str(err)
 
 
 def test_validate_outputs_read_mode_fallback_requires_full_input_pool(reader_agent, temp_workspace):

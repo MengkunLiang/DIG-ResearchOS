@@ -13,6 +13,8 @@ from researchos.runtime.abstract_sweep import (
     generate_abstract_note,
     generate_bib_entry,
     generate_comparison_row,
+    normalize_abstract_reader_note,
+    repair_abstract_sweep_notes,
     run_abstract_sweep,
     run_abstract_sweep_with_reader,
     _normalize_id,
@@ -126,6 +128,94 @@ def test_generate_abstract_note_handles_no_abstract():
     paper = _sample_paper(abstract="")
     note = generate_abstract_note(paper)
     assert "no abstract available" in note
+
+
+def test_normalize_abstract_reader_note_repairs_partial_mechanism_claim():
+    raw = """# Paper One
+
+- **ID**: p1
+- **Title**: Paper One
+- **Status**: [ABSTRACT-ONLY]
+
+## 1. Problem & Motivation
+Problem.
+
+## 2. Method Summary
+Method.
+
+### A. 核心做法/视角
+View.
+
+### B. 桥接点
+Bridge.
+
+## 3. Key Claimed Results
+Result.
+
+## Raw Abstract
+Abstract.
+
+## 13. Mechanism Claim
+- **Evidence type**: abstract_claim_hint
+Not available because no abstract was supplied.
+
+## Source
+- Read from: abstract / metadata only
+"""
+
+    note = normalize_abstract_reader_note(raw, _sample_paper(id="p1", paper_id="p1"))
+    assert "\n## A. 核心做法/视角\n" in note
+    assert "\n## B. 桥接点\n" in note
+    assert "\n### A. 核心做法/视角\n" not in note
+    assert "- **Stated mechanism**: not available from abstract" in note
+    assert "- **Evidence type**: abstract_claim_hint" in note
+    assert "- **Supporting artifact**: abstract metadata only" in note
+
+
+def test_repair_abstract_sweep_notes_updates_existing_bad_note(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    note_dir = workspace / "literature" / "paper_notes_abstract"
+    note_dir.mkdir(parents=True)
+    note_path = note_dir / "p1.md"
+    note_path.write_text(
+        """# Paper One
+
+- **ID**: p1
+- **Status**: [ABSTRACT-ONLY]
+
+## 1. Problem & Motivation
+Problem.
+
+## 2. Method Summary
+Method.
+
+## A. 核心做法/视角
+View.
+
+## B. 桥接点
+Bridge.
+
+## 3. Key Claimed Results
+Result.
+
+## Raw Abstract
+Abstract.
+
+## 13. Mechanism Claim
+- **Evidence type**: abstract_claim_hint
+
+## Source
+- Read from: abstract / metadata only
+""",
+        encoding="utf-8",
+    )
+
+    result = repair_abstract_sweep_notes(workspace)
+    repaired = note_path.read_text(encoding="utf-8")
+
+    assert result == {"checked": 1, "repaired": 1}
+    assert "- **Stated mechanism**:" in repaired
+    assert "- **Supporting artifact**:" in repaired
 
 
 # ---------------------------------------------------------------------------
@@ -598,3 +688,44 @@ Abstract text with a method and claimed result.
     audit = (workspace / "literature" / "access_audit.md").read_text(encoding="utf-8")
     assert "T3 Abstract Sweep" in audit
     assert "Reader LLM notes: 1" in audit
+
+
+@pytest.mark.asyncio
+async def test_run_abstract_sweep_with_reader_skips_llm_for_missing_abstract(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    _write_jsonl(
+        workspace / "literature" / "papers_verified.jsonl",
+        [
+            {
+                "id": "p1",
+                "title": "Metadata Only Paper",
+                "abstract": "",
+                "relevance_score": 0.9,
+                "year": 2024,
+                "venue": "ICML",
+            },
+        ],
+    )
+
+    async def should_not_call_reader(paper: dict, prompt: str) -> str:
+        raise AssertionError("metadata-only records should use deterministic fallback")
+
+    result = await run_abstract_sweep_with_reader(
+        workspace,
+        {
+            "enabled": True,
+            "lite_paper_num": 10,
+            "min_relevance": 0.0,
+            "sources": ["papers_verified"],
+            "exclude_already_read": True,
+            "include_metadata_only": True,
+        },
+        abstract_reader=should_not_call_reader,
+    )
+
+    assert result["notes_generated"] == 1
+    assert result["llm_notes_generated"] == 0
+    assert result["fallback_notes_generated"] == 1
+    note = (workspace / "literature" / "paper_notes_abstract" / "p1.md").read_text(encoding="utf-8")
+    assert "ABSTRACT-ONLY" in note
+    assert "- **Stated mechanism**:" in note

@@ -126,6 +126,8 @@ class CompletePipelineRunner:
                 _LOG.info("pipeline_paused")
                 self.run_logger.event("PAUSED", project_id=state.project_id, task=state.current_task, reason=state.last_error)
                 print("Project paused.")
+                if state.last_error:
+                    print(f"Pause reason: {state.last_error}")
                 return 130
             if state.status == "WAITING_HUMAN":
                 _LOG.info("pipeline_waiting_human")

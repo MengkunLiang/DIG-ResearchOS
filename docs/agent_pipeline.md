@@ -1597,10 +1597,12 @@ reader:
 
 执行方式：
 
-1. 默认调用 Reader LLM 读取单篇 title/abstract，写出 5 节 + §13 的 abstract-only 轻量 note
-2. LLM note 必须保留 `## A. 核心做法/视角` 和 `## B. 桥接点`，供 T3.5/T4/T8 复用
-3. 如果 Reader LLM 调用失败，才使用确定性 fallback 生成带 `LLM_REVIEW_REQUIRED` 的保守 note
-4. 失败不会改变 T3 已完成状态，但会写入日志，便于 resume 后排查
+1. 有 abstract 的候选默认调用 Reader LLM 读取单篇 title/abstract，写出 5 节 + §13 的 abstract-only 轻量 note
+2. 缺 abstract 的 metadata-only 候选不调用 LLM，直接使用确定性 fallback，避免把“无摘要”伪装成 LLM 阅读结果
+3. LLM note 必须保留行级 `## A. 核心做法/视角` 和 `## B. 桥接点`，供 T3.5/T4/T8 复用；runtime 会把常见的 `### A/B` heading 漂移确定性规范回 `## A/B`
+4. `## 13. Mechanism Claim` 必须含 `Stated mechanism / Evidence type / Supporting artifact`；如果 LLM 漏字段，runtime 只补保守占位，不提升证据强度
+5. Reader LLM 调用失败时使用确定性 fallback 生成保守 note
+6. abstract sweep 的格式问题会在 T3 校验前确定性修复；若仍失败，完整 pipeline 会 `PAUSED` 并在控制台显示 `Pause reason`
 
 产出：
 - `literature/paper_notes_abstract/` — 精简 note（5 节 + §13 Mechanism Claim）

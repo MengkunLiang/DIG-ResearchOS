@@ -190,7 +190,7 @@ profiles:
 - `lite_paper_num: 120` 表示每轮最多做 120 篇 abstract-only / metadata-only 轻量补读，避免几百篇 backlog 把 T3 拖成长期 LLM 消耗。
 - `sources: [papers_verified, papers_dedup, papers_backlog]` 表示优先覆盖 active pool，再从 backlog 补读尚未覆盖且有 title/abstract/metadata 的候选。
 - `min_relevance: 0.0` 表示不靠 metadata priority hint 丢弃候选。
-- `include_metadata_only: true` 表示缺摘要但有标题的论文也会生成 metadata-only 轻量 note。
+- `include_metadata_only: true` 表示缺摘要但有标题的论文也会生成 metadata-only 轻量 note；这类记录不调用 Reader LLM，只走确定性 fallback，并保持 `ABSTRACT_ONLY / abstract_claim_hint` 弱证据标记。
 - `exclude_semantic_excluded: true` 表示 Scout 已明确判为 `shared_keyword_only/unrelated` 或禁止 deep-read 的论文默认不再进入 abstract note、BibTeX 和 comparison table，避免污染 T3.5/T8 语料；如需做排除线索复核，可在项目配置中显式设为 `false`。
 
 这组参数只控制机械覆盖行为；论文是否能作为学术证据仍由 Reader/Writer 的 LLM 判断和 evidence level 控制。

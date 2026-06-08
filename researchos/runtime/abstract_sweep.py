@@ -353,6 +353,8 @@ def normalize_abstract_reader_note(note: str, paper: dict[str, Any]) -> str:
     if metadata_lines:
         text = "\n".join(metadata_lines) + "\n\n" + text
 
+    text = _normalize_abstract_note_headings(text)
+
     required_sections = [
         "## 1. Problem & Motivation",
         "## 2. Method Summary",
@@ -386,12 +388,91 @@ def normalize_abstract_reader_note(note: str, paper: dict[str, Any]) -> str:
 
     if "[ABSTRACT-ONLY]" not in text:
         text = text.replace("- **Status**:", "- **Status**: [ABSTRACT-ONLY] ", 1)
-    if "abstract_claim_hint" not in text:
-        text += "\n- **Evidence type**: abstract_claim_hint\n"
+    text = _ensure_abstract_mechanism_claim_fields(text)
     if "LLM_REVIEW_REQUIRED" in text:
         text = text.replace("LLM_REVIEW_REQUIRED. ", "")
         text = text.replace("LLM_REVIEW_REQUIRED", "abstract-only review")
     return text.strip() + "\n"
+
+
+def repair_existing_abstract_note(note: str, paper: dict[str, Any] | None = None) -> str:
+    """Repair an already written abstract sweep note without re-calling the LLM."""
+
+    return normalize_abstract_reader_note(note, paper or {})
+
+
+def repair_abstract_sweep_notes(workspace: Path) -> dict[str, Any]:
+    """Deterministically repair shallow abstract-note formatting drift.
+
+    This is intentionally narrow: it only fills required abstract-note structure
+    and §13 fields. It does not rewrite claims or upgrade evidence strength.
+    """
+
+    abstract_dir = workspace / "literature" / "paper_notes_abstract"
+    if not abstract_dir.exists():
+        return {"checked": 0, "repaired": 0}
+
+    checked = 0
+    repaired = 0
+    for note_path in sorted(abstract_dir.glob("*.md")):
+        if note_path.name.startswith("_"):
+            continue
+        old_text = note_path.read_text(encoding="utf-8")
+        new_text = repair_existing_abstract_note(old_text)
+        checked += 1
+        if new_text != old_text:
+            note_path.write_text(new_text, encoding="utf-8")
+            repaired += 1
+    return {"checked": checked, "repaired": repaired}
+
+
+def _ensure_abstract_mechanism_claim_fields(text: str) -> str:
+    """Ensure §13 contains all fields required by Reader validation."""
+
+    defaults = [
+        "- **Stated mechanism**: not available from abstract",
+        "- **Evidence type**: abstract_claim_hint",
+        "- **Supporting artifact**: abstract metadata only",
+    ]
+    match = re.search(
+        r"(?ms)^## 13\. Mechanism Claim\s*(?P<section>.*?)(?=^##\s+(?:\d+\.|[A-Z]\.)|^## Source\b|\Z)",
+        text,
+    )
+    if match is None:
+        return text.rstrip() + "\n\n## 13. Mechanism Claim\n" + "\n".join(defaults) + "\n"
+
+    section = match.group("section")
+    additions: list[str] = []
+    if "- **Stated mechanism**:" not in section:
+        additions.append(defaults[0])
+    if "- **Evidence type**:" not in section:
+        additions.append(defaults[1])
+    elif "abstract_claim_hint" not in section and "claimed_untested" not in section:
+        section = re.sub(
+            r"(?m)^- \*\*Evidence type\*\*:.*$",
+            defaults[1],
+            section,
+            count=1,
+        )
+    if "- **Supporting artifact**:" not in section:
+        additions.append(defaults[2])
+    if not additions:
+        return text[:match.start("section")] + section + text[match.end("section"):]
+
+    section = section.rstrip() + "\n" + "\n".join(additions) + "\n"
+    return text[:match.start("section")] + section + text[match.end("section"):].lstrip("\n")
+
+
+def _normalize_abstract_note_headings(text: str) -> str:
+    """Normalize common LLM heading drift in abstract-only notes."""
+
+    replacements = {
+        r"(?m)^#{3,}\s*A\.\s*核心做法/视角\s*$": "## A. 核心做法/视角",
+        r"(?m)^#{3,}\s*B\.\s*桥接点\s*$": "## B. 桥接点",
+    }
+    for pattern, replacement in replacements.items():
+        text = re.sub(pattern, replacement, text)
+    return text
 
 
 def _extract_year(paper: dict) -> int | None:
@@ -638,7 +719,8 @@ async def _run_abstract_sweep_async(
             continue
 
         note_source = "deterministic_fallback"
-        if abstract_reader is not None:
+        has_abstract = bool(str(paper.get("abstract") or "").strip())
+        if abstract_reader is not None and has_abstract:
             prompt = build_abstract_reader_prompt(paper)
             try:
                 note_raw = await _call_abstract_reader(abstract_reader, paper, prompt)
