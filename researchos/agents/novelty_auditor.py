@@ -25,6 +25,7 @@ from pathlib import Path
 from ..time_utils import recent_year_from
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
+from ..runtime.artifact_fingerprints import write_t45_fingerprint_report
 from ..runtime.prompts import render_prompt
 from ._common import (
     prepend_resume_prefix,
@@ -209,6 +210,7 @@ class NoveltyAuditorAgent(Agent):
             if not any(signal in collision_text for signal in collision_signals):
                 return False, "novelty_audit.md 提到 High/Medium Overlap，但 collision_cases.md 未归档对应案例"
 
+        write_t45_fingerprint_report(ws)
         return True, None
 
 

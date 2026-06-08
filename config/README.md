@@ -170,7 +170,7 @@ profiles:
 | `abstract_backfill_max_concurrency` | `6` | `agents.scout.behavior.t2_finalize` | 多源摘要回填并发上限 |
 | `snowball_max_sources` | `12` | `agents.scout.behavior.t2_finalize` | citation snowball 最多从多少个高置信来源扩展 |
 | `snowball_refs_per_source` | `8` | `agents.scout.behavior.t2_finalize` | 每个 snowball 来源最多解析多少条引用/相关工作 |
-| `snowball_max_candidates` | `40` | `agents.scout.behavior.t2_finalize` | 每轮 OpenAlex/Crossref snowball 最多尝试解析多少个候选 |
+| `snowball_max_candidates` | `40` | `agents.scout.behavior.t2_finalize` | OpenAlex 与 Crossref 共享的全局 snowball 解析尝试上限；OpenAlex 消耗后只把剩余额度给 Crossref |
 | `snowball_max_concurrency` | `6` | `agents.scout.behavior.t2_finalize` | snowball metadata 解析并发上限 |
 | `snowball_title_match_threshold` | `0.90` | `agents.scout.behavior.t2_finalize` | Crossref 引用标题转 OpenAlex 候选时的最低标题相似度 |
 | `progress.enabled` | `true` | `agents.scout.behavior.progress` | 是否写 `literature/temp/scout_progress.md` |

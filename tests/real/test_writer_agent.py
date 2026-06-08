@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from researchos.agents.writer import WriterAgent
-from researchos.tools.manuscript import build_paper_state_input_fingerprints
+from researchos.tools.manuscript import build_paper_state_input_fingerprints, craft_audit_input_fingerprints
 
 
 CORE_SECTIONS = [
@@ -159,10 +159,13 @@ def _write_valid_draft_support(workspace: Path, *, short_section: bool = False) 
                     {"name": "matrix_row_count", "level": "PASS", "passed": True},
                     {"name": "intro_contribution_count", "level": "PASS", "passed": True},
                     {"name": "abstract_no_cite", "level": "PASS", "passed": True},
+                    {"name": "no_internal_label_leakage", "level": "PASS", "passed": True},
+                    {"name": "no_placeholder_tokens", "level": "PASS", "passed": True},
                     {"name": "number_traceability", "level": "PASS", "passed": True},
                     {"name": "no_standalone_limitations", "level": "PASS", "passed": True},
                     {"name": "conclusion_has_limitations_subsection", "level": "PASS", "passed": True},
                 ],
+                "input_fingerprints": craft_audit_input_fingerprints(workspace),
             }
         ),
         encoding="utf-8",

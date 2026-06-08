@@ -328,6 +328,12 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 }
 ```
 
+写完 review 和 actions 后，必须调用：
+`bind_survey_review(review_path="drafts/survey/survey_review.md", actions_path="drafts/survey/survey_review_actions.json")`
+
+这个工具会把当前 survey plan/state/tex/audit/sections/literature inputs 的 fingerprint 写入
+`survey_review_actions.json`。不要手写或伪造 fingerprint；缺少 fingerprint 时 validator 会拒绝旧 review。
+
 最后调用 `finish_task`。
 {% endif %}
 
@@ -342,7 +348,7 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - `latex_compile` 会自动把编译报告写入 `drafts/survey/survey_compile_report.json`，你不需要再手工复制 `data.compile_report`。
 - 编译产物应包括 `drafts/survey/survey.pdf` 和 `drafts/survey/survey.log`。
 - 如果工具返回 `waiting_environment_*`，不要伪造 PDF 或 report；让 runtime 暂停，等 TeX/Docker 环境修好后 resume。
-- 如果是 LaTeX 语法或引用错误，读取 log，修对应 section 文件或 references，再重新 assemble/compile；不要一次性重写整篇 survey.tex。
+- 如果是 LaTeX 语法或引用错误，读取 log，修对应 section 文件或 references，再重新 `assemble_survey`、`audit_survey_coverage`、`latex_compile`；不要一次性重写整篇 survey.tex，也不要复用修订前的旧 `survey_audit.json`。
 
 最后调用 `finish_task`。
 {% endif %}

@@ -680,6 +680,7 @@ states:
       comparison_table: literature/comparison_table.csv # 方法对比表
       missing_areas: literature/missing_areas.md       # 研究空白
       domain_map: literature/domain_map.json            # 引用图领域地图与 novelty 近邻信号
+      bridge_domain_plan: literature/bridge_domain_plan.json # T1 已确认的 bridge 召回/裁决计划（可为空计划）
       synthesis_workbench: literature/synthesis_workbench.json # 结构化综述工作台
       survey_insights: ideation/survey_insights.json    # 可选：T3.6 综述支线导出的 taxonomy/challenge/future 素材
       seed_ideas: user_seeds/seed_ideas.md            # 种子想法（可选）
@@ -718,9 +719,6 @@ states:
       bridge_coverage_review: ideation/bridge_coverage_review.json
     outputs:
       gate1_user_selection: ideation/_gate1_user_selection.json
-      bridge_coverage_review: ideation/bridge_coverage_review.json
-    optional_outputs:
-      bridge_coverage_review: ideation/bridge_coverage_review.json
     next_on_success: T4
     next_on_failure: failed
 

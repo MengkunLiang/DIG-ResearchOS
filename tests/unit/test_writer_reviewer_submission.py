@@ -1,5 +1,6 @@
 """Writer/Reviewer/Submission Agent 单元测试"""
 
+import asyncio
 import hashlib
 import json
 import os
@@ -16,8 +17,13 @@ from researchos.agents.submission import (
 )
 from researchos.runtime.agent_params import get_agent_params
 from researchos.runtime.prompts import render_prompt
-from researchos.tools.manuscript import CORE_SECTIONS
-from researchos.tools.manuscript import PrepareSubmissionBundleTool
+from researchos.tools.manuscript import (
+    AuditWritingCraftTool,
+    BindReviewRoundTool,
+    CORE_SECTIONS,
+    PrepareSubmissionBundleTool,
+    craft_audit_input_fingerprints,
+)
 from researchos.tools.latex_compile import _compile_dependency_fingerprint
 from researchos.tools.workspace_policy import WorkspaceAccessPolicy
 
@@ -172,6 +178,7 @@ def _write_bundle_manifest(workspace: Path) -> None:
 
 
 def _write_valid_paper_claim_audit(workspace: Path) -> None:
+    _write_passing_craft_audit(workspace)
     paper_path = workspace / "drafts" / "paper.tex"
     evidence_path = workspace / "drafts" / "experiment_evidence_pack.json"
     result_path = workspace / "drafts" / "result_to_claim.json"
@@ -533,11 +540,21 @@ def _write_passing_craft_audit(workspace: Path) -> None:
         {"name": "matrix_row_count", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "intro_contribution_count", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "abstract_no_cite", "level": "PASS", "passed": True, "detail": "ok"},
+        {"name": "no_internal_label_leakage", "level": "PASS", "passed": True, "detail": "ok"},
+        {"name": "no_placeholder_tokens", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "number_traceability", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "no_standalone_limitations", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "conclusion_has_limitations_subsection", "level": "PASS", "passed": True, "detail": "ok"},
     ]
-    (workspace / "drafts" / "craft_audit.md").write_text("# Writing Craft And Alignment Audit\n- [x] ok\n")
+    (workspace / "drafts").mkdir(parents=True, exist_ok=True)
+    (workspace / "drafts" / "sections").mkdir(parents=True, exist_ok=True)
+    if not (workspace / "drafts" / "alignment_matrix.json").exists():
+        _write_manuscript_registries(workspace)
+    if not (workspace / "drafts" / "cdr_claim_ledger.json").exists():
+        _write_manuscript_registries(workspace)
+    if not (workspace / "drafts" / "paper_state.json").exists():
+        _write_valid_paper_state(workspace)
+    (workspace / "drafts" / "craft_audit.md").write_text("# Writing Craft And Alignment Audit\n- [x] ok\n", encoding="utf-8")
     (workspace / "drafts" / "craft_audit.json").write_text(
         json.dumps(
             {
@@ -545,6 +562,7 @@ def _write_passing_craft_audit(workspace: Path) -> None:
                 "semantics": "deterministic_writing_craft_audit_not_scientific_judgment",
                 "venue_style": "ccf_a",
                 "alignment_cids": ["C1", "C2", "C3"],
+                "input_fingerprints": craft_audit_input_fingerprints(workspace),
                 "checks": checks,
             }
         ),
@@ -552,7 +570,22 @@ def _write_passing_craft_audit(workspace: Path) -> None:
     )
 
 
+async def _bind_review_round(workspace: Path, round_num: int = 1) -> None:
+    policy = WorkspaceAccessPolicy(
+        workspace,
+        allowed_read_prefixes=[""],
+        allowed_write_prefixes=["drafts/review_rounds/"],
+    )
+    result = await BindReviewRoundTool(policy).execute(round_num=round_num)
+    assert result.ok, result.content
+
+
 def _write_valid_draft_artifacts(workspace: Path) -> None:
+    _write_manuscript_registries(workspace)
+    (workspace / "literature" / "related_work.bib").write_text(
+        "@article{test2024,\n  author={Test Author},\n  title={Test Title},\n  year={2024}\n}",
+        encoding="utf-8",
+    )
     _write_valid_paper_state(workspace)
     state = json.loads((workspace / "drafts" / "paper_state.json").read_text(encoding="utf-8"))
     section_dir = workspace / "drafts" / "sections"
@@ -586,10 +619,6 @@ Validity boundaries.
     (workspace / "drafts" / "paper.tex").write_text(paper_content, encoding="utf-8")
     (workspace / "drafts" / "manuscript_audit.md").write_text("# Audit\n- [x] ok\n", encoding="utf-8")
     _write_passing_craft_audit(workspace)
-    (workspace / "literature" / "related_work.bib").write_text(
-        "@article{test2024,\n  author={Test Author},\n  title={Test Title},\n  year={2024}\n}",
-        encoding="utf-8",
-    )
 
 
 # ══════════════════════════════════════════════════════
@@ -743,6 +772,43 @@ def test_writer_validate_outputs_abstract_rejects_formal_citations(temp_workspac
 
     assert not ok
     assert "正式引用" in err
+
+
+def test_craft_audit_rejects_natural_language_placeholder_token(temp_workspace):
+    """Dirty planning text can appear without the exact LLM_REVIEW_REQUIRED token."""
+
+    paper = (
+        "\\documentclass{article}\\begin{document}"
+        "\\begin{abstract}A clean abstract without formal citations. The study summarizes scope and evidence.\\end{abstract}"
+        "\\section{Introduction} The final manuscript still says LLM review required for a claim. "
+        "This must not enter the submitted paper."
+        "\\end{document}"
+    )
+    (temp_workspace / "drafts").mkdir(parents=True, exist_ok=True)
+    (temp_workspace / "drafts" / "paper.tex").write_text(paper, encoding="utf-8")
+    (temp_workspace / "drafts" / "sections").mkdir(parents=True, exist_ok=True)
+    (temp_workspace / "drafts" / "paper_state.json").write_text(
+        json.dumps({"semantics": "manuscript_section_state_for_incremental_writing", "sections": {}}),
+        encoding="utf-8",
+    )
+    (temp_workspace / "drafts" / "alignment_matrix.json").write_text(
+        json.dumps({"rows": []}),
+        encoding="utf-8",
+    )
+
+    policy = WorkspaceAccessPolicy(
+        temp_workspace,
+        allowed_read_prefixes=["", "drafts/", "literature/", "experiments/", "ideation/"],
+        allowed_write_prefixes=["drafts/"],
+    )
+    result = asyncio.run(AuditWritingCraftTool(policy).execute())
+
+    assert result.ok is True
+    audit_json = json.loads((temp_workspace / "drafts" / "craft_audit.json").read_text(encoding="utf-8"))
+    assert any(
+        check["name"] == "no_placeholder_tokens" and check["passed"] is False
+        for check in audit_json["checks"]
+    )
 
 
 def test_writer_uses_ctx_mode_when_phase_extra_missing(temp_workspace):
@@ -1496,10 +1562,12 @@ def test_reviewer_prompt_flags_abstract_formal_citations(temp_workspace):
     assert "Introduction 或 Related Work" in prompt
 
 
-def test_reviewer_validate_outputs_success(temp_workspace):
+@pytest.mark.asyncio
+async def test_reviewer_validate_outputs_success(temp_workspace):
     """测试审稿报告验证成功"""
     agent = ReviewerAgent()
     ctx = MockExecutionContext("review", temp_workspace, {"round": 1})
+    _write_valid_draft_artifacts(temp_workspace)
 
     report_content = """# 审稿报告 - Round 1
 
@@ -1563,16 +1631,69 @@ def test_reviewer_validate_outputs_success(temp_workspace):
             "## Actionable Fixes\n- [Low] Fix wording.\n",
             encoding="utf-8",
         )
+    await _bind_review_round(temp_workspace, round_num=1)
 
     ok, err = agent.validate_outputs(ctx)
     assert ok
     assert err is None
 
 
+@pytest.mark.asyncio
+async def test_reviewer_validate_outputs_rejects_stale_review_fingerprints(temp_workspace):
+    agent = ReviewerAgent()
+    ctx = MockExecutionContext("review", temp_workspace, {"round": 1})
+    _write_valid_draft_artifacts(temp_workspace)
+    report_content = """# 审稿报告 - Round 1
+
+## 总体评价
+这篇论文整体质量良好。
+
+## 主要问题
+主要问题描述。
+
+## 次要问题
+次要问题描述。
+
+## 写作范式与对齐核查
+Alignment matrix closure: Pass.
+
+## CDR Contribution Verdict
+- Problem frame clarity: Clear enough.
+- Design rationale support: Supported enough.
+- Contribution type credibility: Plausible.
+- Evidence alignment: Evidence issues are actionable.
+- Boundary condition honesty: Boundaries are stated.
+- Verdict: Needs minor revision.
+"""
+    (temp_workspace / "drafts" / "review_rounds" / "round_1.md").write_text(report_content)
+    section_dir = temp_workspace / "drafts" / "review_rounds" / "round_1_sections"
+    section_dir.mkdir(parents=True, exist_ok=True)
+    for section_id in CORE_SECTIONS:
+        (section_dir / f"{section_id}.md").write_text(
+            f"# Section Review: {section_id}\n\n"
+            "## CDR Alignment Check\nProblem, rationale, evidence, and boundary alignment are checked.\n\n"
+            "## Alignment Matrix Check\nCID coverage is checked.\n\n"
+            "## Writing Craft Check\nCraft audit is checked.\n\n"
+            "## Actionable Fixes\n- [Low] Fix wording.\n",
+            encoding="utf-8",
+        )
+    await _bind_review_round(temp_workspace, round_num=1)
+    (temp_workspace / "drafts" / "paper.tex").write_text(
+        (temp_workspace / "drafts" / "paper.tex").read_text(encoding="utf-8") + "\n% changed after review\n",
+        encoding="utf-8",
+    )
+
+    ok, err = agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "review 输入已变化" in (err or "")
+
+
 def test_reviewer_validate_outputs_too_short(temp_workspace):
     """测试审稿报告内容过短"""
     agent = ReviewerAgent()
     ctx = MockExecutionContext("review", temp_workspace, {"round": 1})
+    _write_valid_draft_artifacts(temp_workspace)
 
     (temp_workspace / "drafts" / "review_rounds" / "round_1.md").write_text("Too short")
 
@@ -1585,6 +1706,7 @@ def test_reviewer_validate_outputs_missing_sections(temp_workspace):
     """测试审稿报告缺少必需章节"""
     agent = ReviewerAgent()
     ctx = MockExecutionContext("review", temp_workspace, {"round": 1})
+    _write_valid_draft_artifacts(temp_workspace)
 
     report_content = """# 审稿报告 - Round 1
 
@@ -1656,6 +1778,7 @@ def test_submission_validate_outputs_success(temp_workspace):
     (bundle_dir / "main.pdf").write_bytes(b"%PDF-1.4\nmock pdf body\n%%EOF")
     (bundle_dir / "main.log").write_text("This is a clean compile log.")
     _write_compile_report(temp_workspace)
+    _write_passing_craft_audit(temp_workspace)
 
     # 创建迁移报告
     report_content = """# 投稿迁移报告
@@ -1742,6 +1865,7 @@ def _write_valid_submission_bundle(workspace: Path) -> None:
     (bundle_dir / "main.pdf").write_bytes(b"%PDF-1.4\nmock pdf body\n%%EOF")
     (bundle_dir / "main.log").write_text("This is a clean compile log.")
     _write_compile_report(workspace)
+    _write_passing_craft_audit(workspace)
 
 
 def _valid_migration_report(extra: str = "") -> str:
@@ -1773,6 +1897,7 @@ def test_submission_requires_evidence_audit_trace_when_present(temp_workspace):
     (temp_workspace / "drafts" / "paper_claim_audit.json").write_text('{"semantics":"paper_claim_audit_against_experiment_evidence_pack"}\n')
     (temp_workspace / "drafts" / "result_to_claim.json").write_text('{"semantics":"mechanical_result_to_claim_map_not_final_scientific_judgment"}\n')
     (temp_workspace / "drafts" / "experiment_evidence_pack.json").write_text('{"semantics":"normalized_experiment_evidence_pack"}\n')
+    _write_passing_craft_audit(temp_workspace)
     (temp_workspace / "submission" / "migration_report.md").write_text(_valid_migration_report())
 
     ok, err = agent.validate_outputs(ctx)
@@ -1815,6 +1940,7 @@ def test_writer_paper_claim_audit_requires_current_input_fingerprints(temp_works
         json.dumps({"semantics": "mechanical_result_to_claim_map_not_final_scientific_judgment", "claim_mappings": []}),
         encoding="utf-8",
     )
+    _write_passing_craft_audit(temp_workspace)
     (temp_workspace / "drafts" / "paper_claim_audit.md").write_text("# Paper Claim Audit\n", encoding="utf-8")
     (temp_workspace / "drafts" / "paper_claim_audit.json").write_text(
         json.dumps(
@@ -1966,6 +2092,72 @@ def test_submission_validate_outputs_rejects_non_pdf_payload(temp_workspace):
 
     assert not ok
     assert "%PDF" in err
+
+
+def test_submission_validate_outputs_rejects_dirty_bundle_main_tex(temp_workspace):
+    """T9 template migration cannot introduce planning tokens after T8 craft audit."""
+    agent = SubmissionAgent()
+    ctx = MockExecutionContext("submission", temp_workspace)
+
+    bundle_dir = temp_workspace / "submission" / "bundle"
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+    (bundle_dir / "main.tex").write_text(
+        r"\documentclass{article}\begin{document}C1: TODO finish this claim.\bibliography{references}\end{document}",
+        encoding="utf-8",
+    )
+    (bundle_dir / "references.bib").write_text("@article{test,}\n", encoding="utf-8")
+    (bundle_dir / "main.pdf").write_bytes(b"%PDF-1.4\nmock pdf body\n%%EOF")
+    (bundle_dir / "main.log").write_text("This is a clean compile log.", encoding="utf-8")
+    _write_bundle_manifest(temp_workspace)
+    _write_compile_report(temp_workspace)
+    _write_passing_craft_audit(temp_workspace)
+    (temp_workspace / "submission" / "migration_report.md").write_text(
+        "# 投稿迁移报告\n\n"
+        "## 迁移摘要\n"
+        "- 迁移状态: 成功\n"
+        "- 编译状态: 成功\n"
+        "- 匿名化检查: 通过\n\n"
+        "## Evidence Audit Trace\n"
+        "No evidence audit artifacts present.\n\n"
+        "## 文件清单\n"
+        "- main.tex\n- main.pdf\n- references.bib\n",
+        encoding="utf-8",
+    )
+
+    ok, err = agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "main.tex" in (err or "") and ("placeholder" in (err or "") or "CID" in (err or ""))
+
+
+def test_submission_validate_outputs_rejects_bare_cid_phrase(temp_workspace):
+    """Bare prose such as 'C1 is...' should not survive T9 migration."""
+    agent = SubmissionAgent()
+    ctx = MockExecutionContext("submission", temp_workspace)
+
+    _write_valid_submission_bundle(temp_workspace)
+    (temp_workspace / "submission" / "bundle" / "main.tex").write_text(
+        r"\documentclass{article}\begin{document}C1 is the first internal contribution lane.\bibliography{references}\end{document}",
+        encoding="utf-8",
+    )
+    _write_bundle_manifest(temp_workspace)
+    (temp_workspace / "submission" / "bundle" / "main.log").write_text(
+        "This is a clean compile log after cid migration.",
+        encoding="utf-8",
+    )
+    (temp_workspace / "submission" / "bundle" / "main.pdf").write_bytes(
+        b"%PDF-1.4\nmock pdf body after cid migration\n%%EOF"
+    )
+    _write_compile_report(temp_workspace)
+    (temp_workspace / "submission" / "migration_report.md").write_text(
+        _valid_migration_report(),
+        encoding="utf-8",
+    )
+
+    ok, err = agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "CID" in (err or "")
 
 
 def test_submission_validate_outputs_rejects_tiny_pdf_placeholder(temp_workspace):

@@ -181,6 +181,17 @@ def test_scout_system_prompt_includes_seed_ideas(scout_agent, execution_context)
     assert "因果效应角度改进 AI agent memory retrieval" in prompt
 
 
+def test_scout_system_prompt_ignores_placeholder_seed_ideas(scout_agent, execution_context):
+    ideas_path = execution_context.workspace_dir / "user_seeds" / "seed_ideas.md"
+    ideas_path.parent.mkdir(parents=True, exist_ok=True)
+    ideas_path.write_text("# 初步研究想法\n\n（暂无）\n", encoding="utf-8")
+
+    prompt = scout_agent.system_prompt(execution_context)
+
+    assert "用户种子想法" not in prompt
+    assert "（暂无）" not in prompt
+
+
 def test_scout_system_prompt_includes_external_resources(scout_agent, execution_context):
     """测试 seed_external_resources 会进入 T2 prompt。"""
     resources_path = execution_context.workspace_dir / "user_seeds" / "seed_external_resources.jsonl"
@@ -377,7 +388,7 @@ def test_validate_outputs_too_few_papers(scout_agent, execution_context):
     lit_dir = execution_context.workspace_dir / "literature"
     lit_dir.mkdir()
 
-    # 只有10篇（刚好达到最低要求）
+    # 15篇刚好达到当前配置的 papers_dedup_min。
     dedup_papers = [
         {
             "id": f"s2:{i}",
@@ -393,7 +404,7 @@ def test_validate_outputs_too_few_papers(scout_agent, execution_context):
             "citation_count": 10,
             "url": f"https://example.com/{i}",
         }
-        for i in range(10)
+        for i in range(15)
     ]
     # 创建对应的 raw papers
     raw_papers = [
@@ -461,7 +472,7 @@ def test_validate_outputs_too_few_papers(scout_agent, execution_context):
     (lit_dir / "search_log.md").write_text("")
     (lit_dir / "missing_areas.md").write_text("")
 
-    # 10篇刚好达到最低要求，应该通过
+    # 刚好达到最低要求，应该通过
     ok, err = scout_agent.validate_outputs(execution_context)
     assert ok
 
@@ -484,7 +495,7 @@ def test_validate_outputs_rejects_verified_records_missing_queue_disposition(sco
             "doi": f"10.1234/{i}",
             "url": f"https://example.com/{i}",
         }
-        for i in range(12)
+        for i in range(17)
     ]
     dedup_papers = [
         {
@@ -514,10 +525,10 @@ def test_validate_outputs_rejects_verified_records_missing_queue_disposition(sco
             f.write(json.dumps(verified) + "\n")
     (lit_dir / "verification_failures.jsonl").write_text("", encoding="utf-8")
 
-    # Old bug shape: queue reaches the minimum 10, but two verified papers have
+    # Old bug shape: queue reaches the configured minimum, but two verified papers have
     # no deep/shallow disposition and would vanish before T3 abstract sweep.
     with (lit_dir / "deep_read_queue.jsonl").open("w", encoding="utf-8") as f:
-        for i, paper in enumerate(dedup_papers[:10], start=1):
+        for i, paper in enumerate(dedup_papers[:15], start=1):
             queue_record = {
                 "paper_id": paper["id"],
                 "title": paper["title"],

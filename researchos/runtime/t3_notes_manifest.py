@@ -10,6 +10,7 @@ precise diagnostics.
 """
 
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 import tempfile
@@ -27,6 +28,24 @@ from ..literature_identity import (
 
 
 NOTE_MANIFEST_REL_PATH = "literature/notes_manifest.json"
+
+T3_INPUT_FINGERPRINT_PATHS = {
+    "deep_read_queue": "literature/deep_read_queue.jsonl",
+    "papers_verified": "literature/papers_verified.jsonl",
+    "papers_dedup": "literature/papers_dedup.jsonl",
+    "domain_map": "literature/domain_map.json",
+    "access_audit": "literature/access_audit.md",
+    "bridge_domain_plan": "literature/bridge_domain_plan.json",
+    "seed_pdfs": "user_seeds/pdfs",
+    "legacy_seed_papers_dir": "seeds/T2_scout/papers",
+    "literature_pdfs": "literature/pdfs",
+    "seed_outline_profile": "user_seeds/seed_outline_profile.json",
+    "seed_constraints": "user_seeds/seed_constraints.md",
+    "legacy_seed_constraints": "seeds/T2_scout/constraints.md",
+    "seed_external_resources": "user_seeds/seed_external_resources.jsonl",
+    "agent_params_config": "config/agent_params.yaml",
+    "user_settings_config": "config/user_settings.yaml",
+}
 
 
 def build_t3_notes_manifest(
@@ -144,6 +163,7 @@ def build_t3_notes_manifest(
         "valid_note_file_count": sum(1 for info in note_infos if info.get("valid")),
         "invalid_note_file_count": sum(1 for info in note_infos if not info.get("valid")),
         "duplicate_canonical_ids": duplicate_canonical_ids,
+        "input_fingerprints": t3_input_fingerprints(workspace_dir),
         "entries": entries,
         "invalid_unmatched_notes": invalid_unmatched,
     }
@@ -156,6 +176,39 @@ def refresh_t3_notes_manifest(workspace_dir: Path) -> dict[str, Any]:
     """Refresh and return the persisted T3 note manifest."""
 
     return build_t3_notes_manifest(workspace_dir, write=True)
+
+
+def t3_input_fingerprints(workspace_dir: Path) -> dict[str, dict[str, Any]]:
+    """Fingerprint upstream inputs that determine the T3 reading target set."""
+
+    workspace_dir = workspace_dir.resolve()
+    return {
+        label: _file_fingerprint(workspace_dir, rel_path)
+        for label, rel_path in T3_INPUT_FINGERPRINT_PATHS.items()
+    }
+
+
+def validate_t3_input_fingerprints(workspace_dir: Path, manifest: dict[str, Any]) -> tuple[bool, str | None]:
+    """Ensure a manifest still corresponds to the current T2/T3 input files."""
+
+    fingerprints = manifest.get("input_fingerprints")
+    if not isinstance(fingerprints, dict):
+        return False, "notes_manifest.json 缺少 input_fingerprints，T3 需要重新校验/续跑"
+    current = t3_input_fingerprints(workspace_dir)
+    stale: list[str] = []
+    for label, item in current.items():
+        previous = fingerprints.get(label)
+        if not isinstance(previous, dict):
+            stale.append(label)
+            continue
+        if bool(previous.get("exists")) != bool(item.get("exists")):
+            stale.append(label)
+            continue
+        if item.get("exists") and str(previous.get("sha256") or "") != str(item.get("sha256") or ""):
+            stale.append(label)
+    if stale:
+        return False, "notes_manifest.json 对应的 T3 输入已变化，需要重新读取: " + ", ".join(stale)
+    return True, None
 
 
 def target_entries(manifest: dict[str, Any]) -> list[dict[str, Any]]:
@@ -261,6 +314,46 @@ def _load_default_queue(literature_dir: Path) -> tuple[list[dict[str, Any]], str
         if path.exists():
             return load_jsonl(path), f"literature/{rel_name}"
     return [], "none"
+
+
+def _file_fingerprint(workspace_dir: Path, rel_path: str) -> dict[str, Any]:
+    path = _resolve_fingerprint_path(workspace_dir, rel_path)
+    item: dict[str, Any] = {"path": rel_path, "exists": path.exists()}
+    if path.exists() and path.is_file():
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        item["sha256"] = digest.hexdigest()
+        item["size"] = path.stat().st_size
+    elif path.exists() and path.is_dir():
+        children = [child for child in path.rglob("*") if child.is_file()]
+        item["kind"] = "dir"
+        item["file_count"] = len(children)
+        digest = hashlib.sha256()
+        for child in sorted(children, key=lambda p: p.relative_to(path).as_posix()):
+            rel = child.relative_to(path).as_posix()
+            digest.update(rel.encode("utf-8"))
+            digest.update(b"\0")
+            try:
+                digest.update(str(child.stat().st_size).encode("ascii"))
+                digest.update(b"\0")
+                with child.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        digest.update(chunk)
+            except OSError:
+                digest.update(b"<unreadable>")
+            digest.update(b"\0")
+        item["sha256"] = digest.hexdigest()
+    return item
+
+
+def _resolve_fingerprint_path(workspace_dir: Path, rel_path: str) -> Path:
+    workspace_path = workspace_dir / rel_path
+    if workspace_path.exists() or not rel_path.startswith("config/"):
+        return workspace_path
+    repo_root = Path(__file__).resolve().parents[2]
+    return repo_root / rel_path
 
 
 def _collect_note_infos(workspace_dir: Path, literature_dir: Path) -> list[dict[str, Any]]:

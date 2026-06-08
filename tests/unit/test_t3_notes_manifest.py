@@ -10,6 +10,7 @@ from researchos.runtime.t3_notes_manifest import (
     format_completion_diagnostics,
     find_queue_record_by_rank,
     target_entries,
+    validate_t3_input_fingerprints,
 )
 from researchos.tools.save_paper_note import SavePaperNoteTool
 from researchos.tools.workspace_policy import WorkspaceAccessPolicy
@@ -218,11 +219,24 @@ def test_manifest_distinguishes_complete_incomplete_and_missing_notes(tmp_path: 
     assert entries[0]["has_abstract"] is True
     assert entries[0]["reference_hint_count"] == 8
     assert entries[0]["has_pdf_url_hint"] is True
+    assert "seed_outline_profile" in manifest["input_fingerprints"]
+    assert "seed_constraints" in manifest["input_fingerprints"]
+    assert "seed_external_resources" in manifest["input_fingerprints"]
+    assert "seed_pdfs" in manifest["input_fingerprints"]
+    assert "legacy_seed_papers_dir" in manifest["input_fingerprints"]
+    assert "literature_pdfs" in manifest["input_fingerprints"]
+    assert "agent_params_config" in manifest["input_fingerprints"]
     assert "## 10. Key Quotes" in entries[1]["validation_error"]
     diagnostic = format_completion_diagnostics(entries)
     assert "已匹配但结构不合格" in diagnostic
     assert "未找到 note" in diagnostic
     assert (workspace / "literature" / "notes_manifest.json").exists()
+
+    (workspace / "user_seeds" / "pdfs").mkdir(parents=True, exist_ok=True)
+    (workspace / "user_seeds" / "pdfs" / "new_seed.pdf").write_bytes(b"%PDF changed after manifest")
+    ok, err = validate_t3_input_fingerprints(workspace, manifest)
+    assert not ok
+    assert "seed_pdfs" in (err or "")
 
 
 @pytest.mark.asyncio

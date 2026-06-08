@@ -28,10 +28,10 @@ from pathlib import Path
 import json
 
 from ..runtime.agent import Agent, ExecutionContext
-from ..runtime.agent_params import build_agent_spec
+from ..runtime.agent_params import build_agent_spec, get_agent_params
 from ..runtime.t2_config import detect_manuscript_profile, load_t2_finalize_config
 from ..runtime.prompts import render_prompt
-from ..literature_identity import paper_record_match_keys
+from ..literature_identity import is_placeholder_text, paper_record_match_keys
 from ..tools.pdf_metadata import scan_seed_papers
 from ..tools.paper_utils import (
     deduplicate_papers,
@@ -155,6 +155,10 @@ class ScoutAgent(Agent):
             ctx.workspace_dir / "user_seeds" / "seed_ideas.md",
             default="",
         )
+        if is_placeholder_text(seed_ideas):
+            seed_ideas = ""
+        if is_placeholder_text(seed_constraints):
+            seed_constraints = ""
         seed_outline_profile = read_text_file(
             ctx.workspace_dir / "user_seeds" / "seed_outline_profile.json",
             default="",
@@ -222,10 +226,16 @@ class ScoutAgent(Agent):
 
         # 3. 校验papers_dedup数量和schema
         t2_config = load_t2_finalize_config(ctx.workspace_dir)
+        try:
+            params = get_agent_params("scout")
+        except Exception:
+            params = {}
+        expected_outputs = params.get("expected_outputs") if isinstance(params.get("expected_outputs"), dict) else {}
+        dedup_min = _safe_int(expected_outputs.get("papers_dedup_min"), 10, minimum=0)
         ok, err = validate_jsonl_schema(
             dedup_path,
             "papers_dedup",
-            min_count=10,  # 降低要求：10篇高质量论文优于15篇低质量论文
+            min_count=dedup_min,
             max_count=t2_config.active_pool_max,
         )
         if not ok:
@@ -247,7 +257,7 @@ class ScoutAgent(Agent):
         ok, err = validate_jsonl_schema(
             verified_path,
             "papers_verified",
-            min_count=min(10, len(dedup_records)),
+            min_count=min(dedup_min, len(dedup_records)),
             max_count=len(dedup_records),
         )
         if not ok:
@@ -268,7 +278,7 @@ class ScoutAgent(Agent):
         ok, err = validate_jsonl_schema(
             queue_path,
             "deep_read_queue",
-            min_count=min(10, len(verified_records)),
+            min_count=min(dedup_min, len(verified_records)),
             max_count=len(verified_records),
         )
         if not ok:
@@ -632,3 +642,13 @@ def _bridge_target_counts(records: list[dict]) -> dict[str, int]:
             if record.get("target_bucket") == "bridge_deep" or _is_semantic_screened_protected_candidate(record):
                 counts[bridge_id] = counts.get(bridge_id, 0) + 1
     return counts
+
+
+def _safe_int(value, default: int, *, minimum: int | None = None) -> int:
+    try:
+        result = int(float(str(value).strip())) if value not in (None, "", [], {}) else int(default)
+    except (TypeError, ValueError):
+        result = int(default)
+    if minimum is not None:
+        result = max(minimum, result)
+    return result

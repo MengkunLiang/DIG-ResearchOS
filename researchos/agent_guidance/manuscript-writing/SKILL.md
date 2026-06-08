@@ -41,12 +41,12 @@ Do not turn section-by-section drafting into several short placeholders. Except 
 - Analysis should explain support for design rationales, alternative explanations, failure cases, sensitivity, and boundaries.
 - Introduction and Conclusion should form a complete problem-method-evidence-contribution chain.
 
-Avoid hard word-count floors. If evidence is missing, write TODO/limitation. If evidence is available, develop the section to the density expected by the target venue.
+Avoid hard word-count floors. If evidence is missing, use natural-language limitations, weaken/remove the unsupported claim, or record the issue in audit/self-check files. Do not leave literal TODO/TBD/LLM_REVIEW_REQUIRED/PLACEHOLDER tokens in final TeX. If evidence is available, develop the section to the density expected by the target venue.
 
 ## Evidence Rules
 
 - Numbers must come from `drafts/experiment_evidence_pack.json`, `drafts/result_to_claim.json`, `experiments/results_summary.json`, `experiments/ablations.csv`, or indexed run artifacts.
-- Figures must come from existing generated assets or be explicitly marked as TODO with a generation plan.
+- Figures must come from existing generated assets or be planned in figure/table registries. If a figure cannot be generated, explain the limitation or remove the reference from final TeX.
 - Claims about prior work must cite `literature/related_work.bib` keys and be traceable to `literature/synthesis.md` or paper notes.
 - If evidence is external, weak, mock-only, or not fully audited, state the boundary in Conclusion's Limitations subsection and avoid claiming unsupported empirical validation.
 - Abstract should not contain formal citations: no LaTeX citation commands, no author-year parenthetical citations, and no numeric citation brackets. Refer to method families or problem classes in the Abstract, then put concrete prior-work citations in Introduction or Related Work.

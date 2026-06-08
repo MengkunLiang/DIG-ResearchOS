@@ -943,6 +943,10 @@ ideas:
 
 #### 文件5: `ideation/gate_decisions.json`
 Gate 决策日志，**严格符合** gate_decisions.schema.json。必须记录 `T4-DECIDE-1` 和 `T4-DECIDE-2`。
+如果存在 `ideation/_gate1_user_selection.json` 且其中有 `selection_fingerprint`，
+必须把同一个值写入 `gate_decisions.json` 顶层字段 `gate1_selection_fingerprint`，
+并在 `T4-DECIDE-1` 决策对象中写入 `source_selection_fingerprint`。这是 resume 防陈旧约束，
+用于证明最终假设确实消费了当前这次人工 Gate1 选择。
 
 **必须使用 write_structured_file 工具生成此文件**：
 ```
@@ -958,10 +962,12 @@ write_structured_file(
 ```json
 {
   "version": "1.0",
+  "gate1_selection_fingerprint": "<copy from ideation/_gate1_user_selection.json>",
   "decisions": [
     {
       "gate_id": "T4-DECIDE-1",
       "action": "select_direction",
+      "source_selection_fingerprint": "<same fingerprint>",
       "selected_idea_ids": ["D1"],
       "rejected_idea_ids": ["D2", "D3"],
       "deferred_idea_ids": [],
@@ -1139,7 +1145,7 @@ Top 3 风险分析，诚实列出最大的风险。
 - 每个假设必须有可追溯的**生成依据**，并写入 `ideation/idea_rationales.json`
 - 每个候选idea必须写入 `ideation/idea_scorecard.yaml`，包括来源、核心内容、选择依据、closest baselines、七维评分、决策、风险和最低可行实验
 - 被淘汰/暂缓/合并的idea必须写入 `ideation/rejected_ideas.md`
-- 两轮Gate必须写入 `ideation/gate_decisions.json`
+- 两轮Gate必须写入 `ideation/gate_decisions.json`；若 `_gate1_user_selection.json` 带 `selection_fingerprint`，必须复制到 `gate_decisions.json`，否则 resume 会拒绝复用这些最终产物
 - exp_plan.yaml 必须**严格符合** exp_plan.schema.json
 - idea_scorecard.yaml 必须**严格符合** idea_scorecard.schema.json
 - idea_rationales.json 必须**严格符合** idea_rationales.schema.json

@@ -544,6 +544,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "comparison_table": "literature/comparison_table.csv",
             "missing_areas": "literature/missing_areas.md",
             "domain_map": "literature/domain_map.json",
+            "bridge_domain_plan": "literature/bridge_domain_plan.json",
             "synthesis_workbench": "literature/synthesis_workbench.json",
             "survey_insights": "ideation/survey_insights.json",
             "seed_ideas": "user_seeds/seed_ideas.md",
@@ -584,9 +585,8 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         },
         "outputs": {
             "gate1_user_selection": "ideation/_gate1_user_selection.json",
-            "bridge_coverage_review": "ideation/bridge_coverage_review.json",
         },
-        "optional_outputs": ["bridge_coverage_review"],
+        "optional_outputs": [],
         "required_inputs": [
             "candidate_directions",
             "gate1_selection_brief",

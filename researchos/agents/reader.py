@@ -16,6 +16,7 @@ from ..literature_identity import (
     add_identity_key_variants,
     display_record_key,
     is_paper_note_file,
+    is_placeholder_text,
     paper_note_match_keys,
     paper_record_match_keys,
     record_is_covered,
@@ -26,7 +27,7 @@ from ..runtime.t3_notes_manifest import (
     target_entries,
 )
 from ..runtime.agent import Agent, ExecutionContext
-from ..runtime.agent_params import build_agent_spec
+from ..runtime.agent_params import build_agent_spec, get_agent_mode_params
 from ..runtime.prompts import render_prompt
 from ..runtime.t2_config import get_effective_reader_read_params, load_deep_read_queue_config
 from ._common import (
@@ -90,6 +91,8 @@ class ReaderAgent(Agent):
             ctx.workspace_dir / "user_seeds" / "seed_constraints.md",
             default="",
         )
+        if is_placeholder_text(seed_constraints):
+            seed_constraints = ""
         queue_config = load_deep_read_queue_config(ctx.workspace_dir)
         context_vars = {
             "project": project,
@@ -430,8 +433,10 @@ class ReaderAgent(Agent):
         if missing:
             return False, f"synthesis.md缺少以下章节: {missing}"
 
-        if len(content) < 2000:
-            return False, f"synthesis.md过短({len(content)}字符)，可能没有认真综合"
+        synth_params = _reader_synthesize_params()
+        expected_length_min = _safe_int(synth_params.get("expected_length_min"), 2000, minimum=0)
+        if len(content) < expected_length_min:
+            return False, f"synthesis.md过短({len(content)}字符)，至少需要{expected_length_min}字符，可能没有认真综合"
 
         workbench_path = ctx.workspace_dir / "literature" / "synthesis_workbench.json"
         domain_map_exists = (ctx.workspace_dir / "literature" / "domain_map.json").exists()
@@ -466,8 +471,9 @@ class ReaderAgent(Agent):
             content,
             flags=re.IGNORECASE,
         )
-        if len(paper_refs) < 5:
-            return False, f"synthesis.md中论文引用过少({len(paper_refs)}个)，应该引用更多paper_notes中的论文"
+        expected_citations_min = _safe_int(synth_params.get("expected_citations_min"), 5, minimum=0)
+        if len(paper_refs) < expected_citations_min:
+            return False, f"synthesis.md中论文引用过少({len(paper_refs)}个)，至少需要{expected_citations_min}个paper_notes引用"
 
         return True, None
 
@@ -1061,3 +1067,20 @@ def _validate_key_results_evidence(note_path: Path, content: str) -> tuple[bool,
         )
 
     return True, None
+
+
+def _reader_synthesize_params() -> dict:
+    try:
+        return get_agent_mode_params("reader", "synthesize")
+    except Exception:
+        return {}
+
+
+def _safe_int(value, default: int, *, minimum: int | None = None) -> int:
+    try:
+        result = int(float(str(value).strip())) if value not in (None, "", [], {}) else int(default)
+    except (TypeError, ValueError):
+        result = int(default)
+    if minimum is not None:
+        result = max(minimum, result)
+    return result

@@ -28,6 +28,13 @@ from researchos.orchestration.task_io_contract import (
     resolve_outputs,
 )
 from researchos.runtime.agent import AgentResult, ExecutionContext
+from researchos.runtime.artifact_fingerprints import write_t45_fingerprint_report
+
+
+def _write_t45_fingerprint_report(workspace: Path) -> None:
+    """Mirror NoveltyAuditor's success hook for parse-only state-machine tests."""
+
+    write_t45_fingerprint_report(workspace)
 
 
 class TestAgentModeInitialization:
@@ -704,6 +711,7 @@ class TestMultiModeStateFlow:
         }
         for text, expected in verdicts.items():
             (temp_workspace / "ideation" / "novelty_audit.md").write_text(text, encoding="utf-8")
+            _write_t45_fingerprint_report(temp_workspace)
             assert sm._parse_t45_verdict(temp_workspace) == expected
 
     def test_t45_pass_routes_to_external_handoff_when_available(self, temp_workspace):
@@ -743,6 +751,7 @@ class TestMultiModeStateFlow:
             "Final Gate Verdict: pass_to_experiment\n",
             encoding="utf-8",
         )
+        _write_t45_fingerprint_report(temp_workspace)
         sm_path = temp_workspace / "state_machine.yaml"
         sm_path.write_text(yaml.dump(sm_config))
         sm = StateMachine(sm_path)

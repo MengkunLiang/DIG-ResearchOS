@@ -14,10 +14,63 @@ import pytest
 
 from researchos.agents.submission import SubmissionAgent
 from researchos.tools.latex_compile import _compile_dependency_fingerprint
+from researchos.tools.manuscript import craft_audit_input_fingerprints
 
 
 def _sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_passing_craft_audit(workspace: Path) -> None:
+    drafts = workspace / "drafts"
+    drafts.mkdir(parents=True, exist_ok=True)
+    (drafts / "sections").mkdir(parents=True, exist_ok=True)
+    if not (drafts / "paper_state.json").exists():
+        (drafts / "paper_state.json").write_text(
+            json.dumps(
+                {
+                    "semantics": "shared_state_for_section_by_section_writing_not_final_claims",
+                    "sections": {},
+                    "shared_facts": {"bib_keys": [], "result_metrics": [], "alignment_matrix": []},
+                }
+            ),
+            encoding="utf-8",
+        )
+    if not (drafts / "alignment_matrix.json").exists():
+        (drafts / "alignment_matrix.json").write_text(
+            '{"semantics":"alignment_matrix_seed_not_final_scientific_judgment","rows":[]}\n',
+            encoding="utf-8",
+        )
+    if not (drafts / "cdr_claim_ledger.json").exists():
+        (drafts / "cdr_claim_ledger.json").write_text(
+            '{"semantics":"cdr_claim_ledger_seed_not_final_scientific_judgment","contribution_chains":[]}\n',
+            encoding="utf-8",
+        )
+    checks = [
+        {"name": "matrix_row_count", "level": "PASS", "passed": True},
+        {"name": "intro_contribution_count", "level": "PASS", "passed": True},
+        {"name": "abstract_no_cite", "level": "PASS", "passed": True},
+        {"name": "no_internal_label_leakage", "level": "PASS", "passed": True},
+        {"name": "no_placeholder_tokens", "level": "PASS", "passed": True},
+        {"name": "number_traceability", "level": "PASS", "passed": True},
+        {"name": "no_standalone_limitations", "level": "PASS", "passed": True},
+        {"name": "conclusion_has_limitations_subsection", "level": "PASS", "passed": True},
+    ]
+    (drafts / "craft_audit.md").write_text("# Writing Craft And Alignment Audit\n- [x] ok\n", encoding="utf-8")
+    (drafts / "craft_audit.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "deterministic_writing_craft_audit_not_scientific_judgment",
+                "input_fingerprints": craft_audit_input_fingerprints(workspace),
+                "checks": checks,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 class TestSubmissionAgent:
@@ -250,6 +303,7 @@ class TestSubmissionAgentValidateOutputs:
             ),
             encoding="utf-8",
         )
+        _write_passing_craft_audit(standard_workspace)
 
         # 创建 migration_report.md（SubmissionAgent 必需）
         report = standard_workspace / "submission" / "migration_report.md"

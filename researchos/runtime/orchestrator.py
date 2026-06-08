@@ -26,10 +26,12 @@ from .manuscript_recovery import (
     repair_t8_section_plan_outputs,
 )
 from .message import Message, Role, ToolCall, is_empty_assistant
-from .t2_recovery import finalize_t2_outputs
+from .t2_recovery import finalize_t2_outputs, validate_t2_finalize_manifest
 from .abstract_sweep import run_abstract_sweep, run_abstract_sweep_with_reader
 from .t2_config import get_effective_reader_read_params, load_t2_finalize_config
 from .t3_recovery import prepare_t3_resume_artifacts
+from .t3_notes_manifest import validate_t3_input_fingerprints
+from .artifact_fingerprints import validate_t45_fingerprint_report
 from .task_recovery import prepare_generic_resume_artifacts
 from .run_logger import RunLogger
 from ..agents.ideation import validate_t4_gate1_ready
@@ -1194,7 +1196,8 @@ class AgentRunner:
 
         if ctx.outputs_expected and all(path.exists() for path in ctx.outputs_expected.values()):
             ok, _err = self.agent.validate_outputs(ctx)
-            if ok:
+            manifest_ok, manifest_err = validate_t2_finalize_manifest(ctx.workspace_dir)
+            if ok and manifest_ok:
                 self._record_runtime_completion(
                     ctx,
                     "t2_existing_outputs_prefinalize",
@@ -1202,9 +1205,17 @@ class AgentRunner:
                 )
                 print("[Agent] T2 检测到已有完整产物且校验通过，跳过 LLM 续跑", flush=True)
                 return True
+            if ok and not manifest_ok:
+                self.log.info("t2_existing_outputs_prefinalize_skipped", reason=manifest_err)
 
         if not self._is_resume_run(ctx):
             return False
+
+        manifest_ok, manifest_err = validate_t2_finalize_manifest(ctx.workspace_dir)
+        if not manifest_ok and (ctx.workspace_dir / "literature" / "papers_raw.jsonl").exists():
+            if not self._raw_t2_cache_newer_than_inputs(ctx):
+                self.log.info("t2_resume_prefinalize_skipped", reason=manifest_err)
+                return False
 
         return await self._finalize_t2_from_raw(
             ctx,
@@ -1212,6 +1223,26 @@ class AgentRunner:
             min_raw_count=self._t2_finish_finalize_min_raw(ctx),
             start_message="[Agent] T2 resume 检测到已有 papers_raw，尝试确定性补齐缺失产物...",
             success_message="[Agent] T2 resume 确定性补齐成功，跳过 LLM 续跑",
+        )
+
+    def _raw_t2_cache_newer_than_inputs(self, ctx: ExecutionContext) -> bool:
+        raw_path = ctx.workspace_dir / "literature" / "papers_raw.jsonl"
+        if not raw_path.exists() or raw_path.stat().st_size <= 0:
+            return False
+        return self._outputs_newer_than_inputs(
+            ctx,
+            outputs=[raw_path],
+            inputs=[
+                ctx.workspace_dir / "project.yaml",
+                ctx.workspace_dir / "literature" / "bridge_domain_plan.json",
+                ctx.workspace_dir / "user_seeds" / "seed_papers.jsonl",
+                ctx.workspace_dir / "user_seeds" / "seed_ideas.md",
+                ctx.workspace_dir / "user_seeds" / "seed_constraints.md",
+                ctx.workspace_dir / "user_seeds" / "seed_outline_profile.json",
+                ctx.workspace_dir / "user_seeds" / "seed_external_resources.jsonl",
+            ],
+            event="t2_resume_prefinalize_skipped",
+            reason="papers_raw_older_than_t2_inputs",
         )
 
     async def _maybe_finalize_t3_before_llm(self, ctx: ExecutionContext) -> bool:
@@ -1233,13 +1264,32 @@ class AgentRunner:
         if any(not path.exists() for path in expected_paths):
             return False
 
+        manifest_path = ctx.workspace_dir / "literature" / "notes_manifest.json"
+        if not manifest_path.exists() or manifest_path.stat().st_size <= 0:
+            self.log.info("t3_resume_prefinalize_skipped", reason="notes_manifest_missing")
+            return False
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            self.log.info("t3_resume_prefinalize_skipped", reason=f"notes_manifest_invalid:{exc}")
+            return False
+        if not isinstance(manifest, dict):
+            self.log.info("t3_resume_prefinalize_skipped", reason="notes_manifest_not_object")
+            return False
+        ok, err = validate_t3_input_fingerprints(ctx.workspace_dir, manifest)
+        if not ok:
+            self.log.info("t3_resume_prefinalize_skipped", reason=err)
+            return False
+
         ok, err = self.agent.validate_outputs(ctx)
         if not ok:
             self.log.info("t3_resume_prefinalize_skipped", reason=err)
             return False
 
-        print("[Agent] T3 检测到已有 deep-read 产物且校验通过，跳过 LLM 续跑", flush=True)
-        ctx.extra["skip_t3_abstract_sweep"] = True
+        print("[Agent] T3 检测到已有 deep-read 产物且校验通过，跳过 deep-read LLM 续跑", flush=True)
+        # Do not suppress abstract sweep here. Resume may have valid deep-read
+        # notes while shallow/metadata notes are missing or stale; the post-run
+        # sweep is the cheap deterministic/Reader path that repairs that gap.
         self._record_runtime_completion(
             ctx,
             "t3_resume_prefinalize",
@@ -1278,6 +1328,14 @@ class AgentRunner:
         ]
         if any(not path.exists() or path.stat().st_size <= 0 for path in expected_paths):
             return False
+        if not self._outputs_newer_than_inputs(
+            ctx,
+            outputs=expected_paths,
+            inputs=self._t4_upstream_input_paths(ctx),
+            event="t4_resume_prefinalize_skipped",
+            reason="final_outputs_older_than_t4_inputs",
+        ):
+            return False
         if not self._t4_final_outputs_follow_gate1(ctx):
             return False
 
@@ -1310,6 +1368,15 @@ class AgentRunner:
         ok, err = validate_t4_gate1_ready(ctx.workspace_dir)
         if not ok:
             self.log.info("t4_gate1_prefinalize_skipped", reason=err)
+            return False
+        gate1_paths = self._t4_gate1_artifact_paths(ctx)
+        if not self._outputs_newer_than_inputs(
+            ctx,
+            outputs=gate1_paths,
+            inputs=self._t4_upstream_input_paths(ctx),
+            event="t4_gate1_prefinalize_skipped",
+            reason="gate1_artifacts_older_than_t4_inputs",
+        ):
             return False
         print("[Agent] T4 检测到 Gate1 候选池已就绪，转入人工选择 Gate", flush=True)
         self._record_runtime_completion(
@@ -1344,6 +1411,15 @@ class AgentRunner:
         ok, err = validate_t4_gate1_ready(ctx.workspace_dir)
         if not ok:
             self.log.info("t4_gate1_finalize_skipped", reason=err)
+            return stop_reason, error_msg
+        gate1_paths = self._t4_gate1_artifact_paths(ctx)
+        if not self._outputs_newer_than_inputs(
+            ctx,
+            outputs=gate1_paths,
+            inputs=self._t4_upstream_input_paths(ctx),
+            event="t4_gate1_finalize_skipped",
+            reason="gate1_artifacts_older_than_t4_inputs",
+        ):
             return stop_reason, error_msg
         print("[Agent] T4 Gate1 候选池已就绪，暂停进入人工选择 Gate", flush=True)
         self._record_runtime_completion(
@@ -1409,6 +1485,97 @@ class AgentRunner:
             return False
         return True
 
+    def _t4_gate1_artifact_paths(self, ctx: ExecutionContext) -> list[Path]:
+        paths = [
+            ctx.workspace_dir / "ideation" / "_pass1_forward_candidates.json",
+            ctx.workspace_dir / "ideation" / "_pass2_grounding_review.json",
+            ctx.workspace_dir / "ideation" / "_candidate_directions.json",
+            ctx.workspace_dir / "ideation" / "_gate1_selection_brief.md",
+        ]
+        bridge_review = ctx.workspace_dir / "ideation" / "bridge_coverage_review.json"
+        if bridge_review.exists():
+            paths.append(bridge_review)
+        return paths
+
+    def _t4_upstream_input_paths(self, ctx: ExecutionContext) -> list[Path]:
+        return [
+            ctx.workspace_dir / "project.yaml",
+            ctx.workspace_dir / "literature" / "synthesis.md",
+            ctx.workspace_dir / "literature" / "synthesis_workbench.json",
+            ctx.workspace_dir / "literature" / "domain_map.json",
+            ctx.workspace_dir / "literature" / "bridge_domain_plan.json",
+            ctx.workspace_dir / "literature" / "comparison_table.csv",
+            ctx.workspace_dir / "literature" / "missing_areas.md",
+            ctx.workspace_dir / "ideation" / "survey_insights.json",
+            ctx.workspace_dir / "user_seeds" / "seed_ideas.md",
+            ctx.workspace_dir / "user_seeds" / "seed_constraints.md",
+        ]
+
+    def _t45_output_paths(self, ctx: ExecutionContext) -> list[Path]:
+        paths = [
+            ctx.workspace_dir / "ideation" / "novelty_audit.md",
+        ]
+        tuples_dir = ctx.workspace_dir / "ideation" / "_mechanism_tuples"
+        if tuples_dir.exists():
+            paths.extend(path for path in tuples_dir.rglob("*") if path.is_file())
+        design_tuples_dir = ctx.workspace_dir / "ideation" / "_design_rationale_tuples"
+        if design_tuples_dir.exists():
+            paths.extend(path for path in design_tuples_dir.rglob("*") if path.is_file())
+        collision_path = ctx.workspace_dir / "ideation" / "collision_cases.md"
+        if collision_path.exists():
+            paths.append(collision_path)
+        return paths
+
+    def _t45_upstream_input_paths(self, ctx: ExecutionContext) -> list[Path]:
+        return [
+            ctx.workspace_dir / "ideation" / "hypotheses.md",
+            ctx.workspace_dir / "ideation" / "exp_plan.yaml",
+            ctx.workspace_dir / "ideation" / "idea_scorecard.yaml",
+            ctx.workspace_dir / "ideation" / "idea_rationales.json",
+            ctx.workspace_dir / "ideation" / "gate_decisions.json",
+            ctx.workspace_dir / "literature" / "synthesis.md",
+            ctx.workspace_dir / "literature" / "synthesis_workbench.json",
+            ctx.workspace_dir / "literature" / "comparison_table.csv",
+        ]
+
+    def _outputs_newer_than_inputs(
+        self,
+        ctx: ExecutionContext,
+        *,
+        outputs: list[Path],
+        inputs: list[Path],
+        event: str,
+        reason: str,
+    ) -> bool:
+        existing_outputs = [path for path in outputs if path.exists() and path.stat().st_size > 0]
+        if not existing_outputs:
+            self.log.info(event, reason=f"{reason}:missing_outputs")
+            return False
+        existing_inputs = [path for path in inputs if path.exists() and path.stat().st_size > 0]
+        if not existing_inputs:
+            return True
+
+        oldest_output_mtime = min(path.stat().st_mtime for path in existing_outputs)
+        newer_inputs = [
+            str(path.relative_to(ctx.workspace_dir))
+            for path in existing_inputs
+            if path.stat().st_mtime > oldest_output_mtime
+        ]
+        if newer_inputs:
+            oldest_outputs = [
+                str(path.relative_to(ctx.workspace_dir))
+                for path in existing_outputs
+                if path.stat().st_mtime == oldest_output_mtime
+            ]
+            self.log.info(
+                event,
+                reason=reason,
+                newer_inputs=newer_inputs,
+                oldest_outputs=oldest_outputs,
+            )
+            return False
+        return True
+
     async def _maybe_finalize_t45_before_llm(self, ctx: ExecutionContext) -> bool:
         """T4.5 续跑时，已有审计和 mechanism tuples 合格则直接完成。"""
 
@@ -1420,6 +1587,18 @@ class AgentRunner:
             ctx.workspace_dir / "ideation" / "_mechanism_tuples",
         ]
         if any(not path.exists() for path in required_paths):
+            return False
+        if not self._outputs_newer_than_inputs(
+            ctx,
+            outputs=self._t45_output_paths(ctx),
+            inputs=self._t45_upstream_input_paths(ctx),
+            event="t45_resume_prefinalize_skipped",
+            reason="novelty_outputs_older_than_t45_inputs",
+        ):
+            return False
+        ok, err = validate_t45_fingerprint_report(ctx.workspace_dir)
+        if not ok:
+            self.log.info("t45_resume_prefinalize_skipped", reason=err)
             return False
 
         ok, err = self.agent.validate_outputs(ctx)

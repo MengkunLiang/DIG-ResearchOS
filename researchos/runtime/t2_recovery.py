@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 from difflib import SequenceMatcher
+from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -60,6 +62,24 @@ SEARCH_TOOL_NAMES = frozenset(
         "fetch_outgoing_citations",
     }
 )
+
+T2_FINALIZE_MANIFEST_REL_PATH = "literature/t2_finalize_manifest.json"
+T2_FINALIZE_INPUT_PATHS = {
+    "project": "project.yaml",
+    "papers_raw": "literature/papers_raw.jsonl",
+    "bridge_domain_plan": "literature/bridge_domain_plan.json",
+    "seed_papers": "user_seeds/seed_papers.jsonl",
+    "seed_pdfs": "user_seeds/pdfs",
+    "legacy_seed_papers_dir": "seeds/T2_scout/papers",
+    "legacy_seed_constraints": "seeds/T2_scout/constraints.md",
+    "seed_ideas": "user_seeds/seed_ideas.md",
+    "seed_constraints": "user_seeds/seed_constraints.md",
+    "seed_outline_profile": "user_seeds/seed_outline_profile.json",
+    "seed_external_resources": "user_seeds/seed_external_resources.jsonl",
+    "literature_pdfs": "literature/pdfs",
+    "agent_params_config": "config/agent_params.yaml",
+    "user_settings_config": "config/user_settings.yaml",
+}
 
 _DEFAULT_T2_FINALIZE_CONFIG = T2FinalizeConfig()
 
@@ -452,6 +472,105 @@ def _write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     content = "\n".join(json.dumps(record, ensure_ascii=False) for record in records)
     path.write_text(content + ("\n" if content else ""), encoding="utf-8")
+
+
+def _file_fingerprint(workspace_dir: Path, rel_path: str) -> dict[str, Any]:
+    path = _resolve_fingerprint_path(workspace_dir, rel_path)
+    item: dict[str, Any] = {"path": rel_path, "exists": path.exists()}
+    if path.exists() and path.is_file():
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        item["sha256"] = digest.hexdigest()
+        item["size"] = path.stat().st_size
+    elif path.exists() and path.is_dir():
+        item["kind"] = "dir"
+        children = [child for child in path.rglob("*") if child.is_file()]
+        item["file_count"] = len(children)
+        digest = hashlib.sha256()
+        for child in sorted(children, key=lambda p: p.relative_to(path).as_posix()):
+            rel = child.relative_to(path).as_posix()
+            digest.update(rel.encode("utf-8"))
+            digest.update(b"\0")
+            try:
+                stat = child.stat()
+                digest.update(str(stat.st_size).encode("ascii"))
+                digest.update(b"\0")
+                with child.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        digest.update(chunk)
+            except OSError:
+                digest.update(b"<unreadable>")
+            digest.update(b"\0")
+        item["sha256"] = digest.hexdigest()
+    return item
+
+
+def _resolve_fingerprint_path(workspace_dir: Path, rel_path: str) -> Path:
+    workspace_path = workspace_dir / rel_path
+    if workspace_path.exists() or not rel_path.startswith("config/"):
+        return workspace_path
+    repo_root = Path(__file__).resolve().parents[2]
+    return repo_root / rel_path
+
+
+def t2_input_fingerprints(workspace_dir: Path) -> dict[str, dict[str, Any]]:
+    workspace_dir = workspace_dir.resolve()
+    return {label: _file_fingerprint(workspace_dir, rel_path) for label, rel_path in T2_FINALIZE_INPUT_PATHS.items()}
+
+
+def write_t2_finalize_manifest(workspace_dir: Path, summary: dict[str, Any]) -> dict[str, Any]:
+    payload = {
+        "version": 1,
+        "semantics": "t2_finalize_input_fingerprints",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "input_fingerprints": t2_input_fingerprints(workspace_dir),
+        "summary": {
+            "raw_count": summary.get("raw_count"),
+            "dedup_count": summary.get("dedup_count"),
+            "backlog_count": summary.get("backlog_count"),
+            "query_count": summary.get("query_count"),
+            "t2_finalize_config": summary.get("t2_finalize_config"),
+            "deep_read_queue_config": summary.get("deep_read_queue_config"),
+        },
+    }
+    path = workspace_dir / T2_FINALIZE_MANIFEST_REL_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return payload
+
+
+def validate_t2_finalize_manifest(workspace_dir: Path) -> tuple[bool, str | None]:
+    manifest_path = workspace_dir / T2_FINALIZE_MANIFEST_REL_PATH
+    if not manifest_path.exists() or manifest_path.stat().st_size <= 0:
+        return False, "缺少 literature/t2_finalize_manifest.json，T2 需要重新收尾"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return False, f"t2_finalize_manifest.json 解析失败: {exc}"
+    if not isinstance(manifest, dict):
+        return False, "t2_finalize_manifest.json 顶层必须是对象"
+    if manifest.get("semantics") != "t2_finalize_input_fingerprints":
+        return False, "t2_finalize_manifest.json semantics 不正确"
+    previous = manifest.get("input_fingerprints")
+    if not isinstance(previous, dict):
+        return False, "t2_finalize_manifest.json 缺少 input_fingerprints"
+    current = t2_input_fingerprints(workspace_dir)
+    stale: list[str] = []
+    for label, item in current.items():
+        prior = previous.get(label)
+        if not isinstance(prior, dict):
+            stale.append(label)
+            continue
+        if bool(prior.get("exists")) != bool(item.get("exists")):
+            stale.append(label)
+            continue
+        if item.get("exists") and item.get("sha256") and str(prior.get("sha256") or "") != str(item.get("sha256") or ""):
+            stale.append(label)
+    if stale:
+        return False, "t2_finalize_manifest.json 对应输入已变化，需要重新跑 T2: " + ", ".join(stale)
+    return True, None
 
 
 def _log_t2_progress(workspace_dir: Path, config: T2FinalizeConfig, event: str, **fields: Any) -> None:
@@ -1302,6 +1421,42 @@ def _existing_snowball_record_count(papers: list[dict[str, Any]], source_tools: 
     return count
 
 
+def _existing_snowball_source_ids(papers: list[dict[str, Any]], source_tools: set[str]) -> set[str]:
+    known_snowball_tools = {
+        "openalex_snowball_backfill",
+        "crossref_snowball_backfill",
+        "crossref_reference_title_openalex_backfill",
+    }
+    source_ids: set[str] = set()
+    for paper in papers:
+        paper_source_tools = {
+            str(item or "").strip()
+            for item in [
+                paper.get("source_tool"),
+                paper.get("source"),
+                *((paper.get("source_tools") or []) if isinstance(paper.get("source_tools"), list) else []),
+            ]
+            if str(item or "").strip()
+        }
+        is_matching_tool = bool(paper_source_tools & source_tools)
+        is_generic_matching = (
+            _is_citation_snowball_record(paper)
+            and not (paper_source_tools & known_snowball_tools)
+            and any(source_tool in known_snowball_tools or source_tool.endswith("snowball_backfill") for source_tool in source_tools)
+        )
+        if not (is_matching_tool or is_generic_matching):
+            continue
+        for raw_source in [
+            paper.get("citation_snowball_source_id"),
+            paper.get("snowball_source_id"),
+            *((paper.get("citation_snowball_source_ids") or []) if isinstance(paper.get("citation_snowball_source_ids"), list) else []),
+        ]:
+            source_id = str(raw_source or "").strip()
+            if source_id:
+                source_ids.add(source_id)
+    return source_ids
+
+
 def _is_allowed_snowball_source(paper: dict[str, Any]) -> bool:
     """Only expand citation neighbors from high-confidence source papers.
 
@@ -1359,22 +1514,20 @@ async def _expand_crossref_snowball_candidates(
         return [], stats
 
     known_papers = [*papers, *(existing_papers or [])]
-    existing_snowball_records = _existing_snowball_record_count(
-        known_papers,
-        {"crossref_snowball_backfill", "crossref_reference_title_openalex_backfill"},
-    )
+    snowball_tools = {"crossref_snowball_backfill", "crossref_reference_title_openalex_backfill"}
+    existing_snowball_records = _existing_snowball_record_count(known_papers, snowball_tools)
+    already_expanded_source_ids = _existing_snowball_source_ids(known_papers, snowball_tools)
     if existing_snowball_records > 0:
         stats["skipped_existing_snowball_records"] = existing_snowball_records
-        stats["raw_persist_ok"] = True
-        stats["raw_persisted"] = 0
-        stats["raw_merged"] = 0
-        stats["raw_persisted_or_merged"] = 0
-        return [], stats
+        stats["skipped_existing_snowball_source_count"] = len(already_expanded_source_ids)
 
     existing_dois = {_record_doi(paper).casefold() for paper in known_papers if _record_doi(paper)}
     selected_sources: list[dict[str, Any]] = []
     for paper in papers:
         if not _is_allowed_snowball_source(paper):
+            continue
+        source_id = str(paper.get("id") or paper.get("canonical_id") or paper.get("doi") or paper.get("title") or "").strip()
+        if source_id and source_id in already_expanded_source_ids:
             continue
         refs = paper.get("referenced_works") or paper.get("references") or []
         if not isinstance(refs, list) or not refs:
@@ -1589,14 +1742,12 @@ async def _expand_openalex_snowball_candidates(
         return [], stats
 
     known_papers = [*papers, *(existing_papers or [])]
-    existing_snowball_records = _existing_snowball_record_count(known_papers, {"openalex_snowball_backfill"})
+    snowball_tools = {"openalex_snowball_backfill"}
+    existing_snowball_records = _existing_snowball_record_count(known_papers, snowball_tools)
+    already_expanded_source_ids = _existing_snowball_source_ids(known_papers, snowball_tools)
     if existing_snowball_records > 0:
         stats["skipped_existing_snowball_records"] = existing_snowball_records
-        stats["raw_persist_ok"] = True
-        stats["raw_persisted"] = 0
-        stats["raw_merged"] = 0
-        stats["raw_persisted_or_merged"] = 0
-        return [], stats
+        stats["skipped_existing_snowball_source_count"] = len(already_expanded_source_ids)
 
     existing_openalex_ids = {_record_openalex_id(paper) for paper in known_papers if _record_openalex_id(paper)}
     selected_sources = [
@@ -1604,6 +1755,8 @@ async def _expand_openalex_snowball_candidates(
         for paper in papers
         if isinstance(paper.get("referenced_works"), list) or isinstance(paper.get("related_works"), list)
         if _is_allowed_snowball_source(paper)
+        if str(paper.get("id") or paper.get("canonical_id") or paper.get("doi") or paper.get("title") or "").strip()
+        not in already_expanded_source_ids
     ]
     selected_sources.sort(
         key=lambda paper: (
@@ -2683,15 +2836,35 @@ async def finalize_t2_outputs(
         max_candidates=t2_config.snowball_max_candidates,
         max_concurrency=t2_config.snowball_max_concurrency,
     )
-    crossref_snowball_candidates, citation_backfill = await _expand_crossref_snowball_candidates(
-        dedup_papers,
-        existing_papers=raw_papers_for_snowball_dedup,
-        max_sources=t2_config.snowball_max_sources,
-        refs_per_source=t2_config.snowball_refs_per_source,
-        max_candidates=t2_config.snowball_max_candidates,
-        max_concurrency=t2_config.snowball_max_concurrency,
-        title_match_threshold=t2_config.snowball_title_match_threshold,
-    )
+    openalex_snowball_attempted = int(openalex_citation_backfill.get("attempted") or len(openalex_snowball_candidates))
+    remaining_snowball_cap = max(0, int(t2_config.snowball_max_candidates) - openalex_snowball_attempted)
+    if remaining_snowball_cap > 0:
+        crossref_snowball_candidates, citation_backfill = await _expand_crossref_snowball_candidates(
+            dedup_papers,
+            existing_papers=[*raw_papers_for_snowball_dedup, *openalex_snowball_candidates],
+            max_sources=t2_config.snowball_max_sources,
+            refs_per_source=t2_config.snowball_refs_per_source,
+            max_candidates=remaining_snowball_cap,
+            max_concurrency=t2_config.snowball_max_concurrency,
+            title_match_threshold=t2_config.snowball_title_match_threshold,
+        )
+    else:
+        crossref_snowball_candidates = []
+        citation_backfill = {
+            "enabled": True,
+            "source_candidates": 0,
+            "sources_used": 0,
+            "reference_items_seen": 0,
+            "reference_dois_seen": 0,
+            "reference_titles_seen": 0,
+            "title_references_resolved": 0,
+            "non_doi_references_skipped": 0,
+            "skipped_by_global_snowball_cap": True,
+            "global_snowball_cap": t2_config.snowball_max_candidates,
+            "attempted": 0,
+            "added": 0,
+            "failed": 0,
+        }
     snowball_candidates = [*openalex_snowball_candidates, *crossref_snowball_candidates]
     await _persist_snowball_candidates(
         policy,
@@ -3103,7 +3276,7 @@ async def finalize_t2_outputs(
             query_count=len(queries),
         )
 
-    return {
+    summary = {
         "ok": True,
         "raw_count": len(raw_papers),
         "dedup_count": len(enriched_papers),
@@ -3138,3 +3311,6 @@ async def finalize_t2_outputs(
             "missing_areas": str(missing_areas_path),
         },
     }
+    write_t2_finalize_manifest(workspace_dir, summary)
+    summary["paths"]["t2_finalize_manifest"] = str(workspace_dir / T2_FINALIZE_MANIFEST_REL_PATH)
+    return summary

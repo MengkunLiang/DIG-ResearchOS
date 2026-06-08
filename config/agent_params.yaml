@@ -299,7 +299,7 @@ agents:
               - papers_backlog
       synthesize:
         prompt:
-          expected_length_min: 1000
+          expected_length_min: 2000
           expected_sections:
           - '## Method Families'
           - '## Shared Assumptions'
@@ -603,6 +603,7 @@ agents:
       - update_survey_section_state
       - assemble_survey
       - audit_survey_coverage
+      - bind_survey_review
       - export_survey_for_ideation
       - latex_compile
       - finish_task
@@ -647,6 +648,7 @@ agents:
       - read_file
       - list_files
       - write_file
+      - bind_review_round
       - finish_task
       allowed_write_prefixes:
       - drafts/review_rounds/

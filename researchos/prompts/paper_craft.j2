@@ -8,8 +8,8 @@
 - `invention`：可用 introduce / first to，但必须有证据链。
 - `improvement`：用 improve / extend，禁止 first / novel paradigm。
 - `exaptation`：用 adapt / transfer X to Y。
-- `routine`：不应作为核心贡献；若出现，标 TODO 并提示上游 gate 需要重审。
-- 每个量化 claim 必须指向 result metric 或实验 artifact，否则写 `% TODO(evidence)`。
+- `routine`：不应作为核心贡献；若出现，在 review/self_check 中标为需要上游 gate 重审，不要写进最终贡献。
+- 每个量化 claim 必须指向 result metric 或实验 artifact；没有证据就删除该 claim、弱化表述，或转入 Limitations，不要在最终 TeX 中写 `% TODO(evidence)`。
 
 ### 时态 / 语态
 - Method 用现在时。
@@ -32,6 +32,7 @@ With the rapid development|advancement of / in today's fast-paced|ever-evolving 
 - 数字来自 result_metrics 或明确读取的 artifact，保留与来源一致的有效位数。
 - 不在多个 section 中用不同小数位重复报告同一结果。
 
-### 对齐标注
-- 如果某段明确兑现某条贡献，可以用 `% [Cn]` 注释帮助工具追踪；多贡献写 `% [C1,C3]`。
-- 这是 traceability hint，不是学术写作格式要求；不要为了凑注释破坏段落可读性。
+### 对齐关系
+- `alignment_matrix.json` 和 `paper_state.json` 负责内部追踪 contribution lane。
+- 最终 TeX 正文和注释都不要暴露内部编号，例如 `C1`、`[C1]`、`C1:` 或 `% [C1]`。
+- 如果某段兑现某条贡献，用自然语言说明 motivation / design choice / evidence / analysis 的闭环。

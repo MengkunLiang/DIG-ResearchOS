@@ -21,6 +21,8 @@ from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
 from ..schemas.validator import validate_record
 from ..tools.ideation_analysis import analyze_ideation_coverage
+from ..literature_identity import is_placeholder_text
+from .survey_writer import _validate_survey_insights_fingerprints
 from ._common import (
     cdr_schema_prompt_summary,
     load_cdr_schema,
@@ -122,6 +124,8 @@ class IdeationAgent(Agent):
         synthesis = read_text_file(ws / "literature" / "synthesis.md", default="")
         missing_areas = read_text_file(ws / "literature" / "missing_areas.md", default="")
         seed_ideas = read_text_file(ws / "user_seeds" / "seed_ideas.md", default="")
+        if is_placeholder_text(seed_ideas):
+            seed_ideas = ""
         comparison_table = read_text_file(ws / "literature" / "comparison_table.csv", default="")
         domain_map = read_text_file(ws / "literature" / "domain_map.json", default="")
         bridge_domain_plan = read_text_file(ws / "literature" / "bridge_domain_plan.json", default="")
@@ -502,6 +506,12 @@ class IdeationAgent(Agent):
         ok, err = validate_record(gate_data, "gate_decisions")
         if not ok:
             return False, f"gate_decisions.json 不符合schema: {err}"
+        ok, err = _validate_current_survey_insights(ws)
+        if not ok:
+            return False, err
+        ok, err = _validate_gate1_selection_fingerprint(ws, gate_data)
+        if not ok:
+            return False, err
         decisions = gate_data.get("decisions", [])
         gate_ids = {str(item.get("gate_id") or "") for item in decisions if isinstance(item, dict)}
         required_gates = {"T4-DECIDE-1", "T4-DECIDE-2"}
@@ -717,6 +727,110 @@ def validate_t4_gate1_ready(ws: Path) -> tuple[bool, str | None]:
     if not ok:
         return False, err
     return True, None
+
+
+def _validate_current_survey_insights(ws: Path) -> tuple[bool, str | None]:
+    path = ws / "ideation" / "survey_insights.json"
+    if not path.exists() or path.stat().st_size <= 0:
+        return True, None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return False, f"survey_insights.json 解析失败: {exc}"
+    if not isinstance(data, dict):
+        return False, "survey_insights.json 顶层必须是对象"
+    if data.get("semantics") != "survey_insights_optional_ideation_fuel_not_gate":
+        return False, "survey_insights.json semantics 不正确"
+    if ((data.get("audit_summary") or {}).get("passed")) is not True:
+        return False, "survey_insights.json 只能来自已通过 audit 的 survey"
+    return _validate_survey_insights_fingerprints(ws, data)
+
+
+def _validate_gate1_selection_fingerprint(ws: Path, gate_data: dict) -> tuple[bool, str | None]:
+    """Bind final T4 outputs to the current formal Gate1 decision.
+
+    Old workspaces may not have a selection fingerprint, so this check is
+    backward-compatible. New runtime-written Gate1 decisions include
+    `selection_fingerprint`; final T4 artifacts must echo it in
+    `gate_decisions.json` to prove they consumed the current human choice rather
+    than reusing touched stale outputs.
+    """
+
+    selection_path = ws / "ideation" / "_gate1_user_selection.json"
+    if not selection_path.exists() or selection_path.stat().st_size <= 0:
+        return True, None
+    try:
+        selection = json.loads(selection_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return False, f"_gate1_user_selection.json 解析失败: {exc}"
+    if not isinstance(selection, dict):
+        return False, "_gate1_user_selection.json 顶层必须是对象"
+    expected = str(selection.get("selection_fingerprint") or "").strip()
+    if not expected:
+        return True, None
+    ok, err = _validate_gate1_candidate_pool_fingerprints(ws, selection)
+    if not ok:
+        return False, err
+
+    candidates = {
+        str(gate_data.get("gate1_selection_fingerprint") or "").strip(),
+        str(gate_data.get("selection_fingerprint") or "").strip(),
+    }
+    for item in gate_data.get("decisions") or []:
+        if not isinstance(item, dict):
+            continue
+        candidates.add(str(item.get("gate1_selection_fingerprint") or "").strip())
+        candidates.add(str(item.get("selection_fingerprint") or "").strip())
+        if str(item.get("gate_id") or "").strip() == "T4-DECIDE-1":
+            candidates.add(str(item.get("source_selection_fingerprint") or "").strip())
+    candidates.discard("")
+    if expected not in candidates:
+        return False, (
+            "gate_decisions.json 未绑定当前 Gate1 选择；必须回写 "
+            f"_gate1_user_selection.json 的 selection_fingerprint={expected[:12]}..."
+        )
+    return True, None
+
+
+def _validate_gate1_candidate_pool_fingerprints(ws: Path, selection: dict) -> tuple[bool, str | None]:
+    fingerprints = selection.get("candidate_pool_fingerprints")
+    if not isinstance(fingerprints, dict):
+        return True, None
+    stale: list[str] = []
+    for label, item in fingerprints.items():
+        if not isinstance(item, dict):
+            stale.append(str(label))
+            continue
+        rel = str(item.get("path") or "").strip()
+        if not rel:
+            stale.append(str(label))
+            continue
+        path = ws / rel
+        expected_exists = bool(item.get("exists"))
+        if expected_exists != path.exists():
+            stale.append(str(label))
+            continue
+        if not expected_exists:
+            continue
+        expected_sha = str(item.get("sha256") or "").strip()
+        if not expected_sha:
+            stale.append(str(label))
+            continue
+        if not path.is_file() or _sha256_file(path) != expected_sha:
+            stale.append(str(label))
+    if stale:
+        return False, "Gate1 用户选择绑定的候选池已变化，必须重新进入 T4-GATE1: " + ", ".join(stale)
+    return True, None
+
+
+def _sha256_file(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _validate_pass_stage_artifacts(ws: Path) -> tuple[bool, str | None]:

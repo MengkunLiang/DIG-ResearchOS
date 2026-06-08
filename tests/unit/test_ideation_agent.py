@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -23,7 +24,67 @@ from researchos.agents.ideation import (
     validate_t4_gate1_ready,
 )
 from researchos.runtime.agent import ExecutionContext
+from researchos.orchestration.task_io_contract import TASK_IO_CONTRACTS
 from researchos.schemas.validator import validate_record
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _stable_json_fingerprint(payload: dict) -> str:
+    normalized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _gate1_candidate_pool_fingerprints(workspace: Path) -> dict:
+    paths = {
+        "pass1_forward_candidates": "ideation/_pass1_forward_candidates.json",
+        "pass2_grounding_review": "ideation/_pass2_grounding_review.json",
+        "candidate_directions": "ideation/_candidate_directions.json",
+        "gate1_selection_brief": "ideation/_gate1_selection_brief.md",
+        "bridge_coverage_review": "ideation/bridge_coverage_review.json",
+    }
+    result = {}
+    for label, rel in paths.items():
+        path = workspace / rel
+        item = {"path": rel, "exists": path.exists()}
+        if path.exists() and path.is_file():
+            item["sha256"] = _file_sha256(path)
+            item["size"] = path.stat().st_size
+        result[label] = item
+    return result
+
+
+def _write_gate1_selection(workspace: Path, *, selected_option: str = "select_direction") -> str:
+    captured = {"selected_idea_ids": ["D1"], "user_feedback": "选择 D1"}
+    pool = _gate1_candidate_pool_fingerprints(workspace)
+    payload_for_hash = {
+        "semantics": "t4_gate1_selection_fingerprint",
+        "gate_id": "t4_gate1",
+        "selected_option": selected_option,
+        "captured": captured,
+        "candidate_pool_fingerprints": pool,
+    }
+    fingerprint = _stable_json_fingerprint(payload_for_hash)
+    payload = {
+        "semantics": "t4_gate1_user_selection_for_candidate_pool",
+        "task_id": "T4-GATE1",
+        "gate_id": "t4_gate1",
+        "selected_option": selected_option,
+        "captured": captured,
+        "candidate_pool_fingerprints": pool,
+        "selection_fingerprint": fingerprint,
+        "next_task": "T4",
+        "decided_at": "2026-01-01T00:00:00+00:00",
+    }
+    path = workspace / "ideation" / "_gate1_user_selection.json"
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return fingerprint
 
 
 @pytest.fixture
@@ -940,6 +1001,45 @@ def test_validate_outputs_success(ideation_agent, temp_workspace):
 
     ok, err = ideation_agent.validate_outputs(ctx)
     assert ok, f"Validation failed: {err}"
+
+
+def test_t4_contract_declares_bridge_domain_plan_input():
+    """T4 prompt consumes bridge_domain_plan, so the IO contract must track it."""
+
+    assert (
+        TASK_IO_CONTRACTS["T4"]["inputs"]["bridge_domain_plan"]
+        == "literature/bridge_domain_plan.json"
+    )
+
+
+def test_validate_outputs_rejects_gate1_selection_when_candidate_pool_changed(ideation_agent, temp_workspace):
+    """Gate1 用户选择必须绑定当时展示的候选池，而不只是绑定 selected id。"""
+    _write_valid_t4_outputs(temp_workspace)
+    fingerprint = _write_gate1_selection(temp_workspace)
+    gate_path = temp_workspace / "ideation" / "gate_decisions.json"
+    gate_data = json.loads(gate_path.read_text(encoding="utf-8"))
+    gate_data["gate1_selection_fingerprint"] = fingerprint
+    gate_data["decisions"][0]["source_selection_fingerprint"] = fingerprint
+    gate_path.write_text(json.dumps(gate_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T4",
+        run_id="test-run-1",
+        mode=None,
+    )
+
+    ok, err = ideation_agent.validate_outputs(ctx)
+    assert ok, f"Validation failed before candidate mutation: {err}"
+
+    candidate_path = temp_workspace / "ideation" / "_candidate_directions.json"
+    candidate_data = json.loads(candidate_path.read_text(encoding="utf-8"))
+    candidate_data["candidates"][0]["pitch"] = "Changed after human selection"
+    candidate_path.write_text(json.dumps(candidate_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    ok, err = ideation_agent.validate_outputs(ctx)
+    assert not ok
+    assert "候选池已变化" in (err or "")
 
 
 def test_validate_outputs_missing_idea_rationales(ideation_agent, temp_workspace):

@@ -22,13 +22,14 @@
 ## 通用硬规则
 
 1. 工具负责资源索引、章节任务、拼装和机械审计；你负责学术判断、章节论证、技术表述和取舍。
-2. 所有实验数字必须来自 `paper_state.shared_facts.result_metrics`、`drafts/experiment_evidence_pack.json`、`drafts/result_to_claim.json`、`experiments/results_summary.json`、`experiments/ablations.csv` 或 indexed run artifacts；不确定就写 TODO/limitation，不编造。
+2. 所有实验数字必须来自 `paper_state.shared_facts.result_metrics`、`drafts/experiment_evidence_pack.json`、`drafts/result_to_claim.json`、`experiments/results_summary.json`、`experiments/ablations.csv` 或 indexed run artifacts；不确定就删去该数字 claim，或在 Conclusion 的 Limitations 子段用自然语言说明证据边界，不编造。
 3. 所有引用必须对应 `literature/related_work.bib` 中真实 BibTeX key。
 4. 写作必须显式利用已有资源：`synthesis.md`、`comparison_table.csv`、paper notes、hypotheses、idea_scorecard、novelty audit、实验结果、ablation、run logs、figures/tables/code artifacts。
 5. Experiments 与 Conclusion 的 `\subsection{Limitations}` 必须说明外部执行器证据边界；`mock_only` / `unsupported_mock_only` 只能写成协议 dry-run 或限制，不能伪装成真实实验证据。
 6. 每个章节必须作为独立 run 成稿，再拼装融合；不要在任何单章阶段直接写整篇 `paper.tex`。
-7. `drafts/alignment_matrix.json` 是跨章节对齐契约的 seed/hint，不是最终科学判断；你必须用 LLM 阅读证据后补全 motivation、related_gap、counterfactual、nearest_prior_work、novelty_signal、design_choice、experiment、analysis。若某段明确兑现 contribution，可用 `% [Cn]` 做 traceability hint，但不要把注释当成论文格式硬要求。
+7. `drafts/alignment_matrix.json` 是跨章节对齐契约的 seed/hint，不是最终科学判断；你必须用 LLM 阅读证据后补全 motivation、related_gap、counterfactual、nearest_prior_work、novelty_signal、design_choice、experiment、analysis。CID 只作为内部 alignment id；最终 TeX 正文和注释都不要输出 `C1`、`[C1]` 或 `% [C1]` 这类内部编号。
 8. 如果存在 `drafts/experiment_evidence_pack.json`，实验 claim 必须先经过 `drafts/result_to_claim.json` 的 support_status/allowed_wording 约束；mock_only 或 unsupported_mock_only 只能写成协议 dry-run/限制，不能写成实证结果。
+9. 最终 TeX 正文和注释都不能包含 literal `TODO`、`TBD`、`LLM_REVIEW_REQUIRED` 或 `PLACEHOLDER`。这些词只能出现在计划、ledger、review、自查或 audit 文件里；正文缺证据时用自然语言 limitation、弱化表述或删除 claim。
 
 ## 项目信息
 
@@ -86,7 +87,7 @@ project:
    - figures / tables / code / logs
    - evidence claim slots / figure-table slots
    - CDR claim ledger / generic claim ledger / figure registry / alignment matrix
-7. 如有明显缺失，在对应计划或 ledger/matrix 中保留 TODO/unsupported，不要假装已存在。
+7. 如有明显缺失，在对应计划或 ledger/matrix 中标记为 unsupported 或 missing，不要假装已存在，也不要把这些标记带入最终 TeX。
 
 {% elif phase == "outline" %}
 ## Phase 1: 论文论证大纲
@@ -173,7 +174,7 @@ project:
    - Analysis: design_rationale evidence、alternative explanations、failure cases、sensitivity
    - Conclusion: contribution_type、可迁移设计知识、`\subsection{Limitations}`、future work
 5. Figure/table plan：
-   - 每个 figure/table 的来源：existing artifact / generated from results / TODO
+   - 每个 figure/table 的来源：existing artifact / generated from results / unsupported/missing
    - 必须参考 `drafts/figure_table_plan.json`，不能在没有数据的情况下承诺图表已经存在
    - 需要新生成的图表写清输入数据和目标信息
 6. Claim ledger：核心 claims 列表，每条 claim 的 CDR field、证据文件和 citation plan；必须参考 `drafts/cdr_claim_ledger.json` 与 `drafts/evidence_plan.json` 的 claim_slots。
@@ -197,7 +198,7 @@ project:
    - `shared_facts.result_metrics`
    - `shared_facts.claim_slots`
    - `shared_facts.alignment_matrix`
-3. 读取 `drafts/section_outlines/` 下各章大纲，确认每章有 Purpose、Required Inputs、Responsible CIDs、Claim Slots、Figure/Table Slots、Writing Rules。
+3. 读取 `drafts/section_outlines/` 下各章大纲，确认每章有 Purpose、Required Inputs、Internal Alignment IDs、Claim Slots、Figure/Table Slots、Writing Rules。
 4. 不要生成 `drafts/sections/*.tex`，不要生成 `drafts/paper.tex`。
 
 ### 当前大纲预览
@@ -291,7 +292,7 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 5. 所有数字必须来自 `paper_state.shared_facts.result_metrics` 或明确读取的实验 artifact。
 6. 除 Abstract 外，所有 citation key 必须来自 `paper_state.shared_facts.bib_keys` 或 `literature/related_work.bib`。Abstract 不写正式引用；具体文献引用放到 Introduction、Related Work 或 Method。
 7. CDR ledger 是写作 scaffold，不是最终表述；你要用 LLM 判断把 design rationale / contribution type 写成连贯学术论证。
-8. 若某段明确兑现某条 contribution，可在段首加 `% [Cn]` 作为 traceability hint，CID 来自 `drafts/alignment_matrix.json` 或 section outline 的 Responsible CIDs；不要为了凑注释破坏正文自然度。
+8. 若某段兑现 contribution，请用自然语言写清 motivation、method、evidence 和 analysis 的关系；不要在 TeX 正文或注释中写 `C1`、`[C1]`、`C1:` 或 `% [C1]`。内部对齐关系只保存在 `paper_state.json` / `alignment_matrix.json`。
 9. 写完后调用：
    `update_manuscript_section_state(section_id="{{ section_id }}", state_path="drafts/paper_state.json", section_path="drafts/sections/{{ section_id }}.tex", status="written")`
 10. 然后调用 `finish_task`。
@@ -306,7 +307,7 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 - analysis：解释 design rationale 是否被支持，写 alternative explanation、failure case、sensitivity 或 boundary，而不是重复结果数字。
 - introduction/conclusion：形成完整论证链，不写占位式短 intro，也不把 conclusion 写成 abstract 复制。
 
-不要设置僵硬字数下限；如果证据不足，明确写 TODO/limitation。如果证据充足，就充分展开到目标 venue 所需的写作密度。
+不要设置僵硬字数下限；如果证据不足，在正文中用自然语言写 limitation 或删除/弱化对应 claim，不要留下 literal TODO。如果证据充足，就充分展开到目标 venue 所需的写作密度。
 
 {% include "paper_craft.j2" %}
 
@@ -315,33 +316,33 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 {% if section_id == "methodology" %}
 - Required Inputs：`paper_state.json`、`section_outlines/methodology.md`、`alignment_matrix.json` 的 design_choice、`hypotheses.md`、`exp_plan.yaml`、`idea_scorecard.yaml`、`novelty_audit.md`、CDR/design-rationale tuples、configs/code artifacts。
 - 使命：定义 artifact，解释为什么这样设计，再讲怎么实现；这是全文技术核心。
-- 段落范式：总览 artifact + design rationale `% [所有 cid]`；architecture 概览；每个组件一段写 how / why / alternative justification；notation/algorithm 集中定义。
-- 约束：不使用实验结果证明方法有效；每个 design_choice 有 `% [Cn]` 段落；`ccf_a` 紧凑，`is` 可展开 design principles 与理论联系。
+- 段落范式：总览 artifact 与 design rationale；architecture 概览；每个组件一段写 how / why / alternative justification；notation/algorithm 集中定义。
+- 约束：不使用实验结果证明方法有效；每个 design_choice 都有自然语言解释和证据来源；`ccf_a` 紧凑，`is` 可展开 design principles 与理论联系。
 - Failure checklist：无 architecture 概览、只讲 how 不讲 why、notation 散落、符号复用冲突，都必须修。
 {% elif section_id == "experiments" %}
 - Required Inputs：`paper_state.json`、`section_outlines/experiments.md`、`alignment_matrix.json` 的 experiment 列、`experiment_evidence_pack.json`、`result_to_claim.json`、`integrity_audit.json`、`results_summary.json`、`ablations.csv`、runs/configs、seed ensemble、`exp_plan.yaml`、`figure_table_plan.json`、baseline 要求。
 - 使命：把 data_view/evaluation_mode 变成可复核证据，逐条回答 intro claim。
-- 段落范式：RQ 前置且每个 RQ 标 cid；setup 写 datasets/splits/baselines/metrics/seeds/compute；main results 先 takeaway 再表；ablation 覆盖 method design choices。
-- 约束：所有数字逐一对照 artifacts；缺 seed/error bar/baseline 时写 TODO 或转 Conclusion Limitations；setup 必须说明外部执行器、result pack、raw/config/log/hash 和 integrity audit 边界。
+- 段落范式：RQ 前置并说明每个 RQ 验证的贡献逻辑；setup 写 datasets/splits/baselines/metrics/seeds/compute；main results 先 takeaway 再表；ablation 覆盖 method design choices。
+- 约束：所有数字逐一对照 artifacts；缺 seed/error bar/baseline 时删除相应强 claim 或转入 Conclusion Limitations；setup 必须说明外部执行器、result pack、raw/config/log/hash 和 integrity audit 边界。
 - Failure checklist：直接从 dataset 开头、表无 takeaway、ablation 与 method 对不上、数字来源不明，都必须修。
 {% elif section_id == "related_work" %}
 - Required Inputs：`paper_state.json`、`section_outlines/related_work.md`、`alignment_matrix.json` 的 related_gap / nearest_prior_work / counterfactual / novelty_signal、`synthesis.md`、`synthesis_workbench.json` 的 adjacent_transfers / bridge_transfer_drafts、`domain_map.json` 的 core / theory_bridge / adjacent / citation_edges、`comparison_table.csv`、paper notes、`related_work.bib`。
 - 使命：按 competing design rationale 定位本文，让每个 related gap 对应一条贡献。
-- 段落范式：每个 subsection 只写一个 rationale 流派；先概括共同 rationale，再列 2-4 篇代表工作，再写共同局限/tension，最后用 `% [Ci]` 对应本文贡献。
+- 段落范式：每个 subsection 只写一个 rationale 流派；先概括共同 rationale，再列 2-4 篇代表工作，再写共同局限/tension，最后用自然 prose 对应本文贡献。
 - 约束：subsection 数约等于核心贡献数；citation key 全部来自 bib；不要第一次披露本文方法细节。
 - Failure checklist：X et al. 流水账、orphan 段落、只靠贬低式 however positioning、提前剧透方法，都必须修。
 {% elif section_id == "analysis" %}
 - Required Inputs：`paper_state.json`、`section_outlines/analysis.md`、`alignment_matrix.json` 的 analysis 列、已写 Method/Experiments、`ablations.csv`、`iteration_log.md`、`novelty_audit.md`。
 - 使命：判断证据支持、削弱还是仅部分支持 design rationale，把“调参涨点”和“真贡献”区分开。
-- 段落范式：每条 cid 一段机制解读；至少一个 alternative explanation 并用证据排除；failure case；sensitivity。
+- 段落范式：每条内部 alignment lane 对应一段机制解读；至少一个 alternative explanation 并用证据排除；failure case；sensitivity。
 - 约束：每个解释必须指回 artifact；不能把 mock dry-run、未审计外部结果或额外计划实验写成已完成。
 - Failure checklist：只复述数字、不考虑替代解释、failure case 装饰化，都必须修。
 {% elif section_id == "introduction" %}
 - Required Inputs：`paper_state.json`、`section_outlines/introduction.md`、`alignment_matrix.json` 的 motivation/contribution、CDR ledger、synthesis、hypotheses、results、已写 Method/Experiments/Related。
 - 使命：回答“如果本文成立，领域会怎样不同”，把 contribution_type 写成后文可兑现承诺。
-- 段落范式：M1 直接 problem，不用宏大背景；M2 列 ≤3 个 gap/motivation 且预声明 cid；M3 design rationale + artifact；M4 numbered Contributions 3-4 条，每条 `% [Ci]`；M5 按 venue 收束。
+- 段落范式：M1 直接 problem，不用宏大背景；M2 列 ≤3 个 gap/motivation；M3 design rationale + artifact；M4 numbered Contributions 3-4 条，用自然语言表达，不带内部编号；M5 按 venue 收束。
 - 约束：gap 与 contribution 应逻辑对应，不要求机械一一等数；贡献动词开头、可验证、强度匹配 contribution_type；`ccf_a` 有量化 headline，`is` 有 theory/reference anchor。
-- Failure checklist：背景过长、贡献散文、overclaim、缺 cid、把 planned/跳过实验写成已发生，都必须修。
+- Failure checklist：背景过长、贡献散文、overclaim、缺少 alignment 对应关系、把 planned/跳过实验写成已发生，都必须修。
 {% elif section_id == "conclusion" %}
 - Required Inputs：`paper_state.json`、`section_outlines/conclusion.md`、`alignment_matrix.json`、Introduction、Experiments、`risks.md`、`novelty_audit.md`、`experiment_evidence_pack.json`、`result_to_claim.json`、`results_summary.json`、`iteration_log.md`。
 - 使命：收束 problem -> method -> evidence -> contribution，给出可迁移 design knowledge，并诚实陈述限制。
@@ -385,7 +386,7 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
    - 改写后重新调用 `audit_writing_craft(..., venue_style="both")` 刷新主稿和两套变体审计。
 7. 如果 audit 发现 missing citation、可疑数字、缺图/缺表、alignment 断裂、paper-claim unsupported 或 craft FAIL：
    - 能修就修
-   - 不能修则在 manuscript_audit 或 Conclusion 的 Limitations 子段中明确 TODO/限制
+   - 不能修则在 manuscript_audit / self_check 中记录待办，并在 Conclusion 的 Limitations 子段用自然语言说明限制；不要在 `paper.tex` 留下 literal TODO
 
 ### LaTeX 要求
 

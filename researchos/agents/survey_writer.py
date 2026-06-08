@@ -15,6 +15,9 @@ import yaml
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
+from ..tools.latex_compile import _compile_dependency_fingerprint
+from ..literature_identity import is_placeholder_text
+from ..tools.manuscript import _extract_latex_cites, _extract_bib_keys, has_formal_citation
 from ..tools.survey_tools import SURVEY_SECTION_SEQUENCE, SURVEY_SECTION_TITLES
 from ._common import ensure_seed_outline_profile, load_jsonl, load_project, prepend_resume_prefix, read_text_file
 
@@ -39,6 +42,7 @@ class SurveyWriterAgent(Agent):
                         "update_survey_section_state",
                         "assemble_survey",
                         "audit_survey_coverage",
+                        "bind_survey_review",
                         "export_survey_for_ideation",
                         "latex_compile",
                         "finish_task",
@@ -83,6 +87,10 @@ class SurveyWriterAgent(Agent):
         seed_outline_profile = read_text_file(ws / "user_seeds" / "seed_outline_profile.json", default="")
         seed_ideas = read_text_file(ws / "user_seeds" / "seed_ideas.md", default="")
         seed_constraints = read_text_file(ws / "user_seeds" / "seed_constraints.md", default="")
+        if is_placeholder_text(seed_ideas):
+            seed_ideas = ""
+        if is_placeholder_text(seed_constraints):
+            seed_constraints = ""
         seed_papers = load_jsonl(ws / "user_seeds" / "seed_papers.jsonl")
         external_resources = load_jsonl(ws / "user_seeds" / "seed_external_resources.jsonl")
         return render_prompt(
@@ -227,11 +235,22 @@ class SurveyWriterAgent(Agent):
             tex = read_text_file(ws / "drafts" / "survey" / "survey.tex", default="")
             if "\\documentclass" not in tex or "\\begin{document}" not in tex or "\\end{document}" not in tex:
                 return False, "survey.tex 缺少完整 LaTeX wrapper"
+            assembly_manifest, err = _load_json(ws / "drafts" / "survey" / "survey_assembly_manifest.json")
+            if err:
+                return False, err
+            if assembly_manifest.get("semantics") != "survey_assembly_input_fingerprints":
+                return False, "survey_assembly_manifest.json semantics 不正确"
+            ok, err = _validate_fingerprint_map(ws, assembly_manifest.get("input_fingerprints"), "survey_assembly_manifest.json")
+            if not ok:
+                return False, err
             audit, err = _load_json(ws / "drafts" / "survey" / "survey_audit.json")
             if err:
                 return False, err
             if audit.get("semantics") != "deterministic_survey_coverage_audit_not_scientific_judgment":
                 return False, "survey_audit.json semantics 不正确"
+            ok, err = _validate_fingerprint_map(ws, audit.get("input_fingerprints"), "survey_audit.json")
+            if not ok:
+                return False, err
             fail_checks = [
                 item.get("name")
                 for item in audit.get("checks") or []
@@ -267,6 +286,9 @@ class SurveyWriterAgent(Agent):
                 return False, "survey_review_actions.json 仍标记存在 blocking issues"
             if not isinstance(actions.get("section_actions"), list):
                 return False, "survey_review_actions.json section_actions 必须是列表"
+            ok, err = _validate_fingerprint_map(ws, actions.get("input_fingerprints"), "survey_review_actions.json")
+            if not ok:
+                return False, err
             return True, None
         if phase == "survey_compile":
             pdf_path = ws / "drafts" / "survey" / "survey.pdf"
@@ -284,6 +306,41 @@ class SurveyWriterAgent(Agent):
                 return False, "缺少 drafts/survey/survey.pdf"
             if not log_path.exists() or log_path.stat().st_size <= 0:
                 return False, "缺少 drafts/survey/survey.log"
+            for key in ("main_tex_sha256", "pdf_sha256", "log_sha256"):
+                if not str(report.get(key) or "").strip():
+                    return False, f"survey_compile_report 缺少 {key}，需重新编译"
+            if report.get("main_tex_sha256") != _sha256_file(ws / "drafts" / "survey" / "survey.tex"):
+                return False, "survey_compile_report.main_tex_sha256 与当前 survey.tex 不一致，需重新编译"
+            if report.get("pdf_sha256") != _sha256_file(pdf_path):
+                return False, "survey_compile_report.pdf_sha256 与当前 survey.pdf 不一致"
+            if report.get("log_sha256") != _sha256_file(log_path):
+                return False, "survey_compile_report.log_sha256 与当前 survey.log 不一致"
+            dependency = _compile_dependency_fingerprint(ws, ws / "drafts" / "survey" / "survey.tex")
+            report_dependency = report.get("dependency_fingerprint") if isinstance(report.get("dependency_fingerprint"), dict) else {}
+            report_dependency_hash = str(report_dependency.get("hash") or report.get("dependency_fingerprint_hash") or "").strip()
+            if not report_dependency_hash:
+                return False, "survey_compile_report.dependency_fingerprint 缺失，需重新编译"
+            if report_dependency_hash != dependency.get("hash"):
+                return False, "survey_compile_report.dependency_fingerprint 与当前 survey 依赖不一致，需重新编译"
+            attempts = report.get("attempts")
+            if isinstance(attempts, list) and attempts:
+                last_attempt = attempts[-1] if isinstance(attempts[-1], dict) else {}
+                attempt_dependency_hash = str(last_attempt.get("dependency_fingerprint_hash") or "").strip()
+                if attempt_dependency_hash and attempt_dependency_hash != dependency.get("hash"):
+                    return False, "survey_compile_report 最后一次 attempt 的 dependency_fingerprint_hash 过期，需重新编译"
+            if float(report.get("pdf_mtime") or 0) <= 0:
+                return False, "survey_compile_report 缺少 pdf_mtime，需重新编译"
+            if float(report.get("pdf_mtime") or 0) < (ws / "drafts" / "survey" / "survey.tex").stat().st_mtime:
+                return False, "survey_compile_report.pdf_mtime 早于当前 survey.tex，需重新编译"
+            ok, err = _validate_current_survey_audit(ws)
+            if not ok:
+                return False, err
+            ok, err = _validate_survey_compile_log(log_path)
+            if not ok:
+                return False, err
+            ok, err = _validate_survey_pdf(pdf_path)
+            if not ok:
+                return False, err
             return True, None
         if phase == "survey_feed":
             data, err = _load_json(ws / "ideation" / "survey_insights.json")
@@ -291,6 +348,11 @@ class SurveyWriterAgent(Agent):
                 return False, err
             if data.get("semantics") != "survey_insights_optional_ideation_fuel_not_gate":
                 return False, "survey_insights.json semantics 不正确"
+            if ((data.get("audit_summary") or {}).get("passed")) is not True:
+                return False, "survey_insights.json 只能从已通过 audit 的 survey 导出"
+            ok, err = _validate_survey_insights_fingerprints(ws, data)
+            if not ok:
+                return False, err
             summary = read_text_file(ws / "drafts" / "survey" / "survey_summary.md", default="")
             if len(summary.strip()) < 80:
                 return False, "survey_summary.md 过短"
@@ -364,6 +426,42 @@ def _validate_survey_plan_evidence_strength(ws: Path, data: dict) -> tuple[bool,
     return True, None
 
 
+def _validate_survey_insights_fingerprints(ws: Path, data: dict) -> tuple[bool, str | None]:
+    fingerprints = data.get("input_fingerprints")
+    if not isinstance(fingerprints, dict):
+        return False, "survey_insights.json 缺少 input_fingerprints，必须重新导出"
+    required = {
+        "survey_plan": "drafts/survey/survey_plan.json",
+        "survey_state": "drafts/survey/survey_state.json",
+        "survey_audit": "drafts/survey/survey_audit.json",
+        "survey_tex": "drafts/survey/survey.tex",
+    }
+    for label, default_rel in required.items():
+        item = fingerprints.get(label)
+        if not isinstance(item, dict):
+            return False, f"survey_insights.json input_fingerprints 缺少 {label}"
+        rel = str(item.get("path") or default_rel).strip()
+        path = ws / rel
+        if item.get("exists") is not True or not path.exists():
+            return False, f"survey_insights input 不存在: {rel}"
+        expected = str(item.get("sha256") or "").strip()
+        if not expected:
+            return False, f"survey_insights input_fingerprints.{label} 缺少 sha256"
+        if path.is_file() and _sha256_file(path) != expected:
+            return False, f"survey_insights 对应的 {label} 已过期，必须重新导出"
+    return True, None
+
+
+def _sha256_file(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _survey_weak_evidence_ids(ws: Path) -> set[str]:
     weak: set[str] = set()
     abstract_dir = ws / "literature" / "paper_notes_abstract"
@@ -382,6 +480,9 @@ def _validate_survey_state(ws: Path) -> tuple[bool, str | None]:
         return False, err
     if data.get("semantics") != "survey_state_for_taxonomy_driven_section_writing_not_final_claims":
         return False, "survey_state.json semantics 不正确"
+    ok, err = _validate_fingerprint_map(ws, data.get("input_fingerprints"), "survey_state.json")
+    if not ok:
+        return False, err
     sections = data.get("sections")
     if not isinstance(sections, dict):
         return False, "survey_state.json 缺少 sections"
@@ -407,6 +508,8 @@ def _validate_survey_section(ws: Path, section_id: str) -> tuple[bool, str | Non
         return False, err
     entry = ((state.get("sections") or {}).get(section_id) or {})
     if isinstance(entry, dict) and entry.get("status") == "skipped":
+        if not section_id.startswith("theme_"):
+            return False, f"survey section {section_id} 是关键章节，不能标记为 skipped"
         return True, None
     path = ws / "drafts" / "survey" / "sections" / f"{section_id}.tex"
     if not path.exists():
@@ -417,11 +520,128 @@ def _validate_survey_section(ws: Path, section_id: str) -> tuple[bool, str | Non
         return False, f"survey section {section_id} 过短"
     if "\\documentclass" in text or "\\begin{document}" in text or "\\end{document}" in text:
         return False, f"survey section {section_id} 不能包含完整 LaTeX wrapper"
+    placeholder_hits = _placeholder_hits(text)
+    if placeholder_hits:
+        return False, f"survey section {section_id} 仍包含 planning placeholder: {', '.join(placeholder_hits[:8])}"
+    if section_id == "abstract" and has_formal_citation(text):
+        return False, "survey abstract 不应包含正式引用命令、作者-年份括号引用或数字引用"
+    bib_keys = set(_extract_bib_keys(ws / "literature" / "related_work.bib"))
+    cited = _extract_latex_cites(text)
+    if cited and bib_keys:
+        missing_cites = sorted(cited - bib_keys)
+        if missing_cites:
+            return False, f"survey section {section_id} 引用了 related_work.bib 不存在的 key: {missing_cites[:8]}"
+    elif cited and not bib_keys:
+        return False, f"survey section {section_id} 含引用但 literature/related_work.bib 缺失或无 BibTeX key"
     foreign = _foreign_survey_headers(text, section_id)
     if foreign:
         return False, f"survey section {section_id} 夹带其它章节: {', '.join(foreign[:5])}"
     if isinstance(entry, dict) and entry.get("status") not in {"written", "revised"}:
         return False, f"survey_state 中 {section_id} 未标记 written/revised"
+    ok, err = _validate_fingerprint_map(ws, entry.get("input_fingerprints"), f"survey_state.sections.{section_id}")
+    if not ok:
+        return False, err
+    return True, None
+
+
+def _placeholder_hits(text: str) -> list[str]:
+    return sorted(set(re.findall(r"\b(?:TODO|TBD|LLM_REVIEW_REQUIRED|PLACEHOLDER)\b", text or "", flags=re.IGNORECASE)))
+
+
+def _validate_fingerprint_map(ws: Path, fingerprints: object, label: str) -> tuple[bool, str | None]:
+    if not isinstance(fingerprints, dict):
+        return False, f"{label} 缺少 input_fingerprints，必须重新生成"
+    for key, item in fingerprints.items():
+        if not isinstance(item, dict):
+            return False, f"{label}.input_fingerprints.{key} 必须是对象"
+        rel = str(item.get("path") or "").strip()
+        if not rel:
+            return False, f"{label}.input_fingerprints.{key} 缺少 path"
+        path = ws / rel
+        expected_exists = bool(item.get("exists"))
+        if expected_exists != path.exists():
+            return False, f"{label} 对应输入存在性已变化: {rel}"
+        if not expected_exists:
+            continue
+        if item.get("kind") == "dir" or path.is_dir():
+            expected_count = item.get("file_count")
+            if expected_count is not None and int(expected_count) != len([child for child in path.rglob("*") if child.is_file()]):
+                return False, f"{label} 对应目录文件数已变化: {rel}"
+            expected_sha = str(item.get("sha256") or "").strip()
+            if expected_sha and _sha256_dir(path) != expected_sha:
+                return False, f"{label} 对应目录内容已变化: {rel}"
+            continue
+        expected_sha = str(item.get("sha256") or "").strip()
+        if not expected_sha:
+            return False, f"{label}.input_fingerprints.{key} 缺少 sha256"
+        if not path.is_file() or _sha256_file(path) != expected_sha:
+            return False, f"{label} 对应输入已过期: {rel}"
+    return True, None
+
+
+def _sha256_dir(root: Path) -> str:
+    import hashlib
+
+    children = [child for child in root.rglob("*") if child.is_file()]
+    digest = hashlib.sha256()
+    for child in sorted(children, key=lambda p: p.relative_to(root).as_posix()):
+        rel = child.relative_to(root).as_posix()
+        digest.update(rel.encode("utf-8"))
+        digest.update(b"\0")
+        try:
+            digest.update(str(child.stat().st_size).encode("ascii"))
+            digest.update(b"\0")
+            with child.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+        except OSError:
+            digest.update(b"<unreadable>")
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _validate_current_survey_audit(ws: Path) -> tuple[bool, str | None]:
+    audit, err = _load_json(ws / "drafts" / "survey" / "survey_audit.json")
+    if err:
+        return False, "T3.6-COMPILE 前必须有当前 survey_audit.json: " + err
+    if audit.get("semantics") != "deterministic_survey_coverage_audit_not_scientific_judgment":
+        return False, "survey_audit.json semantics 不正确"
+    if audit.get("passed") is not True:
+        return False, "survey_audit.json 未通过，不能编译放行"
+    ok, err = _validate_fingerprint_map(ws, audit.get("input_fingerprints"), "survey_audit.json")
+    if not ok:
+        return False, "survey_audit.json 已过期，需重新 audit_survey_coverage: " + (err or "")
+    return True, None
+
+
+def _validate_survey_compile_log(log_path: Path) -> tuple[bool, str | None]:
+    text = read_text_file(log_path, default="")
+    fatal_markers = [
+        "Fatal error occurred",
+        "! Emergency stop.",
+        "==> Fatal error occurred",
+        "LaTeX Warning: There were undefined references",
+        "LaTeX Warning: Citation `",
+        "Citation `",
+        "Reference `",
+        "undefined citations",
+        "Undefined control sequence",
+    ]
+    for marker in fatal_markers:
+        if marker in text:
+            return False, f"survey.log 仍包含致命或未解析引用问题: {marker}"
+    return True, None
+
+
+def _validate_survey_pdf(pdf_path: Path) -> tuple[bool, str | None]:
+    try:
+        prefix = pdf_path.read_bytes()[:5]
+    except Exception as exc:
+        return False, f"survey.pdf 读取失败: {exc}"
+    if prefix != b"%PDF-":
+        return False, "survey.pdf 不是有效 PDF payload（缺少 %PDF header）"
+    if pdf_path.stat().st_size < 64:
+        return False, "survey.pdf 过小，疑似占位文件"
     return True, None
 
 

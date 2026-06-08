@@ -260,7 +260,7 @@ def build_cdr_claim_ledger_seed(
             "contribution_chains are writing lanes for 3-4 final contribution bullets, not final scientific claims.",
             "Do not use provenance count as a quality gate.",
             "A selected paper must explain design_rationale and contribution_type in prose.",
-            "Unsupported CDR claims must be marked as limitation or TODO, not invented.",
+            "Unsupported CDR claims must be deleted, weakened, or turned into natural-language limitations in final TeX, not invented.",
         ],
     }
 

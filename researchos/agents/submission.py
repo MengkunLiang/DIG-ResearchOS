@@ -20,7 +20,7 @@ from ..tools.docker_exec import check_docker_environment, get_default_image, loa
 from ..tools.latex_compile import _compile_dependency_fingerprint
 from ..tools.manuscript import extract_bibliography_stems
 from ._common import load_project, prepend_resume_prefix, read_text_file
-from .writer import _validate_paper_claim_audit_if_needed
+from .writer import _validate_paper_claim_audit_if_needed, _validate_required_craft_checks
 
 
 def _sha256_file(path: Path) -> str:
@@ -253,15 +253,22 @@ class SubmissionAgent(Agent):
         ok, err = _validate_evidence_audit_trace(report_text, ws)
         if not ok:
             return False, err
-        ok, err = _validate_paper_claim_audit_if_needed(ws)
-        if not ok:
-            return False, err
 
         # 报告必须明确声明编译成功，避免把失败尝试误判为通过。
         if not _migration_report_declares_current_compile_success(report_text):
             return False, "migration_report.md 未声明“编译状态: 成功”"
 
         ok, err = _validate_latex_log(log_path)
+        if not ok:
+            return False, err
+
+        ok, err = _validate_required_craft_checks(ws)
+        if not ok:
+            return False, "T9 前必须通过当前稿件的 craft audit: " + (err or "")
+        ok, err = _validate_bundle_main_tex_craft(ws)
+        if not ok:
+            return False, err
+        ok, err = _validate_paper_claim_audit_if_needed(ws)
         if not ok:
             return False, err
 
@@ -392,7 +399,9 @@ def _validate_compile_report(report: dict, ws: Path) -> tuple[bool, str | None]:
     if report.get("pdf_sha256") != _sha256_file(main_pdf):
         return False, "compile_report.pdf_sha256 与当前 main.pdf 不一致"
     log_hash = report.get("log_sha256")
-    if log_hash and log_hash != _sha256_file(main_log):
+    if not str(log_hash or "").strip():
+        return False, "compile_report.log_sha256 缺失，需重新编译"
+    if log_hash != _sha256_file(main_log):
         return False, "compile_report.log_sha256 与当前 main.log 不一致"
 
     if float(report.get("pdf_mtime") or 0) < main_tex.stat().st_mtime:
@@ -401,7 +410,9 @@ def _validate_compile_report(report: dict, ws: Path) -> tuple[bool, str | None]:
         return False, "compile_report.log_mtime 早于当前 main.tex，需重新编译"
     if int(report.get("pdf_size") or 0) != main_pdf.stat().st_size:
         return False, "compile_report.pdf_size 与当前 main.pdf 不一致"
-    if int(report.get("log_size") or 0) and int(report.get("log_size") or 0) != main_log.stat().st_size:
+    if int(report.get("log_size") or 0) <= 0:
+        return False, "compile_report.log_size 缺失，需重新编译"
+    if int(report.get("log_size") or 0) != main_log.stat().st_size:
         return False, "compile_report.log_size 与当前 main.log 不一致"
     return True, None
 
@@ -423,3 +434,59 @@ def _validate_latex_log(log_path: Path) -> tuple[bool, str | None]:
         if marker in log_text:
             return False, f"main.log 仍包含致命编译错误: {marker}"
     return True, None
+
+
+def _validate_bundle_main_tex_craft(ws: Path) -> tuple[bool, str | None]:
+    """Reject dirty planning tokens introduced during T9 template migration."""
+
+    main_tex = ws / "submission" / "bundle" / "main.tex"
+    if not main_tex.exists():
+        return False, "submission/bundle/main.tex 不存在"
+    text = read_text_file(main_tex)
+    placeholder_hits = _submission_placeholder_hits(text)
+    if placeholder_hits:
+        return False, "submission/bundle/main.tex 仍包含 planning placeholder: " + ", ".join(placeholder_hits[:8])
+    cid_hits = _submission_internal_alignment_hits(text)
+    if cid_hits:
+        return False, "submission/bundle/main.tex 暴露内部 alignment/CID 标记: " + ", ".join(cid_hits[:8])
+    return True, None
+
+
+def _submission_placeholder_hits(text: str) -> list[str]:
+    patterns = [
+        r"\bTODO\b",
+        r"\bTBD\b",
+        r"\bPLACEHOLDER\b",
+        r"\bLLM_REVIEW_REQUIRED\b",
+        r"\bLLM\s+review\s+required\b",
+    ]
+    hits: list[str] = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, text or "", flags=re.IGNORECASE):
+            value = re.sub(r"\s+", " ", match.group(0)).strip()
+            if value and value not in hits:
+                hits.append(value)
+    return hits
+
+
+def _submission_internal_alignment_hits(text: str) -> list[str]:
+    patterns = [
+        r"%\s*\[[^\]]*\bC\d+\b[^\]]*\]",
+        r"\[\s*C\d+(?:\s*,\s*C\d+)*\s*\]",
+        r"\bC\d+\s*[:：]",
+        r"\bC\d+\s*[\.)]",
+        r"\bC\d+\s+(?:is|are|shows?|supports?|contribution|claim|gap|motivation|rationale|experiment|analysis)\b",
+        r"\b(?:contribution|claim|gap|motivation|rationale|experiment|analysis)\s+C\d+\b",
+        r"\bCID\s*(?:-|:|：)?\s*C?\d+\b",
+        r"\binternal alignment (?:id|lane)\s*(?:-|:|：)?\s*C?\d+\b",
+        r"\bResearchOS\s+(?:alignment|trace|CID)\b",
+    ]
+    hits: list[str] = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, text or "", flags=re.IGNORECASE):
+            value = re.sub(r"\s+", " ", match.group(0)).strip()
+            if value and value not in hits:
+                hits.append(value[:120])
+            if len(hits) >= 20:
+                return hits
+    return hits

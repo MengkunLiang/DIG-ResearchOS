@@ -33,6 +33,7 @@ from .structured_file import WriteStructuredFileTool
 from .survey_tools import (
     AssembleSurveyTool,
     AuditSurveyCoverageTool,
+    BindSurveyReviewTool,
     BuildSurveyStateTool,
     ExpandSurveyCorpusTool,
     ExportSurveyForIdeationTool,
@@ -47,6 +48,7 @@ from .manuscript import (
     AssembleManuscriptTool,
     AuditManuscriptClaimsTool,
     AuditWritingCraftTool,
+    BindReviewRoundTool,
     BuildAlignmentMatrixTool,
     BuildManuscriptRegistriesTool,
     BuildManuscriptRevisionPatchesTool,
@@ -159,6 +161,7 @@ def register_builtin_tools(
     registry.register("prepare_submission_bundle", lambda ctx: PrepareSubmissionBundleTool(ctx.policy))
     registry.register("audit_manuscript_claims", lambda ctx: AuditManuscriptClaimsTool(ctx.policy))
     registry.register("audit_writing_craft", lambda ctx: AuditWritingCraftTool(ctx.policy))
+    registry.register("bind_review_round", lambda ctx: BindReviewRoundTool(ctx.policy))
     registry.register("build_manuscript_revision_patches", lambda ctx: BuildManuscriptRevisionPatchesTool(ctx.policy))
     registry.register("build_experiment_handoff_pack", lambda ctx: BuildExperimentHandoffPackTool(ctx.policy))
     registry.register("select_external_executor", lambda ctx: SelectExternalExecutorTool(ctx.policy))
@@ -174,6 +177,7 @@ def register_builtin_tools(
     registry.register("update_survey_section_state", lambda ctx: UpdateSurveySectionStateTool(ctx.policy))
     registry.register("assemble_survey", lambda ctx: AssembleSurveyTool(ctx.policy))
     registry.register("audit_survey_coverage", lambda ctx: AuditSurveyCoverageTool(ctx.policy))
+    registry.register("bind_survey_review", lambda ctx: BindSurveyReviewTool(ctx.policy))
     registry.register("export_survey_for_ideation", lambda ctx: ExportSurveyForIdeationTool(ctx.policy))
     registry.register("expand_corpus_for_survey", lambda ctx: ExpandSurveyCorpusTool(ctx.policy))
     registry.register(

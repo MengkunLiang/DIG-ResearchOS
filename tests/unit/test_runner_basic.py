@@ -21,10 +21,12 @@ from researchos.runtime.agent import (
 )
 from researchos.runtime.errors import LLMProviderError
 from researchos.runtime.orchestrator import AgentRunner
+from researchos.runtime.artifact_fingerprints import write_t45_fingerprint_report
+from researchos.runtime.t3_notes_manifest import build_t3_notes_manifest
 from researchos.testing.mocks import FakeLLMMessage, FakeRawCompletion, FakeToolCall, MockHumanInterface, MockLLMClient
 from researchos.tools.human_gate import HumanInputUnavailable
 from researchos.tools.latex_compile import _compile_dependency_fingerprint
-from researchos.tools.manuscript import build_paper_state_input_fingerprints
+from researchos.tools.manuscript import build_paper_state_input_fingerprints, craft_audit_input_fingerprints
 from researchos.tools.builtin import register_builtin_tools
 from researchos.tools.registry import ToolRegistry
 
@@ -39,6 +41,51 @@ def _sha256_file(path):
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _stable_json_fingerprint(payload):
+    normalized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _write_gate1_selection(workspace, *, option_id="select_or_reframe", captured=None):
+    captured = captured or {"selection": "D1"}
+    fingerprint_payload = {
+        "semantics": "t4_gate1_selection_fingerprint",
+        "gate_id": "t4_gate1_selection_gate",
+        "selected_option": option_id,
+        "captured": captured,
+    }
+    selection_fingerprint = _stable_json_fingerprint(fingerprint_payload)
+    selection_path = workspace / "ideation" / "_gate1_user_selection.json"
+    selection_path.parent.mkdir(parents=True, exist_ok=True)
+    selection_path.write_text(
+        json.dumps(
+            {
+                "semantics": "t4_gate1_user_selection_for_candidate_pool",
+                "task_id": "T4-GATE1",
+                "gate_id": "t4_gate1_selection_gate",
+                "selected_option": option_id,
+                "captured": captured,
+                "selection_fingerprint": selection_fingerprint,
+                "next_task": "T4",
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return selection_path, selection_fingerprint
+
+
+def _bind_gate_decisions_to_selection(workspace, selection_fingerprint):
+    gate_path = workspace / "ideation" / "gate_decisions.json"
+    data = json.loads(gate_path.read_text(encoding="utf-8"))
+    data["gate1_selection_fingerprint"] = selection_fingerprint
+    for item in data.get("decisions") or []:
+        if isinstance(item, dict) and item.get("gate_id") == "T4-DECIDE-1":
+            item["source_selection_fingerprint"] = selection_fingerprint
+    gate_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def _write_valid_t9_bundle(workspace):
@@ -138,6 +185,60 @@ def _write_valid_t9_bundle(workspace):
         "## 投稿检查清单\n\n"
         "- [x] 主论文\n"
         "- [x] 参考文献\n",
+        encoding="utf-8",
+    )
+    _write_minimal_passing_craft_audit(workspace)
+
+
+def _write_minimal_passing_craft_audit(workspace):
+    drafts = workspace / "drafts"
+    drafts.mkdir(parents=True, exist_ok=True)
+    (drafts / "sections").mkdir(parents=True, exist_ok=True)
+    if not (drafts / "paper_state.json").exists():
+        (drafts / "paper_state.json").write_text(
+            json.dumps(
+                {
+                    "semantics": "shared_state_for_section_by_section_writing_not_final_claims",
+                    "sections": {},
+                    "shared_facts": {"bib_keys": [], "result_metrics": [], "alignment_matrix": []},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+    if not (drafts / "alignment_matrix.json").exists():
+        (drafts / "alignment_matrix.json").write_text(
+            '{"semantics":"alignment_matrix_seed_not_final_scientific_judgment","rows":[]}\n',
+            encoding="utf-8",
+        )
+    if not (drafts / "cdr_claim_ledger.json").exists():
+        (drafts / "cdr_claim_ledger.json").write_text(
+            '{"semantics":"cdr_claim_ledger_seed_not_final_scientific_judgment","contribution_chains":[]}\n',
+            encoding="utf-8",
+        )
+    checks = [
+        {"name": "matrix_row_count", "level": "PASS", "passed": True, "detail": "ok"},
+        {"name": "intro_contribution_count", "level": "PASS", "passed": True, "detail": "ok"},
+        {"name": "abstract_no_cite", "level": "PASS", "passed": True, "detail": "ok"},
+        {"name": "no_internal_label_leakage", "level": "PASS", "passed": True, "detail": "ok"},
+        {"name": "no_placeholder_tokens", "level": "PASS", "passed": True, "detail": "ok"},
+        {"name": "number_traceability", "level": "PASS", "passed": True, "detail": "ok"},
+        {"name": "no_standalone_limitations", "level": "PASS", "passed": True, "detail": "ok"},
+        {"name": "conclusion_has_limitations_subsection", "level": "PASS", "passed": True, "detail": "ok"},
+    ]
+    (drafts / "craft_audit.md").write_text("# Writing Craft And Alignment Audit\n- [x] ok\n", encoding="utf-8")
+    (drafts / "craft_audit.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "deterministic_writing_craft_audit_not_scientific_judgment",
+                "input_fingerprints": craft_audit_input_fingerprints(workspace),
+                "checks": checks,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -1325,12 +1426,20 @@ def write_valid_t4_artifacts(workspace):
 
 def write_valid_t45_artifacts(workspace):
     (workspace / "project.yaml").write_text("research_direction: Test\n", encoding="utf-8")
+    literature_dir = workspace / "literature"
+    literature_dir.mkdir(exist_ok=True)
+    (literature_dir / "synthesis.md").write_text("# Synthesis\nEvidence summary.\n", encoding="utf-8")
+    (literature_dir / "synthesis_workbench.json").write_text('{"items":[]}\n', encoding="utf-8")
+    (literature_dir / "comparison_table.csv").write_text("id,title\npaper0,Paper 0\n", encoding="utf-8")
     ideation_dir = workspace / "ideation"
     ideation_dir.mkdir(exist_ok=True)
     (ideation_dir / "hypotheses.md").write_text(
         "# 研究假设\n\n## H1: 假设1\n\n内容...\n",
         encoding="utf-8",
     )
+    (ideation_dir / "idea_scorecard.yaml").write_text("ideas:\n- id: D1\n  hypothesis_refs: [H1]\n", encoding="utf-8")
+    (ideation_dir / "idea_rationales.json").write_text('{"items":[]}\n', encoding="utf-8")
+    (ideation_dir / "gate_decisions.json").write_text('{"decisions":[]}\n', encoding="utf-8")
     audit_text = (
         "# 新颖性审计报告\n\n"
         "## H1: 假设1\n\n"
@@ -1374,6 +1483,7 @@ def write_valid_t45_artifacts(workspace):
         + "\n",
         encoding="utf-8",
     )
+    write_t45_fingerprint_report(workspace)
 
 
 def write_valid_t3_artifacts(workspace):
@@ -1493,6 +1603,12 @@ method
     (literature / "related_work.bib").write_text(
         "@article{paper0,\n  title={Paper 0},\n  year={2026}\n}\n",
         encoding="utf-8",
+    )
+    build_t3_notes_manifest(
+        workspace,
+        queue_records=queue_rows,
+        source_queue="literature/deep_read_queue.jsonl",
+        write=True,
     )
 
 
@@ -2459,25 +2575,56 @@ async def test_t3_resume_prefinalize_skips_llm_when_artifacts_validate(tmp_works
     assert result.ok
     assert result.metadata["completion_mode"] == "t3_resume_prefinalize"
     assert llm.call_count == 0
-    assert ctx.extra["skip_t3_abstract_sweep"] is True
+    assert "skip_t3_abstract_sweep" not in ctx.extra
+
+
+@pytest.mark.asyncio
+async def test_t3_resume_prefinalize_refuses_stale_notes_manifest_when_queue_changes(tmp_workspace, registry):
+    write_valid_t3_artifacts(tmp_workspace)
+    queue_path = tmp_workspace / "literature" / "deep_read_queue.jsonl"
+    with queue_path.open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "paper_id": "paper_new",
+                    "normalized_id": "paper_new",
+                    "queue_rank": 99,
+                    "title": "New queue paper",
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+    llm = MockLLMClient(responses=[])
+    ctx = ExecutionContext(
+        workspace_dir=tmp_workspace,
+        project_id="p1",
+        task_id="T3",
+        run_id="r_t3_stale_manifest",
+        mode="read",
+        outputs_expected={
+            "paper_notes_dir": tmp_workspace / "literature" / "paper_notes",
+            "comparison_table": tmp_workspace / "literature" / "comparison_table.csv",
+            "related_work_bib": tmp_workspace / "literature" / "related_work.bib",
+        },
+    )
+    runner = AgentRunner(ReaderAgent(mode="read"), registry, llm, MockHumanInterface())
+
+    result = await runner.run(ctx)
+
+    assert not result.ok
+    assert result.metadata.get("completion_mode") != "t3_resume_prefinalize"
 
 
 @pytest.mark.asyncio
 async def test_t4_resume_prefinalize_skips_llm_when_artifacts_validate(tmp_workspace, registry):
     write_valid_t4_artifacts(tmp_workspace)
-    selection_path = tmp_workspace / "ideation" / "_gate1_user_selection.json"
-    selection_path.write_text(
-        json.dumps(
-            {
-                "semantics": "t4_gate1_user_selection_for_candidate_pool",
-                "selected_option": "select_or_reframe",
-                "captured": {"selection": "D1"},
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
+    selection_path, selection_fingerprint = _write_gate1_selection(
+        tmp_workspace,
+        option_id="select_or_reframe",
+        captured={"selection": "D1"},
     )
+    _bind_gate_decisions_to_selection(tmp_workspace, selection_fingerprint)
     newer = selection_path.stat().st_mtime + 10
     for path in [
         tmp_workspace / "ideation" / "hypotheses.md",
@@ -2519,19 +2666,12 @@ async def test_t4_resume_prefinalize_skips_llm_when_artifacts_validate(tmp_works
 @pytest.mark.asyncio
 async def test_t4_resume_prefinalize_refuses_final_outputs_older_than_gate1_selection(tmp_workspace, registry):
     write_valid_t4_artifacts(tmp_workspace)
-    selection_path = tmp_workspace / "ideation" / "_gate1_user_selection.json"
-    selection_path.write_text(
-        json.dumps(
-            {
-                "semantics": "t4_gate1_user_selection_for_candidate_pool",
-                "selected_option": "merge",
-                "captured": {"merge_plan": "D1+D1b"},
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
+    selection_path, selection_fingerprint = _write_gate1_selection(
+        tmp_workspace,
+        option_id="merge",
+        captured={"merge_plan": "D1+D1b"},
     )
+    _bind_gate_decisions_to_selection(tmp_workspace, selection_fingerprint)
     newer = selection_path.stat().st_mtime + 10
     for path in [
         tmp_workspace / "ideation" / "hypotheses.md",
@@ -2620,6 +2760,40 @@ async def test_t45_resume_prefinalize_skips_llm_when_artifacts_validate(tmp_work
     assert result.ok
     assert result.metadata["completion_mode"] == "t45_resume_prefinalize"
     assert llm.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_t45_resume_prefinalize_refuses_stale_fingerprint_even_if_outputs_touched(tmp_workspace, registry):
+    write_valid_t45_artifacts(tmp_workspace)
+    hypotheses_path = tmp_workspace / "ideation" / "hypotheses.md"
+    hypotheses_path.write_text(
+        "# 研究假设\n\n## H1: 假设1\n\n内容已变化，旧 novelty audit 不能继续复用。\n",
+        encoding="utf-8",
+    )
+    newest = hypotheses_path.stat().st_mtime + 10
+    for path in [
+        tmp_workspace / "ideation" / "novelty_audit.md",
+        tmp_workspace / "ideation" / "_mechanism_tuples" / "H1.json",
+        tmp_workspace / "ideation" / "_design_rationale_tuples" / "H1.json",
+    ]:
+        os.utime(path, (newest, newest))
+    llm = MockLLMClient(responses=[])
+    ctx = ExecutionContext(
+        workspace_dir=tmp_workspace,
+        project_id="p1",
+        task_id="T4.5",
+        run_id="r_t45_stale_fingerprint",
+        outputs_expected={
+            "novelty_audit": tmp_workspace / "ideation" / "novelty_audit.md",
+            "mechanism_tuples_dir": tmp_workspace / "ideation" / "_mechanism_tuples",
+        },
+    )
+    runner = AgentRunner(NoveltyAuditorAgent(), registry, llm, MockHumanInterface())
+
+    result = await runner.run(ctx)
+
+    assert not result.ok
+    assert result.metadata.get("completion_mode") != "t45_resume_prefinalize"
 
 
 @pytest.mark.asyncio

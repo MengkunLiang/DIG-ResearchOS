@@ -21,6 +21,7 @@ from ..tools.manuscript import (
     SECTION_TITLES,
     SECTION_WRITING_SEQUENCE,
     _extract_latex_cites,
+    craft_audit_input_fingerprints,
     has_formal_citation,
     normalize_section_id,
 )
@@ -838,6 +839,9 @@ def _validate_required_craft_checks(ws: Path) -> tuple[bool, str | None]:
         return False, err
     if craft.get("semantics") != "deterministic_writing_craft_audit_not_scientific_judgment":
         return False, "craft_audit.json semantics 不正确"
+    ok, err = _validate_craft_audit_fingerprints(ws, craft)
+    if not ok:
+        return False, err
     checks = craft.get("checks")
     if not isinstance(checks, list):
         return False, "craft_audit.json 缺少 checks 列表"
@@ -846,6 +850,8 @@ def _validate_required_craft_checks(ws: Path) -> tuple[bool, str | None]:
         "matrix_row_count",
         "intro_contribution_count",
         "abstract_no_cite",
+        "no_internal_label_leakage",
+        "no_placeholder_tokens",
         "number_traceability",
         "no_standalone_limitations",
         "conclusion_has_limitations_subsection",
@@ -860,10 +866,6 @@ def _validate_required_craft_checks(ws: Path) -> tuple[bool, str | None]:
         if item.get("level") == "FAIL"
         and item.get("passed") is False
         and name not in soft_legacy_failures
-        and not (
-            name.startswith("cid_")
-            and name.endswith(("_intro_anchor", "_related_anchor", "_experiment_anchor"))
-        )
     ]
     if fail_items:
         return False, "craft_audit.json 存在 FAIL: " + ", ".join(fail_items[:8])
@@ -871,6 +873,9 @@ def _validate_required_craft_checks(ws: Path) -> tuple[bool, str | None]:
 
 
 def _validate_paper_claim_audit_if_needed(ws: Path) -> tuple[bool, str | None]:
+    ok, err = _validate_required_craft_checks(ws)
+    if not ok:
+        return False, "paper_claim_audit 前必须先通过当前稿件的 craft audit: " + (err or "")
     pack_path = ws / "drafts" / "experiment_evidence_pack.json"
     if not pack_path.exists():
         return True, None
@@ -901,6 +906,37 @@ def _validate_paper_claim_audit_if_needed(ws: Path) -> tuple[bool, str | None]:
         return False, "paper_claim_audit.json 存在 forbidden_wording_violations，必须先修订"
     if not isinstance(audit.get("issues"), list):
         return False, "paper_claim_audit.json issues 必须是列表"
+    return True, None
+
+
+def _validate_craft_audit_fingerprints(ws: Path, craft: dict) -> tuple[bool, str | None]:
+    fingerprints = craft.get("input_fingerprints")
+    if not isinstance(fingerprints, dict):
+        return False, "craft_audit.json 缺少 input_fingerprints，必须重新运行 audit_writing_craft"
+    current = craft_audit_input_fingerprints(ws)
+    for label, item in current.items():
+        previous = fingerprints.get(label)
+        if not isinstance(previous, dict):
+            return False, f"craft_audit.json input_fingerprints 缺少 {label}"
+        rel = str(previous.get("path") or item.get("path") or "").strip()
+        if rel != str(item.get("path") or ""):
+            return False, f"craft_audit.json input_fingerprints.{label}.path 不匹配"
+        if bool(previous.get("exists")) != bool(item.get("exists")):
+            return False, f"craft_audit.json 对应输入存在性已变化: {rel}"
+        if not item.get("exists"):
+            continue
+        if item.get("kind") == "dir":
+            if str(previous.get("sha256") or "") != str(item.get("sha256") or ""):
+                return False, f"craft_audit.json 对应目录已变化: {rel}"
+            previous_count = previous.get("file_count")
+            current_count = item.get("file_count")
+            if previous_count is None or current_count is None:
+                return False, f"craft_audit.json 对应目录缺少文件计数: {rel}"
+            if int(previous_count) != int(current_count):
+                return False, f"craft_audit.json 对应目录文件数已变化: {rel}"
+            continue
+        if str(previous.get("sha256") or "") != str(item.get("sha256") or ""):
+            return False, f"craft_audit.json 对应输入已过期: {rel}"
     return True, None
 
 

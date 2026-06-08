@@ -401,10 +401,10 @@ def test_audit_writing_craft_warns_when_related_work_ignores_pre_t5_signals():
     ]
     section_texts = {
         "abstract": "Problem gap approach result contribution. " * 25,
-        "introduction": "\\paragraph{Contribution 1} % [C1]\nA.\n\\paragraph{Contribution 2} % [C2]\nB.\n\\paragraph{Contribution 3} % [C3]\nC.",
-        "related_work": "\\subsection{Prior Work}\n% [C1]\nPrior work is discussed.\n% [C2]\nMore work is discussed.\n% [C3]\nMore work is discussed.",
-        "experiments": "% [C1]\nRQ1 tab:main Recall@20\n% [C2]\nRQ2 tab:abl NDCG@20\n% [C3]\nRQ3 tab:fail Coverage",
-        "analysis": "% [C1]\nAnalysis.\n% [C2]\nAnalysis.\n% [C3]\nAnalysis.",
+        "introduction": "\\paragraph{Contributions}\nWe improve subgroup robustness, adaptive activity handling, and boundary analysis.",
+        "related_work": "\\subsection{Prior Work}\nPrior work is discussed without using the nearest-prior or tension signals yet.",
+        "experiments": "RQ1 tab:main Recall@20\nRQ2 tab:abl NDCG@20\nRQ3 tab:fail Coverage",
+        "analysis": "The analysis interprets subgroup robustness, adaptive activity, and boundary behavior.",
         "conclusion": "\\subsection{Limitations}\nNo new claims.",
     }
     audit = audit_writing_craft(
@@ -752,7 +752,7 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
     assert paper_state["shared_facts"]["alignment_matrix"]
     assert (tmp_workspace / "drafts" / "section_outlines" / "methodology.md").exists()
     method_outline = (tmp_workspace / "drafts" / "section_outlines" / "methodology.md").read_text(encoding="utf-8")
-    assert "## Responsible CIDs" in method_outline
+    assert "## Internal Alignment IDs" in method_outline
     ok, err = validator.validate_outputs(_WriterContext(tmp_workspace, "section_plan"))
     assert ok, err
 
@@ -766,7 +766,7 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
         "conclusion",
     ]:
         cid_lines = "\n".join(
-            f"% [{row['cid']}]\nContent for {name} linked to {row['experiment']['rq']} "
+            f"Content for {name} links the relevant contribution logic to {row['experiment']['rq']} "
             f"and {row['experiment']['table']} with accuracy 0.82."
             for row in alignment["rows"]
         )
@@ -775,15 +775,17 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
             body = "This paper studies a gap. We propose a method. It achieves 0.82 accuracy. " * 25
         if name == "introduction":
             body = (
-                "Gap 1 motivates C1. Gap 2 motivates C2. Gap 3 motivates C3.\n"
+                "The first gap concerns sparse recommendation robustness. "
+                "The second gap concerns adaptive perturbation. "
+                "The third gap concerns boundary analysis.\n"
                 "Contributions\n"
-                "- % [C1] We improve the first alignment lane.\n"
-                "- % [C2] We improve the second alignment lane.\n"
-                "- % [C3] We improve the third alignment lane.\n"
+                "- We improve sparse recommendation robustness with evidence from the main result.\n"
+                "- We introduce adaptive perturbation and test it through ablation.\n"
+                "- We analyze boundary behavior through failure and sensitivity evidence.\n"
             )
         if name == "related_work":
             body = "\n".join(
-                f"\\subsection{{Rationale {idx}}}\n% [{row['cid']}]\nPrior work \\cite{{smith2024}} leaves a tension for {row['cid']}."
+                f"\\subsection{{Rationale {idx}}}\nPrior work \\cite{{smith2024}} leaves a design-rationale tension for the corresponding contribution."
                 for idx, row in enumerate(alignment["rows"], start=1)
             )
         if name == "conclusion":
@@ -989,6 +991,7 @@ async def test_writing_craft_audit_reports_alignment_and_traceability_failures(t
     intro_check = next(item for item in audit["checks"] if item["name"] == "intro_contribution_count")
     assert intro_check["level"] == "WARN"
     assert "abstract_no_cite" in failed
+    assert "no_internal_label_leakage" in failed
     assert "no_standalone_limitations" in failed
     assert "conclusion_has_limitations_subsection" in failed
     assert "number_traceability" in warned

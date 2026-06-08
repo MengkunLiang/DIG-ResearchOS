@@ -19,6 +19,7 @@ from researchos.runtime.t2_recovery import (
     _select_active_candidate_pool,
     _search_records_from_raw,
     finalize_t2_outputs,
+    validate_t2_finalize_manifest,
 )
 from researchos.runtime.t2_config import T2FinalizeConfig
 
@@ -391,9 +392,47 @@ async def test_openalex_snowball_detects_existing_plural_source_tools():
         ],
     )
 
-    assert candidates == []
-    assert stats["attempted"] == 0
+    assert candidates
+    assert stats["attempted"] == 1
     assert stats["skipped_existing_snowball_records"] == 1
+    assert stats["skipped_existing_snowball_source_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_openalex_snowball_skips_only_already_expanded_source():
+    candidates, stats = await _expand_openalex_snowball_candidates(
+        [
+            {
+                "id": "W_source_old",
+                "canonical_id": "W_source_old",
+                "title": "Old Source Paper",
+                "seed_priority": True,
+                "referenced_works": ["https://openalex.org/W123"],
+            },
+            {
+                "id": "W_source_new",
+                "canonical_id": "W_source_new",
+                "title": "New Source Paper",
+                "seed_priority": True,
+                "referenced_works": ["https://openalex.org/W456"],
+            },
+        ],
+        existing_papers=[
+            {
+                "id": "merged-record",
+                "canonical_id": "merged-record",
+                "title": "Merged Snowball Record",
+                "source_tool": "openalex_snowball_backfill",
+                "citation_snowball_source_id": "W_source_old",
+            }
+        ],
+    )
+
+    assert candidates
+    assert all(item.get("citation_snowball_source_id") == "W_source_new" for item in candidates)
+    assert stats["source_candidates"] == 1
+    assert stats["skipped_existing_snowball_records"] == 1
+    assert stats["skipped_existing_snowball_source_count"] == 1
 
 
 @pytest.mark.asyncio
@@ -996,6 +1035,95 @@ async def test_finalize_t2_outputs_caps_active_pool_and_writes_backlog(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_finalize_t2_outputs_applies_global_snowball_candidate_cap(monkeypatch, tmp_path: Path):
+    workspace = tmp_path / "ws"
+    (workspace / "literature").mkdir(parents=True)
+    (workspace / "project.yaml").write_text(
+        "research_direction: snowball cap\nkeywords: [snowball]\n",
+        encoding="utf-8",
+    )
+    _write_jsonl(
+        workspace / "literature" / "papers_raw.jsonl",
+        [
+            {
+                "id": f"paper-{idx}",
+                "canonical_id": f"paper-{idx}",
+                "source": "openalex",
+                "source_tool": "openalex_search",
+                "source_query": "snowball cap",
+                "search_bucket": "core",
+                "title": f"Snowball Source {idx}",
+                "authors": ["A. Researcher"],
+                "year": 2025,
+                "abstract": "Snowball source abstract.",
+                "venue": "Test Venue",
+                "citation_count": idx,
+                "relevance_score": 0.8,
+            }
+            for idx in range(12)
+        ],
+    )
+
+    import researchos.runtime.t2_recovery as t2_recovery
+
+    async def _no_openalex_backfill(*args, **kwargs):
+        return {
+            "enabled": True,
+            "candidate_count": 0,
+            "attempted": 0,
+            "openalex_id_filled": 0,
+            "abstract_filled": 0,
+            "references_filled": 0,
+            "pdf_hints_filled": 0,
+            "failed": 0,
+        }
+
+    async def _no_metadata_backfill(*args, **kwargs):
+        return {"enabled": True, "candidate_count": 0, "attempted": 0, "abstract_filled": 0, "references_filled": 0, "failed": 0}
+
+    async def _openalex_at_cap(*args, **kwargs):
+        max_candidates = int(kwargs.get("max_candidates") or 0)
+        candidates = [
+            {
+                "id": f"W_snowball_{idx}",
+                "canonical_id": f"W_snowball_{idx}",
+                "title": f"OpenAlex Snowball {idx}",
+                "authors": [{"name": "Snow Author"}],
+                "year": 2024,
+                "abstract": "Snowball abstract.",
+                "source": "openalex_snowball",
+                "source_tool": "openalex_snowball_backfill",
+                "retrieval_intent": "citation_snowball",
+                "search_bucket": "snowball",
+                "source_bucket": "snowball",
+                "relevance_score": 0.6,
+            }
+            for idx in range(max_candidates)
+        ]
+        return candidates, {"enabled": True, "attempted": max_candidates, "added": len(candidates), "failed": 0}
+
+    async def _crossref_should_not_run(*args, **kwargs):
+        raise AssertionError("Crossref snowball should not run after OpenAlex consumes the global cap")
+
+    monkeypatch.setattr(t2_recovery, "_backfill_recovered_openalex_metadata", _no_openalex_backfill)
+    monkeypatch.setattr(
+        t2_recovery,
+        "_backfill_recovered_openalex_title_metadata",
+        lambda *args, **kwargs: _no_openalex_backfill(*args, **kwargs),
+    )
+    monkeypatch.setattr(t2_recovery, "_backfill_recovered_crossref_metadata", _no_metadata_backfill)
+    monkeypatch.setattr(t2_recovery, "_backfill_recovered_multisource_abstracts", _no_metadata_backfill)
+    monkeypatch.setattr(t2_recovery, "_expand_openalex_snowball_candidates", _openalex_at_cap)
+    monkeypatch.setattr(t2_recovery, "_expand_crossref_snowball_candidates", _crossref_should_not_run)
+
+    result = await finalize_t2_outputs(workspace, trace_paths=[])
+
+    assert result["ok"] is True
+    assert result["openalex_citation_backfill"]["attempted"] == result["t2_finalize_config"]["snowball_max_candidates"]
+    assert result["citation_backfill"]["skipped_by_global_snowball_cap"] is True
+
+
+@pytest.mark.asyncio
 async def test_finalize_t2_outputs_keeps_domain_filtered_records_in_backlog(monkeypatch, tmp_path: Path):
     workspace = tmp_path / "ws"
     (workspace / "literature").mkdir(parents=True)
@@ -1186,6 +1314,35 @@ agents:
     assert result["backlog_count"] == 25
     assert result["t2_finalize_config"]["active_pool_max"] == 20
     assert result["deep_read_queue_config"]["deep_read_target"] == 12
+    assert (workspace / "literature" / "t2_finalize_manifest.json").exists()
+    ok, err = validate_t2_finalize_manifest(workspace)
+    assert ok, err
+    manifest = json.loads((workspace / "literature" / "t2_finalize_manifest.json").read_text(encoding="utf-8"))
+    for key in [
+        "seed_pdfs",
+        "legacy_seed_papers_dir",
+        "legacy_seed_constraints",
+        "literature_pdfs",
+        "agent_params_config",
+        "user_settings_config",
+    ]:
+        assert key in manifest["input_fingerprints"]
+
+    (workspace / "user_seeds").mkdir(exist_ok=True)
+    (workspace / "user_seeds" / "seed_constraints.md").write_text(
+        "new constraint after finalize\n",
+        encoding="utf-8",
+    )
+    ok, err = validate_t2_finalize_manifest(workspace)
+    assert not ok
+    assert "seed_constraints" in (err or "")
+
+    (workspace / "user_seeds" / "seed_constraints.md").unlink()
+    (workspace / "user_seeds" / "pdfs").mkdir(parents=True, exist_ok=True)
+    (workspace / "user_seeds" / "pdfs" / "new_seed.pdf").write_bytes(b"%PDF changed after finalize")
+    ok, err = validate_t2_finalize_manifest(workspace)
+    assert not ok
+    assert "seed_pdfs" in (err or "")
 
     queue_meta = json.loads((workspace / "literature" / "deep_read_queue_meta.json").read_text(encoding="utf-8"))
     assert queue_meta["deep_read_target"] == 12

@@ -431,6 +431,64 @@ def test_t4_gate1_completion_mode_routes_to_immediate_gate(tmp_workspace):
     assert decision["captured"]["merge_plan"] == "D1+D3"
 
 
+def test_t4_gate1_resolve_reprompts_when_candidate_pool_changes(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    gates = tmp_workspace / "gates.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T4-GATE1
+        states:
+          T4-GATE1:
+            agent: ideation
+            extra:
+              immediate_gate: true
+            gate: t4_gate1_selection_gate
+            outputs:
+              gate1_user_selection: ideation/_gate1_user_selection.json
+            next_on_success: T4
+          T4:
+            agent: ideation
+          done:
+            terminal: true
+        """,
+    )
+    _write_yaml(
+        gates,
+        """
+        gates:
+          t4_gate1_selection_gate:
+            presentation:
+              brief:
+                path: ideation/_gate1_selection_brief.md
+            options:
+              - id: merge
+                label: Merge
+                next: T4
+        """,
+    )
+    ideation = tmp_workspace / "ideation"
+    ideation.mkdir()
+    (ideation / "_gate1_selection_brief.md").write_text("Candidate A\n", encoding="utf-8")
+    (ideation / "_candidate_directions.json").write_text('{"directions":[{"id":"D1"}]}\n', encoding="utf-8")
+
+    sm = StateMachine(config, gates)
+    state = sm.create_initial_state("p1")
+    state = sm.pause_for_immediate_gate(state, workspace_dir=tmp_workspace)
+    (ideation / "_gate1_selection_brief.md").write_text("Candidate B changed while waiting\n", encoding="utf-8")
+
+    state = sm.resolve_pending_gate(
+        state,
+        {"option_id": "merge", "captured": {"merge_plan": "D1+D3"}},
+        workspace_dir=tmp_workspace,
+    )
+
+    assert state.status == "WAITING_HUMAN"
+    assert state.current_task == "T4-GATE1"
+    assert "candidate pool changed" in (state.last_error or "")
+    assert not (ideation / "_gate1_user_selection.json").exists()
+
+
 def test_t5_executor_gate_persists_selection_and_patches_executor_files(tmp_workspace):
     config = tmp_workspace / "fsm.yaml"
     gates = tmp_workspace / "gates.yaml"

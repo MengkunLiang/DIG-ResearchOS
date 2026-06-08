@@ -66,8 +66,8 @@
 - Related Work 是否呈现 design-rationale tension，而不只是列 taxonomy？
 
 ### 6. Alignment Matrix 与 Writing Craft
-- 每条 cid 是否形成 motivation -> contribution -> related_gap -> experiment -> analysis 闭环？
-- 章节中是否用 `% [Cn]` 标注兑现关系？
+- 每条 internal alignment lane 是否形成 motivation -> contribution -> related_gap -> experiment -> analysis 闭环？
+- 章节是否用自然语言兑现对齐关系，且没有把 `C1`、`[C1]`、`C1:` 或 `% [C1]` 暴露在最终 TeX 中？
 - Introduction 的 gap 和 contribution 是否一一对应？
 - Related Work 是否有 orphan 段落或流水账式 citation？
 - Conclusion 是否包含 `\subsection{Limitations}`，且没有独立 `\section{Limitations}`？
@@ -158,7 +158,7 @@
 [本章是否履行 CDR 职责；problem_frame/design_rationale/contribution_type/evaluation_mode/boundary_conditions 是否与正文证据一致]
 
 ## Alignment Matrix Check
-[本章是否兑现它负责的 cid；是否存在缺失、错误或无锚点的 % [Cn] 段落]
+[本章是否兑现它负责的 internal alignment lane；是否存在缺失、错误、无证据锚点或暴露内部编号的段落]
 
 ## Writing Craft Check
 [本章是否违反 craft_audit 或 section craft：流水账、过度 claim、无效 citation key、独立 limitations 等]
@@ -223,7 +223,7 @@
 - Craft audit FAIL items: [列出并判断是否必须修]
 - Craft audit WARN items: [列出需要进入 Medium TODO 的项]
 - Standalone Limitations section: Pass / Fail
-- CID traceability coverage: Pass / Weak / Fail
+- Internal alignment closure without visible IDs: Pass / Weak / Fail
 
 ## CDR Contribution Verdict
 
@@ -246,10 +246,11 @@
 2. **验证引用**：检查所有 \cite{} 是否存在于 related_work.bib
 3. **利用机械审计**：对 `manuscript_audit.md` 中未解决的 `[ ]` 项逐条判断是否应成为审稿问题
 4. **利用 craft 审计**：对 `craft_audit.md` 中 FAIL/WARN 逐条判断是否已经修复；未修复的 FAIL 进入主要问题
-5. **利用 alignment matrix**：检查 cid 是否在 responsible section 中被 `% [Cn]` 标注并闭环
+5. **利用 alignment matrix**：检查每条 internal alignment lane 是否在 responsible section 中通过自然 prose 闭环；若正文或注释出现 `C1` / `[C1]` / `% [C1]`，作为格式问题提出
 6. **利用作者自查**：对 `self_check.md` 中的 High/Medium TODO 判断是否已经反映在正文或 Conclusion 的 Limitations 子段
 7. **利用 CDR ledger**：检查核心 contribution claims 是否在对应章节被解释并被证据支持；不要把 ledger 当最终真理
 8. **检查匿名化**：确保论文不包含作者信息
+9. **绑定输入指纹**：写完逐章审稿和综合审稿后，必须调用 `bind_review_round(round_num={{ round }})`，生成 `drafts/review_rounds/round_{{ round }}_fingerprints.json`；否则 validator 会拒绝旧 review 驱动新稿修订
 
 ## 质量标准
 

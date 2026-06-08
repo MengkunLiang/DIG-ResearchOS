@@ -16,10 +16,12 @@ from researchos.schemas.state import StateYaml
 from researchos.tools.survey_tools import (
     AssembleSurveyTool,
     AuditSurveyCoverageTool,
+    BindSurveyReviewTool,
     BuildSurveyStateTool,
     ExportSurveyForIdeationTool,
     UpdateSurveySectionStateTool,
 )
+from researchos.tools.latex_compile import _compile_dependency_fingerprint
 from researchos.tools.workspace_policy import WorkspaceAccessPolicy
 
 
@@ -71,6 +73,122 @@ def _policy(workspace: Path) -> WorkspaceAccessPolicy:
         allowed_read_prefixes=["", "drafts/", "literature/", "ideation/"],
         allowed_write_prefixes=["drafts/", "ideation/"],
     )
+
+
+def _sha256_file(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _write_survey_compile_report(ws: Path) -> None:
+    survey_dir = ws / "drafts" / "survey"
+    tex = survey_dir / "survey.tex"
+    pdf = survey_dir / "survey.pdf"
+    log = survey_dir / "survey.log"
+    dependency = _compile_dependency_fingerprint(ws, tex)
+    _write_json(
+        survey_dir / "survey_compile_report.json",
+        {
+            "semantics": "latex_compile_attempt_report",
+            "tex_path": "drafts/survey/survey.tex",
+            "success": True,
+            "pdf_path": "drafts/survey/survey.pdf",
+            "log_path": "drafts/survey/survey.log",
+            "main_tex_sha256": _sha256_file(tex),
+            "dependency_fingerprint": dependency,
+            "attempts": [
+                {
+                    "success": True,
+                    "exit_code": 0,
+                    "dependency_fingerprint_hash": dependency["hash"],
+                }
+            ],
+            "pdf_sha256": _sha256_file(pdf),
+            "log_sha256": _sha256_file(log),
+            "pdf_mtime": pdf.stat().st_mtime,
+        },
+    )
+
+
+def _survey_ctx(ws: Path, mode: str, **extra):
+    return type("Ctx", (), {"workspace_dir": ws, "mode": mode, "extra": extra})()
+
+
+async def _build_valid_survey_chain(ws: Path) -> None:
+    _write_json(ws / "drafts" / "survey" / "survey_plan.json", _survey_plan())
+    _write_json(ws / "drafts" / "survey" / "corpus_decision.json", {"scope": "conservative"})
+    (ws / "literature").mkdir(parents=True, exist_ok=True)
+    (ws / "literature" / "related_work.bib").write_text(
+        "@article{p1,title={A}}\n@article{p2,title={B}}\n@article{p3,title={C}}\n",
+        encoding="utf-8",
+    )
+    policy = _policy(ws)
+    result = await BuildSurveyStateTool(policy).execute()
+    assert result.ok, result.content
+    sections_dir = ws / "drafts" / "survey" / "sections"
+    sections_dir.mkdir(parents=True, exist_ok=True)
+    section_text = {
+        "background": (
+            "\\section{Background and Scope}\n"
+            "This survey defines scope using prior work \\citep[see][]{p1}. "
+            "It separates mechanism evidence from application examples so that later comparisons remain auditable."
+        ),
+        "taxonomy": (
+            "\\section{Taxonomy}\n"
+            "The taxonomy separates perturbation and routing mechanisms \\citep{p1,p2}. "
+            "Each class is described by its design rationale, required assumptions, and observable evaluation signals."
+        ),
+        "theme_1": (
+            "\\section{Perturbation Mechanisms}\n"
+            "This theme compares perturbation mechanisms across papers \\citep{p1,p2}. "
+            "It discusses how each mechanism changes the data-generating process, what invariance it expects, "
+            "and where the available evidence is still too narrow for a strong survey-level conclusion."
+        ),
+        "theme_2": (
+            "\\section{Routing Mechanisms}\n"
+            "This theme compares routing mechanisms and their evidence \\citep{p3}. "
+            "It contrasts static assignment, adaptive routing, and evaluation assumptions across representative work."
+        ),
+        "comparison": (
+            "\\section{Comparative Analysis}\n"
+            "Comparative analysis identifies cross-paper tensions \\citep{p1,p3}. "
+            "The section links taxonomy classes to evaluation gaps and explains where conclusions are conservative."
+        ),
+        "challenges": (
+            "\\section{Open Challenges}\n"
+            "Open Challenge: robustness remains hard under distribution shift \\citep{p2}. "
+            "The challenge is not only algorithmic accuracy but also construct validity and data availability."
+        ),
+        "future": (
+            "\\section{Future Directions}\n"
+            "Future directions include adjacent transfers and better evaluation \\citep{p3}. "
+            "The section prioritizes directions that can be supported by richer evidence rather than speculative labels."
+        ),
+        "introduction": (
+            "\\section{Introduction}\n"
+            "This survey motivates a taxonomy-driven reading of the field \\citep{p1}. "
+            "It states the scope, the evidence boundary, and the intended reader-facing contribution."
+        ),
+        "conclusion": (
+            "\\section{Conclusion}\n"
+            "The survey concludes with open challenges and future directions. "
+            "It summarizes the taxonomy without overstating weak or abstract-only evidence."
+        ),
+        "abstract": "\\section*{Abstract}\nA taxonomy-driven survey of mechanisms.",
+    }
+    for section_id, text in section_text.items():
+        (sections_dir / f"{section_id}.tex").write_text(text, encoding="utf-8")
+        result = await UpdateSurveySectionStateTool(policy).execute(section_id=section_id)
+        assert result.ok, result.content
+    result = await AssembleSurveyTool(policy).execute()
+    assert result.ok, result.content
+    result = await AuditSurveyCoverageTool(policy).execute()
+    assert result.ok, result.content
 
 
 @pytest.mark.asyncio
@@ -217,25 +335,278 @@ def test_t36_contract_exposes_seed_outline_inputs_to_non_compile_nodes():
         assert seed_keys <= inputs, task_id
 
 
-def test_survey_writer_compile_validation_accepts_success_report(tmp_path: Path):
+@pytest.mark.asyncio
+async def test_survey_writer_compile_validation_accepts_success_report(tmp_path: Path):
     ws = tmp_path
-    (ws / "drafts" / "survey").mkdir(parents=True)
-    (ws / "drafts" / "survey" / "survey.pdf").write_bytes(b"%PDF-1.4\n")
-    (ws / "drafts" / "survey" / "survey.log").write_text("ok", encoding="utf-8")
-    _write_json(
-        ws / "drafts" / "survey" / "survey_compile_report.json",
-        {
-            "semantics": "latex_compile_attempt_report",
-            "tex_path": "drafts/survey/survey.tex",
-            "success": True,
-            "pdf_path": "drafts/survey/survey.pdf",
-            "log_path": "drafts/survey/survey.log",
-        },
+    survey_dir = ws / "drafts" / "survey"
+    survey_dir.mkdir(parents=True)
+    (ws / "literature").mkdir(parents=True)
+    (survey_dir / "survey_plan.json").write_text(json.dumps(_survey_plan()), encoding="utf-8")
+    (survey_dir / "survey_state.json").write_text(
+        json.dumps(
+            {
+                "semantics": "survey_state_for_taxonomy_driven_section_writing_not_final_claims",
+                "sections": {
+                    "taxonomy": {"status": "written"},
+                    "comparison": {"status": "written"},
+                    "challenges": {"status": "written"},
+                    "future": {"status": "written"},
+                },
+            }
+        ),
+        encoding="utf-8",
     )
+    (ws / "literature" / "related_work.bib").write_text(
+        "@article{p1,title={A}}\n@article{p2,title={B}}\n@article{p3,title={C}}\n",
+        encoding="utf-8",
+    )
+    (ws / "drafts" / "survey" / "survey.tex").write_text(
+        (
+            "\\documentclass{article}\\begin{document}"
+            "\\section{Taxonomy} Taxonomy \\citep{p1}."
+            "\\section{Comparative Analysis} Comparative analysis \\citep{p2}."
+            "\\section{Open Challenges} Open challenges."
+            "\\section{Future Directions} Future directions \\citep{p3}."
+            "\\end{document}\n"
+        ),
+        encoding="utf-8",
+    )
+    result = await AuditSurveyCoverageTool(_policy(ws)).execute()
+    assert result.ok, result.content
+    (ws / "drafts" / "survey" / "survey.pdf").write_bytes(b"%PDF-1.4\n" + b"x" * 128)
+    (ws / "drafts" / "survey" / "survey.log").write_text("ok", encoding="utf-8")
+    _write_survey_compile_report(ws)
     agent = SurveyWriterAgent(mode="survey_compile")
     ctx = type("Ctx", (), {"workspace_dir": ws, "mode": "survey_compile", "extra": {}})()
     ok, err = agent.validate_outputs(ctx)
     assert ok, err
+
+
+@pytest.mark.asyncio
+async def test_t36_state_refuses_stale_plan_fingerprint(tmp_path: Path):
+    ws = tmp_path
+    await _build_valid_survey_chain(ws)
+    agent = SurveyWriterAgent(mode="survey_state")
+    ctx = _survey_ctx(ws, "survey_state")
+    ok, err = agent.validate_outputs(ctx)
+    assert ok, err
+
+    plan = json.loads((ws / "drafts" / "survey" / "survey_plan.json").read_text(encoding="utf-8"))
+    plan["taxonomy"]["dimension"] = "changed taxonomy"
+    _write_json(ws / "drafts" / "survey" / "survey_plan.json", plan)
+
+    ok, err = agent.validate_outputs(ctx)
+    assert not ok
+    assert "已过期" in (err or "")
+
+
+@pytest.mark.asyncio
+async def test_t36_section_refuses_stale_section_outline_and_file(tmp_path: Path):
+    ws = tmp_path
+    await _build_valid_survey_chain(ws)
+    agent = SurveyWriterAgent(mode="survey_section")
+    ctx = _survey_ctx(ws, "survey_section", section_id="theme_1")
+    ok, err = agent.validate_outputs(ctx)
+    assert ok, err
+
+    (ws / "drafts" / "survey" / "section_outlines" / "theme_1.md").write_text(
+        "# Theme 1\n\nChanged outline after section was marked written.\n",
+        encoding="utf-8",
+    )
+    ok, err = agent.validate_outputs(ctx)
+    assert not ok
+    assert "已过期" in (err or "")
+
+    await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="theme_1")
+    ok, err = agent.validate_outputs(ctx)
+    assert ok, err
+
+    (ws / "drafts" / "survey" / "sections" / "theme_1.tex").write_text(
+        (
+            "\\section{Perturbation Mechanisms}\n"
+            "Changed section content after state fingerprint while still remaining long enough "
+            "to pass the section length guard. The validator should therefore detect the stale "
+            "fingerprint rather than reporting a short-section error."
+        ),
+        encoding="utf-8",
+    )
+    ok, err = agent.validate_outputs(ctx)
+    assert not ok
+    assert "已过期" in (err or "")
+
+
+@pytest.mark.asyncio
+async def test_t36_section_validation_rejects_dirty_abstract_and_bad_cites(tmp_path: Path):
+    ws = tmp_path
+    await _build_valid_survey_chain(ws)
+    agent = SurveyWriterAgent(mode="survey_section")
+
+    abstract_path = ws / "drafts" / "survey" / "sections" / "abstract.tex"
+    abstract_path.write_text(
+        "\\section*{Abstract}\nThis survey cites prior work \\citep{p1} in the abstract.",
+        encoding="utf-8",
+    )
+    await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="abstract")
+    ok, err = agent.validate_outputs(_survey_ctx(ws, "survey_section", section_id="abstract"))
+    assert not ok
+    assert "abstract" in (err or "") and "引用" in (err or "")
+
+    section_path = ws / "drafts" / "survey" / "sections" / "theme_1.tex"
+    section_path.write_text(
+        "\\section{Perturbation Mechanisms}\n"
+        "TODO replace this placeholder with evidence after reviewing the full section context. "
+        "The rest of this deliberately long sentence exists only to pass the length guard so "
+        "the validator reaches the placeholder-specific check.",
+        encoding="utf-8",
+    )
+    await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="theme_1")
+    ok, err = agent.validate_outputs(_survey_ctx(ws, "survey_section", section_id="theme_1"))
+    assert not ok
+    assert "placeholder" in (err or "")
+
+    section_path.write_text(
+        "\\section{Perturbation Mechanisms}\n"
+        "This section has enough substantive wording to pass the length guard while citing "
+        "an unavailable source \\citep{missingKey2026} that is not present in the bibliography.",
+        encoding="utf-8",
+    )
+    await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="theme_1")
+    ok, err = agent.validate_outputs(_survey_ctx(ws, "survey_section", section_id="theme_1"))
+    assert not ok
+    assert "missingKey2026" in (err or "")
+
+
+@pytest.mark.asyncio
+async def test_t36_assemble_refuses_stale_assembly_or_audit_inputs(tmp_path: Path):
+    ws = tmp_path
+    await _build_valid_survey_chain(ws)
+    agent = SurveyWriterAgent(mode="survey_assemble")
+    ctx = _survey_ctx(ws, "survey_assemble")
+    ok, err = agent.validate_outputs(ctx)
+    assert ok, err
+
+    (ws / "drafts" / "survey" / "sections" / "comparison.tex").write_text(
+        "\\section{Comparative Analysis}\nChanged comparison after assembly and audit fingerprints.\n",
+        encoding="utf-8",
+    )
+    ok, err = agent.validate_outputs(ctx)
+    assert not ok
+    assert "已过期" in (err or "") or "已变化" in (err or "")
+
+    result = await AssembleSurveyTool(_policy(ws)).execute()
+    assert result.ok, result.content
+    ok, err = agent.validate_outputs(ctx)
+    assert not ok
+    assert "survey_audit.json" in (err or "") and ("已过期" in (err or "") or "已变化" in (err or ""))
+
+
+def test_survey_writer_compile_validation_rejects_stale_tex_hash(tmp_path: Path):
+    ws = tmp_path
+    survey_dir = ws / "drafts" / "survey"
+    survey_dir.mkdir(parents=True)
+    tex = survey_dir / "survey.tex"
+    pdf = survey_dir / "survey.pdf"
+    log = survey_dir / "survey.log"
+    tex.write_text("\\documentclass{article}\\begin{document}Survey\\end{document}\n", encoding="utf-8")
+    pdf.write_bytes(b"%PDF-1.4\n")
+    log.write_text("ok", encoding="utf-8")
+    _write_survey_compile_report(ws)
+    tex.write_text("\\documentclass{article}\\begin{document}Changed\\end{document}\n", encoding="utf-8")
+
+    agent = SurveyWriterAgent(mode="survey_compile")
+    ctx = _survey_ctx(ws, "survey_compile")
+    ok, err = agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "main_tex_sha256" in (err or "")
+
+
+@pytest.mark.asyncio
+async def test_survey_writer_compile_validation_rejects_stale_dependency_fingerprint(tmp_path: Path):
+    ws = tmp_path
+    await _build_valid_survey_chain(ws)
+    survey_dir = ws / "drafts" / "survey"
+    pdf = survey_dir / "survey.pdf"
+    log = survey_dir / "survey.log"
+    pdf.write_bytes(b"%PDF-1.4\n" + b"x" * 128)
+    log.write_text("ok", encoding="utf-8")
+    _write_survey_compile_report(ws)
+    (survey_dir / "references.bib").write_text(
+        (survey_dir / "references.bib").read_text(encoding="utf-8") + "\n@article{new,title={New}}\n",
+        encoding="utf-8",
+    )
+
+    ok, err = SurveyWriterAgent(mode="survey_compile").validate_outputs(_survey_ctx(ws, "survey_compile"))
+
+    assert not ok
+    assert "dependency_fingerprint" in (err or "")
+
+
+@pytest.mark.asyncio
+async def test_survey_writer_compile_validation_rejects_stale_audit_after_compile_fix(tmp_path: Path):
+    ws = tmp_path
+    survey_dir = ws / "drafts" / "survey"
+    survey_dir.mkdir(parents=True)
+    (ws / "literature").mkdir(parents=True)
+    _write_json(survey_dir / "survey_plan.json", _survey_plan())
+    _write_json(
+        survey_dir / "survey_state.json",
+        {
+            "semantics": "survey_state_for_taxonomy_driven_section_writing_not_final_claims",
+            "sections": {
+                "taxonomy": {"status": "written"},
+                "comparison": {"status": "written"},
+                "challenges": {"status": "written"},
+                "future": {"status": "written"},
+            },
+        },
+    )
+    (ws / "literature" / "related_work.bib").write_text(
+        "@article{p1,title={A}}\n@article{p2,title={B}}\n@article{p3,title={C}}\n",
+        encoding="utf-8",
+    )
+    tex = survey_dir / "survey.tex"
+    tex.write_text(
+        (
+            "\\documentclass{article}\\begin{document}"
+            "\\section{Taxonomy} Taxonomy \\citep{p1}."
+            "\\section{Comparative Analysis} Comparative analysis \\citep{p2}."
+            "\\section{Open Challenges} Open challenges."
+            "\\section{Future Directions} Future directions \\citep{p3}."
+            "\\end{document}\n"
+        ),
+        encoding="utf-8",
+    )
+    result = await AuditSurveyCoverageTool(_policy(ws)).execute()
+    assert result.ok, result.content
+    tex.write_text(tex.read_text(encoding="utf-8").replace("Taxonomy", "Taxonomy revised", 1), encoding="utf-8")
+    pdf = survey_dir / "survey.pdf"
+    log = survey_dir / "survey.log"
+    pdf.write_bytes(b"%PDF-1.4\n" + b"x" * 128)
+    log.write_text("ok", encoding="utf-8")
+    _write_survey_compile_report(ws)
+
+    ok, err = SurveyWriterAgent(mode="survey_compile").validate_outputs(_survey_ctx(ws, "survey_compile"))
+
+    assert not ok
+    assert "survey_audit.json 已过期" in (err or "")
+
+
+@pytest.mark.asyncio
+async def test_survey_writer_compile_validation_rejects_undefined_citation_log(tmp_path: Path):
+    ws = tmp_path
+    await _build_valid_survey_chain(ws)
+    survey_dir = ws / "drafts" / "survey"
+    pdf = survey_dir / "survey.pdf"
+    log = survey_dir / "survey.log"
+    pdf.write_bytes(b"%PDF-1.4\n" + b"x" * 128)
+    log.write_text("LaTeX Warning: Citation `missing' undefined", encoding="utf-8")
+    _write_survey_compile_report(ws)
+
+    ok, err = SurveyWriterAgent(mode="survey_compile").validate_outputs(_survey_ctx(ws, "survey_compile"))
+
+    assert not ok
+    assert "survey.log" in (err or "")
 
 
 def test_survey_writer_plan_validation_rejects_weak_evidence_as_core_paper(tmp_path: Path):
@@ -284,9 +655,10 @@ def test_t36_compile_artifact_checker_requires_compile_report(tmp_path: Path):
     assert "survey_compile_report" in err
 
 
-def test_survey_writer_review_validation_accepts_complete_review(tmp_path: Path):
+@pytest.mark.asyncio
+async def test_survey_writer_review_validation_accepts_complete_review(tmp_path: Path):
     ws = tmp_path
-    (ws / "drafts" / "survey").mkdir(parents=True)
+    await _build_valid_survey_chain(ws)
     (ws / "drafts" / "survey" / "survey_review.md").write_text(
         "\n".join(
             [
@@ -326,10 +698,37 @@ def test_survey_writer_review_validation_accepts_complete_review(tmp_path: Path)
             "audit_after_review": {"survey_audit_passed": True},
         },
     )
+    result = await BindSurveyReviewTool(_policy(ws)).execute()
+    assert result.ok, result.content
     agent = SurveyWriterAgent(mode="survey_review")
     ctx = type("Ctx", (), {"workspace_dir": ws, "mode": "survey_review", "extra": {}})()
     ok, err = agent.validate_outputs(ctx)
     assert ok, err
+
+    (ws / "drafts" / "survey" / "sections" / "comparison.tex").write_text(
+        "\\section{Comparative Analysis}\nChanged section after review while file count remains stable.\n",
+        encoding="utf-8",
+    )
+    ok, err = agent.validate_outputs(ctx)
+    assert not ok
+    assert "目录内容已变化" in (err or "") or "已过期" in (err or "")
+
+    result = await AssembleSurveyTool(_policy(ws)).execute()
+    assert result.ok, result.content
+    result = await AuditSurveyCoverageTool(_policy(ws)).execute()
+    assert result.ok, result.content
+    result = await BindSurveyReviewTool(_policy(ws)).execute()
+    assert result.ok, result.content
+    ok, err = agent.validate_outputs(ctx)
+    assert ok, err
+
+    (ws / "drafts" / "survey" / "survey.tex").write_text(
+        "\\documentclass{article}\\begin{document}Changed after review\\end{document}\n",
+        encoding="utf-8",
+    )
+    ok, err = agent.validate_outputs(ctx)
+    assert not ok
+    assert "已过期" in (err or "")
 
 
 def test_t36_state_machine_routes_survey_yes_no_and_corpus_scope(tmp_path: Path):
@@ -477,13 +876,27 @@ def test_t36_immediate_gates_persist_decisions(tmp_path: Path):
     state = sm.pause_for_immediate_gate(state, workspace_dir=tmp_path)
     state = sm.resolve_pending_gate(state, {"option_id": "yes", "captured": {}}, workspace_dir=tmp_path)
     assert state.current_task == "T3.6-PLAN"
-    assert json.loads((tmp_path / "drafts" / "survey" / "decision.json").read_text(encoding="utf-8"))["write_survey"] is True
+    survey_decision = json.loads((tmp_path / "drafts" / "survey" / "decision.json").read_text(encoding="utf-8"))
+    assert survey_decision["write_survey"] is True
+    assert isinstance(survey_decision.get("input_fingerprints"), dict)
+    assert sm._parse_t36_survey_decision(tmp_path) == "T3.6-PLAN"
+    (tmp_path / "literature").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "literature" / "synthesis.md").write_text("changed after survey gate\n", encoding="utf-8")
+    assert sm._parse_t36_survey_decision(tmp_path) == "T3.6-GATE-SURVEY"
 
+    _write_json(tmp_path / "drafts" / "survey" / "survey_plan.json", _survey_plan())
     state = StateYaml(project_id="p1", current_task="T3.6-GATE-CORPUS", status="RUNNING")
     state = sm.pause_for_immediate_gate(state, workspace_dir=tmp_path)
     state = sm.resolve_pending_gate(state, {"option_id": "complete", "captured": {}}, workspace_dir=tmp_path)
     assert state.current_task == "T3.6-EXPAND"
-    assert json.loads((tmp_path / "drafts" / "survey" / "corpus_decision.json").read_text(encoding="utf-8"))["scope"] == "complete"
+    corpus_decision = json.loads((tmp_path / "drafts" / "survey" / "corpus_decision.json").read_text(encoding="utf-8"))
+    assert corpus_decision["scope"] == "complete"
+    assert isinstance(corpus_decision.get("input_fingerprints"), dict)
+    assert sm._parse_t36_corpus_decision(tmp_path) == "T3.6-EXPAND"
+    plan = json.loads((tmp_path / "drafts" / "survey" / "survey_plan.json").read_text(encoding="utf-8"))
+    plan["taxonomy"]["dimension"] = "changed after corpus gate"
+    _write_json(tmp_path / "drafts" / "survey" / "survey_plan.json", plan)
+    assert sm._parse_t36_corpus_decision(tmp_path) == "T3.6-GATE-CORPUS"
 
 
 def test_t45_reframe_and_drop_pause_for_human_gate(tmp_path: Path):

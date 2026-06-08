@@ -8,6 +8,7 @@ does that work section by section.
 """
 
 import json
+import hashlib
 import re
 from pathlib import Path
 from typing import Any, Literal
@@ -48,6 +49,8 @@ SURVEY_SECTION_TITLES = {
     "future": "Future Directions",
     "conclusion": "Conclusion",
 }
+
+OPTIONAL_SURVEY_SECTION_PREFIXES = ("theme_",)
 
 
 class BuildSurveyStateParams(BaseModel):
@@ -93,6 +96,20 @@ class ExportSurveyForIdeationParams(BaseModel):
     summary_output_path: str = Field(default="drafts/survey/survey_summary.md")
 
 
+class BindSurveyReviewParams(BaseModel):
+    review_path: str = Field(default="drafts/survey/survey_review.md")
+    actions_path: str = Field(default="drafts/survey/survey_review_actions.json")
+    survey_plan_path: str = Field(default="drafts/survey/survey_plan.json")
+    state_path: str = Field(default="drafts/survey/survey_state.json")
+    survey_tex_path: str = Field(default="drafts/survey/survey.tex")
+    survey_audit_json_path: str = Field(default="drafts/survey/survey_audit.json")
+    sections_dir: str = Field(default="drafts/survey/sections")
+    synthesis_workbench_path: str = Field(default="literature/synthesis_workbench.json")
+    domain_map_path: str = Field(default="literature/domain_map.json")
+    comparison_table_path: str = Field(default="literature/comparison_table.csv")
+    related_work_bib_path: str = Field(default="literature/related_work.bib")
+
+
 class ExpandSurveyCorpusParams(BaseModel):
     survey_plan_path: str = Field(default="drafts/survey/survey_plan.json")
     domain_map_path: str = Field(default="literature/domain_map.json")
@@ -128,6 +145,17 @@ class BuildSurveyStateTool(Tool):
             return ToolResult(ok=False, content=str(exc), error="invalid_input")
 
         outline = _coerce_outline(plan.get("outline"))
+        overflow_count = _theme_entry_overflow_count(outline, max_theme_sections=params.max_theme_sections)
+        if overflow_count > 0:
+            return ToolResult(
+                ok=False,
+                content=(
+                    f"survey_plan outline contains {overflow_count + params.max_theme_sections} theme sections, "
+                    f"but current T3.6 state machine supports {params.max_theme_sections}. "
+                    "Merge/prioritize themes or extend SURVEY_SECTION_SEQUENCE/state_machine before continuing."
+                ),
+                error="too_many_theme_sections",
+            )
         theme_entries = _theme_entries(outline, max_theme_sections=params.max_theme_sections)
         theme_by_slot = {f"theme_{idx}": entry for idx, entry in enumerate(theme_entries, start=1)}
 
@@ -151,6 +179,14 @@ class BuildSurveyStateTool(Tool):
         state = {
             "semantics": "survey_state_for_taxonomy_driven_section_writing_not_final_claims",
             "survey_plan": params.survey_plan_path,
+            "input_fingerprints": _input_fingerprints(
+                self.policy.workspace_dir,
+                {
+                    "survey_plan": params.survey_plan_path,
+                    "corpus_decision": params.corpus_decision_path,
+                    "survey_expansion": params.expansion_path,
+                },
+            ),
             "corpus_scope": _corpus_scope(corpus_decision),
             "write_order": [sid for sid in SURVEY_SECTION_SEQUENCE if sections[sid]["status"] != "skipped"],
             "sections": sections,
@@ -201,10 +237,23 @@ class UpdateSurveySectionStateTool(Tool):
         sections = state.get("sections")
         if not isinstance(sections, dict) or section_id not in sections:
             return ToolResult(ok=False, content=f"Unknown survey section: {section_id}", error="unknown_section")
+        if params.status == "skipped" and not section_id.startswith(OPTIONAL_SURVEY_SECTION_PREFIXES):
+            return ToolResult(
+                ok=False,
+                content=f"Survey section {section_id} is mandatory and cannot be marked skipped.",
+                error="mandatory_section_skipped",
+            )
 
         section_path = params.section_path.strip() or f"drafts/survey/sections/{section_id}.tex"
         sections[section_id]["status"] = params.status
         sections[section_id]["file"] = section_path
+        sections[section_id]["input_fingerprints"] = _input_fingerprints(
+            self.policy.workspace_dir,
+            {
+                "section_outline": str(sections[section_id].get("outline_file") or f"drafts/survey/section_outlines/{section_id}.md"),
+                "section_file": section_path,
+            },
+        )
         if params.note.strip():
             sections[section_id]["note"] = params.note.strip()
         log = state.setdefault("revision_log", [])
@@ -228,10 +277,26 @@ class AssembleSurveyTool(Tool):
             state = _read_json(self.policy.resolve_read(params.state_path))
             output_path = self.policy.resolve_write(params.output_path)
             section_dir = self.policy.resolve_read(params.section_dir)
+            bib_path = self.policy.resolve_read(params.related_work_bib_path)
         except (ToolAccessDenied, FileNotFoundError, ValueError) as exc:
             return ToolResult(ok=False, content=str(exc), error="invalid_input")
         if not section_dir.exists() or not section_dir.is_dir():
             return ToolResult(ok=False, content=f"Section dir missing: {params.section_dir}", error="missing_sections")
+        if not bib_path.exists() or bib_path.stat().st_size <= 0:
+            return ToolResult(
+                ok=False,
+                content=(
+                    f"Missing bibliography for survey assembly: {params.related_work_bib_path}. "
+                    "Run/repair T3 related_work.bib before assembling survey.tex."
+                ),
+                error="missing_bibliography",
+            )
+        if "@" not in bib_path.read_text(encoding="utf-8", errors="replace"):
+            return ToolResult(
+                ok=False,
+                content=f"Survey bibliography has no BibTeX entries: {params.related_work_bib_path}",
+                error="invalid_bibliography",
+            )
 
         title = params.title.strip() or _infer_title(state)
         pieces = [
@@ -270,6 +335,25 @@ class AssembleSurveyTool(Tool):
         pieces.extend(["\\bibliographystyle{plainnat}", "\\bibliography{references}", "\\end{document}", ""])
         output_path.write_text("\n\n".join(pieces), encoding="utf-8")
         _copy_bibliography_for_survey(self.policy, params.related_work_bib_path, output_path.parent / "references.bib")
+        assembly_manifest = {
+            "semantics": "survey_assembly_input_fingerprints",
+            "input_fingerprints": _input_fingerprints(
+                self.policy.workspace_dir,
+                {
+                    "survey_state": params.state_path,
+                    "sections_dir": params.section_dir,
+                    "related_work_bib": params.related_work_bib_path,
+                    "survey_tex": params.output_path,
+                    "references_bib": "drafts/survey/references.bib",
+                    **{f"section_{sid}": str(((state.get("sections") or {}).get(sid) or {}).get("file") or "") for sid in included},
+                },
+            ),
+            "included_sections": included,
+        }
+        (output_path.parent / "survey_assembly_manifest.json").write_text(
+            json.dumps(assembly_manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
         return ToolResult(
             ok=not missing,
             content=f"Assembled survey.tex with {len(included)} sections." + (f" Missing: {missing}" if missing else ""),
@@ -327,6 +411,16 @@ class AuditSurveyCoverageTool(Tool):
         passed = all(item["passed"] or item["level"] == "WARN" for item in checks)
         audit = {
             "semantics": "deterministic_survey_coverage_audit_not_scientific_judgment",
+            "input_fingerprints": _input_fingerprints(
+                self.policy.workspace_dir,
+                {
+                    "survey_plan": params.survey_plan_path,
+                    "survey_state": params.state_path,
+                    "survey_tex": params.survey_tex_path,
+                    "related_work_bib": params.related_work_bib_path,
+                    "survey_assembly_manifest": "drafts/survey/survey_assembly_manifest.json",
+                },
+            ),
             "passed": passed,
             "checks": checks,
             "stats": {
@@ -365,9 +459,24 @@ class ExportSurveyForIdeationTool(Tool):
             summary_path = self.policy.resolve_write(params.summary_output_path)
         except (ToolAccessDenied, FileNotFoundError, ValueError) as exc:
             return ToolResult(ok=False, content=str(exc), error="invalid_input")
+        if audit.get("passed") is not True:
+            return ToolResult(
+                ok=False,
+                content="survey_audit.json has not passed; do not export survey insights to T4.",
+                error="survey_audit_not_passed",
+            )
 
         insights = {
             "semantics": "survey_insights_optional_ideation_fuel_not_gate",
+            "input_fingerprints": _input_fingerprints(
+                self.policy.workspace_dir,
+                {
+                    "survey_plan": params.survey_plan_path,
+                    "survey_state": params.survey_state_path,
+                    "survey_audit": params.survey_audit_path,
+                    "survey_tex": params.survey_tex_path,
+                },
+            ),
             "taxonomy": plan.get("taxonomy") or {},
             "evolution_narrative": plan.get("evolution_narrative") or "",
             "coverage_selfcheck": plan.get("coverage_selfcheck") or {},
@@ -417,6 +526,56 @@ class ExportSurveyForIdeationTool(Tool):
         ]
         summary_path.write_text("\n".join(summary), encoding="utf-8")
         return ToolResult(ok=True, content="Exported survey insights for T4.", data={"insights_output_path": params.insights_output_path})
+
+
+class BindSurveyReviewTool(Tool):
+    name = "bind_survey_review"
+    description = (
+        "Bind survey_review_actions.json to the current survey review inputs by adding input_fingerprints. "
+        "Call after writing survey_review.md and survey_review_actions.json."
+    )
+    parameters_schema = BindSurveyReviewParams
+
+    def __init__(self, policy: WorkspaceAccessPolicy):
+        self.policy = policy
+
+    async def execute(self, **kwargs: Any) -> ToolResult:
+        params = BindSurveyReviewParams(**kwargs)
+        try:
+            review_path = self.policy.resolve_read(params.review_path)
+            actions_path = self.policy.resolve_write(params.actions_path)
+            actions_read_path = self.policy.resolve_read(params.actions_path)
+        except (ToolAccessDenied, FileNotFoundError, ValueError) as exc:
+            return ToolResult(ok=False, content=str(exc), error="invalid_input")
+        if not review_path.exists() or review_path.stat().st_size <= 0:
+            return ToolResult(ok=False, content=f"Missing review file: {params.review_path}", error="missing_review")
+        try:
+            actions = json.loads(actions_read_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return ToolResult(ok=False, content=f"survey_review_actions.json parse failed: {exc}", error="invalid_actions_json")
+        if not isinstance(actions, dict):
+            return ToolResult(ok=False, content="survey_review_actions.json top-level must be an object", error="invalid_actions_json")
+        actions["input_fingerprints"] = _input_fingerprints(
+            self.policy.workspace_dir,
+            {
+                "survey_review": params.review_path,
+                "survey_plan": params.survey_plan_path,
+                "survey_state": params.state_path,
+                "survey_tex": params.survey_tex_path,
+                "survey_audit_json": params.survey_audit_json_path,
+                "sections_dir": params.sections_dir,
+                "synthesis_workbench": params.synthesis_workbench_path,
+                "domain_map": params.domain_map_path,
+                "comparison_table": params.comparison_table_path,
+                "related_work_bib": params.related_work_bib_path,
+            },
+        )
+        actions_path.write_text(json.dumps(actions, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return ToolResult(
+            ok=True,
+            content="Bound survey review actions to current input fingerprints.",
+            data={"actions_path": params.actions_path},
+        )
 
 
 class ExpandSurveyCorpusTool(Tool):
@@ -493,6 +652,49 @@ def _read_jsonl_optional(policy: WorkspaceAccessPolicy, rel_path: str) -> list[d
         return []
 
 
+def _input_fingerprints(workspace: Path, paths: dict[str, str]) -> dict[str, dict[str, Any]]:
+    fingerprints: dict[str, dict[str, Any]] = {}
+    for label, rel_path in paths.items():
+        path = workspace / rel_path
+        item: dict[str, Any] = {"path": rel_path, "exists": path.exists()}
+        if path.exists() and path.is_file():
+            item["sha256"] = _sha256_file(path)
+            item["kind"] = "file"
+        elif path.exists() and path.is_dir():
+            item["kind"] = "dir"
+            children = [child for child in path.rglob("*") if child.is_file()]
+            item["file_count"] = len(children)
+            item["sha256"] = _sha256_dir(path, children)
+        fingerprints[label] = item
+    return fingerprints
+
+
+def _sha256_dir(root: Path, children: list[Path]) -> str:
+    digest = hashlib.sha256()
+    for child in sorted(children, key=lambda p: p.relative_to(root).as_posix()):
+        rel = child.relative_to(root).as_posix()
+        digest.update(rel.encode("utf-8"))
+        digest.update(b"\0")
+        try:
+            digest.update(str(child.stat().st_size).encode("ascii"))
+            digest.update(b"\0")
+            with child.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+        except OSError:
+            digest.update(b"<unreadable>")
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _coerce_outline(raw: object) -> list[dict[str, Any]]:
     if not isinstance(raw, list):
         return []
@@ -528,6 +730,37 @@ def _theme_entries(outline: list[dict[str, Any]], *, max_theme_sections: int) ->
         }
     ]
     return taxonomy_entries[:max_theme_sections]
+
+
+def _theme_entry_overflow_count(outline: list[dict[str, Any]], *, max_theme_sections: int) -> int:
+    themes = [
+        item
+        for item in outline
+        if str(item.get("section_id") or "").lower().startswith("theme")
+        or "theme" in str(item.get("section_id") or "").lower()
+    ]
+    if themes:
+        return max(0, len(themes) - max_theme_sections)
+    taxonomy_entries = [
+        item
+        for item in outline
+        if str(item.get("section_id") or "").lower() not in {
+            "introduction",
+            "intro",
+            "background",
+            "scope",
+            "taxonomy",
+            "comparison",
+            "comparative_analysis",
+            "challenges",
+            "open_challenges",
+            "future",
+            "future_directions",
+            "conclusion",
+            "abstract",
+        }
+    ]
+    return max(0, len(taxonomy_entries) - max_theme_sections)
 
 
 def _matching_plan_entry(

@@ -90,7 +90,21 @@ _LATEX_CITATION_COMMAND_RE = re.compile(
     flags=re.IGNORECASE,
 )
 _AUTHOR_YEAR_CITATION_RE = re.compile(
-    r"\b[A-Z][A-Za-z][A-Za-z'\-]+(?:\s+et\s+al\.)?\s*(?:\(|,\s*)20\d{2}\)?"
+    r"(?:"
+    r"\b[A-Z][A-Za-z][A-Za-z'\-]+"
+    r"(?:\s+(?:et\s+al\.|and\s+[A-Z][A-Za-z][A-Za-z'\-]+|&\s+[A-Z][A-Za-z][A-Za-z'\-]+))?"
+    r"\s*\((?:19|20)\d{2}\)"
+    r"|"
+    r"\b[A-Z][A-Za-z][A-Za-z'\-]+"
+    r"(?:\s+(?:et\s+al\.|and\s+[A-Z][A-Za-z][A-Za-z'\-]+|&\s+[A-Z][A-Za-z][A-Za-z'\-]+))?"
+    r"\s*,\s*(?:19|20)\d{2}"
+    r"|"
+    r"\([A-Z][A-Za-z][A-Za-z'\-]+"
+    r"(?:\s+(?:et\s+al\.|and\s+[A-Z][A-Za-z][A-Za-z'\-]+|&\s+[A-Z][A-Za-z][A-Za-z'\-]+))?"
+    r"\s*,\s*(?:19|20)\d{2}(?:\s*;\s*[A-Z][A-Za-z][A-Za-z'\-]+"
+    r"(?:\s+(?:et\s+al\.|and\s+[A-Z][A-Za-z][A-Za-z'\-]+|&\s+[A-Z][A-Za-z][A-Za-z'\-]+))?"
+    r"\s*,\s*(?:19|20)\d{2})*\)"
+    r")"
 )
 _NUMERIC_CITATION_RE = re.compile(r"\[(?:\d{1,3})(?:\s*[,;-]\s*\d{1,3})*\]")
 
@@ -327,6 +341,14 @@ class BuildManuscriptRevisionPatchesParams(BaseModel):
         description="Patch list output path. Defaults to drafts/patches/round_{round_num}_patches.json.",
     )
     include_low: bool = Field(default=True, description="Include Low-severity issues in the patch list.")
+
+
+class BindReviewRoundParams(BaseModel):
+    round_num: int = Field(default=1, description="Review round number.")
+    output_path: str = Field(
+        default="",
+        description="Fingerprint JSON path. Defaults to drafts/review_rounds/round_{round_num}_fingerprints.json.",
+    )
 
 
 class BuildManuscriptResourceIndexTool(Tool):
@@ -946,6 +968,14 @@ class AuditWritingCraftTool(Tool):
                 cdr_ledger=cdr_ledger,
                 venue_style=params.venue_style,
             )
+            audit_doc["json"]["input_fingerprints"] = craft_audit_input_fingerprints(
+                self.policy.workspace_dir,
+                paper_path=params.paper_path,
+                sections_dir=params.sections_dir,
+                paper_state_path=params.paper_state_path,
+                alignment_matrix_path=params.alignment_matrix_path,
+                cdr_claim_ledger_path=params.cdr_claim_ledger_path,
+            )
             output_path = self.policy.resolve_write(params.output_path)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(audit_doc["markdown"], encoding="utf-8")
@@ -1047,6 +1077,41 @@ class BuildManuscriptRevisionPatchesTool(Tool):
             ok=True,
             content=f"Wrote revision patch list to {output_rel} with {len(patch_doc['patches'])} patches.",
             data={"path": output_rel, "patch_count": len(patch_doc["patches"]), "patches": patch_doc["patches"]},
+        )
+
+
+class BindReviewRoundTool(Tool):
+    name = "bind_review_round"
+    description = (
+        "Bind a T8 reviewer round to the current manuscript, audit, evidence, and bibliography inputs. "
+        "Call after writing round_N.md and round_N_sections/*.md."
+    )
+    parameters_schema = BindReviewRoundParams
+    timeout_seconds = 10.0
+
+    def __init__(self, policy: WorkspaceAccessPolicy):
+        self.policy = policy
+
+    async def execute(self, **kwargs: Any) -> ToolResult:
+        params = BindReviewRoundParams(**kwargs)
+        round_num = max(1, int(params.round_num or 1))
+        output_rel = params.output_path or f"drafts/review_rounds/round_{round_num}_fingerprints.json"
+        payload = {
+            "version": "1.0",
+            "semantics": "review_round_input_fingerprints",
+            "round": round_num,
+            "input_fingerprints": review_round_input_fingerprints(self.policy.workspace_dir),
+        }
+        try:
+            output = self.policy.resolve_write(output_rel)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        except ToolAccessDenied as exc:
+            return ToolResult(ok=False, content=str(exc), error="access_denied")
+        return ToolResult(
+            ok=True,
+            content=f"Bound review round {round_num} to current input fingerprints.",
+            data={"path": output_rel, "round": round_num},
         )
 
 
@@ -1246,7 +1311,7 @@ def build_section_plan(index: dict[str, Any], *, target_venue: str = "", paper_t
             "novelty/must_add_baselines.md",
         ],
         ["setup", "datasets", "baselines", "metrics", "main results", "ablations"],
-        ["Every number must come from results artifacts; mark missing stats as TODO rather than inventing."],
+        ["Every number must come from results artifacts; if stats are missing, remove or weaken the claim in final TeX and record the evidence boundary in natural language."],
     )
     section(
         "analysis",
@@ -1442,7 +1507,7 @@ def build_evidence_and_figure_plans(
             "LLM must fill claim wording; this plan only lists slots and provenance.",
             "Every numeric claim must point to result_metrics or an experiment artifact.",
             "Every citation claim must use keys from bib_keys.",
-            "Unsupported slots must be marked as TODO or limitation, not invented.",
+            "Unsupported slots remain unsupported in this plan; final TeX must remove or weaken those claims, or describe the evidence boundary in natural-language limitations.",
         ],
     }
 
@@ -1505,7 +1570,7 @@ def build_evidence_and_figure_plans(
             "Generate plots from results/ablations/run artifacts, not from manuscript prose.",
             "Captions must state data source and metric definitions.",
             "Use accessible colors and avoid overloaded multi-metric figures.",
-            "If data is missing, leave the planned visual as TODO and explain the limitation.",
+            "If data is missing, keep the visual ungenerated in this plan and remove unsupported figure/table references from final TeX.",
         ],
     }
     return evidence_plan, figure_plan
@@ -1628,8 +1693,8 @@ def build_alignment_matrix_seed(
         "rules": [
             "This is a mechanical seed; Writer LLM must complete motivation, related_gap, design_choice, experiment, and analysis after reading artifacts.",
             "Rows are contribution lanes, not raw CDR evidence slots; final contribution wording belongs in the Writer outline.",
-            "Each final contribution bullet in Introduction should map to exactly one cid.",
-            "Each section paragraph that fulfills a cid must start with a LaTeX comment like % [C1].",
+            "CIDs are internal alignment identifiers for tools/review only; do not emit C1/C2 labels or CID trace comments in final TeX prose.",
+            "Each final contribution bullet in Introduction should map conceptually to one cid in paper_state/alignment_matrix, but the bullet should use natural prose.",
             "Do not treat TODO or LLM_REVIEW_REQUIRED cells as validated scientific facts.",
         ],
     }
@@ -1716,6 +1781,7 @@ def build_paper_state(
             "Citation keys must come from shared_facts.bib_keys.",
             "If a section needs a missing fact, read the source artifact and update the state with provenance rather than inventing it.",
             "Use alignment_matrix CIDs as section-to-section anchors; fill academic wording with LLM judgment, not tool guesses.",
+            "Do not write visible C1/C2 labels or LaTeX CID trace comments in section TeX; keep traceability in paper_state/alignment_matrix.",
             "Tools maintain state and assembly; LLM writes section prose and scientific reasoning.",
         ],
         "revision_log": [],
@@ -1791,16 +1857,16 @@ def build_section_outlines(
         lines.extend(["", "## CDR Responsibility"])
         lines.append(f"- {_section_cdr_responsibility(section_id)}")
         lines.append("- Use `drafts/cdr_claim_ledger.json` as a ledger seed; do not treat it as final prose.")
-        lines.extend(["", "## Responsible CIDs"])
+        lines.extend(["", "## Internal Alignment IDs"])
         responsible = _responsible_cids_for_section(section_id, alignment_rows)
         if responsible:
             for item in responsible:
                 cid = item.get("cid")
                 column = item.get("column")
                 value = item.get("value")
-                lines.append(f"- `{cid}`: fulfill `{column}`; current seed = {value!r}")
+                lines.append(f"- `{cid}`: internal `{column}` alignment lane; current seed = {value!r}")
         else:
-            lines.append("- No seeded cid found; if the paper has a contribution, read `drafts/alignment_matrix.json` and fill the missing mapping.")
+            lines.append("- No seeded internal alignment id found; if the paper has a contribution, read `drafts/alignment_matrix.json` and fill the missing mapping.")
         lines.extend(["", "## Claim Slots"])
         for slot in slots_by_section.get(section_id, []):
             lines.append(
@@ -1829,9 +1895,9 @@ def build_section_outlines(
                 "- Write only this section.",
                 "- Do not include `\\documentclass`, `\\begin{document}`, or `\\end{document}`.",
                 "- Use only BibTeX keys and result numbers traceable through `paper_state.json` or source artifacts.",
-                "- Prefix paragraphs that fulfill a contribution with `% [Cn]` using the CIDs from `drafts/alignment_matrix.json`.",
+                "- Do not print internal CIDs such as `C1`, `[C1]`, or `% [C1]` in this TeX section; use natural prose and keep traceability in `paper_state.json` / `alignment_matrix.json`.",
                 "- Keep CDR fields as reasoning scaffolds; the Writer LLM must decide the final scientific wording.",
-                "- Mark unsupported material as TODO or limitation instead of inventing it.",
+                "- For unsupported material, delete or weaken the claim in final TeX, or state the evidence boundary in natural-language limitations; do not emit literal TODO/TBD placeholders.",
                 "",
             ]
         )
@@ -2068,6 +2134,29 @@ def audit_writing_craft(
         not has_formal_citation(abstract),
         "Abstract must not contain formal citations; cite prior work in Introduction or Related Work.",
     )
+    internal_label_hits = _internal_label_leakages(paper, cids)
+    add(
+        "no_internal_label_leakage",
+        "FAIL",
+        not internal_label_hits,
+        (
+            "Final TeX should not expose internal alignment IDs such as C1/[C1] or CID trace comments; "
+            f"hits={internal_label_hits[:8]}"
+            if internal_label_hits
+            else "No internal C1/C2/CID labels detected in final TeX."
+        ),
+    )
+    placeholder_hits = _placeholder_hits(paper)
+    add(
+        "no_placeholder_tokens",
+        "FAIL",
+        not placeholder_hits,
+        (
+            "Final TeX still contains planning placeholders: " + ", ".join(placeholder_hits[:10])
+            if placeholder_hits
+            else "No TODO/TBD/LLM_REVIEW_REQUIRED/PLACEHOLDER tokens detected in final TeX."
+        ),
+    )
     word_count = len(re.findall(r"[A-Za-z]+(?:[-'][A-Za-z]+)?", abstract))
     if venue_style == "is":
         passed = 200 <= word_count <= 300
@@ -2082,41 +2171,17 @@ def audit_writing_craft(
         if not cid:
             continue
         add(
-            f"cid_{cid}_intro_anchor",
-            "WARN",
-            _section_has_cid_anchor(intro, cid),
-            f"Introduction may mark motivation/contribution paragraph with % [{cid}] for traceability.",
-        )
-        add(
-            f"cid_{cid}_related_anchor",
-            "WARN",
-            _section_has_cid_anchor(related, cid),
-            f"Related Work may map a gap/tension paragraph to % [{cid}] for traceability.",
-        )
-        add(
-            f"cid_{cid}_experiment_anchor",
-            "WARN",
-            _section_has_cid_anchor(experiments, cid),
-            f"Experiments may map an RQ/result paragraph to % [{cid}] for traceability.",
-        )
-        add(
             f"cid_{cid}_experiment_artifact",
             "WARN",
             _row_experiment_refs_present(row, experiments),
-            f"Experiments may mention table/metric/ablation refs seeded for % [{cid}] when the row has concrete evidence.",
-        )
-        add(
-            f"cid_{cid}_analysis_anchor",
-            "WARN",
-            _section_has_cid_anchor(analysis, cid),
-            f"Analysis should interpret evidence for % [{cid}].",
+            f"Experiments should mention the table/metric/ablation refs seeded for internal alignment id {cid} when the row has concrete evidence.",
         )
 
     add(
         "no_orphan_related_work",
         "WARN",
-        _related_work_topics_have_cids(related),
-        "Related Work subsections should map to at least one cid anchor.",
+        _related_work_topics_are_substantive(related),
+        "Related Work subsections should contain citations, tension/nearest-prior-work discussion, or enough substantive contrastive prose.",
     )
     add(
         "related_work_laundry_list",
@@ -2195,6 +2260,14 @@ def _write_style_variant_craft_audits(
             alignment_matrix=alignment_matrix,
             cdr_ledger=cdr_ledger,
             venue_style=style,
+        )
+        audit_doc["json"]["input_fingerprints"] = craft_audit_input_fingerprints(
+            policy.workspace_dir,
+            paper_path=paper_rel,
+            sections_dir=params.sections_dir,
+            paper_state_path=params.paper_state_path,
+            alignment_matrix_path=params.alignment_matrix_path,
+            cdr_claim_ledger_path=params.cdr_claim_ledger_path,
         )
         markdown_rel = f"drafts/{style}/craft_audit.md"
         markdown_path = policy.resolve_write(markdown_rel)
@@ -2617,7 +2690,7 @@ def _count_intro_contributions(text: str) -> int:
             break
     if count:
         return count
-    return len(set(re.findall(r"%\s*\[(C\d+(?:\s*,\s*C\d+)*)\]", text, flags=re.IGNORECASE)))
+    return 0
 
 
 def _count_intro_gaps(text: str) -> int:
@@ -2628,6 +2701,163 @@ def _count_intro_gaps(text: str) -> int:
 def _section_has_cid_anchor(text: str, cid: str) -> bool:
     pattern = r"%\s*\[[^\]]*\b" + re.escape(cid) + r"\b[^\]]*\]"
     return bool(re.search(pattern, text, flags=re.IGNORECASE))
+
+
+def _internal_label_leakages(paper: str, cids: list[str]) -> list[str]:
+    """Return short snippets where internal alignment IDs leak into final TeX.
+
+    CIDs are intentionally still present in JSON artifacts. In `paper.tex`,
+    however, they encourage mechanical prose such as "[C1]" or "C1:" and make
+    the manuscript look like a planning document. We keep the detector narrow:
+    it only checks the known alignment IDs and common CID surface forms.
+    """
+
+    if not paper.strip() or not cids:
+        return []
+    cid_values = [str(cid).upper() for cid in cids if re.fullmatch(r"C\d+", str(cid).upper())]
+    if not cid_values:
+        return []
+    known = [re.escape(cid) for cid in cid_values]
+    cid_alt = "|".join(known)
+    cid_nums = sorted({str(int(cid[1:])) for cid in cid_values}, key=int)
+    num_alt = "|".join(re.escape(num) for num in cid_nums)
+    patterns = [
+        rf"%\s*\[[^\]]*\b(?:{cid_alt})\b[^\]]*\]",
+        rf"\[(?:{cid_alt})(?:\s*,\s*(?:{cid_alt}))*\]",
+        rf"\bC0*(?:{num_alt})\s*[:：]",
+        rf"\bC0*(?:{num_alt})\s*[\.)]",
+        rf"\b(?:{cid_alt})\s*[:：]",
+        rf"\b(?:{cid_alt})\s*[\.)]",
+        rf"\b(?:{cid_alt})\b(?=\s+(?:contribution|claim|gap|motivation|rationale|experiment|analysis)\b)",
+        rf"\b(?:{cid_alt})\b(?=\s+(?:is|are|shows?|supports?)\b)",
+        rf"\b(?:contribution|claim|gap|motivation|rationale|experiment|analysis)\s+(?:{cid_alt})\b",
+        rf"\bCID\s*(?:-|:|：)?\s*(?:{cid_alt}|0*(?:{num_alt}))\b",
+        rf"\binternal alignment id\s*(?:-|:|：)?\s*(?:{cid_alt}|0*(?:{num_alt}))\b",
+        rf"\binternal alignment (?:id|lane)\s*(?:-|:|：)?\s*(?:{cid_alt}|0*(?:{num_alt}))\b",
+    ]
+    hits: list[str] = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, paper, flags=re.IGNORECASE):
+            snippet = re.sub(r"\s+", " ", match.group(0)).strip()
+            if snippet and snippet not in hits:
+                hits.append(snippet[:120])
+            if len(hits) >= 20:
+                return hits
+    return hits
+
+
+def _placeholder_hits(paper: str) -> list[str]:
+    hits: list[str] = []
+    for pattern in [
+        r"\bTODO\b",
+        r"\bTBD\b",
+        r"\bPLACEHOLDER\b",
+        r"\bLLM_REVIEW_REQUIRED\b",
+        r"\bLLM\s+review\s+required\b",
+    ]:
+        for match in re.finditer(pattern, paper or "", flags=re.IGNORECASE):
+            value = re.sub(r"\s+", " ", match.group(0)).strip()
+            if value and value not in hits:
+                hits.append(value)
+    return hits
+
+
+def craft_audit_input_fingerprints(
+    workspace: Path,
+    *,
+    paper_path: str = "drafts/paper.tex",
+    sections_dir: str = "drafts/sections",
+    paper_state_path: str = "drafts/paper_state.json",
+    alignment_matrix_path: str = "drafts/alignment_matrix.json",
+    cdr_claim_ledger_path: str = "drafts/cdr_claim_ledger.json",
+) -> dict[str, dict[str, Any]]:
+    paths = {
+        "paper": paper_path,
+        "sections_dir": sections_dir,
+        "paper_state": paper_state_path,
+        "alignment_matrix": alignment_matrix_path,
+        "cdr_claim_ledger": cdr_claim_ledger_path,
+    }
+    fingerprints: dict[str, dict[str, Any]] = {}
+    for label, rel_path in paths.items():
+        path = workspace / rel_path
+        item: dict[str, Any] = {"path": rel_path, "exists": path.exists()}
+        if path.exists() and path.is_file():
+            item["kind"] = "file"
+            item["sha256"] = _sha256_path(path)
+        elif path.exists() and path.is_dir():
+            item["kind"] = "dir"
+            item["file_count"] = len([child for child in path.rglob("*") if child.is_file()])
+            item["sha256"] = _sha256_directory(path, workspace)
+        fingerprints[label] = item
+    return fingerprints
+
+
+REVIEW_ROUND_INPUT_PATHS = {
+    "paper": "drafts/paper.tex",
+    "manuscript_audit": "drafts/manuscript_audit.md",
+    "craft_audit": "drafts/craft_audit.json",
+    "paper_claim_audit": "drafts/paper_claim_audit.json",
+    "result_to_claim": "drafts/result_to_claim.json",
+    "experiment_evidence_pack": "drafts/experiment_evidence_pack.json",
+    "self_check": "drafts/self_check.md",
+    "cdr_claim_ledger": "drafts/cdr_claim_ledger.json",
+    "alignment_matrix": "drafts/alignment_matrix.json",
+    "related_work_bib": "literature/related_work.bib",
+    "results_summary": "experiments/results_summary.json",
+}
+
+
+def review_round_input_fingerprints(workspace: Path) -> dict[str, dict[str, Any]]:
+    fingerprints: dict[str, dict[str, Any]] = {}
+    for label, rel_path in REVIEW_ROUND_INPUT_PATHS.items():
+        path = workspace / rel_path
+        item: dict[str, Any] = {"path": rel_path, "exists": path.exists()}
+        if path.exists() and path.is_file():
+            item["kind"] = "file"
+            item["sha256"] = _sha256_path(path)
+            item["size"] = path.stat().st_size
+        elif path.exists() and path.is_dir():
+            item["kind"] = "dir"
+            item["file_count"] = len([child for child in path.rglob("*") if child.is_file()])
+            item["sha256"] = _sha256_directory(path, workspace)
+        fingerprints[label] = item
+    return fingerprints
+
+
+def validate_review_round_input_fingerprints(
+    workspace: Path,
+    fingerprints: object,
+) -> tuple[bool, str | None]:
+    if not isinstance(fingerprints, dict):
+        return False, "review fingerprints 缺少 input_fingerprints"
+    current = review_round_input_fingerprints(workspace)
+    stale: list[str] = []
+    for label, item in current.items():
+        previous = fingerprints.get(label)
+        if not isinstance(previous, dict):
+            stale.append(label)
+            continue
+        if bool(previous.get("exists")) != bool(item.get("exists")):
+            stale.append(label)
+            continue
+        if item.get("exists") and str(previous.get("sha256") or "") != str(item.get("sha256") or ""):
+            stale.append(label)
+    if stale:
+        return False, "review 输入已变化，必须重新生成本轮 review: " + ", ".join(stale[:8])
+    return True, None
+
+
+def _sha256_directory(path: Path, workspace: Path) -> str:
+    payload: list[dict[str, str]] = []
+    for child in sorted(item for item in path.rglob("*") if item.is_file()):
+        payload.append(
+            {
+                "path": _rel_path(workspace, child),
+                "sha256": _sha256_path(child),
+            }
+        )
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
 def _row_experiment_refs_present(row: dict[str, Any], experiments_text: str) -> bool:
@@ -2657,40 +2887,31 @@ def _row_experiment_refs_present(row: dict[str, Any], experiments_text: str) -> 
     return any(ref.lower() in low for ref in concrete_refs)
 
 
-def _related_work_topics_have_cids(text: str) -> bool:
+def _related_work_topics_are_substantive(text: str) -> bool:
     headings = list(re.finditer(r"\\subsection\*?\{[^}]+\}", text))
     if not headings:
         return True
     for idx, match in enumerate(headings):
         end = headings[idx + 1].start() if idx + 1 < len(headings) else len(text)
         chunk = text[match.start():end]
-        if not re.search(r"%\s*\[[^\]]*\bC\d+\b[^\]]*\]", chunk, flags=re.IGNORECASE):
+        body = re.sub(r"\\subsection\*?\{[^}]+\}", "", chunk)
+        has_citation = bool(_extract_latex_cites(body))
+        has_tension_word = bool(
+            re.search(
+                r"rationale|tension|gap|contrast|however|whereas|limitation|nearest prior|"
+                r"张力|缺口|局限|差异|相比|然而",
+                body,
+                flags=re.IGNORECASE,
+            )
+        )
+        word_count = len(re.findall(r"[A-Za-z]+|[\u4e00-\u9fff]", body))
+        if not (has_citation or has_tension_word or word_count >= 80):
             return False
     return True
 
 
 def _related_work_consumes_pre_t5_signals(text: str, rows: list[dict[str, Any]]) -> bool:
     lowered = text.lower()
-    if any(
-        token in lowered
-        for token in (
-            "nearest prior",
-            "nearest-prior",
-            "closest prior",
-            "adjacent transfer",
-            "adjacent-transfer",
-            "cross-paper tension",
-            "design rationale",
-            "competing rationale",
-            "transferable mechanism",
-            "邻接",
-            "可迁移",
-            "最近工作",
-            "设计论证",
-        )
-    ):
-        return True
-
     candidates: list[str] = []
     for row in rows:
         related_gap = row.get("related_gap") if isinstance(row, dict) else {}

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -27,6 +28,11 @@ from ..runtime.agent import (
     ToolPolicyOverride,
 )
 from ..runtime.task_recovery import prepare_task_resume_artifacts
+from ..runtime.artifact_fingerprints import (
+    build_input_fingerprints,
+    validate_input_fingerprints,
+    validate_t45_fingerprint_report,
+)
 from ..schemas.state import BudgetCumulative, GateState, StateYaml, TaskHistoryEntry
 from .gate_presenter import build_presentation
 from .task_io_contract import get_task_io
@@ -39,6 +45,93 @@ from ..tools.external_experiment import (
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _stable_json_fingerprint(payload: dict[str, Any]) -> str:
+    normalized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+_T36_SURVEY_GATE_INPUT_PATHS = {
+    "project": "project.yaml",
+    "synthesis": "literature/synthesis.md",
+    "synthesis_workbench": "literature/synthesis_workbench.json",
+    "domain_map": "literature/domain_map.json",
+    "comparison_table": "literature/comparison_table.csv",
+    "seed_outline_profile": "user_seeds/seed_outline_profile.json",
+    "seed_ideas": "user_seeds/seed_ideas.md",
+    "seed_constraints": "user_seeds/seed_constraints.md",
+    "seed_external_resources": "user_seeds/seed_external_resources.jsonl",
+}
+
+
+_T36_CORPUS_GATE_INPUT_PATHS = {
+    "survey_plan": "drafts/survey/survey_plan.json",
+    "survey_state": "drafts/survey/survey_state.json",
+    "synthesis": "literature/synthesis.md",
+    "synthesis_workbench": "literature/synthesis_workbench.json",
+    "domain_map": "literature/domain_map.json",
+    "comparison_table": "literature/comparison_table.csv",
+    "paper_notes": "literature/paper_notes",
+    "paper_notes_abstract": "literature/paper_notes_abstract",
+    "metadata_triage": "literature/metadata_triage.md",
+    "related_work_bib": "literature/related_work.bib",
+}
+
+
+def _t4_gate1_candidate_pool_fingerprints(workspace_dir: Path) -> dict[str, dict[str, Any]]:
+    paths = {
+        "pass1_forward_candidates": "ideation/_pass1_forward_candidates.json",
+        "pass2_grounding_review": "ideation/_pass2_grounding_review.json",
+        "candidate_directions": "ideation/_candidate_directions.json",
+        "gate1_selection_brief": "ideation/_gate1_selection_brief.md",
+        "bridge_coverage_review": "ideation/bridge_coverage_review.json",
+    }
+    fingerprints: dict[str, dict[str, Any]] = {}
+    for label, rel in paths.items():
+        path = workspace_dir / rel
+        item: dict[str, Any] = {"path": rel, "exists": path.exists()}
+        if path.exists() and path.is_file():
+            digest = hashlib.sha256()
+            with path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            item["sha256"] = digest.hexdigest()
+            item["size"] = path.stat().st_size
+        fingerprints[label] = item
+    return fingerprints
+
+
+def _gate1_pool_fingerprint_changed(
+    stored: object,
+    current: dict[str, dict[str, Any]],
+) -> list[str]:
+    if not isinstance(stored, dict):
+        return []
+    changed: list[str] = []
+    for label, item in current.items():
+        previous = stored.get(label)
+        if not isinstance(previous, dict):
+            changed.append(label)
+            continue
+        if bool(previous.get("exists")) != bool(item.get("exists")):
+            changed.append(label)
+            continue
+        if item.get("exists") and str(previous.get("sha256") or "") != str(item.get("sha256") or ""):
+            changed.append(label)
+    return changed
+
+
+def _file_newer_than_existing_inputs(output: Path, inputs: list[Path]) -> bool:
+    """Return true when an output can safely route against existing inputs."""
+
+    if not output.exists() or output.stat().st_size <= 0:
+        return False
+    output_mtime = output.stat().st_mtime
+    for path in inputs:
+        if path.exists() and path.stat().st_size > 0 and path.stat().st_mtime > output_mtime:
+            return False
+    return True
 
 
 def _normalized_tags(value: Any) -> set[str]:
@@ -361,6 +454,8 @@ class StateMachine:
             model_dump(state, mode="json"),
             workspace_dir or Path("."),
         )
+        if node.task_id == "T4-GATE1" and workspace_dir is not None:
+            presentation["candidate_pool_fingerprints"] = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
         state.pending_gate = GateState(
             gate_id=gate_id,
             presented_at=_now_iso(),
@@ -477,6 +572,8 @@ class StateMachine:
                 model_dump(state, mode="json"),
                 workspace_dir or Path("."),
             )
+            if state.current_task == "T4-GATE1" and workspace_dir is not None:
+                presentation["candidate_pool_fingerprints"] = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
             state.pending_gate = GateState(
                 gate_id=gate_id,
                 presented_at=_now_iso(),
@@ -499,6 +596,32 @@ class StateMachine:
         if state.pending_gate is None:
             raise ValueError("No pending gate to resolve")
         node = self.nodes[state.current_task]
+        if node.task_id == "T4-GATE1" and workspace_dir is not None:
+            current_pool = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
+            previous_pool = (state.pending_gate.presentation or {}).get("candidate_pool_fingerprints")
+            changed = _gate1_pool_fingerprint_changed(previous_pool, current_pool)
+            if changed:
+                gate_spec = self._find_gate(self._gate_id_for_node(node))
+                presentation = build_presentation(
+                    gate_spec,
+                    model_dump(state, mode="json"),
+                    workspace_dir,
+                )
+                presentation["candidate_pool_fingerprints"] = current_pool
+                presentation["stale_reason"] = (
+                    "T4-GATE1 candidate pool changed while waiting for human selection: "
+                    + ", ".join(changed[:8])
+                )
+                state.pending_gate = GateState(
+                    gate_id=self._gate_id_for_node(node),
+                    presented_at=_now_iso(),
+                    presentation=presentation,
+                    options=list(gate_spec.get("options", [])),
+                )
+                state.status = "WAITING_HUMAN"
+                state.paused_at = _now_iso()
+                state.last_error = presentation["stale_reason"]
+                return state
         next_task = self._resolve_branch(node, gate_result, state, workspace_dir=workspace_dir)
         self._persist_immediate_gate_result(node, gate_result, next_task, workspace_dir)
         if node.task_id == "T5-EXTERNAL-WAIT" and workspace_dir is not None and next_task == "T7-INGEST":
@@ -629,6 +752,7 @@ class StateMachine:
                     if write_survey
                     else "skip survey branch and continue T4"
                 ),
+                "input_fingerprints": build_input_fingerprints(workspace_dir, _T36_SURVEY_GATE_INPUT_PATHS),
                 "decided_at": _now_iso(),
             }
             path = workspace_dir / "drafts" / "survey" / "decision.json"
@@ -646,6 +770,7 @@ class StateMachine:
                     if scope == "complete"
                     else "use existing T2/T3 corpus only"
                 ),
+                "input_fingerprints": build_input_fingerprints(workspace_dir, _T36_CORPUS_GATE_INPUT_PATHS),
                 "decided_at": _now_iso(),
             }
             path = workspace_dir / "drafts" / "survey" / "corpus_decision.json"
@@ -654,12 +779,23 @@ class StateMachine:
             return
         if node.task_id == "T4-GATE1":
             option_id = str(gate_result.get("option_id") or gate_result.get("key") or "")
+            captured = gate_result.get("captured") or {}
+            candidate_pool_fingerprints = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
+            fingerprint_payload = {
+                "semantics": "t4_gate1_selection_fingerprint",
+                "gate_id": self._gate_id_for_node(node),
+                "selected_option": option_id,
+                "captured": captured,
+                "candidate_pool_fingerprints": candidate_pool_fingerprints,
+            }
             payload = {
                 "semantics": "t4_gate1_user_selection_for_candidate_pool",
                 "task_id": node.task_id,
                 "gate_id": self._gate_id_for_node(node),
                 "selected_option": option_id,
-                "captured": gate_result.get("captured") or {},
+                "captured": captured,
+                "candidate_pool_fingerprints": candidate_pool_fingerprints,
+                "selection_fingerprint": _stable_json_fingerprint(fingerprint_payload),
                 "next_task": next_task,
                 "decided_at": _now_iso(),
             }
@@ -765,6 +901,21 @@ class StateMachine:
         audit_path = workspace_dir / "ideation" / "novelty_audit.md"
         if not audit_path.exists():
             return human_review
+        if not _file_newer_than_existing_inputs(
+            audit_path,
+            [
+                workspace_dir / "ideation" / "hypotheses.md",
+                workspace_dir / "ideation" / "idea_scorecard.yaml",
+                workspace_dir / "ideation" / "gate_decisions.json",
+                workspace_dir / "literature" / "synthesis.md",
+                workspace_dir / "literature" / "synthesis_workbench.json",
+                workspace_dir / "literature" / "comparison_table.csv",
+            ],
+        ):
+            return human_review
+        ok, _err = validate_t45_fingerprint_report(workspace_dir)
+        if not ok:
+            return human_review
 
         text = audit_path.read_text(encoding="utf-8", errors="replace")
         verdict_text = _extract_t45_final_gate_verdict(text)
@@ -799,6 +950,16 @@ class StateMachine:
         data = self._read_json_dict(path)
         if data is None:
             return "T3.6-GATE-SURVEY" if "T3.6-GATE-SURVEY" in self.nodes else "failed"
+        fingerprints = data.get("input_fingerprints")
+        if fingerprints is not None:
+            ok, _ = validate_input_fingerprints(
+                workspace_dir,
+                fingerprints,
+                _T36_SURVEY_GATE_INPUT_PATHS,
+                label_for_error="T3.6 survey gate decision",
+            )
+            if not ok:
+                return "T3.6-GATE-SURVEY" if "T3.6-GATE-SURVEY" in self.nodes else "failed"
         decision = data.get("write_survey")
         if isinstance(decision, str):
             decision = decision.strip().lower() in {"yes", "true", "1", "write", "survey", "撰写", "是"}
@@ -813,6 +974,16 @@ class StateMachine:
         data = self._read_json_dict(path)
         if data is None:
             return "T3.6-GATE-CORPUS" if "T3.6-GATE-CORPUS" in self.nodes else "failed"
+        fingerprints = data.get("input_fingerprints")
+        if fingerprints is not None:
+            ok, _ = validate_input_fingerprints(
+                workspace_dir,
+                fingerprints,
+                _T36_CORPUS_GATE_INPUT_PATHS,
+                label_for_error="T3.6 corpus gate decision",
+            )
+            if not ok:
+                return "T3.6-GATE-CORPUS" if "T3.6-GATE-CORPUS" in self.nodes else "failed"
         scope = str(data.get("scope") or data.get("corpus_scope") or "").strip().lower()
         if scope in {"complete", "full", "expand", "完整", "补检", "定向补检"}:
             return "T3.6-EXPAND" if "T3.6-EXPAND" in self.nodes else "T3.6-STATE"

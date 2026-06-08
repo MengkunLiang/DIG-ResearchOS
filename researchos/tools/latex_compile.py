@@ -349,8 +349,12 @@ def _compile_dependency_fingerprint(workspace: Path, tex_abs: Path) -> dict[str,
 
     base_dir = tex_abs.parent
     files: list[dict[str, Any]] = []
+    report_rel = _compile_report_target_for_tex(_rel_to_workspace(workspace, tex_abs))
+    report_abs = (workspace / report_rel).resolve() if report_rel else None
     if base_dir.exists():
         for path in sorted(item for item in base_dir.rglob("*") if item.is_file()):
+            if report_abs is not None and path.resolve() == report_abs:
+                continue
             if _is_generated_compile_artifact(path):
                 continue
             try:

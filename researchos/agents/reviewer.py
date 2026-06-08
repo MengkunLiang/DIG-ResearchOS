@@ -6,13 +6,14 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
-from ..tools.manuscript import CORE_SECTIONS
+from ..tools.manuscript import CORE_SECTIONS, validate_review_round_input_fingerprints
 from ._common import load_project, prepend_resume_prefix, read_text_file
 
 
@@ -29,6 +30,7 @@ class ReviewerAgent(Agent):
                         "read_file",
                         "list_files",
                         "write_file",
+                        "bind_review_round",
                         "finish_task",
                     ],
                     "max_steps": 60,
@@ -118,6 +120,8 @@ class ReviewerAgent(Agent):
             f"{'、drafts/review_rounds/round_' + str(round_num - 1) + '.md' if round_num > 1 else ''}，"
             f"先逐章生成 drafts/review_rounds/round_{round_num}_sections/*.md，"
             f"再综合生成 drafts/review_rounds/round_{round_num}.md。"
+            f"最后必须调用 bind_review_round(round_num={round_num})，写入 "
+            f"drafts/review_rounds/round_{round_num}_fingerprints.json。"
             "从内容完整性、技术准确性、写作质量、学术规范、CDR 贡献兑现、alignment 闭环和 craft 合规维度审查，"
             "并检查上一轮问题是否闭环。"
             ),
@@ -127,6 +131,8 @@ class ReviewerAgent(Agent):
         """校验审稿报告。"""
         ws = ctx.workspace_dir
         round_num = self._round(ctx)
+        if not (ws / "drafts" / "paper.tex").exists():
+            return False, "Reviewer 缺少 drafts/paper.tex，不能审阅空稿"
 
         report_path = ws / "drafts" / "review_rounds" / f"round_{round_num}.md"
         report = read_text_file(report_path, default="")
@@ -173,4 +179,27 @@ class ReviewerAgent(Agent):
             if "## Writing Craft Check" not in text:
                 return False, f"逐章节审稿缺少 Writing Craft Check: {section_report.relative_to(ws)}"
 
+        fingerprint_path = ws / "drafts" / "review_rounds" / f"round_{round_num}_fingerprints.json"
+        fingerprints, err = _load_json(fingerprint_path)
+        if err:
+            return False, "review fingerprints 缺失或无效，需重新审稿: " + err
+        if fingerprints.get("semantics") != "review_round_input_fingerprints":
+            return False, "review fingerprints semantics 不正确"
+        if fingerprints.get("round") != round_num:
+            return False, "review fingerprints round 与当前 review round 不一致"
+        ok, err = validate_review_round_input_fingerprints(ws, fingerprints.get("input_fingerprints"))
+        if not ok:
+            return False, err
         return True, None
+
+
+def _load_json(path: Path) -> tuple[dict, str | None]:
+    if not path.exists():
+        return {}, f"缺少文件: {path}"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {}, f"{path} JSON 解析失败: {exc}"
+    if not isinstance(data, dict):
+        return {}, f"{path} 顶层必须是对象"
+    return data, None
