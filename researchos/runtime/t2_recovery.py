@@ -32,6 +32,7 @@ from ..tools.paper_save_tools import (
     _raw_record_identity_keys,
 )
 from ..literature_identity import normalize_loose_identity_key, paper_record_match_keys, stable_noopenalex_id
+from ..tools.seed_paper_processor import _choose_pdf_title, _is_likely_pdf_header_or_journal_title
 from ..tools.paper_utils import (
     deduplicate_papers,
     filter_by_domain,
@@ -2008,7 +2009,55 @@ async def _persist_snowball_candidates(
 
 
 def _load_seed_papers(workspace_dir: Path) -> list[dict[str, Any]]:
-    return _load_jsonl(workspace_dir / "user_seeds" / "seed_papers.jsonl")
+    return [
+        _repair_seed_record_title(record, workspace_dir)
+        for record in _load_jsonl(workspace_dir / "user_seeds" / "seed_papers.jsonl")
+    ]
+
+
+def _seed_title_from_pdf_path(seed: dict[str, Any]) -> str:
+    pdf_path = str(seed.get("pdf_path") or seed.get("seed_pdf_path") or "").strip()
+    if not pdf_path:
+        return ""
+    title = _choose_pdf_title(
+        metadata_title="",
+        first_page_text="",
+        filename_stem=Path(pdf_path).stem,
+    )
+    return str(title.get("title") or "").strip()
+
+
+def _repair_seed_record_title(seed: dict[str, Any], workspace_dir: Path | None = None) -> dict[str, Any]:
+    """Repair legacy seed records whose title is a journal masthead/page header.
+
+    Older T1 runs sometimes stored Chinese PDF mastheads such as
+    ``《管理世界》（月刊）`` as seed paper titles.  T2 recovery must not propagate
+    those into IDs, queues, BibTeX, or notes.  Only repair when the existing
+    title is clearly a PDF header/journal title and the PDF filename gives a
+    usable title.
+    """
+
+    record = dict(seed)
+    title = str(record.get("title") or "").strip()
+    if title and not _is_likely_pdf_header_or_journal_title(title):
+        return record
+
+    repaired_title = _seed_title_from_pdf_path(record)
+    if not repaired_title or repaired_title == title or _is_likely_pdf_header_or_journal_title(repaired_title):
+        return record
+
+    record["title"] = repaired_title
+    record["original_title"] = title
+    record["title_source"] = "pdf_filename_repair"
+    record["title_confidence"] = "heuristic_medium"
+    record["metadata_review_required"] = True
+    record["title_repair_reason"] = "legacy_seed_title_was_pdf_header_or_journal_masthead"
+    if workspace_dir is not None:
+        rel_pdf = str(record.get("pdf_path") or record.get("seed_pdf_path") or "")
+        pdf_abs = workspace_dir / rel_pdf if rel_pdf else None
+        if pdf_abs is not None and pdf_abs.exists():
+            record.setdefault("has_seed_pdf", True)
+    return record
 
 
 def _seed_to_recovery_paper(seed: dict[str, Any]) -> dict[str, Any]:
@@ -2025,7 +2074,7 @@ def _seed_to_recovery_paper(seed: dict[str, Any]) -> dict[str, Any]:
         seed_year = int(seed["year"]) if seed.get("year") else None
     except (TypeError, ValueError):
         seed_year = None
-    return {
+    recovered = {
         "id": paper_id,
         "canonical_id": canonical_id,
         "preferred_id_source": "arxiv" if arxiv_id else "doi" if seed.get("doi") else "seed_fallback",
@@ -2052,6 +2101,21 @@ def _seed_to_recovery_paper(seed: dict[str, Any]) -> dict[str, Any]:
             "id_source": canonical_id_source,
         },
     }
+    for key in (
+        "title_source",
+        "title_confidence",
+        "metadata_review_required",
+        "title_repair_reason",
+        "seed_pdf_path",
+        "pdf_path",
+        "has_seed_pdf",
+        "has_local_pdf",
+        "access_level_hint",
+        "access_score",
+    ):
+        if key in seed and seed[key] not in (None, ""):
+            recovered[key] = seed[key]
+    return recovered
 
 
 def _ensure_seed_papers(

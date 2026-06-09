@@ -959,8 +959,10 @@ def test_seed_pdf_fuzzy_matching_treats_user_seed_pdfs_as_full_text(tmp_path):
     assert all(item["has_seed_pdf"] is True for item in queue)
     assert all(item["has_local_pdf"] is True for item in queue)
     assert all(item["access_score"] == 1.0 for item in queue)
+    assert all(item["evidence_level"] == "FULL_TEXT" for item in queue)
     assert all(item["access_level_hint"] == "FULL_TEXT_LOCAL" for item in queue)
     assert sum(1 for item in audit_records if item["has_seed_pdf"]) == 6
+    assert all(item["evidence_level"] == "FULL_TEXT" for item in audit_records if item["has_seed_pdf"])
     assert "`user_seeds/pdfs/` 可匹配的 seed PDF: 6" in audit_md
 
 

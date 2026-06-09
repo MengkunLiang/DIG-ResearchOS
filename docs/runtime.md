@@ -346,8 +346,17 @@ CLI 在每个 task/agent 开始时会输出一整行 `==== <task_id> | <agent_na
 OpenAI-compatible provider 对消息顺序很严格：assistant message 一旦带 `tool_calls`，
 后面必须紧跟对应 `tool` messages，不能先插入 runtime 的 `user` note。Runner 因此会在
 所有 tool messages 回填后，再追加“已延后其它工具”“自动转 ask_human”等 runtime note。
+在真正调用 provider 前，Runner 还会做一次确定性消息序列修复：缺失的 tool result 会补成
+`missing_tool_result_repaired` 错误 tool message，孤立的 tool message 会转成普通 runtime
+note，避免一次中断或手工修复 trace 后让 DeepSeek/OpenAI-compatible endpoint 连续报
+`tool_calls`/`tool_call_id` 顺序错误。
 如果日志里出现 `assistant message with 'tool_calls' must be followed by tool messages`，
 优先检查 trace 中 assistant/tool/user 顺序，而不是先怀疑 API key 或 base_url。
+
+LLMClient 每次 `acompletion` 返回或超时后都会调用 LiteLLM 的 async client cleanup，并兜底关闭
+LiteLLM 暴露的 `client_session` / `aclient_session`。如果控制台仍出现 `Unclosed client session`，
+优先看是否是进程被强杀或 provider SDK 在退出阶段打印的 cleanup warning；它不等价于
+`fetch_paper_pdf` 或 PDF 解析失败。
 
 ### 6.3 空回复与 nudging
 

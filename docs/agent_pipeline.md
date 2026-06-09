@@ -1216,7 +1216,7 @@ Bridge domain 是一条独立于主线文献池的补强链路，不等于“把
   - `abstract_only`
   - `metadata_backlog`
 
-`user_seeds/pdfs/` 是一等本地全文来源。T2 会用 `literature_identity.find_matching_seed_pdf()` 做 seed title 与 PDF 文件名的 fuzzy matching，容忍作者/年份前缀、中文“等”、截断、标点和大小写差异。命中后写入 `has_seed_pdf=true`、`seed_pdf_path=user_seeds/pdfs/...`、`has_local_pdf=true`、`access_score=1.0`、`access_level_hint=FULL_TEXT_LOCAL`，推荐动作优先为 `read_seed_pdf`。这一步只做身份匹配，不判断论文是否学术相关。
+`user_seeds/pdfs/` 是一等本地全文来源。T2 会用 `literature_identity.find_matching_seed_pdf()` 做 seed title 与 PDF 文件名的 fuzzy matching，容忍作者/年份前缀、中文“等”、截断、标点和大小写差异。命中后写入 `has_seed_pdf=true`、`seed_pdf_path=user_seeds/pdfs/...`、`has_local_pdf=true`、`access_score=1.0`、`evidence_level=FULL_TEXT`、`access_level_hint=FULL_TEXT_LOCAL`，推荐动作优先为 `read_seed_pdf`。这一步只做身份匹配，不判断论文是否学术相关；T3 仍必须用 `extract_pdf_text` 的完整页码覆盖来证明最终 note 可以标 `[FULL-TEXT]`。旧中文 PDF seed 如果把期刊页眉或期号识别成标题，T2 recovery 会在 title 明显是 masthead/page header 时从 PDF 文件名修复标题，并保留 `title_repair_reason` 审计字段。
 
 ### T2 的成功标准
 

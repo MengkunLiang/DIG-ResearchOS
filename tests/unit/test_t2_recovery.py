@@ -16,7 +16,9 @@ from researchos.runtime.t2_recovery import (
     _expand_openalex_snowball_candidates,
     _merge_enriched_records_back_to_raw,
     _openalex_detail_url,
+    _repair_seed_record_title,
     _select_active_candidate_pool,
+    _seed_to_recovery_paper,
     _search_records_from_raw,
     finalize_t2_outputs,
     validate_t2_finalize_manifest,
@@ -153,6 +155,39 @@ def test_cap_active_pool_after_seed_repair_preserves_seed_and_moves_overflow_to_
     assert all(record.get("t2_pool_role") == "backlog" for record in backlog)
     assert all(record.get("triaged_out") is True for record in backlog)
     assert meta["seed_repair_overflow_count"] == 6
+
+
+def test_repair_seed_record_title_recovers_chinese_title_from_pdf_filename(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    pdf_path = workspace / "user_seeds" / "pdfs" / "大数据环境下的决策范式转变与使能创新_陈国青.pdf"
+    pdf_path.parent.mkdir(parents=True)
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    seed = {
+        "title": "《管理世界》（月刊）",
+        "authors": ["CNKI"],
+        "year": 2022,
+        "pdf_path": "user_seeds/pdfs/大数据环境下的决策范式转变与使能创新_陈国青.pdf",
+    }
+
+    repaired = _repair_seed_record_title(seed, workspace)
+    recovered = _seed_to_recovery_paper(repaired)
+
+    assert repaired["title"] == "大数据环境下的决策范式转变与使能创新"
+    assert repaired["original_title"] == "《管理世界》（月刊）"
+    assert repaired["title_repair_reason"] == "legacy_seed_title_was_pdf_header_or_journal_masthead"
+    assert recovered["title"] == repaired["title"]
+
+
+def test_repair_seed_record_title_leaves_valid_title_unchanged(tmp_path: Path):
+    seed = {
+        "title": "数智赋能：信息系统研究的新跃迁",
+        "pdf_path": "user_seeds/pdfs/数智赋能：信息系统研究的新跃迁_陈国青.pdf",
+    }
+
+    repaired = _repair_seed_record_title(seed, tmp_path)
+
+    assert repaired["title"] == "数智赋能：信息系统研究的新跃迁"
+    assert "original_title" not in repaired
 
 
 def test_select_active_candidate_pool_caps_should_bridge_lower_than_must(tmp_path: Path):

@@ -883,9 +883,11 @@ def build_deep_read_queue(
         )
         access_est = float(paper.get("access_score_estimate", _estimate_access_score(paper)))
         access_score = max(access_est, 1.0 if has_local_pdf else access_est)
+        evidence_level = str(paper.get("evidence_level", _estimate_evidence_level(paper)))
         access_level_hint = str(paper.get("access_level_hint", _estimate_access_level_hint(paper)))
         if has_seed_pdf:
             access_level_hint = "FULL_TEXT_LOCAL"
+            evidence_level = "FULL_TEXT"
         relevance_score = float(paper.get("relevance_score", 0.0))
         verification_confidence = float(paper.get("verification_confidence", 0.0))
         verification_bonus = 0.25 if verification_status in {"metadata_verified", "pdf_verified"} else 0.0
@@ -969,7 +971,7 @@ def build_deep_read_queue(
             "relevance_score": round(relevance_score, 2),
             "access_score_estimate": round(access_est, 2),
             "access_score": round(access_score, 2),
-            "evidence_level": paper.get("evidence_level", _estimate_evidence_level(paper)),
+            "evidence_level": evidence_level,
             "access_level_hint": access_level_hint,
             "seed_priority": is_seed,
             "has_local_pdf": has_local_pdf,
@@ -1718,6 +1720,7 @@ def build_access_audit(
         access_level_hint = str(paper.get("access_level_hint", _estimate_access_level_hint(paper)))
         if has_seed_pdf:
             access_est = 1.0
+            evidence_level = "FULL_TEXT"
             access_level_hint = "FULL_TEXT_LOCAL"
         records.append(
             {

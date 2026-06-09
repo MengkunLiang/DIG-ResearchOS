@@ -82,6 +82,26 @@ def _clean_pdf_title_candidate(value: Any) -> str:
     return text.strip(" \t\r\n-–—|")
 
 
+def _clean_pdf_filename_stem_title(value: Any) -> str:
+    """Turn a seed PDF filename stem into a plausible title fallback."""
+
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    # Common CNKI/manual seed filenames use `Title_Author` or `Title-Author`.
+    # Keep the title side when the suffix looks like a short Chinese author list.
+    for separator in ("_", " - ", "－", "——"):
+        if separator not in text:
+            continue
+        head, tail = text.rsplit(separator, 1)
+        tail_clean = _clean_pdf_title_candidate(tail)
+        if re.fullmatch(r"[\u4e00-\u9fff·、,，]{2,18}", tail_clean):
+            text = head
+            break
+    text = text.replace("_", " ").replace("-", " ")
+    return _clean_pdf_title_candidate(text)
+
+
 def _title_signal_counts(title: str) -> tuple[int, int, int]:
     chinese_chars = len(re.findall(r"[\u4e00-\u9fff]", title))
     ascii_letters = len(re.findall(r"[A-Za-z]", title))
@@ -221,7 +241,7 @@ def _choose_pdf_title(
     for candidate in _pdf_title_candidates_from_text(first_page_text):
         candidates.append(candidate)
 
-    filename_title = _clean_pdf_title_candidate(str(filename_stem or "").replace("_", " ").replace("-", " "))
+    filename_title = _clean_pdf_filename_stem_title(filename_stem)
     filename_rejected = False
     if filename_title:
         score = _pdf_title_score(filename_title, source="filename")

@@ -20,6 +20,7 @@ from researchos.runtime.agent import (
     resolve_effective_config,
 )
 from researchos.runtime.errors import LLMProviderError
+from researchos.runtime.message import Message, ToolCall
 from researchos.runtime.orchestrator import AgentRunner
 from researchos.runtime.artifact_fingerprints import write_t45_fingerprint_report
 from researchos.runtime.t3_notes_manifest import build_t3_notes_manifest
@@ -919,6 +920,50 @@ def test_agent_runner_caps_pdf_tool_context_metadata():
     assert "- complete_pdf_read: false" in capped
     assert "- covers_full_pdf: false" in capped
     assert "runtime_context_truncated: true" in capped
+
+
+def test_agent_runner_repairs_missing_tool_messages_before_llm():
+    runner = AgentRunner(
+        MinimalAgent(),
+        ToolRegistry(),
+        MockLLMClient(responses=[]),
+        MockHumanInterface(),
+    )
+    tool_call = ToolCall(id="tc_missing", name="echo", arguments={"text": "hi"})
+    messages = [
+        Message.system("system"),
+        Message.user("start"),
+        Message.assistant(tool_calls=[tool_call], step=1),
+        Message.user("next"),
+    ]
+
+    repaired = runner._repair_openai_tool_message_sequence(messages)
+
+    assert [message.role.value for message in repaired] == ["system", "user", "assistant", "tool", "user"]
+    repaired_tool = repaired[3]
+    assert repaired_tool.tool_call_id == "tc_missing"
+    assert repaired_tool.name == "echo"
+    assert repaired_tool.metadata["error"] == "missing_tool_result_repaired"
+
+
+def test_agent_runner_converts_orphan_tool_messages_before_llm():
+    runner = AgentRunner(
+        MinimalAgent(),
+        ToolRegistry(),
+        MockLLMClient(responses=[]),
+        MockHumanInterface(),
+    )
+    messages = [
+        Message.system("system"),
+        Message.tool(tool_call_id="tc_orphan", name="echo", content="late result", step=1),
+        Message.user("continue"),
+    ]
+
+    repaired = runner._repair_openai_tool_message_sequence(messages)
+
+    assert [message.role.value for message in repaired] == ["system", "user", "user"]
+    assert "orphan tool result" in (repaired[1].content or "")
+    assert "tc_orphan" in (repaired[1].content or "")
 
 
 def write_valid_t4_artifacts(workspace):

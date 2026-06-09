@@ -405,6 +405,7 @@ class AgentRunner:
                 # 如果上下文太长，这里会按“完整 tool call group”为单位裁掉旧消息，
                 # 同时插入一条 runtime note，提醒模型去读 artifact 而不是假装记得历史。
                 messages = self._maybe_truncate(messages, primary_binding)
+                messages = self._repair_openai_tool_message_sequence(messages)
 
                 try:
                     run_logger.event(
@@ -3092,6 +3093,80 @@ class AgentRunner:
         for group in kept[1:]:
             flattened.extend(group)
         return flattened
+
+    def _repair_openai_tool_message_sequence(self, messages: list[Message]) -> list[Message]:
+        """Ensure assistant tool_calls are immediately followed by tool messages.
+
+        OpenAI-compatible providers reject histories where an assistant message
+        declares tool_calls but any corresponding tool result is missing. This
+        can happen after cancellation, gate auto-bridging, manual trace repair,
+        or future truncation changes. We repair at the provider boundary instead
+        of letting one malformed history make every fallback model fail.
+        """
+
+        repaired: list[Message] = []
+        changed = False
+        idx = 0
+        while idx < len(messages):
+            message = messages[idx]
+            if message.role == Role.TOOL:
+                changed = True
+                preview = (message.content or "").strip()
+                if len(preview) > 500:
+                    preview = preview[:497] + "..."
+                repaired.append(
+                    Message.user(
+                        "[Runtime] Omitted an orphan tool result from the provider message history "
+                        "because it was not immediately attached to an assistant tool_call. "
+                        f"tool={message.name or 'unknown_tool'} tool_call_id={message.tool_call_id or ''}. "
+                        f"Preview: {preview}",
+                        step=message.step,
+                    )
+                )
+                idx += 1
+                continue
+            repaired.append(message)
+            idx += 1
+            if message.role != Role.ASSISTANT or not message.tool_calls:
+                continue
+
+            expected_ids = [tool_call.id for tool_call in message.tool_calls]
+            seen_ids: set[str] = set()
+            while idx < len(messages) and messages[idx].role == Role.TOOL:
+                tool_message = messages[idx]
+                if tool_message.tool_call_id:
+                    seen_ids.add(tool_message.tool_call_id)
+                repaired.append(tool_message)
+                idx += 1
+
+            missing_ids = [tool_call_id for tool_call_id in expected_ids if tool_call_id not in seen_ids]
+            if not missing_ids:
+                continue
+            changed = True
+            name_by_id = {tool_call.id: tool_call.name for tool_call in message.tool_calls}
+            for tool_call_id in missing_ids:
+                repaired.append(
+                    Message.tool(
+                        tool_call_id=tool_call_id,
+                        name=name_by_id.get(tool_call_id, "unknown_tool"),
+                        content=(
+                            "ERROR: tool result was unavailable because the previous ResearchOS "
+                            "turn was interrupted or repaired before the tool response was recorded. "
+                            "Do not assume this tool succeeded; inspect persisted artifacts or call "
+                            "the tool again if needed."
+                        ),
+                        is_error=True,
+                        step=message.step,
+                        metadata={
+                            "error": "missing_tool_result_repaired",
+                            "data": {"runtime_repaired": True},
+                        },
+                    )
+                )
+
+        if changed:
+            self.log.warning("repaired_missing_tool_messages_before_llm")
+        return repaired
 
     def _split_into_groups(self, messages: list[Message]) -> list[list[Message]]:
         """把消息拆成“assistant + tool results”为一组的逻辑轮次。"""

@@ -55,6 +55,17 @@ def test_chinese_pdf_title_selection_uses_filename_when_only_header_exists() -> 
     assert selection["title_confidence"] in {"heuristic_medium", "heuristic_high"}
 
 
+def test_chinese_pdf_title_selection_strips_short_author_suffix_from_filename() -> None:
+    selection = _choose_pdf_title(
+        metadata_title="《管理世界》（月刊）",
+        first_page_text="《管理世界》（月刊）\n2024年第1期",
+        filename_stem="大数据环境下的决策范式转变与使能创新_陈国青",
+    )
+
+    assert selection["title"] == "大数据环境下的决策范式转变与使能创新"
+    assert selection["title_source"] == "filename"
+
+
 async def test_process_seed_paper_jsonl_preserves_chinese_and_title_diagnostics(tmp_workspace: Path) -> None:
     pdf_path = tmp_workspace / "seed.pdf"
     pdf_path.write_bytes(b"%PDF-1.4\n")

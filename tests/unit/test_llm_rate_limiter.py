@@ -18,6 +18,16 @@ class _FakeResponse:
     _hidden_params = {"response_cost": 0.02}
 
 
+class _FakeAsyncSession:
+    def __init__(self):
+        self.closed = False
+        self.close_calls = 0
+
+    async def close(self):
+        self.close_calls += 1
+        self.closed = True
+
+
 async def _fake_acompletion(**kwargs):
     return _FakeResponse()
 
@@ -260,6 +270,36 @@ async def test_llm_client_chat_enforces_runtime_hard_timeout(tmp_path, monkeypat
 
     assert "TimeoutError" in str(exc_info.value)
     assert cleanup_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_llm_client_aclose_closes_litellm_global_sessions(tmp_path, monkeypatch):
+    routing = tmp_path / "model_routing.yaml"
+    _write_routing(routing)
+    monkeypatch.setenv("TEST_API_KEY", "secret")
+    async_session = _FakeAsyncSession()
+    close_litellm_calls = 0
+
+    async def fake_close_clients():
+        nonlocal close_litellm_calls
+        close_litellm_calls += 1
+
+    fake_litellm = types.SimpleNamespace(
+        acompletion=_fake_acompletion,
+        token_counter=lambda **_: 12,
+        close_litellm_async_clients=fake_close_clients,
+        client_session=async_session,
+        aclient_session=None,
+    )
+    monkeypatch.setattr("researchos.runtime.llm_client.litellm", fake_litellm)
+
+    client = LLMClient(routing)
+    await client.aclose()
+
+    assert close_litellm_calls == 1
+    assert async_session.closed is True
+    assert async_session.close_calls == 1
+    assert fake_litellm.client_session is None
 
 
 @pytest.mark.asyncio

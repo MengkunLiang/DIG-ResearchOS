@@ -590,10 +590,13 @@ class LLMClient:
                         kwargs["tool_choice"] = "auto"
                     # 对 LiteLLM 再包一层 runtime 级硬超时，避免 provider/SDK
                     # 未按预期尊重 timeout 时单次调用悬挂过久。
-                    raw = await asyncio.wait_for(
-                        litellm.acompletion(**kwargs),
-                        timeout=max(float(timeout), 0.001),
-                    )
+                    try:
+                        raw = await asyncio.wait_for(
+                            litellm.acompletion(**kwargs),
+                            timeout=max(float(timeout), 0.001),
+                        )
+                    finally:
+                        await self.aclose()
                     choices = getattr(raw, "choices", None)
                     if not choices:
                         raise RuntimeError("LLM provider returned an empty choices list")
@@ -615,7 +618,6 @@ class LLMClient:
                     )
             if attempt < max_retries_per_model - 1:
                 await asyncio.sleep(min(retry_base_delay * (2**attempt), 8))
-        await self.aclose()
         raise LLMProviderError(
             f"All candidates failed (profile={profile or self.default_profile_name}, "
             f"tier={tier}). Errors: {errors}"
@@ -639,14 +641,35 @@ class LLMClient:
         if litellm is None:
             return
         closer = getattr(litellm, "close_litellm_async_clients", None)
-        if closer is None:
-            return
         try:
-            maybe_awaitable = closer()
-            if inspect.isawaitable(maybe_awaitable):
-                await maybe_awaitable
+            if closer is not None:
+                maybe_awaitable = closer()
+                if inspect.isawaitable(maybe_awaitable):
+                    await maybe_awaitable
+            for attr_name in ("client_session", "aclient_session"):
+                session = getattr(litellm, attr_name, None)
+                if session is None:
+                    continue
+                await self._close_async_client_like(session)
+                try:
+                    setattr(litellm, attr_name, None)
+                except Exception:
+                    pass
         except Exception as exc:  # pragma: no cover - cleanup failure should not mask LLM error
             _log.warning("litellm_async_client_cleanup_failed", error=repr(exc))
+
+    @staticmethod
+    async def _close_async_client_like(client: Any) -> None:
+        """Best-effort close for aiohttp/httpx-style async clients."""
+
+        if getattr(client, "closed", False):
+            return
+        close = getattr(client, "aclose", None) or getattr(client, "close", None)
+        if not callable(close):
+            return
+        maybe_awaitable = close()
+        if inspect.isawaitable(maybe_awaitable):
+            await maybe_awaitable
 
     def count_tokens(self, messages: list[dict[str, Any]], binding: ModelBinding) -> int:
         """尽量准确地估算 token；若 provider 不支持，则退化到字符近似。"""
