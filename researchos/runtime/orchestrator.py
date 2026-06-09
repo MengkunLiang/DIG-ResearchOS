@@ -491,7 +491,6 @@ class AgentRunner:
 
                 empty_count = 0
                 messages.append(assistant_msg)
-                trace.write_message(assistant_msg)
 
                 # 输出 Agent 的文本回复（如果有）。普通状态说明默认只在 verbose 显示；
                 # 但同一轮如果要 ask_human，正文通常包含用户必须看到的草案、
@@ -502,6 +501,7 @@ class AgentRunner:
                         verbose_only=not any(tc.name == "ask_human" for tc in assistant_msg.tool_calls),
                     )
 
+                post_tool_runtime_notes: list[Message] = []
                 # 如果模型在文本里向用户提问/要求选择，但没有显式调用 ask_human，
                 # runtime 必须先等待人类输入。即便同一轮还混有 read/write 等工具，
                 # 也不能继续执行那些工具，否则会复现“模型问了但没有输入框仍继续跑”的问题。
@@ -509,6 +509,7 @@ class AgentRunner:
                     tc.name == "ask_human" for tc in assistant_msg.tool_calls
                 ):
                     if "ask_human" not in tool_map:
+                        trace.write_message(assistant_msg)
                         stop_reason = AgentResult.STOP_INTERRUPTED
                         error_msg = (
                             "Agent asked for human input but ask_human is not available in this task. "
@@ -525,13 +526,11 @@ class AgentRunner:
                         },
                     )
                     assistant_msg.tool_calls = [tool_call]
-                    bridge_note = Message.user(
+                    post_tool_runtime_notes.append(Message.user(
                         "[Runtime] 检测到 Agent 向用户提问/要求选择但未调用 ask_human，"
                         "已自动转成 ask_human，并阻止本轮其它工具继续执行；如果输入不可用将暂停等待 resume。",
                         step=budget.steps,
-                    )
-                    messages.append(bridge_note)
-                    trace.write_message(bridge_note)
+                    ))
 
                 # 如果模型只说话不调用工具，runtime 会反复提醒它：
                 # 要么继续推进，要么明确 finish_task。
@@ -539,6 +538,7 @@ class AgentRunner:
                     if not self._looks_like_human_interaction_request(assistant_msg):
                         nudge_count += 1
                         if nudge_count > self.runtime_settings.agent_behavior.max_nudge_finish:
+                            trace.write_message(assistant_msg)
                             stop_reason = AgentResult.STOP_ERROR
                             error_msg = "agent 多次只输出文本但未调用工具"
                             break
@@ -546,6 +546,7 @@ class AgentRunner:
                             "你没有调用任何工具。如果任务已完成，请调用 finish_task；否则请继续调用适当工具。",
                             step=budget.steps,
                         )
+                        trace.write_message(assistant_msg)
                         messages.append(nudge)
                         trace.write_message(nudge)
                         continue
@@ -557,13 +558,12 @@ class AgentRunner:
                     blocked_tools = [tc.name for tc in assistant_msg.tool_calls if tc.name != "ask_human"]
                     if blocked_tools:
                         assistant_msg.tool_calls = [ask_call]
-                        human_barrier_note = Message.user(
+                        post_tool_runtime_notes.append(Message.user(
                             "[Runtime] 本轮包含 ask_human，已先等待用户输入；"
                             f"延后执行同轮其它工具: {', '.join(blocked_tools)}。",
                             step=budget.steps,
-                        )
-                        messages.append(human_barrier_note)
-                        trace.write_message(human_barrier_note)
+                        ))
+                trace.write_message(assistant_msg)
                 # 输出工具调用信息
                 if len(assistant_msg.tool_calls) > 0:
                     tool_names = [tc.name for tc in assistant_msg.tool_calls]
@@ -599,6 +599,9 @@ class AgentRunner:
                     if self._is_recoverable_tool_pause(tool_call.name, tool_msg):
                         pause_requested = True
                         pause_reason = tool_msg.content or "需要用户输入，但当前输入不可用。"
+                for note in post_tool_runtime_notes:
+                    messages.append(note)
+                    trace.write_message(note)
 
                 if pause_requested:
                     stop_reason = AgentResult.STOP_INTERRUPTED

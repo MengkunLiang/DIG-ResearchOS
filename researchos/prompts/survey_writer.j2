@@ -8,6 +8,9 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - `synthesis.md` 的用途：给 T4 idea 生成提供 fuel，组织逻辑是 design_rationale 谱系、cross-paper tensions、adjacent transfers。
 - `survey.tex` 的用途：给读者阅读的专业综述，组织逻辑是 taxonomy、领域演进、系统比较、open challenges 和 future directions。
 - 工具只做机械组织/拼装/审计；taxonomy 选择、领域叙事、章节论证和学术判断由你完成。
+- 默认写成紧凑专业综述：Introduction, Background and Scope, Taxonomy, Comparative Analysis, Open Challenges, Future Directions, Conclusion。
+  不要默认为每个 taxonomy 类创建独立 theme 章；taxonomy 类应优先写成 Taxonomy/Comparative Analysis 内部的小节或段落。
+- 最终 TeX 正文和注释不得暴露内部运行标号，例如 `C1`、`[C1]`、`C1:`、`CID`、`ResearchOS alignment` 或 `% [C1]`。
 
 ## 项目信息
 - research_direction: {{ project.get('research_direction', project.get('topic', '未指定')) }}
@@ -123,7 +126,7 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 1. 选择一个适合读者理解的 taxonomy 主轴。候选主轴包括 design_rationale、artifact type、data/evaluation view、problem subtask、temporal evolution；可以组合，但必须说明为什么。如果存在 seed outline profile，必须优先检查用户给出的 taxonomy hint 是否合理；例如“四类视角 × 风险生成链条”这类框架应作为默认候选，除非证据显示需要调整。
 2. 构建 2-4 层 taxonomy tree，每个类挂 paper_ids。分类要尽量 MECE；不确定时在 coverage_selfcheck 中标明。
 3. 用 domain_map.citation_edges/domain buckets 梳理 evolution narrative：奠基工作、主要分支、当前前沿、邻接转折。
-4. 规划章节级 outline。必须包含 background、taxonomy、comparison、challenges、future；可以有 theme_* 主题章。
+4. 规划章节级 outline。默认必须采用紧凑综述结构：background、taxonomy、comparison、challenges、future；Introduction/Conclusion/Abstract 由后续写作补齐。不要默认生成 theme_* 独立主题章；只有用户明确要求长篇综述，且该主题章不能自然并入 taxonomy/comparison 时，才允许最多 1-2 个 theme_* 章，并在 rationale 中说明原因。
 5. 做 coverage_selfcheck：unclassified_papers、empty_classes、corpus_sufficiency、classes_needing_more_lit。
 6. 显式区分 evidence strength：FULL/PARTIAL notes 可作为综述主体证据；abstract-only 只能作为覆盖和趋势线索；metadata-only triage 只能进入 `resource_upgrade_needs`，不能挂到 taxonomy paper_ids 里。
 7. 如果 seed outline profile 的代表性方向没有被 T2/T3 具体论文覆盖，写入 `coverage_selfcheck.classes_needing_more_lit` 或 `resource_upgrade_needs`，不要伪造代表论文。
@@ -140,10 +143,14 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
     ]
   },
   "evolution_narrative": "...",
+  "sectioning_policy": {
+    "mode": "compact",
+    "max_theme_sections": 0,
+    "rationale": "Taxonomy classes are handled inside Taxonomy and Comparative Analysis instead of standalone theme chapters."
+  },
   "outline": [
     {"section_id": "background", "title": "Background and Scope", "covers": ["scope"]},
     {"section_id": "taxonomy", "title": "Taxonomy", "covers": ["T1", "T2"]},
-    {"section_id": "theme_T1", "title": "...", "covers": ["T1"], "paper_ids": ["..."]},
     {"section_id": "comparison", "title": "Comparative Analysis", "covers": ["cross_paper_tensions"]},
     {"section_id": "challenges", "title": "Open Challenges", "covers": ["..."]},
     {"section_id": "future", "title": "Future Directions", "covers": ["adjacent_transfers"]}
@@ -160,6 +167,9 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 }
 ```
 
+`sectioning_policy.mode` 默认必须是 `compact`。`outline` 中不要输出 `theme_*`，除非确实需要独立主题章；taxonomy 的子类、风险链条、治理视角等应写入 `taxonomy.tree` 和 `taxonomy`/`comparison` 的 covers，而不是膨胀成很多 section。
+如果用户明确要求长篇综述，可把 `sectioning_policy.mode` 设为 `standalone_theme_sections`，但必须给出 `rationale` 和小的 `max_theme_sections`；否则 validator 会拒绝 plan。
+所有字段中都不要写 `C1`、`CID` 或 ResearchOS 内部 alignment 标记。
 不要写正文。最后调用 `finish_task`。
 {% endif %}
 
@@ -228,7 +238,8 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - `drafts/survey/survey_state.json`
 - `drafts/survey/section_outlines/*.md`
 
-工具会把 theme_* 映射到固定 `theme_1` 到 `theme_4` 槽位。少于 4 个主题时，多余槽位标记 skipped。
+工具默认采用 compact survey mode：`theme_1` 到 `theme_4` 都会 skipped，taxonomy 类写进 Taxonomy/Comparative Analysis 内部。
+只有 survey_plan 明确包含 theme_* 且工具参数允许时，才会启用独立 theme 章；默认不要启用。
 不要写正文。最后调用 `finish_task`。
 {% endif %}
 
@@ -247,11 +258,14 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - 如果当前 section 是 `abstract`，文件只能写摘要纯正文；不要写 `\section{Abstract}`、`\section*{Abstract}`、`\begin{abstract}` 或 `\end{abstract}`。`assemble_survey` 会负责放入 abstract 环境。
 - 如果 section_id 是 `theme_1`-`theme_4` 且 survey_state 标记 skipped，直接调用 `update_survey_section_state(section_id="{{ section_id }}", status="skipped")` 并 finish。
 - 组织方式必须围绕 taxonomy，不要按 synthesis.md 的 design_rationale fuel 结构硬转写。
+- Taxonomy section 应承载 taxonomy 类、风险链条或视角框架的主要叙述；不要把每个类写成独立大章，除非 survey_state 明确启用了 theme_*。
+- Comparative Analysis section 应比较类之间的机制、证据边界、适用条件和张力，不要写成论文逐篇清单。
 - 每段要有具体学术功能：定义边界、解释演进、比较机制、指出 tension、总结挑战或提出方向。
 - 引用必须来自 `related_work.bib`。不确定 citation key 时，不要编造。
 - `abstract` 不写任何正式引用；具体 prior work attribution 放到 Introduction 或正文综述章节。
 - 对 abstract-only 文献，要标注 evidence 边界，不把 abstract claim 写成已验证机制。
 - 避免 "this section reviews..." 这类空话；直接进入内容。
+- 不要输出内部运行标号或审计标记：`C1`、`[C1]`、`CID`、`ResearchOS alignment`、`LLM_REVIEW_REQUIRED`、`TODO/TBD/PLACEHOLDER` 都不得出现在 TeX 中。
 
 完成后调用：
 `update_survey_section_state(section_id="{{ section_id }}", status="written")`
@@ -293,6 +307,8 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 4. **Challenges 质量**：open challenges 是否来自真实 tensions/gaps，而不是空泛套话。
 5. **Future Directions 质量**：future 是否具体、可操作，并合理使用 adjacent_transfers / boundary hints。
 6. **Scope 诚实性与写作 craft**：conservative 模式是否声明覆盖边界；是否有流水账、placeholder、引用不可信、AI 套话。
+7. **Sectioning 结构**：是否像真实综述论文一样紧凑组织；如果出现多个 theme 章，必须判断它们是否必要，能否合并到 Taxonomy 或 Comparative Analysis。
+8. **内部标记泄漏**：正文和注释中不得出现 `C1`、`[C1]`、`CID`、`ResearchOS alignment`、`TODO/TBD/PLACEHOLDER` 等运行/规划残留。
 
 如果发现 blocking 问题：
 - 只修对应 section 文件，例如 `drafts/survey/sections/comparison.tex` 或 `future.tex`。

@@ -18,7 +18,11 @@ from ..runtime.prompts import render_prompt
 from ..tools.latex_compile import _compile_dependency_fingerprint
 from ..literature_identity import is_paper_note_file, is_placeholder_text
 from ..tools.manuscript import _extract_latex_cites, _extract_bib_keys, has_formal_citation
-from ..tools.survey_tools import SURVEY_SECTION_SEQUENCE, SURVEY_SECTION_TITLES, _survey_internal_alignment_hits
+from ..tools.survey_tools import (
+    SURVEY_SECTION_SEQUENCE,
+    SURVEY_SECTION_TITLES,
+    _survey_internal_alignment_hits,
+)
 from ._common import ensure_seed_outline_profile, load_jsonl, load_project, prepend_resume_prefix, read_text_file
 
 
@@ -389,6 +393,9 @@ def _validate_survey_plan(path: Path) -> tuple[bool, str | None]:
     outline = data.get("outline")
     if not isinstance(outline, list) or len(outline) < 5:
         return False, "survey_plan.json outline 至少需要 5 个章节"
+    ok, sectioning_err = _validate_plan_sectioning_policy(data)
+    if not ok:
+        return False, sectioning_err
     section_ids = {str(item.get("section_id") or "").lower() for item in outline if isinstance(item, dict)}
     for required in ("background", "taxonomy", "comparison"):
         if required not in section_ids and not any(required in sid for sid in section_ids):
@@ -397,6 +404,72 @@ def _validate_survey_plan(path: Path) -> tuple[bool, str | None]:
     if not isinstance(selfcheck, dict):
         return False, "survey_plan.json 缺少 coverage_selfcheck"
     return True, None
+
+
+def _validate_plan_sectioning_policy(data: dict) -> tuple[bool, str | None]:
+    raw_policy = data.get("sectioning_policy")
+    outline = data.get("outline") if isinstance(data.get("outline"), list) else []
+    theme_sections = [
+        str(item.get("section_id") or "").strip()
+        for item in outline
+        if isinstance(item, dict)
+        and (
+            str(item.get("section_id") or "").strip().lower().startswith("theme")
+            or "theme" in str(item.get("section_id") or "").strip().lower()
+        )
+    ]
+    if raw_policy is None:
+        return False, (
+            "survey_plan.json 缺少 sectioning_policy。默认应写 compact，并把 taxonomy 类放在 "
+            "Taxonomy/Comparative Analysis 内部；只有用户明确要求长综述时才允许 standalone theme 章。"
+        )
+    mode = ""
+    max_theme_sections = 0
+    rationale = ""
+    if isinstance(raw_policy, str):
+        mode = raw_policy.strip().lower()
+    elif isinstance(raw_policy, dict):
+        mode = str(raw_policy.get("mode") or raw_policy.get("sectioning_policy") or "").strip().lower()
+        rationale = str(raw_policy.get("rationale") or "").strip()
+        try:
+            max_theme_sections = int(raw_policy.get("max_theme_sections") or raw_policy.get("theme_section_limit") or 0)
+        except (TypeError, ValueError):
+            max_theme_sections = 0
+    else:
+        return False, "survey_plan.json sectioning_policy 必须是字符串或对象"
+
+    compact_modes = {
+        "compact",
+        "compact_survey",
+        "compact_survey_default_taxonomy_classes_inside_taxonomy_and_comparison",
+    }
+    standalone_modes = {
+        "standalone_theme_sections",
+        "standalone_theme_sections_enabled",
+        "allow_theme_sections",
+        "long_survey_with_theme_sections",
+    }
+    if mode in compact_modes:
+        if theme_sections:
+            return False, (
+                "survey_plan.json 使用 compact sectioning_policy，但 outline 仍包含独立 theme 章节: "
+                + ", ".join(theme_sections[:8])
+                + "。请把它们合并进 taxonomy/comparison 的小节或段落。"
+            )
+        return True, None
+    if mode in standalone_modes:
+        if max_theme_sections < 1:
+            max_theme_sections = 1
+        if len(theme_sections) > max_theme_sections:
+            return False, (
+                f"survey_plan.json 独立 theme 章节数 {len(theme_sections)} 超过 sectioning_policy.max_theme_sections={max_theme_sections}"
+            )
+        if not rationale:
+            return False, "启用 standalone theme sections 时 sectioning_policy.rationale 不能为空"
+        return True, None
+    return False, (
+        "survey_plan.json sectioning_policy.mode 不清楚；请使用 compact 或 standalone_theme_sections。"
+    )
 
 
 def _validate_survey_plan_evidence_strength(ws: Path, data: dict) -> tuple[bool, str | None]:

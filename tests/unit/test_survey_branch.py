@@ -42,11 +42,14 @@ def _survey_plan() -> dict:
             ],
         },
         "evolution_narrative": "Foundational perturbation work led to routing-aware methods.",
+        "sectioning_policy": {
+            "mode": "compact",
+            "max_theme_sections": 0,
+            "rationale": "Taxonomy classes are written inside Taxonomy and compared in Comparative Analysis.",
+        },
         "outline": [
             {"section_id": "background", "title": "Background and Scope", "covers": ["scope"]},
             {"section_id": "taxonomy", "title": "Taxonomy", "covers": ["T1", "T2"]},
-            {"section_id": "theme_T1", "title": "Perturbation Mechanisms", "covers": ["T1"], "paper_ids": ["P1", "P2"]},
-            {"section_id": "theme_T2", "title": "Routing Mechanisms", "covers": ["T2"], "paper_ids": ["P3"]},
             {"section_id": "comparison", "title": "Comparative Analysis", "covers": ["cross_paper_tensions"]},
             {"section_id": "challenges", "title": "Open Challenges", "covers": ["challenge_hints"]},
             {"section_id": "future", "title": "Future Directions", "covers": ["adjacent_transfers"]},
@@ -143,17 +146,6 @@ async def _build_valid_survey_chain(ws: Path) -> None:
             "The taxonomy separates perturbation and routing mechanisms \\citep{p1,p2}. "
             "Each class is described by its design rationale, required assumptions, and observable evaluation signals."
         ),
-        "theme_1": (
-            "\\section{Perturbation Mechanisms}\n"
-            "This theme compares perturbation mechanisms across papers \\citep{p1,p2}. "
-            "It discusses how each mechanism changes the data-generating process, what invariance it expects, "
-            "and where the available evidence is still too narrow for a strong survey-level conclusion."
-        ),
-        "theme_2": (
-            "\\section{Routing Mechanisms}\n"
-            "This theme compares routing mechanisms and their evidence \\citep{p3}. "
-            "It contrasts static assignment, adaptive routing, and evaluation assumptions across representative work."
-        ),
         "comparison": (
             "\\section{Comparative Analysis}\n"
             "Comparative analysis identifies cross-paper tensions \\citep{p1,p3}. "
@@ -207,7 +199,8 @@ async def test_survey_tools_build_state_assemble_audit_and_export(tmp_path: Path
     assert result.ok
     state = json.loads((ws / "drafts" / "survey" / "survey_state.json").read_text(encoding="utf-8"))
     assert state["semantics"] == "survey_state_for_taxonomy_driven_section_writing_not_final_claims"
-    assert state["sections"]["theme_1"]["title"] == "Perturbation Mechanisms"
+    assert state["shared_facts"]["sectioning_policy"].startswith("compact_survey")
+    assert state["sections"]["theme_1"]["status"] == "skipped"
     assert state["sections"]["theme_3"]["status"] == "skipped"
     assert state["shared_facts"]["resource_upgrade_needs"][0]["allowed_use"] == "resource_upgrade_hint_not_survey_or_idea_evidence"
     state["shared_facts"]["resource_upgrade_needs"].append(
@@ -229,8 +222,6 @@ async def test_survey_tools_build_state_assemble_audit_and_export(tmp_path: Path
     section_text = {
         "background": "\\section{Background and Scope}\nThis survey defines scope using prior work \\citep[see][]{p1}.",
         "taxonomy": "\\section{Taxonomy}\nThe taxonomy separates perturbation and routing mechanisms \\citep{p1,p2}.",
-        "theme_1": "\\section{Perturbation Mechanisms}\nThis theme compares perturbation mechanisms across papers \\citep{p1,p2}.",
-        "theme_2": "\\section{Routing Mechanisms}\nThis theme compares routing mechanisms and their evidence \\citep{p3}.",
         "comparison": "\\section{Comparative Analysis}\nComparative analysis identifies cross-paper tensions \\citep{p1,p3}.",
         "challenges": "\\section{Open Challenges}\nOpen Challenge: robustness remains hard under distribution shift \\citep{p2}.",
         "future": "\\section{Future Directions}\nFuture directions include adjacent transfers and better evaluation \\citep{p3}.",
@@ -247,7 +238,8 @@ async def test_survey_tools_build_state_assemble_audit_and_export(tmp_path: Path
     assert result.ok
     tex = (ws / "drafts" / "survey" / "survey.tex").read_text(encoding="utf-8")
     assert "\\documentclass" in tex
-    assert "Perturbation Mechanisms" in tex
+    assert "perturbation and routing mechanisms" in tex
+    assert "Theme 1" not in tex
     assert "\\begin{abstract}" in tex
     assert "\\section*{Abstract}" not in tex
     assert tex.index("\\begin{abstract}") < tex.index("\\section{Introduction}")
@@ -349,6 +341,58 @@ def test_survey_writer_prompt_includes_seed_outline_profile_as_taxonomy_prior(tm
     assert "EU AI Act" in prompt
 
 
+def test_survey_writer_plan_validation_requires_compact_sectioning_policy(tmp_path: Path):
+    ws = tmp_path
+    (ws / "drafts" / "survey").mkdir(parents=True)
+    plan = _survey_plan()
+    del plan["sectioning_policy"]
+    _write_json(ws / "drafts" / "survey" / "survey_plan.json", plan)
+    agent = SurveyWriterAgent(mode="survey_plan")
+    ctx = type("Ctx", (), {"workspace_dir": ws, "mode": "survey_plan", "extra": {}})()
+
+    ok, err = agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "sectioning_policy" in (err or "")
+
+    plan = _survey_plan()
+    plan["outline"].insert(
+        2,
+        {"section_id": "theme_T1", "title": "Perturbation Mechanisms", "covers": ["T1"]},
+    )
+    _write_json(ws / "drafts" / "survey" / "survey_plan.json", plan)
+
+    ok, err = agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "compact sectioning_policy" in (err or "")
+
+
+@pytest.mark.asyncio
+async def test_build_survey_state_can_enable_limited_standalone_theme_sections(tmp_path: Path):
+    ws = tmp_path
+    plan = _survey_plan()
+    plan["sectioning_policy"] = {
+        "mode": "standalone_theme_sections",
+        "max_theme_sections": 1,
+        "rationale": "One unusually large mechanism family needs its own survey section.",
+    }
+    plan["outline"].insert(
+        2,
+        {"section_id": "theme_T1", "title": "Perturbation Mechanisms", "covers": ["T1"], "paper_ids": ["P1", "P2"]},
+    )
+    _write_json(ws / "drafts" / "survey" / "survey_plan.json", plan)
+    _write_json(ws / "drafts" / "survey" / "corpus_decision.json", {"scope": "conservative"})
+    result = await BuildSurveyStateTool(_policy(ws)).execute()
+
+    assert result.ok, result.content
+    state = json.loads((ws / "drafts" / "survey" / "survey_state.json").read_text(encoding="utf-8"))
+    assert state["shared_facts"]["sectioning_policy"] == "standalone_theme_sections_enabled"
+    assert state["sections"]["theme_1"]["status"] == "pending"
+    assert state["sections"]["theme_1"]["title"] == "Perturbation Mechanisms"
+    assert state["sections"]["theme_2"]["status"] == "skipped"
+
+
 def test_t36_contract_exposes_seed_outline_inputs_to_non_compile_nodes():
     seed_keys = {"seed_outline_profile", "seed_ideas", "seed_constraints", "seed_external_resources"}
     for task_id, contract in TASK_IO_CONTRACTS.items():
@@ -430,25 +474,25 @@ async def test_t36_section_refuses_stale_section_outline_and_file(tmp_path: Path
     ws = tmp_path
     await _build_valid_survey_chain(ws)
     agent = SurveyWriterAgent(mode="survey_section")
-    ctx = _survey_ctx(ws, "survey_section", section_id="theme_1")
+    ctx = _survey_ctx(ws, "survey_section", section_id="taxonomy")
     ok, err = agent.validate_outputs(ctx)
     assert ok, err
 
-    (ws / "drafts" / "survey" / "section_outlines" / "theme_1.md").write_text(
-        "# Theme 1\n\nChanged outline after section was marked written.\n",
+    (ws / "drafts" / "survey" / "section_outlines" / "taxonomy.md").write_text(
+        "# Taxonomy\n\nChanged outline after section was marked written.\n",
         encoding="utf-8",
     )
     ok, err = agent.validate_outputs(ctx)
     assert not ok
     assert "已过期" in (err or "")
 
-    await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="theme_1")
+    await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="taxonomy")
     ok, err = agent.validate_outputs(ctx)
     assert ok, err
 
-    (ws / "drafts" / "survey" / "sections" / "theme_1.tex").write_text(
+    (ws / "drafts" / "survey" / "sections" / "taxonomy.tex").write_text(
         (
-            "\\section{Perturbation Mechanisms}\n"
+            "\\section{Taxonomy}\n"
             "Changed section content after state fingerprint while still remaining long enough "
             "to pass the section length guard. The validator should therefore detect the stale "
             "fingerprint rather than reporting a short-section error."
@@ -494,38 +538,38 @@ async def test_t36_section_validation_rejects_dirty_abstract_and_bad_cites(tmp_p
     assert not ok
     assert "begin{abstract}" in (err or "") or "摘要正文" in (err or "")
 
-    section_path = ws / "drafts" / "survey" / "sections" / "theme_1.tex"
+    section_path = ws / "drafts" / "survey" / "sections" / "taxonomy.tex"
     section_path.write_text(
-        "\\section{Perturbation Mechanisms}\n"
+        "\\section{Taxonomy}\n"
         "TODO replace this placeholder with evidence after reviewing the full section context. "
         "The rest of this deliberately long sentence exists only to pass the length guard so "
         "the validator reaches the placeholder-specific check.",
         encoding="utf-8",
     )
-    await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="theme_1")
-    ok, err = agent.validate_outputs(_survey_ctx(ws, "survey_section", section_id="theme_1"))
+    await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="taxonomy")
+    ok, err = agent.validate_outputs(_survey_ctx(ws, "survey_section", section_id="taxonomy"))
     assert not ok
     assert "placeholder" in (err or "")
 
     section_path.write_text(
-        "\\section{Perturbation Mechanisms}\n"
+        "\\section{Taxonomy}\n"
         "C1 is an internal ResearchOS alignment label and should not appear in polished survey prose. "
         "This deliberately long section text lets the validator reach the internal-label check.",
         encoding="utf-8",
     )
-    await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="theme_1")
-    ok, err = agent.validate_outputs(_survey_ctx(ws, "survey_section", section_id="theme_1"))
+    await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="taxonomy")
+    ok, err = agent.validate_outputs(_survey_ctx(ws, "survey_section", section_id="taxonomy"))
     assert not ok
     assert "CID" in (err or "") or "内部" in (err or "")
 
     section_path.write_text(
-        "\\section{Perturbation Mechanisms}\n"
+        "\\section{Taxonomy}\n"
         "This section has enough substantive wording to pass the length guard while citing "
         "an unavailable source \\citep{missingKey2026} that is not present in the bibliography.",
         encoding="utf-8",
     )
-    await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="theme_1")
-    ok, err = agent.validate_outputs(_survey_ctx(ws, "survey_section", section_id="theme_1"))
+    await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="taxonomy")
+    ok, err = agent.validate_outputs(_survey_ctx(ws, "survey_section", section_id="taxonomy"))
     assert not ok
     assert "missingKey2026" in (err or "")
 

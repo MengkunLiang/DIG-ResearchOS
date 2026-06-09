@@ -35,6 +35,8 @@ SURVEY_SECTION_SEQUENCE = [
     "abstract",
 ]
 
+DEFAULT_MAX_THEME_SECTIONS = 0
+
 SURVEY_BODY_ASSEMBLY_ORDER = [
     "introduction",
     "background",
@@ -73,7 +75,7 @@ class BuildSurveyStateParams(BaseModel):
     expansion_path: str = Field(default="drafts/survey/survey_expansion.json")
     state_output_path: str = Field(default="drafts/survey/survey_state.json")
     section_outline_dir: str = Field(default="drafts/survey/section_outlines")
-    max_theme_sections: int = Field(default=4, ge=1, le=8)
+    max_theme_sections: int = Field(default=DEFAULT_MAX_THEME_SECTIONS, ge=0, le=4)
 
 
 class UpdateSurveySectionStateParams(BaseModel):
@@ -159,18 +161,24 @@ class BuildSurveyStateTool(Tool):
             return ToolResult(ok=False, content=str(exc), error="invalid_input")
 
         outline = _coerce_outline(plan.get("outline"))
-        overflow_count = _theme_entry_overflow_count(outline, max_theme_sections=params.max_theme_sections)
+        planned_theme_limit = _survey_plan_theme_limit(plan)
+        max_theme_sections = params.max_theme_sections
+        if max_theme_sections == DEFAULT_MAX_THEME_SECTIONS and planned_theme_limit > 0:
+            max_theme_sections = planned_theme_limit
+        compact_mode = max_theme_sections == 0
+        overflow_count = 0 if compact_mode else _theme_entry_overflow_count(outline, max_theme_sections=max_theme_sections)
         if overflow_count > 0:
             return ToolResult(
                 ok=False,
                 content=(
-                    f"survey_plan outline contains {overflow_count + params.max_theme_sections} theme sections, "
-                    f"but current T3.6 state machine supports {params.max_theme_sections}. "
-                    "Merge/prioritize themes or extend SURVEY_SECTION_SEQUENCE/state_machine before continuing."
+                    f"survey_plan outline contains {overflow_count + max_theme_sections} standalone theme sections, "
+                    f"but current T3.6 sectioning policy supports {max_theme_sections}. "
+                    "Merge taxonomy classes into the Taxonomy/Comparative Analysis sections or explicitly raise "
+                    "max_theme_sections for a longer survey."
                 ),
                 error="too_many_theme_sections",
             )
-        theme_entries = _theme_entries(outline, max_theme_sections=params.max_theme_sections)
+        theme_entries = [] if compact_mode else _theme_entries(outline, max_theme_sections=max_theme_sections)
         theme_by_slot = {f"theme_{idx}": entry for idx, entry in enumerate(theme_entries, start=1)}
 
         sections: dict[str, dict[str, Any]] = {}
@@ -189,6 +197,16 @@ class BuildSurveyStateTool(Tool):
                 "paper_ids": list(plan_entry.get("paper_ids") or []) if isinstance(plan_entry, dict) else [],
                 "plan_section_id": str(plan_entry.get("section_id") or section_id) if isinstance(plan_entry, dict) else section_id,
             }
+            if compact_mode and section_id == "taxonomy":
+                sections[section_id]["note"] = (
+                    "Compact survey mode: write taxonomy classes as subsections/paragraphs here instead of "
+                    "creating standalone theme chapters."
+                )
+            if compact_mode and section_id == "comparison":
+                sections[section_id]["note"] = (
+                    "Compact survey mode: compare the taxonomy classes here and reserve challenges/future for "
+                    "cross-cutting issues."
+                )
 
         state = {
             "semantics": "survey_state_for_taxonomy_driven_section_writing_not_final_claims",
@@ -205,6 +223,12 @@ class BuildSurveyStateTool(Tool):
             "write_order": [sid for sid in SURVEY_SECTION_SEQUENCE if sections[sid]["status"] != "skipped"],
             "sections": sections,
             "shared_facts": {
+                "sectioning_policy": (
+                    "compact_survey_default_taxonomy_classes_inside_taxonomy_and_comparison"
+                    if compact_mode
+                    else "standalone_theme_sections_enabled"
+                ),
+                "max_theme_sections": max_theme_sections,
                 "taxonomy_dimension": ((plan.get("taxonomy") or {}).get("dimension") if isinstance(plan.get("taxonomy"), dict) else ""),
                 "taxonomy_classes": _taxonomy_classes(plan),
                 "evolution_narrative": str(plan.get("evolution_narrative") or ""),
@@ -778,6 +802,8 @@ def _coerce_outline(raw: object) -> list[dict[str, Any]]:
 
 
 def _theme_entries(outline: list[dict[str, Any]], *, max_theme_sections: int) -> list[dict[str, Any]]:
+    if max_theme_sections <= 0:
+        return []
     themes = [
         item
         for item in outline
@@ -809,6 +835,8 @@ def _theme_entries(outline: list[dict[str, Any]], *, max_theme_sections: int) ->
 
 
 def _theme_entry_overflow_count(outline: list[dict[str, Any]], *, max_theme_sections: int) -> int:
+    if max_theme_sections <= 0:
+        return 0
     themes = [
         item
         for item in outline
@@ -837,6 +865,36 @@ def _theme_entry_overflow_count(outline: list[dict[str, Any]], *, max_theme_sect
         }
     ]
     return max(0, len(taxonomy_entries) - max_theme_sections)
+
+
+def _survey_plan_theme_limit(plan: dict[str, Any]) -> int:
+    """Return explicit standalone theme-section allowance from a survey plan.
+
+    Compact survey is the default. The LLM may only enable theme sections by
+    writing an explicit sectioning_policy object; merely emitting theme_* in
+    outline is treated as legacy/over-fragmented plan text and folded away by
+    BuildSurveyStateTool.
+    """
+
+    raw = plan.get("sectioning_policy")
+    if isinstance(raw, str):
+        if raw.strip().lower() in {
+            "standalone_theme_sections_enabled",
+            "allow_theme_sections",
+            "long_survey_with_theme_sections",
+        }:
+            return 1
+        return 0
+    if not isinstance(raw, dict):
+        return 0
+    mode = str(raw.get("mode") or raw.get("sectioning_policy") or "").strip().lower()
+    if mode not in {"standalone_theme_sections", "allow_theme_sections", "long_survey_with_theme_sections"}:
+        return 0
+    try:
+        limit = int(raw.get("max_theme_sections") or raw.get("theme_section_limit") or 1)
+    except (TypeError, ValueError):
+        limit = 1
+    return max(0, min(limit, 4))
 
 
 def _matching_plan_entry(
@@ -931,26 +989,62 @@ def _section_outline_text(section_id: str, entry: dict[str, Any], plan: dict[str
     title = entry.get("title") or SURVEY_SECTION_TITLES.get(section_id, section_id)
     covers = entry.get("covers") or []
     paper_ids = entry.get("paper_ids") or []
+    sectioning_policy = plan.get("sectioning_policy") if isinstance(plan.get("sectioning_policy"), (dict, str)) else "compact"
     lines = [
         f"# {title}",
         "",
         f"- section_id: {section_id}",
         f"- plan_section_id: {entry.get('plan_section_id', section_id)}",
+        f"- sectioning_policy: {json.dumps(sectioning_policy, ensure_ascii=False)}",
         f"- covers: {', '.join(str(item) for item in covers) if covers else 'LLM should map taxonomy classes here'}",
         f"- paper_ids: {', '.join(str(item) for item in paper_ids) if paper_ids else 'LLM should select from notes/bib'}",
         "",
         "## Writing Skill",
         "- Write one coherent survey section only; do not write adjacent sections.",
         "- Use taxonomy as the organizing axis, not the synthesis.md design-rationale fuel structure.",
+        "- Default compact mode keeps taxonomy classes inside Taxonomy and Comparative Analysis rather than standalone theme chapters.",
         "- Synthesize evolution, comparison, tensions, and open problems using citations from related_work.bib.",
         "- Do not invent citations. If a needed citation key is missing, state the limitation in prose and avoid fake keys.",
+        "- Do not expose internal ResearchOS labels such as C1, [C1], CID, ResearchOS alignment, TODO/TBD/PLACEHOLDER, or LLM_REVIEW_REQUIRED.",
+        "- Treat abstract-only or metadata-only material as coverage/resource-upgrade context, not as verified mechanism evidence.",
         "- Avoid deterministic template filler; use LLM scholarly judgment for narrative, framing, and taxonomy critique.",
+        "",
+        "## Sectioning Guidance",
+        _sectioning_guidance(section_id, plan),
         "",
         "## Global Taxonomy Snapshot",
         json.dumps(plan.get("taxonomy") or {}, ensure_ascii=False, indent=2)[:3000],
         "",
     ]
     return "\n".join(lines)
+
+
+def _sectioning_guidance(section_id: str, plan: dict[str, Any]) -> str:
+    policy = plan.get("sectioning_policy") if isinstance(plan.get("sectioning_policy"), dict) else {}
+    mode = str(policy.get("mode") or plan.get("sectioning_policy") or "compact").strip().lower()
+    if section_id.startswith("theme_"):
+        return (
+            "This optional theme slot is skipped in compact mode. If survey_state marks it skipped, do not write prose; "
+            "call update_survey_section_state(..., status='skipped') and finish."
+        )
+    if section_id == "taxonomy":
+        return (
+            "Carry the main taxonomy here. Use subsections or paragraphs for classes, risk-chain stages, perspectives, "
+            "or mechanism families; do not offload them into separate theme chapters unless sectioning_policy explicitly enables them."
+        )
+    if section_id == "comparison":
+        return (
+            "Compare taxonomy classes across assumptions, mechanisms, evidence strength, data/evaluation settings, and limitations. "
+            "Avoid paper-by-paper laundry lists."
+        )
+    if section_id in {"challenges", "future"}:
+        return (
+            "Write cross-cutting issues grounded in taxonomy and comparison. Keep directions concrete and evidence-aware; "
+            "do not inflate weak or metadata-only hints into firm claims."
+        )
+    if mode.startswith("standalone"):
+        return "Standalone theme sections are enabled, but this section should still remain compact and avoid duplicated theme prose."
+    return "Use compact professional survey structure and avoid unnecessary section fragmentation."
 
 
 def _normalize_section_id(raw: str) -> str:

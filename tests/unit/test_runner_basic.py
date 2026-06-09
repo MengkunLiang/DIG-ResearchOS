@@ -2311,6 +2311,53 @@ async def test_runner_explicit_ask_human_blocks_sibling_tools_until_next_turn(tm
 
 
 @pytest.mark.asyncio
+async def test_runner_keeps_openai_tool_message_order_after_ask_human_barrier(tmp_workspace, registry):
+    llm = RecordingLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[
+                        FakeToolCall(
+                            name="ask_human",
+                            arguments={"question": "请确认是否写文件", "suggestions": ["确认"]},
+                            id="tc1",
+                        ),
+                        FakeToolCall(
+                            name="write_file",
+                            arguments={"path": "should_not_exist.txt", "content": "bad"},
+                            id="tc2",
+                        ),
+                    ]
+                )
+            ),
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="finish_task", arguments={"summary": "done"}, id="tc3")]
+                )
+            ),
+        ]
+    )
+    human = MockHumanInterface(clarification_answer="确认")
+    ctx = ExecutionContext(workspace_dir=tmp_workspace, project_id="p1", task_id="T4", run_id="r_openai_tool_order")
+    runner = AgentRunner(AskHumanWriteAgent(), registry, llm, human)
+
+    result = await runner.run(ctx)
+
+    assert result.ok
+    second_call_messages = llm.chat_kwargs[1]["messages"]
+    ask_assistant_idx = next(
+        idx
+        for idx, message in enumerate(second_call_messages)
+        if message.get("role") == "assistant" and message.get("tool_calls")
+    )
+    assert second_call_messages[ask_assistant_idx]["tool_calls"][0]["id"] == "tc1"
+    assert second_call_messages[ask_assistant_idx + 1]["role"] == "tool"
+    assert second_call_messages[ask_assistant_idx + 1]["tool_call_id"] == "tc1"
+    assert second_call_messages[ask_assistant_idx + 2]["role"] == "user"
+    assert "延后执行同轮其它工具: write_file" in second_call_messages[ask_assistant_idx + 2]["content"]
+
+
+@pytest.mark.asyncio
 async def test_validation_retry_exhaustion_pauses_for_resume(tmp_workspace, registry):
     llm = MockLLMClient(
         responses=[

@@ -2002,7 +2002,7 @@ T3.5
 | 输出 | 文件 | 含义 |
 | --- | --- | --- |
 | `survey_decision` | `drafts/survey/decision.json` | 用户是否撰写 survey |
-| `survey_plan` | `drafts/survey/survey_plan.json` | LLM 规划的 taxonomy、evolution narrative、outline、coverage selfcheck |
+| `survey_plan` | `drafts/survey/survey_plan.json` | LLM 规划的 taxonomy、evolution narrative、sectioning_policy、outline、coverage selfcheck |
 | `outline_decision` | `drafts/survey/outline_decision.json` | 用户确认/调整 taxonomy 大纲的记录 |
 | `corpus_decision` | `drafts/survey/corpus_decision.json` | 用户选择 conservative / complete 素材范围 |
 | `survey_expansion` | `drafts/survey/survey_expansion.json` | complete 模式的一次性补检计划，不回到 T2/T4 循环 |
@@ -2048,10 +2048,13 @@ paper id 或 citation key。
 - `taxonomy.rationale`
 - `taxonomy.tree`
 - `evolution_narrative`
+- `sectioning_policy`
 - `outline`
 - `coverage_selfcheck`
 
-validator 会要求 taxonomy tree 非空、outline 至少包含 background/taxonomy/comparison 等核心 section、coverage_selfcheck 存在。
+`sectioning_policy` 是写作前置契约，不是 review 后补救项。默认必须是 compact：taxonomy 类、风险链条、治理视角或机制家族写进 `Taxonomy` 与 `Comparative Analysis` 的小节/段落，而不是为每个类膨胀出独立大章。只有用户明确要求长篇综述，且某个主题无法自然并入 taxonomy/comparison 时，才允许 `standalone_theme_sections`，并且必须写明 `rationale` 和很小的 `max_theme_sections`。
+
+validator 会要求 taxonomy tree 非空、outline 至少包含 background/taxonomy/comparison 等核心 section、coverage_selfcheck 存在，并在 PLAN 阶段拒绝缺失 `sectioning_policy` 或 compact 模式下仍输出 `theme_*` 独立章的 plan。这样章节结构问题会在正文写作前暴露，而不是等到 review/compile 后才发现。
 
 #### `T3.6-GATE-OUTLINE`
 
@@ -2081,7 +2084,7 @@ Agent 调用 `build_survey_state`。工具把 `survey_plan.json` 机械转换为
 - `survey_state.json`
 - `section_outlines/background.md`
 - `section_outlines/taxonomy.md`
-- `section_outlines/theme_1.md` 到 `theme_4.md`
+- `section_outlines/theme_1.md` 到 `theme_4.md`（兼容占位；compact 默认全部 skipped）
 - `section_outlines/comparison.md`
 - `section_outlines/challenges.md`
 - `section_outlines/future.md`
@@ -2089,7 +2092,9 @@ Agent 调用 `build_survey_state`。工具把 `survey_plan.json` 机械转换为
 - `section_outlines/conclusion.md`
 - `section_outlines/abstract.md`
 
-主题章最多映射到 4 个固定 state-machine 节点。若 taxonomy 只有 2 个主题，`theme_3` 和 `theme_4` 在 `survey_state.json` 中标记为 `skipped`。这样每个主题仍是单独节点，避免一个 agent 一次写多个主题章。
+默认 compact 模式会把 `theme_1` 到 `theme_4` 都标记为 `skipped`，并在 taxonomy/comparison 的 section outline 中写明“taxonomy 类写入本节内部”的规则。`T3.6-SEC-THEME-*` 节点仍保留是为了兼容旧状态机和显式长综述模式；如果 `survey_state` 标记 skipped，该节点只调用 `update_survey_section_state(..., status="skipped")` 后结束，不写正文。
+
+如果 `survey_plan.sectioning_policy.mode=standalone_theme_sections`，工具才会把少量 theme outline 映射到固定槽位；超过 `max_theme_sections` 会失败，要求回到 PLAN/outline gate 合并或删减章节。
 
 #### `T3.6-SEC-*`
 
@@ -2097,10 +2102,10 @@ Agent 调用 `build_survey_state`。工具把 `survey_plan.json` 机械转换为
 
 - `T3.6-SEC-BACKGROUND` -> `drafts/survey/sections/background.tex`
 - `T3.6-SEC-TAXONOMY` -> `drafts/survey/sections/taxonomy.tex`
-- `T3.6-SEC-THEME-1` -> `drafts/survey/sections/theme_1.tex`
-- `T3.6-SEC-THEME-2` -> `drafts/survey/sections/theme_2.tex`
-- `T3.6-SEC-THEME-3` -> `drafts/survey/sections/theme_3.tex`
-- `T3.6-SEC-THEME-4` -> `drafts/survey/sections/theme_4.tex`
+- `T3.6-SEC-THEME-1` -> `drafts/survey/sections/theme_1.tex`（默认 skipped）
+- `T3.6-SEC-THEME-2` -> `drafts/survey/sections/theme_2.tex`（默认 skipped）
+- `T3.6-SEC-THEME-3` -> `drafts/survey/sections/theme_3.tex`（默认 skipped）
+- `T3.6-SEC-THEME-4` -> `drafts/survey/sections/theme_4.tex`（默认 skipped）
 - `T3.6-SEC-COMPARISON` -> `drafts/survey/sections/comparison.tex`
 - `T3.6-SEC-CHALLENGES` -> `drafts/survey/sections/challenges.tex`
 - `T3.6-SEC-FUTURE` -> `drafts/survey/sections/future.tex`
@@ -2137,7 +2142,7 @@ audit_survey_coverage(...)
 
 #### `T3.6-REVIEW`
 
-`SurveyWriterAgent(mode=survey_review)` 读取 `survey.tex`、`survey_audit.md/json`、`survey_plan.json`、`survey_state.json`、所有 `sections/*.tex`、`synthesis_workbench.json`、`domain_map.json`、`comparison_table.csv` 和 `.bib`。这一步用 LLM 的学术判断做综述模式审阅，不把 taxonomy 质量硬编码成 tool 规则。
+`SurveyWriterAgent(mode=survey_review)` 读取 `survey.tex`、`survey_audit.md/json`、`survey_plan.json`、`survey_state.json`、所有 `sections/*.tex`、`synthesis_workbench.json`、`domain_map.json`、`comparison_table.csv` 和 `.bib`。这一步用 LLM 的学术判断做综述模式审阅，不把 taxonomy 质量硬编码成 tool 规则。章节结构、内部标号和弱证据滥用已经在 PLAN/SECTION/ASSEMBLE 前置拦截；review 只做最后一轮人工风格的结构和学术质量兜底。
 
 审阅维度固定为六类：
 
@@ -2183,7 +2188,7 @@ T3.6 是 artifact-first 支线。每个 section 都是单独文件，`survey_sta
 - 如果 `decision.json` 已存在，survey gate 可直接完成。
 - 如果 `survey_plan.json` 已存在，PLAN 不必重写。
 - 如果某个 section 已写且 `survey_state` 标记 written/revised，validator 会接受，后续节点继续。
-- 如果 `theme_3` / `theme_4` 是 skipped，section validator 不要求对应 tex 文件。
+- compact 默认下 `theme_1` 到 `theme_4` 都是 skipped，section validator 不要求对应 tex 文件。
 - 如果 review 失败，resume 会回到 `T3.6-REVIEW`，读取 `survey_review.md` 和 `survey_review_actions.json` 定位 section patch，不会重写整篇 survey。
 - 如果 `survey.tex` 已拼装且 review 通过但 compile 失败，resume 会回到 `T3.6-COMPILE` 或当前状态，读取 log 修复。`survey_review_actions.json` 必须由 `bind_survey_review` 写入当前 `survey_plan`、`survey_state`、`survey.tex`、`survey_audit`、sections 和 literature 输入的 fingerprint；旧 review 不会放行新 survey。
 

@@ -337,10 +337,17 @@ CLI 在每个 task/agent 开始时会输出一整行 `==== <task_id> | <agent_na
 6. 进入 `while True` 主循环
 7. 调用 LLM
 8. 解析 assistant message / tool_calls
-9. 执行工具
-10. 回填 tool messages
-11. 如果 tool 调用了 `finish_task`，则做 `validate_outputs`
-12. 成功则退出，否则继续修复
+9. 应用 runtime 屏障规则：如果本轮包含 `ask_human`，或文本明显要求用户选择但没有调用 `ask_human`，只保留/注入一个 `ask_human`，其它同轮工具延后
+10. 执行工具
+11. 回填 tool messages
+12. 如果 tool 调用了 `finish_task`，则做 `validate_outputs`
+13. 成功则退出，否则继续修复
+
+OpenAI-compatible provider 对消息顺序很严格：assistant message 一旦带 `tool_calls`，
+后面必须紧跟对应 `tool` messages，不能先插入 runtime 的 `user` note。Runner 因此会在
+所有 tool messages 回填后，再追加“已延后其它工具”“自动转 ask_human”等 runtime note。
+如果日志里出现 `assistant message with 'tool_calls' must be followed by tool messages`，
+优先检查 trace 中 assistant/tool/user 顺序，而不是先怀疑 API key 或 base_url。
 
 ### 6.3 空回复与 nudging
 
