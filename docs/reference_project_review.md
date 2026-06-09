@@ -45,7 +45,7 @@
 - Tool：`researchos/tools/reference_mining.py`
 - Tool：`researchos/tools/external_experiment.py`
 - Registry：`researchos/tools/builtin.py`
-- State machine：`config/state_machine.yaml`
+- State machine：`config/system_config/state_machine.yaml`
 - Contracts：`researchos/orchestration/task_io_contract.py`
 - Skills：`skills/reference-project-miner/`、`skills/external-executor-bridge/`、`skills/experiment-integrity-audit/`、`skills/result-to-claim/`、`skills/paper-claim-audit/`
 - Shared references：`skills/shared-references/*.md`

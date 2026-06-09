@@ -18,6 +18,7 @@ from ..runtime.config import RuntimeSettings
 from ..runtime.llm_client import LLMClient
 from ..runtime.logger import get_logger
 from ..runtime.orchestrator import AgentRunner
+from ..runtime.system_config import system_config_path
 from ..runtime.task_recovery import prepare_task_resume_artifacts
 from ..runtime.workspace import initialize_workspace
 from ..schemas.state import StateYaml, TaskHistoryEntry
@@ -27,8 +28,8 @@ from ..tools.registry import ToolRegistry
 
 
 _LOG = get_logger("single_task")
-_DEFAULT_STATE_MACHINE_PATH = Path(__file__).resolve().parents[2] / "config" / "state_machine.yaml"
-_DEFAULT_GATES_PATH = Path(__file__).resolve().parents[2] / "config" / "gates.yaml"
+_DEFAULT_STATE_MACHINE_PATH = system_config_path("state_machine.yaml")
+_DEFAULT_GATES_PATH = system_config_path("gates.yaml")
 
 
 def _now_iso() -> str:

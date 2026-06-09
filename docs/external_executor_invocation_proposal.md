@@ -405,7 +405,7 @@ CLI/UX 需求：
 
 以下是后续实现设计可能相关的当前仓库位置。本文档不修改这些代码：
 
-- `config/state_machine.yaml`：T5/T7 state definitions，以及潜在 `T5-EXTERNAL-INVOKE` 插入点。
+- `config/system_config/state_machine.yaml`：T5/T7 state definitions，以及潜在 `T5-EXTERNAL-INVOKE` 插入点。
 - `researchos/tools/external_experiment.py`：handoff、selection、mock dry-run、wait validation、ingest、audit、claim mapping tools。
 - `researchos/tools/human_gate.py`：CLI gate 行为和 `codex_cli` 二次确认。
 - `researchos/agents/experimenter.py`：experimenter output validation。

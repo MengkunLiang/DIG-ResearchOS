@@ -78,7 +78,7 @@ PATTERN_RULES = [
         "mechanism": "Every stage has declared inputs, outputs, definition-of-done, retry and error semantics.",
         "researchos_target_stage": ["task_io_contract", "state_machine", "validators"],
         "adaptation": "Keep ResearchOS state machine and task_io_contract in exact sync, then validate artifacts after each node.",
-        "required_artifacts": ["config/state_machine.yaml", "researchos/orchestration/task_io_contract.py"],
+        "required_artifacts": ["config/system_config/state_machine.yaml", "researchos/orchestration/task_io_contract.py"],
         "acceptance_tests": ["validate-config catches drift", "single-task prerequisite validation catches missing input"],
     },
     {
@@ -393,4 +393,3 @@ def _risks_for_pattern(pattern_id: str) -> list[str]:
 
 def _safe_id(value: str) -> str:
     return "".join(ch if ch.isalnum() else "_" for ch in value.upper()).strip("_") or "REFERENCE"
-

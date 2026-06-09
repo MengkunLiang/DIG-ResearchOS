@@ -541,14 +541,14 @@ legacy `T5/T7` 显式调试时再检查已有代码目录、Docker digest 和内
 
 推荐步骤：
 
-1. 改 `config/state_machine.yaml`
+1. 改 `config/system_config/state_machine.yaml`
 2. 跑 `validate-config`
 3. 必要时单测 `StateMachine`
 4. 再用 `run` / `resume` 验证完整链
 
 常见文件：
 
-- `config/state_machine.yaml`
+- `config/system_config/state_machine.yaml`
 - `researchos/orchestration/state_machine.py`
 - `researchos/orchestration/task_io_contract.py`
 

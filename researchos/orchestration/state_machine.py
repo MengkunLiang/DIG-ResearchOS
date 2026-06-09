@@ -3,7 +3,7 @@ from __future__ import annotations
 """ResearchOS 状态机解释器。
 
 本模块负责三件事：
-1. 把 `config/state_machine.yaml` 解析成 task 节点；
+1. 把 `config/system_config/state_machine.yaml` 解析成 task 节点；
 2. 基于 `AgentResult` 推进 `state.yaml`；
 3. 在 gate / resume / iteration 这些跨 task 语义上做统一处理。
 """

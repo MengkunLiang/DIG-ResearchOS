@@ -1048,7 +1048,7 @@ pytest tests/unit/test_runtime_config_and_validator_extensions.py -q
 
 已知限制：
 
-- Reviewer 当前是单节点 section-aware，还不是每个 section 一个独立 Reviewer 节点。13.1.1 已给出可执行状态机设计；落地时需要同步改 `config/state_machine.yaml`、`ReviewerAgent` mode 分支、`task_io_contract.py` 和 task checker。
+- Reviewer 当前是单节点 section-aware，还不是每个 section 一个独立 Reviewer 节点。13.1.1 已给出可执行状态机设计；落地时需要同步改 `config/system_config/state_machine.yaml`、`ReviewerAgent` mode 分支、`task_io_contract.py` 和 task checker。
 - Revision patch list 已结构化，但 patch 应用过程仍主要靠 prompt 和 validator 间接约束。
 - `audit_manuscript_claims` 目前偏机械 hint；`claim_ledger.json` 已生成 seed，但 claim support 的最终语义判断仍靠 Writer/Reviewer。
 - 图表 registry 已生成 seed，但自动 plot/table tool 尚未完全接入。

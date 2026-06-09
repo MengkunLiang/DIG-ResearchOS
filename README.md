@@ -125,7 +125,7 @@ That is why resume and interruption recovery work best when the relevant outputs
 | `researchos/orchestration/` | state machine, gates, task I/O contract |
 | `researchos/tools/` | builtin tools, MCP adapter, filesystem, paper tools |
 | `researchos/skills/` | skill loader, aliases, runner |
-| `config/` | state machine, model routing, agent params, runtime config |
+| `config/` | user settings, model routing, agent params, runtime config, and `system_config/` workflow contracts |
 | `docs/` | detailed system documentation |
 | `infra/docker/` | Docker build and run scripts |
 | `tests/` | unit and real-environment tests |
@@ -209,7 +209,8 @@ The most commonly used variables are:
 Important rule:
 
 - secrets belong in `.env`
-- runtime behavior belongs in `config/*.yaml`
+- day-to-day runtime behavior belongs in `config/user_settings.yaml`, `config/runtime.yaml`, and `.env`
+- workflow contracts live under `config/system_config/`; they are active, but ordinary users normally do not edit them
 - agent defaults live in `config/agent_params.yaml`, grouped by `llm`, `budget`, `tools`, `prompt`, `behavior`, and `modes`; legacy flat fields are still accepted for compatibility, but the checked-in config uses the sectioned form
 
 See [docs/config.md](./docs/config.md) for the full configuration model.

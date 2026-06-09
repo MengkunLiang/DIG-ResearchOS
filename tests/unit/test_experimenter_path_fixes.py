@@ -18,6 +18,7 @@ import yaml
 from researchos.agents.experimenter import ExperimenterAgent
 from researchos.runtime.agent import ExecutionContext
 from researchos.runtime.prompts import render_prompt
+from researchos.runtime.system_config import system_config_path
 
 
 class TestNoveltyReportPathPriority:
@@ -340,8 +341,8 @@ class TestStateMachineModePropagation:
         from researchos.orchestration.state_machine import StateMachine
         from pathlib import Path
 
-        sm_path = Path(__file__).resolve().parents[2] / "config" / "state_machine.yaml"
-        gates_path = Path(__file__).resolve().parents[2] / "config" / "gates.yaml"
+        sm_path = system_config_path("state_machine.yaml")
+        gates_path = system_config_path("gates.yaml")
 
         sm = StateMachine(sm_path, gates_config_path=gates_path)
         t5_node = sm.nodes.get("T5")
@@ -354,8 +355,8 @@ class TestStateMachineModePropagation:
         from researchos.orchestration.state_machine import StateMachine
         from pathlib import Path
 
-        sm_path = Path(__file__).resolve().parents[2] / "config" / "state_machine.yaml"
-        gates_path = Path(__file__).resolve().parents[2] / "config" / "gates.yaml"
+        sm_path = system_config_path("state_machine.yaml")
+        gates_path = system_config_path("gates.yaml")
 
         sm = StateMachine(sm_path, gates_config_path=gates_path)
         t7_node = sm.nodes.get("T7")

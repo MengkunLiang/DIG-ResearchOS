@@ -49,6 +49,7 @@ from .runtime.cli_ui import format_startup_summary, show_startup_banner
 from .runtime.config import RuntimeSettings, UISettings, load_runtime_settings
 from .runtime.llm_client import LLMClient
 from .runtime.logger import configure_file_logging, configure_logging
+from .runtime.system_config import system_config_path
 from .runtime.trace import render_trace_for_humans
 from .runtime.workspace import WorkspaceInitResult, initialize_workspace
 from .schemas.state import StateYaml
@@ -1091,11 +1092,11 @@ def _add_shared_cli_options(
     )
     parser.add_argument(
         "--state-machine",
-        default="config/state_machine.yaml" if use_defaults else default,
+        default=str(system_config_path("state_machine.yaml")) if use_defaults else default,
     )
     parser.add_argument(
         "--gates",
-        default="config/gates.yaml" if use_defaults else default,
+        default=str(system_config_path("gates.yaml")) if use_defaults else default,
     )
     parser.add_argument(
         "--model-routing",

@@ -30,6 +30,9 @@
 7. `drafts/alignment_matrix.json` 是跨章节对齐契约的 seed/hint，不是最终科学判断；你必须用 LLM 阅读证据后补全 motivation、related_gap、counterfactual、nearest_prior_work、novelty_signal、design_choice、experiment、analysis。CID 只作为内部 alignment id；最终 TeX 正文和注释都不要输出 `C1`、`[C1]` 或 `% [C1]` 这类内部编号。
 8. 如果存在 `drafts/experiment_evidence_pack.json`，实验 claim 必须先经过 `drafts/result_to_claim.json` 的 support_status/allowed_wording 约束；mock_only 或 unsupported_mock_only 只能写成协议 dry-run/限制，不能写成实证结果。
 9. 最终 TeX 正文和注释都不能包含 literal `TODO`、`TBD`、`LLM_REVIEW_REQUIRED` 或 `PLACEHOLDER`。这些词只能出现在计划、ledger、review、自查或 audit 文件里；正文缺证据时用自然语言 limitation、弱化表述或删除 claim。
+10. 写作结构必须像真实论文，而不是把内部 artifact 清单翻译成段落。每个段落都要承担一个学术功能：定义问题、建立 gap、比较机制、解释设计、呈现实证、排除替代解释、陈述边界或收束贡献。
+11. 不要把章节拆成过多细碎 subsection。默认主论文只使用 Abstract、Introduction、Related Work、Method、Experiments、Analysis、Conclusion；Related Work 和 Method 内部 subsection 必须按论证功能组织，不按每篇论文、每个内部 claim id 或每个 artifact 拆章。
+12. 禁止展示内部工程/审计标号作为正文组织方式，包括 `C1`、`CID`、`claim_ledger`、`alignment_matrix`、`LLM_REVIEW_REQUIRED`、文件路径清单式段落和 “ResearchOS alignment”。
 
 ## 项目信息
 
@@ -173,6 +176,7 @@ project:
    - Experiments: data_view、evaluation_mode、setup、baseline、metrics、main results、ablation、seed ensemble
    - Analysis: design_rationale evidence、alternative explanations、failure cases、sensitivity
    - Conclusion: contribution_type、可迁移设计知识、`\subsection{Limitations}`、future work
+   每个 section 都必须写清“本章承担什么论证功能、读者读完后应该相信什么、哪些证据支持这个判断”。不要在 outline 里生成过细的章节树；小节数量以必要为准，默认每个核心 section 2-4 个功能性小节足够。
 5. Figure/table plan：
    - 每个 figure/table 的来源：existing artifact / generated from results / unsupported/missing
    - 必须参考 `drafts/figure_table_plan.json`，不能在没有数据的情况下承诺图表已经存在
@@ -307,6 +311,8 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 - related_work：按 2-4 个 competing rationale/taxonomy subsection 组织，每个 subsection 都要有代表工作、共同 tension、与本文的差异化定位。
 - analysis：解释 design rationale 是否被支持，写 alternative explanation、failure case、sensitivity 或 boundary，而不是重复结果数字。
 - introduction/conclusion：形成完整论证链，不写占位式短 intro，也不把 conclusion 写成 abstract 复制。
+
+每一段先有功能再有 citation/数字。避免 “X et al. did A. Y et al. did B.” 的流水账，避免 “This section reviews...” 这类空话开头，避免用文件名、内部编号或 artifact 字段名替代自然学术论证。
 
 不要设置僵硬字数下限；如果证据不足，在正文中用自然语言写 limitation 或删除/弱化对应 claim，不要留下 literal TODO。如果证据充足，就充分展开到目标 venue 所需的写作密度。
 

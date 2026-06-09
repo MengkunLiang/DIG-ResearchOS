@@ -2197,6 +2197,18 @@ def audit_writing_craft(
         "Related Work has repeated et al. listing patterns; ensure rationale/tension structure.",
     )
     add(
+        "sectioning_granularity",
+        "WARN",
+        _sectioning_granularity_is_reasonable(paper),
+        "Manuscript has too many fine-grained subsections for a section-by-section draft; merge artifact/id/paper-level fragments into functional argument sections.",
+    )
+    add(
+        "paragraph_function_signal",
+        "WARN",
+        _paragraphs_have_argument_functions(paper),
+        "Many paragraphs look like citations or artifact mentions without an argument function; each paragraph should define, compare, justify, evidence, analyze, or bound a claim.",
+    )
+    add(
         "related_work_pre_t5_signal_consumption",
         "WARN",
         _related_work_consumes_pre_t5_signals(related, rows),
@@ -2969,6 +2981,50 @@ def _looks_like_laundry_list(text: str) -> bool:
     etal_sentences = sum(1 for sentence in sentences if re.search(r"\bet al\.", sentence))
     transition_hits = sum(1 for sentence in sentences if re.search(r"rationale|tension|gap|however|therefore|因此|张力|缺口", sentence, flags=re.IGNORECASE))
     return etal_sentences >= 4 and transition_hits < 2
+
+
+def _sectioning_granularity_is_reasonable(text: str) -> bool:
+    section_count = len(re.findall(r"(?<!sub)\\section\*?\{", text))
+    subsection_count = len(re.findall(r"(?<!sub)\\subsection\*?\{", text))
+    subsubsection_count = len(re.findall(r"\\subsubsection\*?\{", text))
+    if subsubsection_count:
+        return False
+    if section_count <= 0:
+        return subsection_count <= 12
+    return subsection_count <= max(18, section_count * 4)
+
+
+def _paragraphs_have_argument_functions(text: str) -> bool:
+    paragraphs = [
+        re.sub(
+            r"\s+",
+            " ",
+            re.sub(r"\\(?:section|subsection|subsubsection|paragraph)\*?\{[^{}]*\}", " ", paragraph),
+        ).strip()
+        for paragraph in re.split(r"\n\s*\n", text or "")
+    ]
+    substantive = [
+        paragraph
+        for paragraph in paragraphs
+        if len(paragraph) >= 120
+        and "\\begin{" not in paragraph
+        and "\\end{" not in paragraph
+    ]
+    function_words = re.compile(
+        r"\b(because|therefore|however|whereas|while|although|suggests?|indicates?|"
+        r"shows?|implies?|motivates?|contrasts?|differs?|supports?|limits?|boundary|"
+        r"rationale|tension|gap|mechanism|evidence|we find|we show)\b|"
+        r"因此|然而|相比|差异|机制|证据|边界|张力|缺口|说明|表明|支持|限制",
+        flags=re.IGNORECASE,
+    )
+    weak = 0
+    for paragraph in substantive:
+        has_function = bool(function_words.search(paragraph))
+        citation_like = len(re.findall(r"\\cite\{|\bet al\.", paragraph)) >= 2
+        artifact_like = len(re.findall(r"\b(?:paper_state|alignment_matrix|claim_ledger|cdr_|drafts/|literature/)\b", paragraph)) >= 1
+        if not has_function and (citation_like or artifact_like):
+            weak += 1
+    return weak <= max(0, len(substantive) // 4)
 
 
 def _ai_boilerplate_hits(text: str) -> list[str]:

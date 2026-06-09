@@ -228,7 +228,7 @@ workspace 初始化由 [researchos/runtime/workspace.py](../researchos/runtime/w
 
 ## 5. StateMachine：流程推进内核
 
-状态机由 [researchos/orchestration/state_machine.py](../researchos/orchestration/state_machine.py) 解释 [config/state_machine.yaml](../config/state_machine.yaml)。
+状态机由 [researchos/orchestration/state_machine.py](../researchos/orchestration/state_machine.py) 解释 [config/system_config/state_machine.yaml](../config/system_config/state_machine.yaml)。
 
 ### 5.1 它负责什么
 
@@ -845,7 +845,7 @@ runner 或 single-task 在 agent 成功后还会用 task contract 做一轮额�
 
 这些规则一部分来自：
 
-- `config/state_machine.yaml`
+- `config/system_config/state_machine.yaml`
 - `researchos/orchestration/task_io_contract.py`
 - 各 agent 的 `validate_outputs()`
 
@@ -913,12 +913,12 @@ ResearchOS 不只有“文件存在性校验”，还有两类更高层的 gate�
    - `validate_outputs()`
 5. 在 [researchos/agents/registry.py](../researchos/agents/registry.py) 中注册
 6. 在 [config/agent_params.yaml](../config/agent_params.yaml) 配默认参数
-7. 在 [config/state_machine.yaml](../config/state_machine.yaml) 配节点
+7. 在 [config/system_config/state_machine.yaml](../config/system_config/state_machine.yaml) 配节点
 8. 在 [researchos/orchestration/task_io_contract.py](../researchos/orchestration/task_io_contract.py) 配 I/O
 
 如果这个 agent 需要新 gate、special next、resume 语义，也通常要同步改：
 
-- `config/gates.yaml`
+- `config/system_config/gates.yaml`
 - `state_machine.py`
 - `task_recovery.py` 或专项 recovery
 

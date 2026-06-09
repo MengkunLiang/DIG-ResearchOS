@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 import yaml
 
 from ..literature_identity import is_placeholder_text, is_workspace_guide_or_template
+from ..runtime.system_config import system_config_path
 from ..tools.seed_outline import (
     build_seed_outline_profile,
     looks_like_seed_outline,
@@ -48,7 +49,7 @@ def repo_root() -> Path:
 def load_cdr_schema() -> dict:
     """Load the shared CDR schema used by Pre-T5 and manuscript agents."""
 
-    schema_path = repo_root() / "config" / "cdr_schema.yaml"
+    schema_path = system_config_path("cdr_schema.yaml")
     if not schema_path.exists():
         return {}
     return yaml.safe_load(schema_path.read_text(encoding="utf-8")) or {}

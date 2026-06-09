@@ -483,6 +483,47 @@ def test_writing_craft_counts_itemize_contributions_and_rejects_abstract_cites()
         assert cited_checks["abstract_no_cite"]["level"] == "FAIL"
 
 
+def test_writing_craft_warns_on_fragmented_sectioning_and_nonfunctional_paragraphs():
+    rows = [
+        {"cid": f"C{idx}", "experiment": {"rq": f"RQ{idx}", "table": "tab:main", "result_metric": "accuracy"}}
+        for idx in range(1, 4)
+    ]
+    tiny_subsections = "\n".join(
+        f"\\subsection{{Artifact Fragment {idx}}}\n"
+        f"Smith et al. describe one setup. Jones et al. describe another setup. "
+        f"This paragraph mentions drafts/claim_ledger.json and literature/synthesis.md without explaining why it matters."
+        for idx in range(1, 24)
+    )
+    section_texts = {
+        "abstract": "We study a concrete problem gap and report a reproducible method with measured evidence. " * 12,
+        "introduction": (
+            "\\paragraph{Contributions}\n"
+            "\\begin{itemize}\n"
+            "\\item We identify a concrete gap.\n"
+            "\\item We introduce a method.\n"
+            "\\item We validate the mechanism.\n"
+            "\\end{itemize}\n"
+        ),
+        "related_work": "\\subsection{Prior Work}\nThis paragraph compares nearest prior work and cross-paper tension.",
+        "methodology": tiny_subsections,
+        "experiments": "RQ1 tab:main accuracy\nRQ2 tab:main accuracy\nRQ3 tab:main accuracy",
+        "analysis": "Analysis explains the mechanism because the ablation supports the design boundary.",
+        "conclusion": "\\subsection{Limitations}\nNo new claims.",
+    }
+    audit = audit_writing_craft(
+        paper="\n\n".join(section_texts.values()),
+        section_texts=section_texts,
+        paper_state={"shared_facts": {"result_metrics": ["accuracy"], "alignment_matrix": rows}},
+        alignment_matrix={"rows": rows},
+        cdr_ledger={"contribution_chains": rows},
+        venue_style="ccf_a",
+    )
+
+    checks = {item["name"]: item for item in audit["json"]["checks"]}
+    assert checks["sectioning_granularity"]["level"] == "WARN"
+    assert checks["paragraph_function_signal"]["level"] == "WARN"
+
+
 def test_ideation_soft_signal_tools_are_diagnostic_not_gates():
     scorecard = {
         "ideas": [

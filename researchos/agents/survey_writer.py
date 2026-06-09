@@ -588,7 +588,7 @@ def _validate_survey_section(ws: Path, section_id: str) -> tuple[bool, str | Non
     if not path.exists():
         return False, f"缺少章节草稿: drafts/survey/sections/{section_id}.tex"
     text = path.read_text(encoding="utf-8", errors="replace")
-    min_chars = 50 if section_id == "abstract" else 120
+    min_chars = 80 if section_id == "abstract" else 300
     if len(text.strip()) < min_chars:
         return False, f"survey section {section_id} 过短"
     if "\\documentclass" in text or "\\begin{document}" in text or "\\end{document}" in text:
@@ -619,6 +619,10 @@ def _validate_survey_section(ws: Path, section_id: str) -> tuple[bool, str | Non
     foreign = _foreign_survey_headers(text, section_id)
     if foreign:
         return False, f"survey section {section_id} 夹带其它章节: {', '.join(foreign[:5])}"
+    if section_id != "abstract":
+        craft_hits = _survey_section_craft_issues(text)
+        if craft_hits:
+            return False, f"survey section {section_id} 写作结构问题: {', '.join(craft_hits[:4])}"
     if isinstance(entry, dict) and entry.get("status") not in {"written", "revised"}:
         return False, f"survey_state 中 {section_id} 未标记 written/revised"
     ok, err = _validate_fingerprint_map(ws, entry.get("input_fingerprints"), f"survey_state.sections.{section_id}")
@@ -629,6 +633,28 @@ def _validate_survey_section(ws: Path, section_id: str) -> tuple[bool, str | Non
 
 def _placeholder_hits(text: str) -> list[str]:
     return sorted(set(re.findall(r"\b(?:TODO|TBD|LLM_REVIEW_REQUIRED|PLACEHOLDER)\b", text or "", flags=re.IGNORECASE)))
+
+
+def _survey_section_craft_issues(text: str) -> list[str]:
+    issues: list[str] = []
+    lowered = text.lower()
+    if lowered.count("this section reviews") + lowered.count("this section discusses") >= 2:
+        issues.append("重复空泛 section 开场")
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    etal_sentences = sum(1 for sentence in sentences if re.search(r"\bet al\.", sentence))
+    comparison_signals = len(
+        re.findall(
+            r"\b(whereas|however|contrast|tension|boundary|mechanism|taxonomy|challenge|future direction)\b|"
+            r"相比|然而|机制|边界|分类|张力|挑战|方向",
+            text,
+            flags=re.IGNORECASE,
+        )
+    )
+    if etal_sentences >= 5 and comparison_signals < 2:
+        issues.append("疑似逐篇论文流水账")
+    if len(re.findall(r"\\subsubsection\*?\{", text)) > 0:
+        issues.append("综述 section 不应使用过细 subsubsection")
+    return issues
 
 
 def _validate_fingerprint_map(ws: Path, fingerprints: object, label: str) -> tuple[bool, str | None]:

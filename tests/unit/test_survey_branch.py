@@ -122,6 +122,22 @@ def _survey_ctx(ws: Path, mode: str, **extra):
     return type("Ctx", (), {"workspace_dir": ws, "mode": mode, "extra": extra})()
 
 
+def _valid_survey_section_body(section: str, cite: str = "\\citep{p1}") -> str:
+    mechanism_phrase = ""
+    if section == "Taxonomy":
+        mechanism_phrase = "It specifically separates perturbation and routing mechanisms as reader-facing categories. "
+    return (
+        f"\\section{{{section}}}\n"
+        f"This section defines its reader-facing role using verified literature {cite}. "
+        f"{mechanism_phrase}"
+        "It compares taxonomy classes by mechanism, evidence boundary, evaluation setting, and scope, "
+        "therefore the prose is not a paper-by-paper list. "
+        "The section explains why the distinction matters for interpreting the field, how the classes differ, "
+        "where cross-paper tensions remain unresolved, and which claims should stay conservative when evidence is partial. "
+        "This wording is intentionally substantive enough for validation while still remaining a compact survey section."
+    )
+
+
 async def _build_valid_survey_chain(ws: Path) -> None:
     _write_json(ws / "drafts" / "survey" / "survey_plan.json", _survey_plan())
     _write_json(ws / "drafts" / "survey" / "corpus_decision.json", {"scope": "conservative"})
@@ -136,42 +152,14 @@ async def _build_valid_survey_chain(ws: Path) -> None:
     sections_dir = ws / "drafts" / "survey" / "sections"
     sections_dir.mkdir(parents=True, exist_ok=True)
     section_text = {
-        "background": (
-            "\\section{Background and Scope}\n"
-            "This survey defines scope using prior work \\citep[see][]{p1}. "
-            "It separates mechanism evidence from application examples so that later comparisons remain auditable."
-        ),
-        "taxonomy": (
-            "\\section{Taxonomy}\n"
-            "The taxonomy separates perturbation and routing mechanisms \\citep{p1,p2}. "
-            "Each class is described by its design rationale, required assumptions, and observable evaluation signals."
-        ),
-        "comparison": (
-            "\\section{Comparative Analysis}\n"
-            "Comparative analysis identifies cross-paper tensions \\citep{p1,p3}. "
-            "The section links taxonomy classes to evaluation gaps and explains where conclusions are conservative."
-        ),
-        "challenges": (
-            "\\section{Open Challenges}\n"
-            "Open Challenge: robustness remains hard under distribution shift \\citep{p2}. "
-            "The challenge is not only algorithmic accuracy but also construct validity and data availability."
-        ),
-        "future": (
-            "\\section{Future Directions}\n"
-            "Future directions include adjacent transfers and better evaluation \\citep{p3}. "
-            "The section prioritizes directions that can be supported by richer evidence rather than speculative labels."
-        ),
-        "introduction": (
-            "\\section{Introduction}\n"
-            "This survey motivates a taxonomy-driven reading of the field \\citep{p1}. "
-            "It states the scope, the evidence boundary, and the intended reader-facing contribution."
-        ),
-        "conclusion": (
-            "\\section{Conclusion}\n"
-            "The survey concludes with open challenges and future directions. "
-            "It summarizes the taxonomy without overstating weak or abstract-only evidence."
-        ),
-        "abstract": "A taxonomy-driven survey of mechanisms.",
+        "background": _valid_survey_section_body("Background and Scope", "\\citep[see][]{p1}"),
+        "taxonomy": _valid_survey_section_body("Taxonomy", "\\citep{p1,p2}"),
+        "comparison": _valid_survey_section_body("Comparative Analysis", "\\citep{p1,p3}"),
+        "challenges": _valid_survey_section_body("Open Challenges", "\\citep{p2}"),
+        "future": _valid_survey_section_body("Future Directions", "\\citep{p3}"),
+        "introduction": _valid_survey_section_body("Introduction", "\\citep{p1}"),
+        "conclusion": _valid_survey_section_body("Conclusion", "\\citep{p2,p3}"),
+        "abstract": "A taxonomy-driven survey of mechanisms that compares evidence boundaries and future research needs.",
     }
     for section_id, text in section_text.items():
         (sections_dir / f"{section_id}.tex").write_text(text, encoding="utf-8")
@@ -220,14 +208,14 @@ async def test_survey_tools_build_state_assemble_audit_and_export(tmp_path: Path
     sections_dir = ws / "drafts" / "survey" / "sections"
     sections_dir.mkdir(parents=True)
     section_text = {
-        "background": "\\section{Background and Scope}\nThis survey defines scope using prior work \\citep[see][]{p1}.",
-        "taxonomy": "\\section{Taxonomy}\nThe taxonomy separates perturbation and routing mechanisms \\citep{p1,p2}.",
-        "comparison": "\\section{Comparative Analysis}\nComparative analysis identifies cross-paper tensions \\citep{p1,p3}.",
-        "challenges": "\\section{Open Challenges}\nOpen Challenge: robustness remains hard under distribution shift \\citep{p2}.",
-        "future": "\\section{Future Directions}\nFuture directions include adjacent transfers and better evaluation \\citep{p3}.",
-        "introduction": "\\section{Introduction}\nThis survey motivates a taxonomy-driven reading of the field \\citep{p1}.",
-        "conclusion": "\\section{Conclusion}\nThe survey concludes with open challenges and future directions.",
-        "abstract": "A taxonomy-driven survey of mechanisms.",
+        "background": _valid_survey_section_body("Background and Scope", "\\citep[see][]{p1}"),
+        "taxonomy": _valid_survey_section_body("Taxonomy", "\\citep{p1,p2}"),
+        "comparison": _valid_survey_section_body("Comparative Analysis", "\\citep{p1,p3}"),
+        "challenges": _valid_survey_section_body("Open Challenges", "\\citep{p2}"),
+        "future": _valid_survey_section_body("Future Directions", "\\citep{p3}"),
+        "introduction": _valid_survey_section_body("Introduction", "\\citep{p1}"),
+        "conclusion": _valid_survey_section_body("Conclusion", "\\citep{p2,p3}"),
+        "abstract": "A taxonomy-driven survey of mechanisms that compares evidence boundaries and future research needs.",
     }
     for section_id, text in section_text.items():
         (sections_dir / f"{section_id}.tex").write_text(text, encoding="utf-8")
@@ -495,7 +483,10 @@ async def test_t36_section_refuses_stale_section_outline_and_file(tmp_path: Path
             "\\section{Taxonomy}\n"
             "Changed section content after state fingerprint while still remaining long enough "
             "to pass the section length guard. The validator should therefore detect the stale "
-            "fingerprint rather than reporting a short-section error."
+            "fingerprint rather than reporting a short-section error. "
+            "The edited section still compares taxonomy classes by mechanism, evidence boundary, "
+            "evaluation setting, scope, and unresolved cross-paper tension so that craft checks "
+            "do not mask the fingerprint freshness assertion in this test fixture."
         ),
         encoding="utf-8",
     )
@@ -512,7 +503,8 @@ async def test_t36_section_validation_rejects_dirty_abstract_and_bad_cites(tmp_p
 
     abstract_path = ws / "drafts" / "survey" / "sections" / "abstract.tex"
     abstract_path.write_text(
-        "This survey cites prior work \\citep{p1} in the abstract.",
+        "This survey cites prior work \\citep{p1} in the abstract while otherwise summarizing a taxonomy-driven "
+        "map of mechanisms, evidence boundaries, open challenges, and future research needs.",
         encoding="utf-8",
     )
     await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="abstract")
@@ -543,7 +535,9 @@ async def test_t36_section_validation_rejects_dirty_abstract_and_bad_cites(tmp_p
         "\\section{Taxonomy}\n"
         "TODO replace this placeholder with evidence after reviewing the full section context. "
         "The rest of this deliberately long sentence exists only to pass the length guard so "
-        "the validator reaches the placeholder-specific check.",
+        "the validator reaches the placeholder-specific check. "
+        "The taxonomy narrative should normally compare mechanisms, evidence boundaries, and scope, "
+        "but this fixture intentionally keeps the placeholder token visible for validation.",
         encoding="utf-8",
     )
     await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="taxonomy")
@@ -554,7 +548,9 @@ async def test_t36_section_validation_rejects_dirty_abstract_and_bad_cites(tmp_p
     section_path.write_text(
         "\\section{Taxonomy}\n"
         "C1 is an internal ResearchOS alignment label and should not appear in polished survey prose. "
-        "This deliberately long section text lets the validator reach the internal-label check.",
+        "This deliberately long section text lets the validator reach the internal-label check. "
+        "A valid taxonomy section would organize classes around mechanisms, evidence boundaries, "
+        "and reader-facing scope rather than internal runtime identifiers.",
         encoding="utf-8",
     )
     await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="taxonomy")
@@ -565,13 +561,29 @@ async def test_t36_section_validation_rejects_dirty_abstract_and_bad_cites(tmp_p
     section_path.write_text(
         "\\section{Taxonomy}\n"
         "This section has enough substantive wording to pass the length guard while citing "
-        "an unavailable source \\citep{missingKey2026} that is not present in the bibliography.",
+        "an unavailable source \\citep{missingKey2026} that is not present in the bibliography. "
+        "The rest of the section compares taxonomy scope, evidence boundaries, and mechanism differences "
+        "only to ensure the validator reaches the missing-citation check.",
         encoding="utf-8",
     )
     await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="taxonomy")
     ok, err = agent.validate_outputs(_survey_ctx(ws, "survey_section", section_id="taxonomy"))
     assert not ok
     assert "missingKey2026" in (err or "")
+
+    section_path.write_text(
+        "\\section{Taxonomy}\n"
+        "This section reviews prior work. Smith et al. studied one dataset. "
+        "Jones et al. proposed a related model. Lee et al. reported another benchmark. "
+        "Garcia et al. explored a fourth direction. Kumar et al. added a fifth variant. "
+        "This section reviews additional papers without comparing taxonomy classes, mechanisms, "
+        "boundaries, or evidence quality. The text is deliberately long enough to reach the craft check.",
+        encoding="utf-8",
+    )
+    await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="taxonomy")
+    ok, err = agent.validate_outputs(_survey_ctx(ws, "survey_section", section_id="taxonomy"))
+    assert not ok
+    assert "流水账" in (err or "") or "写作结构" in (err or "")
 
 
 @pytest.mark.asyncio

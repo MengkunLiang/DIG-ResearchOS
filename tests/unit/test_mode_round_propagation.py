@@ -29,6 +29,7 @@ from researchos.orchestration.task_io_contract import (
 )
 from researchos.runtime.agent import AgentResult, ExecutionContext
 from researchos.runtime.artifact_fingerprints import write_t45_fingerprint_report
+from researchos.runtime.system_config import system_config_path
 
 
 def _write_t45_fingerprint_report(workspace: Path) -> None:
@@ -319,8 +320,8 @@ class TestTaskIOContractCompleteness:
 
     def test_all_states_have_inputs_outputs(self):
         """所有状态机节点应该定义 inputs 和 outputs。"""
-        sm_path = Path(__file__).resolve().parents[2] / "config" / "state_machine.yaml"
-        gates_path = Path(__file__).resolve().parents[2] / "config" / "gates.yaml"
+        sm_path = system_config_path("state_machine.yaml")
+        gates_path = system_config_path("gates.yaml")
         if not sm_path.exists():
             pytest.skip("state_machine.yaml not found")
 
@@ -345,7 +346,7 @@ class TestTaskIOContractCompleteness:
 
     def test_state_machine_contract_alignment(self):
         """状态机配置应该与 task_io_contract 对齐。"""
-        sm_path = Path(__file__).resolve().parents[2] / "config" / "state_machine.yaml"
+        sm_path = system_config_path("state_machine.yaml")
         if not sm_path.exists():
             pytest.skip("state_machine.yaml not found")
 
@@ -494,7 +495,7 @@ class TestMultiModeStateFlow:
 
     def test_real_t8_chain_uses_single_section_nodes(self, temp_workspace):
         """真实状态机中 T8 正文写作必须逐 section 执行，不能回退到 T8-SECTIONS。"""
-        sm_path = Path(__file__).resolve().parents[2] / "config" / "state_machine.yaml"
+        sm_path = system_config_path("state_machine.yaml")
         sm = StateMachine(sm_path)
 
         expected_chain = [
@@ -916,8 +917,8 @@ class TestStateMachineValidation:
 
     def test_validate_definition_no_errors(self):
         """validate_definition 应该返回 0 错误。"""
-        sm_path = Path(__file__).resolve().parents[2] / "config" / "state_machine.yaml"
-        gates_path = Path(__file__).resolve().parents[2] / "config" / "gates.yaml"
+        sm_path = system_config_path("state_machine.yaml")
+        gates_path = system_config_path("gates.yaml")
         if not sm_path.exists():
             pytest.skip("state_machine.yaml not found")
 
@@ -928,7 +929,7 @@ class TestStateMachineValidation:
 
     def test_t75_gate_go_write_enters_style_gate(self):
         """Manual write option must not bypass T8-STYLE-GATE."""
-        gates_path = Path(__file__).resolve().parents[2] / "config" / "gates.yaml"
+        gates_path = system_config_path("gates.yaml")
         data = yaml.safe_load(gates_path.read_text(encoding="utf-8")) or {}
         gate = (data.get("gates") or {}).get("t75_human_review_gate") or {}
         options = {

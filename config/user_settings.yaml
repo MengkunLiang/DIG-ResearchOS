@@ -3,7 +3,10 @@
 # 普通模型、预算、timeout/retry 设置只改这份文件和 .env。底层完整表仍保留：
 # - agent_params.yaml: agent 工具、权限、prompt、schema、behavior 能力声明
 # - model_routing.yaml: endpoint/profile/fallback 候选定义
-# - state_machine.yaml: 流程拓扑、节点输入输出和 gate 分支
+# - system_config/state_machine.yaml: 流程拓扑、节点输入输出和 gate 分支
+# - system_config/gates.yaml: human gate 文案、选项和跳转
+# - system_config/cdr_schema.yaml: CDR 写作/idea schema
+# - system_config/venue_style_map.yaml: T8 写作风格默认建议
 #
 # 单一所有权：
 # - LLM 参数只在 llm.*：profile/tier/model/endpoint/max_context/temperature
@@ -11,7 +14,7 @@
 # - 超时/重试/扩限只在 runtime.*
 #
 # 覆盖关系：
-# CLI/run-task 临时参数 > state_machine 少数强覆盖 > user_settings.yaml >
+# CLI/run-task 临时参数 > system_config/state_machine 少数强覆盖 > user_settings.yaml >
 # agent_params.yaml/model_routing.yaml 能力默认 > Python fallback。
 
 llm:
@@ -81,7 +84,7 @@ llm:
       temperature: 0.3
     submission:
       # T9 投稿包和 LaTeX 修复以机械检查为主，低温。
-      tier: medium
+      tier: heavy
       max_context: 12800000
       temperature: 0.3
     hello:

@@ -16,6 +16,7 @@ import yaml
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
+from ..runtime.system_config import system_config_path
 from ..tools.manuscript import (
     CORE_SECTIONS,
     SECTION_TITLES,
@@ -1087,7 +1088,7 @@ def _validate_style_variants(ws: Path) -> tuple[bool, str | None]:
 
 def _suggest_venue_style(target_venue: object) -> str:
     venue = str(target_venue or "").lower()
-    config_path = Path(__file__).resolve().parents[2] / "config" / "venue_style_map.yaml"
+    config_path = system_config_path("venue_style_map.yaml")
     try:
         data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     except Exception:
