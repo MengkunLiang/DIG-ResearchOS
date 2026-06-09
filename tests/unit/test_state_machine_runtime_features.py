@@ -3,6 +3,7 @@ import json
 import textwrap
 
 from researchos.orchestration.state_machine import StateMachine
+from researchos.tools.human_gate import CLIHumanInterface
 from researchos.runtime.agent import AgentResult
 from researchos.schemas.state import StateYaml, TaskHistoryEntry
 
@@ -548,6 +549,121 @@ def test_t2_literature_param_gate_persists_clear_coverage_parameters(tmp_workspa
     assert payload["reader"]["deep_read_target"] == 60
     assert payload["reader"]["require_deep_read_target"] is True
     assert "保留候选数" in payload["parameter_meanings"]["active_pool_max"]
+    assert payload["selected_summary"]["active_pool_max"] == 180
+
+
+def test_t2_literature_param_gate_displays_actual_values_and_profile_default(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    gates = tmp_workspace / "gates.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T2-PARAM-GATE
+        states:
+          T2-PARAM-GATE:
+            agent: scout
+            extra:
+              immediate_gate: true
+            gate: t2_literature_param_gate
+            outputs:
+              literature_params: literature/literature_params.json
+            next_on_success: T2
+          T2:
+            agent: scout
+            outputs:
+              papers_raw: literature/papers_raw.jsonl
+        """,
+    )
+    _write_yaml(
+        gates,
+        """
+        gates:
+          t2_literature_param_gate:
+            title: T2 文献覆盖参数确认
+            description: confirm coverage
+            presentation:
+              meaning:
+                literal: choose coverage
+            options:
+              - id: standard_research
+                label: 标准研究论文覆盖
+                next: T2
+              - id: survey_balanced
+                label: 综述均衡覆盖
+                next: T2
+              - id: survey_exhaustive
+                label: 综述强覆盖
+                next: T2
+              - id: custom
+                label: 自定义关键数字
+                next: T2
+        """,
+    )
+    (tmp_workspace / "project.yaml").write_text(
+        "metadata:\n  manuscript_type: survey\n",
+        encoding="utf-8",
+    )
+    sm = StateMachine(config, gates)
+    state = sm.pause_for_immediate_gate(sm.create_initial_state("p1"), workspace_dir=tmp_workspace)
+
+    preview = state.pending_gate.presentation["current_parameter_preview"]
+    assert preview["detected_profile"] == "survey"
+    assert preview["recommended_option"] == "survey_balanced"
+    balanced = next(option for option in state.pending_gate.options if option["id"] == "survey_balanced")
+    standard = next(option for option in state.pending_gate.options if option["id"] == "standard_research")
+    custom = next(option for option in state.pending_gate.options if option["id"] == "custom")
+    assert balanced["is_default"] is True
+    assert "active_pool_max=180" in balanced["parameter_preview"]
+    assert "active_pool_max=120" in standard["parameter_preview"]
+    assert "input_prompts" in custom
+    assert CLIHumanInterface._default_option_id("t2_literature_param_gate", state.pending_gate.options) == "survey_balanced"
+
+
+def test_t2_literature_param_gate_defaults_to_standard_for_research_article(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    gates = tmp_workspace / "gates.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T2-PARAM-GATE
+        states:
+          T2-PARAM-GATE:
+            agent: scout
+            extra:
+              immediate_gate: true
+            gate: t2_literature_param_gate
+            outputs:
+              literature_params: literature/literature_params.json
+            next_on_success: T2
+          T2:
+            agent: scout
+            outputs:
+              papers_raw: literature/papers_raw.jsonl
+        """,
+    )
+    _write_yaml(
+        gates,
+        """
+        gates:
+          t2_literature_param_gate:
+            presentation: {}
+            options:
+              - id: standard_research
+                label: 标准研究论文覆盖
+                next: T2
+              - id: survey_balanced
+                label: 综述均衡覆盖
+                next: T2
+        """,
+    )
+    (tmp_workspace / "project.yaml").write_text("metadata:\n  manuscript_type: research_article\n", encoding="utf-8")
+    sm = StateMachine(config, gates)
+    state = sm.pause_for_immediate_gate(sm.create_initial_state("p1"), workspace_dir=tmp_workspace)
+
+    assert state.pending_gate.presentation["current_parameter_preview"]["recommended_option"] == "standard_research"
+    standard = next(option for option in state.pending_gate.options if option["id"] == "standard_research")
+    assert standard["is_default"] is True
+    assert CLIHumanInterface._default_option_id("t2_literature_param_gate", state.pending_gate.options) == "standard_research"
 
 
 def test_t5_executor_gate_persists_selection_and_patches_executor_files(tmp_workspace):

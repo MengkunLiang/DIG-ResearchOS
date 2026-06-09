@@ -592,7 +592,7 @@ agents:
 | `bridge_pool_cap` | `15` | `agents.reader.modes.read.behavior` | 每个 bridge 在 deep-read queue 中默认保留的候选总上限；超额记录不删除，标为 `read_disposition=deferred` 和 `triaged_reason=bridge_pool_cap_exceeded` |
 | `citation_hub_slots` | `3` | `agents.reader.modes.read.behavior` | citation graph 枢纽节点保护槽，仍需 Reader 复核 |
 
-`T2-PARAM-GATE` 会在每个 workspace 写 `literature/literature_params.json`，用人类可读方式确认“保留候选数、精读目标、摘要轻读目标”。这个文件优先于全局 yaml；全局 yaml 仍作为默认值和无交互调试 fallback。`reader.modes.read.behavior.abstract_sweep` 当前默认是有上限的轻量补读取向：
+`T2-PARAM-GATE` 会在每个 workspace 写 `literature/literature_params.json`，用人类可读方式确认“保留候选数、精读目标、摘要轻读目标”。Gate 会显示当前检测到的任务类型、推荐选项、各档实际数值和自定义输入说明；直接回车采用当前推荐项。这个文件优先于全局 yaml；全局 yaml 仍作为默认值和无交互调试 fallback。`reader.modes.read.behavior.abstract_sweep` 当前默认是有上限的轻量补读取向：
 
 - `expected_notes_ratio: 1.0` 表示无 `deep_read_queue` 的旧 workspace fallback 也按输入池 100% 校验，不再按 80% 放行。
 - `lite_paper_num: 120` 表示研究论文默认最多处理 120 篇 abstract sweep 候选；综述 gate 可写 `all_readable`，表示尽量读完保留候选中所有可读摘要。

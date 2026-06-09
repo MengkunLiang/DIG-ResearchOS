@@ -194,7 +194,7 @@ profiles:
 | `bridge_pool_cap` | `15` | `agents.reader.modes.read.behavior` | 每个 bridge 在 deep-read queue 中保留的候选总上限 |
 | `citation_hub_slots` | `3` | `agents.reader.modes.read.behavior` | citation graph 枢纽节点保护槽，仍需 Reader 复核 |
 
-完整 `run` 会在 T2 前进入 `T2-PARAM-GATE`，把本 workspace 的“保留候选数、精读目标、摘要轻读目标”写入 `literature/literature_params.json`；该文件优先于全局 yaml。当前 Reader 的 `modes.read.behavior.abstract_sweep` 默认用于覆盖 T3 deep read 后尚未读完的保留候选；`papers_backlog.jsonl` 是覆盖账本和人工/显式回捞池，综述 gate 可允许从中回捞有摘要/PDF 的候选补足可读覆盖：
+完整 `run` 会在 T2 前进入 `T2-PARAM-GATE`。Gate 会先展示当前 workspace 检测到的任务类型、推荐档位、以及每个选项实际写入的 `active_pool_max`、`deep_read_min/target/max`、`require_deep_read_target` 和 `abstract_sweep_target`；直接回车采用当前推荐项。确认后写入 `literature/literature_params.json`，该文件优先于全局 yaml。当前 Reader 的 `modes.read.behavior.abstract_sweep` 默认用于覆盖 T3 deep read 后尚未读完的保留候选；`papers_backlog.jsonl` 是覆盖账本和人工/显式回捞池，综述 gate 可允许从中回捞有摘要/PDF 的候选补足可读覆盖：
 
 - `expected_notes_ratio: 1.0` 是无 queue 旧 workspace 的 fallback 比例，表示输入池默认必须 100% 有笔记；新主流程仍优先用 `deep_read_queue` 区分精读目标和 shallow/backlog。
 - `lite_paper_num: 120` 表示研究论文默认最多处理 120 篇 abstract sweep 候选；综述 gate 可写 `all_readable`，表示尽量读完保留候选中所有可读摘要。

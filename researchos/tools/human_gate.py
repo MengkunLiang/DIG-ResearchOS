@@ -105,7 +105,12 @@ class CLIHumanInterface(HumanInterface):
             else:
                 print(json.dumps(value, indent=2, ensure_ascii=False))
         for idx, option in enumerate(options, start=1):
-            print(f"[{idx}] {option['label']}")
+            default_marker = " [默认]" if option.get("is_default") else ""
+            print(f"[{idx}] {option['label']}{default_marker}")
+            if option.get("parameter_preview"):
+                print(f"    参数: {option['parameter_preview']}")
+            if option.get("description"):
+                print(f"    作用: {option['description']}")
         selected = None
         while selected is None:
             try:
@@ -115,7 +120,7 @@ class CLIHumanInterface(HumanInterface):
             answer = self._parse_option_index(raw_answer, options)
             if answer is None:
                 if not raw_answer:
-                    default_id = self._default_option_id(gate_id)
+                    default_id = self._default_option_id(gate_id, options)
                     if default_id:
                         selected = next(
                             (option for option in options if (option.get("id") or option.get("key")) == default_id),
@@ -130,8 +135,9 @@ class CLIHumanInterface(HumanInterface):
             selected = options[answer]
         captured: dict[str, str] = {}
         for field_name in selected.get("collect_input", []):
+            prompt = self._collect_input_prompt(selected, field_name)
             try:
-                captured[field_name] = input(f"{field_name}: ").strip()
+                captured[field_name] = input(f"{prompt}: ").strip()
             except EOFError as exc:
                 raise HumanInputUnavailable(f"Gate {gate_id} 需要输入 {field_name}，但当前输入不可用。") from exc
         option_id = selected.get("id") or selected.get("key")
@@ -151,12 +157,22 @@ class CLIHumanInterface(HumanInterface):
         return {"option_id": option_id, "captured": captured}
 
     @staticmethod
-    def _default_option_id(gate_id: str) -> str | None:
+    def _default_option_id(gate_id: str, options: list[dict] | None = None) -> str | None:
+        for option in options or []:
+            if option.get("is_default"):
+                return option.get("id") or option.get("key")
         if gate_id == "t2_literature_param_gate":
             return "survey_balanced"
         if gate_id == "t5_executor_gate":
             return "mock_dry_run"
         return None
+
+    @staticmethod
+    def _collect_input_prompt(option: dict, field_name: str) -> str:
+        prompts = option.get("input_prompts") or {}
+        if isinstance(prompts, dict) and prompts.get(field_name):
+            return f"{field_name}（{prompts[field_name]}）"
+        return field_name
 
     @staticmethod
     def _parse_option_index(raw_answer: str, options: list[dict] | int) -> int | None:

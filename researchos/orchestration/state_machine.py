@@ -86,6 +86,167 @@ _T2_LITERATURE_PARAM_GATE_INPUT_PATHS = {
 }
 
 
+_LITERATURE_PARAM_PRESETS: dict[str, dict[str, Any]] = {
+    "standard_research": {
+        "profile": "research_article",
+        "t2_finalize": {"active_pool_max": 120},
+        "reader": {
+            "deep_read_min": 35,
+            "deep_read_target": 35,
+            "deep_read_max": 45,
+            "require_deep_read_target": True,
+            "abstract_sweep": {
+                "lite_paper_num": 120,
+                "sources": ["papers_verified", "papers_dedup"],
+                "include_metadata_only": True,
+                "metadata_replacement_policy": "replace_metadata_only_with_readable_backlog_when_available",
+            },
+        },
+    },
+    "survey_balanced": {
+        "profile": "survey",
+        "t2_finalize": {"active_pool_max": 180},
+        "reader": {
+            "deep_read_min": 50,
+            "deep_read_target": 60,
+            "deep_read_max": 70,
+            "require_deep_read_target": True,
+            "abstract_sweep": {
+                "lite_paper_num": "all_readable",
+                "sources": ["papers_verified", "papers_dedup", "papers_backlog"],
+                "include_metadata_only": True,
+                "metadata_replacement_policy": "replace_metadata_only_with_readable_backlog_when_available",
+            },
+        },
+    },
+    "survey_exhaustive": {
+        "profile": "survey",
+        "t2_finalize": {"active_pool_max": 240},
+        "reader": {
+            "deep_read_min": 70,
+            "deep_read_target": 80,
+            "deep_read_max": 95,
+            "require_deep_read_target": True,
+            "abstract_sweep": {
+                "lite_paper_num": "all_readable",
+                "sources": ["papers_verified", "papers_dedup", "papers_backlog"],
+                "include_metadata_only": True,
+                "metadata_replacement_policy": "replace_metadata_only_with_readable_backlog_when_available",
+            },
+        },
+    },
+}
+
+
+_LITERATURE_PARAM_PRESET_LABELS = {
+    "standard_research": "标准研究论文覆盖",
+    "survey_balanced": "综述均衡覆盖",
+    "survey_exhaustive": "综述强覆盖",
+    "custom": "自定义关键数字",
+}
+
+
+_LITERATURE_PARAM_PRESET_NOTES = {
+    "standard_research": "适合 research article：候选池和轻读覆盖较克制，精读目标 35 篇。",
+    "survey_balanced": "适合一般综述：扩大候选池，精读目标 60 篇，摘要轻读尽量覆盖可读候选。",
+    "survey_exhaustive": "适合正式综述/展示型综述：更宽候选池和更高精读目标，运行时间和 LLM 成本更高。",
+    "custom": "只改四个关键覆盖数字；网络补资源仍由系统自动尽量执行。",
+}
+
+
+def _clone_literature_param_preset(option: str) -> dict[str, Any]:
+    return json.loads(json.dumps(_LITERATURE_PARAM_PRESETS[option], ensure_ascii=False))
+
+
+def _literature_param_summary_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    reader = payload.get("reader") if isinstance(payload.get("reader"), dict) else {}
+    abstract_sweep = reader.get("abstract_sweep") if isinstance(reader.get("abstract_sweep"), dict) else {}
+    return {
+        "profile": payload.get("profile"),
+        "active_pool_max": (payload.get("t2_finalize") or {}).get("active_pool_max"),
+        "deep_read_min": reader.get("deep_read_min"),
+        "deep_read_target": reader.get("deep_read_target"),
+        "deep_read_max": reader.get("deep_read_max"),
+        "require_deep_read_target": reader.get("require_deep_read_target"),
+        "abstract_sweep_target": abstract_sweep.get("lite_paper_num"),
+        "abstract_sweep_sources": abstract_sweep.get("sources"),
+        "metadata_replacement_policy": abstract_sweep.get("metadata_replacement_policy"),
+    }
+
+
+def build_literature_param_gate_preview(workspace_dir: Path | None = None) -> dict[str, Any]:
+    """Return human-readable current T2/T3 coverage presets for gate display."""
+
+    detected_profile = _detect_literature_profile_hint(workspace_dir) if workspace_dir is not None else "research_article"
+    recommended_option = "survey_balanced" if detected_profile == "survey" else "standard_research"
+    options: dict[str, Any] = {}
+    for option_id, payload in _LITERATURE_PARAM_PRESETS.items():
+        options[option_id] = {
+            "label": _LITERATURE_PARAM_PRESET_LABELS[option_id],
+            "recommended": option_id == recommended_option,
+            "summary": _literature_param_summary_from_payload(payload),
+            "will_do": _LITERATURE_PARAM_PRESET_NOTES[option_id],
+        }
+    return {
+        "detected_profile": detected_profile,
+        "recommended_option": recommended_option,
+        "recommended_label": _LITERATURE_PARAM_PRESET_LABELS[recommended_option],
+        "current_default_if_enter": recommended_option,
+        "question": (
+            "请确认是否采用推荐档位；如果不合适，选择其他档位或自定义 active_pool_max / "
+            "deep_read_target / abstract_sweep_target / require_deep_read_target。"
+        ),
+        "options": options,
+        "custom_input_examples": {
+            "active_pool_max": "例如 180；表示 T2 保留 180 篇进入阅读处置，超额进 papers_backlog.jsonl",
+            "deep_read_target": "例如 60；表示 T3 正常应完成 60 篇结构化精读笔记",
+            "abstract_sweep_target": "例如 all_readable 或 120；表示 T3 后 LLM 摘要轻读多少篇",
+            "require_deep_read_target": "true/false；true 表示未读满 deep_read_target 不放行到 T3.5",
+        },
+    }
+
+
+def enrich_literature_param_gate_options(options: list[dict[str, Any]], workspace_dir: Path | None = None) -> list[dict[str, Any]]:
+    """Attach actual preset values to T2 coverage gate options shown in CLI."""
+
+    preview = build_literature_param_gate_preview(workspace_dir)
+    recommended = preview["recommended_option"]
+    enriched: list[dict[str, Any]] = []
+    for option in options:
+        item = dict(option)
+        option_id = str(item.get("id") or item.get("key") or "")
+        if option_id in _LITERATURE_PARAM_PRESETS:
+            summary = _literature_param_summary_from_payload(_LITERATURE_PARAM_PRESETS[option_id])
+            item["is_default"] = option_id == recommended
+            if item["is_default"] and "（推荐" not in str(item.get("label", "")):
+                item["label"] = f"{item.get('label', option_id)}（当前推荐）"
+            item["description"] = _LITERATURE_PARAM_PRESET_NOTES[option_id]
+            item["parameter_preview"] = (
+                f"active_pool_max={summary['active_pool_max']}；"
+                f"deep_read={summary['deep_read_min']}/{summary['deep_read_target']}/{summary['deep_read_max']}；"
+                f"require_target={summary['require_deep_read_target']}；"
+                f"abstract_sweep={summary['abstract_sweep_target']}"
+            )
+        elif option_id == "custom":
+            item["description"] = _LITERATURE_PARAM_PRESET_NOTES["custom"]
+            item["parameter_preview"] = (
+                "逐项输入 active_pool_max、deep_read_target、abstract_sweep_target、require_deep_read_target；"
+                "未填或填错时使用综述均衡默认。"
+            )
+            item.setdefault(
+                "collect_input",
+                [
+                    "active_pool_max",
+                    "deep_read_target",
+                    "abstract_sweep_target",
+                    "require_deep_read_target",
+                ],
+            )
+            item["input_prompts"] = preview["custom_input_examples"]
+        enriched.append(item)
+    return enriched
+
+
 def _t4_gate1_candidate_pool_fingerprints(workspace_dir: Path) -> dict[str, dict[str, Any]]:
     paths = {
         "pass1_forward_candidates": "ideation/_pass1_forward_candidates.json",
@@ -138,57 +299,7 @@ def build_literature_param_payload(
     """Build the workspace-local literature coverage parameters for T2/T3."""
 
     option = _normalize_literature_param_option(selected_option)
-    presets: dict[str, dict[str, Any]] = {
-        "standard_research": {
-            "profile": "research_article",
-            "t2_finalize": {"active_pool_max": 120},
-            "reader": {
-                "deep_read_min": 35,
-                "deep_read_target": 35,
-                "deep_read_max": 45,
-                "require_deep_read_target": True,
-                "abstract_sweep": {
-                    "lite_paper_num": 120,
-                    "sources": ["papers_verified", "papers_dedup"],
-                    "include_metadata_only": True,
-                    "metadata_replacement_policy": "replace_metadata_only_with_readable_backlog_when_available",
-                },
-            },
-        },
-        "survey_balanced": {
-            "profile": "survey",
-            "t2_finalize": {"active_pool_max": 180},
-            "reader": {
-                "deep_read_min": 50,
-                "deep_read_target": 60,
-                "deep_read_max": 70,
-                "require_deep_read_target": True,
-                "abstract_sweep": {
-                    "lite_paper_num": "all_readable",
-                    "sources": ["papers_verified", "papers_dedup", "papers_backlog"],
-                    "include_metadata_only": True,
-                    "metadata_replacement_policy": "replace_metadata_only_with_readable_backlog_when_available",
-                },
-            },
-        },
-        "survey_exhaustive": {
-            "profile": "survey",
-            "t2_finalize": {"active_pool_max": 240},
-            "reader": {
-                "deep_read_min": 70,
-                "deep_read_target": 80,
-                "deep_read_max": 95,
-                "require_deep_read_target": True,
-                "abstract_sweep": {
-                    "lite_paper_num": "all_readable",
-                    "sources": ["papers_verified", "papers_dedup", "papers_backlog"],
-                    "include_metadata_only": True,
-                    "metadata_replacement_policy": "replace_metadata_only_with_readable_backlog_when_available",
-                },
-            },
-        },
-    }
-    payload = json.loads(json.dumps(presets.get(option, presets["survey_balanced"]), ensure_ascii=False))
+    payload = _clone_literature_param_preset(option if option in _LITERATURE_PARAM_PRESETS else "survey_balanced")
     captured = captured or {}
     if option == "custom":
         active_pool = _safe_int(captured.get("active_pool_max"), default=180, minimum=30)
@@ -219,6 +330,8 @@ def build_literature_param_payload(
         {
             "semantics": "workspace_literature_coverage_parameters_for_t2_t3",
             "selected_option": option,
+            "selected_label": _LITERATURE_PARAM_PRESET_LABELS.get(option, option),
+            "selected_summary": _literature_param_summary_from_payload(payload),
             "captured": captured,
             "resource_backfill_policy": {
                 "retained_candidates": "attempt all reasonable metadata, abstract, DOI, OpenAlex, Crossref, Semantic Scholar, arXiv, and PDF-hint backfill",
@@ -627,13 +740,17 @@ class StateMachine:
             model_dump(state, mode="json"),
             workspace_dir or Path("."),
         )
+        options = list(gate_spec.get("options", []))
+        if node.task_id == "T2-PARAM-GATE":
+            presentation["current_parameter_preview"] = build_literature_param_gate_preview(workspace_dir)
+            options = enrich_literature_param_gate_options(options, workspace_dir)
         if node.task_id == "T4-GATE1" and workspace_dir is not None:
             presentation["candidate_pool_fingerprints"] = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
         state.pending_gate = GateState(
             gate_id=gate_id,
             presented_at=_now_iso(),
             presentation=presentation,
-            options=list(gate_spec.get("options", [])),
+            options=options,
         )
         state.status = "WAITING_HUMAN"
         state.paused_at = _now_iso()
@@ -745,13 +862,17 @@ class StateMachine:
                 model_dump(state, mode="json"),
                 workspace_dir or Path("."),
             )
+            options = list(gate_spec.get("options", []))
+            if state.current_task == "T2-PARAM-GATE":
+                presentation["current_parameter_preview"] = build_literature_param_gate_preview(workspace_dir)
+                options = enrich_literature_param_gate_options(options, workspace_dir)
             if state.current_task == "T4-GATE1" and workspace_dir is not None:
                 presentation["candidate_pool_fingerprints"] = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
             state.pending_gate = GateState(
                 gate_id=gate_id,
                 presented_at=_now_iso(),
                 presentation=presentation,
-                options=list(gate_spec.get("options", [])),
+                options=options,
             )
             state.status = "WAITING_HUMAN"
             return state

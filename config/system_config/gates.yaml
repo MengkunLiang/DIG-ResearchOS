@@ -59,8 +59,15 @@ gates:
   # 会对保留候选尽可能尝试；工程 safety cap 仍由系统内部控制，不要求用户填写。
   t2_literature_param_gate:
     title: "T2 文献覆盖参数确认"
-    description: "请先确认本轮文献检索与阅读覆盖强度。这里的核心不是网络请求上限，而是你希望系统保留多少候选、精读多少篇、摘要轻读多少篇。"
+    description: "请确认本轮文献检索与阅读覆盖强度。系统会先展示当前推荐档位和各档实际数值；你只需要判断是否沿用推荐，或改成更轻/更强/自定义。"
     presentation:
+      how_to_choose:
+        literal: |
+          如何选择：
+          - 如果你在写研究论文：通常选“标准研究论文覆盖”，精读 35 篇，轻读最多 120 篇。
+          - 如果你在写综述：通常选“综述均衡覆盖”，精读目标 60 篇，摘要轻读尽量覆盖可读候选。
+          - 如果这是最终展示型综述或你特别在意覆盖面：选“综述强覆盖”，但运行更久、LLM 成本更高。
+          - 如果你只想改数字：选“自定义关键数字”。自定义只影响覆盖目标，不影响系统尽可能补摘要/PDF/DOI 的策略。
       parameter_meaning:
         literal: |
           参数含义：
@@ -83,18 +90,22 @@ gates:
     options:
       - id: standard_research
         label: "标准研究论文覆盖"
+        description: "写 research article 时的默认强度：保留 120 篇候选，T3 精读目标 35 篇，摘要轻读最多 120 篇。"
         aliases: ["standard", "research", "默认", "研究"]
         next: T2
       - id: survey_balanced
         label: "综述均衡覆盖（推荐综述）"
+        description: "一般综述建议：保留 180 篇候选，T3 精读目标 60 篇，摘要轻读尽量覆盖可读候选。"
         aliases: ["survey", "review", "综述", "均衡"]
         next: T2
       - id: survey_exhaustive
         label: "综述强覆盖"
+        description: "更重的综述覆盖：保留 240 篇候选，T3 精读目标 80 篇，适合最终展示型综述。"
         aliases: ["exhaustive", "full", "全量", "强覆盖"]
         next: T2
       - id: custom
         label: "自定义关键数字"
+        description: "手动输入保留候选、精读目标、摘要轻读目标和是否必须读满目标。"
         aliases: ["自定义", "custom"]
         next: T2
         collect_input:
