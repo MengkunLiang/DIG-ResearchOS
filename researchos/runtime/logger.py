@@ -73,7 +73,7 @@ def configure_logging(level: str = "INFO", json_logs: bool = True) -> None:
     ]
     renderer: structlog.types.Processor
     if json_logs:
-        renderer = structlog.processors.JSONRenderer()
+        renderer = structlog.processors.JSONRenderer(ensure_ascii=False, default=str)
     else:
         renderer = structlog.dev.ConsoleRenderer()
 

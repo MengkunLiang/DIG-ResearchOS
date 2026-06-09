@@ -10,6 +10,7 @@ from __future__ import annotations
 """
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,239 @@ from .workspace_policy import WorkspaceAccessPolicy
 from ..runtime.logger import get_logger
 
 _LOG = get_logger("seed_paper_processor")
+
+
+_GENERIC_PDF_TITLE_VALUES = {
+    "untitled",
+    "unknown",
+    "document",
+    "paper",
+    "article",
+    "main",
+    "fulltext",
+}
+
+
+def _is_likely_pdf_front_matter_line(title: str) -> bool:
+    candidate = _clean_pdf_title_candidate(title)
+    chinese_front_matter = (
+        "作者",
+        "作者简介",
+        "通讯作者",
+        "基金项目",
+        "基金",
+        "摘要",
+        "关键词",
+        "关键字",
+        "中图分类号",
+        "文献标识码",
+        "收稿日期",
+        "引用格式",
+        "本文格式",
+    )
+    if candidate.startswith(chinese_front_matter):
+        return True
+    return bool(
+        re.match(
+            r"^(author|authors|abstract|keywords|received|corresponding author|funding)\b",
+            candidate,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _clean_pdf_title_candidate(value: Any) -> str:
+    """Normalize one possible PDF title without losing Chinese text."""
+
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    replacements = {
+        "\u3000": " ",
+        "\ufeff": "",
+        "．": ".",
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    text = re.sub(r"\s+", " ", text)
+    # Chinese PDF page headers often contain one Chinese character per cell.
+    text = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])", "", text)
+    return text.strip(" \t\r\n-–—|")
+
+
+def _title_signal_counts(title: str) -> tuple[int, int, int]:
+    chinese_chars = len(re.findall(r"[\u4e00-\u9fff]", title))
+    ascii_letters = len(re.findall(r"[A-Za-z]", title))
+    digits = len(re.findall(r"\d", title))
+    return chinese_chars, ascii_letters, digits
+
+
+def _is_likely_pdf_header_or_journal_title(title: str) -> bool:
+    """Reject journal mastheads, issue headers, DOI lines, and generic PDF metadata."""
+
+    candidate = _clean_pdf_title_candidate(title)
+    if not candidate:
+        return True
+
+    lowered = candidate.casefold()
+    compact = re.sub(r"\s+", "", candidate)
+    chinese_chars, ascii_letters, digits = _title_signal_counts(candidate)
+
+    if lowered in _GENERIC_PDF_TITLE_VALUES:
+        return True
+    if lowered.startswith(("microsoft word", "untitled", "springer", "elsevier")) and len(candidate) <= 40:
+        return True
+    if re.fullmatch(r"[\W\d_]+", candidate):
+        return True
+    if chinese_chars + ascii_letters < 4:
+        return True
+    if _is_likely_pdf_front_matter_line(candidate):
+        return True
+
+    issue_patterns = [
+        r"第\s*\d+\s*卷.*第\s*\d+\s*期",
+        r"第\s*\d+\s*期.*第\s*\d+\s*卷",
+        r"\bvol\.?\s*\d+.*\bno\.?\s*\d+",
+        r"\bvolume\s*\d+.*\b(issue|number)\s*\d+",
+        r"\bissn\b",
+        r"\bcn\s*\d{2}[-/]\d+",
+        r"\bdoi\s*[:：]",
+    ]
+    if any(re.search(pattern, candidate, flags=re.IGNORECASE) for pattern in issue_patterns):
+        return True
+
+    if re.fullmatch(r"《[^》]{2,30}》(?:[（(][^）)]*(?:月刊|双月刊|季刊|周刊)[^）)]*[）)])?", candidate):
+        return True
+    if re.search(r"(月刊|双月刊|季刊|周刊)", candidate) and len(compact) <= 24 and "研究" not in candidate:
+        return True
+    if re.fullmatch(r"[\u4e00-\u9fff]{2,18}(学报|杂志|论坛|评论|研究|科学)$", compact) and digits == 0:
+        return True
+    if re.search(r"(journal|transactions|proceedings|conference)", lowered) and digits >= 2 and len(candidate) <= 90:
+        return True
+
+    return False
+
+
+def _pdf_title_score(title: str, *, source: str, line_index: int | None = None) -> float:
+    candidate = _clean_pdf_title_candidate(title)
+    if _is_likely_pdf_header_or_journal_title(candidate):
+        return -1000.0
+    chinese_chars, ascii_letters, digits = _title_signal_counts(candidate)
+    length = len(candidate)
+    score = 0.0
+    if source == "first_page":
+        score += 6.0
+    elif source == "metadata":
+        score += 4.0
+    elif source == "filename":
+        score += 2.0
+    if line_index is not None:
+        score += max(0.0, 5.0 - min(line_index, 20) * 0.2)
+    score += min(chinese_chars + ascii_letters / 2, 24) * 0.15
+    if 10 <= length <= 150:
+        score += 3.0
+    elif 6 <= length < 10:
+        score += 1.0
+    elif length > 180:
+        score -= 3.0
+    if any(mark in candidate for mark in (":", "：", "——", "--")):
+        score += 1.0
+    if re.search(r"(研究|模型|算法|治理|风险|机制|效应|analysis|model|learning|risk|governance)", candidate, flags=re.I):
+        score += 1.0
+    if digits > max(4, chinese_chars + ascii_letters):
+        score -= 2.0
+    return score
+
+
+def _pdf_title_candidates_from_text(text: str) -> list[dict[str, Any]]:
+    lines = [_clean_pdf_title_candidate(line) for line in str(text or "").splitlines()]
+    lines = [line for line in lines if line]
+    candidates: list[dict[str, Any]] = []
+    for idx, line in enumerate(lines[:70]):
+        if len(line) > 220:
+            continue
+        score = _pdf_title_score(line, source="first_page", line_index=idx)
+        if score > -100:
+            candidates.append({"title": line, "source": "first_page", "line_index": idx, "score": score})
+        if idx + 1 < len(lines):
+            next_line = lines[idx + 1]
+            if _is_likely_pdf_front_matter_line(next_line) or _pdf_title_score(
+                next_line,
+                source="first_page",
+                line_index=idx + 1,
+            ) <= -100:
+                continue
+            merged = _clean_pdf_title_candidate(f"{line} {lines[idx + 1]}")
+            if len(merged) <= 220:
+                merged_score = _pdf_title_score(merged, source="first_page", line_index=idx) - 0.5
+                if merged_score > -100:
+                    candidates.append(
+                        {
+                            "title": merged,
+                            "source": "first_page",
+                            "line_index": idx,
+                            "score": merged_score,
+                        }
+                    )
+    return candidates
+
+
+def _choose_pdf_title(
+    *,
+    metadata_title: Any = "",
+    first_page_text: str = "",
+    filename_stem: str = "",
+) -> dict[str, Any]:
+    """Choose a paper title from PDF metadata, first-page text, and filename fallback."""
+
+    candidates: list[dict[str, Any]] = []
+    rejected: list[str] = []
+
+    meta_title = _clean_pdf_title_candidate(metadata_title)
+    if meta_title:
+        score = _pdf_title_score(meta_title, source="metadata")
+        if score > -100:
+            candidates.append({"title": meta_title, "source": "metadata", "score": score})
+        else:
+            rejected.append(meta_title)
+
+    for candidate in _pdf_title_candidates_from_text(first_page_text):
+        candidates.append(candidate)
+
+    filename_title = _clean_pdf_title_candidate(str(filename_stem or "").replace("_", " ").replace("-", " "))
+    filename_rejected = False
+    if filename_title:
+        score = _pdf_title_score(filename_title, source="filename")
+        if score > -100:
+            candidates.append({"title": filename_title, "source": "filename", "score": score})
+        else:
+            filename_rejected = True
+            rejected.append(filename_title)
+
+    if candidates:
+        best = max(
+            candidates,
+            key=lambda item: (
+                float(item.get("score", 0.0)),
+                -int(item.get("line_index", 999)),
+                len(str(item.get("title", ""))),
+            ),
+        )
+        return {
+            "title": best["title"],
+            "title_source": best.get("source", "unknown"),
+            "title_confidence": "heuristic_high" if float(best.get("score", 0.0)) >= 8 else "heuristic_medium",
+            "rejected_title_candidates": rejected[:8],
+        }
+
+    fallback = filename_title or "Untitled seed paper"
+    return {
+        "title": fallback,
+        "title_source": "filename_review_required" if filename_rejected else "filename_fallback",
+        "title_confidence": "needs_review",
+        "metadata_review_required": True,
+        "rejected_title_candidates": rejected[:8],
+    }
 
 
 def _first_text(value: Any, default: str = "") -> str:
@@ -199,7 +433,13 @@ class ProcessSeedPaperTool(Tool):
             "role": params.role,
             "why_relevant": params.why_relevant,
             "pdf_path": f"user_seeds/pdfs/{pdf_path.name}",
+            "title_source": metadata.get("title_source", "unknown"),
+            "title_confidence": metadata.get("title_confidence", "unknown"),
         }
+        if metadata.get("metadata_review_required"):
+            paper_info["metadata_review_required"] = True
+        if metadata.get("rejected_title_candidates"):
+            paper_info["rejected_title_candidates"] = metadata["rejected_title_candidates"]
 
         # 写入 seed_papers.jsonl
         await self._append_to_seed_papers(paper_info)
@@ -226,7 +466,9 @@ class ProcessSeedPaperTool(Tool):
         2. pdfplumber
         3. 文件名解析
         """
-        metadata = {}
+        metadata: dict[str, Any] = {}
+        metadata_title = ""
+        first_page_text = ""
 
         # 方法 1: PyMuPDF
         try:
@@ -235,7 +477,7 @@ class ProcessSeedPaperTool(Tool):
             meta = doc.metadata
 
             if meta.get("title"):
-                metadata["title"] = meta["title"]
+                metadata_title = str(meta["title"])
             if meta.get("author"):
                 # 作者可能是逗号分隔的字符串
                 authors = [a.strip() for a in meta["author"].split(",")]
@@ -251,25 +493,31 @@ class ProcessSeedPaperTool(Tool):
         except Exception as e:
             _LOG.debug("pymupdf_extraction_failed", error=str(e))
 
-        # 方法 2: pdfplumber（如果 PyMuPDF 失败）
-        if not metadata.get("title"):
+        # 方法 2: pdfplumber / PyMuPDF page text
+        try:
+            import fitz  # PyMuPDF
+            doc = fitz.open(pdf_path)
+            if doc.page_count:
+                first_page_text = doc[0].get_text("text") or ""
+            doc.close()
+        except Exception as e:
+            _LOG.debug("pymupdf_text_extraction_failed", error=str(e))
+
+        if not first_page_text:
             try:
                 import pdfplumber
                 with pdfplumber.open(pdf_path) as pdf:
                     first_page = pdf.pages[0]
-                    text = first_page.extract_text()
-
-                    # 简单启发式：第一行通常是标题
-                    lines = text.split("\n")
-                    if lines:
-                        metadata["title"] = lines[0].strip()
+                    first_page_text = first_page.extract_text() or ""
             except Exception as e:
                 _LOG.debug("pdfplumber_extraction_failed", error=str(e))
 
-        # 方法 3: 文件名解析（最后的备选）
-        if not metadata.get("title"):
-            # 使用文件名作为标题
-            metadata["title"] = pdf_path.stem.replace("_", " ").replace("-", " ")
+        title_selection = _choose_pdf_title(
+            metadata_title=metadata_title,
+            first_page_text=first_page_text,
+            filename_stem=pdf_path.stem,
+        )
+        metadata.update(title_selection)
 
         return metadata
 
