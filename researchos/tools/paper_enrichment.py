@@ -211,6 +211,8 @@ def enrich_papers(
             paper["evidence_level"] = "ABSTRACT_ONLY" if str(paper.get("abstract", "")).strip() else "METADATA_ONLY"
             paper.setdefault("_needs_reader_evidence_level", True)
 
+        _normalize_seed_pdf_evidence_hint(paper)
+
         if "url" not in paper or not paper["url"]:
             # 尝试从 DOI 生成 URL
             doi = paper.get("doi", "")
@@ -253,6 +255,28 @@ def enrich_papers(
         enriched.append(paper)
 
     return enriched
+
+
+def _normalize_seed_pdf_evidence_hint(paper: dict[str, Any]) -> None:
+    """Normalize local seed PDF records before they reach T2/T3 artifacts.
+
+    `evidence_level` is a reading/evidence-strength enum, so it should remain
+    `FULL_TEXT` rather than a source label like `seed_pdf`. The seed PDF source
+    is represented by `has_seed_pdf`, `seed_pdf_path`, and `access_level_hint`.
+    """
+
+    has_seed_pdf = bool(paper.get("has_seed_pdf") or str(paper.get("seed_pdf_path") or "").strip())
+    is_user_seed = str(paper.get("source") or "").casefold() == "user_seed"
+    full_text_local = str(paper.get("access_level_hint") or "").strip() == "FULL_TEXT_LOCAL"
+    if not (has_seed_pdf or (is_user_seed and full_text_local)):
+        return
+    paper["has_seed_pdf"] = True
+    paper["has_local_pdf"] = True
+    paper["access_level_hint"] = "FULL_TEXT_LOCAL"
+    paper["access_score"] = 1.0
+    paper["access_score_estimate"] = max(float(paper.get("access_score_estimate") or 0.0), 1.0)
+    paper["evidence_level"] = "FULL_TEXT"
+    paper.pop("_needs_reader_evidence_level", None)
 
 
 def _normalize_author_names(authors: Any) -> list[str]:
@@ -1937,15 +1961,15 @@ def _recommended_action(
     access_level_hint: str,
     verification_status: str,
 ) -> str:
+    if has_seed_pdf:
+        return "read_seed_pdf"
+    if has_local_pdf:
+        return "read_local_pdf"
     # 未核验论文先做 metadata backfill / verification，避免直接把幻觉候选送进 T3。
     if verification_status == "retrieved":
         return "verify_metadata"
     if verification_status == "failed_verification":
         return "exclude_from_t3"
-    if has_seed_pdf:
-        return "read_seed_pdf"
-    if has_local_pdf:
-        return "read_local_pdf"
     if access_level_hint in {"LIKELY_FULL_TEXT", "POSSIBLE_FULL_TEXT"}:
         return "probe_pdf"
     if evidence_level == "ABSTRACT_ONLY":

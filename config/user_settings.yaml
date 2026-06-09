@@ -49,12 +49,12 @@ llm:
           temperature: 0.2
     scout:
       # T2 主要做 query 规划和语义筛选；检索/补资源由工具和 runtime 做。
-      tier: medium
+      tier: heavy
       max_context: 1280000
       temperature: 0.5
     reader:
       # T3/T3.5 文献阅读和综合；精读质量受 prompt 与工具约束共同影响。
-      tier: medium
+      tier: heavy
       temperature: 0.5
     ideation:
       # T4 需要更开放的生成；profile 若不存在，validate-config 会提示。
@@ -67,7 +67,7 @@ llm:
       temperature: 0.3
     experimenter:
       # T5-T7 现在主要做外部执行器 handoff/ingest/audit，不直接长跑实验。
-      tier: medium
+      tier: heavy
       temperature: 0.3
     writer:
       # T8 写作链需要长上下文，但正文仍按 section 分块生成。

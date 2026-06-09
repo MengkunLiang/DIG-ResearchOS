@@ -513,6 +513,34 @@ def test_enrich_papers_does_not_infer_full_text_from_access_metadata():
     assert papers[0]["_needs_reader_evidence_level"] is True
 
 
+def test_enrich_papers_normalizes_legacy_seed_pdf_metadata_only_record():
+    papers = enrich_papers(
+        [
+            {
+                "id": "seed-1",
+                "title": "Seed With Local PDF",
+                "source": "user_seed",
+                "has_seed_pdf": True,
+                "has_local_pdf": True,
+                "seed_pdf_path": "user_seeds/pdfs/Seed With Local PDF.pdf",
+                "access_level_hint": "FULL_TEXT_LOCAL",
+                "access_score": 0.1,
+                "access_score_estimate": 0.1,
+                "evidence_level": "METADATA_ONLY",
+                "_needs_reader_evidence_level": True,
+            }
+        ]
+    )
+
+    assert papers[0]["evidence_level"] == "FULL_TEXT"
+    assert papers[0]["access_level_hint"] == "FULL_TEXT_LOCAL"
+    assert papers[0]["access_score"] == 1.0
+    assert papers[0]["access_score_estimate"] == 1.0
+    assert papers[0]["has_seed_pdf"] is True
+    assert papers[0]["has_local_pdf"] is True
+    assert "_needs_reader_evidence_level" not in papers[0]
+
+
 def test_build_deep_read_queue_prefers_verified_pool_when_caller_passes_dedup(tmp_path):
     workspace = tmp_path / "ws"
     (workspace / "literature" / "pdfs").mkdir(parents=True)
@@ -963,6 +991,7 @@ def test_seed_pdf_fuzzy_matching_treats_user_seed_pdfs_as_full_text(tmp_path):
     assert all(item["access_level_hint"] == "FULL_TEXT_LOCAL" for item in queue)
     assert sum(1 for item in audit_records if item["has_seed_pdf"]) == 6
     assert all(item["evidence_level"] == "FULL_TEXT" for item in audit_records if item["has_seed_pdf"])
+    assert all(item["recommended_action"] == "read_seed_pdf" for item in audit_records if item["has_seed_pdf"])
     assert "`user_seeds/pdfs/` 可匹配的 seed PDF: 6" in audit_md
 
 

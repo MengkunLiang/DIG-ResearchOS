@@ -14,7 +14,7 @@ EEI Codex 的目标是在 `T5-EXECUTOR-GATE` 选择 `codex_cli` 后，定义 Res
 - Codex CLI 负责在允许路径内实现和运行真实实验，并写回结构化结果、状态、manifest、raw results、configs 和 logs。
 - ResearchOS 不接受只有自然语言总结的实验结果。
 - Codex CLI 可以声明执行完成，但不能声明证据被 ResearchOS 接受；`executor_status.json.accepted` 必须保持 `false`。
-- 无论 Codex CLI 是否由 ResearchOS 主动启动，真实结果进入 T7 前都必须经过 `T5-EXTERNAL-WAIT`。
+- 无论 Codex CLI 是否由 ResearchOS 主动启动，真实结果进入 T7 前都必须经过 `T5-EXTERNAL-WAIT`。[待修改]
 
 ## 2. 推荐 MVP 决策
 
@@ -367,7 +367,7 @@ Future tests：
 
 ## 13. 建议开发拆分
 
-第一阶段：
+第一阶段：[待修改]
 
 - 确认 `codex_cli` selection 的 gate 行为。
 - 实现/补齐 `auto_launch=false` handoff instructions。
@@ -416,11 +416,11 @@ Future tests：
 | C-04 | 先配置化，记录 stdin/argv/prompt-file 之一 |
 | C-05 | 只做 best-effort；失败时提示用户手动登录，不记录 credential |
 | C-06 | 默认 4 小时，可配置 |
-| C-07 | heartbeat 是否进入 MVP？ | managed launch 中 SHOULD，非 managed 模式不要求 | 影响 monitor 复杂度 |
+| C-07 | heartbeat 进入 MVP |
 | C-08 | 是 |
 | C-09 | 是 |
-| C-10 | allowed paths 是否只做 audit，还是本阶段要实现强 sandbox？ | MVP 只做 audit，并明确警告；强 sandbox 后续开发 | 影响安全边界和开发量 |
+| C-10 | MVP 只做 audit，并明确警告；强 sandbox 后续开发 |
 | C-11 | mvp 记录 sha256 和 bytes；stdout/stderr 可设 max log size 并 truncate with notice |
 | C-12 | archive 到带时间戳目录或写 supersession event，避免覆盖无记录 |
 | C-13 | mvp 分离；后续若事件模型稳定再统一 |
-| C-14 | schema version strategy 是否在本阶段落地？ | 至少给 result/status/manifest/invocation 增加 `schema_version` | 影响长期兼容 |
+| C-14 | schema version strategy 在本阶段落地 |
