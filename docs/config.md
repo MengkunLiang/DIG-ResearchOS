@@ -546,15 +546,15 @@ agents:
 | 参数 | 默认值 | 位置 | 作用 |
 | --- | --- | --- | --- |
 | `finish_finalize_min_raw` | `30` | `agents.scout.behavior.t2_finalize` | Scout 调用 `finish_task` 后，runtime 至少看到多少 raw 才 deterministic finalize；下限为 10 |
-| `active_pool_max` | `120` | `agents.scout.behavior.t2_finalize` | `papers_dedup.jsonl` / `papers_verified.jsonl` active pool 上限 |
-| `screened_active_pool_cap` | `60` | `agents.scout.behavior.t2_finalize` | semantic-screened deep-read 候选在 active pool 中的优先保留上限 |
-| `bridge_active_pool_cap_per_bridge` | `15` | `agents.scout.behavior.t2_finalize` | 兼容旧字段；未设置 must cap 时作为 `must_explore` bridge 的默认 active 保留上限 |
-| `must_bridge_active_pool_cap_per_bridge` | `15` | `agents.scout.behavior.t2_finalize` | 每个 `priority=must_explore` bridge 在 active pool 中的召回保留上限 |
-| `should_bridge_active_pool_cap_per_bridge` | `5` | `agents.scout.behavior.t2_finalize` | 每个 `priority=should_explore` bridge 在 active pool 中的召回保留上限；低于 must，避免桥接召回挤掉主线 |
-| `snowball_active_pool_cap` | `12` | `agents.scout.behavior.t2_finalize` | citation snowball 候选在 active pool 中的优先保留上限 |
-| `dedup_title_threshold` | `0.95` | `agents.scout.behavior.t2_finalize` | raw、snowball 和最终 active pool 去重时的标题相似度阈值 |
+| `active_pool_max` | `120` | `agents.scout.behavior.t2_finalize` | 保留候选数上限；`papers_dedup.jsonl` / `papers_verified.jsonl` 只保存本轮进入后续阅读处置的候选 |
+| `screened_active_pool_cap` | `60` | `agents.scout.behavior.t2_finalize` | semantic-screened deep-read 主线候选在保留候选集中的优先保留上限 |
+| `bridge_active_pool_cap_per_bridge` | `15` | `agents.scout.behavior.t2_finalize` | 兼容旧字段；未设置 must cap 时作为 `must_explore` bridge 的默认保留上限 |
+| `must_bridge_active_pool_cap_per_bridge` | `15` | `agents.scout.behavior.t2_finalize` | 每个 `priority=must_explore` bridge 进入保留候选集的召回保留上限 |
+| `should_bridge_active_pool_cap_per_bridge` | `5` | `agents.scout.behavior.t2_finalize` | 每个 `priority=should_explore` bridge 进入保留候选集的召回保留上限；低于 must，避免桥接召回挤掉主线 |
+| `snowball_active_pool_cap` | `12` | `agents.scout.behavior.t2_finalize` | citation snowball 候选进入保留候选集的优先保留上限 |
+| `dedup_title_threshold` | `0.95` | `agents.scout.behavior.t2_finalize` | raw、snowball 和最终保留候选集去重时的标题相似度阈值 |
 | `access_audit_top_n` | `50` | `agents.scout.behavior.t2_finalize` | `access_audit.md` 展示的 top 论文数量 |
-| `pre_active_light_backfill_max` | `220` | `agents.scout.behavior.t2_finalize` | active/backlog 切分前先对全 dedup 池前 N 篇做轻量标题/DOI/OA/摘要补全；`0` 关闭，`-1` 不限量 |
+| `pre_active_light_backfill_max` | `220` | `agents.scout.behavior.t2_finalize` | 保留候选/backlog 切分前先对全 dedup 池前 N 篇做轻量标题/DOI/OA/摘要补全；`0` 关闭，`-1` 不限量 |
 | `metadata_backfill_max_concurrency` | `6` | `agents.scout.behavior.t2_finalize` | OpenAlex/Crossref/title metadata 回填并发上限 |
 | `abstract_backfill_title_match_threshold` | `0.88` | `agents.scout.behavior.t2_finalize` | 多源摘要回填的标题匹配阈值 |
 | `abstract_backfill_max_concurrency` | `6` | `agents.scout.behavior.t2_finalize` | 多源摘要回填并发上限 |
@@ -565,29 +565,29 @@ agents:
 | `snowball_title_match_threshold` | `0.90` | `agents.scout.behavior.t2_finalize` | Crossref 引用标题转 OpenAlex 候选时的最低标题相似度 |
 | `progress.enabled` | `true` | `agents.scout.behavior.progress` | 是否写 `literature/temp/scout_progress.md` |
 | `progress.update_on_tool_results` | `true` | `agents.scout.behavior.progress` | 搜索工具自动落盘 raw 后是否同步写 progress |
-| `progress.update_on_finalize` | `true` | `agents.scout.behavior.progress` | deterministic finalize 是否同步写开始、active/backlog 切分、完成/失败 |
-| `deep_read_min` | `35` | `agents.reader.modes.read.behavior` | T3 validator 最少完成的结构合格 deep-read note 数 |
-| `deep_read_target` | `35` | `agents.reader.modes.read.behavior` | T3 目标精读数 |
-| `deep_read_max` | `45` | `agents.reader.modes.read.behavior` | active deep-read target 上限 |
+| `progress.update_on_finalize` | `true` | `agents.scout.behavior.progress` | deterministic finalize 是否同步写开始、保留候选/backlog 切分、完成/失败 |
+| `deep_read_min` | `35` | `agents.reader.modes.read.behavior` 或 `literature/literature_params.json` | 最低精读线；预算/资源异常时的最低可接受结构合格 deep-read note 数 |
+| `deep_read_target` | `35` | `agents.reader.modes.read.behavior` 或 `literature/literature_params.json` | 精读目标；`require_deep_read_target=true` 时 T3 必须读满该目标 |
+| `deep_read_max` | `45` | `agents.reader.modes.read.behavior` | 精读目标硬上限 |
 | `probe_pool` | `45` | `agents.reader.modes.read.behavior` | T3 优先 probe 的候选池大小 |
 | `mainline_screened_cap` | `90` | `agents.reader.modes.read.behavior` | 主线 shallow/screened backlog 保留上限 |
-| `bridge_deep_floor` | `3` | `agents.reader.modes.read.behavior` | 每个 must_explore bridge 通过 screen 后的 active deep-read 保底 |
+| `bridge_deep_floor` | `3` | `agents.reader.modes.read.behavior` | 每个 must_explore bridge 通过 screen 后的精读保底 |
 | `bridge_screened_cap` | `7` | `agents.reader.modes.read.behavior` | 每个 bridge 的 shallow/screened backlog 保留上限 |
 | `bridge_pool_cap` | `15` | `agents.reader.modes.read.behavior` | 每个 bridge 在 deep-read queue 中默认保留的候选总上限；超额记录不删除，标为 `read_disposition=deferred` 和 `triaged_reason=bridge_pool_cap_exceeded` |
 | `citation_hub_slots` | `3` | `agents.reader.modes.read.behavior` | citation graph 枢纽节点保护槽，仍需 Reader 复核 |
 
-`reader.modes.read.behavior.abstract_sweep` 当前默认是有上限的轻量补读取向：
+`T2-PARAM-GATE` 会在每个 workspace 写 `literature/literature_params.json`，用人类可读方式确认“保留候选数、精读目标、摘要轻读目标”。这个文件优先于全局 yaml；全局 yaml 仍作为默认值和无交互调试 fallback。`reader.modes.read.behavior.abstract_sweep` 当前默认是有上限的轻量补读取向：
 
 - `expected_notes_ratio: 1.0` 表示无 `deep_read_queue` 的旧 workspace fallback 也按输入池 100% 校验，不再按 80% 放行。
-- `lite_paper_num: 120` 表示每轮最多处理 120 篇 abstract sweep 候选，包含有 abstract 的逐篇 note 和 metadata-only 的批量 triage；这是候选预算 cap，不是最终相关性判断。
-- `sources: [papers_verified, papers_dedup]` 表示默认只覆盖 active verified/dedup；`papers_backlog` 是覆盖账本和人工/显式回捞池，默认不自动扫回证据链。若显式把 `papers_backlog` 加入 sources，`read_disposition=deferred/backlog` 或 `triaged_reason=bridge_pool_cap_exceeded/t2_active_pool_cap_exceeded/domain_profile_filtered` 的记录仍会被跳过，只保留审计和人工回捞语义。
+- `lite_paper_num: 120` 表示研究论文默认最多处理 120 篇 abstract sweep 候选；综述 gate 可写 `all_readable`，表示尽量读完保留候选中所有可读摘要。
+- `sources: [papers_verified, papers_dedup]` 表示默认只覆盖保留候选；`papers_backlog` 是覆盖账本和人工/显式回捞池。若 gate 写入 `metadata_replacement_policy=replace_metadata_only_with_readable_backlog_when_available`，允许从 backlog 回捞有摘要/PDF 的候选补足可读覆盖。
 - `min_relevance: 0.0` 表示不靠 metadata priority hint 丢弃剩余候选。
 - `priority_weights` 默认 `relevance/resource/year = 0.70/0.20/0.10`，用于在候选预算内排序：`relevance_score` 仍是检索/元数据优先级提示，资源可获得性和发表年限只影响“先读谁/先补谁”。
 - `include_metadata_only: true` 表示缺摘要但有标题的论文会进入 `literature/metadata_triage.md` 批量 triage；正常完成路径调用 Reader LLM 做 metadata-only 审阅，中断/LLM 失败时用确定性 fallback。它不会生成逐篇 note、BibTeX 或 comparison evidence。
 - `metadata_triage_report: literature/metadata_triage.md` 是 metadata-only triage report 路径；该报告只能作为补资源/升级阅读线索，不能进入 claim evidence。
 - `exclude_semantic_excluded: true` 表示 LLM screen 为 `shared_keyword_only/unrelated` 或 `can_enter_deep_read=false` 的论文默认不写入 abstract sweep note/BibTeX/comparison table，避免被后续 synthesis/writer 当作可用证据；需要排除线索复核时可显式设为 `false`。
 
-这和 T2 的 active pool/backlog 分层配套：active deep-read 由 T3 精读，active shallow 由 abstract sweep 生成弱证据提示或 metadata-only 补资源线索；active pool 外的 backlog 默认只做覆盖审计和人工/显式回捞。
+这和 T2 的“保留候选 / backlog”分层配套：保留候选中的 deep-read 由 T3 精读，shallow 由 abstract sweep 生成弱证据提示或 metadata-only 补资源线索；保留候选外的 backlog 默认只做覆盖审计和人工/显式回捞，综述强覆盖时可作为可读候选补位来源。
 
 #### research article vs survey profile
 
@@ -596,13 +596,13 @@ agents:
 - `project.yaml.metadata.manuscript_type/project_type/article_type/paper_type`
 - 或 `user_seeds/seed_outline_profile.json` 的 `manuscript_type/project_type`
 
-字段包含 `survey`、`综述`、`review` 或 `taxonomy-driven` 时启用 `behavior_profiles.survey`。综述版会放宽覆盖参数，但仍保持 active/backlog 和证据等级边界：
+字段包含 `survey`、`综述`、`review` 或 `taxonomy-driven` 时启用 `behavior_profiles.survey`。综述版会放宽覆盖参数，但仍保持保留候选/backlog 和证据等级边界：
 
 | 参数组 | research_article 默认 | survey 默认 | 作用 |
 | --- | --- | --- | --- |
-| `t2_finalize.active_pool_max` | `120` | `180` | 综述需要更宽 taxonomy 覆盖，超额仍进入 backlog |
+| `t2_finalize.active_pool_max` | `120` | `180` | 保留候选数；综述需要更宽 taxonomy 覆盖，超额仍进入 backlog |
 | `t2_finalize.screened_active_pool_cap` | `60` | `90` | 保留更多 semantic-screened 候选 |
-| `t2_finalize.pre_active_light_backfill_max` | `220` | `360` | 切 active/backlog 前补更多 DOI/OA/摘要 hint |
+| `t2_finalize.pre_active_light_backfill_max` | `220` | `360` | 切保留候选/backlog 前补更多 DOI/OA/摘要 hint |
 | `t2_finalize.snowball_max_sources` | `12` | `18` | 从更多高置信来源做 bounded one-hop citation snowball |
 | `reader.deep_read_min/target/max` | `35/35/45` | `45/55/65` | 综述需要更多结构化 deep-read note 支撑 taxonomy |
 | `reader.abstract_sweep.lite_paper_num` | `120` | `180` | 综述轻读覆盖更宽，供 T3.6 taxonomy plan 看到边界材料 |

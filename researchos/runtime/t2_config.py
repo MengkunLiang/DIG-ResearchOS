@@ -8,6 +8,7 @@ of scattering them across validators, recovery paths, and prompts.
 
 from dataclasses import asdict, dataclass
 from copy import deepcopy
+import json
 from pathlib import Path
 from typing import Any
 
@@ -180,12 +181,34 @@ def _apply_behavior_profile(
     return merged
 
 
+def _workspace_literature_params(workspace_dir: Path | str | None = None) -> dict[str, Any]:
+    if workspace_dir is None:
+        return {}
+    path = Path(workspace_dir) / "literature" / "literature_params.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    if data.get("semantics") != "workspace_literature_coverage_parameters_for_t2_t3":
+        return {}
+    return data
+
+
 def get_effective_reader_read_params(workspace_dir: Path | str | None = None) -> dict[str, Any]:
     try:
         params = get_agent_mode_params("reader", "read")
     except Exception:
         params = {}
-    return _apply_behavior_profile(params, workspace_dir=workspace_dir)
+    params = _apply_behavior_profile(params, workspace_dir=workspace_dir)
+    overrides = _workspace_literature_params(workspace_dir).get("reader")
+    if isinstance(overrides, dict):
+        params = _deep_merge(params, overrides)
+        params["workspace_literature_params_path"] = "literature/literature_params.json"
+    return params
 
 
 def load_t2_finalize_config(workspace_dir: Path | str | None = None) -> T2FinalizeConfig:
@@ -195,6 +218,10 @@ def load_t2_finalize_config(workspace_dir: Path | str | None = None) -> T2Finali
     except Exception:
         params = {}
     params = _apply_behavior_profile(params, workspace_dir=workspace_dir)
+    workspace_params = _workspace_literature_params(workspace_dir)
+    t2_overrides = workspace_params.get("t2_finalize")
+    if isinstance(t2_overrides, dict):
+        params = _deep_merge(params, {"t2_finalize": t2_overrides})
 
     finalize = params.get("t2_finalize")
     if not isinstance(finalize, dict):

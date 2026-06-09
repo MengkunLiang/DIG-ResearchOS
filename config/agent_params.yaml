@@ -128,29 +128,29 @@ agents:
     behavior:
       # T2 deterministic finalize 参数：
       # Scout LLM 负责 query/semantic_screen；runtime 用这里的阈值做去重、资源补全、
-      # active/backlog 切分、citation snowball 和 deep_read_queue 构建。
+      # 保留候选/backlog 切分、citation snowball 和 deep_read_queue 构建。
       t2_finalize:
         # finish_task 后至少要有多少 raw 才允许 deterministic finalize；过低说明检索没展开。
         finish_finalize_min_raw: 30
-        # active candidate pool 上限；超过的去 papers_backlog.jsonl，不静默丢弃。
+        # 保留候选数上限；超过的去 papers_backlog.jsonl，不静默丢弃。
         active_pool_max: 120
-        # semantic_screen 通过的主线候选在 active pool 的优先保留上限。
+        # semantic_screen 通过的主线候选在保留候选集中的优先保留上限。
         screened_active_pool_cap: 60
         # 兼容旧字段：未设置 must_bridge_active_pool_cap_per_bridge 时作为 must 默认值。
         bridge_active_pool_cap_per_bridge: 15
-        # 每个 priority=must_explore bridge 最多保留多少 active 候选。
+        # 每个 priority=must_explore bridge 最多保留多少个候选进入保留候选集。
         must_bridge_active_pool_cap_per_bridge: 15
-        # 每个 priority=should_explore bridge 最多保留多少 active 候选；默认明显低于 must，
+        # 每个 priority=should_explore bridge 最多保留多少个候选进入保留候选集；默认明显低于 must，
         # 避免 bridge 扩散挤掉 core 主线。priority=no_cross/skip 不保留。
         should_bridge_active_pool_cap_per_bridge: 5
-        # citation snowball 候选在 active pool 的保护上限。
+        # citation snowball 候选进入保留候选集的保护上限。
         snowball_active_pool_cap: 12
         # 标题去重阈值；越高越保守，越低越容易合并近似标题。
         dedup_title_threshold: 0.95
         # access_audit.md 展示 top N，方便排查 PDF/摘要/DOI 获取情况。
         access_audit_top_n: 50
-        # active/backlog 切分前先对全 dedup 池前 N 篇做轻量标题/DOI/OA/摘要补全。
-        # 0 表示关闭；-1 表示不限量。避免只有早选 active 才拿到资源补全导致排序偏。
+        # 保留候选/backlog 切分前先对全 dedup 池前 N 篇做轻量标题/DOI/OA/摘要补全。
+        # 0 表示关闭；-1 表示不限量。避免只有早选保留候选才拿到资源补全导致排序偏。
         pre_active_light_backfill_max: 220
         # OpenAlex/Crossref/title metadata 回填并发；过高可能触发外部 API 限流。
         metadata_backfill_max_concurrency: 6
@@ -237,7 +237,7 @@ agents:
             lite_paper_num: 120
             # 最低 relevance_score hint；0.0 表示不靠该 hint 丢弃候选。
             min_relevance: 0.0
-            # 候选来源优先级；verified/dedup 是 active pool。papers_backlog 是审计/人工回捞池，
+            # 候选来源优先级；verified/dedup 是保留候选集。papers_backlog 是审计/人工回捞池，
             # 默认不自动扫，显式加入 sources 时仍会跳过 t2_active_pool_cap_exceeded/domain_profile_filtered。
             sources:
             - papers_verified
@@ -264,13 +264,13 @@ agents:
         deep_read_min: 35
         # T3 prompt 和 queue meta 中展示的目标精读数。
         deep_read_target: 35
-        # active deep-read 上限；seed/bridge/citation hub 保护位也计入这个上限。
+        # 精读目标硬上限；seed/bridge/citation hub 保护位也计入这个上限。
         deep_read_max: 45
         # Reader 优先 probe 的候选池大小。
         probe_pool: 45
         # 主线 shallow/screened backlog 在 deep_read_queue.jsonl 中保留的上限。
         mainline_screened_cap: 90
-        # 每个 must_explore bridge 的 active deep-read 保底。
+        # 每个 must_explore bridge 的精读保底。
         bridge_deep_floor: 3
         # 每个 bridge 的 shallow/screened backlog 保留上限。
         bridge_screened_cap: 7
@@ -280,7 +280,7 @@ agents:
         citation_hub_slots: 3
         behavior_profiles:
           survey:
-            # 综述版需要更多深读覆盖 taxonomy 主类，但仍保留 active/backlog 分层。
+            # 综述版需要更多深读覆盖 taxonomy 主类，但仍保留候选/backlog 分层。
             deep_read_min: 45
             deep_read_target: 55
             deep_read_max: 65

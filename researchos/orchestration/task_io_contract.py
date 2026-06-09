@@ -42,9 +42,22 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "bridge_domain_plan": "bridge_domain_plan",
         },
     },
+    "T2-PARAM-GATE": {
+        "inputs": {
+            "project": "project.yaml",
+            "seed_outline_profile": "user_seeds/seed_outline_profile.json",
+            "bridge_domain_plan": "literature/bridge_domain_plan.json",
+        },
+        "outputs": {
+            "literature_params": "literature/literature_params.json",
+        },
+        "required_inputs": ["project"],
+        "schemas": {},
+    },
     "T2": {
         "inputs": {
             "project": "project.yaml",
+            "literature_params": "literature/literature_params.json",
             "seed_papers": "user_seeds/seed_papers.jsonl",
             "seed_pdfs": "user_seeds/pdfs",
             "seed_constraints": "user_seeds/seed_constraints.md",

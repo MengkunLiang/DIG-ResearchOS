@@ -677,6 +677,64 @@ def test_validate_outputs_read_mode_missing_notes(reader_agent, temp_workspace):
     assert "deep_read_queue" in err or "至少需要完成" in err
 
 
+def test_validate_outputs_read_mode_requires_target_when_configured(reader_agent, temp_workspace, monkeypatch):
+    """T3 默认不应在达到 min 但未达到 target 时提前放行。"""
+
+    queue_path = temp_workspace / "literature" / "deep_read_queue.jsonl"
+    records = [
+        {
+            "paper_id": f"paper{i}",
+            "normalized_id": f"paper{i}",
+            "title": f"Paper {i}",
+            "relevance_score": 0.8,
+            "access_score_estimate": 0.7,
+            "access_score": 0.7,
+            "evidence_level": "PARTIAL_TEXT",
+            "seed_priority": False,
+            "queue_rank": i + 1,
+            "read_priority": 0.8,
+            "target_bucket": "target",
+            "read_disposition": "deep_read",
+        }
+        for i in range(6)
+    ]
+    queue_path.write_text("\n".join(json.dumps(item, ensure_ascii=False) for item in records) + "\n", encoding="utf-8")
+    notes_dir = temp_workspace / "literature" / "paper_notes"
+    for i in range(3):
+        (notes_dir / f"paper{i}.md").write_text(_structured_note(f"paper{i}"), encoding="utf-8")
+    (temp_workspace / "literature" / "comparison_table.csv").write_text("id,title,year\npaper0,Paper 0,2025\n", encoding="utf-8")
+    (temp_workspace / "literature" / "related_work.bib").write_text("@article{p0,title={P0},year={2025}}\n", encoding="utf-8")
+    (temp_workspace / "literature" / "literature_params.json").write_text(
+        json.dumps(
+            {
+                "semantics": "workspace_literature_coverage_parameters_for_t2_t3",
+                "reader": {
+                    "deep_read_min": 3,
+                    "deep_read_target": 5,
+                    "deep_read_max": 6,
+                    "require_deep_read_target": True,
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T3",
+        run_id="test-run-target",
+        mode="read",
+    )
+
+    ok, err = reader_agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "至少需要完成 5 篇" in (err or "")
+    assert "目标" in (err or "")
+
+
 def test_validate_outputs_read_mode_reports_matched_invalid_queue_note(reader_agent, temp_workspace):
     """同名 note 存在但结构不合格时，应明确报结构问题，而不是让用户误以为没读。"""
     queue_path = temp_workspace / "literature" / "deep_read_queue.jsonl"

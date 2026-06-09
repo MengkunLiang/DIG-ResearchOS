@@ -54,6 +54,55 @@ gates:
     config:
       min_novelty_score: 0.6
 
+  # T2/T3 文献覆盖参数确认：
+  # 这些是“研究覆盖强度”参数，不是内部网络重试上限。摘要/PDF/DOI/OpenAlex 等资源补全
+  # 会对保留候选尽可能尝试；工程 safety cap 仍由系统内部控制，不要求用户填写。
+  t2_literature_param_gate:
+    title: "T2 文献覆盖参数确认"
+    description: "请先确认本轮文献检索与阅读覆盖强度。这里的核心不是网络请求上限，而是你希望系统保留多少候选、精读多少篇、摘要轻读多少篇。"
+    presentation:
+      parameter_meaning:
+        literal: |
+          参数含义：
+          - 保留候选数 active_pool_max：T2 从检索结果里保留多少篇进入后续阅读处置。它不是精读篇数，也不是最终引用篇数；超出部分仍保存在 papers_backlog.jsonl，可追溯和回捞。
+          - 精读目标 deep_read_target：正常完成 T3 前应完成多少篇结构化深读笔记。综述建议读满目标后再进入 T3.5。
+          - 最低精读 deep_read_min：预算或资源异常时的最低可接受线。默认不把它当正常停止线，除非你选快速/自定义并允许达到最低线就继续。
+          - 是否必须读满目标 require_deep_read_target：true 表示未读满精读目标不放行到 T3.5；false 表示达到最低精读即可放行。
+          - 摘要轻读 abstract_sweep_target：T3 后对未精读但有摘要的论文做多少篇 LLM 摘要级轻读；all_readable 表示尽量读完保留候选中所有可读摘要。
+          - metadata-only 处理：只有标题/年份/venue 而没有摘要/全文的论文会被 LLM 批量 triage，但不能当作证据；系统会尽量用 backlog 中有摘要/PDF 的候选补足可读覆盖。
+          - 资源补全：对保留候选尽可能补摘要、DOI、OpenAlex/Crossref/Semantic Scholar/arXiv/可访问 PDF hints；内部 safety cap 只防异常失控，不需要用户设置。
+      project_summary:
+        from_file: project.yaml
+        max_chars: 2500
+      seed_outline_profile:
+        from_file: user_seeds/seed_outline_profile.json
+        max_chars: 2500
+      bridge_domain_plan:
+        from_file: literature/bridge_domain_plan.json
+        max_chars: 2500
+    options:
+      - id: standard_research
+        label: "标准研究论文覆盖"
+        aliases: ["standard", "research", "默认", "研究"]
+        next: T2
+      - id: survey_balanced
+        label: "综述均衡覆盖（推荐综述）"
+        aliases: ["survey", "review", "综述", "均衡"]
+        next: T2
+      - id: survey_exhaustive
+        label: "综述强覆盖"
+        aliases: ["exhaustive", "full", "全量", "强覆盖"]
+        next: T2
+      - id: custom
+        label: "自定义关键数字"
+        aliases: ["自定义", "custom"]
+        next: T2
+        collect_input:
+          - active_pool_max
+          - deep_read_target
+          - abstract_sweep_target
+          - require_deep_read_target
+
   # T3.6 综述支线入口：
   # 这是 runtime 级人工 gate，不需要先调用 LLM。synthesis.md 继续作为 T4 idea fuel；
   # 只有用户明确选择 yes 时，才启动 taxonomy-driven survey 分支。

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 输出：
 - literature/papers_raw.jsonl: 原始检索结果
-- literature/papers_dedup.jsonl: active candidate pool（上限见 agents.scout.behavior.t2_finalize.active_pool_max）
+- literature/papers_dedup.jsonl: 保留候选集（上限见 agents.scout.behavior.t2_finalize.active_pool_max）
 - literature/deep_read_queue.jsonl: T3精读队列
 - literature/search_log.md: 检索审计日志
 - literature/missing_areas.md: 缺口分析
@@ -204,7 +204,7 @@ class ScoutAgent(Agent):
             "你负责完成高质量多源检索并让 raw 结果落盘；"
             "raw 数量足够只是必要条件，你还要判断 query/source/bucket 覆盖是否足够；"
             "覆盖足够后调用 finish_task，runtime 才会完成去重、metadata verification 和 deep_read_queue.jsonl，"
-            "最终 papers_dedup 会按 config/agent_params.yaml 的 agents.scout.behavior.t2_finalize.active_pool_max 控制 active pool。"
+            "最终 papers_dedup 会按 config/agent_params.yaml 的 agents.scout.behavior.t2_finalize.active_pool_max 控制保留候选数。"
             ),
         )
 
@@ -273,7 +273,7 @@ class ScoutAgent(Agent):
             return False, err
 
         verified_records = load_jsonl(verified_path)
-        # 6. 校验 deep_read_queue：必须建立在 verified 池之上。
+        # 6. 校验 deep_read_queue：必须建立在已核验保留候选之上。
         queue_path = ctx.workspace_dir / "literature" / "deep_read_queue.jsonl"
         ok, err = validate_jsonl_schema(
             queue_path,
@@ -298,7 +298,7 @@ class ScoutAgent(Agent):
             if _is_semantic_screened_protected_candidate(item)
         ]
         if protected_verified and not any(_is_semantic_screened_protected_candidate(item) for item in queue_records):
-            return False, "verified 池包含 semantic_screen 允许的跨域/theory 候选，但 deep_read_queue 未保留任何对应候选"
+            return False, "已核验保留候选包含 semantic_screen 允许的跨域/theory 候选，但 deep_read_queue 未保留任何对应候选"
         if protected_verified and not any(
             _is_semantic_screened_protected_candidate(item)
             and not bool(item.get("triaged_out"))
@@ -448,7 +448,7 @@ def _validate_queue_membership_and_disposition(
     """Ensure verified papers have a full deep/shallow reading disposition.
 
     T2 may not LLM-screen every verified paper before finish, but no verified
-    paper should vanish. Every verified record must either be an active deep-read
+    paper should vanish. Every verified record must either be a deep-read
     target or retained as a shallow/backlog queue record for T3 abstract sweep
     and later human revisit.
     """
@@ -501,7 +501,7 @@ def _validate_queue_membership_and_disposition(
             "必须 100% 保留为 deep_read 或 shallow_read/backlog。",
         )
     if queue_records and active_count <= 0:
-        return False, "deep_read_queue 没有任何 active deep-read target"
+        return False, "deep_read_queue 没有任何精读目标"
     if len(queue_records) > active_count and shallow_count <= 0:
         return False, "deep_read_queue 有截断候选但未保留 shallow/backlog 处置"
     return True, None

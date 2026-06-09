@@ -79,6 +79,13 @@ _T36_CORPUS_GATE_INPUT_PATHS = {
 }
 
 
+_T2_LITERATURE_PARAM_GATE_INPUT_PATHS = {
+    "project": "project.yaml",
+    "seed_outline_profile": "user_seeds/seed_outline_profile.json",
+    "bridge_domain_plan": "literature/bridge_domain_plan.json",
+}
+
+
 def _t4_gate1_candidate_pool_fingerprints(workspace_dir: Path) -> dict[str, dict[str, Any]]:
     paths = {
         "pass1_forward_candidates": "ideation/_pass1_forward_candidates.json",
@@ -120,6 +127,172 @@ def _gate1_pool_fingerprint_changed(
         if item.get("exists") and str(previous.get("sha256") or "") != str(item.get("sha256") or ""):
             changed.append(label)
     return changed
+
+
+def build_literature_param_payload(
+    *,
+    selected_option: str,
+    captured: dict[str, Any] | None = None,
+    workspace_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Build the workspace-local literature coverage parameters for T2/T3."""
+
+    option = _normalize_literature_param_option(selected_option)
+    presets: dict[str, dict[str, Any]] = {
+        "standard_research": {
+            "profile": "research_article",
+            "t2_finalize": {"active_pool_max": 120},
+            "reader": {
+                "deep_read_min": 35,
+                "deep_read_target": 35,
+                "deep_read_max": 45,
+                "require_deep_read_target": True,
+                "abstract_sweep": {
+                    "lite_paper_num": 120,
+                    "sources": ["papers_verified", "papers_dedup"],
+                    "include_metadata_only": True,
+                    "metadata_replacement_policy": "replace_metadata_only_with_readable_backlog_when_available",
+                },
+            },
+        },
+        "survey_balanced": {
+            "profile": "survey",
+            "t2_finalize": {"active_pool_max": 180},
+            "reader": {
+                "deep_read_min": 50,
+                "deep_read_target": 60,
+                "deep_read_max": 70,
+                "require_deep_read_target": True,
+                "abstract_sweep": {
+                    "lite_paper_num": "all_readable",
+                    "sources": ["papers_verified", "papers_dedup", "papers_backlog"],
+                    "include_metadata_only": True,
+                    "metadata_replacement_policy": "replace_metadata_only_with_readable_backlog_when_available",
+                },
+            },
+        },
+        "survey_exhaustive": {
+            "profile": "survey",
+            "t2_finalize": {"active_pool_max": 240},
+            "reader": {
+                "deep_read_min": 70,
+                "deep_read_target": 80,
+                "deep_read_max": 95,
+                "require_deep_read_target": True,
+                "abstract_sweep": {
+                    "lite_paper_num": "all_readable",
+                    "sources": ["papers_verified", "papers_dedup", "papers_backlog"],
+                    "include_metadata_only": True,
+                    "metadata_replacement_policy": "replace_metadata_only_with_readable_backlog_when_available",
+                },
+            },
+        },
+    }
+    payload = json.loads(json.dumps(presets.get(option, presets["survey_balanced"]), ensure_ascii=False))
+    captured = captured or {}
+    if option == "custom":
+        active_pool = _safe_int(captured.get("active_pool_max"), default=180, minimum=30)
+        deep_target = _safe_int(captured.get("deep_read_target"), default=60, minimum=1)
+        deep_min = max(1, min(deep_target, int(round(deep_target * 0.8))))
+        abstract_target: str | int = str(captured.get("abstract_sweep_target") or "all_readable").strip()
+        if abstract_target.casefold() not in {"all", "all_readable", "unlimited", "全部"}:
+            abstract_target = _safe_int(abstract_target, default=active_pool, minimum=1)
+        require_target = _safe_bool(captured.get("require_deep_read_target"), default=True)
+        payload = {
+            "profile": "custom",
+            "t2_finalize": {"active_pool_max": active_pool},
+            "reader": {
+                "deep_read_min": deep_min,
+                "deep_read_target": deep_target,
+                "deep_read_max": max(deep_target, int(round(deep_target * 1.15))),
+                "require_deep_read_target": require_target,
+                "abstract_sweep": {
+                    "lite_paper_num": abstract_target,
+                    "sources": ["papers_verified", "papers_dedup", "papers_backlog"],
+                    "include_metadata_only": True,
+                    "metadata_replacement_policy": "replace_metadata_only_with_readable_backlog_when_available",
+                },
+            },
+        }
+
+    payload.update(
+        {
+            "semantics": "workspace_literature_coverage_parameters_for_t2_t3",
+            "selected_option": option,
+            "captured": captured,
+            "resource_backfill_policy": {
+                "retained_candidates": "attempt all reasonable metadata, abstract, DOI, OpenAlex, Crossref, Semantic Scholar, arXiv, and PDF-hint backfill",
+                "user_visible_budget_semantics": "coverage targets, not network attempt caps",
+                "metadata_only": (
+                    "metadata-only records receive batch LLM triage but do not count as abstract-note evidence; "
+                    "when possible, readable backlog records should replace metadata-only slots for coverage."
+                ),
+            },
+            "parameter_meanings": {
+                "active_pool_max": "保留候选数：T2 从检索结果里保留多少篇进入后续阅读处置；不是精读篇数，也不是最终引用篇数。",
+                "deep_read_target": "精读目标：正常完成 T3 前应完成多少篇结构化深读笔记。",
+                "deep_read_min": "最低精读：预算或资源异常时的最低可接受线；正常运行由 require_deep_read_target 决定是否必须读满 target。",
+                "abstract_sweep.lite_paper_num": "摘要轻读数量：T3 后对未精读但有摘要的论文做 LLM 摘要级轻读；all_readable 表示尽量读完可读摘要。",
+                "metadata_replacement_policy": "metadata-only 只做批量 triage，并尽量用 backlog 中有摘要/PDF 的候选补足可读覆盖。",
+            },
+        }
+    )
+    if workspace_dir is not None:
+        payload["detected_profile_before_gate"] = _detect_literature_profile_hint(workspace_dir)
+    return payload
+
+
+def _normalize_literature_param_option(option: str) -> str:
+    normalized = str(option or "").strip().casefold()
+    aliases = {
+        "standard": "standard_research",
+        "research": "standard_research",
+        "默认": "standard_research",
+        "研究": "standard_research",
+        "survey": "survey_balanced",
+        "review": "survey_balanced",
+        "综述": "survey_balanced",
+        "均衡": "survey_balanced",
+        "exhaustive": "survey_exhaustive",
+        "full": "survey_exhaustive",
+        "全量": "survey_exhaustive",
+        "强覆盖": "survey_exhaustive",
+        "自定义": "custom",
+    }
+    return aliases.get(normalized, normalized if normalized in {"standard_research", "survey_balanced", "survey_exhaustive", "custom"} else "survey_balanced")
+
+
+def _safe_int(value: Any, *, default: int, minimum: int) -> int:
+    try:
+        result = int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        result = default
+    return max(minimum, result)
+
+
+def _safe_bool(value: Any, *, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    text = str(value).strip().casefold()
+    if text in {"1", "true", "yes", "y", "是", "需要", "require", "target"}:
+        return True
+    if text in {"0", "false", "no", "n", "否", "不", "min"}:
+        return False
+    return default
+
+
+def _detect_literature_profile_hint(workspace_dir: Path) -> str:
+    texts: list[str] = []
+    for rel in ("project.yaml", "user_seeds/seed_outline_profile.json"):
+        path = workspace_dir / rel
+        if path.exists():
+            texts.append(path.read_text(encoding="utf-8", errors="replace")[:4000])
+    joined = " ".join(texts).casefold()
+    if any(token in joined for token in ("survey", "综述", "review", "taxonomy-driven")):
+        return "survey"
+    return "research_article"
 
 
 def _file_newer_than_existing_inputs(output: Path, inputs: list[Path]) -> bool:
@@ -739,6 +912,26 @@ class StateMachine:
         """Persist the user decision for gate-only nodes that declare a JSON output."""
 
         if workspace_dir is None or not (node.extra or {}).get("immediate_gate"):
+            return
+        if node.task_id == "T2-PARAM-GATE":
+            option_id = str(gate_result.get("option_id") or gate_result.get("key") or "survey_balanced")
+            captured = gate_result.get("captured") or {}
+            payload = build_literature_param_payload(
+                selected_option=option_id,
+                captured=captured if isinstance(captured, dict) else {},
+                workspace_dir=workspace_dir,
+            )
+            payload["task_id"] = node.task_id
+            payload["gate_id"] = self._gate_id_for_node(node)
+            payload["next_task"] = next_task
+            payload["input_fingerprints"] = build_input_fingerprints(
+                workspace_dir,
+                _T2_LITERATURE_PARAM_GATE_INPUT_PATHS,
+            )
+            payload["decided_at"] = _now_iso()
+            path = workspace_dir / "literature" / "literature_params.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             return
         if node.task_id == "T3.6-GATE-SURVEY":
             option_id = str(gate_result.get("option_id") or gate_result.get("key") or "")

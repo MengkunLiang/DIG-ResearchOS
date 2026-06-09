@@ -283,6 +283,8 @@ class ReaderAgent(Agent):
         queue_config = load_deep_read_queue_config(ctx.workspace_dir)
         min_required = queue_config.deep_read_min
         target_required = queue_config.deep_read_target
+        mode_params = get_effective_reader_read_params(ctx.workspace_dir)
+        require_target_completion = _require_deep_read_target(mode_params)
         queue_path = ctx.workspace_dir / "literature" / "deep_read_queue.jsonl"
         queue_records = load_jsonl(queue_path) if queue_path.exists() else []
         queue_count = len(queue_records)
@@ -317,11 +319,17 @@ class ReaderAgent(Agent):
 
             covered_queue_count = sum(1 for entry in manifest_entries if entry.get("status") == "complete")
             min_required = min(queue_count_for_completion, min_required)
+            required_queue_notes = min(
+                queue_count_for_completion,
+                target_required if require_target_completion else min_required,
+            )
 
-            if covered_queue_count < min_required:
+            if covered_queue_count < required_queue_notes:
+                requirement_label = "目标" if require_target_completion else "最低"
                 return False, (
                     f"deep_read_queue 仅完成 {covered_queue_count}/{queue_count_for_completion} 篇，"
-                    f"至少需要完成 {min_required} 篇队列论文；当前目标阅读数为 {target_required}。"
+                    f"至少需要完成 {required_queue_notes} 篇队列论文（当前按{requirement_label}完成线校验）；"
+                    f"最低阅读数为 {min_required}，目标阅读数为 {target_required}。"
                     + _manifest_diagnostic_suffix(manifest_entries)
                 )
 
@@ -345,7 +353,6 @@ class ReaderAgent(Agent):
         # 默认 expected_notes_ratio=1.0；旧 workspace 没有 queue 时也不能再按 80% 静默放过。
         dedup_path = ctx.workspace_dir / "literature" / "papers_dedup.jsonl"
         verified_path = ctx.workspace_dir / "literature" / "papers_verified.jsonl"
-        mode_params = get_effective_reader_read_params(ctx.workspace_dir)
         expected_notes_ratio = _expected_notes_ratio(mode_params.get("expected_notes_ratio", 1.0))
         if not queue_count and verified_path.exists():
             verified_papers = load_jsonl(verified_path)
@@ -639,6 +646,20 @@ def _expected_notes_ratio(raw: object) -> float:
     if ratio <= 0:
         return 1.0
     return min(1.0, ratio)
+
+
+def _require_deep_read_target(params: dict[str, object]) -> bool:
+    raw = params.get("require_deep_read_target")
+    if isinstance(raw, bool):
+        return raw
+    if raw is None:
+        return False
+    text = str(raw).strip().casefold()
+    if text in {"1", "true", "yes", "y", "on", "target", "目标", "读满"}:
+        return True
+    if text in {"0", "false", "no", "n", "off", "min", "最低"}:
+        return False
+    return bool(raw)
 
 
 def _required_note_count(expected_count: int, ratio: float) -> int:

@@ -94,10 +94,10 @@
 {% endif %}
 
 {% if verified_paper_count > 0 %}
-## Verified Pool
-- 当前 `papers_verified.jsonl` 中有 {{ verified_paper_count }} 篇经过 metadata verification 的论文
+## 已核验保留候选
+- 当前 `papers_verified.jsonl` 中有 {{ verified_paper_count }} 篇经过 metadata verification 的保留候选
 {% if verified_paper_preview %}
-- verified 论文预览（前 {{ verified_paper_preview|length }} 篇）：
+- 已核验保留候选预览（前 {{ verified_paper_preview|length }} 篇）：
 {% for item in verified_paper_preview %}
   - {{ item.get('title', 'Untitled') }} | {{ item.get('verification_status', '') }} | confidence={{ item.get('verification_confidence', '?') }}
 {% endfor %}
@@ -326,7 +326,7 @@ paper_id,Paper Title,2026,Venue,Method Family,DatasetOrSetting,Primary Metric,85
 ## 鲁棒性规则
 
 1. **禁止编造数据**：如果PDF读不到，只基于abstract写笔记，并在Status字段标注 **[ABSTRACT-ONLY]**
-2. **verified 论文优先**：如果 `papers_verified.jsonl` 存在，优先从 verified 池和 queue 里读取；不要默认消费未核验 dedup 论文
+2. **已核验保留候选优先**：如果 `papers_verified.jsonl` 存在，优先从已核验保留候选和 queue 里读取；不要默认消费未核验 dedup 论文
 3. **单篇 metadata 查询**：需要论文详情时优先调用 `lookup_paper_record(queue_rank=...)`；除非 queue 文件不存在且没有其他选择，不要读取完整 `papers_verified.jsonl` 或 `papers_dedup.jsonl`
 4. **PDF可用必须全文覆盖**：只要本地存在 PDF 或 `fetch_paper_pdf` 下载成功，就必须用 `extract_pdf_text` 读到 `total_pages` 的最后一页；不能只读前 8-10 页
 5. **FULL-TEXT判定要严格**：只有所有页面都读过且最终没有未解决的 `preview_truncated_by_max_chars=true` / runtime 截断时，Status 才能写 **[FULL-TEXT]**；如果初次调用被截断，必须分块重读直到全篇覆盖并在 `Truncation` 说明已解决；否则写 **[PARTIAL-TEXT]**

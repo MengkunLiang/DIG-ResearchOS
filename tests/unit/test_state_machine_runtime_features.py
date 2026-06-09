@@ -489,6 +489,67 @@ def test_t4_gate1_resolve_reprompts_when_candidate_pool_changes(tmp_workspace):
     assert not (ideation / "_gate1_user_selection.json").exists()
 
 
+def test_t2_literature_param_gate_persists_clear_coverage_parameters(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    gates = tmp_workspace / "gates.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T2-PARAM-GATE
+        states:
+          T2-PARAM-GATE:
+            agent: scout
+            extra:
+              immediate_gate: true
+            gate: t2_literature_param_gate
+            inputs:
+              project: project.yaml
+              seed_outline_profile: user_seeds/seed_outline_profile.json
+              bridge_domain_plan: literature/bridge_domain_plan.json
+            outputs:
+              literature_params: literature/literature_params.json
+            next_on_success: T2
+          T2:
+            agent: scout
+            outputs:
+              papers_raw: literature/papers_raw.jsonl
+        """,
+    )
+    _write_yaml(
+        gates,
+        """
+        gates:
+          t2_literature_param_gate:
+            presentation:
+              meaning:
+                literal: choose coverage
+            options:
+              - id: survey_balanced
+                label: Survey balanced
+                next: T2
+        """,
+    )
+    (tmp_workspace / "project.yaml").write_text("project_id: p\n", encoding="utf-8")
+    (tmp_workspace / "user_seeds").mkdir(parents=True)
+    (tmp_workspace / "user_seeds" / "seed_outline_profile.json").write_text("{}", encoding="utf-8")
+    (tmp_workspace / "literature").mkdir(parents=True)
+    (tmp_workspace / "literature" / "bridge_domain_plan.json").write_text("{}", encoding="utf-8")
+    sm = StateMachine(config, gates)
+    state = sm.create_initial_state("p1")
+
+    state = sm.pause_for_immediate_gate(state, workspace_dir=tmp_workspace)
+    state = sm.resolve_pending_gate(state, {"option_id": "survey_balanced"}, workspace_dir=tmp_workspace)
+
+    assert state.current_task == "T2"
+    payload = json.loads((tmp_workspace / "literature" / "literature_params.json").read_text(encoding="utf-8"))
+    assert payload["semantics"] == "workspace_literature_coverage_parameters_for_t2_t3"
+    assert payload["selected_option"] == "survey_balanced"
+    assert payload["t2_finalize"]["active_pool_max"] == 180
+    assert payload["reader"]["deep_read_target"] == 60
+    assert payload["reader"]["require_deep_read_target"] is True
+    assert "保留候选数" in payload["parameter_meanings"]["active_pool_max"]
+
+
 def test_t5_executor_gate_persists_selection_and_patches_executor_files(tmp_workspace):
     config = tmp_workspace / "fsm.yaml"
     gates = tmp_workspace / "gates.yaml"

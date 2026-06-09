@@ -413,7 +413,7 @@ python -m researchos.cli run \
 | --- | --- | --- |
 | `HELLO` | runtime 最小闭环 | `hello.txt` |
 | `T1` | `project.yaml` 合法且信息完整 | `project.yaml`, `state.yaml` |
-| `T2` | 候选池、verified 池、deep-read 队列都落盘 | `papers_dedup.jsonl`, `papers_verified.jsonl`, `deep_read_queue.jsonl`, `access_audit.md` |
+| `T2` | 保留候选集、已核验保留候选、deep-read 队列都落盘 | `papers_dedup.jsonl`, `papers_verified.jsonl`, `deep_read_queue.jsonl`, `access_audit.md` |
 | `T3` | note/table/bib 同步增长、PDF 可用时全文覆盖、且支持续跑 | `paper_notes/`, `comparison_table.csv`, `related_work.bib`, `deep_read_queue_pending.jsonl` |
 | `T3.5` | synthesis 分阶段产物和最终综合结构完整 | `literature/synthesis_workbench.json`, `literature/synthesis_outline.md`, `literature/synthesis_draft.md`, `literature/synthesis.md` |
 | `T4` | hypotheses / exp_plan / idea scorecard / gate decisions / risks 成对齐 | `ideation/hypotheses.md`, `ideation/exp_plan.yaml`, `ideation/idea_scorecard.yaml`, `ideation/rejected_ideas.md`, `ideation/gate_decisions.json`, `ideation/idea_rationales.json`, `ideation/risks.md` |
@@ -440,13 +440,13 @@ python -m researchos.cli run \
 
 ### 7.1 T2 重点看什么
 
-- `papers_raw` 和 active `papers_dedup` 是否分离；raw 可以很大，`papers_dedup`/`papers_verified` 应控制在 active pool 上限内
-- `papers_verified` 和 `papers_backlog` 是否生成；backlog 用来解释 active pool 之外的候选，没有静默丢弃
+- `papers_raw` 和保留候选 `papers_dedup` 是否分离；raw 可以很大，`papers_dedup`/`papers_verified` 应控制在保留候选数上限内
+- `papers_verified` 和 `papers_backlog` 是否生成；backlog 用来解释保留候选集之外的候选，没有静默丢弃
 - `verification_failures` 是否合理
 - `deep_read_queue` 是否确实优先 seed 和高可读性论文
 - `search_log.md` 是否展示 Query / Bucket / Bridge / Tool / Calls / Results / Persisted 表，以及 Bridge Domain Query/Plan 覆盖表；重复 query 应合并到 Calls
 - Active 切分前轻量补全是否合理：`search_log.md` 应出现 `Active 切分前轻量补全`，说明 input/candidate/skipped_by_cap、abstract_after、pdf_hint_after、reference_hint_after。它只做 bounded metadata/OA/abstract hint，不做 snowball 或学术判断。
-- OpenAlex 标题兜底补全、OpenAlex DOI/OA 详情补全、Crossref DOI 详情补全、多源摘要回填的 `eligible/candidate/attempted/skipped_by_cap/filled/failed/remaining_missing_*` 是否合理；pre-active light backfill 面向排序后的候选前缀，后续详情补全只面向 active pool，不是全 raw 池无限补全
+- OpenAlex 标题兜底补全、OpenAlex DOI/OA 详情补全、Crossref DOI 详情补全、多源摘要回填的 `eligible/candidate/attempted/skipped_by_cap/filled/failed/remaining_missing_*` 是否合理；候选切分前轻量补全面向排序后的候选前缀，后续详情补全只面向保留候选集，不是全 raw 池无限补全
 - OpenAlex/Crossref citation snowball 的 `reference_items_seen`、`non_doi_references_skipped`、`reference_openalex_ids_seen`、`title_references_resolved`、`skipped_by_refs_per_source_cap`、`skipped_by_max_candidates_cap`、`skipped_existing_snowball_records`、`raw_persisted/raw_merged` 是否合理；snowball 是 bounded one-hop，不是全量引用扩展，重复 finalize 不应继续增长 raw
 - `deep_read_queue_meta.json` 中 `verified_disposition_coverage` 是否为 `1.0`，`queue_with_pdf_url_hints`、`queue_with_reference_hints`、`citation_hub_in_target`、`must_explore_bridge_diagnostics` 是否符合预期
 - `deep_read_queue.jsonl` 是否保留短 provenance：`source_query/source_queries`、`source_tool/source_tools`、`search_buckets`、`openalex_id`、citation snowball 来源；摘要全文仍应通过 `lookup_paper_record` 从 verified/raw 合并读取

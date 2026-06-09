@@ -241,13 +241,13 @@ def _select_active_candidate_pool(
     config: T2FinalizeConfig | None = None,
     max_count: int | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
-    """Split the recovered pool into an active T2 pool and a backlog.
+    """Split the recovered pool into a retained T2 candidate set and a backlog.
 
     `papers_raw.jsonl` is the complete audit trail. `papers_dedup.jsonl` is the
-    active candidate pool consumed by T3/T3.5, and Scout validation caps it at
+    retained candidate set consumed by T3/T3.5, and Scout validation caps it at
     120. Older recovery code kept every verified paper in `papers_dedup`, which
     made the validator fail and pushed hundreds of weak bridge hits into later
-    LLM stages. This selector keeps seeds and high-signal material active while
+    LLM stages. This selector keeps seeds and high-signal material retained while
     writing the rest to `papers_backlog.jsonl` for audit/revisit.
     """
 
@@ -679,7 +679,7 @@ def _cap_active_pool_after_seed_repair(
     *,
     max_count: int | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
-    """Keep seed repair from accidentally bypassing the T2 active pool cap."""
+    """Keep seed repair from accidentally bypassing the T2 retained-candidate cap."""
 
     if max_count is None:
         max_count = int(active_pool_meta.get("active_pool_max") or _DEFAULT_T2_FINALIZE_CONFIG.active_pool_max)
@@ -1927,11 +1927,11 @@ async def _pre_active_light_backfill(
     policy: WorkspaceAccessPolicy,
     config: T2FinalizeConfig,
 ) -> dict[str, Any]:
-    """Best-effort metadata repair before active/backlog selection.
+    """Best-effort metadata repair before retained-candidate/backlog selection.
 
     This pass is intentionally bounded and non-semantic. It gives near-frontier
     raw/dedup candidates a fair chance to receive DOI/OpenAlex/abstract/OA
-    hints before `papers_dedup.jsonl` is capped into the active pool. Expensive
+    hints before `papers_dedup.jsonl` is capped into the retained-candidate set. Expensive
     citation snowball still runs only after active selection.
     """
 
@@ -2086,7 +2086,7 @@ def _ensure_seed_papers(
         selected_title_keys.add(seed_key)
 
     # Seed repair must not become a hidden pool cap. T2 queue construction is
-    # responsible for active deep-read limits; verified overflow still feeds
+    # responsible for deep-read limits; verified overflow still feeds
     # shallow abstract sweep, citation diagnostics, and resume decisions.
     return selected
 
@@ -3114,14 +3114,14 @@ async def finalize_t2_outputs(
     search_log += "- 此文件由 runtime 基于当前 `papers_raw.jsonl` 和可解析的 T2 trace 自动重建。\n"
     search_log += f"- 解析到的 T2 trace 数量: {trace_count}\n"
     search_log += (
-        "- T2 active candidate pool: "
+        "- T2 保留候选集: "
         f"input={active_pool_meta.get('input_count')}, "
-        f"active={active_pool_meta.get('active_count')}, "
+        f"retained={active_pool_meta.get('active_count')}, "
         f"backlog={active_pool_meta.get('backlog_count')}, "
         f"max={active_pool_meta.get('active_pool_max')}, "
         f"selection_reasons={active_pool_meta.get('selection_reasons')}; "
         "`papers_raw.jsonl` 保留全量检索审计，`papers_dedup.jsonl`/`papers_verified.jsonl` "
-        "只保存本轮 active 候选池，超额或 domain-profile 排除候选写入 "
+        "只保存本轮保留候选集，超额或 domain-profile 排除候选写入 "
         "`papers_backlog.jsonl` 供审计或人工/显式回捞，不会被普通 abstract sweep 自动读回。\n"
     )
     search_log += (

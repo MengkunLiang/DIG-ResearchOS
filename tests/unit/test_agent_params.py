@@ -308,6 +308,74 @@ agents:
     clear_cache()
 
 
+def test_workspace_literature_params_override_t2_and_t3(tmp_path, monkeypatch):
+    config_path = tmp_path / "agent_params.yaml"
+    workspace = tmp_path / "workspace"
+    (workspace / "literature").mkdir(parents=True)
+    (workspace / "project.yaml").write_text("project_id: p\n", encoding="utf-8")
+    (workspace / "literature" / "literature_params.json").write_text(
+        json.dumps(
+            {
+                "semantics": "workspace_literature_coverage_parameters_for_t2_t3",
+                "selected_option": "survey_balanced",
+                "t2_finalize": {"active_pool_max": 222},
+                "reader": {
+                    "deep_read_min": 50,
+                    "deep_read_target": 61,
+                    "deep_read_max": 75,
+                    "require_deep_read_target": True,
+                    "abstract_sweep": {
+                        "lite_paper_num": "all_readable",
+                        "sources": ["papers_verified", "papers_backlog"],
+                        "metadata_replacement_policy": "replace_metadata_only_with_readable_backlog_when_available",
+                    },
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    config_path.write_text(
+        """
+agents:
+  scout:
+    behavior:
+      t2_finalize:
+        active_pool_max: 120
+  reader:
+    modes:
+      read:
+        behavior:
+          deep_read_min: 35
+          deep_read_target: 35
+          deep_read_max: 45
+          require_deep_read_target: false
+          abstract_sweep:
+            lite_paper_num: 120
+            sources:
+              - papers_verified
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("RESEARCHOS_AGENT_PARAMS", str(config_path))
+    clear_cache()
+
+    t2 = load_t2_finalize_config(workspace)
+    t3 = load_deep_read_queue_config(workspace)
+    params = get_effective_reader_read_params(workspace)
+
+    assert t2.active_pool_max == 222
+    assert t3.deep_read_min == 50
+    assert t3.deep_read_target == 61
+    assert t3.deep_read_max == 75
+    assert params["require_deep_read_target"] is True
+    assert params["abstract_sweep"]["lite_paper_num"] == "all_readable"
+    assert "papers_backlog" in params["abstract_sweep"]["sources"]
+    assert params["workspace_literature_params_path"] == "literature/literature_params.json"
+
+    clear_cache()
+
+
 def test_agent_params_support_unlimited_budget_tags_and_explicit_false(tmp_path, monkeypatch):
     config_path = tmp_path / "agent_params.yaml"
     config_path.write_text(

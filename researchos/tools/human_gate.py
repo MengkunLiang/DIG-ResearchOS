@@ -152,6 +152,8 @@ class CLIHumanInterface(HumanInterface):
 
     @staticmethod
     def _default_option_id(gate_id: str) -> str | None:
+        if gate_id == "t2_literature_param_gate":
+            return "survey_balanced"
         if gate_id == "t5_executor_gate":
             return "mock_dry_run"
         return None

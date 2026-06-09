@@ -70,7 +70,7 @@ def build_sweep_candidates(
 
     cfg = _resolve_config(config)
     lite_raw = cfg.get("lite_paper_num")
-    if lite_raw in (None, "", "all", "ALL", "unlimited", "UNLIMITED"):
+    if lite_raw in (None, "", "all", "ALL", "all_readable", "ALL_READABLE", "unlimited", "UNLIMITED"):
         lite_num: int | None = None
     else:
         lite_num = int(lite_raw)
@@ -128,9 +128,12 @@ def build_sweep_candidates(
         if exclude_read and record_is_covered(record, completed_keys):
             continue
         disposition = _lookup_queue_disposition(record, queue_disposition)
-        if _is_deferred_by_queue_disposition(disposition):
+        if _is_deferred_by_queue_disposition(disposition, allow_cap_exceeded_backlog=_allow_readable_backlog_refill(cfg)):
             continue
-        if _is_deferred_by_queue_disposition(_record_disposition(record)):
+        if _is_deferred_by_queue_disposition(
+            _record_disposition(record),
+            allow_cap_exceeded_backlog=_allow_readable_backlog_refill(cfg),
+        ):
             continue
         if _is_duplicate_record(record):
             continue
@@ -201,14 +204,34 @@ def _record_disposition(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _is_deferred_by_queue_disposition(disposition: dict[str, Any]) -> bool:
+def _is_deferred_by_queue_disposition(
+    disposition: dict[str, Any],
+    *,
+    allow_cap_exceeded_backlog: bool = False,
+) -> bool:
     if not disposition:
         return False
     reason = str(disposition.get("triaged_reason") or "")
-    if reason in {"bridge_pool_cap_exceeded", "t2_active_pool_cap_exceeded", "domain_profile_filtered"}:
+    cap_exceeded = {"bridge_pool_cap_exceeded", "t2_active_pool_cap_exceeded"}
+    if reason in cap_exceeded and allow_cap_exceeded_backlog:
+        return False
+    if reason in {*cap_exceeded, "domain_profile_filtered"}:
         return True
     read_disposition = str(disposition.get("read_disposition") or "")
+    if read_disposition == "backlog" and allow_cap_exceeded_backlog:
+        return False
     return read_disposition in {"deferred", "backlog"}
+
+
+def _allow_readable_backlog_refill(config: dict[str, Any]) -> bool:
+    policy = str(config.get("metadata_replacement_policy") or "").strip().casefold()
+    if policy in {
+        "replace_metadata_only_with_readable_backlog_when_available",
+        "readable_backlog_refill",
+        "refill",
+    }:
+        return True
+    return bool(config.get("allow_readable_backlog_refill"))
 
 
 def _sweep_priority(record: dict[str, Any], config: dict[str, Any] | None = None) -> tuple[float, dict[str, float]]:

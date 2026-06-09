@@ -1188,7 +1188,7 @@ async def test_finalize_t2_outputs_keeps_domain_filtered_records_in_backlog(monk
     assert backlog[0]["triaged_reason"] == "domain_profile_filtered"
     assert backlog[0]["read_disposition"] == "backlog"
     search_log = (workspace / "literature" / "search_log.md").read_text(encoding="utf-8")
-    assert "T2 active candidate pool" in search_log
+    assert "T2 保留候选集" in search_log
     assert "papers_backlog.jsonl" in search_log
     progress = (workspace / "literature" / "temp" / "scout_progress.md").read_text(encoding="utf-8")
     assert "runtime_finalize_started" in progress

@@ -710,11 +710,11 @@ researchos run \
 - legacy `T5/T7`： [researchos/runtime/experiment_recovery.py](../researchos/runtime/experiment_recovery.py)
 
 T2 的恢复/确定性收尾会从 `papers_raw.jsonl` 和可解析 trace 重建
-active `papers_dedup.jsonl`、active `papers_verified.jsonl`、`papers_backlog.jsonl`、`deep_read_queue.jsonl`、
+保留候选 `papers_dedup.jsonl`、已核验保留候选 `papers_verified.jsonl`、`papers_backlog.jsonl`、`deep_read_queue.jsonl`、
 `citation_edges.json`、`domain_map.json`、`access_audit.md`、`search_log.md`
 和 `missing_areas.md`。`papers_raw.jsonl` 是全量检索审计池，可以大于 120；`papers_dedup.jsonl`
-和 `papers_verified.jsonl` 是本轮 active candidate pool，默认最多 120，超额候选写入
-`papers_backlog.jsonl`。OpenAlex/Crossref/multi-source metadata 与摘要补全只面向 active pool；
+和 `papers_verified.jsonl` 是本轮保留候选集，默认最多 120，超额候选写入
+`papers_backlog.jsonl`。OpenAlex/Crossref/multi-source metadata 与摘要补全只面向保留候选集；
 citation snowball 只从 seed 或 semantic-screened 来源做一次性 bounded one-hop，并把 cap、失败、幂等跳过和持久化数写入日志。
 
 T5-EXTERNAL-WAIT 是真实外部执行器的暂停点：result pack 缺失时写入可恢复暂停；
@@ -752,13 +752,13 @@ trace 记录：
 当前分三层：
 
 - `_runtime/logs/researchos.log`：人类可读运行时间线，由 `RunLogger` 写入。一行一个事件，记录 `RUN_START`、`TASK_START`、`STATE_TRANSITION`、`TOOL_CALL`、`TOOL_RESULT`、`FINISH_REQUESTED`、`VALIDATION_FAILED`、`PAUSED`、`RESUME`、`ERROR` 等摘要，不写完整 prompt/response。
-- `literature/temp/scout_progress.md`：T2 现场进度文件，面向用户随时查看当前 Scout 到哪一步。它现在由 runtime 在搜索工具自动保存 raw、T2 deterministic finalize 开始、active/backlog 切分、完成或失败时自动追加；Scout LLM 主动调用 `log_scout_progress` 只是补充，不再是唯一来源。路径和开关在 `config/agent_params.yaml -> agents.scout.behavior.progress`。
+- `literature/temp/scout_progress.md`：T2 现场进度文件，面向用户随时查看当前 Scout 到哪一步。它现在由 runtime 在搜索工具自动保存 raw、T2 deterministic finalize 开始、保留候选/backlog 切分、完成或失败时自动追加；Scout LLM 主动调用 `log_scout_progress` 只是补充，不再是唯一来源。路径和开关在 `config/agent_params.yaml -> agents.scout.behavior.progress`。
 - `_runtime/logs/researchos-debug.log`：Python logging / structlog 的底层调试输出，受 `runtime.yaml: logging.level/json` 控制。
 - `_runtime/traces/*.jsonl`：机器级完整 trace，包含消息、LLM response、tool result 等细节，用于复盘单次 run。
 
 CLI 默认只显示 task/tool/validation 摘要；`--quiet` 只显示状态跳转、暂停、错误和最终结果；`--verbose` 会额外显示 Agent 文本输出和 step token 摘要。LiteLLM 的 INFO 输出默认被压到 WARNING，正常情况下不会污染控制台或 `researchos.log`。如果 T2 搜索工具返回论文但 raw 没落盘，`researchos.log` 的 `TOOL_RESULT` 会显示 `reported_paper_count`、`persisted_raw_delta`、`merged_raw_count`、`retained_raw_count`、`raw_count_after` 和 `append_status=raw_persistence_mismatch/raw_append_failed`。如果检索式规划为空，会记录 `empty_query_plan`；如果搜索工具实际收到空 query，会记录 `empty_query`，二者都不是普通 0 结果。
 
-T2 finalize 的 `search_log.md` 是人类排障入口：`## 检索式` 表展示 Query、Bucket、Bridge、Tool/Source、Calls、Results、Persisted；`## Bridge Domain Query 覆盖` 展示每个 bridge 的实际 query 与落盘量；`## Bridge Domain Plan 覆盖` 展示正式 bridge plan 中每个 bridge 是 covered、missing 还是 skipped。trace 缺失时，runtime 会从 `papers_raw.jsonl` 的 `source_queries/search_buckets/recalled_by_bridges/source_tools` 重建这些表，但不会把错位的 bridge provenance 硬配给 core query。T2 raw 覆盖足够后还应看到 active candidate pool 统计、OpenAlex 标题兜底补全、OpenAlex DOI/OA 详情补全、多源摘要回填、Crossref DOI 详情补全、OpenAlex citation snowball、Crossref citation snowball 和 snowball 后二次补全统计。active pool、finish raw 阈值、bridge/snowball 配额来自 `agents.scout.behavior.t2_finalize`；deep-read queue 目标、上限、bridge/citation hub 配额来自 `agents.reader.modes.read.behavior`。active pool 详情/摘要补全看 `eligible`、`candidate`、`attempted`、`skipped_by_cap`、`failed`、`remaining_missing_abstract`、`remaining_missing_pdf_hints`；bounded snowball 看 `reference_items_seen`、`non_doi_references_skipped`、`title_references_resolved`、`skipped_by_refs_per_source_cap`、`skipped_by_max_candidates_cap`、`skipped_existing_snowball_records`、`raw_persisted/raw_merged`。这些字段能区分：API 没提供摘要、网络失败、候选被显式 cap、引用没有 DOI/OpenAlex ID、title match 低置信，还是上游搜索工具没有保留 DOI/OpenAlex ID。
+T2 finalize 的 `search_log.md` 是人类排障入口：`## 检索式` 表展示 Query、Bucket、Bridge、Tool/Source、Calls、Results、Persisted；`## Bridge Domain Query 覆盖` 展示每个 bridge 的实际 query 与落盘量；`## Bridge Domain Plan 覆盖` 展示正式 bridge plan 中每个 bridge 是 covered、missing 还是 skipped。trace 缺失时，runtime 会从 `papers_raw.jsonl` 的 `source_queries/search_buckets/recalled_by_bridges/source_tools` 重建这些表，但不会把错位的 bridge provenance 硬配给 core query。T2 raw 覆盖足够后还应看到保留候选集统计、OpenAlex 标题兜底补全、OpenAlex DOI/OA 详情补全、多源摘要回填、Crossref DOI 详情补全、OpenAlex citation snowball、Crossref citation snowball 和 snowball 后二次补全统计。保留候选数、finish raw 阈值、bridge/snowball 配额来自 `agents.scout.behavior.t2_finalize`；deep-read queue 目标、上限、bridge/citation hub 配额来自 `agents.reader.modes.read.behavior`。保留候选集详情/摘要补全看 `eligible`、`candidate`、`attempted`、`skipped_by_cap`、`failed`、`remaining_missing_abstract`、`remaining_missing_pdf_hints`；bounded snowball 看 `reference_items_seen`、`non_doi_references_skipped`、`title_references_resolved`、`skipped_by_refs_per_source_cap`、`skipped_by_max_candidates_cap`、`skipped_existing_snowball_records`、`raw_persisted/raw_merged`。这些字段能区分：API 没提供摘要、网络失败、候选被显式 cap、引用没有 DOI/OpenAlex ID、title match 低置信，还是上游搜索工具没有保留 DOI/OpenAlex ID。
 
 人工输入轮次是一个例外：如果同一轮包含 `ask_human`，Agent 本轮正文会在默认 CLI 模式显示，因为正文常包含 `project.yaml` 草案、Bridge Domain Plan 候选或其它用户必须看见的决策上下文。`ask_human.question` 也会被参数校验拒绝空白；如果模型仍写出“请确认以上/上述草案/这些方向”等依赖隐藏上下文的短问题，runner 会把本轮 Agent 正文自动并入 question，再显示输入框。同一轮如果同时包含 `ask_human` 和其它 tool call，runner 会先只执行 `ask_human`，把其它工具延后到下一轮模型响应；这避免用户尚未回答时并发执行写文件、检索或 `finish_task`。
 

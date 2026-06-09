@@ -57,6 +57,25 @@ states:
       project: project.yaml      # 项目配置文件
       bridge_domain_plan: literature/bridge_domain_plan.json # T2 跨领域检索计划，可为空
       state: state.yaml          # 项目状态文件
+    next_on_success: T2-PARAM-GATE
+    next_on_failure: failed
+
+  # T2-PARAM-GATE 状态：文献检索/阅读覆盖参数确认
+  # 用途：T2/T3 的保留候选数、深读目标、摘要级轻读和 metadata-only 处理会显著影响
+  # 资源消耗与综述质量，必须先用人类可读语义确认，而不是只藏在全局 yaml。
+  T2-PARAM-GATE:
+    agent: scout
+    mode: literature_param_gate
+    extra:
+      immediate_gate: true
+    inputs:
+      project: project.yaml
+      seed_outline_profile: user_seeds/seed_outline_profile.json
+      bridge_domain_plan: literature/bridge_domain_plan.json
+    outputs:
+      literature_params: literature/literature_params.json
+    gate:
+      type: t2_literature_param_gate
     next_on_success: T2
     next_on_failure: failed
 
@@ -67,6 +86,7 @@ states:
     agent: scout
     inputs:
       project: project.yaml                            # 项目配置
+      literature_params: literature/literature_params.json # T2/T3 覆盖参数 gate 决策
       seed_papers: user_seeds/seed_papers.jsonl        # 种子论文（可选）
       seed_pdfs: user_seeds/pdfs                       # 种子 PDF（可选）
       seed_constraints: user_seeds/seed_constraints.md # 种子约束（可选）
@@ -76,9 +96,9 @@ states:
       bridge_domain_plan: literature/bridge_domain_plan.json # T1 交互生成的桥接领域计划（可空）
     outputs:
       papers_raw: literature/papers_raw.jsonl           # 原始检索结果
-      papers_dedup: literature/papers_dedup.jsonl      # active candidate pool（上限见 agent_params.yaml）
-      papers_verified: literature/papers_verified.jsonl # active pool 中已做 metadata verification 的论文
-      papers_backlog: literature/papers_backlog.jsonl   # active pool 外的保留候选
+      papers_dedup: literature/papers_dedup.jsonl      # 保留候选集（上限见 active_pool_max）
+      papers_verified: literature/papers_verified.jsonl # 保留候选集中已做 metadata verification 的论文
+      papers_backlog: literature/papers_backlog.jsonl   # 保留候选集之外的 backlog 候选
       verification_failures: literature/verification_failures.jsonl # verification 失败清单
       citation_edges: literature/citation_edges.json     # 一跳出引/related_works 边，供 domain_map 与下游复用
       deep_read_queue: literature/deep_read_queue.jsonl # T3 精读队列
@@ -121,7 +141,7 @@ states:
       project: project.yaml                             # 输入：项目配置
       papers_dedup: literature/papers_dedup.jsonl       # 输入：去重论文列表
       papers_verified: literature/papers_verified.jsonl # 输入：已核验论文列表（优先）
-      papers_backlog: literature/papers_backlog.jsonl   # 输入：active pool 外的轻量补读候选
+      papers_backlog: literature/papers_backlog.jsonl   # 输入：保留候选集之外的轻量补读候选
       deep_read_queue_pending: literature/deep_read_queue_pending.jsonl # 输入：恢复运行时的剩余精读队列（优先）
       deep_read_queue: literature/deep_read_queue.jsonl # 输入：精读队列（优先）
       domain_map: literature/domain_map.json             # 输入：T2 引用图领域地图（邻接/边界提示）
