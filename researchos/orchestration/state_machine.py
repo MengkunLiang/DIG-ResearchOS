@@ -158,6 +158,13 @@ def _clone_literature_param_preset(option: str) -> dict[str, Any]:
     return json.loads(json.dumps(_LITERATURE_PARAM_PRESETS[option], ensure_ascii=False))
 
 
+def _recommended_literature_param_option(workspace_dir: Path | None = None) -> str:
+    if workspace_dir is None:
+        return "standard_research"
+    detected_profile = _detect_literature_profile_hint(workspace_dir)
+    return "survey_balanced" if detected_profile == "survey" else "standard_research"
+
+
 def _literature_param_summary_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
     reader = payload.get("reader") if isinstance(payload.get("reader"), dict) else {}
     abstract_sweep = reader.get("abstract_sweep") if isinstance(reader.get("abstract_sweep"), dict) else {}
@@ -178,7 +185,7 @@ def build_literature_param_gate_preview(workspace_dir: Path | None = None) -> di
     """Return human-readable current T2/T3 coverage presets for gate display."""
 
     detected_profile = _detect_literature_profile_hint(workspace_dir) if workspace_dir is not None else "research_article"
-    recommended_option = "survey_balanced" if detected_profile == "survey" else "standard_research"
+    recommended_option = _recommended_literature_param_option(workspace_dir)
     options: dict[str, Any] = {}
     for option_id, payload in _LITERATURE_PARAM_PRESETS.items():
         options[option_id] = {
@@ -302,28 +309,57 @@ def build_literature_param_payload(
     payload = _clone_literature_param_preset(option if option in _LITERATURE_PARAM_PRESETS else "survey_balanced")
     captured = captured or {}
     if option == "custom":
-        active_pool = _safe_int(captured.get("active_pool_max"), default=180, minimum=30)
-        deep_target = _safe_int(captured.get("deep_read_target"), default=60, minimum=1)
-        deep_min = max(1, min(deep_target, int(round(deep_target * 0.8))))
-        abstract_target: str | int = str(captured.get("abstract_sweep_target") or "all_readable").strip()
+        base_option = _normalize_literature_param_option(
+            captured.get("base_option") or captured.get("_base_option") or _recommended_literature_param_option(workspace_dir)
+        )
+        if base_option not in _LITERATURE_PARAM_PRESETS:
+            base_option = "survey_balanced"
+        base_payload = _clone_literature_param_preset(base_option)
+        base_summary = _literature_param_summary_from_payload(base_payload)
+        active_pool = _safe_int(
+            captured.get("active_pool_max"),
+            default=int(base_summary.get("active_pool_max") or 180),
+            minimum=30,
+        )
+        deep_target = _safe_int(
+            captured.get("deep_read_target"),
+            default=int(base_summary.get("deep_read_target") or 60),
+            minimum=1,
+        )
+        if captured.get("deep_read_min") not in (None, ""):
+            deep_min = _safe_int(captured.get("deep_read_min"), default=max(1, int(round(deep_target * 0.8))), minimum=1)
+            deep_min = min(deep_min, deep_target)
+        else:
+            base_deep_min = int(base_summary.get("deep_read_min") or max(1, int(round(deep_target * 0.8))))
+            deep_min = min(base_deep_min, deep_target)
+        base_deep_max = int(base_summary.get("deep_read_max") or max(deep_target, int(round(deep_target * 1.15))))
+        deep_max = max(deep_target, base_deep_max if deep_target <= int(base_summary.get("deep_read_target") or deep_target) else int(round(deep_target * 1.15)))
+        abstract_target: str | int = str(
+            captured.get("abstract_sweep_target") or base_summary.get("abstract_sweep_target") or "all_readable"
+        ).strip()
         if abstract_target.casefold() not in {"all", "all_readable", "unlimited", "全部"}:
             abstract_target = _safe_int(abstract_target, default=active_pool, minimum=1)
-        require_target = _safe_bool(captured.get("require_deep_read_target"), default=True)
+        require_target = _safe_bool(
+            captured.get("require_deep_read_target"),
+            default=bool(base_summary.get("require_deep_read_target")),
+        )
+        abstract_sources = base_summary.get("abstract_sweep_sources") or ["papers_verified", "papers_dedup", "papers_backlog"]
         payload = {
             "profile": "custom",
             "t2_finalize": {"active_pool_max": active_pool},
             "reader": {
                 "deep_read_min": deep_min,
                 "deep_read_target": deep_target,
-                "deep_read_max": max(deep_target, int(round(deep_target * 1.15))),
+                "deep_read_max": deep_max,
                 "require_deep_read_target": require_target,
                 "abstract_sweep": {
                     "lite_paper_num": abstract_target,
-                    "sources": ["papers_verified", "papers_dedup", "papers_backlog"],
+                    "sources": abstract_sources,
                     "include_metadata_only": True,
                     "metadata_replacement_policy": "replace_metadata_only_with_readable_backlog_when_available",
                 },
             },
+            "base_option": base_option,
         }
 
     payload.update(

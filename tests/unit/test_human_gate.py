@@ -30,6 +30,46 @@ def test_cli_gate_parse_accepts_label_and_custom_aliases():
     assert CLIHumanInterface._parse_option_index("确认计划", options) == 1
 
 
+def test_t2_literature_gate_parses_inline_active_pool_customization():
+    options = [
+        {"id": "standard_research", "label": "标准研究论文覆盖", "is_default": True},
+        {"id": "survey_balanced", "label": "综述均衡覆盖"},
+        {"id": "custom", "label": "自定义关键数字"},
+    ]
+
+    result = CLIHumanInterface._parse_inline_gate_customization(
+        "t2_literature_param_gate",
+        "把 active pool 改成 300",
+        options,
+    )
+
+    assert result == {
+        "option_id": "custom",
+        "captured": {"active_pool_max": "300", "base_option": "standard_research"},
+    }
+
+
+def test_t2_literature_gate_parses_multiple_inline_customizations():
+    options = [
+        {"id": "standard_research", "label": "标准研究论文覆盖"},
+        {"id": "survey_balanced", "label": "综述均衡覆盖", "is_default": True},
+        {"id": "custom", "label": "自定义关键数字"},
+    ]
+
+    result = CLIHumanInterface._parse_inline_gate_customization(
+        "t2_literature_param_gate",
+        "候选数300，精读80，摘要轻读all_readable，require=false",
+        options,
+    )
+
+    assert result["option_id"] == "custom"
+    assert result["captured"]["active_pool_max"] == "300"
+    assert result["captured"]["deep_read_target"] == "80"
+    assert result["captured"]["abstract_sweep_target"] == "all_readable"
+    assert result["captured"]["require_deep_read_target"] == "false"
+    assert result["captured"]["base_option"] == "survey_balanced"
+
+
 @pytest.mark.asyncio
 async def test_cli_gate_eof_pauses_instead_of_defaulting(monkeypatch):
     async def _run_gate():

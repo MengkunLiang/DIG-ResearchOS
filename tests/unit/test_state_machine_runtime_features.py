@@ -2,7 +2,7 @@ from pathlib import Path
 import json
 import textwrap
 
-from researchos.orchestration.state_machine import StateMachine
+from researchos.orchestration.state_machine import StateMachine, build_literature_param_payload
 from researchos.tools.human_gate import CLIHumanInterface
 from researchos.runtime.agent import AgentResult
 from researchos.schemas.state import StateYaml, TaskHistoryEntry
@@ -664,6 +664,44 @@ def test_t2_literature_param_gate_defaults_to_standard_for_research_article(tmp_
     standard = next(option for option in state.pending_gate.options if option["id"] == "standard_research")
     assert standard["is_default"] is True
     assert CLIHumanInterface._default_option_id("t2_literature_param_gate", state.pending_gate.options) == "standard_research"
+
+
+def test_custom_t2_literature_params_inherit_detected_recommended_profile(tmp_workspace):
+    (tmp_workspace / "project.yaml").write_text("metadata:\n  manuscript_type: research_article\n", encoding="utf-8")
+
+    payload = build_literature_param_payload(
+        selected_option="custom",
+        captured={"active_pool_max": "300", "base_option": "standard_research"},
+        workspace_dir=tmp_workspace,
+    )
+
+    assert payload["t2_finalize"]["active_pool_max"] == 300
+    assert payload["reader"]["deep_read_target"] == 35
+    assert payload["reader"]["abstract_sweep"]["lite_paper_num"] == 120
+    assert payload["selected_summary"]["active_pool_max"] == 300
+
+
+def test_custom_t2_literature_params_can_override_multiple_numbers(tmp_workspace):
+    (tmp_workspace / "project.yaml").write_text("metadata:\n  manuscript_type: survey\n", encoding="utf-8")
+
+    payload = build_literature_param_payload(
+        selected_option="custom",
+        captured={
+            "active_pool_max": "300",
+            "deep_read_target": "80",
+            "abstract_sweep_target": "all_readable",
+            "require_deep_read_target": "false",
+            "base_option": "survey_balanced",
+        },
+        workspace_dir=tmp_workspace,
+    )
+
+    assert payload["t2_finalize"]["active_pool_max"] == 300
+    assert payload["reader"]["deep_read_min"] == 50
+    assert payload["reader"]["deep_read_target"] == 80
+    assert payload["reader"]["deep_read_max"] >= 80
+    assert payload["reader"]["require_deep_read_target"] is False
+    assert payload["reader"]["abstract_sweep"]["lite_paper_num"] == "all_readable"
 
 
 def test_t5_executor_gate_persists_selection_and_patches_executor_files(tmp_workspace):

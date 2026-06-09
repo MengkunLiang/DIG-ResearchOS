@@ -117,6 +117,9 @@ class CLIHumanInterface(HumanInterface):
                 raw_answer = input("请选择: ").strip()
             except EOFError:
                 raise HumanInputUnavailable(f"Gate {gate_id} 需要用户选择，但当前输入不可用。") from None
+            inline_result = self._parse_inline_gate_customization(gate_id, raw_answer, options)
+            if inline_result is not None:
+                return inline_result
             answer = self._parse_option_index(raw_answer, options)
             if answer is None:
                 if not raw_answer:
@@ -155,6 +158,78 @@ class CLIHumanInterface(HumanInterface):
                 captured["downgraded_from"] = "codex_cli"
                 captured["downgrade_reason"] = "codex_cli confirmation was not yes"
         return {"option_id": option_id, "captured": captured}
+
+    @staticmethod
+    def _parse_inline_gate_customization(gate_id: str, raw_answer: str, options: list[dict]) -> dict | None:
+        if gate_id != "t2_literature_param_gate":
+            return None
+        captured = CLIHumanInterface._parse_t2_literature_param_text(raw_answer)
+        if not captured:
+            return None
+        if not any((option.get("id") or option.get("key")) == "custom" for option in options):
+            return None
+        default_id = CLIHumanInterface._default_option_id(gate_id, options)
+        if default_id and default_id != "custom":
+            captured.setdefault("base_option", str(default_id))
+        return {"option_id": "custom", "captured": captured}
+
+    @staticmethod
+    def _parse_t2_literature_param_text(raw_answer: str) -> dict[str, str]:
+        text = str(raw_answer or "").strip()
+        if not text:
+            return {}
+        normalized = text.replace("，", ",").replace("；", ";").replace("：", ":")
+        captured: dict[str, str] = {}
+
+        patterns = {
+            "active_pool_max": [
+                r"\bactive[_\s-]*pool(?:[_\s-]*max)?\b\s*(?:=|:|改成|设为|设置为|到|为)?\s*(\d+)",
+                r"(?:保留候选数|候选池|候选数|保留候选|active\s*pool)\s*(?:=|:|改成|设为|设置为|到|为)?\s*(\d+)",
+            ],
+            "deep_read_target": [
+                r"\bdeep[_\s-]*read(?:[_\s-]*target)?\b\s*(?:=|:|改成|设为|设置为|到|为)?\s*(\d+)",
+                r"(?:精读目标|精读|深读目标|深读)\s*(?:=|:|改成|设为|设置为|到|为)?\s*(\d+)",
+            ],
+            "abstract_sweep_target": [
+                r"\babstract[_\s-]*sweep(?:[_\s-]*target)?\b\s*(?:=|:|改成|设为|设置为|到|为)?\s*([A-Za-z0-9_\-]+|全部)",
+                r"(?:摘要轻读|轻读|摘要阅读)\s*(?:=|:|改成|设为|设置为|到|为)?\s*([A-Za-z0-9_\-]+|全部)",
+            ],
+            "require_deep_read_target": [
+                r"\brequire(?:[_\s-]*deep)?(?:[_\s-]*read)?(?:[_\s-]*target)?\b\s*(?:=|:|改成|设为|设置为|到|为)?\s*(true|false|yes|no|y|n|1|0|是|否|需要|不需要)",
+                r"(?:必须读满|读满目标|必须达到目标|达到最低即可)\s*(?:=|:|改成|设为|设置为|到|为)?\s*(true|false|yes|no|y|n|1|0|是|否|需要|不需要)?",
+            ],
+        }
+        for field_name, field_patterns in patterns.items():
+            for pattern in field_patterns:
+                match = re.search(pattern, normalized, flags=re.IGNORECASE)
+                if match:
+                    value = (match.group(1) or "").strip()
+                    if field_name == "require_deep_read_target" and not value:
+                        value = "false" if "最低" in match.group(0) else "true"
+                    if value:
+                        captured[field_name] = value
+                    break
+
+        key_aliases = {
+            "active_pool": "active_pool_max",
+            "active_pool_max": "active_pool_max",
+            "pool": "active_pool_max",
+            "deep": "deep_read_target",
+            "deep_read": "deep_read_target",
+            "deep_read_target": "deep_read_target",
+            "abstract": "abstract_sweep_target",
+            "abstract_sweep": "abstract_sweep_target",
+            "abstract_sweep_target": "abstract_sweep_target",
+            "require": "require_deep_read_target",
+            "require_target": "require_deep_read_target",
+            "require_deep_read_target": "require_deep_read_target",
+        }
+        for key, value in re.findall(r"([A-Za-z_][A-Za-z0-9_\-\s]*?)\s*[=:]\s*([A-Za-z0-9_\-]+|全部)", normalized):
+            canonical = key_aliases.get(re.sub(r"[\s-]+", "_", key.strip().lower()))
+            if canonical:
+                captured[canonical] = value.strip()
+
+        return captured
 
     @staticmethod
     def _default_option_id(gate_id: str, options: list[dict] | None = None) -> str | None:
