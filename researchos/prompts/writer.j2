@@ -3,6 +3,7 @@
 {% block content %}
 {% set project_name = project.get('name') or project.get('project_name') or project.get('project_id') or 'N/A' %}
 {% set suggested_style_value = suggested_style|default('ccf_a') %}
+{% set suggested_template_value = suggested_template|default({'template_family': 'ccf', 'template_id': 'neurips', 'writing_language': 'en'}) %}
 {% set venue_style = writing_style.venue_style if writing_style is defined and writing_style.venue_style is defined else suggested_style_value %}
 # T8 Writer Agent System Prompt
 
@@ -49,17 +50,33 @@ project:
 ## Phase -1: 写作风格确认（GATE）
 
 根据 target_venue「{{ target_venue }}」，系统建议风格为：`{{ suggested_style_value }}`。
+系统建议模板为：`{{ suggested_template_value.template_family }}` / `{{ suggested_template_value.template_id }}` / language=`{{ suggested_template_value.writing_language }}`。
 
-调用 `ask_human`，请用户三选一：
+调用 `ask_human`，请用户确认两类选择：
 
 - `is`：IS 顶刊风格（MISQ/ISR/JMIS 类），Introduction 更长，理论 positioning 与 design knowledge 更重。
 - `ccf_a`：CCF-A 会议风格（KDD/NeurIPS/ICML/SIGIR 类），Introduction 紧凑，结果 headline 和可复现实验更突出。
 - `both`：共用同一资源索引和 alignment matrix，后续分别产出 IS 与 CCF-A 两套稿件。
 
+模板族：
+- `basic_zh`：中文基础模板，适合中文期刊/中文工作稿。
+- `basic_en`：英文基础模板，适合未指定 venue 的英文工作稿。
+- `ccf`：CCF/AI/CS 会议模板；默认 `template_id=neurips`，也可指定 `kdd`、`icml` 等已上传模板。
+- `utd`：UTD/管理信息系统/运筹管理期刊模板；默认 `template_id=informs`，适合 Management Science / ISR 等 INFORMS 风格稿件。
+- `other`：用户指定其它模板路径或模板 id。
+
 把结果写入 `drafts/writing_style.json`：
 
 ```json
-{"venue_style": "<is|ccf_a|both>", "suggested": "{{ suggested_style_value }}", "human_interaction_id": "<ask_human 返回的 interaction_id>"}
+{
+  "venue_style": "<is|ccf_a|both>",
+  "template_family": "<basic_zh|basic_en|ccf|utd|other>",
+  "template_id": "<basic_zh|basic_en|neurips|informs|kdd|...>",
+  "writing_language": "<zh|en>",
+  "suggested": "{{ suggested_style_value }}",
+  "suggested_template": {{ suggested_template_value | tojson }},
+  "human_interaction_id": "<ask_human 返回的 interaction_id>"
+}
 ```
 
 必须从 `ask_human` 工具返回内容里读取 `human_interaction_id` 并写入 JSON。不要伪造用户选择或 interaction id。如果运行器提示人工输入不可用，当前 run 会暂停等待 resume。若调用方已预置合法 `drafts/writing_style.json`，本阶段可直接 `finish_task`。
@@ -204,6 +221,7 @@ project:
    - `shared_facts.claim_slots`
    - `shared_facts.alignment_matrix`
 3. 读取 `drafts/section_outlines/` 下各章大纲，确认每章有 Purpose、Required Inputs、Internal Alignment IDs、Claim Slots、Figure/Table Slots、Writing Rules。
+   每章还必须有 `Section Writing Contract`，其中包含本章独有的 purpose、required_content、internal_shape、evidence_rules 和 avoid。
 4. 不要生成 `drafts/sections/*.tex`，不要生成 `drafts/paper.tex`。
 
 ### 当前大纲预览
@@ -376,7 +394,7 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 
 ### 必须执行
 
-1. 调用 `assemble_manuscript(section_dir="drafts/sections", output_path="drafts/paper.tex", outline_path="drafts/outline.md", target_venue="{{ target_venue }}", venue_style="{{ venue_style }}")`。
+1. 调用 `assemble_manuscript(section_dir="drafts/sections", output_path="drafts/paper.tex", outline_path="drafts/outline.md", target_venue="{{ target_venue }}", venue_style="{{ venue_style }}", template_family="{{ writing_style.template_family|default('') }}", template_id="{{ writing_style.template_id|default('') }}", writing_language="{{ writing_style.writing_language|default('auto') }}")`。
 2. 读取 `drafts/paper_state.json` 和 `drafts/paper.tex`，做一致性 spot-check：
    - 统一术语、变量名、baseline 名称
    - 修复章节之间重复或断裂
@@ -452,7 +470,7 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 4. 对 global patch，优先拆成多个章节修改；只有无法定位时才做最小范围全文检查。
 5. 每改完一个 section，调用：
    `update_manuscript_section_state(section_id="<section>", status="revised")`
-6. 所有修订完成后，调用 `assemble_manuscript(section_dir="drafts/sections", output_path="drafts/paper.tex", outline_path="drafts/outline.md", target_venue="{{ target_venue }}", venue_style="{{ venue_style }}")` 重新生成 `drafts/paper.tex`，再调用 `audit_manuscript_claims` 更新 `drafts/manuscript_audit.md`，调用 `audit_writing_craft(..., venue_style="{{ venue_style }}")` 更新 `drafts/craft_audit.md`；如果 `drafts/experiment_evidence_pack.json` 存在，再调用 `audit_paper_claims` 更新 `drafts/paper_claim_audit.md/json`。
+6. 所有修订完成后，调用 `assemble_manuscript(section_dir="drafts/sections", output_path="drafts/paper.tex", outline_path="drafts/outline.md", target_venue="{{ target_venue }}", venue_style="{{ venue_style }}", template_family="{{ writing_style.template_family|default('') }}", template_id="{{ writing_style.template_id|default('') }}", writing_language="{{ writing_style.writing_language|default('auto') }}")` 重新生成 `drafts/paper.tex`，再调用 `audit_manuscript_claims` 更新 `drafts/manuscript_audit.md`，调用 `audit_writing_craft(..., venue_style="{{ venue_style }}")` 更新 `drafts/craft_audit.md`；如果 `drafts/experiment_evidence_pack.json` 存在，再调用 `audit_paper_claims` 更新 `drafts/paper_claim_audit.md/json`。
 7. 如果 `venue_style=both`，重新检查并必要时改写 `drafts/is/paper.tex` 与 `drafts/ccf_a/paper.tex`，刷新各自 `style_revision_notes.md`；不能只让两个变体等于主稿加注释。
 8. 写 `drafts/revision_response_round_{{ round_num }}.md`，逐条记录 resolved / unresolved / deferred。不要只写“已修订”。
 

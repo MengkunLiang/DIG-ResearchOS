@@ -610,7 +610,30 @@ def _valid_writing_style_file(path: Path) -> bool:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return False
-    return isinstance(data, dict) and data.get("venue_style") in {"is", "ccf_a", "both"}
+    if not isinstance(data, dict) or data.get("venue_style") not in {"is", "ccf_a", "both"}:
+        return False
+    return _valid_template_selection_dict(data)
+
+
+def _valid_template_selection_file(path: Path) -> bool:
+    if not path.exists() or path.stat().st_size <= 0:
+        return False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    return isinstance(data, dict) and _valid_template_selection_dict(data)
+
+
+def _valid_template_selection_dict(data: dict[str, Any]) -> bool:
+    family = str(data.get("template_family") or data.get("template_type") or "").strip().lower()
+    template_id = str(data.get("template_id") or "").strip().lower()
+    language = str(data.get("writing_language") or "").strip().lower()
+    if family not in {"basic_zh", "basic_en", "ccf", "utd", "other"} or not template_id or language not in {"zh", "en"}:
+        return False
+    if family in {"ccf", "utd"} and template_id == "auto":
+        return False
+    return True
 
 
 def _extract_t45_final_gate_verdict(text: str) -> str:
@@ -1418,6 +1441,11 @@ class StateMachine:
         if isinstance(decision, str):
             decision = decision.strip().lower() in {"yes", "true", "1", "write", "survey", "撰写", "是"}
         if decision:
+            if "T3.6-TEMPLATE-GATE" in self.nodes:
+                template_path = workspace_dir / "drafts" / "survey" / "writing_template.json"
+                if _valid_template_selection_file(template_path):
+                    return "T3.6-PLAN" if "T3.6-PLAN" in self.nodes else "T4"
+                return "T3.6-TEMPLATE-GATE"
             return "T3.6-PLAN" if "T3.6-PLAN" in self.nodes else "T4"
         return "T4" if "T4" in self.nodes else "failed"
 

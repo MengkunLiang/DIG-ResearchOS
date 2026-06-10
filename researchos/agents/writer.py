@@ -202,6 +202,7 @@ class WriterAgent(Agent):
             alignment_matrix_preview=alignment_matrix[:5000],
             writing_style=writing_style,
             suggested_style=_suggest_venue_style(project.get("target_venue", "neurips")),
+            suggested_template=_suggest_template_selection(project.get("target_venue", "neurips")),
             section_id=section_id,
             section_title=SECTION_TITLES.get(section_id or "", (section_id or "").replace("_", " ").title()),
             section_outline_preview=section_outline[:5000],
@@ -240,9 +241,11 @@ class WriterAgent(Agent):
                 ctx,
                 (
                 "请执行 T8 Writer Phase -1: 写作风格确认。\n\n"
-                "根据 target_venue 和系统建议，调用 ask_human 让用户在 is / ccf_a / both 中选择。"
+                "根据 target_venue 和系统建议，调用 ask_human 让用户确认写作风格与 LaTeX 模板。"
+                "写作风格为 is / ccf_a / both；模板族为 basic_zh / basic_en / ccf / utd / other。"
+                "CCF 默认 template_id=neurips，UTD 默认 template_id=informs，也允许用户指定其它模板。"
                 "如果当前运行环境不支持人工输入，runtime 会暂停等待 resume；不要写入伪造默认选择。"
-                "若 drafts/writing_style.json 已存在且 venue_style 合法，可直接 finish_task。"
+                "若 drafts/writing_style.json 已存在且 venue_style 与模板字段合法，可直接 finish_task。"
                 "否则必须在收到真实选择后写 drafts/writing_style.json，然后 finish_task。"
                 ),
             )
@@ -369,6 +372,9 @@ class WriterAgent(Agent):
                 return False, err
             if style.get("venue_style") not in {"is", "ccf_a", "both"}:
                 return False, "writing_style.json venue_style 必须是 is/ccf_a/both"
+            template_err = _validate_template_selection(style)
+            if template_err:
+                return False, template_err
             interaction_id = str(style.get("human_interaction_id") or "").strip()
             if not interaction_id:
                 return False, "writing_style.json 必须包含 ask_human 返回的 human_interaction_id"
@@ -396,8 +402,11 @@ class WriterAgent(Agent):
                 "abstract",
             ]:
                 outline_path = ws / "drafts" / "section_outlines" / f"{section_id}.md"
-                if not outline_path.exists() or len(read_text_file(outline_path, default="").strip()) < 120:
+                outline_text = read_text_file(outline_path, default="")
+                if not outline_path.exists() or len(outline_text.strip()) < 120:
                     return False, f"缺少或过短的章节大纲: drafts/section_outlines/{section_id}.md"
+                if "Section Writing Contract" not in outline_text:
+                    return False, f"章节大纲缺少 Section Writing Contract: drafts/section_outlines/{section_id}.md"
             return True, None
 
         if phase == "outline":
@@ -648,6 +657,8 @@ def _validate_paper_state(ws: Path) -> tuple[bool, str | None]:
             return False, f"paper_state.json 缺少 section: {section_id}"
         if entry.get("file") != f"drafts/sections/{section_id}.tex":
             return False, f"paper_state.json section file 不正确: {section_id}"
+        if not isinstance(entry.get("writing_contract"), dict) or not entry.get("writing_contract"):
+            return False, f"paper_state.json sections.{section_id}.writing_contract 缺失，请重新运行 T8-SECTION-PLAN"
     shared = state.get("shared_facts")
     if not isinstance(shared, dict):
         return False, "paper_state.json 缺少 shared_facts"
@@ -1032,6 +1043,23 @@ def _parse_writing_style(text: str) -> dict[str, str]:
     return {str(key): str(value) for key, value in data.items() if value is not None}
 
 
+def _validate_template_selection(style: dict) -> str | None:
+    family = str(style.get("template_family") or style.get("template_type") or "").strip().lower()
+    template_id = str(style.get("template_id") or "").strip().lower()
+    language = str(style.get("writing_language") or "").strip().lower()
+    if family not in {"basic_zh", "basic_en", "ccf", "utd", "other"}:
+        return "writing_style.json template_family 必须是 basic_zh/basic_en/ccf/utd/other"
+    if language not in {"zh", "en"}:
+        return "writing_style.json writing_language 必须是 zh 或 en"
+    if not template_id:
+        return "writing_style.json 必须包含 template_id"
+    if family == "ccf" and template_id == "auto":
+        return "writing_style.json CCF 模板需明确 template_id，默认应为 neurips"
+    if family == "utd" and template_id == "auto":
+        return "writing_style.json UTD 模板需明确 template_id，默认应为 informs"
+    return None
+
+
 def _human_interaction_exists(ws: Path, interaction_id: str) -> bool:
     if not interaction_id:
         return False
@@ -1099,3 +1127,14 @@ def _suggest_venue_style(target_venue: object) -> str:
     if isinstance(data, dict) and data.get("ccf_a_default", True):
         return "ccf_a"
     return "ccf_a"
+
+
+def _suggest_template_selection(target_venue: object) -> dict[str, str]:
+    venue = str(target_venue or "").casefold()
+    if any(token in venue for token in ("misq", "management science", "information systems research", "isr", "utd", "informs")):
+        return {"template_family": "utd", "template_id": "informs", "writing_language": "en"}
+    if any(token in venue for token in ("中文", "管理世界", "管理科学学报", "系统工程理论与实践", "cssci", "cscd")):
+        return {"template_family": "basic_zh", "template_id": "basic_zh", "writing_language": "zh"}
+    if any(token in venue for token in ("neurips", "kdd", "icml", "sigir", "aaai", "ijcai", "ccf")):
+        return {"template_family": "ccf", "template_id": "neurips", "writing_language": "en"}
+    return {"template_family": "basic_en", "template_id": "basic_en", "writing_language": "en"}

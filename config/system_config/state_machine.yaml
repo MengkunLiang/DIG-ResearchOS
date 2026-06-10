@@ -210,6 +210,25 @@ states:
     next_on_success: __parse_from_output__
     next_on_failure: failed
 
+  # T3.6-TEMPLATE-GATE 状态：综述写作语言与 LaTeX 模板确认
+  # 用途：写 taxonomy plan 前先确认中文/英文基础模板、CCF 模板或 UTD/INFORMS 模板。
+  T3.6-TEMPLATE-GATE:
+    agent: survey_writer
+    mode: template_gate
+    extra:
+      immediate_gate: true
+    inputs:
+      project: project.yaml
+      survey_decision: drafts/survey/decision.json
+      seed_outline_profile: user_seeds/seed_outline_profile.json
+      seed_ideas: user_seeds/seed_ideas.md
+      seed_constraints: user_seeds/seed_constraints.md
+      seed_external_resources: user_seeds/seed_external_resources.jsonl
+    outputs:
+      writing_template: drafts/survey/writing_template.json
+    next_on_success: T3.6-PLAN
+    next_on_failure: failed
+
   # T3.6-PLAN 状态：综述 taxonomy 与章节大纲规划
   # 用途：LLM 基于 synthesis/workbench/domain_map/paper_notes 设计 taxonomy，而不是转写 synthesis.md。
   T3.6-PLAN:
@@ -224,6 +243,7 @@ states:
       paper_notes_dir: literature/paper_notes
       paper_notes_abstract_dir: literature/paper_notes_abstract
       related_work_bib: literature/related_work.bib
+      writing_template: drafts/survey/writing_template.json
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
       seed_constraints: user_seeds/seed_constraints.md

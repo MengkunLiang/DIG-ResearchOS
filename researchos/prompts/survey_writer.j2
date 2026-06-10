@@ -78,6 +78,11 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 {{ survey_plan_preview }}
 {% endif %}
 
+{% if writing_template_preview %}
+### writing_template.json 预览
+{{ writing_template_preview }}
+{% endif %}
+
 {% if survey_state_preview %}
 ### survey_state.json 预览
 {{ survey_state_preview }}
@@ -99,6 +104,9 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 {% else %}
 - 未发现 BibTeX key。含引用的 section 将无法通过校验。
 {% endif %}
+
+### Section citation pool preview
+{{ citation_pool_preview }}
 
 ---
 
@@ -125,6 +133,37 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 最后调用 `finish_task`。
 {% endif %}
 
+{% if phase == "template_gate" %}
+## Phase: T3.6 Template Gate 写作语言与模板确认
+
+根据项目目标期刊和用户 seed，调用 `ask_human` 询问综述稿采用哪类模板：
+
+- `basic_zh`：中文基础模板，适合中文期刊/中文工作稿。
+- `basic_en`：英文基础模板，适合未指定 venue 的英文工作稿。
+- `ccf`：CCF/AI/CS 会议模板；默认 `template_id=neurips`，也可指定 `kdd`、`icml` 等已上传模板。
+- `utd`：UTD/管理信息系统/运筹管理期刊模板；默认 `template_id=informs`，适合 Management Science / ISR 等 INFORMS 风格稿件。
+- `other`：用户指定其它模板路径或模板 id。
+
+如果目标是 CCF，默认建议 `template_family=ccf, template_id=neurips, writing_language=en`。
+如果目标是 UTD/Management Science/ISR/MISQ，默认建议 `template_family=utd, template_id=informs, writing_language=en`。
+如果目标是中文期刊或中文综述，默认建议 `template_family=basic_zh, template_id=basic_zh, writing_language=zh`。
+
+写 `drafts/survey/writing_template.json`：
+
+```json
+{
+  "template_family": "<basic_zh|basic_en|ccf|utd|other>",
+  "template_id": "<basic_zh|basic_en|neurips|informs|kdd|...>",
+  "writing_language": "<zh|en>",
+  "human_interaction_id": "<ask_human 返回的 interaction_id>",
+  "user_answer": "...",
+  "note": "T3.6 survey template/language selection before PLAN"
+}
+```
+
+必须从 ask_human 工具返回内容里读取 `human_interaction_id`；不要伪造。最后调用 `finish_task`。
+{% endif %}
+
 {% if phase == "survey_plan" %}
 ## Phase: T3.6-PLAN taxonomy + outline
 
@@ -139,6 +178,7 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - `literature/related_work.bib`
 - `user_seeds/seed_outline_profile.json`（如果存在；作为用户 taxonomy/scope 先验，不是 citation 来源）
 - `user_seeds/seed_ideas.md`、`seed_constraints.md`、`seed_external_resources.jsonl`（如果存在）
+- `drafts/survey/writing_template.json`（如果存在；它决定 writing_language 与模板族）
 
 任务：
 1. 先把主题变成一个明确的 `central_question`。这个问题要说明：该领域到底在研究什么、已有研究解决了什么、还没有说清楚什么。不能只写“综述某某主题”。
@@ -149,7 +189,7 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 6. 用 domain_map.citation_edges/domain buckets 梳理 evolution narrative：奠基工作、主要分支、当前前沿、邻接转折。
 7. 规划章节级 outline。默认必须采用紧凑综述结构：background、taxonomy、comparison、challenges、future；Introduction/Conclusion/Abstract 由后续写作补齐。不要默认生成 theme_* 独立主题章；只有用户明确要求长篇综述，且该主题章不能自然并入 taxonomy/comparison 时，才允许最多 1-2 个 theme_* 章，并在 rationale 中说明原因。
    每个 planned section 必须写出 `reader_question` 和 `section_argument`：本节回答什么读者问题、提出什么节内论点、如何使用 taxonomy/evidence、哪些内容不应另拆为独立章。
-   必须在 survey_plan.json 顶层写 `writing_language`: `"zh"` 或 `"en"`。如果目标是中文期刊、中文综述或用户明确要求中文稿，默认 `"zh"`；如果目标是英文学术期刊/会议或用户明确要求英文稿，写 `"en"`。不要写 mixed 作为正文语言。
+   必须在 survey_plan.json 顶层写 `writing_language`: `"zh"` 或 `"en"`。如果 `writing_template.json` 存在，必须采用其中的 `writing_language`；否则如果目标是中文期刊、中文综述或用户明确要求中文稿，默认 `"zh"`；如果目标是英文学术期刊/会议或用户明确要求英文稿，写 `"en"`。不要写 mixed 作为正文语言。
 8. 做 coverage_selfcheck：unclassified_papers、empty_classes、corpus_sufficiency、classes_needing_more_lit。
 9. 显式区分 evidence strength：FULL/PARTIAL notes 可作为综述主体证据；abstract-only 只能作为覆盖和趋势线索；metadata-only triage 只能进入 `resource_upgrade_needs`，不能挂到 taxonomy paper_ids 里。
 10. 如果 seed outline profile 的代表性方向没有被 T2/T3 具体论文覆盖，写入 `coverage_selfcheck.classes_needing_more_lit` 或 `resource_upgrade_needs`，不要伪造代表论文。
@@ -159,6 +199,7 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 {
   "semantics": "llm_authored_taxonomy_driven_survey_plan",
   "writing_language": "zh | en",
+  "template_selection": {"template_family": "...", "template_id": "..."},
   "central_question": "...",
   "scope_boundaries": {
     "included": ["..."],
@@ -310,8 +351,10 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - 每段要有具体学术功能：定义边界、解释演进、比较机制、指出 tension、总结挑战或提出方向。
 - 如果一个 taxonomy class 只有 abstract-only 或 metadata-only 支撑，不要把它写成成熟主流方向；应写成 coverage boundary、emerging hint 或 resource upgrade need。
 - 引用必须逐字来自上方“可用 citation keys”或 `related_work.bib`。不确定 citation key 时，不要编造；宁可不引用或改写为不带 key 的范围描述。
+- 除 Abstract 和 Conclusion 外，每个 claim-bearing section 必须有足够的代表性引用：Background 至少 4 个 unique keys，Taxonomy 至少 4 个，Comparative Analysis 至少 5 个，Challenges/Future 至少 2 个，Introduction 至少 2 个。引用必须服务于概念、流派、比较、挑战或议程，不要机械堆 key。
 - `abstract` 不写任何正式引用；具体 prior work attribution 放到 Introduction 或正文综述章节。
 - 对 abstract-only 文献，要标注 evidence 边界，不把 abstract claim 写成已验证机制。
+- 正文不得暴露 ResearchOS 的运行过程或内部语料状态：不要写 `metadata triage`、`candidate_count`、`FULL-TEXT`、`PARTIAL-TEXT`、`ABSTRACT-ONLY`、`backlog`、`保留候选`、`候选池`、`经过去重与初筛后共获得 N 篇` 等流水账。Background 可以写公开可读的范围、来源类型与证据边界，但不要写内部队列、精读/轻读统计或未获取全文候选数。
 - 避免 "this section reviews..." 这类空话；直接进入内容。
 - 不要输出内部运行标号或审计标记：`C1`、`[C1]`、`CID`、`ResearchOS alignment`、`LLM_REVIEW_REQUIRED`、`TODO/TBD/PLACEHOLDER` 都不得出现在 TeX 中。
 
@@ -417,6 +460,10 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 ## Phase: T3.6-COMPILE 编译 survey PDF
 
 调用：
+如果 `survey_state.shared_facts.writing_language == "zh"`，调用：
+`latex_compile(tex_path="drafts/survey/survey.tex", engine="xelatex", bibtex=true)`
+
+如果正文语言是英文，调用：
 `latex_compile(tex_path="drafts/survey/survey.tex", engine="pdflatex", bibtex=true)`
 
 要求：

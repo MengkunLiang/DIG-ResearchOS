@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from ..literature_identity import is_paper_note_file
 from .base import Tool, ToolResult
+from .bibtex import extract_bib_keys_from_text
 from .manuscript_registries import (
     build_claim_ledger_seed,
     build_cdr_claim_ledger_seed,
@@ -82,6 +83,154 @@ SECTION_ALIASES = {
     "limitations": "conclusion",
     "conclusion": "conclusion",
     "abstract": "abstract",
+}
+
+SECTION_WRITING_CONTRACTS = {
+    "abstract": {
+        "purpose": "Compress the final paper into a citation-free problem, gap, approach, evidence, and contribution summary.",
+        "required_content": [
+            "Problem and why it matters.",
+            "Specific gap addressed by the paper.",
+            "Approach/artifact at a high level.",
+            "Key result only if supported by result artifacts.",
+            "Contribution type and evidence boundary.",
+        ],
+        "internal_shape": [
+            "Problem -> gap -> approach -> key evidence -> contribution.",
+            "One compact paragraph unless the target venue expects a structured abstract.",
+        ],
+        "evidence_rules": [
+            "No formal citations.",
+            "No number absent from result artifacts or the already written body.",
+        ],
+        "avoid": [
+            "Do not introduce terms, claims, datasets, or results not present in the body.",
+            "Do not include abstract wrappers or section headings.",
+        ],
+    },
+    "introduction": {
+        "purpose": "Establish the problem, gap, contribution, and evidence promise in a form the rest of the paper can fulfill.",
+        "required_content": [
+            "Focused problem motivation.",
+            "Two to four concrete gaps tied to prior work or practice.",
+            "The proposed idea/artifact and why it is different.",
+            "Contribution bullets with evidence commitments.",
+            "Result headline only when evidence supports it.",
+        ],
+        "internal_shape": [
+            "Problem -> gap -> approach -> contributions -> evidence headline/roadmap.",
+        ],
+        "evidence_rules": [
+            "Every cited gap must use a real BibTeX key.",
+            "Every contribution must map conceptually to CDR/alignment rows without printing internal IDs.",
+        ],
+        "avoid": [
+            "Do not write a broad literature essay before the problem.",
+            "Do not promise experiments, baselines, or deployments that are missing.",
+        ],
+    },
+    "related_work": {
+        "purpose": "Position the paper against competing rationales and nearest prior work using citation-backed synthesis.",
+        "required_content": [
+            "Two to four prior-work streams organized by rationale, not by authors.",
+            "Representative citations for each stream.",
+            "Shared limitations or tensions in each stream.",
+            "Precise positioning of this paper's contribution.",
+        ],
+        "internal_shape": [
+            "Stream rationale -> representative evidence -> shared limitation/tension -> positioning.",
+        ],
+        "evidence_rules": [
+            "Use only keys from related_work.bib.",
+            "Do not use low-quality/do_not_cite materials for core positioning.",
+        ],
+        "avoid": [
+            "Do not write X et al. paragraph chains.",
+            "Do not reveal the method in full before Method.",
+        ],
+    },
+    "methodology": {
+        "purpose": "Explain what the artifact/method is, why it is designed that way, and how it operates.",
+        "required_content": [
+            "Method overview and inputs/outputs.",
+            "Core components and responsibilities.",
+            "Design rationale and rejected alternatives.",
+            "Algorithm/procedure or implementation details when available.",
+            "Scope assumptions and failure modes known before experiments.",
+        ],
+        "internal_shape": [
+            "Overview -> components -> design choices -> procedure/implementation -> assumptions.",
+        ],
+        "evidence_rules": [
+            "Do not use experimental outcomes as method justification.",
+            "Tie design choices to hypotheses, idea scorecard, exp plan, or code/config artifacts.",
+        ],
+        "avoid": [
+            "Do not list files or internal CIDs as the method structure.",
+            "Do not mix evaluation setup into method unless it defines the artifact.",
+        ],
+    },
+    "experiments": {
+        "purpose": "Convert result artifacts into reproducible evidence that answers the paper's research questions.",
+        "required_content": [
+            "Research questions or evaluation objectives.",
+            "Datasets/tasks/splits/baselines/metrics/seeds/compute when available.",
+            "Main results with source-backed numbers.",
+            "Ablation, robustness, failure, or sensitivity evidence when available.",
+            "Evidence boundary if any protocol is dry-run, mock-only, or incomplete.",
+        ],
+        "internal_shape": [
+            "RQ/objective -> setup -> main results -> ablation/analysis bridge -> evidence boundary.",
+        ],
+        "evidence_rules": [
+            "Every number must appear in result_metrics, evidence pack, ablations, or run artifacts.",
+            "Do not upgrade mock/dry-run evidence into real empirical claims.",
+        ],
+        "avoid": [
+            "Do not start with a dataset inventory without explaining the evaluation objective.",
+            "Do not include tables or figures that cannot be generated from artifacts.",
+        ],
+    },
+    "analysis": {
+        "purpose": "Interpret whether the evidence supports the design rationale and rule out or weaken alternatives.",
+        "required_content": [
+            "Mechanism interpretation tied to method and experiments.",
+            "Alternative explanations and what evidence does or does not rule out.",
+            "Failure cases, sensitivity, or boundary conditions.",
+            "Implications for the contribution claim.",
+        ],
+        "internal_shape": [
+            "Design rationale -> evidence interpretation -> alternative explanation -> boundary/implication.",
+        ],
+        "evidence_rules": [
+            "Use only completed evidence artifacts or clearly state limits.",
+            "Do not restate result tables without interpretation.",
+        ],
+        "avoid": [
+            "Do not introduce new method details or new result numbers.",
+            "Do not treat speculation as analysis.",
+        ],
+    },
+    "conclusion": {
+        "purpose": "Close the paper by restating what was learned, what remains limited, and what follows.",
+        "required_content": [
+            "Concise answer to the problem framed in Introduction.",
+            "Main contribution and transferable design knowledge.",
+            "Limitations subsection covering evidence and validity boundaries.",
+            "Future work that follows from limitations.",
+        ],
+        "internal_shape": [
+            "Answer -> contribution -> limitations -> future work.",
+        ],
+        "evidence_rules": [
+            "No new citations, numbers, datasets, baselines, or claims.",
+            "Limitations must reflect actual evidence pack/result boundaries.",
+        ],
+        "avoid": [
+            "Do not copy the abstract.",
+            "Do not add new promises or unsupported impact claims.",
+        ],
+    },
 }
 
 _LATEX_CITATION_COMMAND_RE = re.compile(
@@ -283,6 +432,9 @@ class AssembleManuscriptParams(BaseModel):
         default="auto",
         description="Writing style selected by T8-STYLE-GATE; when 'both', also emits drafts/is and drafts/ccf_a variants.",
     )
+    template_family: str = Field(default="", description="Template family selected by T8-STYLE-GATE.")
+    template_id: str = Field(default="", description="Template id selected by T8-STYLE-GATE.")
+    writing_language: Literal["zh", "en", "auto"] = Field(default="auto", description="Manuscript language selected by T8-STYLE-GATE.")
 
 
 class PrepareSubmissionBundleParams(BaseModel):
@@ -801,9 +953,16 @@ class AssembleManuscriptTool(Tool):
                 target_venue=params.target_venue,
                 outline_text=outline_path.read_text(encoding="utf-8") if outline_path else "",
                 venue_style=params.venue_style,
+                template_family=params.template_family,
+                template_id=params.template_id,
+                writing_language=params.writing_language,
             )
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(assembled, encoding="utf-8")
+            _copy_latex_template_support_files(
+                _resolve_latex_template(_repo_root(), params.template_family, params.template_id, params.writing_language),
+                output_path.parent,
+            )
             variant_outputs = _write_style_variant_manuscripts(
                 self.policy,
                 assembled,
@@ -1262,6 +1421,7 @@ def build_section_plan(index: dict[str, Any], *, target_venue: str = "", paper_t
                 "missing_inputs": [path for path in required if path not in artifact_paths],
                 "expected_outputs": outputs,
                 "llm_tasks": llm_tasks,
+                "writing_contract": _section_writing_contract(name),
                 "tool_notes": "Tools provide provenance and inventories only; Writer LLM must write and verify the section.",
             }
         )
@@ -1776,6 +1936,7 @@ def build_paper_state(
             "available_inputs": list(plan_entry.get("available_inputs", [])),
             "missing_inputs": list(plan_entry.get("missing_inputs", [])),
             "expected_outputs": list(plan_entry.get("expected_outputs", [])),
+            "writing_contract": plan_entry.get("writing_contract") if isinstance(plan_entry.get("writing_contract"), dict) else _section_writing_contract(section_id),
         }
 
     claim_slots = [
@@ -1894,6 +2055,13 @@ def build_section_outlines(
             lines.append(f"- {item}")
         if not plan_entry.get("expected_outputs"):
             lines.append("- Section prose that advances the paper argument without whole-document wrapper.")
+        contract = plan_entry.get("writing_contract") if isinstance(plan_entry.get("writing_contract"), dict) else _section_writing_contract(section_id)
+        lines.extend(["", "## Section Writing Contract"])
+        lines.append(f"- purpose: {contract.get('purpose') or _section_purpose(section_id)}")
+        lines.extend(_contract_items("required_content", contract.get("required_content")))
+        lines.extend(_contract_items("internal_shape", contract.get("internal_shape")))
+        lines.extend(_contract_items("evidence_rules", contract.get("evidence_rules")))
+        lines.extend(_contract_items("avoid", contract.get("avoid")))
         lines.extend(["", "## CDR Responsibility"])
         lines.append(f"- {_section_cdr_responsibility(section_id)}")
         lines.append("- Use `drafts/cdr_claim_ledger.json` as a ledger seed; do not treat it as final prose.")
@@ -1945,6 +2113,17 @@ def build_section_outlines(
     return outlines
 
 
+def _section_writing_contract(section_id: str) -> dict[str, Any]:
+    return dict(SECTION_WRITING_CONTRACTS.get(section_id) or {})
+
+
+def _contract_items(label: str, raw_items: object) -> list[str]:
+    items = [str(item).strip() for item in raw_items or [] if str(item).strip()] if isinstance(raw_items, list) else []
+    if not items:
+        return [f"- {label}: unspecified"]
+    return [f"- {label}:"] + [f"  - {item}" for item in items]
+
+
 def assemble_sections(
     section_dir: Path,
     *,
@@ -1952,6 +2131,9 @@ def assemble_sections(
     target_venue: str = "",
     outline_text: str = "",
     venue_style: str = "auto",
+    template_family: str = "",
+    template_id: str = "",
+    writing_language: str = "auto",
 ) -> str:
     if not section_dir.exists():
         raise FileNotFoundError(section_dir)
@@ -1986,23 +2168,123 @@ def assemble_sections(
             text = f"\\section{{{heading}}}\n{text}"
         body_parts.append(text)
 
-    return (
-        "\\documentclass{article}\n"
+    body = _manuscript_document_body(title=title, abstract=abstract, body_parts=body_parts, bib_stem="related_work")
+    family = str(template_family or "").strip().lower()
+    template = str(template_id or "").strip().lower()
+    language = str(writing_language or "auto").strip().lower()
+    template_path = _resolve_latex_template(_repo_root(), family, template, language)
+    if template_path and template_path.exists():
+        rendered = _replace_template_document_body(template_path.read_text(encoding="utf-8", errors="replace"), body)
+    else:
+        rendered = _fallback_manuscript_document(
+            title=title,
+            abstract=abstract,
+            body_parts=body_parts,
+            writing_language=language,
+            template_family=family,
+            bib_stem="related_work",
+        )
+    meta = (
         f"% ResearchOS venue_style: {venue_style}\n"
         f"% ResearchOS target_venue: {target_venue}\n"
-        "\\usepackage{graphicx}\n"
-        "\\usepackage{amsmath}\n"
-        "\\usepackage{booktabs}\n"
-        "\\usepackage{hyperref}\n"
-        "\\begin{document}\n"
+        f"% ResearchOS template_family: {family or ('basic_zh' if language == 'zh' else 'basic_en')}\n"
+        f"% ResearchOS template_id: {template or ('basic_zh' if language == 'zh' else 'basic_en')}\n"
+        f"% ResearchOS writing_language: {language}\n"
+        f"% ResearchOS template_source: {template_path.relative_to(_repo_root()).as_posix() if template_path and template_path.exists() else 'fallback'}\n"
+    )
+    return rendered.replace("\\documentclass", meta + "\\documentclass", 1)
+
+
+def _manuscript_document_body(*, title: str, abstract: str, body_parts: list[str], bib_stem: str) -> str:
+    return (
         f"\\title{{{_escape_latex_braces(title)}}}\n"
         "\\author{}\n"
         "\\maketitle\n"
         f"\\begin{{abstract}}\n{abstract}\n\\end{{abstract}}\n\n"
         + "\n\n".join(body_parts)
-        + "\n\n\\bibliographystyle{plain}\n\\bibliography{related_work}\n"
-        "\\end{document}\n"
+        + f"\n\n\\bibliographystyle{{plainnat}}\n\\bibliography{{{bib_stem}}}\n"
     )
+
+
+def _fallback_manuscript_document(
+    *,
+    title: str,
+    abstract: str,
+    body_parts: list[str],
+    writing_language: str,
+    template_family: str,
+    bib_stem: str,
+) -> str:
+    documentclass = "\\documentclass{ctexart}\n" if writing_language == "zh" or template_family == "basic_zh" else "\\documentclass{article}\n"
+    return (
+        documentclass
+        + "\\usepackage{graphicx}\n"
+        "\\usepackage{amsmath}\n"
+        "\\usepackage{booktabs}\n"
+        "\\usepackage{hyperref}\n"
+        "\\begin{document}\n"
+        + _manuscript_document_body(title=title, abstract=abstract, body_parts=body_parts, bib_stem=bib_stem)
+        + "\\end{document}\n"
+    )
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _resolve_latex_template(repo_root: Path, family: str, template_id: str, writing_language: str) -> Path | None:
+    base = repo_root / "latex_templete"
+    family = str(family or "").strip().lower()
+    template_id = str(template_id or "").strip().lower()
+    writing_language = str(writing_language or "").strip().lower()
+    candidates: list[Path] = []
+    if family == "basic_zh" or writing_language == "zh":
+        candidates.append(base / "normal" / "basic_zh.tex")
+    elif family == "basic_en":
+        candidates.append(base / "normal" / "basic_en.tex")
+    elif family == "utd":
+        candidates.append(base / "utd" / "informs_basic.tex")
+    elif family == "ccf":
+        if (template_id or "neurips") == "neurips":
+            candidates.append(base / "ccf-latex-templates" / "NeurIPS" / "neurips_2026.tex")
+        elif template_id == "kdd":
+            candidates.extend((base / "ccf-latex-templates" / "SIGKDD").glob("*.tex"))
+    if not candidates:
+        candidates.append(base / "normal" / ("basic_zh.tex" if writing_language == "zh" else "basic_en.tex"))
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _replace_template_document_body(template: str, body: str) -> str:
+    match = re.search(r"\\begin\{document\}", template or "", flags=re.IGNORECASE)
+    if not match:
+        return template.strip() + "\n\n" + body.strip() + "\n"
+    preamble = template[: match.start()]
+    rest = template[match.end() :]
+    end_match = re.search(r"\\end\{document\}", rest, flags=re.IGNORECASE)
+    suffix = rest[end_match.end() :] if end_match else ""
+    preamble = re.sub(r"(?ms)^\\title\{.*?\}\s*", "", preamble)
+    preamble = re.sub(r"(?ms)^\\author\{.*?\}\s*", "", preamble)
+    preamble = re.sub(r"(?m)^\\date\{.*?\}\s*", "", preamble)
+    if "\\bibliographystyle" in preamble:
+        preamble = re.sub(r"\\bibliographystyle\{[^}]*\}", lambda _m: "\\bibliographystyle{plainnat}", preamble)
+    else:
+        preamble = preamble.rstrip() + "\n\\bibliographystyle{plainnat}\n"
+    return preamble.rstrip() + "\n\n\\begin{document}\n" + body.strip() + "\n\\end{document}" + suffix
+
+
+def _copy_latex_template_support_files(template_path: Path | None, target_dir: Path) -> None:
+    if not template_path or not template_path.exists():
+        return
+    for source in template_path.parent.iterdir():
+        if source.suffix.lower() not in {".sty", ".cls", ".bst"}:
+            continue
+        try:
+            (target_dir / source.name).write_bytes(source.read_bytes())
+        except OSError:
+            continue
 
 
 def _write_style_variant_manuscripts(
@@ -3290,7 +3572,7 @@ def _extract_bib_keys(path: Path) -> list[str]:
     if not path.exists():
         return []
     text = path.read_text(encoding="utf-8", errors="replace")
-    return sorted(set(re.findall(r"@\w+\{([^,\s]+)", text)))
+    return sorted(set(extract_bib_keys_from_text(text)))
 
 
 def _extract_latex_cites(text: str) -> set[str]:

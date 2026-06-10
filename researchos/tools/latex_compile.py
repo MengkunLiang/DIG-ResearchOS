@@ -76,7 +76,13 @@ class LatexCompileTool(Tool):
                 _write_compile_report_for_known_target(self.docker.policy.workspace_dir, params.tex_path, report)
                 return ToolResult(
                     ok=False,
-                    content="WAITING_ENVIRONMENT: latexmk is not installed in the current container/native environment.",
+                    content=(
+                        "WAITING_ENVIRONMENT: latexmk is not installed in the current container/native environment.\n"
+                        "Fix by installing TeX/latexmk in the active environment or by using the ResearchOS Docker image. "
+                        "If a Python import error says `No module named researchos`, do not run `pip install researchos` "
+                        "from PyPI; run from the repository root with `PYTHONPATH=/path/to/DIG-ResearchOS python -m researchos.cli ...` "
+                        "or install this local checkout with `pip install -e .`."
+                    ),
                     error="waiting_environment_latexmk_missing",
                     data={"error": "waiting_environment_latexmk_missing", "compile_report": report},
                 )
@@ -240,7 +246,12 @@ class LatexCompileTool(Tool):
                 "docker_image_missing",
                 "image_not_allowed",
             }:
-                content = "WAITING_ENVIRONMENT: Docker/LaTeX compile environment unavailable.\n\n" + result.content
+                content = (
+                    "WAITING_ENVIRONMENT: Docker/LaTeX compile environment unavailable.\n"
+                    "If the Docker image reports `No module named researchos`, rebuild/install the local ResearchOS checkout "
+                    "in the image; do not install an unrelated PyPI package named researchos.\n\n"
+                    + result.content
+                )
                 report = _finalize_compile_report(
                     report_base,
                     success=False,

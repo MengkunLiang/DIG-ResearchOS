@@ -162,6 +162,16 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "required_inputs": ["project", "synthesis", "synthesis_workbench", "domain_map"],
         "schemas": {},
     },
+    "T3.6-TEMPLATE-GATE": {
+        "inputs": {
+            "project": "project.yaml",
+            "survey_decision": "drafts/survey/decision.json",
+            **OPTIONAL_SEED_SURVEY_INPUTS,
+        },
+        "outputs": {"writing_template": "drafts/survey/writing_template.json"},
+        "required_inputs": ["project", "survey_decision"],
+        "schemas": {},
+    },
     "T3.6-PLAN": {
         "inputs": {
             "project": "project.yaml",
@@ -172,6 +182,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "paper_notes_dir": "literature/paper_notes",
             "paper_notes_abstract_dir": "literature/paper_notes_abstract",
             "related_work_bib": "literature/related_work.bib",
+            "writing_template": "drafts/survey/writing_template.json",
             **OPTIONAL_SEED_SURVEY_INPUTS,
         },
         "outputs": {"survey_plan": "drafts/survey/survey_plan.json"},

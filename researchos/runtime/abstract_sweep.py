@@ -24,6 +24,7 @@ from ..literature_identity import (
     record_is_covered,
 )
 from ..tools.paper_utils import deduplicate_papers
+from ..tools.bibtex import dedupe_bibtex_entries, escape_bibtex_value, extract_bib_keys_from_text, stable_bib_key
 
 
 # ---------------------------------------------------------------------------
@@ -831,36 +832,43 @@ def generate_bib_entry(paper: dict) -> str:
     """从 paper record 生成 BibTeX 条目。"""
 
     paper_id = _normalize_id(paper)
-    bib_key = re.sub(r"[^a-zA-Z0-9]", "", paper_id)[:40]
-    title = paper.get("title", "Unknown").strip()
+    title_raw = str(paper.get("title") or "").strip()
+    bib_key_seed = paper.get("doi") or paper.get("arxiv_id") or paper_id or title_raw
+    bib_key = stable_bib_key(bib_key_seed, fallback="abstract_note")
+    title = escape_bibtex_value(title_raw or "Untitled abstract-screened record")
     year = _extract_year(paper) or "XXXX"
-    venue = paper.get("venue", "").strip()
+    venue = escape_bibtex_value(paper.get("venue", ""))
     author_names = _normalize_author_names(paper.get("authors", []), limit=10)
     if author_names:
-        author_str = " and ".join(author_names)
+        author_str = " and ".join(escape_bibtex_value(name) for name in author_names)
     else:
-        author_str = "Unknown"
+        author_str = ""
 
     # 判断 entry type
-    venue_lower = venue.lower()
-    if any(j in venue_lower for j in ["journal", "jmlr", "tacl", "nature", "science"]):
+    venue_lower = str(paper.get("venue", "")).lower()
+    if any(j in venue_lower for j in ["journal", "jmlr", "tacl", "nature", "science", "quarterly", "transactions"]):
         entry_type = "article"
-    else:
+    elif venue:
         entry_type = "inproceedings"
+    else:
+        entry_type = "misc"
 
     entry = f"""@{entry_type}{{{bib_key},
   title = {{{title}}},
-  author = {{{author_str}}},
   year = {{{year}}},
 """
+    if author_str:
+        entry += f"  author = {{{author_str}}},\n"
     if venue:
         if entry_type == "article":
             entry += f"  journal = {{{venue}}},\n"
-        else:
+        elif entry_type == "inproceedings":
             entry += f"  booktitle = {{{venue}}},\n"
+        else:
+            entry += f"  howpublished = {{{venue}}},\n"
 
     # 尝试加 DOI / URL
-    doi = paper.get("doi", "")
+    doi = escape_bibtex_value(paper.get("doi", ""))
     arxiv_id = paper.get("arxiv_id", "") or paper.get("id", "")
     if doi:
         entry += f"  doi = {{{doi}}},\n"
@@ -1222,6 +1230,16 @@ def _append_csv_rows(path: Path, rows: list[str]) -> None:
 
 def _append_bib_entries(path: Path, entries: list[str]) -> None:
     """追加 BibTeX 条目。"""
-    with path.open("a", encoding="utf-8") as f:
-        for entry in entries:
-            f.write("\n" + entry)
+    existing = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+    existing_keys = set(extract_bib_keys_from_text(existing))
+    new_entries: list[str] = []
+    for entry in entries:
+        keys = extract_bib_keys_from_text(entry)
+        if not keys or keys[0] in existing_keys:
+            continue
+        existing_keys.add(keys[0])
+        new_entries.append(entry.strip())
+    if not new_entries:
+        return
+    combined = existing.rstrip() + "\n\n" + "\n\n".join(new_entries) + "\n"
+    path.write_text(dedupe_bibtex_entries(combined), encoding="utf-8")

@@ -197,9 +197,9 @@ def _valid_survey_section_body(section: str, cite: str = "\\citep{p1}") -> str:
         "Background and Scope": (
             "The scope boundary matters because a review without inclusion and exclusion rules becomes a broad "
             "topic essay. This section defines the core concepts, states which mechanism-level studies are "
-            "included, excludes purely speculative or metadata-only material from claim evidence, and describes "
+            "included, excludes purely speculative bibliographic records without usable content from claim evidence, and describes "
             "the corpus search and analysis method. The definition also separates established evidence from "
-            "abstract-only context so that citation claims remain calibrated. "
+            "summary-level context so that citation claims remain calibrated. "
         ),
         "Taxonomy": (
             "The analytical framework separates perturbation and routing mechanisms as reader-facing taxonomy "
@@ -258,41 +258,58 @@ def _valid_survey_section_body(section: str, cite: str = "\\citep{p1}") -> str:
     return f"\\section{{{section}}}\n" + role + common + elaboration + elaboration
 
 
+def _valid_survey_bib() -> str:
+    return "\n\n".join(
+        [
+            "@article{p1, author={Alpha, Alice}, title={Evidence Boundary Design}, journal={Journal of Review Methods}, year={2021}}",
+            "@article{p2, author={Beta, Bob}, title={Mechanism Families in Applied Systems}, journal={Journal of Mechanism Studies}, year={2022}}",
+            "@article{p3, author={Gamma, Carol}, title={Routing Mechanisms and Evaluation}, journal={Information Systems Research}, year={2023}}",
+            "@article{p4, author={Delta, Dan}, title={Perturbation Tests and Boundary Conditions}, journal={Management Science}, year={2024}}",
+            "@article{p5, author={Epsilon, Eve}, title={Comparative Evaluation of Research Streams}, journal={MIS Quarterly}, year={2025}}",
+            "@article{p6, author={Zeta, Zoe}, title={Future Agenda Construction}, journal={Journal of Management Information Systems}, year={2026}}",
+            "@article{p7, author={Eta, Erin}, title={Evidence Transfer Across Settings}, journal={Academy of Management Review}, year={2020}}",
+            "@article{p8, author={Theta, Theo}, title={Governance and Audit Boundaries}, journal={Information and Management}, year={2019}}",
+            "@article{p9, author={Iota, Iris}, title={Longitudinal Evaluation of Mechanisms}, journal={Decision Support Systems}, year={2018}}",
+        ]
+    ) + "\n"
+
+
+def _write_valid_survey_bib(ws: Path) -> None:
+    (ws / "literature").mkdir(parents=True, exist_ok=True)
+    (ws / "literature" / "related_work.bib").write_text(_valid_survey_bib(), encoding="utf-8")
+
+
 def _valid_survey_tex_document() -> str:
     sections = [
         "\\begin{abstract}A taxonomy-driven survey of mechanisms compares evidence boundaries and future research needs in a concise but complete form. It states the problem, the taxonomy axis, the comparative insight, and the research agenda without using formal citations. The abstract also explains why the survey matters to readers, how the framework organizes prior work, and what kinds of open questions follow from the evidence gradient.\\end{abstract}",
-        _valid_survey_section_body("Introduction", "\\citep{p1}"),
-        _valid_survey_section_body("Concepts, Scope, and Search Strategy", "\\citep{p1}"),
-        _valid_survey_section_body("Taxonomy", "\\citep{p1}"),
-        _valid_survey_section_body("Research Progress and Comparative Evaluation", "\\citep{p2}"),
-        _valid_survey_section_body("Critical Assessment and Open Challenges", "\\citep{p2}"),
-        _valid_survey_section_body("Future Research Agenda", "\\citep{p3}"),
-        _valid_survey_section_body("Conclusion", "\\citep{p3}"),
+        _valid_survey_section_body("Introduction", "\\citep{p1,p2}"),
+        _valid_survey_section_body("Concepts, Scope, and Search Strategy", "\\citep{p1,p2,p3,p4}"),
+        _valid_survey_section_body("Taxonomy", "\\citep{p3,p4,p5,p6}"),
+        _valid_survey_section_body("Research Progress and Comparative Evaluation", "\\citep{p5,p6,p7,p8,p9}"),
+        _valid_survey_section_body("Critical Assessment and Open Challenges", "\\citep{p7,p8}"),
+        _valid_survey_section_body("Future Research Agenda", "\\citep{p8,p9}"),
+        _valid_survey_section_body("Conclusion", "\\citep{p6,p9}"),
     ]
     return "\\documentclass{article}\\begin{document}\n" + "\n".join(sections) + "\n\\end{document}\n"
 
 
-async def _build_valid_survey_chain(ws: Path) -> None:
-    _write_json(ws / "drafts" / "survey" / "survey_plan.json", _survey_plan())
+async def _build_valid_survey_chain(ws: Path, *, plan: dict | None = None) -> None:
+    _write_json(ws / "drafts" / "survey" / "survey_plan.json", plan or _survey_plan())
     _write_json(ws / "drafts" / "survey" / "corpus_decision.json", {"scope": "conservative"})
-    (ws / "literature").mkdir(parents=True, exist_ok=True)
-    (ws / "literature" / "related_work.bib").write_text(
-        "@article{p1,title={A}}\n@article{p2,title={B}}\n@article{p3,title={C}}\n",
-        encoding="utf-8",
-    )
+    _write_valid_survey_bib(ws)
     policy = _policy(ws)
     result = await BuildSurveyStateTool(policy).execute()
     assert result.ok, result.content
     sections_dir = ws / "drafts" / "survey" / "sections"
     sections_dir.mkdir(parents=True, exist_ok=True)
     section_text = {
-        "background": _valid_survey_section_body("Background and Scope", "\\citep[see][]{p1}"),
-        "taxonomy": _valid_survey_section_body("Taxonomy", "\\citep{p1,p2}"),
-        "comparison": _valid_survey_section_body("Comparative Analysis", "\\citep{p1,p3}"),
-        "challenges": _valid_survey_section_body("Open Challenges", "\\citep{p2}"),
-        "future": _valid_survey_section_body("Future Directions", "\\citep{p3}"),
-        "introduction": _valid_survey_section_body("Introduction", "\\citep{p1}"),
-        "conclusion": _valid_survey_section_body("Conclusion", "\\citep{p2,p3}"),
+        "background": _valid_survey_section_body("Background and Scope", "\\citep[see][]{p1,p2,p3,p4}"),
+        "taxonomy": _valid_survey_section_body("Taxonomy", "\\citep{p3,p4,p5,p6}"),
+        "comparison": _valid_survey_section_body("Comparative Analysis", "\\citep{p5,p6,p7,p8,p9}"),
+        "challenges": _valid_survey_section_body("Open Challenges", "\\citep{p7,p8}"),
+        "future": _valid_survey_section_body("Future Directions", "\\citep{p8,p9}"),
+        "introduction": _valid_survey_section_body("Introduction", "\\citep{p1,p2}"),
+        "conclusion": _valid_survey_section_body("Conclusion", "\\citep{p6,p9}"),
             "abstract": (
                 "A taxonomy-driven survey of mechanisms that compares evidence boundaries and future research needs. "
                 "The abstract states the motivating problem, the taxonomy axis, the comparative insight, and the "
@@ -315,11 +332,7 @@ async def test_survey_tools_build_state_assemble_audit_and_export(tmp_path: Path
     ws = tmp_path
     _write_json(ws / "drafts" / "survey" / "survey_plan.json", _survey_plan())
     _write_json(ws / "drafts" / "survey" / "corpus_decision.json", {"scope": "conservative"})
-    (ws / "literature").mkdir()
-    (ws / "literature" / "related_work.bib").write_text(
-        "@article{p1,title={A}}\n@article{p2,title={B}}\n@article{p3,title={C}}\n",
-        encoding="utf-8",
-    )
+    _write_valid_survey_bib(ws)
     (ws / "literature" / "metadata_triage.md").write_text(
         """# Metadata-only Literature Triage
 
@@ -391,13 +404,13 @@ async def test_survey_tools_build_state_assemble_audit_and_export(tmp_path: Path
     sections_dir = ws / "drafts" / "survey" / "sections"
     sections_dir.mkdir(parents=True)
     section_text = {
-        "background": _valid_survey_section_body("Background and Scope", "\\citep[see][]{p1}"),
-        "taxonomy": _valid_survey_section_body("Taxonomy", "\\citep{p1,p2}"),
-        "comparison": _valid_survey_section_body("Comparative Analysis", "\\citep{p1,p3}"),
-        "challenges": _valid_survey_section_body("Open Challenges", "\\citep{p2}"),
-        "future": _valid_survey_section_body("Future Directions", "\\citep{p3}"),
-        "introduction": _valid_survey_section_body("Introduction", "\\citep{p1}"),
-        "conclusion": _valid_survey_section_body("Conclusion", "\\citep{p2,p3}"),
+        "background": _valid_survey_section_body("Background and Scope", "\\citep[see][]{p1,p2,p3,p4}"),
+        "taxonomy": _valid_survey_section_body("Taxonomy", "\\citep{p3,p4,p5,p6}"),
+        "comparison": _valid_survey_section_body("Comparative Analysis", "\\citep{p5,p6,p7,p8,p9}"),
+        "challenges": _valid_survey_section_body("Open Challenges", "\\citep{p7,p8}"),
+        "future": _valid_survey_section_body("Future Directions", "\\citep{p8,p9}"),
+        "introduction": _valid_survey_section_body("Introduction", "\\citep{p1,p2}"),
+        "conclusion": _valid_survey_section_body("Conclusion", "\\citep{p6,p9}"),
             "abstract": (
                 "A taxonomy-driven survey of mechanisms that compares evidence boundaries and future research needs. "
                 "The abstract states the motivating problem, the taxonomy axis, the comparative insight, and the "
@@ -451,7 +464,7 @@ async def test_survey_audit_rejects_compact_theme_content_not_absorbed(tmp_path:
         "perturbation mechanisms and precise perturbation tests; in contrast, adjacent implementation studies "
         "focus on deployment constraints without naming the omitted taxonomy class. This comparison evaluates "
         "the contribution and limitation of each stream by asking whether its evidence explains mechanisms, "
-        "whereas weaker streams only describe settings. Verified literature \\citep{p1,p3} anchors these claims, "
+        "whereas weaker streams only describe settings. Verified literature \\citep{p1,p2,p3,p4,p5} anchors these claims, "
         "but the paragraph uses citations as evidence for stream-level relationships rather than as the structure "
         "of the review. The strength of the perturbation stream is conceptual precision, while its limitation is "
         "that boundary conditions and transfer across settings remain under-specified. "
@@ -579,6 +592,108 @@ def test_survey_writer_plan_validation_requires_compact_sectioning_policy(tmp_pa
     assert "compact sectioning_policy" in (err or "")
 
 
+def test_survey_writer_template_gate_accepts_recorded_human_selection(tmp_path: Path):
+    ws = tmp_path
+    survey_dir = ws / "drafts" / "survey"
+    survey_dir.mkdir(parents=True)
+    runtime_dir = ws / "_runtime"
+    runtime_dir.mkdir(parents=True)
+    (runtime_dir / "human_interactions.jsonl").write_text(
+        json.dumps(
+            {
+                "semantics": "researchos_human_interaction_record",
+                "interaction_id": "human_template123",
+                "task_id": "T3.6-TEMPLATE-GATE",
+                "answer": "basic_zh",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_json(
+        survey_dir / "writing_template.json",
+        {
+            "template_family": "basic_zh",
+            "template_id": "basic_zh",
+            "writing_language": "zh",
+            "human_interaction_id": "human_template123",
+        },
+    )
+
+    ok, err = SurveyWriterAgent(mode="template_gate").validate_outputs(_survey_ctx(ws, "template_gate"))
+
+    assert ok, err
+
+
+def test_survey_writer_plan_rejects_template_selection_mismatch(tmp_path: Path):
+    ws = tmp_path
+    survey_dir = ws / "drafts" / "survey"
+    survey_dir.mkdir(parents=True)
+    _write_json(
+        survey_dir / "writing_template.json",
+        {
+            "template_family": "ccf",
+            "template_id": "neurips",
+            "writing_language": "en",
+            "human_interaction_id": "human_template123",
+        },
+    )
+    plan = _survey_plan()
+    plan["template_selection"] = {
+        "template_family": "utd",
+        "template_id": "informs",
+        "writing_language": "en",
+    }
+    _write_json(survey_dir / "survey_plan.json", plan)
+
+    ok, err = SurveyWriterAgent(mode="survey_plan").validate_outputs(_survey_ctx(ws, "survey_plan"))
+
+    assert not ok
+    assert "template_selection.template_family" in (err or "")
+
+
+@pytest.mark.asyncio
+async def test_t36_assemble_applies_selected_basic_zh_template(tmp_path: Path):
+    ws = tmp_path
+    plan = _survey_plan()
+    plan["writing_language"] = "zh"
+    plan["template_selection"] = {
+        "template_family": "basic_zh",
+        "template_id": "basic_zh",
+        "writing_language": "zh",
+    }
+    _write_json(ws / "drafts" / "survey" / "survey_plan.json", plan)
+    _write_json(ws / "drafts" / "survey" / "corpus_decision.json", {"scope": "conservative"})
+    _write_valid_survey_bib(ws)
+    policy = _policy(ws)
+    result = await BuildSurveyStateTool(policy).execute()
+    assert result.ok, result.content
+    sections_dir = ws / "drafts" / "survey" / "sections"
+    sections_dir.mkdir(parents=True, exist_ok=True)
+    zh_sections = {
+        "abstract": "中文摘要正文。",
+        "introduction": "\\section{Introduction}\n中文引言正文 \\citep{p1,p2}。",
+        "background": "\\section{Background and Scope}\n中文背景正文 \\citep{p1,p2,p3,p4}。",
+        "taxonomy": "\\section{Taxonomy}\n中文分类正文 \\citep{p3,p4,p5,p6}。",
+        "comparison": "\\section{Comparative Analysis}\n中文比较正文 \\citep{p5,p6,p7,p8,p9}。",
+        "challenges": "\\section{Open Challenges}\n中文挑战正文 \\citep{p7,p8}。",
+        "future": "\\section{Future Directions}\n中文未来正文 \\citep{p8,p9}。",
+        "conclusion": "\\section{Conclusion}\n中文结论正文。",
+    }
+    for section_id, text in zh_sections.items():
+        (sections_dir / f"{section_id}.tex").write_text(text, encoding="utf-8")
+        result = await UpdateSurveySectionStateTool(policy).execute(section_id=section_id)
+        assert result.ok, result.content
+    result = await AssembleSurveyTool(policy).execute()
+    assert result.ok, result.content
+
+    tex = (ws / "drafts" / "survey" / "survey.tex").read_text(encoding="utf-8")
+
+    assert "\\documentclass[11pt]{ctexart}" in tex
+    assert "ResearchOS template_family: basic_zh" in tex
+
+
 @pytest.mark.asyncio
 async def test_build_survey_state_can_enable_limited_standalone_theme_sections(tmp_path: Path):
     ws = tmp_path
@@ -634,10 +749,7 @@ async def test_survey_writer_compile_validation_accepts_success_report(tmp_path:
         ),
         encoding="utf-8",
     )
-    (ws / "literature" / "related_work.bib").write_text(
-        "@article{p1,title={A}}\n@article{p2,title={B}}\n@article{p3,title={C}}\n",
-        encoding="utf-8",
-    )
+    _write_valid_survey_bib(ws)
     (ws / "drafts" / "survey" / "survey.tex").write_text(_valid_survey_tex_document(), encoding="utf-8")
     result = await AuditSurveyCoverageTool(_policy(ws)).execute()
     assert result.ok, result.content
@@ -692,7 +804,7 @@ async def test_t36_section_refuses_stale_section_outline_and_file(tmp_path: Path
     (ws / "drafts" / "survey" / "sections" / "taxonomy.tex").write_text(
         (
             "\\section{Taxonomy}\n"
-            + _valid_survey_section_body("Taxonomy", "\\citep{p1,p2}").split("\n", 1)[1]
+            + _valid_survey_section_body("Taxonomy", "\\citep{p1,p2,p3,p4}").split("\n", 1)[1]
             + " This changed sentence is appended after state fingerprint while the section remains a valid "
             "analytical framework with mechanism, boundary, classification, taxonomy, relationship, and evidence signals."
         ),
@@ -710,15 +822,29 @@ async def test_t36_section_refuses_stale_section_outline_and_file(tmp_path: Path
 async def test_t36_section_repairs_unique_near_miss_citation_key(tmp_path: Path):
     ws = tmp_path
     await _build_valid_survey_chain(ws)
-    bib_key = "102316journal203201032034219"
-    wrong_key = "102316journal201203032034219"
+    bib_keys = [
+        "102316journal203201032034219",
+        "102316journal203201032034220",
+        "102316journal203201032034221",
+        "102316journal203201032034222",
+    ]
+    wrong_keys = [
+        "102316journal201203032034219",
+        "102316journal201203032034220",
+        "102316journal201203032034221",
+        "102316journal201203032034222",
+    ]
     (ws / "literature" / "related_work.bib").write_text(
-        f"@article{{{bib_key},title={{Correct Key}}}}\n",
+        "\n".join(
+            f"@article{{{key}, author={{Repair, Test}}, title={{Correct Key {idx}}}, journal={{Repair Journal}}, year={{202{idx}}}}}"
+            for idx, key in enumerate(bib_keys, start=1)
+        )
+        + "\n",
         encoding="utf-8",
     )
     section_path = ws / "drafts" / "survey" / "sections" / "background.tex"
     section_path.write_text(
-        _valid_survey_section_body("Background and Scope", f"\\citep{{{wrong_key}}}"),
+        _valid_survey_section_body("Background and Scope", "\\citep{" + ",".join(wrong_keys) + "}"),
         encoding="utf-8",
     )
     await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="background")
@@ -728,8 +854,9 @@ async def test_t36_section_repairs_unique_near_miss_citation_key(tmp_path: Path)
     )
 
     assert ok, err
-    assert wrong_key not in section_path.read_text(encoding="utf-8")
-    assert bib_key in section_path.read_text(encoding="utf-8")
+    repaired_text = section_path.read_text(encoding="utf-8")
+    assert not any(wrong_key in repaired_text for wrong_key in wrong_keys)
+    assert all(bib_key in repaired_text for bib_key in bib_keys)
 
 
 @pytest.mark.asyncio
@@ -828,7 +955,7 @@ async def test_t36_section_validation_rejects_dirty_abstract_and_bad_cites(tmp_p
     section_path.write_text(
         "\\section{Taxonomy}\n"
         + (
-            "This section reviews prior work. Smith et al. studied one dataset. "
+            "This section reviews prior work \\citep{p3,p4,p5,p6}. Smith et al. studied one dataset. "
             "Jones et al. proposed a related model. Lee et al. reported another benchmark. "
             "Garcia et al. explored a fourth direction. Kumar et al. added a fifth variant. "
             "Brown et al. proposed a taxonomy class. Martin et al. found another pattern. "
@@ -844,6 +971,31 @@ async def test_t36_section_validation_rejects_dirty_abstract_and_bad_cites(tmp_p
     ok, err = agent.validate_outputs(_survey_ctx(ws, "survey_section", section_id="taxonomy"))
     assert not ok
     assert "流水账" in (err or "") or "写作结构" in (err or "")
+
+
+@pytest.mark.asyncio
+async def test_t36_audit_rejects_runtime_process_prose(tmp_path: Path):
+    ws = tmp_path
+    await _build_valid_survey_chain(ws)
+    background_path = ws / "drafts" / "survey" / "sections" / "background.tex"
+    background_path.write_text(
+        _valid_survey_section_body("Background and Scope", "\\citep[see][]{p1,p2,p3,p4}")
+        + " After deduplication and initial screening, 562 candidate papers were retained; "
+        + "60 FULL-TEXT or PARTIAL-TEXT notes and 502 ABSTRACT-ONLY records formed the corpus, "
+        + "with metadata triage used for additional backlog decisions.",
+        encoding="utf-8",
+    )
+    await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="background", status="revised")
+    result = await AssembleSurveyTool(_policy(ws)).execute()
+    assert result.ok, result.content
+
+    result = await AuditSurveyCoverageTool(_policy(ws)).execute()
+
+    assert not result.ok
+    audit = json.loads((ws / "drafts" / "survey" / "survey_audit.json").read_text(encoding="utf-8"))
+    process_check = next(item for item in audit["checks"] if item["name"] == "no_runtime_process_prose")
+    assert process_check["passed"] is False
+    assert "metadata triage" in process_check["detail"] or "FULL-TEXT" in process_check["detail"]
 
 
 @pytest.mark.asyncio
@@ -868,6 +1020,25 @@ async def test_t36_assemble_refuses_stale_assembly_or_audit_inputs(tmp_path: Pat
     ok, err = agent.validate_outputs(ctx)
     assert not ok
     assert "survey_audit.json" in (err or "") and ("已过期" in (err or "") or "已变化" in (err or ""))
+
+
+@pytest.mark.asyncio
+async def test_t36_assemble_validation_rejects_old_audit_missing_new_checks(tmp_path: Path):
+    ws = tmp_path
+    await _build_valid_survey_chain(ws)
+    audit_path = ws / "drafts" / "survey" / "survey_audit.json"
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    audit["checks"] = [
+        item
+        for item in audit["checks"]
+        if item.get("name") not in {"section_level_citation_density", "no_runtime_process_prose", "bibliography_quality"}
+    ]
+    audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    ok, err = SurveyWriterAgent(mode="survey_assemble").validate_outputs(_survey_ctx(ws, "survey_assemble"))
+
+    assert not ok
+    assert "缺少新增质量检查" in (err or "")
 
 
 def test_survey_writer_compile_validation_rejects_stale_tex_hash(tmp_path: Path):
@@ -902,7 +1073,8 @@ async def test_survey_writer_compile_validation_rejects_stale_dependency_fingerp
     log.write_text("ok", encoding="utf-8")
     _write_survey_compile_report(ws)
     (survey_dir / "references.bib").write_text(
-        (survey_dir / "references.bib").read_text(encoding="utf-8") + "\n@article{new,title={New}}\n",
+        (survey_dir / "references.bib").read_text(encoding="utf-8")
+        + "\n@article{new, author={New, Nora}, title={New Reference}, journal={New Journal}, year={2026}}\n",
         encoding="utf-8",
     )
 
@@ -932,7 +1104,7 @@ async def test_survey_writer_compile_validation_rejects_stale_audit_after_compil
         },
     )
     (ws / "literature" / "related_work.bib").write_text(
-        "@article{p1,title={A}}\n@article{p2,title={B}}\n@article{p3,title={C}}\n",
+        _valid_survey_bib(),
         encoding="utf-8",
     )
     tex = survey_dir / "survey.tex"
@@ -1078,7 +1250,7 @@ async def test_survey_writer_review_validation_accepts_complete_review(tmp_path:
     assert "目录内容已变化" in (err or "") or "已过期" in (err or "")
 
     (ws / "drafts" / "survey" / "sections" / "comparison.tex").write_text(
-        _valid_survey_section_body("Comparative Analysis", "\\citep{p1,p3}")
+        _valid_survey_section_body("Comparative Analysis", "\\citep{p5,p6,p7,p8,p9}")
         + " This revised comparison clarifies incomparable settings while preserving a framework-level research map.",
         encoding="utf-8",
     )

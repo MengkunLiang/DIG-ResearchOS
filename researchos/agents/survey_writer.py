@@ -21,10 +21,12 @@ from ..literature_identity import is_paper_note_file, is_placeholder_text
 from ..tools.manuscript import _extract_latex_cites, _extract_bib_keys, has_formal_citation
 from ..tools.survey_tools import (
     _SURVEY_MIN_PLAIN_CHARS,
+    SURVEY_SECTION_MIN_CITATIONS,
     SURVEY_SECTION_SEQUENCE,
     SURVEY_SECTION_TITLES,
     _language_profile,
     _plain_latex_text,
+    _SURVEY_RUNTIME_PROCESS_RE,
     _survey_section_id_for_heading,
     _survey_state_writing_language,
     _survey_internal_alignment_hits,
@@ -106,6 +108,7 @@ class SurveyWriterAgent(Agent):
         external_resources = load_jsonl(ws / "user_seeds" / "seed_external_resources.jsonl")
         related_work_bib_path = ws / "literature" / "related_work.bib"
         related_work_keys = _extract_bib_keys(related_work_bib_path)
+        citation_pool_preview = _citation_pool_preview(ws, related_work_keys)
         return render_prompt(
             self.spec.prompt_template,
             ctx,
@@ -118,6 +121,7 @@ class SurveyWriterAgent(Agent):
             domain_map_preview=read_text_file(ws / "literature" / "domain_map.json", default="")[:5000],
             comparison_table_preview=read_text_file(ws / "literature" / "comparison_table.csv", default="")[:4000],
             survey_plan_preview=read_text_file(ws / "drafts" / "survey" / "survey_plan.json", default="")[:7000],
+            writing_template_preview=read_text_file(ws / "drafts" / "survey" / "writing_template.json", default="")[:2000],
             survey_state_preview=read_text_file(ws / "drafts" / "survey" / "survey_state.json", default="")[:7000],
             corpus_decision_preview=read_text_file(ws / "drafts" / "survey" / "corpus_decision.json", default="")[:2000],
             survey_audit_preview=read_text_file(ws / "drafts" / "survey" / "survey_audit.md", default="")[:3000],
@@ -125,6 +129,7 @@ class SurveyWriterAgent(Agent):
             related_work_preview=read_text_file(related_work_bib_path, default="")[:3000],
             related_work_keys=related_work_keys,
             related_work_key_count=len(related_work_keys),
+            citation_pool_preview=citation_pool_preview,
             seed_outline_profile_preview=seed_outline_profile[:7000],
             has_seed_outline_profile=bool(seed_outline_profile.strip()),
             seed_ideas_preview=seed_ideas[:3000],
@@ -145,6 +150,12 @@ class SurveyWriterAgent(Agent):
                 "请执行 T3.6 Gate-1：询问用户是否撰写综述论文。"
                 "必须调用 ask_human；若没有人工输入，暂停等待 resume，不要写伪默认值。"
                 "结果写入 drafts/survey/decision.json。"
+            )
+        elif phase == "template_gate":
+            message = (
+                "请执行 T3.6 Template Gate：询问用户选择综述写作语言与 LaTeX 模板。"
+                "选项包括 basic_zh、basic_en、ccf(默认 neurips)、utd(默认 informs) 或 other。"
+                "结果写入 drafts/survey/writing_template.json；没有真实人工输入时暂停等待 resume。"
             )
         elif phase == "survey_plan":
             message = (
@@ -192,8 +203,8 @@ class SurveyWriterAgent(Agent):
             )
         elif phase == "survey_compile":
             message = (
-                "请执行 T3.6-COMPILE：调用 latex_compile(tex_path=\"drafts/survey/survey.tex\") "
-                "编译 survey PDF。latex_compile 会自动写 "
+                "请执行 T3.6-COMPILE：根据 survey_state 写作语言调用 latex_compile 编译 survey PDF；"
+                "中文稿使用 engine=\"xelatex\"，英文稿使用 engine=\"pdflatex\"。latex_compile 会自动写 "
                 "drafts/survey/survey_compile_report.json；不要伪造或手抄 report。"
                 "若环境缺失或编译失败，按工具结果暂停/修复后 resume。"
             )
@@ -215,6 +226,19 @@ class SurveyWriterAgent(Agent):
                 return False, err
             if not isinstance(data.get("write_survey"), bool):
                 return False, "decision.json 必须包含布尔字段 write_survey"
+            return True, None
+        if phase == "template_gate":
+            data, err = _load_json(ws / "drafts" / "survey" / "writing_template.json")
+            if err:
+                return False, err
+            template_err = _validate_survey_template_selection(data)
+            if template_err:
+                return False, template_err
+            interaction_id = str(data.get("human_interaction_id") or "").strip()
+            if not interaction_id:
+                return False, "writing_template.json 必须包含 ask_human 返回的 human_interaction_id"
+            if not _human_interaction_exists(ws, interaction_id):
+                return False, "writing_template.json human_interaction_id 未在 _runtime/human_interactions.jsonl 中找到"
             return True, None
         if phase == "survey_plan":
             return _validate_survey_plan(ws / "drafts" / "survey" / "survey_plan.json")
@@ -266,6 +290,19 @@ class SurveyWriterAgent(Agent):
             ok, err = _validate_fingerprint_map(ws, audit.get("input_fingerprints"), "survey_audit.json")
             if not ok:
                 return False, err
+            required_checks = {
+                "section_level_citation_density",
+                "no_runtime_process_prose",
+                "bibliography_quality",
+            }
+            present_checks = {
+                str(item.get("name") or "")
+                for item in audit.get("checks") or []
+                if isinstance(item, dict)
+            }
+            missing_checks = sorted(required_checks - present_checks)
+            if missing_checks:
+                return False, "survey_audit.json 缺少新增质量检查，请重新运行 audit_survey_coverage: " + ", ".join(missing_checks)
             fail_checks = [
                 item.get("name")
                 for item in audit.get("checks") or []
@@ -397,6 +434,143 @@ def _load_json(path: Path) -> tuple[dict, str | None]:
     return data, None
 
 
+def _validate_survey_template_selection(data: dict) -> str | None:
+    family = str(data.get("template_family") or data.get("template_type") or "").strip().lower()
+    template_id = str(data.get("template_id") or "").strip().lower()
+    language = str(data.get("writing_language") or "").strip().lower()
+    if family not in {"basic_zh", "basic_en", "ccf", "utd", "other"}:
+        return "writing_template.json template_family 必须是 basic_zh/basic_en/ccf/utd/other"
+    if language not in {"zh", "en"}:
+        return "writing_template.json writing_language 必须是 zh 或 en"
+    if not template_id:
+        return "writing_template.json 必须包含 template_id"
+    if family == "ccf" and template_id == "auto":
+        return "writing_template.json CCF 模板需明确 template_id，默认应为 neurips"
+    if family == "utd" and template_id == "auto":
+        return "writing_template.json UTD 模板需明确 template_id，默认应为 informs"
+    return None
+
+
+def _human_interaction_exists(ws: Path, interaction_id: str) -> bool:
+    if not interaction_id:
+        return False
+    log_path = ws / "_runtime" / "human_interactions.jsonl"
+    if not log_path.exists():
+        return False
+    for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except Exception:
+            continue
+        if str(record.get("interaction_id") or "") == interaction_id:
+            return True
+    return False
+
+
+def _citation_pool_preview(ws: Path, related_work_keys: list[str], *, max_items: int = 80) -> str:
+    bib_entries = _parse_bib_preview(ws / "literature" / "related_work.bib")
+    quality_by_id = _notes_quality_by_id(ws / "literature" / "notes_manifest.json")
+    plan, _ = _load_json(ws / "drafts" / "survey" / "survey_plan.json")
+    section_paper_ids = _survey_plan_paper_ids(plan)
+    lines = [
+        "# Citation Pool",
+        "",
+        "Use exact BibTeX keys. Prefer entries marked core/supporting and avoid weak/do_not_cite entries for mechanism claims.",
+    ]
+    for idx, key in enumerate(related_work_keys[:max_items], start=1):
+        meta = bib_entries.get(key, {})
+        quality = quality_by_id.get(key) or quality_by_id.get(str(meta.get("title", "")).casefold()) or {}
+        title = str(meta.get("title") or "").strip() or "title unavailable"
+        year = str(meta.get("year") or "").strip() or "year?"
+        venue = str(meta.get("venue") or "").strip()
+        flags: list[str] = []
+        use = str(quality.get("citation_use") or "").strip()
+        score = quality.get("citation_quality_score")
+        if use:
+            flags.append(f"use={use}")
+        if score not in (None, ""):
+            flags.append(f"score={score}")
+        for section_id, paper_ids in section_paper_ids.items():
+            if key in paper_ids:
+                flags.append(f"planned_for={section_id}")
+        if "abstract-only" in str(meta.get("note") or "").casefold() or "metadata-only" in str(meta.get("note") or "").casefold():
+            flags.append("weak_context_only")
+        suffix = f" ({'; '.join(flags)})" if flags else ""
+        venue_part = f", {venue}" if venue else ""
+        lines.append(f"{idx}. `{key}`: {title} ({year}{venue_part}){suffix}")
+    if len(related_work_keys) > max_items:
+        lines.append(f"... {len(related_work_keys) - max_items} more keys omitted from preview; read related_work.bib if needed.")
+    return "\n".join(lines)
+
+
+def _parse_bib_preview(path: Path) -> dict[str, dict[str, str]]:
+    if not path.exists():
+        return {}
+    text = path.read_text(encoding="utf-8", errors="replace")
+    entries: dict[str, dict[str, str]] = {}
+    for match in re.finditer(r"@(\w+)\s*\{\s*([^,\s{}]+)\s*,(.*?)(?=^@\w+\s*\{|\Z)", text, flags=re.DOTALL | re.MULTILINE):
+        key = match.group(2).strip()
+        body = match.group(3)
+        fields = {
+            field.group(1).lower(): re.sub(r"\s+", " ", field.group(2)).strip()
+            for field in re.finditer(r"(?ims)^\s*([A-Za-z][A-Za-z0-9_-]*)\s*=\s*\{(.*?)\}\s*,?", body)
+        }
+        venue = fields.get("journal") or fields.get("booktitle") or fields.get("publisher") or ""
+        entries[key] = {
+            "title": fields.get("title", ""),
+            "year": fields.get("year", ""),
+            "venue": venue,
+            "note": fields.get("note", ""),
+        }
+    return entries
+
+
+def _notes_quality_by_id(path: Path) -> dict[str, dict]:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    out: dict[str, dict] = {}
+    for item in data.get("entries") or [] if isinstance(data, dict) else []:
+        if not isinstance(item, dict):
+            continue
+        for key in (
+            item.get("canonical_id"),
+            item.get("paper_id"),
+            item.get("bib_key"),
+            str(item.get("title") or "").casefold(),
+        ):
+            key_str = str(key or "").strip()
+            if key_str:
+                out[key_str] = item
+    return out
+
+
+def _survey_plan_paper_ids(plan: dict) -> dict[str, set[str]]:
+    out: dict[str, set[str]] = {}
+    for item in plan.get("outline") or [] if isinstance(plan, dict) else []:
+        if not isinstance(item, dict):
+            continue
+        section_id = str(item.get("section_id") or "").strip()
+        if not section_id:
+            continue
+        out.setdefault(section_id, set()).update(str(pid).strip() for pid in item.get("paper_ids") or [] if str(pid).strip())
+    taxonomy = plan.get("taxonomy") if isinstance(plan.get("taxonomy"), dict) else {}
+    for item in taxonomy.get("tree") or []:
+        if not isinstance(item, dict):
+            continue
+        for pid in item.get("paper_ids") or []:
+            pid_str = str(pid).strip()
+            if pid_str:
+                out.setdefault("taxonomy", set()).add(pid_str)
+                out.setdefault("comparison", set()).add(pid_str)
+    return out
+
+
 def _validate_survey_plan(path: Path) -> tuple[bool, str | None]:
     data, err = _load_json(path)
     if err:
@@ -407,6 +581,20 @@ def _validate_survey_plan(path: Path) -> tuple[bool, str | None]:
     writing_language = str(data.get("writing_language") or "").strip().lower()
     if writing_language not in {"zh", "en"}:
         return False, "survey_plan.json 顶层 writing_language 必须是 zh 或 en；双语输入不等于混合正文"
+    template_path = path.parent / "writing_template.json"
+    if template_path.exists():
+        template, template_err = _load_json(template_path)
+        if template_err:
+            return False, template_err
+        selected_language = str(template.get("writing_language") or "").strip().lower()
+        if selected_language in {"zh", "en"} and writing_language != selected_language:
+            return False, "survey_plan.json writing_language 必须与 writing_template.json 一致"
+        template_selection = data.get("template_selection")
+        if not isinstance(template_selection, dict) or _validate_survey_template_selection({**template, **template_selection}):
+            return False, "survey_plan.json 必须包含与 writing_template.json 一致的 template_selection"
+        for field in ("template_family", "template_id", "writing_language"):
+            if str(template_selection.get(field) or "").strip().lower() != str(template.get(field) or "").strip().lower():
+                return False, f"survey_plan.json template_selection.{field} 必须与 writing_template.json 一致"
     central_question = str(data.get("central_question") or data.get("review_question") or "").strip()
     if len(central_question) < 20:
         return False, "survey_plan.json 必须包含明确 central_question/review_question，不能只写主题名"
@@ -674,6 +862,12 @@ def _validate_survey_section(ws: Path, section_id: str) -> tuple[bool, str | Non
         return False, "survey abstract 文件应只包含摘要正文，不应包含 \\begin{abstract} 或 \\end{abstract}"
     if section_id == "abstract" and re.search(r"\\(?:section|subsection)\*?\{", text, flags=re.IGNORECASE):
         return False, "survey abstract 文件应只包含摘要正文，不应包含 \\section 或 \\subsection 标题"
+    process_hits = _survey_runtime_process_hits(text)
+    if process_hits:
+        return False, (
+            f"survey section {section_id} 暴露内部检索/运行过程术语: "
+            + ", ".join(process_hits[:8])
+        )
     language = _survey_state_writing_language(state, ws)
     lang_err = _validate_section_language_and_depth(section_id, text, language)
     if lang_err:
@@ -694,6 +888,9 @@ def _validate_survey_section(ws: Path, section_id: str) -> tuple[bool, str | Non
                 return False, f"survey section {section_id} 引用了 related_work.bib 不存在的 key: {missing_cites[:8]}{suffix}"
     elif cited and not bib_keys:
         return False, f"survey section {section_id} 含引用但 literature/related_work.bib 缺失或无 BibTeX key"
+    citation_err = _validate_section_citation_density(section_id, cited)
+    if citation_err:
+        return False, citation_err
     foreign = _foreign_survey_headers(text, section_id, state)
     if foreign:
         return False, f"survey section {section_id} 夹带其它章节: {', '.join(foreign[:5])}"
@@ -707,6 +904,20 @@ def _validate_survey_section(ws: Path, section_id: str) -> tuple[bool, str | Non
     if not ok:
         return False, err
     return True, None
+
+
+def _validate_section_citation_density(section_id: str, cited: set[str]) -> str | None:
+    if section_id in {"abstract", "conclusion"} or section_id.startswith("theme_"):
+        return None
+    minimum = SURVEY_SECTION_MIN_CITATIONS.get(section_id, 0)
+    if minimum and len(cited) < minimum:
+        return f"survey section {section_id} 引用过少: unique citations={len(cited)} < {minimum}"
+    return None
+
+
+def _survey_runtime_process_hits(text: str) -> list[str]:
+    plain = _plain_latex_text(text)
+    return sorted({match.group(0).strip() for match in _SURVEY_RUNTIME_PROCESS_RE.finditer(plain)})
 
 
 def _validate_section_language_and_depth(section_id: str, text: str, language: str) -> str | None:

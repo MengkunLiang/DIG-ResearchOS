@@ -17,6 +17,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from .base import Tool, ToolResult
+from .bibtex import bibtex_quality_issues, dedupe_bibtex_entries, extract_bib_keys_from_text
 from .manuscript import _extract_latex_cites, has_formal_citation
 from .workspace_policy import ToolAccessDenied, WorkspaceAccessPolicy
 
@@ -169,24 +170,26 @@ SURVEY_SECTION_WRITING_CONTRACTS = {
         ],
     },
     "background": {
-        "purpose": "Define the review object, boundaries, corpus/search strategy, and evidence rules.",
+        "purpose": "Define the review object, boundaries, public evidence policy, and coverage limits without exposing runtime pipeline internals.",
         "required_content": [
             "Core concepts and terminology.",
             "Inclusion and exclusion boundaries.",
-            "Corpus/search strategy or analysis method when available.",
-            "Evidence-level policy: full/partial notes, abstract-only context, metadata-only upgrade hints.",
+            "A short public-facing account of source types and screening logic when available.",
+            "Evidence-level policy in reader-facing language: deeply read work supports claims; lightly read work only informs scope and trends.",
             "Coverage limits that readers must know before the framework section.",
         ],
         "internal_shape": [
-            "Concepts -> scope boundaries -> corpus/search method -> evidence rules -> coverage limits.",
+            "Concepts -> scope boundaries -> public source strategy -> evidence rules -> coverage limits.",
         ],
         "evidence_rules": [
             "Do not use metadata-only records as claim evidence.",
             "Abstract-only material may signal coverage or emerging themes but must be labeled as weak.",
+            "Do not report exact runtime pool counts, queue labels, metadata triage labels, or ResearchOS processing categories in reader-facing prose.",
         ],
         "avoid": [
             "Do not duplicate the taxonomy framework.",
             "Do not hide exclusions or weak evidence boundaries.",
+            "Do not write internal process prose such as deduped candidate counts, FULL-TEXT/PARTIAL-TEXT/ABSTRACT-ONLY labels, metadata triage, backlog, or candidate pool accounting.",
         ],
     },
     "taxonomy": {
@@ -305,6 +308,25 @@ SURVEY_QUALITY_DIMENSIONS = (
 )
 
 OPTIONAL_SURVEY_SECTION_PREFIXES = ("theme_",)
+
+SURVEY_SECTION_MIN_CITATIONS = {
+    "introduction": 2,
+    "background": 4,
+    "taxonomy": 4,
+    "comparison": 5,
+    "challenges": 2,
+    "future": 2,
+}
+
+_SURVEY_RUNTIME_PROCESS_RE = re.compile(
+    r"(?i)"
+    r"metadata\s+triage|candidate_count|FULL[_\-\s]?TEXT|PARTIAL[_\-\s]?TEXT|ABSTRACT[_\-\s]?ONLY|"
+    r"FULL/PARTIAL\s+notes|metadata[_\-\s]?only|ResearchOS|backlog|候选池|保留候选|"
+    r"初筛后共获得\s*\d+\s*篇|经过去重|去重与.{0,12}初筛|"
+    r"全文阅读或深度部分阅读|精读笔记|精读文献|覆盖层|覆盖文献|摘要覆盖|"
+    r"仅基于摘要信息|尚未获取全文的候选文献|未获取全文候选|"
+    r"\d+\s*篇.{0,8}(?:精读|覆盖|候选)"
+)
 
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 _LATIN_WORD_RE = re.compile(r"\b[A-Za-z][A-Za-z\-]{2,}\b")
@@ -472,6 +494,11 @@ class BuildSurveyStateTool(Tool):
         writing_language = _infer_survey_writing_language(self.policy.workspace_dir, plan)
         taxonomy_classes = _taxonomy_classes(plan)
         theme_coverage_contract = _theme_coverage_contract(plan, taxonomy_classes, compact_mode=compact_mode)
+        template_selection = plan.get("template_selection") if isinstance(plan.get("template_selection"), dict) else {}
+        if not template_selection:
+            template_selection = _read_workspace_json_optional(
+                self.policy.workspace_dir / "drafts" / "survey" / "writing_template.json"
+            )
 
         sections: dict[str, dict[str, Any]] = {}
         for section_id in SURVEY_SECTION_SEQUENCE:
@@ -533,6 +560,7 @@ class BuildSurveyStateTool(Tool):
                     else "standalone_theme_sections_enabled"
                 ),
                 "writing_language": writing_language,
+                "template_selection": template_selection,
                 "central_question": str(plan.get("central_question") or plan.get("review_question") or ""),
                 "review_contribution": str(plan.get("review_contribution") or ""),
                 "quality_dimensions": list(SURVEY_QUALITY_DIMENSIONS),
@@ -652,23 +680,12 @@ class AssembleSurveyTool(Tool):
                 content=f"Survey bibliography has no BibTeX entries: {params.related_work_bib_path}",
                 error="invalid_bibliography",
             )
-
         title = params.title.strip() or _infer_title(state)
         writing_language = _survey_state_writing_language(state, self.policy.workspace_dir)
-        pieces = [
-            "\\documentclass[11pt]{article}",
-            "\\usepackage[margin=1in]{geometry}",
-            "\\usepackage{booktabs}",
-            "\\usepackage{hyperref}",
-            "\\usepackage{natbib}",
-            "\\title{" + _escape_latex_title(title) + "}",
-            "\\author{}",
-            "\\date{}",
-            "\\begin{document}",
-            "\\maketitle",
-        ]
+        template_selection = _survey_template_selection(state)
         included: list[str] = []
         missing: list[str] = []
+        body_sections: list[str] = []
 
         active_sections = _active_survey_sections(state)
         if "abstract" in active_sections:
@@ -680,10 +697,12 @@ class AssembleSurveyTool(Tool):
             if abstract_missing:
                 missing.append(abstract_missing)
             elif abstract_text.strip():
-                pieces.append("\\begin{abstract}\n" + _strip_survey_section_heading(abstract_text, "abstract").strip() + "\n\\end{abstract}")
+                abstract_body = _strip_survey_section_heading(abstract_text, "abstract").strip()
                 included.append("abstract")
             else:
                 missing.append("drafts/survey/sections/abstract.tex")
+        else:
+            abstract_body = ""
 
         body_order = [
             section_id for section_id in SURVEY_BODY_ASSEMBLY_ORDER if section_id in active_sections
@@ -704,10 +723,42 @@ class AssembleSurveyTool(Tool):
             if not text:
                 missing.append(f"drafts/survey/sections/{section_id}.tex")
                 continue
-            pieces.append(text.strip())
+            body_sections.append(text.strip())
             included.append(section_id)
-        pieces.extend(["\\bibliographystyle{plainnat}", "\\bibliography{references}", "\\end{document}", ""])
-        output_path.write_text("\n\n".join(pieces), encoding="utf-8")
+        cited_keys = set()
+        if abstract_body:
+            cited_keys.update(_extract_latex_cites(abstract_body))
+        for piece in body_sections:
+            cited_keys.update(_extract_latex_cites(piece))
+        bib_text = bib_path.read_text(encoding="utf-8", errors="replace")
+        blocking_bib_issues = _blocking_bibtex_quality_issues(bib_text, cited_keys)
+        if blocking_bib_issues:
+            return ToolResult(
+                ok=False,
+                content=(
+                    f"Survey bibliography quality check failed for {params.related_work_bib_path}: "
+                    + "; ".join(blocking_bib_issues[:12])
+                ),
+                error="invalid_bibliography_quality",
+            )
+
+        repo_root = _repo_root()
+        template_path = _resolve_latex_template(
+            repo_root,
+            template_selection.get("template_family", ""),
+            template_selection.get("template_id", ""),
+            writing_language,
+        )
+        tex = _render_survey_document(
+            title=title,
+            abstract=abstract_body,
+            body_sections=body_sections,
+            writing_language=writing_language,
+            template_selection=template_selection,
+            repo_root=repo_root,
+        )
+        output_path.write_text(tex, encoding="utf-8")
+        _copy_latex_template_support_files(template_path, output_path.parent)
         _copy_bibliography_for_survey(self.policy, params.related_work_bib_path, output_path.parent / "references.bib")
         assembly_manifest = {
             "semantics": "survey_assembly_input_fingerprints",
@@ -724,6 +775,7 @@ class AssembleSurveyTool(Tool):
             ),
             "included_sections": included,
             "writing_language": writing_language,
+            "template_selection": template_selection,
         }
         (output_path.parent / "survey_assembly_manifest.json").write_text(
             json.dumps(assembly_manifest, ensure_ascii=False, indent=2) + "\n",
@@ -767,6 +819,8 @@ class AuditSurveyCoverageTool(Tool):
         checks.append(_check("has_critical_assessment_section", "challenges" in section_texts, "Survey should include critical assessment/open challenges."))
         checks.append(_check("has_future_agenda_section", "future" in section_texts, "Survey should include a concrete future research agenda."))
         abstract_text = _extract_survey_abstract(tex)
+        if abstract_text.strip():
+            section_texts.setdefault("abstract", abstract_text)
         checks.append(_check("has_abstract_environment", bool(abstract_text.strip()), "Survey should place abstract text in a LaTeX abstract environment."))
         checks.append(
             _check(
@@ -827,7 +881,43 @@ class AuditSurveyCoverageTool(Tool):
         )
         missing_cites = sorted(cited - bib_keys) if bib_keys else []
         checks.append(_check("all_citations_in_bib", not missing_cites, f"Citation keys missing from bib: {missing_cites}"))
-        checks.append(_check("has_multiple_citations", len(cited) >= 3, f"Only {len(cited)} unique citation keys found.", level_if_fail="WARN"))
+        min_unique_citations = _survey_min_unique_citations(state)
+        checks.append(
+            _check(
+                "has_sufficient_citations",
+                len(cited) >= min_unique_citations,
+                f"Only {len(cited)} unique citation keys found; minimum={min_unique_citations}.",
+            )
+        )
+        citation_issues = _survey_section_citation_issues(section_texts, state)
+        checks.append(
+            _check(
+                "section_level_citation_density",
+                not citation_issues,
+                "Citation density issues: " + "; ".join(citation_issues[:8]),
+            )
+        )
+        process_issues = _survey_runtime_process_issues(section_texts)
+        checks.append(
+            _check(
+                "no_runtime_process_prose",
+                not process_issues,
+                "Runtime process prose found: " + "; ".join(process_issues[:8]),
+            )
+        )
+        bib_quality_issues = _blocking_bibtex_quality_issues(
+            self.policy.resolve_read(params.related_work_bib_path).read_text(encoding="utf-8", errors="replace")
+            if bib_keys
+            else "",
+            cited,
+        )
+        checks.append(
+            _check(
+                "bibliography_quality",
+                not bib_quality_issues,
+                "Bibliography quality issues: " + "; ".join(bib_quality_issues[:12]),
+            )
+        )
         plan_issues = _survey_plan_quality_issues(plan)
         checks.append(
             _check(
@@ -1088,6 +1178,15 @@ def _read_json(path: Path) -> dict[str, Any]:
 def _read_optional_json(policy: WorkspaceAccessPolicy, rel_path: str) -> dict[str, Any]:
     try:
         path = policy.resolve_read(rel_path)
+        if not path.exists() or path.stat().st_size <= 0:
+            return {}
+        return _read_json(path)
+    except Exception:
+        return {}
+
+
+def _read_workspace_json_optional(path: Path) -> dict[str, Any]:
+    try:
         if not path.exists() or path.stat().st_size <= 0:
             return {}
         return _read_json(path)
@@ -1881,9 +1980,9 @@ def _section_outline_text(section_id: str, entry: dict[str, Any], plan: dict[str
     covers = entry.get("covers") or []
     paper_ids = entry.get("paper_ids") or []
     sectioning_policy = plan.get("sectioning_policy") if isinstance(plan.get("sectioning_policy"), (dict, str)) else "compact"
-    reader_question = str(entry.get("reader_question") or "")
-    section_argument = str(entry.get("section_argument") or entry.get("function") or "")
-    central_question = str(plan.get("central_question") or plan.get("review_question") or "")
+    reader_question = _sanitize_runtime_process_instruction(str(entry.get("reader_question") or ""))
+    section_argument = _sanitize_runtime_process_instruction(str(entry.get("section_argument") or entry.get("function") or ""))
+    central_question = _sanitize_runtime_process_instruction(str(plan.get("central_question") or plan.get("review_question") or ""))
     contract = entry.get("writing_contract") if isinstance(entry.get("writing_contract"), dict) else _section_writing_contract(section_id)
     compact_contract = _section_compact_theme_contract(section_id, entry, plan)
     lines = [
@@ -1906,6 +2005,9 @@ def _section_outline_text(section_id: str, entry: dict[str, Any], plan: dict[str
         *_outline_contract_items("evidence_rules", contract.get("evidence_rules")),
         *_outline_contract_items("avoid", contract.get("avoid")),
         "",
+        "## Citation Requirements",
+        *_section_citation_requirement_lines(section_id),
+        "",
         "## Survey Quality Standard",
         "- A survey is a second-order research contribution: it reorganizes literature around a question, not a list of papers.",
         "- Every section needs an internal argument. Use claim -> evidence -> comparison -> evaluation paragraphs.",
@@ -1926,11 +2028,42 @@ def _section_outline_text(section_id: str, entry: dict[str, Any], plan: dict[str
     return "\n".join(lines)
 
 
+def _sanitize_runtime_process_instruction(text: str) -> str:
+    if not text:
+        return ""
+    if _SURVEY_RUNTIME_PROCESS_RE.search(text):
+        return (
+            "Use reader-facing scope, concept, evidence-boundary, and synthesis language; "
+            "do not report internal corpus counts, reading-status labels, or metadata triage process details."
+        )
+    return text
+
+
 def _outline_contract_items(label: str, raw_items: object) -> list[str]:
     items = [str(item).strip() for item in raw_items or [] if str(item).strip()] if isinstance(raw_items, list) else []
     if not items:
         return [f"- {label}: unspecified"]
     return [f"- {label}:"] + [f"  - {item}" for item in items]
+
+
+def _section_citation_requirement_lines(section_id: str) -> list[str]:
+    if section_id == "abstract":
+        return [
+            "- minimum_unique_citations: 0",
+            "- rule: Abstract must not contain formal citations.",
+        ]
+    minimum = SURVEY_SECTION_MIN_CITATIONS.get(section_id, 0)
+    if minimum <= 0:
+        return [
+            "- minimum_unique_citations: 0",
+            "- rule: Do not introduce new evidence claims; cite only if needed for continuity.",
+        ]
+    return [
+        f"- minimum_unique_citations: {minimum}",
+        "- rule: Use exact keys from related_work.bib and distribute citations across claim-bearing paragraphs.",
+        "- rule: Citation count is not a target by itself; every citation must anchor a concept, stream, comparison, challenge, or agenda item.",
+        "- rule: Do not cite metadata-only or explicitly weak/do_not_cite records as mechanism evidence.",
+    ]
 
 
 def _section_compact_theme_contract(section_id: str, entry: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
@@ -1995,10 +2128,11 @@ def _section_writing_skill(section_id: str) -> list[str]:
             "- Make the contribution of the survey explicit without promising experiments or original empirical results.",
         ],
         "background": [
-            "- Define core concepts, inclusion/exclusion boundaries, corpus/search strategy, and analysis method.",
+            "- Define core concepts, inclusion/exclusion boundaries, source strategy, and public evidence rules without exposing runtime pipeline accounting.",
             "- Explain what is inside the review and what is deliberately outside it.",
             "- Do not duplicate the framework section; use background to set scope, terms, and evidence rules.",
             "- Separate established foundations from weak or emerging evidence.",
+            "- Do not write exact internal candidate counts, queue labels, metadata triage labels, or FULL/PARTIAL/ABSTRACT-ONLY runtime tags in the paper body.",
         ],
         "taxonomy": [
             "- Carry the main explanatory framework here, using subsections or compact paragraphs for classes, stages, perspectives, or mechanisms.",
@@ -2103,7 +2237,194 @@ def _copy_bibliography_for_survey(
     if not bib_path.exists():
         return
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    target_path.write_text(bib_path.read_text(encoding="utf-8", errors="replace"), encoding="utf-8")
+    target_path.write_text(dedupe_bibtex_entries(bib_path.read_text(encoding="utf-8", errors="replace")), encoding="utf-8")
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _copy_latex_template_support_files(template_path: Path | None, target_dir: Path) -> None:
+    if not template_path or not template_path.exists():
+        return
+    for source in template_path.parent.iterdir():
+        if source.suffix.lower() not in {".sty", ".cls", ".bst"}:
+            continue
+        target = target_dir / source.name
+        try:
+            target.write_bytes(source.read_bytes())
+        except OSError:
+            continue
+
+
+_BIBTEX_BLOCKING_MARKERS = (
+    "duplicate_key",
+    "invalid_key",
+    "missing_or_unknown_title",
+    "missing_year",
+    "marked_irrelevant",
+    "contains_unknown_placeholder",
+    "placeholder_doi",
+    "missing_booktitle",
+    "likely_journal_record_as_inproceedings",
+    "unbalanced_braces",
+)
+
+
+def _blocking_bibtex_quality_issues(bib_text: str, cited_keys: set[str]) -> list[str]:
+    issues = bibtex_quality_issues(bib_text)
+    if not issues:
+        return []
+    blocking: list[str] = []
+    for item in issues:
+        if not any(marker in item for marker in _BIBTEX_BLOCKING_MARKERS):
+            continue
+        if item == "unbalanced_braces" or item == "no_parseable_bibtex_entries":
+            blocking.append(item)
+            continue
+        key = item.split(":", 1)[0].strip()
+        if key in cited_keys or "duplicate_key" in item:
+            blocking.append(item)
+    return blocking
+
+
+def _survey_template_selection(state: dict[str, Any]) -> dict[str, str]:
+    shared = state.get("shared_facts") if isinstance(state.get("shared_facts"), dict) else {}
+    selection = shared.get("template_selection") if isinstance(shared, dict) else {}
+    if not isinstance(selection, dict):
+        selection = {}
+    family = str(selection.get("template_family") or "").strip().lower()
+    template_id = str(selection.get("template_id") or "").strip().lower()
+    language = str(selection.get("writing_language") or "").strip().lower()
+    return {
+        "template_family": family,
+        "template_id": template_id,
+        "writing_language": language,
+    }
+
+
+def _render_survey_document(
+    *,
+    title: str,
+    abstract: str,
+    body_sections: list[str],
+    writing_language: str,
+    template_selection: dict[str, str],
+    repo_root: Path,
+) -> str:
+    family = str(template_selection.get("template_family") or "").strip().lower()
+    template_id = str(template_selection.get("template_id") or "").strip().lower()
+    template_path = _resolve_latex_template(repo_root, family, template_id, writing_language)
+    body = _survey_document_body(title=title, abstract=abstract, body_sections=body_sections, bib_stem="references")
+    if template_path and template_path.exists():
+        template = template_path.read_text(encoding="utf-8", errors="replace")
+        rendered = _replace_template_document_body(template, body, bib_stem="references")
+    else:
+        rendered = _fallback_survey_document(
+            title=title,
+            abstract=abstract,
+            body_sections=body_sections,
+            writing_language=writing_language,
+            bib_stem="references",
+        )
+    meta = (
+        f"% ResearchOS template_family: {family or ('basic_zh' if writing_language == 'zh' else 'basic_en')}\n"
+        f"% ResearchOS template_id: {template_id or ('basic_zh' if writing_language == 'zh' else 'basic_en')}\n"
+        f"% ResearchOS template_source: {template_path.relative_to(repo_root).as_posix() if template_path and template_path.exists() else 'fallback'}\n"
+    )
+    return rendered.replace("\\documentclass", meta + "\\documentclass", 1)
+
+
+def _fallback_survey_document(
+    *,
+    title: str,
+    abstract: str,
+    body_sections: list[str],
+    writing_language: str,
+    bib_stem: str,
+) -> str:
+    documentclass = "\\documentclass[11pt]{ctexart}" if writing_language == "zh" else "\\documentclass[11pt]{article}"
+    pieces = [
+        documentclass,
+        "\\usepackage[margin=1in]{geometry}",
+        "\\usepackage{booktabs}",
+        "\\usepackage{hyperref}",
+        "\\usepackage{natbib}",
+        "\\begin{document}",
+        _survey_document_body(title=title, abstract=abstract, body_sections=body_sections, bib_stem=bib_stem),
+        "\\end{document}",
+        "",
+    ]
+    return "\n\n".join(pieces)
+
+
+def _survey_document_body(*, title: str, abstract: str, body_sections: list[str], bib_stem: str) -> str:
+    parts = [
+        "\\title{" + _escape_latex_title(title) + "}",
+        "\\author{}",
+        "\\date{}",
+        "\\maketitle",
+        "\\begin{abstract}\n" + abstract.strip() + "\n\\end{abstract}",
+        *[section.strip() for section in body_sections if section.strip()],
+        "\\bibliographystyle{plainnat}",
+        f"\\bibliography{{{bib_stem}}}",
+    ]
+    return "\n\n".join(parts)
+
+
+def _replace_template_document_body(template: str, body: str, *, bib_stem: str) -> str:
+    preamble, begin_cmd, rest = _split_template_at_begin_document(template)
+    if not begin_cmd:
+        return template.strip() + "\n\n" + body + "\n"
+    end_match = re.search(r"\\end\{document\}", rest, flags=re.IGNORECASE)
+    suffix = rest[end_match.end() :] if end_match else ""
+    preamble = _remove_template_title_author(preamble)
+    preamble = _ensure_template_bib_style(preamble)
+    body = re.sub(r"\\bibliography\{[^}]*\}", lambda _m: f"\\bibliography{{{bib_stem}}}", body)
+    return preamble.rstrip() + "\n\n" + begin_cmd + "\n" + body.strip() + "\n\\end{document}" + suffix
+
+
+def _split_template_at_begin_document(template: str) -> tuple[str, str, str]:
+    match = re.search(r"\\begin\{document\}", template or "", flags=re.IGNORECASE)
+    if not match:
+        return template, "", ""
+    return template[: match.start()], match.group(0), template[match.end() :]
+
+
+def _remove_template_title_author(preamble: str) -> str:
+    cleaned = re.sub(r"(?ms)^\\title\{.*?\}\s*", "", preamble)
+    cleaned = re.sub(r"(?ms)^\\author\{.*?\}\s*", "", cleaned)
+    cleaned = re.sub(r"(?m)^\\date\{.*?\}\s*", "", cleaned)
+    return cleaned
+
+
+def _ensure_template_bib_style(preamble: str) -> str:
+    if "\\bibliographystyle" in preamble:
+        return re.sub(r"\\bibliographystyle\{[^}]*\}", lambda _m: "\\bibliographystyle{plainnat}", preamble)
+    return preamble.rstrip() + "\n\\bibliographystyle{plainnat}\n"
+
+
+def _resolve_latex_template(repo_root: Path, family: str, template_id: str, writing_language: str) -> Path | None:
+    base = repo_root / "latex_templete"
+    candidates: list[Path] = []
+    if family == "basic_zh" or writing_language == "zh":
+        candidates.append(base / "normal" / "basic_zh.tex")
+    elif family == "basic_en":
+        candidates.append(base / "normal" / "basic_en.tex")
+    elif family == "utd":
+        candidates.append(base / "utd" / "informs_basic.tex")
+    elif family == "ccf":
+        tid = template_id or "neurips"
+        if tid == "neurips":
+            candidates.append(base / "ccf-latex-templates" / "NeurIPS" / "neurips_2026.tex")
+        elif tid == "kdd":
+            candidates.extend((base / "ccf-latex-templates" / "SIGKDD").glob("*.tex"))
+    if not candidates:
+        candidates.append(base / "normal" / ("basic_zh.tex" if writing_language == "zh" else "basic_en.tex"))
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def _active_survey_sections(state: dict[str, Any]) -> list[str]:
@@ -2177,11 +2498,47 @@ def _bib_keys_optional(policy: WorkspaceAccessPolicy, rel_path: str) -> set[str]
         text = path.read_text(encoding="utf-8", errors="replace")
     except Exception:
         return set()
-    return set(re.findall(r"@\w+\{([^,\s]+)", text))
+    return set(extract_bib_keys_from_text(text))
 
 
 def _cited_keys(text: str) -> set[str]:
     return _extract_latex_cites(text)
+
+
+def _survey_min_unique_citations(state: dict[str, Any]) -> int:
+    active = [
+        sid
+        for sid in _active_survey_sections(state)
+        if sid not in {"abstract", "conclusion"} and not sid.startswith("theme_")
+    ]
+    if not active:
+        return 0
+    return max(6, min(14, sum(SURVEY_SECTION_MIN_CITATIONS.get(sid, 0) for sid in active) // 2))
+
+
+def _survey_section_citation_issues(section_texts: dict[str, str], state: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    for section_id in _active_survey_sections(state):
+        if section_id in {"abstract", "conclusion"} or section_id.startswith("theme_"):
+            continue
+        text = section_texts.get(section_id, "")
+        if not text.strip():
+            continue
+        cited = _extract_latex_cites(text)
+        minimum = SURVEY_SECTION_MIN_CITATIONS.get(section_id, 0)
+        if len(cited) < minimum:
+            issues.append(f"{section_id} has {len(cited)} unique citations; minimum={minimum}")
+    return issues
+
+
+def _survey_runtime_process_issues(section_texts: dict[str, str]) -> list[str]:
+    issues: list[str] = []
+    for section_id, text in section_texts.items():
+        plain = _plain_latex_text(text)
+        hits = sorted({match.group(0).strip() for match in _SURVEY_RUNTIME_PROCESS_RE.finditer(plain)})
+        if hits:
+            issues.append(f"{section_id}: " + ", ".join(hits[:6]))
+    return issues
 
 
 def _extract_survey_abstract(tex: str) -> str:

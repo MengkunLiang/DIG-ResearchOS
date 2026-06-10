@@ -631,7 +631,10 @@ class TestMultiModeStateFlow:
         (temp_workspace / "evaluation").mkdir()
         (temp_workspace / "evaluation" / "evaluation_decision.md").write_text("next_task: T8\n", encoding="utf-8")
         (temp_workspace / "drafts").mkdir()
-        (temp_workspace / "drafts" / "writing_style.json").write_text('{"venue_style":"ccf_a"}\n', encoding="utf-8")
+        (temp_workspace / "drafts" / "writing_style.json").write_text(
+            '{"venue_style":"ccf_a","template_family":"ccf","template_id":"neurips","writing_language":"en"}\n',
+            encoding="utf-8",
+        )
         sm_path = temp_workspace / "state_machine.yaml"
         sm_path.write_text(yaml.dump(sm_config))
         sm = StateMachine(sm_path)
@@ -670,7 +673,12 @@ class TestMultiModeStateFlow:
         sm_path.write_text(yaml.dump(sm_config))
         sm = StateMachine(sm_path)
 
-        for invalid_style_text in ["not-json", '{"venue_style":"other"}\n', '{"suggested":"ccf_a"}\n']:
+        for invalid_style_text in [
+            "not-json",
+            '{"venue_style":"other","template_family":"ccf","template_id":"neurips","writing_language":"en"}\n',
+            '{"suggested":"ccf_a"}\n',
+            '{"venue_style":"ccf_a","template_family":"ccf","template_id":"auto","writing_language":"en"}\n',
+        ]:
             (temp_workspace / "drafts" / "writing_style.json").write_text(invalid_style_text, encoding="utf-8")
             assert sm._parse_t75_decision(temp_workspace) == "T8-STYLE-GATE"
 

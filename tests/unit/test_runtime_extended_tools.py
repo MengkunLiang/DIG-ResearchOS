@@ -11,6 +11,13 @@ from researchos.agents.writer import WriterAgent
 from researchos.runtime.config import RuntimeSettings, WebFetchSettings
 from researchos.testing.mocks import MockHumanInterface
 from researchos.tools.bash_run import BashRunTool
+from researchos.tools.bibtex import (
+    bibtex_quality_issues,
+    dedupe_bibtex_entries,
+    escape_bibtex_value,
+    parse_bib_entries,
+    stable_bib_key,
+)
 from researchos.tools.citation_graph import build_domain_map
 from researchos.tools.glob_files import GlobFilesTool
 from researchos.tools.grep_search import GrepSearchTool
@@ -370,6 +377,36 @@ def test_build_domain_map_does_not_resolve_edges_by_title_fallback():
     )
 
     assert domain_map["citation_edges"] == []
+
+
+def test_bibtex_helpers_parse_quality_dedupe_and_escape():
+    text = (
+        "@article{smith2024, author={Smith, Ann}, title={A Good Paper}, journal={Journal}, year={2024}}\n"
+        "@inproceedings{bad2025, title={Unknown}, booktitle={Unknown}, year={XXXX}, doi={10.1234/123456}}\n"
+        "@article{smith2024, author={Smith, Ann}, title={Duplicate Paper}, journal={Journal}, year={2024}}\n"
+    )
+
+    entries = parse_bib_entries(text)
+    assert [entry["key"] for entry in entries] == ["smith2024", "bad2025", "smith2024"]
+
+    issues = bibtex_quality_issues(text)
+    assert "bad2025: missing_or_unknown_title" in issues
+    assert "bad2025: missing_year" in issues
+    assert "bad2025: placeholder_doi" in issues
+    assert "bad2025: missing_booktitle" in issues
+    assert "smith2024: duplicate_key_2" in issues
+    assert "101287mnsc10800869: invalid_key" not in bibtex_quality_issues(
+        "@article{101287mnsc10800869, author={Known, K.}, title={Known Unknowns in Decision Systems}, year={2024}}\n"
+    )
+    assert "unknown2025algorithmic: contains_unknown_placeholder" not in bibtex_quality_issues(
+        "@article{unknown2025algorithmic, author={Known, K.}, title={Algorithmic Risk in Practice}, year={2025}}\n"
+    )
+
+    deduped = dedupe_bibtex_entries(text)
+    assert deduped.count("@article{smith2024") == 1
+    assert "Duplicate Paper" not in deduped
+    assert escape_bibtex_value("A&B_#%") == r"A\&B\_\#\%"
+    assert stable_bib_key("10.1287/mnsc.2024.001") == "p_10_1287_mnsc_2024_001"
 
 
 def test_audit_writing_craft_warns_when_related_work_ignores_pre_t5_signals():
@@ -819,6 +856,8 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
     assert (tmp_workspace / "drafts" / "section_outlines" / "methodology.md").exists()
     method_outline = (tmp_workspace / "drafts" / "section_outlines" / "methodology.md").read_text(encoding="utf-8")
     assert "## Internal Alignment IDs" in method_outline
+    assert "## Section Writing Contract" in method_outline
+    assert paper_state["sections"]["methodology"]["writing_contract"]["purpose"].startswith("Explain what the artifact")
     ok, err = validator.validate_outputs(_WriterContext(tmp_workspace, "section_plan"))
     assert ok, err
 
@@ -869,13 +908,24 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
     assert ok, err
 
     assemble_tool = AssembleManuscriptTool(policy)
-    (tmp_workspace / "drafts" / "writing_style.json").write_text('{"venue_style":"both"}\n', encoding="utf-8")
-    assembled = await assemble_tool.execute(target_venue="neurips", venue_style="both")
+    (tmp_workspace / "drafts" / "writing_style.json").write_text(
+        '{"venue_style":"both","template_family":"ccf","template_id":"neurips","writing_language":"en"}\n',
+        encoding="utf-8",
+    )
+    assembled = await assemble_tool.execute(
+        target_venue="neurips",
+        venue_style="both",
+        template_family="ccf",
+        template_id="neurips",
+        writing_language="en",
+    )
     assert assembled.ok
     assert (tmp_workspace / "drafts" / "is" / "paper.tex").exists()
     assert (tmp_workspace / "drafts" / "ccf_a" / "paper.tex").exists()
     paper = (tmp_workspace / "drafts" / "paper.tex").read_text(encoding="utf-8")
     assert "\\documentclass" in paper
+    assert "\\usepackage{neurips_2026}" in paper
+    assert (tmp_workspace / "drafts" / "neurips_2026.sty").exists()
     assert "\\begin{document}" in paper
     assert "\\bibliography{related_work}" in paper
     assert "\\section{Introduction}" in paper

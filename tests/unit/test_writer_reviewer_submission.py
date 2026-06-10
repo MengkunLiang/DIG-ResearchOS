@@ -22,6 +22,7 @@ from researchos.tools.manuscript import (
     BindReviewRoundTool,
     CORE_SECTIONS,
     PrepareSubmissionBundleTool,
+    SECTION_WRITING_CONTRACTS,
     craft_audit_input_fingerprints,
 )
 from researchos.tools.latex_compile import _compile_dependency_fingerprint
@@ -696,7 +697,16 @@ def test_writer_style_gate_requires_human_interaction_id(temp_workspace):
     agent = WriterAgent()
     ctx = MockExecutionContext("style_gate", temp_workspace, {"phase": "style_gate"})
     (temp_workspace / "drafts" / "writing_style.json").write_text(
-        '{"venue_style":"ccf_a","suggested":"ccf_a"}\n',
+        json.dumps(
+            {
+                "venue_style": "ccf_a",
+                "suggested": "ccf_a",
+                "template_family": "ccf",
+                "template_id": "neurips",
+                "writing_language": "en",
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -725,7 +735,17 @@ def test_writer_style_gate_accepts_recorded_human_interaction(temp_workspace):
         encoding="utf-8",
     )
     (temp_workspace / "drafts" / "writing_style.json").write_text(
-        '{"venue_style":"ccf_a","suggested":"ccf_a","human_interaction_id":"human_test123"}\n',
+        json.dumps(
+            {
+                "venue_style": "ccf_a",
+                "suggested": "ccf_a",
+                "template_family": "ccf",
+                "template_id": "neurips",
+                "writing_language": "en",
+                "human_interaction_id": "human_test123",
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -975,11 +995,16 @@ def _write_valid_paper_state(workspace: Path) -> None:
             "status": "pending",
             "file": f"drafts/sections/{section_id}.tex",
             "outline": f"drafts/section_outlines/{section_id}.md",
+            "writing_contract": SECTION_WRITING_CONTRACTS[section_id],
         }
         outline_path = workspace / "drafts" / "section_outlines" / f"{section_id}.md"
         outline_path.parent.mkdir(parents=True, exist_ok=True)
         outline_path.write_text(
-            f"# Section Outline: {section_id}\n\n## Purpose\n" + ("Detailed outline. " * 10),
+            f"# Section Outline: {section_id}\n\n"
+            "## Section Writing Contract\n"
+            + json.dumps(SECTION_WRITING_CONTRACTS[section_id], ensure_ascii=False, indent=2)
+            + "\n\n## Purpose\n"
+            + ("Detailed outline. " * 10),
             encoding="utf-8",
         )
     fingerprint_paths = {
@@ -1289,7 +1314,10 @@ def test_writer_validate_outputs_both_rejects_annotation_only_variants(temp_work
     ctx = MockExecutionContext("draft", temp_workspace, {"phase": "draft"})
     _write_valid_draft_artifacts(temp_workspace)
     main = (temp_workspace / "drafts" / "paper.tex").read_text(encoding="utf-8")
-    (temp_workspace / "drafts" / "writing_style.json").write_text('{"venue_style":"both"}\n', encoding="utf-8")
+    (temp_workspace / "drafts" / "writing_style.json").write_text(
+        '{"venue_style":"both","template_family":"ccf","template_id":"neurips","writing_language":"en"}\n',
+        encoding="utf-8",
+    )
     for style_id in ("is", "ccf_a"):
         style_dir = temp_workspace / "drafts" / style_id
         style_dir.mkdir(parents=True, exist_ok=True)
@@ -1317,7 +1345,10 @@ def test_writer_validate_outputs_both_accepts_style_revised_variants(temp_worksp
     ctx = MockExecutionContext("draft", temp_workspace, {"phase": "draft"})
     _write_valid_draft_artifacts(temp_workspace)
     main = (temp_workspace / "drafts" / "paper.tex").read_text(encoding="utf-8")
-    (temp_workspace / "drafts" / "writing_style.json").write_text('{"venue_style":"both"}\n', encoding="utf-8")
+    (temp_workspace / "drafts" / "writing_style.json").write_text(
+        '{"venue_style":"both","template_family":"ccf","template_id":"neurips","writing_language":"en"}\n',
+        encoding="utf-8",
+    )
     for style_id, sentence in (
         ("is", "This IS-style revision expands the theoretical positioning and validity framing."),
         ("ccf_a", "This CCF-A revision tightens the result headline and reproducibility framing."),
