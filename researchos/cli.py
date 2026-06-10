@@ -270,6 +270,7 @@ class PreparedRuntime:
     skill_roots: list[Path]
     registry: ToolRegistry
     llm_client: LLMClient
+    skill_count: int = 0
     mcp_server_count: int = 0
     mcp_tool_count: int = 0
 
@@ -329,12 +330,13 @@ def _resolve_skill_roots(args: argparse.Namespace, workspace_dir: Path) -> list[
 def _build_tool_registry(
     skill_roots: list[Path],
     runtime_settings: RuntimeSettings,
+    discovered_skills: dict | None = None,
 ) -> ToolRegistry:
     """构造本次 CLI 运行用到的完整 ToolRegistry。"""
 
     registry = ToolRegistry()
     register_builtin_tools(registry, runtime_settings)
-    register_skill_tools(registry, skill_roots)
+    register_skill_tools(registry, skill_roots, discovered_skills=discovered_skills)
     return registry
 
 
@@ -497,6 +499,7 @@ def _emit_startup_ui(
     show_banner: bool = True,
     show_summary: bool = True,
     skill_roots: list[Path] | None = None,
+    skill_count: int | None = None,
     mcp_server_count: int = 0,
     mcp_tool_count: int = 0,
 ) -> None:
@@ -516,6 +519,7 @@ def _emit_startup_ui(
         gates=Path(args.gates).resolve() if hasattr(args, "gates") and args.gates else None,
         model_routing=Path(args.model_routing).resolve() if hasattr(args, "model_routing") else None,
         skill_roots=skill_roots,
+        skill_count=skill_count,
         mcp_server_count=mcp_server_count,
         mcp_tool_count=mcp_tool_count,
     )
@@ -537,7 +541,8 @@ async def _prepare_runtime(args: argparse.Namespace, workspace_dir: Path) -> Pre
     skill_roots = _resolve_skill_roots(args, workspace_dir)
     runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
     runtime_settings = _runtime_settings_for_args(runtime_settings, args)
-    registry = _build_tool_registry(skill_roots, runtime_settings)
+    discovered_skills = discover_skills_from_roots(skill_roots)
+    registry = _build_tool_registry(skill_roots, runtime_settings, discovered_skills=discovered_skills)
     mcp_server_count, mcp_tool_count = await _maybe_register_mcp_tools(args, registry)
     _validate_agent_tools(registry)
     _maybe_check_docker_availability()
@@ -545,6 +550,7 @@ async def _prepare_runtime(args: argparse.Namespace, workspace_dir: Path) -> Pre
     await _maybe_run_selftest(args, llm_client)
     return PreparedRuntime(
         skill_roots=skill_roots,
+        skill_count=len(discovered_skills),
         registry=registry,
         llm_client=llm_client,
         mcp_server_count=mcp_server_count,
@@ -596,6 +602,7 @@ async def run_command(args: argparse.Namespace) -> int:
         workspace_dir=workspace_dir,
         show_banner=False,
         skill_roots=prepared.skill_roots,
+        skill_count=prepared.skill_count,
         mcp_server_count=prepared.mcp_server_count,
         mcp_tool_count=prepared.mcp_tool_count,
     )
@@ -760,6 +767,7 @@ async def run_task_command(args: argparse.Namespace) -> int:
         workspace_dir=workspace_dir,
         show_banner=False,
         skill_roots=prepared.skill_roots,
+        skill_count=prepared.skill_count,
         mcp_server_count=prepared.mcp_server_count,
         mcp_tool_count=prepared.mcp_tool_count,
     )
@@ -807,6 +815,7 @@ async def run_skill_command(args: argparse.Namespace) -> int:
         workspace_dir=workspace_dir,
         show_banner=False,
         skill_roots=prepared.skill_roots,
+        skill_count=prepared.skill_count,
         mcp_server_count=prepared.mcp_server_count,
         mcp_tool_count=prepared.mcp_tool_count,
     )

@@ -100,9 +100,15 @@ def discover_skills_from_roots(skill_roots: Iterable[Path]) -> dict[str, Skill]:
     return merged
 
 
-def register_skill_tools(registry: ToolRegistry, skill_roots: Iterable[Path]) -> None:
+def register_skill_tools(
+    registry: ToolRegistry,
+    skill_roots: Iterable[Path],
+    *,
+    discovered_skills: dict[str, Skill] | None = None,
+) -> None:
     """自动注册 `skills/*/tools/*.py` 中导出的 TOOL 实例。"""
-    for skill in discover_skills_from_roots(skill_roots).values():
+    skills = discovered_skills if discovered_skills is not None else discover_skills_from_roots(skill_roots)
+    for skill in skills.values():
         tools_dir = skill.skill_dir / "tools"
         if not tools_dir.is_dir():
             continue

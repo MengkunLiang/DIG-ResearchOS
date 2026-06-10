@@ -136,6 +136,7 @@ def format_startup_summary(
     gates: Path | None = None,
     model_routing: Path | None = None,
     skill_roots: list[Path] | None = None,
+    skill_count: int | None = None,
     mcp_server_count: int = 0,
     mcp_tool_count: int = 0,
 ) -> str:
@@ -151,8 +152,17 @@ def format_startup_summary(
     if model_routing is not None:
         lines.append(f"[startup] model_routing={model_routing}")
     if skill_roots:
-        roots = ", ".join(str(item) for item in skill_roots)
-        lines.append(f"[startup] skill_roots={roots}")
+        existing = [item for item in skill_roots if item.exists()]
+        missing = [item for item in skill_roots if not item.exists()]
+        discovered = "unknown" if skill_count is None else str(skill_count)
+        lines.append(
+            "[startup] skills="
+            f"discovered={discovered} roots={len(skill_roots)} existing={len(existing)} missing={len(missing)}"
+        )
+        if existing:
+            lines.append("[startup] skill_roots_existing=" + ", ".join(str(item) for item in existing))
+        if missing:
+            lines.append("[startup] skill_roots_missing=" + ", ".join(str(item) for item in missing))
     lines.append(
         f"[startup] mcp_servers={mcp_server_count} mcp_tools={mcp_tool_count}"
     )

@@ -44,9 +44,12 @@ def test_format_startup_summary_renders_paths():
         gates=Path("/tmp/gates.yaml"),
         model_routing=Path("/tmp/model_routing.yaml"),
         skill_roots=[Path("/tmp/skills")],
+        skill_count=3,
         mcp_server_count=2,
         mcp_tool_count=5,
     )
 
     assert "workspace=/tmp/workspace" in summary
+    assert "skills=discovered=3 roots=1" in summary
+    assert "skill_roots_missing=/tmp/skills" in summary
     assert "mcp_servers=2 mcp_tools=5" in summary
