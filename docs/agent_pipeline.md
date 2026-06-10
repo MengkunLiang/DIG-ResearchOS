@@ -2032,7 +2032,7 @@ T3.5
 
 #### `T3.6-PLAN`
 
-LLM 读取 `synthesis.md`、`synthesis_workbench.json`、`domain_map.json`、`comparison_table.csv`、`paper_notes/`、`paper_notes_abstract/`、`.bib` 和可选 `seed_outline_profile.json`。它要选择 taxonomy 主轴，构建 2-4 层 taxonomy tree，给每个 class 绑定 paper IDs，并写 evolution narrative。
+LLM 读取 `synthesis.md`、`synthesis_workbench.json`、`domain_map.json`、`comparison_table.csv`、`paper_notes/`、`paper_notes_abstract/`、`.bib` 和可选 `seed_outline_profile.json`。它首先要把主题改写成明确的 `central_question`，说明领域到底在研究什么、已有研究解决了什么、哪里还没说清楚；然后写清 `scope_boundaries`、`review_contribution` 和 `quality_plan`，再选择 taxonomy 主轴，构建 2-4 层 taxonomy tree，给每个 class 绑定 paper IDs，并写 evolution narrative。
 
 这里需要 LLM 学术判断，不能由 tool 硬编码 taxonomy。`domain_map` 只提供 citation/evolution hint，`adjacent_transfers` 只提供邻接迁移素材，不能被当成最终分类结论。
 
@@ -2044,17 +2044,20 @@ paper id 或 citation key。
 
 输出 `survey_plan.json` 至少包含：
 
+- `writing_language`，只能是 `zh` 或 `en`，表示全文正文语言，不表示输入语料语言
+- `central_question` / `scope_boundaries` / `review_contribution`
+- `quality_plan.organizing_framework` / `comparison_strategy` / `theoretical_lift` / `future_agenda_logic`
 - `taxonomy.dimension`
 - `taxonomy.rationale`
 - `taxonomy.tree`
 - `evolution_narrative`
 - `sectioning_policy`
-- `outline`
+- `outline`，核心 section 必须有 `reader_question` 和 `section_argument`
 - `coverage_selfcheck`
 
-`sectioning_policy` 是写作前置契约，不是 review 后补救项。默认必须是 compact：taxonomy 类、风险链条、治理视角或机制家族写进 `Taxonomy` 与 `Comparative Analysis` 的小节/段落，而不是为每个类膨胀出独立大章。只有用户明确要求长篇综述，且某个主题无法自然并入 taxonomy/comparison 时，才允许 `standalone_theme_sections`，并且必须写明 `rationale` 和很小的 `max_theme_sections`。
+这些要求来自通用综述写作质量标准，不是某个具体题目的模板：综述必须有问题意识、边界、分析框架、比较评价、理论提升和未来研究议程。`sectioning_policy` 是写作前置契约，不是 review 后补救项。默认必须是 compact：taxonomy 类、风险链条、治理视角或机制家族写进 `Taxonomy` 与 `Comparative Analysis` 的小节/段落，而不是为每个类膨胀出独立大章。只有用户明确要求长篇综述，且某个主题无法自然并入 taxonomy/comparison 时，才允许 `standalone_theme_sections`，并且必须写明 `rationale` 和很小的 `max_theme_sections`。
 
-validator 会要求 taxonomy tree 非空、outline 至少包含 background/taxonomy/comparison 等核心 section、coverage_selfcheck 存在，并在 PLAN 阶段拒绝缺失 `sectioning_policy` 或 compact 模式下仍输出 `theme_*` 独立章的 plan。这样章节结构问题会在正文写作前暴露，而不是等到 review/compile 后才发现。
+validator 会要求 taxonomy tree 非空、outline 至少包含 background/taxonomy/comparison 等核心 section、coverage_selfcheck 存在，并在 PLAN 阶段拒绝缺失中心问题、边界、综述贡献、section argument、`sectioning_policy` 或 compact 模式下仍输出 `theme_*` 独立章的 plan。这样章节结构问题会在正文写作前暴露，而不是等到 review/compile 后才发现。
 
 #### `T3.6-GATE-OUTLINE`
 
@@ -2113,7 +2116,7 @@ Agent 调用 `build_survey_state`。工具把 `survey_plan.json` 机械转换为
 - `T3.6-SEC-CONCLUSION` -> `drafts/survey/sections/conclusion.tex`
 - `T3.6-SEC-ABSTRACT` -> `drafts/survey/sections/abstract.tex`
 
-每次调用输入只包含 `survey_state.json`、当前 `section_outline`、该节需要的证据文件和必要的相邻 section。Writer 不允许生成 `\documentclass`、`\begin{document}` 或其它 section 标题。`abstract.tex` 是摘要源片段，只能包含摘要纯正文，不能写 `\section{Abstract}`、`\section*{Abstract}`、`\begin{abstract}` 或 `\end{abstract}`；`assemble_survey` 会负责放入 abstract 环境。写完后必须调用 `update_survey_section_state(section_id=..., status="written")`。
+每次调用输入只包含 `survey_state.json`、当前 `section_outline`、该节需要的证据文件和必要的相邻 section。Writer 不允许生成 `\documentclass`、`\begin{document}` 或其它 section 标题。非 abstract section 必须包含当前节标题，语言必须与 `survey_plan.writing_language` 一致，且篇幅要满足不同 section 的最低展开要求；Introduction/Background/Taxonomy/Comparison/Challenges/Future/Conclusion 的阈值不同，不能用同一短模板糊过去。section validator 还会拦截缺少综述论证信号的草稿，例如文献串烧、没有比较评价、future 只有“加强理论/实证/跨学科研究”等空泛话。`abstract.tex` 是摘要源片段，只能包含摘要纯正文，不能写 `\section{Abstract}`、`\section*{Abstract}`、`\begin{abstract}` 或 `\end{abstract}`；`assemble_survey` 会负责放入 abstract 环境。写完后必须调用 `update_survey_section_state(section_id=..., status="written")`。
 
 章节顺序有意安排为：background/taxonomy/theme/comparison/challenges/future 先确定事实密集内容，再写 introduction、conclusion、abstract。这样 abstract 和 introduction 不会在方法、比较和挑战尚未稳定时先行编造。
 
@@ -2130,21 +2133,24 @@ audit_survey_coverage(...)
 
 `audit_survey_coverage` 做确定性检查：
 
-- 是否有 taxonomy section
-- 是否有 comparative analysis
-- 是否有 open challenges
-- 是否有 future directions
+- 是否有 taxonomy/framework section
+- 是否有 research progress / comparative evaluation
+- 是否有 critical assessment / open challenges
+- 是否有 future research agenda
 - active sections 是否全部 written/revised
 - 是否仍有 TODO/TBD/LLM_REVIEW_REQUIRED/PLACEHOLDER
 - citation keys 是否存在于 bib
+- plan 是否包含中心问题、边界、综述贡献和 section arguments
+- 全文语言是否一致
+- 各 section 是否达到对应篇幅和综述论证结构
 
-审计只检查机械一致性，不评价 taxonomy 学术质量。
+审计只检查可确定化的结构质量，不替代 LLM 学术审稿；taxonomy 是否真正有解释力、公允性和理论贡献仍在 REVIEW 里审。
 
 #### `T3.6-REVIEW`
 
 `SurveyWriterAgent(mode=survey_review)` 读取 `survey.tex`、`survey_audit.md/json`、`survey_plan.json`、`survey_state.json`、所有 `sections/*.tex`、`synthesis_workbench.json`、`domain_map.json`、`comparison_table.csv` 和 `.bib`。这一步用 LLM 的学术判断做综述模式审阅，不把 taxonomy 质量硬编码成 tool 规则。章节结构、内部标号和弱证据滥用已经在 PLAN/SECTION/ASSEMBLE 前置拦截；review 只做最后一轮人工风格的结构和学术质量兜底。
 
-审阅维度固定为六类：
+审阅维度固定为八类：
 
 - Taxonomy 合理性：分类维度是否能组织领域，是否 MECE，是否明显错分/空类。
 - Coverage 完整性：是否覆盖 plan 中的核心类、代表论文、相邻/边界区域；abstract-only 证据是否诚实标注。
@@ -2152,12 +2158,14 @@ audit_survey_coverage(...)
 - Challenges 质量：open challenges 是否来自真实 tensions/gaps，而不是空泛套话。
 - Future directions 质量：future 是否具体、可操作，并合理使用 adjacent_transfers / boundary hints。
 - Scope and craft：conservative 模式是否声明覆盖边界；是否有流水账、placeholder、引用不可信或 AI 套话。
+- Review contribution：全文是否形成二阶贡献，例如新的分类、解释框架、研究地图、问题意识或未来议程。
+- Language and depth：是否全文单一语言、各 section 是否充分展开；语言混杂不能被标为低风险。
 
 如果发现 blocking issue，Agent 只修对应 section 文件，例如 `drafts/survey/sections/comparison.tex` 或 `future.tex`，调用 `update_survey_section_state(..., status="revised")` 记录修订，再重新调用 `assemble_survey` 与 `audit_survey_coverage`。它不能整篇重写 `survey.tex`。
 
 输出：
 
-- `drafts/survey/survey_review.md`，必须包含 `Taxonomy Review`、`Coverage Review`、`Comparative Fairness Review`、`Challenges Review`、`Future Directions Review`、`Scope And Craft Review`、`Remaining Risks`。
+- `drafts/survey/survey_review.md`，必须包含 `Taxonomy Review`、`Coverage Review`、`Comparative Fairness Review`、`Challenges Review`、`Future Directions Review`、`Scope And Craft Review`、`Review Contribution Review`、`Language And Depth Review`、`Remaining Risks`。
 - `drafts/survey/survey_review_actions.json`，语义为 `llm_survey_review_and_section_revision_plan`，`review_target=taxonomy_driven_survey`，`blocking_issues_remaining=false` 才能进入编译。
 
 #### `T3.6-COMPILE`
@@ -2189,8 +2197,11 @@ T3.6 是 artifact-first 支线。每个 section 都是单独文件，`survey_sta
 - 如果 `survey_plan.json` 已存在，PLAN 不必重写。
 - 如果某个 section 已写且 `survey_state` 标记 written/revised，validator 会接受，后续节点继续。
 - compact 默认下 `theme_1` 到 `theme_4` 都是 skipped，section validator 不要求对应 tex 文件。
+- 如果 section、assemble、review 或 compile 的输出校验失败，状态机会回到同一修复节点；compile 失败回到 assemble 重新绑定最新 sections/references，而不是直接暂停为不可修复状态。
 - 如果 review 失败，resume 会回到 `T3.6-REVIEW`，读取 `survey_review.md` 和 `survey_review_actions.json` 定位 section patch，不会重写整篇 survey。
 - 如果 `survey.tex` 已拼装且 review 通过但 compile 失败，resume 会回到 `T3.6-COMPILE` 或当前状态，读取 log 修复。`survey_review_actions.json` 必须由 `bind_survey_review` 写入当前 `survey_plan`、`survey_state`、`survey.tex`、`survey_audit`、sections 和 literature 输入的 fingerprint；旧 review 不会放行新 survey。
+
+如果只想重做综述支线而保留 T2/T3/T3.5，可移走或删除旧 `drafts/survey/`，把 `state.yaml` 改为 `current_task: T3.6-PLAN` 与 `status: PAUSED`，再执行 `researchos resume --workspace ...`。这样会从 survey plan 重新开始，并复用已有 `literature/`、paper notes 和 synthesis。
 
 ### 单独运行示例
 

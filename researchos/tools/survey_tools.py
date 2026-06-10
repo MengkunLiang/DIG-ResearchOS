@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 from typing import Any, Literal
 
+import yaml
 from pydantic import BaseModel, Field
 
 from .base import Tool, ToolResult
@@ -66,7 +67,124 @@ SURVEY_SECTION_TITLES = {
     "conclusion": "Conclusion",
 }
 
+SURVEY_SECTION_TITLE_ALIASES = {
+    "abstract": ("Abstract", "摘要"),
+    "introduction": ("Introduction", "引言"),
+    "background": (
+        "Concepts, Scope, and Search Strategy",
+        "Background and Scope",
+        "Concepts and Scope",
+        "Scope and Method",
+        "Literature Search and Analysis Method",
+        "概念界定、研究范围与检索方法",
+        "概念界定与研究范围",
+        "文献检索与分析方法",
+    ),
+    "taxonomy": (
+        "Analytical Framework",
+        "Taxonomy",
+        "Theory and Analytical Framework",
+        "分析框架",
+        "理论基础与分析框架",
+    ),
+    "comparison": (
+        "Research Progress and Comparative Evaluation",
+        "Research Progress",
+        "Comparative Analysis",
+        "Comparative Review",
+        "主要研究进展与比较评价",
+        "研究评述与比较分析",
+        "主要研究进展",
+    ),
+    "challenges": (
+        "Critical Assessment and Open Challenges",
+        "Open Challenges",
+        "Critical Assessment",
+        "现有研究不足与开放挑战",
+        "现有研究评述",
+        "开放挑战",
+    ),
+    "future": (
+        "Future Research Agenda",
+        "Future Directions",
+        "未来研究方向",
+        "未来研究议程",
+        "研究展望",
+    ),
+    "conclusion": ("Conclusion", "结论"),
+}
+
+SURVEY_SECTION_FUNCTIONS = {
+    "abstract": "State background, review object/problem, framework/findings, and contribution/future agenda.",
+    "introduction": "Turn the topic into a clear review problem; explain importance, prior fragmentation, contribution, and roadmap.",
+    "background": "Define concepts, scope, inclusion/exclusion boundaries, corpus/search strategy, and analysis method.",
+    "taxonomy": "Build the explanatory knowledge structure: taxonomy, mechanism chain, map, or framework that reorganizes the literature.",
+    "comparison": "Synthesize research streams through the framework; compare contributions, limitations, evidence boundaries, and relationships.",
+    "challenges": "Critically assess unresolved tensions, missing mechanisms, evidence gaps, and mismatches exposed by the comparison.",
+    "future": "Translate the critique into concrete, theory-bearing and actionable research agenda items.",
+    "conclusion": "Return to the central problem; summarize the framework contribution, overall judgment, implications, and limits.",
+}
+
+SURVEY_QUALITY_DIMENSIONS = (
+    "clear_problem",
+    "scope_boundary",
+    "organizing_framework",
+    "comparison_and_evaluation",
+    "theoretical_lift",
+    "future_agenda",
+    "real_citations",
+)
+
 OPTIONAL_SURVEY_SECTION_PREFIXES = ("theme_",)
+
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+_LATIN_WORD_RE = re.compile(r"\b[A-Za-z][A-Za-z\-]{2,}\b")
+
+_SURVEY_MIN_PLAIN_CHARS = {
+    "abstract": {"en": 180, "zh": 500},
+    "introduction": {"en": 1400, "zh": 2500},
+    "background": {"en": 1300, "zh": 2200},
+    "taxonomy": {"en": 1700, "zh": 3000},
+    "comparison": {"en": 2600, "zh": 4500},
+    "challenges": {"en": 1300, "zh": 2200},
+    "future": {"en": 1600, "zh": 2800},
+    "conclusion": {"en": 800, "zh": 1500},
+}
+
+_SURVEY_SECTION_QUALITY_PATTERNS = {
+    "introduction": {
+        "problem": r"central problem|review problem|research question|why this review|问题意识|核心问题|研究问题|为什么需要综述",
+        "gap": r"gap|fragment|underexplored|insufficient|limitation|不足|割裂|分散|缺乏|尚未",
+        "contribution": r"contribution|this survey|we propose|本文|本综述|贡献|框架|结构安排",
+    },
+    "background": {
+        "scope": r"scope|boundary|include|exclude|inclusion|exclusion|范围|边界|纳入|排除",
+        "definition": r"define|definition|concept|terminology|概念|界定|内涵|定义",
+        "method": r"search|database|corpus|screen|analysis method|检索|数据库|筛选|文献来源|分析方法",
+    },
+    "taxonomy": {
+        "framework": r"framework|taxonomy|classification|dimension|map|chain|机制链|分类|框架|维度|知识结构|风险链条",
+        "mechanism": r"mechanism|pathway|source|consequence|governance|机制|来源|后果|治理|传导|嵌入",
+        "boundary": r"boundary|distinguish|relationship|adjacent|边界|区别|关系|相邻|互补",
+    },
+    "comparison": {
+        "stream": r"research stream|line of work|literature|现有研究|研究路径|文献|一类研究|另一类研究",
+        "compare": r"compare|whereas|in contrast|tradeoff|difference|相比|然而|区别|权衡|比较",
+        "evaluate": r"strength|limitation|contribution|evidence|boundary|贡献|局限|证据|评价|不足",
+    },
+    "challenges": {
+        "critique": r"challenge|gap|limitation|tension|unresolved|不足|挑战|张力|断裂|脱节|尚未解决",
+        "why": r"because|therefore|implies|resulting|原因|因此|导致|意味着|根源",
+    },
+    "future": {
+        "agenda": r"future|agenda|research should|next step|direction|未来|研究方向|研究议程|后续研究",
+        "specific": r"mechanism|design|measure|evaluate|longitudinal|scenario|governance|机制|设计|测量|评估|场景|治理|动态",
+    },
+    "conclusion": {
+        "central_problem": r"central problem|this survey|overall|本文|本综述|总体|核心问题",
+        "contribution": r"framework|taxonomy|contribution|implication|框架|分类|贡献|启示|意义",
+    },
+}
 
 
 class BuildSurveyStateParams(BaseModel):
@@ -182,6 +300,7 @@ class BuildSurveyStateTool(Tool):
             )
         theme_entries = [] if compact_mode else _theme_entries(outline, max_theme_sections=max_theme_sections)
         theme_by_slot = {f"theme_{idx}": entry for idx, entry in enumerate(theme_entries, start=1)}
+        writing_language = _infer_survey_writing_language(self.policy.workspace_dir, plan)
 
         sections: dict[str, dict[str, Any]] = {}
         for section_id in SURVEY_SECTION_SEQUENCE:
@@ -231,10 +350,16 @@ class BuildSurveyStateTool(Tool):
                     if compact_mode
                     else "standalone_theme_sections_enabled"
                 ),
+                "writing_language": writing_language,
+                "central_question": str(plan.get("central_question") or plan.get("review_question") or ""),
+                "review_contribution": str(plan.get("review_contribution") or ""),
+                "quality_dimensions": list(SURVEY_QUALITY_DIMENSIONS),
                 "max_theme_sections": max_theme_sections,
                 "taxonomy_dimension": ((plan.get("taxonomy") or {}).get("dimension") if isinstance(plan.get("taxonomy"), dict) else ""),
                 "taxonomy_classes": _taxonomy_classes(plan),
                 "evolution_narrative": str(plan.get("evolution_narrative") or ""),
+                "scope_boundaries": plan.get("scope_boundaries") or {},
+                "quality_plan": plan.get("quality_plan") or {},
                 "coverage_selfcheck": plan.get("coverage_selfcheck") or {},
                 "resource_upgrade_needs": _merge_resource_upgrade_needs(
                     _resource_upgrade_needs(plan),
@@ -346,6 +471,7 @@ class AssembleSurveyTool(Tool):
             )
 
         title = params.title.strip() or _infer_title(state)
+        writing_language = _survey_state_writing_language(state, self.policy.workspace_dir)
         pieces = [
             "\\documentclass[11pt]{article}",
             "\\usepackage[margin=1in]{geometry}",
@@ -414,6 +540,7 @@ class AssembleSurveyTool(Tool):
                 },
             ),
             "included_sections": included,
+            "writing_language": writing_language,
         }
         (output_path.parent / "survey_assembly_manifest.json").write_text(
             json.dumps(assembly_manifest, ensure_ascii=False, indent=2) + "\n",
@@ -449,11 +576,13 @@ class AuditSurveyCoverageTool(Tool):
 
         bib_keys = _bib_keys_optional(self.policy, params.related_work_bib_path)
         cited = _cited_keys(tex)
+        writing_language = _survey_state_writing_language(state, self.policy.workspace_dir)
+        section_texts = _survey_section_texts(tex, state)
         checks = []
-        checks.append(_check("has_taxonomy_section", "Taxonomy" in tex or "taxonomy" in tex.lower(), "Survey should include a taxonomy section."))
-        checks.append(_check("has_comparative_analysis", "Comparative" in tex or "comparison" in tex.lower(), "Survey should include cross-paper comparison."))
-        checks.append(_check("has_open_challenges", "Challenge" in tex or "Open" in tex, "Survey should include open challenges."))
-        checks.append(_check("has_future_directions", "Future" in tex or "direction" in tex.lower(), "Survey should include future directions."))
+        checks.append(_check("has_framework_section", "taxonomy" in section_texts, "Survey should include a taxonomy/framework section."))
+        checks.append(_check("has_research_progress_section", "comparison" in section_texts, "Survey should include research-progress/comparative evaluation."))
+        checks.append(_check("has_critical_assessment_section", "challenges" in section_texts, "Survey should include critical assessment/open challenges."))
+        checks.append(_check("has_future_agenda_section", "future" in section_texts, "Survey should include a concrete future research agenda."))
         abstract_text = _extract_survey_abstract(tex)
         checks.append(_check("has_abstract_environment", bool(abstract_text.strip()), "Survey should place abstract text in a LaTeX abstract environment."))
         checks.append(
@@ -516,6 +645,30 @@ class AuditSurveyCoverageTool(Tool):
         missing_cites = sorted(cited - bib_keys) if bib_keys else []
         checks.append(_check("all_citations_in_bib", not missing_cites, f"Citation keys missing from bib: {missing_cites}"))
         checks.append(_check("has_multiple_citations", len(cited) >= 3, f"Only {len(cited)} unique citation keys found.", level_if_fail="WARN"))
+        plan_issues = _survey_plan_quality_issues(plan)
+        checks.append(
+            _check(
+                "survey_plan_quality",
+                not plan_issues,
+                "Plan quality issues: " + "; ".join(plan_issues[:8]),
+            )
+        )
+        language_issues = _survey_language_issues(tex, state, writing_language)
+        checks.append(
+            _check(
+                "survey_language_consistency",
+                not language_issues,
+                "Language consistency issues: " + "; ".join(language_issues[:8]),
+            )
+        )
+        depth_issues = _survey_depth_issues(tex, state, writing_language)
+        checks.append(
+            _check(
+                "survey_section_depth",
+                not depth_issues,
+                "Section depth issues: " + "; ".join(depth_issues[:8]),
+            )
+        )
 
         passed = all(item["passed"] or item["level"] == "WARN" for item in checks)
         audit = {
@@ -537,6 +690,8 @@ class AuditSurveyCoverageTool(Tool):
                 "unique_citations": sorted(cited),
                 "bib_key_count": len(bib_keys),
                 "latex_chars": len(tex),
+                "writing_language": writing_language,
+                "language_profile": _language_profile(tex),
             },
         }
         output_json.write_text(json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -752,6 +907,322 @@ def _read_optional_text(policy: WorkspaceAccessPolicy, rel_path: str) -> str:
         return path.read_text(encoding="utf-8", errors="replace")
     except Exception:
         return ""
+
+
+def _infer_survey_writing_language(workspace: Path, plan: dict[str, Any] | None = None) -> str:
+    plan = plan or {}
+    explicit = _normalize_survey_language(
+        plan.get("writing_language")
+        or plan.get("manuscript_language")
+        or ((plan.get("style") or {}).get("language") if isinstance(plan.get("style"), dict) else "")
+    )
+    if explicit:
+        return explicit
+    project_path = workspace / "project.yaml"
+    project: dict[str, Any] = {}
+    if project_path.exists():
+        try:
+            loaded = yaml.safe_load(project_path.read_text(encoding="utf-8")) or {}
+            if isinstance(loaded, dict):
+                project = loaded
+        except Exception:
+            project = {}
+    for key in ("writing_language", "manuscript_language", "target_language", "language"):
+        explicit = _normalize_survey_language(project.get(key))
+        if explicit:
+            return explicit
+    constraints = project.get("constraints") if isinstance(project.get("constraints"), dict) else {}
+    target_text = " ".join(
+        [
+            str(project.get("target_venue") or ""),
+            " ".join(str(item) for item in project.get("target_venues") or []),
+            str(constraints.get("target_venue") or ""),
+            " ".join(str(item) for item in constraints.get("target_venues") or []),
+        ]
+    )
+    if _target_text_prefers_zh(target_text):
+        return "zh"
+    if _target_text_prefers_en(target_text):
+        return "en"
+    profile_path = workspace / "user_seeds" / "seed_outline_profile.json"
+    if profile_path.exists():
+        try:
+            profile = json.loads(profile_path.read_text(encoding="utf-8"))
+        except Exception:
+            profile = {}
+        if isinstance(profile, dict):
+            explicit = _normalize_survey_language(profile.get("writing_language") or profile.get("target_language"))
+            if explicit:
+                return explicit
+            lang = str(profile.get("language") or "").strip().lower()
+            if lang == "zh":
+                return "zh"
+            if lang in {"en", "english"}:
+                return "en"
+    return "en"
+
+
+def _target_text_prefers_zh(target_text: str) -> bool:
+    if not target_text.strip():
+        return False
+    cjk_chars = len(_CJK_RE.findall(target_text))
+    zh_markers = (
+        "中文",
+        "中国",
+        "期刊",
+        "学报",
+        "核心",
+        "北大核心",
+        "南大核心",
+        "cssci",
+        "cscd",
+        "ami",
+        "wjci",
+    )
+    return cjk_chars >= 2 or any(marker in target_text.casefold() for marker in zh_markers)
+
+
+def _target_text_prefers_en(target_text: str) -> bool:
+    if not target_text.strip():
+        return False
+    lowered = target_text.casefold()
+    en_markers = (
+        "english",
+        "journal",
+        "conference",
+        "transactions",
+        "proceedings",
+        "quarterly",
+        "review",
+        "science",
+        "systems",
+    )
+    return any(marker in lowered for marker in en_markers)
+
+
+def _normalize_survey_language(raw: object) -> str:
+    value = str(raw or "").strip().lower().replace("-", "_")
+    if value in {"zh", "chinese", "中文"}:
+        return "zh"
+    if value in {"en", "english", "英文"}:
+        return "en"
+    return ""
+
+
+def _survey_state_writing_language(state: dict[str, Any], workspace: Path) -> str:
+    shared = state.get("shared_facts") if isinstance(state.get("shared_facts"), dict) else {}
+    value = _normalize_survey_language(shared.get("writing_language") if isinstance(shared, dict) else "")
+    return value or _infer_survey_writing_language(workspace)
+
+
+def _language_profile(text: str) -> dict[str, Any]:
+    plain = _plain_latex_text(text)
+    cjk = len(_CJK_RE.findall(plain))
+    latin_words = len(_LATIN_WORD_RE.findall(plain))
+    return {
+        "plain_chars": len(plain),
+        "cjk_chars": cjk,
+        "latin_words": latin_words,
+    }
+
+
+def _plain_latex_text(text: str) -> str:
+    text = re.sub(r"\\(?:cite|citep|citet|ref|label|url|href)(?:\[[^\]]*\])*\{[^{}]*\}", " ", text or "")
+    text = re.sub(r"\\(?:section|subsection|subsubsection)\*?\{([^{}]*)\}", r" \1 ", text)
+    text = re.sub(r"\\[A-Za-z]+\*?(?:\[[^\]]*\])?", " ", text)
+    text = re.sub(r"[{}$^_~%&]", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _survey_language_issues(tex: str, state: dict[str, Any], writing_language: str) -> list[str]:
+    issues: list[str] = []
+    sections = _survey_section_texts(tex, state)
+    active = _active_survey_sections(state)
+    for sid in active:
+        text = sections.get(sid, "")
+        if not text.strip() and sid == "abstract":
+            text = _extract_survey_abstract(tex)
+        if not text.strip():
+            continue
+        profile = _language_profile(text)
+        if writing_language == "zh" and profile["latin_words"] > max(80, profile["cjk_chars"] * 0.35):
+            issues.append(f"{sid} appears English-heavy for zh survey")
+        if writing_language == "en" and profile["cjk_chars"] > max(40, profile["latin_words"] * 1.5):
+            issues.append(f"{sid} appears Chinese-heavy for en survey")
+    profiles = {sid: _language_profile(text) for sid, text in sections.items() if text.strip()}
+    if writing_language == "zh":
+        english_heavy = [sid for sid, profile in profiles.items() if profile["latin_words"] > max(80, profile["cjk_chars"] * 0.35)]
+        if english_heavy:
+            issues.append("English-heavy sections in zh survey: " + ", ".join(english_heavy[:8]))
+    if writing_language == "en":
+        chinese_heavy = [sid for sid, profile in profiles.items() if profile["cjk_chars"] > max(40, profile["latin_words"] * 1.5)]
+        if chinese_heavy:
+            issues.append("Chinese-heavy sections in en survey: " + ", ".join(chinese_heavy[:8]))
+    return issues
+
+
+def _survey_depth_issues(tex: str, state: dict[str, Any], writing_language: str) -> list[str]:
+    issues: list[str] = []
+    sections = _survey_section_texts(tex, state)
+    abstract = _extract_survey_abstract(tex)
+    if abstract.strip():
+        sections["abstract"] = abstract
+    for sid in _active_survey_sections(state):
+        text = sections.get(sid, "")
+        if not text.strip():
+            issues.append(f"{sid} missing from survey.tex")
+            continue
+        profile = _language_profile(text)
+        metric = profile["cjk_chars"] if writing_language == "zh" else profile["plain_chars"]
+        min_chars = _SURVEY_MIN_PLAIN_CHARS.get(sid, {"en": 600, "zh": 800}).get(writing_language, 600)
+        if metric < min_chars:
+            issues.append(f"{sid} too short ({metric} < {min_chars})")
+        structure_issues = _survey_section_quality_issues(sid, text)
+        if structure_issues:
+            issues.extend(f"{sid} {item}" for item in structure_issues[:3])
+    return issues
+
+
+def _survey_section_texts(tex: str, state: dict[str, Any] | None = None) -> dict[str, str]:
+    matches = list(re.finditer(r"\\section\*?\{([^{}]+)\}", tex or "", flags=re.IGNORECASE))
+    sections: dict[str, str] = {}
+    for idx, match in enumerate(matches):
+        sid = _survey_section_id_for_heading(match.group(1), state)
+        if not sid:
+            continue
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(tex)
+        sections[sid] = tex[match.end() : end]
+    return sections
+
+
+def _survey_section_id_for_heading(title: str, state: dict[str, Any] | None = None) -> str:
+    normalized = _normalize_survey_heading(title)
+    if not normalized:
+        return ""
+    if isinstance(state, dict):
+        for section_id, entry in (state.get("sections") or {}).items():
+            if not isinstance(entry, dict):
+                continue
+            state_title = str(entry.get("title") or "").strip()
+            if state_title and _heading_matches(normalized, _normalize_survey_heading(state_title)):
+                return str(section_id)
+    for section_id, aliases in SURVEY_SECTION_TITLE_ALIASES.items():
+        if section_id.startswith("theme_"):
+            continue
+        for alias in aliases:
+            alias_norm = _normalize_survey_heading(alias)
+            if not alias_norm:
+                continue
+            if _heading_matches(normalized, alias_norm):
+                return section_id
+    return ""
+
+
+def _heading_matches(normalized: str, alias_norm: str) -> bool:
+    return bool(
+        normalized
+        and alias_norm
+        and (normalized == alias_norm or normalized.startswith(alias_norm + " ") or alias_norm.startswith(normalized + " "))
+    )
+
+
+def _normalize_survey_heading(value: str) -> str:
+    text = re.sub(r"^\s*\d+(?:\.\d+)*\s*", "", value or "").strip()
+    text = re.sub(r"[:：].*$", "", text).strip()
+    text = re.sub(r"[\s_\-]+", " ", text.casefold())
+    text = re.sub(r"[^\w\u4e00-\u9fff ]+", "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _survey_section_quality_issues(section_id: str, text: str) -> list[str]:
+    if section_id == "abstract" or section_id.startswith("theme_"):
+        return []
+    plain = _plain_latex_text(text)
+    issues: list[str] = []
+    patterns = _SURVEY_SECTION_QUALITY_PATTERNS.get(section_id, {})
+    missing = [
+        label
+        for label, pattern in patterns.items()
+        if not re.search(pattern, plain, flags=re.IGNORECASE)
+    ]
+    if missing:
+        issues.append("lacks survey-argument signals: " + ", ".join(missing))
+    if section_id in {"comparison", "challenges", "future"}:
+        if _looks_like_paper_by_paper_summary(plain):
+            issues.append("looks like paper-by-paper summary rather than synthesis")
+    if section_id in {"comparison", "challenges", "future"} and _generic_future_or_gap_text(plain):
+        issues.append("contains generic gap/future wording without concrete agenda")
+    return issues
+
+
+def _survey_plan_quality_issues(plan: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    central_question = str(plan.get("central_question") or plan.get("review_question") or "").strip()
+    if len(central_question) < 20:
+        issues.append("missing_or_weak_central_question")
+    scope = plan.get("scope_boundaries")
+    if not isinstance(scope, dict) or not (
+        scope.get("included") or scope.get("include") or scope.get("excluded") or scope.get("exclude")
+    ):
+        issues.append("missing_scope_boundaries")
+    contribution = str(plan.get("review_contribution") or plan.get("theoretical_contribution") or "").strip()
+    quality_plan = plan.get("quality_plan") if isinstance(plan.get("quality_plan"), dict) else {}
+    if len(contribution) < 20 and not quality_plan.get("theoretical_lift"):
+        issues.append("missing_review_contribution_or_theoretical_lift")
+    outline = plan.get("outline") if isinstance(plan.get("outline"), list) else []
+    weak_sections: list[str] = []
+    for item in outline:
+        if not isinstance(item, dict):
+            continue
+        section_id = str(item.get("section_id") or "").strip()
+        rationale = " ".join(
+            str(item.get(key) or "")
+            for key in ("section_argument", "reader_question", "function", "covers_rationale", "rationale")
+        ).strip()
+        if section_id and section_id in {"background", "taxonomy", "comparison", "challenges", "future"} and len(rationale) < 20:
+            weak_sections.append(section_id)
+    if weak_sections:
+        issues.append("outline lacks section arguments: " + ", ".join(weak_sections[:6]))
+    return issues
+
+
+def _looks_like_paper_by_paper_summary(text: str) -> bool:
+    sentences = re.split(r"(?<=[.!?。！？])\s+", text or "")
+    authorish = sum(
+        1
+        for sentence in sentences
+        if re.search(r"\bet al\.|提出|发现|认为|研究了|proposed|found|studied|argued", sentence, flags=re.IGNORECASE)
+    )
+    relation_signals = len(
+        re.findall(
+            r"compare|whereas|however|in contrast|tradeoff|relationship|limitation|boundary|"
+            r"相比|然而|与此不同|关系|权衡|局限|边界|断裂|脱节",
+            text or "",
+            flags=re.IGNORECASE,
+        )
+    )
+    return authorish >= 6 and relation_signals < 3
+
+
+def _generic_future_or_gap_text(text: str) -> bool:
+    generic_hits = len(
+        re.findall(
+            r"future research should strengthen|more research is needed|interdisciplinary research|"
+            r"未来应加强理论研究|未来应加强实证研究|未来应加强交叉学科研究|需要进一步研究",
+            text or "",
+            flags=re.IGNORECASE,
+        )
+    )
+    concrete_hits = len(
+        re.findall(
+            r"mechanism|scenario|measure|dataset|longitudinal|governance|audit|responsibility|"
+            r"机制|场景|测量|数据|纵向|治理|审计|责任|评估|干预|组织",
+            text or "",
+            flags=re.IGNORECASE,
+        )
+    )
+    return generic_hits >= 2 and concrete_hits < 4
 
 
 def _read_jsonl_optional(policy: WorkspaceAccessPolicy, rel_path: str) -> list[dict[str, Any]]:
@@ -1062,14 +1533,25 @@ def _section_outline_text(section_id: str, entry: dict[str, Any], plan: dict[str
     covers = entry.get("covers") or []
     paper_ids = entry.get("paper_ids") or []
     sectioning_policy = plan.get("sectioning_policy") if isinstance(plan.get("sectioning_policy"), (dict, str)) else "compact"
+    section_argument = str(entry.get("section_argument") or entry.get("reader_question") or entry.get("function") or "")
+    central_question = str(plan.get("central_question") or plan.get("review_question") or "")
     lines = [
         f"# {title}",
         "",
         f"- section_id: {section_id}",
         f"- plan_section_id: {entry.get('plan_section_id', section_id)}",
         f"- sectioning_policy: {json.dumps(sectioning_policy, ensure_ascii=False)}",
+        f"- central_question: {central_question or 'LLM must preserve the review central question from survey_plan'}",
+        f"- section_role: {SURVEY_SECTION_FUNCTIONS.get(section_id, 'Survey section role')}",
+        f"- section_argument: {section_argument or 'LLM must write a section-level argument, not a topic label.'}",
         f"- covers: {', '.join(str(item) for item in covers) if covers else 'LLM should map taxonomy classes here'}",
         f"- paper_ids: {', '.join(str(item) for item in paper_ids) if paper_ids else 'LLM should select from notes/bib'}",
+        "",
+        "## Survey Quality Standard",
+        "- A survey is a second-order research contribution: it reorganizes literature around a question, not a list of papers.",
+        "- Every section needs an internal argument. Use claim -> evidence -> comparison -> evaluation paragraphs.",
+        "- State relationships among research streams: differences, complementarities, tensions, missing mechanisms, and boundary conditions.",
+        "- Avoid encyclopedia headings and author-by-author summaries.",
         "",
         "## Writing Skill",
         *_section_writing_skill(section_id),
@@ -1087,7 +1569,8 @@ def _section_outline_text(section_id: str, entry: dict[str, Any], plan: dict[str
 def _section_writing_skill(section_id: str) -> list[str]:
     common = [
         "- Write one coherent survey section only; do not write adjacent sections.",
-        "- Use taxonomy as the organizing axis, not the synthesis.md design-rationale fuel structure.",
+        "- Use the plan's central question and framework as the organizing axis, not the synthesis.md design-rationale fuel structure.",
+        "- Paragraphs should follow claim -> evidence -> comparison -> evaluation; do not list papers one by one.",
         "- Cite only exact keys from related_work.bib; do not invent or approximate citation keys.",
         "- Do not expose internal ResearchOS labels such as C1, [C1], CID, ResearchOS alignment, TODO/TBD/PLACEHOLDER, or LLM_REVIEW_REQUIRED.",
         "- Treat abstract-only or metadata-only material as coverage/resource-upgrade context, not as verified mechanism evidence.",
@@ -1095,41 +1578,47 @@ def _section_writing_skill(section_id: str) -> list[str]:
     specific: dict[str, list[str]] = {
         "abstract": [
             "- Write only the abstract body: no heading, no LaTeX abstract environment, and no citations.",
-            "- Summarize the review problem, taxonomy axis, main comparative insight, open challenges, and future agenda in one compact paragraph.",
+            "- Summarize background, review object/problem, framework/findings, and contribution/future agenda in one compact paragraph.",
             "- Avoid claims that require detailed evidence attribution; those belong in the main sections.",
         ],
         "introduction": [
-            "- Motivate why readers need this survey, define the scope, state the taxonomy contribution, and preview the section roadmap.",
+            "- Start from the field problem, not a topic label: why this review is needed now, what existing work has not explained, and what question the paper answers.",
+            "- State the review contribution as a framework/map/problem consciousness, not as 'we summarize many papers'.",
             "- Cite sparingly: use representative anchors for the field, not a long literature list.",
             "- Make the contribution of the survey explicit without promising experiments or original empirical results.",
         ],
         "background": [
-            "- Define core concepts, domain boundaries, and historical context needed to understand the taxonomy.",
-            "- Do not duplicate the taxonomy section; use background to set scope and terminology.",
+            "- Define core concepts, inclusion/exclusion boundaries, corpus/search strategy, and analysis method.",
+            "- Explain what is inside the review and what is deliberately outside it.",
+            "- Do not duplicate the framework section; use background to set scope, terms, and evidence rules.",
             "- Separate established foundations from weak or emerging evidence.",
         ],
         "taxonomy": [
-            "- Carry the main classification framework here, using subsections or compact paragraphs for classes, stages, or perspectives.",
-            "- For each class, explain the mechanism, inclusion boundary, representative evidence, and relation to adjacent classes.",
+            "- Carry the main explanatory framework here, using subsections or compact paragraphs for classes, stages, perspectives, or mechanisms.",
+            "- For each class, explain the mechanism, inclusion boundary, representative evidence, and relation to adjacent classes or stages.",
+            "- The framework should help readers understand relationships among studies, not merely name categories.",
             "- Avoid paper-by-paper summaries; papers support the class definition rather than becoming the structure.",
         ],
         "comparison": [
-            "- Compare taxonomy classes across assumptions, mechanisms, data/evaluation settings, evidence strength, and practical constraints.",
+            "- Organize the main research progress around problem types or framework dimensions, not around individual papers.",
+            "- Compare streams across assumptions, mechanisms, methods, evidence strength, settings, and practical constraints.",
             "- Surface tensions and tradeoffs that are not visible inside individual classes.",
-            "- Use tables only if already planned; otherwise write dense comparative prose rather than a literature list.",
+            "- Each subsection should end with a short evaluation: contribution, limitation, and relation to the next stream.",
         ],
         "challenges": [
             "- Derive challenges from gaps, contradictions, weak evidence, and deployment boundaries identified earlier.",
             "- Keep challenges specific enough to guide research; avoid generic statements that could fit any field.",
+            "- Explain why each challenge exists and what it prevents current research from explaining.",
             "- Mark metadata-only/resource-upgrade hints as unresolved coverage needs, not evidence-backed conclusions.",
         ],
         "future": [
-            "- Turn the taxonomy and challenge analysis into concrete research directions, study designs, benchmarks, or governance questions.",
+            "- Turn the framework and critique into concrete research directions, study designs, benchmarks, mechanisms, or governance questions.",
             "- Distinguish near-term feasible work from speculative agenda items.",
+            "- Avoid generic phrases such as 'strengthen theoretical research' unless followed by a specific question, mechanism, and empirical route.",
             "- Do not introduce new unsupported literature claims; reuse evidence already established in earlier sections.",
         ],
         "conclusion": [
-            "- Synthesize what the taxonomy clarifies, what remains uncertain, and how future work should use the survey.",
+            "- Answer the central question again: what the framework clarifies, what remains uncertain, and how future work should use the survey.",
             "- Do not introduce new evidence, new citations, or new taxonomy classes.",
             "- Keep the ending concise and intellectually honest about coverage limits.",
         ],
@@ -1211,8 +1700,13 @@ def _copy_bibliography_for_survey(
 
 
 def _active_survey_sections(state: dict[str, Any]) -> list[str]:
-    order = state.get("write_order") if isinstance(state.get("write_order"), list) else SURVEY_SECTION_SEQUENCE
     sections = state.get("sections") if isinstance(state.get("sections"), dict) else {}
+    if isinstance(state.get("write_order"), list):
+        order = state.get("write_order") or []
+    elif sections:
+        order = list(sections.keys())
+    else:
+        order = SURVEY_SECTION_SEQUENCE
     active: list[str] = []
     for section_id in order:
         sid = str(section_id)

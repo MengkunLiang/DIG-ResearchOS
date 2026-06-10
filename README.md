@@ -297,6 +297,22 @@ not verified citations and are never written to `seed_papers.jsonl`. A survey
 profile widens T2/T3 literature coverage via `config/agent_params.yaml`
 `behavior_profiles.survey`.
 
+T3.6 survey writing is gated by generic review-paper quality standards rather
+than topic-specific templates. `survey_plan.json` must declare
+`writing_language`, `central_question`, `scope_boundaries`,
+`review_contribution`, and `quality_plan`; core outline entries must include a
+reader question and section argument. Section validation rejects mixed-language
+drafts, very short sections, paper-by-paper summaries, generic future/gap prose,
+unknown BibTeX keys, and internal planning labels.
+
+To redo only the survey branch after T2/T3/T3.5 are already good, keep
+`literature/` and `user_seeds/`, move or delete stale `drafts/survey/` outputs,
+set `state.yaml` to `current_task: T3.6-PLAN` and `status: PAUSED`, then run:
+
+```bash
+python -m researchos.cli resume --workspace ./workspace/local-test2
+```
+
 ## Typical Usage Patterns
 
 ### Full project run

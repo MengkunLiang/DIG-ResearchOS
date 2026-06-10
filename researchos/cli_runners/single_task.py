@@ -255,9 +255,9 @@ class SingleTaskRunner:
             print(f"[进度] 输出校验失败: {error_text}", flush=True)
             if result.ok:
                 result.ok = False
-                result.stop_reason = result.STOP_INTERRUPTED
+                result.stop_reason = result.STOP_ERROR
                 result.error = (
-                    "Runtime artifact validation failed; paused for artifact repair/resume: "
+                    "Runtime artifact validation failed; task did not produce valid artifacts: "
                     + error_text
                 )
                 result.message = result.error

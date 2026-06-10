@@ -34,6 +34,26 @@ def _write_json(path: Path, data: dict) -> None:
 def _survey_plan() -> dict:
     return {
         "semantics": "llm_authored_taxonomy_driven_survey_plan",
+        "writing_language": "en",
+        "central_question": (
+            "How should this field be reorganized into a mechanism-level framework that explains what prior studies "
+            "have clarified, where their evidence boundaries remain, and which research problems should come next?"
+        ),
+        "scope_boundaries": {
+            "included": ["mechanism-level studies", "comparative evaluation papers", "representative adjacent work"],
+            "excluded": ["purely speculative commentary", "metadata-only records without abstracts"],
+            "evidence_rules": "FULL/PARTIAL notes support claims; abstract-only notes are context; metadata-only records are upgrade hints.",
+        },
+        "review_contribution": (
+            "The survey contributes a taxonomy-driven research map that links mechanisms, evidence boundaries, "
+            "cross-stream tensions, and future agenda items rather than summarizing papers individually."
+        ),
+        "quality_plan": {
+            "organizing_framework": "Mechanism families with explicit boundaries and cross-stream relationships.",
+            "comparison_strategy": "Compare streams by assumptions, mechanisms, settings, evidence strength, and limitations.",
+            "theoretical_lift": "Explain why the mechanism map reveals unresolved relationships among streams.",
+            "future_agenda_logic": "Turn evidence gaps and tensions into concrete research questions.",
+        },
         "taxonomy": {
             "dimension": "mechanism families",
             "rationale": "Readers need a mechanism-level map.",
@@ -49,11 +69,41 @@ def _survey_plan() -> dict:
             "rationale": "Taxonomy classes are written inside Taxonomy and compared in Comparative Analysis.",
         },
         "outline": [
-            {"section_id": "background", "title": "Background and Scope", "covers": ["scope"]},
-            {"section_id": "taxonomy", "title": "Taxonomy", "covers": ["T1", "T2"]},
-            {"section_id": "comparison", "title": "Comparative Analysis", "covers": ["cross_paper_tensions"]},
-            {"section_id": "challenges", "title": "Open Challenges", "covers": ["challenge_hints"]},
-            {"section_id": "future", "title": "Future Directions", "covers": ["adjacent_transfers"]},
+            {
+                "section_id": "background",
+                "title": "Concepts, Scope, and Search Strategy",
+                "reader_question": "What concepts, boundaries, and evidence rules define the review corpus?",
+                "section_argument": "Clear boundaries prevent the survey from becoming a general topic summary.",
+                "covers": ["scope"],
+            },
+            {
+                "section_id": "taxonomy",
+                "title": "Analytical Framework",
+                "reader_question": "What framework reorganizes the literature into explanatory mechanism families?",
+                "section_argument": "A mechanism framework clarifies relationships that paper-by-paper summaries obscure.",
+                "covers": ["T1", "T2"],
+            },
+            {
+                "section_id": "comparison",
+                "title": "Research Progress and Comparative Evaluation",
+                "reader_question": "How do the main research streams differ in assumptions, evidence, and limitations?",
+                "section_argument": "Comparing streams exposes the field's contributions and unresolved tensions.",
+                "covers": ["cross_paper_tensions"],
+            },
+            {
+                "section_id": "challenges",
+                "title": "Critical Assessment and Open Challenges",
+                "reader_question": "Which unresolved tensions prevent the framework from becoming a settled account?",
+                "section_argument": "Open challenges should be derived from evidence gaps and stream-level disagreements.",
+                "covers": ["challenge_hints"],
+            },
+            {
+                "section_id": "future",
+                "title": "Future Research Agenda",
+                "reader_question": "Which concrete research directions follow from the framework and critique?",
+                "section_argument": "Future directions should translate critique into actionable studies and mechanisms.",
+                "covers": ["adjacent_transfers"],
+            },
         ],
         "coverage_selfcheck": {
             "unclassified_papers": [],
@@ -124,19 +174,102 @@ def _survey_ctx(ws: Path, mode: str, **extra):
 
 
 def _valid_survey_section_body(section: str, cite: str = "\\citep{p1}") -> str:
-    mechanism_phrase = ""
-    if section == "Taxonomy":
-        mechanism_phrase = "It specifically separates perturbation and routing mechanisms as reader-facing categories. "
-    return (
-        f"\\section{{{section}}}\n"
-        f"This section defines its reader-facing role using verified literature {cite}. "
-        f"{mechanism_phrase}"
-        "It compares taxonomy classes by mechanism, evidence boundary, evaluation setting, and scope, "
-        "therefore the prose is not a paper-by-paper list. "
-        "The section explains why the distinction matters for interpreting the field, how the classes differ, "
-        "where cross-paper tensions remain unresolved, and which claims should stay conservative when evidence is partial. "
-        "This wording is intentionally substantive enough for validation while still remaining a compact survey section."
+    role_key = section
+    if "Scope" in section or "Search Strategy" in section:
+        role_key = "Background and Scope"
+    elif "Framework" in section or section == "Taxonomy":
+        role_key = "Taxonomy"
+    elif "Comparative" in section or "Research Progress" in section:
+        role_key = "Comparative Analysis"
+    elif "Challenges" in section or "Critical Assessment" in section:
+        role_key = "Open Challenges"
+    elif "Future" in section or "Agenda" in section:
+        role_key = "Future Directions"
+    role_bits = {
+        "Introduction": (
+            "This review problem is not merely whether a topic has many papers, but how the field should be "
+            "reorganized around a central problem that existing studies have only partially explained. "
+            "The central problem is that prior work clarifies individual mechanisms while leaving the "
+            "relationship among mechanism families, evidence boundaries, and future research agenda items "
+            "fragmented. This survey therefore contributes a framework-oriented research map and explains why "
+            "the review is needed now rather than promising a new empirical model. "
+        ),
+        "Background and Scope": (
+            "The scope boundary matters because a review without inclusion and exclusion rules becomes a broad "
+            "topic essay. This section defines the core concepts, states which mechanism-level studies are "
+            "included, excludes purely speculative or metadata-only material from claim evidence, and describes "
+            "the corpus search and analysis method. The definition also separates established evidence from "
+            "abstract-only context so that citation claims remain calibrated. "
+        ),
+        "Taxonomy": (
+            "The analytical framework separates perturbation and routing mechanisms as reader-facing taxonomy "
+            "classes. This taxonomy is useful because it explains relationships among studies: one stream "
+            "treats variation as the central mechanism, whereas another stream treats routing and assignment as "
+            "the primary mechanism. The boundary between classes is therefore conceptual rather than merely "
+            "bibliographic, and adjacent classes remain connected through shared evaluation concerns. "
+        ),
+        "Comparative Analysis": (
+            "Research progress is best understood as several streams that differ in assumptions, mechanism "
+            "claims, evaluation settings, and evidence strength. One stream contributes precise perturbation "
+            "tests, whereas another stream contributes routing-aware designs; however, both streams leave "
+            "boundary conditions under-specified. This comparison evaluates the contribution and limitation of "
+            "each stream instead of listing studies one by one, and it shows how cross-stream tensions shape the "
+            "field's next questions. "
+        ),
+        "Open Challenges": (
+            "The main challenge is not a generic lack of research but an unresolved tension between mechanism "
+            "claims and evidence boundaries. Because studies often optimize within narrow settings, the field "
+            "still lacks a clear account of when mechanisms transfer, when they fail, and how partial evidence "
+            "should be interpreted. These gaps prevent the framework from becoming a settled account and require "
+            "more precise boundary tests. "
+        ),
+        "Future Directions": (
+            "The future research agenda should translate the framework and critique into concrete studies. "
+            "Future work should measure mechanism transfer across scenarios, design longitudinal evaluations, "
+            "test boundary conditions, and build governance or audit procedures that connect evidence to action. "
+            "These directions are specific next steps rather than generic calls for more theory or more data. "
+        ),
+        "Conclusion": (
+            "Overall, this survey answers the central problem by showing that a framework-oriented map clarifies "
+            "mechanism relationships, evidence boundaries, and research agenda priorities. The contribution is "
+            "not the number of papers summarized but the taxonomy, comparison, and implications that help "
+            "readers interpret the field. The conclusion also keeps limitations visible and avoids introducing "
+            "new evidence. "
+        ),
+    }
+    role = role_bits.get(role_key, role_bits["Comparative Analysis"])
+    common = (
+        f"Verified literature {cite} anchors the claim evidence, but the prose treats papers as evidence for "
+        "stream-level relationships rather than as the structure of the paragraph. The discussion follows a "
+        "claim, evidence, comparison, and evaluation sequence: it states a judgment, uses representative work "
+        "to ground the judgment, compares the focal stream with adjacent streams, and then evaluates what the "
+        "stream explains and what it misses. This makes the section a synthesis rather than a literature list. "
     )
+    elaboration = (
+        "A professional survey section also needs enough argumentative depth to connect definitions, mechanisms, "
+        "and limitations rather than merely naming categories. The discussion identifies boundary conditions, "
+        "clarifies how assumptions differ across streams, and explains why those differences matter for readers. "
+        "It distinguishes established findings from provisional signals, which prevents weak evidence from being "
+        "inflated into consensus. It also uses comparison words such as whereas, however, limitation, boundary, "
+        "mechanism, relationship, and tradeoff so that the relationship among research streams remains visible. "
+    )
+    if "Comparative" in section or "Research Progress" in section:
+        elaboration = elaboration + elaboration
+    return f"\\section{{{section}}}\n" + role + common + elaboration + elaboration
+
+
+def _valid_survey_tex_document() -> str:
+    sections = [
+        "\\begin{abstract}A taxonomy-driven survey of mechanisms compares evidence boundaries and future research needs in a concise but complete form. It states the problem, the taxonomy axis, the comparative insight, and the research agenda without using formal citations. The abstract also explains why the survey matters to readers, how the framework organizes prior work, and what kinds of open questions follow from the evidence gradient.\\end{abstract}",
+        _valid_survey_section_body("Introduction", "\\citep{p1}"),
+        _valid_survey_section_body("Concepts, Scope, and Search Strategy", "\\citep{p1}"),
+        _valid_survey_section_body("Taxonomy", "\\citep{p1}"),
+        _valid_survey_section_body("Research Progress and Comparative Evaluation", "\\citep{p2}"),
+        _valid_survey_section_body("Critical Assessment and Open Challenges", "\\citep{p2}"),
+        _valid_survey_section_body("Future Research Agenda", "\\citep{p3}"),
+        _valid_survey_section_body("Conclusion", "\\citep{p3}"),
+    ]
+    return "\\documentclass{article}\\begin{document}\n" + "\n".join(sections) + "\n\\end{document}\n"
 
 
 async def _build_valid_survey_chain(ws: Path) -> None:
@@ -160,7 +293,12 @@ async def _build_valid_survey_chain(ws: Path) -> None:
         "future": _valid_survey_section_body("Future Directions", "\\citep{p3}"),
         "introduction": _valid_survey_section_body("Introduction", "\\citep{p1}"),
         "conclusion": _valid_survey_section_body("Conclusion", "\\citep{p2,p3}"),
-        "abstract": "A taxonomy-driven survey of mechanisms that compares evidence boundaries and future research needs.",
+            "abstract": (
+                "A taxonomy-driven survey of mechanisms that compares evidence boundaries and future research needs. "
+                "The abstract states the motivating problem, the taxonomy axis, the comparative insight, and the "
+                "research agenda without formal citations, while keeping evidence claims at a level appropriate for "
+                "a concise survey summary."
+            ),
     }
     for section_id, text in section_text.items():
         (sections_dir / f"{section_id}.tex").write_text(text, encoding="utf-8")
@@ -218,7 +356,7 @@ async def test_survey_tools_build_state_assemble_audit_and_export(tmp_path: Path
     abstract_outline = (ws / "drafts" / "survey" / "section_outlines" / "abstract.md").read_text(encoding="utf-8")
     theme_outline = (ws / "drafts" / "survey" / "section_outlines" / "theme_1.md").read_text(encoding="utf-8")
     assert "Define core concepts" in background_outline
-    assert "Carry the main classification framework" in taxonomy_outline
+    assert "Carry the main explanatory framework" in taxonomy_outline
     assert "no heading, no LaTeX abstract environment" in abstract_outline
     assert "optional standalone theme slot" in theme_outline
     assert background_outline != taxonomy_outline
@@ -246,7 +384,12 @@ async def test_survey_tools_build_state_assemble_audit_and_export(tmp_path: Path
         "future": _valid_survey_section_body("Future Directions", "\\citep{p3}"),
         "introduction": _valid_survey_section_body("Introduction", "\\citep{p1}"),
         "conclusion": _valid_survey_section_body("Conclusion", "\\citep{p2,p3}"),
-        "abstract": "A taxonomy-driven survey of mechanisms that compares evidence boundaries and future research needs.",
+            "abstract": (
+                "A taxonomy-driven survey of mechanisms that compares evidence boundaries and future research needs. "
+                "The abstract states the motivating problem, the taxonomy axis, the comparative insight, and the "
+                "research agenda without formal citations, while keeping evidence claims at a level appropriate for "
+                "a concise survey summary."
+            ),
     }
     for section_id, text in section_text.items():
         (sections_dir / f"{section_id}.tex").write_text(text, encoding="utf-8")
@@ -446,19 +589,7 @@ async def test_survey_writer_compile_validation_accepts_success_report(tmp_path:
         "@article{p1,title={A}}\n@article{p2,title={B}}\n@article{p3,title={C}}\n",
         encoding="utf-8",
     )
-    (ws / "drafts" / "survey" / "survey.tex").write_text(
-        (
-            "\\documentclass{article}\\begin{document}"
-            "\\begin{abstract}A taxonomy-driven survey of mechanisms.\\end{abstract}"
-            "\\section{Introduction} Introduction \\citep{p1}."
-            "\\section{Taxonomy} Taxonomy \\citep{p1}."
-            "\\section{Comparative Analysis} Comparative analysis \\citep{p2}."
-            "\\section{Open Challenges} Open challenges."
-            "\\section{Future Directions} Future directions \\citep{p3}."
-            "\\end{document}\n"
-        ),
-        encoding="utf-8",
-    )
+    (ws / "drafts" / "survey" / "survey.tex").write_text(_valid_survey_tex_document(), encoding="utf-8")
     result = await AuditSurveyCoverageTool(_policy(ws)).execute()
     assert result.ok, result.content
     (ws / "drafts" / "survey" / "survey.pdf").write_bytes(b"%PDF-1.4\n" + b"x" * 128)
@@ -512,12 +643,9 @@ async def test_t36_section_refuses_stale_section_outline_and_file(tmp_path: Path
     (ws / "drafts" / "survey" / "sections" / "taxonomy.tex").write_text(
         (
             "\\section{Taxonomy}\n"
-            "Changed section content after state fingerprint while still remaining long enough "
-            "to pass the section length guard. The validator should therefore detect the stale "
-            "fingerprint rather than reporting a short-section error. "
-            "The edited section still compares taxonomy classes by mechanism, evidence boundary, "
-            "evaluation setting, scope, and unresolved cross-paper tension so that craft checks "
-            "do not mask the fingerprint freshness assertion in this test fixture."
+            + _valid_survey_section_body("Taxonomy", "\\citep{p1,p2}").split("\n", 1)[1]
+            + " This changed sentence is appended after state fingerprint while the section remains a valid "
+            "analytical framework with mechanism, boundary, classification, taxonomy, relationship, and evidence signals."
         ),
         encoding="utf-8",
     )
@@ -640,11 +768,7 @@ async def test_t36_section_validation_rejects_dirty_abstract_and_bad_cites(tmp_p
     assert "CID" in (err or "") or "内部" in (err or "")
 
     section_path.write_text(
-        "\\section{Taxonomy}\n"
-        "This section has enough substantive wording to pass the length guard while citing "
-        "an unavailable source \\citep{missingKey2026} that is not present in the bibliography. "
-        "The rest of the section compares taxonomy scope, evidence boundaries, and mechanism differences "
-        "only to ensure the validator reaches the missing-citation check.",
+        _valid_survey_section_body("Taxonomy", "\\citep{missingKey2026}"),
         encoding="utf-8",
     )
     await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="taxonomy")
@@ -654,11 +778,17 @@ async def test_t36_section_validation_rejects_dirty_abstract_and_bad_cites(tmp_p
 
     section_path.write_text(
         "\\section{Taxonomy}\n"
-        "This section reviews prior work. Smith et al. studied one dataset. "
-        "Jones et al. proposed a related model. Lee et al. reported another benchmark. "
-        "Garcia et al. explored a fourth direction. Kumar et al. added a fifth variant. "
-        "This section reviews additional papers without comparing taxonomy classes, mechanisms, "
-        "boundaries, or evidence quality. The text is deliberately long enough to reach the craft check.",
+        + (
+            "This section reviews prior work. Smith et al. studied one dataset. "
+            "Jones et al. proposed a related model. Lee et al. reported another benchmark. "
+            "Garcia et al. explored a fourth direction. Kumar et al. added a fifth variant. "
+            "Brown et al. proposed a taxonomy class. Martin et al. found another pattern. "
+            "Chen et al. argued for an adjacent mechanism. Patel et al. studied a related setting. "
+            "This taxonomy discussion names classification, mechanism, evidence boundary, framework, and relationship, "
+            "but it deliberately avoids real comparison, limitation, tension, or tradeoff evaluation so the validator "
+            "can detect a paper-by-paper summary rather than a genuine survey synthesis. "
+        )
+        * 4,
         encoding="utf-8",
     )
     await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="taxonomy")
@@ -757,19 +887,7 @@ async def test_survey_writer_compile_validation_rejects_stale_audit_after_compil
         encoding="utf-8",
     )
     tex = survey_dir / "survey.tex"
-    tex.write_text(
-        (
-            "\\documentclass{article}\\begin{document}"
-            "\\begin{abstract}A taxonomy-driven survey of mechanisms.\\end{abstract}"
-            "\\section{Introduction} Introduction \\citep{p1}."
-            "\\section{Taxonomy} Taxonomy \\citep{p1}."
-            "\\section{Comparative Analysis} Comparative analysis \\citep{p2}."
-            "\\section{Open Challenges} Open challenges."
-            "\\section{Future Directions} Future directions \\citep{p3}."
-            "\\end{document}\n"
-        ),
-        encoding="utf-8",
-    )
+    tex.write_text(_valid_survey_tex_document(), encoding="utf-8")
     result = await AuditSurveyCoverageTool(_policy(ws)).execute()
     assert result.ok, result.content
     tex.write_text(tex.read_text(encoding="utf-8").replace("Taxonomy", "Taxonomy revised", 1), encoding="utf-8")
@@ -867,6 +985,10 @@ async def test_survey_writer_review_validation_accepts_complete_review(tmp_path:
                 "Future directions use adjacent transfers without overstating them.",
                 "## Scope And Craft Review",
                 "Scope is stated honestly and craft issues have been checked.",
+                "## Review Contribution Review",
+                "The survey contributes a framework-level research map rather than a paper-by-paper summary.",
+                "## Language And Depth Review",
+                "The survey uses one manuscript language consistently and section depth is adequate.",
                 "## Remaining Risks",
                 "No blocking issue remains; minor citation polish may still be useful.",
             ]
@@ -906,6 +1028,12 @@ async def test_survey_writer_review_validation_accepts_complete_review(tmp_path:
     assert not ok
     assert "目录内容已变化" in (err or "") or "已过期" in (err or "")
 
+    (ws / "drafts" / "survey" / "sections" / "comparison.tex").write_text(
+        _valid_survey_section_body("Comparative Analysis", "\\citep{p1,p3}")
+        + " This revised comparison clarifies incomparable settings while preserving a framework-level research map.",
+        encoding="utf-8",
+    )
+    await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="comparison", status="revised")
     result = await AssembleSurveyTool(_policy(ws)).execute()
     assert result.ok, result.content
     result = await AuditSurveyCoverageTool(_policy(ws)).execute()
@@ -922,6 +1050,105 @@ async def test_survey_writer_review_validation_accepts_complete_review(tmp_path:
     ok, err = agent.validate_outputs(ctx)
     assert not ok
     assert "已过期" in (err or "")
+
+
+@pytest.mark.asyncio
+async def test_survey_audit_rejects_language_mixed_body_for_zh_survey(tmp_path: Path):
+    ws = tmp_path
+    await _build_valid_survey_chain(ws)
+    (ws / "project.yaml").write_text(
+        "project_id: p\nresearch_direction: 智能算法风险综述\ntarget_venues:\n- 管理科学学报\n",
+        encoding="utf-8",
+    )
+    state = json.loads((ws / "drafts" / "survey" / "survey_state.json").read_text(encoding="utf-8"))
+    state.setdefault("shared_facts", {})["writing_language"] = "zh"
+    (ws / "drafts" / "survey" / "survey_state.json").write_text(
+        json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    result = await AssembleSurveyTool(_policy(ws)).execute()
+    assert result.ok, result.content
+    result = await AuditSurveyCoverageTool(_policy(ws)).execute()
+
+    assert not result.ok
+    audit = json.loads((ws / "drafts" / "survey" / "survey_audit.json").read_text(encoding="utf-8"))
+    failed = [item["name"] for item in audit["checks"] if item["passed"] is False]
+    assert "survey_language_consistency" in failed
+
+
+@pytest.mark.asyncio
+async def test_t36_section_rejects_short_introduction_and_language_mismatch(tmp_path: Path):
+    ws = tmp_path
+    await _build_valid_survey_chain(ws)
+    state = json.loads((ws / "drafts" / "survey" / "survey_state.json").read_text(encoding="utf-8"))
+    state.setdefault("shared_facts", {})["writing_language"] = "zh"
+    (ws / "drafts" / "survey" / "survey_state.json").write_text(
+        json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    intro_path = ws / "drafts" / "survey" / "sections" / "introduction.tex"
+    intro_path.write_text(
+        "\\section{Introduction}\nThis is a short English introduction for a Chinese survey.",
+        encoding="utf-8",
+    )
+    await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="introduction")
+
+    ok, err = SurveyWriterAgent(mode="survey_section").validate_outputs(
+        _survey_ctx(ws, "survey_section", section_id="introduction")
+    )
+
+    assert not ok
+    assert "篇幅不足" in (err or "") or "语言不一致" in (err or "")
+
+
+@pytest.mark.asyncio
+async def test_survey_review_rejects_low_language_consistency_risk(tmp_path: Path):
+    ws = tmp_path
+    await _build_valid_survey_chain(ws)
+    (ws / "drafts" / "survey" / "survey_review.md").write_text(
+        "\n".join(
+            [
+                "## Taxonomy Review\nok",
+                "## Coverage Review\nok",
+                "## Comparative Fairness Review\nok",
+                "## Challenges Review\nok",
+                "## Future Directions Review\nok",
+                "## Scope And Craft Review\nok",
+                "## Review Contribution Review\nok",
+                "## Language And Depth Review\nBilingual consistency (LOW): abstract is Chinese while body is English.",
+                "## Remaining Risks\nNo blocking issue remains.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    _write_json(
+        ws / "drafts" / "survey" / "survey_review_actions.json",
+        {
+            "semantics": "llm_survey_review_and_section_revision_plan",
+            "review_target": "taxonomy_driven_survey",
+            "blocking_issues_remaining": False,
+            "section_actions": [
+                {
+                    "section_id": "abstract",
+                    "severity": "low",
+                    "issue": "Bilingual consistency issue.",
+                    "action_taken": "no_change_needed",
+                    "evidence": "Chinese abstract with English body.",
+                }
+            ],
+            "audit_after_review": {"survey_audit_passed": True},
+        },
+    )
+    result = await BindSurveyReviewTool(_policy(ws)).execute()
+    assert result.ok, result.content
+
+    ok, err = SurveyWriterAgent(mode="survey_review").validate_outputs(
+        _survey_ctx(ws, "survey_review")
+    )
+
+    assert not ok
+    assert "语言一致性" in (err or "")
 
 
 def test_t36_state_machine_routes_survey_yes_no_and_corpus_scope(tmp_path: Path):
@@ -1163,3 +1390,27 @@ def test_t45_reframe_and_drop_pause_for_human_gate(tmp_path: Path):
     decision = json.loads((tmp_path / "ideation" / "novelty_human_review.json").read_text(encoding="utf-8"))
     assert decision["semantics"] == "human_decision_over_agent_recommendation"
     assert decision["selected_option"] == "return_to_t4"
+
+
+def test_t36_failure_routes_retry_repairable_survey_nodes():
+    config = yaml.safe_load(system_config_path("state_machine.yaml").read_text(encoding="utf-8"))
+    states = config["states"]
+    expected = {
+        "T3.6-SEC-BACKGROUND": "T3.6-SEC-BACKGROUND",
+        "T3.6-SEC-TAXONOMY": "T3.6-SEC-TAXONOMY",
+        "T3.6-SEC-THEME-1": "T3.6-SEC-THEME-1",
+        "T3.6-SEC-THEME-2": "T3.6-SEC-THEME-2",
+        "T3.6-SEC-THEME-3": "T3.6-SEC-THEME-3",
+        "T3.6-SEC-THEME-4": "T3.6-SEC-THEME-4",
+        "T3.6-SEC-COMPARISON": "T3.6-SEC-COMPARISON",
+        "T3.6-SEC-CHALLENGES": "T3.6-SEC-CHALLENGES",
+        "T3.6-SEC-FUTURE": "T3.6-SEC-FUTURE",
+        "T3.6-SEC-INTRO": "T3.6-SEC-INTRO",
+        "T3.6-SEC-CONCLUSION": "T3.6-SEC-CONCLUSION",
+        "T3.6-SEC-ABSTRACT": "T3.6-SEC-ABSTRACT",
+        "T3.6-ASSEMBLE": "T3.6-ASSEMBLE",
+        "T3.6-REVIEW": "T3.6-REVIEW",
+        "T3.6-COMPILE": "T3.6-ASSEMBLE",
+    }
+    for task_id, next_task in expected.items():
+        assert states[task_id]["next_on_failure"] == next_task

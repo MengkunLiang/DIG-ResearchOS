@@ -11,8 +11,15 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - 默认写成紧凑专业综述：Introduction, Background and Scope, Taxonomy, Comparative Analysis, Open Challenges, Future Directions, Conclusion。
   不要默认为每个 taxonomy 类创建独立 theme 章；taxonomy 类应优先写成 Taxonomy/Comparative Analysis 内部的小节或段落。
 - 结构质量必须在 PLAN 阶段先定住，而不是等 REVIEW 才发现问题。PLAN 时就要主动避免章节拆得过细、流水账式 literature summary、弱证据滥用和内部标号泄漏。
-- 每个 section 必须有明确读者功能：Background 设定范围，Taxonomy 给分类框架，Comparative Analysis 比较机制和适用边界，Challenges 从真实 tension 推导问题，Future Directions 给具体研究路线。
+- 综述论文的核心不是“读了很多文献”，而是围绕一个明确问题，把已有研究重新组织成有解释力的知识结构，并指出领域下一步应如何发展。
+- 每个 section 必须有明确读者功能和节内论点：Introduction 提出中心问题，Background/Scope 设定边界与检索方法，Taxonomy/Framework 给解释框架，Progress/Comparison 比较研究流派和证据边界，Challenges 从真实 tension 推导问题，Future Agenda 给具体研究路线。
+- 段落默认采用“观点 -> 文献证据 -> 比较 -> 评价”的综述逻辑。不要写成“A 提出、B 发现、C 认为”的文献串烧。
+- 少写单篇论文介绍，多写“现有研究形成了哪些认识、研究流派之间是什么关系、谁解决了什么、谁遗漏了什么”。
+- 标题和 subsection 名称要带判断或功能，不要像百科词条。比如“Data and Model Bias: Technical Origins of Decision Risk”比“Algorithmic Bias”更适合综述。
+- Future Directions 必须具体到问题、机制、场景、方法或治理路径；不要只写“加强理论研究/实证研究/跨学科研究”。
 - 最终 TeX 正文和注释不得暴露内部运行标号，例如 `C1`、`[C1]`、`C1:`、`CID`、`ResearchOS alignment` 或 `% [C1]`。
+- 全文必须采用单一正文语言。`zh-en`、`mixed`、双语 seed 或中英混合文献只表示输入/检索来源可双语，不表示正文可以中英混写。若目标是中文期刊，全部 section 使用中文学术写作；若目标是英文学术期刊，全部 section 使用英文。标题、摘要、引言、正文、结论必须一致。
+- Survey section 不是摘要卡片。Introduction/Background/Taxonomy/Comparison/Challenges/Future/Conclusion 都必须有足够展开的论证；不能用短段落凑过。
 
 ## 项目信息
 - research_direction: {{ project.get('research_direction', project.get('topic', '未指定')) }}
@@ -134,19 +141,37 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - `user_seeds/seed_ideas.md`、`seed_constraints.md`、`seed_external_resources.jsonl`（如果存在）
 
 任务：
-1. 选择一个适合读者理解的 taxonomy 主轴。候选主轴包括 design_rationale、artifact type、data/evaluation view、problem subtask、temporal evolution；可以组合，但必须说明为什么。如果存在 seed outline profile，必须优先检查用户给出的 taxonomy hint 是否合理；例如“四类视角 × 风险生成链条”这类框架应作为默认候选，除非证据显示需要调整。
-2. 构建 2-4 层 taxonomy tree，每个类挂 paper_ids。分类要尽量 MECE；不确定时在 coverage_selfcheck 中标明。
-3. 用 domain_map.citation_edges/domain buckets 梳理 evolution narrative：奠基工作、主要分支、当前前沿、邻接转折。
-4. 规划章节级 outline。默认必须采用紧凑综述结构：background、taxonomy、comparison、challenges、future；Introduction/Conclusion/Abstract 由后续写作补齐。不要默认生成 theme_* 独立主题章；只有用户明确要求长篇综述，且该主题章不能自然并入 taxonomy/comparison 时，才允许最多 1-2 个 theme_* 章，并在 rationale 中说明原因。
-   每个 planned section 必须写出 paragraph functions 或 covers rationale：本节解决什么读者问题、如何使用 taxonomy/evidence、哪些内容不应另拆为独立章。
-5. 做 coverage_selfcheck：unclassified_papers、empty_classes、corpus_sufficiency、classes_needing_more_lit。
-6. 显式区分 evidence strength：FULL/PARTIAL notes 可作为综述主体证据；abstract-only 只能作为覆盖和趋势线索；metadata-only triage 只能进入 `resource_upgrade_needs`，不能挂到 taxonomy paper_ids 里。
-7. 如果 seed outline profile 的代表性方向没有被 T2/T3 具体论文覆盖，写入 `coverage_selfcheck.classes_needing_more_lit` 或 `resource_upgrade_needs`，不要伪造代表论文。
+1. 先把主题变成一个明确的 `central_question`。这个问题要说明：该领域到底在研究什么、已有研究解决了什么、还没有说清楚什么。不能只写“综述某某主题”。
+2. 明确 `scope_boundaries`：纳入什么、不纳入什么、为什么。边界可以来自场景、对象、方法、文献类型、时间范围或证据等级。
+3. 选择一个适合读者理解的 taxonomy/framework 主轴。候选主轴包括 mechanism chain、risk/source-process-outcome-governance、theory/method/application/governance perspectives、artifact type、problem subtask、temporal evolution；可以组合，但必须说明为什么。如果存在 seed outline profile，必须优先检查用户给出的 taxonomy hint 是否合理；除非证据显示需要调整。
+4. 构建 2-4 层 taxonomy tree，每个类挂 paper_ids。分类要尽量 MECE；不确定时在 coverage_selfcheck 中标明。
+5. 写出 `review_contribution`：这篇综述贡献的是新的分类、解释框架、研究地图、问题意识、理论连接，还是未来研究议程。不能只写“总结文献”。
+6. 用 domain_map.citation_edges/domain buckets 梳理 evolution narrative：奠基工作、主要分支、当前前沿、邻接转折。
+7. 规划章节级 outline。默认必须采用紧凑综述结构：background、taxonomy、comparison、challenges、future；Introduction/Conclusion/Abstract 由后续写作补齐。不要默认生成 theme_* 独立主题章；只有用户明确要求长篇综述，且该主题章不能自然并入 taxonomy/comparison 时，才允许最多 1-2 个 theme_* 章，并在 rationale 中说明原因。
+   每个 planned section 必须写出 `reader_question` 和 `section_argument`：本节回答什么读者问题、提出什么节内论点、如何使用 taxonomy/evidence、哪些内容不应另拆为独立章。
+   必须在 survey_plan.json 顶层写 `writing_language`: `"zh"` 或 `"en"`。如果目标是中文期刊、中文综述或用户明确要求中文稿，默认 `"zh"`；如果目标是英文学术期刊/会议或用户明确要求英文稿，写 `"en"`。不要写 mixed 作为正文语言。
+8. 做 coverage_selfcheck：unclassified_papers、empty_classes、corpus_sufficiency、classes_needing_more_lit。
+9. 显式区分 evidence strength：FULL/PARTIAL notes 可作为综述主体证据；abstract-only 只能作为覆盖和趋势线索；metadata-only triage 只能进入 `resource_upgrade_needs`，不能挂到 taxonomy paper_ids 里。
+10. 如果 seed outline profile 的代表性方向没有被 T2/T3 具体论文覆盖，写入 `coverage_selfcheck.classes_needing_more_lit` 或 `resource_upgrade_needs`，不要伪造代表论文。
 
 写 `drafts/survey/survey_plan.json`，结构：
 ```json
 {
   "semantics": "llm_authored_taxonomy_driven_survey_plan",
+  "writing_language": "zh | en",
+  "central_question": "...",
+  "scope_boundaries": {
+    "included": ["..."],
+    "excluded": ["..."],
+    "evidence_rules": "FULL/PARTIAL notes are claim evidence; abstract-only is trend/context; metadata-only is upgrade hint."
+  },
+  "review_contribution": "...",
+  "quality_plan": {
+    "organizing_framework": "...",
+    "comparison_strategy": "...",
+    "theoretical_lift": "...",
+    "future_agenda_logic": "..."
+  },
   "taxonomy": {
     "dimension": "...",
     "rationale": "...",
@@ -161,11 +186,11 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
     "rationale": "Taxonomy classes are handled inside Taxonomy and Comparative Analysis instead of standalone theme chapters."
   },
   "outline": [
-    {"section_id": "background", "title": "Background and Scope", "covers": ["scope"]},
-    {"section_id": "taxonomy", "title": "Taxonomy", "covers": ["T1", "T2"]},
-    {"section_id": "comparison", "title": "Comparative Analysis", "covers": ["cross_paper_tensions"]},
-    {"section_id": "challenges", "title": "Open Challenges", "covers": ["..."]},
-    {"section_id": "future", "title": "Future Directions", "covers": ["adjacent_transfers"]}
+    {"section_id": "background", "title": "Concepts, Scope, and Search Strategy", "reader_question": "...", "section_argument": "...", "covers": ["scope"]},
+    {"section_id": "taxonomy", "title": "Analytical Framework", "reader_question": "...", "section_argument": "...", "covers": ["T1", "T2"]},
+    {"section_id": "comparison", "title": "Research Progress and Comparative Evaluation", "reader_question": "...", "section_argument": "...", "covers": ["cross_paper_tensions"]},
+    {"section_id": "challenges", "title": "Critical Assessment and Open Challenges", "reader_question": "...", "section_argument": "...", "covers": ["..."]},
+    {"section_id": "future", "title": "Future Research Agenda", "reader_question": "...", "section_argument": "...", "covers": ["adjacent_transfers"]}
   ],
   "coverage_selfcheck": {
     "unclassified_papers": [],
@@ -266,14 +291,20 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 
 写作原则：
 - 这是一个独立 section，不要写其它 section。
+- 语言必须与 `survey_state.shared_facts.writing_language` / `survey_plan.writing_language` 一致。中文稿所有 section 写中文；英文稿所有 section 写英文。不要出现中文摘要+英文正文、中文引言+英文主体等混合形态。
+- 篇幅必须支撑综述论文：除 abstract 外，每节都要有多个实质段落；Introduction/Conclusion 也不能只写很短的框架说明。宁可少用小节，也要把论证写充分。
+- 每节必须围绕 `survey_plan.central_question` 和当前 `section_outline` 的 `reader_question` / `section_argument` 写。若 outline 过空，先从 survey_plan 的 central_question、scope_boundaries、quality_plan 中恢复本节论点，不要写成泛泛主题介绍。
+- 每节都要有“节内论点”。小节标题和段落开头应表达判断、关系或问题，而不是百科词条。
+- 段落应采用“观点 -> 文献证据 -> 比较 -> 评价”的综述逻辑。可以引用代表论文，但段落主语应是研究流派、机制、框架维度、证据边界或问题张力，不是一串作者名。
 - 不要包含 `\documentclass`、`\begin{document}`、`\end{document}`。
 - 如果当前 section 是 `abstract`，文件只能写摘要纯正文；不要写 `\section{Abstract}`、`\section*{Abstract}`、`\begin{abstract}` 或 `\end{abstract}`。`assemble_survey` 会负责放入 abstract 环境。
 - 如果 section_id 是 `theme_1`-`theme_4` 且 survey_state 标记 skipped，直接调用 `update_survey_section_state(section_id="{{ section_id }}", status="skipped")` 并 finish。
 - 组织方式必须围绕 taxonomy，不要按 synthesis.md 的 design_rationale fuel 结构硬转写。
 - Taxonomy section 应承载 taxonomy 类、风险链条或视角框架的主要叙述；不要把每个类写成独立大章，除非 survey_state 明确启用了 theme_*。
-- Comparative Analysis section 应比较类之间的机制、证据边界、适用条件和张力，不要写成论文逐篇清单。
+- Comparative Analysis / Research Progress section 应把现有研究重新组织为若干研究流派、机制路径或问题类型，并比较它们的贡献、局限、适用边界和相互关系；不要写成论文逐篇清单。
+- Challenges section 不能只罗列“数据不足、方法不足、实证不足”等通用缺口；每个挑战都要解释它来自哪种研究张力或框架断裂。
+- Future section 不能只写“加强理论/实证/跨学科研究”；每个方向都要给出具体问题、机制、可行研究设计或治理路径。
 - 每段要有具体学术功能：定义边界、解释演进、比较机制、指出 tension、总结挑战或提出方向。
-- 每段不要只堆 paper。可以引用代表论文，但段落的主语应是 taxonomy class、机制差异、证据边界或风险链条，而不是一串作者名。
 - 如果一个 taxonomy class 只有 abstract-only 或 metadata-only 支撑，不要把它写成成熟主流方向；应写成 coverage boundary、emerging hint 或 resource upgrade need。
 - 引用必须逐字来自上方“可用 citation keys”或 `related_work.bib`。不确定 citation key 时，不要编造；宁可不引用或改写为不带 key 的范围描述。
 - `abstract` 不写任何正式引用；具体 prior work attribution 放到 Introduction 或正文综述章节。
@@ -315,17 +346,22 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - `literature/comparison_table.csv`
 
 这一步不是机械 audit，也不是研究论文 reviewer。你要以 survey reviewer 的视角审阅：
-1. **Taxonomy 合理性**：分类维度是否能组织该领域，是否 MECE，是否有明显错分/空类/不必要类。
-2. **Coverage 完整性**：survey 是否覆盖 plan 中的核心类、代表论文、相邻/边界区域；abstract-only 证据是否被诚实标注。
-3. **Comparative Fairness**：comparison 是否公允，是否比较不可比 setting，是否夸大某类方法。
-4. **Challenges 质量**：open challenges 是否来自真实 tensions/gaps，而不是空泛套话。
-5. **Future Directions 质量**：future 是否具体、可操作，并合理使用 adjacent_transfers / boundary hints。
-6. **Scope 诚实性与写作 craft**：conservative 模式是否声明覆盖边界；是否有流水账、placeholder、引用不可信、AI 套话。
-7. **Sectioning 结构**：是否像真实综述论文一样紧凑组织；如果出现多个 theme 章，必须判断它们是否必要，能否合并到 Taxonomy 或 Comparative Analysis。
-8. **内部标记泄漏**：正文和注释中不得出现 `C1`、`[C1]`、`CID`、`ResearchOS alignment`、`TODO/TBD/PLACEHOLDER` 等运行/规划残留。
+1. **中心问题**：全文是否围绕一个明确 review question 展开，而不是泛泛综述一个主题。
+2. **范围边界**：是否说明纳入/排除边界、语料来源、证据等级和覆盖限制。
+3. **Taxonomy/Framework 合理性**：分类维度是否能组织该领域，是否 MECE，是否有明显错分/空类/不必要类。
+4. **Coverage 完整性**：survey 是否覆盖 plan 中的核心类、代表论文、相邻/边界区域；abstract-only 证据是否被诚实标注。
+5. **Comparative Fairness**：research progress/comparison 是否公允，是否比较不可比 setting，是否夸大某类方法。
+6. **二阶贡献**：全文是否提出了分类、解释框架、研究地图或问题意识，而不是文献摘要合集。
+7. **Challenges 质量**：open challenges 是否来自真实 tensions/gaps，而不是空泛套话。
+8. **Future Directions 质量**：future 是否具体、可操作，并合理使用 adjacent_transfers / boundary hints。
+9. **Scope 诚实性与写作 craft**：conservative 模式是否声明覆盖边界；是否有流水账、placeholder、引用不可信、AI 套话。
+10. **语言一致性与篇幅深度**：全文是否采用单一正文语言；是否存在中文摘要/引言 + 英文主体或反向混杂；各 section 是否达到综述论文应有的展开深度。
+11. **Sectioning 结构**：是否像真实综述论文一样紧凑组织；如果出现多个 theme 章，必须判断它们是否必要，能否合并到 Taxonomy/Framework 或 Research Progress/Comparison。
+12. **内部标记泄漏**：正文和注释中不得出现 `C1`、`[C1]`、`CID`、`ResearchOS alignment`、`TODO/TBD/PLACEHOLDER` 等运行/规划残留。
 
 如果发现 blocking 问题：
 - 只修对应 section 文件，例如 `drafts/survey/sections/comparison.tex` 或 `future.tex`。
+- 语言混杂、明显短节、未润色的 section 必须视为 blocking，不得列为 LOW/Remaining Risk。
 - 不要整篇重写 `survey.tex`。
 - 每修完一个 section 调用 `update_survey_section_state(section_id=..., status="revised", note="...")`。
 - 然后重新调用 `assemble_survey(...)` 和 `audit_survey_coverage(...)`。
@@ -337,6 +373,8 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - `## Challenges Review`
 - `## Future Directions Review`
 - `## Scope And Craft Review`
+- `## Review Contribution Review`
+- `## Language And Depth Review`
 - `## Remaining Risks`
 
 写 `drafts/survey/survey_review_actions.json`：

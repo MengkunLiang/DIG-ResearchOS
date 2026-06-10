@@ -20,9 +20,15 @@ from ..tools.latex_compile import _compile_dependency_fingerprint
 from ..literature_identity import is_paper_note_file, is_placeholder_text
 from ..tools.manuscript import _extract_latex_cites, _extract_bib_keys, has_formal_citation
 from ..tools.survey_tools import (
+    _SURVEY_MIN_PLAIN_CHARS,
     SURVEY_SECTION_SEQUENCE,
     SURVEY_SECTION_TITLES,
+    _language_profile,
+    _plain_latex_text,
+    _survey_section_id_for_heading,
+    _survey_state_writing_language,
     _survey_internal_alignment_hits,
+    _survey_section_quality_issues,
 )
 from ._common import ensure_seed_outline_profile, load_jsonl, load_project, prepend_resume_prefix, read_text_file
 
@@ -280,6 +286,8 @@ class SurveyWriterAgent(Agent):
                 "Challenges",
                 "Future",
                 "Scope",
+                "Review Contribution",
+                "Language",
             ]
             missing = [marker for marker in required_markers if marker.casefold() not in review.casefold()]
             if missing:
@@ -295,6 +303,14 @@ class SurveyWriterAgent(Agent):
                 return False, "survey_review_actions.json 仍标记存在 blocking issues"
             if not isinstance(actions.get("section_actions"), list):
                 return False, "survey_review_actions.json section_actions 必须是列表"
+            audit, audit_err = _load_json(ws / "drafts" / "survey" / "survey_audit.json")
+            if audit_err:
+                return False, audit_err
+            if audit.get("passed") is not True:
+                return False, "survey_review 不能通过：survey_audit.json 仍未通过"
+            language_review_err = _validate_survey_review_language_gate(review, actions)
+            if language_review_err:
+                return False, language_review_err
             ok, err = _validate_fingerprint_map(ws, actions.get("input_fingerprints"), "survey_review_actions.json")
             if not ok:
                 return False, err
@@ -386,6 +402,23 @@ def _validate_survey_plan(path: Path) -> tuple[bool, str | None]:
     if err:
         return False, err
     ws = path.parents[2] if len(path.parents) >= 3 else path.parent
+    if data.get("semantics") != "llm_authored_taxonomy_driven_survey_plan":
+        return False, "survey_plan.json semantics 必须是 llm_authored_taxonomy_driven_survey_plan"
+    writing_language = str(data.get("writing_language") or "").strip().lower()
+    if writing_language not in {"zh", "en"}:
+        return False, "survey_plan.json 顶层 writing_language 必须是 zh 或 en；双语输入不等于混合正文"
+    central_question = str(data.get("central_question") or data.get("review_question") or "").strip()
+    if len(central_question) < 20:
+        return False, "survey_plan.json 必须包含明确 central_question/review_question，不能只写主题名"
+    scope = data.get("scope_boundaries")
+    if not isinstance(scope, dict) or not (
+        scope.get("included") or scope.get("include") or scope.get("excluded") or scope.get("exclude")
+    ):
+        return False, "survey_plan.json 必须包含 scope_boundaries，说明纳入与排除边界"
+    contribution = str(data.get("review_contribution") or data.get("theoretical_contribution") or "").strip()
+    quality_plan = data.get("quality_plan") if isinstance(data.get("quality_plan"), dict) else {}
+    if len(contribution) < 20 and not quality_plan.get("theoretical_lift"):
+        return False, "survey_plan.json 必须说明 review_contribution 或 quality_plan.theoretical_lift"
     taxonomy = data.get("taxonomy")
     if not isinstance(taxonomy, dict):
         return False, "survey_plan.json 缺少 taxonomy 对象"
@@ -405,6 +438,21 @@ def _validate_survey_plan(path: Path) -> tuple[bool, str | None]:
     for required in ("background", "taxonomy", "comparison"):
         if required not in section_ids and not any(required in sid for sid in section_ids):
             return False, f"survey_plan.json outline 缺少 {required}"
+    weak_outline = []
+    for item in outline:
+        if not isinstance(item, dict):
+            continue
+        sid = str(item.get("section_id") or "").strip()
+        if sid not in {"background", "taxonomy", "comparison", "challenges", "future"}:
+            continue
+        section_argument = " ".join(
+            str(item.get(key) or "")
+            for key in ("section_argument", "reader_question", "function", "covers_rationale", "rationale")
+        ).strip()
+        if len(section_argument) < 20:
+            weak_outline.append(sid)
+    if weak_outline:
+        return False, "survey_plan.json outline 中这些章节缺少 section_argument/reader_question: " + ", ".join(weak_outline)
     selfcheck = data.get("coverage_selfcheck")
     if not isinstance(selfcheck, dict):
         return False, "survey_plan.json 缺少 coverage_selfcheck"
@@ -593,11 +641,10 @@ def _validate_survey_section(ws: Path, section_id: str) -> tuple[bool, str | Non
     if not path.exists():
         return False, f"缺少章节草稿: drafts/survey/sections/{section_id}.tex"
     text = path.read_text(encoding="utf-8", errors="replace")
-    min_chars = 80 if section_id == "abstract" else 300
-    if len(text.strip()) < min_chars:
-        return False, f"survey section {section_id} 过短"
     if "\\documentclass" in text or "\\begin{document}" in text or "\\end{document}" in text:
         return False, f"survey section {section_id} 不能包含完整 LaTeX wrapper"
+    if section_id != "abstract" and not _has_current_section_heading(text, section_id, state):
+        return False, f"survey section {section_id} 缺少本节 \\section{{...}} 标题"
     placeholder_hits = _placeholder_hits(text)
     if placeholder_hits:
         return False, f"survey section {section_id} 仍包含 planning placeholder: {', '.join(placeholder_hits[:8])}"
@@ -613,6 +660,10 @@ def _validate_survey_section(ws: Path, section_id: str) -> tuple[bool, str | Non
         return False, "survey abstract 文件应只包含摘要正文，不应包含 \\begin{abstract} 或 \\end{abstract}"
     if section_id == "abstract" and re.search(r"\\(?:section|subsection)\*?\{", text, flags=re.IGNORECASE):
         return False, "survey abstract 文件应只包含摘要正文，不应包含 \\section 或 \\subsection 标题"
+    language = _survey_state_writing_language(state, ws)
+    lang_err = _validate_section_language_and_depth(section_id, text, language)
+    if lang_err:
+        return False, lang_err
     bib_keys = set(_extract_bib_keys(ws / "literature" / "related_work.bib"))
     cited = _extract_latex_cites(text)
     if cited and bib_keys:
@@ -629,7 +680,7 @@ def _validate_survey_section(ws: Path, section_id: str) -> tuple[bool, str | Non
                 return False, f"survey section {section_id} 引用了 related_work.bib 不存在的 key: {missing_cites[:8]}{suffix}"
     elif cited and not bib_keys:
         return False, f"survey section {section_id} 含引用但 literature/related_work.bib 缺失或无 BibTeX key"
-    foreign = _foreign_survey_headers(text, section_id)
+    foreign = _foreign_survey_headers(text, section_id, state)
     if foreign:
         return False, f"survey section {section_id} 夹带其它章节: {', '.join(foreign[:5])}"
     if section_id != "abstract":
@@ -642,6 +693,48 @@ def _validate_survey_section(ws: Path, section_id: str) -> tuple[bool, str | Non
     if not ok:
         return False, err
     return True, None
+
+
+def _validate_section_language_and_depth(section_id: str, text: str, language: str) -> str | None:
+    profile = _language_profile(text)
+    min_chars = _SURVEY_MIN_PLAIN_CHARS.get(section_id, {"en": 600, "zh": 800})
+    metric = profile["cjk_chars"] if language == "zh" else len(_plain_latex_text(text))
+    required = min_chars.get(language, 600)
+    if metric < required:
+        return f"survey section {section_id} 篇幅不足: {metric} < {required} ({language})"
+    if language == "zh" and profile["latin_words"] > max(80, profile["cjk_chars"] * 0.35):
+        return f"survey section {section_id} 语言不一致：中文稿中英文内容过多"
+    if language == "en" and profile["cjk_chars"] > max(40, profile["latin_words"] * 1.5):
+        return f"survey section {section_id} 语言不一致：英文稿中中文内容过多"
+    quality_issues = _survey_section_quality_issues(section_id, text)
+    if quality_issues:
+        return f"survey section {section_id} 综述论证结构不足: {', '.join(quality_issues[:3])}"
+    return None
+
+
+def _has_current_section_heading(text: str, section_id: str, state: dict | None = None) -> bool:
+    expected_ids = {section_id}
+    for match in re.finditer(r"\\section\*?\{([^{}]+)\}", text or "", flags=re.IGNORECASE):
+        detected = _survey_section_id_for_heading(match.group(1), state)
+        if detected in expected_ids:
+            return True
+    return False
+
+
+def _validate_survey_review_language_gate(review: str, actions: dict) -> str | None:
+    lowered = review.casefold()
+    if "bilingual consistency" in lowered or "语言" in review or "中英" in review:
+        if re.search(r"(?is)(bilingual consistency|语言|中英)[\s\S]{0,240}\bLOW\b", review):
+            return "survey_review 把语言一致性问题降为 LOW；语言混杂必须作为 blocking issue 修复"
+    for item in actions.get("section_actions") or []:
+        if not isinstance(item, dict):
+            continue
+        issue = str(item.get("issue") or "")
+        evidence = str(item.get("evidence") or "")
+        if re.search(r"语言|中英|bilingual|language consistency", issue + " " + evidence, flags=re.IGNORECASE):
+            if str(item.get("severity") or "").lower() == "low" or str(item.get("action_taken") or "") == "no_change_needed":
+                return "survey_review_actions 把语言一致性问题标为低风险/无需修改；必须修复后才能通过"
+    return None
 
 
 def _repair_near_miss_citation_keys(path: Path, missing: list[str], bib_keys: set[str]) -> bool:
@@ -892,19 +985,14 @@ def _validate_survey_pdf(pdf_path: Path) -> tuple[bool, str | None]:
     return True, None
 
 
-def _foreign_survey_headers(text: str, section_id: str) -> list[str]:
-    current = _normalize_title(SURVEY_SECTION_TITLES.get(section_id, section_id))
+def _foreign_survey_headers(text: str, section_id: str, state: dict | None = None) -> list[str]:
     foreign = []
     for match in re.finditer(r"\\(?:section|subsection)\*?\{([^{}]+)\}", text):
-        title = _normalize_title(match.group(1))
-        if not title or title == current:
+        detected = _survey_section_id_for_heading(match.group(1), state)
+        if not detected or detected == section_id:
             continue
-        for other_id, other_title in SURVEY_SECTION_TITLES.items():
-            if other_id == section_id:
-                continue
-            if title == _normalize_title(other_title):
-                foreign.append(other_title)
-                break
+        if detected in SURVEY_SECTION_TITLES:
+            foreign.append(SURVEY_SECTION_TITLES[detected])
     return foreign
 
 

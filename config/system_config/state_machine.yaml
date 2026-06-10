@@ -338,7 +338,7 @@ states:
     outputs:
       section: drafts/survey/sections/background.tex
     next_on_success: T3.6-SEC-TAXONOMY
-    next_on_failure: failed
+    next_on_failure: T3.6-SEC-BACKGROUND
 
   T3.6-SEC-TAXONOMY:
     agent: survey_writer
@@ -360,7 +360,7 @@ states:
     outputs:
       section: drafts/survey/sections/taxonomy.tex
     next_on_success: T3.6-SEC-THEME-1
-    next_on_failure: failed
+    next_on_failure: T3.6-SEC-TAXONOMY
 
   T3.6-SEC-THEME-1:
     agent: survey_writer
@@ -388,7 +388,7 @@ states:
     optional_outputs:
       section: drafts/survey/sections/theme_1.tex
     next_on_success: T3.6-SEC-THEME-2
-    next_on_failure: failed
+    next_on_failure: T3.6-SEC-THEME-1
 
   T3.6-SEC-THEME-2:
     agent: survey_writer
@@ -416,7 +416,7 @@ states:
     optional_outputs:
       section: drafts/survey/sections/theme_2.tex
     next_on_success: T3.6-SEC-THEME-3
-    next_on_failure: failed
+    next_on_failure: T3.6-SEC-THEME-2
 
   T3.6-SEC-THEME-3:
     agent: survey_writer
@@ -444,7 +444,7 @@ states:
     optional_outputs:
       section: drafts/survey/sections/theme_3.tex
     next_on_success: T3.6-SEC-THEME-4
-    next_on_failure: failed
+    next_on_failure: T3.6-SEC-THEME-3
 
   T3.6-SEC-THEME-4:
     agent: survey_writer
@@ -472,7 +472,7 @@ states:
     optional_outputs:
       section: drafts/survey/sections/theme_4.tex
     next_on_success: T3.6-SEC-COMPARISON
-    next_on_failure: failed
+    next_on_failure: T3.6-SEC-THEME-4
 
   T3.6-SEC-COMPARISON:
     agent: survey_writer
@@ -493,7 +493,7 @@ states:
     outputs:
       section: drafts/survey/sections/comparison.tex
     next_on_success: T3.6-SEC-CHALLENGES
-    next_on_failure: failed
+    next_on_failure: T3.6-SEC-COMPARISON
 
   T3.6-SEC-CHALLENGES:
     agent: survey_writer
@@ -515,7 +515,7 @@ states:
     outputs:
       section: drafts/survey/sections/challenges.tex
     next_on_success: T3.6-SEC-FUTURE
-    next_on_failure: failed
+    next_on_failure: T3.6-SEC-CHALLENGES
 
   T3.6-SEC-FUTURE:
     agent: survey_writer
@@ -536,7 +536,7 @@ states:
     outputs:
       section: drafts/survey/sections/future.tex
     next_on_success: T3.6-SEC-INTRO
-    next_on_failure: failed
+    next_on_failure: T3.6-SEC-FUTURE
 
   T3.6-SEC-INTRO:
     agent: survey_writer
@@ -560,7 +560,7 @@ states:
     outputs:
       section: drafts/survey/sections/introduction.tex
     next_on_success: T3.6-SEC-CONCLUSION
-    next_on_failure: failed
+    next_on_failure: T3.6-SEC-INTRO
 
   T3.6-SEC-CONCLUSION:
     agent: survey_writer
@@ -580,7 +580,7 @@ states:
     outputs:
       section: drafts/survey/sections/conclusion.tex
     next_on_success: T3.6-SEC-ABSTRACT
-    next_on_failure: failed
+    next_on_failure: T3.6-SEC-CONCLUSION
 
   T3.6-SEC-ABSTRACT:
     agent: survey_writer
@@ -604,7 +604,7 @@ states:
     outputs:
       section: drafts/survey/sections/abstract.tex
     next_on_success: T3.6-ASSEMBLE
-    next_on_failure: failed
+    next_on_failure: T3.6-SEC-ABSTRACT
 
   # T3.6-ASSEMBLE 状态：拼装 survey.tex 并做覆盖审计
   T3.6-ASSEMBLE:
@@ -625,7 +625,7 @@ states:
       survey_audit: drafts/survey/survey_audit.md
       survey_audit_json: drafts/survey/survey_audit.json
     next_on_success: T3.6-REVIEW
-    next_on_failure: failed
+    next_on_failure: T3.6-ASSEMBLE
 
   # T3.6-REVIEW 状态：综述模式审阅与定向修订
   # 用途：LLM 按 taxonomy/coverage/fairness/challenges/future/scope 维度审阅，必要时只修对应 section。
@@ -655,7 +655,7 @@ states:
       survey_audit: drafts/survey/survey_audit.md
       survey_audit_json: drafts/survey/survey_audit.json
     next_on_success: T3.6-COMPILE
-    next_on_failure: failed
+    next_on_failure: T3.6-REVIEW
 
   # T3.6-COMPILE 状态：编译 survey.tex 为 PDF
   # 用途：验证 survey 分章节写作产物能形成可读 PDF；失败时暂停等待 TeX/Docker 环境或章节修复。
@@ -673,7 +673,7 @@ states:
       survey_log: drafts/survey/survey.log
       survey_compile_report: drafts/survey/survey_compile_report.json
     next_on_success: T3.6-FEED
-    next_on_failure: failed
+    next_on_failure: T3.6-ASSEMBLE
 
   # T3.6-FEED 状态：导出 T4 可消费的综述洞察
   # 用途：把 taxonomy/challenges/future directions 作为额外 idea fuel，不作为 T4 gate。
