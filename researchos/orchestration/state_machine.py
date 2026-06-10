@@ -751,7 +751,12 @@ class StateMachine:
         self._check_iteration_deadlock(state, node)
 
         run_id = f"{state.current_task.lower()}_{uuid.uuid4().hex[:8]}"
-        outputs = {name: workspace_dir / rel for name, rel in (node.outputs or {}).items()}
+        optional_output_names = set((node.optional_outputs or {}).keys())
+        outputs = {
+            name: workspace_dir / rel
+            for name, rel in (node.outputs or {}).items()
+            if name not in optional_output_names
+        }
         inputs = {name: workspace_dir / rel for name, rel in (node.inputs or {}).items()}
 
         # ctx.extra 的来源分三层：

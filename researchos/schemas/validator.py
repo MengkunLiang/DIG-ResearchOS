@@ -127,6 +127,8 @@ def validate_task_artifacts(
         # 没有定义outputs，跳过校验
         return True, None
     optional_outputs = set(task_io.get("optional_outputs", []))
+    if declared_outputs:
+        outputs = {name: path for name, path in outputs.items() if name not in optional_outputs}
 
     errors = []
 

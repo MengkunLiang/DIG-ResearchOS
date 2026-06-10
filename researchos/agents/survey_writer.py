@@ -9,6 +9,7 @@ T3.5. It is not a converter from synthesis.md to TeX.
 import json
 import re
 from pathlib import Path
+from difflib import SequenceMatcher
 
 import yaml
 
@@ -97,6 +98,8 @@ class SurveyWriterAgent(Agent):
             seed_constraints = ""
         seed_papers = load_jsonl(ws / "user_seeds" / "seed_papers.jsonl")
         external_resources = load_jsonl(ws / "user_seeds" / "seed_external_resources.jsonl")
+        related_work_bib_path = ws / "literature" / "related_work.bib"
+        related_work_keys = _extract_bib_keys(related_work_bib_path)
         return render_prompt(
             self.spec.prompt_template,
             ctx,
@@ -113,7 +116,9 @@ class SurveyWriterAgent(Agent):
             corpus_decision_preview=read_text_file(ws / "drafts" / "survey" / "corpus_decision.json", default="")[:2000],
             survey_audit_preview=read_text_file(ws / "drafts" / "survey" / "survey_audit.md", default="")[:3000],
             section_outline_preview=section_outline[:5000],
-            related_work_preview=read_text_file(ws / "literature" / "related_work.bib", default="")[:3000],
+            related_work_preview=read_text_file(related_work_bib_path, default="")[:3000],
+            related_work_keys=related_work_keys,
+            related_work_key_count=len(related_work_keys),
             seed_outline_profile_preview=seed_outline_profile[:7000],
             has_seed_outline_profile=bool(seed_outline_profile.strip()),
             seed_ideas_preview=seed_ideas[:3000],
@@ -613,7 +618,15 @@ def _validate_survey_section(ws: Path, section_id: str) -> tuple[bool, str | Non
     if cited and bib_keys:
         missing_cites = sorted(cited - bib_keys)
         if missing_cites:
-            return False, f"survey section {section_id} 引用了 related_work.bib 不存在的 key: {missing_cites[:8]}"
+            repaired = _repair_near_miss_citation_keys(path, missing_cites, bib_keys)
+            if repaired:
+                text = path.read_text(encoding="utf-8", errors="replace")
+                cited = _extract_latex_cites(text)
+                missing_cites = sorted(cited - bib_keys)
+            if missing_cites:
+                suggestions = _citation_key_suggestions(missing_cites, bib_keys)
+                suffix = f"；可能候选: {suggestions}" if suggestions else ""
+                return False, f"survey section {section_id} 引用了 related_work.bib 不存在的 key: {missing_cites[:8]}{suffix}"
     elif cited and not bib_keys:
         return False, f"survey section {section_id} 含引用但 literature/related_work.bib 缺失或无 BibTeX key"
     foreign = _foreign_survey_headers(text, section_id)
@@ -625,10 +638,135 @@ def _validate_survey_section(ws: Path, section_id: str) -> tuple[bool, str | Non
             return False, f"survey section {section_id} 写作结构问题: {', '.join(craft_hits[:4])}"
     if isinstance(entry, dict) and entry.get("status") not in {"written", "revised"}:
         return False, f"survey_state 中 {section_id} 未标记 written/revised"
-    ok, err = _validate_fingerprint_map(ws, entry.get("input_fingerprints"), f"survey_state.sections.{section_id}")
+    ok, err = _validate_section_fingerprints(ws, state, section_id, entry)
     if not ok:
         return False, err
     return True, None
+
+
+def _repair_near_miss_citation_keys(path: Path, missing: list[str], bib_keys: set[str]) -> bool:
+    replacements: dict[str, str] = {}
+    for key in missing:
+        replacement = _unique_close_bib_key(key, bib_keys)
+        if not replacement:
+            return False
+        replacements[key] = replacement
+    original = path.read_text(encoding="utf-8", errors="replace")
+    repaired = _replace_latex_cite_keys(original, replacements)
+    if repaired == original:
+        return False
+    path.write_text(repaired, encoding="utf-8")
+    return True
+
+
+def _unique_close_bib_key(key: str, bib_keys: set[str]) -> str | None:
+    if len(key) < 8:
+        return None
+    scored: list[tuple[float, str]] = []
+    key_folded = key.casefold()
+    for candidate in bib_keys:
+        candidate_folded = candidate.casefold()
+        ratio = SequenceMatcher(None, key_folded, candidate_folded).ratio()
+        if ratio >= 0.90:
+            scored.append((ratio, candidate))
+    scored.sort(reverse=True)
+    if not scored:
+        return None
+    if len(scored) > 1 and scored[0][0] - scored[1][0] < 0.025:
+        return None
+    return scored[0][1]
+
+
+_LATEX_CITE_WITH_KEYS_RE = re.compile(
+    r"(\\(?:cite|citep|citet|citealp|citealt|citeauthor|citeyear|parencite|textcite|autocite|footcite|supercite)\*?"
+    r"(?:\[[^\]]*\]){0,2}\{)([^}]+)(\})",
+    flags=re.IGNORECASE,
+)
+
+
+def _replace_latex_cite_keys(text: str, replacements: dict[str, str]) -> str:
+    def repl(match: re.Match[str]) -> str:
+        prefix, keys, suffix = match.groups()
+        parts = [part.strip() for part in keys.split(",")]
+        new_parts = [replacements.get(part, part) for part in parts]
+        return prefix + ",".join(new_parts) + suffix
+
+    return _LATEX_CITE_WITH_KEYS_RE.sub(repl, text)
+
+
+def _citation_key_suggestions(missing: list[str], bib_keys: set[str]) -> dict[str, list[str]]:
+    suggestions: dict[str, list[str]] = {}
+    for key in missing[:8]:
+        scored = sorted(
+            (
+                (SequenceMatcher(None, key.casefold(), candidate.casefold()).ratio(), candidate)
+                for candidate in bib_keys
+            ),
+            reverse=True,
+        )
+        close = [candidate for score, candidate in scored[:3] if score >= 0.78]
+        if close:
+            suggestions[key] = close
+    return suggestions
+
+
+def _validate_section_fingerprints(
+    ws: Path,
+    state: dict,
+    section_id: str,
+    entry: dict,
+) -> tuple[bool, str | None]:
+    fingerprints = entry.get("input_fingerprints")
+    if not isinstance(fingerprints, dict):
+        return False, f"survey_state.sections.{section_id} 缺少 input_fingerprints，必须重新生成"
+    outline = fingerprints.get("section_outline")
+    if isinstance(outline, dict):
+        ok, err = _validate_fingerprint_map(
+            ws,
+            {"section_outline": outline},
+            f"survey_state.sections.{section_id}",
+        )
+        if not ok:
+            return False, err
+    section_file = fingerprints.get("section_file")
+    if isinstance(section_file, dict):
+        ok, err = _validate_fingerprint_map(
+            ws,
+            {"section_file": section_file},
+            f"survey_state.sections.{section_id}",
+        )
+        if not ok:
+            if _refresh_section_file_fingerprint(ws, state, section_id, section_file):
+                return True, None
+            return False, err
+    return True, None
+
+
+def _refresh_section_file_fingerprint(
+    ws: Path,
+    state: dict,
+    section_id: str,
+    item: dict,
+) -> bool:
+    rel = str(item.get("path") or f"drafts/survey/sections/{section_id}.tex").strip()
+    path = ws / rel
+    if not path.exists() or not path.is_file():
+        return False
+    sections = state.get("sections")
+    if not isinstance(sections, dict) or not isinstance(sections.get(section_id), dict):
+        return False
+    fingerprints = sections[section_id].setdefault("input_fingerprints", {})
+    if not isinstance(fingerprints, dict):
+        return False
+    fingerprints["section_file"] = {
+        "path": rel,
+        "exists": True,
+        "sha256": _sha256_file(path),
+        "kind": "file",
+    }
+    state_path = ws / "drafts" / "survey" / "survey_state.json"
+    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return True
 
 
 def _placeholder_hits(text: str) -> list[str]:

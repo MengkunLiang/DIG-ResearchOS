@@ -385,6 +385,8 @@ states:
       seed_external_resources: user_seeds/seed_external_resources.jsonl
     outputs:
       section: drafts/survey/sections/theme_1.tex
+    optional_outputs:
+      section: drafts/survey/sections/theme_1.tex
     next_on_success: T3.6-SEC-THEME-2
     next_on_failure: failed
 
@@ -410,6 +412,8 @@ states:
       seed_constraints: user_seeds/seed_constraints.md
       seed_external_resources: user_seeds/seed_external_resources.jsonl
     outputs:
+      section: drafts/survey/sections/theme_2.tex
+    optional_outputs:
       section: drafts/survey/sections/theme_2.tex
     next_on_success: T3.6-SEC-THEME-3
     next_on_failure: failed
@@ -437,6 +441,8 @@ states:
       seed_external_resources: user_seeds/seed_external_resources.jsonl
     outputs:
       section: drafts/survey/sections/theme_3.tex
+    optional_outputs:
+      section: drafts/survey/sections/theme_3.tex
     next_on_success: T3.6-SEC-THEME-4
     next_on_failure: failed
 
@@ -462,6 +468,8 @@ states:
       seed_constraints: user_seeds/seed_constraints.md
       seed_external_resources: user_seeds/seed_external_resources.jsonl
     outputs:
+      section: drafts/survey/sections/theme_4.tex
+    optional_outputs:
       section: drafts/survey/sections/theme_4.tex
     next_on_success: T3.6-SEC-COMPARISON
     next_on_failure: failed

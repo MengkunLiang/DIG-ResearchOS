@@ -73,6 +73,7 @@ class BuildSurveyStateParams(BaseModel):
     survey_plan_path: str = Field(default="drafts/survey/survey_plan.json")
     corpus_decision_path: str = Field(default="drafts/survey/corpus_decision.json")
     expansion_path: str = Field(default="drafts/survey/survey_expansion.json")
+    metadata_triage_path: str = Field(default="literature/metadata_triage.md")
     state_output_path: str = Field(default="drafts/survey/survey_state.json")
     section_outline_dir: str = Field(default="drafts/survey/section_outlines")
     max_theme_sections: int = Field(default=DEFAULT_MAX_THEME_SECTIONS, ge=0, le=4)
@@ -155,6 +156,7 @@ class BuildSurveyStateTool(Tool):
                 params.corpus_decision_path,
             )
             expansion = _read_optional_json(self.policy, params.expansion_path)
+            metadata_triage = _read_optional_text(self.policy, params.metadata_triage_path)
             state_path = self.policy.resolve_write(params.state_output_path)
             outline_dir = self.policy.resolve_write(params.section_outline_dir)
         except (ToolAccessDenied, FileNotFoundError, ValueError) as exc:
@@ -217,6 +219,7 @@ class BuildSurveyStateTool(Tool):
                     "survey_plan": params.survey_plan_path,
                     "corpus_decision": params.corpus_decision_path,
                     "survey_expansion": params.expansion_path,
+                    "metadata_triage": params.metadata_triage_path,
                 },
             ),
             "corpus_scope": _corpus_scope(corpus_decision),
@@ -233,7 +236,11 @@ class BuildSurveyStateTool(Tool):
                 "taxonomy_classes": _taxonomy_classes(plan),
                 "evolution_narrative": str(plan.get("evolution_narrative") or ""),
                 "coverage_selfcheck": plan.get("coverage_selfcheck") or {},
-                "resource_upgrade_needs": _resource_upgrade_needs(plan),
+                "resource_upgrade_needs": _merge_resource_upgrade_needs(
+                    _resource_upgrade_needs(plan),
+                    _metadata_triage_upgrade_needs(metadata_triage),
+                ),
+                "metadata_triage_boundaries": _metadata_triage_boundaries(metadata_triage),
                 "expansion_summary": expansion.get("summary", "") if isinstance(expansion, dict) else "",
             },
             "revision_log": [],
@@ -285,12 +292,14 @@ class UpdateSurveySectionStateTool(Tool):
         section_path = params.section_path.strip() or f"drafts/survey/sections/{section_id}.tex"
         sections[section_id]["status"] = params.status
         sections[section_id]["file"] = section_path
+        fingerprint_paths = {
+            "section_outline": str(sections[section_id].get("outline_file") or f"drafts/survey/section_outlines/{section_id}.md"),
+        }
+        if params.status != "skipped":
+            fingerprint_paths["section_file"] = section_path
         sections[section_id]["input_fingerprints"] = _input_fingerprints(
             self.policy.workspace_dir,
-            {
-                "section_outline": str(sections[section_id].get("outline_file") or f"drafts/survey/section_outlines/{section_id}.md"),
-                "section_file": section_path,
-            },
+            fingerprint_paths,
         )
         if params.note.strip():
             sections[section_id]["note"] = params.note.strip()
@@ -735,6 +744,16 @@ def _read_optional_json(policy: WorkspaceAccessPolicy, rel_path: str) -> dict[st
         return {}
 
 
+def _read_optional_text(policy: WorkspaceAccessPolicy, rel_path: str) -> str:
+    try:
+        path = policy.resolve_read(rel_path)
+        if not path.exists() or not path.is_file():
+            return ""
+        return path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
 def _read_jsonl_optional(policy: WorkspaceAccessPolicy, rel_path: str) -> list[dict[str, Any]]:
     try:
         path = policy.resolve_read(rel_path)
@@ -976,6 +995,59 @@ def _merge_resource_upgrade_needs(*groups: list[dict[str, Any]]) -> list[dict[st
     return merged
 
 
+def _metadata_triage_upgrade_needs(text: str) -> list[dict[str, Any]]:
+    items = _metadata_triage_section_items(text, "Likely Useful To Upgrade")
+    needs: list[dict[str, Any]] = []
+    for item in items[:25]:
+        needs.append(
+            {
+                "paper_or_topic": item,
+                "reason": "metadata_triage_likely_useful_but_not_evidence",
+                "suggested_action": "Acquire abstract/PDF and promote to abstract/deep note before citing or using as mechanism evidence.",
+                "allowed_use": "resource_upgrade_hint_not_survey_or_idea_evidence",
+                "source": "literature/metadata_triage.md",
+            }
+        )
+    return needs
+
+
+def _metadata_triage_boundaries(text: str) -> dict[str, Any]:
+    if not text.strip():
+        return {}
+    do_not_use = _metadata_triage_section_items(text, "Do Not Use As Evidence")
+    low_evidence = _metadata_triage_section_items(text, "Low Evidence / Defer")
+    count_match = re.search(r"candidate_count:\s*(\d+)", text)
+    return {
+        "source": "literature/metadata_triage.md",
+        "allowed_use": "coverage_gap_and_resource_upgrade_only_not_claim_evidence",
+        "candidate_count": int(count_match.group(1)) if count_match else None,
+        "likely_useful_to_upgrade_count": len(_metadata_triage_section_items(text, "Likely Useful To Upgrade")),
+        "low_evidence_defer_count": len(low_evidence),
+        "do_not_use_as_evidence_count": len(do_not_use),
+        "do_not_use_examples": do_not_use[:12],
+        "low_evidence_examples": low_evidence[:12],
+    }
+
+
+def _metadata_triage_section_items(text: str, heading: str) -> list[str]:
+    if not text.strip():
+        return []
+    pattern = rf"(?ims)^##\s+{re.escape(heading)}\s*$([\s\S]*?)(?=^##\s+|\Z)"
+    match = re.search(pattern, text)
+    if not match:
+        return []
+    items: list[str] = []
+    for line in match.group(1).splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("-"):
+            continue
+        normalized = re.sub(r"^\-\s*", "", stripped).strip()
+        normalized = re.sub(r"\s+", " ", normalized)
+        if normalized:
+            items.append(normalized[:280])
+    return items
+
+
 def _corpus_scope(decision: dict[str, Any]) -> str:
     scope = str(decision.get("scope") or decision.get("corpus_scope") or "").strip().lower()
     if scope in {"complete", "full", "expand"}:
@@ -1000,14 +1072,7 @@ def _section_outline_text(section_id: str, entry: dict[str, Any], plan: dict[str
         f"- paper_ids: {', '.join(str(item) for item in paper_ids) if paper_ids else 'LLM should select from notes/bib'}",
         "",
         "## Writing Skill",
-        "- Write one coherent survey section only; do not write adjacent sections.",
-        "- Use taxonomy as the organizing axis, not the synthesis.md design-rationale fuel structure.",
-        "- Default compact mode keeps taxonomy classes inside Taxonomy and Comparative Analysis rather than standalone theme chapters.",
-        "- Synthesize evolution, comparison, tensions, and open problems using citations from related_work.bib.",
-        "- Do not invent citations. If a needed citation key is missing, state the limitation in prose and avoid fake keys.",
-        "- Do not expose internal ResearchOS labels such as C1, [C1], CID, ResearchOS alignment, TODO/TBD/PLACEHOLDER, or LLM_REVIEW_REQUIRED.",
-        "- Treat abstract-only or metadata-only material as coverage/resource-upgrade context, not as verified mechanism evidence.",
-        "- Avoid deterministic template filler; use LLM scholarly judgment for narrative, framing, and taxonomy critique.",
+        *_section_writing_skill(section_id),
         "",
         "## Sectioning Guidance",
         _sectioning_guidance(section_id, plan),
@@ -1017,6 +1082,66 @@ def _section_outline_text(section_id: str, entry: dict[str, Any], plan: dict[str
         "",
     ]
     return "\n".join(lines)
+
+
+def _section_writing_skill(section_id: str) -> list[str]:
+    common = [
+        "- Write one coherent survey section only; do not write adjacent sections.",
+        "- Use taxonomy as the organizing axis, not the synthesis.md design-rationale fuel structure.",
+        "- Cite only exact keys from related_work.bib; do not invent or approximate citation keys.",
+        "- Do not expose internal ResearchOS labels such as C1, [C1], CID, ResearchOS alignment, TODO/TBD/PLACEHOLDER, or LLM_REVIEW_REQUIRED.",
+        "- Treat abstract-only or metadata-only material as coverage/resource-upgrade context, not as verified mechanism evidence.",
+    ]
+    specific: dict[str, list[str]] = {
+        "abstract": [
+            "- Write only the abstract body: no heading, no LaTeX abstract environment, and no citations.",
+            "- Summarize the review problem, taxonomy axis, main comparative insight, open challenges, and future agenda in one compact paragraph.",
+            "- Avoid claims that require detailed evidence attribution; those belong in the main sections.",
+        ],
+        "introduction": [
+            "- Motivate why readers need this survey, define the scope, state the taxonomy contribution, and preview the section roadmap.",
+            "- Cite sparingly: use representative anchors for the field, not a long literature list.",
+            "- Make the contribution of the survey explicit without promising experiments or original empirical results.",
+        ],
+        "background": [
+            "- Define core concepts, domain boundaries, and historical context needed to understand the taxonomy.",
+            "- Do not duplicate the taxonomy section; use background to set scope and terminology.",
+            "- Separate established foundations from weak or emerging evidence.",
+        ],
+        "taxonomy": [
+            "- Carry the main classification framework here, using subsections or compact paragraphs for classes, stages, or perspectives.",
+            "- For each class, explain the mechanism, inclusion boundary, representative evidence, and relation to adjacent classes.",
+            "- Avoid paper-by-paper summaries; papers support the class definition rather than becoming the structure.",
+        ],
+        "comparison": [
+            "- Compare taxonomy classes across assumptions, mechanisms, data/evaluation settings, evidence strength, and practical constraints.",
+            "- Surface tensions and tradeoffs that are not visible inside individual classes.",
+            "- Use tables only if already planned; otherwise write dense comparative prose rather than a literature list.",
+        ],
+        "challenges": [
+            "- Derive challenges from gaps, contradictions, weak evidence, and deployment boundaries identified earlier.",
+            "- Keep challenges specific enough to guide research; avoid generic statements that could fit any field.",
+            "- Mark metadata-only/resource-upgrade hints as unresolved coverage needs, not evidence-backed conclusions.",
+        ],
+        "future": [
+            "- Turn the taxonomy and challenge analysis into concrete research directions, study designs, benchmarks, or governance questions.",
+            "- Distinguish near-term feasible work from speculative agenda items.",
+            "- Do not introduce new unsupported literature claims; reuse evidence already established in earlier sections.",
+        ],
+        "conclusion": [
+            "- Synthesize what the taxonomy clarifies, what remains uncertain, and how future work should use the survey.",
+            "- Do not introduce new evidence, new citations, or new taxonomy classes.",
+            "- Keep the ending concise and intellectually honest about coverage limits.",
+        ],
+    }
+    if section_id.startswith("theme_"):
+        return [
+            "- This is an optional standalone theme slot, not a default chapter.",
+            "- If survey_state marks this section skipped, do not write prose; call update_survey_section_state with status='skipped'.",
+            "- If explicitly enabled, write a focused theme chapter only when it cannot be integrated into Taxonomy or Comparative Analysis.",
+            *common,
+        ]
+    return [*(specific.get(section_id) or ["- Write compact professional survey prose for this section's reader-facing function."]), *common]
 
 
 def _sectioning_guidance(section_id: str, plan: dict[str, Any]) -> str:

@@ -84,6 +84,15 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 ### related_work.bib 预览
 {{ related_work_preview }}
 
+### related_work.bib 可用 citation keys（{{ related_work_key_count }} 个）
+{% if related_work_keys %}
+{% for key in related_work_keys %}
+- {{ key }}
+{% endfor %}
+{% else %}
+- 未发现 BibTeX key。含引用的 section 将无法通过校验。
+{% endif %}
+
 ---
 
 {% if phase == "survey_gate" %}
@@ -266,7 +275,7 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - 每段要有具体学术功能：定义边界、解释演进、比较机制、指出 tension、总结挑战或提出方向。
 - 每段不要只堆 paper。可以引用代表论文，但段落的主语应是 taxonomy class、机制差异、证据边界或风险链条，而不是一串作者名。
 - 如果一个 taxonomy class 只有 abstract-only 或 metadata-only 支撑，不要把它写成成熟主流方向；应写成 coverage boundary、emerging hint 或 resource upgrade need。
-- 引用必须来自 `related_work.bib`。不确定 citation key 时，不要编造。
+- 引用必须逐字来自上方“可用 citation keys”或 `related_work.bib`。不确定 citation key 时，不要编造；宁可不引用或改写为不带 key 的范围描述。
 - `abstract` 不写任何正式引用；具体 prior work attribution 放到 Introduction 或正文综述章节。
 - 对 abstract-only 文献，要标注 evidence 边界，不把 abstract claim 写成已验证机制。
 - 避免 "this section reviews..." 这类空话；直接进入内容。

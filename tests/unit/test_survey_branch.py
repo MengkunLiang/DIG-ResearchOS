@@ -10,6 +10,7 @@ from researchos.agents.registry import get_agent_by_id
 from researchos.agents.survey_writer import SurveyWriterAgent
 from researchos.orchestration.task_io_contract import TASK_IO_CONTRACTS
 from researchos.orchestration.state_machine import StateMachine
+from researchos.runtime.system_config import system_config_path
 from researchos.runtime.agent import AgentResult, ExecutionContext
 from researchos.schemas.validator import validate_task_artifacts
 from researchos.schemas.state import StateYaml
@@ -181,6 +182,25 @@ async def test_survey_tools_build_state_assemble_audit_and_export(tmp_path: Path
         "@article{p1,title={A}}\n@article{p2,title={B}}\n@article{p3,title={C}}\n",
         encoding="utf-8",
     )
+    (ws / "literature" / "metadata_triage.md").write_text(
+        """# Metadata-only Literature Triage
+
+## Likely Useful To Upgrade
+
+- **17** - Useful metadata-only paper (Information Fusion, 2021)
+
+## Low Evidence / Defer
+
+- **22** - Weak metadata-only paper
+
+## Do Not Use As Evidence
+
+- **1** - Suspect venue paper
+
+<!-- metadata_triage_source: reader_llm; candidate_count: 3 -->
+""",
+        encoding="utf-8",
+    )
     policy = _policy(ws)
 
     result = await BuildSurveyStateTool(policy).execute()
@@ -191,6 +211,17 @@ async def test_survey_tools_build_state_assemble_audit_and_export(tmp_path: Path
     assert state["sections"]["theme_1"]["status"] == "skipped"
     assert state["sections"]["theme_3"]["status"] == "skipped"
     assert state["shared_facts"]["resource_upgrade_needs"][0]["allowed_use"] == "resource_upgrade_hint_not_survey_or_idea_evidence"
+    assert any("Useful metadata-only paper" in item["paper_or_topic"] for item in state["shared_facts"]["resource_upgrade_needs"])
+    assert state["shared_facts"]["metadata_triage_boundaries"]["do_not_use_as_evidence_count"] == 1
+    background_outline = (ws / "drafts" / "survey" / "section_outlines" / "background.md").read_text(encoding="utf-8")
+    taxonomy_outline = (ws / "drafts" / "survey" / "section_outlines" / "taxonomy.md").read_text(encoding="utf-8")
+    abstract_outline = (ws / "drafts" / "survey" / "section_outlines" / "abstract.md").read_text(encoding="utf-8")
+    theme_outline = (ws / "drafts" / "survey" / "section_outlines" / "theme_1.md").read_text(encoding="utf-8")
+    assert "Define core concepts" in background_outline
+    assert "Carry the main classification framework" in taxonomy_outline
+    assert "no heading, no LaTeX abstract environment" in abstract_outline
+    assert "optional standalone theme slot" in theme_outline
+    assert background_outline != taxonomy_outline
     state["shared_facts"]["resource_upgrade_needs"].append(
         {
             "paper_or_topic": "state_added_need",
@@ -491,8 +522,58 @@ async def test_t36_section_refuses_stale_section_outline_and_file(tmp_path: Path
         encoding="utf-8",
     )
     ok, err = agent.validate_outputs(ctx)
-    assert not ok
-    assert "已过期" in (err or "")
+    assert ok, err
+    state = json.loads((ws / "drafts" / "survey" / "survey_state.json").read_text(encoding="utf-8"))
+    assert state["sections"]["taxonomy"]["input_fingerprints"]["section_file"]["sha256"] == _sha256_file(
+        ws / "drafts" / "survey" / "sections" / "taxonomy.tex"
+    )
+
+
+@pytest.mark.asyncio
+async def test_t36_section_repairs_unique_near_miss_citation_key(tmp_path: Path):
+    ws = tmp_path
+    await _build_valid_survey_chain(ws)
+    bib_key = "102316journal203201032034219"
+    wrong_key = "102316journal201203032034219"
+    (ws / "literature" / "related_work.bib").write_text(
+        f"@article{{{bib_key},title={{Correct Key}}}}\n",
+        encoding="utf-8",
+    )
+    section_path = ws / "drafts" / "survey" / "sections" / "background.tex"
+    section_path.write_text(
+        _valid_survey_section_body("Background and Scope", f"\\citep{{{wrong_key}}}"),
+        encoding="utf-8",
+    )
+    await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="background")
+
+    ok, err = SurveyWriterAgent(mode="survey_section").validate_outputs(
+        _survey_ctx(ws, "survey_section", section_id="background")
+    )
+
+    assert ok, err
+    assert wrong_key not in section_path.read_text(encoding="utf-8")
+    assert bib_key in section_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_t36_theme_section_skipped_is_optional_for_runtime_validation(tmp_path: Path):
+    ws = tmp_path
+    _write_json(ws / "drafts" / "survey" / "survey_plan.json", _survey_plan())
+    _write_json(ws / "drafts" / "survey" / "corpus_decision.json", {"scope": "conservative"})
+    result = await BuildSurveyStateTool(_policy(ws)).execute()
+    assert result.ok, result.content
+    result = await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="theme_1", status="skipped")
+    assert result.ok, result.content
+    state = json.loads((ws / "drafts" / "survey" / "survey_state.json").read_text(encoding="utf-8"))
+    assert set(state["sections"]["theme_1"]["input_fingerprints"]) == {"section_outline"}
+
+    ok, err = validate_task_artifacts(ws, "T3.6-SEC-THEME-1", declared_outputs={"section": "drafts/survey/sections/theme_1.tex"})
+
+    assert ok, err
+    sm = StateMachine(system_config_path("state_machine.yaml"))
+    state = StateYaml(project_id="p", current_task="T3.6-SEC-THEME-1")
+    ctx = sm.build_execution_context(ws, state)
+    assert ctx.outputs_expected == {}
 
 
 @pytest.mark.asyncio
