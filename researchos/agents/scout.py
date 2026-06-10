@@ -29,7 +29,12 @@ import json
 
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec, get_agent_params
-from ..runtime.t2_config import detect_manuscript_profile, load_t2_finalize_config
+from ..runtime.t2_config import (
+    detect_manuscript_profile,
+    load_literature_quality_policy,
+    load_t2_finalize_config,
+)
+from ..runtime.literature_quality import include_chinese_literature, infer_manuscript_language
 from ..runtime.prompts import render_prompt
 from ..literature_identity import is_placeholder_text, paper_record_match_keys
 from ..tools.pdf_metadata import scan_seed_papers
@@ -170,6 +175,16 @@ class ScoutAgent(Agent):
             ctx.workspace_dir / "literature" / "bridge_domain_plan.json",
             default="",
         )
+        literature_quality_policy = load_literature_quality_policy(ctx.workspace_dir)
+        manuscript_language = infer_manuscript_language(
+            ctx.workspace_dir,
+            literature_quality_policy.manuscript_language,
+        )
+        allow_chinese_literature = include_chinese_literature(
+            ctx.workspace_dir,
+            literature_quality_policy,
+            manuscript_language=manuscript_language,
+        )
 
         return render_prompt(
             self.spec.prompt_template,
@@ -188,6 +203,9 @@ class ScoutAgent(Agent):
             has_external_resources=bool(external_resources),
             bridge_domain_plan_preview=bridge_domain_plan[:3000],
             has_bridge_domain_plan=bool(bridge_domain_plan.strip()),
+            literature_quality_policy=literature_quality_policy.to_dict(),
+            manuscript_language=manuscript_language,
+            include_chinese_literature=allow_chinese_literature,
             agent_guidance=load_agent_guidance("literature-scout"),
         )
 

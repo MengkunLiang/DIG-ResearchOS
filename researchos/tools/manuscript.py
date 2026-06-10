@@ -1172,6 +1172,7 @@ def build_resource_index(workspace: Path, *, include_previews: bool = True) -> d
     figures = [_media_entry(workspace, path) for path in _glob_media(workspace, kind="figure")]
     tables = [_media_entry(workspace, path) for path in _glob_media(workspace, kind="table")]
     bib_keys = _extract_bib_keys(workspace / "literature" / "related_work.bib")
+    citation_quality = _extract_citation_quality_summary(workspace / "literature" / "notes_manifest.json")
     result_metrics = _extract_result_metrics(workspace / "experiments" / "results_summary.json")
     result_metrics.extend(_extract_evidence_pack_metrics(workspace / "drafts" / "experiment_evidence_pack.json"))
     result_metrics = _dedupe_metric_records(result_metrics)
@@ -1184,6 +1185,7 @@ def build_resource_index(workspace: Path, *, include_previews: bool = True) -> d
         "figures": figures,
         "tables": tables,
         "bib_keys": bib_keys,
+        "citation_quality": citation_quality,
         "result_metrics": result_metrics,
         "ablation_columns": ablation_columns,
         "writing_guidance": {
@@ -1202,6 +1204,44 @@ def build_resource_index(workspace: Path, *, include_previews: bool = True) -> d
                 "numeric/citation audit hints",
             ],
         },
+    }
+
+
+def _extract_citation_quality_summary(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {
+            "available": False,
+            "usage_rule": "citation quality not available; inspect paper notes and evidence levels manually",
+        }
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"available": False, "error": "notes_manifest_unreadable"}
+    entries = manifest.get("entries") if isinstance(manifest.get("entries"), list) else []
+    by_use: dict[str, int] = {}
+    high_quality_ids: list[str] = []
+    low_or_do_not_cite: list[str] = []
+    for entry in entries:
+        if not isinstance(entry, dict) or entry.get("status") != "complete":
+            continue
+        use = str(entry.get("citation_use") or "unknown")
+        by_use[use] = by_use.get(use, 0) + 1
+        try:
+            score = float(entry.get("citation_quality_score") or 0.0)
+        except (TypeError, ValueError):
+            score = 0.0
+        paper_id = str(entry.get("canonical_id") or entry.get("paper_id") or "").strip()
+        if score >= 0.55 and use in {"core_evidence", "supporting_context"} and paper_id:
+            high_quality_ids.append(paper_id)
+        if (score < 0.55 or use == "do_not_cite") and paper_id:
+            low_or_do_not_cite.append(paper_id)
+    return {
+        "available": True,
+        "source": "literature/notes_manifest.json",
+        "by_use": by_use,
+        "core_or_supporting_ids": high_quality_ids[:40],
+        "low_or_do_not_cite_ids": low_or_do_not_cite[:40],
+        "usage_rule": "Prefer score>=0.55 core_evidence/supporting_context for claims; lower scores are background or upgrade leads.",
     }
 
 

@@ -44,6 +44,10 @@ _DEFAULT_CONFIG = {
         "resource": 0.20,
         "year": 0.10,
     },
+    "progress": {
+        "enabled": True,
+        "print_every": 10,
+    },
 }
 
 
@@ -1020,8 +1024,14 @@ async def _run_abstract_sweep_async(
     rows_to_append: list[str] = []
     bib_entries: list[str] = []
     metadata_only_papers: list[dict[str, Any]] = []
+    progress_cfg = cfg.get("progress") if isinstance(cfg.get("progress"), dict) else {}
+    progress_enabled = bool(progress_cfg.get("enabled", True))
+    try:
+        progress_every = max(1, int(progress_cfg.get("print_every") or 10))
+    except (TypeError, ValueError):
+        progress_every = 10
 
-    for paper in candidates:
+    for candidate_index, paper in enumerate(candidates, start=1):
         paper_id = _normalize_id(paper)
         if not paper_id:
             continue
@@ -1031,6 +1041,12 @@ async def _run_abstract_sweep_async(
         if not has_abstract:
             metadata_only_papers.append(paper)
             metadata_triage_count += 1
+            if progress_enabled and (candidate_index % progress_every == 0 or candidate_index == len(candidates)):
+                print(
+                    f"[Agent] Abstract sweep progress: {candidate_index}/{len(candidates)} candidates, "
+                    f"notes={notes_generated}, metadata_only={metadata_triage_count}",
+                    flush=True,
+                )
             continue
         if abstract_reader is not None:
             prompt = build_abstract_reader_prompt(paper)
@@ -1054,6 +1070,12 @@ async def _run_abstract_sweep_async(
         rows_to_append.append(generate_comparison_row(paper))
         bib_entries.append(generate_bib_entry(paper))
         notes_generated += 1
+        if progress_enabled and (candidate_index % progress_every == 0 or candidate_index == len(candidates)):
+            print(
+                f"[Agent] Abstract sweep progress: {candidate_index}/{len(candidates)} candidates, "
+                f"notes={notes_generated}, metadata_only={metadata_triage_count}",
+                flush=True,
+            )
 
     metadata_report_path = ""
     if metadata_only_papers:

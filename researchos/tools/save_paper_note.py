@@ -86,11 +86,13 @@ class SavePaperNoteTool(Tool):
             existing_complete, existing_err = _validate_note(abs_path)
             if existing_complete:
                 manifest = _build_manifest_for_source_queue(self.policy.workspace_dir, source_queue)
+                progress = _progress_summary(manifest)
                 return ToolResult(
                     ok=True,
                     content=(
                         f"{rel_path} 已存在且结构合格，未覆盖。"
                         f"notes_manifest 已刷新，complete_count={manifest.get('complete_count')}。"
+                        f"\n[Agent] T3 deep read progress: {progress}"
                     ),
                     data={
                         "path": rel_path,
@@ -102,6 +104,7 @@ class SavePaperNoteTool(Tool):
                         "record_display_key": display_record_key(record),
                         "status": "already_complete",
                         "validation_error": "",
+                        "progress": progress,
                     },
                 )
 
@@ -114,6 +117,7 @@ class SavePaperNoteTool(Tool):
         ok, err = _validate_note(abs_path)
         manifest = _build_manifest_for_source_queue(self.policy.workspace_dir, source_queue)
         entry = _find_manifest_entry(manifest, rel_path, params.queue_rank)
+        progress = _progress_summary(manifest)
         data = {
             "path": rel_path,
             "queue_rank": params.queue_rank,
@@ -126,6 +130,7 @@ class SavePaperNoteTool(Tool):
             "validation_error": err or "",
             "manifest_path": "literature/notes_manifest.json",
             "manifest_entry": entry,
+            "progress": progress,
         }
         if not ok:
             return ToolResult(
@@ -139,7 +144,7 @@ class SavePaperNoteTool(Tool):
             )
         return ToolResult(
             ok=True,
-            content=f"已保存并校验通过: {rel_path}；notes_manifest 已刷新。",
+            content=f"已保存并校验通过: {rel_path}；notes_manifest 已刷新。\n[Agent] T3 deep read progress: {progress}",
             data=data,
         )
 
@@ -204,3 +209,11 @@ def _find_manifest_entry(
         if isinstance(entry, dict) and int(entry.get("queue_rank") or -1) == queue_rank:
             return entry
     return {}
+
+
+def _progress_summary(manifest: dict[str, Any]) -> str:
+    target_total = int(manifest.get("target_entry_count") or 0)
+    target_done = int(manifest.get("target_complete_count") or 0)
+    if target_total > 0:
+        return f"{target_done}/{target_total} target notes complete"
+    return f"{int(manifest.get('complete_count') or 0)}/{int(manifest.get('entry_count') or 0)} queue notes complete"

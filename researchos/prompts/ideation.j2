@@ -44,6 +44,11 @@
 如果 `synthesis_workbench.json` 含 `weak_evidence_and_resource_upgrade`，其中的
 abstract-only/metadata-only 项只能作为补资源、升级阅读或低证据 idea fuel；不能把它们写成
 “已有研究已经证明”的机制证据。
+如果 `synthesis_workbench.json` 或 `notes_manifest.json` 含 citation_quality_score /
+citation_use，候选 idea 的核心文献依据必须优先来自 score >= 0.55 且 use 为
+core_evidence/supporting_context 的 note。score < 0.55、do_not_cite、citation_allowed=false、
+或英文稿中不应引用的中文文献，只能作为风险、背景或补资源线索，不能支撑 novelty /
+feasibility 结论。
 
 {% endif %}
 {% if has_synthesis_workbench %}

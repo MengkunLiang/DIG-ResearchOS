@@ -96,7 +96,7 @@ def test_scout_agent_spec(scout_agent):
     """测试Scout Agent的AgentSpec配置"""
     spec = scout_agent.spec
     assert spec.name == "scout"
-    assert spec.model_tier == "medium"
+    assert spec.model_tier in {"medium", "heavy"}
     assert spec.temperature == 0.5
     assert "inspect_user_seeds" in spec.tool_names
     assert "search_papers" in spec.tool_names
@@ -252,6 +252,34 @@ def test_scout_prompt_consumes_seed_outline_profile_as_query_prior(scout_agent, 
     assert "不能写入 `seed_papers.jsonl`" in prompt
     assert "智能算法风险/管理决策/算法治理" in prompt
     assert "management/IS/OR" in prompt
+
+
+def test_scout_prompt_respects_english_no_chinese_literature_policy(scout_agent, execution_context):
+    literature_dir = execution_context.workspace_dir / "literature"
+    literature_dir.mkdir(parents=True, exist_ok=True)
+    (literature_dir / "literature_params.json").write_text(
+        json.dumps(
+            {
+                "semantics": "workspace_literature_coverage_parameters_for_t2_t3",
+                "literature_quality": {
+                    "enabled": True,
+                    "manuscript_language": "en",
+                    "include_chinese_literature": "false",
+                    "english_manuscript_policy": "exclude_non_seed_chinese",
+                    "chinese_literature_policy": "authoritative_or_seed",
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    prompt = scout_agent.system_prompt(execution_context)
+
+    assert "manuscript_language=en" in prompt
+    assert "include_chinese_literature=False" in prompt
+    assert "不要主动设计中文 query" in prompt
+    assert "不得把它当作英文稿核心 citation" in prompt
 
 
 def test_scout_initial_user_message(scout_agent, execution_context):

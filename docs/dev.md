@@ -441,6 +441,7 @@ python -m researchos.cli run \
 ### 7.1 T2 重点看什么
 
 - `papers_raw` 和保留候选 `papers_dedup` 是否分离；raw 可以很大，`papers_dedup`/`papers_verified` 应控制在保留候选数上限内
+- `literature/literature_params.json` 是否记录本轮 `active_pool_max/deep_read_target/abstract_sweep_target` 以及 `literature_quality`；英文稿应看到 `include_chinese_literature=false/auto` 时非 seed 中文论文被过滤到 backlog，中文/双语项目只允许显式权威中文来源或用户 seed 进入 active pool
 - `papers_verified` 和 `papers_backlog` 是否生成；backlog 用来解释保留候选集之外的候选，没有静默丢弃
 - `verification_failures` 是否合理
 - `deep_read_queue` 是否确实优先 seed 和高可读性论文
@@ -452,13 +453,17 @@ python -m researchos.cli run \
 - `deep_read_queue.jsonl` 是否保留短 provenance：`source_query/source_queries`、`source_tool/source_tools`、`search_buckets`、`openalex_id`、citation snowball 来源；摘要全文仍应通过 `lookup_paper_record` 从 verified/raw 合并读取
 - 如果 search tool 返回很多论文但 raw/dedup/verified 很少，优先检查 raw merge、hidden cap、schema skipped records 和 `researchos.log` 的 `retained_raw_count`
 - `papers_raw.jsonl` 是可恢复 metadata cache。finalize 后应看到 `search_log.md` 的 `T2 raw 元数据缓存回写`，并确认 `raw_cache_records_merged/appended` 合理；否则 resume/re-finalize 可能重新依赖网络回填。
+- 如果包含中文文献，抽查记录里的 `paper_language`、`chinese_authority_status`、`literature_quality_policy.reason` 和 `citation_allowed`。普通普刊/来源不明中文论文不应进入英文稿 citation pool。
 
 ### 7.2 T3 重点看什么
 
 - 是否只复用结构合格的已有 `paper_notes`
 - 是否正确生成 `deep_read_queue_pending.jsonl`
+- CLI 是否持续显示 `T3 deep read progress: x/y`，abstract sweep 是否显示候选处理进度；这两者是确定性输出，不依赖 LLM 自己汇报
 - PDF 可用的 note 是否包含 `## 12. Reading Coverage`
 - `[FULL-TEXT]` note 的 `Pages read` 是否类似 `1-N / N` 或 `1-4, 5-8, 9-N / N`，且 `Truncation` 明确最终无截断；`all pages` 这类无总页数/范围的描述不能通过
+- `notes_manifest.json` 是否抽取了 `citation_quality_score`、`citation_use` 和 `citation_quality_rationale`；后续 T3.5/T4/T8 应优先使用 `score>=0.55` 且 `core_evidence/supporting_context` 的论文，低分或 `do_not_cite` 只能做背景/补资源线索
+- seed PDF 应表现为 `has_seed_pdf=true`、`seed_pdf_path=...`、`access_level_hint=FULL_TEXT_LOCAL`、`evidence_level=FULL_TEXT`。不要新增 `seed_pdf` evidence enum；旧 `comparison_table.csv` 如果显示 `ABSTRACT_ONLY`，T3 validator 会用 note/access audit 兜底修复
 - `comparison_table.csv` 是否持续可追加
 - `related_work.bib` 是否没有粘连/损坏
 

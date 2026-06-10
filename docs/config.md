@@ -81,6 +81,16 @@
 
 T3.6 和 T8 已经分离：T3.6 使用 `survey_writer`，产物在 `drafts/survey/`，只把 `ideation/survey_insights.json` 作为可选素材传给 T4；T8 使用 `writer`，产物在 `drafts/sections/`、`drafts/paper.tex` 和 `submission/` 链路中。要调综述写作，只改 `survey_writer`；要调主论文写作，只改 `writer`。
 
+### 2.1.2 T2/T3 文献运行参数
+
+全局默认在 `config/agent_params.yaml`：
+
+- `agents.scout.behavior.t2_finalize`：保留候选数、去重阈值、metadata/abstract/PDF hint 回填并发、citation snowball 上限
+- `agents.scout.behavior.literature_quality`：写作语言与中文文献准入策略
+- `agents.reader.modes.read.behavior`：deep-read 目标、abstract sweep、metadata-only triage
+
+单个 workspace 的实际运行决策写在 `workspace/<name>/literature/literature_params.json`，由 `T2-PARAM-GATE` 生成，优先于全局默认。这个 gate 可以直接接受自然语言修改，例如“英文稿，不要中文论文，候选数300”。英文稿默认不主动检索中文论文；中文/双语或显式允许中文时，只允许 WJCI、SCI/SSCI、EI、北大核心、CSSCI、CSCD、AMI 顶级/权威/核心等显式权威来源或用户 seed 进入 active pool。
+
 ### 2.2 Budget / 工具 / 路径相关优先级
 
 从高到低：

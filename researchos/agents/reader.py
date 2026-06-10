@@ -381,6 +381,11 @@ class ReaderAgent(Agent):
         ct_path = ctx.workspace_dir / "literature" / "comparison_table.csv"
         if not ct_path.exists():
             return False, "缺少literature/comparison_table.csv"
+        from ..runtime.comparison_table import repair_comparison_table_evidence_levels
+
+        repair_result = repair_comparison_table_evidence_levels(ctx.workspace_dir)
+        if not repair_result.get("ok", False):
+            return False, f"comparison_table.csv证据级别修复失败: {repair_result.get('reason')}"
 
         try:
             import csv

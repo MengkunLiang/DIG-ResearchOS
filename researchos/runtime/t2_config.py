@@ -15,6 +15,10 @@ from typing import Any
 import yaml
 
 from .agent_params import get_agent_mode_params
+from .literature_quality import (
+    DEFAULT_CHINESE_AUTHORITY_KEYWORDS,
+    LiteratureQualityPolicy,
+)
 
 
 @dataclass(frozen=True)
@@ -322,6 +326,34 @@ def load_t2_finalize_config(workspace_dir: Path | str | None = None) -> T2Finali
             defaults.progress_update_on_finalize,
         ),
         progress_file=str(progress.get("file") or defaults.progress_file),
+    )
+
+
+def load_literature_quality_policy(workspace_dir: Path | str | None = None) -> LiteratureQualityPolicy:
+    try:
+        params = get_agent_mode_params("scout", None)
+    except Exception:
+        params = {}
+    params = _apply_behavior_profile(params, workspace_dir=workspace_dir)
+    workspace_params = _workspace_literature_params(workspace_dir)
+    if isinstance(workspace_params.get("literature_quality"), dict):
+        params = _deep_merge(params, {"literature_quality": workspace_params["literature_quality"]})
+    raw = params.get("literature_quality")
+    if not isinstance(raw, dict):
+        raw = {}
+    keywords = raw.get("authoritative_chinese_keywords")
+    if isinstance(keywords, list):
+        authority_keywords = tuple(str(item) for item in keywords if str(item).strip())
+    else:
+        authority_keywords = DEFAULT_CHINESE_AUTHORITY_KEYWORDS
+    return LiteratureQualityPolicy(
+        enabled=_as_bool(raw.get("enabled"), True),
+        manuscript_language=str(raw.get("manuscript_language") or "auto"),
+        include_chinese_literature=str(raw.get("include_chinese_literature") or "auto"),
+        english_manuscript_policy=str(raw.get("english_manuscript_policy") or "exclude_non_seed_chinese"),
+        chinese_literature_policy=str(raw.get("chinese_literature_policy") or "authoritative_or_seed"),
+        authoritative_chinese_keywords=authority_keywords,
+        allow_user_seed_override=_as_bool(raw.get("allow_user_seed_override"), True),
     )
 
 

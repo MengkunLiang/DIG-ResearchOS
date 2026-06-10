@@ -195,6 +195,7 @@ class BuildSynthesisWorkbenchTool(Tool):
             abstract_notes,
             metadata_triage,
         )
+        citation_quality = _build_citation_quality_summary(all_notes)
         workbench = {
             "note_count": len(notes),
             "abstract_note_count": len(abstract_notes),
@@ -205,6 +206,7 @@ class BuildSynthesisWorkbenchTool(Tool):
                 "metadata_triage_available": weak_evidence.get("metadata_triage_available", False),
                 "allowed_use": "prompt_visible_guardrail_not_claim_evidence",
             },
+            "citation_quality_summary": citation_quality,
             "paper_ids": [note["paper_id"] for note in all_notes],
             "method_families": families,
             "shared_assumption_candidates": _build_shared_assumptions(notes, llm_insights=insights),
@@ -271,6 +273,7 @@ def _parse_note(path: Path, evidence_level: str = "FULL_TEXT") -> dict[str, Any]
     # 从 Status 或参数推断 evidence_level
     if "ABSTRACT-ONLY" in status_raw:
         evidence_level = "ABSTRACT_ONLY"
+    citation_quality = _citation_quality_fields(text, evidence_level)
     return {
         "paper_id": _normalize_ref_id(paper_id),
         "source_file": path.name,
@@ -279,6 +282,7 @@ def _parse_note(path: Path, evidence_level: str = "FULL_TEXT") -> dict[str, Any]
         "venue": _field(text, "Venue"),
         "status": status_raw,
         "evidence_level": evidence_level,
+        **citation_quality,
         "method_overview": _section(text, "2. Method Overview") or _section(text, "2. Method Summary"),
         "core_approach_view": _section(text, "A. 核心做法/视角"),
         "bridge_point": _section(text, "B. 桥接点"),
@@ -301,6 +305,83 @@ def _parse_note(path: Path, evidence_level: str = "FULL_TEXT") -> dict[str, Any]
 def _field(text: str, name: str) -> str:
     match = re.search(rf"(?m)^-\s+\*\*{re.escape(name)}\*\*:\s*(.+)$", text)
     return match.group(1).strip() if match else ""
+
+
+def _citation_quality_fields(text: str, evidence_level: str) -> dict[str, Any]:
+    raw_score = _field(text, "Citation Quality Score")
+    score = _parse_score(raw_score)
+    if score is None:
+        score = 0.30 if evidence_level == "ABSTRACT_ONLY" else 0.70
+        source = "deterministic_fallback"
+    else:
+        source = "reader_llm_field"
+    citation_use = _field(text, "Citation Use")
+    if not citation_use:
+        if score >= 0.80:
+            citation_use = "core_evidence"
+        elif score >= 0.55:
+            citation_use = "supporting_context"
+        elif score >= 0.25:
+            citation_use = "background_only"
+        else:
+            citation_use = "do_not_cite"
+    return {
+        "citation_quality_score": round(score, 3),
+        "citation_quality_band": "high" if score >= 0.75 else "medium" if score >= 0.50 else "low" if score > 0 else "invalid",
+        "citation_use": citation_use,
+        "citation_quality_rationale": _field(text, "Citation Quality Rationale"),
+        "quality_source": source,
+    }
+
+
+def _parse_score(value: str) -> float | None:
+    if not value:
+        return None
+    match = re.search(r"(?:0(?:\.\d+)?|1(?:\.0+)?)", value)
+    if not match:
+        return None
+    try:
+        score = float(match.group(0))
+    except ValueError:
+        return None
+    return min(1.0, max(0.0, score))
+
+
+def _build_citation_quality_summary(notes: list[dict[str, Any]]) -> dict[str, Any]:
+    by_use: dict[str, int] = {}
+    by_band: dict[str, int] = {}
+    top_core: list[dict[str, Any]] = []
+    low_or_do_not_cite: list[dict[str, Any]] = []
+    for note in notes:
+        use = str(note.get("citation_use") or "unknown")
+        band = str(note.get("citation_quality_band") or "unknown")
+        by_use[use] = by_use.get(use, 0) + 1
+        by_band[band] = by_band.get(band, 0) + 1
+        item = {
+            "paper_id": note.get("paper_id"),
+            "title": note.get("title"),
+            "score": note.get("citation_quality_score"),
+            "use": use,
+            "evidence_level": note.get("evidence_level"),
+        }
+        try:
+            score = float(note.get("citation_quality_score") or 0.0)
+        except (TypeError, ValueError):
+            score = 0.0
+        if score >= 0.55 and use in {"core_evidence", "supporting_context"}:
+            top_core.append(item)
+        if score < 0.55 or use == "do_not_cite":
+            low_or_do_not_cite.append(item)
+    top_core.sort(key=lambda item: float(item.get("score") or 0.0), reverse=True)
+    low_or_do_not_cite.sort(key=lambda item: float(item.get("score") or 0.0))
+    return {
+        "semantics": "reader_citation_quality_summary_not_final_citation_decision",
+        "by_use": by_use,
+        "by_band": by_band,
+        "core_or_supporting_ids": [str(item.get("paper_id") or "") for item in top_core[:30] if item.get("paper_id")],
+        "low_or_do_not_cite": low_or_do_not_cite[:30],
+        "usage_rule": "Use score>=0.55 core_evidence/supporting_context for main claims; lower scores are background or upgrade leads.",
+    }
 
 
 def _section(text: str, heading: str) -> str:

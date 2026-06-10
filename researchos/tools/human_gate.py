@@ -180,6 +180,14 @@ class CLIHumanInterface(HumanInterface):
             return {}
         normalized = text.replace("，", ",").replace("；", ";").replace("：", ":")
         captured: dict[str, str] = {}
+        if "英文稿" in normalized or "英文论文" in normalized:
+            captured["manuscript_language"] = "英文"
+        elif ("中文稿" in normalized or "中文论文" in normalized) and "不要中文论文" not in normalized:
+            captured["manuscript_language"] = "中文"
+        if any(token in normalized for token in ("不要中文论文", "不要中文文献", "不检索中文", "不引用中文", "排除中文")):
+            captured["include_chinese_literature"] = "false"
+        elif any(token in normalized for token in ("允许中文论文", "允许中文文献", "检索中文", "包含中文", "包括中文")):
+            captured["include_chinese_literature"] = "true"
 
         patterns = {
             "active_pool_max": [
@@ -198,14 +206,26 @@ class CLIHumanInterface(HumanInterface):
                 r"\brequire(?:[_\s-]*deep)?(?:[_\s-]*read)?(?:[_\s-]*target)?\b\s*(?:=|:|改成|设为|设置为|到|为)?\s*(true|false|yes|no|y|n|1|0|是|否|需要|不需要)",
                 r"(?:必须读满|读满目标|必须达到目标|达到最低即可)\s*(?:=|:|改成|设为|设置为|到|为)?\s*(true|false|yes|no|y|n|1|0|是|否|需要|不需要)?",
             ],
+            "manuscript_language": [
+                r"\b(?:manuscript|writing)?[_\s-]*language\b\s*(?:=|:|改成|设为|设置为|到|为)?\s*(en|english|zh|chinese|mixed|bilingual|auto)",
+                r"(?:写作语言|论文语言|稿件语言)\s*(?:=|:|改成|设为|设置为|到|为)?\s*(英文|中文|双语|en|english|zh|chinese|mixed|bilingual|auto)",
+            ],
+            "include_chinese_literature": [
+                r"\b(?:include[_\s-]*chinese|include[_\s-]*zh|chinese[_\s-]*literature)\b\s*(?:=|:|改成|设为|设置为|到|为)?\s*(true|false|yes|no|y|n|1|0|auto|include|exclude)",
+                r"(?:中文文献|中文论文|检索中文|包含中文|include\s*zh)\s*(?:=|:|改成|设为|设置为|到|为)?\s*(true|false|yes|no|y|n|1|0|auto|允许|不允许|不要|包括|不包括|是|否)?",
+            ],
         }
         for field_name, field_patterns in patterns.items():
+            if field_name in captured:
+                continue
             for pattern in field_patterns:
                 match = re.search(pattern, normalized, flags=re.IGNORECASE)
                 if match:
                     value = (match.group(1) or "").strip()
                     if field_name == "require_deep_read_target" and not value:
                         value = "false" if "最低" in match.group(0) else "true"
+                    if field_name == "include_chinese_literature" and not value:
+                        value = "false" if any(token in match.group(0) for token in ("不", "不要", "exclude")) else "true"
                     if value:
                         captured[field_name] = value
                     break
@@ -223,6 +243,13 @@ class CLIHumanInterface(HumanInterface):
             "require": "require_deep_read_target",
             "require_target": "require_deep_read_target",
             "require_deep_read_target": "require_deep_read_target",
+            "language": "manuscript_language",
+            "manuscript_language": "manuscript_language",
+            "writing_language": "manuscript_language",
+            "include_zh": "include_chinese_literature",
+            "include_chinese": "include_chinese_literature",
+            "include_chinese_literature": "include_chinese_literature",
+            "chinese_literature": "include_chinese_literature",
         }
         for key, value in re.findall(r"([A-Za-z_][A-Za-z0-9_\-\s]*?)\s*[=:]\s*([A-Za-z0-9_\-]+|全部)", normalized):
             canonical = key_aliases.get(re.sub(r"[\s-]+", "_", key.strip().lower()))

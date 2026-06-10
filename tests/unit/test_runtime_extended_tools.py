@@ -694,6 +694,28 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
     notes_dir.mkdir(parents=True, exist_ok=True)
     (notes_dir / "_DIR_GUIDE.md").write_text("# Guide\n", encoding="utf-8")
     (notes_dir / "core_note.md").write_text("# Core note\n- **ID**: core_note\n", encoding="utf-8")
+    (tmp_workspace / "literature" / "notes_manifest.json").write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {
+                        "status": "complete",
+                        "canonical_id": "core_note",
+                        "citation_quality_score": 0.86,
+                        "citation_use": "core_evidence",
+                    },
+                    {
+                        "status": "complete",
+                        "canonical_id": "weak_note",
+                        "citation_quality_score": 0.2,
+                        "citation_use": "do_not_cite",
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
     abstract_dir = tmp_workspace / "literature" / "paper_notes_abstract"
     abstract_dir.mkdir(parents=True, exist_ok=True)
     (abstract_dir / "README.md").write_text("# README\n", encoding="utf-8")
@@ -715,6 +737,9 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
     assert "literature/paper_notes_bridge/b1/bridge_note.md" in artifact_paths
     assert "literature/paper_notes/_DIR_GUIDE.md" not in artifact_paths
     assert "literature/paper_notes_abstract/README.md" not in artifact_paths
+    assert resource_index["citation_quality"]["available"] is True
+    assert "core_note" in resource_index["citation_quality"]["core_or_supporting_ids"]
+    assert "weak_note" in resource_index["citation_quality"]["low_or_do_not_cite_ids"]
     assert any(item.get("metric_id") == "m_external_acc" for item in resource_index["result_metrics"])
 
     plan_tool = PlanManuscriptSectionsTool(policy)

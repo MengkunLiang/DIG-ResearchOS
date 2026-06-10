@@ -177,6 +177,44 @@ agents:
         update_on_tool_results: true
         # deterministic finalize 开始/完成/失败时是否刷新进度。
         update_on_finalize: true
+      literature_quality:
+        # T2 候选池的语言/来源质量底线策略。这里只做机械准入和打标，
+        # 不替代 Scout/Reader 对相关性和机制价值的 LLM 判断。
+        enabled: true
+        # auto 会从 project.yaml / seed_outline_profile 推断 en、zh 或 mixed。
+        manuscript_language: auto
+        # auto 表示英文稿默认不引入中文非 seed 文献；中文/双语综述允许中文候选。
+        include_chinese_literature: auto
+        # 英文稿的中文候选处理策略：非用户 seed 的中文论文不进入 active pool。
+        english_manuscript_policy: exclude_non_seed_chinese
+        # 中文候选进入 active pool 的最低来源要求：权威来源标记或用户 seed。
+        chinese_literature_policy: authoritative_or_seed
+        # 用户上传的 seed 可保留和阅读，但若不符合英文稿/权威来源要求，
+        # 会被标记 citation_allowed=false 或 needs_authority_review，供写作阶段避用/复核。
+        allow_user_seed_override: true
+        # 中文权威来源关键词。T2 只接受显式命中的来源/期刊/标注，不靠模糊猜测。
+        authoritative_chinese_keywords:
+        - WJCI
+        - SCI
+        - SSCI
+        - EI
+        - 北大核心
+        - CSSCI
+        - CSCD
+        - AMI
+        - AMI顶级
+        - AMI权威
+        - AMI核心
+        - 管理世界
+        - 管理科学学报
+        - 系统工程理论与实践
+        - 科研管理
+        - 中国管理科学
+        - 南开管理评论
+        - 管理评论
+        - 管理工程学报
+        - 情报学报
+        - 情报理论与实践
       behavior_profiles:
         # runtime 会根据 workspace 自动选择 profile：
         # - project.yaml 的 metadata.manuscript_type/project_type/article_type/paper_type

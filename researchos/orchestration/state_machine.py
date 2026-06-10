@@ -168,6 +168,7 @@ def _recommended_literature_param_option(workspace_dir: Path | None = None) -> s
 def _literature_param_summary_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
     reader = payload.get("reader") if isinstance(payload.get("reader"), dict) else {}
     abstract_sweep = reader.get("abstract_sweep") if isinstance(reader.get("abstract_sweep"), dict) else {}
+    literature_quality = payload.get("literature_quality") if isinstance(payload.get("literature_quality"), dict) else {}
     return {
         "profile": payload.get("profile"),
         "active_pool_max": (payload.get("t2_finalize") or {}).get("active_pool_max"),
@@ -178,6 +179,9 @@ def _literature_param_summary_from_payload(payload: dict[str, Any]) -> dict[str,
         "abstract_sweep_target": abstract_sweep.get("lite_paper_num"),
         "abstract_sweep_sources": abstract_sweep.get("sources"),
         "metadata_replacement_policy": abstract_sweep.get("metadata_replacement_policy"),
+        "manuscript_language": literature_quality.get("manuscript_language", "auto"),
+        "include_chinese_literature": literature_quality.get("include_chinese_literature", "auto"),
+        "chinese_literature_policy": literature_quality.get("chinese_literature_policy", "authoritative_or_seed"),
     }
 
 
@@ -209,6 +213,8 @@ def build_literature_param_gate_preview(workspace_dir: Path | None = None) -> di
             "deep_read_target": "例如 60；表示 T3 正常应完成 60 篇结构化精读笔记",
             "abstract_sweep_target": "例如 all_readable 或 120；表示 T3 后 LLM 摘要轻读多少篇",
             "require_deep_read_target": "true/false；true 表示未读满 deep_read_target 不放行到 T3.5",
+            "manuscript_language": "en/zh/mixed/auto；英文稿默认不检索也不引用中文非 seed 论文",
+            "include_chinese_literature": "auto/false/true；false 表示不要中文论文，true 表示只允许权威中文来源",
         },
     }
 
@@ -232,23 +238,28 @@ def enrich_literature_param_gate_options(options: list[dict[str, Any]], workspac
                 f"active_pool_max={summary['active_pool_max']}；"
                 f"deep_read={summary['deep_read_min']}/{summary['deep_read_target']}/{summary['deep_read_max']}；"
                 f"require_target={summary['require_deep_read_target']}；"
-                f"abstract_sweep={summary['abstract_sweep_target']}"
+                f"abstract_sweep={summary['abstract_sweep_target']}；"
+                f"language={summary['manuscript_language']}；"
+                f"include_zh={summary['include_chinese_literature']}"
             )
         elif option_id == "custom":
             item["description"] = _LITERATURE_PARAM_PRESET_NOTES["custom"]
             item["parameter_preview"] = (
                 "逐项输入 active_pool_max、deep_read_target、abstract_sweep_target、require_deep_read_target；"
-                "未填或填错时使用综述均衡默认。"
+                "也可指定 manuscript_language/include_chinese_literature；未填或填错时使用推荐档位默认。"
             )
-            item.setdefault(
-                "collect_input",
-                [
-                    "active_pool_max",
-                    "deep_read_target",
-                    "abstract_sweep_target",
-                    "require_deep_read_target",
-                ],
-            )
+            collect_input = list(item.get("collect_input") or [])
+            for field_name in [
+                "active_pool_max",
+                "deep_read_target",
+                "abstract_sweep_target",
+                "require_deep_read_target",
+                "manuscript_language",
+                "include_chinese_literature",
+            ]:
+                if field_name not in collect_input:
+                    collect_input.append(field_name)
+            item["collect_input"] = collect_input
             item["input_prompts"] = preview["custom_input_examples"]
         enriched.append(item)
     return enriched
@@ -308,6 +319,7 @@ def build_literature_param_payload(
     option = _normalize_literature_param_option(selected_option)
     payload = _clone_literature_param_preset(option if option in _LITERATURE_PARAM_PRESETS else "survey_balanced")
     captured = captured or {}
+    _apply_literature_quality_overrides(payload, captured, workspace_dir=workspace_dir)
     if option == "custom":
         base_option = _normalize_literature_param_option(
             captured.get("base_option") or captured.get("_base_option") or _recommended_literature_param_option(workspace_dir)
@@ -361,6 +373,7 @@ def build_literature_param_payload(
             },
             "base_option": base_option,
         }
+        _apply_literature_quality_overrides(payload, captured, workspace_dir=workspace_dir)
 
     payload.update(
         {
@@ -383,12 +396,98 @@ def build_literature_param_payload(
                 "deep_read_min": "最低精读：预算或资源异常时的最低可接受线；正常运行由 require_deep_read_target 决定是否必须读满 target。",
                 "abstract_sweep.lite_paper_num": "摘要轻读数量：T3 后对未精读但有摘要的论文做 LLM 摘要级轻读；all_readable 表示尽量读完可读摘要。",
                 "metadata_replacement_policy": "metadata-only 只做批量 triage，并尽量用 backlog 中有摘要/PDF 的候选补足可读覆盖。",
+                "literature_quality.manuscript_language": "写作语言：auto/en/zh/mixed；英文稿默认不搜索、不主动引用中文非 seed 论文。",
+                "literature_quality.include_chinese_literature": "是否允许中文论文进入候选池：auto/false/true；中文候选仍需命中权威来源或是用户 seed。",
+                "literature_quality.chinese_literature_policy": "中文论文来源底线：默认 authoritative_or_seed，仅 WJCI/SCI/EI/北大核心/CSSCI/CSCD/AMI 等显式权威来源或用户 seed 可进入 active pool。",
             },
         }
     )
     if workspace_dir is not None:
         payload["detected_profile_before_gate"] = _detect_literature_profile_hint(workspace_dir)
     return payload
+
+
+def _apply_literature_quality_overrides(
+    payload: dict[str, Any],
+    captured: dict[str, Any],
+    *,
+    workspace_dir: Path | None = None,
+) -> None:
+    """Attach workspace-local language/source-quality decisions to T2/T3 params."""
+
+    literature_quality = dict(payload.get("literature_quality") or {})
+    inferred_language = _infer_gate_manuscript_language(workspace_dir)
+
+    manuscript_language = str(
+        captured.get("manuscript_language")
+        or captured.get("language")
+        or captured.get("writing_language")
+        or literature_quality.get("manuscript_language")
+        or inferred_language
+        or "auto"
+    ).strip().lower()
+    manuscript_language = {
+        "english": "en",
+        "英文": "en",
+        "chinese": "zh",
+        "中文": "zh",
+        "bilingual": "mixed",
+        "双语": "mixed",
+        "zh-en": "mixed",
+        "zh_en": "mixed",
+    }.get(manuscript_language, manuscript_language)
+    if manuscript_language not in {"auto", "en", "zh", "mixed"}:
+        manuscript_language = inferred_language or "auto"
+
+    include_raw = captured.get("include_chinese_literature")
+    if include_raw in (None, ""):
+        include_raw = captured.get("include_zh") or captured.get("chinese_literature")
+    if include_raw in (None, ""):
+        include_raw = literature_quality.get("include_chinese_literature", "auto")
+    include_chinese = _normalize_include_chinese_value(include_raw)
+    default_enabled = _safe_bool(literature_quality.get("enabled"), default=True)
+    default_seed_override = _safe_bool(literature_quality.get("allow_user_seed_override"), default=True)
+
+    literature_quality.update(
+        {
+            "enabled": _safe_bool(captured.get("literature_quality_enabled"), default=default_enabled),
+            "manuscript_language": manuscript_language,
+            "include_chinese_literature": include_chinese,
+            "english_manuscript_policy": str(
+                literature_quality.get("english_manuscript_policy") or "exclude_non_seed_chinese"
+            ),
+            "chinese_literature_policy": str(
+                captured.get("chinese_literature_policy")
+                or literature_quality.get("chinese_literature_policy")
+                or "authoritative_or_seed"
+            ),
+            "allow_user_seed_override": _safe_bool(
+                captured.get("allow_user_seed_override"),
+                default=default_seed_override,
+            ),
+        }
+    )
+    payload["literature_quality"] = literature_quality
+
+
+def _normalize_include_chinese_value(value: Any) -> str:
+    text = str(value if value is not None else "auto").strip().casefold().replace("-", "_")
+    if text in {"true", "yes", "y", "1", "include", "允许", "是", "需要", "zh", "中文"}:
+        return "true"
+    if text in {"false", "no", "n", "0", "exclude", "不", "不要", "否", "英文", "english_only", "en_only"}:
+        return "false"
+    return "auto"
+
+
+def _infer_gate_manuscript_language(workspace_dir: Path | None) -> str:
+    if workspace_dir is None:
+        return "auto"
+    try:
+        from ..runtime.literature_quality import infer_manuscript_language
+
+        return infer_manuscript_language(workspace_dir, "auto")
+    except Exception:
+        return "auto"
 
 
 def _normalize_literature_param_option(option: str) -> str:

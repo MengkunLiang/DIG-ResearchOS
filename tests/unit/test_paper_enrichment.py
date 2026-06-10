@@ -264,6 +264,40 @@ async def test_build_verified_papers_backfills_missing_abstract_from_verified_me
     assert "_missing_abstract" not in verified
 
 
+@pytest.mark.asyncio
+async def test_build_verified_papers_marks_seed_pdf_as_full_text(tmp_path):
+    workspace = tmp_path / "ws"
+    seed_dir = workspace / "user_seeds" / "pdfs"
+    seed_dir.mkdir(parents=True)
+    (seed_dir / "Seed With Local PDF.pdf").write_bytes(b"%PDF-1.4 seed")
+    policy = WorkspaceAccessPolicy(workspace, [""], [""])
+    tool = BuildVerifiedPapersTool(policy)
+
+    verified, failure = await tool._verify_one_paper(
+        _FakeMetadataClient(),
+        {
+            "id": "seed-1",
+            "canonical_id": "seed-1",
+            "title": "Seed With Local PDF",
+            "source": "user_seed",
+            "year": 2024,
+            "evidence_level": "METADATA_ONLY",
+            "_needs_reader_evidence_level": True,
+        },
+        title_similarity_threshold=0.84,
+    )
+
+    assert failure is None
+    assert verified is not None
+    assert verified["verification_status"] == "pdf_verified"
+    assert verified["verification_source"] == "user_seeds/pdfs"
+    assert verified["has_seed_pdf"] is True
+    assert verified["has_local_pdf"] is True
+    assert verified["access_level_hint"] == "FULL_TEXT_LOCAL"
+    assert verified["evidence_level"] == "FULL_TEXT"
+    assert "_needs_reader_evidence_level" not in verified
+
+
 def test_build_deep_read_queue_prioritizes_seed_and_access(tmp_path):
     workspace = tmp_path / "ws"
     (workspace / "user_seeds").mkdir(parents=True)

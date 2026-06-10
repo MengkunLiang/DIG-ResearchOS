@@ -34,6 +34,9 @@ def _valid_note(paper_id: str) -> str:
 - **Citations**: 10
 - **Verification**: metadata_verified (confidence: 0.95)
 - **Status**: [FULL-TEXT]
+- **Citation Quality Score**: 0.86
+- **Citation Use**: core_evidence
+- **Citation Quality Rationale**: Strong venue, full-text evidence, and direct relevance.
 
 ## 1. Problem & Motivation
 problem
@@ -219,6 +222,9 @@ def test_manifest_distinguishes_complete_incomplete_and_missing_notes(tmp_path: 
     assert entries[0]["has_abstract"] is True
     assert entries[0]["reference_hint_count"] == 8
     assert entries[0]["has_pdf_url_hint"] is True
+    assert entries[0]["citation_quality_score"] == 0.86
+    assert entries[0]["citation_use"] == "core_evidence"
+    assert entries[0]["citation_quality_band"] == "high"
     assert "seed_outline_profile" in manifest["input_fingerprints"]
     assert "seed_constraints" in manifest["input_fingerprints"]
     assert "seed_external_resources" in manifest["input_fingerprints"]
@@ -237,6 +243,32 @@ def test_manifest_distinguishes_complete_incomplete_and_missing_notes(tmp_path: 
     ok, err = validate_t3_input_fingerprints(workspace, manifest)
     assert not ok
     assert "seed_pdfs" in (err or "")
+
+
+def test_manifest_uses_quality_fallback_for_legacy_notes(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    notes_dir = workspace / "literature" / "paper_notes"
+    notes_dir.mkdir(parents=True)
+    _write_jsonl(
+        workspace / "literature" / "deep_read_queue.jsonl",
+        [{"paper_id": "legacy", "normalized_id": "legacy", "title": "Legacy Paper", "queue_rank": 1, "target_bucket": "target"}],
+    )
+    legacy_note = _valid_note("legacy")
+    legacy_note = "\n".join(
+        line
+        for line in legacy_note.splitlines()
+        if not line.startswith("- **Citation Quality")
+        and not line.startswith("- **Citation Use")
+    )
+    (notes_dir / "legacy.md").write_text(legacy_note, encoding="utf-8")
+
+    manifest = build_t3_notes_manifest(workspace)
+
+    entry = manifest["entries"][0]
+    assert entry["status"] == "complete"
+    assert entry["citation_quality_score"] == 0.75
+    assert entry["citation_use"] == "supporting_context"
+    assert entry["quality_source"] == "deterministic_fallback"
 
 
 @pytest.mark.asyncio
@@ -266,6 +298,8 @@ async def test_save_paper_note_uses_queue_rank_and_refreshes_manifest(tmp_path: 
 
     assert result.ok, result.content
     assert result.data["path"] == "literature/paper_notes/noopenalex__496b8b9485c829bf.md"
+    assert result.data["progress"] == "1/1 target notes complete"
+    assert "T3 deep read progress: 1/1 target notes complete" in result.content
     assert (workspace / result.data["path"]).exists()
     manifest = json.loads((workspace / "literature" / "notes_manifest.json").read_text(encoding="utf-8"))
     assert manifest["complete_count"] == 1
@@ -318,6 +352,7 @@ async def test_save_paper_note_refreshes_manifest_against_pending_queue(tmp_path
     assert result.data["path"] == "literature/paper_notes/paper2.md"
     assert result.data["pending_queue_rank"] == 1
     assert result.data["original_queue_rank"] == 2
+    assert result.data["progress"] == "1/1 target notes complete"
     manifest = json.loads((workspace / "literature" / "notes_manifest.json").read_text(encoding="utf-8"))
     assert manifest["source_queue"] == "literature/deep_read_queue_pending.jsonl"
     assert manifest["entries"][0]["paper_id"] == "paper2"

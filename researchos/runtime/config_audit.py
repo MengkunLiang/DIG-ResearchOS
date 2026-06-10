@@ -101,7 +101,7 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
         },
         "configuration_layers": [
             "模型/预算/timeout/retry 日常只改 config/user_settings.yaml：llm.* 管模型，budget.* 管预算，runtime.* 管 timeout/retry/budget escalation。",
-            "T2/T3 文献流程机械阈值默认来自 config/agent_params.yaml 的 scout.behavior.t2_finalize/progress 和 reader.modes.read.behavior；完整 run 会先经 T2-PARAM-GATE 写 workspace-local literature/literature_params.json，覆盖保留候选数、精读目标和摘要轻读目标。",
+            "T2/T3 文献流程机械阈值默认来自 config/agent_params.yaml 的 scout.behavior.t2_finalize/progress/literature_quality 和 reader.modes.read.behavior；完整 run 会先经 T2-PARAM-GATE 写 workspace-local literature/literature_params.json，覆盖保留候选数、精读目标、摘要轻读目标和写作语言/中文文献策略。",
             "状态机、gate、CDR schema 和 venue style map 属于 config/system_config/ 系统契约；CLI 默认读取新路径，并保留 config/*.yaml 旧路径 fallback。",
             "config/user_settings.yaml 会覆盖默认 agent_params.yaml 与 model_routing.yaml，但不改变状态机拓扑。",
             "state_machine.yaml 只定义拓扑、IO、gate 和少数 extra；默认配置不应写 llm/budget 强覆盖。",

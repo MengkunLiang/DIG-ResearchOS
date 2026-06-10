@@ -15,6 +15,7 @@ from researchos.runtime.t2_config import (
     detect_manuscript_profile,
     get_effective_reader_read_params,
     load_deep_read_queue_config,
+    load_literature_quality_policy,
     load_t2_finalize_config,
 )
 
@@ -372,6 +373,52 @@ agents:
     assert params["abstract_sweep"]["lite_paper_num"] == "all_readable"
     assert "papers_backlog" in params["abstract_sweep"]["sources"]
     assert params["workspace_literature_params_path"] == "literature/literature_params.json"
+
+    clear_cache()
+
+
+def test_workspace_literature_params_override_literature_quality_policy(tmp_path, monkeypatch):
+    config_path = tmp_path / "agent_params.yaml"
+    workspace = tmp_path / "workspace"
+    (workspace / "literature").mkdir(parents=True)
+    (workspace / "project.yaml").write_text("language: en\n", encoding="utf-8")
+    (workspace / "literature" / "literature_params.json").write_text(
+        json.dumps(
+            {
+                "semantics": "workspace_literature_coverage_parameters_for_t2_t3",
+                "literature_quality": {
+                    "enabled": True,
+                    "manuscript_language": "en",
+                    "include_chinese_literature": "false",
+                    "chinese_literature_policy": "authoritative_or_seed",
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    config_path.write_text(
+        """
+agents:
+  scout:
+    behavior:
+      literature_quality:
+        enabled: true
+        manuscript_language: auto
+        include_chinese_literature: auto
+        chinese_literature_policy: authoritative_or_seed
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("RESEARCHOS_AGENT_PARAMS", str(config_path))
+    clear_cache()
+
+    policy = load_literature_quality_policy(workspace)
+
+    assert policy.enabled is True
+    assert policy.manuscript_language == "en"
+    assert policy.include_chinese_literature == "false"
+    assert policy.chinese_literature_policy == "authoritative_or_seed"
 
     clear_cache()
 

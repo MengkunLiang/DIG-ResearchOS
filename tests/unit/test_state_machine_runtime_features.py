@@ -616,6 +616,8 @@ def test_t2_literature_param_gate_displays_actual_values_and_profile_default(tmp
     assert "active_pool_max=180" in balanced["parameter_preview"]
     assert "active_pool_max=120" in standard["parameter_preview"]
     assert "input_prompts" in custom
+    assert "manuscript_language" in custom["collect_input"]
+    assert "include_chinese_literature" in custom["collect_input"]
     assert CLIHumanInterface._default_option_id("t2_literature_param_gate", state.pending_gate.options) == "survey_balanced"
 
 
@@ -702,6 +704,27 @@ def test_custom_t2_literature_params_can_override_multiple_numbers(tmp_workspace
     assert payload["reader"]["deep_read_max"] >= 80
     assert payload["reader"]["require_deep_read_target"] is False
     assert payload["reader"]["abstract_sweep"]["lite_paper_num"] == "all_readable"
+
+
+def test_custom_t2_literature_params_can_disable_chinese_for_english_manuscript(tmp_workspace):
+    (tmp_workspace / "project.yaml").write_text("language: en\n", encoding="utf-8")
+
+    payload = build_literature_param_payload(
+        selected_option="custom",
+        captured={
+            "active_pool_max": "300",
+            "manuscript_language": "英文",
+            "include_chinese_literature": "false",
+            "base_option": "standard_research",
+        },
+        workspace_dir=tmp_workspace,
+    )
+
+    assert payload["t2_finalize"]["active_pool_max"] == 300
+    assert payload["literature_quality"]["manuscript_language"] == "en"
+    assert payload["literature_quality"]["include_chinese_literature"] == "false"
+    assert payload["literature_quality"]["chinese_literature_policy"] == "authoritative_or_seed"
+    assert "literature_quality.include_chinese_literature" in payload["parameter_meanings"]
 
 
 def test_t5_executor_gate_persists_selection_and_patches_executor_files(tmp_workspace):

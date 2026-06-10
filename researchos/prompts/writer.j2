@@ -25,14 +25,15 @@
 2. 所有实验数字必须来自 `paper_state.shared_facts.result_metrics`、`drafts/experiment_evidence_pack.json`、`drafts/result_to_claim.json`、`experiments/results_summary.json`、`experiments/ablations.csv` 或 indexed run artifacts；不确定就删去该数字 claim，或在 Conclusion 的 Limitations 子段用自然语言说明证据边界，不编造。
 3. 所有引用必须对应 `literature/related_work.bib` 中真实 BibTeX key。
 4. 写作必须显式利用已有资源：`synthesis.md`、`comparison_table.csv`、paper notes、hypotheses、idea_scorecard、novelty audit、实验结果、ablation、run logs、figures/tables/code artifacts。
-5. Experiments 与 Conclusion 的 `\subsection{Limitations}` 必须说明外部执行器证据边界；`mock_only` / `unsupported_mock_only` 只能写成协议 dry-run 或限制，不能伪装成真实实验证据。
-6. 每个章节必须作为独立 run 成稿，再拼装融合；不要在任何单章阶段直接写整篇 `paper.tex`。
-7. `drafts/alignment_matrix.json` 是跨章节对齐契约的 seed/hint，不是最终科学判断；你必须用 LLM 阅读证据后补全 motivation、related_gap、counterfactual、nearest_prior_work、novelty_signal、design_choice、experiment、analysis。CID 只作为内部 alignment id；最终 TeX 正文和注释都不要输出 `C1`、`[C1]` 或 `% [C1]` 这类内部编号。
-8. 如果存在 `drafts/experiment_evidence_pack.json`，实验 claim 必须先经过 `drafts/result_to_claim.json` 的 support_status/allowed_wording 约束；mock_only 或 unsupported_mock_only 只能写成协议 dry-run/限制，不能写成实证结果。
-9. 最终 TeX 正文和注释都不能包含 literal `TODO`、`TBD`、`LLM_REVIEW_REQUIRED` 或 `PLACEHOLDER`。这些词只能出现在计划、ledger、review、自查或 audit 文件里；正文缺证据时用自然语言 limitation、弱化表述或删除 claim。
-10. 写作结构必须像真实论文，而不是把内部 artifact 清单翻译成段落。每个段落都要承担一个学术功能：定义问题、建立 gap、比较机制、解释设计、呈现实证、排除替代解释、陈述边界或收束贡献。
-11. 不要把章节拆成过多细碎 subsection。默认主论文只使用 Abstract、Introduction、Related Work、Method、Experiments、Analysis、Conclusion；Related Work 和 Method 内部 subsection 必须按论证功能组织，不按每篇论文、每个内部 claim id 或每个 artifact 拆章。
-12. 禁止展示内部工程/审计标号作为正文组织方式，包括 `C1`、`CID`、`claim_ledger`、`alignment_matrix`、`LLM_REVIEW_REQUIRED`、文件路径清单式段落和 “ResearchOS alignment”。
+5. 若 `drafts/manuscript_resource_index.json` 中存在 `citation_quality`，核心 claim 优先使用 `score>=0.55` 且 `citation_use=core_evidence/supporting_context` 的文献；`low_or_do_not_cite_ids`、`do_not_cite`、citation_allowed=false、或英文稿中不应引用的中文文献不得支撑正文核心结论。
+6. Experiments 与 Conclusion 的 `\subsection{Limitations}` 必须说明外部执行器证据边界；`mock_only` / `unsupported_mock_only` 只能写成协议 dry-run 或限制，不能伪装成真实实验证据。
+7. 每个章节必须作为独立 run 成稿，再拼装融合；不要在任何单章阶段直接写整篇 `paper.tex`。
+8. `drafts/alignment_matrix.json` 是跨章节对齐契约的 seed/hint，不是最终科学判断；你必须用 LLM 阅读证据后补全 motivation、related_gap、counterfactual、nearest_prior_work、novelty_signal、design_choice、experiment、analysis。CID 只作为内部 alignment id；最终 TeX 正文和注释都不要输出 `C1`、`[C1]` 或 `% [C1]` 这类内部编号。
+9. 如果存在 `drafts/experiment_evidence_pack.json`，实验 claim 必须先经过 `drafts/result_to_claim.json` 的 support_status/allowed_wording 约束；mock_only 或 unsupported_mock_only 只能写成协议 dry-run/限制，不能写成实证结果。
+10. 最终 TeX 正文和注释都不能包含 literal `TODO`、`TBD`、`LLM_REVIEW_REQUIRED` 或 `PLACEHOLDER`。这些词只能出现在计划、ledger、review、自查或 audit 文件里；正文缺证据时用自然语言 limitation、弱化表述或删除 claim。
+11. 写作结构必须像真实论文，而不是把内部 artifact 清单翻译成段落。每个段落都要承担一个学术功能：定义问题、建立 gap、比较机制、解释设计、呈现实证、排除替代解释、陈述边界或收束贡献。
+12. 不要把章节拆成过多细碎 subsection。默认主论文只使用 Abstract、Introduction、Related Work、Method、Experiments、Analysis、Conclusion；Related Work 和 Method 内部 subsection 必须按论证功能组织，不按每篇论文、每个内部 claim id 或每个 artifact 拆章。
+13. 禁止展示内部工程/审计标号作为正文组织方式，包括 `C1`、`CID`、`claim_ledger`、`alignment_matrix`、`LLM_REVIEW_REQUIRED`、文件路径清单式段落和 “ResearchOS alignment”。
 
 ## 项目信息
 

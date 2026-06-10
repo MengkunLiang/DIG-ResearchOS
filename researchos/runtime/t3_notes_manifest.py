@@ -78,6 +78,7 @@ def build_t3_notes_manifest(
         status = "complete" if complete_matches else "incomplete" if incomplete_matches else "missing"
         note_path = str(primary.get("rel_path") or "") if primary else ""
         validation_error = "" if complete_matches else str(primary.get("validation_error") or "") if primary else ""
+        quality = primary.get("quality") if isinstance(primary, dict) and isinstance(primary.get("quality"), dict) else {}
         if primary:
             matched_note_paths.add(str(primary.get("rel_path") or ""))
         entry = {
@@ -122,6 +123,11 @@ def build_t3_notes_manifest(
             "matched_note_paths": [str(item.get("rel_path") or "") for item in [*complete_matches, *incomplete_matches]],
             "validation_error": validation_error,
             "sections_missing": _sections_missing_from_error(validation_error),
+            "citation_quality_score": quality.get("citation_quality_score"),
+            "citation_quality_band": str(quality.get("citation_quality_band") or ""),
+            "citation_use": str(quality.get("citation_use") or ""),
+            "citation_quality_rationale": str(quality.get("citation_quality_rationale") or ""),
+            "quality_source": str(quality.get("quality_source") or ""),
             "record_display_key": display_record_key(record),
         }
         entries.append(entry)
@@ -381,6 +387,7 @@ def _collect_note_infos(workspace_dir: Path, literature_dir: Path) -> list[dict[
                     "valid": ok,
                     "validation_error": err or "",
                     "keys": paper_note_match_keys(note_path),
+                    "quality": _extract_note_quality(note_path, valid=ok),
                 }
             )
     return infos
@@ -412,6 +419,101 @@ def _validate_note(note_path: Path) -> tuple[bool, str | None]:
         return _validate_note_structure(note_path)
     except Exception as exc:  # pragma: no cover - defensive fallback
         return False, f"{note_path.name} note validation crashed: {exc}"
+
+
+def _extract_note_quality(note_path: Path, *, valid: bool) -> dict[str, Any]:
+    """Extract Reader-assigned citation quality, with conservative fallback."""
+
+    try:
+        text = note_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return _fallback_note_quality("", valid=False)
+    score_text = _extract_markdown_field(text, "Citation Quality Score")
+    use = _extract_markdown_field(text, "Citation Use")
+    rationale = _extract_markdown_field(text, "Citation Quality Rationale")
+    score = _parse_score(score_text)
+    if score is None:
+        quality = _fallback_note_quality(text, valid=valid)
+        if use:
+            quality["citation_use"] = use
+        if rationale:
+            quality["citation_quality_rationale"] = rationale
+        return quality
+    return {
+        "citation_quality_score": round(score, 3),
+        "citation_quality_band": _quality_band(score),
+        "citation_use": use or _citation_use_for_score(score),
+        "citation_quality_rationale": rationale,
+        "quality_source": "reader_llm_field",
+    }
+
+
+def _fallback_note_quality(text: str, *, valid: bool) -> dict[str, Any]:
+    status = _extract_markdown_field(text, "Status").upper()
+    if not valid:
+        score = 0.0
+        use = "do_not_cite"
+    elif "FULL-TEXT" in status:
+        score = 0.75
+        use = "supporting_context"
+    elif "PARTIAL-TEXT" in status:
+        score = 0.55
+        use = "supporting_context"
+    elif "ABSTRACT-ONLY" in status:
+        score = 0.30
+        use = "background_only"
+    else:
+        score = 0.40
+        use = "background_only"
+    return {
+        "citation_quality_score": score,
+        "citation_quality_band": _quality_band(score),
+        "citation_use": use,
+        "citation_quality_rationale": "deterministic fallback from note status; Reader did not provide explicit score",
+        "quality_source": "deterministic_fallback",
+    }
+
+
+def _extract_markdown_field(text: str, name: str) -> str:
+    import re
+
+    match = re.search(rf"(?m)^-\s+\*\*{re.escape(name)}\*\*:\s*(.+?)\s*$", text)
+    return match.group(1).strip() if match else ""
+
+
+def _parse_score(value: str) -> float | None:
+    if not value:
+        return None
+    import re
+
+    match = re.search(r"(?:0(?:\.\d+)?|1(?:\.0+)?)", value)
+    if not match:
+        return None
+    try:
+        score = float(match.group(0))
+    except ValueError:
+        return None
+    return min(1.0, max(0.0, score))
+
+
+def _quality_band(score: float) -> str:
+    if score >= 0.75:
+        return "high"
+    if score >= 0.50:
+        return "medium"
+    if score > 0:
+        return "low"
+    return "invalid"
+
+
+def _citation_use_for_score(score: float) -> str:
+    if score >= 0.80:
+        return "core_evidence"
+    if score >= 0.55:
+        return "supporting_context"
+    if score >= 0.25:
+        return "background_only"
+    return "do_not_cite"
 
 
 def _sections_missing_from_error(error: str) -> list[str]:

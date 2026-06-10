@@ -949,6 +949,8 @@ class BuildVerifiedPapersTool(Tool):
             verified_record["access_level_hint"] = "FULL_TEXT_LOCAL"
             verified_record["access_score"] = 1.0
             verified_record["access_score_estimate"] = 1.0
+            verified_record["evidence_level"] = "FULL_TEXT"
+            verified_record.pop("_needs_reader_evidence_level", None)
             await self._backfill_verified_abstract(client, verified_record, {})
             return verified_record, None
 

@@ -2382,6 +2382,7 @@ class AgentRunner:
         if not result.ok:
             self._remember_tool_failure(failure_cache_key, tool_msg, tool_failure_cache)
         self._record_tool_side_effect_metadata(ctx, tc.name, model_dump(parsed), result)
+        self._emit_tool_progress(tc.name, result)
         if run_logger is not None:
             run_logger.tool_result(
                 tc.name,
@@ -2395,6 +2396,16 @@ class AgentRunner:
                 step=step,
             )
         return tool_msg
+
+    def _emit_tool_progress(self, tool_name: str, result: ToolResult) -> None:
+        """Print deterministic progress summaries that users need during long runs."""
+
+        if self.runtime_settings.ui.quiet:
+            return
+        data = result.data if isinstance(result.data, dict) else {}
+        progress = str(data.get("progress") or "").strip()
+        if tool_name == "save_paper_note" and progress:
+            self._emit(f"[Agent] T3 deep read progress: {progress}")
 
     @staticmethod
     def _looks_like_human_interaction_request(message: Message) -> bool:

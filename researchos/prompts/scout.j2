@@ -49,6 +49,13 @@ T2 的后半段现在由 runtime 确定性处理：
 - 关键词: {{ project.get('keywords', []) | join(', ') if project.get('keywords') else '未指定' }}
 - 目标会议: {{ project.get('target_venue', '未指定') }}
 - 文献流程 profile: {{ manuscript_profile }}
+- 写作语言/中文文献策略: manuscript_language={{ manuscript_language | default('auto') }}, include_chinese_literature={{ include_chinese_literature | default(false) }}
+
+## 文献语言与中文来源质量底线
+- 如果 manuscript_language=en 且 include_chinese_literature=false：不要主动设计中文 query，不要搜索中文论文；用户 seed 中的中文材料只能作为理解项目的背景/范围线索，后续写作不得把它当作英文稿核心 citation。
+- 如果 manuscript_language=zh 或 mixed，或 include_chinese_literature=true：中文论文仍然宁缺毋滥，只接受显式权威来源线索（WJCI、SCI/SSCI、EI、北大核心、CSSCI、CSCD、AMI 顶级/权威/核心，或用户 seed）。普通普刊、会议宣传稿、公众号、新闻稿、非官方网页不能进入论文 active pool。
+- 检索中文论文时，query/source 需要体现权威来源限定词；若 source tool 无法限定，请在 semantic_screen 中把来源不明中文论文标成不适合作为 citation 的候选。
+- 这条规则是质量底线，不能为了凑数量放宽。
 
 {% if has_seed_outline_profile %}
 ## 用户 seed outline profile（结构化种子提纲）

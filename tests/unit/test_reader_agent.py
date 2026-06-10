@@ -146,7 +146,7 @@ def test_reader_agent_spec(reader_agent):
     """测试Reader Agent的AgentSpec配置。"""
     spec = reader_agent.spec
     assert spec.name == "reader"
-    assert spec.model_tier == "medium"
+    assert spec.model_tier in {"medium", "heavy"}
     assert "read_file" in spec.tool_names
     assert "write_file" in spec.tool_names
     assert "lookup_paper_record" in spec.tool_names

@@ -70,6 +70,24 @@ def test_t2_literature_gate_parses_multiple_inline_customizations():
     assert result["captured"]["base_option"] == "survey_balanced"
 
 
+def test_t2_literature_gate_parses_language_and_chinese_policy():
+    options = [
+        {"id": "standard_research", "label": "标准研究论文覆盖", "is_default": True},
+        {"id": "custom", "label": "自定义关键数字"},
+    ]
+
+    result = CLIHumanInterface._parse_inline_gate_customization(
+        "t2_literature_param_gate",
+        "英文稿，不要中文论文，候选数300",
+        options,
+    )
+
+    assert result["option_id"] == "custom"
+    assert result["captured"]["manuscript_language"] == "英文"
+    assert result["captured"]["include_chinese_literature"] == "false"
+    assert result["captured"]["active_pool_max"] == "300"
+
+
 @pytest.mark.asyncio
 async def test_cli_gate_eof_pauses_instead_of_defaulting(monkeypatch):
     async def _run_gate():

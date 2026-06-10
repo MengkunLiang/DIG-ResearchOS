@@ -154,7 +154,7 @@ def test_pilot_mode_spec(experimenter_agent):
     spec = ExperimenterAgent(mode="pilot").spec
 
     assert spec.name == "experimenter"
-    assert spec.model_tier == "medium"
+    assert spec.model_tier == "heavy"
 
     assert spec.max_steps == 1000
     assert spec.max_tokens_total == 1_000_000

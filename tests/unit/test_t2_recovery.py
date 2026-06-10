@@ -620,6 +620,44 @@ class _FakeCrossrefClient:
         raise AssertionError(f"Unexpected Crossref URL: {url}")
 
 
+class _FakeChineseCrossrefClient(_FakeCrossrefClient):
+    async def get(self, url: str, **kwargs):
+        if "10.1111%2Fsource" in url:
+            return _FakeCrossrefResponse(
+                {
+                    "message": {
+                        "DOI": "10.1111/source",
+                        "title": ["Source Paper"],
+                        "published": {"date-parts": [[2025]]},
+                        "abstract": "<jats:p>Source abstract.</jats:p>",
+                        "reference-count": 1,
+                        "reference": [
+                            {
+                                "DOI": "10.3333/cn",
+                                "article-title": "普通中文普刊论文",
+                                "year": "2024",
+                            }
+                        ],
+                    }
+                }
+            )
+        if "10.3333%2Fcn" in url:
+            return _FakeCrossrefResponse(
+                {
+                    "message": {
+                        "DOI": "10.3333/cn",
+                        "title": ["普通中文普刊论文"],
+                        "author": [{"given": "A", "family": "Author"}],
+                        "published": {"date-parts": [[2024]]},
+                        "abstract": "<jats:p>一篇普通来源中文论文。</jats:p>",
+                        "container-title": ["地方普刊"],
+                        "is-referenced-by-count": 1,
+                    }
+                }
+            )
+        raise AssertionError(f"Unexpected Crossref URL: {url}")
+
+
 class _FakeOpenAlexClient:
     def __init__(self, *args, **kwargs) -> None:
         pass
@@ -967,6 +1005,81 @@ async def test_finalize_t2_outputs_persists_crossref_snowball_and_structured_log
         and "doi:10.2222/ref" in edge.get("referenced_works", [])
         for edge in citation_edges
     )
+
+
+@pytest.mark.asyncio
+async def test_finalize_t2_outputs_filters_post_snowball_chinese_for_english_manuscript(monkeypatch, tmp_path: Path):
+    workspace = tmp_path / "ws"
+    (workspace / "literature").mkdir(parents=True)
+    (workspace / "project.yaml").write_text(
+        "language: en\nresearch_direction: citation recovery\nkeywords: [citation, recovery]\n",
+        encoding="utf-8",
+    )
+    (workspace / "literature" / "literature_params.json").write_text(
+        json.dumps(
+            {
+                "semantics": "workspace_literature_coverage_parameters_for_t2_t3",
+                "literature_quality": {
+                    "enabled": True,
+                    "manuscript_language": "en",
+                    "include_chinese_literature": "false",
+                    "chinese_literature_policy": "authoritative_or_seed",
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    _write_jsonl(
+        workspace / "literature" / "papers_raw.jsonl",
+        [
+            {
+                "id": "doi:10.1111/source",
+                "canonical_id": "doi:10.1111/source",
+                "source": "crossref",
+                "source_tool": "crossref_search",
+                "source_query": "citation recovery",
+                "search_bucket": "core",
+                "title": "Source Paper",
+                "authors": ["Grace Hopper"],
+                "year": 2025,
+                "abstract": "",
+                "doi": "10.1111/source",
+                "venue": "Source Venue",
+                "citation_count": 2,
+                "seed_priority": True,
+            }
+        ],
+    )
+
+    import researchos.runtime.t2_recovery as t2_recovery
+
+    monkeypatch.setattr(
+        t2_recovery.httpx,
+        "AsyncClient",
+        lambda *args, **kwargs: _FakeChineseCrossrefClient(*args, **kwargs),
+    )
+
+    result = await finalize_t2_outputs(workspace, trace_paths=[])
+
+    assert result["ok"] is True
+    assert result["citation_backfill"]["added"] == 1
+    dedup_titles = [
+        json.loads(line)["title"]
+        for line in (workspace / "literature" / "papers_dedup.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert "普通中文普刊论文" not in dedup_titles
+    backlog_records = [
+        json.loads(line)
+        for line in (workspace / "literature" / "papers_backlog.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    filtered = next(record for record in backlog_records if record.get("title") == "普通中文普刊论文")
+    assert filtered["triaged_reason"] == "english_manuscript_excludes_chinese_literature"
+    assert filtered["citation_allowed"] is False
+    assert result["literature_quality"]["filtered_count"] >= 1
+    assert "post_snowball" in json.dumps(result["literature_quality"].get("stages"), ensure_ascii=False)
 
 
 @pytest.mark.asyncio

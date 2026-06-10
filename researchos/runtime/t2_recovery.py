@@ -41,7 +41,13 @@ from ..tools.paper_utils import (
 )
 from ..tools.scout_progress import ScoutProgressLogger
 from ..tools.workspace_policy import WorkspaceAccessPolicy
-from .t2_config import T2FinalizeConfig, load_deep_read_queue_config, load_t2_finalize_config
+from .literature_quality import apply_literature_quality_policy
+from .t2_config import (
+    T2FinalizeConfig,
+    load_deep_read_queue_config,
+    load_literature_quality_policy,
+    load_t2_finalize_config,
+)
 from ..time_utils import current_utc_year, format_year_window, recent_year_from
 
 try:
@@ -637,6 +643,44 @@ def _domain_filter_backlog_record(record: dict[str, Any], domain_profile: dict[s
             }
         )
     return item
+
+
+def _quality_policy_backlog_record(record: dict[str, Any]) -> dict[str, Any]:
+    item = dict(record)
+    item["t2_pool_role"] = "backlog"
+    item["triaged_out"] = True
+    quality = item.get("literature_quality_policy") if isinstance(item.get("literature_quality_policy"), dict) else {}
+    item["triaged_reason"] = str(quality.get("reason") or "literature_quality_policy_filtered")
+    item["read_disposition"] = "backlog"
+    item["read_disposition_reason"] = "excluded_from_active_pool_by_literature_quality_policy"
+    return item
+
+
+def _merge_literature_quality_meta(
+    base: dict[str, Any],
+    update: dict[str, Any],
+    *,
+    stage_name: str,
+) -> dict[str, Any]:
+    merged = dict(base)
+    for key in ("input_count", "kept_count", "filtered_count"):
+        merged[key] = int(merged.get(key) or 0) + int(update.get(key) or 0)
+    reasons = dict(merged.get("reason_counts") or {})
+    for reason, count in (update.get("reason_counts") or {}).items():
+        reasons[str(reason)] = int(reasons.get(str(reason)) or 0) + int(count or 0)
+    merged["reason_counts"] = reasons
+    stages = list(merged.get("stages") or [])
+    stages.append(
+        {
+            "stage": stage_name,
+            "input_count": int(update.get("input_count") or 0),
+            "kept_count": int(update.get("kept_count") or 0),
+            "filtered_count": int(update.get("filtered_count") or 0),
+            "reason_counts": update.get("reason_counts") or {},
+        }
+    )
+    merged["stages"] = stages
+    return merged
 
 
 def _filter_records_by_identity(
@@ -2763,6 +2807,7 @@ async def finalize_t2_outputs(
     workspace_dir = workspace_dir.resolve()
     t2_config = load_t2_finalize_config(workspace_dir)
     queue_config = load_deep_read_queue_config(workspace_dir)
+    literature_quality_policy = load_literature_quality_policy(workspace_dir)
     raw_path = workspace_dir / "literature" / "papers_raw.jsonl"
     raw_papers = _load_jsonl(raw_path)
     if not raw_papers:
@@ -2831,6 +2876,12 @@ async def finalize_t2_outputs(
     # and title-based backfill can improve seed abstracts instead of leaving
     # the highest-priority papers with the weakest metadata.
     dedup_papers = _ensure_seed_papers(dedup_papers, dedup_papers + raw_papers, workspace_dir)
+    dedup_papers, quality_filtered_backlog, literature_quality_meta = apply_literature_quality_policy(
+        dedup_papers,
+        literature_quality_policy,
+        workspace_dir=workspace_dir,
+    )
+    quality_filtered_backlog = [_quality_policy_backlog_record(item) for item in quality_filtered_backlog]
 
     pre_active_scored_papers = score_papers(dedup_papers, keywords)
     pre_active_scored_papers = sorted(
@@ -2930,6 +2981,7 @@ async def finalize_t2_outputs(
             "failed": 0,
         }
     snowball_candidates = [*openalex_snowball_candidates, *crossref_snowball_candidates]
+    pre_snowball_dedup_papers = list(dedup_papers)
     await _persist_snowball_candidates(
         policy,
         openalex_snowball_candidates,
@@ -2981,6 +3033,37 @@ async def finalize_t2_outputs(
         post_snowball_abstract_backfill = {"enabled": True, "candidate_count": 0, "filled": 0}
         post_snowball_crossref_backfill = {"enabled": True, "candidate_count": 0, "attempted": 0}
 
+    if snowball_candidates:
+        candidate_keys = _candidate_pool_identity_keys(snowball_candidates)
+        pre_snowball_keys = _candidate_pool_identity_keys(pre_snowball_dedup_papers)
+        snowball_records_after_dedup = [
+            paper
+            for paper in dedup_papers
+            if (_candidate_record_identity_keys(paper) & candidate_keys)
+            and not (_candidate_record_identity_keys(paper) & pre_snowball_keys)
+        ]
+        non_snowball_records_after_dedup = [
+            paper
+            for paper in dedup_papers
+            if not ((_candidate_record_identity_keys(paper) & candidate_keys) and not (_candidate_record_identity_keys(paper) & pre_snowball_keys))
+        ]
+        kept_snowball_records, post_quality_filtered, post_literature_quality_meta = apply_literature_quality_policy(
+            snowball_records_after_dedup,
+            literature_quality_policy,
+            workspace_dir=workspace_dir,
+        )
+        literature_quality_meta = _merge_literature_quality_meta(
+            literature_quality_meta,
+            post_literature_quality_meta,
+            stage_name="post_snowball",
+        )
+        quality_filtered_backlog.extend(_quality_policy_backlog_record(item) for item in post_quality_filtered)
+        dedup_papers = deduplicate_papers(
+            [*pre_snowball_dedup_papers, *non_snowball_records_after_dedup, *kept_snowball_records],
+            doi_dedup=True,
+            title_threshold=t2_config.dedup_title_threshold,
+        )
+
     scored_papers = score_papers(dedup_papers, keywords)
     # Sort for deterministic queue priority only. `relevance_score` is a
     # metadata priority hint and is not used as an exclusion threshold.
@@ -3001,6 +3084,7 @@ async def finalize_t2_outputs(
     active_pool_meta["pre_backfill_active_count"] = len(dedup_papers)
     active_pool_meta["pre_backfill_backlog_count"] = len(pre_backfill_backlog_papers)
     active_pool_meta["domain_profile_filtered_count"] = len(domain_filtered_backlog)
+    active_pool_meta["literature_quality_filtered_count"] = len(quality_filtered_backlog)
     final_papers = _ensure_seed_papers(final_papers, scored_papers + raw_papers, workspace_dir)
     final_papers = _filter_records_by_identity(final_papers, domain_filtered_backlog)
     final_papers = deduplicate_papers(
@@ -3008,7 +3092,7 @@ async def finalize_t2_outputs(
         doi_dedup=True,
         title_threshold=t2_config.dedup_title_threshold,
     )
-    backlog_papers = [*backlog_papers, *domain_filtered_backlog]
+    backlog_papers = [*backlog_papers, *domain_filtered_backlog, *quality_filtered_backlog]
     final_papers, backlog_papers, active_pool_meta = _cap_active_pool_after_seed_repair(
         final_papers,
         backlog_papers,
@@ -3185,8 +3269,18 @@ async def finalize_t2_outputs(
         f"max={active_pool_meta.get('active_pool_max')}, "
         f"selection_reasons={active_pool_meta.get('selection_reasons')}; "
         "`papers_raw.jsonl` 保留全量检索审计，`papers_dedup.jsonl`/`papers_verified.jsonl` "
-        "只保存本轮保留候选集，超额或 domain-profile 排除候选写入 "
+        "只保存本轮保留候选集，超额、domain-profile 或 literature-quality 排除候选写入 "
         "`papers_backlog.jsonl` 供审计或人工/显式回捞，不会被普通 abstract sweep 自动读回。\n"
+    )
+    search_log += (
+        "- 文献语言/来源质量策略: "
+        f"enabled={literature_quality_meta.get('enabled')}, "
+        f"manuscript_language={literature_quality_meta.get('manuscript_language')}, "
+        f"include_chinese_literature={literature_quality_meta.get('include_chinese_literature')}, "
+        f"input={literature_quality_meta.get('input_count')}, "
+        f"kept={literature_quality_meta.get('kept_count')}, "
+        f"filtered={literature_quality_meta.get('filtered_count')}, "
+        f"reasons={literature_quality_meta.get('reason_counts')}。\n"
     )
     search_log += (
         "- T2/T3 阈值配置来源: "
@@ -3348,6 +3442,8 @@ async def finalize_t2_outputs(
         "active_pool": active_pool_meta,
         "t2_finalize_config": t2_config.to_dict(),
         "deep_read_queue_config": queue_config.to_dict(),
+        "literature_quality_policy": literature_quality_policy.to_dict(),
+        "literature_quality": literature_quality_meta,
         "query_count": len(queries),
         "trace_count": trace_count,
         "openalex_backfill": openalex_backfill,
