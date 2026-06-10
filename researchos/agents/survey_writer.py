@@ -619,9 +619,23 @@ def _validate_survey_state(ws: Path) -> tuple[bool, str | None]:
         outline_path = ws / "drafts" / "survey" / "section_outlines" / f"{section_id}.md"
         if not outline_path.exists():
             return False, f"缺少 survey section outline: {section_id}"
+        outline_text = outline_path.read_text(encoding="utf-8", errors="replace")
+        if "Section Writing Contract" not in outline_text:
+            return False, f"survey section outline 缺少 Section Writing Contract: {section_id}，请重建 T3.6-STATE"
+        if not isinstance(entry.get("writing_contract"), dict) or not entry.get("writing_contract"):
+            return False, f"survey_state.sections.{section_id}.writing_contract 缺失，请重建 T3.6-STATE"
     shared = data.get("shared_facts")
     if not isinstance(shared, dict) or not isinstance(shared.get("taxonomy_classes"), list):
         return False, "survey_state.json shared_facts.taxonomy_classes 必须是列表"
+    sectioning_policy = str(shared.get("sectioning_policy") or "")
+    if sectioning_policy.startswith("compact_survey"):
+        contract = shared.get("theme_coverage_contract")
+        if not isinstance(contract, dict) or contract.get("mode") != "compact_theme_slots_skipped_content_must_be_absorbed":
+            return False, "survey_state.json 缺少 compact theme coverage contract，请重建 T3.6-STATE"
+        for section_id in ("taxonomy", "comparison"):
+            entry = sections.get(section_id) if isinstance(sections, dict) else {}
+            if not isinstance(entry, dict) or entry.get("absorbs_theme_content") is not True:
+                return False, f"survey_state.sections.{section_id} 缺少 absorbs_theme_content=true，请重建 T3.6-STATE"
     return True, None
 
 

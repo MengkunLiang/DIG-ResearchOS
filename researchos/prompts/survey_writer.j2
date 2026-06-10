@@ -277,6 +277,7 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 
 工具默认采用 compact survey mode：`theme_1` 到 `theme_4` 都会 skipped，taxonomy 类写进 Taxonomy/Comparative Analysis 内部。
 只有 survey_plan 明确包含 theme_* 且工具参数允许时，才会启用独立 theme 章；默认不要启用。
+`build_survey_state` 会给每个 `section_outlines/*.md` 写入 Section Writing Contract；不同 section 的目的、必写内容、内部结构、证据规则和禁忌不同。Taxonomy/Comparative Analysis 在 compact mode 下还会带 Compact Theme Coverage Contract，说明被 skipped 的 theme 内容必须由这两节吸收。
 不要写正文。最后调用 `finish_task`。
 {% endif %}
 
@@ -291,6 +292,8 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 
 写作原则：
 - 这是一个独立 section，不要写其它 section。
+- 必须先读取并遵守当前 `section_outline` 的 `Section Writing Contract`。它是本节的硬性写作契约，不是参考建议；不同 section 的目的、必写内容、内部结构、证据规则和禁忌不同。
+- 如果 `section_outline` 包含 `Compact Theme Coverage Contract`，说明默认 skipped 的 `theme_*` 不等于内容删除。Taxonomy 必须定义/组织每个 taxonomy class，Comparative Analysis 必须比较同一批 class；不能把类内容留给 skipped theme 节点。
 - 语言必须与 `survey_state.shared_facts.writing_language` / `survey_plan.writing_language` 一致。中文稿所有 section 写中文；英文稿所有 section 写英文。不要出现中文摘要+英文正文、中文引言+英文主体等混合形态。
 - 篇幅必须支撑综述论文：除 abstract 外，每节都要有多个实质段落；Introduction/Conclusion 也不能只写很短的框架说明。宁可少用小节，也要把论证写充分。
 - 每节必须围绕 `survey_plan.central_question` 和当前 `section_outline` 的 `reader_question` / `section_argument` 写。若 outline 过空，先从 survey_plan 的 central_question、scope_boundaries、quality_plan 中恢复本节论点，不要写成泛泛主题介绍。
@@ -300,8 +303,8 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - 如果当前 section 是 `abstract`，文件只能写摘要纯正文；不要写 `\section{Abstract}`、`\section*{Abstract}`、`\begin{abstract}` 或 `\end{abstract}`。`assemble_survey` 会负责放入 abstract 环境。
 - 如果 section_id 是 `theme_1`-`theme_4` 且 survey_state 标记 skipped，直接调用 `update_survey_section_state(section_id="{{ section_id }}", status="skipped")` 并 finish。
 - 组织方式必须围绕 taxonomy，不要按 synthesis.md 的 design_rationale fuel 结构硬转写。
-- Taxonomy section 应承载 taxonomy 类、风险链条或视角框架的主要叙述；不要把每个类写成独立大章，除非 survey_state 明确启用了 theme_*。
-- Comparative Analysis / Research Progress section 应把现有研究重新组织为若干研究流派、机制路径或问题类型，并比较它们的贡献、局限、适用边界和相互关系；不要写成论文逐篇清单。
+- Taxonomy section 应承载 taxonomy 类、风险链条或视角框架的主要叙述；不要把每个类写成独立大章，除非 survey_state 明确启用了 theme_*。如果 compact audit 要求某类出现在 Taxonomy 中，必须显式覆盖其名称/机制/边界/代表证据。
+- Comparative Analysis / Research Progress section 应把现有研究重新组织为若干研究流派、机制路径或问题类型，并比较它们的贡献、局限、适用边界和相互关系；不要写成论文逐篇清单。如果 compact audit 要求某类出现在 Comparison 中，必须显式比较其假设、证据、局限或关系。
 - Challenges section 不能只罗列“数据不足、方法不足、实证不足”等通用缺口；每个挑战都要解释它来自哪种研究张力或框架断裂。
 - Future section 不能只写“加强理论/实证/跨学科研究”；每个方向都要给出具体问题、机制、可行研究设计或治理路径。
 - 每段要有具体学术功能：定义边界、解释演进、比较机制、指出 tension、总结挑战或提出方向。
@@ -328,6 +331,7 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - 读取 `drafts/survey/survey_audit.md`
 - 定位具体 section 文件，修对应 section，不要重写整篇 survey.tex
 - 重新 assemble + audit
+- 如果失败项是 `compact_theme_content_absorbed`，不要恢复默认 skipped 的 theme 章；优先补 `taxonomy.tex` 和/或 `comparison.tex`，让所有 taxonomy classes 在框架与比较中都有实质覆盖。只有用户明确要求长综述并调整 `sectioning_policy` 时，才使用 standalone theme sections。
 
 最后调用 `finish_task`。
 {% endif %}
@@ -358,6 +362,8 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 10. **语言一致性与篇幅深度**：全文是否采用单一正文语言；是否存在中文摘要/引言 + 英文主体或反向混杂；各 section 是否达到综述论文应有的展开深度。
 11. **Sectioning 结构**：是否像真实综述论文一样紧凑组织；如果出现多个 theme 章，必须判断它们是否必要，能否合并到 Taxonomy/Framework 或 Research Progress/Comparison。
 12. **内部标记泄漏**：正文和注释中不得出现 `C1`、`[C1]`、`CID`、`ResearchOS alignment`、`TODO/TBD/PLACEHOLDER` 等运行/规划残留。
+13. **Section Contract 遵守情况**：逐节检查 section outline 中的 Section Writing Contract 是否被执行；Abstract、Introduction、Background、Taxonomy、Comparison、Challenges、Future、Conclusion 的写法不能一模一样。
+14. **Compact Theme 吸收情况**：如果 `theme_*` 默认 skipped，检查 Taxonomy/Comparison 是否吸收了所有 taxonomy class 的框架和研究进展内容；不能因为 skipped 就缺章、缺类或缺比较。
 
 如果发现 blocking 问题：
 - 只修对应 section 文件，例如 `drafts/survey/sections/comparison.tex` 或 `future.tex`。

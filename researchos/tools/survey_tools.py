@@ -125,6 +125,175 @@ SURVEY_SECTION_FUNCTIONS = {
     "conclusion": "Return to the central problem; summarize the framework contribution, overall judgment, implications, and limits.",
 }
 
+SURVEY_SECTION_WRITING_CONTRACTS = {
+    "abstract": {
+        "purpose": "Give a compact, citation-free preview of the review problem, framework, findings, contribution, and future agenda.",
+        "required_content": [
+            "Research background and why a review is needed.",
+            "The review object and central question.",
+            "The organizing framework or taxonomy axis.",
+            "Main synthesized findings or tensions.",
+            "Review contribution and future agenda.",
+        ],
+        "internal_shape": [
+            "One compact paragraph or two very short paragraphs.",
+            "No headings, no formal citations, no detailed literature attribution.",
+        ],
+        "evidence_rules": [
+            "Keep claims at survey-summary level; move detailed evidence to the main body.",
+        ],
+        "avoid": [
+            "Do not write a table-of-contents abstract.",
+            "Do not use LaTeX abstract wrappers; assemble_survey adds them.",
+        ],
+    },
+    "introduction": {
+        "purpose": "Turn the topic into a review problem and establish the paper's second-order contribution.",
+        "required_content": [
+            "Real-world or field-level motivation for the review.",
+            "Why prior work is fragmented, incomplete, or hard to compare.",
+            "The central review question.",
+            "The paper's contribution as a framework, map, taxonomy, or problem reframing.",
+            "A concise roadmap of the article.",
+        ],
+        "internal_shape": [
+            "Problem importance -> literature fragmentation -> review question -> contribution -> article roadmap.",
+            "Use representative citations sparingly; do not dump the literature list here.",
+        ],
+        "evidence_rules": [
+            "Use citations as anchors for the field and fragmentation, not as a full review.",
+        ],
+        "avoid": [
+            "Do not promise new experiments or original empirical findings.",
+            "Do not start from a generic topic definition if the background section will define terms.",
+        ],
+    },
+    "background": {
+        "purpose": "Define the review object, boundaries, corpus/search strategy, and evidence rules.",
+        "required_content": [
+            "Core concepts and terminology.",
+            "Inclusion and exclusion boundaries.",
+            "Corpus/search strategy or analysis method when available.",
+            "Evidence-level policy: full/partial notes, abstract-only context, metadata-only upgrade hints.",
+            "Coverage limits that readers must know before the framework section.",
+        ],
+        "internal_shape": [
+            "Concepts -> scope boundaries -> corpus/search method -> evidence rules -> coverage limits.",
+        ],
+        "evidence_rules": [
+            "Do not use metadata-only records as claim evidence.",
+            "Abstract-only material may signal coverage or emerging themes but must be labeled as weak.",
+        ],
+        "avoid": [
+            "Do not duplicate the taxonomy framework.",
+            "Do not hide exclusions or weak evidence boundaries.",
+        ],
+    },
+    "taxonomy": {
+        "purpose": "Build the main explanatory knowledge structure that replaces a paper-by-paper literature list.",
+        "required_content": [
+            "The taxonomy/framework dimension and why it organizes the field.",
+            "Every taxonomy class, stage, perspective, or mechanism family in survey_plan.taxonomy.tree, unless explicitly marked weak/deferred.",
+            "For each class: definition, mechanism, inclusion boundary, representative evidence, adjacent relationship, and limitation.",
+            "A short explanation of how the classes connect into an interpretable map.",
+            "If compact mode skips theme sections, absorb the would-be theme chapter content here at framework level.",
+        ],
+        "internal_shape": [
+            "Framework rationale -> class-by-class synthesis -> relationships among classes -> framework limitations.",
+            "Use subsections or claim-led paragraphs for classes; do not make papers the unit of structure.",
+        ],
+        "evidence_rules": [
+            "Each mature class should be grounded by verified notes/citations.",
+            "Weak or metadata-only classes must be described as coverage gaps or resource-upgrade needs.",
+        ],
+        "avoid": [
+            "Do not merely name categories.",
+            "Do not offload default taxonomy classes into skipped theme slots.",
+        ],
+    },
+    "comparison": {
+        "purpose": "Synthesize research progress by comparing streams, classes, mechanisms, evidence boundaries, and tradeoffs.",
+        "required_content": [
+            "All major taxonomy classes or research streams introduced earlier.",
+            "Comparison across assumptions, mechanisms, methods, datasets/settings, evidence strength, and practical constraints.",
+            "Cross-stream tensions, complementarities, and boundary conditions.",
+            "Evaluation of each stream's contribution and limitation.",
+            "If compact mode skips theme sections, expand the substantive research-progress discussion here.",
+        ],
+        "internal_shape": [
+            "Comparison dimensions -> stream/class comparison -> tensions and tradeoffs -> evaluative synthesis.",
+            "Each paragraph should include a claim, representative evidence, comparison, and evaluation.",
+        ],
+        "evidence_rules": [
+            "Do not compare incomparable settings without naming the boundary.",
+            "Do not inflate abstract-only or metadata-only hints into settled progress.",
+        ],
+        "avoid": [
+            "Do not write a sequence of author summaries.",
+            "Do not repeat taxonomy definitions without evaluating research progress.",
+        ],
+    },
+    "challenges": {
+        "purpose": "Derive unresolved problems from the framework and comparison rather than listing generic limitations.",
+        "required_content": [
+            "Concrete tensions or gaps exposed by taxonomy/comparison.",
+            "Why each challenge exists and what it prevents current research from explaining.",
+            "Evidence or coverage boundary behind the challenge.",
+            "Relation between the challenge and the central question.",
+        ],
+        "internal_shape": [
+            "Challenge claim -> source in prior sections -> why it matters -> what would resolve it.",
+        ],
+        "evidence_rules": [
+            "Resource-upgrade items can motivate a coverage challenge but cannot become evidence-backed conclusions.",
+        ],
+        "avoid": [
+            "Do not write generic 'data/method/theory is insufficient' lists.",
+            "Do not introduce new taxonomy classes here.",
+        ],
+    },
+    "future": {
+        "purpose": "Turn the critique into a concrete research agenda with mechanisms, settings, methods, or governance paths.",
+        "required_content": [
+            "Specific future questions derived from the central framework.",
+            "Mechanisms, settings, methods, datasets, longitudinal designs, interventions, or governance paths to study.",
+            "Near-term feasible directions versus longer-horizon agenda items.",
+            "How each direction addresses a named limitation or tension.",
+        ],
+        "internal_shape": [
+            "Agenda item -> unresolved tension -> possible research design/path -> expected theoretical contribution.",
+        ],
+        "evidence_rules": [
+            "Do not introduce unsupported new literature claims.",
+            "Connect each direction to evidence already established in earlier sections.",
+        ],
+        "avoid": [
+            "Do not write only 'strengthen theory/empirics/interdisciplinary work'.",
+            "Do not turn weak hints into mandatory future directions without caveats.",
+        ],
+    },
+    "conclusion": {
+        "purpose": "Close the review by answering the central question and restating the framework contribution and limits.",
+        "required_content": [
+            "Overall answer to the central review question.",
+            "What the taxonomy/framework clarifies.",
+            "Main comparative judgment and remaining uncertainty.",
+            "Theoretical/practical implications when supported.",
+            "Limitations of the review's corpus and evidence.",
+        ],
+        "internal_shape": [
+            "Answer -> contribution -> implications -> limits -> closing future orientation.",
+        ],
+        "evidence_rules": [
+            "Do not introduce new citations, evidence, taxonomy classes, or claims.",
+        ],
+        "avoid": [
+            "Do not simply repeat the section list.",
+            "Do not overclaim beyond the coverage audit.",
+        ],
+    },
+}
+
 SURVEY_QUALITY_DIMENSIONS = (
     "clear_problem",
     "scope_boundary",
@@ -301,6 +470,8 @@ class BuildSurveyStateTool(Tool):
         theme_entries = [] if compact_mode else _theme_entries(outline, max_theme_sections=max_theme_sections)
         theme_by_slot = {f"theme_{idx}": entry for idx, entry in enumerate(theme_entries, start=1)}
         writing_language = _infer_survey_writing_language(self.policy.workspace_dir, plan)
+        taxonomy_classes = _taxonomy_classes(plan)
+        theme_coverage_contract = _theme_coverage_contract(plan, taxonomy_classes, compact_mode=compact_mode)
 
         sections: dict[str, dict[str, Any]] = {}
         for section_id in SURVEY_SECTION_SEQUENCE:
@@ -314,20 +485,31 @@ class BuildSurveyStateTool(Tool):
                 "file": f"drafts/survey/sections/{section_id}.tex",
                 "outline_file": f"drafts/survey/section_outlines/{section_id}.md",
                 "title": title,
+                "reader_question": str(plan_entry.get("reader_question") or "") if isinstance(plan_entry, dict) else "",
+                "section_argument": str(plan_entry.get("section_argument") or "") if isinstance(plan_entry, dict) else "",
                 "covers": list(plan_entry.get("covers") or []) if isinstance(plan_entry, dict) else [],
                 "paper_ids": list(plan_entry.get("paper_ids") or []) if isinstance(plan_entry, dict) else [],
                 "plan_section_id": str(plan_entry.get("section_id") or section_id) if isinstance(plan_entry, dict) else section_id,
+                "writing_contract": _section_writing_contract(section_id),
             }
             if compact_mode and section_id == "taxonomy":
                 sections[section_id]["note"] = (
                     "Compact survey mode: write taxonomy classes as subsections/paragraphs here instead of "
                     "creating standalone theme chapters."
                 )
+                sections[section_id]["absorbs_theme_content"] = True
+                sections[section_id]["must_cover_taxonomy_classes"] = [
+                    item.get("class_id") or item.get("name") for item in taxonomy_classes if isinstance(item, dict)
+                ]
             if compact_mode and section_id == "comparison":
                 sections[section_id]["note"] = (
                     "Compact survey mode: compare the taxonomy classes here and reserve challenges/future for "
                     "cross-cutting issues."
                 )
+                sections[section_id]["absorbs_theme_content"] = True
+                sections[section_id]["must_compare_taxonomy_classes"] = [
+                    item.get("class_id") or item.get("name") for item in taxonomy_classes if isinstance(item, dict)
+                ]
 
         state = {
             "semantics": "survey_state_for_taxonomy_driven_section_writing_not_final_claims",
@@ -356,7 +538,8 @@ class BuildSurveyStateTool(Tool):
                 "quality_dimensions": list(SURVEY_QUALITY_DIMENSIONS),
                 "max_theme_sections": max_theme_sections,
                 "taxonomy_dimension": ((plan.get("taxonomy") or {}).get("dimension") if isinstance(plan.get("taxonomy"), dict) else ""),
-                "taxonomy_classes": _taxonomy_classes(plan),
+                "taxonomy_classes": taxonomy_classes,
+                "theme_coverage_contract": theme_coverage_contract,
                 "evolution_narrative": str(plan.get("evolution_narrative") or ""),
                 "scope_boundaries": plan.get("scope_boundaries") or {},
                 "quality_plan": plan.get("quality_plan") or {},
@@ -669,6 +852,14 @@ class AuditSurveyCoverageTool(Tool):
                 "Section depth issues: " + "; ".join(depth_issues[:8]),
             )
         )
+        compact_theme_issues = _compact_theme_coverage_issues(state, section_texts)
+        checks.append(
+            _check(
+                "compact_theme_content_absorbed",
+                not compact_theme_issues,
+                "Compact theme coverage issues: " + "; ".join(compact_theme_issues[:8]),
+            )
+        )
 
         passed = all(item["passed"] or item["level"] == "WARN" for item in checks)
         audit = {
@@ -692,6 +883,11 @@ class AuditSurveyCoverageTool(Tool):
                 "latex_chars": len(tex),
                 "writing_language": writing_language,
                 "language_profile": _language_profile(tex),
+                "theme_coverage_contract": (
+                    (state.get("shared_facts") or {}).get("theme_coverage_contract")
+                    if isinstance(state.get("shared_facts"), dict)
+                    else {}
+                ),
             },
         }
         output_json.write_text(json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -1084,6 +1280,88 @@ def _survey_depth_issues(tex: str, state: dict[str, Any], writing_language: str)
     return issues
 
 
+def _compact_theme_coverage_issues(state: dict[str, Any], section_texts: dict[str, str]) -> list[str]:
+    shared = state.get("shared_facts") if isinstance(state.get("shared_facts"), dict) else {}
+    contract = shared.get("theme_coverage_contract") if isinstance(shared.get("theme_coverage_contract"), dict) else {}
+    if contract.get("mode") != "compact_theme_slots_skipped_content_must_be_absorbed":
+        return []
+    class_refs = contract.get("taxonomy_classes") if isinstance(contract.get("taxonomy_classes"), list) else []
+    if not class_refs:
+        return []
+    taxonomy_text = section_texts.get("taxonomy", "")
+    comparison_text = section_texts.get("comparison", "")
+    issues: list[str] = []
+    for item in class_refs:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("name") or item.get("class_id") or "").strip()
+        if not label:
+            continue
+        if not _taxonomy_class_mentioned(taxonomy_text, item):
+            issues.append(f"taxonomy does not cover compact theme/taxonomy class: {label}")
+        if not _taxonomy_class_mentioned(comparison_text, item):
+            issues.append(f"comparison does not compare compact theme/taxonomy class: {label}")
+    return issues
+
+
+def _taxonomy_class_mentioned(text: str, item: dict[str, Any]) -> bool:
+    name = str(item.get("name") or item.get("label") or "").strip()
+    class_id = str(item.get("class_id") or "").strip()
+    plain = _plain_latex_text(text).casefold()
+    if name and _label_mentioned(plain, name):
+        return True
+    # Prefer names over terse IDs. IDs are only accepted when no class name exists.
+    if not name and class_id and len(class_id) >= 2:
+        return re.search(rf"(?<![A-Za-z0-9]){re.escape(class_id.casefold())}(?![A-Za-z0-9])", plain) is not None
+    return False
+
+
+def _label_mentioned(plain_text: str, label: str) -> bool:
+    label_norm = _plain_latex_text(label).casefold()
+    if not label_norm:
+        return False
+    if label_norm in plain_text:
+        return True
+    cjk_label = "".join(_CJK_RE.findall(label_norm))
+    if cjk_label:
+        cjk_text = "".join(_CJK_RE.findall(plain_text))
+        if cjk_label in cjk_text:
+            return True
+        if len(cjk_label) >= 6 and cjk_label[:4] in cjk_text and cjk_label[-4:] in cjk_text:
+            return True
+    stopwords = {
+        "class",
+        "classes",
+        "stream",
+        "streams",
+        "stage",
+        "stages",
+        "perspective",
+        "perspectives",
+        "mechanism",
+        "mechanisms",
+        "risk",
+        "risks",
+        "approach",
+        "approaches",
+        "method",
+        "methods",
+        "model",
+        "models",
+        "research",
+        "studies",
+    }
+    tokens = [
+        token
+        for token in re.findall(r"\b[a-z][a-z0-9\-]{3,}\b", label_norm)
+        if token not in stopwords
+    ]
+    if not tokens:
+        return False
+    hits = sum(1 for token in tokens if re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", plain_text))
+    return hits >= len(tokens) if len(tokens) <= 2 else hits >= 2
+
+
 def _survey_section_texts(tex: str, state: dict[str, Any] | None = None) -> dict[str, str]:
     matches = list(re.finditer(r"\\section\*?\{([^{}]+)\}", tex or "", flags=re.IGNORECASE))
     sections: dict[str, str] = {}
@@ -1421,6 +1699,76 @@ def _taxonomy_classes(plan: dict[str, Any]) -> list[dict[str, Any]]:
     return [item for item in tree if isinstance(item, dict)]
 
 
+def _theme_coverage_contract(
+    plan: dict[str, Any],
+    taxonomy_classes: list[dict[str, Any]],
+    *,
+    compact_mode: bool,
+) -> dict[str, Any]:
+    class_refs = []
+    for item in taxonomy_classes:
+        if not isinstance(item, dict):
+            continue
+        class_id = str(item.get("class_id") or "").strip()
+        name = str(item.get("name") or item.get("label") or "").strip()
+        if not (class_id or name):
+            continue
+        class_refs.append(
+            {
+                "class_id": class_id,
+                "name": name,
+                "required_in": ["taxonomy", "comparison"] if compact_mode else [],
+                "paper_ids": [str(p) for p in item.get("paper_ids") or []],
+            }
+        )
+    return {
+        "mode": (
+            "compact_theme_slots_skipped_content_must_be_absorbed"
+            if compact_mode
+            else "standalone_theme_sections_enabled"
+        ),
+        "reason": (
+            "Default compact survey keeps taxonomy classes inside Taxonomy and Comparative Analysis to avoid fragmented theme chapters."
+            if compact_mode
+            else "Some taxonomy classes may be written as standalone theme sections because sectioning_policy explicitly enabled them."
+        ),
+        "taxonomy_classes": class_refs,
+        "taxonomy_section_obligation": (
+            "Define every mature taxonomy class/stage/perspective and its boundary."
+            if compact_mode
+            else "Define the overarching framework and explain how standalone theme sections fit."
+        ),
+        "comparison_section_obligation": (
+            "Compare the same classes/streams by assumptions, evidence, limitations, settings, and relationships."
+            if compact_mode
+            else "Compare both framework-level classes and any standalone theme sections."
+        ),
+    }
+
+
+def _section_writing_contract(section_id: str) -> dict[str, Any]:
+    if section_id.startswith("theme_"):
+        return {
+            "purpose": "Optional standalone theme slot used only when sectioning_policy explicitly enables long-survey theme chapters.",
+            "required_content": [
+                "If skipped, write no prose and mark skipped.",
+                "If enabled, explain why this theme cannot be integrated into Taxonomy or Comparative Analysis.",
+                "Define the theme, evidence base, relation to the main framework, and limitations.",
+            ],
+            "internal_shape": [
+                "Theme argument -> evidence synthesis -> relation to framework -> evaluative limitation.",
+            ],
+            "evidence_rules": [
+                "Do not use theme sections to hide weak or metadata-only evidence.",
+            ],
+            "avoid": [
+                "Do not create theme chapters by default.",
+                "Do not duplicate taxonomy or comparison prose.",
+            ],
+        }
+    return dict(SURVEY_SECTION_WRITING_CONTRACTS.get(section_id) or {})
+
+
 def _resource_upgrade_needs(plan: dict[str, Any]) -> list[dict[str, Any]]:
     """Return normalized weak-evidence upgrade needs from an LLM survey plan."""
 
@@ -1533,8 +1881,11 @@ def _section_outline_text(section_id: str, entry: dict[str, Any], plan: dict[str
     covers = entry.get("covers") or []
     paper_ids = entry.get("paper_ids") or []
     sectioning_policy = plan.get("sectioning_policy") if isinstance(plan.get("sectioning_policy"), (dict, str)) else "compact"
-    section_argument = str(entry.get("section_argument") or entry.get("reader_question") or entry.get("function") or "")
+    reader_question = str(entry.get("reader_question") or "")
+    section_argument = str(entry.get("section_argument") or entry.get("function") or "")
     central_question = str(plan.get("central_question") or plan.get("review_question") or "")
+    contract = entry.get("writing_contract") if isinstance(entry.get("writing_contract"), dict) else _section_writing_contract(section_id)
+    compact_contract = _section_compact_theme_contract(section_id, entry, plan)
     lines = [
         f"# {title}",
         "",
@@ -1543,9 +1894,17 @@ def _section_outline_text(section_id: str, entry: dict[str, Any], plan: dict[str
         f"- sectioning_policy: {json.dumps(sectioning_policy, ensure_ascii=False)}",
         f"- central_question: {central_question or 'LLM must preserve the review central question from survey_plan'}",
         f"- section_role: {SURVEY_SECTION_FUNCTIONS.get(section_id, 'Survey section role')}",
+        f"- reader_question: {reader_question or 'LLM must recover the reader question from survey_plan and this section role.'}",
         f"- section_argument: {section_argument or 'LLM must write a section-level argument, not a topic label.'}",
         f"- covers: {', '.join(str(item) for item in covers) if covers else 'LLM should map taxonomy classes here'}",
         f"- paper_ids: {', '.join(str(item) for item in paper_ids) if paper_ids else 'LLM should select from notes/bib'}",
+        "",
+        "## Section Writing Contract",
+        f"- purpose: {contract.get('purpose') or SURVEY_SECTION_FUNCTIONS.get(section_id, 'Write this survey section.')}",
+        *_outline_contract_items("required_content", contract.get("required_content")),
+        *_outline_contract_items("internal_shape", contract.get("internal_shape")),
+        *_outline_contract_items("evidence_rules", contract.get("evidence_rules")),
+        *_outline_contract_items("avoid", contract.get("avoid")),
         "",
         "## Survey Quality Standard",
         "- A survey is a second-order research contribution: it reorganizes literature around a question, not a list of papers.",
@@ -1559,11 +1918,59 @@ def _section_outline_text(section_id: str, entry: dict[str, Any], plan: dict[str
         "## Sectioning Guidance",
         _sectioning_guidance(section_id, plan),
         "",
+        *_compact_theme_outline_block(compact_contract),
         "## Global Taxonomy Snapshot",
         json.dumps(plan.get("taxonomy") or {}, ensure_ascii=False, indent=2)[:3000],
         "",
     ]
     return "\n".join(lines)
+
+
+def _outline_contract_items(label: str, raw_items: object) -> list[str]:
+    items = [str(item).strip() for item in raw_items or [] if str(item).strip()] if isinstance(raw_items, list) else []
+    if not items:
+        return [f"- {label}: unspecified"]
+    return [f"- {label}:"] + [f"  - {item}" for item in items]
+
+
+def _section_compact_theme_contract(section_id: str, entry: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
+    compact_mode = _survey_plan_theme_limit(plan) == 0
+    if not compact_mode and not entry.get("absorbs_theme_content"):
+        return {}
+    if section_id not in {"taxonomy", "comparison"} and not section_id.startswith("theme_"):
+        return {}
+    return _theme_coverage_contract(plan, _taxonomy_classes(plan), compact_mode=compact_mode)
+
+
+def _compact_theme_outline_block(contract: dict[str, Any]) -> list[str]:
+    if not contract:
+        return []
+    class_refs = contract.get("taxonomy_classes") if isinstance(contract.get("taxonomy_classes"), list) else []
+    lines = [
+        "## Compact Theme Coverage Contract",
+        f"- mode: {contract.get('mode') or 'unspecified'}",
+        f"- reason: {contract.get('reason') or 'unspecified'}",
+        f"- taxonomy_section_obligation: {contract.get('taxonomy_section_obligation') or 'unspecified'}",
+        f"- comparison_section_obligation: {contract.get('comparison_section_obligation') or 'unspecified'}",
+    ]
+    if class_refs:
+        lines.append("- taxonomy_classes_to_cover:")
+        for item in class_refs:
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("name") or item.get("class_id") or "").strip()
+            if not label:
+                continue
+            class_id = str(item.get("class_id") or "").strip()
+            required_in = ", ".join(str(x) for x in item.get("required_in") or []) or "see sectioning policy"
+            lines.append(f"  - {class_id + ': ' if class_id else ''}{label} (required_in: {required_in})")
+    lines.extend(
+        [
+            "- audit_rule: in compact mode, every listed class must appear in both Taxonomy and Comparative Analysis; skipped theme slots do not remove content obligations.",
+            "",
+        ]
+    )
+    return lines
 
 
 def _section_writing_skill(section_id: str) -> list[str]:

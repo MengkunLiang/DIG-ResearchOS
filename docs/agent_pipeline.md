@@ -2095,7 +2095,9 @@ Agent 调用 `build_survey_state`。工具把 `survey_plan.json` 机械转换为
 - `section_outlines/conclusion.md`
 - `section_outlines/abstract.md`
 
-默认 compact 模式会把 `theme_1` 到 `theme_4` 都标记为 `skipped`，并在 taxonomy/comparison 的 section outline 中写明“taxonomy 类写入本节内部”的规则。`T3.6-SEC-THEME-*` 节点仍保留是为了兼容旧状态机和显式长综述模式；如果 `survey_state` 标记 skipped，该节点只调用 `update_survey_section_state(..., status="skipped")` 后结束，不写正文。
+默认 compact 模式会把 `theme_1` 到 `theme_4` 都标记为 `skipped`，并在 taxonomy/comparison 的 section outline 中写明“taxonomy 类写入本节内部”的规则。这里的 skipped 只表示“不生成独立 theme 大章”，不表示删除主题内容；`survey_state.shared_facts.theme_coverage_contract` 会要求每个 taxonomy class 同时出现在 Taxonomy 和 Comparative Analysis。`T3.6-SEC-THEME-*` 节点仍保留是为了兼容旧状态机和显式长综述模式；如果 `survey_state` 标记 skipped，该节点只调用 `update_survey_section_state(..., status="skipped")` 后结束，不写正文。
+
+每个 `section_outlines/*.md` 都会写入 `Section Writing Contract`，包括本节 purpose、required_content、internal_shape、evidence_rules 和 avoid。Abstract、Introduction、Background、Taxonomy、Comparison、Challenges、Future、Conclusion 的写作任务不同，不能共用同一套短模板。Taxonomy/Comparison 在 compact 模式下还会写入 `Compact Theme Coverage Contract`；旧 state/outline 缺少这些契约时，resume 会要求重建 `T3.6-STATE`。
 
 如果 `survey_plan.sectioning_policy.mode=standalone_theme_sections`，工具才会把少量 theme outline 映射到固定槽位；超过 `max_theme_sections` 会失败，要求回到 PLAN/outline gate 合并或删减章节。
 
@@ -2143,6 +2145,7 @@ audit_survey_coverage(...)
 - plan 是否包含中心问题、边界、综述贡献和 section arguments
 - 全文语言是否一致
 - 各 section 是否达到对应篇幅和综述论证结构
+- compact 默认下 Taxonomy 和 Comparative Analysis 是否吸收了所有 taxonomy classes；失败项名为 `compact_theme_content_absorbed`
 
 审计只检查可确定化的结构质量，不替代 LLM 学术审稿；taxonomy 是否真正有解释力、公允性和理论贡献仍在 REVIEW 里审。
 
@@ -2196,7 +2199,7 @@ T3.6 是 artifact-first 支线。每个 section 都是单独文件，`survey_sta
 - 如果 `decision.json` 已存在，survey gate 可直接完成。
 - 如果 `survey_plan.json` 已存在，PLAN 不必重写。
 - 如果某个 section 已写且 `survey_state` 标记 written/revised，validator 会接受，后续节点继续。
-- compact 默认下 `theme_1` 到 `theme_4` 都是 skipped，section validator 不要求对应 tex 文件。
+- compact 默认下 `theme_1` 到 `theme_4` 都是 skipped，section validator 不要求对应 tex 文件；但 `compact_theme_content_absorbed` 审计要求被跳过的主题内容已进入 Taxonomy/Comparative Analysis，不能因此缺类或缺比较。
 - 如果 section、assemble、review 或 compile 的输出校验失败，状态机会回到同一修复节点；compile 失败回到 assemble 重新绑定最新 sections/references，而不是直接暂停为不可修复状态。
 - 如果 review 失败，resume 会回到 `T3.6-REVIEW`，读取 `survey_review.md` 和 `survey_review_actions.json` 定位 section patch，不会重写整篇 survey。
 - 如果 `survey.tex` 已拼装且 review 通过但 compile 失败，resume 会回到 `T3.6-COMPILE` 或当前状态，读取 log 修复。`survey_review_actions.json` 必须由 `bind_survey_review` 写入当前 `survey_plan`、`survey_state`、`survey.tex`、`survey_audit`、sections 和 literature 输入的 fingerprint；旧 review 不会放行新 survey。

@@ -305,6 +305,14 @@ reader question and section argument. Section validation rejects mixed-language
 drafts, very short sections, paper-by-paper summaries, generic future/gap prose,
 unknown BibTeX keys, and internal planning labels.
 
+`build_survey_state` writes a per-section `Section Writing Contract` into each
+`drafts/survey/section_outlines/*.md`, so Abstract, Introduction, Background,
+Taxonomy, Comparison, Challenges, Future, and Conclusion have different
+purpose/content/shape/evidence rules. In the default compact mode, `theme_*`
+slots are skipped only as standalone chapters; their content must be absorbed by
+Taxonomy and Comparative Analysis, and the audit check
+`compact_theme_content_absorbed` fails if any taxonomy class disappears.
+
 To redo only the survey branch after T2/T3/T3.5 are already good, keep
 `literature/` and `user_seeds/`, move or delete stale `drafts/survey/` outputs,
 set `state.yaml` to `current_task: T3.6-PLAN` and `status: PAUSED`, then run:

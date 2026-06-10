@@ -348,6 +348,12 @@ async def test_survey_tools_build_state_assemble_audit_and_export(tmp_path: Path
     assert state["shared_facts"]["sectioning_policy"].startswith("compact_survey")
     assert state["sections"]["theme_1"]["status"] == "skipped"
     assert state["sections"]["theme_3"]["status"] == "skipped"
+    assert state["sections"]["taxonomy"]["absorbs_theme_content"] is True
+    assert state["sections"]["comparison"]["absorbs_theme_content"] is True
+    assert state["sections"]["taxonomy"]["reader_question"].startswith("What framework")
+    assert state["sections"]["comparison"]["section_argument"].startswith("Comparing streams")
+    assert state["sections"]["background"]["writing_contract"]["purpose"].startswith("Define the review object")
+    assert state["shared_facts"]["theme_coverage_contract"]["mode"] == "compact_theme_slots_skipped_content_must_be_absorbed"
     assert state["shared_facts"]["resource_upgrade_needs"][0]["allowed_use"] == "resource_upgrade_hint_not_survey_or_idea_evidence"
     assert any("Useful metadata-only paper" in item["paper_or_topic"] for item in state["shared_facts"]["resource_upgrade_needs"])
     assert state["shared_facts"]["metadata_triage_boundaries"]["do_not_use_as_evidence_count"] == 1
@@ -357,8 +363,16 @@ async def test_survey_tools_build_state_assemble_audit_and_export(tmp_path: Path
     theme_outline = (ws / "drafts" / "survey" / "section_outlines" / "theme_1.md").read_text(encoding="utf-8")
     assert "Define core concepts" in background_outline
     assert "Carry the main explanatory framework" in taxonomy_outline
+    assert "Section Writing Contract" in taxonomy_outline
+    assert "Every taxonomy class" in taxonomy_outline
+    assert "Compact Theme Coverage Contract" in taxonomy_outline
+    assert "T1: Perturbation mechanisms" in taxonomy_outline
+    assert "T2: Routing mechanisms" in taxonomy_outline
+    assert "every listed class must appear in both Taxonomy and Comparative Analysis" in taxonomy_outline
     assert "no heading, no LaTeX abstract environment" in abstract_outline
     assert "optional standalone theme slot" in theme_outline
+    assert "Section Writing Contract" in theme_outline
+    assert "Compact Theme Coverage Contract" in theme_outline
     assert background_outline != taxonomy_outline
     state["shared_facts"]["resource_upgrade_needs"].append(
         {
@@ -411,6 +425,8 @@ async def test_survey_tools_build_state_assemble_audit_and_export(tmp_path: Path
     assert result.ok
     audit = json.loads((ws / "drafts" / "survey" / "survey_audit.json").read_text(encoding="utf-8"))
     assert audit["passed"] is True
+    assert "compact_theme_content_absorbed" in {item["name"] for item in audit["checks"]}
+    assert audit["stats"]["theme_coverage_contract"]["mode"] == "compact_theme_slots_skipped_content_must_be_absorbed"
 
     result = await ExportSurveyForIdeationTool(policy).execute()
     assert result.ok
@@ -421,6 +437,39 @@ async def test_survey_tools_build_state_assemble_audit_and_export(tmp_path: Path
     assert any(item["paper_or_topic"] == "state_added_need" for item in insights["resource_upgrade_needs"])
     summary = (ws / "drafts" / "survey" / "survey_summary.md").read_text(encoding="utf-8")
     assert "Resource Upgrade Needs" in summary
+
+
+@pytest.mark.asyncio
+async def test_survey_audit_rejects_compact_theme_content_not_absorbed(tmp_path: Path):
+    ws = tmp_path
+    await _build_valid_survey_chain(ws)
+    comparison_path = ws / "drafts" / "survey" / "sections" / "comparison.tex"
+    comparison_body = (
+        "\\section{Comparative Analysis}\n"
+        "Research progress is organized around research streams, assumptions, mechanisms, evidence strength, "
+        "and boundary conditions rather than around a list of individual papers. The first stream contributes "
+        "perturbation mechanisms and precise perturbation tests; in contrast, adjacent implementation studies "
+        "focus on deployment constraints without naming the omitted taxonomy class. This comparison evaluates "
+        "the contribution and limitation of each stream by asking whether its evidence explains mechanisms, "
+        "whereas weaker streams only describe settings. Verified literature \\citep{p1,p3} anchors these claims, "
+        "but the paragraph uses citations as evidence for stream-level relationships rather than as the structure "
+        "of the review. The strength of the perturbation stream is conceptual precision, while its limitation is "
+        "that boundary conditions and transfer across settings remain under-specified. "
+    )
+    comparison_path.write_text(comparison_body * 5, encoding="utf-8")
+    result = await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="comparison", status="revised")
+    assert result.ok, result.content
+    result = await AssembleSurveyTool(_policy(ws)).execute()
+    assert result.ok, result.content
+
+    result = await AuditSurveyCoverageTool(_policy(ws)).execute()
+
+    assert not result.ok
+    audit = json.loads((ws / "drafts" / "survey" / "survey_audit.json").read_text(encoding="utf-8"))
+    failed = {item["name"] for item in audit["checks"] if item["passed"] is False}
+    assert "compact_theme_content_absorbed" in failed
+    compact_check = next(item for item in audit["checks"] if item["name"] == "compact_theme_content_absorbed")
+    assert "Routing mechanisms" in compact_check["detail"]
 
 
 @pytest.mark.asyncio
