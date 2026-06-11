@@ -30,6 +30,7 @@ LABEL version="0.1.0"
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=1
+ENV RESEARCHOS_VENV=/opt/researchos-venv
 
 # 清除代理环境变量（apt 和 Ubuntu 源不走代理）
 # 只有 npm 需要代理
@@ -42,6 +43,7 @@ ENV https_proxy=
 # - python3.11: Python 运行时
 # - git, curl, wget: 版本控制和下载工具
 # - texlive-latex-base + 必要包: LaTeX 基础工具链（替代 texlive-full 节省 ~3GB）
+# - texlive-lang-chinese + fonts-noto-cjk: 中文 survey/T8 草稿需要 ctex/xeCJK 与 CJK 字体
 # - ripgrep: 快速文本搜索（某些工具可能需要）
 # - nodejs, npm: MCP 服务器依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -55,11 +57,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     texlive-latex-extra \
     texlive-fonts-recommended \
     texlive-xetex \
+    texlive-lang-chinese \
+    fonts-noto-cjk \
+    fontconfig \
     latexmk \
     ripgrep \
     nodejs \
     npm \
     && rm -rf /var/lib/apt/lists/*
+
+# Ubuntu 22.04 keeps /usr/bin/python3 and python3-pip on Python 3.10 even when
+# python3.11 is installed. ResearchOS requires Python >=3.11, so all runtime
+# Python commands are pinned to a dedicated 3.11 virtual environment.
+RUN python3.11 -m venv "$RESEARCHOS_VENV" && \
+    "$RESEARCHOS_VENV/bin/pip" install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple --upgrade pip setuptools wheel
+
+ENV PATH="$RESEARCHOS_VENV/bin:$PATH"
 
 # 设置工作目录
 WORKDIR /app
@@ -105,16 +118,14 @@ RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple \
 RUN echo "Skipping MCP server installation (not required for core functionality)"
 
 # 复制 ResearchOS 源代码
+COPY README.md /app/README.md
 COPY researchos /app/researchos
 COPY config /app/config
 COPY scripts /app/scripts
 
 # 安装 ResearchOS
 # 注意：使用普通安装而非可编辑模式，因为 Docker 容器中不需要开发模式
-RUN pip install .
-
-# 创建 python 符号链接（兼容性）
-RUN ln -s /usr/bin/python3 /usr/bin/python
+RUN pip install --no-build-isolation .
 
 # 创建 workspace 挂载点
 RUN mkdir -p /workspace
@@ -123,7 +134,7 @@ RUN mkdir -p /workspace
 ENV CONTAINER_ID=researchos-docker
 
 # 入口点：使用 Python 模块方式启动 CLI
-ENTRYPOINT ["python3", "-m", "researchos.cli"]
+ENTRYPOINT ["python", "-m", "researchos.cli"]
 
 # 默认命令：显示帮助信息
 CMD ["--help"]

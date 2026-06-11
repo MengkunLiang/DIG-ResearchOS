@@ -516,6 +516,8 @@ class DockerExecTool(Tool):
             "30",
             "--memory",
             memory_limit,
+            "--entrypoint",
+            "bash",
         ]
         if not params.allow_network:
             cmd.extend(["--network", "none"])
@@ -527,7 +529,7 @@ class DockerExecTool(Tool):
         for key, value in params.env.items():
             cmd.extend(["-e", f"{key}={value}"])
         cmd.append(params.image)
-        cmd.extend(["bash", "-lc", params.command])
+        cmd.extend(["-lc", params.command])
         return cmd
 
     def _normalize_mount(self, mount: str) -> str:

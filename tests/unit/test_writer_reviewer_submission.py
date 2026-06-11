@@ -18,12 +18,14 @@ from researchos.agents.submission import (
 from researchos.runtime.agent_params import get_agent_params
 from researchos.runtime.prompts import render_prompt
 from researchos.tools.manuscript import (
+    AssembleManuscriptTool,
     AuditWritingCraftTool,
     BindReviewRoundTool,
     CORE_SECTIONS,
     PrepareSubmissionBundleTool,
     SECTION_WRITING_CONTRACTS,
     craft_audit_input_fingerprints,
+    _replace_template_document_body,
 )
 from researchos.tools.latex_compile import _compile_dependency_fingerprint
 from researchos.tools.workspace_policy import WorkspaceAccessPolicy
@@ -211,6 +213,26 @@ def _write_valid_paper_claim_audit(workspace: Path) -> None:
     )
 
 
+def test_manuscript_template_body_bibliographystyle_is_preserved():
+    template = (
+        "\\documentclass{article}\n"
+        "\\begin{document}\n"
+        "\\section{Sample}\n"
+        "\\bibliographystyle{ACM-Reference-Format}\n"
+        "\\bibliography{sample-base}\n"
+        "\\end{document}\n"
+    )
+
+    rendered = _replace_template_document_body(
+        template,
+        "\\section{Introduction}\nBody \\citep{test}.\n\\bibliography{related_work}\n",
+    )
+
+    assert "\\bibliographystyle{ACM-Reference-Format}" in rendered
+    assert rendered.count("\\bibliographystyle") == 1
+    assert "\\bibliography{related_work}" in rendered
+
+
 @pytest.mark.asyncio
 async def test_prepare_submission_bundle_rewrites_bibliography(temp_workspace):
     (temp_workspace / "drafts" / "paper.tex").write_text(
@@ -221,7 +243,7 @@ async def test_prepare_submission_bundle_rewrites_bibliography(temp_workspace):
         encoding="utf-8",
     )
     (temp_workspace / "literature" / "related_work.bib").write_text(
-        "@article{test,title={T}}\n",
+        "@article{test,author={Tester, Tina},title={T},year={2024},note={ABSTRACT-ONLY; runtime status}}\n",
         encoding="utf-8",
     )
     policy = WorkspaceAccessPolicy(
@@ -236,12 +258,48 @@ async def test_prepare_submission_bundle_rewrites_bibliography(temp_workspace):
     main_tex = (temp_workspace / "submission" / "bundle" / "main.tex").read_text(encoding="utf-8")
     assert "\\bibliography{references}" in main_tex
     assert "\\bibliography{related_work}" not in main_tex
-    assert (temp_workspace / "submission" / "bundle" / "references.bib").exists()
+    references = (temp_workspace / "submission" / "bundle" / "references.bib").read_text(encoding="utf-8")
+    assert "ABSTRACT-ONLY" not in references
+    assert "runtime status" not in references
+    assert "test" in references
     manifest = json.loads(
         (temp_workspace / "submission" / "bundle" / "bundle_manifest.json").read_text(encoding="utf-8")
     )
     assert manifest["semantics"] == "submission_bundle_source_fingerprint"
     assert manifest["source"]["paper_path"] == "drafts/paper.tex"
+
+
+@pytest.mark.asyncio
+async def test_prepare_submission_bundle_copies_local_bibliography_style(temp_workspace):
+    drafts = temp_workspace / "drafts"
+    drafts.mkdir(parents=True, exist_ok=True)
+    (drafts / "paper.tex").write_text(
+        "\\documentclass{article}\n\\begin{document}\n"
+        "Body \\cite{test}.\n"
+        "\\bibliographystyle{informs2014}\n\\bibliography{related_work}\n"
+        "\\end{document}\n",
+        encoding="utf-8",
+    )
+    (drafts / "informs2014.bst").write_text("ENTRY {}{}{}\nREAD\n", encoding="utf-8")
+    (temp_workspace / "literature" / "related_work.bib").write_text(
+        "@article{test,author={Tester, Tina},title={T},year={2024}}\n",
+        encoding="utf-8",
+    )
+    policy = WorkspaceAccessPolicy(
+        temp_workspace,
+        ["", "drafts/", "literature/"],
+        ["submission/"],
+    )
+
+    result = await PrepareSubmissionBundleTool(policy).execute()
+
+    assert result.ok, result.content
+    assert (temp_workspace / "submission" / "bundle" / "informs2014.bst").exists()
+    manifest = json.loads(
+        (temp_workspace / "submission" / "bundle" / "bundle_manifest.json").read_text(encoding="utf-8")
+    )
+    support_paths = [item["path"] for item in manifest["bundle"]["copied_support_files"]]
+    assert "submission/bundle/informs2014.bst" in support_paths
 
 
 @pytest.mark.asyncio
@@ -2573,3 +2631,47 @@ def test_submission_compile_environment_pauses_without_latex_or_docker(monkeypat
 
     assert not ok
     assert "WAITING_ENVIRONMENT" in err
+
+
+@pytest.mark.asyncio
+async def test_assemble_manuscript_applies_informs_template_and_support_files(temp_workspace):
+    section_dir = temp_workspace / "drafts" / "sections"
+    section_dir.mkdir(parents=True, exist_ok=True)
+    section_texts = {
+        "abstract": "This paper studies a compile-ready template path.",
+        "introduction": "\\section{Introduction}\nWe position the problem with prior work \\citep{test}.",
+        "related_work": "\\section{Related Work}\nPrior work motivates the baseline \\citep{test}.",
+        "methodology": "\\section{Method}\nThe method is deterministic.",
+        "experiments": "\\section{Experiments}\nThe experiment is a smoke test.",
+        "analysis": "\\section{Analysis}\nThe analysis checks template assembly.",
+        "conclusion": "\\section{Conclusion}\nThe limitation is template-level scope.",
+    }
+    for section_id, text in section_texts.items():
+        (section_dir / f"{section_id}.tex").write_text(text, encoding="utf-8")
+    (temp_workspace / "literature" / "related_work.bib").write_text(
+        "@article{test, author={Tester, Tina}, title={Template Test}, journal={Test Journal}, year={2024}, note={PARTIAL-TEXT; runtime status}}\n",
+        encoding="utf-8",
+    )
+    policy = WorkspaceAccessPolicy(
+        temp_workspace,
+        ["", "drafts/", "literature/"],
+        ["drafts/", "submission/"],
+    )
+
+    result = await AssembleManuscriptTool(policy).execute(
+        title="INFORMS Template Smoke Test",
+        template_family="utd",
+        template_id="informs",
+        writing_language="en",
+    )
+
+    assert result.ok, result.content
+    tex = (temp_workspace / "drafts" / "paper.tex").read_text(encoding="utf-8")
+    assert "ResearchOS template_source" not in tex
+    assert "\\bibliographystyle{informs2014}" in tex
+    assert tex.count("\\bibliographystyle") == 1
+    assert (temp_workspace / "drafts" / "informs2014.bst").exists()
+    copied_bib = (temp_workspace / "drafts" / "related_work.bib").read_text(encoding="utf-8")
+    assert "PARTIAL-TEXT" not in copied_bib
+    assert "runtime status" not in copied_bib
+    assert "test" in copied_bib

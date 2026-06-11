@@ -221,6 +221,11 @@ compute_budget:
         # 宿主机模式：应该是 docker run 命令
         assert captured["args"][0] == "docker"
         assert "run" in captured["args"]
+        assert "--entrypoint" in captured["args"]
+        entrypoint_idx = captured["args"].index("--entrypoint")
+        assert captured["args"][entrypoint_idx + 1] == "bash"
+        image_idx = captured["args"].index("researchos/python:3.11-ml")
+        assert captured["args"][image_idx + 1 : image_idx + 3] == ("-lc", "python run.py")
 
 
 def test_check_docker_environment_reports_missing_command(monkeypatch):
@@ -369,6 +374,94 @@ async def test_latex_compile_skips_repeated_failure_for_same_tex(tmp_workspace: 
     assert docker.calls == 1
     report = json.loads((tmp_workspace / "submission" / "compile_report.json").read_text(encoding="utf-8"))
     assert report["attempt_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_latex_compile_retries_failed_report_when_pdf_exists(tmp_workspace: Path, monkeypatch):
+    bundle = tmp_workspace / "submission" / "bundle"
+    bundle.mkdir(parents=True)
+    tex_path = bundle / "main.tex"
+    pdf_path = bundle / "main.pdf"
+    log_path = bundle / "main.log"
+    tex_path.write_text("\\documentclass{article}\\begin{document}OK\\end{document}", encoding="utf-8")
+    pdf_path.write_bytes(b"%PDF-1.4\nmock pdf body\n%%EOF")
+    log_path.write_text("clean log", encoding="utf-8")
+    dependency_fingerprint = _compile_dependency_fingerprint(tmp_workspace, tex_path)
+    report = {
+        "version": "1.0",
+        "semantics": "latex_compile_attempt_report",
+        "tex_path": "submission/bundle/main.tex",
+        "requested_engine": "pdflatex",
+        "bibtex": True,
+        "output_dir": None,
+        "success": False,
+        "error": "nonzero_exit",
+        "main_tex_sha256": _sha256_file(tex_path),
+        "main_tex_mtime": tex_path.stat().st_mtime,
+        "dependency_fingerprint": dependency_fingerprint,
+        "pdf_path": "",
+        "log_path": "submission/bundle/main.log",
+        "attempts": [
+            {
+                "success": False,
+                "exit_code": 2,
+                "main_tex_sha256": _sha256_file(tex_path),
+                "dependency_fingerprint_hash": dependency_fingerprint["hash"],
+                "error": "nonzero_exit",
+            }
+        ],
+    }
+    (tmp_workspace / "submission" / "compile_report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    class _DockerTool:
+        policy = WorkspaceAccessPolicy(tmp_workspace, ["", "submission/"], ["", "submission/"])
+        calls = 0
+
+        async def execute(self, **kwargs):
+            self.calls += 1
+            return ToolResult(ok=True, content="compiled", data={"exit_code": 0})
+
+    docker = _DockerTool()
+    tool = LatexCompileTool(docker)
+    monkeypatch.setattr(tool, "_is_running_in_container", lambda: False)
+    monkeypatch.setattr("researchos.tools.latex_compile.shutil.which", lambda _name: None)
+
+    result = await tool.execute(tex_path="submission/bundle/main.tex")
+
+    assert result.ok
+    assert docker.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_latex_compile_treats_docker_entrypoint_error_as_environment(tmp_workspace: Path, monkeypatch):
+    bundle = tmp_workspace / "submission" / "bundle"
+    bundle.mkdir(parents=True)
+    (bundle / "main.tex").write_text("\\documentclass{article}\\begin{document}OK\\end{document}", encoding="utf-8")
+
+    class _DockerTool:
+        policy = WorkspaceAccessPolicy(tmp_workspace, ["", "submission/"], ["", "submission/"])
+
+        async def execute(self, **kwargs):
+            return ToolResult(
+                ok=False,
+                content="researchos: error: argument command: invalid choice: 'bash'",
+                error="nonzero_exit",
+                data={"exit_code": 2},
+            )
+
+    tool = LatexCompileTool(_DockerTool())
+    monkeypatch.setattr(tool, "_is_running_in_container", lambda: False)
+    monkeypatch.setattr("researchos.tools.latex_compile.shutil.which", lambda _name: None)
+
+    result = await tool.execute(tex_path="submission/bundle/main.tex")
+
+    assert not result.ok
+    assert result.error == "waiting_environment_docker_entrypoint_misconfigured"
+    report = json.loads((tmp_workspace / "submission" / "compile_report.json").read_text(encoding="utf-8"))
+    assert report["error"] == "docker_entrypoint_misconfigured"
 
 
 @pytest.mark.asyncio

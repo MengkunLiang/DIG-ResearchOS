@@ -17,6 +17,7 @@ from researchos.tools.bibtex import (
     escape_bibtex_value,
     parse_bib_entries,
     stable_bib_key,
+    strip_internal_bibtex_notes,
 )
 from researchos.tools.citation_graph import build_domain_map
 from researchos.tools.glob_files import GlobFilesTool
@@ -407,6 +408,19 @@ def test_bibtex_helpers_parse_quality_dedupe_and_escape():
     assert "Duplicate Paper" not in deduped
     assert escape_bibtex_value("A&B_#%") == r"A\&B\_\#\%"
     assert stable_bib_key("10.1287/mnsc.2024.001") == "p_10_1287_mnsc_2024_001"
+
+
+def test_bibtex_publication_copy_strips_internal_evidence_notes():
+    text = (
+        "@article{a, author={A, Ann}, title={A}, journal={J}, year={2024}, note={ABSTRACT-ONLY; runtime status}}\n"
+        "@article{b, author={B, Bob}, title={B}, journal={J}, year={2024}, note={Accepted manuscript}}\n"
+    )
+
+    cleaned = strip_internal_bibtex_notes(text)
+
+    assert "ABSTRACT-ONLY" not in cleaned
+    assert "runtime status" not in cleaned
+    assert "Accepted manuscript" in cleaned
 
 
 def test_audit_writing_craft_warns_when_related_work_ignores_pre_t5_signals():

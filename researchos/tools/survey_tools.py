@@ -17,7 +17,12 @@ import yaml
 from pydantic import BaseModel, Field
 
 from .base import Tool, ToolResult
-from .bibtex import bibtex_quality_issues, dedupe_bibtex_entries, extract_bib_keys_from_text
+from .bibtex import (
+    bibtex_quality_issues,
+    dedupe_bibtex_entries,
+    extract_bib_keys_from_text,
+    strip_internal_bibtex_notes,
+)
 from .manuscript import _extract_latex_cites, has_formal_citation
 from .workspace_policy import ToolAccessDenied, WorkspaceAccessPolicy
 
@@ -723,7 +728,7 @@ class AssembleSurveyTool(Tool):
             if not text:
                 missing.append(f"drafts/survey/sections/{section_id}.tex")
                 continue
-            body_sections.append(text.strip())
+            body_sections.append(_strip_generated_section_comments(text).strip())
             included.append(section_id)
         cited_keys = set()
         if abstract_body:
@@ -2237,7 +2242,8 @@ def _copy_bibliography_for_survey(
     if not bib_path.exists():
         return
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    target_path.write_text(dedupe_bibtex_entries(bib_path.read_text(encoding="utf-8", errors="replace")), encoding="utf-8")
+    cleaned = strip_internal_bibtex_notes(bib_path.read_text(encoding="utf-8", errors="replace"))
+    target_path.write_text(dedupe_bibtex_entries(cleaned), encoding="utf-8")
 
 
 def _repo_root() -> Path:
@@ -2262,6 +2268,7 @@ _BIBTEX_BLOCKING_MARKERS = (
     "invalid_key",
     "missing_or_unknown_title",
     "missing_year",
+    "missing_author_or_organization",
     "marked_irrelevant",
     "contains_unknown_placeholder",
     "placeholder_doi",
@@ -2272,7 +2279,7 @@ _BIBTEX_BLOCKING_MARKERS = (
 
 
 def _blocking_bibtex_quality_issues(bib_text: str, cited_keys: set[str]) -> list[str]:
-    issues = bibtex_quality_issues(bib_text)
+    issues = bibtex_quality_issues(bib_text, require_author=True)
     if not issues:
         return []
     blocking: list[str] = []
@@ -2327,12 +2334,15 @@ def _render_survey_document(
             writing_language=writing_language,
             bib_stem="references",
         )
-    meta = (
-        f"% ResearchOS template_family: {family or ('basic_zh' if writing_language == 'zh' else 'basic_en')}\n"
-        f"% ResearchOS template_id: {template_id or ('basic_zh' if writing_language == 'zh' else 'basic_en')}\n"
-        f"% ResearchOS template_source: {template_path.relative_to(repo_root).as_posix() if template_path and template_path.exists() else 'fallback'}\n"
+    return rendered
+
+
+def _strip_generated_section_comments(text: str) -> str:
+    return re.sub(
+        r"(?m)\A(?:%\s*===.*?===\s*\n|%\s*Section:.*\n|\s*)+",
+        "",
+        text or "",
     )
-    return rendered.replace("\\documentclass", meta + "\\documentclass", 1)
 
 
 def _fallback_survey_document(
@@ -2343,13 +2353,32 @@ def _fallback_survey_document(
     writing_language: str,
     bib_stem: str,
 ) -> str:
-    documentclass = "\\documentclass[11pt]{ctexart}" if writing_language == "zh" else "\\documentclass[11pt]{article}"
+    cjk_packages = [
+        "\\usepackage{iftex}",
+        "\\usepackage{newunicodechar}",
+        "\\ifXeTeX",
+        "  \\usepackage{fontspec}",
+        "  \\usepackage{xeCJK}",
+        "  \\IfFontExistsTF{Noto Serif CJK SC}{\\setCJKmainfont{Noto Serif CJK SC}[ItalicFont=Noto Serif CJK SC, ItalicFeatures={FakeSlant=0.2}]}{}",
+        "  \\IfFontExistsTF{Noto Sans CJK SC}{\\setCJKsansfont{Noto Sans CJK SC}}{}",
+        "  \\IfFontExistsTF{Noto Serif CJK SC}{\\setCJKmonofont{Noto Serif CJK SC}}{}",
+        "\\fi",
+        "\\newunicodechar{≠}{\\ensuremath{\\ne}}",
+        "\\newunicodechar{≤}{\\ensuremath{\\le}}",
+        "\\newunicodechar{≥}{\\ensuremath{\\ge}}",
+        "\\newunicodechar{×}{\\ensuremath{\\times}}",
+        "\\newunicodechar{→}{\\ensuremath{\\to}}",
+        "\\newunicodechar{←}{\\ensuremath{\\leftarrow}}",
+        "\\newunicodechar{–}{--}",
+        "\\newunicodechar{—}{---}",
+    ] if writing_language == "zh" else []
     pieces = [
-        documentclass,
+        "\\documentclass[11pt]{article}",
         "\\usepackage[margin=1in]{geometry}",
         "\\usepackage{booktabs}",
         "\\usepackage{hyperref}",
         "\\usepackage{natbib}",
+        *cjk_packages,
         "\\begin{document}",
         _survey_document_body(title=title, abstract=abstract, body_sections=body_sections, bib_stem=bib_stem),
         "\\end{document}",
@@ -2379,8 +2408,12 @@ def _replace_template_document_body(template: str, body: str, *, bib_stem: str) 
     end_match = re.search(r"\\end\{document\}", rest, flags=re.IGNORECASE)
     suffix = rest[end_match.end() :] if end_match else ""
     preamble = _remove_template_title_author(preamble)
-    preamble = _ensure_template_bib_style(preamble)
-    body = re.sub(r"\\bibliography\{[^}]*\}", lambda _m: f"\\bibliography{{{bib_stem}}}", body)
+    preamble, bib_style = _extract_template_bib_style(preamble, rest)
+    body = _set_document_bibliography(
+        body,
+        bib_stem=bib_stem,
+        bib_style=bib_style or "plainnat",
+    )
     return preamble.rstrip() + "\n\n" + begin_cmd + "\n" + body.strip() + "\n\\end{document}" + suffix
 
 
@@ -2398,10 +2431,25 @@ def _remove_template_title_author(preamble: str) -> str:
     return cleaned
 
 
-def _ensure_template_bib_style(preamble: str) -> str:
-    if "\\bibliographystyle" in preamble:
-        return re.sub(r"\\bibliographystyle\{[^}]*\}", lambda _m: "\\bibliographystyle{plainnat}", preamble)
-    return preamble.rstrip() + "\n\\bibliographystyle{plainnat}\n"
+def _extract_template_bib_style(preamble: str, body: str = "") -> tuple[str, str]:
+    combined = (preamble or "") + "\n" + (body or "")
+    match = re.search(r"\\bibliographystyle\{([^}]*)\}", combined)
+    style = match.group(1).strip() if match else ""
+    cleaned = re.sub(r"\\bibliographystyle\{[^}]*\}\s*", "", preamble or "")
+    return cleaned, style
+
+
+def _set_document_bibliography(body: str, *, bib_stem: str, bib_style: str) -> str:
+    body = re.sub(r"\\bibliographystyle\{[^}]*\}\s*", "", body or "")
+    body = re.sub(r"\\bibliography\{[^}]*\}", lambda _m: f"\\bibliography{{{bib_stem}}}", body)
+    if "\\bibliography{" not in body:
+        body = body.rstrip() + f"\n\n\\bibliography{{{bib_stem}}}\n"
+    return re.sub(
+        r"(\\bibliography\{[^}]*\})",
+        lambda m: f"\\bibliographystyle{{{bib_style}}}\n" + m.group(1),
+        body,
+        count=1,
+    )
 
 
 def _resolve_latex_template(repo_root: Path, family: str, template_id: str, writing_language: str) -> Path | None:
@@ -2412,6 +2460,9 @@ def _resolve_latex_template(repo_root: Path, family: str, template_id: str, writ
     elif family == "basic_en":
         candidates.append(base / "normal" / "basic_en.tex")
     elif family == "utd":
+        tid = template_id or "informs"
+        if tid in {"informs", "mnsc", "isre", "isr", "ijds"}:
+            candidates.append(base / "utd" / "informs" / "informs_fallback.tex")
         candidates.append(base / "utd" / "informs_basic.tex")
     elif family == "ccf":
         tid = template_id or "neurips"

@@ -1,0 +1,49 @@
+% ResearchOS UTD/INFORMS fallback template.
+%
+% Sources checked on 2026-06-11:
+% - INFORMS Author Portal "LaTeX Style Files" lists journal ZIP packages.
+% - Official Overleaf template "Template for INFORMS Journal on Data Science"
+%   is authored by INFORMS, CC BY 4.0, and uses informs4 + informs2014.
+% - informs2014.bst is distributed under LPPL notice in the file header.
+%
+% This file is intentionally a compile-ready fallback, not a replacement for
+% the complete official informs4.cls package. Use the official journal ZIP at
+% T9 when a final submission bundle must match a target journal exactly.
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{natbib}
+\usepackage{setspace}
+\usepackage{hyperref}
+
+\onehalfspacing
+\bibliographystyle{informs2014}
+
+\title{Paper Title}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Abstract text.
+\end{abstract}
+
+\section{Introduction}
+
+\section{Related Work}
+
+\section{Method}
+
+\section{Experiments}
+
+\section{Analysis}
+
+\section{Conclusion}
+
+\bibliography{references}
+
+\end{document}

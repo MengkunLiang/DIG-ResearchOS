@@ -239,12 +239,14 @@ class LatexCompileTool(Tool):
             extra_mounts=[],
         )
         if not result.ok:
-            error_code = result.error or ""
+            error_code = _classify_docker_compile_error(result)
             if error_code in {
                 "docker_command_not_found",
                 "docker_daemon_unavailable",
                 "docker_image_missing",
                 "image_not_allowed",
+                "docker_entrypoint_misconfigured",
+                "researchos_module_missing",
             }:
                 content = (
                     "WAITING_ENVIRONMENT: Docker/LaTeX compile environment unavailable.\n"
@@ -604,7 +606,7 @@ def _cached_compile_result_if_redundant(
         )
 
     error = str(existing.get("error") or "")
-    if error in {"nonzero_exit", "pdf_missing", "timeout"}:
+    if error in {"nonzero_exit", "pdf_missing", "timeout"} and not _existing_pdf_can_be_revalidated(workspace, existing, report_base):
         return ToolResult(
             ok=False,
             content=(
@@ -620,6 +622,27 @@ def _cached_compile_result_if_redundant(
             },
         )
     return None
+
+
+def _classify_docker_compile_error(result: ToolResult) -> str:
+    error = str(result.error or "")
+    content = str(result.content or "")
+    lowered = content.casefold()
+    if "no module named researchos" in lowered:
+        return "researchos_module_missing"
+    if "invalid choice: 'bash'" in lowered or "argument command: invalid choice" in lowered:
+        return "docker_entrypoint_misconfigured"
+    return error
+
+
+def _existing_pdf_can_be_revalidated(workspace: Path, report: dict[str, Any], base: dict[str, Any]) -> bool:
+    tex_rel = str(report.get("tex_path") or base.get("tex_path") or "").strip()
+    if not tex_rel:
+        return False
+    tex_path = workspace / tex_rel
+    pdf_rel = str(report.get("pdf_path") or "").strip()
+    pdf_path = workspace / pdf_rel if pdf_rel else tex_path.with_suffix(".pdf")
+    return tex_path.exists() and pdf_path.exists() and pdf_path.stat().st_mtime >= tex_path.stat().st_mtime
 
 
 def _cached_success_artifacts_match(

@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from ..literature_identity import is_paper_note_file
 from .base import Tool, ToolResult
-from .bibtex import extract_bib_keys_from_text
+from .bibtex import extract_bib_keys_from_text, strip_internal_bibtex_notes
 from .manuscript_registries import (
     build_claim_ledger_seed,
     build_cdr_claim_ledger_seed,
@@ -963,6 +963,7 @@ class AssembleManuscriptTool(Tool):
                 _resolve_latex_template(_repo_root(), params.template_family, params.template_id, params.writing_language),
                 output_path.parent,
             )
+            _copy_manuscript_bibliography(self.policy, "literature/related_work.bib", output_path.parent / "related_work.bib")
             variant_outputs = _write_style_variant_manuscripts(
                 self.policy,
                 assembled,
@@ -1011,12 +1012,21 @@ class PrepareSubmissionBundleTool(Tool):
             tex = paper_path.read_text(encoding="utf-8")
             tex = rewrite_bibliography_to_references(tex, Path(params.references_filename).stem)
             bundle_dir.mkdir(parents=True, exist_ok=True)
-            references_path.write_text(bib_path.read_text(encoding="utf-8"), encoding="utf-8")
+            references_path.write_text(
+                strip_internal_bibtex_notes(bib_path.read_text(encoding="utf-8", errors="replace")),
+                encoding="utf-8",
+            )
             copied_figures, tex = _copy_submission_figures(
                 self.policy,
                 tex=tex,
                 bundle_dir=params.bundle_dir.rstrip("/"),
                 enabled=params.copy_figures,
+            )
+            copied_support_files = _copy_submission_latex_support_files(
+                self.policy,
+                tex=tex,
+                source_dir=paper_path.parent,
+                bundle_dir=params.bundle_dir.rstrip("/"),
             )
             main_path.write_text(tex, encoding="utf-8")
             manifest = build_submission_bundle_manifest(
@@ -1026,6 +1036,7 @@ class PrepareSubmissionBundleTool(Tool):
                 main_path=main_path,
                 references_path=references_path,
                 copied_figures=copied_figures,
+                copied_support_files=copied_support_files,
             )
             manifest_path.write_text(
                 json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
@@ -1049,6 +1060,7 @@ class PrepareSubmissionBundleTool(Tool):
                 "main_tex": f"{params.bundle_dir.rstrip('/')}/{params.main_filename}",
                 "references_bib": f"{params.bundle_dir.rstrip('/')}/{params.references_filename}",
                 "copied_figures": copied_figures,
+                "copied_support_files": copied_support_files,
                 "bundle_manifest": f"{params.bundle_dir.rstrip('/')}/bundle_manifest.json",
             },
         )
@@ -2184,15 +2196,7 @@ def assemble_sections(
             template_family=family,
             bib_stem="related_work",
         )
-    meta = (
-        f"% ResearchOS venue_style: {venue_style}\n"
-        f"% ResearchOS target_venue: {target_venue}\n"
-        f"% ResearchOS template_family: {family or ('basic_zh' if language == 'zh' else 'basic_en')}\n"
-        f"% ResearchOS template_id: {template or ('basic_zh' if language == 'zh' else 'basic_en')}\n"
-        f"% ResearchOS writing_language: {language}\n"
-        f"% ResearchOS template_source: {template_path.relative_to(_repo_root()).as_posix() if template_path and template_path.exists() else 'fallback'}\n"
-    )
-    return rendered.replace("\\documentclass", meta + "\\documentclass", 1)
+    return rendered
 
 
 def _manuscript_document_body(*, title: str, abstract: str, body_parts: list[str], bib_stem: str) -> str:
@@ -2215,14 +2219,38 @@ def _fallback_manuscript_document(
     template_family: str,
     bib_stem: str,
 ) -> str:
-    documentclass = "\\documentclass{ctexart}\n" if writing_language == "zh" or template_family == "basic_zh" else "\\documentclass{article}\n"
+    is_zh = writing_language == "zh" or template_family == "basic_zh"
+    documentclass = "\\documentclass{article}\n"
+    cjk_packages = (
+        "\\usepackage{iftex}\n"
+        "\\usepackage{newunicodechar}\n"
+        "\\ifXeTeX\n"
+        "  \\usepackage{fontspec}\n"
+        "  \\usepackage{xeCJK}\n"
+        "  \\IfFontExistsTF{Noto Serif CJK SC}{\\setCJKmainfont{Noto Serif CJK SC}[ItalicFont=Noto Serif CJK SC, ItalicFeatures={FakeSlant=0.2}]}{}\n"
+        "  \\IfFontExistsTF{Noto Sans CJK SC}{\\setCJKsansfont{Noto Sans CJK SC}}{}\n"
+        "  \\IfFontExistsTF{Noto Serif CJK SC}{\\setCJKmonofont{Noto Serif CJK SC}}{}\n"
+        "\\fi\n"
+        "\\newunicodechar{≠}{\\ensuremath{\\ne}}\n"
+        "\\newunicodechar{≤}{\\ensuremath{\\le}}\n"
+        "\\newunicodechar{≥}{\\ensuremath{\\ge}}\n"
+        "\\newunicodechar{×}{\\ensuremath{\\times}}\n"
+        "\\newunicodechar{→}{\\ensuremath{\\to}}\n"
+        "\\newunicodechar{←}{\\ensuremath{\\leftarrow}}\n"
+        "\\newunicodechar{–}{--}\n"
+        "\\newunicodechar{—}{---}\n"
+        if is_zh
+        else ""
+    )
     return (
         documentclass
         + "\\usepackage{graphicx}\n"
-        "\\usepackage{amsmath}\n"
-        "\\usepackage{booktabs}\n"
-        "\\usepackage{hyperref}\n"
-        "\\begin{document}\n"
+        + "\\usepackage{amsmath}\n"
+        + "\\usepackage{booktabs}\n"
+        + "\\usepackage{natbib}\n"
+        + cjk_packages
+        + "\\usepackage{hyperref}\n"
+        + "\\begin{document}\n"
         + _manuscript_document_body(title=title, abstract=abstract, body_parts=body_parts, bib_stem=bib_stem)
         + "\\end{document}\n"
     )
@@ -2243,6 +2271,9 @@ def _resolve_latex_template(repo_root: Path, family: str, template_id: str, writ
     elif family == "basic_en":
         candidates.append(base / "normal" / "basic_en.tex")
     elif family == "utd":
+        tid = template_id or "informs"
+        if tid in {"informs", "mnsc", "isre", "isr", "ijds"}:
+            candidates.append(base / "utd" / "informs" / "informs_fallback.tex")
         candidates.append(base / "utd" / "informs_basic.tex")
     elif family == "ccf":
         if (template_id or "neurips") == "neurips":
@@ -2268,11 +2299,34 @@ def _replace_template_document_body(template: str, body: str) -> str:
     preamble = re.sub(r"(?ms)^\\title\{.*?\}\s*", "", preamble)
     preamble = re.sub(r"(?ms)^\\author\{.*?\}\s*", "", preamble)
     preamble = re.sub(r"(?m)^\\date\{.*?\}\s*", "", preamble)
-    if "\\bibliographystyle" in preamble:
-        preamble = re.sub(r"\\bibliographystyle\{[^}]*\}", lambda _m: "\\bibliographystyle{plainnat}", preamble)
-    else:
-        preamble = preamble.rstrip() + "\n\\bibliographystyle{plainnat}\n"
+    preamble, bib_style = _extract_template_bib_style(preamble, rest)
+    body = _set_document_bibliography(
+        body,
+        bib_stem="related_work",
+        bib_style=bib_style or "plainnat",
+    )
     return preamble.rstrip() + "\n\n\\begin{document}\n" + body.strip() + "\n\\end{document}" + suffix
+
+
+def _extract_template_bib_style(preamble: str, body: str = "") -> tuple[str, str]:
+    combined = (preamble or "") + "\n" + (body or "")
+    match = re.search(r"\\bibliographystyle\{([^}]*)\}", combined)
+    style = match.group(1).strip() if match else ""
+    cleaned = re.sub(r"\\bibliographystyle\{[^}]*\}\s*", "", preamble or "")
+    return cleaned, style
+
+
+def _set_document_bibliography(body: str, *, bib_stem: str, bib_style: str) -> str:
+    body = re.sub(r"\\bibliographystyle\{[^}]*\}\s*", "", body or "")
+    body = re.sub(r"\\bibliography\{[^}]*\}", lambda _m: f"\\bibliography{{{bib_stem}}}", body)
+    if "\\bibliography{" not in body:
+        body = body.rstrip() + f"\n\n\\bibliography{{{bib_stem}}}\n"
+    return re.sub(
+        r"(\\bibliography\{[^}]*\})",
+        lambda m: f"\\bibliographystyle{{{bib_style}}}\n" + m.group(1),
+        body,
+        count=1,
+    )
 
 
 def _copy_latex_template_support_files(template_path: Path | None, target_dir: Path) -> None:
@@ -2285,6 +2339,86 @@ def _copy_latex_template_support_files(template_path: Path | None, target_dir: P
             (target_dir / source.name).write_bytes(source.read_bytes())
         except OSError:
             continue
+
+
+def _copy_manuscript_bibliography(
+    policy: WorkspaceAccessPolicy,
+    rel_bib_path: str,
+    target_path: Path,
+) -> None:
+    try:
+        bib_path = policy.resolve_read(rel_bib_path)
+    except Exception:
+        return
+    if not bib_path.exists():
+        return
+    try:
+        target_path.write_text(
+            strip_internal_bibtex_notes(bib_path.read_text(encoding="utf-8", errors="replace")),
+            encoding="utf-8",
+        )
+    except OSError:
+        return
+
+
+_SUPPORT_FILE_COMMAND_RE = re.compile(
+    r"\\(?:bibliographystyle|usepackage|documentclass)(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}"
+)
+_LATEX_SUPPORT_SUFFIXES = {".bst", ".cls", ".sty"}
+
+
+def _copy_submission_latex_support_files(
+    policy: WorkspaceAccessPolicy,
+    *,
+    tex: str,
+    source_dir: Path,
+    bundle_dir: str,
+) -> list[str]:
+    copied: list[str] = []
+    for source in _submission_latex_support_candidates(tex, source_dir):
+        try:
+            source_rel = source.resolve().relative_to(policy.workspace_dir.resolve()).as_posix()
+            checked = policy.resolve_read(source_rel)
+        except (ValueError, ToolAccessDenied):
+            continue
+        if not checked.exists() or not checked.is_file():
+            continue
+        target_rel = f"{bundle_dir}/{checked.name}"
+        target = policy.resolve_write(target_rel)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(checked.read_bytes())
+        if target_rel not in copied:
+            copied.append(target_rel)
+    return copied
+
+
+def _submission_latex_support_candidates(tex: str, source_dir: Path) -> list[Path]:
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+    for match in _SUPPORT_FILE_COMMAND_RE.finditer(tex or ""):
+        command = match.group(0)
+        names = [item.strip() for item in match.group(1).split(",") if item.strip()]
+        for name in names:
+            if not name or "/" in name or "\\" in name:
+                continue
+            suffixes: list[str]
+            if "\\bibliographystyle" in command:
+                suffixes = [".bst"]
+            elif "\\documentclass" in command:
+                suffixes = [".cls"]
+            else:
+                suffixes = [".sty"]
+            raw = Path(name)
+            if raw.suffix.lower() in _LATEX_SUPPORT_SUFFIXES:
+                paths = [source_dir / raw]
+            else:
+                paths = [source_dir / f"{name}{suffix}" for suffix in suffixes]
+            for path in paths:
+                resolved = path.resolve()
+                if resolved not in seen:
+                    seen.add(resolved)
+                    candidates.append(path)
+    return candidates
 
 
 def _write_style_variant_manuscripts(
@@ -3947,6 +4081,7 @@ def build_submission_bundle_manifest(
     main_path: Path,
     references_path: Path,
     copied_figures: list[str | dict[str, str]],
+    copied_support_files: list[str] | None = None,
 ) -> dict[str, Any]:
     """Fingerprint the source artifacts used to prepare a T9 bundle.
 
@@ -3970,6 +4105,7 @@ def build_submission_bundle_manifest(
             "references_bib_path": _rel_path(workspace, references_path),
             "references_bib_sha256": _sha256_path(references_path),
             "copied_figures": _submission_figure_manifest_entries(workspace, copied_figures),
+            "copied_support_files": _submission_support_file_manifest_entries(workspace, copied_support_files or []),
         },
     }
 
@@ -4003,6 +4139,17 @@ def _submission_figure_manifest_entries(
                 entry["source_path"] = source_rel
                 entry["source_sha256"] = _sha256_path(source)
         entries.append(entry)
+    return entries
+
+
+def _submission_support_file_manifest_entries(workspace: Path, copied_support_files: list[str]) -> list[dict[str, str]]:
+    entries: list[dict[str, str]] = []
+    for rel in copied_support_files:
+        path = workspace / rel
+        if path.exists() and path.is_file():
+            entries.append({"path": rel, "sha256": _sha256_path(path)})
+        else:
+            entries.append({"path": rel, "sha256": ""})
     return entries
 
 

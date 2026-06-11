@@ -1,9 +1,29 @@
-\documentclass[11pt]{ctexart}
+% Chinese fallback that keeps a standard document class. Full Chinese support
+% in Docker still requires texlive-lang-chinese; without it, generated TeX will
+% fail early with a clear missing-package error from the CJK stack.
+\documentclass[11pt]{article}
 \usepackage[margin=1in]{geometry}
 \usepackage{amsmath,amssymb}
 \usepackage{booktabs}
 \usepackage{graphicx}
 \usepackage{natbib}
+\usepackage{iftex}
+\usepackage{newunicodechar}
+\ifXeTeX
+  \usepackage{fontspec}
+  \usepackage{xeCJK}
+  \IfFontExistsTF{Noto Serif CJK SC}{\setCJKmainfont{Noto Serif CJK SC}[ItalicFont=Noto Serif CJK SC, ItalicFeatures={FakeSlant=0.2}]}{}
+  \IfFontExistsTF{Noto Sans CJK SC}{\setCJKsansfont{Noto Sans CJK SC}}{}
+  \IfFontExistsTF{Noto Serif CJK SC}{\setCJKmonofont{Noto Serif CJK SC}}{}
+\fi
+\newunicodechar{≠}{\ensuremath{\ne}}
+\newunicodechar{≤}{\ensuremath{\le}}
+\newunicodechar{≥}{\ensuremath{\ge}}
+\newunicodechar{×}{\ensuremath{\times}}
+\newunicodechar{→}{\ensuremath{\to}}
+\newunicodechar{←}{\ensuremath{\leftarrow}}
+\newunicodechar{–}{--}
+\newunicodechar{—}{---}
 \usepackage{hyperref}
 
 \title{论文标题}

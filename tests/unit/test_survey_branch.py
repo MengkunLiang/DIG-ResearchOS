@@ -21,6 +21,7 @@ from researchos.tools.survey_tools import (
     BuildSurveyStateTool,
     ExportSurveyForIdeationTool,
     UpdateSurveySectionStateTool,
+    _replace_template_document_body,
 )
 from researchos.tools.latex_compile import _compile_dependency_fingerprint
 from researchos.tools.workspace_policy import WorkspaceAccessPolicy
@@ -277,6 +278,27 @@ def _valid_survey_bib() -> str:
 def _write_valid_survey_bib(ws: Path) -> None:
     (ws / "literature").mkdir(parents=True, exist_ok=True)
     (ws / "literature" / "related_work.bib").write_text(_valid_survey_bib(), encoding="utf-8")
+
+
+def test_survey_template_body_bibliographystyle_is_preserved():
+    template = (
+        "\\documentclass{article}\n"
+        "\\begin{document}\n"
+        "\\section{Sample}\n"
+        "\\bibliographystyle{ACM-Reference-Format}\n"
+        "\\bibliography{sample-base}\n"
+        "\\end{document}\n"
+    )
+
+    rendered = _replace_template_document_body(
+        template,
+        "\\section{Introduction}\nBody \\citep{p1}.\n\\bibliography{references}\n",
+        bib_stem="references",
+    )
+
+    assert "\\bibliographystyle{ACM-Reference-Format}" in rendered
+    assert rendered.count("\\bibliographystyle") == 1
+    assert "\\bibliography{references}" in rendered
 
 
 def _valid_survey_tex_document() -> str:
@@ -690,8 +712,110 @@ async def test_t36_assemble_applies_selected_basic_zh_template(tmp_path: Path):
 
     tex = (ws / "drafts" / "survey" / "survey.tex").read_text(encoding="utf-8")
 
-    assert "\\documentclass[11pt]{ctexart}" in tex
-    assert "ResearchOS template_family: basic_zh" in tex
+    assert "\\documentclass[11pt]{article}" in tex
+    assert "\\usepackage{xeCJK}" in tex
+    assert "ResearchOS template_family" not in tex
+
+
+@pytest.mark.asyncio
+async def test_t36_assemble_applies_informs_template_and_support_files(tmp_path: Path):
+    ws = tmp_path
+    plan = _survey_plan()
+    plan["template_selection"] = {
+        "template_family": "utd",
+        "template_id": "informs",
+        "writing_language": "en",
+    }
+    _write_json(ws / "drafts" / "survey" / "survey_plan.json", plan)
+    _write_json(ws / "drafts" / "survey" / "corpus_decision.json", {"scope": "conservative"})
+    _write_valid_survey_bib(ws)
+    policy = _policy(ws)
+    result = await BuildSurveyStateTool(policy).execute()
+    assert result.ok, result.content
+    sections_dir = ws / "drafts" / "survey" / "sections"
+    sections_dir.mkdir(parents=True, exist_ok=True)
+    for section_id in [
+        "abstract",
+        "introduction",
+        "background",
+        "taxonomy",
+        "comparison",
+        "challenges",
+        "future",
+        "conclusion",
+    ]:
+        text = "Abstract text." if section_id == "abstract" else _valid_survey_section_body(section_id)
+        (sections_dir / f"{section_id}.tex").write_text(text, encoding="utf-8")
+        result = await UpdateSurveySectionStateTool(policy).execute(section_id=section_id)
+        assert result.ok, result.content
+
+    result = await AssembleSurveyTool(policy).execute()
+    assert result.ok, result.content
+    tex = (ws / "drafts" / "survey" / "survey.tex").read_text(encoding="utf-8")
+
+    assert "ResearchOS template_source" not in tex
+    assert "\\bibliographystyle{informs2014}" in tex
+    assert tex.count("\\bibliographystyle") == 1
+    assert (ws / "drafts" / "survey" / "informs2014.bst").exists()
+    manifest = json.loads((ws / "drafts" / "survey" / "survey_assembly_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["template_selection"]["template_family"] == "utd"
+
+
+@pytest.mark.asyncio
+async def test_t36_assemble_blocks_cited_bib_entry_without_author(tmp_path: Path):
+    ws = tmp_path
+    _write_json(ws / "drafts" / "survey" / "survey_plan.json", _survey_plan())
+    _write_json(ws / "drafts" / "survey" / "corpus_decision.json", {"scope": "conservative"})
+    (ws / "literature").mkdir(parents=True, exist_ok=True)
+    bad_bib = _valid_survey_bib() + (
+        "\n@article{noauthor2026, title={No Author Record}, journal={Journal}, year={2026}}\n"
+    )
+    (ws / "literature" / "related_work.bib").write_text(bad_bib, encoding="utf-8")
+    policy = _policy(ws)
+    result = await BuildSurveyStateTool(policy).execute()
+    assert result.ok, result.content
+    sections_dir = ws / "drafts" / "survey" / "sections"
+    sections_dir.mkdir(parents=True, exist_ok=True)
+    section_texts = {
+        "abstract": "A taxonomy-driven survey without formal citations.",
+        "introduction": _valid_survey_section_body("Introduction", "\\citep{p1,p2}"),
+        "background": _valid_survey_section_body("Background and Scope", "\\citep{p1,p2,p3,noauthor2026}"),
+        "taxonomy": _valid_survey_section_body("Taxonomy", "\\citep{p3,p4,p5,p6}"),
+        "comparison": _valid_survey_section_body("Comparative Analysis", "\\citep{p5,p6,p7,p8,p9}"),
+        "challenges": _valid_survey_section_body("Open Challenges", "\\citep{p7,p8}"),
+        "future": _valid_survey_section_body("Future Directions", "\\citep{p8,p9}"),
+        "conclusion": _valid_survey_section_body("Conclusion"),
+    }
+    for section_id, text in section_texts.items():
+        (sections_dir / f"{section_id}.tex").write_text(text, encoding="utf-8")
+        result = await UpdateSurveySectionStateTool(policy).execute(section_id=section_id)
+        assert result.ok, result.content
+
+    result = await AssembleSurveyTool(policy).execute()
+
+    assert not result.ok
+    assert result.error == "invalid_bibliography_quality"
+    assert "noauthor2026: missing_author_or_organization" in result.content
+
+
+@pytest.mark.asyncio
+async def test_t36_assemble_strips_internal_bib_notes_from_public_references(tmp_path: Path):
+    ws = tmp_path
+    await _build_valid_survey_chain(ws)
+    source = ws / "literature" / "related_work.bib"
+    source.write_text(
+        source.read_text(encoding="utf-8")
+        + "\n@article{status2026, author={Status, Sam}, title={Status Record}, journal={Journal}, year={2026}, note={FULL-TEXT; internal status}}\n",
+        encoding="utf-8",
+    )
+
+    result = await AssembleSurveyTool(_policy(ws)).execute()
+
+    assert result.ok, result.content
+    references = (ws / "drafts" / "survey" / "references.bib").read_text(encoding="utf-8")
+    assert "FULL-TEXT" not in references
+    assert "internal status" not in references
+    assert "status2026" in references
 
 
 @pytest.mark.asyncio

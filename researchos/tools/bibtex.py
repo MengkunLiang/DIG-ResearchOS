@@ -107,7 +107,7 @@ def bibtex_quality_issues(text: str, *, require_author: bool = False) -> list[st
             issues.append(f"{key}: invalid_key")
         title = str(fields.get("title") or "").strip()
         year = str(fields.get("year") or "").strip()
-        author = str(fields.get("author") or fields.get("editor") or fields.get("organization") or "").strip()
+        author = str(fields.get("author") or fields.get("editor") or fields.get("organization") or fields.get("key") or "").strip()
         if not title or title.casefold() == "unknown":
             issues.append(f"{key}: missing_or_unknown_title")
         if not year or year.upper() == "XXXX":
@@ -139,6 +139,36 @@ def bibtex_quality_issues(text: str, *, require_author: bool = False) -> list[st
     if _unbalanced_braces(text):
         issues.append("unbalanced_braces")
     return issues
+
+
+_INTERNAL_NOTE_RE = re.compile(
+    r"(?is),\s*note\s*=\s*(?:\{[^{}]*\}|\"[^\"]*\")\s*"
+)
+_INTERNAL_NOTE_MARKER_RE = re.compile(
+    r"(?i)"
+    r"\b(?:FULL|PARTIAL)\s*[-_ ]?\s*TEXT\b|"
+    r"\bABSTRACT\s*[-_ ]?\s*ONLY\b|"
+    r"\bMETADATA\s*[-_ ]?\s*ONLY\b|"
+    r"\bSeed\s+paper\b|"
+    r"\bmetadata\s+triage\b|"
+    r"\bResearchOS\b|"
+    r"\bIRRELEVANT\b"
+)
+
+
+def strip_internal_bibtex_notes(text: str) -> str:
+    """Remove runtime evidence-status notes before TeX publication output.
+
+    The source ``literature/related_work.bib`` may legitimately carry audit
+    provenance such as FULL-TEXT or ABSTRACT-ONLY. Those labels must not leak
+    into generated reference lists because BibTeX styles often print ``note``.
+    """
+
+    def replace(match: re.Match[str]) -> str:
+        value = match.group(0)
+        return "" if _INTERNAL_NOTE_MARKER_RE.search(value) else value
+
+    return _INTERNAL_NOTE_RE.sub(replace, text or "")
 
 
 def dedupe_bibtex_entries(text: str) -> str:
