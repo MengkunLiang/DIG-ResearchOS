@@ -48,6 +48,8 @@ Avoid hard word-count floors. If evidence is missing, use natural-language limit
 - Numbers must come from `drafts/experiment_evidence_pack.json`, `drafts/result_to_claim.json`, `experiments/results_summary.json`, `experiments/ablations.csv`, or indexed run artifacts.
 - Figures must come from existing generated assets or be planned in figure/table registries. If a figure cannot be generated, explain the limitation or remove the reference from final TeX.
 - Claims about prior work must cite `literature/related_work.bib` keys and be traceable to `literature/synthesis.md` or paper notes.
+- Treat `synthesis.md` `[note:...]` anchors as evidence provenance only. Convert them to real BibTeX keys from `related_work.bib` before writing TeX; do not paste `[note:...]` into `paper.tex`.
+- Introduction and Related Work need visible citation-backed positioning, not only a bibliography at the end. Use representative citations in claim-bearing paragraphs.
 - If evidence is external, weak, mock-only, or not fully audited, state the boundary in Conclusion's Limitations subsection and avoid claiming unsupported empirical validation.
 - Abstract should not contain formal citations: no LaTeX citation commands, no author-year parenthetical citations, and no numeric citation brackets. Refer to method families or problem classes in the Abstract, then put concrete prior-work citations in Introduction or Related Work.
 

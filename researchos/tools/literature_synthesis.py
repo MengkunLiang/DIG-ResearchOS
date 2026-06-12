@@ -612,7 +612,7 @@ def _collect_llm_review_assumption_candidates(notes: list[dict[str, Any]]) -> li
             continue
         candidates.append(
             {
-                "assumption": f"LLM_REVIEW_REQUIRED: derive any shared assumption from [{note['paper_id']}]",
+                "assumption": f"LLM_REVIEW_REQUIRED: derive any shared assumption from {_ref(note['paper_id'])}",
                 "why_questionable": snippet,
                 "supporting_papers": [note["paper_id"]],
                 "review_required": True,
@@ -967,7 +967,7 @@ def _extract_questions_from_notes(
         questions.append(
             {
                 "id": f"Q_REVIEW_{idx}",
-                "question": f"LLM_REVIEW_REQUIRED: turn note gap into a research question for [{note['paper_id']}]",
+                "question": f"LLM_REVIEW_REQUIRED: turn note gap into a research question for {_ref(note['paper_id'])}",
                 "why_unsolved": snippet,
                 "related_papers": [note["paper_id"]],
                 "review_required": True,
@@ -1113,7 +1113,7 @@ def _top_snippets(notes: list[dict[str, Any]], field: str, *, limit: int) -> lis
     for note in notes:
         value = _shorten(note.get(field, ""), 220)
         if value:
-            snippets.append(f"[{note['paper_id']}] {value}")
+            snippets.append(f"{_ref(note['paper_id'])} {value}")
         if len(snippets) >= limit:
             break
     return snippets
@@ -1145,7 +1145,7 @@ def _render_outline(workbench: dict[str, Any], missing_areas: str) -> str:
     contribution_space = workbench.get("contribution_space", {})
     for item in contribution_space.get("design_rationale_snippets", [])[:6]:
         lines.append(
-            f"- [{item.get('paper_id')}] {item.get('contribution_type')} / "
+            f"- {_ref(str(item.get('paper_id') or ''))} {item.get('contribution_type')} / "
             f"{item.get('artifact_type')}: {item.get('rationale')}"
         )
     tensions = workbench.get("cross_paper_tensions", [])
@@ -1177,7 +1177,7 @@ def _render_outline(workbench: dict[str, Any], missing_areas: str) -> str:
             f"metadata triage available: {weak_evidence.get('metadata_triage_available', False)}"
         )
         for item in (weak_evidence.get("abstract_only_examples") or [])[:5]:
-            lines.append(f"- [{item.get('paper_id')}] {item.get('title')} — {item.get('bridge_point')}")
+            lines.append(f"- {_ref(str(item.get('paper_id') or ''))} {item.get('title')} — {item.get('bridge_point')}")
     lines.extend(["", "## Research Questions"])
     for item in workbench["research_question_candidates"]:
         lines.append(f"- {item['id']}: {item['question']}")
@@ -1232,7 +1232,7 @@ def _render_draft_guidance(workbench: dict[str, Any]) -> str:
     contribution_space = workbench.get("contribution_space", {})
     for item in contribution_space.get("design_rationale_snippets", [])[:8]:
         lines.append(
-            f"- [{item.get('paper_id')}] {item.get('contribution_type')} / "
+            f"- {_ref(str(item.get('paper_id') or ''))} {item.get('contribution_type')} / "
             f"{item.get('artifact_type')}: {item.get('rationale')}"
         )
     for item in workbench.get("cross_paper_tensions", [])[:8]:
@@ -1261,7 +1261,7 @@ def _render_draft_guidance(workbench: dict[str, Any]) -> str:
         )
         for item in (weak_evidence.get("abstract_only_examples") or [])[:8]:
             lines.append(
-                f"- [{item.get('paper_id')}] {item.get('title')} | "
+                f"- {_ref(str(item.get('paper_id') or ''))} {item.get('title')} | "
                 f"allowed use: {item.get('allowed_use')}"
             )
         if weak_evidence.get("metadata_triage_excerpt"):
@@ -1296,7 +1296,8 @@ def _render_synthesis(workbench: dict[str, Any], missing_areas: str) -> str:
 
 
 def _ref(paper_id: str) -> str:
-    return f"[{_normalize_ref_id(paper_id)}]"
+    normalized = _normalize_ref_id(paper_id)
+    return f"[note:{normalized}]" if normalized else ""
 
 
 def _refs(paper_ids: list[str]) -> list[str]:

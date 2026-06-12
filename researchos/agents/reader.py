@@ -30,6 +30,7 @@ from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec, get_agent_mode_params
 from ..runtime.prompts import render_prompt
 from ..runtime.t2_config import get_effective_reader_read_params, load_deep_read_queue_config
+from ..tools.bibtex import bibtex_internal_marker_issues, extract_bib_keys_from_text, parse_bib_entries
 from ._common import (
     cdr_schema_prompt_summary,
     ensure_seed_outline_profile,
@@ -398,8 +399,16 @@ class ReaderAgent(Agent):
         bib_path = ctx.workspace_dir / "literature" / "related_work.bib"
         if not bib_path.exists():
             return False, "缺少literature/related_work.bib"
-        if "@" not in read_text_file(bib_path):
+        bib_text = read_text_file(bib_path)
+        if "@" not in bib_text:
             return False, "related_work.bib似乎为空或格式不正确"
+        internal_marker_issues = bibtex_internal_marker_issues(bib_text)
+        if internal_marker_issues:
+            return False, (
+                "related_work.bib 泄漏了 ResearchOS 内部阅读状态/triage 标记；"
+                "这些信息应保留在 paper note 或 manifest 中，不能写入 BibTeX: "
+                + ", ".join(internal_marker_issues[:8])
+            )
 
         # 校验 abstract sweep notes（可选目录）
         abstract_dir = ctx.workspace_dir / "literature" / "paper_notes_abstract"
@@ -465,12 +474,14 @@ class ReaderAgent(Agent):
         elif domain_map_exists:
             return False, "缺少 literature/synthesis_workbench.json"
 
-        note_ids = _paper_note_reference_ids(ctx.workspace_dir / "literature")
-        known_refs = _known_note_refs_in_content(content, note_ids)
+        literature_dir = ctx.workspace_dir / "literature"
+        note_ids = _paper_note_reference_ids(literature_dir)
+        bib_key_map = _bib_key_note_ref_map(literature_dir)
+        known_refs = _known_evidence_refs_in_content(content, note_ids, bib_key_map)
         if note_ids and len(known_refs) < min(5, len(note_ids)):
             return False, (
-                f"synthesis.md中真实paper_notes引用过少({len(known_refs)}个)，"
-                "应引用更多已读论文"
+                f"synthesis.md中真实已读论文引用过少({len(known_refs)}个)，"
+                "应在 Markdown 正文中使用更多 paper note anchor（如 [paper_id]）或 related_work.bib 中的 \\cite{key}"
             )
 
         # 兼容没有 paper_notes 白名单的旧测试/workspace，仍接受规范论文ID样式。
@@ -566,25 +577,86 @@ def _iter_paper_note_paths(literature_dir: Path) -> list[Path]:
 
 
 def _paper_note_reference_ids(literature_dir: Path) -> set[str]:
-    ids = {path.stem for path in _iter_paper_note_paths(literature_dir)}
     normalized: set[str] = set()
-    for paper_id in ids:
-        normalized.add(paper_id)
-        normalized.add(paper_id.replace(":", "_").replace("/", "_"))
-        normalized.add(normalize_text_key(paper_id))
+    for note_path in _iter_paper_note_paths(literature_dir):
+        for paper_id in paper_note_match_keys(note_path):
+            normalized.add(paper_id)
+            normalized.add(paper_id.replace(":", "_").replace("/", "_"))
+            normalized.add(normalize_text_key(paper_id))
     return {item for item in normalized if item}
 
 
-def _known_note_refs_in_content(content: str, note_ids: set[str]) -> set[str]:
-    import re
-
+def _known_evidence_refs_in_content(
+    content: str,
+    note_ids: set[str],
+    bib_key_map: dict[str, str] | None = None,
+) -> set[str]:
     normalized_note_ids = {normalize_text_key(note_id) for note_id in note_ids if note_id}
     found: set[str] = set()
     for raw_ref in re.findall(r"\[([^\[\]]+)\]", content):
-        normalized = normalize_text_key(raw_ref.replace(":", "_").replace("/", "_"))
+        cleaned_ref = re.sub(r"(?i)^\s*note\s*:\s*", "", raw_ref).strip()
+        normalized = normalize_text_key(cleaned_ref.replace(":", "_").replace("/", "_"))
         if normalized in normalized_note_ids:
             found.add(normalized)
+    for raw_key in _latex_cite_keys(content):
+        normalized_key = normalize_text_key(raw_key)
+        if normalized_key in normalized_note_ids:
+            found.add(normalized_key)
+            continue
+        mapped = (bib_key_map or {}).get(raw_key) or (bib_key_map or {}).get(normalized_key)
+        if mapped:
+            found.add(mapped)
     return found
+
+
+def _latex_cite_keys(content: str) -> set[str]:
+    keys: set[str] = set()
+    pattern = re.compile(
+        r"\\(?:cite|citep|citet|citealp|citealt|citeauthor|citeyear|parencite|textcite|autocite|footcite|supercite)\*?"
+        r"(?:\[[^\]]*\]){0,2}\{([^}]+)\}",
+        flags=re.IGNORECASE,
+    )
+    for match in pattern.finditer(content or ""):
+        keys.update(key.strip() for key in match.group(1).split(",") if key.strip())
+    return keys
+
+
+def _bib_key_note_ref_map(literature_dir: Path) -> dict[str, str]:
+    bib_path = literature_dir / "related_work.bib"
+    if not bib_path.exists():
+        return {}
+    try:
+        bib_text = bib_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return {}
+    entries = parse_bib_entries(bib_text)
+    if not entries:
+        return {key: normalize_text_key(key) for key in extract_bib_keys_from_text(bib_text)}
+    note_refs = _paper_note_reference_ids(literature_dir)
+    normalized_note_refs = {normalize_text_key(ref): normalize_text_key(ref) for ref in note_refs}
+    mapping: dict[str, str] = {}
+    for entry in entries:
+        key = str(entry.get("key") or "").strip()
+        if not key:
+            continue
+        fields = entry.get("fields") if isinstance(entry.get("fields"), dict) else {}
+        candidates = [
+            key,
+            str(fields.get("doi") or ""),
+            str(fields.get("eprint") or ""),
+            str(fields.get("url") or ""),
+            str(fields.get("title") or ""),
+        ]
+        mapped = ""
+        for candidate in candidates:
+            normalized = normalize_text_key(candidate.replace(":", "_").replace("/", "_"))
+            if normalized in normalized_note_refs:
+                mapped = normalized_note_refs[normalized]
+                break
+        if mapped:
+            mapping[key] = mapped
+            mapping[normalize_text_key(key)] = mapped
+    return mapping
 
 
 def _validate_note_structure(note_path: Path) -> tuple[bool, str | None]:

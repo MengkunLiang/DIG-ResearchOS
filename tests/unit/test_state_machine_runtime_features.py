@@ -668,6 +668,82 @@ def test_t2_literature_param_gate_defaults_to_standard_for_research_article(tmp_
     assert CLIHumanInterface._default_option_id("t2_literature_param_gate", state.pending_gate.options) == "standard_research"
 
 
+def test_t2_coverage_gate_persists_human_confirmation(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    gates = tmp_workspace / "gates.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T2-COVERAGE-GATE
+        states:
+          T2-COVERAGE-GATE:
+            agent: scout
+            extra:
+              immediate_gate: true
+            gate: t2_coverage_gate
+            inputs:
+              papers_verified: literature/papers_verified.jsonl
+              deep_read_queue: literature/deep_read_queue.jsonl
+              missing_areas: literature/missing_areas.md
+            outputs:
+              coverage_decision: literature/coverage_decision.json
+            next_on_success: T3
+          T3:
+            agent: reader
+            outputs:
+              notes: literature/paper_notes
+        """,
+    )
+    _write_yaml(
+        gates,
+        """
+        gates:
+          t2_coverage_gate:
+            presentation:
+              summary:
+                literal: confirm coverage
+            options:
+              - id: continue_to_t3
+                label: Continue
+                next: T3
+              - id: rerun_t2_expand
+                label: Expand
+                next: T2
+        """,
+    )
+    literature = tmp_workspace / "literature"
+    literature.mkdir(parents=True)
+    (literature / "papers_verified.jsonl").write_text('{"paper_id":"p1"}\n{"paper_id":"p2"}\n', encoding="utf-8")
+    (literature / "deep_read_queue.jsonl").write_text('{"paper_id":"p1"}\n', encoding="utf-8")
+    (literature / "missing_areas.md").write_text("# Coverage\n需要补充相邻领域。\n", encoding="utf-8")
+    (literature / "literature_params.json").write_text(
+        json.dumps({"confirmation_summary": "保留候选 80 篇；精读 35/35/45。"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    sm = StateMachine(config, gates)
+    state = sm.pause_for_immediate_gate(sm.create_initial_state("p1"), workspace_dir=tmp_workspace)
+
+    state = sm.resolve_pending_gate(
+        state,
+        {"option_id": "continue_to_t3", "captured": {"note": "confirmed"}},
+        workspace_dir=tmp_workspace,
+    )
+
+    assert state.current_task == "T3"
+    payload = json.loads((literature / "coverage_decision.json").read_text(encoding="utf-8"))
+    assert payload["semantics"] == "human_confirmed_t2_retrieval_coverage_before_t3"
+    assert payload["selected_option"] == "continue_to_t3"
+    assert payload["next_task"] == "T3"
+    assert payload["captured"]["note"] == "confirmed"
+    assert payload["coverage_summary"]["papers_verified_count"] == 2
+    assert payload["coverage_summary"]["deep_read_queue_count"] == 1
+    assert payload["coverage_summary"]["missing_area_signal_present"] is True
+    assert payload["coverage_summary"]["literature_params_summary"] == "保留候选 80 篇；精读 35/35/45。"
+    assert payload["decision_summary"]
+    assert payload["input_fingerprints"]["papers_verified"]["exists"] is True
+    assert payload["input_fingerprints"]["deep_read_queue"]["exists"] is True
+
+
 def test_custom_t2_literature_params_inherit_detected_recommended_profile(tmp_workspace):
     (tmp_workspace / "project.yaml").write_text("metadata:\n  manuscript_type: research_article\n", encoding="utf-8")
 

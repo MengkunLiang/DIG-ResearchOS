@@ -85,6 +85,17 @@ _T2_LITERATURE_PARAM_GATE_INPUT_PATHS = {
     "bridge_domain_plan": "literature/bridge_domain_plan.json",
 }
 
+_T2_COVERAGE_GATE_INPUT_PATHS = {
+    "search_log": "literature/search_log.md",
+    "missing_areas": "literature/missing_areas.md",
+    "domain_map": "literature/domain_map.json",
+    "access_audit": "literature/access_audit.md",
+    "deep_read_queue": "literature/deep_read_queue.jsonl",
+    "papers_verified": "literature/papers_verified.jsonl",
+    "papers_dedup": "literature/papers_dedup.jsonl",
+    "literature_params": "literature/literature_params.json",
+}
+
 
 _LITERATURE_PARAM_PRESETS: dict[str, dict[str, Any]] = {
     "standard_research": {
@@ -150,7 +161,16 @@ _LITERATURE_PARAM_PRESET_NOTES = {
     "standard_research": "适合 research article：候选池和轻读覆盖较克制，精读目标 35 篇。",
     "survey_balanced": "适合一般综述：扩大候选池，精读目标 60 篇，摘要轻读尽量覆盖可读候选。",
     "survey_exhaustive": "适合正式综述/展示型综述：更宽候选池和更高精读目标，运行时间和 LLM 成本更高。",
-    "custom": "只改四个关键覆盖数字；网络补资源仍由系统自动尽量执行。",
+    "custom": "只改覆盖目标；网络补资源仍由系统自动尽量执行。",
+}
+
+
+_LITERATURE_PARAM_SHORT_MEANINGS = {
+    "active_pool_max": "保留候选数：T2 留给后续处置的候选上限；不是精读篇数，也不是最终引用数。",
+    "deep_read": "精读 min/target/max：T3 的最低完成线、正常目标和硬上限。",
+    "require_target": "是否必须读满 target：true 表示未达到精读目标不进入 T3.5。",
+    "abstract_sweep": "摘要轻读：T3 后对未精读但有摘要的候选做 LLM 轻读；all_readable 表示尽量覆盖可读摘要。",
+    "language": "稿件语言：影响 query 语言、中文文献准入和后续引用策略。",
 }
 
 
@@ -198,19 +218,28 @@ def build_literature_param_gate_preview(workspace_dir: Path | None = None) -> di
             "summary": _literature_param_summary_from_payload(payload),
             "will_do": _LITERATURE_PARAM_PRESET_NOTES[option_id],
         }
+    recommended_summary = options[recommended_option]["summary"]
     return {
         "detected_profile": detected_profile,
         "recommended_option": recommended_option,
         "recommended_label": _LITERATURE_PARAM_PRESET_LABELS[recommended_option],
+        "recommended_summary": recommended_summary,
+        "recommended_human_summary": _literature_param_sentence(
+            _LITERATURE_PARAM_PRESET_LABELS[recommended_option],
+            recommended_summary,
+        ),
         "current_default_if_enter": recommended_option,
         "question": (
-            "请确认是否采用推荐档位；如果不合适，选择其他档位或自定义 active_pool_max / "
-            "deep_read_target / abstract_sweep_target / require_deep_read_target。"
+            "先确认稿件类型和语言，再选择覆盖强度。默认项会直接写入 "
+            "literature/literature_params.json；自定义只需填想改的字段，空字段沿用推荐档位。"
         ),
+        "parameter_meanings_short": _LITERATURE_PARAM_SHORT_MEANINGS,
         "options": options,
         "custom_input_examples": {
             "active_pool_max": "例如 180；表示 T2 保留 180 篇进入阅读处置，超额进 papers_backlog.jsonl",
-            "deep_read_target": "例如 60；表示 T3 正常应完成 60 篇结构化精读笔记",
+            "deep_read_target": "例如 60；表示 T3 正常应完成 60 篇结构化精读笔记；也可输入 deep_read=35/35/45 一次指定 min/target/max",
+            "deep_read_min": "可选；例如 35。留空则沿用所选基础档位并不超过 target",
+            "deep_read_max": "可选；例如 45。留空则按所选基础档位或 target 自动设置",
             "abstract_sweep_target": "例如 all_readable 或 120；表示 T3 后 LLM 摘要轻读多少篇",
             "require_deep_read_target": "true/false；true 表示未读满 deep_read_target 不放行到 T3.5",
             "manuscript_language": "en/zh/mixed/auto；英文稿默认不检索也不引用中文非 seed 论文",
@@ -245,13 +274,15 @@ def enrich_literature_param_gate_options(options: list[dict[str, Any]], workspac
         elif option_id == "custom":
             item["description"] = _LITERATURE_PARAM_PRESET_NOTES["custom"]
             item["parameter_preview"] = (
-                "逐项输入 active_pool_max、deep_read_target、abstract_sweep_target、require_deep_read_target；"
+                "逐项输入 active_pool_max、deep_read_min/deep_read_target/deep_read_max、abstract_sweep_target、require_deep_read_target；"
                 "也可指定 manuscript_language/include_chinese_literature；未填或填错时使用推荐档位默认。"
             )
             collect_input = list(item.get("collect_input") or [])
             for field_name in [
                 "active_pool_max",
+                "deep_read_min",
                 "deep_read_target",
+                "deep_read_max",
                 "abstract_sweep_target",
                 "require_deep_read_target",
                 "manuscript_language",
@@ -345,7 +376,15 @@ def build_literature_param_payload(
             base_deep_min = int(base_summary.get("deep_read_min") or max(1, int(round(deep_target * 0.8))))
             deep_min = min(base_deep_min, deep_target)
         base_deep_max = int(base_summary.get("deep_read_max") or max(deep_target, int(round(deep_target * 1.15))))
-        deep_max = max(deep_target, base_deep_max if deep_target <= int(base_summary.get("deep_read_target") or deep_target) else int(round(deep_target * 1.15)))
+        if captured.get("deep_read_max") not in (None, ""):
+            deep_max = _safe_int(captured.get("deep_read_max"), default=base_deep_max, minimum=deep_target)
+        else:
+            deep_max = max(
+                deep_target,
+                base_deep_max
+                if deep_target <= int(base_summary.get("deep_read_target") or deep_target)
+                else int(round(deep_target * 1.15)),
+            )
         abstract_target: str | int = str(
             captured.get("abstract_sweep_target") or base_summary.get("abstract_sweep_target") or "all_readable"
         ).strip()
@@ -381,6 +420,10 @@ def build_literature_param_payload(
             "selected_option": option,
             "selected_label": _LITERATURE_PARAM_PRESET_LABELS.get(option, option),
             "selected_summary": _literature_param_summary_from_payload(payload),
+            "confirmation_summary": _literature_param_sentence(
+                _LITERATURE_PARAM_PRESET_LABELS.get(option, option),
+                _literature_param_summary_from_payload(payload),
+            ),
             "captured": captured,
             "resource_backfill_policy": {
                 "retained_candidates": "attempt all reasonable metadata, abstract, DOI, OpenAlex, Crossref, Semantic Scholar, arXiv, and PDF-hint backfill",
@@ -529,6 +572,48 @@ def _safe_bool(value: Any, *, default: bool) -> bool:
     if text in {"0", "false", "no", "n", "否", "不", "min"}:
         return False
     return default
+
+
+def _literature_param_sentence(label: str, summary: dict[str, Any]) -> str:
+    return (
+        f"{label}: 保留候选 {summary.get('active_pool_max')} 篇；"
+        f"精读 {summary.get('deep_read_min')}/{summary.get('deep_read_target')}/{summary.get('deep_read_max')} "
+        f"(min/target/max)；"
+        f"必须读满目标={summary.get('require_deep_read_target')}；"
+        f"摘要轻读={summary.get('abstract_sweep_target')}；"
+        f"稿件语言={summary.get('manuscript_language')}; "
+        f"中文文献={summary.get('include_chinese_literature')}。"
+    )
+
+
+def _coverage_gate_summary(workspace_dir: Path) -> dict[str, Any]:
+    summary: dict[str, Any] = {}
+    jsonl_paths = {
+        "papers_verified_count": workspace_dir / "literature" / "papers_verified.jsonl",
+        "papers_dedup_count": workspace_dir / "literature" / "papers_dedup.jsonl",
+        "deep_read_queue_count": workspace_dir / "literature" / "deep_read_queue.jsonl",
+    }
+    for key, path in jsonl_paths.items():
+        if not path.exists():
+            summary[key] = 0
+            continue
+        try:
+            summary[key] = sum(1 for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip())
+        except Exception:
+            summary[key] = 0
+    params_path = workspace_dir / "literature" / "literature_params.json"
+    if params_path.exists():
+        try:
+            params = json.loads(params_path.read_text(encoding="utf-8"))
+        except Exception:
+            params = {}
+        if isinstance(params, dict):
+            summary["literature_params_summary"] = params.get("confirmation_summary") or params.get("selected_summary")
+    missing_path = workspace_dir / "literature" / "missing_areas.md"
+    if missing_path.exists():
+        text = missing_path.read_text(encoding="utf-8", errors="replace")
+        summary["missing_area_signal_present"] = bool(re.search(r"(?i)missing|gap|coverage|缺|不足|补", text))
+    return summary
 
 
 def _detect_literature_profile_hint(workspace_dir: Path) -> str:
@@ -1214,6 +1299,36 @@ class StateMachine:
             )
             payload["decided_at"] = _now_iso()
             path = workspace_dir / "literature" / "literature_params.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            return
+        if node.task_id == "T2-COVERAGE-GATE":
+            option_id = str(gate_result.get("option_id") or gate_result.get("key") or "continue_to_t3")
+            captured = gate_result.get("captured") or {}
+            payload = {
+                "semantics": "human_confirmed_t2_retrieval_coverage_before_t3",
+                "task_id": node.task_id,
+                "gate_id": self._gate_id_for_node(node),
+                "selected_option": option_id,
+                "captured": captured if isinstance(captured, dict) else {},
+                "next_task": next_task,
+                "coverage_summary": _coverage_gate_summary(workspace_dir),
+                "input_fingerprints": build_input_fingerprints(
+                    workspace_dir,
+                    _T2_COVERAGE_GATE_INPUT_PATHS,
+                ),
+                "decided_at": _now_iso(),
+            }
+            if option_id == "continue_to_t3":
+                payload["decision_summary"] = (
+                    "Proceed to T3 with the current verified corpus and deep_read_queue; "
+                    "missing_areas.md remains a retrieval coverage hint, not a final research gap."
+                )
+            elif option_id == "rerun_t2_expand":
+                payload["decision_summary"] = "Return to T2 for user-requested expansion or query adjustment."
+            else:
+                payload["decision_summary"] = "Stop or pause the project after T2 coverage review."
+            path = workspace_dir / "literature" / "coverage_decision.json"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             return

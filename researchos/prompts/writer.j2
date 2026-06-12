@@ -52,7 +52,7 @@ project:
 根据 target_venue「{{ target_venue }}」，系统建议风格为：`{{ suggested_style_value }}`。
 系统建议模板为：`{{ suggested_template_value.template_family }}` / `{{ suggested_template_value.template_id }}` / language=`{{ suggested_template_value.writing_language }}`。
 
-调用 `ask_human`，请用户确认两类选择：
+调用 `ask_human`，请用户确认写作风格、正文语言和模板。问题必须按三步解释，不要直接丢参数名：
 
 - `is`：IS 顶刊风格（MISQ/ISR/JMIS 类），Introduction 更长，理论 positioning 与 design knowledge 更重。
 - `ccf_a`：CCF-A 会议风格（KDD/NeurIPS/ICML/SIGIR 类），Introduction 紧凑，结果 headline 和可复现实验更突出。
@@ -60,10 +60,16 @@ project:
 
 模板族：
 - `basic_zh`：中文基础模板，适合中文期刊/中文工作稿。
-- `basic_en`：英文基础模板，适合未指定 venue 的英文工作稿。
-- `ccf`：CCF/AI/CS 会议模板；默认 `template_id=neurips`，也可指定 `kdd`、`icml` 等已上传模板。
-- `utd`：UTD/管理信息系统/运筹管理期刊模板；默认 `template_id=informs`，适合 Management Science / ISR 等 INFORMS 风格稿件。
+- `basic_en`：英文基础模板，适合未指定 venue 或暂不套会议/期刊格式的英文工作稿。
+- `ccf`：CCF/AI/CS 会议模板；如果选择 CCF-A，必须继续确认具体会议模板。默认 `template_id=neurips`，也可指定 `kdd`、`icml`、`aaai`、`sigir` 等已上传模板；如果用户说“不用模板/只确定中英”，改用 `basic_en` 或 `basic_zh`。
+- `utd`：UTD/管理信息系统/运筹管理期刊模板；默认且推荐 `template_id=informs`，适合 Management Science / ISR / INFORMS 风格稿件。MISQ 没有可直接套用的 INFORMS 类模板时，也可选择 `basic_en` 先写内容稿。
 - `other`：用户指定其它模板路径或模板 id。
+
+默认映射：
+- CCF-A/AI/CS：`venue_style=ccf_a, template_family=ccf, template_id=neurips, writing_language=en`，但必须允许用户改成 KDD/ICML/AAAI/SIGIR 或不用 venue 模板。
+- UTD/Management Science/ISR/INFORMS：`venue_style=is, template_family=utd, template_id=informs, writing_language=en`。
+- 中文稿：`template_family=basic_zh, template_id=basic_zh, writing_language=zh`。
+- 只想确定中英、不想套 venue：英文用 `basic_en`，中文用 `basic_zh`。
 
 把结果写入 `drafts/writing_style.json`：
 
@@ -315,6 +321,7 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
    如果当前 section 是 `abstract`，文件只能写摘要纯正文；不要写 `\section{Abstract}`、`\section*{Abstract}`、`\begin{abstract}` 或 `\end{abstract}`。`assemble_manuscript` 会负责放入 abstract 环境。
 5. 所有数字必须来自 `paper_state.shared_facts.result_metrics` 或明确读取的实验 artifact。
 6. 除 Abstract 外，所有 citation key 必须来自 `paper_state.shared_facts.bib_keys` 或 `literature/related_work.bib`。Abstract 不写正式引用；具体文献引用放到 Introduction、Related Work 或 Method。
+   `synthesis.md` 里的 `[note:...]` 只是 Markdown 证据锚点，写 TeX 时必须转换为真实 BibTeX key，不要把 `[note:...]` 粘进 `paper.tex`。
 7. CDR ledger 是写作 scaffold，不是最终表述；你要用 LLM 判断把 design rationale / contribution type 写成连贯学术论证。
 8. 若某段兑现 contribution，请用自然语言写清 motivation、method、evidence 和 analysis 的关系；不要在 TeX 正文或注释中写 `C1`、`[C1]`、`C1:` 或 `% [C1]`。内部对齐关系只保存在 `paper_state.json` / `alignment_matrix.json`。
 9. 写完后调用：
@@ -327,13 +334,24 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 
 - methodology：写清 artifact 总览、组件职责、输入输出、algorithm/notation、关键设计选择、被放弃的替代设计及理由。
 - experiments：写清 RQ、数据/切分、baseline、metrics、seed/compute、main result、ablation/error analysis、每个主要数字的来源。
-- related_work：按 2-4 个 competing rationale/taxonomy subsection 组织，每个 subsection 都要有代表工作、共同 tension、与本文的差异化定位。
+- related_work：按 2-4 个 competing rationale/taxonomy subsection 组织，每个 subsection 都要有代表工作、共同 tension、与本文的差异化定位；全节至少 6 个 unique BibTeX keys。
 - analysis：解释 design rationale 是否被支持，写 alternative explanation、failure case、sensitivity 或 boundary，而不是重复结果数字。
 - introduction/conclusion：形成完整论证链，不写占位式短 intro，也不把 conclusion 写成 abstract 复制。
+
+引用密度底线：Introduction 至少 2 个 unique keys，Related Work 至少 6 个，Method 至少 1 个，Analysis 至少 1 个。引用要服务于 gap、定位、设计选择或解释边界，不要机械堆在段尾。
 
 每一段先有功能再有 citation/数字。避免 “X et al. did A. Y et al. did B.” 的流水账，避免 “This section reviews...” 这类空话开头，避免用文件名、内部编号或 artifact 字段名替代自然学术论证。
 
 不要设置僵硬字数下限；如果证据不足，在正文中用自然语言写 limitation 或删除/弱化对应 claim，不要留下 literal TODO。如果证据充足，就充分展开到目标 venue 所需的写作密度。
+
+### Venue-aware section protocol
+
+当前 venue_style=`{{ venue_style }}`。每个 section 都要按目标 venue 调整论证重心：
+
+- CCF-A/AI/CS (`ccf_a`)：Problem gap 要早出现；Method 先给核心 idea 和算法/系统路径；Experiments 必须回答 RQ、baseline、metric、ablation、robustness/reproducibility；Analysis 用来解释 why it works 和边界，不要写成管理启示。
+- UTD/IS/INFORMS (`is`)：Introduction 先建立 phenomenon 和理论/实践张力；Related Work 按 construct、theory lens、design knowledge 或 governance mechanism 组织；Method 要说明 artifact/design principle 与理论机制的关系；Analysis 强调 mechanism、boundary condition、validity threat、managerial/theoretical implications。
+- `both`：先写事实骨架中性的 section，再在 draft 阶段派生两套风格；不要为了某一套风格改动数字、citation 或 evidence boundary。
+- 中文基础稿：保持中文学术论文的概念界定、研究现状、问题提出、方法/框架、讨论与启示结构，但仍遵守 citation key、证据边界和内部标记禁令。
 
 {% include "paper_craft.j2" %}
 
@@ -344,30 +362,35 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 - 使命：定义 artifact，解释为什么这样设计，再讲怎么实现；这是全文技术核心。
 - 段落范式：总览 artifact 与 design rationale；architecture 概览；每个组件一段写 how / why / alternative justification；notation/algorithm 集中定义。
 - 约束：不使用实验结果证明方法有效；每个 design_choice 都有自然语言解释和证据来源；`ccf_a` 紧凑，`is` 可展开 design principles 与理论联系。
+- Venue adaptation：`ccf_a` 必须突出 algorithm/system mechanics、complexity 或 implementation path；`is` 必须把 design principle 映射到 construct、organizational mechanism 或 decision process。
 - Failure checklist：无 architecture 概览、只讲 how 不讲 why、notation 散落、符号复用冲突，都必须修。
 {% elif section_id == "experiments" %}
 - Required Inputs：`paper_state.json`、`section_outlines/experiments.md`、`alignment_matrix.json` 的 experiment 列、`experiment_evidence_pack.json`、`result_to_claim.json`、`integrity_audit.json`、`results_summary.json`、`ablations.csv`、runs/configs、seed ensemble、`exp_plan.yaml`、`figure_table_plan.json`、baseline 要求。
 - 使命：把 data_view/evaluation_mode 变成可复核证据，逐条回答 intro claim。
 - 段落范式：RQ 前置并说明每个 RQ 验证的贡献逻辑；setup 写 datasets/splits/baselines/metrics/seeds/compute；main results 先 takeaway 再表；ablation 覆盖 method design choices。
 - 约束：所有数字逐一对照 artifacts；缺 seed/error bar/baseline 时删除相应强 claim 或转入 Conclusion Limitations；setup 必须说明外部执行器、result pack、raw/config/log/hash 和 integrity audit 边界。
+- Venue adaptation：`ccf_a` 需要完整 baseline/ablation/robustness/reproducibility 叙述；`is` 需要把 evidence 映射到 hypothesis/proposition、construct validity、field relevance 或 boundary condition。
 - Failure checklist：直接从 dataset 开头、表无 takeaway、ablation 与 method 对不上、数字来源不明，都必须修。
 {% elif section_id == "related_work" %}
 - Required Inputs：`paper_state.json`、`section_outlines/related_work.md`、`alignment_matrix.json` 的 related_gap / nearest_prior_work / counterfactual / novelty_signal、`synthesis.md`、`synthesis_workbench.json` 的 adjacent_transfers / bridge_transfer_drafts、`domain_map.json` 的 core / theory_bridge / adjacent / citation_edges、`comparison_table.csv`、paper notes、`related_work.bib`。
 - 使命：按 competing design rationale 定位本文，让每个 related gap 对应一条贡献。
 - 段落范式：每个 subsection 只写一个 rationale 流派；先概括共同 rationale，再列 2-4 篇代表工作，再写共同局限/tension，最后用自然 prose 对应本文贡献。
 - 约束：subsection 数约等于核心贡献数；citation key 全部来自 bib；不要第一次披露本文方法细节。
+- Venue adaptation：`ccf_a` 按 nearest method families、datasets/evaluation regimes、systems tradeoffs 或 algorithmic assumptions 组织；`is` 按 theory stream、construct family、organizational/process mechanism、governance/design knowledge 组织。
 - Failure checklist：X et al. 流水账、orphan 段落、只靠贬低式 however positioning、提前剧透方法，都必须修。
 {% elif section_id == "analysis" %}
 - Required Inputs：`paper_state.json`、`section_outlines/analysis.md`、`alignment_matrix.json` 的 analysis 列、已写 Method/Experiments、`ablations.csv`、`iteration_log.md`、`novelty_audit.md`。
 - 使命：判断证据支持、削弱还是仅部分支持 design rationale，把“调参涨点”和“真贡献”区分开。
 - 段落范式：每条内部 alignment lane 对应一段机制解读；至少一个 alternative explanation 并用证据排除；failure case；sensitivity。
 - 约束：每个解释必须指回 artifact；不能把 mock dry-run、未审计外部结果或额外计划实验写成已完成。
+- Venue adaptation：`ccf_a` 重点解释 ablation/robustness/failure pattern 对方法主张的支持；`is` 重点解释 mechanism、validity threat、boundary condition 与 managerial/theoretical implications。
 - Failure checklist：只复述数字、不考虑替代解释、failure case 装饰化，都必须修。
 {% elif section_id == "introduction" %}
 - Required Inputs：`paper_state.json`、`section_outlines/introduction.md`、`alignment_matrix.json` 的 motivation/contribution、CDR ledger、synthesis、hypotheses、results、已写 Method/Experiments/Related。
 - 使命：回答“如果本文成立，领域会怎样不同”，把 contribution_type 写成后文可兑现承诺。
 - 段落范式：M1 直接 problem，不用宏大背景；M2 列 ≤3 个 gap/motivation；M3 design rationale + artifact；M4 numbered Contributions 3-4 条，用自然语言表达，不带内部编号；M5 按 venue 收束。
 - 约束：gap 与 contribution 应逻辑对应，不要求机械一一等数；贡献动词开头、可验证、强度匹配 contribution_type；`ccf_a` 有量化 headline，`is` 有 theory/reference anchor。
+- Venue adaptation：`ccf_a` 的前两段必须让读者看到 task/method gap 和结果承诺；`is` 的前两段必须让读者看到 phenomenon、theory/practice gap 和 design knowledge 承诺。
 - Failure checklist：背景过长、贡献散文、overclaim、缺少 alignment 对应关系、把 planned/跳过实验写成已发生，都必须修。
 {% elif section_id == "conclusion" %}
 - Required Inputs：`paper_state.json`、`section_outlines/conclusion.md`、`alignment_matrix.json`、Introduction、Experiments、`risks.md`、`novelty_audit.md`、`experiment_evidence_pack.json`、`result_to_claim.json`、`results_summary.json`、`iteration_log.md`。

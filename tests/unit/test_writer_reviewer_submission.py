@@ -643,7 +643,7 @@ async def _bind_review_round(workspace: Path, round_num: int = 1) -> None:
 def _write_valid_draft_artifacts(workspace: Path) -> None:
     _write_manuscript_registries(workspace)
     (workspace / "literature" / "related_work.bib").write_text(
-        "@article{test2024,\n  author={Test Author},\n  title={Test Title},\n  year={2024}\n}",
+        _valid_bibtex(),
         encoding="utf-8",
     )
     _write_valid_paper_state(workspace)
@@ -652,9 +652,7 @@ def _write_valid_draft_artifacts(workspace: Path) -> None:
     section_dir.mkdir(parents=True, exist_ok=True)
     for name in CORE_SECTIONS:
         state["sections"][name]["status"] = "written"
-        body = f"\\section{{{name.replace('_', ' ').title()}}}\n" + ("Substantive section content. " * 6)
-        if name == "abstract":
-            body = "This is an abstract without formal citations or section headings. " * 3
+        body = _valid_section_body(name)
         (section_dir / f"{name}.tex").write_text(
             body,
             encoding="utf-8",
@@ -682,6 +680,36 @@ Validity boundaries.
     (workspace / "drafts" / "paper.tex").write_text(paper_content, encoding="utf-8")
     (workspace / "drafts" / "manuscript_audit.md").write_text("# Audit\n- [x] ok\n", encoding="utf-8")
     _write_passing_craft_audit(workspace)
+
+
+def _valid_bibtex() -> str:
+    return (
+        "@article{smith2024,\n  author={Smith, Sam},\n  title={Smith Paper},\n  journal={Journal},\n  year={2024}\n}\n"
+        "@article{test2024,\n  author={Test Author},\n  title={Test Title},\n  journal={Journal},\n  year={2024}\n}\n"
+        "@article{lee2023,\n  author={Lee, Lan},\n  title={Lee Paper},\n  journal={Journal},\n  year={2023}\n}\n"
+        "@article{chen2022,\n  author={Chen, Chen},\n  title={Chen Paper},\n  journal={Journal},\n  year={2022}\n}\n"
+        "@article{garcia2021,\n  author={Garcia, Gia},\n  title={Garcia Paper},\n  journal={Journal},\n  year={2021}\n}\n"
+        "@article{patel2020,\n  author={Patel, Priya},\n  title={Patel Paper},\n  journal={Journal},\n  year={2020}\n}\n"
+    )
+
+
+def _valid_section_body(section_id: str) -> str:
+    title = section_id.replace("_", " ").title()
+    if section_id == "abstract":
+        return "This is an abstract without formal citations or section headings. " * 3
+    citation_sets = {
+        "introduction": "\\cite{smith2024,test2024}",
+        "related_work": "\\cite{smith2024,test2024,lee2023,chen2022,garcia2021,patel2020}",
+        "methodology": "\\cite{smith2024}",
+        "analysis": "\\cite{smith2024}",
+    }
+    citation = citation_sets.get(section_id, "")
+    body = f"\\section{{{title}}}\n" + ("Substantive section content. " * 6)
+    if citation:
+        body += f"\nThis section grounds its claim-bearing prose in prior work {citation}.\n"
+    if section_id == "conclusion":
+        body += "\n\\subsection{Limitations}\nValidity boundaries.\n"
+    return body
 
 
 # ══════════════════════════════════════════════════════
@@ -1091,7 +1119,7 @@ def _write_valid_paper_state(workspace: Path) -> None:
                 "section_order": list(sections),
                 "sections": sections,
                 "shared_facts": {
-                    "bib_keys": ["smith2024"],
+                    "bib_keys": ["smith2024", "test2024", "lee2023", "chen2022", "garcia2021", "patel2020"],
                     "result_metrics": [],
                     "alignment_matrix": [
                         {
@@ -1255,7 +1283,7 @@ def test_writer_validate_outputs_draft_rejects_unvalidated_section_wrapper(temp_
         "conclusion",
     ]:
         state["sections"][name]["status"] = "written"
-        body = f"\\section{{{name}}}\n" + ("Substantive section content. " * 6)
+        body = _valid_section_body(name)
         if name == "analysis":
             body = "\\documentclass{article}\n\\begin{document}\n" + body + "\\end{document}\n"
         (section_dir / f"{name}.tex").write_text(body, encoding="utf-8")
@@ -1451,9 +1479,7 @@ def test_writer_validate_outputs_revise_requires_audit(temp_workspace):
         "conclusion",
     ]:
         state["sections"][name]["status"] = "revised"
-        body = f"\\section{{{name.replace('_', ' ').title()}}}\n" + ("Substantive section content. " * 6)
-        if name == "abstract":
-            body = "This abstract summarizes the revised paper without section headings. " * 3
+        body = _valid_section_body(name)
         (section_dir / f"{name}.tex").write_text(
             body,
             encoding="utf-8",
@@ -1515,9 +1541,7 @@ def test_writer_validate_outputs_revise_requires_patch_list(temp_workspace):
         "conclusion",
     ]:
         state["sections"][name]["status"] = "revised"
-        body = f"\\section{{{name.replace('_', ' ').title()}}}\n" + ("Substantive section content. " * 6)
-        if name == "abstract":
-            body = "This abstract summarizes the revised paper without section headings. " * 3
+        body = _valid_section_body(name)
         (section_dir / f"{name}.tex").write_text(
             body,
             encoding="utf-8",
@@ -1555,9 +1579,7 @@ def test_writer_validate_outputs_draft_missing_documentclass(temp_workspace):
         "conclusion",
     ]:
         state["sections"][name]["status"] = "written"
-        body = f"\\section{{{name.replace('_', ' ').title()}}}\n" + ("Substantive section content. " * 6)
-        if name == "abstract":
-            body = "This abstract summarizes the paper without section headings. " * 3
+        body = _valid_section_body(name)
         (section_dir / f"{name}.tex").write_text(
             body,
             encoding="utf-8",
@@ -1596,9 +1618,7 @@ def test_writer_validate_outputs_draft_invalid_citations(temp_workspace):
         "conclusion",
     ]:
         state["sections"][name]["status"] = "written"
-        body = f"\\section{{{name.replace('_', ' ').title()}}}\n" + ("Substantive section content. " * 6)
-        if name == "abstract":
-            body = "This abstract summarizes the paper without section headings. " * 3
+        body = _valid_section_body(name)
         (section_dir / f"{name}.tex").write_text(
             body,
             encoding="utf-8",

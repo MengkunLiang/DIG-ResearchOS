@@ -70,6 +70,32 @@ def test_t2_literature_gate_parses_multiple_inline_customizations():
     assert result["captured"]["base_option"] == "survey_balanced"
 
 
+def test_t2_literature_gate_parses_user_custom_inline_sentence():
+    options = [
+        {"id": "standard_research", "label": "标准研究论文覆盖"},
+        {"id": "survey_balanced", "label": "综述均衡覆盖", "is_default": True},
+        {"id": "survey_exhaustive", "label": "综述强覆盖"},
+        {"id": "custom", "label": "自定义关键数字"},
+    ]
+
+    result = CLIHumanInterface._parse_inline_gate_customization(
+        "t2_literature_param_gate",
+        "4；active_pool_max=80；deep_read=35/35/45；require_target=True；abstract_sweep=80；英文",
+        options,
+    )
+
+    assert result["option_id"] == "custom"
+    captured = result["captured"]
+    assert captured["active_pool_max"] == "80"
+    assert captured["deep_read_min"] == "35"
+    assert captured["deep_read_target"] == "35"
+    assert captured["deep_read_max"] == "45"
+    assert captured["abstract_sweep_target"] == "80"
+    assert captured["require_deep_read_target"] == "True"
+    assert captured["manuscript_language"] == "英文"
+    assert captured["base_option"] == "survey_balanced"
+
+
 def test_t2_literature_gate_parses_language_and_chinese_policy():
     options = [
         {"id": "standard_research", "label": "标准研究论文覆盖", "is_default": True},

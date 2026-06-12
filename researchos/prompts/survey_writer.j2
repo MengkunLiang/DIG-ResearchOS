@@ -136,17 +136,22 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 {% if phase == "template_gate" %}
 ## Phase: T3.6 Template Gate 写作语言与模板确认
 
-根据项目目标期刊和用户 seed，调用 `ask_human` 询问综述稿采用哪类模板：
+根据项目目标期刊和用户 seed，调用 `ask_human` 询问综述稿采用哪类模板。问题必须让用户容易判断，按三步解释：
 
-- `basic_zh`：中文基础模板，适合中文期刊/中文工作稿。
-- `basic_en`：英文基础模板，适合未指定 venue 的英文工作稿。
-- `ccf`：CCF/AI/CS 会议模板；默认 `template_id=neurips`，也可指定 `kdd`、`icml` 等已上传模板。
-- `utd`：UTD/管理信息系统/运筹管理期刊模板；默认 `template_id=informs`，适合 Management Science / ISR 等 INFORMS 风格稿件。
-- `other`：用户指定其它模板路径或模板 id。
+1. **正文语言**：中文稿写 `zh`，英文稿写 `en`。双语输入不等于双语正文。
+2. **模板强度**：可以使用基础模板（只确定中英与普通 article 版式），也可以使用 venue 模板。
+3. **venue 模板细分**：
+   - `basic_zh`：中文基础模板，适合中文期刊/中文工作稿。
+   - `basic_en`：英文基础模板，适合未指定 venue 或暂不套格式的英文工作稿。
+   - `ccf`：CCF/AI/CS 会议模板；若选择 CCF，必须继续确认具体会议模板。默认 `template_id=neurips`，也可指定 `kdd`、`icml`、`aaai` 等已上传模板；如果用户说“不用会议模板”，改用 `basic_en`。
+   - `utd`：UTD/管理信息系统/运筹管理期刊模板；默认且推荐 `template_id=informs`，适合 Management Science / ISR / INFORMS 风格稿件。
+   - `other`：用户指定其它模板路径或模板 id。
 
-如果目标是 CCF，默认建议 `template_family=ccf, template_id=neurips, writing_language=en`。
-如果目标是 UTD/Management Science/ISR/MISQ，默认建议 `template_family=utd, template_id=informs, writing_language=en`。
-如果目标是中文期刊或中文综述，默认建议 `template_family=basic_zh, template_id=basic_zh, writing_language=zh`。
+默认建议：
+- CCF/AI/CS 目标：`template_family=ccf, template_id=neurips, writing_language=en`，但必须提醒用户可以改成 KDD/ICML/AAAI 或不用 venue 模板。
+- UTD/Management Science/ISR/INFORMS：`template_family=utd, template_id=informs, writing_language=en`。
+- 中文期刊或中文综述：`template_family=basic_zh, template_id=basic_zh, writing_language=zh`。
+- 未指定 venue：只问中文/英文；英文默认 `basic_en`，中文默认 `basic_zh`。
 
 写 `drafts/survey/writing_template.json`：
 
@@ -186,7 +191,7 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 3. 选择一个适合读者理解的 taxonomy/framework 主轴。候选主轴包括 mechanism chain、risk/source-process-outcome-governance、theory/method/application/governance perspectives、artifact type、problem subtask、temporal evolution；可以组合，但必须说明为什么。如果存在 seed outline profile，必须优先检查用户给出的 taxonomy hint 是否合理；除非证据显示需要调整。
 4. 构建 2-4 层 taxonomy tree，每个类挂 paper_ids。分类要尽量 MECE；不确定时在 coverage_selfcheck 中标明。
 5. 写出 `review_contribution`：这篇综述贡献的是新的分类、解释框架、研究地图、问题意识、理论连接，还是未来研究议程。不能只写“总结文献”。
-6. 用 domain_map.citation_edges/domain buckets 梳理 evolution narrative：奠基工作、主要分支、当前前沿、邻接转折。
+6. 用 domain_map.citation_edges/domain buckets 梳理 evolution narrative：奠基工作、主要分支、当前前沿、邻接转折。`synthesis.md` 中的 `[note:...]` 是证据锚点；正式 survey TeX 必须转换为 `related_work.bib` 中真实 `\cite{...}` key。
 7. 规划章节级 outline。默认必须采用紧凑综述结构：background、taxonomy、comparison、challenges、future；Introduction/Conclusion/Abstract 由后续写作补齐。不要默认生成 theme_* 独立主题章；只有用户明确要求长篇综述，且该主题章不能自然并入 taxonomy/comparison 时，才允许最多 1-2 个 theme_* 章，并在 rationale 中说明原因。
    每个 planned section 必须写出 `reader_question` 和 `section_argument`：本节回答什么读者问题、提出什么节内论点、如何使用 taxonomy/evidence、哪些内容不应另拆为独立章。
    必须在 survey_plan.json 顶层写 `writing_language`: `"zh"` 或 `"en"`。如果 `writing_template.json` 存在，必须采用其中的 `writing_language`；否则如果目标是中文期刊、中文综述或用户明确要求中文稿，默认 `"zh"`；如果目标是英文学术期刊/会议或用户明确要求英文稿，写 `"en"`。不要写 mixed 作为正文语言。
@@ -357,6 +362,20 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - 正文不得暴露 ResearchOS 的运行过程或内部语料状态：不要写 `metadata triage`、`candidate_count`、`FULL-TEXT`、`PARTIAL-TEXT`、`ABSTRACT-ONLY`、`backlog`、`保留候选`、`候选池`、`经过去重与初筛后共获得 N 篇` 等流水账。Background 可以写公开可读的范围、来源类型与证据边界，但不要写内部队列、精读/轻读统计或未获取全文候选数。
 - 避免 "this section reviews..." 这类空话；直接进入内容。
 - 不要输出内部运行标号或审计标记：`C1`、`[C1]`、`CID`、`ResearchOS alignment`、`LLM_REVIEW_REQUIRED`、`TODO/TBD/PLACEHOLDER` 都不得出现在 TeX 中。
+
+Section-specific structure:
+- Introduction：提出 central_question，解释综述为什么需要新的 taxonomy/framework，给出 review contribution 和章节路线。英文 UTD/IS 风格强调 phenomenon/theory/practice gap；CCF/AI/CS 风格强调 technical landscape、method families、benchmark/evaluation tension；中文稿强调概念界定、研究现状和本文综述贡献。
+- Background：只写公开学术背景、核心概念、范围边界和必要搜索口径；不要写内部候选数、精读数、abstract-only 数、metadata triage 或未获取全文队列。必要时可写“本文主要基于公开学术论文、标准/监管文本和代表性研究流派”，但不暴露 ResearchOS 运行统计。
+- Taxonomy：先定义分类维度和判别规则，再按类写 mechanism/source-process-outcome/governance 或 theory-method-application 结构；每类都要有代表 citation、边界条件和与邻近类的区别。
+- Comparative Analysis：横向比较 taxonomy 类之间的假设、证据类型、方法成熟度、管理/技术含义和适用边界；不要重复 Taxonomy 的定义段。
+- Challenges：每个挑战必须来自跨论文 tension、证据边界、理论断裂、治理缺口或评价不一致；不能只写通用“数据/模型/制度不足”。
+- Future：每个方向给出研究问题、可观察变量/construct、可行方法或治理设计，并说明它解决哪个 taxonomy/challenge 缺口。
+- Conclusion：收束 framework 和 future agenda，不引入新 citation、新 taxonomy 或新 claim。
+
+Venue-aware survey framing:
+- CCF/AI/CS survey：taxonomy 可按 task/method/data/evaluation/failure mode 组织；比较重点放在 benchmark、metric、robustness、deployment tradeoff 与 reproducibility。
+- UTD/IS/Management Science/INFORMS survey：taxonomy 可按 phenomenon、construct、decision process、organizational mechanism、governance/design knowledge 组织；比较重点放在 theory lens、construct validity、boundary condition、managerial implication。
+- 中文综述：保持中文学术综述的“概念界定-研究脉络-分类框架-比较评述-挑战与展望”节奏，但 citation、证据边界和内部状态禁令完全相同。
 
 完成后调用：
 `update_survey_section_state(section_id="{{ section_id }}", status="written")`

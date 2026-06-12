@@ -233,6 +233,16 @@ SECTION_WRITING_CONTRACTS = {
     },
 }
 
+MANUSCRIPT_SECTION_MIN_CITATIONS = {
+    "introduction": 2,
+    "related_work": 6,
+    "methodology": 1,
+    "experiments": 0,
+    "analysis": 1,
+    "conclusion": 0,
+    "abstract": 0,
+}
+
 _LATEX_CITATION_COMMAND_RE = re.compile(
     r"\\(?:cite|citep|citet|citealp|citealt|citeauthor|citeyear|parencite|textcite|autocite|footcite|supercite)\*?"
     r"(?:\[[^\]]*\]){0,2}\{[^}]+\}",
@@ -2597,6 +2607,17 @@ def audit_writing_craft(
         not re.search(r"\\(?:section|subsection)\*?\{", raw_abstract, flags=re.IGNORECASE),
         "Abstract text should be plain abstract prose, not a section/subsection heading.",
     )
+    citation_density_issues = _manuscript_section_citation_issues(section_texts)
+    add(
+        "section_level_citation_density",
+        "FAIL",
+        not citation_density_issues,
+        (
+            "Citation density issues: " + "; ".join(citation_density_issues)
+            if citation_density_issues
+            else "Claim-bearing sections meet minimum unique citation counts."
+        ),
+    )
     internal_label_hits = _internal_label_leakages(paper, cids)
     add(
         "no_internal_label_leakage",
@@ -3381,6 +3402,20 @@ def _row_experiment_refs_present(row: dict[str, Any], experiments_text: str) -> 
         return False
     low = experiments_text.lower()
     return any(ref.lower() in low for ref in concrete_refs)
+
+
+def _manuscript_section_citation_issues(section_texts: dict[str, str]) -> list[str]:
+    issues: list[str] = []
+    for section_id, minimum in MANUSCRIPT_SECTION_MIN_CITATIONS.items():
+        if minimum <= 0:
+            continue
+        text = section_texts.get(section_id, "")
+        if not text.strip():
+            continue
+        cited = _extract_latex_cites(text)
+        if len(cited) < minimum:
+            issues.append(f"{section_id} has {len(cited)} unique citations; minimum={minimum}")
+    return issues
 
 
 def _related_work_topics_are_substantive(text: str) -> bool:

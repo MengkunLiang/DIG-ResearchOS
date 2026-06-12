@@ -23,6 +23,8 @@ Use this guidance when writing `literature/synthesis.md`.
 
 ## Final Writing Rules
 
-- Every important claim should cite paper-note IDs.
+- Every important claim should cite real paper-note anchors. Prefer `[note:<paper_note_id>]`; legacy `[<paper_note_id>]` is accepted only for old drafts.
+- `synthesis.md` is Markdown evidence provenance, not final LaTeX. Do not rely on author-year prose alone; it is not machine-checkable.
+- If you also use `\cite{bibkey}` to align with later TeX writing, the key must exist in `literature/related_work.bib` and correspond to a real note.
 - Avoid generic template sentences. Explain the actual technical pattern observed in this project.
 - Preserve uncertainty: use "candidate", "suggests", or "needs verification" when evidence is weak.

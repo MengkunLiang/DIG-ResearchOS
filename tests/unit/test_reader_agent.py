@@ -1029,6 +1029,103 @@ def test_validate_outputs_synthesize_mode_accepts_real_paper_ids(reader_agent, t
     assert ok, f"Validation failed: {err}"
 
 
+def test_validate_outputs_synthesize_mode_accepts_note_anchors_and_mapped_cites(reader_agent, temp_workspace):
+    """T3.5 Markdown 可用 [note:...]，也可用能映射到真实 note 的 BibTeX key。"""
+    notes_dir = temp_workspace / "literature" / "paper_notes"
+    for paper_id in ["paper0", "paper1", "paper2", "paper3"]:
+        (notes_dir / f"{paper_id}.md").write_text(_structured_note(paper_id), encoding="utf-8")
+    (notes_dir / "memory_note.md").write_text(
+        _structured_note("arxiv:2507.07957"),
+        encoding="utf-8",
+    )
+    (temp_workspace / "literature" / "related_work.bib").write_text(
+        "@article{memory2025, title={arxiv:2507.07957}, author={A, Ann}, journal={J}, year={2025}}\n",
+        encoding="utf-8",
+    )
+    refs = "[note:paper0] [note:paper1] [paper2] [note:paper3] \\cite{memory2025}"
+    synthesis_content = f"""# 文献综述
+
+## 方法家族分类
+方法家族分类基于真实 note anchor 展开，覆盖代表性论文 {refs}。
+
+## 共同假设
+共同假设包括可观测状态稳定、反馈可迁移和机制可复用 {refs}。
+
+## 贡献空间地图
+贡献空间地图按 design rationale、artifact 类型、data view 和 evaluation mode 区分 {refs}。
+
+## 技术趋势
+技术趋势表现为更强的审计性、更细的边界条件和更明确的部署约束 {refs}。
+
+## 跨论文矛盾与张力
+跨论文矛盾来自统一机制假设与场景边界假设之间的差异 {refs}。
+
+## 可操作研究问题
+可操作研究问题包括如何把这些机制转化为可测量设计选择 {refs}。
+""" + "这一段继续展开机制、边界、证据强度和研究机会。" * 180
+    (temp_workspace / "literature" / "synthesis.md").write_text(synthesis_content, encoding="utf-8")
+
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T3.5",
+        run_id="test-run-note-anchor",
+        mode="synthesize",
+    )
+
+    ok, err = reader_agent.validate_outputs(ctx)
+    assert ok, f"Validation failed: {err}"
+
+
+def test_validate_outputs_synthesize_mode_does_not_count_unmapped_cites(reader_agent, temp_workspace):
+    """孤立 BibTeX key 不能伪装成真实已读 paper note 引用。"""
+    notes_dir = temp_workspace / "literature" / "paper_notes"
+    for paper_id in ["paper0", "paper1", "paper2", "paper3", "paper4"]:
+        (notes_dir / f"{paper_id}.md").write_text(_structured_note(paper_id), encoding="utf-8")
+    (temp_workspace / "literature" / "related_work.bib").write_text(
+        "\n".join(
+            f"@article{{unmapped{i}, title={{Unmapped {i}}}, author={{A, Ann}}, journal={{J}}, year={{2025}}}}"
+            for i in range(6)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    refs = "[note:paper0] \\cite{unmapped0,unmapped1,unmapped2,unmapped3,unmapped4}"
+    synthesis_content = f"""# 文献综述
+
+## 方法家族分类
+方法家族分类不能依赖无法映射到已读 note 的 citation key {refs}。
+
+## 共同假设
+共同假设需要真实 note 证据，而不是孤立 BibTeX key {refs}。
+
+## 贡献空间地图
+贡献空间地图按 design rationale、artifact 类型、data view 和 evaluation mode 区分 {refs}。
+
+## 技术趋势
+技术趋势需要来自 paper note 的证据 anchor {refs}。
+
+## 跨论文矛盾与张力
+跨论文矛盾也需要真实已读材料支撑 {refs}。
+
+## 可操作研究问题
+可操作研究问题不能只由 unmapped citation key 生成 {refs}。
+""" + "这一段继续展开机制、边界、证据强度和研究机会。" * 180
+    (temp_workspace / "literature" / "synthesis.md").write_text(synthesis_content, encoding="utf-8")
+
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T3.5",
+        run_id="test-run-unmapped-cites",
+        mode="synthesize",
+    )
+
+    ok, err = reader_agent.validate_outputs(ctx)
+    assert not ok
+    assert "真实已读论文引用过少" in (err or "")
+
+
 def test_validate_outputs_synthesize_mode_missing_sections(reader_agent, temp_workspace):
     """测试synthesize模式输出校验（缺少章节）。"""
     # 创建synthesis.md，但缺少某些章节

@@ -21,6 +21,7 @@ from ..tools.manuscript import (
     CORE_SECTIONS,
     SECTION_TITLES,
     SECTION_WRITING_SEQUENCE,
+    MANUSCRIPT_SECTION_MIN_CITATIONS,
     _internal_label_leakages,
     _placeholder_hits,
     _extract_latex_cites,
@@ -732,6 +733,16 @@ def _validate_single_section(ws: Path, section_id: str) -> tuple[bool, str | Non
         return False, "Abstract 章节文件应只包含摘要正文，不应包含 \\begin{abstract} 或 \\end{abstract}"
     if section_id == "abstract" and re.search(r"\\(?:section|subsection)\*?\{", text, flags=re.IGNORECASE):
         return False, "Abstract 章节文件应只包含摘要正文，不应包含 \\section 或 \\subsection 标题"
+    cited = _extract_latex_cites(text)
+    minimum = MANUSCRIPT_SECTION_MIN_CITATIONS.get(section_id, 0)
+    if minimum and len(cited) < minimum:
+        return False, f"章节草稿 {section_id} 引用过少: unique citations={len(cited)} < {minimum}"
+    if cited:
+        bib_keys = _extract_bib_keys_from_workspace(ws)
+        if bib_keys:
+            missing = sorted(cited - bib_keys)
+            if missing:
+                return False, f"章节草稿 {section_id} 引用了 related_work.bib 不存在的 key: {missing[:8]}"
     foreign_headers = _find_foreign_section_headers(text, section_id)
     if foreign_headers:
         return False, (
@@ -768,6 +779,14 @@ def _known_alignment_cids(ws: Path) -> list[str]:
             if re.fullmatch(r"C\d+", cid) and cid not in cids:
                 cids.append(cid)
     return cids
+
+
+def _extract_bib_keys_from_workspace(ws: Path) -> set[str]:
+    bib_path = ws / "literature" / "related_work.bib"
+    if not bib_path.exists():
+        return set()
+    text = read_text_file(bib_path, default="")
+    return set(re.findall(r"@\w+\{([^,\s]+)", text))
 
 
 def _find_foreign_section_headers(text: str, section_id: str) -> list[str]:

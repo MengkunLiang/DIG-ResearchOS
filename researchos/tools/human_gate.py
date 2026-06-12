@@ -180,14 +180,35 @@ class CLIHumanInterface(HumanInterface):
             return {}
         normalized = text.replace("，", ",").replace("；", ";").replace("：", ":")
         captured: dict[str, str] = {}
-        if "英文稿" in normalized or "英文论文" in normalized:
+        if re.search(r"\b(en|english)\b", normalized, flags=re.IGNORECASE) or any(
+            token in normalized for token in ("英文稿", "英文论文", "英文")
+        ):
             captured["manuscript_language"] = "英文"
-        elif ("中文稿" in normalized or "中文论文" in normalized) and "不要中文论文" not in normalized:
+        elif (
+            re.search(r"\b(zh|chinese)\b", normalized, flags=re.IGNORECASE)
+            or any(token in normalized for token in ("中文稿", "中文论文", "中文"))
+        ) and "不要中文论文" not in normalized:
             captured["manuscript_language"] = "中文"
         if any(token in normalized for token in ("不要中文论文", "不要中文文献", "不检索中文", "不引用中文", "排除中文")):
             captured["include_chinese_literature"] = "false"
         elif any(token in normalized for token in ("允许中文论文", "允许中文文献", "检索中文", "包含中文", "包括中文")):
             captured["include_chinese_literature"] = "true"
+
+        deep_triplet = re.search(
+            r"\bdeep[_\s-]*read\b\s*(?:=|:|为)?\s*(\d+)\s*/\s*(\d+)\s*/\s*(\d+)",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        if not deep_triplet:
+            deep_triplet = re.search(
+                r"(?:精读|深读)\s*(?:=|:|为)?\s*(\d+)\s*/\s*(\d+)\s*/\s*(\d+)",
+                normalized,
+                flags=re.IGNORECASE,
+            )
+        if deep_triplet:
+            captured["deep_read_min"] = deep_triplet.group(1)
+            captured["deep_read_target"] = deep_triplet.group(2)
+            captured["deep_read_max"] = deep_triplet.group(3)
 
         patterns = {
             "active_pool_max": [
@@ -236,7 +257,9 @@ class CLIHumanInterface(HumanInterface):
             "pool": "active_pool_max",
             "deep": "deep_read_target",
             "deep_read": "deep_read_target",
+            "deep_read_min": "deep_read_min",
             "deep_read_target": "deep_read_target",
+            "deep_read_max": "deep_read_max",
             "abstract": "abstract_sweep_target",
             "abstract_sweep": "abstract_sweep_target",
             "abstract_sweep_target": "abstract_sweep_target",
@@ -251,10 +274,17 @@ class CLIHumanInterface(HumanInterface):
             "include_chinese_literature": "include_chinese_literature",
             "chinese_literature": "include_chinese_literature",
         }
-        for key, value in re.findall(r"([A-Za-z_][A-Za-z0-9_\-\s]*?)\s*[=:]\s*([A-Za-z0-9_\-]+|全部)", normalized):
+        for key, value in re.findall(r"([A-Za-z_][A-Za-z0-9_\-\s]*?)\s*[=:]\s*([A-Za-z0-9_\/\-]+|全部)", normalized):
             canonical = key_aliases.get(re.sub(r"[\s-]+", "_", key.strip().lower()))
             if canonical:
-                captured[canonical] = value.strip()
+                value = value.strip()
+                if canonical == "deep_read_target" and re.fullmatch(r"\d+/\d+/\d+", value):
+                    min_v, target_v, max_v = value.split("/")
+                    captured["deep_read_min"] = min_v
+                    captured["deep_read_target"] = target_v
+                    captured["deep_read_max"] = max_v
+                    continue
+                captured[canonical] = value
 
         return captured
 

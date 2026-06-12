@@ -121,6 +121,8 @@ def bibtex_quality_issues(text: str, *, require_author: bool = False) -> list[st
         note_lower = str(fields.get("note") or fields.get("annotation") or "").casefold()
         if "irrelevant" in note_lower:
             issues.append(f"{key}: marked_irrelevant")
+        if _INTERNAL_NOTE_MARKER_RE.search(str(entry.get("raw") or "")):
+            issues.append(f"{key}: contains_internal_runtime_marker")
         if title_lower == "unknown" or author_lower == "unknown" or note_lower in {"unknown", "placeholder", "todo"}:
             issues.append(f"{key}: contains_unknown_placeholder")
         if "123456" in str(fields.get("doi") or ""):
@@ -169,6 +171,20 @@ def strip_internal_bibtex_notes(text: str) -> str:
         return "" if _INTERNAL_NOTE_MARKER_RE.search(value) else value
 
     return _INTERNAL_NOTE_RE.sub(replace, text or "")
+
+
+def bibtex_internal_marker_issues(text: str) -> list[str]:
+    """Return entries that leak ResearchOS-only evidence/status markers."""
+
+    issues: list[str] = []
+    for entry in parse_bib_entries(text):
+        key = str(entry.get("key") or "").strip() or "<unknown>"
+        raw = str(entry.get("raw") or "")
+        if _INTERNAL_NOTE_MARKER_RE.search(raw):
+            issues.append(f"{key}: contains_internal_runtime_marker")
+    if not issues and _INTERNAL_NOTE_MARKER_RE.search(text or ""):
+        issues.append("bibliography_contains_internal_runtime_marker")
+    return issues
 
 
 def dedupe_bibtex_entries(text: str) -> str:

@@ -1,21 +1,52 @@
-% Chinese fallback that keeps a standard document class. Full Chinese support
-% in Docker still requires texlive-lang-chinese; without it, generated TeX will
-% fail early with a clear missing-package error from the CJK stack.
-\documentclass[11pt]{article}
-\usepackage[margin=1in]{geometry}
-\usepackage{amsmath,amssymb}
-\usepackage{booktabs}
-\usepackage{graphicx}
-\usepackage{natbib}
+\documentclass[UTF8,11pt]{ctexart}
+
+\usepackage[a4paper,margin=2.6cm]{geometry}
 \usepackage{iftex}
 \usepackage{newunicodechar}
 \ifXeTeX
   \usepackage{fontspec}
-  \usepackage{xeCJK}
   \IfFontExistsTF{Noto Serif CJK SC}{\setCJKmainfont{Noto Serif CJK SC}[ItalicFont=Noto Serif CJK SC, ItalicFeatures={FakeSlant=0.2}]}{}
   \IfFontExistsTF{Noto Sans CJK SC}{\setCJKsansfont{Noto Sans CJK SC}}{}
   \IfFontExistsTF{Noto Serif CJK SC}{\setCJKmonofont{Noto Serif CJK SC}}{}
 \fi
+\usepackage{microtype}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{enumitem}
+\usepackage{setspace}
+\usepackage{natbib}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  citecolor=blue!55!black,
+  urlcolor=blue!55!black
+}
+
+\ctexset{
+  section = {
+    format = \Large\bfseries\raggedright,
+    beforeskip = 1.2ex plus .2ex,
+    afterskip = .8ex
+  },
+  subsection = {
+    format = \large\bfseries\raggedright,
+    beforeskip = 1.0ex plus .2ex,
+    afterskip = .5ex
+  }
+}
+\setstretch{1.18}
+\setlength{\parindent}{2em}
+\setlength{\parskip}{0.15em}
+\setlist[itemize]{leftmargin=2em,itemsep=0.2em,topsep=0.3em}
+\setlist[enumerate]{leftmargin=2.2em,itemsep=0.2em,topsep=0.3em}
+\captionsetup{font=small,labelfont=bf}
+
 \newunicodechar{≠}{\ensuremath{\ne}}
 \newunicodechar{≤}{\ensuremath{\le}}
 \newunicodechar{≥}{\ensuremath{\ge}}
@@ -24,7 +55,6 @@
 \newunicodechar{←}{\ensuremath{\leftarrow}}
 \newunicodechar{–}{--}
 \newunicodechar{—}{---}
-\usepackage{hyperref}
 
 \title{论文标题}
 \author{}
@@ -36,6 +66,8 @@
 \begin{abstract}
 摘要正文。
 \end{abstract}
+
+\noindent\textbf{关键词：} 关键词一；关键词二；关键词三
 
 \section{引言}
 

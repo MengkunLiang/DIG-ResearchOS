@@ -12,6 +12,7 @@ from researchos.runtime.config import RuntimeSettings, WebFetchSettings
 from researchos.testing.mocks import MockHumanInterface
 from researchos.tools.bash_run import BashRunTool
 from researchos.tools.bibtex import (
+    bibtex_internal_marker_issues,
     bibtex_quality_issues,
     dedupe_bibtex_entries,
     escape_bibtex_value,
@@ -396,6 +397,9 @@ def test_bibtex_helpers_parse_quality_dedupe_and_escape():
     assert "bad2025: placeholder_doi" in issues
     assert "bad2025: missing_booktitle" in issues
     assert "smith2024: duplicate_key_2" in issues
+    assert "status2024: contains_internal_runtime_marker" in bibtex_quality_issues(
+        "@article{status2024, author={A, Ann}, title={Status Leak}, journal={J}, year={2024}, note={FULL-TEXT; runtime status}}\n"
+    )
     assert "101287mnsc10800869: invalid_key" not in bibtex_quality_issues(
         "@article{101287mnsc10800869, author={Known, K.}, title={Known Unknowns in Decision Systems}, year={2024}}\n"
     )
@@ -421,6 +425,15 @@ def test_bibtex_publication_copy_strips_internal_evidence_notes():
     assert "ABSTRACT-ONLY" not in cleaned
     assert "runtime status" not in cleaned
     assert "Accepted manuscript" in cleaned
+
+
+def test_bibtex_internal_marker_issues_flags_source_bibliography_leakage():
+    text = (
+        "@article{a, author={A, Ann}, title={A}, journal={J}, year={2024}, note={FULL-TEXT; runtime status}}\n"
+        "@article{b, author={B, Bob}, title={B}, journal={J}, year={2024}}\n"
+    )
+
+    assert bibtex_internal_marker_issues(text) == ["a: contains_internal_runtime_marker"]
 
 
 def test_audit_writing_craft_warns_when_related_work_ignores_pre_t5_signals():
@@ -661,7 +674,12 @@ def _prepare_manuscript_workspace(workspace: Path) -> None:
         encoding="utf-8",
     )
     (workspace / "literature" / "related_work.bib").write_text(
-        "@article{smith2024,\n title={A Paper},\n year={2024}\n}\n",
+        "@article{smith2024,\n title={A Paper},\n year={2024}\n}\n"
+        "@article{lee2023,\n title={Lee Paper},\n year={2023}\n}\n"
+        "@article{chen2022,\n title={Chen Paper},\n year={2022}\n}\n"
+        "@article{garcia2021,\n title={Garcia Paper},\n year={2021}\n}\n"
+        "@article{patel2020,\n title={Patel Paper},\n year={2020}\n}\n"
+        "@article{nguyen2019,\n title={Nguyen Paper},\n year={2019}\n}\n",
         encoding="utf-8",
     )
     (workspace / "literature" / "comparison_table.csv").write_text("paper,metric\nA,0.7\n", encoding="utf-8")
@@ -865,7 +883,9 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
     assert paper_state["semantics"] == "shared_state_for_section_by_section_writing_not_final_claims"
     assert paper_state["sections"]["methodology"]["file"] == "drafts/sections/methodology.tex"
     assert "limitations" not in paper_state["sections"]
-    assert paper_state["shared_facts"]["bib_keys"] == ["smith2024"]
+    assert {"smith2024", "lee2023", "chen2022", "garcia2021", "patel2020", "nguyen2019"} <= set(
+        paper_state["shared_facts"]["bib_keys"]
+    )
     assert paper_state["shared_facts"]["alignment_matrix"]
     assert (tmp_workspace / "drafts" / "section_outlines" / "methodology.md").exists()
     method_outline = (tmp_workspace / "drafts" / "section_outlines" / "methodology.md").read_text(encoding="utf-8")
@@ -895,7 +915,7 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
         if name == "introduction":
             body = (
                 "The first gap concerns sparse recommendation robustness. "
-                "The second gap concerns adaptive perturbation. "
+                "The second gap concerns adaptive perturbation \\cite{smith2024,lee2023}. "
                 "The third gap concerns boundary analysis.\n"
                 "Contributions\n"
                 "- We improve sparse recommendation robustness with evidence from the main result.\n"
@@ -903,10 +923,13 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
                 "- We analyze boundary behavior through failure and sensitivity evidence.\n"
             )
         if name == "related_work":
+            keys = ["smith2024", "lee2023", "chen2022", "garcia2021", "patel2020", "nguyen2019"]
             body = "\n".join(
-                f"\\subsection{{Rationale {idx}}}\nPrior work \\cite{{smith2024}} leaves a design-rationale tension for the corresponding contribution."
+                f"\\subsection{{Rationale {idx}}}\nPrior work \\cite{{{','.join(keys)}}} leaves a design-rationale tension for the corresponding contribution."
                 for idx, row in enumerate(alignment["rows"], start=1)
             )
+        if name in {"methodology", "analysis"}:
+            body += "\nThis design interpretation is grounded in prior work \\cite{smith2024}.\n"
         if name == "conclusion":
             body += "\n\\subsection{Limitations}\nDirect-full evidence remains bounded.\n"
         (tmp_workspace / "drafts" / "sections" / f"{name}.tex").write_text(
@@ -1282,7 +1305,7 @@ async def test_build_synthesis_workbench_writes_staged_outputs(tmp_workspace: Pa
     assert "README" not in workbench["paper_ids"]
     draft = (literature / "synthesis_draft.md").read_text(encoding="utf-8")
     assert "This is not a final literature synthesis" in draft
-    assert "[paper_0]" in draft
+    assert "[note:paper_0]" in draft
 
 
 @pytest.mark.asyncio

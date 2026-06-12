@@ -712,8 +712,8 @@ async def test_t36_assemble_applies_selected_basic_zh_template(tmp_path: Path):
 
     tex = (ws / "drafts" / "survey" / "survey.tex").read_text(encoding="utf-8")
 
-    assert "\\documentclass[11pt]{article}" in tex
-    assert "\\usepackage{xeCJK}" in tex
+    assert "\\documentclass[UTF8,11pt]{ctexart}" in tex
+    assert "\\ctexset" in tex
     assert "ResearchOS template_family" not in tex
 
 

@@ -1,10 +1,32 @@
 \documentclass[11pt]{article}
-\usepackage[margin=1in]{geometry}
-\usepackage{amsmath,amssymb}
+
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\IfFileExists{lmodern.sty}{\usepackage{lmodern}}{\usepackage{mathptmx}}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb,amsthm}
 \usepackage{booktabs}
 \usepackage{graphicx}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{enumitem}
+\usepackage{setspace}
 \usepackage{natbib}
+\usepackage{xcolor}
 \usepackage{hyperref}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  citecolor=blue!55!black,
+  urlcolor=blue!55!black
+}
+
+\setstretch{1.08}
+\setlist[itemize]{leftmargin=1.4em,itemsep=0.2em,topsep=0.3em}
+\setlist[enumerate]{leftmargin=1.6em,itemsep=0.2em,topsep=0.3em}
+\captionsetup{font=small,labelfont=bf}
 
 \title{Paper Title}
 \author{}
@@ -16,6 +38,8 @@
 \begin{abstract}
 Abstract text.
 \end{abstract}
+
+\noindent\textbf{Keywords:} keyword one; keyword two; keyword three
 
 \section{Introduction}
 
