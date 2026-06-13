@@ -27,7 +27,11 @@ from researchos.runtime.t3_notes_manifest import build_t3_notes_manifest
 from researchos.testing.mocks import FakeLLMMessage, FakeRawCompletion, FakeToolCall, MockHumanInterface, MockLLMClient
 from researchos.tools.human_gate import HumanInputUnavailable
 from researchos.tools.latex_compile import _compile_dependency_fingerprint
-from researchos.tools.manuscript import build_paper_state_input_fingerprints, craft_audit_input_fingerprints
+from researchos.tools.manuscript import (
+    _section_writing_contract,
+    build_paper_state_input_fingerprints,
+    craft_audit_input_fingerprints,
+)
 from researchos.tools.builtin import register_builtin_tools
 from researchos.tools.registry import ToolRegistry
 
@@ -617,18 +621,25 @@ def write_valid_t8_revise_artifacts(workspace):
     literature.mkdir(parents=True, exist_ok=True)
     experiments.mkdir(parents=True, exist_ok=True)
     (literature / "related_work.bib").write_text(
-        "@article{smith2024,\n  title={Prior Work},\n  year={2024}\n}\n",
+        "\n".join(
+            f"@article{{smith2024_{idx},\n  title={{Prior Work {idx}}},\n  year={{2024}}\n}}\n"
+            for idx in range(1, 7)
+        )
+        + "@article{smith2024,\n  title={Prior Work},\n  year={2024}\n}\n",
         encoding="utf-8",
     )
     (experiments / "results_summary.json").write_text('{"metrics":{"accuracy":0.82}}\n', encoding="utf-8")
     sections_dir = drafts / "sections"
     sections_dir.mkdir(parents=True, exist_ok=True)
     section_bodies = {
-        "methodology": "\\section{Method}\nMethod describes the mechanism and implementation details.",
+        "methodology": "\\section{Method}\nMethod builds on the prior mechanism design~\\cite{smith2024} and implementation details.",
         "experiments": "\\section{Experiments}\nExperiments report accuracy 0.82 in Table~\\ref{tab:main_results}.",
-        "related_work": "\\section{Related Work}\nPrior work motivates the gap~\\cite{smith2024}.",
-        "analysis": "\\section{Analysis}\nThe result supports the mechanism while noting uncertainty.",
-        "introduction": "\\section{Introduction}\nThis paper makes three contributions to the problem.",
+        "related_work": (
+            "\\section{Related Work}\nPrior work motivates the gap~"
+            "\\cite{smith2024_1,smith2024_2,smith2024_3,smith2024_4,smith2024_5,smith2024_6}."
+        ),
+        "analysis": "\\section{Analysis}\nThe result supports the mechanism while noting uncertainty~\\cite{smith2024_1}.",
+        "introduction": "\\section{Introduction}\nThis paper makes three contributions to the problem~\\cite{smith2024_1,smith2024_2}.",
         "conclusion": "\\section{Conclusion}\nWe summarize the findings.\\subsection{Limitations}\nEvidence remains bounded.",
         "abstract": "This paper studies efficient memory retrieval and reports accuracy 0.82.",
     }
@@ -661,11 +672,15 @@ def write_valid_t8_revise_artifacts(workspace):
         "input_fingerprints": _paper_state_input_fingerprints(workspace),
         "section_order": list(SECTION_WRITING_SEQUENCE),
         "sections": {
-            section_id: {"status": "pending", "file": f"drafts/sections/{section_id}.tex"}
+            section_id: {
+                "status": "pending",
+                "file": f"drafts/sections/{section_id}.tex",
+                "writing_contract": _section_writing_contract(section_id),
+            }
             for section_id in SECTION_WRITING_SEQUENCE
         },
         "shared_facts": {
-            "bib_keys": ["smith2024"],
+            "bib_keys": ["smith2024", *[f"smith2024_{idx}" for idx in range(1, 7)]],
             "result_metrics": [{"name": "accuracy", "value": 0.82}],
             "alignment_matrix": alignment_rows,
         },

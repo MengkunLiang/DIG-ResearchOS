@@ -880,8 +880,38 @@ def test_ideation_initial_user_message(ideation_agent, temp_workspace):
     )
 
     msg = ideation_agent.initial_user_message(ctx)
-    assert "T4" in msg or "假设生成" in msg
-    assert "Gate" in msg or "两轮" in msg
+    assert "T4 Gate1 前半段" in msg
+    assert "_pass1_forward_candidates.json" in msg
+    assert "_gate1_selection_brief.md" in msg
+    assert "不要在本轮调用 ask_human" in msg
+    assert "不要写hypotheses.md" in msg
+
+
+def test_ideation_initial_user_message_after_gate1_selection(ideation_agent, temp_workspace):
+    """Gate1 selection 存在后，T4 才进入最终假设/实验计划写作。"""
+    (temp_workspace / "ideation" / "_gate1_user_selection.json").write_text(
+        json.dumps(
+            {
+                "semantics": "t4_gate1_user_selection_for_candidate_pool",
+                "selection_fingerprint": "abc123",
+            }
+        ),
+        encoding="utf-8",
+    )
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T4",
+        run_id="test-run-1",
+        mode=None,
+    )
+
+    msg = ideation_agent.initial_user_message(ctx)
+
+    assert "T4 Gate1 后半段" in msg
+    assert "_gate1_user_selection.json" in msg
+    assert "hypotheses.md" in msg
+    assert "selection_fingerprint" in msg
 
 
 def _write_valid_t4_outputs(workspace: Path) -> None:

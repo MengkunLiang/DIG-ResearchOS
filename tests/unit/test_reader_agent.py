@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 
 import pytest
 
@@ -1075,6 +1076,87 @@ def test_validate_outputs_synthesize_mode_accepts_note_anchors_and_mapped_cites(
 
     ok, err = reader_agent.validate_outputs(ctx)
     assert ok, f"Validation failed: {err}"
+
+
+def test_validate_outputs_synthesize_mode_maps_noopenalex_note_to_bib_cite(reader_agent, temp_workspace):
+    """noopenalex 机器 ID 应能经 title/DOI 映射到 BibTeX cite，并计入真实 note 引用。"""
+    notes_dir = temp_workspace / "literature" / "paper_notes"
+    seed_notes = [
+        ("noopenalex__7d21650e64a96a02", "noopenalex::7d21650e64a96a02", "大数据环境下的决策范式转变与使能创新", "10.19744/j.cnki.11-1235/f.2020.0023", "guanlishijie2022"),
+        ("noopenalex__f7133263380c51f6", "noopenalex::f7133263380c51f6", "数智赋能：信息系统研究的新跃迁", "10.19744/j.cnki.11-1235/f.2022.0011", "chen2022shuzi"),
+        ("paper2", "paper2", "Paper Two", "", "paper2"),
+        ("paper3", "paper3", "Paper Three", "", "paper3"),
+        ("paper4", "paper4", "Paper Four", "", "paper4"),
+    ]
+    for filename, paper_id, title, doi, _key in seed_notes:
+        note = _structured_note(paper_id).replace(f"# {paper_id}", f"# {title}", 1)
+        if doi:
+            note = re.sub(
+                r"- \*\*DOI/arXiv\*\*: .+",
+                f"- **DOI/arXiv**: {doi}",
+                note,
+                count=1,
+            )
+        (notes_dir / f"{filename}.md").write_text(note, encoding="utf-8")
+    (temp_workspace / "literature" / "related_work.bib").write_text(
+        """@article{guanlishijie2022,
+  title={大数据环境下的决策范式转变与使能创新},
+  author={陈国青 and 曾大军 and 卫强 and 张明月 and 郭迅华},
+  journal={管理世界},
+  year={2020},
+  doi={10.19744/j.cnki.11-1235/f.2020.0023}
+}
+
+@article{chen2022shuzi,
+  title={数智赋能：信息系统研究的新跃迁},
+  author={陈国青 and 任明 and 卫强 and 郭迅华 and 易成},
+  journal={管理世界},
+  year={2022},
+  doi={10.19744/j.cnki.11-1235/f.2022.0011}
+}
+
+@article{paper2,title={Paper Two},author={A},journal={J},year={2025}}
+@article{paper3,title={Paper Three},author={A},journal={J},year={2025}}
+@article{paper4,title={Paper Four},author={A},journal={J},year={2025}}
+""",
+        encoding="utf-8",
+    )
+    refs = "\\cite{guanlishijie2022,chen2022shuzi,paper2,paper3,paper4}"
+    synthesis_content = f"""# 文献综述
+
+## 方法家族分类
+这些管理决策与算法治理文献共同形成了范式、组织、技术与治理四类证据 {refs}。
+
+## 共同假设
+共同假设包括数据驱动范式会提升决策质量、人机协同会改变责任结构、算法风险需要治理嵌入 {refs}。
+
+## 贡献空间地图
+贡献空间地图按 design rationale、artifact 类型、data view 和 evaluation mode 区分这些文献的定位 {refs}。
+
+## 技术趋势
+技术趋势从大数据驱动、数智赋能走向更显式的组织风险和治理框架 {refs}。
+
+## 跨论文矛盾与张力
+跨论文矛盾来自效率增强叙事与风险治理叙事之间的张力 {refs}。
+
+## 可操作研究问题
+可操作研究问题包括如何把治理机制转化为可测量的管理决策设计原则 {refs}。
+""" + "这一段继续展开机制、边界、证据强度、研究机会和后续 T4 可用的问题重构。" * 160
+    (temp_workspace / "literature" / "synthesis.md").write_text(synthesis_content, encoding="utf-8")
+
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T3.5",
+        run_id="test-run-noopenalex-cite-map",
+        mode="synthesize",
+    )
+
+    ok, err = reader_agent.validate_outputs(ctx)
+
+    assert ok, f"Validation failed: {err}"
+    citation_map = json.loads((temp_workspace / "literature" / "citation_map.json").read_text(encoding="utf-8"))
+    assert citation_map["mapped_bib_count"] >= 5
 
 
 def test_validate_outputs_synthesize_mode_does_not_count_unmapped_cites(reader_agent, temp_workspace):

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from researchos.agents.writer import WriterAgent
+from researchos.literature_citations import citation_ref_for_id, refresh_literature_citation_maps
 from researchos.runtime.config import RuntimeSettings, WebFetchSettings
 from researchos.testing.mocks import MockHumanInterface
 from researchos.tools.bash_run import BashRunTool
@@ -1265,6 +1266,44 @@ This paper studies {family_hint} with a concrete mechanism for robust representa
 """
 
 
+def test_refresh_literature_citation_maps_links_note_ids_titles_and_bib_keys(tmp_workspace: Path):
+    literature = tmp_workspace / "literature"
+    notes_dir = literature / "paper_notes"
+    notes_dir.mkdir(parents=True)
+    note_id = "noopenalex__7d21650e64a96a02"
+    (notes_dir / f"{note_id}.md").write_text(
+        """# 大数据环境下的决策范式转变与使能创新
+
+- **ID**: noopenalex::7d21650e64a96a02
+- **Authors**: 陈国青, 曾大军, 卫强, 张明月, 郭迅华
+- **Venue**: 管理世界 (2020)
+- **DOI/arXiv**: 10.19744/j.cnki.11-1235/f.2020.0023
+- **Status**: [FULL-TEXT]
+""",
+        encoding="utf-8",
+    )
+    (literature / "related_work.bib").write_text(
+        """@article{guanlishijie2022,
+  title={大数据环境下的决策范式转变与使能创新},
+  author={陈国青 and 曾大军 and 卫强 and 张明月 and 郭迅华},
+  journal={管理世界},
+  year={2020},
+  doi={10.19744/j.cnki.11-1235/f.2020.0023}
+}
+""",
+        encoding="utf-8",
+    )
+
+    bundle = refresh_literature_citation_maps(tmp_workspace, write=True)
+
+    citation_map = bundle["citation_map"]
+    assert citation_map["mapped_bib_count"] == 1
+    assert citation_ref_for_id("noopenalex::7d21650e64a96a02", citation_map) == "\\cite{guanlishijie2022}"
+    assert citation_ref_for_id(note_id, citation_map) == "\\cite{guanlishijie2022}"
+    persisted = json.loads((literature / "paper_note_index.json").read_text(encoding="utf-8"))
+    assert persisted["entries"][0]["display_label"] == "大数据环境下的决策范式转变与使能创新 (2020)"
+
+
 @pytest.mark.asyncio
 async def test_build_synthesis_workbench_writes_staged_outputs(tmp_workspace: Path):
     literature = tmp_workspace / "literature"
@@ -1306,6 +1345,40 @@ async def test_build_synthesis_workbench_writes_staged_outputs(tmp_workspace: Pa
     draft = (literature / "synthesis_draft.md").read_text(encoding="utf-8")
     assert "This is not a final literature synthesis" in draft
     assert "[note:paper_0]" in draft
+
+
+@pytest.mark.asyncio
+async def test_build_synthesis_workbench_prefers_bib_citation_refs(tmp_workspace: Path):
+    literature = tmp_workspace / "literature"
+    notes_dir = literature / "paper_notes"
+    notes_dir.mkdir(parents=True)
+    (notes_dir / "paper_0.md").write_text(
+        _note("paper_0", family_hint="Readable Citation"),
+        encoding="utf-8",
+    )
+    (literature / "related_work.bib").write_text(
+        """@article{readable2025citation,
+  title={Readable Citation Paper paper_0},
+  author={Ada and Bob},
+  journal={TestConf},
+  year={2025}
+}
+""",
+        encoding="utf-8",
+    )
+    policy = WorkspaceAccessPolicy(tmp_workspace, ["", "literature/"], ["", "literature/"])
+    tool = BuildSynthesisWorkbenchTool(policy)
+
+    result = await tool.execute(write_final=False)
+
+    assert result.ok, result.content
+    workbench = json.loads((literature / "synthesis_workbench.json").read_text(encoding="utf-8"))
+    assert workbench["citation_map_summary"]["mapped_bib_count"] == 1
+    assert workbench["notes"][0]["citation_ref"] == "\\cite{readable2025citation}"
+    assert workbench["citation_ref_by_paper_id"]["paper_0"] == "\\cite{readable2025citation}"
+    assert (literature / "citation_map.json").exists()
+    draft = (literature / "synthesis_draft.md").read_text(encoding="utf-8")
+    assert "\\cite{readable2025citation}" in draft
 
 
 @pytest.mark.asyncio

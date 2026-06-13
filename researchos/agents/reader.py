@@ -21,6 +21,11 @@ from ..literature_identity import (
     paper_record_match_keys,
     record_is_covered,
 )
+from ..literature_citations import (
+    citation_map_key_lookup,
+    load_or_build_citation_map,
+    refresh_literature_citation_maps,
+)
 from ..runtime.t3_notes_manifest import (
     build_t3_notes_manifest,
     format_completion_diagnostics,
@@ -185,8 +190,20 @@ class ReaderAgent(Agent):
         elif mode == "synthesize":
             note_files = _iter_paper_note_paths(ctx.workspace_dir / "literature")
             note_count = len(note_files)
+            citation_bundle = refresh_literature_citation_maps(ctx.workspace_dir, write=True)
+            citation_map = citation_bundle.get("citation_map") if isinstance(citation_bundle, dict) else {}
+            mapped_entries = [
+                entry
+                for entry in citation_map.get("entries", [])
+                if isinstance(entry, dict) and entry.get("bib_key")
+            ]
             context_vars["note_count"] = note_count
             context_vars["note_id_preview"] = [path.stem for path in note_files[:30]]
+            context_vars["citation_ref_preview"] = [
+                f"{entry.get('display_label') or entry.get('title')} -> {entry.get('citation_ref')}"
+                for entry in mapped_entries[:20]
+            ]
+            context_vars["citation_map_path"] = "literature/citation_map.json"
             abstract_dir = ctx.workspace_dir / "literature" / "paper_notes_abstract"
             abstract_count = (
                 len([path for path in abstract_dir.glob("*.md") if is_paper_note_file(path)])
@@ -622,19 +639,40 @@ def _latex_cite_keys(content: str) -> set[str]:
 
 
 def _bib_key_note_ref_map(literature_dir: Path) -> dict[str, str]:
+    try:
+        citation_map = refresh_literature_citation_maps(literature_dir.parent, write=True).get("citation_map", {})
+    except Exception:
+        try:
+            citation_map = load_or_build_citation_map(literature_dir)
+        except Exception:
+            citation_map = {}
+    mapping: dict[str, str] = {}
+    if citation_map:
+        for key, entry in citation_map_key_lookup(citation_map).items():
+            note_id = str(entry.get("note_id") or entry.get("paper_id") or "").strip()
+            if note_id:
+                mapping[key] = normalize_text_key(note_id)
+        for entry in citation_map.get("entries") or []:
+            if not isinstance(entry, dict):
+                continue
+            bib_key = str(entry.get("bib_key") or "").strip()
+            note_id = str(entry.get("note_id") or entry.get("paper_id") or "").strip()
+            if bib_key and note_id:
+                mapping[bib_key] = normalize_text_key(note_id)
+                mapping[normalize_text_key(bib_key)] = normalize_text_key(note_id)
     bib_path = literature_dir / "related_work.bib"
     if not bib_path.exists():
-        return {}
+        return mapping
     try:
         bib_text = bib_path.read_text(encoding="utf-8", errors="replace")
     except Exception:
-        return {}
+        return mapping
     entries = parse_bib_entries(bib_text)
     if not entries:
-        return {key: normalize_text_key(key) for key in extract_bib_keys_from_text(bib_text)}
+        mapping.update({key: normalize_text_key(key) for key in extract_bib_keys_from_text(bib_text)})
+        return mapping
     note_refs = _paper_note_reference_ids(literature_dir)
     normalized_note_refs = {normalize_text_key(ref): normalize_text_key(ref) for ref in note_refs}
-    mapping: dict[str, str] = {}
     for entry in entries:
         key = str(entry.get("key") or "").strip()
         if not key:

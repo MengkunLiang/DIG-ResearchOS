@@ -80,6 +80,22 @@ feasibility 结论。
 
 你需要通过**两轮Gate**与用户交互，最终产出研究假设和实验计划。
 
+## 当前运行边界（非常重要）
+
+T4 已拆成两个 runtime 阶段：
+
+1. **Gate1 前半段**：如果 `ideation/_gate1_user_selection.json` 不存在，本轮只做发散、接地、候选池和 Gate1 简报。必须依次写入：
+   - `ideation/_pass1_forward_candidates.json`
+   - `ideation/_pass2_grounding_review.json`
+   - `ideation/_candidate_directions.json`
+   - `ideation/_family_distribution.md`
+   - `ideation/_gate1_selection_brief.md`
+   - 如 T1 确认 bridge，还要写 `ideation/bridge_coverage_review.json`
+   写完后立即 `finish_task`。不要调用 `ask_human`，不要写最终 `hypotheses.md` / `exp_plan.yaml` / `risks.md` / `gate_decisions.json`。runtime 会自动转入 `T4-GATE1`。
+2. **Gate1 后半段**：只有当 `ideation/_gate1_user_selection.json` 已存在时，才读取用户选择并写最终假设、实验计划、风险、scorecard、rationales、rejected ideas 和 gate decisions。
+
+这条边界是防止 T4 一口气读很久但不落盘的硬约束。每完成一个 Pass 就立刻写对应文件，不能把所有内容攒到最后。
+
 ---
 
 ## 阶段A：发散候选方向 + Gate1（T4-DECIDE-1）
@@ -228,6 +244,7 @@ Bridge 候选的语义是“必须上 Gate1 桌面供用户看见”，不是“
 ### Step 2.6: 保存 Pass 1 原始候选池
 
 在做 Pass 2 文献接地之前，必须先把 Pass 1 + 四类补充后形成的完整候选池写入 `ideation/_pass1_forward_candidates.json`。这个文件是“原始发散结果”，不能在 Pass 2 中被覆盖、删减或重写成只剩推荐候选。
+写入后继续执行 Pass 2；如果本轮在这里中断，resume 时必须先保留该文件并从 Pass 2 继续，不要重写成另一套 ID。
 
 格式：
 ```json
@@ -317,6 +334,7 @@ Bridge 候选的语义是“必须上 Gate1 桌面供用户看见”，不是“
 ```
 
 `_pass2_grounding_review.json` 是审阅和接地报告，不是删除列表。所有 `ideation/_pass1_forward_candidates.json` 中的 `id` 都必须在这里出现，且 `visible_to_gate` 必须为 true。
+写入后继续写 `_candidate_directions.json`；不要等到最终假设阶段才补这个文件。
 
 ### Step 3: 写入候选方向
 将候选方向写入 `ideation/_candidate_directions.json`，格式。这个文件是 Pass 1 候选 + Pass 2 接地后的 Gate1 候选池，必须覆盖 `_pass1_forward_candidates.json` 的全部候选，不允许只保留推荐项：
@@ -517,7 +535,12 @@ Gate1 和 Gate2 后必须回写 `decision` 字段：
 - 如果用户选择 Pass 2 标为 `reject_recommended` 或 `routine_risk` 的候选，先写一个重构后的 selected 版本或更新该候选的 CDR tuple，使最终进入 `hypotheses.md` 的 idea 不再是 routine；原始风险写入 `risks.md` 和 `gate_decisions.json`。
 
 ### Step 4: Gate1 - 让用户选择方向
-用 `ask_human` 工具呈现候选方向，格式：
+**当前 runtime 中不要在 T4 前半段直接调用 `ask_human`。**你要把下面内容写入
+`ideation/_gate1_selection_brief.md`，然后调用 `finish_task`；系统会进入独立的
+`T4-GATE1` gate 来询问用户。以下格式是 brief/gate 展示内容，不是本轮直接调用
+`ask_human` 的许可。
+
+候选方向展示格式：
 
 ```
 === Mechanism Family 分布 ===
@@ -557,6 +580,8 @@ Gate1 和 Gate2 后必须回写 `decision` 字段：
 ```
 
 **关键**：把 mechanism / counterfactual 字段是否为占位词、Pass2 为什么不推荐、是否需要重构都**直接暴露给用户**，而不是提前删除。用户能立刻看出哪些 idea 还没想清楚机制，也能主动选择高风险候选或要求合并。
+
+如果 `ideation/_gate1_user_selection.json` 不存在，到这里写完 `_gate1_selection_brief.md` 后必须停止并 `finish_task`。
 
 **Gate1处理逻辑**：
 - 如果用户选择某个方向 → 进入阶段A.5（Pre-mortem检查）

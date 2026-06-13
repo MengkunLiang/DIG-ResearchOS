@@ -14,6 +14,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from ..runtime.errors import ToolAccessDenied, ToolRuntimeError
+from ..literature_citations import refresh_literature_citation_maps
 from ..runtime.t3_notes_manifest import (
     build_t3_notes_manifest,
     find_queue_record_by_rank,
@@ -86,6 +87,7 @@ class SavePaperNoteTool(Tool):
             existing_complete, existing_err = _validate_note(abs_path)
             if existing_complete:
                 manifest = _build_manifest_for_source_queue(self.policy.workspace_dir, source_queue)
+                citation_maps = refresh_literature_citation_maps(self.policy.workspace_dir, write=True)
                 progress = _progress_summary(manifest)
                 return ToolResult(
                     ok=True,
@@ -105,6 +107,9 @@ class SavePaperNoteTool(Tool):
                         "status": "already_complete",
                         "validation_error": "",
                         "progress": progress,
+                        "paper_note_index_path": "literature/paper_note_index.json",
+                        "citation_map_path": "literature/citation_map.json",
+                        "mapped_bib_count": (citation_maps.get("citation_map") or {}).get("mapped_bib_count", 0),
                     },
                 )
 
@@ -116,6 +121,7 @@ class SavePaperNoteTool(Tool):
 
         ok, err = _validate_note(abs_path)
         manifest = _build_manifest_for_source_queue(self.policy.workspace_dir, source_queue)
+        citation_maps = refresh_literature_citation_maps(self.policy.workspace_dir, write=True)
         entry = _find_manifest_entry(manifest, rel_path, params.queue_rank)
         progress = _progress_summary(manifest)
         data = {
@@ -131,6 +137,9 @@ class SavePaperNoteTool(Tool):
             "manifest_path": "literature/notes_manifest.json",
             "manifest_entry": entry,
             "progress": progress,
+            "paper_note_index_path": "literature/paper_note_index.json",
+            "citation_map_path": "literature/citation_map.json",
+            "mapped_bib_count": (citation_maps.get("citation_map") or {}).get("mapped_bib_count", 0),
         }
         if not ok:
             return ToolResult(

@@ -158,13 +158,27 @@ class IdeationAgent(Agent):
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
         """初始用户消息。"""
+        gate1_selection = ctx.workspace_dir / "ideation" / "_gate1_user_selection.json"
+        if not gate1_selection.exists():
+            return prepend_resume_prefix(
+                ctx,
+                (
+                "请执行 T4 Gate1 前半段。当前尚无 ideation/_gate1_user_selection.json，"
+                "所以本轮只生成并写入 Gate1 候选池中间产物："
+                "ideation/_pass1_forward_candidates.json、ideation/_pass2_grounding_review.json、"
+                "ideation/_candidate_directions.json、ideation/_family_distribution.md、"
+                "ideation/_gate1_selection_brief.md，以及必要时的 bridge_coverage_review.json。"
+                "写完这些文件后立即调用 finish_task；不要在本轮调用 ask_human，也不要写"
+                "hypotheses.md、exp_plan.yaml、risks.md 或 gate_decisions.json。runtime 会自动进入 T4-GATE1。"
+                ),
+            )
         return prepend_resume_prefix(
             ctx,
             (
-            "请执行 T4 假设生成。基于 synthesis.md 和 seed_ideas.md，"
-            "通过两轮 Gate 与用户确认，产出 hypotheses.md + exp_plan.yaml + "
+            "请执行 T4 Gate1 后半段。必须先读取 ideation/_gate1_user_selection.json，"
+            "并根据用户已确认/合并/重构的候选方向产出 hypotheses.md + exp_plan.yaml + "
             "risks.md + idea_rationales.json + idea_scorecard.yaml + "
-            "rejected_ideas.md + gate_decisions.json + Pass1/Pass2可见候选文件。"
+            "rejected_ideas.md + gate_decisions.json。最终输出必须绑定 Gate1 selection_fingerprint。"
             ),
         )
 
@@ -845,10 +859,16 @@ def _validate_pass_stage_artifacts(ws: Path) -> tuple[bool, str | None]:
     for path, label in [
         (pass1_path, "_pass1_forward_candidates.json"),
         (pass2_path, "_pass2_grounding_review.json"),
+        (candidate_path, "_candidate_directions.json"),
         (gate_brief_path, "_gate1_selection_brief.md"),
     ]:
         if not path.exists():
-            return False, f"缺少 ideation/{label}，T4 必须暴露 Pass1/Pass2 和 Gate1 全量候选"
+            return False, (
+                f"缺少 ideation/{label}。T4 Gate1 前半段必须先按顺序写入 "
+                "_pass1_forward_candidates.json、_pass2_grounding_review.json、"
+                "_candidate_directions.json、_family_distribution.md、_gate1_selection_brief.md，"
+                "然后 finish_task 交给 T4-GATE1；不要只读取材料后等待最终阶段。"
+            )
 
     try:
         pass1_data = json.loads(pass1_path.read_text(encoding="utf-8"))

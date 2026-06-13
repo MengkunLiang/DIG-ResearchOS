@@ -15,6 +15,13 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from ..literature_citations import (
+    citation_map_key_lookup,
+    citation_entry_for_id,
+    citation_ref_for_id,
+    refresh_literature_citation_maps,
+)
+from ..literature_identity import canonical_note_id
 from ..literature_identity import is_paper_note_file
 from ..time_utils import recent_year_from
 from ..runtime.errors import ToolAccessDenied
@@ -167,8 +174,12 @@ class BuildSynthesisWorkbenchTool(Tool):
                 error="not_found",
             )
 
+        citation_bundle = refresh_literature_citation_maps(self.policy.workspace_dir, write=True)
+        citation_map = citation_bundle.get("citation_map") if isinstance(citation_bundle, dict) else {}
+        citation_lookup = citation_map_key_lookup(citation_map) if isinstance(citation_map, dict) else {}
+
         note_paths = _iter_note_paths(notes_dir)
-        notes = [_parse_note(path) for path in note_paths[: params.max_notes]]
+        notes = [_parse_note(path, citation_map=citation_map, citation_lookup=citation_lookup) for path in note_paths[: params.max_notes]]
         notes = [note for note in notes if note.get("paper_id")]
 
         # 读取 abstract-only notes（可选目录）
@@ -176,7 +187,7 @@ class BuildSynthesisWorkbenchTool(Tool):
         abstract_notes: list[dict] = []
         if abstract_dir.exists() and abstract_dir.is_dir():
             abstract_notes = [
-                _parse_note(path, evidence_level="ABSTRACT_ONLY")
+                _parse_note(path, evidence_level="ABSTRACT_ONLY", citation_map=citation_map, citation_lookup=citation_lookup)
                 for path in sorted(path for path in abstract_dir.glob("*.md") if is_paper_note_file(path))
             ]
             abstract_notes = [note for note in abstract_notes if note.get("paper_id")]
@@ -208,6 +219,17 @@ class BuildSynthesisWorkbenchTool(Tool):
             },
             "citation_quality_summary": citation_quality,
             "paper_ids": [note["paper_id"] for note in all_notes],
+            "paper_citation_refs": [note.get("citation_ref") for note in all_notes if note.get("citation_ref")],
+            "citation_ref_by_paper_id": {
+                note["paper_id"]: note.get("citation_ref") for note in all_notes if note.get("paper_id")
+            },
+            "citation_map_summary": {
+                "semantics": "paper_note_to_bibtex_citation_map",
+                "path": "literature/citation_map.json",
+                "mapped_bib_count": citation_map.get("mapped_bib_count", 0) if isinstance(citation_map, dict) else 0,
+                "note_count": citation_map.get("note_count", 0) if isinstance(citation_map, dict) else 0,
+                "usage": "Prefer citation_ref / \\cite{bibkey}; fall back to [note:<note_id>] only when no BibTeX key is mapped.",
+            },
             "method_families": families,
             "shared_assumption_candidates": _build_shared_assumptions(notes, llm_insights=insights),
             "metric_landscape_hints": _build_metric_landscape_hints(notes, comparison_rows),
@@ -265,7 +287,12 @@ class BuildSynthesisWorkbenchTool(Tool):
         )
 
 
-def _parse_note(path: Path, evidence_level: str = "FULL_TEXT") -> dict[str, Any]:
+def _parse_note(
+    path: Path,
+    evidence_level: str = "FULL_TEXT",
+    citation_map: dict[str, Any] | None = None,
+    citation_lookup: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     text = path.read_text(encoding="utf-8", errors="replace")
     title_match = re.search(r"(?m)^#\s+(.+)$", text)
     paper_id = _field(text, "ID") or path.stem
@@ -274,10 +301,24 @@ def _parse_note(path: Path, evidence_level: str = "FULL_TEXT") -> dict[str, Any]
     if "ABSTRACT-ONLY" in status_raw:
         evidence_level = "ABSTRACT_ONLY"
     citation_quality = _citation_quality_fields(text, evidence_level)
+    normalized_paper_id = _normalize_ref_id(paper_id)
+    citation_entry = (
+        citation_entry_for_id(paper_id, citation_map, citation_lookup)
+        or citation_entry_for_id(normalized_paper_id, citation_map, citation_lookup)
+        or citation_entry_for_id(path.stem, citation_map, citation_lookup)
+    )
+    citation_ref = citation_ref_for_id(paper_id, citation_map, citation_lookup)
+    if citation_ref.startswith("[note:") and citation_entry:
+        citation_ref = citation_ref_for_id(path.stem, citation_map, citation_lookup)
     return {
-        "paper_id": _normalize_ref_id(paper_id),
+        "note_id": (citation_entry or {}).get("note_id") or canonical_note_id(paper_id) or path.stem,
+        "paper_id": normalized_paper_id,
+        "raw_paper_id": paper_id,
         "source_file": path.name,
         "title": title_match.group(1).strip() if title_match else path.stem,
+        "display_label": (citation_entry or {}).get("display_label") or (title_match.group(1).strip() if title_match else path.stem),
+        "bib_key": (citation_entry or {}).get("bib_key", ""),
+        "citation_ref": citation_ref,
         "year": _extract_year(_field(text, "Venue")),
         "venue": _field(text, "Venue"),
         "status": status_raw,
@@ -532,6 +573,7 @@ def _build_method_families(
     llm_insights: LLMInsights | None = None,
 ) -> list[dict[str, Any]]:
     all_notes = notes + (abstract_notes or [])
+    citation_map = _citation_map_from_notes(all_notes)
     # Build LLM classification lookup if available
     llm_classifications: dict[str, str] = {}
     if llm_insights and llm_insights.family_classifications:
@@ -552,6 +594,7 @@ def _build_method_families(
             {
                 "name": label,
                 "paper_ids": [note["paper_id"] for note in members[:8]],
+                "citation_refs": [_ref(note, citation_map) for note in members[:8]],
                 "full_or_partial_paper_ids": [note["paper_id"] for note in full_members[:8]],
                 "abstract_only_paper_ids": [note["paper_id"] for note in abs_members[:8]],
                 "representative_titles": [note["title"] for note in full_members[:4]],
@@ -606,15 +649,17 @@ def _extract_assumptions_from_notes(notes: list[dict[str, Any]]) -> list[dict[st
 
 def _collect_llm_review_assumption_candidates(notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
+    citation_map = _citation_map_from_notes(notes)
     for note in notes:
         snippet = _shorten(note.get("limitations") or note.get("gaps") or note.get("questions"), 220)
         if not snippet:
             continue
         candidates.append(
             {
-                "assumption": f"LLM_REVIEW_REQUIRED: derive any shared assumption from {_ref(note['paper_id'])}",
+                "assumption": f"LLM_REVIEW_REQUIRED: derive any shared assumption from {_ref(note, citation_map)}",
                 "why_questionable": snippet,
                 "supporting_papers": [note["paper_id"]],
+                "supporting_citation_refs": [_ref(note, citation_map)],
                 "review_required": True,
             }
         )
@@ -960,6 +1005,7 @@ def _extract_questions_from_notes(
     """Extract paper-authored question snippets without inventing domain templates."""
     questions: list[dict[str, Any]] = []
     source_notes = gaps or notes
+    citation_map = _citation_map_from_notes(notes)
     for idx, note in enumerate(source_notes[:6], start=1):
         snippet = _shorten(note.get("questions") or note.get("gaps") or note.get("limitations"), 220)
         if not snippet:
@@ -967,9 +1013,10 @@ def _extract_questions_from_notes(
         questions.append(
             {
                 "id": f"Q_REVIEW_{idx}",
-                "question": f"LLM_REVIEW_REQUIRED: turn note gap into a research question for {_ref(note['paper_id'])}",
+                "question": f"LLM_REVIEW_REQUIRED: turn note gap into a research question for {_ref(note, citation_map)}",
                 "why_unsolved": snippet,
                 "related_papers": [note["paper_id"]],
+                "related_citation_refs": [_ref(note, citation_map)],
                 "review_required": True,
             }
         )
@@ -985,6 +1032,7 @@ def _build_mechanism_claim_clusters(all_notes: list[dict[str, Any]]) -> list[dic
     challenging.
     """
     claims: list[dict[str, Any]] = []
+    citation_map = _citation_map_from_notes(all_notes)
     for note in all_notes:
         mc = note.get("mechanism_claim") or {}
         stated = mc.get("stated_mechanism", "").strip()
@@ -995,6 +1043,7 @@ def _build_mechanism_claim_clusters(all_notes: list[dict[str, Any]]) -> list[dic
         claims.append({
             "paper_id": note["paper_id"],
             "title": note.get("title", ""),
+            "citation_ref": _ref(note, citation_map),
             "mechanism": stated,
             "evidence_type": evidence_type,
             "evidence_level": evidence_level,
@@ -1031,6 +1080,7 @@ def _build_mechanism_claim_clusters(all_notes: list[dict[str, Any]]) -> list[dic
             "mechanism": cluster["representative_mechanism"],
             "paper_count": len(papers),
             "paper_ids": [p["paper_id"] for p in papers[:6]],
+            "citation_refs": [p.get("citation_ref") for p in papers[:6] if p.get("citation_ref")],
             "full_or_partial_paper_ids": [p["paper_id"] for p in papers if p["evidence_level"] != "ABSTRACT_ONLY"][:6],
             "abstract_only_paper_ids": [p["paper_id"] for p in papers if p["evidence_level"] == "ABSTRACT_ONLY"][:6],
             "evidence_types": evidence_types,
@@ -1063,6 +1113,7 @@ def _build_weak_evidence_resource_upgrade(
         {
             "paper_id": note.get("paper_id"),
             "title": note.get("title", ""),
+            "citation_ref": note.get("citation_ref") or _ref(str(note.get("paper_id") or "")),
             "bridge_point": _shorten(note.get("bridge_point", ""), 220),
             "core_approach_view": _shorten(note.get("core_approach_view", ""), 220),
             "evidence_level": "ABSTRACT_ONLY",
@@ -1110,10 +1161,11 @@ def _first_metric_line(text: str) -> str:
 
 def _top_snippets(notes: list[dict[str, Any]], field: str, *, limit: int) -> list[str]:
     snippets = []
+    citation_map = _citation_map_from_notes(notes)
     for note in notes:
         value = _shorten(note.get(field, ""), 220)
         if value:
-            snippets.append(f"{_ref(note['paper_id'])} {value}")
+            snippets.append(f"{_ref(note, citation_map)} {value}")
         if len(snippets) >= limit:
             break
     return snippets
@@ -1136,29 +1188,30 @@ def _shorten(value: Any, limit: int) -> str:
 
 def _render_outline(workbench: dict[str, Any], missing_areas: str) -> str:
     lines = ["# Synthesis Outline", ""]
+    citation_map = workbench.get("citation_ref_by_paper_id") if isinstance(workbench.get("citation_ref_by_paper_id"), dict) else {}
     for family in workbench["method_families"]:
-        lines.append(f"- 方法家族: {family['name']} ({', '.join(_refs(family['paper_ids'][:4]))})")
+        lines.append(f"- 方法家族: {family['name']} ({', '.join(_refs(family['paper_ids'][:4], citation_map))})")
     lines.extend(["", "## Shared Assumptions"])
     for item in workbench["shared_assumption_candidates"]:
-        lines.append(f"- {item['assumption']} ({', '.join(_refs(item['supporting_papers']))})")
+        lines.append(f"- {item['assumption']} ({', '.join(_refs(item['supporting_papers'], citation_map))})")
     lines.extend(["", "## Contribution-Space Map"])
     contribution_space = workbench.get("contribution_space", {})
     for item in contribution_space.get("design_rationale_snippets", [])[:6]:
         lines.append(
-            f"- {_ref(str(item.get('paper_id') or ''))} {item.get('contribution_type')} / "
+            f"- {_ref(str(item.get('paper_id') or ''), citation_map)} {item.get('contribution_type')} / "
             f"{item.get('artifact_type')}: {item.get('rationale')}"
         )
     tensions = workbench.get("cross_paper_tensions", [])
     if tensions:
         lines.extend(["", "## Cross-Paper Tensions"])
         for item in tensions[:6]:
-            refs = ", ".join(_refs(item.get("paper_ids", [])))
+            refs = ", ".join(_refs(item.get("paper_ids", []), citation_map))
             lines.append(f"- {item.get('tension', '')} ({refs})")
     adjacent_transfers = workbench.get("adjacent_transfers", [])
     lines.extend(["", "## Adjacent Transfers / 邻接领域可迁移机制"])
     if adjacent_transfers:
         for item in adjacent_transfers[:6]:
-            refs = ", ".join(_refs(item.get("source_papers", [])))
+            refs = ", ".join(_refs(item.get("source_papers", []), citation_map))
             lines.append(f"- {item.get('mechanism', '')} ({refs}) -> {item.get('transfer_hypothesis_hint', '')}")
     else:
         lines.append("- No adjacent-transfer seed was detected; final synthesis should state whether this is a retrieval limitation.")
@@ -1177,7 +1230,7 @@ def _render_outline(workbench: dict[str, Any], missing_areas: str) -> str:
             f"metadata triage available: {weak_evidence.get('metadata_triage_available', False)}"
         )
         for item in (weak_evidence.get("abstract_only_examples") or [])[:5]:
-            lines.append(f"- {_ref(str(item.get('paper_id') or ''))} {item.get('title')} — {item.get('bridge_point')}")
+            lines.append(f"- {_ref(str(item.get('paper_id') or ''), citation_map)} {item.get('title')} — {item.get('bridge_point')}")
     lines.extend(["", "## Research Questions"])
     for item in workbench["research_question_candidates"]:
         lines.append(f"- {item['id']}: {item['question']}")
@@ -1194,6 +1247,7 @@ def _render_draft_guidance(workbench: dict[str, Any]) -> str:
     human/LLM judgment is still required.
     """
 
+    citation_map = workbench.get("citation_ref_by_paper_id") if isinstance(workbench.get("citation_ref_by_paper_id"), dict) else {}
     lines = [
         "# Synthesis Draft Guidance",
         "",
@@ -1204,7 +1258,7 @@ def _render_draft_guidance(workbench: dict[str, Any]) -> str:
         "",
     ]
     for family in workbench.get("method_families", []):
-        refs = ", ".join(_refs(family.get("paper_ids", [])[:6]))
+        refs = ", ".join(_refs(family.get("paper_ids", [])[:6], citation_map))
         lines.extend(
             [
                 f"### {family.get('name', 'Unclassified')}",
@@ -1218,30 +1272,30 @@ def _render_draft_guidance(workbench: dict[str, Any]) -> str:
 
     lines.extend(["## Candidate Assumptions To Verify", ""])
     for item in workbench.get("shared_assumption_candidates", []):
-        refs = ", ".join(_refs(item.get("supporting_papers", [])))
+        refs = ", ".join(_refs(item.get("supporting_papers", []), citation_map))
         lines.append(f"- {item.get('assumption', '')} | supporting papers: {refs}")
         if item.get("why_questionable"):
             lines.append(f"  Review question: {item['why_questionable']}")
 
     lines.extend(["", "## Candidate Research Questions To Refine", ""])
     for item in workbench.get("research_question_candidates", []):
-        refs = ", ".join(_refs(item.get("related_papers", [])))
+        refs = ", ".join(_refs(item.get("related_papers", []), citation_map))
         lines.append(f"- {item.get('id', 'Q?')}: {item.get('question', '')} | related papers: {refs}")
 
     lines.extend(["", "## Contribution-Space And Tensions To Review", ""])
     contribution_space = workbench.get("contribution_space", {})
     for item in contribution_space.get("design_rationale_snippets", [])[:8]:
         lines.append(
-            f"- {_ref(str(item.get('paper_id') or ''))} {item.get('contribution_type')} / "
+            f"- {_ref(str(item.get('paper_id') or ''), citation_map)} {item.get('contribution_type')} / "
             f"{item.get('artifact_type')}: {item.get('rationale')}"
         )
     for item in workbench.get("cross_paper_tensions", [])[:8]:
-        refs = ", ".join(_refs(item.get("paper_ids", [])))
+        refs = ", ".join(_refs(item.get("paper_ids", []), citation_map))
         lines.append(f"- Tension: {item.get('tension', '')} | papers: {refs}")
 
     lines.extend(["", "## Adjacent Transfers To Review", ""])
     for item in workbench.get("adjacent_transfers", [])[:8]:
-        refs = ", ".join(_refs(item.get("source_papers", [])))
+        refs = ", ".join(_refs(item.get("source_papers", []), citation_map))
         lines.append(
             f"- Transfer seed: {item.get('mechanism', '')} | source papers: {refs} | "
             f"bridge: {item.get('transfer_hypothesis_hint', '')}"
@@ -1261,7 +1315,7 @@ def _render_draft_guidance(workbench: dict[str, Any]) -> str:
         )
         for item in (weak_evidence.get("abstract_only_examples") or [])[:8]:
             lines.append(
-                f"- {_ref(str(item.get('paper_id') or ''))} {item.get('title')} | "
+                f"- {_ref(str(item.get('paper_id') or ''), citation_map)} {item.get('title')} | "
                 f"allowed use: {item.get('allowed_use')}"
             )
         if weak_evidence.get("metadata_triage_excerpt"):
@@ -1295,10 +1349,42 @@ def _render_synthesis(workbench: dict[str, Any], missing_areas: str) -> str:
     return guidance
 
 
-def _ref(paper_id: str) -> str:
-    normalized = _normalize_ref_id(paper_id)
+def _citation_map_from_notes(notes: list[dict[str, Any]]) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for note in notes:
+        if not isinstance(note, dict):
+            continue
+        ref = str(note.get("citation_ref") or "").strip()
+        if not ref:
+            continue
+        for key in {
+            str(note.get("note_id") or ""),
+            str(note.get("paper_id") or ""),
+            str(note.get("raw_paper_id") or ""),
+            Path(str(note.get("source_file") or "")).stem,
+        }:
+            normalized = _normalize_ref_id(key)
+            if normalized:
+                mapping[normalized] = ref
+            if key:
+                mapping[key] = ref
+    return mapping
+
+
+def _ref(paper_id: str | dict[str, Any], citation_map: dict[str, str] | None = None) -> str:
+    if isinstance(paper_id, dict):
+        direct = str(paper_id.get("citation_ref") or "").strip()
+        if direct:
+            return direct
+        paper_id = str(paper_id.get("paper_id") or paper_id.get("raw_paper_id") or "")
+    raw = str(paper_id or "")
+    normalized = _normalize_ref_id(raw)
+    if citation_map:
+        direct = citation_map.get(raw) or citation_map.get(normalized)
+        if direct:
+            return direct
     return f"[note:{normalized}]" if normalized else ""
 
 
-def _refs(paper_ids: list[str]) -> list[str]:
-    return [_ref(paper_id) for paper_id in paper_ids if paper_id]
+def _refs(paper_ids: list[str], citation_map: dict[str, str] | None = None) -> list[str]:
+    return [_ref(paper_id, citation_map) for paper_id in paper_ids if paper_id]
