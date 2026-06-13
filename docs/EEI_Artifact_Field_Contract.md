@@ -624,7 +624,6 @@ Required fields：
 | `current_state` | string | allowed completion state |
 | `accepted` | boolean | must be `false` |
 | `dry_run` | boolean | `mock_dry_run` 可为 `true`；其他 executor 必须为 `false` |
-| `mock_only` | boolean | `mock_dry_run` 可为 `true`；其他 executor 必须为 `false` |
 | `updated_at` | string | timestamp |
 
 Optional fields：
