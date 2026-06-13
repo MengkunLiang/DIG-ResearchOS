@@ -1,23 +1,24 @@
-# EEI Artifact Schema Contract
+# EEI Artifact Field Contract
 
-本文档基于 `EEI_codex_proposal_v02.md` 和 `EEI_Schema_version_strategy.md`，规定 EEI Codex 阶段会从 `external_executor/` 读取和写回的 artifact schema contract。
+本文档基于 `EEI_codex_proposal_v02.md`，规定 EEI 阶段会从 `external_executor/` 读取和写回的 artifact 字段设计策略。
 
-本文档采用 ResearchOS 轻量 schema contract 表达方式：列出文件语义、生产者、消费者、required/optional 字段、枚举、路径规则和 validation 规则。后续可以把这些 contract 映射为 JSON Schema draft，但 MVP 不要求直接使用完整 JSON Schema draft。
+本文档采用 ResearchOS 轻量字段契约表达方式：列出文件语义、生产者、消费者、required/optional 字段、枚举、路径规则和 validation 规则。
+MVP 不实现完整 schema version management。
 
 ## 1. 通用规则
 
-### 1.1 版本和语义字段
+### 1.1 语义字段
 
-除纯文本说明文件和二进制/任意格式 raw artifact 外，EEI JSON/JSONL 文件必须包含 schema version。
+除纯文本说明文件和二进制/任意格式 raw artifact 外，EEI JSON/JSONL 文件应包含 `semantics` 字段。MVP validator 不基于 `schema_version` 做分派、迁移或兼容矩阵判断。
 
-统一字段：
+通用字段：
 
 | 字段 | 类型 | Required | 规则 |
 | --- | --- | --- | --- |
-| `schema_version` | string | yes | 初始版本为 `"1.0.0"`，采用 SemVer |
 | `semantics` | string | yes | 必须匹配文件类型 |
 
-新写出的 EEI Codex JSON artifacts 缺少 `schema_version` 必须 reject。旧 workspace 可按 legacy 兼容策略读取，但必须在 report 中标记。
+MVP 不因缺少 `schema_version` 单独 reject；
+字段结构、`semantics`、required fields、枚举、hash、allowed paths 和 evidence integrity 是 reject 依据。
 
 ### 1.2 时间、路径和 hash
 
@@ -33,7 +34,7 @@
 
 | 枚举 | 允许值 |
 | --- | --- |
-| `executor` | `codex_cli` |
+| `executor` | `mock_dry_run`, `codex_cli`, `claude_code_window`, `manual` |
 | `path_permission` | `rw`, `ro`, `no` |
 | `allowed_paths_enforcement` | `audit`, future `sandbox` |
 | `policy` | `require_confirmation`, `allow`, `deny` |
@@ -61,9 +62,6 @@
 
 建议错误码：
 
-- `SCHEMA_VERSION_MISSING`
-- `SCHEMA_VERSION_INVALID`
-- `SCHEMA_VERSION_UNSUPPORTED`
 - `SCHEMA_SEMANTICS_MISMATCH`
 - `REQUIRED_FIELD_MISSING`
 - `INVALID_ENUM_VALUE`
@@ -81,7 +79,7 @@
 
 生产者：ResearchOS `T5-HANDOFF`
 
-消费者：Codex CLI、`T5-EXTERNAL-INVOKE`、`T5-EXTERNAL-WAIT`、T7 context
+消费者：selected executor、`T5-EXTERNAL-INVOKE`、`T5-EXTERNAL-WAIT`、T7 context
 
 语义：主实验契约。
 
@@ -89,9 +87,8 @@ Required fields：
 
 | 字段 | 类型 | 规则 |
 | --- | --- | --- |
-| `schema_version` | string | 推荐必需；旧 workspace 可 legacy read |
 | `semantics` | string | 推荐 `external_executor_handoff_pack` |
-| `executor` 或 `selected_executor` | string | 如果已 patch，应为 `codex_cli` |
+| `executor` 或 `selected_executor` | string | 如果已 patch，应属于 executor 枚举 |
 | `execution_mode` | string | 应表示真实外部执行 |
 | `metrics` | array | 需要执行和回填的 metric 需求 |
 | `expected_outputs` | array/object | 必需输出说明 |
@@ -110,7 +107,6 @@ Optional fields：
 Validation：
 
 - 文件存在且 JSON 可解析。
-- 如果有 `schema_version`，必须是 supported version。
 - executor mode 与 `executor_selection.json` 不得冲突。
 - required outputs 必须覆盖 result/status/manifest/raw/config/log。
 
@@ -124,9 +120,8 @@ Required fields：
 
 | 字段 | 类型 | 规则 |
 | --- | --- | --- |
-| `schema_version` | string | 建议必需，新写文件必须有 |
 | `semantics` | string | `external_executor_selection` |
-| `selected_executor` | string | enum: `codex_cli` |
+| `selected_executor` | string | enum: executor |
 | `next_state` | string | `T5-EXTERNAL-INVOKE` |
 | `selected_by` | string | `human`, `cli`, `config`, `runtime` 之一 |
 | `selected_at` | string | timestamp |
@@ -139,23 +134,22 @@ Optional fields：
 
 Validation：
 
-- `selected_executor` 必须为 `codex_cli` 才进入 Codex EEI。
+- `selected_executor` 必须属于 executor 枚举才进入 EEI。
 - `next_state` 必须是 `T5-EXTERNAL-INVOKE`。
 
 ### 2.3 `external_executor/input_manifest.json`
 
 生产者：ResearchOS `T5-HANDOFF`
 
-消费者：Codex CLI、audit context
+消费者：selected executor、audit context
 
 Required fields：
 
 | 字段 | 类型 | 规则 |
 | --- | --- | --- |
-| `schema_version` | string | 建议必需 |
 | `semantics` | string | `external_executor_input_manifest` |
 | `inputs` | array | 输入 artifact 列表 |
-| `required_executor_outputs` | array | Codex 必须写出的文件或目录 |
+| `required_executor_outputs` | array | selected executor 必须写出的文件或目录 |
 
 `inputs[]` item：
 
@@ -177,18 +171,17 @@ Validation：
 
 生产者：ResearchOS `T5-HANDOFF`
 
-消费者：Codex CLI、`T5-EXTERNAL-WAIT`
+消费者：selected executor、`T5-EXTERNAL-WAIT`
 
 Required fields：
 
 | 字段 | 类型 | 规则 |
 | --- | --- | --- |
-| `schema_version` | string | `"1.0.0"` |
 | `semantics` | string | `external_executor_expected_outputs_schema` |
 | `required_outputs` | array | 必需输出声明 |
-| `artifact_schema_versions` | object | result/status/manifest 版本 |
+| `artifact_contracts` | object | result/status/manifest 字段契约摘要 |
 
-`artifact_schema_versions` required keys：
+`artifact_contracts` recommended keys：
 
 - `result_pack`
 - `executor_status`
@@ -202,19 +195,17 @@ Required fields：
 | `kind` | string | yes | artifact kind |
 | `required` | boolean | yes | 是否必需 |
 | `min_count` | integer | no | 目录类输出最小数量 |
-| `schema_version` | string | no | 该输出期望版本 |
 
 Validation：
 
 - 必须声明 `result_pack.json`、`executor_status.json`、`run_manifest.json`。
 - 必须声明 `raw_results/`、`configs/`、`logs/`。
-- 声明版本与实际输出不一致时，wait validator 必须 reject 或给出明确 warning；MVP 建议 reject。
 
 ### 2.5 `external_executor/allowed_paths.txt`
 
 生产者：ResearchOS `T5-HANDOFF`
 
-消费者：Codex CLI、`T5-EXTERNAL-INVOKE`、`T5-EXTERNAL-WAIT`
+消费者：selected executor、`T5-EXTERNAL-INVOKE`、`T5-EXTERNAL-WAIT`
 
 格式：纯文本，每行一条规则。
 
@@ -248,13 +239,13 @@ Validation：
 
 生产者：ResearchOS `T5-HANDOFF`
 
-消费者：Codex CLI
+消费者：selected executor
 
 格式：Markdown。
 
 Required content：
 
-- 指明 executor 是 `codex_cli`。
+- 指明 selected executor。
 - 指明必须遵守 `allowed_paths.txt`。
 - 指明必须写出 result/status/manifest/raw/config/log。
 - 指明 `executor_status.json.accepted=false`。
@@ -269,7 +260,7 @@ Validation：
 
 生产者：ResearchOS `T5-HANDOFF`
 
-消费者：Codex CLI
+消费者：selected executor
 
 格式：Markdown。
 
@@ -279,7 +270,7 @@ Required content：
 - 指向 `expected_outputs_schema.json`。
 - 指向 `allowed_paths.txt`。
 - 指明输出文件路径。
-- 指明 schema version 要求。
+- 指明字段契约、required fields 和枚举要求。
 - 指明 hash/source artifact 要求。
 
 Validation：
@@ -291,13 +282,12 @@ Validation：
 
 生产者：ResearchOS `T5-HANDOFF`，可由 ResearchOS 后续 patch
 
-消费者：Codex CLI、monitor、resume
+消费者：selected executor、monitor、resume
 
 Required fields：
 
 | 字段 | 类型 | 规则 |
 | --- | --- | --- |
-| `schema_version` | string | 建议必需 |
 | `semantics` | string | `external_executor_job_state` |
 | `current_state` | string | lifecycle state |
 | `allowed_states` | array | 状态枚举 |
@@ -322,7 +312,7 @@ Validation：
 
 生产者：ResearchOS `T5-HANDOFF`
 
-消费者：用户、Codex CLI
+消费者：用户、selected executor
 
 格式：Markdown。
 
@@ -342,10 +332,9 @@ Required fields：
 
 | 字段 | 类型 | 规则 |
 | --- | --- | --- |
-| `schema_version` | string | `"1.0.0"` |
 | `semantics` | string | `external_executor_invocation` |
 | `invocation_id` | string | 稳定唯一 id |
-| `executor` | string | `codex_cli` |
+| `executor` | string | enum: executor |
 | `cwd` | string | 本次运行 workspace 实例目录 |
 | `command` | object | command summary |
 | `prompt` | object | prompt summary |
@@ -423,8 +412,7 @@ Validation：
 
 | 字段 | 类型 | 规则 |
 | --- | --- | --- |
-| `schema_version` | string | `"1.0.0"` |
-| `event_schema_version` | string | `"1.0.0"` |
+| `event_contract` | string | optional | event 字段契约标识 |
 | `event_id` | string | stable id |
 | `invocation_id` | string | 对应 invocation |
 | `event_type` | string | event enum |
@@ -461,10 +449,9 @@ Required fields：
 
 | 字段 | 类型 | 规则 |
 | --- | --- | --- |
-| `schema_version` | string | `"1.0.0"` |
 | `semantics` | string | `external_executor_heartbeat` |
 | `invocation_id` | string | 对应 invocation |
-| `executor` | string | `codex_cli` |
+| `executor` | string | enum: executor |
 | `state` | string | heartbeat state enum |
 | `pid` | integer/null | 可用时写 pid |
 | `started_at` | string | timestamp |
@@ -496,13 +483,12 @@ Required fields：
 
 | 字段 | 类型 | 规则 |
 | --- | --- | --- |
-| `schema_version` | string | `"1.0.0"` |
 | `semantics` | string | `external_executor_wait_acceptance_report` |
 | `accepted_at` | string | timestamp |
-| `executor` | string | `codex_cli` |
+| `executor` | string | enum: executor |
 | `invocation_id` | string/null | 若存在 invocation 则写入 |
 | `validated_files` | array | 已校验文件 |
-| `schema_versions` | object | 实际版本摘要 |
+| `artifact_contracts_checked` | object | 已校验字段契约摘要 |
 | `warnings` | array | warning objects |
 | `next_state` | string | `T7-INGEST` |
 
@@ -535,7 +521,7 @@ Required content：
 external_executor/wait_rejection_report.json
 ```
 
-如果实现 sidecar，schema 见下一节。
+如果实现 sidecar，字段契约见下一节。
 
 ### 3.6 `external_executor/wait_rejection_report.json`
 
@@ -549,10 +535,9 @@ Required fields：
 
 | 字段 | 类型 | 规则 |
 | --- | --- | --- |
-| `schema_version` | string | `"1.0.0"` |
 | `semantics` | string | `external_executor_wait_rejection_report` |
 | `rejected_at` | string | timestamp |
-| `executor` | string | `codex_cli` |
+| `executor` | string | enum: executor |
 | `invocation_id` | string/null | 若存在 invocation 则写入 |
 | `recoverable` | boolean | 通常为 true |
 | `errors` | array | error objects |
@@ -560,11 +545,11 @@ Required fields：
 | `required_files_missing` | array | 缺失文件列表 |
 | `next_action_hint` | string | 修复建议 |
 
-## 4. Codex 写回文件
+## 4. Executor 写回文件
 
 ### 4.1 `external_executor/result_pack.json`
 
-生产者：Codex CLI
+生产者：selected executor
 
 消费者：`T5-EXTERNAL-WAIT`、`T7-INGEST`、`T7-AUDIT`
 
@@ -572,12 +557,11 @@ Required fields：
 
 | 字段 | 类型 | 规则 |
 | --- | --- | --- |
-| `schema_version` | string | `"1.0.0"` |
 | `semantics` | string | `external_executor_result_pack` |
 | `run_id` | string | stable id |
-| `executor` | string | `codex_cli` |
-| `dry_run` | boolean | `false` |
-| `mock_only` | boolean | `false` |
+| `executor` | string | enum: executor |
+| `dry_run` | boolean | `mock_dry_run` 可为 `true`；其他 executor 必须为 `false` |
+| `mock_only` | boolean | `mock_dry_run` 可为 `true`；其他 executor 必须为 `false` |
 | `evidence_grade` | string | recommended `audited_external` or `external_pending_audit` |
 | `baseline_coverage` | object | required |
 | `metrics` | array | non-empty |
@@ -622,12 +606,12 @@ Validation：
 - 每个 `source_artifact` 必须存在于 `artifacts` 或 run manifest artifacts。
 - artifact path 必须允许。
 - sha256 必须匹配。
-- `dry_run=true` 或 `mock_only=true` 在 Codex 真实路径必须 reject。
+- `dry_run=true` 或 `mock_only=true` 仅允许 `mock_dry_run`，其他 executor 必须 reject。
 - 只有自然语言 summary 必须 reject。
 
 ### 4.2 `external_executor/executor_status.json`
 
-生产者：Codex CLI
+生产者：selected executor
 
 消费者：`T5-EXTERNAL-WAIT`
 
@@ -635,13 +619,12 @@ Required fields：
 
 | 字段 | 类型 | 规则 |
 | --- | --- | --- |
-| `schema_version` | string | `"1.0.0"` |
 | `semantics` | string | `external_executor_status` |
-| `executor` | string | `codex_cli` |
+| `executor` | string | enum: executor |
 | `current_state` | string | allowed completion state |
 | `accepted` | boolean | must be `false` |
-| `dry_run` | boolean | `false` |
-| `mock_only` | boolean | `false` |
+| `dry_run` | boolean | `mock_dry_run` 可为 `true`；其他 executor 必须为 `false` |
+| `mock_only` | boolean | `mock_dry_run` 可为 `true`；其他 executor 必须为 `false` |
 | `updated_at` | string | timestamp |
 
 Optional fields：
@@ -669,11 +652,11 @@ Validation：
 
 - `accepted=true` must reject.
 - `PARTIAL_RESULTS_READY` must reject unless explicit future config enables partial results.
-- `executor` must be `codex_cli`.
+- `executor` must belong to executor enum.
 
 ### 4.3 `external_executor/run_manifest.json`
 
-生产者：Codex CLI
+生产者：selected executor
 
 消费者：`T5-EXTERNAL-WAIT`、`T7-AUDIT`
 
@@ -681,9 +664,8 @@ Required fields：
 
 | 字段 | 类型 | 规则 |
 | --- | --- | --- |
-| `schema_version` | string | `"1.0.0"` |
 | `semantics` | string | `external_executor_run_manifest` |
-| `executor` | string | `codex_cli` |
+| `executor` | string | enum: executor |
 | `run_id` | string | stable id |
 | `runs` | array | non-empty |
 | `artifacts` | array | non-empty |
@@ -721,7 +703,7 @@ Validation：
 
 ### 4.4 `external_executor/raw_results/*`
 
-生产者：Codex CLI
+生产者：selected executor
 
 消费者：`T5-EXTERNAL-WAIT`、T7 ingest/audit
 
@@ -738,14 +720,13 @@ Contract：
 
 | 字段 | 类型 | Required |
 | --- | --- | --- |
-| `schema_version` | string | recommended |
 | `semantics` | string | recommended |
 | `run_id` | string | recommended |
 | `records` | array/object | yes |
 
 ### 4.5 `external_executor/configs/*`
 
-生产者：Codex CLI
+生产者：selected executor
 
 消费者：wait/audit
 
@@ -760,14 +741,14 @@ Contract：
 
 ### 4.6 `external_executor/logs/*`
 
-生产者：Codex CLI 和 ResearchOS invocation adapter
+生产者：selected executor 和 ResearchOS invocation adapter
 
 消费者：wait/audit/debug
 
 Contract：
 
 - 至少一个实验执行 log 必须存在。
-- `codex_cli_stdout.log` 和 `codex_cli_stderr.log` 由 ResearchOS 写入或记录等价路径。
+- `<executor>_stdout.log` 和 `<executor>_stderr.log` 由 ResearchOS 写入或记录等价路径。
 - logs 必须被 run manifest 或 invocation summary 引用。
 - logs 可截断，但必须记录 truncation notice。
 - logs 不能作为唯一 evidence source。
@@ -789,7 +770,7 @@ resume 至少读取：
 
 Resume validation：
 
-- selection 为 `codex_cli` 且 invocation 缺失时，进入 `T5-EXTERNAL-INVOKE`。
+- selection 属于 executor 枚举且 invocation 缺失时，进入 `T5-EXTERNAL-INVOKE`。
 - invocation 存在且 heartbeat running 时，不重复启动。
 - invocation failed/timeout 但 result/status/manifest 完整时，进入 wait validation。
 - wait acceptance 存在时，可进入或继续 `T7-INGEST`。
@@ -817,7 +798,7 @@ P1 建议结构化：
 - `handoff_pack.json`
 - `job_state.json`
 - `wait_rejection_report.json`
-- raw result JSON schema recommendation
+- raw result JSON field recommendation
 
 P2 只做存在性/模板检查：
 
@@ -828,11 +809,10 @@ P2 只做存在性/模板检查：
 
 ## 7. 测试清单
 
-Schema contract tests:
+Field contract tests:
 
-- 每个 P0 JSON 文件缺少 `schema_version` 时 reject。
 - 每个 P0 JSON 文件 `semantics` 不匹配时 reject。
-- `executor_selection.selected_executor != codex_cli` 时不进入 Codex EEI。
+- `executor_selection.selected_executor` 不属于 executor 枚举时不进入 EEI。
 - `executor_selection.next_state != T5-EXTERNAL-INVOKE` 时 reject。
 - `allowed_paths.txt` 中 invalid permission reject。
 - `allowed_paths.txt` 中 path traversal reject。
@@ -852,11 +832,8 @@ Schema contract tests:
 
 | ID | 待确认项 | 建议 |
 | --- | --- | --- |
-| A-01 | `handoff_pack.json` 是否强制带 `schema_version` | 建议新写强制，旧 workspace legacy read |
-| A-02 | `executor_selection.json` 是否强制带 `schema_version` | 建议强制 |
-| A-03 | `input_manifest.json` 是否强制带 `schema_version` | 建议强制，但优先级低于 P0 |
 | A-04 | `wait_rejection_report.json` 是否作为 MVP 必需 sidecar | 建议 P1，便于测试和 CLI |
-| A-05 | raw result JSON 是否强制统一 schema | MVP 不强制，只要求 machine-readable 和 manifest 引用 |
+| A-05 | raw result JSON 是否强制统一字段结构 | MVP 不强制，只要求 machine-readable 和 manifest 引用 |
 | A-06 | config 文件是否强制 JSON/YAML | MVP 不强制 |
 | A-07 | `status` 是否兼容旧字段 | 新写使用 `current_state`，旧读兼容 `status` |
 | A-08 | JSONL unknown event type 是 warning 还是 reject | MVP warning，关键事件缺失再 reject |

@@ -112,16 +112,29 @@ Codex CLI 必须写回：
 
 `executor_invocation_log.jsonl` 与现有 `executor_events.jsonl` 在 MVP 中保持分离。后续如事件模型稳定，再考虑统一。
 
-### 3.4 Schema version
+### 3.4 Schema version and field contract
 
-v0.2 确认：本阶段至少需要在以下文件中加入或保留 `schema_version`：
+v0.2 调整：MVP 不实现完整 schema version management。当前阶段优先落地 artifact 字段契约和字段级 validator。
 
-- `result_pack.json`
-- `executor_status.json`
-- `run_manifest.json`
-- `executor_invocation.json`
+MVP 必须明确并校验以下内容：
 
-如果旧文件暂时没有版本字段，MVP validator 可以允许兼容读取，但新写出的 EEI Codex invocation artifacts 必须带版本字段。
+- 每个 EEI artifact 的字段清单。
+- required / optional 规则。
+- 枚举值。
+- path、sha256、source artifact、status、accepted、dry/mock flags 等关键语义。
+- rejection error code 和 remediation hint。
+
+MVP 可以在新写出的 ResearchOS artifacts 中写入固定占位字段：
+
+```json
+{
+  "schema_version": "1.0.0"
+}
+```
+
+但 MVP validator 不需要实现 schema registry、SemVer 兼容矩阵、migration、legacy workspace 自动识别、newer minor warning 或 unknown major 分派。`schema_version` 在 MVP 中作为信息字段和未来扩展钩子；是否 reject 应主要由字段契约、`semantics`、required fields、枚举、hash、allowed paths 和 evidence integrity 决定。
+
+Codex 写回文件如果缺少 `schema_version`，MVP 可以 warning；如果字段结构不符合 artifact contract，则必须 reject。
 
 ## 4. Codex CLI 调用需求
 
@@ -249,7 +262,7 @@ MVP 配置项：
 | `dependency_install_policy` | `require_confirmation` |
 | `allowed_paths_enforcement` | MVP 为 `audit`，后续增强为 sandbox |
 | `log_redaction_policy` | 必需，至少脱敏 tokens/secrets/credential-like values |
-| `schema_version` | 新写出的 invocation/result/status/manifest 必须带版本 |
+| `schema_version` | MVP 可写固定 `"1.0.0"` 作为未来扩展钩子；不实现完整版本管理 |
 
 说明：`network_policy=require_confirmation` 与 `dependency_install_policy=require_confirmation` 是 policy 记录需求。具体实现可以通过项目配置、全局配置或 gate 配置确定这些策略；`T5-EXTERNAL-INVOKE` 按已记录策略启动 Codex CLI。
 
@@ -552,7 +565,8 @@ Future tests：
 - 定义 `executor_invocation.json` schema。
 - 定义 `executor_invocation_log.jsonl` event schema。
 - 定义 `heartbeat.json` managed Codex 字段。
-- 确认新写出的 result/status/manifest/invocation schema version。
+- 定义 result/status/manifest/invocation 的字段契约、required/optional 和枚举。
+- 保留固定 `schema_version="1.0.0"` 信息字段，但不实现版本分派、migration 或兼容矩阵。
 
 ### 第二阶段：Codex adapter MVP
 
@@ -611,4 +625,4 @@ Future tests：
 | invocation log 长期可审计，MVP 与 executor_events 分离 | 用户补充确认 2.5 / C-13 |
 | large raw/log MVP 记录 sha256/bytes，stdout/stderr 可截断并声明 | C-11 |
 | 重新选择 executor 或 rerun 时保留旧 artifacts 或 supersession event | C-12 |
-| schema version 至少覆盖 result/status/manifest/invocation | C-14 |
+| MVP 暂不实现完整 schema version management，优先实现 artifact 字段契约和字段级 validator | Prompt7 需求调整 |
