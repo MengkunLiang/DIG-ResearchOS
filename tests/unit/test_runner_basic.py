@@ -55,11 +55,15 @@ def _stable_json_fingerprint(payload):
 
 def _write_gate1_selection(workspace, *, option_id="select_or_reframe", captured=None):
     captured = captured or {"selection": "D1"}
+    from researchos.orchestration.state_machine import _t4_gate1_candidate_pool_fingerprints
+
+    candidate_pool_fingerprints = _t4_gate1_candidate_pool_fingerprints(workspace)
     fingerprint_payload = {
         "semantics": "t4_gate1_selection_fingerprint",
         "gate_id": "t4_gate1_selection_gate",
         "selected_option": option_id,
         "captured": captured,
+        "candidate_pool_fingerprints": candidate_pool_fingerprints,
     }
     selection_fingerprint = _stable_json_fingerprint(fingerprint_payload)
     selection_path = workspace / "ideation" / "_gate1_user_selection.json"
@@ -72,6 +76,7 @@ def _write_gate1_selection(workspace, *, option_id="select_or_reframe", captured
                 "gate_id": "t4_gate1_selection_gate",
                 "selected_option": option_id,
                 "captured": captured,
+                "candidate_pool_fingerprints": candidate_pool_fingerprints,
                 "selection_fingerprint": selection_fingerprint,
                 "next_task": "T4",
             },
@@ -436,6 +441,38 @@ def _write_t4_stage_visibility_artifacts(ideation_dir):
             ensure_ascii=False,
             indent=2,
         ),
+        encoding="utf-8",
+    )
+    (ideation_dir / "_gate1_candidate_cards.md").write_text(
+        "# T4 Gate1 Candidate Cards\n\n"
+        "## 排序 / 推荐动作\n"
+        "- Rank 1: D1 select; Rank 2: D1b revise; Rank 3: S1 merge; Rank 4: D2 reject.\n\n"
+        "## D1: 测试假设依据\n"
+        "- **Technical mechanism**: selective mechanism changes sparse representations; prediction improves accuracy; counterfactual no change after disabling it.\n"
+        "- **Practical / managerial / business implication**: managers can focus compute and review resources on high-risk subgroups instead of increasing global model cost.\n"
+        "- **Scores + score rationale**: novelty=4 feasibility=4 impact=4 evaluability=5 differentiation=3 cost=5 contribution_strength=4 because the pilot is cheap and measurable.\n"
+        "- **Core paper dependencies**: Test Paper and synthesis.md Q1 support the target constraint.\n"
+        "- **Risk / kill criteria**: stop if pilot matches baseline.\n\n"
+        "## D1b: 基于证据的替代候选\n"
+        "- **Technical mechanism**: failure-mode intervention changes subgroup errors.\n"
+        "- **Practical / managerial / business implication**: turns observed failures into an operational improvement workflow.\n"
+        "- **Scores + score rationale**: novelty=3 feasibility=3 impact=3 evaluability=3 differentiation=3 cost=4 contribution_strength=2 because the mechanism needs narrowing.\n"
+        "- **Core paper dependencies**: Failure Paper.\n"
+        "- **Risk / kill criteria**: stop if no single counterfactual can be defined.\n\n"
+        "## D2: 被淘汰方向\n"
+        "- **Technical mechanism**: direct transfer reuses source representation bias.\n"
+        "- **Practical / managerial / business implication**: low research value if it is only scenario migration.\n"
+        "- **Scores + score rationale**: novelty=2 feasibility=4 impact=2 evaluability=2 differentiation=2 cost=4 contribution_strength=1 because it is too close to prior work.\n"
+        "- **Core paper dependencies**: Nearby Paper.\n"
+        "- **Risk / kill criteria**: reject if only application setting changes.\n\n"
+        "## S1: 反向操作补充候选\n"
+        "- **Technical mechanism**: removing augmentation tests whether it is necessary.\n"
+        "- **Practical / managerial / business implication**: avoids paying maintenance cost for ineffective enhancements.\n"
+        "- **Scores + score rationale**: novelty=3 feasibility=5 impact=2 evaluability=5 differentiation=3 cost=5 contribution_strength=2 because it is useful as an ablation.\n"
+        "- **Core paper dependencies**: Ablation Paper.\n"
+        "- **Risk / kill criteria**: stop if it is only a routine ablation.\n\n"
+        "Machine-readable artifacts: `ideation/_candidate_directions.json`, "
+        "`ideation/_pass2_grounding_review.json`, `ideation/_pass1_forward_candidates.json`.\n",
         encoding="utf-8",
     )
     (ideation_dir / "_gate1_selection_brief.md").write_text(
@@ -988,8 +1025,27 @@ def write_valid_t4_artifacts(workspace):
     ideation_dir = workspace / "ideation"
     ideation_dir.mkdir(exist_ok=True)
     (ideation_dir / "hypotheses.md").write_text(
-        "# 研究假设\n\n## H1: 假设1\n\n"
-        + "这是一个可验证的研究假设，包含明确指标、背景、预期结果和风险。" * 40
+        "# 研究假设\n\n"
+        "## H1: 假设1\n\n"
+        "### 背景\n"
+        "这是一个可验证的研究假设，包含明确指标、背景、预期结果和风险。输入材料共同指向目标机制在预算内可验证，且现有方法在目标约束下存在缺口。\n\n"
+        "### 生成依据\n"
+        "- **文献观察**: Test Paper 指出现有方法在目标约束下存在缺口。\n"
+        "- **前向推理 / 问题重构 / 类比依据**: 统一机制默认设定无法解释稀疏用户子群表现，因此需要选择性机制调节。\n"
+        "- **研究缺口/覆盖提示**: synthesis.md Q1 和 missing_areas.md 均提示需要机制验证。\n"
+        "- **评分依据**: novelty=4、feasibility=4、impact=4、evaluability=5、differentiation=3、cost=5、contribution_strength=4；入选原因是指标和 baseline 清楚且预算内。\n"
+        "- **核心论文依赖**: Test Paper / synthesis.md Q1；claim_used 是现有方法在目标约束下存在缺口。\n"
+        "- **置信度**: Medium。\n\n"
+        "### 技术机制\n"
+        "通过正则化梯度范数改善稀疏用户嵌入质量；prediction 是稀疏用户子群 Recall@20 提升；counterfactual 是选择性噪声关闭后指标无显著差异。\n\n"
+        "### 现实 / 管理 / 商业含义\n"
+        "如果成立，团队可以把算力和调参资源集中给高风险子群，而不是全量增加模型复杂度，从而降低部署和维护成本。\n\n"
+        "### 核心假设\n"
+        "目标机制可以在预算内改善可观测指标。\n\n"
+        "### 预期结果\n"
+        "同等成本下 accuracy 或 Recall@20 相对 baseline1 提升。\n\n"
+        "### 风险 / 证伪 / 停止条件\n"
+        "如果 pilot 接近 baseline 或不优于 baseline，则停止该方向。\n"
     )
     (ideation_dir / "exp_plan.yaml").write_text(
         yaml.dump(
@@ -1452,6 +1508,25 @@ def write_valid_t4_artifacts(workspace):
         "Both families are distinct.\n"
     )
     _write_t4_stage_visibility_artifacts(ideation_dir)
+    (ideation_dir / "selected_idea_brief.md").write_text(
+        "# Selected Idea Brief\n\n"
+        "## Gate1 用户选择\n"
+        "- **Selected option**: select_or_reframe\n"
+        "- **Captured feedback**: 确认 D1。\n"
+        "- **Selection fingerprint**: fixture\n\n"
+        "## Final selected idea\n"
+        "- **Idea IDs**: D1\n"
+        "- **One-line hypothesis**: 目标机制可以在预算内改善可观测指标。\n"
+        "- **Technical mechanism**: 通过正则化梯度范数改善稀疏用户嵌入质量；prediction 是稀疏用户子群 Recall@20 提升；counterfactual 是选择性噪声关闭后指标无显著差异。\n"
+        "- **Practical / managerial / business implication**: 团队可以把算力和调参资源集中给高风险子群，减少全量复杂化成本。\n"
+        "- **Core paper dependencies**: Test Paper / synthesis.md Q1。\n"
+        "- **Score rationale**: novelty=4、feasibility=4、impact=4、evaluability=5、differentiation=3、cost=5。\n\n"
+        "## Hypothesis scope\n"
+        "- **H1**: 验证 D1 的选择性机制调节。\n\n"
+        "## Rejected, deferred, or merged alternatives\n"
+        "- D1b 暂缓；D2 拒绝；S1 可作为消融，详见 rejected_ideas.md。\n",
+        encoding="utf-8",
+    )
     (ideation_dir / "gate_decisions.json").write_text(
         json.dumps(
             {
@@ -2739,11 +2814,12 @@ async def test_t4_resume_prefinalize_skips_llm_when_artifacts_validate(tmp_works
         tmp_workspace / "ideation" / "exp_plan.yaml",
         tmp_workspace / "ideation" / "risks.md",
         tmp_workspace / "ideation" / "idea_scorecard.yaml",
-        tmp_workspace / "ideation" / "idea_rationales.json",
-        tmp_workspace / "ideation" / "gate_decisions.json",
-        tmp_workspace / "ideation" / "rejected_ideas.md",
-    ]:
-        os.utime(path, (newer, newer))
+            tmp_workspace / "ideation" / "idea_rationales.json",
+            tmp_workspace / "ideation" / "gate_decisions.json",
+            tmp_workspace / "ideation" / "rejected_ideas.md",
+            tmp_workspace / "ideation" / "selected_idea_brief.md",
+        ]:
+            os.utime(path, (newer, newer))
     llm = MockLLMClient(responses=[])
     ctx = ExecutionContext(
         workspace_dir=tmp_workspace,

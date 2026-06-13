@@ -562,16 +562,10 @@ def register_builtin_task_checkers():
             return False, err
         decision_path = workspace_dir / "ideation" / "_gate1_user_selection.json"
         if not decision_path.exists() or decision_path.stat().st_size <= 0:
-            return False, "缺少 ideation/_gate1_user_selection.json"
-        try:
-            data = json.loads(decision_path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            return False, f"_gate1_user_selection.json 解析失败: {exc}"
-        if data.get("semantics") != "t4_gate1_user_selection_for_candidate_pool":
-            return False, "_gate1_user_selection.json semantics 不正确"
-        if not str(data.get("selected_option") or "").strip():
-            return False, "_gate1_user_selection.json 缺少 selected_option"
-        return True, None
+            return True, None
+        from ..orchestration.state_machine import validate_t4_gate1_selection_file
+
+        return validate_t4_gate1_selection_file(workspace_dir)
 
     def check_reviewer_phase(workspace_dir: Path, task_id: str) -> tuple[bool, str | None]:
         from ..agents.reviewer import ReviewerAgent

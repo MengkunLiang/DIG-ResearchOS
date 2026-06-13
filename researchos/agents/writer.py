@@ -1150,7 +1150,17 @@ def _suggest_venue_style(target_venue: object) -> str:
 
 def _suggest_template_selection(target_venue: object) -> dict[str, str]:
     venue = str(target_venue or "").casefold()
-    if any(token in venue for token in ("misq", "management science", "information systems research", "isr", "utd", "informs")):
+    if any(token in venue for token in (
+        "misq",
+        "management science",
+        "information systems research",
+        "isr",
+        "utd",
+        "informs",
+        "cds",
+        "commerce data science",
+        "informs journal on data science",
+    )):
         return {"template_family": "utd", "template_id": "informs", "writing_language": "en"}
     if any(token in venue for token in ("中文", "管理世界", "管理科学学报", "系统工程理论与实践", "cssci", "cscd")):
         return {"template_family": "basic_zh", "template_id": "basic_zh", "writing_language": "zh"}

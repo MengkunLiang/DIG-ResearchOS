@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..agents.registry import get_agent_by_id
-from ..orchestration.state_machine import StateMachine
+from ..orchestration.state_machine import StateMachine, validate_t4_gate1_selection_file
 from ..runtime.agent import AgentResult
 from ..runtime.config import RuntimeSettings
 from ..runtime.llm_client import LLMClient
@@ -139,6 +139,22 @@ class CompletePipelineRunner:
         """推进一个状态机 step。"""
         while True:
             if state.pending_gate is not None:
+                if (
+                    state.current_task == "T4-GATE1"
+                    and validate_t4_gate1_selection_file(self.workspace)[0]
+                ):
+                    state.pending_gate = None
+                    state.current_task = "T4"
+                    state.status = "RUNNING"
+                    state.last_error = None
+                    state.dump_yaml(state_path)
+                    self.run_logger.event(
+                        "HUMAN_GATE",
+                        task="T4-GATE1",
+                        gate_id="t4_gate1_selection_gate",
+                        mode="selection_file_fast_forward",
+                    )
+                    continue
                 state = await self._present_pending_gate(state, state_path)
                 if state.status != "RUNNING":
                     return state
@@ -174,7 +190,7 @@ class CompletePipelineRunner:
             state.dump_yaml(state_path)
             self.run_logger.event("ERROR", task=state.current_task, kind="build_context", message=state.last_error)
             return state
-        state = self.state_machine.start_task(state, ctx.run_id)
+        state = self.state_machine.start_task(state, ctx.run_id, workspace_dir=self.workspace)
         self.run_logger.event("TASK_START", task=ctx.task_id, run_id=ctx.run_id, status=state.status)
         state.dump_yaml(state_path)
 

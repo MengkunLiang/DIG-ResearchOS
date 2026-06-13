@@ -741,11 +741,13 @@ states:
       idea_rationales: ideation/idea_rationales.json  # 每个 idea/假设的生成依据
       idea_scorecard: ideation/idea_scorecard.yaml    # 所有候选 idea 的证据链和评分
       rejected_ideas: ideation/rejected_ideas.md      # 被淘汰/暂缓 idea 的人类可读记录
+      selected_idea_brief: ideation/selected_idea_brief.md # Gate1 后最终方向的人类可读确认
       gate_decisions: ideation/gate_decisions.json    # Gate 选择、反馈和决策链
       family_distribution: ideation/_family_distribution.md  # mechanism family 分布
       pass1_forward_candidates: ideation/_pass1_forward_candidates.json # Pass1 原始发散候选池
       pass2_grounding_review: ideation/_pass2_grounding_review.json # Pass2 文献接地/风险审阅
       candidate_directions: ideation/_candidate_directions.json # 主线与补充候选方向池
+      gate1_candidate_cards: ideation/_gate1_candidate_cards.md # Gate1 用户可读候选卡片
       gate1_selection_brief: ideation/_gate1_selection_brief.md # Gate1 全量候选选择简报
     optional_outputs:
       bridge_coverage_review: ideation/bridge_coverage_review.json # 已确认 bridge 候选的上桌/裁决/逃生舱记录
@@ -762,11 +764,14 @@ states:
     gate: t4_gate1_selection_gate
     inputs:
       candidate_directions: ideation/_candidate_directions.json
+      gate1_candidate_cards: ideation/_gate1_candidate_cards.md
       gate1_selection_brief: ideation/_gate1_selection_brief.md
       pass1_forward_candidates: ideation/_pass1_forward_candidates.json
       pass2_grounding_review: ideation/_pass2_grounding_review.json
       bridge_coverage_review: ideation/bridge_coverage_review.json
     outputs:
+      gate1_user_selection: ideation/_gate1_user_selection.json
+    optional_outputs:
       gate1_user_selection: ideation/_gate1_user_selection.json
     next_on_success: T4
     next_on_failure: failed
@@ -806,6 +811,7 @@ states:
       hypotheses: ideation/hypotheses.md
       novelty_audit: ideation/novelty_audit.md
       idea_scorecard: ideation/idea_scorecard.yaml
+      selected_idea_brief: ideation/selected_idea_brief.md
       gate1_selection_brief: ideation/_gate1_selection_brief.md
       rejected_ideas: ideation/rejected_ideas.md
     outputs:

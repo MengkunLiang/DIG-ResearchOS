@@ -590,8 +590,10 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "pass1_forward_candidates": "ideation/_pass1_forward_candidates.json",
             "pass2_grounding_review": "ideation/_pass2_grounding_review.json",
             "candidate_directions": "ideation/_candidate_directions.json",
+            "gate1_candidate_cards": "ideation/_gate1_candidate_cards.md",
             "gate1_selection_brief": "ideation/_gate1_selection_brief.md",
             "bridge_coverage_review": "ideation/bridge_coverage_review.json",
+            "selected_idea_brief": "ideation/selected_idea_brief.md",
         },
         "optional_outputs": ["bridge_coverage_review"],
         "required_inputs": ["project", "synthesis", "domain_map", "synthesis_workbench"],
@@ -606,6 +608,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
     "T4-GATE1": {
         "inputs": {
             "candidate_directions": "ideation/_candidate_directions.json",
+            "gate1_candidate_cards": "ideation/_gate1_candidate_cards.md",
             "gate1_selection_brief": "ideation/_gate1_selection_brief.md",
             "pass1_forward_candidates": "ideation/_pass1_forward_candidates.json",
             "pass2_grounding_review": "ideation/_pass2_grounding_review.json",
@@ -614,9 +617,10 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "outputs": {
             "gate1_user_selection": "ideation/_gate1_user_selection.json",
         },
-        "optional_outputs": [],
+        "optional_outputs": ["gate1_user_selection"],
         "required_inputs": [
             "candidate_directions",
+            "gate1_candidate_cards",
             "gate1_selection_brief",
             "pass1_forward_candidates",
             "pass2_grounding_review",
@@ -647,6 +651,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "hypotheses": "ideation/hypotheses.md",
             "novelty_audit": "ideation/novelty_audit.md",
             "idea_scorecard": "ideation/idea_scorecard.yaml",
+            "selected_idea_brief": "ideation/selected_idea_brief.md",
             "gate1_selection_brief": "ideation/_gate1_selection_brief.md",
             "rejected_ideas": "ideation/rejected_ideas.md",
         },

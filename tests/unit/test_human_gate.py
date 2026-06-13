@@ -137,6 +137,16 @@ def test_template_gate_parses_inline_informs_and_ccf_choices():
     assert informs["captured"]["template_family"] == "utd"
     assert informs["captured"]["template_id"] == "informs"
 
+    cds = CLIHumanInterface._parse_inline_gate_customization(
+        "t8_style_template_gate",
+        "CDS / INFORMS Journal on Data Science",
+        t8_options,
+    )
+    assert cds["option_id"] == "is_informs"
+    assert cds["captured"]["venue_style"] == "is"
+    assert cds["captured"]["template_family"] == "utd"
+    assert cds["captured"]["template_id"] == "informs"
+
     ccf = CLIHumanInterface._parse_inline_gate_customization(
         "t8_style_template_gate",
         "ccf kdd",
@@ -154,6 +164,64 @@ def test_template_gate_parses_inline_informs_and_ccf_choices():
     )
     assert zh["option_id"] == "basic_zh"
     assert zh["captured"]["writing_language"] == "zh"
+
+
+def test_t4_gate1_parses_direct_candidate_and_merge_inputs():
+    options = [
+        {"id": "select_or_reframe", "label": "按说明选择/重构"},
+        {"id": "merge", "label": "合并多个候选"},
+        {"id": "new_idea", "label": "补充新想法"},
+        {"id": "reanalyze", "label": "重新分析候选池"},
+    ]
+
+    selected = CLIHumanInterface._parse_inline_gate_customization(
+        "t4_gate1_selection_gate",
+        "D1，按 D1 重构",
+        options,
+    )
+    assert selected == {
+        "option_id": "select_or_reframe",
+        "captured": {"selection": "D1,按 D1 重构"},
+    }
+
+    merged = CLIHumanInterface._parse_inline_gate_customization(
+        "t4_gate1_selection_gate",
+        "merge D1+D3",
+        options,
+    )
+    assert merged == {
+        "option_id": "merge",
+        "captured": {"merge_plan": "merge D1+D3"},
+    }
+
+
+def test_t4_gate1_parses_new_idea_and_reanalyze_inputs():
+    options = [
+        {"id": "select_or_reframe", "label": "按说明选择/重构"},
+        {"id": "merge", "label": "合并多个候选"},
+        {"id": "new_idea", "label": "补充新想法"},
+        {"id": "reanalyze", "label": "重新分析候选池"},
+    ]
+
+    new_idea = CLIHumanInterface._parse_inline_gate_customization(
+        "t4_gate1_selection_gate",
+        "new: dataset-first benchmark idea",
+        options,
+    )
+    assert new_idea == {
+        "option_id": "new_idea",
+        "captured": {"new_idea": "dataset-first benchmark idea"},
+    }
+
+    reanalyze = CLIHumanInterface._parse_inline_gate_customization(
+        "t4_gate1_selection_gate",
+        "reanalyze: 只保留一个 CCF 方法主线",
+        options,
+    )
+    assert reanalyze == {
+        "option_id": "reanalyze",
+        "captured": {"feedback": "只保留一个 CCF 方法主线"},
+    }
 
 
 @pytest.mark.asyncio

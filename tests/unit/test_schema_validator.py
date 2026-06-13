@@ -3,6 +3,7 @@ import json
 from researchos.agents.ideation import _validate_bridge_coverage_review
 from researchos.orchestration.task_io_contract import resolve_outputs
 from researchos.schemas import validator
+from tests.unit.test_runner_basic import _write_gate1_selection, _write_t4_stage_visibility_artifacts
 
 
 def _valid_t3_note(paper_id: str) -> str:
@@ -247,6 +248,32 @@ def test_t4_bridge_coverage_review_is_conditional_output(tmp_path):
 
     assert ok
     assert err is None
+
+
+def test_validate_t4_gate1_accepts_ready_candidate_pool_without_selection(tmp_path):
+    workspace = tmp_path / "workspace"
+    ideation = workspace / "ideation"
+    ideation.mkdir(parents=True)
+    _write_t4_stage_visibility_artifacts(ideation)
+
+    ok, err = validator.validate_task_artifacts(workspace, "T4-GATE1")
+
+    assert ok, err
+
+
+def test_validate_t4_gate1_rejects_invalid_existing_selection(tmp_path):
+    workspace = tmp_path / "workspace"
+    ideation = workspace / "ideation"
+    ideation.mkdir(parents=True)
+    _write_t4_stage_visibility_artifacts(ideation)
+    _write_gate1_selection(workspace, captured={"selection": "D1"})
+    (ideation / "_gate1_user_selection.json").write_text('{"semantics":"bad"}\n', encoding="utf-8")
+
+    ok, err = validator.validate_task_artifacts(workspace, "T4-GATE1")
+
+    assert not ok
+    assert err is not None
+    assert "semantics" in err
 
 
 def test_validate_prerequisites_only_requires_declared_required_inputs(tmp_path):

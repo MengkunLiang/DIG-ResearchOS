@@ -53,3 +53,30 @@ def test_gate_presenter_supports_regex_extraction_from_file(tmp_workspace):
     presentation = build_presentation(gate_spec, {}, tmp_workspace)
 
     assert presentation["recommended_next_task"] == "T7"
+
+
+def test_gate_presenter_can_show_file_path_summary_without_storing_full_file(tmp_workspace):
+    (tmp_workspace / "ideation").mkdir()
+    (tmp_workspace / "ideation" / "_gate1_candidate_cards.md").write_text(
+        "# Cards\n\n" + "D1 details\n" * 100,
+        encoding="utf-8",
+    )
+
+    presentation = build_presentation(
+        {
+            "presentation": {
+                "cards": {
+                    "from_file": "ideation/_gate1_candidate_cards.md",
+                    "mode": "path_summary",
+                    "summary_chars": 30,
+                }
+            }
+        },
+        {},
+        tmp_workspace,
+    )
+
+    assert presentation["cards"]["path"] == "ideation/_gate1_candidate_cards.md"
+    assert presentation["cards"]["size_chars"] > 30
+    assert "D1 details" in presentation["cards"]["summary"]
+    assert "truncated from" in presentation["cards"]["summary"]

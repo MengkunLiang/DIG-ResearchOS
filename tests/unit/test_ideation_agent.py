@@ -46,6 +46,7 @@ def _gate1_candidate_pool_fingerprints(workspace: Path) -> dict:
         "pass1_forward_candidates": "ideation/_pass1_forward_candidates.json",
         "pass2_grounding_review": "ideation/_pass2_grounding_review.json",
         "candidate_directions": "ideation/_candidate_directions.json",
+        "gate1_candidate_cards": "ideation/_gate1_candidate_cards.md",
         "gate1_selection_brief": "ideation/_gate1_selection_brief.md",
         "bridge_coverage_review": "ideation/bridge_coverage_review.json",
     }
@@ -65,7 +66,7 @@ def _write_gate1_selection(workspace: Path, *, selected_option: str = "select_di
     pool = _gate1_candidate_pool_fingerprints(workspace)
     payload_for_hash = {
         "semantics": "t4_gate1_selection_fingerprint",
-        "gate_id": "t4_gate1",
+        "gate_id": "t4_gate1_selection_gate",
         "selected_option": selected_option,
         "captured": captured,
         "candidate_pool_fingerprints": pool,
@@ -74,7 +75,7 @@ def _write_gate1_selection(workspace: Path, *, selected_option: str = "select_di
     payload = {
         "semantics": "t4_gate1_user_selection_for_candidate_pool",
         "task_id": "T4-GATE1",
-        "gate_id": "t4_gate1",
+        "gate_id": "t4_gate1_selection_gate",
         "selected_option": selected_option,
         "captured": captured,
         "candidate_pool_fingerprints": pool,
@@ -658,6 +659,50 @@ Both families are distinct. D1 focuses on mechanism verification while D2 is a d
         json.dumps(candidate_payload, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    (workspace / "ideation" / "_gate1_candidate_cards.md").write_text(
+        """# T4 Gate1 Candidate Cards
+
+## 如何使用
+- 排序 / 推荐动作：优先看 D1；D1b 可作为合并或重构备选；D2 建议拒绝；S1 建议作为消融补充。
+- 完整 JSON 只作为机器可读附录：`ideation/_candidate_directions.json`、`ideation/_pass2_grounding_review.json`、`ideation/_pass1_forward_candidates.json`。
+
+## Rank 1 / D1: 测试假设依据
+- **One-line hypothesis**: 选择性机制调节能改善目标场景中的可观测指标。
+- **Technical mechanism**: 通过正则化梯度范数改善稀疏用户嵌入质量；prediction 是稀疏用户子群 Recall@20 提升；counterfactual 是关闭选择性噪声后指标无显著差异。
+- **Practical / managerial / business implication**: 如果成立，产品和运营团队可以把资源投向高风险子群的定向机制调节，而不是全量提高模型复杂度，降低部署成本并改善关键用户群体验。
+- **Scores + score rationale**: novelty=4, feasibility=4, impact=4, evaluability=5, differentiation=3, cost=5, contribution_strength=4；评分依据是机制清楚、pilot 便宜、指标可观测，但与 baseline 仍有相邻关系。
+- **Core paper dependencies**: Test Paper / synthesis.md Q1 / comparison_table.csv；claim_used 是现有方法在目标约束下存在缺口。
+- **Nearest prior work / novelty delta**: baseline1，distance=moderate；差异在于本 idea 强调机制验证和成本约束。
+- **Minimum convincing evidence**: dataset=test validation set；baseline=baseline1；metric=accuracy/cost；expected_signal=同等成本下 accuracy 提升。
+- **Top risks / kill criteria**: 若 pilot 指标接近 baseline 或不优于简单 baseline 则停止。
+- **User-edit hint**: 可以合并 D1+S1，把 S1 作为反向操作消融。
+
+## Rank 2 / D1b: 基于证据的替代候选
+- **Recommended action**: revise_before_final 或 merge_with_D1。
+- **Technical mechanism**: 针对共同失败模式调整训练信号以降低目标误差。
+- **Practical / managerial / business implication**: 若成立，可把失败模式从事后诊断转成可干预的质量管理流程。
+- **Scores + score rationale**: novelty=3, feasibility=3, impact=3, evaluability=3, differentiation=3, cost=4, contribution_strength=2；评分依据是方向有潜力但机制仍宽。
+- **Core paper dependencies**: Failure Paper；claim_used 是存在共同失败模式。
+- **Top risks / kill criteria**: 如果无法形成单一反事实，则不进入最终 hypothesis。
+
+## Rank 3 / S1: 反向操作补充候选
+- **Recommended action**: merge_with_D1 as ablation。
+- **Technical mechanism**: 移除常规增强后若指标不降，说明原增强并非关键机制。
+- **Practical / managerial / business implication**: 可帮助团队避免为无效增强支付维护和算力成本。
+- **Scores + score rationale**: novelty=3, feasibility=5, impact=2, evaluability=5, differentiation=3, cost=5, contribution_strength=2；评分依据是便宜且可测，但单独成文较弱。
+- **Core paper dependencies**: Ablation Paper；claim_used 是增强常被默认开启。
+- **Top risks / kill criteria**: 若只是普通消融、无法区分机制必要性则停止。
+
+## Rank 4 / D2: 被淘汰方向
+- **Recommended action**: reject unless reframed。
+- **Technical mechanism**: 直接迁移复用已有表示偏置影响目标指标。
+- **Practical / managerial / business implication**: 若只成立为应用迁移，对业务价值有限，难以支撑研究贡献。
+- **Scores + score rationale**: novelty=2, feasibility=4, impact=2, evaluability=2, differentiation=2, cost=4, contribution_strength=1；评分依据是可做但太接近已有工作。
+- **Core paper dependencies**: Nearby Paper；claim_used 是已有方法已经覆盖主要机制。
+- **Top risks / kill criteria**: 若差异只剩应用场景变化则放弃。
+""",
+        encoding="utf-8",
+    )
     (workspace / "ideation" / "_gate1_selection_brief.md").write_text(
         """# Gate1 Selection Brief
 
@@ -811,6 +856,31 @@ Both families are distinct. D1 focuses on mechanism verification while D2 is a d
         ),
         encoding="utf-8",
     )
+    (workspace / "ideation" / "selected_idea_brief.md").write_text(
+        """# Selected Idea Brief
+
+## Gate1 用户选择
+- **Selected option**: select_or_reframe
+- **Captured feedback**: 继续聚焦 D1 的可验证方向。
+- **Selection fingerprint**: test-fixture
+
+## Final selected idea
+- **Idea IDs**: D1
+- **One-line hypothesis**: 选择性机制调节能改善目标场景中的可观测指标。
+- **Technical mechanism**: 通过正则化梯度范数改善稀疏用户嵌入质量；prediction 是稀疏用户子群 Recall@20 提升；counterfactual 是关闭选择性噪声后指标无显著差异。
+- **Practical / managerial / business implication**: 如果成立，管理者可以把算力和干预资源优先投向高风险子群，减少全量复杂化带来的成本浪费。
+- **Core paper dependencies**: Test Paper / synthesis.md Q1 / comparison_table.csv；claim_used 是现有方法在目标约束下存在缺口。
+- **Score rationale**: novelty=4、feasibility=4、impact=4、evaluability=5、differentiation=3、cost=5；入选原因是机制清楚、实验便宜且指标可观测。
+
+## Hypothesis scope
+- **H1**: 验证选择性机制调节是否改善目标指标。
+- **H2**: 验证同一机制是否改善分布外泛化或关键子群稳定性。
+
+## Rejected, deferred, or merged alternatives
+- D1b 暂缓；D2 拒绝；S1 作为可合并消融，详见 `ideation/rejected_ideas.md`。
+""",
+        encoding="utf-8",
+    )
 
 
 def test_ideation_agent_spec(ideation_agent):
@@ -889,15 +959,8 @@ def test_ideation_initial_user_message(ideation_agent, temp_workspace):
 
 def test_ideation_initial_user_message_after_gate1_selection(ideation_agent, temp_workspace):
     """Gate1 selection 存在后，T4 才进入最终假设/实验计划写作。"""
-    (temp_workspace / "ideation" / "_gate1_user_selection.json").write_text(
-        json.dumps(
-            {
-                "semantics": "t4_gate1_user_selection_for_candidate_pool",
-                "selection_fingerprint": "abc123",
-            }
-        ),
-        encoding="utf-8",
-    )
+    _write_valid_t4_outputs(temp_workspace)
+    _write_gate1_selection(temp_workspace)
     ctx = ExecutionContext(
         workspace_dir=temp_workspace,
         project_id="test_project",
@@ -912,6 +975,25 @@ def test_ideation_initial_user_message_after_gate1_selection(ideation_agent, tem
     assert "_gate1_user_selection.json" in msg
     assert "hypotheses.md" in msg
     assert "selection_fingerprint" in msg
+
+
+def test_ideation_initial_user_message_rejects_invalid_gate1_selection(ideation_agent, temp_workspace):
+    (temp_workspace / "ideation" / "_gate1_user_selection.json").write_text(
+        json.dumps({"semantics": "t4_gate1_user_selection_for_candidate_pool", "selection_fingerprint": "abc123"}),
+        encoding="utf-8",
+    )
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T4",
+        run_id="test-run-1",
+        mode=None,
+    )
+
+    msg = ideation_agent.initial_user_message(ctx)
+
+    assert "T4 Gate1 前半段" in msg
+    assert "尚无合法" in msg
 
 
 def _write_valid_t4_outputs(workspace: Path) -> None:
@@ -931,26 +1013,60 @@ def _write_valid_t4_outputs(workspace: Path) -> None:
 
 ### 背景
 这是背景，需要足够长的内容来通过500字符的验证。我们基于文献综述发现了一个重要的研究缺口，
-现有方法在处理大规模数据时存在效率问题，而我们提出的方法可以显著提升性能。
-这个假设基于多篇论文的观察，包括Smith et al. 2023和Jones et al. 2024的工作。
-我们相信这个方向具有重要的理论和实践价值。
+现有方法在目标场景下存在效率和子群稳定性问题，而 D1 提出的选择性机制调节可以把干预集中在
+最需要的子群上。这个假设基于 Test Paper、synthesis.md Q1 和 comparison_table.csv 的共同观察，
+同时保留 forward reasoning：即使抽掉单篇论文，问题重构仍然支持按子群状态调整机制强度。
+
+### 生成依据
+- **文献观察**: Test Paper 指出现有方法在目标约束下存在缺口。
+- **前向推理 / 问题重构 / 类比依据**: 从统一机制默认设置与子群失败之间的张力推出选择性调节。
+- **研究缺口/覆盖提示**: synthesis.md Q1 与 missing_areas.md 都指向机制验证不足。
+- **评分依据**: novelty=4、feasibility=4、impact=4、evaluability=5、differentiation=3、cost=5、contribution_strength=4；入选原因是机制明确、pilot 便宜、指标可观测。
+- **核心论文依赖**: Test Paper / synthesis.md Q1 / comparison_table.csv；claim_used 是现有方法在目标约束下存在缺口。
+- **置信度**: Medium，因为机制和指标清楚，但仍需 T4.5 新颖性审计。
+
+### 技术机制
+选择性机制调节通过正则化梯度范数改善稀疏用户嵌入质量；prediction 是稀疏用户子群 Recall@20 提升 5% 以上；counterfactual 是关闭选择性噪声后指标无显著差异。
+
+### 现实 / 管理 / 商业含义
+如果假设成立，管理者可以把算力预算和模型维护资源投向高风险子群，而不是全量增加模型复杂度，从而降低部署成本并改善关键用户群体验。
 
 ### 核心假设
-我们假设通过引入新的注意力机制，可以在保持准确率的同时将推理速度提升2倍以上。
-这个假设是可验证的，我们将通过在ImageNet数据集上的实验来验证。
-具体来说，我们将实现一个新的高效注意力模块。
+我们假设通过引入选择性机制调节，可以在保持成本可控的同时改善目标子群的主指标。
 
 ### 预期结果
-如果假设成立，我们预期在ImageNet-1k验证集上达到80%以上的top-1准确率，
-同时推理时间不超过100ms每张图片。这将比现有最好的方法快2倍。
+如果假设成立，我们预期在 test validation set 上 accuracy 或 Recall@20 明显优于 baseline1，同时 cost 不显著上升。
 
-### 风险
-主要风险是新机制可能导致训练不稳定。如果出现这种情况，我们将尝试调整学习率和优化器。
+### 风险 / 证伪 / 停止条件
+主要风险是机制收益不明显。若 pilot 指标接近 baseline 或关闭选择性噪声后没有可区分变化，则停止该假设或降级为负结果分析。
 
 ## H2: 第二个假设
 
 ### 背景
-第二个假设关注模型的泛化能力，我们观察到现有方法在分布外数据上表现不佳。
+第二个假设关注同一机制能否改善分布外泛化或关键子群稳定性。它来自 D1 的机制外推，而不是独立的新论文主张。
+
+### 生成依据
+- **文献观察**: synthesis.md Q1 中多个方法在目标约束下表现不稳定。
+- **前向推理 / 问题重构 / 类比依据**: 如果选择性机制调节确实改善表示质量，它应当在更难的子群或分布外设置中保留部分收益。
+- **研究缺口/覆盖提示**: comparison_table.csv 显示 baseline 未充分报告子群鲁棒性。
+- **评分依据**: novelty=3、feasibility=4、impact=3、evaluability=4、differentiation=3、cost=4、contribution_strength=3；它适合作为 H1 的外部效度扩展。
+- **核心论文依赖**: Test Paper / Failure Paper；claim_used 是目标约束和共同失败模式仍未被机制化解释。
+- **置信度**: Medium。
+
+### 技术机制
+同一选择性机制通过降低稀疏子群表示噪声提升分布外稳定性；prediction 是分布外或关键子群的 accuracy 更稳定；counterfactual 是若收益只来自过拟合，分布外指标不会改善。
+
+### 现实 / 管理 / 商业含义
+如果假设成立，业务团队可以把该机制用于更稳健的上线策略，减少高风险子群中的体验波动和人工干预成本。
+
+### 核心假设
+我们假设选择性机制调节不仅改善平均指标，也能改善关键子群或分布外场景的稳定性。
+
+### 预期结果
+如果假设成立，关键子群指标的方差下降，且相对 baseline1 的主指标保持正向差异。
+
+### 风险 / 证伪 / 停止条件
+如果分布外指标无改善，或稳定性提升只来自阈值调参而非机制调节，则停止 H2 或将其写为边界条件。
 """
     hyp_path.write_text(hyp_content)
 

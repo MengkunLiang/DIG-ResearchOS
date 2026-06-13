@@ -148,7 +148,7 @@ gates:
           如何选择：
           - 只想先写内容稿：中文选“中文基础模板”，英文选“英文基础模板”。
           - CCF/AI/CS 会议综述：选“CCF 默认 NeurIPS”；也可在自定义中指定 template_id=kdd。当前本地可编译入口主要支持 neurips/kdd。
-          - UTD/Management Science/ISR/INFORMS 风格：选“UTD/INFORMS”。这是本地可编译 fallback，最终投稿仍应替换为官方期刊 ZIP。
+          - UTD/Management Science/ISR/INFORMS/CDS 风格：选“UTD/INFORMS”。这是本地可编译 fallback，最终投稿仍应替换为官方期刊 ZIP。
           - 不确定投哪里：先选基础英文或基础中文，后续 T8/T9 仍可重新确认。
       project_summary:
         from_file: project.yaml
@@ -186,8 +186,8 @@ gates:
           writing_language: en
       - id: utd_informs
         label: "UTD/INFORMS"
-        description: "英文 UTD/Management Science/ISR/INFORMS 风格稿件，使用本地可编译 INFORMS fallback。"
-        aliases: ["utd", "informs", "management science", "isr", "misq"]
+        description: "英文 UTD/Management Science/ISR/INFORMS/CDS 风格稿件，使用本地可编译 INFORMS fallback。"
+        aliases: ["utd", "informs", "management science", "isr", "misq", "cds", "commerce data science", "informs journal on data science"]
         next: T3.6-PLAN
         captured_defaults:
           template_family: utd
@@ -233,17 +233,31 @@ gates:
   # 候选池已经写入 artifact，runtime 在这里暂停，让用户选择、合并、重构或要求重分析。
   t4_gate1_selection_gate:
     title: "T4 Gate1 候选方向选择"
-    description: "T4 已生成 Pass1/Pass2 候选池和选择简报。请查看全量候选、风险、bridge 覆盖和合并建议后决定下一步。"
+    description: "T4 已生成候选方向。请优先阅读 Markdown 候选卡片，JSON 只作为机器可读附录，不需要直接阅读原始 JSON。"
     presentation:
+      gate1_candidate_cards:
+        from_file: ideation/_gate1_candidate_cards.md
+        mode: path_summary
+        summary_chars: 1800
       gate1_selection_brief:
         from_file: ideation/_gate1_selection_brief.md
-        max_chars: 9000
-      candidate_directions:
-        from_file: ideation/_candidate_directions.json
-        max_chars: 7000
-      bridge_coverage_review:
-        from_file: ideation/bridge_coverage_review.json
-        max_chars: 3500
+        mode: path_summary
+        summary_chars: 2400
+      how_to_answer:
+        literal: |
+          推荐输入方式：
+          - 直接输入 `D1`：选择某个候选并允许后半段按你的文字重构。
+          - 直接输入 `D1+D3` 或 `merge D1+D3`：合并多个候选。
+          - 输入 `new: ...`：补充一个新想法。
+          - 输入 `reanalyze: ...`：要求重新生成候选池。
+          详细卡片请打开 ideation/_gate1_candidate_cards.md；简报请打开 ideation/_gate1_selection_brief.md。
+      machine_readable_artifacts:
+        literal: |
+          机器可读附录路径（一般不需要直接阅读）：
+          - ideation/_candidate_directions.json：完整候选结构化数据
+          - ideation/_pass2_grounding_review.json：Pass2 文献接地、风险和推荐
+          - ideation/_pass1_forward_candidates.json：Pass1 原始发散候选
+          - ideation/bridge_coverage_review.json：如存在，记录 bridge 候选上桌/暂缓原因
     options:
       - id: select_or_reframe
         label: "按说明选择/重构"
@@ -322,7 +336,7 @@ gates:
       how_to_choose:
         literal: |
           如何选择：
-          - IS/UTD 期刊稿：选“IS + INFORMS”，默认 template_family=utd, template_id=informs。
+          - IS/UTD/CDS 期刊稿：选“IS + INFORMS”，默认 template_family=utd, template_id=informs。
           - CCF-A 会议稿：选“CCF-A + NeurIPS”，默认 template_family=ccf, template_id=neurips；当前本地可编译入口主要支持 neurips/kdd。
           - 同时准备两套稿：选“Both + 基础英文”，先共享资源索引与 alignment matrix。
           - 只想确定中英、不套 venue：选中文基础或英文基础。
@@ -336,8 +350,8 @@ gates:
     options:
       - id: is_informs
         label: "IS + INFORMS"
-        description: "IS/UTD 期刊写法，英文 INFORMS fallback 模板。"
-        aliases: ["is", "utd", "informs", "management science", "isr", "misq"]
+        description: "IS/UTD/CDS 期刊写法，英文 INFORMS fallback 模板。"
+        aliases: ["is", "utd", "informs", "management science", "isr", "misq", "cds", "commerce data science", "informs journal on data science"]
         next: T8-RESOURCE
         captured_defaults:
           venue_style: is
@@ -412,6 +426,9 @@ gates:
         max_chars: 7000
       gate1_selection_brief:
         from_file: ideation/_gate1_selection_brief.md
+        max_chars: 3000
+      selected_idea_brief:
+        from_file: ideation/selected_idea_brief.md
         max_chars: 5000
       idea_scorecard:
         from_file: ideation/idea_scorecard.yaml

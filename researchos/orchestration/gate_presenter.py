@@ -20,6 +20,7 @@ def build_presentation(
     支持的规则：
     - `literal` / `value`：直接写死文本或对象
     - `from_file`：读取 workspace 内单个文件
+      - `mode: path_summary`：只展示文件路径、大小和少量摘要，不把大文件塞进 state.yaml
     - `from_dir`：列出目录文件
     - `from_state`：从 state.yaml 中按点路径取值
     可选字段：
@@ -58,6 +59,16 @@ def _resolve_rule(
         if not path.exists():
             return f"[file not found: {rule['from_file']}]"
         text = path.read_text(encoding="utf-8", errors="replace")
+        if rule.get("mode") == "path_summary":
+            rel = str(rule["from_file"])
+            limit = int(rule.get("summary_chars") or rule.get("max_chars") or 1200)
+            summary = text[:limit].rstrip()
+            truncated = len(text) > limit
+            return {
+                "path": rel,
+                "size_chars": len(text),
+                "summary": summary + (f"\n\n[open {rel} for full content; truncated from {len(text)} chars]" if truncated else ""),
+            }
         limit = rule.get("max_chars")
         if limit is not None and len(text) > int(limit):
             return text[: int(limit)] + f"\n\n[... truncated from {len(text)} chars]"

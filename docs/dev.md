@@ -416,7 +416,7 @@ python -m researchos.cli run \
 | `T2` | 保留候选集、已核验保留候选、deep-read 队列都落盘 | `papers_dedup.jsonl`, `papers_verified.jsonl`, `deep_read_queue.jsonl`, `access_audit.md` |
 | `T3` | note/table/bib 同步增长、PDF 可用时全文覆盖、且支持续跑 | `paper_notes/`, `comparison_table.csv`, `related_work.bib`, `deep_read_queue_pending.jsonl` |
 | `T3.5` | synthesis 分阶段产物和最终综合结构完整 | `literature/synthesis_workbench.json`, `literature/synthesis_outline.md`, `literature/synthesis_draft.md`, `literature/synthesis.md` |
-| `T4` | hypotheses / exp_plan / idea scorecard / gate decisions / risks 成对齐 | `ideation/hypotheses.md`, `ideation/exp_plan.yaml`, `ideation/idea_scorecard.yaml`, `ideation/rejected_ideas.md`, `ideation/gate_decisions.json`, `ideation/idea_rationales.json`, `ideation/risks.md` |
+| `T4` | hypotheses / exp_plan / Gate1 cards / selected idea brief / idea scorecard / gate decisions / risks 成对齐 | `ideation/hypotheses.md`, `ideation/exp_plan.yaml`, `ideation/_gate1_candidate_cards.md`, `ideation/selected_idea_brief.md`, `ideation/idea_scorecard.yaml`, `ideation/rejected_ideas.md`, `ideation/gate_decisions.json`, `ideation/idea_rationales.json`, `ideation/risks.md` |
 | `T4.5` | novelty audit 生成；如有 High/Medium Overlap 则归档 collision cases | `ideation/novelty_audit.md`, `ideation/collision_cases.md`（条件产物） |
 | `T5-HANDOFF` | 外部执行协议、AGENTS/CLAUDE、prompt、schema 和 allowed paths 完整 | `external_executor/handoff_pack.json`, `AGENTS.md`, `CLAUDE.md`, `executor_prompt.md`, `codex_prompt.md`, `claude_code_prompt.md`, `expected_outputs_schema.json`, `allowed_paths.txt` |
 | `T5-EXECUTOR-GATE` | 执行器选择写入并 patch mode 占位 | `external_executor/executor_selection.json`, `AGENTS.md`, `CLAUDE.md` |
@@ -559,9 +559,9 @@ legacy `T5/T7` 显式调试时再检查已有代码目录、Docker digest 和内
 
 #### T4 Gate1 中间态
 
-T4 有一个正式的中间完成态：`completion_mode=t4_gate1_ready`。当 `IdeationAgent` 已经写好 `_pass1_forward_candidates.json`、`_pass2_grounding_review.json`、`_candidate_directions.json` 和 `_gate1_selection_brief.md`，但还没有用户选择时，runner 会跳过完整 T4 artifact 校验，状态机转入 `T4-GATE1` immediate gate。
+T4 有一个正式的中间完成态：`completion_mode=t4_gate1_ready`。当 `IdeationAgent` 已经写好 `_pass1_forward_candidates.json`、`_pass2_grounding_review.json`、`_candidate_directions.json`、`_gate1_candidate_cards.md` 和 `_gate1_selection_brief.md`，但还没有用户选择时，runner 会跳过完整 T4 artifact 校验，状态机转入 `T4-GATE1` immediate gate。旧 workspace 若已有结构化候选池但缺卡片，runtime 会从 `_candidate_directions.json` 自动补写 `_gate1_candidate_cards.md`，避免为了展示升级而重跑长 T4。
 
-调试时不要把这个状态当作 T4 最终完成。`T4-GATE1` 会写 `ideation/_gate1_user_selection.json`，随后回到 T4 生成最终 `hypotheses.md`、`exp_plan.yaml`、`idea_scorecard.yaml` 和 `gate_decisions.json`。T4 的 resume prefinalize 只有在这些最终产物晚于 `_gate1_user_selection.json` 时才会复用，避免形式上经过 Gate1、实际上复用旧假设。
+调试时不要把这个状态当作 T4 最终完成。`T4-GATE1` 默认展示 Markdown 候选卡片的路径、字符数和短摘要，完整内容在 `ideation/_gate1_candidate_cards.md`；JSON 只保留为机器可读附录路径，不直接刷给用户。CLI 可直接输入 `D1`、`D1+D3`、`merge D1+D3`、`new: ...` 或 `reanalyze: ...`。gate 会写 `ideation/_gate1_user_selection.json` 和一个即时 `selected_idea_brief.md` stub，selection 会绑定候选池 fingerprint；如果候选池在等待期间变化，resume 会重新展示 Gate1。随后回到 T4 生成最终 `hypotheses.md`、`exp_plan.yaml`、`idea_scorecard.yaml`、`selected_idea_brief.md` 和 `gate_decisions.json`。T4 的 resume prefinalize 只有在这些最终产物晚于 `_gate1_user_selection.json` 时才会复用，避免形式上经过 Gate1、实际上复用旧假设；最终 `selected_idea_brief.md` 不能保留 “待 T4 后半段补全” 这类 stub 文案。T4 的迭代死锁 hash 使用稳定 SHA256，并把 Gate1 selection fingerprint 纳入 post-Gate1 参数，避免旧的 pre-Gate1 失败记录阻塞用户选择后的 T4 后半段。
 
 ---
 

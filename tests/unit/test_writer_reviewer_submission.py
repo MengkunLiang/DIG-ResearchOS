@@ -452,6 +452,21 @@ def test_writer_prompt_defaults_suggested_style_when_not_injected(temp_workspace
     assert "venue_style: ccf_a" in prompt
 
 
+def test_writer_prompt_suggests_informs_for_cds_target(temp_workspace):
+    (temp_workspace / "project.yaml").write_text(
+        "name: test_project\nresearch_direction: AI\ntarget_venue: CDS / INFORMS Journal on Data Science\n",
+        encoding="utf-8",
+    )
+    agent = WriterAgent()
+    ctx = MockExecutionContext("style_gate", temp_workspace, {"phase": "style_gate"})
+
+    prompt = agent.system_prompt(ctx)
+
+    assert "venue_style: is" in prompt
+    assert '"template_family": "utd"' in prompt
+    assert '"template_id": "informs"' in prompt
+
+
 def test_writer_abstract_prompt_forbids_formal_citations(temp_workspace):
     agent = WriterAgent()
     ctx = MockExecutionContext(

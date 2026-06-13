@@ -694,6 +694,38 @@ def test_validate_t4_artifacts_reports_bad_hypothesis_ref(tmp_path: Path):
         ),
         encoding="utf-8",
     )
+    (workspace / "ideation" / "_gate1_candidate_cards.md").write_text(
+        "# T4 Gate1 Candidate Cards\n\n"
+        "## 排序 / 推荐动作\n"
+        "- Rank 1: D1 select; Rank 2: D1b revise; Rank 3: S1 merge; Rank 4: D2 reject.\n\n"
+        "## D1\n"
+        "- **Technical mechanism**: mainline mechanism changes sparse representations with a testable prediction and counterfactual.\n"
+        "- **Practical / managerial / business implication**: managers can target intervention budget to the subgroup where the mechanism matters.\n"
+        "- **Scores + score rationale**: novelty=4 feasibility=4 impact=4 evaluability=5 differentiation=3 cost=5 contribution_strength=4 because it is measurable and cheap.\n"
+        "- **Core paper dependencies**: Smith2024 and synthesis.md Q1.\n"
+        "- **Risk / kill criteria**: stop if pilot matches baseline.\n\n"
+        "## D1b\n"
+        "- **Technical mechanism**: cross-domain analogy mechanism should change failure-mode behavior.\n"
+        "- **Practical / managerial / business implication**: turns failure diagnosis into an improvement workflow.\n"
+        "- **Scores + score rationale**: novelty=3 feasibility=3 impact=3 evaluability=3 differentiation=3 cost=4 contribution_strength=2 because evidence is weaker.\n"
+        "- **Core paper dependencies**: Nearby Paper.\n"
+        "- **Risk / kill criteria**: defer if no clear counterfactual.\n\n"
+        "## D2\n"
+        "- **Technical mechanism**: direct transfer reuses prior representation bias.\n"
+        "- **Practical / managerial / business implication**: low research value if only the application setting changes.\n"
+        "- **Scores + score rationale**: novelty=2 feasibility=4 impact=2 evaluability=2 differentiation=2 cost=4 contribution_strength=1 because it is close to prior work.\n"
+        "- **Core paper dependencies**: Nearby Paper.\n"
+        "- **Risk / kill criteria**: reject if novelty collapses.\n\n"
+        "## S1\n"
+        "- **Technical mechanism**: reverse operation tests component necessity.\n"
+        "- **Practical / managerial / business implication**: avoids maintaining ineffective components.\n"
+        "- **Scores + score rationale**: novelty=3 feasibility=5 impact=2 evaluability=5 differentiation=3 cost=5 contribution_strength=2 because it is best as ablation.\n"
+        "- **Core paper dependencies**: Ablation Paper.\n"
+        "- **Risk / kill criteria**: stop if routine ablation only.\n\n"
+        "Machine-readable artifacts: `ideation/_candidate_directions.json`, "
+        "`ideation/_pass2_grounding_review.json`, `ideation/_pass1_forward_candidates.json`.\n",
+        encoding="utf-8",
+    )
     (workspace / "ideation" / "_gate1_selection_brief.md").write_text(
         "# Gate1 Selection Brief\n\n"
         "- D1: Pass2 proceed.\n"
@@ -701,6 +733,25 @@ def test_validate_t4_artifacts_reports_bad_hypothesis_ref(tmp_path: Path):
         "- D2: Pass2 reject_recommended.\n"
         "- S1: Pass2 revise_before_selection.\n\n"
         "Merge options: 合并 D1+D1b or 合并 D1+S1.\n",
+        encoding="utf-8",
+    )
+    (workspace / "ideation" / "selected_idea_brief.md").write_text(
+        "# Selected Idea Brief\n\n"
+        "## Gate1 用户选择\n"
+        "- **Selected option**: select_or_reframe\n"
+        "- **Captured feedback**: choose D1\n"
+        "- **Selection fingerprint**: fixture\n\n"
+        "## Final selected idea\n"
+        "- **Idea IDs**: D1\n"
+        "- **One-line hypothesis**: mainline mechanism improves the target metric.\n"
+        "- **Technical mechanism**: mainline mechanism changes sparse representations with a prediction and counterfactual.\n"
+        "- **Practical / managerial / business implication**: managers can focus intervention resources on the subgroup where the mechanism matters.\n"
+        "- **Core paper dependencies**: Smith2024 and synthesis.md Q1.\n"
+        "- **Score rationale**: novelty=4 feasibility=4 impact=4 evaluability=5 differentiation=3 cost=5.\n\n"
+        "## Hypothesis scope\n"
+        "- **H1**: validate mainline mechanism.\n\n"
+        "## Rejected, deferred, or merged alternatives\n"
+        "- D1b deferred, D2 rejected, S1 available as ablation.\n",
         encoding="utf-8",
     )
 

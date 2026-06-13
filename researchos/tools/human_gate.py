@@ -167,6 +167,8 @@ class CLIHumanInterface(HumanInterface):
     def _parse_inline_gate_customization(gate_id: str, raw_answer: str, options: list[dict]) -> dict | None:
         if gate_id in {"t36_template_gate", "t8_style_template_gate"}:
             return CLIHumanInterface._parse_template_gate_text(gate_id, raw_answer, options)
+        if gate_id == "t4_gate1_selection_gate":
+            return CLIHumanInterface._parse_t4_gate1_text(raw_answer, options)
         if gate_id != "t2_literature_param_gate":
             return None
         captured = CLIHumanInterface._parse_t2_literature_param_text(raw_answer)
@@ -178,6 +180,35 @@ class CLIHumanInterface(HumanInterface):
         if default_id and default_id != "custom":
             captured.setdefault("base_option", str(default_id))
         return {"option_id": "custom", "captured": captured}
+
+    @staticmethod
+    def _parse_t4_gate1_text(raw_answer: str, options: list[dict]) -> dict | None:
+        text = str(raw_answer or "").strip()
+        if not text:
+            return None
+        normalized = text.replace("，", ",").replace("＋", "+").strip()
+        lowered = normalized.casefold()
+        option_ids = {str(option.get("id") or option.get("key") or "") for option in options}
+        candidate_pattern = r"\b[DS]\d+\b"
+        candidates = [item.upper() for item in re.findall(candidate_pattern, normalized, flags=re.IGNORECASE)]
+        unique_candidates = list(dict.fromkeys(candidates))
+
+        if "reanalyze" in lowered or "重新分析" in normalized or "重跑" in normalized:
+            feedback = re.sub(r"(?i)\breanalyze\b\s*[:：-]?", "", normalized).strip()
+            feedback = feedback.replace("重新分析", "").replace("重跑", "").strip(" ：:-")
+            return {"option_id": "reanalyze", "captured": {"feedback": feedback or normalized}}
+
+        if lowered.startswith(("new:", "new idea:", "idea:")) or normalized.startswith(("新想法", "补充")):
+            new_idea = re.sub(r"(?i)^(new|new idea|idea)\s*[:：-]?", "", normalized).strip()
+            new_idea = re.sub(r"^(新想法|补充)\s*[:：-]?", "", new_idea).strip()
+            return {"option_id": "new_idea", "captured": {"new_idea": new_idea or normalized}}
+
+        explicit_merge = "merge" in lowered or "合并" in normalized or "+" in normalized or len(unique_candidates) > 1
+        if candidates and explicit_merge and "merge" in option_ids:
+            return {"option_id": "merge", "captured": {"merge_plan": normalized}}
+        if candidates and "select_or_reframe" in option_ids:
+            return {"option_id": "select_or_reframe", "captured": {"selection": normalized}}
+        return None
 
     @staticmethod
     def _parse_template_gate_text(gate_id: str, raw_answer: str, options: list[dict]) -> dict | None:
@@ -192,7 +223,17 @@ class CLIHumanInterface(HumanInterface):
         if any(token in normalized for token in ("中文", "chinese", "basic_zh", " zh")) or normalized == "zh":
             captured.update({"template_family": "basic_zh", "template_id": "basic_zh", "writing_language": "zh"})
             option_id = "basic_zh"
-        elif any(token in normalized for token in ("informs", "utd", "management science", "information systems research", "isr", "misq")):
+        elif any(token in normalized for token in (
+            "informs",
+            "utd",
+            "management science",
+            "information systems research",
+            "isr",
+            "misq",
+            "cds",
+            "commerce data science",
+            "informs journal on data science",
+        )):
             captured.update({"template_family": "utd", "template_id": "informs", "writing_language": "en"})
             option_id = "utd_informs" if gate_id == "t36_template_gate" else "is_informs"
         elif any(token in normalized for token in ("ccf", "neurips", "kdd", "conference", "会议", "ccf-a", "ccf_a")):

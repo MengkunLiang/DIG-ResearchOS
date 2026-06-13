@@ -13,6 +13,7 @@ import yaml
 
 from researchos.orchestration.state_machine import StateMachine
 from researchos.schemas.state import StateYaml
+from tests.unit.test_runner_basic import _write_gate1_selection, _write_t4_stage_visibility_artifacts
 
 
 @pytest.fixture
@@ -151,6 +152,7 @@ def test_param_hash_consistency(simple_fsm_config: Path):
 
     # 参数内容相同，哈希应该相同（不受顺序影响）
     assert hash1 == hash2
+    assert len(hash1) == 64
 
 
 def test_param_hash_difference(simple_fsm_config: Path):
@@ -242,3 +244,45 @@ def test_extract_task_params_comprehensive(simple_fsm_config: Path):
     assert params["inputs"] == {"input_file": "input.txt"}
     assert params["outputs"] == {"output_file": "output.txt"}
     assert params["llm"] == {"profile": "default", "tier": "fast"}
+
+
+def test_t4_gate1_selection_changes_deadlock_hash_after_gate(temp_config_dir: Path):
+    """Old pre-Gate1 T4 attempts must not block the post-Gate1 T4 continuation."""
+
+    sm = StateMachine(Path("config/system_config/state_machine.yaml"), Path("config/system_config/gates.yaml"))
+    state = StateYaml(project_id="p1", current_task="T4", status="PAUSED")
+    workspace = temp_config_dir / "workspace"
+    ideation = workspace / "ideation"
+    ideation.mkdir(parents=True)
+    _write_t4_stage_visibility_artifacts(ideation)
+
+    node = sm.nodes["T4"]
+    pre_gate_hash = sm._compute_param_hash(sm._extract_task_params(node, state=state, workspace_dir=workspace))
+    state.iteration_history["T4"] = [
+        {"param_hash": pre_gate_hash, "timestamp": "2026-01-01T00:00:00+00:00", "params": {"t4_gate_phase": "pre_gate1"}}
+        for _ in range(3)
+    ]
+
+    _write_gate1_selection(workspace, captured={"selection": "D1"})
+
+    ctx = sm.build_execution_context(workspace, state)
+
+    assert ctx.task_id == "T4"
+    post_gate_hash = sm._compute_param_hash(sm._extract_task_params(node, state=state, workspace_dir=workspace))
+    assert post_gate_hash != pre_gate_hash
+
+
+def test_t4_start_task_records_gate1_selection_fingerprint(temp_config_dir: Path):
+    sm = StateMachine(Path("config/system_config/state_machine.yaml"), Path("config/system_config/gates.yaml"))
+    state = StateYaml(project_id="p1", current_task="T4", status="PAUSED")
+    workspace = temp_config_dir / "workspace"
+    ideation = workspace / "ideation"
+    ideation.mkdir(parents=True)
+    _write_t4_stage_visibility_artifacts(ideation)
+    _, selection_fingerprint = _write_gate1_selection(workspace, captured={"selection": "D1"})
+
+    state = sm.start_task(state, "run_t4", workspace_dir=workspace)
+
+    entry = state.iteration_history["T4"][-1]
+    assert entry["params"]["t4_gate_phase"] == "post_gate1"
+    assert entry["params"]["gate1_selection_fingerprint"] == selection_fingerprint

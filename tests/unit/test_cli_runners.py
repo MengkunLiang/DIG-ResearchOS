@@ -19,6 +19,7 @@ from researchos.testing.mocks import (
 from researchos.tools.builtin import register_builtin_tools
 from researchos.tools.human_gate import HumanInputUnavailable, HumanInterface
 from researchos.tools.registry import ToolRegistry
+from tests.unit.test_runner_basic import _write_t4_stage_visibility_artifacts
 
 
 def _write_t8_section_plan_inputs(workspace: Path) -> None:
@@ -313,6 +314,75 @@ async def test_complete_pipeline_pauses_when_pending_gate_input_unavailable(tmp_
     state_after = StateYaml.load_yaml(tmp_workspace / "state.yaml")
     assert state_after.status == "PAUSED"
     assert "stdin closed" in (state_after.last_error or "")
+
+
+@pytest.mark.asyncio
+async def test_complete_pipeline_fast_forwards_t4_gate1_when_selection_file_exists(tmp_workspace: Path):
+    config = tmp_workspace / "fsm.yaml"
+    gates = tmp_workspace / "gates.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T4-GATE1
+        states:
+          T4-GATE1:
+            agent: ideation
+            extra:
+              immediate_gate: true
+            gate: t4_gate1_selection_gate
+            outputs:
+              gate1_user_selection: ideation/_gate1_user_selection.json
+            next_on_success: T4
+          T4:
+            terminal: true
+        """,
+    )
+    _write_yaml(
+        gates,
+        """
+        gates:
+          t4_gate1_selection_gate:
+            presentation:
+              cards:
+                from_file: ideation/_gate1_candidate_cards.md
+            options:
+              - id: select_or_reframe
+                label: Select
+                next: T4
+        """,
+    )
+    (tmp_workspace / "ideation").mkdir(parents=True, exist_ok=True)
+    _write_t4_stage_visibility_artifacts(tmp_workspace / "ideation")
+    sm = StateMachine(config, gates)
+    state = sm.pause_for_immediate_gate(sm.create_initial_state("demo-project"), workspace_dir=tmp_workspace)
+    stale_pending_gate = state.pending_gate
+    state = sm.resolve_pending_gate(
+        state,
+        {"option_id": "select_or_reframe", "captured": {"selection": "D1"}},
+        workspace_dir=tmp_workspace,
+    )
+    state.current_task = "T4-GATE1"
+    state.status = "WAITING_HUMAN"
+    state.pending_gate = stale_pending_gate
+    state.dump_yaml(tmp_workspace / "state.yaml")
+    human = _UnavailableGateHuman()
+    runner = CompletePipelineRunner(
+        workspace=tmp_workspace,
+        state_machine=sm,
+        llm_client=_hello_llm(),
+        tool_registry=_registry(),
+        human_interface=human,
+    )
+
+    state_after = await runner._run_one_step(StateYaml.load_yaml(tmp_workspace / "state.yaml"), tmp_workspace / "state.yaml")
+
+    assert state_after.status == "COMPLETED"
+    assert state_after.current_task == "T4"
+    assert state_after.pending_gate is None
+    persisted = StateYaml.load_yaml(tmp_workspace / "state.yaml")
+    assert persisted.current_task == "T4"
+    assert persisted.pending_gate is None
+    assert not (tmp_workspace / "hello.txt").exists()
 
 
 @pytest.mark.asyncio

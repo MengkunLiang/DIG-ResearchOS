@@ -5,7 +5,8 @@
 输出: hypotheses.md, exp_plan.yaml, risks.md, idea_rationales.json,
       idea_scorecard.yaml, rejected_ideas.md, gate_decisions.json,
       _pass1_forward_candidates.json, _pass2_grounding_review.json,
-      _gate1_selection_brief.md
+      _gate1_selection_brief.md, _gate1_candidate_cards.md,
+      selected_idea_brief.md
 """
 
 from __future__ import annotations
@@ -163,16 +164,19 @@ class IdeationAgent(Agent):
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
         """初始用户消息。"""
-        gate1_selection = ctx.workspace_dir / "ideation" / "_gate1_user_selection.json"
-        if not gate1_selection.exists():
+        from ..orchestration.state_machine import validate_t4_gate1_selection_file
+
+        gate1_selection_ok, gate1_selection_error = validate_t4_gate1_selection_file(ctx.workspace_dir)
+        if not gate1_selection_ok:
             return prepend_resume_prefix(
                 ctx,
                 (
-                "请执行 T4 Gate1 前半段。当前尚无 ideation/_gate1_user_selection.json，"
-                "所以本轮只生成并写入 Gate1 候选池中间产物："
+                "请执行 T4 Gate1 前半段。当前尚无合法 ideation/_gate1_user_selection.json"
+                f"（{gate1_selection_error}），所以本轮只生成并写入 Gate1 候选池中间产物："
                 "ideation/_pass1_forward_candidates.json、ideation/_pass2_grounding_review.json、"
                 "ideation/_candidate_directions.json、ideation/_family_distribution.md、"
-                "ideation/_gate1_selection_brief.md，以及必要时的 bridge_coverage_review.json。"
+                "ideation/_gate1_candidate_cards.md、ideation/_gate1_selection_brief.md，"
+                "以及必要时的 bridge_coverage_review.json。"
                 "候选池必须在四类补充通道之外包含至少一个领域交叉候选："
                 "idea_origin=cross_domain_analogy 或 bridge_synthesis。"
                 "写完这些文件后立即调用 finish_task；不要在本轮调用 ask_human，也不要写"
@@ -185,7 +189,9 @@ class IdeationAgent(Agent):
             "请执行 T4 Gate1 后半段。必须先读取 ideation/_gate1_user_selection.json，"
             "并根据用户已确认/合并/重构的候选方向产出 hypotheses.md + exp_plan.yaml + "
             "risks.md + idea_rationales.json + idea_scorecard.yaml + "
-            "rejected_ideas.md + gate_decisions.json。最终输出必须绑定 Gate1 selection_fingerprint。"
+            "rejected_ideas.md + selected_idea_brief.md + gate_decisions.json。"
+            "最终输出必须绑定 Gate1 selection_fingerprint，并在 hypotheses.md 中为每个 H 写出"
+            "技术机制、现实/管理/商业含义、评分依据和核心论文依赖。"
             ),
         )
 
@@ -606,6 +612,13 @@ class IdeationAgent(Agent):
         if isinstance(budget_check, dict) and budget_check.get("over_budget") is True:
             return False, "exp_plan.yaml budget_check.over_budget=true，不能判定为完成"
 
+        ok, err = _validate_hypotheses_user_readable_sections(hyp_text)
+        if not ok:
+            return False, err
+        ok, err = _validate_selected_idea_brief(ws)
+        if not ok:
+            return False, err
+
         return True, None
 
 
@@ -759,6 +772,211 @@ def validate_t4_gate1_ready(ws: Path) -> tuple[bool, str | None]:
     return True, None
 
 
+def ensure_t4_gate1_candidate_cards(ws: Path) -> bool:
+    """Backfill the human-readable Gate1 card deck for upgraded workspaces.
+
+    Returns True when a file was written. This is intentionally conservative:
+    it never overwrites an existing card deck, and it only uses the structured
+    candidate pool that T4 already produced.
+    """
+
+    cards_path = ws / "ideation" / "_gate1_candidate_cards.md"
+    if cards_path.exists() and cards_path.stat().st_size > 0:
+        return False
+    candidate_path = ws / "ideation" / "_candidate_directions.json"
+    if not candidate_path.exists():
+        return False
+    try:
+        candidate_data = json.loads(candidate_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    candidates = candidate_data.get("candidates") if isinstance(candidate_data, dict) else None
+    if not isinstance(candidates, list) or not candidates:
+        return False
+    pass2_by_id: dict[str, dict] = {}
+    pass2_path = ws / "ideation" / "_pass2_grounding_review.json"
+    if pass2_path.exists():
+        try:
+            pass2_data = json.loads(pass2_path.read_text(encoding="utf-8"))
+            for item in pass2_data.get("reviews") or []:
+                if isinstance(item, dict):
+                    idea_id = str(item.get("idea_id") or item.get("id") or "").strip()
+                    if idea_id:
+                        pass2_by_id[idea_id] = item
+        except Exception:
+            pass
+    cards_path.parent.mkdir(parents=True, exist_ok=True)
+    cards_path.write_text(_render_gate1_candidate_cards(candidates, pass2_by_id), encoding="utf-8")
+    return True
+
+
+def _render_gate1_candidate_cards(candidates: list[dict], pass2_by_id: dict[str, dict]) -> str:
+    score_order = [
+        "novelty",
+        "feasibility",
+        "impact",
+        "evaluability",
+        "differentiation",
+        "cost",
+        "contribution_strength",
+    ]
+    lines = [
+        "# T4 Gate1 Candidate Cards",
+        "",
+        "## How to Use",
+        "- **排序 / 推荐动作**: 优先比较 recommendation、技术机制、现实含义、评分依据、核心论文依赖、风险和 kill criteria。",
+        "- JSON 只作为机器可读附录；用户主要阅读本文件和 `_gate1_selection_brief.md`。",
+        "- 可选动作：选择 Dn、选择 Dn 并重构、合并 D1+D3、新想法、重新分析。",
+        "",
+    ]
+    for rank, candidate in enumerate(candidates, start=1):
+        if not isinstance(candidate, dict):
+            continue
+        idea_id = str(candidate.get("id") or candidate.get("idea_id") or f"D{rank}").strip()
+        title = str(candidate.get("title") or "Untitled candidate").strip()
+        pass2 = candidate.get("pass2_screening") if isinstance(candidate.get("pass2_screening"), dict) else {}
+        review = pass2_by_id.get(idea_id, {})
+        recommendation = str(
+            pass2.get("screening_recommendation")
+            or review.get("screening_recommendation")
+            or "review_needed"
+        ).strip()
+        warning = str(
+            pass2.get("selection_warning")
+            or review.get("selection_warning")
+            or "none"
+        ).strip()
+        scores = candidate.get("scores") if isinstance(candidate.get("scores"), dict) else {}
+        score_text = ", ".join(
+            f"{key}={scores.get(key)}" for key in score_order if scores.get(key) is not None
+        ) or "not scored"
+        basis_sources = candidate.get("basis_sources") if isinstance(candidate.get("basis_sources"), list) else []
+        papers = candidate.get("supporting_papers") if isinstance(candidate.get("supporting_papers"), list) else []
+        if not papers and basis_sources:
+            papers = [
+                {
+                    "title": str(item.get("ref") or item.get("type") or "source"),
+                    "claim_used": str(item.get("claim") or ""),
+                }
+                for item in basis_sources
+                if isinstance(item, dict)
+            ]
+        paper_text = _format_card_papers(papers)
+        if paper_text == "none":
+            paper_text = "none; forward-generated from synthesis/problem reframing/cross-domain analogy"
+        minimum = candidate.get("minimum_experiment") if isinstance(candidate.get("minimum_experiment"), dict) else {}
+        metrics = minimum.get("metric")
+        if isinstance(metrics, list):
+            metrics_text = ", ".join(str(item) for item in metrics)
+        else:
+            metrics_text = str(metrics or "metric TBD")
+        risks = candidate.get("key_risks") or candidate.get("risks") or []
+        risk_text = _format_card_risks(risks)
+        practical = _candidate_practical_implication(candidate)
+        nearest = candidate.get("nearest_prior_work") if isinstance(candidate.get("nearest_prior_work"), dict) else {}
+        lines.extend(
+            [
+                f"## Rank {rank} / {idea_id}: {title}",
+                f"- **Recommended action**: {recommendation}; warning: {warning}",
+                f"- **One-line hypothesis**: {candidate.get('pitch') or candidate.get('core_claim') or 'TBD'}",
+                f"- **Technical mechanism**: {candidate.get('mechanism') or 'TBD'} Prediction: {candidate.get('prediction') or 'TBD'} Counterfactual: {candidate.get('counterfactual') or 'TBD'}",
+                f"- **Practical / managerial / business implication**: {practical}",
+                f"- **Scores + score rationale**: {score_text}; rationale: {candidate.get('basis_summary') or candidate.get('contribution_character') or 'see candidate pool'}",
+                f"- **Core paper dependencies**: {paper_text}",
+                f"- **Nearest prior work / novelty delta**: {nearest.get('work', 'not_computed')} (distance={nearest.get('distance', 'not_computed')}); novelty_signal={candidate.get('novelty_signal') or 'not_computed'}",
+                f"- **Minimum convincing evidence**: dataset={minimum.get('dataset', 'TBD')}; baseline={minimum.get('baseline', 'TBD')}; metric={metrics_text}; expected_signal={minimum.get('expected_signal', 'TBD')}",
+                f"- **Top risks / kill criteria**: {risk_text}",
+                "- **User-edit hint**: edit mechanism, practical implication, core paper dependencies, or merge plan before selecting if the card feels under-specified.",
+                "",
+            ]
+        )
+    lines.extend(
+        [
+            "## Machine-Readable Artifact Paths",
+            "- `ideation/_candidate_directions.json`: complete structured candidate pool",
+            "- `ideation/_pass2_grounding_review.json`: grounding review and risk flags",
+            "- `ideation/_pass1_forward_candidates.json`: raw forward candidates",
+            "- `ideation/bridge_coverage_review.json`: bridge visibility and escape-hatch review if present",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _format_card_papers(items: object) -> str:
+    if not isinstance(items, list) or not items:
+        return "none"
+    parts: list[str] = []
+    for item in items[:5]:
+        if isinstance(item, dict):
+            title = str(item.get("title") or item.get("paper_id") or item.get("ref") or "paper").strip()
+            claim = str(item.get("claim_used") or item.get("claim") or "").strip()
+            parts.append(f"{title}" + (f" ({claim})" if claim else ""))
+        else:
+            parts.append(str(item))
+    return "; ".join(parts) if parts else "none"
+
+
+def _candidate_practical_implication(candidate: dict) -> str:
+    explicit = (
+        str(candidate.get("practical_implication") or "").strip()
+        or str(candidate.get("managerial_implication") or "").strip()
+        or str(candidate.get("business_implication") or "").strip()
+    )
+    if explicit:
+        return explicit
+    title = str(candidate.get("title") or "this idea").strip()
+    origin = str(candidate.get("idea_origin") or candidate.get("origin") or "").strip()
+    target = str(candidate.get("target_problem") or "the target decision setting").strip()
+    lower = f"{title} {origin} {target}".casefold()
+    if "coverage" in lower or "resource" in lower or "missing" in lower:
+        return (
+            "Practically, this is a research-governance checkpoint: it prevents the team "
+            "from turning retrieval or dataset uncertainty into an overstated field-gap claim."
+        )
+    if "subgroup" in lower or "failure" in lower:
+        return (
+            "Practically, it helps managers identify which customer, treatment, or deployment "
+            "subgroups are unsafe to transfer across before making targeting decisions."
+        )
+    if "reverse" in lower or "remove" in lower or "ablation" in lower:
+        return (
+            "Practically, it tests whether a costly component is actually needed, helping teams "
+            "avoid maintaining bridges or modules that do not change decisions."
+        )
+    if "bridge" in lower or "cross_domain" in lower or "analogy" in lower:
+        return (
+            "Practically, it clarifies which ideas can travel across domains and which require "
+            "local evidence, reducing blind transfer risk in new business contexts."
+        )
+    if "treatment" in lower or "uplift" in lower or "causal" in lower:
+        return (
+            "Practically, it shifts uplift deployment from generic feature adaptation toward "
+            "treatment-aware targeting decisions with clearer budget and intervention logic."
+        )
+    contribution = str(candidate.get("contribution_character") or "").strip()
+    if contribution:
+        return contribution
+    return (
+        "Practically, this idea should change how users prioritize design, evaluation, or "
+        "deployment decisions in the target setting if the mechanism is validated."
+    )
+
+
+def _format_card_risks(items: object) -> str:
+    if not isinstance(items, list) or not items:
+        return "risk not specified; require Gate1 clarification"
+    parts: list[str] = []
+    for item in items[:3]:
+        if isinstance(item, dict):
+            risk = str(item.get("risk") or "risk").strip()
+            kill = str(item.get("kill_criteria") or "kill criteria TBD").strip()
+            parts.append(f"{risk}; kill criteria: {kill}")
+        else:
+            parts.append(str(item))
+    return " | ".join(parts)
+
+
 def _validate_current_survey_insights(ws: Path) -> tuple[bool, str | None]:
     path = ws / "ideation" / "survey_insights.json"
     if not path.exists() or path.stat().st_size <= 0:
@@ -870,19 +1088,22 @@ def _validate_pass_stage_artifacts(ws: Path) -> tuple[bool, str | None]:
     pass1_path = ideation_dir / "_pass1_forward_candidates.json"
     pass2_path = ideation_dir / "_pass2_grounding_review.json"
     candidate_path = ideation_dir / "_candidate_directions.json"
+    candidate_cards_path = ideation_dir / "_gate1_candidate_cards.md"
     gate_brief_path = ideation_dir / "_gate1_selection_brief.md"
 
     for path, label in [
         (pass1_path, "_pass1_forward_candidates.json"),
         (pass2_path, "_pass2_grounding_review.json"),
         (candidate_path, "_candidate_directions.json"),
+        (candidate_cards_path, "_gate1_candidate_cards.md"),
         (gate_brief_path, "_gate1_selection_brief.md"),
     ]:
         if not path.exists():
             return False, (
                 f"缺少 ideation/{label}。T4 Gate1 前半段必须先按顺序写入 "
                 "_pass1_forward_candidates.json、_pass2_grounding_review.json、"
-                "_candidate_directions.json、_family_distribution.md、_gate1_selection_brief.md，"
+                "_candidate_directions.json、_family_distribution.md、"
+                "_gate1_candidate_cards.md、_gate1_selection_brief.md，"
                 "然后 finish_task 交给 T4-GATE1；不要只读取材料后等待最终阶段。"
             )
 
@@ -967,6 +1188,10 @@ def _validate_pass_stage_artifacts(ws: Path) -> tuple[bool, str | None]:
             f"{missing_gate_candidates}"
         )
 
+    ok, err = _validate_gate1_candidate_cards(candidate_cards_path, pass1_ids)
+    if not ok:
+        return False, err
+
     brief_text = read_text_file(gate_brief_path)
     if len(brief_text.strip()) < 300:
         return False, "_gate1_selection_brief.md 过短，必须展示全量候选、Pass2风险和合并建议"
@@ -987,6 +1212,94 @@ def _validate_pass_stage_artifacts(ws: Path) -> tuple[bool, str | None]:
     if missing_soft:
         return False, "_gate1_selection_brief.md 缺少软提示章节: " + ", ".join(missing_soft)
 
+    return True, None
+
+
+def _validate_gate1_candidate_cards(path: Path, pass1_ids: set[str]) -> tuple[bool, str | None]:
+    """Validate the reader-facing Gate1 card deck.
+
+    `_candidate_directions.json` remains the machine-readable source of truth,
+    but the runtime gate should show a compact Markdown card deck first. This
+    check keeps the human-facing artifact from degrading into a short pointer or
+    a raw JSON dump.
+    """
+
+    text = read_text_file(path)
+    stripped = text.strip()
+    if len(stripped) < 800:
+        return False, (
+            "ideation/_gate1_candidate_cards.md 过短，必须用 Markdown 卡片展示每个候选的"
+            "技术机制、现实含义、评分依据、核心论文依赖和推荐动作"
+        )
+    if re.search(r"^\s*[\{\[]", stripped):
+        return False, "ideation/_gate1_candidate_cards.md 不能是 raw JSON，必须是给用户阅读的 Markdown"
+    missing = [idea_id for idea_id in sorted(pass1_ids) if idea_id not in text]
+    if missing:
+        return False, f"_gate1_candidate_cards.md 必须提到所有候选ID，缺少: {missing}"
+    required_sections = [
+        ("排序/推荐动作", r"排序|rank|推荐动作|recommended action|建议动作"),
+        ("技术机制", r"技术机制|technical mechanism|mechanism"),
+        ("现实含义", r"现实含义|管理含义|商业含义|业务含义|practical|managerial|business"),
+        ("评分依据", r"评分依据|score rationale|评分|scores"),
+        ("核心论文依赖", r"核心论文依赖|paper dependencies|core paper|supporting papers|核心文献"),
+        ("风险/kill criteria", r"kill criteria|停止条件|关键风险|risk"),
+        ("文件路径提示", r"_candidate_directions\.json|_pass2_grounding_review\.json|机器可读|完整 JSON"),
+    ]
+    missing_sections = [
+        label for label, pattern in required_sections
+        if not re.search(pattern, text, flags=re.IGNORECASE)
+    ]
+    if missing_sections:
+        return False, "_gate1_candidate_cards.md 缺少用户选择所需字段: " + ", ".join(missing_sections)
+    return True, None
+
+
+def _validate_hypotheses_user_readable_sections(text: str) -> tuple[bool, str | None]:
+    anchors = list(re.finditer(r"^#+\s*(H\d+)\b.*$", text, flags=re.MULTILINE | re.IGNORECASE))
+    if not anchors:
+        return True, None
+    section_requirements = [
+        ("技术机制", r"技术机制|机制假设|technical formulation|mechanism hypothesis|mechanism"),
+        ("现实/管理/商业含义", r"现实含义|管理含义|商业含义|业务含义|practical implication|managerial implication|business implication"),
+        ("评分依据", r"评分依据|score rationale|选择依据|selection rationale|why selected"),
+        ("核心论文依赖", r"核心论文依赖|核心文献依赖|paper dependencies|core paper dependencies|supporting papers"),
+        ("证伪/停止条件", r"证伪|kill criteria|停止条件|counterfactual|falsification"),
+    ]
+    for index, match in enumerate(anchors):
+        anchor = match.group(1).upper()
+        end = anchors[index + 1].start() if index + 1 < len(anchors) else len(text)
+        block = text[match.start():end]
+        missing = [
+            label for label, pattern in section_requirements
+            if not re.search(pattern, block, flags=re.IGNORECASE)
+        ]
+        if missing:
+            return False, f"hypotheses.md {anchor} 缺少用户可读质量小节: " + ", ".join(missing)
+    return True, None
+
+
+def _validate_selected_idea_brief(ws: Path) -> tuple[bool, str | None]:
+    path = ws / "ideation" / "selected_idea_brief.md"
+    if not path.exists():
+        return False, (
+            "缺少 ideation/selected_idea_brief.md；Gate1 后必须写用户可读的最终 idea/假设确认摘要"
+        )
+    text = read_text_file(path)
+    if len(text.strip()) < 400:
+        return False, "selected_idea_brief.md 过短，必须说明用户选择、最终 idea、现实含义和下一步假设范围"
+    if re.search(r"待\s*T4|待.*后半段|待.*补全|待.*写入|TBD|TODO", text, flags=re.IGNORECASE):
+        return False, "selected_idea_brief.md 仍是 Gate1 stub 或占位内容，T4 后半段必须补全最终选择摘要"
+    required = [
+        ("用户选择", r"用户选择|Gate1|selected_option|human selection"),
+        ("最终 idea", r"最终 idea|selected idea|最终方向|final idea"),
+        ("技术机制", r"技术机制|mechanism|机制假设"),
+        ("现实含义", r"现实含义|管理含义|商业含义|业务含义|practical|managerial|business"),
+        ("核心论文依赖", r"核心论文依赖|核心文献依赖|paper dependencies|supporting papers"),
+        ("后续假设", r"H1|hypotheses\.md|后续假设|final hypotheses"),
+    ]
+    missing = [label for label, pattern in required if not re.search(pattern, text, flags=re.IGNORECASE)]
+    if missing:
+        return False, "selected_idea_brief.md 缺少字段: " + ", ".join(missing)
     return True, None
 
 

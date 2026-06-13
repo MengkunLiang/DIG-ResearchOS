@@ -404,7 +404,7 @@ def _write_current_ideation_artifacts(workspace: Path, refs: list[str]) -> None:
         },
         "source": {
             **rejected["source"],
-            "idea_origin": "evidence_driven",
+            "idea_origin": "cross_domain_analogy",
             "trigger_observation": "A weaker evidence pattern suggests a possible but underspecified mechanism.",
         },
         "decision": {
@@ -473,9 +473,9 @@ def _write_current_ideation_artifacts(workspace: Path, refs: list[str]) -> None:
         },
         {
             **deferred_a["idea"],
-            "idea_origin": "evidence_driven",
+            "idea_origin": "cross_domain_analogy",
             "constraint_status": "mainline",
-            "basis_summary": "Derived from weaker evidence patterns that need stronger mechanism support.",
+            "basis_summary": "Derived as a cross-domain analogy candidate from weaker evidence patterns that need stronger mechanism support.",
         },
         {
             **deferred_b["idea"],
@@ -570,6 +570,38 @@ def _write_current_ideation_artifacts(workspace: Path, refs: list[str]) -> None:
         ),
         encoding="utf-8",
     )
+    (workspace / "ideation" / "_gate1_candidate_cards.md").write_text(
+        "# T4 Gate1 Candidate Cards\n\n"
+        "## 排序 / 推荐动作\n"
+        "- Rank 1: D1 select; Rank 2: D3 revise; Rank 3: D4 merge as ablation; Rank 4: D2 reject.\n\n"
+        "## D1: mainline candidate\n"
+        "- **Technical mechanism**: targeted mechanism changes sparse representations; prediction improves measurable target metrics; counterfactual no change if the mechanism is disabled.\n"
+        "- **Practical / managerial / business implication**: decision makers can prioritize intervention budget for the subgroup where the mechanism matters most.\n"
+        "- **Scores + score rationale**: novelty=4 feasibility=4 impact=4 evaluability=5 differentiation=3 cost=5 contribution_strength=4 because the mechanism and pilot are clear.\n"
+        "- **Core paper dependencies**: synthesis.md Q1 and selected paper notes support the target constraint.\n"
+        "- **Risk / kill criteria**: stop if the pilot is indistinguishable from baseline.\n\n"
+        "## D2: rejected recommendation\n"
+        "- **Technical mechanism**: direct transfer reuses an existing representation bias.\n"
+        "- **Practical / managerial / business implication**: low practical research value if only the deployment setting changes.\n"
+        "- **Scores + score rationale**: novelty=2 feasibility=4 impact=2 evaluability=2 differentiation=2 cost=4 contribution_strength=1 because it is close to prior work.\n"
+        "- **Core paper dependencies**: Nearby Paper.\n"
+        "- **Risk / kill criteria**: reject if novelty collapses into existing work.\n\n"
+        "## D3: deferred evidence-driven option\n"
+        "- **Technical mechanism**: failure-mode intervention changes subgroup behavior.\n"
+        "- **Practical / managerial / business implication**: converts failure diagnosis into a targeted improvement workflow.\n"
+        "- **Scores + score rationale**: novelty=3 feasibility=3 impact=3 evaluability=3 differentiation=3 cost=4 contribution_strength=2 because mechanism evidence is still weak.\n"
+        "- **Core paper dependencies**: Failure Paper.\n"
+        "- **Risk / kill criteria**: defer if no single counterfactual can be written.\n\n"
+        "## D4: supplement reverse-operation option\n"
+        "- **Technical mechanism**: removing a component tests whether it is necessary.\n"
+        "- **Practical / managerial / business implication**: avoids spending engineering effort on unnecessary components.\n"
+        "- **Scores + score rationale**: novelty=3 feasibility=5 impact=2 evaluability=5 differentiation=3 cost=5 contribution_strength=2 because it is best as a supporting ablation.\n"
+        "- **Core paper dependencies**: Ablation Paper.\n"
+        "- **Risk / kill criteria**: stop if it is only a routine ablation.\n\n"
+        "Machine-readable artifacts: `ideation/_candidate_directions.json`, "
+        "`ideation/_pass2_grounding_review.json`, `ideation/_pass1_forward_candidates.json`.\n",
+        encoding="utf-8",
+    )
     (workspace / "ideation" / "_gate1_selection_brief.md").write_text(
         "# Gate1 Selection Brief\n\n"
         "## Pass1 candidates\n\n"
@@ -591,6 +623,25 @@ def _write_current_ideation_artifacts(workspace: Path, refs: list[str]) -> None:
         "## Novelty-Utility 谱系排布\n\n"
         "High utility and medium novelty: D1. Low novelty routine transfer: D2. "
         "Higher uncertainty options: D3 and D4, both still visible for user choice.\n",
+        encoding="utf-8",
+    )
+    (workspace / "ideation" / "selected_idea_brief.md").write_text(
+        "# Selected Idea Brief\n\n"
+        "## Gate1 用户选择\n"
+        "- **Selected option**: select_or_reframe\n"
+        "- **Captured feedback**: select D1\n"
+        "- **Selection fingerprint**: fixture\n\n"
+        "## Final selected idea\n"
+        "- **Idea IDs**: D1\n"
+        "- **One-line hypothesis**: A targeted calibration mechanism improves a measurable metric.\n"
+        "- **Technical mechanism**: targeted calibration changes the measurable error pattern; prediction is validation accuracy improvement; counterfactual is no accuracy change when calibration is disabled.\n"
+        "- **Practical / managerial / business implication**: decision makers can prioritize intervention budget for the subgroup where the mechanism matters most.\n"
+        "- **Core paper dependencies**: Prior Paper / synthesis.md Q1; claim_used is that prior methods leave a measurable gap.\n"
+        "- **Score rationale**: novelty=4, feasibility=4, impact=4, evaluability=5, differentiation=3, cost=5, contribution_strength=4.\n\n"
+        "## Hypothesis scope\n"
+        "- **H1**: validate the targeted calibration mechanism.\n\n"
+        "## Rejected, deferred, or merged alternatives\n"
+        "- D2 rejected, D3 deferred as cross-domain analogy, D4 deferred as reverse-operation supplement.\n",
         encoding="utf-8",
     )
     with (workspace / "ideation" / "rejected_ideas.md").open("a", encoding="utf-8") as handle:
@@ -763,11 +814,24 @@ class TestIdeationAgentValidateOutputs:
         hypotheses.write_text(
             "# Hypotheses\n\n"
             "## H1: Test Hypothesis\n\n"
+            "### Background\n"
+            "This is a test hypothesis with sufficient content. The synthesis gap points to a pilotable mechanism and the closest prior work leaves a measurable gap.\n\n"
+            "### Evidence and rationale\n"
+            "- **Literature observation**: Prior Paper reports a measurable gap.\n"
+            "- **Forward reasoning / problem reframing**: targeted calibration should directly affect the observed error pattern.\n"
+            "- **Score rationale**: novelty=4, feasibility=4, impact=4, evaluability=5, differentiation=3, cost=5, contribution_strength=4.\n"
+            "- **Core paper dependencies**: Prior Paper / synthesis.md Q1; claim_used is that prior methods leave a measurable gap.\n"
+            "- **Confidence**: Medium.\n\n"
+            "### Technical mechanism\n"
+            "A targeted calibration mechanism changes the measurable error pattern. Prediction: accuracy improves on the target validation set. Counterfactual: disabling calibration should not change accuracy if the mechanism is irrelevant.\n\n"
+            "### Practical / managerial / business implication\n"
+            "Decision makers can prioritize intervention budget for the subgroup where the mechanism matters most.\n\n"
             "### Hypothesis\n"
-            "This is a test hypothesis with sufficient content.\n\n"
-            "### Evidence\n"
-            "Evidence supporting this hypothesis.\n\n"
-            "This is a longer hypothesis document.\n" * 10,
+            "The proposed targeted calibration mechanism improves a measurable metric.\n\n"
+            "### Expected result\n"
+            "Accuracy improves on the target validation set without exceeding budget.\n\n"
+            "### Risk / falsification / kill criteria\n"
+            "If the pilot fails or disabling calibration does not change accuracy, the hypothesis is falsified and should stop.\n",
             encoding="utf-8",
         )
 

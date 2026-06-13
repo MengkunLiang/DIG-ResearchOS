@@ -27,7 +27,7 @@ T1 项目初始化
  -> T3 精读与结构化笔记
  -> T3.5 文献综合
  -> T3.6 可选综述论文支线（runtime gate：是否撰写 survey）
- -> T4 候选池生成
+ -> T4 候选池生成（Markdown candidate cards + machine JSON）
  -> T4-GATE1 候选方向人工选择 / 合并 / 重分析
  -> T4 最终假设与实验计划生成
  -> T4.5 新颖性预审（非通过 verdict 进入人工决策 gate）
@@ -79,7 +79,7 @@ T1
             -> T3.6-SEC-INTRO -> T3.6-SEC-CONCLUSION -> T3.6-SEC-ABSTRACT
             -> T3.6-ASSEMBLE -> T3.6-REVIEW -> T3.6-COMPILE -> T3.6-FEED -> T4
  -> T4
-    -> candidate pool ready: T4-GATE1 -> user chooses/selects/merges/reanalyzes -> T4
+    -> candidate pool ready: T4-GATE1 -> user reads candidate cards and chooses/selects/merges/reanalyzes -> T4
     -> final hypotheses ready: T4.5
     -> pass*: T5-HANDOFF
     -> reframe/drop/reject/collision: T4.5-HUMAN-REVIEW -> user chooses T5-HANDOFF/T4/done
@@ -120,6 +120,7 @@ T1
 - `HELLO` 是显式运行的 smoke task，不是主链起点；主链的 `initial_state` 是 `T1`
 - 当前主链只有在 `T4.5` 的 `Final Gate Verdict` 明确写成 `pass_to_experiment` / `pass_with_required_baselines` 等通过枚举时才自动进入 `T5-HANDOFF`；`return_to_T4_reframe`、`drop_due_to_collision`、`reject`、`collision`、`fail`、缺失 verdict 或无法识别的 verdict 都会进入 `T4.5-HUMAN-REVIEW`，由用户选择继续外部实验链、回 T4 重构或结束项目。系统不再自动拒绝、自动回退或默认放行，避免 T4.5-T4 死循环，也避免模型在新颖性不确定时替用户做价值裁决。旧内部实验阶段保留为 legacy 兼容入口，但主链和普通 `run-task T7` 不再进入旧内部完整实验
 - `T8` 不是一个节点，而是风格确认、资源索引、对齐矩阵、大纲、逐章节写作、拼装、自查、审稿、修订组成的多节点链；旧报告或旧 gate 中的 `next_task: T8` / `next_task: T8-WRITE` 会被状态机安全映射到 `T8-STYLE-GATE`，只有合法的 `drafts/writing_style.json` 已存在时才直接进入 `T8-RESOURCE`
+- `T4-GATE1` 给用户看的主文件是 `ideation/_gate1_candidate_cards.md`，每个 idea 必须展示技术机制、现实/管理/商业含义、评分依据、核心论文依赖、风险和推荐动作；`_candidate_directions.json`、Pass1/Pass2 JSON 只作为机器可读附录。用户选择后会先写 `_gate1_user_selection.json` 和 `selected_idea_brief.md`，T4 后半段再把最终假设、实验计划、scorecard、reject/defer 记录和最终 `selected_idea_brief.md` 补全。
 - `T8-REVIEW` 不是当前真实状态名，当前真实状态名是：
   - `T8-REVIEW-1`
   - `T8-REVIEW-2`
@@ -2289,8 +2290,8 @@ researchos run-task T3.6-COMPILE --workspace ./workspace/local-test2
 5. 做 Pass 2 文献接地，把每个候选标为 `proceed` / `revise_before_selection` / `defer_recommended` / `reject_recommended`，写 `ideation/_pass2_grounding_review.json`
 6. 写 `ideation/_candidate_directions.json` 和 `_gate1_selection_brief.md`，保证所有 Pass 1 候选都对用户可见
 7. 对每个候选写七维评分、机制、prediction、counterfactual、最低实验和 kill criteria
-8. runtime 在候选池就绪时把 T4 标记为 `t4_gate1_ready`，跳到 `T4-GATE1` 状态机级 immediate gate；如果旧 workspace 已经有完整候选池但停在 T4 死锁/PAUSED，resume 会先进入 `T4-GATE1`，不会先触发同参数死锁检查。
-9. 用户选择、重构、合并多个候选或补充新想法时，结果写入 `ideation/_gate1_user_selection.json`；如果用户选择“重新分析”，runtime 只写 `ideation/_gate1_reanalysis_request.json` 并归档旧候选池，不写 selection 文件，避免 T4 误入后半段。
+8. runtime 在候选池就绪时把 T4 标记为 `t4_gate1_ready`，跳到 `T4-GATE1` 状态机级 immediate gate；如果旧 workspace 已经有完整候选池但停在 T4 死锁/PAUSED，resume 会先进入 `T4-GATE1`，不会先触发同参数死锁检查。Gate 的 `state.yaml.pending_gate` 只保存 `_gate1_candidate_cards.md` 和 `_gate1_selection_brief.md` 的路径、字符数和短摘要，避免把整份候选池内联到状态文件。
+9. 用户选择、重构、合并多个候选或补充新想法时，结果写入 `ideation/_gate1_user_selection.json`；CLI 可直接输入 `D1`、`D1+D3`、`merge D1+D3`、`new: ...` 或 `reanalyze: ...`。selection 会绑定候选池 fingerprint，候选池变化时重新展示 Gate1；如果用户选择“重新分析”，runtime 只写 `ideation/_gate1_reanalysis_request.json` 并归档旧候选池，不写 selection 文件，避免 T4 误入后半段。
 10. T4 resume 读取 `_gate1_user_selection.json`，再对选定方向做 pre-mortem
 11. 写 `_family_distribution.md` 统计 mechanism family 分布
 12. 最终产出：
@@ -2348,7 +2349,7 @@ researchos run-task T3.6-COMPILE --workspace ./workspace/local-test2
 
 10. **Gate1 暂停**：T4 不在同一次 LLM run 内继续写最终假设。runtime 校验 `_pass1_forward_candidates.json`、`_pass2_grounding_review.json`、`_candidate_directions.json`、`_gate1_selection_brief.md` 和条件性的 `bridge_coverage_review.json` 后，返回 `completion_mode=t4_gate1_ready` 并转入 `T4-GATE1`。
 
-11. **T4-GATE1 用户裁决**：状态机直接展示候选方向、机制/反事实占位风险、Pass 2 不推荐理由、bridge 覆盖/逃生舱和合并建议。用户可选择、选择并重构、合并、补充或要求重新分析。选择/合并/补充结果写入 `ideation/_gate1_user_selection.json`，然后回到 `T4`；“重新分析”只写 `ideation/_gate1_reanalysis_request.json` 并归档旧候选池，回到 T4 重新生成 Pass1/Pass2。
+11. **T4-GATE1 用户裁决**：状态机展示候选卡片摘要和文件路径，完整候选方向、机制/反事实、Pass 2 不推荐理由、bridge 覆盖/逃生舱和合并建议在 `ideation/_gate1_candidate_cards.md` 与 `_gate1_selection_brief.md`。用户可选择、选择并重构、合并、补充或要求重新分析；CLI 直接输入 `D1`、`D1+D3`、`merge D1+D3`、`new: ...` 或 `reanalyze: ...` 即可。选择/合并/补充结果写入带候选池 fingerprint 的 `ideation/_gate1_user_selection.json`，然后回到 `T4`；“重新分析”只写 `ideation/_gate1_reanalysis_request.json` 并归档旧候选池，回到 T4 重新生成 Pass1/Pass2。若已有合法 selection 文件但 `state.yaml` 仍残留旧 pending gate，resume 会清掉旧 gate 并直接进入 T4 后半段。
 
 12. **更新决策链**：T4 resume 读取 `_gate1_user_selection.json`，更新 `idea_scorecard.yaml`、`rejected_ideas.md`、`gate_decisions.json` 并继续生成最终 hypotheses/exp plan。
 

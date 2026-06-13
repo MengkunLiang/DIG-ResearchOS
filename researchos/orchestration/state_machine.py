@@ -338,6 +338,7 @@ def _t4_gate1_candidate_pool_fingerprints(workspace_dir: Path) -> dict[str, dict
         "pass1_forward_candidates": "ideation/_pass1_forward_candidates.json",
         "pass2_grounding_review": "ideation/_pass2_grounding_review.json",
         "candidate_directions": "ideation/_candidate_directions.json",
+        "gate1_candidate_cards": "ideation/_gate1_candidate_cards.md",
         "gate1_selection_brief": "ideation/_gate1_selection_brief.md",
         "bridge_coverage_review": "ideation/bridge_coverage_review.json",
     }
@@ -354,6 +355,103 @@ def _t4_gate1_candidate_pool_fingerprints(workspace_dir: Path) -> dict[str, dict
             item["size"] = path.stat().st_size
         fingerprints[label] = item
     return fingerprints
+
+
+def validate_t4_gate1_selection_file(workspace_dir: Path) -> tuple[bool, str | None]:
+    """Validate that the formal T4 Gate1 user selection is usable for resume."""
+
+    path = workspace_dir / "ideation" / "_gate1_user_selection.json"
+    if not path.exists() or path.stat().st_size <= 0:
+        return False, "missing ideation/_gate1_user_selection.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return False, f"_gate1_user_selection.json parse failed: {exc}"
+    if not isinstance(data, dict):
+        return False, "_gate1_user_selection.json top-level value must be an object"
+    if data.get("semantics") != "t4_gate1_user_selection_for_candidate_pool":
+        return False, "_gate1_user_selection.json semantics is invalid"
+    if data.get("task_id") != "T4-GATE1":
+        return False, "_gate1_user_selection.json task_id must be T4-GATE1"
+    if data.get("gate_id") != "t4_gate1_selection_gate":
+        return False, "_gate1_user_selection.json gate_id must be t4_gate1_selection_gate"
+    option_id = str(data.get("selected_option") or "").strip()
+    if not option_id:
+        return False, "_gate1_user_selection.json missing selected_option"
+    captured = data.get("captured")
+    if not isinstance(captured, dict):
+        return False, "_gate1_user_selection.json captured must be an object"
+    captured_text = " ".join(str(value).strip() for value in captured.values() if str(value).strip())
+    if option_id in {"select_or_reframe", "merge", "new_idea", "reanalyze"} and not captured_text:
+        return False, "_gate1_user_selection.json captured selection text is empty"
+    if not str(data.get("selection_fingerprint") or "").strip():
+        return False, "_gate1_user_selection.json missing selection_fingerprint"
+    changed = _gate1_pool_fingerprint_changed(
+        data.get("candidate_pool_fingerprints"),
+        _t4_gate1_candidate_pool_fingerprints(workspace_dir),
+    )
+    if changed:
+        return False, "Gate1 selection is stale: " + ", ".join(changed[:8])
+    return True, None
+
+
+def _write_t4_selected_idea_brief_stub(
+    workspace_dir: Path,
+    *,
+    gate_id: str,
+    option_id: str,
+    captured: dict[str, Any],
+    selection_fingerprint: str,
+    next_task: str,
+) -> None:
+    """Write a human-readable confirmation immediately after Gate1 selection.
+
+    The T4 post-gate agent is expected to replace or extend this file with the
+    final technical mechanism, practical implication, paper dependencies, and
+    hypothesis scope. This stub gives users a stable place to inspect what was
+    recorded right after the gate.
+    """
+
+    path = workspace_dir / "ideation" / "selected_idea_brief.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    captured_lines = []
+    for key, value in sorted((captured or {}).items()):
+        captured_lines.append(f"- **{key}**: {value if value not in (None, '') else '(empty)'}")
+    if not captured_lines:
+        captured_lines.append("- (No additional free-text input was captured.)")
+    cards_path = workspace_dir / "ideation" / "_gate1_candidate_cards.md"
+    selection_brief_path = workspace_dir / "ideation" / "_gate1_selection_brief.md"
+    content = f"""# Selected Idea Brief
+
+## Gate1 用户选择
+- **Gate ID**: {gate_id}
+- **Selected option**: {option_id}
+- **Selection fingerprint**: {selection_fingerprint}
+- **Next task**: {next_task}
+
+## Captured feedback
+{chr(10).join(captured_lines)}
+
+## Final selected idea
+- **Idea IDs**: 待 T4 Gate1 后半段根据用户选择确认；如用户输入了 `selection`、`merge_plan` 或 `new_idea`，以上 captured feedback 是当前来源。
+- **One-line hypothesis**: 待 T4 后半段写入 `ideation/hypotheses.md`。
+- **Technical mechanism**: 待 T4 后半段从候选机制、prediction 和 counterfactual 中收敛。
+- **Practical / managerial / business implication**: 待 T4 后半段补全现实、管理、商业或部署意义。
+- **Core paper dependencies**: 待 T4 后半段从 `idea_scorecard.yaml` / `idea_rationales.json` / paper notes 中确认；不要把 weak-only 线索当强证据。
+- **Score rationale**: 待 T4 后半段引用候选评分和用户选择理由。
+
+## Hypothesis scope
+- T4 后半段必须把最终范围写入 `ideation/hypotheses.md`，并在此文件补充 H1/H2/H3 对应关系。
+
+## Source files
+- Candidate cards: `{cards_path.relative_to(workspace_dir).as_posix() if cards_path.exists() else 'ideation/_gate1_candidate_cards.md'}`
+- Gate1 selection brief: `{selection_brief_path.relative_to(workspace_dir).as_posix() if selection_brief_path.exists() else 'ideation/_gate1_selection_brief.md'}`
+- Machine selection record: `ideation/_gate1_user_selection.json`
+
+## Rejected, deferred, or merged alternatives
+- 待 T4 后半段写入 `ideation/rejected_ideas.md`，并在此处同步摘要。
+"""
+    path.write_text(content, encoding="utf-8")
 
 
 def _gate1_pool_fingerprint_changed(
@@ -918,6 +1016,10 @@ def _normalize_template_family(value: Any) -> str:
         "informs": "utd",
         "is": "utd",
         "misq": "utd",
+        "cds": "utd",
+        "commerce_data_science": "utd",
+        "informs_journal_on_data_science": "utd",
+        "informs_journal_on_data_science_and_analytics": "utd",
         "management_science": "utd",
         "ccf_a": "ccf",
         "ccf-a": "ccf",
@@ -944,6 +1046,10 @@ def _normalize_template_id(value: Any) -> str:
         "isr": "informs",
         "isre": "informs",
         "management_science": "informs",
+        "cds": "informs",
+        "commerce_data_science": "informs",
+        "informs_journal_on_data_science": "informs",
+        "informs_journal_on_data_science_and_analytics": "informs",
     }
     return aliases.get(text, text)
 
@@ -969,6 +1075,10 @@ def _normalize_venue_style(value: Any) -> str:
         "utd": "is",
         "informs": "is",
         "misq": "is",
+        "cds": "is",
+        "commerce_data_science": "is",
+        "informs_journal_on_data_science": "is",
+        "informs_journal_on_data_science_and_analytics": "is",
     }
     text = aliases.get(text, text)
     return text if text in {"is", "ccf_a", "both"} else "ccf_a"
@@ -1112,7 +1222,7 @@ class StateMachine:
         node = self.nodes[state.current_task]
 
         # Phase 2.3: 检查迭代死锁（相同参数重复3次以上）
-        self._check_iteration_deadlock(state, node)
+        self._check_iteration_deadlock(state, node, workspace_dir=workspace_dir)
 
         run_id = f"{state.current_task.lower()}_{uuid.uuid4().hex[:8]}"
         optional_output_names = set((node.optional_outputs or {}).keys())
@@ -1271,17 +1381,18 @@ class StateMachine:
 
     @staticmethod
     def _t4_gate1_ready_without_selection(workspace_dir: Path) -> bool:
-        if (workspace_dir / "ideation" / "_gate1_user_selection.json").exists():
+        if validate_t4_gate1_selection_file(workspace_dir)[0]:
             return False
         try:
-            from ..agents.ideation import validate_t4_gate1_ready
+            from ..agents.ideation import ensure_t4_gate1_candidate_cards, validate_t4_gate1_ready
 
+            ensure_t4_gate1_candidate_cards(workspace_dir)
             ok, _err = validate_t4_gate1_ready(workspace_dir)
             return bool(ok)
         except Exception:
             return False
 
-    def start_task(self, state: StateYaml, run_id: str) -> StateYaml:
+    def start_task(self, state: StateYaml, run_id: str, *, workspace_dir: Path | None = None) -> StateYaml:
         """task 开始执行前，先写入一条 RUNNING history。"""
         state.status = "RUNNING"
         state.pending_gate = None
@@ -1296,7 +1407,7 @@ class StateMachine:
         )
 
         # Phase 2.3: 记录迭代历史（用于死锁检测）
-        self._record_iteration_attempt(state, self.nodes[state.current_task])
+        self._record_iteration_attempt(state, self.nodes[state.current_task], workspace_dir=workspace_dir)
 
         return state
 
@@ -1415,6 +1526,13 @@ class StateMachine:
         if state.pending_gate is None:
             raise ValueError("No pending gate to resolve")
         node = self.nodes[state.current_task]
+        if (
+            node.task_id == "T4-GATE1"
+            and workspace_dir is not None
+            and validate_t4_gate1_selection_file(workspace_dir)[0]
+        ):
+            state.pending_gate = None
+            return self._transition_to_next(state, "T4", workspace_dir=workspace_dir)
         if node.task_id == "T4-GATE1" and workspace_dir is not None:
             current_pool = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
             previous_pool = (state.pending_gate.presentation or {}).get("candidate_pool_fingerprints")
@@ -1686,6 +1804,7 @@ class StateMachine:
                     "ideation/_pass2_grounding_review.json",
                     "ideation/_candidate_directions.json",
                     "ideation/_family_distribution.md",
+                    "ideation/_gate1_candidate_cards.md",
                     "ideation/_gate1_selection_brief.md",
                     "ideation/bridge_coverage_review.json",
                 ):
@@ -1718,6 +1837,14 @@ class StateMachine:
             path = workspace_dir / "ideation" / "_gate1_user_selection.json"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            _write_t4_selected_idea_brief_stub(
+                workspace_dir,
+                gate_id=self._gate_id_for_node(node),
+                option_id=option_id,
+                captured=captured,
+                selection_fingerprint=payload["selection_fingerprint"],
+                next_task=next_task,
+            )
             return
         if node.task_id == "T8-STYLE-GATE":
             option_id = str(gate_result.get("option_id") or gate_result.get("key") or "ccf_neurips")
@@ -2156,7 +2283,7 @@ class StateMachine:
         except Exception as e:
             logger.debug(f"预算检查失败: {e}")
 
-    def _check_iteration_deadlock(self, state: StateYaml, node: TaskNode) -> None:
+    def _check_iteration_deadlock(self, state: StateYaml, node: TaskNode, workspace_dir: Path | None = None) -> None:
         """检查迭代死锁：相同参数组合尝试3次以上时快速失败。
 
         Phase 2.3: 防止 Agent 在相同参数上无限迭代。
@@ -2172,7 +2299,7 @@ class StateMachine:
             return
 
         # 计算当前参数哈希
-        current_params = self._extract_task_params(node)
+        current_params = self._extract_task_params(node, state=state, workspace_dir=workspace_dir)
         current_hash = self._compute_param_hash(current_params)
 
         # 统计相同参数哈希出现次数
@@ -2194,13 +2321,19 @@ class StateMachine:
                 f"再次尝试将触发死锁保护。"
             )
 
-    def _record_iteration_attempt(self, state: StateYaml, node: TaskNode) -> None:
+    def _record_iteration_attempt(
+        self,
+        state: StateYaml,
+        node: TaskNode,
+        *,
+        workspace_dir: Path | None = None,
+    ) -> None:
         """记录本次迭代尝试到 iteration_history。
 
         Phase 2.3: 用于后续死锁检测。
         """
         task_id = state.current_task
-        params = self._extract_task_params(node)
+        params = self._extract_task_params(node, state=state, workspace_dir=workspace_dir)
         param_hash = self._compute_param_hash(params)
 
         if task_id not in state.iteration_history:
@@ -2215,7 +2348,12 @@ class StateMachine:
         )
 
     @staticmethod
-    def _extract_task_params(node: TaskNode) -> dict[str, Any]:
+    def _extract_task_params(
+        node: TaskNode,
+        *,
+        state: StateYaml | None = None,
+        workspace_dir: Path | None = None,
+    ) -> dict[str, Any]:
         """提取任务的关键参数用于死锁检测。
 
         包括：inputs, outputs, llm配置, budget配置等影响任务行为的参数。
@@ -2235,6 +2373,21 @@ class StateMachine:
         if node.extra:
             params["extra"] = dict(node.extra)
 
+        if node.task_id == "T4" and state is not None:
+            selection_fingerprint = ""
+            if workspace_dir is not None:
+                selection_path = workspace_dir / "ideation" / "_gate1_user_selection.json"
+                if selection_path.exists() and selection_path.stat().st_size > 0:
+                    try:
+                        data = json.loads(selection_path.read_text(encoding="utf-8"))
+                        if isinstance(data, dict):
+                            selection_fingerprint = str(data.get("selection_fingerprint") or "").strip()
+                    except Exception:
+                        selection_fingerprint = ""
+            params["t4_gate_phase"] = "post_gate1" if selection_fingerprint else "pre_gate1"
+            if selection_fingerprint:
+                params["gate1_selection_fingerprint"] = selection_fingerprint
+
         return params
 
     @staticmethod
@@ -2245,7 +2398,5 @@ class StateMachine:
         """
         import json
 
-        # 将参数转换为规范化的JSON字符串，然后计算哈希
-        # 使用 sort_keys 确保字典顺序一致
-        normalized = json.dumps(params, sort_keys=True, default=str)
-        return str(hash(normalized))
+        normalized = json.dumps(params, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":"))
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()

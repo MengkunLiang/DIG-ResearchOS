@@ -89,6 +89,7 @@ T4 已拆成两个 runtime 阶段：
    - `ideation/_pass2_grounding_review.json`
    - `ideation/_candidate_directions.json`
    - `ideation/_family_distribution.md`
+   - `ideation/_gate1_candidate_cards.md`
    - `ideation/_gate1_selection_brief.md`
    - 如 T1 确认 bridge，还要写 `ideation/bridge_coverage_review.json`
    写完后立即 `finish_task`。不要调用 `ask_human`，不要写最终 `hypotheses.md` / `exp_plan.yaml` / `risks.md` / `gate_decisions.json`。runtime 会自动转入 `T4-GATE1`。
@@ -483,9 +484,31 @@ counterfactual: "if it fails, metric does not improve"
 
 这个文件本身**不强制做出合并动作**，它只是把 family 分布暴露给后面的 Gate1。
 
-### Step 3.35: 写 Gate1 选择简报
+### Step 3.35: 写 Gate1 用户候选卡片与选择简报
 
-在调用 `ask_human` 前，必须写 `ideation/_gate1_selection_brief.md`。它是给用户看的候选全量清单，必须包含：
+在 `finish_task` 前，必须先写 `ideation/_gate1_candidate_cards.md`，再写
+`ideation/_gate1_selection_brief.md`。
+
+`ideation/_gate1_candidate_cards.md` 是 Gate1 默认展示给用户阅读的主文件，不是 JSON 摘要。
+它必须用 Markdown 卡片逐个展示所有候选，方便用户直接判断“选、合并、重构、暂缓或重分析”。
+每个候选卡片必须包含：
+
+- `Rank / 推荐动作`：如 select、revise_before_final、merge_with_Dn、defer、reject、reanalyze_hint。
+- `Idea ID + title + one-line hypothesis`：一句话假设，不要只写方法名。
+- `Technical mechanism`：机制、prediction、counterfactual，用用户能看懂的技术语言写清楚。
+- `Practical / managerial / business implication`：如果该 idea 成立，对管理、业务、商业决策、组织治理、产品或现实部署意味着什么。即使是 CCF 技术稿，也要写现实含义，避免只有干涩技术点。
+- `Scores + score rationale`：展示 novelty / feasibility / impact / evaluability / differentiation / cost / contribution_strength，并用 1-2 句解释高低分依据。
+- `Core paper dependencies`：列核心论文、note id、paper id 或 title；没有直接论文依赖时写 `none; forward-generated`，并解释它如何由问题重构/跨域类比推出。不要伪造文献。
+- `Nearest prior work / novelty delta`：最接近工作、距离和关键差异。
+- `Minimum convincing evidence`：cheap pilot 的 dataset/workload、baseline、metric、expected signal。
+- `Top risks / kill criteria`：最早能看见的失败信号和停止条件。
+- `User-edit hint`：如果用户要改，最应该改哪个字段，例如收紧机制、换应用场景、合并 D1+D3、增加管理含义。
+
+文件末尾必须写“机器可读附录路径”：`ideation/_candidate_directions.json`、
+`ideation/_pass2_grounding_review.json`、`ideation/_pass1_forward_candidates.json`
+和可选 `ideation/bridge_coverage_review.json`。这些 JSON 是后续工具和审计使用，不应成为用户主要阅读内容。
+
+`ideation/_gate1_selection_brief.md` 是更短的选择摘要，必须包含：
 
 - Pass 1 原始候选 ID、标题、origin、mainline/supplement 状态
 - Pass 2 对每个候选的 `screening_recommendation`、主要风险和 `selection_warning`
@@ -493,6 +516,7 @@ counterfactual: "if it fails, metric does not improve"
 - 所有候选都必须可见，包括 `reject_recommended`、`defer_recommended`、`routine_risk`、证据不足候选
 - 合并建议，例如 `D1 + D3 -> M1`，并说明合并后应继承哪些 design rationale、mechanism、experiment
 - 末尾必须有三段软提示：`集中度提示`、`Origin 分布`、`Novelty-Utility 谱系排布`
+- 指向完整候选卡片：`详见 ideation/_gate1_candidate_cards.md`
 - 明确写出用户可选动作：
   - `选择 Dn`
   - `选择 Dn 并重构`
@@ -500,7 +524,9 @@ counterfactual: "if it fails, metric does not improve"
   - `新想法: ...`
   - `重新分析`
 
-`_gate1_selection_brief.md` 不替代 `ask_human`，但它保证用户和后续 resume 都能看到完整候选池。
+`_gate1_candidate_cards.md` 和 `_gate1_selection_brief.md` 不替代 runtime human gate，
+但它们保证用户和后续 resume 都能看到完整候选池。不要把 `_candidate_directions.json`
+直接粘贴成 Markdown；JSON 只作为机器可读附录。
 
 写 brief 前如需集中度提示，应基于 `_candidate_directions.json` 自行总结候选 origin/family 分布；不要在 `idea_scorecard.yaml` 尚未初始化时调用 `analyze_idea_concentration(scorecard_path="ideation/idea_scorecard.yaml")`。
 
@@ -537,7 +563,7 @@ Gate1 和 Gate2 后必须回写 `decision` 字段：
 
 ### Step 4: Gate1 - 让用户选择方向
 **当前 runtime 中不要在 T4 前半段直接调用 `ask_human`。**你要把下面内容写入
-`ideation/_gate1_selection_brief.md`，然后调用 `finish_task`；系统会进入独立的
+`ideation/_gate1_candidate_cards.md` 与 `ideation/_gate1_selection_brief.md`，然后调用 `finish_task`；系统会进入独立的
 `T4-GATE1` gate 来询问用户。以下格式是 brief/gate 展示内容，不是本轮直接调用
 `ask_human` 的许可。
 
@@ -582,7 +608,8 @@ Gate1 和 Gate2 后必须回写 `decision` 字段：
 
 **关键**：把 mechanism / counterfactual 字段是否为占位词、Pass2 为什么不推荐、是否需要重构都**直接暴露给用户**，而不是提前删除。用户能立刻看出哪些 idea 还没想清楚机制，也能主动选择高风险候选或要求合并。
 
-如果 `ideation/_gate1_user_selection.json` 不存在，到这里写完 `_gate1_selection_brief.md` 后必须停止并 `finish_task`。
+如果 `ideation/_gate1_user_selection.json` 不存在，到这里写完 `_gate1_candidate_cards.md`
+和 `_gate1_selection_brief.md` 后必须停止并 `finish_task`。
 
 **Gate1处理逻辑**：
 - 如果用户选择某个方向 → 进入阶段A.5（Pre-mortem检查）
@@ -594,6 +621,7 @@ Gate1 和 Gate2 后必须回写 `decision` 字段：
 - 每次Gate1后必须更新：
   - `ideation/idea_scorecard.yaml` 中每个候选的 `decision`
   - `ideation/rejected_ideas.md` 中被淘汰/暂缓/合并 idea 的可读原因
+  - `ideation/selected_idea_brief.md` 中用户选择后的最终 idea 摘要、现实含义和后续假设范围
   - `ideation/gate_decisions.json` 中 `T4-DECIDE-1` 的 selected / rejected / user_feedback / rationale
 
 ---
@@ -716,7 +744,7 @@ Gate1 和 Gate2 后必须回写 `decision` 字段：
 ### Step 5: 展开选定方向
 基于用户选定的方向，展开成详细的研究假设和实验计划。
 
-### Step 6: 产出七个文件
+### Step 6: 产出八个文件
 
 #### 文件1: `ideation/hypotheses.md`
 研究假设文档，每个假设用 `## H1`、`## H2` 等标记anchor（方便exp_plan引用）。
@@ -736,7 +764,16 @@ Gate1 和 Gate2 后必须回写 `decision` 字段：
 - **研究缺口/覆盖提示**: [来自 synthesis.md 的明确问题，或 missing_areas.md 中经复核后可转化的问题；不要把检索覆盖不足直接写成领域空白]
 - **推导逻辑**: [为什么这些观察会导向这个假设，而不是只做表面组合]
 - **CDR tuple**: [problem_frame / design_rationale / artifact / data_view / evaluation_mode / contribution_type / boundary_conditions]
+- **评分依据**: [novelty / feasibility / impact / evaluability / differentiation / cost / contribution_strength 的核心理由，不需要重复完整 scorecard，但必须解释为什么入选]
+- **核心论文依赖**: [核心 paper note id / paper id / title / claim_used；没有直接依赖时写 none; forward-generated，并解释不是伪造引用]
 - **置信度**: Low / Medium / High，并说明原因
+
+### 技术机制
+机制假设、prediction 和 counterfactual。必须能被实验反驳，不能只写“使用 X 提升 Y”。
+
+### 现实 / 管理 / 商业含义
+说明该假设如果成立，对管理决策、业务流程、产品部署、商业价值、组织治理或现实场景有什么意义。
+技术型 CCF 稿也要写这一节；如果确实没有管理语义，至少写清楚现实部署或工程实践含义。
 
 ### 核心假设
 具体的、可验证的假设陈述。
@@ -755,6 +792,7 @@ Gate1 和 Gate2 后必须回写 `decision` 字段：
 - 每个假设必须是**可验证的**（有明确的成功/失败标准）
 - 必须有**observable metrics**（不能是"提升模型理解能力"这种模糊表述）
 - 每个假设必须有**生成依据**，说明它从哪些输入材料和推理步骤得出
+- 每个假设必须有**技术机制**、**现实/管理/商业含义**、**评分依据**和**核心论文依赖**
 - 至少1个假设，最多3个假设
 
 #### 文件2: `ideation/exp_plan.yaml`
@@ -952,6 +990,8 @@ ideas:
 - 至少一个 `decision.status=selected`
 - 至少一个 `decision.status=rejected/deferred/merged`
 - selected idea 的 `hypothesis_refs` 必须覆盖最终 `hypotheses.md` 中的所有 `H1/H2/...`
+- selected idea 必须在 `selection_rationale` 中写 `contribution_character`，并尽量写
+  `practical_implication` 或 `managerial_implication`，供 Gate1 卡片、hypotheses.md 和 T8 引用。
 - rejected/deferred/merged idea 必须有 `rejection_reason` 和 `can_revisit_if`
 
 #### 文件4: `ideation/rejected_ideas.md`
@@ -973,7 +1013,36 @@ ideas:
 - **Cheap pilot that was not chosen**: [最低实验为什么不够好]
 ```
 
-#### 文件5: `ideation/gate_decisions.json`
+#### 文件5: `ideation/selected_idea_brief.md`
+Gate1 后给用户和后续 agent 阅读的最终方向确认文件。这个文件不是 JSON，必须用 Markdown
+写清楚“用户最终选了什么、系统如何解释选择、后续 hypotheses.md 将写哪些假设”。
+
+**格式要求**：
+```markdown
+# Selected Idea Brief
+
+## Gate1 用户选择
+- **Selected option**: select_or_reframe / merge / new_idea
+- **Captured feedback**: <来自 ideation/_gate1_user_selection.json 的用户文本>
+- **Selection fingerprint**: <如存在则写；用于防止旧候选池复用>
+
+## Final selected idea
+- **Idea IDs**: D1 或 M1
+- **One-line hypothesis**: <一句话假设>
+- **Technical mechanism**: <机制、prediction、counterfactual>
+- **Practical / managerial / business implication**: <现实、管理、商业、业务或部署意义>
+- **Core paper dependencies**: <paper note id / title / paper id / claim_used；没有直接依赖时写 none; forward-generated>
+- **Score rationale**: <为什么这个 idea 在 novelty/feasibility/impact/evaluability/differentiation/cost 上值得进入最终假设>
+
+## Hypothesis scope
+- **H1**: <将写入 hypotheses.md 的假设范围>
+- **H2/H3**: <如有>
+
+## Rejected, deferred, or merged alternatives
+- <D2/D3/S1 的处理原因，指向 rejected_ideas.md>
+```
+
+#### 文件6: `ideation/gate_decisions.json`
 Gate 决策日志，**严格符合** gate_decisions.schema.json。必须记录 `T4-DECIDE-1` 和 `T4-DECIDE-2`。
 如果存在 `ideation/_gate1_user_selection.json` 且其中有 `selection_fingerprint`，
 必须把同一个值写入 `gate_decisions.json` 顶层字段 `gate1_selection_fingerprint`，
@@ -1027,7 +1096,7 @@ write_structured_file(
 }
 ```
 
-#### 文件6: `ideation/idea_rationales.json`
+#### 文件7: `ideation/idea_rationales.json`
 每个最终 idea / hypothesis 的可机器读取依据记录，**严格符合** idea_rationales.schema.json。
 
 **必须使用 write_structured_file 工具生成此文件**：
@@ -1083,7 +1152,7 @@ write_structured_file(
 - 不确定依据必须标为 `strength: "weak"`，不要伪装成强证据
 - `idea_origin` 应区分 `free_reasoning`、`seed_refinement`、`evidence_driven` 和四类 supplement，方便后续 coverage 分析；不要为了满足某类而硬编没有证据的候选
 
-#### 文件7: `ideation/risks.md`
+#### 文件8: `ideation/risks.md`
 Top 3 风险分析，诚实列出最大的风险。
 
 **格式要求**：

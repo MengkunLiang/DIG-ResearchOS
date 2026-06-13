@@ -1369,6 +1369,9 @@ class AgentRunner:
             return False
         if self._t4_gate1_user_selection_exists(ctx):
             return False
+        from ..agents.ideation import ensure_t4_gate1_candidate_cards
+
+        ensure_t4_gate1_candidate_cards(ctx.workspace_dir)
         ok, err = validate_t4_gate1_ready(ctx.workspace_dir)
         if not ok:
             self.log.info("t4_gate1_prefinalize_skipped", reason=err)
@@ -1391,6 +1394,7 @@ class AgentRunner:
                     "ideation/_pass1_forward_candidates.json",
                     "ideation/_pass2_grounding_review.json",
                     "ideation/_candidate_directions.json",
+                    "ideation/_gate1_candidate_cards.md",
                     "ideation/_gate1_selection_brief.md",
                     "ideation/bridge_coverage_review.json",
                 ],
@@ -1412,6 +1416,9 @@ class AgentRunner:
             return stop_reason, error_msg
         if ctx.extra.get("completion_mode") in {"t4_resume_prefinalize", "t4_gate1_ready"}:
             return stop_reason, error_msg
+        from ..agents.ideation import ensure_t4_gate1_candidate_cards
+
+        ensure_t4_gate1_candidate_cards(ctx.workspace_dir)
         ok, err = validate_t4_gate1_ready(ctx.workspace_dir)
         if not ok:
             self.log.info("t4_gate1_finalize_skipped", reason=err)
@@ -1434,6 +1441,7 @@ class AgentRunner:
                     "ideation/_pass1_forward_candidates.json",
                     "ideation/_pass2_grounding_review.json",
                     "ideation/_candidate_directions.json",
+                    "ideation/_gate1_candidate_cards.md",
                     "ideation/_gate1_selection_brief.md",
                     "ideation/bridge_coverage_review.json",
                 ],
@@ -1444,8 +1452,10 @@ class AgentRunner:
 
     @staticmethod
     def _t4_gate1_user_selection_exists(ctx: ExecutionContext) -> bool:
-        path = ctx.workspace_dir / "ideation" / "_gate1_user_selection.json"
-        return path.exists() and path.stat().st_size > 0
+        from ..orchestration.state_machine import validate_t4_gate1_selection_file
+
+        ok, _ = validate_t4_gate1_selection_file(ctx.workspace_dir)
+        return ok
 
     def _t4_final_outputs_follow_gate1(self, ctx: ExecutionContext) -> bool:
         """Require final T4 artifacts to be produced after the formal Gate1 choice.
@@ -1459,6 +1469,9 @@ class AgentRunner:
 
         selection_path = ctx.workspace_dir / "ideation" / "_gate1_user_selection.json"
         if not selection_path.exists() or selection_path.stat().st_size <= 0:
+            from ..agents.ideation import ensure_t4_gate1_candidate_cards
+
+            ensure_t4_gate1_candidate_cards(ctx.workspace_dir)
             ok, _ = validate_t4_gate1_ready(ctx.workspace_dir)
             if ok:
                 self.log.info("t4_resume_prefinalize_skipped", reason="gate1_selection_missing")
@@ -1474,6 +1487,7 @@ class AgentRunner:
             ctx.workspace_dir / "ideation" / "idea_rationales.json",
             ctx.workspace_dir / "ideation" / "gate_decisions.json",
             ctx.workspace_dir / "ideation" / "rejected_ideas.md",
+            ctx.workspace_dir / "ideation" / "selected_idea_brief.md",
         ]
         stale_paths = [
             str(path.relative_to(ctx.workspace_dir))
@@ -1494,6 +1508,7 @@ class AgentRunner:
             ctx.workspace_dir / "ideation" / "_pass1_forward_candidates.json",
             ctx.workspace_dir / "ideation" / "_pass2_grounding_review.json",
             ctx.workspace_dir / "ideation" / "_candidate_directions.json",
+            ctx.workspace_dir / "ideation" / "_gate1_candidate_cards.md",
             ctx.workspace_dir / "ideation" / "_gate1_selection_brief.md",
         ]
         bridge_review = ctx.workspace_dir / "ideation" / "bridge_coverage_review.json"
