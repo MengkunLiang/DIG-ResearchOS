@@ -585,9 +585,9 @@ def test_validate_t4_artifacts_reports_bad_hypothesis_ref(tmp_path: Path):
                     },
                     {
                         "idea_id": "D1b",
-                        "idea_origin": "evidence_driven",
+                        "idea_origin": "cross_domain_analogy",
                         "constraint_status": "mainline",
-                        "basis_summary": "Evidence-driven candidate from paper notes and experiment feasibility.",
+                        "basis_summary": "Cross-domain analogy candidate from paper notes and experiment feasibility.",
                     },
                     {
                         "idea_id": "D2",
@@ -622,9 +622,9 @@ def test_validate_t4_artifacts_reports_bad_hypothesis_ref(tmp_path: Path):
                     },
                     {
                         "id": "D1b",
-                        "idea_origin": "evidence_driven",
+                        "idea_origin": "cross_domain_analogy",
                         "constraint_status": "mainline",
-                        "basis_summary": "Evidence-driven candidate from paper notes and experiment feasibility.",
+                        "basis_summary": "Cross-domain analogy candidate from paper notes and experiment feasibility.",
                     },
                     {
                         "id": "D2",

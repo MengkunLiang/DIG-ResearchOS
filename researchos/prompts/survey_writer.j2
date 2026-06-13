@@ -143,12 +143,12 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 3. **venue 模板细分**：
    - `basic_zh`：中文基础模板，适合中文期刊/中文工作稿。
    - `basic_en`：英文基础模板，适合未指定 venue 或暂不套格式的英文工作稿。
-   - `ccf`：CCF/AI/CS 会议模板；若选择 CCF，必须继续确认具体会议模板。默认 `template_id=neurips`，也可指定 `kdd`、`icml`、`aaai` 等已上传模板；如果用户说“不用会议模板”，改用 `basic_en`。
+   - `ccf`：CCF/AI/CS 会议模板；若选择 CCF，必须继续确认具体会议模板。默认 `template_id=neurips`，当前本地可编译入口主要支持 `neurips` 和 `kdd`；如果用户说“不用会议模板”，改用 `basic_en`。
    - `utd`：UTD/管理信息系统/运筹管理期刊模板；默认且推荐 `template_id=informs`，适合 Management Science / ISR / INFORMS 风格稿件。
    - `other`：用户指定其它模板路径或模板 id。
 
 默认建议：
-- CCF/AI/CS 目标：`template_family=ccf, template_id=neurips, writing_language=en`，但必须提醒用户可以改成 KDD/ICML/AAAI 或不用 venue 模板。
+- CCF/AI/CS 目标：`template_family=ccf, template_id=neurips, writing_language=en`，但必须提醒用户可以改成 KDD 或不用 venue 模板；其它会议模板只有在本地模板入口补齐后才能保证编译。
 - UTD/Management Science/ISR/INFORMS：`template_family=utd, template_id=informs, writing_language=en`。
 - 中文期刊或中文综述：`template_family=basic_zh, template_id=basic_zh, writing_language=zh`。
 - 未指定 venue：只问中文/英文；英文默认 `basic_en`，中文默认 `basic_zh`。

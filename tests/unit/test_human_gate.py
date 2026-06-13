@@ -114,6 +114,48 @@ def test_t2_literature_gate_parses_language_and_chinese_policy():
     assert result["captured"]["active_pool_max"] == "300"
 
 
+def test_template_gate_parses_inline_informs_and_ccf_choices():
+    t36_options = [
+        {"id": "basic_en", "label": "英文基础模板"},
+        {"id": "ccf_neurips", "label": "CCF 默认 NeurIPS"},
+        {"id": "utd_informs", "label": "UTD/INFORMS"},
+        {"id": "custom", "label": "自定义模板"},
+    ]
+    t8_options = [
+        {"id": "is_informs", "label": "IS + INFORMS"},
+        {"id": "ccf_neurips", "label": "CCF-A + NeurIPS"},
+        {"id": "basic_zh", "label": "中文基础模板"},
+        {"id": "custom", "label": "自定义模板"},
+    ]
+
+    informs = CLIHumanInterface._parse_inline_gate_customization(
+        "t36_template_gate",
+        "英文 informs",
+        t36_options,
+    )
+    assert informs["option_id"] == "utd_informs"
+    assert informs["captured"]["template_family"] == "utd"
+    assert informs["captured"]["template_id"] == "informs"
+
+    ccf = CLIHumanInterface._parse_inline_gate_customization(
+        "t8_style_template_gate",
+        "ccf kdd",
+        t8_options,
+    )
+    assert ccf["option_id"] == "ccf_neurips"
+    assert ccf["captured"]["venue_style"] == "ccf_a"
+    assert ccf["captured"]["template_family"] == "ccf"
+    assert ccf["captured"]["template_id"] == "kdd"
+
+    zh = CLIHumanInterface._parse_inline_gate_customization(
+        "t8_style_template_gate",
+        "中文基础模板",
+        t8_options,
+    )
+    assert zh["option_id"] == "basic_zh"
+    assert zh["captured"]["writing_language"] == "zh"
+
+
 @pytest.mark.asyncio
 async def test_cli_gate_eof_pauses_instead_of_defaulting(monkeypatch):
     async def _run_gate():

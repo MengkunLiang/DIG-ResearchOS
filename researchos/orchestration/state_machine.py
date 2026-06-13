@@ -79,6 +79,43 @@ _T36_CORPUS_GATE_INPUT_PATHS = {
 }
 
 
+_TEMPLATE_GATE_INPUT_PATHS = {
+    "project": "project.yaml",
+    "seed_outline_profile": "user_seeds/seed_outline_profile.json",
+    "seed_ideas": "user_seeds/seed_ideas.md",
+    "seed_constraints": "user_seeds/seed_constraints.md",
+}
+
+
+_TEMPLATE_GATE_DEFAULTS: dict[str, dict[str, str]] = {
+    "basic_en": {"template_family": "basic_en", "template_id": "basic_en", "writing_language": "en"},
+    "basic_zh": {"template_family": "basic_zh", "template_id": "basic_zh", "writing_language": "zh"},
+    "ccf_neurips": {"template_family": "ccf", "template_id": "neurips", "writing_language": "en"},
+    "utd_informs": {"template_family": "utd", "template_id": "informs", "writing_language": "en"},
+    "is_informs": {
+        "venue_style": "is",
+        "template_family": "utd",
+        "template_id": "informs",
+        "writing_language": "en",
+    },
+    "both_basic_en": {
+        "venue_style": "both",
+        "template_family": "basic_en",
+        "template_id": "basic_en",
+        "writing_language": "en",
+    },
+}
+
+
+_SUPPORTED_RUNTIME_TEMPLATE_IDS = {
+    "basic_zh",
+    "basic_en",
+    "neurips",
+    "kdd",
+    "informs",
+}
+
+
 _T2_LITERATURE_PARAM_GATE_INPUT_PATHS = {
     "project": "project.yaml",
     "seed_outline_profile": "user_seeds/seed_outline_profile.json",
@@ -697,6 +734,8 @@ def _valid_writing_style_file(path: Path) -> bool:
         return False
     if not isinstance(data, dict) or data.get("venue_style") not in {"is", "ccf_a", "both"}:
         return False
+    if not _recorded_human_interaction_exists(path.parent.parent, str(data.get("human_interaction_id") or "")):
+        return False
     return _valid_template_selection_dict(data)
 
 
@@ -707,7 +746,11 @@ def _valid_template_selection_file(path: Path) -> bool:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return False
-    return isinstance(data, dict) and _valid_template_selection_dict(data)
+    return (
+        isinstance(data, dict)
+        and _valid_template_selection_dict(data)
+        and _recorded_human_interaction_exists(path.parents[2], str(data.get("human_interaction_id") or ""))
+    )
 
 
 def _valid_template_selection_dict(data: dict[str, Any]) -> bool:
@@ -719,6 +762,216 @@ def _valid_template_selection_dict(data: dict[str, Any]) -> bool:
     if family in {"ccf", "utd"} and template_id == "auto":
         return False
     return True
+
+
+def _recorded_human_interaction_exists(workspace_dir: Path, interaction_id: str) -> bool:
+    interaction_id = str(interaction_id or "").strip()
+    if not interaction_id:
+        return False
+    path = workspace_dir / "_runtime" / "human_interactions.jsonl"
+    if not path.exists():
+        return False
+    try:
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except Exception:
+                continue
+            if isinstance(record, dict) and str(record.get("interaction_id") or "").strip() == interaction_id:
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _record_runtime_gate_interaction(
+    workspace_dir: Path,
+    *,
+    interaction_id: str,
+    task_id: str,
+    gate_id: str,
+    selected_option: str,
+    captured: dict[str, Any],
+) -> None:
+    path = workspace_dir / "_runtime" / "human_interactions.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "interaction_id": interaction_id,
+        "kind": "runtime_gate",
+        "task_id": task_id,
+        "gate_id": gate_id,
+        "selected_option": selected_option,
+        "captured": captured,
+        "created_at": _now_iso(),
+    }
+    path.open("a", encoding="utf-8").write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def _interaction_id_for_gate_result(
+    *,
+    task_id: str,
+    gate_id: str,
+    selected_option: str,
+    captured: dict[str, Any],
+) -> str:
+    explicit = str(captured.get("human_interaction_id") or "").strip()
+    if explicit:
+        return explicit
+    fingerprint = _stable_json_fingerprint(
+        {
+            "task_id": task_id,
+            "gate_id": gate_id,
+            "selected_option": selected_option,
+            "captured": captured,
+        }
+    )
+    return f"gate_{task_id.lower().replace('.', '_').replace('-', '_')}_{fingerprint[:12]}"
+
+
+def _template_selection_from_gate(
+    *,
+    task_id: str,
+    gate_id: str,
+    option_id: str,
+    gate_result: dict[str, Any],
+    next_task: str,
+    workspace_dir: Path,
+) -> dict[str, Any]:
+    raw_captured = gate_result.get("captured") or {}
+    captured = raw_captured if isinstance(raw_captured, dict) else {}
+    defaults = dict(_TEMPLATE_GATE_DEFAULTS.get(option_id) or {})
+    defaults.update({str(k): str(v) for k, v in captured.items() if v not in (None, "")})
+    family = _normalize_template_family(defaults.get("template_family") or defaults.get("template_type") or option_id)
+    template_id = _normalize_template_id(defaults.get("template_id") or defaults.get("template") or family)
+    language = _normalize_writing_language(defaults.get("writing_language") or defaults.get("language") or "")
+    if family == "ccf" and template_id in {"", "auto", "ccf", "ccf_neurips"}:
+        template_id = "neurips"
+    if family == "utd" and template_id in {"", "auto", "utd", "is_informs", "utd_informs"}:
+        template_id = "informs"
+    if family == "basic_zh":
+        template_id = "basic_zh"
+        language = "zh"
+    if family == "basic_en":
+        template_id = "basic_en"
+        language = "en"
+    if not language:
+        language = "zh" if family == "basic_zh" else "en"
+    venue_style = _normalize_venue_style(
+        defaults.get("venue_style")
+        or defaults.get("style")
+        or ("is" if family in {"utd", "basic_zh"} else "ccf_a")
+    )
+    warning = ""
+    if template_id not in _SUPPORTED_RUNTIME_TEMPLATE_IDS:
+        warning = (
+            f"template_id={template_id} is not a known local compile-ready entry; "
+            "assembly may fall back to a basic template unless this template is added."
+        )
+    human_interaction_id = _interaction_id_for_gate_result(
+        task_id=task_id,
+        gate_id=gate_id,
+        selected_option=option_id,
+        captured=captured,
+    )
+    _record_runtime_gate_interaction(
+        workspace_dir,
+        interaction_id=human_interaction_id,
+        task_id=task_id,
+        gate_id=gate_id,
+        selected_option=option_id,
+        captured=captured,
+    )
+    payload = {
+        "semantics": "human_confirmed_writing_template_selection",
+        "task_id": task_id,
+        "gate_id": gate_id,
+        "selected_option": option_id,
+        "template_family": family,
+        "template_id": template_id,
+        "writing_language": language,
+        "human_interaction_id": human_interaction_id,
+        "captured": captured,
+        "user_answer": option_id,
+        "next_task": next_task,
+        "note": "runtime immediate gate selection before writing",
+        "decided_at": _now_iso(),
+        "input_fingerprints": build_input_fingerprints(workspace_dir, _TEMPLATE_GATE_INPUT_PATHS),
+    }
+    if task_id == "T8-STYLE-GATE":
+        payload["venue_style"] = venue_style
+    if warning:
+        payload["template_warning"] = warning
+    return payload
+
+
+def _normalize_template_family(value: Any) -> str:
+    text = str(value or "").strip().casefold().replace("-", "_")
+    aliases = {
+        "zh": "basic_zh",
+        "chinese": "basic_zh",
+        "中文": "basic_zh",
+        "en": "basic_en",
+        "english": "basic_en",
+        "英文": "basic_en",
+        "informs": "utd",
+        "is": "utd",
+        "misq": "utd",
+        "management_science": "utd",
+        "ccf_a": "ccf",
+        "ccf-a": "ccf",
+        "neurips": "ccf",
+        "kdd": "ccf",
+    }
+    text = aliases.get(text, text)
+    return text if text in {"basic_zh", "basic_en", "ccf", "utd", "other"} else "basic_en"
+
+
+def _normalize_template_id(value: Any) -> str:
+    text = str(value or "").strip().casefold().replace("-", "_")
+    aliases = {
+        "zh": "basic_zh",
+        "chinese": "basic_zh",
+        "中文": "basic_zh",
+        "en": "basic_en",
+        "english": "basic_en",
+        "英文": "basic_en",
+        "nips": "neurips",
+        "neurips2026": "neurips",
+        "sigkdd": "kdd",
+        "mnsc": "informs",
+        "isr": "informs",
+        "isre": "informs",
+        "management_science": "informs",
+    }
+    return aliases.get(text, text)
+
+
+def _normalize_writing_language(value: Any) -> str:
+    text = str(value or "").strip().casefold().replace("-", "_")
+    aliases = {
+        "english": "en",
+        "英文": "en",
+        "chinese": "zh",
+        "中文": "zh",
+    }
+    text = aliases.get(text, text)
+    return text if text in {"zh", "en"} else ""
+
+
+def _normalize_venue_style(value: Any) -> str:
+    text = str(value or "").strip().casefold().replace("-", "_")
+    aliases = {
+        "ccf": "ccf_a",
+        "ccf-a": "ccf_a",
+        "conference": "ccf_a",
+        "utd": "is",
+        "informs": "is",
+        "misq": "is",
+    }
+    text = aliases.get(text, text)
+    return text if text in {"is", "ccf_a", "both"} else "ccf_a"
 
 
 def _extract_t45_final_gate_verdict(text: str) -> str:
@@ -779,6 +1032,9 @@ class StateMachine:
 
     def __init__(self, config_path: Path, gates_config_path: Path | None = None):
         self.config_path = config_path
+        if gates_config_path is None:
+            candidate = config_path.parent / "gates.yaml"
+            gates_config_path = candidate if candidate.exists() else None
         self.gates_config_path = gates_config_path
         raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
         self.initial_state = raw["initial_state"]
@@ -964,9 +1220,11 @@ class StateMachine:
         ctx.tool_policy_override = tool_ov
         return ctx
 
-    def should_pause_for_immediate_gate(self, state: StateYaml) -> bool:
+    def should_pause_for_immediate_gate(self, state: StateYaml, *, workspace_dir: Path | None = None) -> bool:
         """Return true when the current node is a gate-only node that should not run an LLM."""
 
+        if state.current_task == "T4" and "T4-GATE1" in self.nodes and workspace_dir is not None:
+            return self._t4_gate1_ready_without_selection(workspace_dir)
         node = self.nodes[state.current_task]
         return bool(node.gate and (node.extra or {}).get("immediate_gate"))
 
@@ -978,6 +1236,8 @@ class StateMachine:
     ) -> StateYaml:
         """Present a gate-only node directly and pause without starting an agent run."""
 
+        if state.current_task == "T4" and workspace_dir is not None and self._t4_gate1_ready_without_selection(workspace_dir):
+            state.current_task = "T4-GATE1"
         node = self.nodes[state.current_task]
         if not node.gate:
             raise ValueError(f"{state.current_task} has no gate")
@@ -1003,6 +1263,23 @@ class StateMachine:
         state.status = "WAITING_HUMAN"
         state.paused_at = _now_iso()
         return state
+
+    def t4_gate1_ready_without_selection(self, workspace_dir: Path) -> bool:
+        """Public helper for runners/tests: T4 has candidate artifacts ready but no Gate1 choice."""
+
+        return self._t4_gate1_ready_without_selection(workspace_dir)
+
+    @staticmethod
+    def _t4_gate1_ready_without_selection(workspace_dir: Path) -> bool:
+        if (workspace_dir / "ideation" / "_gate1_user_selection.json").exists():
+            return False
+        try:
+            from ..agents.ideation import validate_t4_gate1_ready
+
+            ok, _err = validate_t4_gate1_ready(workspace_dir)
+            return bool(ok)
+        except Exception:
+            return False
 
     def start_task(self, state: StateYaml, run_id: str) -> StateYaml:
         """task 开始执行前，先写入一条 RUNNING history。"""
@@ -1351,6 +1628,21 @@ class StateMachine:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             return
+        if node.task_id == "T3.6-TEMPLATE-GATE":
+            option_id = str(gate_result.get("option_id") or gate_result.get("key") or "basic_en")
+            payload = _template_selection_from_gate(
+                task_id=node.task_id,
+                gate_id=self._gate_id_for_node(node),
+                option_id=option_id,
+                gate_result=gate_result,
+                next_task=next_task,
+                workspace_dir=workspace_dir,
+            )
+            payload["note"] = "T3.6 survey template/language selection before PLAN"
+            path = workspace_dir / "drafts" / "survey" / "writing_template.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            return
         if node.task_id == "T3.6-GATE-CORPUS":
             option_id = str(gate_result.get("option_id") or gate_result.get("key") or "")
             scope = "complete" if option_id in {"complete", "full", "expand", "补检", "完整"} else "conservative"
@@ -1372,6 +1664,38 @@ class StateMachine:
         if node.task_id == "T4-GATE1":
             option_id = str(gate_result.get("option_id") or gate_result.get("key") or "")
             captured = gate_result.get("captured") or {}
+            if option_id == "reanalyze":
+                payload = {
+                    "semantics": "t4_gate1_reanalysis_request",
+                    "task_id": node.task_id,
+                    "gate_id": self._gate_id_for_node(node),
+                    "selected_option": option_id,
+                    "captured": captured,
+                    "candidate_pool_fingerprints": _t4_gate1_candidate_pool_fingerprints(workspace_dir),
+                    "next_task": next_task,
+                    "decided_at": _now_iso(),
+                }
+                path = workspace_dir / "ideation" / "_gate1_reanalysis_request.json"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                selection_path = workspace_dir / "ideation" / "_gate1_user_selection.json"
+                if selection_path.exists():
+                    selection_path.unlink()
+                for rel in (
+                    "ideation/_pass1_forward_candidates.json",
+                    "ideation/_pass2_grounding_review.json",
+                    "ideation/_candidate_directions.json",
+                    "ideation/_family_distribution.md",
+                    "ideation/_gate1_selection_brief.md",
+                    "ideation/bridge_coverage_review.json",
+                ):
+                    artifact = workspace_dir / rel
+                    if artifact.exists() and artifact.is_file():
+                        archive_dir = workspace_dir / "ideation" / "_gate1_reanalysis_archive"
+                        archive_dir.mkdir(parents=True, exist_ok=True)
+                        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+                        artifact.replace(archive_dir / f"{stamp}_{artifact.name}")
+                return
             candidate_pool_fingerprints = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
             fingerprint_payload = {
                 "semantics": "t4_gate1_selection_fingerprint",
@@ -1392,6 +1716,22 @@ class StateMachine:
                 "decided_at": _now_iso(),
             }
             path = workspace_dir / "ideation" / "_gate1_user_selection.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            return
+        if node.task_id == "T8-STYLE-GATE":
+            option_id = str(gate_result.get("option_id") or gate_result.get("key") or "ccf_neurips")
+            payload = _template_selection_from_gate(
+                task_id=node.task_id,
+                gate_id=self._gate_id_for_node(node),
+                option_id=option_id,
+                gate_result=gate_result,
+                next_task=next_task,
+                workspace_dir=workspace_dir,
+            )
+            payload["semantics"] = "human_confirmed_t8_writing_style_and_template"
+            payload["note"] = "T8 writing style/language/template selection before RESOURCE"
+            path = workspace_dir / "drafts" / "writing_style.json"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             return

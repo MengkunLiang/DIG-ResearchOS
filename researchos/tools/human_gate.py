@@ -143,6 +143,10 @@ class CLIHumanInterface(HumanInterface):
                 captured[field_name] = input(f"{prompt}: ").strip()
             except EOFError as exc:
                 raise HumanInputUnavailable(f"Gate {gate_id} 需要输入 {field_name}，但当前输入不可用。") from exc
+        defaults = selected.get("captured_defaults")
+        if isinstance(defaults, dict):
+            for key, value in defaults.items():
+                captured.setdefault(str(key), str(value))
         option_id = selected.get("id") or selected.get("key")
         if gate_id == "t5_executor_gate" and option_id == "codex_cli":
             print(
@@ -161,6 +165,8 @@ class CLIHumanInterface(HumanInterface):
 
     @staticmethod
     def _parse_inline_gate_customization(gate_id: str, raw_answer: str, options: list[dict]) -> dict | None:
+        if gate_id in {"t36_template_gate", "t8_style_template_gate"}:
+            return CLIHumanInterface._parse_template_gate_text(gate_id, raw_answer, options)
         if gate_id != "t2_literature_param_gate":
             return None
         captured = CLIHumanInterface._parse_t2_literature_param_text(raw_answer)
@@ -172,6 +178,67 @@ class CLIHumanInterface(HumanInterface):
         if default_id and default_id != "custom":
             captured.setdefault("base_option", str(default_id))
         return {"option_id": "custom", "captured": captured}
+
+    @staticmethod
+    def _parse_template_gate_text(gate_id: str, raw_answer: str, options: list[dict]) -> dict | None:
+        text = str(raw_answer or "").strip()
+        if not text:
+            return None
+        normalized = text.casefold().replace("，", ",").replace("；", ";").replace("：", ":")
+        option_ids = {str(option.get("id") or option.get("key") or "") for option in options}
+        captured: dict[str, str] = {}
+        option_id = ""
+
+        if any(token in normalized for token in ("中文", "chinese", "basic_zh", " zh")) or normalized == "zh":
+            captured.update({"template_family": "basic_zh", "template_id": "basic_zh", "writing_language": "zh"})
+            option_id = "basic_zh"
+        elif any(token in normalized for token in ("informs", "utd", "management science", "information systems research", "isr", "misq")):
+            captured.update({"template_family": "utd", "template_id": "informs", "writing_language": "en"})
+            option_id = "utd_informs" if gate_id == "t36_template_gate" else "is_informs"
+        elif any(token in normalized for token in ("ccf", "neurips", "kdd", "conference", "会议", "ccf-a", "ccf_a")):
+            template_id = "kdd" if "kdd" in normalized else "neurips"
+            captured.update({"template_family": "ccf", "template_id": template_id, "writing_language": "en"})
+            option_id = "ccf_neurips"
+        elif any(token in normalized for token in ("英文", "english", "basic_en", "不用模板", "不要模板", "no template")) or normalized == "en":
+            captured.update({"template_family": "basic_en", "template_id": "basic_en", "writing_language": "en"})
+            option_id = "basic_en"
+        elif any(token in normalized for token in ("both", "两套", "双线")) and gate_id == "t8_style_template_gate":
+            captured.update({"template_family": "basic_en", "template_id": "basic_en", "writing_language": "en", "venue_style": "both"})
+            option_id = "both_basic_en"
+
+        key_aliases = {
+            "venue_style": "venue_style",
+            "style": "venue_style",
+            "template_family": "template_family",
+            "family": "template_family",
+            "template_type": "template_family",
+            "template_id": "template_id",
+            "template": "template_id",
+            "writing_language": "writing_language",
+            "language": "writing_language",
+            "lang": "writing_language",
+        }
+        for key, value in re.findall(r"([A-Za-z_][A-Za-z0-9_\-\s]*?)\s*[=:]\s*([A-Za-z0-9_\-]+)", normalized):
+            canonical = key_aliases.get(re.sub(r"[\s-]+", "_", key.strip().lower()))
+            if canonical:
+                captured[canonical] = value.strip()
+
+        if gate_id == "t8_style_template_gate":
+            if "venue_style" not in captured:
+                if option_id == "is_informs":
+                    captured["venue_style"] = "is"
+                elif option_id == "both_basic_en":
+                    captured["venue_style"] = "both"
+                elif option_id:
+                    captured["venue_style"] = "ccf_a"
+
+        if not captured:
+            return None
+        if not option_id or option_id not in option_ids:
+            option_id = "custom" if "custom" in option_ids else next(iter(option_ids), "")
+        if not option_id:
+            return None
+        return {"option_id": option_id, "captured": captured}
 
     @staticmethod
     def _parse_t2_literature_param_text(raw_answer: str) -> dict[str, str]:

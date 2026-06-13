@@ -88,6 +88,13 @@ def test_deadlock_detection_same_params_three_times(simple_fsm_config: Path, tem
         sm.build_execution_context(workspace, state)
 
 
+def test_production_t4_failure_does_not_self_loop_to_deadlock():
+    """T4 内部已有 retry；状态机失败应保留真实错误，不做同参数自循环。"""
+    sm = StateMachine(Path("config/system_config/state_machine.yaml"))
+
+    assert sm.nodes["T4"].next_on_failure == "failed"
+
+
 def test_boundary_case_two_same_params(simple_fsm_config: Path, temp_config_dir: Path):
     """测试边界情况：相同参数2次应发出警告但不阻止。"""
     sm = StateMachine(simple_fsm_config)

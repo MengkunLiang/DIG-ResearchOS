@@ -268,7 +268,7 @@ def _write_t4_stage_visibility_artifacts(ideation_dir):
             "id": "D1b",
             "title": "证据驱动替代候选",
             "generation_stage": "mainline",
-            "idea_origin": "evidence_driven",
+            "idea_origin": "cross_domain_analogy",
             "constraint_status": "mainline",
             "pitch": "从 paper notes 的共同限制形成替代方向。",
             "core_claim": "证据驱动的机制干预能改善目标指标。",
@@ -456,7 +456,7 @@ def _write_t4_stage_visibility_artifacts(ideation_dir):
         "## 集中度提示\n\n"
         "候选没有过度集中在单一论文；这是软提示。\n\n"
         "## Origin 分布\n\n"
-        "free_reasoning: 1; evidence_driven: 1; seed_refinement: 1; reverse_operation: 1。\n\n"
+        "free_reasoning: 1; cross_domain_analogy: 1; seed_refinement: 1; reverse_operation: 1。\n\n"
         "## Novelty-Utility 谱系排布\n\n"
         "高新颖高风险: S1；中新颖高可行: D1, D1b；低新颖高可行: D2。\n\n"
         "用户可选择 D1、选择 D2 并重构、合并 D1+D1b、合并 D1+S1、新想法或重新分析。\n",
@@ -1183,7 +1183,7 @@ def write_valid_t4_artifacts(workspace):
                         },
                         "hypothesis_refs": [],
                         "source": {
-                            "idea_origin": "evidence_driven",
+                            "idea_origin": "cross_domain_analogy",
                             "constraint_status": "mainline",
                             "from_synthesis_section": "literature/synthesis.md: Q1",
                             "from_missing_area": "missing_areas.md: 失败子群",

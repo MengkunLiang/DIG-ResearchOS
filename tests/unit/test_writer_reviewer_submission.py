@@ -17,6 +17,7 @@ from researchos.agents.submission import (
 )
 from researchos.runtime.agent_params import get_agent_params
 from researchos.runtime.prompts import render_prompt
+from researchos.runtime.manuscript_recovery import refresh_t8_manuscript_outputs
 from researchos.tools.manuscript import (
     AssembleManuscriptTool,
     AuditWritingCraftTool,
@@ -2695,3 +2696,61 @@ async def test_assemble_manuscript_applies_informs_template_and_support_files(te
     assert "PARTIAL-TEXT" not in copied_bib
     assert "runtime status" not in copied_bib
     assert "test" in copied_bib
+
+
+@pytest.mark.asyncio
+async def test_t8_recovery_refresh_preserves_selected_informs_template(temp_workspace):
+    section_dir = temp_workspace / "drafts" / "sections"
+    section_dir.mkdir(parents=True, exist_ok=True)
+    section_texts = {
+        "abstract": "This paper studies deterministic recovery of template selection.",
+        "introduction": "\\section{Introduction}\nPrior work motivates the problem \\citep{test}.",
+        "related_work": "\\section{Related Work}\nPrior work motivates the baseline \\citep{test}.",
+        "methodology": "\\section{Method}\nThe method is deterministic.",
+        "experiments": "\\section{Experiments}\nThe experiment is a smoke test.",
+        "analysis": "\\section{Analysis}\nThe analysis checks recovery.",
+        "conclusion": "\\section{Conclusion}\nThe limitation is template-level scope.",
+    }
+    for section_id, text in section_texts.items():
+        (section_dir / f"{section_id}.tex").write_text(text, encoding="utf-8")
+    (temp_workspace / "drafts" / "outline.md").write_text("# Template Recovery\n", encoding="utf-8")
+    (temp_workspace / "drafts" / "writing_style.json").write_text(
+        json.dumps(
+            {
+                "venue_style": "is",
+                "template_family": "utd",
+                "template_id": "informs",
+                "writing_language": "en",
+                "human_interaction_id": "human_style",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (temp_workspace / "literature" / "related_work.bib").write_text(
+        "@article{test, author={Tester, Tina}, title={Template Test}, journal={Test Journal}, year={2024}}\n",
+        encoding="utf-8",
+    )
+    (temp_workspace / "drafts" / "manuscript_resource_index.json").write_text(
+        json.dumps({"semantics": "test_resource_index", "bib_keys": ["test"]}) + "\n",
+        encoding="utf-8",
+    )
+    (temp_workspace / "drafts" / "paper_state.json").write_text(
+        json.dumps({"semantics": "manuscript_state", "sections": {}}) + "\n",
+        encoding="utf-8",
+    )
+    (temp_workspace / "drafts" / "alignment_matrix.json").write_text(
+        json.dumps({"semantics": "alignment_matrix", "rows": []}) + "\n",
+        encoding="utf-8",
+    )
+    (temp_workspace / "drafts" / "cdr_claim_ledger.json").write_text(
+        json.dumps({"semantics": "cdr_claim_ledger", "claims": []}) + "\n",
+        encoding="utf-8",
+    )
+
+    ok, err = await refresh_t8_manuscript_outputs(temp_workspace)
+
+    assert ok, err
+    tex = (temp_workspace / "drafts" / "paper.tex").read_text(encoding="utf-8")
+    assert "\\bibliographystyle{informs2014}" in tex
+    assert (temp_workspace / "drafts" / "informs2014.bst").exists()

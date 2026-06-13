@@ -217,6 +217,7 @@ states:
     mode: template_gate
     extra:
       immediate_gate: true
+    gate: t36_template_gate
     inputs:
       project: project.yaml
       survey_decision: drafts/survey/decision.json
@@ -749,7 +750,7 @@ states:
     optional_outputs:
       bridge_coverage_review: ideation/bridge_coverage_review.json # 已确认 bridge 候选的上桌/裁决/逃生舱记录
     next_on_success: T4.5
-    next_on_failure: T4  # 允许失败后重试
+    next_on_failure: failed  # T4 内部已有 validation retry；候选池失败时保留真实错误，避免同参数死锁
 
   # T4-GATE1 状态：候选 idea 池人工选择
   # 用途：T4 一旦生成 Pass1/Pass2/_candidate_directions/_gate1_selection_brief，
@@ -1093,6 +1094,9 @@ states:
   T8-STYLE-GATE:
     agent: writer
     mode: style_gate
+    extra:
+      immediate_gate: true
+    gate: t8_style_template_gate
     inputs:
       project: project.yaml
     outputs:

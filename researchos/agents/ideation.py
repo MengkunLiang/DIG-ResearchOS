@@ -42,6 +42,11 @@ CROSS_DOMAIN_RELATIONS = {
     "adjacent_application",
 }
 
+CROSS_DOMAIN_IDEA_ORIGINS = {
+    "cross_domain_analogy",
+    "bridge_synthesis",
+}
+
 
 def _weak_evidence_prompt_summary(synthesis_workbench_text: str) -> str:
     """Extract weak-evidence guardrails from synthesis_workbench for prompt visibility."""
@@ -168,6 +173,8 @@ class IdeationAgent(Agent):
                 "ideation/_pass1_forward_candidates.json、ideation/_pass2_grounding_review.json、"
                 "ideation/_candidate_directions.json、ideation/_family_distribution.md、"
                 "ideation/_gate1_selection_brief.md，以及必要时的 bridge_coverage_review.json。"
+                "候选池必须在四类补充通道之外包含至少一个领域交叉候选："
+                "idea_origin=cross_domain_analogy 或 bridge_synthesis。"
                 "写完这些文件后立即调用 finish_task；不要在本轮调用 ask_human，也不要写"
                 "hypotheses.md、exp_plan.yaml、risks.md 或 gate_decisions.json。runtime 会自动进入 T4-GATE1。"
                 ),
@@ -637,6 +644,7 @@ def _validate_candidate_directions(ws: Path) -> tuple[bool, str | None]:
     supplement_count = 0
     bridge_candidate_count = 0
     bridge_covered_ids: set[str] = set()
+    cross_domain_candidate_ids: set[str] = set()
     ids: set[str] = set()
     for idx, candidate in enumerate(candidates, start=1):
         if not isinstance(candidate, dict):
@@ -659,6 +667,8 @@ def _validate_candidate_directions(ws: Path) -> tuple[bool, str | None]:
         ok, err = _validate_cross_domain_provenance(candidate, idea_id, "_candidate_directions.json")
         if not ok:
             return False, err
+        if _is_cross_domain_candidate(candidate):
+            cross_domain_candidate_ids.add(idea_id)
         if origin in mainline_origins or status == "mainline":
             mainline_count += 1
         if origin in supplement_origins or status == "supplement":
@@ -717,6 +727,12 @@ def _validate_candidate_directions(ws: Path) -> tuple[bool, str | None]:
         return False, (
             "_candidate_directions.json 至少需要2个 CDR 主线候选，不能只靠四类补充；"
             f"合法主线 origins: {sorted(mainline_origins)}"
+        )
+    if not cross_domain_candidate_ids:
+        return False, (
+            "_candidate_directions.json 必须包含至少1个 Gate1 可见的领域交叉候选；"
+            "请在四类补充候选之外生成 idea_origin=cross_domain_analogy 的主线候选，"
+            "或在已确认 bridge 有足够素材时生成 idea_origin=bridge_synthesis 的候选。"
         )
     if supplement_count > mainline_count + 4:
         return False, "_candidate_directions.json 四类补充候选过多，主线推理被覆盖"
@@ -1012,6 +1028,17 @@ def _validate_cross_domain_provenance(record: dict, idea_id: str, label: str) ->
     return True, None
 
 
+def _is_cross_domain_candidate(record: dict) -> bool:
+    """Return whether a candidate satisfies the mandatory cross-domain slot."""
+
+    if not isinstance(record, dict):
+        return False
+    origin = str(record.get("idea_origin") or record.get("origin") or "").strip()
+    if origin in CROSS_DOMAIN_IDEA_ORIGINS:
+        return True
+    return bool(_cross_domain_sources(record))
+
+
 def _validate_bridge_coverage_review(ws: Path) -> tuple[bool, str | None]:
     bridge_plan = _load_bridge_plan(ws)
     confirmed_bridge_ids = set(_confirmed_bridge_ids(bridge_plan))
@@ -1030,6 +1057,9 @@ def _validate_bridge_coverage_review(ws: Path) -> tuple[bool, str | None]:
     normalized = _normalize_bridge_coverage_review_for_schema(review, bridge_plan)
     if normalized is not review:
         review = normalized
+        # Resume compatibility: old partial T4 artifacts used a legacy bridge
+        # coverage schema. Normalize once so later validators and agents read
+        # the same schema-bound file.
         review_path.write_text(json.dumps(review, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     ok, err = validate_record(review, "bridge_coverage_review")
     if not ok:

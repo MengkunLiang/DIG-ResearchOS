@@ -199,7 +199,7 @@ class SingleTaskRunner:
         if (
             task_node is not None
             and state_machine is not None
-            and state_machine.should_pause_for_immediate_gate(state)
+            and state_machine.should_pause_for_immediate_gate(state, workspace_dir=self.workspace)
         ):
             return await self._run_immediate_gate_task(state, state_path, state_machine)
 

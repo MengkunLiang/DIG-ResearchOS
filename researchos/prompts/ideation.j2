@@ -112,10 +112,11 @@ T4 已拆成两个 runtime 阶段：
 - **synthesis_gestalt / free_reasoning 候选**：至少 1 个，来自你对 synthesis.md 的整体格局、贡献空间和 cross-paper tensions 的综合判断。
 - **problem_reframing 候选**：至少 1 个，把问题本身换一种表述或评价视角。
 - **design_rationale_derivation 候选**：至少 1 个，从问题结构第一性原理地推导“设计应该是什么样”。
-- **cross_domain_analogy 候选**：鼓励作为主线候选，用模型自身知识和已有语料类比其它领域；不要触发新检索。
+- **cross_domain_analogy 候选**：必须至少 1 个，作为四类补充通道之外的主线候选。用模型自身知识和已有语料类比其它领域；不要触发新检索。
   - 如果 `literature/synthesis_workbench.json` 中有 `bridge_transfer_drafts` 或 `adjacent_transfers`，优先把其中的 transfer seed 作为类比锚点；它只是素材，不是 provenance gate。
   - 如果只有 `weak_evidence_and_resource_upgrade` 或 `metadata_triage.md` 支撑某个方向，必须标 `constraint_status="not_supported_by_current_evidence"` 或写成资源升级计划，不能作为选中假设的强证据。
   - 如果 `domain_map.theory_bridge` 非空，把它作为“可迁移机制/方法/评价协议/失败模式”的提示来思考。不要因为某材料来自 bridge query 就自动生成 idea；必须由你解释可迁移机制。
+  - 即使没有已确认 bridge，也要生成一个 `idea_origin="cross_domain_analogy"` 的候选，用 `basis_summary` 说明类比来源、可迁移逻辑和反事实风险；只有使用了具体 bridge/domain_map 证据时才填写 `cross_domain_sources`。
 {% if has_seed_ideas %}
 - **seed-derived 候选**：至少 1 个，直接吸收、修订或挑战用户 seed ideas。不要机械照抄 seed idea，要把它改写成可验证、可差异化的研究假设。
 {% else %}
@@ -193,7 +194,7 @@ T4 已拆成两个 runtime 阶段：
 结构要求：先说明覆盖缺口和建议复核动作；只有当 synthesis、paper notes 和你的领域判断共同支持时，才把它转化为研究 idea，否则应写成补检/验证计划。
 注意：提示中的"难度"字段只帮助评估复核成本，优先选 Medium/Low 难度的提示。
 
-这四个补充候选可以和主线候选合并，但不能覆盖掉主线自由推理/seed-derived/问题重构/设计论证推导/跨域类比候选。`source` 中建议记录 `idea_origin`（如 `synthesis_gestalt`、`problem_reframing`、`design_rationale_derivation`、`cross_domain_analogy`、`free_reasoning`、`seed_refinement`、`survey_driven`、`mechanism_challenge`、`reverse_operation`、`subgroup_failure`、`missing_area_exploration`）。
+这四个补充候选可以和主线候选合并，但不能覆盖掉主线自由推理/seed-derived/问题重构/设计论证推导/跨域类比候选。Gate1 候选池必须至少包含 1 个 `cross_domain_analogy` 或 `bridge_synthesis` 候选，否则 validation 会失败。`source` 中建议记录 `idea_origin`（如 `synthesis_gestalt`、`problem_reframing`、`design_rationale_derivation`、`cross_domain_analogy`、`free_reasoning`、`seed_refinement`、`survey_driven`、`mechanism_challenge`、`reverse_operation`、`subgroup_failure`、`missing_area_exploration`）。
 
 {% if has_bridge_domain_plan %}
 ### Step 2.55: Bridge synthesis 候选（仅对 T1 已确认桥接清单启用）
@@ -947,6 +948,7 @@ ideas:
 
 **关键约束**：
 - 必须记录所有 Gate1 候选 idea，不只是最终选中项
+- Gate1 候选池必须至少包含一个领域交叉候选：`idea_origin=cross_domain_analogy` 或 `bridge_synthesis`。这和四类补充候选是并列要求，不能用 mechanism_challenge/reverse_operation/subgroup_failure/missing_area_exploration 代替。
 - 至少一个 `decision.status=selected`
 - 至少一个 `decision.status=rejected/deferred/merged`
 - selected idea 的 `hypothesis_refs` 必须覆盖最终 `hypotheses.md` 中的所有 `H1/H2/...`

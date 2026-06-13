@@ -1609,6 +1609,7 @@ def test_t36_immediate_gates_persist_decisions(tmp_path: Path):
                 "gate": "t36_corpus_gate",
             },
             "T3.6-PLAN": {"agent": "survey_writer", "next_on_success": "done"},
+            "T3.6-TEMPLATE-GATE": {"agent": "survey_writer", "mode": "template_gate", "next_on_success": "T3.6-PLAN"},
             "T3.6-EXPAND": {"agent": "survey_writer", "next_on_success": "done"},
             "T3.6-STATE": {"agent": "survey_writer", "next_on_success": "done"},
             "T4": {"agent": "ideation", "next_on_success": "done"},
@@ -1619,7 +1620,7 @@ def test_t36_immediate_gates_persist_decisions(tmp_path: Path):
         "gates": {
             "t36_survey_gate": {
                 "options": [
-                    {"id": "yes", "label": "写", "next": "T3.6-PLAN"},
+                    {"id": "yes", "label": "写", "next": "T3.6-TEMPLATE-GATE"},
                     {"id": "no", "label": "跳过", "next": "T4"},
                 ]
             },
@@ -1640,10 +1641,25 @@ def test_t36_immediate_gates_persist_decisions(tmp_path: Path):
     state = StateYaml(project_id="p1", current_task="T3.6-GATE-SURVEY", status="RUNNING")
     state = sm.pause_for_immediate_gate(state, workspace_dir=tmp_path)
     state = sm.resolve_pending_gate(state, {"option_id": "yes", "captured": {}}, workspace_dir=tmp_path)
-    assert state.current_task == "T3.6-PLAN"
+    assert state.current_task == "T3.6-TEMPLATE-GATE"
     survey_decision = json.loads((tmp_path / "drafts" / "survey" / "decision.json").read_text(encoding="utf-8"))
     assert survey_decision["write_survey"] is True
     assert isinstance(survey_decision.get("input_fingerprints"), dict)
+    assert sm._parse_t36_survey_decision(tmp_path) == "T3.6-TEMPLATE-GATE"
+    (tmp_path / "_runtime").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "_runtime" / "human_interactions.jsonl").write_text(
+        json.dumps({"interaction_id": "human_template", "task_id": "T3.6-TEMPLATE-GATE"}) + "\n",
+        encoding="utf-8",
+    )
+    _write_json(
+        tmp_path / "drafts" / "survey" / "writing_template.json",
+        {
+            "template_family": "ccf",
+            "template_id": "neurips",
+            "writing_language": "en",
+            "human_interaction_id": "human_template",
+        },
+    )
     assert sm._parse_t36_survey_decision(tmp_path) == "T3.6-PLAN"
     (tmp_path / "literature").mkdir(parents=True, exist_ok=True)
     (tmp_path / "literature" / "synthesis.md").write_text("changed after survey gate\n", encoding="utf-8")

@@ -127,7 +127,7 @@ def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) 
             "id": "D1b",
             "title": "基于证据的替代候选",
             "generation_stage": "mainline",
-            "idea_origin": "evidence_driven",
+            "idea_origin": "cross_domain_analogy",
             "constraint_status": "mainline",
             "pitch": "从 paper notes 的共同限制形成替代方向。",
             "core_claim": "证据驱动的机制干预能改善目标指标。",
@@ -362,7 +362,7 @@ def write_valid_idea_rationales(workspace: Path, refs: list[str] | None = None) 
                 },
                 "hypothesis_refs": [],
                 "source": {
-                    "idea_origin": "evidence_driven",
+                    "idea_origin": "cross_domain_analogy",
                     "constraint_status": "mainline",
                     "from_synthesis_section": "literature/synthesis.md: Q1",
                     "from_missing_area": "missing_areas.md: 失败子群",
@@ -664,7 +664,7 @@ Both families are distinct. D1 focuses on mechanism verification while D2 is a d
 ## Pass1 candidates
 
 - D1: 测试假设依据，Origin free_reasoning，Pass2 proceed。
-- D1b: 基于证据的替代候选，Origin evidence_driven，Pass2 defer_recommended，仍可选择但需要重构机制。
+- D1b: 基于证据的替代候选，Origin cross_domain_analogy，Pass2 defer_recommended，仍可选择但需要重构机制。
 - D2: 被淘汰方向，Origin seed_refinement，Pass2 reject_recommended，仍可选择但必须重构 contribution character。
 - S1: 反向操作补充候选，Origin reverse_operation，Pass2 revise_before_selection，适合作为补充。
 
@@ -687,7 +687,7 @@ Both families are distinct. D1 focuses on mechanism verification while D2 is a d
 ## Origin 分布
 
 - free_reasoning: 1
-- evidence_driven: 1
+- cross_domain_analogy: 1
 - seed_refinement: 1
 - reverse_operation: 1
 
@@ -1602,6 +1602,29 @@ def test_candidate_directions_rejects_zero_bridge_candidate_when_plan_confirmed(
 
     assert not ok
     assert "零 bridge_synthesis 候选" in err
+
+
+def test_candidate_directions_require_cross_domain_candidate(temp_workspace):
+    """四类补充之外必须有一个领域交叉/跨域类比候选。"""
+    write_valid_idea_rationales(temp_workspace)
+    for rel in [
+        "ideation/_candidate_directions.json",
+        "ideation/_pass1_forward_candidates.json",
+    ]:
+        path = temp_workspace / rel
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for candidate in data["candidates"]:
+            if str(candidate.get("id") or candidate.get("idea_id")) == "D1b":
+                candidate["idea_origin"] = "evidence_driven"
+                candidate.pop("cross_domain_sources", None)
+                candidate.pop("cross_domain_source", None)
+                candidate.pop("cross_domain_relation", None)
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    ok, err = _validate_candidate_directions(temp_workspace)
+
+    assert not ok
+    assert "领域交叉候选" in err
 
 
 def test_bridge_missing_must_can_use_escape_hatch_warning(temp_workspace):

@@ -631,8 +631,16 @@ class TestMultiModeStateFlow:
         (temp_workspace / "evaluation").mkdir()
         (temp_workspace / "evaluation" / "evaluation_decision.md").write_text("next_task: T8\n", encoding="utf-8")
         (temp_workspace / "drafts").mkdir()
+        (temp_workspace / "_runtime").mkdir()
+        (temp_workspace / "_runtime" / "human_interactions.jsonl").write_text(
+            '{"interaction_id":"human_style","task_id":"T8-STYLE-GATE"}\n',
+            encoding="utf-8",
+        )
         (temp_workspace / "drafts" / "writing_style.json").write_text(
-            '{"venue_style":"ccf_a","template_family":"ccf","template_id":"neurips","writing_language":"en"}\n',
+            (
+                '{"venue_style":"ccf_a","template_family":"ccf","template_id":"neurips",'
+                '"writing_language":"en","human_interaction_id":"human_style"}\n'
+            ),
             encoding="utf-8",
         )
         sm_path = temp_workspace / "state_machine.yaml"
@@ -678,6 +686,11 @@ class TestMultiModeStateFlow:
             '{"venue_style":"other","template_family":"ccf","template_id":"neurips","writing_language":"en"}\n',
             '{"suggested":"ccf_a"}\n',
             '{"venue_style":"ccf_a","template_family":"ccf","template_id":"auto","writing_language":"en"}\n',
+            '{"venue_style":"ccf_a","template_family":"ccf","template_id":"neurips","writing_language":"en"}\n',
+            (
+                '{"venue_style":"ccf_a","template_family":"ccf","template_id":"neurips",'
+                '"writing_language":"en","human_interaction_id":"missing"}\n'
+            ),
         ]:
             (temp_workspace / "drafts" / "writing_style.json").write_text(invalid_style_text, encoding="utf-8")
             assert sm._parse_t75_decision(temp_workspace) == "T8-STYLE-GATE"

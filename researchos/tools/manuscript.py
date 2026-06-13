@@ -17,6 +17,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, Field
 
+from ..literature_citations import load_or_build_citation_map
 from ..literature_identity import is_paper_note_file
 from .base import Tool, ToolResult
 from .bibtex import extract_bib_keys_from_text, strip_internal_bibtex_notes
@@ -1353,6 +1354,7 @@ def build_resource_index(workspace: Path, *, include_previews: bool = True) -> d
     figures = [_media_entry(workspace, path) for path in _glob_media(workspace, kind="figure")]
     tables = [_media_entry(workspace, path) for path in _glob_media(workspace, kind="table")]
     bib_keys = _extract_bib_keys(workspace / "literature" / "related_work.bib")
+    citation_refs = _extract_citation_reference_summary(workspace)
     citation_quality = _extract_citation_quality_summary(workspace / "literature" / "notes_manifest.json")
     result_metrics = _extract_result_metrics(workspace / "experiments" / "results_summary.json")
     result_metrics.extend(_extract_evidence_pack_metrics(workspace / "drafts" / "experiment_evidence_pack.json"))
@@ -1366,6 +1368,10 @@ def build_resource_index(workspace: Path, *, include_previews: bool = True) -> d
         "figures": figures,
         "tables": tables,
         "bib_keys": bib_keys,
+        "citation_map_summary": citation_refs["summary"],
+        "citation_ref_by_note_id": citation_refs["citation_ref_by_note_id"],
+        "note_id_by_bib_key": citation_refs["note_id_by_bib_key"],
+        "unmapped_note_ids": citation_refs["unmapped_note_ids"],
         "citation_quality": citation_quality,
         "result_metrics": result_metrics,
         "ablation_columns": ablation_columns,
@@ -1385,6 +1391,47 @@ def build_resource_index(workspace: Path, *, include_previews: bool = True) -> d
                 "numeric/citation audit hints",
             ],
         },
+    }
+
+
+def _extract_citation_reference_summary(workspace: Path) -> dict[str, Any]:
+    try:
+        citation_map = load_or_build_citation_map(workspace / "literature")
+    except Exception:
+        citation_map = {}
+    entries = citation_map.get("entries") if isinstance(citation_map, dict) else []
+    citation_ref_by_note_id: dict[str, str] = {}
+    note_id_by_bib_key: dict[str, list[str]] = {}
+    unmapped_note_ids: list[str] = []
+    if isinstance(entries, list):
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            note_id = str(entry.get("note_id") or "").strip()
+            if not note_id:
+                continue
+            citation_ref = str(entry.get("citation_ref") or "").strip()
+            bib_key = str(entry.get("bib_key") or "").strip()
+            if citation_ref:
+                citation_ref_by_note_id[note_id] = citation_ref
+            if bib_key:
+                note_id_by_bib_key.setdefault(bib_key, []).append(note_id)
+            else:
+                unmapped_note_ids.append(note_id)
+    return {
+        "summary": {
+            "available": bool(citation_map),
+            "note_count": int(citation_map.get("note_count") or 0) if isinstance(citation_map, dict) else 0,
+            "bib_entry_count": int(citation_map.get("bib_entry_count") or 0) if isinstance(citation_map, dict) else 0,
+            "mapped_bib_count": int(citation_map.get("mapped_bib_count") or 0) if isinstance(citation_map, dict) else 0,
+            "usage_rule": (
+                "When converting synthesis provenance to TeX, replace [note:<id>] with citation_ref_by_note_id[id] "
+                "only if it starts with \\cite; otherwise treat the note as provenance/upgrade context, not a formal citation."
+            ),
+        },
+        "citation_ref_by_note_id": citation_ref_by_note_id,
+        "note_id_by_bib_key": {key: sorted(set(ids)) for key, ids in note_id_by_bib_key.items()},
+        "unmapped_note_ids": sorted(set(unmapped_note_ids)),
     }
 
 
@@ -1942,6 +1989,9 @@ def build_paper_state(
 ) -> dict[str, Any]:
     metrics = index.get("result_metrics", []) if isinstance(index, dict) else []
     bib_keys = index.get("bib_keys", []) if isinstance(index, dict) else []
+    citation_ref_by_note_id = index.get("citation_ref_by_note_id", {}) if isinstance(index, dict) else {}
+    note_id_by_bib_key = index.get("note_id_by_bib_key", {}) if isinstance(index, dict) else {}
+    unmapped_note_ids = index.get("unmapped_note_ids", []) if isinstance(index, dict) else []
     sections: dict[str, dict[str, Any]] = {}
     planned_sections = {
         normalize_section_id(str(item.get("id", ""))): item
@@ -1989,6 +2039,9 @@ def build_paper_state(
             "source": "mechanical_candidates_from_artifacts; Writer LLM must verify wording",
             "title_candidates": _extract_title_candidates(outline_text),
             "bib_keys": bib_keys,
+            "citation_ref_by_note_id": citation_ref_by_note_id if isinstance(citation_ref_by_note_id, dict) else {},
+            "note_id_by_bib_key": note_id_by_bib_key if isinstance(note_id_by_bib_key, dict) else {},
+            "unmapped_note_ids": unmapped_note_ids if isinstance(unmapped_note_ids, list) else [],
             "result_metrics": metrics,
             "claim_slots": claim_slots,
             "planned_visuals": visuals,

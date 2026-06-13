@@ -103,7 +103,8 @@ def _load_target_venue(workspace_dir: Path) -> str:
         return ""
     if not isinstance(data, dict):
         return ""
-    return str(data.get("target_venue") or "")
+    constraints = data.get("constraints") if isinstance(data.get("constraints"), dict) else {}
+    return str(data.get("target_venue") or constraints.get("target_venue") or "")
 
 
 def _load_venue_style(workspace_dir: Path) -> str:
@@ -118,6 +119,21 @@ def _load_venue_style(workspace_dir: Path) -> str:
         return "auto"
     style = str(data.get("venue_style") or "auto").strip()
     return style if style in {"is", "ccf_a", "both", "auto"} else "auto"
+
+
+def _load_writing_template_selection(workspace_dir: Path) -> dict[str, str]:
+    style_path = workspace_dir / "drafts" / "writing_style.json"
+    try:
+        data = json.loads(style_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        "template_family": str(data.get("template_family") or data.get("template_type") or "").strip().lower(),
+        "template_id": str(data.get("template_id") or "").strip().lower(),
+        "writing_language": str(data.get("writing_language") or "auto").strip().lower() or "auto",
+    }
 
 
 def can_refresh_t8_manuscript_outputs(workspace_dir: Path) -> bool:
@@ -161,6 +177,7 @@ async def refresh_t8_manuscript_outputs(
         return False, "缺少 drafts/sections 下的核心章节，无法刷新 T8 manuscript 输出"
 
     style = venue_style or _load_venue_style(workspace_dir) or "auto"
+    template_selection = _load_writing_template_selection(workspace_dir)
     venue = target_venue if target_venue is not None else _load_target_venue(workspace_dir)
     assembly_style = "auto" if style == "both" else style
     policy = WorkspaceAccessPolicy(
@@ -175,6 +192,9 @@ async def refresh_t8_manuscript_outputs(
         outline_path="drafts/outline.md",
         target_venue=str(venue or ""),
         venue_style=assembly_style,
+        template_family=template_selection.get("template_family", ""),
+        template_id=template_selection.get("template_id", ""),
+        writing_language=template_selection.get("writing_language", "auto"),
     )
     if not assembled.ok:
         return False, assembled.content or assembled.error or "T8 manuscript 拼装失败"

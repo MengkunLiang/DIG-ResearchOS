@@ -194,7 +194,6 @@ def _attach_bib_keys(notes: list[dict[str, Any]], bib_entries: list[dict[str, An
     for bib in bib_entries:
         for alias in bib.get("aliases") or []:
             bib_lookup.setdefault(_lookup_key(alias), bib)
-    used_keys: set[str] = set()
     for note in notes:
         matched: dict[str, Any] | None = None
         for alias in note.get("aliases") or []:
@@ -205,10 +204,9 @@ def _attach_bib_keys(notes: list[dict[str, Any]], bib_entries: list[dict[str, An
             matched = _match_bib_by_title(note, bib_entries)
         if matched:
             bib_key = str(matched.get("key") or "").strip()
-            if bib_key and bib_key not in used_keys:
+            if bib_key:
                 note["bib_key"] = bib_key
                 note["citation_ref"] = f"\\cite{{{bib_key}}}"
-                used_keys.add(bib_key)
 
 
 def _match_bib_by_title(note: dict[str, Any], bib_entries: list[dict[str, Any]]) -> dict[str, Any] | None:

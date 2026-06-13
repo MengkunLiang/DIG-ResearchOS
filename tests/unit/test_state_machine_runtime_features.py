@@ -6,6 +6,7 @@ from researchos.orchestration.state_machine import StateMachine, build_literatur
 from researchos.tools.human_gate import CLIHumanInterface
 from researchos.runtime.agent import AgentResult
 from researchos.schemas.state import StateYaml, TaskHistoryEntry
+from tests.unit.test_runner_basic import _write_t4_stage_visibility_artifacts
 
 
 def _write_yaml(path: Path, content: str) -> None:
@@ -416,7 +417,7 @@ def test_t4_gate1_completion_mode_routes_to_immediate_gate(tmp_workspace):
 
     assert state.current_task == "T4-GATE1"
     assert state.status == "RUNNING"
-    assert sm.should_pause_for_immediate_gate(state) is True
+    assert sm.should_pause_for_immediate_gate(state, workspace_dir=tmp_workspace) is True
 
     state = sm.pause_for_immediate_gate(state, workspace_dir=tmp_workspace)
     state = sm.resolve_pending_gate(
@@ -430,6 +431,115 @@ def test_t4_gate1_completion_mode_routes_to_immediate_gate(tmp_workspace):
     assert decision["semantics"] == "t4_gate1_user_selection_for_candidate_pool"
     assert decision["selected_option"] == "merge"
     assert decision["captured"]["merge_plan"] == "D1+D3"
+
+
+def test_t4_ready_artifacts_route_paused_state_to_gate1_before_deadlock(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    gates = tmp_workspace / "gates.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T4
+        states:
+          T4:
+            agent: ideation
+          T4-GATE1:
+            agent: ideation
+            extra:
+              immediate_gate: true
+            gate: t4_gate1_selection_gate
+            outputs:
+              gate1_user_selection: ideation/_gate1_user_selection.json
+            next_on_success: T4
+        """,
+    )
+    _write_yaml(
+        gates,
+        """
+        gates:
+          t4_gate1_selection_gate:
+            presentation:
+              brief:
+                from_file: ideation/_gate1_selection_brief.md
+            options:
+              - id: merge
+                label: Merge
+                next: T4
+        """,
+    )
+    (tmp_workspace / "ideation").mkdir(parents=True, exist_ok=True)
+    _write_t4_stage_visibility_artifacts(tmp_workspace / "ideation")
+    sm = StateMachine(config, gates)
+    state = StateYaml(
+        project_id="p1",
+        current_task="T4",
+        status="PAUSED",
+        iteration_history={
+            "T4": [
+                {"param_hash": "same"},
+                {"param_hash": "same"},
+                {"param_hash": "same"},
+            ]
+        },
+    )
+
+    assert sm.should_pause_for_immediate_gate(state, workspace_dir=tmp_workspace) is True
+    state = sm.pause_for_immediate_gate(state, workspace_dir=tmp_workspace)
+
+    assert state.current_task == "T4-GATE1"
+    assert state.status == "WAITING_HUMAN"
+    assert state.pending_gate is not None
+
+
+def test_t4_gate1_reanalyze_does_not_write_user_selection(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    gates = tmp_workspace / "gates.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T4-GATE1
+        states:
+          T4-GATE1:
+            agent: ideation
+            extra:
+              immediate_gate: true
+            gate: t4_gate1_selection_gate
+            outputs:
+              gate1_user_selection: ideation/_gate1_user_selection.json
+            next_on_success: T4
+          T4:
+            agent: ideation
+        """,
+    )
+    _write_yaml(
+        gates,
+        """
+        gates:
+          t4_gate1_selection_gate:
+            presentation:
+              brief:
+                from_file: ideation/_gate1_selection_brief.md
+            options:
+              - id: reanalyze
+                label: Reanalyze
+                next: T4
+        """,
+    )
+    (tmp_workspace / "ideation").mkdir(parents=True, exist_ok=True)
+    _write_t4_stage_visibility_artifacts(tmp_workspace / "ideation")
+    sm = StateMachine(config, gates)
+    state = sm.pause_for_immediate_gate(sm.create_initial_state("p1"), workspace_dir=tmp_workspace)
+
+    state = sm.resolve_pending_gate(
+        state,
+        {"option_id": "reanalyze", "captured": {"feedback": "make more cross-domain"}},
+        workspace_dir=tmp_workspace,
+    )
+
+    assert state.current_task == "T4"
+    assert not (tmp_workspace / "ideation" / "_gate1_user_selection.json").exists()
+    assert (tmp_workspace / "ideation" / "_gate1_reanalysis_request.json").exists()
+    assert (tmp_workspace / "ideation" / "_gate1_reanalysis_archive").is_dir()
 
 
 def test_t4_gate1_resolve_reprompts_when_candidate_pool_changes(tmp_workspace):
@@ -801,6 +911,105 @@ def test_custom_t2_literature_params_can_disable_chinese_for_english_manuscript(
     assert payload["literature_quality"]["include_chinese_literature"] == "false"
     assert payload["literature_quality"]["chinese_literature_policy"] == "authoritative_or_seed"
     assert "literature_quality.include_chinese_literature" in payload["parameter_meanings"]
+
+
+def test_t36_template_gate_persists_runtime_confirmed_template(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    gates = tmp_workspace / "gates.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T3.6-TEMPLATE-GATE
+        states:
+          T3.6-TEMPLATE-GATE:
+            agent: survey_writer
+            mode: template_gate
+            extra:
+              immediate_gate: true
+            gate: t36_template_gate
+            outputs:
+              writing_template: drafts/survey/writing_template.json
+            next_on_success: T3.6-PLAN
+          T3.6-PLAN:
+            agent: survey_writer
+        """,
+    )
+    _write_yaml(
+        gates,
+        """
+        gates:
+          t36_template_gate:
+            options:
+              - id: utd_informs
+                label: UTD
+                next: T3.6-PLAN
+                captured_defaults:
+                  template_family: utd
+                  template_id: informs
+                  writing_language: en
+        """,
+    )
+    sm = StateMachine(config, gates)
+    state = sm.pause_for_immediate_gate(sm.create_initial_state("p1"), workspace_dir=tmp_workspace)
+    state = sm.resolve_pending_gate(state, {"option_id": "utd_informs", "captured": {}}, workspace_dir=tmp_workspace)
+
+    assert state.current_task == "T3.6-PLAN"
+    payload = json.loads((tmp_workspace / "drafts" / "survey" / "writing_template.json").read_text(encoding="utf-8"))
+    assert payload["template_family"] == "utd"
+    assert payload["template_id"] == "informs"
+    assert payload["writing_language"] == "en"
+    assert payload["human_interaction_id"]
+    interactions = (tmp_workspace / "_runtime" / "human_interactions.jsonl").read_text(encoding="utf-8")
+    assert payload["human_interaction_id"] in interactions
+
+
+def test_t8_style_template_gate_persists_runtime_confirmed_style(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    gates = tmp_workspace / "gates.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T8-STYLE-GATE
+        states:
+          T8-STYLE-GATE:
+            agent: writer
+            mode: style_gate
+            extra:
+              immediate_gate: true
+            gate: t8_style_template_gate
+            outputs:
+              writing_style: drafts/writing_style.json
+            next_on_success: T8-RESOURCE
+          T8-RESOURCE:
+            agent: writer
+        """,
+    )
+    _write_yaml(
+        gates,
+        """
+        gates:
+          t8_style_template_gate:
+            options:
+              - id: ccf_neurips
+                label: CCF
+                next: T8-RESOURCE
+                captured_defaults:
+                  venue_style: ccf_a
+                  template_family: ccf
+                  template_id: neurips
+                  writing_language: en
+        """,
+    )
+    sm = StateMachine(config, gates)
+    state = sm.pause_for_immediate_gate(sm.create_initial_state("p1"), workspace_dir=tmp_workspace)
+    state = sm.resolve_pending_gate(state, {"option_id": "ccf_neurips", "captured": {}}, workspace_dir=tmp_workspace)
+
+    assert state.current_task == "T8-RESOURCE"
+    payload = json.loads((tmp_workspace / "drafts" / "writing_style.json").read_text(encoding="utf-8"))
+    assert payload["venue_style"] == "ccf_a"
+    assert payload["template_family"] == "ccf"
+    assert payload["template_id"] == "neurips"
+    assert payload["human_interaction_id"]
 
 
 def test_t5_executor_gate_persists_selection_and_patches_executor_files(tmp_workspace):

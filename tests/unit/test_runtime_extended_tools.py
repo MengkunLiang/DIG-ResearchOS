@@ -763,7 +763,7 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
     notes_dir = tmp_workspace / "literature" / "paper_notes"
     notes_dir.mkdir(parents=True, exist_ok=True)
     (notes_dir / "_DIR_GUIDE.md").write_text("# Guide\n", encoding="utf-8")
-    (notes_dir / "core_note.md").write_text("# Core note\n- **ID**: core_note\n", encoding="utf-8")
+    (notes_dir / "core_note.md").write_text("# A Paper\n- **ID**: core_note\n", encoding="utf-8")
     (tmp_workspace / "literature" / "notes_manifest.json").write_text(
         json.dumps(
             {
@@ -802,6 +802,8 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
     resource_index = json.loads(index_path.read_text(encoding="utf-8"))
     artifact_paths = {item["path"] for item in resource_index["artifacts"]}
     assert "smith2024" in resource_index["bib_keys"]
+    assert resource_index["citation_ref_by_note_id"]["core_note"] == "\\cite{smith2024}"
+    assert "core_note" in resource_index["note_id_by_bib_key"]["smith2024"]
     assert any(item["path"] == "experiments/results_summary.json" for item in resource_index["artifacts"])
     assert "literature/paper_notes/core_note.md" in artifact_paths
     assert "literature/paper_notes_bridge/b1/bridge_note.md" in artifact_paths
@@ -887,6 +889,7 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
     assert {"smith2024", "lee2023", "chen2022", "garcia2021", "patel2020", "nguyen2019"} <= set(
         paper_state["shared_facts"]["bib_keys"]
     )
+    assert paper_state["shared_facts"]["citation_ref_by_note_id"]["core_note"] == "\\cite{smith2024}"
     assert paper_state["shared_facts"]["alignment_matrix"]
     assert (tmp_workspace / "drafts" / "section_outlines" / "methodology.md").exists()
     method_outline = (tmp_workspace / "drafts" / "section_outlines" / "methodology.md").read_text(encoding="utf-8")
@@ -1282,6 +1285,18 @@ def test_refresh_literature_citation_maps_links_note_ids_titles_and_bib_keys(tmp
 """,
         encoding="utf-8",
     )
+    alias_note_id = "W1234567890"
+    (notes_dir / f"{alias_note_id}.md").write_text(
+        """# 大数据环境下的决策范式转变与使能创新
+
+- **ID**: W1234567890
+- **Authors**: 陈国青, 曾大军, 卫强, 张明月, 郭迅华
+- **Venue**: 管理世界 (2020)
+- **DOI/arXiv**: 10.19744/j.cnki.11-1235/f.2020.0023
+- **Status**: [ABSTRACT-ONLY]
+""",
+        encoding="utf-8",
+    )
     (literature / "related_work.bib").write_text(
         """@article{guanlishijie2022,
   title={大数据环境下的决策范式转变与使能创新},
@@ -1297,9 +1312,10 @@ def test_refresh_literature_citation_maps_links_note_ids_titles_and_bib_keys(tmp
     bundle = refresh_literature_citation_maps(tmp_workspace, write=True)
 
     citation_map = bundle["citation_map"]
-    assert citation_map["mapped_bib_count"] == 1
+    assert citation_map["mapped_bib_count"] == 2
     assert citation_ref_for_id("noopenalex::7d21650e64a96a02", citation_map) == "\\cite{guanlishijie2022}"
     assert citation_ref_for_id(note_id, citation_map) == "\\cite{guanlishijie2022}"
+    assert citation_ref_for_id(alias_note_id, citation_map) == "\\cite{guanlishijie2022}"
     persisted = json.loads((literature / "paper_note_index.json").read_text(encoding="utf-8"))
     assert persisted["entries"][0]["display_label"] == "大数据环境下的决策范式转变与使能创新 (2020)"
 

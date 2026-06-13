@@ -134,7 +134,74 @@ gates:
         next: T4
       - id: "yes"
         label: "撰写综述论文"
+        next: T3.6-TEMPLATE-GATE
+
+  # T3.6 综述写作语言与 LaTeX 模板确认：
+  # 这是 runtime 级确定 gate，选完后写 drafts/survey/writing_template.json。
+  # CCF 默认 NeurIPS；UTD 默认 INFORMS；也可以只选基础中文/英文模板。
+  t36_template_gate:
+    title: "T3.6 综述语言与模板确认"
+    description: "请先确认综述正文语言和 LaTeX 模板。这里决定后续 survey plan 和 TeX assembly 使用的模板，不需要先运行 LLM。"
+    presentation:
+      how_to_choose:
+        literal: |
+          如何选择：
+          - 只想先写内容稿：中文选“中文基础模板”，英文选“英文基础模板”。
+          - CCF/AI/CS 会议综述：选“CCF 默认 NeurIPS”；也可在自定义中指定 template_id=kdd。当前本地可编译入口主要支持 neurips/kdd。
+          - UTD/Management Science/ISR/INFORMS 风格：选“UTD/INFORMS”。这是本地可编译 fallback，最终投稿仍应替换为官方期刊 ZIP。
+          - 不确定投哪里：先选基础英文或基础中文，后续 T8/T9 仍可重新确认。
+      project_summary:
+        from_file: project.yaml
+        max_chars: 2500
+      seed_outline_profile:
+        from_file: user_seeds/seed_outline_profile.json
+        max_chars: 2000
+    options:
+      - id: basic_en
+        label: "英文基础模板"
+        description: "只确定英文正文，使用普通 article 模板。"
+        aliases: ["英文", "english", "en", "basic_en", "不用模板", "不要模板"]
         next: T3.6-PLAN
+        captured_defaults:
+          template_family: basic_en
+          template_id: basic_en
+          writing_language: en
+      - id: basic_zh
+        label: "中文基础模板"
+        description: "只确定中文正文，使用 ctex 中文基础模板。"
+        aliases: ["中文", "chinese", "zh", "basic_zh"]
+        next: T3.6-PLAN
+        captured_defaults:
+          template_family: basic_zh
+          template_id: basic_zh
+          writing_language: zh
+      - id: ccf_neurips
+        label: "CCF 默认 NeurIPS"
+        description: "英文 CCF/AI/CS 会议稿默认入口；本地默认模板为 NeurIPS。"
+        aliases: ["ccf", "neurips", "ccf-a", "会议"]
+        next: T3.6-PLAN
+        captured_defaults:
+          template_family: ccf
+          template_id: neurips
+          writing_language: en
+      - id: utd_informs
+        label: "UTD/INFORMS"
+        description: "英文 UTD/Management Science/ISR/INFORMS 风格稿件，使用本地可编译 INFORMS fallback。"
+        aliases: ["utd", "informs", "management science", "isr", "misq"]
+        next: T3.6-PLAN
+        captured_defaults:
+          template_family: utd
+          template_id: informs
+          writing_language: en
+      - id: custom
+        label: "自定义模板"
+        description: "手动输入 template_family、template_id、writing_language。"
+        aliases: ["custom", "自定义"]
+        next: T3.6-PLAN
+        collect_input:
+          - template_family
+          - template_id
+          - writing_language
 
   # T3.6 综述语料范围确认：
   # conservative 只使用现有 T2/T3 语料；complete 只做一次性定向补检计划，
@@ -245,6 +312,88 @@ gates:
       - id: stop_project
         label: "结束当前项目"
         next: done
+
+  # T8 正文写作风格、语言与 LaTeX 模板确认：
+  # 这是 runtime 级确定 gate，选完后写 drafts/writing_style.json。
+  t8_style_template_gate:
+    title: "T8 写作风格与模板确认"
+    description: "请确认正式论文正文采用 IS/CCF-A/both 风格，以及使用哪类 LaTeX 模板。"
+    presentation:
+      how_to_choose:
+        literal: |
+          如何选择：
+          - IS/UTD 期刊稿：选“IS + INFORMS”，默认 template_family=utd, template_id=informs。
+          - CCF-A 会议稿：选“CCF-A + NeurIPS”，默认 template_family=ccf, template_id=neurips；当前本地可编译入口主要支持 neurips/kdd。
+          - 同时准备两套稿：选“Both + 基础英文”，先共享资源索引与 alignment matrix。
+          - 只想确定中英、不套 venue：选中文基础或英文基础。
+          - Management Science/ISR/INFORMS 的本地模板是可编译 fallback；最终投稿仍需官方期刊 ZIP。
+      project_summary:
+        from_file: project.yaml
+        max_chars: 2500
+      evaluation_decision:
+        from_file: evaluation/evaluation_decision.md
+        max_chars: 2000
+    options:
+      - id: is_informs
+        label: "IS + INFORMS"
+        description: "IS/UTD 期刊写法，英文 INFORMS fallback 模板。"
+        aliases: ["is", "utd", "informs", "management science", "isr", "misq"]
+        next: T8-RESOURCE
+        captured_defaults:
+          venue_style: is
+          template_family: utd
+          template_id: informs
+          writing_language: en
+      - id: ccf_neurips
+        label: "CCF-A + NeurIPS"
+        description: "CCF-A/AI/CS 会议写法，英文 NeurIPS 模板。"
+        aliases: ["ccf", "ccf_a", "ccf-a", "neurips", "conference"]
+        next: T8-RESOURCE
+        captured_defaults:
+          venue_style: ccf_a
+          template_family: ccf
+          template_id: neurips
+          writing_language: en
+      - id: both_basic_en
+        label: "Both + 基础英文"
+        description: "同时准备 IS/CCF-A 两套写作结构，先用英文基础模板。"
+        aliases: ["both", "两套", "双线"]
+        next: T8-RESOURCE
+        captured_defaults:
+          venue_style: both
+          template_family: basic_en
+          template_id: basic_en
+          writing_language: en
+      - id: basic_en
+        label: "英文基础模板"
+        description: "只确定英文正文，使用普通 article 模板，不套 venue。"
+        aliases: ["英文", "english", "en", "basic_en", "不用模板", "不要模板"]
+        next: T8-RESOURCE
+        captured_defaults:
+          venue_style: ccf_a
+          template_family: basic_en
+          template_id: basic_en
+          writing_language: en
+      - id: basic_zh
+        label: "中文基础模板"
+        description: "中文正文，使用 ctex 中文基础模板。"
+        aliases: ["中文", "chinese", "zh", "basic_zh"]
+        next: T8-RESOURCE
+        captured_defaults:
+          venue_style: is
+          template_family: basic_zh
+          template_id: basic_zh
+          writing_language: zh
+      - id: custom
+        label: "自定义模板"
+        description: "手动输入 venue_style、template_family、template_id、writing_language。"
+        aliases: ["custom", "自定义"]
+        next: T8-RESOURCE
+        collect_input:
+          - venue_style
+          - template_family
+          - template_id
+          - writing_language
 
   # T4.5 非通过 verdict 的人工确认门：
   # Novelty Auditor 可以建议 reframe/drop，但最终是否回 T4、继续 T7 或停止由用户决定。

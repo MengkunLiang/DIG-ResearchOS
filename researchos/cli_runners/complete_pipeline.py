@@ -150,7 +150,7 @@ class CompletePipelineRunner:
                 state.dump_yaml(state_path)
                 return state
 
-            if self.state_machine.should_pause_for_immediate_gate(state):
+            if self.state_machine.should_pause_for_immediate_gate(state, workspace_dir=self.workspace):
                 state = self.state_machine.pause_for_immediate_gate(
                     state,
                     workspace_dir=self.workspace,
