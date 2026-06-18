@@ -13,6 +13,7 @@ from ..runtime.config import RuntimeSettings
 from ..runtime.llm_client import LLMClient
 from ..runtime.logger import get_logger
 from ..runtime.orchestrator import AgentRunner
+from ..runtime.progress import CliProgressEmitter
 from ..runtime.run_logger import RunLogger
 from ..runtime.workspace import initialize_workspace
 from ..schemas.state import StateYaml
@@ -57,6 +58,10 @@ class CompletePipelineRunner:
             quiet=self.runtime_settings.ui.quiet,
             verbose=self.runtime_settings.ui.verbose,
         )
+        self.progress = CliProgressEmitter(
+            quiet=self.runtime_settings.ui.quiet,
+            verbose=self.runtime_settings.ui.verbose,
+        )
         register_builtin_task_checkers()
 
     async def run(self, *, project_id: str, resume: bool = False) -> int:
@@ -82,7 +87,7 @@ class CompletePipelineRunner:
             )
             state.last_error = "检测到上次运行停留在 RUNNING，已按陈旧运行自动转为 PAUSED。"
             state.dump_yaml(state_path)
-            print("检测到陈旧 RUNNING 状态，已转为 PAUSED 并继续 resume。")
+            self.progress.emit("检测到上次运行未正常收尾，已转为可 resume 状态。", important=True)
             self.run_logger.event(
                 "RESUME",
                 project_id=state.project_id,
@@ -91,7 +96,11 @@ class CompletePipelineRunner:
             )
 
         if resume and state.status not in {"PAUSED", "WAITING_HUMAN"}:
-            print("当前状态不是 PAUSED/WAITING_HUMAN，无法 resume。")
+            self.progress.error_context(
+                stage="resume",
+                message=f"当前状态是 {state.status}，不是 PAUSED/WAITING_HUMAN",
+                log_path=str(self.workspace / self.runtime_settings.workspace.runtime_dir / "logs" / "researchos.log"),
+            )
             self.run_logger.event(
                 "ERROR",
                 kind="resume_rejected",
@@ -101,15 +110,22 @@ class CompletePipelineRunner:
             return 1
         if resume:
             self.run_logger.event("RESUME", project_id=state.project_id, task=state.current_task, status=state.status)
+            self.progress.pipeline_start(
+                project_id=state.project_id,
+                task=state.current_task,
+                resume=True,
+                status=state.status,
+            )
         else:
             self.run_logger.event("RUN_START", project_id=project_id, task=state.current_task, mode="pipeline")
+            self.progress.pipeline_start(project_id=project_id, task=state.current_task, resume=False)
 
         while True:
             state = await self._run_one_step(state, state_path)
             if state.status == "COMPLETED":
                 _LOG.info("pipeline_completed", workspace=str(self.workspace))
                 self.run_logger.event("RUN_END", project_id=state.project_id, status="COMPLETED")
-                print("Project completed.")
+                self.progress.emit("[Pipeline] 项目完成", important=True)
                 return 0
             if state.status == "FAILED":
                 _LOG.warning("pipeline_failed", last_error=state.last_error)
@@ -120,19 +136,21 @@ class CompletePipelineRunner:
                     message=state.last_error,
                 )
                 self.run_logger.event("RUN_END", project_id=state.project_id, status="FAILED")
-                print(f"Project failed: {state.last_error}")
+                self.progress.error_context(
+                    stage="pipeline",
+                    message=str(state.last_error or "unknown"),
+                    log_path=str(self.workspace / self.runtime_settings.workspace.runtime_dir / "logs" / "researchos.log"),
+                )
                 return 1
             if state.status == "PAUSED":
                 _LOG.info("pipeline_paused")
                 self.run_logger.event("PAUSED", project_id=state.project_id, task=state.current_task, reason=state.last_error)
-                print("Project paused.")
-                if state.last_error:
-                    print(f"Pause reason: {state.last_error}")
+                self.progress.pipeline_paused(reason=state.last_error)
                 return 130
             if state.status == "WAITING_HUMAN":
                 _LOG.info("pipeline_waiting_human")
                 self.run_logger.event("ASK_HUMAN", project_id=state.project_id, task=state.current_task)
-                print("Project waiting for human input.")
+                self.progress.emit("Project waiting for human input.", important=True)
                 return 130
 
     async def _run_one_step(self, state: StateYaml, state_path: Path) -> StateYaml:
@@ -238,6 +256,11 @@ class CompletePipelineRunner:
                 reason=result.error,
                 validator="runtime_artifact",
             )
+            self.progress.runtime_validation_failed(
+                task_id=ctx.task_id,
+                reason=result.error,
+                log_path=str(self.workspace / self.runtime_settings.workspace.runtime_dir / "logs" / "researchos.log"),
+            )
 
         before_task = state.current_task
         state = self.state_machine.advance(state, result, workspace_dir=self.workspace)
@@ -251,6 +274,11 @@ class CompletePipelineRunner:
         if before_task != state.current_task:
             self.run_logger.event(
                 "STATE_TRANSITION",
+                from_task=before_task,
+                to_task=state.current_task,
+                reason=result.stop_reason,
+            )
+            self.progress.state_transition(
                 from_task=before_task,
                 to_task=state.current_task,
                 reason=result.stop_reason,
@@ -270,6 +298,7 @@ class CompletePipelineRunner:
             gate_id=gate_id,
             option_count=len(state.pending_gate.options or []),
         )
+        self.progress.gate_needed(gate_id=gate_id, task=state.current_task)
         try:
             gate_result = await self.human.present_gate(
                 gate_id=gate_id,
@@ -296,6 +325,7 @@ class CompletePipelineRunner:
             to_task=state.current_task,
             reason=f"gate:{gate_id}",
         )
+        self.progress.gate_resolved(from_task=before_task, to_task=state.current_task, gate_id=gate_id)
         state.dump_yaml(state_path)
         return state
 

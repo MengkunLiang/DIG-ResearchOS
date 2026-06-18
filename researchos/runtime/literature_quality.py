@@ -44,7 +44,7 @@ class LiteratureQualityPolicy:
     manuscript_language: str = "auto"
     include_chinese_literature: str = "auto"
     english_manuscript_policy: str = "exclude_non_seed_chinese"
-    chinese_literature_policy: str = "authoritative_or_seed"
+    chinese_literature_policy: str = "review_flag_only"
     authoritative_chinese_keywords: tuple[str, ...] = field(default_factory=lambda: DEFAULT_CHINESE_AUTHORITY_KEYWORDS)
     allow_user_seed_override: bool = True
 
@@ -212,11 +212,9 @@ def annotate_literature_quality(
             reason = "english_manuscript_excludes_chinese_literature"
         else:
             reason = "seed_chinese_visible_but_not_for_english_citation" if seed else "chinese_literature_not_for_english_citation"
-    elif record_language == "zh" and include_zh and policy.chinese_literature_policy == "authoritative_or_seed":
+    elif record_language == "zh" and include_zh and policy.chinese_literature_policy in {"authoritative_or_seed", "review_flag_only"}:
         if not authoritative and not (seed and policy.allow_user_seed_override):
-            keep = False
-            citation_allowed = False
-            reason = "chinese_literature_without_authoritative_source_label"
+            reason = "chinese_literature_authority_unverified_review_needed"
         elif seed and not authoritative:
             reason = "user_seed_chinese_literature_needs_authority_review"
 
@@ -234,6 +232,8 @@ def annotate_literature_quality(
     }
     if record_language == "zh":
         item["chinese_authority_status"] = "authoritative" if authoritative else "unverified"
+        if not authoritative:
+            item["authority_review_needed"] = True
     if not citation_allowed:
         item["citation_allowed"] = False
     return item

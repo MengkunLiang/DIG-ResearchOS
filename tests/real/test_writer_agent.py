@@ -11,7 +11,11 @@ from pathlib import Path
 import pytest
 
 from researchos.agents.writer import WriterAgent
-from researchos.tools.manuscript import build_paper_state_input_fingerprints, craft_audit_input_fingerprints
+from researchos.tools.manuscript import (
+    SECTION_WRITING_CONTRACTS,
+    build_paper_state_input_fingerprints,
+    craft_audit_input_fingerprints,
+)
 
 
 CORE_SECTIONS = [
@@ -22,6 +26,15 @@ CORE_SECTIONS = [
     "introduction",
     "conclusion",
     "abstract",
+]
+
+TEST_BIB_KEYS = [
+    "smith2024",
+    "lee2023",
+    "chen2022",
+    "garcia2021",
+    "patel2020",
+    "nguyen2019",
 ]
 
 
@@ -95,6 +108,7 @@ def _write_paper_state_and_sections(workspace: Path, *, short_section: bool = Fa
             "status": "written",
             "file": f"drafts/sections/{section_id}.tex",
             "outline": f"drafts/section_outlines/{section_id}.md",
+            "writing_contract": SECTION_WRITING_CONTRACTS.get(section_id, {}),
         }
         outline_path = workspace / "drafts" / "section_outlines" / f"{section_id}.md"
         outline_path.parent.mkdir(parents=True, exist_ok=True)
@@ -104,11 +118,40 @@ def _write_paper_state_and_sections(workspace: Path, *, short_section: bool = Fa
         )
         section_path = workspace / "drafts" / "sections" / f"{section_id}.tex"
         section_path.parent.mkdir(parents=True, exist_ok=True)
-        body = "Short." if short_section and section_id == "methodology" else ("Substantive section content. " * 6)
-        if section_id == "abstract":
+        if short_section and section_id == "methodology":
+            body = "Short."
+        elif section_id == "abstract":
             body = "This abstract summarizes the paper without formal citations or section headings. " * 3
+        elif section_id == "introduction":
+            body = (
+                "This section motivates the problem and positions the main contribution "
+                "\\cite{smith2024,lee2023}. "
+                + ("It explains the research gap, expected evidence, and paper scope. " * 4)
+            )
+        elif section_id == "related_work":
+            body = (
+                "Prior work spans adjacent methodological and empirical streams "
+                "\\cite{smith2024,lee2023,chen2022,garcia2021,patel2020,nguyen2019}. "
+                + ("The comparison emphasizes tension, limitations, and nearest prior work. " * 4)
+            )
+        elif section_id == "methodology":
+            body = (
+                "The method section grounds the design choice in prior work \\cite{smith2024}. "
+                + ("It then details the model components, assumptions, and implementation path. " * 4)
+            )
+        elif section_id == "analysis":
+            body = (
+                "The analysis interprets the mechanism and boundary conditions \\cite{lee2023}. "
+                + ("It connects the observed patterns to the contribution claims and limitations. " * 4)
+            )
+        else:
+            body = "Substantive section content. " * 6
+        if section_id == "abstract":
+            text = body
+        else:
+            text = f"\\section{{{section_id.replace('_', ' ').title()}}}\n{body}"
         section_path.write_text(
-            body if section_id == "abstract" else f"\\section{{{section_id.replace('_', ' ').title()}}}\n{body}",
+            text,
             encoding="utf-8",
         )
     (workspace / "drafts" / "paper_state.json").write_text(
@@ -145,7 +188,11 @@ def _write_paper_state_and_sections(workspace: Path, *, short_section: bool = Fa
 def _write_valid_draft_support(workspace: Path, *, short_section: bool = False) -> None:
     _write_paper_state_and_sections(workspace, short_section=short_section)
     (workspace / "literature" / "related_work.bib").write_text(
-        "@article{smith2024, title={Test}, author={Smith}, year={2024}}\n",
+        "\n".join(
+            f"@article{{{key}, title={{Test Paper {idx}}}, author={{Author {idx}}}, year={{{2024 - idx}}}}}"
+            for idx, key in enumerate(TEST_BIB_KEYS)
+        )
+        + "\n",
         encoding="utf-8",
     )
     (workspace / "drafts" / "manuscript_audit.md").write_text("# Audit\n- [x] ok\n", encoding="utf-8")
@@ -162,6 +209,7 @@ def _write_valid_draft_support(workspace: Path, *, short_section: bool = False) 
                     {"name": "intro_contribution_count", "level": "PASS", "passed": True},
                     {"name": "abstract_no_cite", "level": "PASS", "passed": True},
                     {"name": "abstract_no_section_heading", "level": "PASS", "passed": True},
+                    {"name": "citation_claim_alignment", "level": "PASS", "passed": True},
                     {"name": "no_internal_label_leakage", "level": "PASS", "passed": True},
                     {"name": "no_placeholder_tokens", "level": "PASS", "passed": True},
                     {"name": "number_traceability", "level": "PASS", "passed": True},

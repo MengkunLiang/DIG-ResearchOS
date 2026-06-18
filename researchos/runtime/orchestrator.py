@@ -26,6 +26,16 @@ from .manuscript_recovery import (
     repair_t8_section_plan_outputs,
 )
 from .message import Message, Role, ToolCall, is_empty_assistant
+from .progress import (
+    CliProgressEmitter,
+    build_tool_narrative,
+    describe_task_artifacts,
+    format_cli_message,
+    next_step_for_task,
+    safe_relative,
+    summarize_progress_markdown,
+    summarize_tool_result,
+)
 from .t2_recovery import finalize_t2_outputs, validate_t2_finalize_manifest
 from .abstract_sweep import run_abstract_sweep, run_abstract_sweep_with_reader
 from .t2_config import get_effective_reader_read_params, load_t2_finalize_config
@@ -129,6 +139,10 @@ class AgentRunner:
         self.global_timeout = get_global_timeout()
         self.retry_policy = get_retry_policy()
         self.budget_escalation_policy = get_budget_escalation_policy()
+        self.progress = CliProgressEmitter(
+            quiet=self.runtime_settings.ui.quiet,
+            verbose=self.runtime_settings.ui.verbose,
+        )
 
     @staticmethod
     def _default_policy_factory(
@@ -223,6 +237,23 @@ class AgentRunner:
         )
 
         self._print_task_start_summary(ctx, eff)
+        self.progress.agent_start(
+            task_id=ctx.task_id,
+            agent=self.agent.spec.name,
+            phase=ctx.mode or ctx.extra.get("phase") or "-",
+            objective=str(ctx.extra.get("task_description") or self._infer_task_description(ctx)),
+            inputs=[
+                safe_relative(path, ctx.workspace_dir) or str(path)
+                for path in list(ctx.inputs.values())
+            ],
+            expected_outputs=[
+                safe_relative(path, ctx.workspace_dir) or str(path)
+                for path in list(ctx.outputs_expected.values())
+            ],
+            expected_artifacts=describe_task_artifacts(ctx.task_id),
+            llm_tier=eff.llm_tier,
+            step_limit="unlimited" if eff.unlimited_budget else str(eff.max_steps),
+        )
         last_model_used: str | None = None
         last_endpoint_used: str | None = None
         stop_reason = AgentResult.STOP_ERROR
@@ -289,16 +320,26 @@ class AgentRunner:
             t35_prepared = False
             if not (deterministic_pre_finalized or t2_pre_finalized or t3_pre_finalized):
                 t35_prepared = await self._maybe_prepare_t35_before_llm(ctx, policy)
+            t36_compile_pre_finalized = False
             if not (deterministic_pre_finalized or t2_pre_finalized or t3_pre_finalized):
+                t36_compile_pre_finalized = await self._maybe_finalize_t36_compile_before_llm(ctx)
+            if not (deterministic_pre_finalized or t2_pre_finalized or t3_pre_finalized or t36_compile_pre_finalized):
                 t4_pre_finalized = await self._maybe_finalize_t4_before_llm(ctx)
             t4_gate1_pre_finalized = False
-            if not (deterministic_pre_finalized or t2_pre_finalized or t3_pre_finalized or t4_pre_finalized):
+            if not (
+                deterministic_pre_finalized
+                or t2_pre_finalized
+                or t3_pre_finalized
+                or t36_compile_pre_finalized
+                or t4_pre_finalized
+            ):
                 t4_gate1_pre_finalized = await self._maybe_finalize_t4_gate1_before_llm(ctx)
             t45_pre_finalized = False
             if not (
                 deterministic_pre_finalized
                 or t2_pre_finalized
                 or t3_pre_finalized
+                or t36_compile_pre_finalized
                 or t4_pre_finalized
                 or t4_gate1_pre_finalized
             ):
@@ -308,6 +349,7 @@ class AgentRunner:
                 deterministic_pre_finalized
                 or t2_pre_finalized
                 or t3_pre_finalized
+                or t36_compile_pre_finalized
                 or t4_pre_finalized
                 or t4_gate1_pre_finalized
                 or t45_pre_finalized
@@ -318,6 +360,7 @@ class AgentRunner:
                 deterministic_pre_finalized
                 or t2_pre_finalized
                 or t3_pre_finalized
+                or t36_compile_pre_finalized
                 or t4_pre_finalized
                 or t4_gate1_pre_finalized
                 or t45_pre_finalized
@@ -330,6 +373,7 @@ class AgentRunner:
                 or
                 t2_pre_finalized
                 or t3_pre_finalized
+                or t36_compile_pre_finalized
                 or t4_pre_finalized
                 or t4_gate1_pre_finalized
                 or t45_pre_finalized
@@ -346,6 +390,7 @@ class AgentRunner:
                 or
                 t2_pre_finalized
                 or t3_pre_finalized
+                or t36_compile_pre_finalized
                 or t4_pre_finalized
                 or t4_gate1_pre_finalized
                 or t45_pre_finalized
@@ -357,6 +402,7 @@ class AgentRunner:
             deterministic_pre_finalized = deterministic_pre_finalized or (
                     t2_pre_finalized
                     or t3_pre_finalized
+                    or t36_compile_pre_finalized
                     or t4_pre_finalized
                     or t4_gate1_pre_finalized
                     or t45_pre_finalized
@@ -383,9 +429,12 @@ class AgentRunner:
                 # 每5步输出一次进度
                 if budget.steps % 5 == 1 or budget.steps == 1:
                     step_limit = "unlimited" if budget.unlimited_budget else str(budget.max_steps)
-                    self._emit(
-                        f"[Agent] 步骤 {budget.steps}/{step_limit} | Token: {budget.tokens_in + budget.tokens_out} | 成本: ${budget.cost_usd:.4f}",
-                        verbose_only=True,
+                    self.progress.agent_step(
+                        agent=self.agent.spec.name,
+                        step=budget.steps,
+                        step_limit=step_limit,
+                        tokens=budget.tokens_in + budget.tokens_out,
+                        cost_usd=budget.cost_usd,
                     )
                 try:
                     budget.check()
@@ -568,9 +617,31 @@ class AgentRunner:
                 # 输出工具调用信息
                 if len(assistant_msg.tool_calls) > 0:
                     tool_names = [tc.name for tc in assistant_msg.tool_calls]
-                    self._emit(f"[Agent] 调用工具: {', '.join(tool_names)}")
+                    if len(tool_names) > 1:
+                        self._emit(
+                            f"[{self.agent.spec.name} Agent] 本轮将按顺序处理 {len(tool_names)} 个工具调用："
+                            f"{', '.join(tool_names)}",
+                        )
                     for tc in assistant_msg.tool_calls:
                         run_logger.tool_call(tc.name, tc.arguments, step=budget.steps)
+                        narrative = build_tool_narrative(
+                            task_id=ctx.task_id,
+                            agent=self.agent.spec.name,
+                            tool_name=tc.name,
+                            arguments=tc.arguments,
+                            workspace_dir=ctx.workspace_dir,
+                            verbose=self.runtime_settings.ui.verbose,
+                        )
+                        self.progress.tool_call(
+                            agent=self.agent.spec.name,
+                            tool_name=tc.name,
+                            narrative=narrative,
+                        )
+                    if len(tool_names) == 1:
+                        self._emit(
+                            f"[{self.agent.spec.name} Agent] 正在调用工具：{tool_names[0]}",
+                            verbose_only=True,
+                        )
 
                 # 同一轮 assistant 发出的多个 tool call 可以并行执行，但回填顺序保持原顺序。
                 tool_msgs = await asyncio.gather(
@@ -595,6 +666,25 @@ class AgentRunner:
                 for tool_call, tool_msg in zip(assistant_msg.tool_calls, tool_msgs):
                     messages.append(tool_msg)
                     trace.write_message(tool_msg)
+                    tool_ok = not bool(tool_msg.metadata.get("is_error"))
+                    tool_summary, output_path = summarize_tool_result(
+                        tool_name=tool_call.name,
+                        ok=tool_ok,
+                        content=tool_msg.content,
+                        data=tool_msg.metadata.get("data") if isinstance(tool_msg.metadata, dict) else {},
+                        error=tool_msg.metadata.get("error") if isinstance(tool_msg.metadata, dict) else None,
+                        metadata=tool_msg.metadata if isinstance(tool_msg.metadata, dict) else {},
+                        verbose=self.runtime_settings.ui.verbose,
+                    )
+                    self.progress.tool_result(
+                        agent=self.agent.spec.name,
+                        tool_name=tool_call.name,
+                        ok=tool_ok,
+                        result_summary=tool_summary,
+                        output_path=safe_relative(output_path, ctx.workspace_dir) or output_path,
+                        next_step=next_step_for_task(ctx.task_id, ok=tool_ok) if not tool_ok else None,
+                        duration_ms=tool_msg.duration_ms,
+                    )
                     if tool_call.name == "finish_task" and not tool_msg.metadata.get("is_error"):
                         finish_requested = True
                     if self._is_recoverable_tool_pause(tool_call.name, tool_msg):
@@ -607,13 +697,13 @@ class AgentRunner:
                 if pause_requested:
                     stop_reason = AgentResult.STOP_INTERRUPTED
                     error_msg = pause_reason
-                    self._emit(f"[Agent] 任务暂停：{pause_reason}", important=True)
+                    self.progress.emit(f"[Runtime] 当前任务暂停：{pause_reason}", important=True)
                     break
 
                 if finish_requested:
                     # finish_task 只是“请求结束”而不是直接结束。
                     # 真正能否成功结束，仍以 validate_outputs 为准。
-                    self._emit("[Agent] Agent 请求完成任务，开始校验输出...")
+                    self.progress.validation_start(task_id=ctx.task_id)
                     run_logger.event("FINISH_REQUESTED", task=ctx.task_id, step=budget.steps)
                     if ctx.task_id == "T2":
                         run_logger.event("FINALIZE_STARTED", task=ctx.task_id, mode="t2_finish_finalize")
@@ -621,20 +711,23 @@ class AgentRunner:
                             ctx,
                             mode="t2_finish_finalize",
                             min_raw_count=self._t2_finish_finalize_min_raw(ctx),
-                            start_message="[Agent] T2 收到 finish_task，先基于 papers_raw 执行确定性收尾...",
-                            success_message="[Agent] T2 确定性收尾成功，继续校验输出",
+                            start_message="[Scout Agent] T2 收到 finish_task，先基于 papers_raw 执行确定性收尾...",
+                            success_message="[Scout Agent] T2 确定性收尾成功，继续校验输出",
                         )
                         run_logger.event("FINALIZE_DONE", task=ctx.task_id, mode="t2_finish_finalize")
                     ok, err = self.agent.validate_outputs(ctx)
                     if ok:
-                        self._emit("[Agent] 输出校验通过，任务完成")
+                        self.progress.validation_result(task_id=ctx.task_id, ok=True)
                         run_logger.event("VALIDATION_PASS", task=ctx.task_id, step=budget.steps)
                         stop_reason = AgentResult.STOP_FINISHED
                         break
                     validation_fails += 1
-                    self._emit(
-                        f"[Agent] 输出校验失败 ({validation_fails}/{validation_retry_limit}): {err}",
-                        important=True,
+                    self.progress.validation_result(
+                        task_id=ctx.task_id,
+                        ok=False,
+                        error=str(err or "unknown validation error"),
+                        failure_count=validation_fails,
+                        retry_limit=validation_retry_limit,
                     )
                     run_logger.event(
                         "VALIDATION_FAILED",
@@ -748,6 +841,22 @@ class AgentRunner:
                 except Exception:  # pragma: no cover - logging path
                     self.log.exception("post_hook_failed")
             trace.close(result)
+            self.progress.agent_done(
+                task_id=ctx.task_id,
+                agent=self.agent.spec.name,
+                ok=result.ok,
+                stop_reason=result.stop_reason,
+                summary=result.message,
+                artifacts=[
+                    safe_relative(path, ctx.workspace_dir) or str(path)
+                    for path in list(result.outputs_produced.values())
+                ],
+                next_step=next_step_for_task(ctx.task_id, ok=result.ok) if not result.ok else None,
+                trace_file=str(result.trace_file.relative_to(ctx.workspace_dir))
+                if result.trace_file is not None
+                else None,
+                error=result.error,
+            )
             run_logger.event(
                 "TASK_END",
                 task=ctx.task_id,
@@ -799,11 +908,12 @@ class AgentRunner:
         separator = self._centered_separator(f"{ctx.task_id} | {self.agent.spec.name}", width=80)
         self._emit(
             f"\n{separator}\n"
-            "[Agent] 初始化完成 | "
-            f"任务: {ctx.task_id} | Agent: {self.agent.spec.name} | 阶段: {phase} | "
+            f"[{self.agent.spec.name} Agent] 初始化完成 | "
+            f"任务: {ctx.task_id} | 阶段: {phase} | "
             f"目标: {description} | 输出: {', '.join(expected) if expected else '未声明'} | "
             f"模型层级: {eff.llm_tier} | 最大步数: {step_limit}\n"
-            f"{'=' * len(separator)}"
+            f"{'=' * len(separator)}",
+            verbose_only=True,
         )
 
     @staticmethod
@@ -822,7 +932,7 @@ class AgentRunner:
             return
         if self.runtime_settings.ui.quiet and not important:
             return
-        print(message, flush=True)
+        print(format_cli_message(message), flush=True)
 
     @staticmethod
     def _infer_task_description(ctx: ExecutionContext) -> str:
@@ -929,7 +1039,10 @@ class AgentRunner:
             "我要补充研究问题、目标 venue、预算/GPU 或外部资源",
         ]
 
-        print("[Agent] T1 启动补充 gate：等待用户确认是否补充材料后再扫描 user_seeds/", flush=True)
+        self.progress.emit(
+            "[PI Agent] T1 启动补充 gate：先确认种子材料和研究边界，再扫描 user_seeds/",
+            important=True,
+        )
         result = await tool_map["ask_human"].execute(question=question, suggestions=suggestions)
         if not result.ok:
             reason = result.content or result.error or "T1 启动补充 gate 未获得用户输入"
@@ -1015,8 +1128,8 @@ class AgentRunner:
             ctx,
             mode="t2_recovery",
             min_raw_count=self._t2_finish_finalize_min_raw(ctx),
-            start_message="[Agent] T2 resume/recovery 检测到未完成输出，尝试基于 papers_raw 补齐...",
-            success_message="[Agent] T2 resume/recovery 补齐成功，已恢复完整 T2 产物",
+            start_message="[Scout Agent] T2 resume/recovery 检测到未完成输出，尝试基于 papers_raw 补齐...",
+            success_message="[Scout Agent] T2 resume/recovery 补齐成功，已恢复完整 T2 产物",
         )
         if finalized:
             return AgentResult.STOP_FINISHED, None
@@ -1097,21 +1210,24 @@ class AgentRunner:
                 return
 
             if stop_reason == AgentResult.STOP_FINISHED:
-                print("[Agent] T3 deep read 完成，开始 abstract sweep...", flush=True)
+                self.progress.emit(
+                    "[Reader Agent] T3 精读阶段已完成，开始 abstract sweep 补齐摘要级覆盖",
+                    important=True,
+                )
             else:
-                print(
-                    f"[Agent] T3 以 {stop_reason} 退出，使用 deterministic abstract sweep 刷新浅层笔记覆盖...",
-                    flush=True,
+                self.progress.emit(
+                    f"[Reader Agent] T3 以 {stop_reason} 退出，使用 deterministic abstract sweep 刷新浅层笔记覆盖...",
+                    important=True,
                 )
 
             if stop_reason != AgentResult.STOP_FINISHED:
                 result = run_abstract_sweep(ctx.workspace_dir, sweep_config)
                 ctx.extra["abstract_sweep"] = result
                 if result.get("notes_generated", 0) > 0:
-                    print(
-                        f"[Agent] Abstract sweep fallback 完成：筛选 {result['candidates_found']} 篇候选，"
+                    self.progress.emit(
+                        f"[Reader Agent] Abstract sweep fallback 完成：筛选 {result['candidates_found']} 篇候选，"
                         f"生成 {result['notes_generated']} 篇 abstract note",
-                        flush=True,
+                        important=True,
                     )
                 return
 
@@ -1176,15 +1292,15 @@ class AgentRunner:
             ctx.extra["abstract_sweep"] = result
 
             if result.get("notes_generated", 0) > 0 or result.get("metadata_triage_count", 0) > 0:
-                print(
-                    f"[Agent] Abstract sweep 完成：筛选 {result['candidates_found']} 篇候选，"
+                self.progress.emit(
+                    f"[Reader Agent] Abstract sweep 完成：筛选 {result['candidates_found']} 篇候选，"
                     f"生成 {result['notes_generated']} 篇 abstract note "
                     f"（LLM {result.get('llm_notes_generated', 0)}，fallback {result.get('fallback_notes_generated', 0)}），"
                     f"metadata-only 批量 triage {result.get('metadata_triage_count', 0)} 篇",
-                    flush=True,
+                    important=True,
                 )
             else:
-                print("[Agent] Abstract sweep 无候选论文", flush=True)
+                self.progress.emit("[Reader Agent] Abstract sweep 无候选论文", important=True)
         except Exception:  # pragma: no cover - sweep failure should not fail a completed T3
             self.log.exception("t3_abstract_sweep_failed")
 
@@ -1207,7 +1323,10 @@ class AgentRunner:
                     "t2_existing_outputs_prefinalize",
                     {"raw_count": self._count_jsonl_records(ctx.workspace_dir / "literature" / "papers_raw.jsonl")},
                 )
-                print("[Agent] T2 检测到已有完整产物且校验通过，跳过 LLM 续跑", flush=True)
+                self.progress.emit(
+                    "[Scout Agent] T2 检测到已有完整产物且校验通过，跳过重复 LLM 续跑",
+                    important=True,
+                )
                 return True
             if ok and not manifest_ok:
                 self.log.info("t2_existing_outputs_prefinalize_skipped", reason=manifest_err)
@@ -1225,8 +1344,8 @@ class AgentRunner:
             ctx,
             mode="t2_resume_prefinalize",
             min_raw_count=self._t2_finish_finalize_min_raw(ctx),
-            start_message="[Agent] T2 resume 检测到已有 papers_raw，尝试确定性补齐缺失产物...",
-            success_message="[Agent] T2 resume 确定性补齐成功，跳过 LLM 续跑",
+            start_message="[Scout Agent] T2 resume 检测到已有 papers_raw，尝试确定性补齐缺失产物...",
+            success_message="[Scout Agent] T2 resume 确定性补齐成功，跳过 LLM 续跑",
         )
 
     def _raw_t2_cache_newer_than_inputs(self, ctx: ExecutionContext) -> bool:
@@ -1240,8 +1359,6 @@ class AgentRunner:
                 ctx.workspace_dir / "project.yaml",
                 ctx.workspace_dir / "literature" / "bridge_domain_plan.json",
                 ctx.workspace_dir / "user_seeds" / "seed_papers.jsonl",
-                ctx.workspace_dir / "user_seeds" / "seed_ideas.md",
-                ctx.workspace_dir / "user_seeds" / "seed_constraints.md",
                 ctx.workspace_dir / "user_seeds" / "seed_outline_profile.json",
                 ctx.workspace_dir / "user_seeds" / "seed_external_resources.jsonl",
             ],
@@ -1290,7 +1407,10 @@ class AgentRunner:
             self.log.info("t3_resume_prefinalize_skipped", reason=err)
             return False
 
-        print("[Agent] T3 检测到已有 deep-read 产物且校验通过，跳过 deep-read LLM 续跑", flush=True)
+        self.progress.emit(
+            "[Reader Agent] T3 检测到已有 deep-read 产物且校验通过，跳过重复 deep-read LLM",
+            important=True,
+        )
         # Do not suppress abstract sweep here. Resume may have valid deep-read
         # notes while shallow/metadata notes are missing or stale; the post-run
         # sweep is the cheap deterministic/Reader path that repairs that gap.
@@ -1305,6 +1425,49 @@ class AgentRunner:
                 ],
             },
             action_type="t3_resume_prefinalize",
+        )
+        return True
+
+    async def _maybe_finalize_t36_compile_before_llm(self, ctx: ExecutionContext) -> bool:
+        """T3.6-COMPILE resume: reuse an already valid survey PDF/report.
+
+        Compile validation is deterministic and already checks survey.tex,
+        survey.pdf, survey.log, survey_compile_report.json, current audit, and
+        unresolved LaTeX warnings. If those artifacts validate after manual
+        repair, resume should advance without asking an LLM to recompile the
+        same PDF.
+        """
+
+        if ctx.task_id != "T3.6-COMPILE":
+            return False
+        if not self._is_resume_run(ctx):
+            return False
+        expected_paths = [
+            ctx.workspace_dir / "drafts" / "survey" / "survey.pdf",
+            ctx.workspace_dir / "drafts" / "survey" / "survey.log",
+            ctx.workspace_dir / "drafts" / "survey" / "survey_compile_report.json",
+        ]
+        if any(not path.exists() or path.stat().st_size <= 0 for path in expected_paths):
+            return False
+        ok, err = self.agent.validate_outputs(ctx)
+        if not ok:
+            self.log.info("t36_compile_resume_prefinalize_skipped", reason=err)
+            return False
+        self.progress.emit(
+            "[Survey Writer Agent] T3.6-COMPILE 检测到已有 PDF、log 和 compile report 且校验通过，跳过重复编译",
+            important=True,
+        )
+        self._record_runtime_completion(
+            ctx,
+            "t36_compile_resume_prefinalize",
+            {
+                "outputs": [
+                    "drafts/survey/survey.pdf",
+                    "drafts/survey/survey.log",
+                    "drafts/survey/survey_compile_report.json",
+                ],
+            },
+            action_type="t36_compile_resume_prefinalize",
         )
         return True
 
@@ -1348,7 +1511,10 @@ class AgentRunner:
             self.log.info("t4_resume_prefinalize_skipped", reason=err)
             return False
 
-        print("[Agent] T4 检测到已有 ideation 三件套且校验通过，跳过 LLM 续跑", flush=True)
+        self.progress.emit(
+            "[Ideation Agent] T4 检测到已有 ideation 产物且校验通过，跳过重复 LLM",
+            important=True,
+        )
         self._record_runtime_completion(
             ctx,
             "t4_resume_prefinalize",
@@ -1385,7 +1551,10 @@ class AgentRunner:
             reason="gate1_artifacts_older_than_t4_inputs",
         ):
             return False
-        print("[Agent] T4 检测到 Gate1 候选池已就绪，转入人工选择 Gate", flush=True)
+        self.progress.emit(
+            "[Ideation Agent] T4 Gate1 候选池已就绪，转入人工选择 gate",
+            important=True,
+        )
         self._record_runtime_completion(
             ctx,
             "t4_gate1_ready",
@@ -1432,7 +1601,10 @@ class AgentRunner:
             reason="gate1_artifacts_older_than_t4_inputs",
         ):
             return stop_reason, error_msg
-        print("[Agent] T4 Gate1 候选池已就绪，暂停进入人工选择 Gate", flush=True)
+        self.progress.emit(
+            "[Ideation Agent] T4 Gate1 候选池已就绪，暂停进入人工选择 gate",
+            important=True,
+        )
         self._record_runtime_completion(
             ctx,
             "t4_gate1_ready",
@@ -1625,7 +1797,10 @@ class AgentRunner:
             self.log.info("t45_resume_prefinalize_skipped", reason=err)
             return False
 
-        print("[Agent] T4.5 检测到已有 novelty audit 且校验通过，跳过 LLM 续跑", flush=True)
+        self.progress.emit(
+            "[Novelty Auditor Agent] T4.5 检测到已有 novelty audit 且校验通过，跳过重复 LLM",
+            important=True,
+        )
         outputs = [
             "ideation/novelty_audit.md",
             "ideation/_mechanism_tuples",
@@ -1658,7 +1833,10 @@ class AgentRunner:
         output_path = ctx.workspace_dir / "external_executor" / "wait_acceptance_report.json"
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        print("[Agent] T5-EXTERNAL-WAIT 检测到外部 result_pack 已就绪，跳过 LLM 并进入 T7-INGEST", flush=True)
+        self.progress.emit(
+            "[Experimenter Agent] T5-EXTERNAL-WAIT 检测到外部 result_pack 已就绪，跳过 LLM 并进入 T7-INGEST",
+            important=True,
+        )
         self._record_runtime_completion(
             ctx,
             "external_wait_prefinalize",
@@ -1697,7 +1875,10 @@ class AgentRunner:
             self.log.info("t9_submission_prefinalize_skipped", reason=err)
             return False
 
-        print("[Agent] T9 检测到已有投稿包且校验通过，跳过环境检查和 LLM 续跑", flush=True)
+        self.progress.emit(
+            "[Submission Agent] T9 检测到已有投稿包且校验通过，跳过环境检查和重复 LLM",
+            important=True,
+        )
         self._record_runtime_completion(
             ctx,
             "t9_submission_prefinalize",
@@ -1748,7 +1929,10 @@ class AgentRunner:
             self.log.warning("paper_claim_audit_prefinalize_validation_failed", error=err)
             return False
 
-        print("[Agent] T8-PAPER-CLAIM-AUDIT 已用确定性工具完成，跳过 LLM", flush=True)
+        self.progress.emit(
+            "[Writer Agent] T8-PAPER-CLAIM-AUDIT 已用确定性工具完成，跳过 LLM",
+            important=True,
+        )
         self._record_runtime_completion(
             ctx,
             "paper_claim_audit_prefinalize",
@@ -1781,7 +1965,10 @@ class AgentRunner:
 
         ok, err = self.agent.validate_outputs(ctx)
         if ok:
-            print("[Agent] T8-SECTION-PLAN 检测到 paper_state/section_outlines 已合格，跳过 LLM 续跑", flush=True)
+            self.progress.emit(
+                "[Writer Agent] T8-SECTION-PLAN 检测到 paper_state/section_outlines 已合格，跳过重复 LLM",
+                important=True,
+            )
             self._record_runtime_completion(
                 ctx,
                 "t8_section_plan_prefinalize",
@@ -1795,10 +1982,10 @@ class AgentRunner:
             )
             return True
 
-        print(
-            "[Agent] T8-SECTION-PLAN 检测到已有计划文件但状态不合格，"
+        self.progress.emit(
+            "[Writer Agent] T8-SECTION-PLAN 检测到已有计划文件但状态不合格，"
             "使用 initialize_manuscript_state 确定性修复...",
-            flush=True,
+            important=True,
         )
         project = {}
         project_path = ctx.workspace_dir / "project.yaml"
@@ -1827,7 +2014,10 @@ class AgentRunner:
             self.log.warning("t8_section_plan_prefinalize_validation_failed", error=err)
             return False
 
-        print("[Agent] T8-SECTION-PLAN 状态修复成功，跳过 LLM 续跑", flush=True)
+        self.progress.emit(
+            "[Writer Agent] T8-SECTION-PLAN 状态修复成功，跳过重复 LLM",
+            important=True,
+        )
         self._record_runtime_completion(
             ctx,
             "t8_section_plan_prefinalize",
@@ -1858,7 +2048,10 @@ class AgentRunner:
         if not can_refresh_t8_manuscript_outputs(ctx.workspace_dir):
             return False
 
-        print("[Agent] T8 检测到已有章节草稿，先确定性重拼 manuscript 并刷新审计...", flush=True)
+        self.progress.emit(
+            "[Writer Agent] T8 检测到已有章节草稿，先确定性重拼 manuscript 并刷新审计",
+            important=True,
+        )
         ok, err = await refresh_t8_manuscript_outputs(ctx.workspace_dir)
         if not ok:
             self.log.info("t8_manuscript_prefinalize_refresh_failed", reason=err)
@@ -1869,7 +2062,10 @@ class AgentRunner:
             self.log.info("t8_manuscript_prefinalize_validation_skipped", reason=err)
             return False
 
-        print("[Agent] T8 manuscript 产物已合格，跳过重复 LLM 续跑", flush=True)
+        self.progress.emit(
+            "[Writer Agent] T8 manuscript 产物已合格，跳过重复 LLM",
+            important=True,
+        )
         self._record_runtime_completion(
             ctx,
             "t8_manuscript_prefinalize",
@@ -1918,7 +2114,10 @@ class AgentRunner:
             newest_note_mtime = max((path.stat().st_mtime for path in note_files), default=0)
             oldest_staged_mtime = min(path.stat().st_mtime for path in staged_outputs)
             if oldest_staged_mtime >= newest_note_mtime:
-                print("[Agent] T3.5 检测到现有 synthesis workbench 且未过期，跳过重复生成", flush=True)
+                self.progress.emit(
+                    "[Synthesizer Agent] T3.5 检测到现有 synthesis workbench 且未过期，跳过重复生成",
+                    important=True,
+                )
                 actions = ctx.extra.setdefault("runtime_actions", [])
                 if isinstance(actions, list):
                     actions.append(
@@ -1937,14 +2136,20 @@ class AgentRunner:
 
         from ..tools.literature_synthesis import BuildSynthesisWorkbenchTool
 
-        print("[Agent] T3.5 先执行分阶段 synthesis workbench 生成...", flush=True)
+        self.progress.emit(
+            "[Synthesizer Agent] T3.5 先执行分阶段 synthesis workbench 生成，用于把 paper notes 组织成可审计综述材料",
+            important=True,
+        )
         tool = BuildSynthesisWorkbenchTool(policy)
         result = await tool.execute(write_final=False, render_draft=False)
         if not result.ok:
             self.log.warning("t35_workbench_failed", error=result.error, content=result.content)
             return False
 
-        print("[Agent] T3.5 synthesis workbench 已生成；继续交给 LLM 审阅并写最终 synthesis.md", flush=True)
+        self.progress.emit(
+            "[Synthesizer Agent] T3.5 synthesis workbench 已生成；继续交给 LLM 审阅并写最终 synthesis.md",
+            important=True,
+        )
         actions = ctx.extra.setdefault("runtime_actions", [])
         if isinstance(actions, list):
             actions.append(
@@ -1991,19 +2196,42 @@ class AgentRunner:
         if not needs_finalize:
             return False
 
-        print(start_message, flush=True)
+        self.progress.emit(start_message, important=True)
         recovery = await finalize_t2_outputs(ctx.workspace_dir)
         if not recovery.get("ok"):
             reason = recovery.get("reason") or "unknown"
             self.log.warning(f"{mode}_failed", reason=reason, recovery=recovery)
+            self.progress.error_context(
+                stage="T2 确定性收尾",
+                agent=self.agent.spec.name,
+                message=str(reason),
+                log_path=str(ctx.workspace_dir / "_runtime" / "logs" / "researchos.log"),
+            )
             return False
 
         ok, err = self.agent.validate_outputs(ctx)
         if not ok:
             self.log.warning(f"{mode}_validation_failed", error=err, recovery=recovery)
+            self.progress.error_context(
+                stage="T2 确定性收尾后校验",
+                agent=self.agent.spec.name,
+                message=str(err or "unknown"),
+                log_path=str(ctx.workspace_dir / "_runtime" / "logs" / "researchos.log"),
+            )
             return False
 
-        print(success_message, flush=True)
+        self.progress.emit(success_message, important=True)
+        self.progress.emit(
+            "[Scout Agent] T2 确定性收尾完成，papers_raw 已被整理为可继续阅读的候选池",
+            important=True,
+        )
+        t2_config = load_t2_finalize_config(ctx.workspace_dir)
+        progress_rel = str(getattr(t2_config, "progress_file", "") or "literature/temp/scout_progress.md")
+        self.progress.progress_file_update(
+            label="Scout/T2 收尾进度",
+            path=progress_rel,
+            bullets=summarize_progress_markdown(ctx.workspace_dir / progress_rel, max_items=4),
+        )
         self._record_runtime_completion(ctx, mode, recovery)
         self.log.debug(f"{mode}_succeeded", recovery=recovery)
         return True
@@ -2420,7 +2648,7 @@ class AgentRunner:
         data = result.data if isinstance(result.data, dict) else {}
         progress = str(data.get("progress") or "").strip()
         if tool_name == "save_paper_note" and progress:
-            self._emit(f"[Agent] T3 deep read progress: {progress}")
+            self.progress.emit(f"[Reader Agent] T3 深读进度：{progress}")
 
     @staticmethod
     def _looks_like_human_interaction_request(message: Message) -> bool:
@@ -2854,9 +3082,10 @@ class AgentRunner:
         if not query:
             query = "[query unavailable]"
         try:
+            progress_rel = str(getattr(t2_config, "progress_file", "") or "literature/temp/scout_progress.md")
             ScoutProgressLogger(
                 ctx.workspace_dir,
-                str(getattr(t2_config, "progress_file", "") or "literature/temp/scout_progress.md"),
+                progress_rel,
             ).log_runtime_event(
                 "search_result",
                 query=query,
@@ -2870,6 +3099,11 @@ class AgentRunner:
                 merged_raw_count=merged_count,
                 raw_count_after=raw_count_after,
                 append_status=append_status,
+            )
+            self.progress.progress_file_update(
+                label="Scout/T2 检索进度",
+                path=progress_rel,
+                bullets=summarize_progress_markdown(ctx.workspace_dir / progress_rel, max_items=4),
             )
         except Exception:
             return

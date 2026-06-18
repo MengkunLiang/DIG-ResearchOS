@@ -351,7 +351,7 @@ def load_literature_quality_policy(workspace_dir: Path | str | None = None) -> L
         manuscript_language=str(raw.get("manuscript_language") or "auto"),
         include_chinese_literature=str(raw.get("include_chinese_literature") or "auto"),
         english_manuscript_policy=str(raw.get("english_manuscript_policy") or "exclude_non_seed_chinese"),
-        chinese_literature_policy=str(raw.get("chinese_literature_policy") or "authoritative_or_seed"),
+        chinese_literature_policy=str(raw.get("chinese_literature_policy") or "review_flag_only"),
         authoritative_chinese_keywords=authority_keywords,
         allow_user_seed_override=_as_bool(raw.get("allow_user_seed_override"), True),
     )

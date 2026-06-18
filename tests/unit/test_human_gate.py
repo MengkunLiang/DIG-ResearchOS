@@ -30,6 +30,84 @@ def test_cli_gate_parse_accepts_label_and_custom_aliases():
     assert CLIHumanInterface._parse_option_index("确认计划", options) == 1
 
 
+def test_cli_gate_formats_path_summary_without_raw_json():
+    rendered = CLIHumanInterface._format_presentation_value(
+        "gate1_candidate_cards",
+        {
+            "path": "ideation/_gate1_candidate_cards.md",
+            "size_chars": 1234,
+            "summary": "# Candidate Cards\n\nD1 details",
+        },
+        gate_id="t4_gate1_selection_gate",
+    )
+
+    assert "文件: ideation/_gate1_candidate_cards.md" in rendered
+    assert "字符数: 1234" in rendered
+    assert "D1 details" in rendered
+    assert '"path"' not in rendered
+
+
+def test_cli_gate_formats_candidate_fingerprints_as_machine_summary():
+    rendered = CLIHumanInterface._format_presentation_value(
+        "candidate_pool_fingerprints",
+        {
+            "candidate_directions": {
+                "path": "ideation/_candidate_directions.json",
+                "exists": True,
+                "sha256": "abc",
+            },
+            "bridge_coverage_review": {
+                "path": "ideation/bridge_coverage_review.json",
+                "exists": False,
+            },
+        },
+        gate_id="t4_gate1_selection_gate",
+    )
+
+    assert "机器校验信息已记录" in rendered
+    assert "1 个文件已锁定" in rendered
+    assert "1 个可选文件缺失" in rendered
+    assert "ideation/_candidate_directions.json" not in rendered
+    assert '"sha256"' not in rendered
+
+
+@pytest.mark.asyncio
+async def test_cli_gate_presentation_uses_human_labels_and_compact_machine_fields(monkeypatch, capsys):
+    answers = iter(["1"])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+    human = CLIHumanInterface()
+
+    result = await human.present_gate(
+        gate_id="t4_gate1_selection_gate",
+        presentation={
+            "_title": "选择 idea",
+            "_description": "请选择后续研究方向。",
+            "gate1_candidate_cards": {
+                "path": "ideation/_gate1_candidate_cards.md",
+                "size_chars": 1200,
+                "summary": "D1: 候选方向摘要",
+            },
+            "candidate_pool_fingerprints": {
+                "candidate_directions": {
+                    "path": "ideation/_candidate_directions.json",
+                    "exists": True,
+                    "sha256": "abc",
+                }
+            },
+        },
+        options=[{"id": "select_or_reframe", "label": "选择/重构"}],
+    )
+
+    out = capsys.readouterr().out
+    assert result["option_id"] == "select_or_reframe"
+    assert "【候选 idea 卡片】" in out
+    assert "D1: 候选方向摘要" in out
+    assert "【候选池校验】" in out
+    assert "1 个文件已锁定" in out
+    assert "ideation/_candidate_directions.json" not in out
+    assert '"sha256"' not in out
+
+
 def test_t2_literature_gate_parses_inline_active_pool_customization():
     options = [
         {"id": "standard_research", "label": "标准研究论文覆盖", "is_default": True},
@@ -47,6 +125,32 @@ def test_t2_literature_gate_parses_inline_active_pool_customization():
         "option_id": "custom",
         "captured": {"active_pool_max": "300", "base_option": "standard_research"},
     }
+
+
+def test_t2_literature_confirm_gate_formats_selected_parameters_without_raw_json():
+    rendered = CLIHumanInterface._format_presentation_value(
+        "selected_parameters",
+        {
+            "path": "literature/literature_params.json",
+            "size_chars": 1000,
+            "summary": (
+                '{"selected_label":"综述均衡覆盖","confirmation_summary":"保留候选 180 篇；精读 50/60/70。",'
+                '"selected_summary":{"active_pool_max":180},'
+                '"reader":{"deep_read_min":50,"deep_read_target":60,"deep_read_max":70,'
+                '"require_deep_read_target":true,"abstract_sweep":{"lite_paper_num":"all_readable"}},'
+                '"literature_quality":{"manuscript_language":"zh","include_chinese_literature":true,'
+                '"chinese_literature_policy":"review_flag_only"}}'
+            ),
+        },
+        gate_id="t2_literature_param_confirm_gate",
+    )
+
+    assert "文件: literature/literature_params.json" in rendered
+    assert "已选择档位: 综述均衡覆盖" in rendered
+    assert "保留候选：180 篇（active_pool_max=180；可选：120/180/240 或自定义）" in rendered
+    assert "深入阅读：目标 60 篇（deep_read=50/60/70；格式：min/target/max）" in rendered
+    assert "稿件语言：zh（manuscript_language=zh；可选：auto/en/zh/mixed）" in rendered
+    assert '"selected_label"' not in rendered
 
 
 def test_t2_literature_gate_parses_multiple_inline_customizations():

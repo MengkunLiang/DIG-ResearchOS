@@ -1593,7 +1593,7 @@ T8/T9 会直接消费它，而不是重新从 note 手工抽引用。
 
 ### T3 的 Abstract Sweep（轻量补读）
 
-Deep read 完成后，orchestrator 自动运行 abstract sweep，默认补读尚未被 `paper_notes/` 或 `paper_notes_abstract/` 覆盖的候选。它只基于 title/abstract/metadata 做轻量补读，不是全文证据。含 abstract 的论文写入 `literature/paper_notes_abstract/`；只有 title/year/venue/DOI 等 metadata 的候选不再逐篇伪装成 note，而是批量写入 `literature/metadata_triage.md`，作为资源补取和升级阅读线索。若 `T2-PARAM-GATE` 选择综述均衡/强覆盖，`abstract_sweep.lite_paper_num=all_readable`，并允许从 `papers_backlog.jsonl` 中回捞有摘要/PDF 的候选补足可读覆盖。
+Deep read 完成后，orchestrator 自动运行 abstract sweep，默认补读尚未被 `paper_notes/` 或 `paper_notes_abstract/` 覆盖的候选。它只基于 title/abstract/metadata 做轻量补读，不是全文证据。含 abstract 的论文写入 `literature/paper_notes_abstract/`；只有 title/year/venue/DOI 等 metadata 的候选不再逐篇伪装成 note，而是批量写入 `literature/metadata_triage.md`，作为资源补取和升级阅读线索。`T2-PARAM-GATE` 的综述均衡默认 `abstract_sweep.lite_paper_num=120`，强覆盖默认 `180`；`papers_backlog.jsonl` 只在数值预算仍有剩余时回捞有摘要/PDF 的候选补足可读覆盖。
 
 配置在 `config/agent_params.yaml` 的 `reader.modes.read.behavior.abstract_sweep`：
 
@@ -1604,7 +1604,7 @@ reader:
       behavior:
         abstract_sweep:
           enabled: true
-          lite_paper_num: 120     # 研究论文默认轻读上限；综述 gate 可设 all_readable
+          lite_paper_num: 120     # 研究论文和综述均衡默认轻读上限；综述强覆盖默认 180；可显式设 all_readable
           min_relevance: 0.0      # 默认不按 metadata hint 丢弃
           sources: [papers_verified, papers_dedup]
           exclude_already_read: true
@@ -1625,7 +1625,7 @@ reader:
 - 跳过 explicit duplicate；默认跳过 semantic exclude / `shared_keyword_only/unrelated` / `can_enter_deep_read=false`，避免已排除论文重新进入 BibTeX、comparison table 和 T8 写作语料。需要排除线索复核时可显式设为 `exclude_semantic_excluded: false`
 - 保留缺摘要但有 title 的 metadata-only 候选，但只进入批量 triage report，不写入 per-paper note / BibTeX / comparison table
 - 如果 T3 已经完成全文/部分全文 note，abstract sweep 不再重复写一个 abstract note
-- 候选预算 `lite_paper_num` 是 abstract note 与 metadata triage 的总候选 cap；`all_readable` 表示不设用户可见轻读篇数上限。排序使用 `abstract_sweep_score = relevance/resource/year` 加权，默认权重是 `0.70/0.20/0.10`
+- 候选预算 `lite_paper_num` 是 abstract note 与 metadata triage 的总候选 cap；`all_readable` 只表示 active/retained 候选内不设用户可见轻读篇数上限，不会全读 backlog。排序使用 `abstract_sweep_score = relevance/resource/year` 加权，默认权重是 `0.70/0.20/0.10`
 
 执行方式：
 
@@ -3125,7 +3125,7 @@ motivation -> contribution -> related_gap -> design_choice -> experiment -> anal
 - `update_manuscript_section_state`：记录单章 written/revised 状态。
 - `assemble_manuscript`：机械拼装 section files 为 `paper.tex`；当 `venue_style=both` 时，同时写 `drafts/is/paper.tex` 和 `drafts/ccf_a/paper.tex` 两个风格变体入口，但真正的 IS/CCF-A 风格化改写由 Writer LLM 完成。
 - `audit_manuscript_claims`：检查 citation key、数字、图表引用和核心章节。
-- `audit_writing_craft`：检查 alignment/craft 机械问题，如独立 Limitations、Abstract 正式引用、内部编号泄露、正文 placeholder token、实验 table/metric 锚点、数字可追溯、AI 套话等；当 `venue_style=both` 时也会审计两套风格变体。Abstract 不放正式引用；citation key 真实性由 `audit_manuscript_claims` 负责。
+- `audit_writing_craft`：检查 alignment/craft 机械问题，如独立 Limitations、Abstract 正式引用、内部编号泄露、正文 placeholder token、实验 table/metric 锚点、数字可追溯、AI 套话、以及 citation 与当前 claim 的语境对齐；当 `venue_style=both` 时也会审计两套风格变体。Abstract 不放正式引用；citation key 真实性由 `audit_manuscript_claims` 负责，citation-claim alignment 会结合 BibTeX、citation_map 和 paper notes 做保守启发式检查。
 - `build_manuscript_revision_patches`：把 reviewer issue 定位成 section patch list。
 
 这些工具只处理机械重复、可解析、可校验的工作；论文贡献判断、理论定位、gap 表达、section prose 和修订取舍仍由 LLM 完成。
@@ -3239,7 +3239,7 @@ Abstract 用 5 句骨架压缩全文：Problem、Gap、Approach、Key result、C
 最后必须调用两个审计工具：
 
 - `audit_manuscript_claims(paper_path="drafts/paper.tex", output_path="drafts/manuscript_audit.md")`：检查 citation key、数字、figure/table refs 和核心章节。
-- `audit_writing_craft(paper_path="drafts/paper.tex", sections_dir="drafts/sections", paper_state_path="drafts/paper_state.json", alignment_matrix_path="drafts/alignment_matrix.json", venue_style=<venue_style>, output_path="drafts/craft_audit.md")`：检查独立 Limitations、Abstract 正式引用、Abstract section heading、内部编号泄露、正文 placeholder token、每个内部 lane 的 experiment table/metric/ablation 锚点、related-work orphan/laundry-list、AI 套话、贡献条数和数字可追溯，并同时写 `drafts/craft_audit.json`。`abstract_no_cite`、`abstract_no_section_heading`、`no_internal_label_leakage`、`no_placeholder_tokens`、`number_traceability`、独立 Limitations、缺 experiment artifact 等机械可查问题是 FAIL；贡献条数和 abstract wordcount 是 WARN。placeholder 检测覆盖 `TODO/TBD/PLACEHOLDER/LLM_REVIEW_REQUIRED` 以及自然语言 `LLM review required`，不是只查大写 token。
+- `audit_writing_craft(paper_path="drafts/paper.tex", sections_dir="drafts/sections", paper_state_path="drafts/paper_state.json", alignment_matrix_path="drafts/alignment_matrix.json", venue_style=<venue_style>, output_path="drafts/craft_audit.md")`：检查独立 Limitations、Abstract 正式引用、Abstract section heading、内部编号泄露、正文 placeholder token、每个内部 lane 的 experiment table/metric/ablation 锚点、related-work orphan/laundry-list、AI 套话、citation-claim alignment、贡献条数和数字可追溯，并同时写 `drafts/craft_audit.json`。`abstract_no_cite`、`abstract_no_section_heading`、`citation_claim_alignment`、`no_internal_label_leakage`、`no_placeholder_tokens`、`number_traceability`、独立 Limitations、缺 experiment artifact 等机械可查问题是 FAIL；贡献条数和 abstract wordcount 是 WARN。placeholder 检测覆盖 `TODO/TBD/PLACEHOLDER/LLM_REVIEW_REQUIRED` 以及自然语言 `LLM review required`，不是只查大写 token。
 
 Validator 要求 `paper.tex`、`manuscript_audit.md`、`craft_audit.md` 和 `craft_audit.json` 存在，并检查 LaTeX wrapper、必要章节、BibTeX key、关键 craft check 是否存在且没有 FAIL。如果 `writing_style.json` 选择 `both`，还要求 `drafts/is/paper.tex`、`drafts/is/craft_audit.json`、`drafts/is/style_revision_notes.md`、`drafts/ccf_a/paper.tex`、`drafts/ccf_a/craft_audit.json` 和 `drafts/ccf_a/style_revision_notes.md` 存在；去掉 ResearchOS 注释后，两个变体不能与主稿正文完全相同。
 

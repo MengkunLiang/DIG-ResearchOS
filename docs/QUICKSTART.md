@@ -116,14 +116,38 @@ python -m researchos.cli run-task HELLO --workspace ./workspace/local-test2
 
 - `workspace/local-test2/hello.txt`
 
-### 2.7 从头跑完整 pipeline
+`HELLO` 只验证 runtime、工具调用、写文件和 finish_task 的最小闭环，不会进入真实文献检索、阅读或写作流程。
+
+### 2.7 跑真实快速联调 `run_smoke`
+
+开发时如果想快速暴露 T2/T3/T4 等真实 pipeline 问题，用 `run_smoke`。它会跑真实状态机，但把文献覆盖参数压小，并把状态机节点的模型层级临时降到 `medium`，适合快速看 CLI 输出、工具接线、workspace 产物和恢复逻辑。
+
+```bash
+cd ResearchOS
+python -m researchos.cli run_smoke \
+  --workspace ./workspace/smoke-t2 \
+  --from ./workspace/local-test2 \
+  --active-pool-max 20 \
+  --deep-read-target 3 \
+  --abstract-sweep 5 \
+  --skip-startup-selftest
+```
+
+默认情况下，`run_smoke` 从 `T2` 开始，会在目标 workspace 写入：
+
+- `literature/literature_params.json`
+- `literature/literature_params_confirmation.json`
+
+如果目标 workspace 已经有 `literature/literature_params.json`，`run_smoke` 不会覆盖；需要重写 smoke 参数时显式加 `--force-smoke-params`。这个模式用于真实快速联调，不代表最终文献覆盖质量。
+
+### 2.8 从头跑完整 pipeline
 
 ```bash
 cd ResearchOS
 python -m researchos.cli run --workspace ./workspace/local-test2
 ```
 
-### 2.8 恢复中断的 pipeline
+### 2.9 恢复中断的 pipeline
 
 ```bash
 cd ResearchOS
@@ -247,7 +271,7 @@ researchos run \
   --start-task T2
 ```
 
-`run --from` 不复制旧 T2 输出，只复制目标 start task 的输入；`run-task --from` 则只运行一个 task，不推进完整状态机。
+`run --from` 不复制旧 T2 输出，只复制目标 start task 的输入；`run-task --from` 则只运行一个 task，不推进完整状态机。开发联调时如果想从 T2 开始跑真实主链但减少候选数和阅读量，优先用 `run_smoke --from`。
 
 如果 T2 结果可信、只想从 T3 重新阅读：
 

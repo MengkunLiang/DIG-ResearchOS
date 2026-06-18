@@ -186,7 +186,7 @@ profiles:
 | `progress.update_on_finalize` | `true` | `agents.scout.behavior.progress` | T2 deterministic finalize 开始、保留候选/backlog 切分、完成/失败时是否同步写 progress |
 | `literature_quality.manuscript_language` | `auto` | `agents.scout.behavior.literature_quality` 或 workspace `literature/literature_params.json` | 写作语言策略；英文稿默认不主动检索中文论文 |
 | `literature_quality.include_chinese_literature` | `auto` | 同上 | 是否允许中文论文进入候选池；`false` 表示英文稿只保留用户 seed 作为背景/复核线索 |
-| `literature_quality.chinese_literature_policy` | `authoritative_or_seed` | 同上 | 中文论文准入底线；只允许 WJCI、SCI/SSCI、EI、北大核心、CSSCI、CSCD、AMI 顶级/权威/核心等显式权威来源或用户 seed |
+| `literature_quality.chinese_literature_policy` | `review_flag_only` | 同上 | 中文论文权威性复核策略；默认不因缺少权威标签硬过滤，只标记 `authority_review_needed` |
 | `deep_read_min` | `35` | `agents.reader.modes.read.behavior` 或 workspace `literature/literature_params.json` | 最低精读线；预算/资源异常时的最低可接受结构合格 deep-read note 数 |
 | `deep_read_target` | `35` | `agents.reader.modes.read.behavior` 或 workspace `literature/literature_params.json` | 精读目标；`require_deep_read_target=true` 时 T3 必须读满目标 |
 | `deep_read_max` | `45` | `agents.reader.modes.read.behavior` | 精读目标硬上限，保护位也在该上限内计数 |
@@ -200,15 +200,17 @@ profiles:
 完整 `run` 会在 T2 前进入 `T2-PARAM-GATE`。Gate 会先展示当前 workspace 检测到的任务类型、推荐档位、以及每个选项实际写入的 `active_pool_max`、`deep_read_min/target/max`、`require_deep_read_target`、`abstract_sweep_target`、`manuscript_language` 和 `include_chinese_literature`；直接回车采用当前推荐项。确认后写入 `literature/literature_params.json`，该文件优先于全局 yaml。你也可以直接输入一句自然语言修改，例如“英文稿，不要中文论文，候选数300”。当前 Reader 的 `modes.read.behavior.abstract_sweep` 默认用于覆盖 T3 deep read 后尚未读完的保留候选；`papers_backlog.jsonl` 是覆盖账本和人工/显式回捞池，综述 gate 可允许从中回捞有摘要/PDF 的候选补足可读覆盖：
 
 - `expected_notes_ratio: 1.0` 是无 queue 旧 workspace 的 fallback 比例，表示输入池默认必须 100% 有笔记；新主流程仍优先用 `deep_read_queue` 区分精读目标和 shallow/backlog。
-- `lite_paper_num: 120` 表示研究论文默认最多处理 120 篇 abstract sweep 候选；综述 gate 可写 `all_readable`，表示尽量读完保留候选中所有可读摘要。
-- `sources: [papers_verified, papers_dedup]` 表示默认只覆盖保留候选；如 gate 写入 `metadata_replacement_policy=replace_metadata_only_with_readable_backlog_when_available`，可从 backlog 回捞有摘要/PDF 的候选补足可读覆盖。
+- `lite_paper_num: 120` 表示研究论文默认最多处理 120 个 abstract sweep 候选；综述均衡 gate 也默认使用 120，强覆盖默认 180。显式写 `all_readable` 时，只表示在保留候选 active pool 内不设上限，不会全读 `papers_backlog.jsonl`。
+- `sources: [papers_verified, papers_dedup]` 表示默认只覆盖保留候选；如 gate 写入 `metadata_replacement_policy=replace_metadata_only_with_readable_backlog_when_available`，可在数值预算还有剩余时从 backlog 回捞有摘要/PDF 的候选补足可读覆盖。
 - `min_relevance: 0.0` 表示不靠 metadata priority hint 丢弃候选。
 - `priority_weights` 默认 `relevance/resource/year = 0.70/0.20/0.10`，用于在候选预算内排序：`relevance_score` 仍是检索/元数据优先级提示，资源可获得性和发表年限只影响“先读谁/先补谁”。
 - `include_metadata_only: true` 表示缺摘要但有标题的论文会进入 `literature/metadata_triage.md` 批量 triage；正常完成路径调用 Reader LLM 做 metadata-only 审阅，中断/LLM 失败时用确定性 fallback。它不会生成逐篇 note、BibTeX 或 comparison evidence。
 - `metadata_triage_report: literature/metadata_triage.md` 是 metadata-only triage report 路径；该报告只能作为补资源/升级阅读线索，不能进入 claim evidence。
 - `exclude_semantic_excluded: true` 表示 Scout 已明确判为 `shared_keyword_only/unrelated` 或禁止 deep-read 的论文默认不再进入 abstract note、BibTeX 和 comparison table，避免污染 T3.5/T8 语料；如需做排除线索复核，可在项目配置中显式设为 `false`。
 
-中文文献策略是质量底线，不是召回建议。英文稿默认不设计中文 query，也不让非 seed 中文论文进入 active pool；中文/双语或显式允许中文文献时，T2 只接受显式权威来源线索（WJCI、SCI/SSCI、EI、北大核心、CSSCI、CSCD、AMI 顶级/权威/核心等）或用户 seed。用户 seed 中文论文可以保留阅读，但若不满足写作语言或权威来源要求，会被打上 `citation_allowed=false` 或 `user_seed_chinese_literature_needs_authority_review`，后续 Writer 不应把它作为英文稿核心证据。
+`run_smoke` 是开发用真实快速联调入口。它不会进入人工 T2 参数 gate，而是直接在目标 workspace 写入同格式的 `literature/literature_params.json` 和 `literature/literature_params_confirmation.json`，默认包含 `selected_option=smoke`、`smoke_mode=true`、`active_pool_max=20`、`deep_read_target=3`、`abstract_sweep_target=5`，并把本次状态机节点临时降到 `medium` tier。已有参数文件默认保留；需要覆盖时使用 `--force-smoke-params`。这类参数只用于调试真实 pipeline，不代表正式检索/阅读覆盖。
+
+中文文献策略是语言/引用风险提示，不是中文期刊数据库替代品。英文稿且用户明确排除中文文献时，非 seed 中文论文不会进入 active pool；中文/双语或显式允许中文文献时，T2 不再因为缺少权威来源标签硬过滤中文候选，只会打上 `authority_review_needed` 或 `user_seed_chinese_literature_needs_authority_review`，后续 Reader/Writer 需要结合真实期刊目录、全文和人工判断决定是否引用。
 
 这组参数只控制阅读/补资源优先级；论文是否能作为学术证据仍由 Reader/Writer 的 LLM 判断、evidence level 和 claim audit 控制。
 

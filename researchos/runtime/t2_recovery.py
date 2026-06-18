@@ -71,6 +71,7 @@ SEARCH_TOOL_NAMES = frozenset(
 )
 
 T2_FINALIZE_MANIFEST_REL_PATH = "literature/t2_finalize_manifest.json"
+T2_FINALIZE_SOFT_TEXT_INPUTS = {"seed_ideas", "seed_constraints"}
 T2_FINALIZE_INPUT_PATHS = {
     "project": "project.yaml",
     "papers_raw": "literature/papers_raw.jsonl",
@@ -576,6 +577,9 @@ def validate_t2_finalize_manifest(workspace_dir: Path) -> tuple[bool, str | None
         if item.get("exists") and item.get("sha256") and str(prior.get("sha256") or "") != str(item.get("sha256") or ""):
             stale.append(label)
     if stale:
+        hard_stale = [label for label in stale if label not in T2_FINALIZE_SOFT_TEXT_INPUTS]
+        if not hard_stale:
+            return True, None
         return False, "t2_finalize_manifest.json 对应输入已变化，需要重新跑 T2: " + ", ".join(stale)
     return True, None
 
@@ -654,6 +658,51 @@ def _quality_policy_backlog_record(record: dict[str, Any]) -> dict[str, Any]:
     item["read_disposition"] = "backlog"
     item["read_disposition_reason"] = "excluded_from_active_pool_by_literature_quality_policy"
     return item
+
+
+def _ensure_paper_schema_defaults(record: dict[str, Any], *, fallback_score: float = 0.35) -> dict[str, Any]:
+    """Fill required paper JSONL fields before validation-facing writes."""
+
+    item = dict(record)
+    title = _paper_title_text(item.get("title")) or "Untitled paper"
+    item["title"] = title
+    item.setdefault("id", str(item.get("canonical_id") or stable_noopenalex_id(item)))
+    item.setdefault("source", str(item.get("source_tool") or item.get("verification_source") or "unknown"))
+    authors = item.get("authors")
+    if isinstance(authors, list):
+        normalized_authors = []
+        for author in authors:
+            if isinstance(author, dict):
+                name = str(author.get("name") or author.get("display_name") or "").strip()
+            else:
+                name = str(author or "").strip()
+            if name:
+                normalized_authors.append(name)
+        item["authors"] = normalized_authors
+    elif isinstance(authors, str) and authors.strip():
+        item["authors"] = [authors.strip()]
+    else:
+        item["authors"] = ["Unknown"]
+    item.setdefault("venue", str(item.get("journal") or item.get("container_title") or "unknown"))
+    item.setdefault("source_type", "unknown")
+    try:
+        score = float(item.get("relevance_score"))
+    except (TypeError, ValueError):
+        score = float(fallback_score)
+    item["relevance_score"] = max(0.0, min(1.0, score))
+    item.setdefault("why_relevant", str(item.get("basis_summary") or item.get("source_query") or "retained for T2 audit/backlog"))
+    item.setdefault("abstract", "")
+    try:
+        citation_count = int(item.get("citation_count") or 0)
+    except (TypeError, ValueError):
+        citation_count = 0
+    item["citation_count"] = max(0, citation_count)
+    item.setdefault("url", str(item.get("pdf_url") or ""))
+    return item
+
+
+def _ensure_paper_schema_defaults_many(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [_ensure_paper_schema_defaults(record) for record in records]
 
 
 def _merge_literature_quality_meta(
@@ -3108,6 +3157,7 @@ async def finalize_t2_outputs(
     backlog_papers = enrich_papers(backlog_papers, keywords, domain_profile=domain_profile) if backlog_papers else []
     if raw_screenings and backlog_papers:
         backlog_papers = apply_semantic_screening(backlog_papers, raw_screenings)
+    backlog_papers = _ensure_paper_schema_defaults_many(backlog_papers)
     backlog_path = workspace_dir / "literature" / "papers_backlog.jsonl"
     _write_jsonl(backlog_path, backlog_papers)
     active_pool_meta["active_count"] = len(enriched_papers)

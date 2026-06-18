@@ -1023,7 +1023,7 @@ async def test_finalize_t2_outputs_filters_post_snowball_chinese_for_english_man
                     "enabled": True,
                     "manuscript_language": "en",
                     "include_chinese_literature": "false",
-                    "chinese_literature_policy": "authoritative_or_seed",
+                    "chinese_literature_policy": "review_flag_only",
                 },
             },
             ensure_ascii=False,
@@ -1482,8 +1482,7 @@ agents:
         encoding="utf-8",
     )
     ok, err = validate_t2_finalize_manifest(workspace)
-    assert not ok
-    assert "seed_constraints" in (err or "")
+    assert ok, err
 
     (workspace / "user_seeds" / "seed_constraints.md").unlink()
     (workspace / "user_seeds" / "pdfs").mkdir(parents=True, exist_ok=True)

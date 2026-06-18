@@ -463,6 +463,167 @@ def test_build_sweep_candidates_respects_lite_paper_num(tmp_path: Path):
     assert len(candidates) == 5
 
 
+def test_build_sweep_candidates_counts_existing_abstract_notes_toward_target(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    records = [{"id": f"p{i}", "title": f"P{i}", "abstract": f"a{i}", "relevance_score": 0.5 + i * 0.01} for i in range(10)]
+    _write_jsonl(workspace / "literature" / "papers_dedup.jsonl", records)
+    abstract_dir = workspace / "literature" / "paper_notes_abstract"
+    abstract_dir.mkdir(parents=True)
+    for i in range(3):
+        (abstract_dir / f"p{i}.md").write_text(
+            f"# P{i}\n\n- **ID**: p{i}\n- **Title**: P{i}\n- **Status**: [ABSTRACT-ONLY]\n",
+            encoding="utf-8",
+        )
+
+    candidates = build_sweep_candidates(
+        workspace,
+        {"lite_paper_num": 5, "min_relevance": 0.0, "sources": ["papers_dedup"], "exclude_already_read": True},
+    )
+
+    assert len(candidates) == 2
+    assert {item["id"] for item in candidates}.isdisjoint({"p0", "p1", "p2"})
+
+
+def test_build_sweep_candidates_zero_lite_paper_num_disables_sweep(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    _write_jsonl(
+        workspace / "literature" / "papers_dedup.jsonl",
+        [{"id": "p1", "title": "P1", "abstract": "a1", "relevance_score": 0.9}],
+    )
+
+    candidates = build_sweep_candidates(
+        workspace,
+        {"lite_paper_num": 0, "min_relevance": 0.0, "sources": ["papers_dedup"], "exclude_already_read": True},
+    )
+
+    assert candidates == []
+
+
+def test_build_sweep_candidates_uses_shallow_queue_not_pending_deep_read(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    _write_jsonl(
+        workspace / "literature" / "papers_verified.jsonl",
+        [
+            {"id": "deep1", "title": "Deep One", "abstract": "deep abstract", "relevance_score": 0.99},
+            {"id": "shallow1", "title": "Shallow One", "abstract": "shallow abstract", "relevance_score": 0.8},
+        ],
+    )
+    _write_jsonl(
+        workspace / "literature" / "deep_read_queue.jsonl",
+        [
+            {
+                "id": "deep1",
+                "paper_id": "deep1",
+                "title": "Deep One",
+                "read_disposition": "deep_read",
+                "triaged_out": False,
+            },
+            {
+                "id": "shallow1",
+                "paper_id": "shallow1",
+                "title": "Shallow One",
+                "read_disposition": "shallow_read",
+                "triaged_reason": "probe_pool_triage_out",
+                "triaged_out": True,
+            },
+        ],
+    )
+
+    candidates = build_sweep_candidates(
+        workspace,
+        {"lite_paper_num": 10, "min_relevance": 0.0, "sources": ["papers_verified"], "exclude_already_read": True},
+    )
+
+    assert [item["id"] for item in candidates] == ["shallow1"]
+
+
+def test_build_sweep_candidates_all_readable_does_not_expand_to_backlog(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    _write_jsonl(
+        workspace / "literature" / "papers_verified.jsonl",
+        [
+            {"id": "active1", "title": "Active One", "abstract": "a1", "relevance_score": 0.8},
+            {"id": "active2", "title": "Active Two", "abstract": "", "relevance_score": 0.7},
+        ],
+    )
+    _write_jsonl(
+        workspace / "literature" / "papers_backlog.jsonl",
+        [
+            {
+                "id": "backlog1",
+                "title": "Backlog One",
+                "abstract": "readable backlog",
+                "relevance_score": 0.99,
+                "t2_pool_role": "backlog",
+                "read_disposition": "backlog",
+                "triaged_reason": "t2_active_pool_cap_exceeded",
+                "triaged_out": True,
+            }
+        ],
+    )
+
+    candidates = build_sweep_candidates(
+        workspace,
+        {
+            "lite_paper_num": "all_readable",
+            "min_relevance": 0.0,
+            "sources": ["papers_verified", "papers_backlog"],
+            "exclude_already_read": True,
+            "include_metadata_only": True,
+            "metadata_replacement_policy": "replace_metadata_only_with_readable_backlog_when_available",
+        },
+    )
+
+    assert {item["id"] for item in candidates} == {"active1", "active2"}
+
+
+def test_build_sweep_candidates_numeric_target_refills_from_readable_backlog(tmp_path: Path):
+    workspace = tmp_path / "ws"
+    _write_jsonl(
+        workspace / "literature" / "papers_verified.jsonl",
+        [{"id": "active1", "title": "Active One", "abstract": "a1", "relevance_score": 0.8}],
+    )
+    _write_jsonl(
+        workspace / "literature" / "papers_backlog.jsonl",
+        [
+            {
+                "id": "backlog1",
+                "title": "Backlog One",
+                "abstract": "readable backlog",
+                "relevance_score": 0.99,
+                "t2_pool_role": "backlog",
+                "read_disposition": "backlog",
+                "triaged_reason": "t2_active_pool_cap_exceeded",
+                "triaged_out": True,
+            },
+            {
+                "id": "backlog-metadata",
+                "title": "Backlog Metadata",
+                "abstract": "",
+                "relevance_score": 1.0,
+                "t2_pool_role": "backlog",
+                "read_disposition": "backlog",
+                "triaged_reason": "t2_active_pool_cap_exceeded",
+                "triaged_out": True,
+            },
+        ],
+    )
+
+    candidates = build_sweep_candidates(
+        workspace,
+        {
+            "lite_paper_num": 3,
+            "min_relevance": 0.0,
+            "sources": ["papers_verified", "papers_backlog"],
+            "exclude_already_read": True,
+            "include_metadata_only": True,
+            "metadata_replacement_policy": "replace_metadata_only_with_readable_backlog_when_available",
+        },
+    )
+
+    assert [item["id"] for item in candidates] == ["active1", "backlog1"]
+
+
 def test_build_sweep_candidates_keeps_metadata_only_by_default(tmp_path: Path):
     workspace = tmp_path / "ws"
     _write_jsonl(
@@ -698,6 +859,8 @@ def test_run_abstract_sweep_generates_notes(tmp_path: Path):
 
     assert result["enabled"] is True
     assert result["notes_generated"] == 2
+    assert result["sweep_plan"]["target_total"] == 10
+    assert result["sweep_plan"]["selected_for_this_run"] == 2
 
     # Check notes exist
     abstract_dir = workspace / "literature" / "paper_notes_abstract"

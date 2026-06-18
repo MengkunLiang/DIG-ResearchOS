@@ -917,6 +917,7 @@ def _validate_required_craft_checks(ws: Path) -> tuple[bool, str | None]:
         "intro_contribution_count",
         "abstract_no_cite",
         "abstract_no_section_heading",
+        "citation_claim_alignment",
         "no_internal_label_leakage",
         "no_placeholder_tokens",
         "number_traceability",

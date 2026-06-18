@@ -65,10 +65,10 @@ gates:
         literal: |
           如何选择：
           - 如果你在写研究论文：通常选“标准研究论文覆盖”，精读 35 篇，轻读最多 120 篇。
-          - 如果你在写综述：通常选“综述均衡覆盖”，精读目标 60 篇，摘要轻读尽量覆盖可读候选。
+          - 如果你在写综述：通常选“综述均衡覆盖”，保留 180 篇候选，精读目标 60 篇，摘要轻读最多 120 篇。
           - 如果这是最终展示型综述或你特别在意覆盖面：选“综述强覆盖”，但运行更久、LLM 成本更高。
           - 如果你只想改数字：选“自定义关键数字”。自定义只影响覆盖目标，不影响系统尽可能补摘要/PDF/DOI 的策略。
-          - 也可以直接输入一句修改要求，例如：把 active pool 改成 300；或：候选数300，精读80，摘要轻读all_readable，require=false。
+          - 也可以直接输入一句修改要求，例如：把 active pool 改成 300；或：候选数300，精读80，摘要轻读120，require=false。
       parameter_meaning:
         literal: |
           参数含义：
@@ -76,7 +76,7 @@ gates:
           - 精读目标 deep_read_target：正常完成 T3 前应完成多少篇结构化深读笔记。综述建议读满目标后再进入 T3.5。
           - 最低精读 deep_read_min：预算或资源异常时的最低可接受线。默认不把它当正常停止线，除非你选快速/自定义并允许达到最低线就继续。
           - 是否必须读满目标 require_deep_read_target：true 表示未读满精读目标不放行到 T3.5；false 表示达到最低精读即可放行。
-          - 摘要轻读 abstract_sweep_target：T3 后对未精读但有摘要的论文做多少篇 LLM 摘要级轻读；all_readable 表示尽量读完保留候选中所有可读摘要。
+          - 摘要轻读 abstract_sweep_target：T3 后对 active/retained 中未精读但有摘要的论文做多少篇 LLM 摘要级轻读；all_readable 表示在保留候选内不设上限，不会全读 papers_backlog。
           - metadata-only 处理：只有标题/年份/venue 而没有摘要/全文的论文会被 LLM 批量 triage，但不能当作证据；系统会尽量用 backlog 中有摘要/PDF 的候选补足可读覆盖。
           - 资源补全：对保留候选尽可能补摘要、DOI、OpenAlex/Crossref/Semantic Scholar/arXiv/可访问 PDF hints；内部 safety cap 只防异常失控，不需要用户设置。
       project_summary:
@@ -93,27 +93,59 @@ gates:
         label: "标准研究论文覆盖"
         description: "写 research article 时的默认强度：保留 120 篇候选，T3 精读目标 35 篇，摘要轻读最多 120 篇。"
         aliases: ["standard", "research", "默认", "研究"]
-        next: T2
+        next: T2-PARAM-CONFIRM-GATE
       - id: survey_balanced
         label: "综述均衡覆盖（推荐综述）"
-        description: "一般综述建议：保留 180 篇候选，T3 精读目标 60 篇，摘要轻读尽量覆盖可读候选。"
+        description: "一般综述建议：保留 180 篇候选，T3 精读目标 60 篇，摘要轻读最多 120 篇。"
         aliases: ["survey", "review", "综述", "均衡"]
-        next: T2
+        next: T2-PARAM-CONFIRM-GATE
       - id: survey_exhaustive
         label: "综述强覆盖"
-        description: "更重的综述覆盖：保留 240 篇候选，T3 精读目标 80 篇，适合最终展示型综述。"
+        description: "更重的综述覆盖：保留 240 篇候选，T3 精读目标 80 篇，摘要轻读最多 180 篇，适合最终展示型综述。"
         aliases: ["exhaustive", "full", "全量", "强覆盖"]
-        next: T2
+        next: T2-PARAM-CONFIRM-GATE
       - id: custom
         label: "自定义关键数字"
         description: "手动输入保留候选、精读目标、摘要轻读目标和是否必须读满目标。"
         aliases: ["自定义", "custom"]
-        next: T2
+        next: T2-PARAM-CONFIRM-GATE
         collect_input:
           - active_pool_max
           - deep_read_target
           - abstract_sweep_target
           - require_deep_read_target
+
+  # T2 参数最终确认：
+  # 参数 gate 会先落盘 literature/literature_params.json；这里把最终配置再次展示，
+  # 允许用户确认进入 T2、返回重选，或结束项目。
+  t2_literature_param_confirm_gate:
+    title: "T2 文献覆盖参数最终确认"
+    description: "请最后确认本轮 T2/T3 将使用的覆盖参数。确认后才会真正开始文献检索；如果数字或语言不对，请返回重选。"
+    presentation:
+      selected_parameters:
+        from_file: literature/literature_params.json
+        mode: path_summary
+        summary_chars: 2600
+      confirmation_help:
+        literal: |
+          你现在只需要判断：
+          - 参数摘要是否符合本轮研究/综述需求；
+          - 写作语言与是否允许中文文献是否正确；
+          - 是否可以正式开始 T2 检索。
+          如果刚才自定义输入错了，选择“返回重选参数”，不会启动 T2。
+    options:
+      - id: confirm_start_t2
+        label: "确认，开始 T2 检索"
+        aliases: ["确认", "开始", "start", "continue", "yes", "y"]
+        next: T2
+      - id: revise_params
+        label: "返回重选参数"
+        aliases: ["重选", "修改", "revise", "back"]
+        next: T2-PARAM-GATE
+      - id: stop_project
+        label: "结束项目"
+        aliases: ["结束", "停止", "stop", "done"]
+        next: done
 
   # T3.6 综述支线入口：
   # 这是 runtime 级人工 gate，不需要先调用 LLM。synthesis.md 继续作为 T4 idea fuel；
@@ -228,6 +260,39 @@ gates:
       - id: complete
         label: "生成一次性补检计划"
         next: T3.6-EXPAND
+
+  # T3.6 综述完成后的去向确认：
+  # Survey PDF/summary 已生成后，用户可能只想结束综述任务，也可能继续进入 T4 idea。
+  t36_post_survey_gate:
+    title: "T3.6 综述完成后去向确认"
+    description: "综述支线已完成并导出 survey_insights。请确认现在结束项目，还是继续进入 T4 生成研究 idea。"
+    presentation:
+      survey_summary:
+        from_file: drafts/survey/survey_summary.md
+        mode: path_summary
+        summary_chars: 2200
+      survey_compile_report:
+        from_file: drafts/survey/survey_compile_report.json
+        max_chars: 2000
+      survey_insights:
+        from_file: ideation/survey_insights.json
+        mode: path_summary
+        summary_chars: 1800
+      how_to_choose:
+        literal: |
+          选择建议：
+          - 如果这次只需要综述 PDF/TeX：选择“结束项目”。
+          - 如果还要基于综述继续生成研究假设、实验计划和后续论文：选择“继续进入 T4”。
+          - 选择会写入 drafts/survey/post_survey_decision.json，resume 时不会丢失。
+    options:
+      - id: continue_to_t4
+        label: "继续进入 T4"
+        aliases: ["继续", "t4", "idea", "生成idea", "continue"]
+        next: T4
+      - id: finish_after_survey
+        label: "结束项目"
+        aliases: ["结束", "完成", "stop", "done", "finish"]
+        next: done
 
   # T4 Gate1 候选方向选择：
   # 候选池已经写入 artifact，runtime 在这里暂停，让用户选择、合并、重构或要求重分析。

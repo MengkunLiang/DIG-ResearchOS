@@ -548,6 +548,70 @@ def test_writing_craft_counts_itemize_contributions_and_rejects_abstract_cites()
         assert cited_checks["abstract_no_cite"]["level"] == "FAIL"
 
 
+@pytest.mark.asyncio
+async def test_audit_writing_craft_rejects_obvious_citation_claim_mismatch(tmp_workspace: Path):
+    _prepare_manuscript_workspace(tmp_workspace)
+    (tmp_workspace / "literature" / "related_work.bib").write_text(
+        "@article{curriculum2026, title={Curriculum Alignment in Higher Education}, year={2026}}\n"
+        "@article{uplift2025, title={Graph Neural Networks for Uplift Modeling}, year={2025}}\n",
+        encoding="utf-8",
+    )
+    section_texts = {
+        "abstract": "This paper studies a concrete problem gap and reports bounded evidence. " * 25,
+        "introduction": (
+            "\\section{Introduction}\n"
+            "Graph neural networks for uplift modeling motivate the problem \\citep{uplift2025}. "
+            "Martial arts training significantly improves commercial entrepreneurship capability \\citep{curriculum2026}.\n"
+            "\\paragraph{Contributions}\n"
+            "\\begin{itemize}\n"
+            "\\item We identify a concrete gap.\n"
+            "\\item We introduce a method.\n"
+            "\\item We validate the mechanism.\n"
+            "\\end{itemize}\n"
+        ),
+        "related_work": "\\section{Related Work}\nGraph neural networks for uplift modeling define the adjacent prior stream \\citep{uplift2025}.",
+        "methodology": "\\section{Method}\nGraph neural networks for uplift modeling inform the design boundary \\citep{uplift2025}.",
+        "experiments": "\\section{Experiments}\nRQ1 tab:main accuracy.",
+        "analysis": "\\section{Analysis}\nGraph neural networks for uplift modeling frame the interpretation boundary \\citep{uplift2025}.",
+        "conclusion": "\\section{Conclusion}\n\\subsection{Limitations}\nNo new claims.",
+    }
+    for section_id, text in section_texts.items():
+        (tmp_workspace / "drafts" / "sections" / f"{section_id}.tex").write_text(text, encoding="utf-8")
+    (tmp_workspace / "drafts" / "paper.tex").write_text("\n\n".join(section_texts.values()), encoding="utf-8")
+    policy = WorkspaceAccessPolicy(tmp_workspace, ["", "drafts/", "literature/"], ["drafts/"])
+
+    result = await AuditWritingCraftTool(policy).execute(venue_style="ccf_a")
+
+    assert result.ok
+    audit = json.loads((tmp_workspace / "drafts" / "craft_audit.json").read_text(encoding="utf-8"))
+    alignment_check = next(item for item in audit["checks"] if item["name"] == "citation_claim_alignment")
+    assert alignment_check["level"] == "FAIL"
+    assert alignment_check["passed"] is False
+    assert "curriculum2026" in alignment_check["detail"]
+
+
+def test_citation_alignment_ignores_weak_overlap_for_strong_claims():
+    from researchos.tools.citation_alignment import citation_alignment_issues
+
+    bib = "@article{alignment2024, title={Curriculum Alignment in Higher Education}, year={2024}}\n"
+
+    weak_overlap_issue = citation_alignment_issues(
+        tex="Martial arts curriculum significantly improves commercial entrepreneurship capability \\citep{alignment2024}.",
+        bibtex=bib,
+    )
+    aligned_context = citation_alignment_issues(
+        tex="课程对齐度越高，学习效果越可预测 \\citep{alignment2024}。",
+        bibtex=bib,
+        support_text_by_key={
+            "alignment2024": "建设性对齐理论认为教学目标、教学活动和评估任务三者对齐时，学习效果更可预测。"
+        },
+    )
+
+    assert weak_overlap_issue
+    assert "alignment2024" in weak_overlap_issue[0]
+    assert aligned_context == []
+
+
 def test_writing_craft_warns_on_fragmented_sectioning_and_nonfunctional_paragraphs():
     rows = [
         {"cid": f"C{idx}", "experiment": {"rq": f"RQ{idx}", "table": "tab:main", "result_metric": "accuracy"}}

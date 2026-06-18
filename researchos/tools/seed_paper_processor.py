@@ -40,10 +40,16 @@ def _is_likely_pdf_front_matter_line(title: str) -> bool:
     chinese_front_matter = (
         "作者",
         "作者简介",
+        "作者单位",
+        "单位",
         "通讯作者",
         "基金项目",
         "基金",
         "摘要",
+        "【摘要】",
+        "〔摘要〕",
+        "要:",
+        "要：",
         "关键词",
         "关键字",
         "中图分类号",
@@ -54,13 +60,70 @@ def _is_likely_pdf_front_matter_line(title: str) -> bool:
     )
     if candidate.startswith(chinese_front_matter):
         return True
+    if re.match(r"^第\s*\d+\s*作者简介", candidate):
+        return True
     return bool(
         re.match(
             r"^(author|authors|abstract|keywords|received|corresponding author|funding)\b",
             candidate,
             flags=re.IGNORECASE,
         )
+        or re.search(
+            r"\b(department|school|college|university|institute|laboratory|lab|affiliation|email)\b",
+            candidate,
+            flags=re.IGNORECASE,
+        )
     )
+
+
+def _is_likely_pdf_abstract_or_body_line(title: str) -> bool:
+    candidate = _clean_pdf_title_candidate(title)
+    if not candidate:
+        return True
+    compact = re.sub(r"\s+", "", candidate)
+    if len(candidate) > 120 and re.search(r"[，,。.；;]", candidate):
+        return True
+    if re.match(
+        r"^(本文|本研究|文章|研究指出|研究认为|目的|方法|结果|结论|为了解决|基于当前|针对当前|通过文本分析)",
+        compact,
+    ):
+        return True
+    if re.match(
+        r"^(this paper|this study|we study|we propose|we investigate|in this paper|in this study|abstract)\b",
+        candidate,
+        flags=re.IGNORECASE,
+    ):
+        return True
+    punctuation_count = len(re.findall(r"[，,。.；;]", candidate))
+    if punctuation_count >= 3 and len(candidate) > 60:
+        return True
+    return False
+
+
+def _is_likely_pdf_affiliation_line(title: str) -> bool:
+    candidate = _clean_pdf_title_candidate(title)
+    if not candidate:
+        return True
+    compact = re.sub(r"\s+", "", candidate)
+    if re.match(r"^[（(]?\s*\d+\.\s*[\u4e00-\u9fffA-Za-z]", candidate):
+        return True
+    if re.search(r"\d{6}", candidate) and re.search(r"(大学|学院|研究院|研究所|中心|上海|北京|广州|武汉|南京|河南|河北|山东|江苏|浙江)", candidate):
+        return True
+    institution_marker = r"(?:大学(?!生)|学院|研究院|研究所|实验室|中心|教研室|基础教育课程教材)"
+    if re.fullmatch(rf".{{0,30}}{institution_marker}.{{0,30}}", compact) and len(compact) <= 70:
+        if not re.search(r"(研究|建设|构建|优化|探索|实践|体系|课程|专业|人才|发展)", compact):
+            return True
+    if re.search(r"(作者单位|通讯地址|邮编|基金项目)", compact):
+        return True
+    if re.search(
+        r"\b(department|school|college|university|institute|laboratory|lab|center|centre|academy)\b",
+        candidate,
+        flags=re.IGNORECASE,
+    ) and len(candidate) <= 100:
+        return True
+    if re.search(r"(@|e-?mail|通讯地址|邮编)", candidate, flags=re.IGNORECASE):
+        return True
+    return False
 
 
 def _clean_pdf_title_candidate(value: Any) -> str:
@@ -102,6 +165,23 @@ def _clean_pdf_filename_stem_title(value: Any) -> str:
     return _clean_pdf_title_candidate(text)
 
 
+def _filename_stem_has_title_author_pattern(value: Any) -> bool:
+    """Return true when a PDF stem looks like a deliberate Title_Author name."""
+
+    text = str(value or "").strip()
+    if not text:
+        return False
+    for separator in ("_", " - ", "－", "——"):
+        if separator not in text:
+            continue
+        head, tail = text.rsplit(separator, 1)
+        head = _clean_pdf_title_candidate(head)
+        tail = _clean_pdf_title_candidate(tail)
+        if head and re.fullmatch(r"[\u4e00-\u9fff·、,，]{2,18}", tail):
+            return True
+    return False
+
+
 def _title_signal_counts(title: str) -> tuple[int, int, int]:
     chinese_chars = len(re.findall(r"[\u4e00-\u9fff]", title))
     ascii_letters = len(re.findall(r"[A-Za-z]", title))
@@ -130,6 +210,10 @@ def _is_likely_pdf_header_or_journal_title(title: str) -> bool:
         return True
     if _is_likely_pdf_front_matter_line(candidate):
         return True
+    if _is_likely_pdf_affiliation_line(candidate):
+        return True
+    if _is_likely_pdf_abstract_or_body_line(candidate):
+        return True
 
     issue_patterns = [
         r"第\s*\d+\s*卷.*第\s*\d+\s*期",
@@ -147,9 +231,16 @@ def _is_likely_pdf_header_or_journal_title(title: str) -> bool:
         return True
     if re.search(r"(月刊|双月刊|季刊|周刊)", candidate) and len(compact) <= 24 and "研究" not in candidate:
         return True
-    if re.fullmatch(r"[\u4e00-\u9fff]{2,18}(学报|杂志|论坛|评论|研究|科学)$", compact) and digits == 0:
+    if re.fullmatch(r"[\u4e00-\u9fff]{2,18}(学报|杂志|论坛|评论)$", compact) and digits == 0:
         return True
     if re.search(r"(journal|transactions|proceedings|conference)", lowered) and digits >= 2 and len(candidate) <= 90:
+        return True
+    if re.fullmatch(r"(journal|transactions|proceedings|conference|review|bulletin|guide)(?:\s+of|\s+on|\s+for)?[A-Za-z\s&,.:-]{0,70}", candidate, flags=re.IGNORECASE):
+        return True
+    if re.fullmatch(r"[A-Z][A-Za-z\s&,.:-]{3,80}", candidate) and re.search(
+        r"\b(journal|review|bulletin|guide|transactions|proceedings|academy|education administration)\b",
+        lowered,
+    ):
         return True
 
     return False
@@ -167,7 +258,7 @@ def _pdf_title_score(title: str, *, source: str, line_index: int | None = None) 
     elif source == "metadata":
         score += 4.0
     elif source == "filename":
-        score += 2.0
+        score += 6.0
     if line_index is not None:
         score += max(0.0, 5.0 - min(line_index, 20) * 0.2)
     score += min(chinese_chars + ascii_letters / 2, 24) * 0.15
@@ -183,6 +274,9 @@ def _pdf_title_score(title: str, *, source: str, line_index: int | None = None) 
         score += 1.0
     if digits > max(4, chinese_chars + ascii_letters):
         score -= 2.0
+    filename_like = source == "filename" and re.search(r"(研究|建设|构建|优化|探索|实践|体系|课程|专业|人才|发展|analysis|model|study|research)", candidate, flags=re.I)
+    if filename_like:
+        score += 2.0
     return score
 
 
@@ -206,6 +300,8 @@ def _pdf_title_candidates_from_text(text: str) -> list[dict[str, Any]]:
                 continue
             merged = _clean_pdf_title_candidate(f"{line} {lines[idx + 1]}")
             if len(merged) <= 220:
+                if _is_likely_pdf_header_or_journal_title(merged):
+                    continue
                 merged_score = _pdf_title_score(merged, source="first_page", line_index=idx) - 0.5
                 if merged_score > -100:
                     candidates.append(
@@ -252,6 +348,44 @@ def _choose_pdf_title(
             rejected.append(filename_title)
 
     if candidates:
+        filename_candidates = [item for item in candidates if item.get("source") == "filename"]
+        page_candidates = [item for item in candidates if item.get("source") == "first_page"]
+        if page_candidates:
+            for item in page_candidates:
+                if _is_likely_noisy_first_page_title(str(item.get("title") or "")):
+                    item["score"] = float(item.get("score", 0.0)) - 6.0
+        if filename_candidates and page_candidates:
+            best_filename = max(filename_candidates, key=lambda item: float(item.get("score", 0.0)))
+            best_page = max(page_candidates, key=lambda item: float(item.get("score", 0.0)))
+            filename_title = str(best_filename.get("title") or "")
+            page_title = str(best_page.get("title") or "")
+            if (
+                _filename_stem_has_title_author_pattern(filename_stem)
+                and _looks_like_better_filename_title(filename_title)
+            ):
+                return {
+                    "title": filename_title,
+                    "title_source": "filename",
+                    "title_confidence": "heuristic_high"
+                    if float(best_filename.get("score", 0.0)) >= 10
+                    else "heuristic_medium",
+                    "metadata_review_required": True,
+                    "rejected_title_candidates": [
+                        *rejected,
+                        *[str(item.get("title") or "") for item in page_candidates[:5]],
+                    ][:8],
+                }
+            if (
+                _looks_like_better_filename_title(filename_title)
+                and _is_likely_noisy_first_page_title(page_title)
+            ):
+                return {
+                    "title": filename_title,
+                    "title_source": "filename",
+                    "title_confidence": "heuristic_medium",
+                    "metadata_review_required": True,
+                    "rejected_title_candidates": [*rejected, page_title][:8],
+                }
         best = max(
             candidates,
             key=lambda item: (
@@ -260,12 +394,24 @@ def _choose_pdf_title(
                 len(str(item.get("title", ""))),
             ),
         )
-        return {
+        result = {
             "title": best["title"],
             "title_source": best.get("source", "unknown"),
             "title_confidence": "heuristic_high" if float(best.get("score", 0.0)) >= 8 else "heuristic_medium",
             "rejected_title_candidates": rejected[:8],
         }
+        if best.get("source") == "filename" and first_page_text.strip():
+            noisy_pages = [
+                str(item.get("title") or "")
+                for item in page_candidates
+                if _is_likely_noisy_first_page_title(str(item.get("title") or ""))
+            ]
+            result["metadata_review_required"] = True
+            if noisy_pages:
+                result["rejected_title_candidates"] = [*rejected, *noisy_pages][:8]
+            elif not result.get("rejected_title_candidates"):
+                result["rejected_title_candidates"] = ["first_page_noise_detected"]
+        return result
 
     fallback = filename_title or "Untitled seed paper"
     return {
@@ -275,6 +421,32 @@ def _choose_pdf_title(
         "metadata_review_required": True,
         "rejected_title_candidates": rejected[:8],
     }
+
+
+def _looks_like_better_filename_title(title: str) -> bool:
+    candidate = _clean_pdf_title_candidate(title)
+    if not candidate or _is_likely_pdf_header_or_journal_title(candidate):
+        return False
+    chinese_chars, ascii_letters, _digits = _title_signal_counts(candidate)
+    if len(candidate) < 6 or len(candidate) > 120:
+        return False
+    return bool(
+        chinese_chars >= 6
+        or ascii_letters >= 12
+        or re.search(r"(研究|建设|构建|优化|探索|实践|体系|课程|专业|人才|发展|analysis|model|study|research)", candidate, flags=re.I)
+    )
+
+
+def _is_likely_noisy_first_page_title(title: str) -> bool:
+    candidate = _clean_pdf_title_candidate(title)
+    if not candidate:
+        return True
+    return (
+        _is_likely_pdf_front_matter_line(candidate)
+        or _is_likely_pdf_affiliation_line(candidate)
+        or _is_likely_pdf_abstract_or_body_line(candidate)
+        or _is_likely_pdf_header_or_journal_title(candidate)
+    )
 
 
 def _first_text(value: Any, default: str = "") -> str:
@@ -462,20 +634,20 @@ class ProcessSeedPaperTool(Tool):
             paper_info["rejected_title_candidates"] = metadata["rejected_title_candidates"]
 
         # 写入 seed_papers.jsonl
-        await self._append_to_seed_papers(paper_info)
+        sync_action, persisted_paper_info = await self._append_to_seed_papers(paper_info)
 
         return ToolResult(
             ok=True,
             content=(
                 f"✅ 成功处理 PDF 论文\n"
-                f"标题: {paper_info['title']}\n"
-                f"作者: {', '.join(paper_info['authors'][:3])}{'...' if len(paper_info['authors']) > 3 else ''}\n"
-                f"年份: {paper_info['year']}\n"
-                f"角色: {paper_info['role']}\n"
-                f"PDF 已复制到: {paper_info['pdf_path']}\n"
-                f"已追加到: user_seeds/seed_papers.jsonl"
+                f"标题: {persisted_paper_info['title']}\n"
+                f"作者: {', '.join((persisted_paper_info.get('authors') or [])[:3])}{'...' if len(persisted_paper_info.get('authors') or []) > 3 else ''}\n"
+                f"年份: {persisted_paper_info.get('year')}\n"
+                f"角色: {persisted_paper_info.get('role', paper_info['role'])}\n"
+                f"PDF 已复制到: {persisted_paper_info.get('pdf_path', paper_info['pdf_path'])}\n"
+                f"seed_papers.jsonl: {sync_action}"
             ),
-            data={"paper": paper_info},
+            data={"paper": persisted_paper_info},
         )
 
     async def _extract_pdf_metadata(self, pdf_path: Path) -> dict[str, Any]:
@@ -605,21 +777,21 @@ class ProcessSeedPaperTool(Tool):
                 }
 
                 # 写入 seed_papers.jsonl
-                await self._append_to_seed_papers(paper_info)
+                sync_action, persisted_paper_info = await self._append_to_seed_papers(paper_info)
 
                 return ToolResult(
                     ok=True,
                     content=(
                         f"✅ 成功从 arXiv 获取论文信息\n"
                         f"arXiv ID: {arxiv_id}\n"
-                        f"标题: {title}\n"
-                        f"作者: {', '.join(authors[:3])}{'...' if len(authors) > 3 else ''}\n"
-                        f"年份: {year}\n"
+                        f"标题: {persisted_paper_info.get('title', title)}\n"
+                        f"作者: {', '.join((persisted_paper_info.get('authors') or authors)[:3])}{'...' if len(persisted_paper_info.get('authors') or authors) > 3 else ''}\n"
+                        f"年份: {persisted_paper_info.get('year', year)}\n"
                         f"角色: {params.role}\n"
                         f"URL: https://arxiv.org/abs/{arxiv_id}\n"
-                        f"已追加到: user_seeds/seed_papers.jsonl"
+                        f"seed_papers.jsonl: {sync_action}"
                     ),
-                    data={"paper": paper_info},
+                    data={"paper": persisted_paper_info},
                 )
         except Exception as e:
             _LOG.error("arxiv_fetch_failed", arxiv_id=arxiv_id, error=str(e))
@@ -680,17 +852,17 @@ class ProcessSeedPaperTool(Tool):
                 }
 
                 # 写入 seed_papers.jsonl
-                await self._append_to_seed_papers(paper_info)
+                sync_action, persisted_paper_info = await self._append_to_seed_papers(paper_info)
 
                 return ToolResult(
                     ok=True,
                     content=(
                         f"✅ 成功从 DOI 获取论文信息\n"
                         f"DOI: {doi}\n"
-                        f"标题: {title}\n"
-                        f"已追加到: user_seeds/seed_papers.jsonl"
+                        f"标题: {persisted_paper_info.get('title', title)}\n"
+                        f"seed_papers.jsonl: {sync_action}"
                     ),
-                    data={"paper": paper_info},
+                    data={"paper": persisted_paper_info},
                 )
         except Exception as e:
             _LOG.error("doi_fetch_failed", doi=doi, error=str(e))
@@ -721,19 +893,19 @@ class ProcessSeedPaperTool(Tool):
         }
 
         # 写入 seed_papers.jsonl
-        await self._append_to_seed_papers(paper_info)
+        sync_action, persisted_paper_info = await self._append_to_seed_papers(paper_info)
 
         return ToolResult(
             ok=True,
             content=(
                 f"✅ 成功处理论文\n"
-                f"标题: {params.value}\n"
-                f"已追加到: user_seeds/seed_papers.jsonl"
+                f"标题: {persisted_paper_info.get('title', params.value)}\n"
+                f"seed_papers.jsonl: {sync_action}"
             ),
-            data={"paper": paper_info},
+            data={"paper": persisted_paper_info},
         )
 
-    async def _append_to_seed_papers(self, paper_info: dict[str, Any]) -> None:
+    async def _append_to_seed_papers(self, paper_info: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         """将论文信息追加到 seed_papers.jsonl 文件。
 
         Args:
@@ -744,8 +916,101 @@ class ProcessSeedPaperTool(Tool):
         # 确保目录存在
         seed_papers_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # 追加到文件（JSONL 格式，每行一个 JSON 对象）
-        with open(seed_papers_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(paper_info, ensure_ascii=False) + "\n")
+        records = _load_seed_paper_records(seed_papers_path)
+        match_index = _find_seed_record_match(records, paper_info)
+        if match_index is not None:
+            existing = records[match_index]
+            if _seed_record_quality(existing) >= _seed_record_quality(paper_info):
+                _LOG.info("seed_paper_existing_kept", title=existing.get("title", "unknown"))
+                return "已存在高置信记录，未重复追加", existing
+            records[match_index] = {**existing, **paper_info}
+            _write_seed_paper_records(seed_papers_path, records)
+            _LOG.info("seed_paper_replaced", title=paper_info.get("title", "unknown"))
+            return "已替换同一论文的低置信记录", records[match_index]
 
+        records.append(paper_info)
+        _write_seed_paper_records(seed_papers_path, records)
         _LOG.info("seed_paper_appended", title=paper_info.get("title", "unknown"))
+        return "已追加新记录", paper_info
+
+
+def _load_seed_paper_records(path: Path) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    if not path.exists():
+        return records
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            records.append(data)
+    return records
+
+
+def _write_seed_paper_records(path: Path, records: list[dict[str, Any]]) -> None:
+    content = "\n".join(json.dumps(record, ensure_ascii=False) for record in records)
+    path.write_text(content + ("\n" if content else ""), encoding="utf-8")
+
+
+def _find_seed_record_match(records: list[dict[str, Any]], paper_info: dict[str, Any]) -> int | None:
+    target_keys = _seed_record_keys(paper_info)
+    if not target_keys:
+        return None
+    for idx, record in enumerate(records):
+        if target_keys & _seed_record_keys(record):
+            return idx
+    return None
+
+
+def _seed_record_keys(record: dict[str, Any]) -> set[str]:
+    keys: set[str] = set()
+    for field in ("pdf_path", "seed_pdf_path"):
+        value = str(record.get(field) or "").strip()
+        if value:
+            keys.add(f"pdf:{Path(value).name.casefold()}")
+            normalized = _normalize_seed_pdf_basename(value)
+            if normalized:
+                keys.add(f"pdf_norm:{normalized}")
+    doi = str(record.get("doi") or "").strip().casefold().removeprefix("doi:")
+    if doi:
+        keys.add(f"doi:{doi}")
+    arxiv_id = str(record.get("arxiv_id") or "").strip().casefold().removeprefix("arxiv:")
+    if arxiv_id:
+        keys.add(f"arxiv:{arxiv_id}")
+    title = _clean_pdf_title_candidate(record.get("title"))
+    year = str(record.get("year") or "").strip()
+    if title:
+        title_key = re.sub(r"\W+", "", title.casefold())
+        if title_key:
+            keys.add(f"title:{title_key}")
+            if year:
+                keys.add(f"title_year:{title_key}|{year}")
+    return keys
+
+
+def _normalize_seed_pdf_basename(value: Any) -> str:
+    name = Path(str(value or "").strip()).name.casefold()
+    if not name:
+        return ""
+    return re.sub(r"[\s\"'“”‘’`]+", "", name)
+
+
+def _seed_record_quality(record: dict[str, Any]) -> float:
+    title = str(record.get("title") or "").strip()
+    score = _pdf_title_score(title, source="filename") if title else -1000.0
+    source = str(record.get("title_source") or "").strip().casefold()
+    confidence = str(record.get("title_confidence") or "").strip().casefold()
+    if "manual" in source:
+        score += 20
+    if "high" in confidence:
+        score += 10
+    elif "medium" in confidence:
+        score += 4
+    if record.get("metadata_review_required"):
+        score -= 2
+    if _is_likely_noisy_first_page_title(title):
+        score -= 20
+    return score

@@ -18,6 +18,7 @@ from ..runtime.config import RuntimeSettings
 from ..runtime.llm_client import LLMClient
 from ..runtime.logger import get_logger
 from ..runtime.orchestrator import AgentRunner
+from ..runtime.progress import CliProgressEmitter
 from ..runtime.system_config import system_config_path
 from ..runtime.task_recovery import prepare_task_resume_artifacts
 from ..runtime.workspace import initialize_workspace
@@ -60,6 +61,10 @@ class SingleTaskRunner:
         self.override_profile = override_profile
         self.runtime_settings = runtime_settings or RuntimeSettings()
         self.human = human_interface or CLIHumanInterface()
+        self.progress = CliProgressEmitter(
+            quiet=self.runtime_settings.ui.quiet,
+            verbose=self.runtime_settings.ui.verbose,
+        )
         register_builtin_task_checkers()
 
     @staticmethod
@@ -105,7 +110,7 @@ class SingleTaskRunner:
         """执行单次 task 调试。"""
         # runner 作为独立 Python API 使用时，也要自己保证 runtime 目录存在，
         # 不能把这个前提完全交给 CLI 调用方。
-        print(f"\n[进度] 初始化 workspace: {self.workspace}")
+        self.progress.emit(f"\n[SingleTask] 初始化 workspace: {self.workspace}", important=True)
         initialize_workspace(
             self.workspace,
             create_project_file=False,
@@ -113,22 +118,26 @@ class SingleTaskRunner:
         )
 
         if self.from_workspace:
-            print(f"[进度] 从 {self.from_workspace} 复制前置产物...", flush=True)
+            self.progress.emit(f"[SingleTask] 从 {self.from_workspace} 复制前置产物...", important=True)
             self._copy_prerequisites()
 
-        print(f"[进度] 校验前置条件...", flush=True)
+        self.progress.emit("[SingleTask] 校验前置条件...", important=True)
         ok, err = validate_prerequisites(self.workspace, self.task_id)
         if not ok:
-            print(f"Prerequisites not met for {self.task_id}: {err}")
-            print("Hint: use --from <other-workspace> to copy upstream artifacts.")
+            self.progress.error_context(
+                stage="前置条件校验",
+                message=f"{self.task_id}: {err}",
+                log_path=str(self.workspace / self.runtime_settings.workspace.runtime_dir / "logs" / "researchos.log"),
+            )
+            self.progress.emit("Hint: use --from <other-workspace> to copy upstream artifacts.", important=True)
             return 3
 
-        print(f"[进度] 加载 Agent: {self.task_id}", flush=True)
+        self.progress.emit(f"[SingleTask] 加载 Agent: {self.task_id}", important=True)
         state_machine = self._load_state_machine()
         task_node = state_machine.nodes.get(self.task_id) if state_machine is not None else None
         agent = self._build_agent(task_node)
         if agent is None:
-            print(f"Unknown or unimplemented task: {self.task_id}")
+            self.progress.error_context(stage="加载 Agent", message=f"Unknown or unimplemented task: {self.task_id}")
             return 4
 
         project_id = self._load_or_fake_project_id()
@@ -160,19 +169,19 @@ class SingleTaskRunner:
         )
         extra.update(recovery_info)
         if recovery_info.get("resume_mode"):
-            print(
-                "[进度] 恢复状态已准备："
+            self.progress.emit(
+                "[SingleTask] 恢复状态已准备："
                 f"已有输出 {recovery_info.get('resume_existing_outputs', [])}，"
                 f"待补 {recovery_info.get('resume_missing_outputs', [])}",
-                flush=True,
+                important=True,
             )
         if self.task_id == "T3" and recovery_info.get("resume_queue_count") is not None:
-            print(
-                "[进度] T3 恢复队列已准备："
+            self.progress.emit(
+                "[Reader Agent] T3 恢复队列已准备："
                 f"{recovery_info.get('resume_queue_count', 0)} 篇待处理，"
                 f"已完成 {recovery_info.get('existing_note_count', 0)} 篇，"
                 f"来源={recovery_info.get('resume_queue_source', 'unknown')}",
-                flush=True,
+                important=True,
             )
 
         ctx = ExecutionContext(
@@ -193,7 +202,7 @@ class SingleTaskRunner:
         if self.override_profile:
             ctx.llm_override.profile = self.override_profile
 
-        print(f"[进度] 准备执行上下文 (run_id: {ctx.run_id})", flush=True)
+        self.progress.emit(f"[SingleTask] 准备执行上下文 (run_id: {ctx.run_id})", important=True)
         state_path = self.workspace / "state.yaml"
 
         if (
@@ -206,10 +215,10 @@ class SingleTaskRunner:
         state = self._record_started(state, ctx.run_id)
         state.dump_yaml(state_path)
 
-        print(f"[进度] 启动 Agent 执行...", flush=True)
+        self.progress.emit("[SingleTask] 启动 Agent 执行...", important=True)
         effective = resolve_effective_config(agent.spec, ctx)
         step_limit = "unlimited" if effective.unlimited_budget else str(effective.max_steps)
-        print(f"[进度] Agent 将执行最多 {step_limit} 步", flush=True)
+        self.progress.emit(f"[SingleTask] Agent 将执行最多 {step_limit} 步", verbose_only=True)
         runner = AgentRunner(
             agent,
             self.tools,
@@ -220,10 +229,13 @@ class SingleTaskRunner:
         try:
             result = await runner.run(ctx)
         except (asyncio.CancelledError, KeyboardInterrupt):
-            print("\n[进度] 任务被中断")
+            self.progress.emit("\n[SingleTask] 任务被中断", important=True)
             state = self._record_interrupted(state)
             state.dump_yaml(state_path)
-            print("Task interrupted. You can inspect state.yaml and trace files in this workspace.")
+            self.progress.emit(
+                "Task interrupted. You can inspect state.yaml and trace files in this workspace.",
+                important=True,
+            )
             return 130
 
         if result.stop_reason in {
@@ -231,14 +243,14 @@ class SingleTaskRunner:
             AgentResult.STOP_MAX_STEPS,
             AgentResult.STOP_BUDGET,
         }:
-            print(f"\n[进度] 任务暂停: {result.error or result.message}")
+            self.progress.emit(f"\n[SingleTask] 任务暂停: {result.error or result.message}", important=True)
             state = self._record_finished(state, result)
             state.dump_yaml(state_path)
             self._print_result(result)
-            print("Task paused. Provide the requested human input and resume this workspace.")
+            self.progress.emit("Task paused. Provide the requested human input and resume this workspace.", important=True)
             return 130
 
-        print(f"\n[进度] Agent 执行完成，开始校验输出产物...")
+        self.progress.emit("\n[SingleTask] Agent 执行完成，开始校验输出产物...", important=True)
         io_spec = get_task_io(self.task_id)
         skip_runtime_artifact_validation = (
             result.ok
@@ -252,7 +264,11 @@ class SingleTaskRunner:
         )
         if not ok:
             error_text = str(errors)
-            print(f"[进度] 输出校验失败: {error_text}", flush=True)
+            self.progress.error_context(
+                stage="输出产物校验",
+                message=error_text,
+                log_path=str(self.workspace / self.runtime_settings.workspace.runtime_dir / "logs" / "researchos.log"),
+            )
             if result.ok:
                 result.ok = False
                 result.stop_reason = result.STOP_ERROR
@@ -262,7 +278,7 @@ class SingleTaskRunner:
                 )
                 result.message = result.error
         else:
-            print(f"[进度] 输出校验通过", flush=True)
+            self.progress.emit("[SingleTask] 输出校验通过", important=True)
 
         state = self._record_finished(state, result)
         state.dump_yaml(state_path)
@@ -287,12 +303,12 @@ class SingleTaskRunner:
             state.status = "PAUSED"
             state.last_error = str(exc)
             state.dump_yaml(state_path)
-            print(f"Task paused: {exc}")
+            self.progress.emit(f"Task paused: {exc}", important=True)
             return 130
         state = state_machine.resolve_pending_gate(state, gate_result, workspace_dir=self.workspace)
         state.status = "COMPLETED" if state.status == "RUNNING" else state.status
         state.dump_yaml(state_path)
-        print(f"[进度] Gate 已处理，下一状态: {state.current_task}")
+        self.progress.emit(f"[Gate] Gate 已处理，下一状态: {state.current_task}", important=True)
         return 0
 
     def _copy_prerequisites(self) -> None:
@@ -308,7 +324,7 @@ class SingleTaskRunner:
                 shutil.copytree(src, dst)
             else:
                 shutil.copy2(src, dst)
-            print(f"copied: {rel_path}")
+            self.progress.emit(f"copied: {rel_path}", verbose_only=True)
 
     def _load_state_machine(self):
         if not _DEFAULT_STATE_MACHINE_PATH.exists():
@@ -465,17 +481,20 @@ class SingleTaskRunner:
         state.paused_at = _now_iso() if state.status == "PAUSED" else None
         return state
 
-    @staticmethod
-    def _print_result(result) -> None:
-        print("=" * 60)
-        print(f"stop_reason: {result.stop_reason}")
-        print(f"steps: {result.steps_used}")
-        print(f"tokens: {result.tokens_in} in / {result.tokens_out} out")
-        print(f"cost: ${result.cost_usd:.4f}")
-        print(f"duration: {result.duration_seconds:.1f}s")
+    def _print_result(self, result) -> None:
+        lines = [
+            "=" * 60,
+            "[SingleTask] 运行摘要",
+            f"stop_reason: {result.stop_reason}",
+            f"steps: {result.steps_used}",
+            f"tokens: {result.tokens_in} in / {result.tokens_out} out",
+            f"cost: ${result.cost_usd:.4f}",
+            f"duration: {result.duration_seconds:.1f}s",
+        ]
         if (result.metadata or {}).get("completion_mode"):
-            print(f"completion_mode: {result.metadata['completion_mode']}")
-        print(f"outputs: {list(result.outputs_produced.keys())}")
+            lines.append(f"completion_mode: {result.metadata['completion_mode']}")
+        lines.append(f"outputs: {list(result.outputs_produced.keys())}")
         if result.error:
-            print(f"error: {result.error}")
-        print("=" * 60)
+            lines.append(f"error: {result.error}")
+        lines.append("=" * 60)
+        self.progress.emit("\n".join(lines), important=True)

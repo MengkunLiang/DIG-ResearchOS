@@ -1123,6 +1123,52 @@ async def test_t36_audit_rejects_runtime_process_prose(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_t36_audit_rejects_low_citation_diversity_when_bib_is_large(tmp_path: Path):
+    ws = tmp_path
+    await _build_valid_survey_chain(ws)
+    bib_entries = [
+        f"@article{{p{i}, author={{Author, A{i}}}, title={{Paper {i}}}, journal={{Journal}}, year={{202{i % 10}}}}}"
+        for i in range(1, 81)
+    ]
+    (ws / "literature" / "related_work.bib").write_text("\n\n".join(bib_entries) + "\n", encoding="utf-8")
+    result = await AuditSurveyCoverageTool(_policy(ws)).execute()
+
+    assert not result.ok
+    audit = json.loads((ws / "drafts" / "survey" / "survey_audit.json").read_text(encoding="utf-8"))
+    diversity_check = next(item for item in audit["checks"] if item["name"] == "citation_diversity")
+    assert diversity_check["passed"] is False
+    assert "diversity minimum" in diversity_check["detail"]
+
+
+@pytest.mark.asyncio
+async def test_t36_audit_rejects_obvious_citation_claim_mismatch(tmp_path: Path):
+    ws = tmp_path
+    await _build_valid_survey_chain(ws)
+    (ws / "literature" / "related_work.bib").write_text(
+        _valid_survey_bib()
+        + "\n@article{curriculum2026, author={Course, Chen}, title={Curriculum Alignment in Higher Education}, journal={Education Review}, year={2026}}\n",
+        encoding="utf-8",
+    )
+    background_path = ws / "drafts" / "survey" / "sections" / "background.tex"
+    background_path.write_text(
+        _valid_survey_section_body("Background and Scope", "\\citep[see][]{p1,p2,p3,p4}")
+        + "\nMartial arts training significantly improves commercial entrepreneurship capability \\citep{curriculum2026}.",
+        encoding="utf-8",
+    )
+    await UpdateSurveySectionStateTool(_policy(ws)).execute(section_id="background", status="revised")
+    result = await AssembleSurveyTool(_policy(ws)).execute()
+    assert result.ok, result.content
+
+    result = await AuditSurveyCoverageTool(_policy(ws)).execute()
+
+    assert not result.ok
+    audit = json.loads((ws / "drafts" / "survey" / "survey_audit.json").read_text(encoding="utf-8"))
+    alignment_check = next(item for item in audit["checks"] if item["name"] == "citation_claim_alignment")
+    assert alignment_check["passed"] is False
+    assert "curriculum2026" in alignment_check["detail"]
+
+
+@pytest.mark.asyncio
 async def test_t36_assemble_refuses_stale_assembly_or_audit_inputs(tmp_path: Path):
     ws = tmp_path
     await _build_valid_survey_chain(ws)
@@ -1147,6 +1193,30 @@ async def test_t36_assemble_refuses_stale_assembly_or_audit_inputs(tmp_path: Pat
 
 
 @pytest.mark.asyncio
+async def test_t36_assemble_refuses_stale_citation_support_inputs(tmp_path: Path):
+    ws = tmp_path
+    await _build_valid_survey_chain(ws)
+    agent = SurveyWriterAgent(mode="survey_assemble")
+    ctx = _survey_ctx(ws, "survey_assemble")
+
+    ok, err = agent.validate_outputs(ctx)
+    assert ok, err
+
+    notes_dir = ws / "literature" / "paper_notes"
+    notes_dir.mkdir(parents=True, exist_ok=True)
+    (notes_dir / "p1.md").write_text(
+        "# Evidence Boundary Design\n\n## 1. Metadata\nThis note changes citation support after survey audit.\n",
+        encoding="utf-8",
+    )
+
+    ok, err = agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "survey_audit.json" in (err or "")
+    assert "paper_notes" in (err or "")
+
+
+@pytest.mark.asyncio
 async def test_t36_assemble_validation_rejects_old_audit_missing_new_checks(tmp_path: Path):
     ws = tmp_path
     await _build_valid_survey_chain(ws)
@@ -1155,7 +1225,8 @@ async def test_t36_assemble_validation_rejects_old_audit_missing_new_checks(tmp_
     audit["checks"] = [
         item
         for item in audit["checks"]
-        if item.get("name") not in {"section_level_citation_density", "no_runtime_process_prose", "bibliography_quality"}
+        if item.get("name")
+        not in {"section_level_citation_density", "citation_claim_alignment", "no_runtime_process_prose", "bibliography_quality"}
     ]
     audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -1163,6 +1234,23 @@ async def test_t36_assemble_validation_rejects_old_audit_missing_new_checks(tmp_
 
     assert not ok
     assert "缺少新增质量检查" in (err or "")
+
+
+@pytest.mark.asyncio
+async def test_t36_assemble_validation_rejects_old_audit_missing_citation_support_fingerprints(tmp_path: Path):
+    ws = tmp_path
+    await _build_valid_survey_chain(ws)
+    audit_path = ws / "drafts" / "survey" / "survey_audit.json"
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    for key in ("citation_map", "paper_notes_dir", "abstract_notes_dir", "bridge_notes_dir"):
+        audit["input_fingerprints"].pop(key, None)
+    audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    ok, err = SurveyWriterAgent(mode="survey_assemble").validate_outputs(_survey_ctx(ws, "survey_assemble"))
+
+    assert not ok
+    assert "缺少新增输入指纹" in (err or "")
+    assert "paper_notes_dir" in (err or "")
 
 
 def test_survey_writer_compile_validation_rejects_stale_tex_hash(tmp_path: Path):

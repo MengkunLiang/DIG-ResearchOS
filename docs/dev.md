@@ -177,7 +177,25 @@ python -m researchos.cli run-task HELLO --workspace ./workspace/dev-smoke
 - `hello.txt` 生成
 - 任务成功结束
 
-### 3.5 看 trace 和状态
+`HELLO` 只验证 runtime 最小闭环，不会触发真实检索、阅读、综合或写作 agent。
+
+### 3.5 跑真实 pipeline smoke
+
+开发联调真实主链时，用 `run_smoke`。它会启动真实状态机，默认从 `T2` 开始，但把候选池、精读目标和摘要轻读量压小，并把状态机节点的模型层级临时降到 `medium`，便于快速观察 CLI 进度、工具调用说明、产物写入和恢复行为。
+
+```bash
+python -m researchos.cli run_smoke \
+  --workspace ./workspace/dev-smoke-t2 \
+  --from ./workspace/dev-smoke \
+  --active-pool-max 20 \
+  --deep-read-target 3 \
+  --abstract-sweep 5 \
+  --skip-startup-selftest
+```
+
+`run_smoke` 会写入目标 workspace 的 `literature/literature_params.json` 和 `literature/literature_params_confirmation.json`。已有参数文件默认保留；需要覆盖时加 `--force-smoke-params`。这个模式用于快速集成测试，不用于正式论文覆盖。
+
+### 3.6 看 trace 和状态
 
 ```bash
 python -m researchos.cli status --workspace ./workspace/dev-smoke
@@ -382,6 +400,17 @@ python -m researchos.cli run \
 
 `run --from` 不指定 `--start-task` 时默认从 `T2` 开始。它会按 `T2` 的输入契约复制 `project.yaml`、`user_seeds/` 中的 seed 文件与 `pdfs/`、以及 `literature/bridge_domain_plan.json`，初始化新 workspace 的 `state.yaml` 为 `current_task: T2`，然后继续完整状态机。
 
+如果目标是开发快速联调，而不是正式重跑覆盖，使用等价的 smoke 入口：
+
+```bash
+python -m researchos.cli run_smoke \
+  --workspace ./workspace/new-test5-smoke \
+  --from ./workspace/new-test5 \
+  --start-task T2
+```
+
+这会保留真实 pipeline 行为，但用 workspace-local smoke 参数减少 T2/T3 的候选和阅读量。
+
 适合：
 
 - 单独复现某阶段 bug
@@ -453,7 +482,7 @@ python -m researchos.cli run \
 - `deep_read_queue.jsonl` 是否保留短 provenance：`source_query/source_queries`、`source_tool/source_tools`、`search_buckets`、`openalex_id`、citation snowball 来源；摘要全文仍应通过 `lookup_paper_record` 从 verified/raw 合并读取
 - 如果 search tool 返回很多论文但 raw/dedup/verified 很少，优先检查 raw merge、hidden cap、schema skipped records 和 `researchos.log` 的 `retained_raw_count`
 - `papers_raw.jsonl` 是可恢复 metadata cache。finalize 后应看到 `search_log.md` 的 `T2 raw 元数据缓存回写`，并确认 `raw_cache_records_merged/appended` 合理；否则 resume/re-finalize 可能重新依赖网络回填。
-- 如果包含中文文献，抽查记录里的 `paper_language`、`chinese_authority_status`、`literature_quality_policy.reason` 和 `citation_allowed`。普通普刊/来源不明中文论文不应进入英文稿 citation pool。
+- 如果包含中文文献，抽查记录里的 `paper_language`、`chinese_authority_status`、`authority_review_needed`、`literature_quality_policy.reason` 和 `citation_allowed`。普通普刊/来源不明中文论文可以作为候选或复核线索保留，但不应在缺少人工/真实目录复核时进入英文稿 citation pool。
 
 ### 7.2 T3 重点看什么
 

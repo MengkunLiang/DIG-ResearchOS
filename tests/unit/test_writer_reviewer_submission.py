@@ -483,6 +483,21 @@ def test_writer_abstract_prompt_forbids_formal_citations(temp_workspace):
     assert "Introduction 或 Related Work" in prompt
 
 
+def test_writer_prompt_requires_citation_claim_alignment(temp_workspace):
+    agent = WriterAgent()
+    ctx = MockExecutionContext(
+        "section_draft",
+        temp_workspace,
+        {"phase": "section_draft", "section_id": "related_work"},
+    )
+
+    prompt = agent.system_prompt(ctx)
+
+    assert "每个 `\\cite{...}` 还必须支撑" in prompt
+    assert "不要用同领域但不相关的 key 充数" in prompt
+    assert "blanket support" in prompt
+
+
 def _write_manuscript_registries(workspace: Path) -> None:
     (workspace / "drafts" / "cdr_claim_ledger.json").write_text(
         json.dumps(
@@ -616,6 +631,7 @@ def _write_passing_craft_audit(workspace: Path) -> None:
         {"name": "intro_contribution_count", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "abstract_no_cite", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "abstract_no_section_heading", "level": "PASS", "passed": True, "detail": "ok"},
+        {"name": "citation_claim_alignment", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "no_internal_label_leakage", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "no_placeholder_tokens", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "number_traceability", "level": "PASS", "passed": True, "detail": "ok"},
@@ -2122,6 +2138,28 @@ def test_writer_paper_claim_audit_requires_current_input_fingerprints(temp_works
 
     assert not ok
     assert "input_fingerprints" in (err or "")
+
+
+def test_writer_craft_audit_becomes_stale_when_citation_support_changes(temp_workspace):
+    agent = WriterAgent(mode="draft")
+    ctx = MockExecutionContext("draft", temp_workspace, {"phase": "draft"})
+    _write_valid_draft_artifacts(temp_workspace)
+
+    ok, err = agent.validate_outputs(ctx)
+    assert ok, err
+
+    notes_dir = temp_workspace / "literature" / "paper_notes"
+    notes_dir.mkdir(parents=True, exist_ok=True)
+    (notes_dir / "smith2024.md").write_text(
+        "# Smith Paper\n\n## 1. Metadata\nThis note changes citation support after craft audit.\n",
+        encoding="utf-8",
+    )
+
+    ok, err = agent.validate_outputs(ctx)
+
+    assert not ok
+    assert "craft_audit.json" in (err or "")
+    assert "paper_notes" in (err or "")
 
 
 def test_submission_validate_outputs_rejects_missing_bibliography_basename(temp_workspace):

@@ -290,8 +290,16 @@ class SurveyWriterAgent(Agent):
             ok, err = _validate_fingerprint_map(ws, audit.get("input_fingerprints"), "survey_audit.json")
             if not ok:
                 return False, err
+            missing_fingerprints = _missing_survey_audit_fingerprints(audit)
+            if missing_fingerprints:
+                return False, (
+                    "survey_audit.json 缺少新增输入指纹，请重新运行 audit_survey_coverage: "
+                    + ", ".join(missing_fingerprints)
+                )
             required_checks = {
                 "section_level_citation_density",
+                "citation_diversity",
+                "citation_claim_alignment",
                 "no_runtime_process_prose",
                 "bibliography_quality",
             }
@@ -1176,7 +1184,28 @@ def _validate_current_survey_audit(ws: Path) -> tuple[bool, str | None]:
     ok, err = _validate_fingerprint_map(ws, audit.get("input_fingerprints"), "survey_audit.json")
     if not ok:
         return False, "survey_audit.json 已过期，需重新 audit_survey_coverage: " + (err or "")
+    missing_fingerprints = _missing_survey_audit_fingerprints(audit)
+    if missing_fingerprints:
+        return False, "survey_audit.json 已过期，需重新 audit_survey_coverage: 缺少新增输入指纹 " + ", ".join(missing_fingerprints)
     return True, None
+
+
+def _missing_survey_audit_fingerprints(audit: dict[str, Any]) -> list[str]:
+    fingerprints = audit.get("input_fingerprints")
+    if not isinstance(fingerprints, dict):
+        return ["input_fingerprints"]
+    required = {
+        "survey_plan",
+        "survey_state",
+        "survey_tex",
+        "related_work_bib",
+        "citation_map",
+        "paper_notes_dir",
+        "abstract_notes_dir",
+        "bridge_notes_dir",
+        "survey_assembly_manifest",
+    }
+    return sorted(required - set(fingerprints))
 
 
 def _validate_survey_compile_log(log_path: Path) -> tuple[bool, str | None]:

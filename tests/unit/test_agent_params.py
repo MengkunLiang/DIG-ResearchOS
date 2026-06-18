@@ -390,7 +390,7 @@ def test_workspace_literature_params_override_literature_quality_policy(tmp_path
                     "enabled": True,
                     "manuscript_language": "en",
                     "include_chinese_literature": "false",
-                    "chinese_literature_policy": "authoritative_or_seed",
+                    "chinese_literature_policy": "review_flag_only",
                 },
             },
             ensure_ascii=False,
@@ -406,7 +406,7 @@ agents:
         enabled: true
         manuscript_language: auto
         include_chinese_literature: auto
-        chinese_literature_policy: authoritative_or_seed
+        chinese_literature_policy: review_flag_only
 """.strip(),
         encoding="utf-8",
     )
@@ -418,7 +418,7 @@ agents:
     assert policy.enabled is True
     assert policy.manuscript_language == "en"
     assert policy.include_chinese_literature == "false"
-    assert policy.chinese_literature_policy == "authoritative_or_seed"
+    assert policy.chinese_literature_policy == "review_flag_only"
 
     clear_cache()
 

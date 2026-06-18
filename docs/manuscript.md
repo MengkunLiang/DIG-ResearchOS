@@ -30,7 +30,7 @@ T8-STYLE-GATE
  -> T9
 ```
 
-`T8-PAPER-CLAIM-AUDIT` 是 T9 前的最终 evidence gate：它读取 `paper.tex`、`experiment_evidence_pack.json` 和 `result_to_claim.json`，检查正文数字和强 claim 是否能追溯到实验审计。未在 evidence pack 中出现的实验数字是 FAIL，不是软提示；mock-only evidence、forbidden wording、unsupported strong claim 也会阻断进入 T9。`paper_claim_audit.json` 会写 `input_fingerprints`，绑定当前 paper/evidence/result-to-claim 的 hash；resume 或 deterministic manuscript refresh 时会同步刷新该 audit，避免旧审计放行新正文。`craft_audit.json` 绑定当前 `paper.tex` / sections / `paper_state.json` / alignment matrix，并强制拦截 Abstract 正式引用、Abstract section heading、正文或注释里的 `C1/CID/internal alignment` 标记、`TODO/TBD/PLACEHOLDER/LLM review required` 残留。旧入口 `T8` 和旧报告中的 `next_task: T8-WRITE` 会优先映射到 `T8-STYLE-GATE`；只有 `drafts/writing_style.json` 已存在且合法时，才直接进入 `T8-RESOURCE`。旧 `T8-SECTIONS` 只作为兼容入口，不再是主链正文写作节点。旧 `T8-SEC-LIMITATIONS` 已移除，limitations 必须写进 Conclusion 的 `\subsection{Limitations}`。
+`T8-PAPER-CLAIM-AUDIT` 是 T9 前的最终 evidence gate：它读取 `paper.tex`、`experiment_evidence_pack.json` 和 `result_to_claim.json`，检查正文数字和强 claim 是否能追溯到实验审计。未在 evidence pack 中出现的实验数字是 FAIL，不是软提示；mock-only evidence、forbidden wording、unsupported strong claim 也会阻断进入 T9。`paper_claim_audit.json` 会写 `input_fingerprints`，绑定当前 paper/evidence/result-to-claim 的 hash；resume 或 deterministic manuscript refresh 时会同步刷新该 audit，避免旧审计放行新正文。`craft_audit.json` 绑定当前 `paper.tex` / sections / `related_work.bib` / `paper_state.json` / alignment matrix，并强制拦截 Abstract 正式引用、Abstract section heading、citation 与当前 claim 明显错配、正文或注释里的 `C1/CID/internal alignment` 标记、`TODO/TBD/PLACEHOLDER/LLM review required` 残留。旧入口 `T8` 和旧报告中的 `next_task: T8-WRITE` 会优先映射到 `T8-STYLE-GATE`；只有 `drafts/writing_style.json` 已存在且合法时，才直接进入 `T8-RESOURCE`。旧 `T8-SECTIONS` 只作为兼容入口，不再是主链正文写作节点。旧 `T8-SEC-LIMITATIONS` 已移除，limitations 必须写进 Conclusion 的 `\subsection{Limitations}`。
 
 当前 Reviewer 链路是“单节点 section-aware”：`T8-REVIEW-N` 在一次 ReviewerAgent 调用里要求先写所有 `round_N_sections/*.md`，再写 `round_N.md`。最后必须调用 `bind_review_round` 写 `round_N_fingerprints.json`，把当前 `paper.tex`、craft/claim audit、evidence pack、result-to-claim、alignment matrix 和 bibliography 绑定到本轮 review；这些输入变化后旧 review 不会被 revise 阶段复用。这已经比整篇凭印象审稿强，但还不是“每个 section 一次独立 LLM 调用”。如果要把审稿做到和 Writer 一样严格，应采用本文 13.1.1 的 per-section Reviewer 状态机设计。
 
@@ -125,7 +125,7 @@ initialize_manuscript_state(...)
 
 ### T8-DRAFT
 
-`WriterAgent(draft)` 调用 `assemble_manuscript` 从 `drafts/sections/*.tex` 拼装 `drafts/paper.tex`，加入 LaTeX wrapper、title、abstract、正文和 `\bibliography{related_work}`。随后 Writer 做全局 spot-check：术语、变量名、baseline 名称、章节过渡、intro/conclusion 呼应、method/experiment setup 一致性。若需要改正文，先改对应 section 文件，再重新拼装；不要直接一次性重写整篇 `paper.tex`。最后调用 `audit_manuscript_claims` 写 `drafts/manuscript_audit.md`，调用 `audit_writing_craft` 写 `drafts/craft_audit.md`；如果存在 `drafts/experiment_evidence_pack.json`，必须调用 `audit_paper_claims` 写 `drafts/paper_claim_audit.md/json`。
+`WriterAgent(draft)` 调用 `assemble_manuscript` 从 `drafts/sections/*.tex` 拼装 `drafts/paper.tex`，加入 LaTeX wrapper、title、abstract、正文和 `\bibliography{related_work}`。随后 Writer 做全局 spot-check：术语、变量名、baseline 名称、章节过渡、intro/conclusion 呼应、method/experiment setup 一致性。若需要改正文，先改对应 section 文件，再重新拼装；不要直接一次性重写整篇 `paper.tex`。最后调用 `audit_manuscript_claims` 写 `drafts/manuscript_audit.md`，调用 `audit_writing_craft` 写 `drafts/craft_audit.md/json`；craft audit 会检查 citation key 与当前句子/相邻短句的 claim 是否明显错配，并结合 BibTeX、citation_map 和 paper notes 降低中英术语误报。如果存在 `drafts/experiment_evidence_pack.json`，必须调用 `audit_paper_claims` 写 `drafts/paper_claim_audit.md/json`。
 
 ### 章节深度协议
 

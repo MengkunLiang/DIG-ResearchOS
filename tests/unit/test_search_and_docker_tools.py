@@ -435,6 +435,45 @@ async def test_latex_compile_retries_failed_report_when_pdf_exists(tmp_workspace
     assert docker.calls == 1
 
 
+def test_latex_compile_dependency_fingerprint_ignores_runtime_reports_but_tracks_sources(tmp_workspace: Path):
+    survey_dir = tmp_workspace / "drafts" / "survey"
+    survey_dir.mkdir(parents=True)
+    tex_path = survey_dir / "survey.tex"
+    tex_path.write_text(
+        "\\documentclass{article}\\begin{document}OK\\\\cite{a}\\bibliography{references}\\end{document}",
+        encoding="utf-8",
+    )
+    (survey_dir / "references.bib").write_text("@article{a,title={A}}\n", encoding="utf-8")
+    (survey_dir / "sections").mkdir()
+    (survey_dir / "sections" / "background.tex").write_text("Background\n", encoding="utf-8")
+    (survey_dir / "survey.pdf").write_bytes(b"%PDF-1.4 output")
+    (survey_dir / "survey.xdv").write_bytes(b"volatile xdv")
+    (survey_dir / "survey.log").write_text("volatile log", encoding="utf-8")
+    (survey_dir / "survey_audit.json").write_text('{"passed": true}\n', encoding="utf-8")
+    (survey_dir / "survey_audit.md").write_text("audit\n", encoding="utf-8")
+    (survey_dir / "survey_compile_report.json").write_text("{}\n", encoding="utf-8")
+
+    first = _compile_dependency_fingerprint(tmp_workspace, tex_path)
+    first_paths = {item["path"] for item in first["files"]}
+
+    assert "drafts/survey/survey.tex" in first_paths
+    assert "drafts/survey/references.bib" in first_paths
+    assert "drafts/survey/sections/background.tex" in first_paths
+    assert "drafts/survey/survey.pdf" not in first_paths
+    assert "drafts/survey/survey.xdv" not in first_paths
+    assert "drafts/survey/survey.log" not in first_paths
+    assert "drafts/survey/survey_audit.json" not in first_paths
+    assert "drafts/survey/survey_audit.md" not in first_paths
+    assert "drafts/survey/survey_compile_report.json" not in first_paths
+
+    (survey_dir / "survey_audit.json").write_text('{"passed": false}\n', encoding="utf-8")
+    (survey_dir / "survey.xdv").write_bytes(b"changed xdv")
+    assert _compile_dependency_fingerprint(tmp_workspace, tex_path)["hash"] == first["hash"]
+
+    (survey_dir / "references.bib").write_text("@article{a,title={Changed}}\n", encoding="utf-8")
+    assert _compile_dependency_fingerprint(tmp_workspace, tex_path)["hash"] != first["hash"]
+
+
 @pytest.mark.asyncio
 async def test_latex_compile_treats_docker_entrypoint_error_as_environment(tmp_workspace: Path, monkeypatch):
     bundle = tmp_workspace / "submission" / "bundle"

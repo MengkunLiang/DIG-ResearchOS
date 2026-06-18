@@ -12,8 +12,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import importlib
 import importlib.util
+import json
 import os
 from pathlib import Path
 import shutil
@@ -433,6 +435,20 @@ def _maybe_check_docker_availability() -> None:
         )
 
 
+def _is_quiet_args(args: argparse.Namespace, runtime_settings: RuntimeSettings | None = None) -> bool:
+    if bool(getattr(args, "quiet", False)):
+        return True
+    return bool(runtime_settings and runtime_settings.ui.quiet)
+
+
+def _startup_banner_enabled(args: argparse.Namespace, runtime_settings: RuntimeSettings) -> bool:
+    return not (
+        _is_quiet_args(args, runtime_settings)
+        or bool(getattr(args, "no_banner", False))
+        or bool(runtime_settings.ui.no_banner)
+    )
+
+
 async def _maybe_run_selftest(args: argparse.Namespace, llm_client: LLMClient) -> None:
     """按需执行 endpoint 自检。"""
 
@@ -505,7 +521,7 @@ def _emit_startup_ui(
 ) -> None:
     """打印 CLI 启动动画与启动摘要。"""
 
-    if show_banner:
+    if show_banner and _startup_banner_enabled(args, runtime_settings):
         show_startup_banner(
             args.command,
             no_banner=getattr(args, "no_banner", False),
@@ -523,7 +539,7 @@ def _emit_startup_ui(
         mcp_server_count=mcp_server_count,
         mcp_tool_count=mcp_tool_count,
     )
-    if summary:
+    if summary and not _is_quiet_args(args, runtime_settings):
         print(summary)
 
 
@@ -591,6 +607,7 @@ async def run_command(args: argparse.Namespace) -> int:
             start_task=start_task,
             from_workspace=Path(args.from_workspace).resolve() if getattr(args, "from_workspace", None) else None,
             project_id=args.project_id,
+            quiet=_is_quiet_args(args, runtime_settings),
         )
         if prepare_code != 0:
             return prepare_code
@@ -621,6 +638,239 @@ async def run_command(args: argparse.Namespace) -> int:
         await prepared.aclose()
 
 
+async def run_smoke_command(args: argparse.Namespace) -> int:
+    """真实 pipeline smoke 模式：小规模覆盖 + medium LLM tier。"""
+
+    runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
+    runtime_settings = _runtime_settings_for_args(runtime_settings, args)
+    workspace_dir = Path(args.workspace).resolve()
+    ensure_workspace_layout(workspace_dir, runtime_settings)
+    _configure_workspace_logging(args, workspace_dir, runtime_settings)
+    _emit_startup_ui(
+        args=args,
+        runtime_settings=runtime_settings,
+        workspace_dir=workspace_dir,
+        show_summary=False,
+    )
+    install_signal_handlers()
+    state_machine = StateMachine(
+        Path(args.state_machine).resolve(),
+        Path(args.gates).resolve() if args.gates else None,
+    )
+    _apply_smoke_llm_overrides(state_machine, tier=args.tier, profile=args.profile)
+    definition_errors = state_machine.validate_definition()
+    if definition_errors:
+        raise SystemExit(
+            "State machine definition is invalid:\n" + "\n".join(f"- {item}" for item in definition_errors)
+        )
+
+    _write_smoke_literature_params(
+        workspace_dir,
+        active_pool_max=args.active_pool_max,
+        deep_read_target=args.deep_read_target,
+        abstract_sweep=args.abstract_sweep,
+        manuscript_language=args.manuscript_language,
+        include_chinese_literature=args.include_chinese_literature,
+        force=bool(args.force_smoke_params),
+        quiet=_is_quiet_args(args, runtime_settings),
+    )
+    start_task = str(args.start_task or "").strip() or "T2"
+    prepare_code = _prepare_pipeline_start_workspace(
+        workspace_dir=workspace_dir,
+        state_machine=state_machine,
+        start_task=start_task,
+        from_workspace=Path(args.from_workspace).resolve() if getattr(args, "from_workspace", None) else None,
+        project_id=args.project_id,
+        quiet=_is_quiet_args(args, runtime_settings),
+    )
+    if prepare_code != 0:
+        return prepare_code
+
+    prepared = await _prepare_runtime(args, workspace_dir)
+    _emit_startup_ui(
+        args=args,
+        runtime_settings=runtime_settings,
+        workspace_dir=workspace_dir,
+        show_banner=False,
+        skill_roots=prepared.skill_roots,
+        skill_count=prepared.skill_count,
+        mcp_server_count=prepared.mcp_server_count,
+        mcp_tool_count=prepared.mcp_tool_count,
+    )
+    if _is_quiet_args(args, runtime_settings):
+        print(f"[Smoke] start_task={start_task}, tier={args.tier}", flush=True)
+    else:
+        print(
+            "[Smoke] 已启动真实快速联调："
+            f"start_task={start_task}, tier={args.tier}, active_pool_max={args.active_pool_max}, "
+            f"deep_read_target={args.deep_read_target}, abstract_sweep={args.abstract_sweep}",
+            flush=True,
+        )
+    try:
+        runner = CompletePipelineRunner(
+            workspace=workspace_dir,
+            state_machine=state_machine,
+            llm_client=prepared.llm_client,
+            tool_registry=prepared.registry,
+            skill_roots=prepared.skill_roots,
+            human_interface=_build_human_interface(runtime_settings),
+            runtime_settings=runtime_settings,
+        )
+        return await runner.run(project_id=args.project_id, resume=False)
+    finally:
+        await prepared.aclose()
+
+
+def _apply_smoke_llm_overrides(state_machine: StateMachine, *, tier: str, profile: str | None = None) -> None:
+    """Temporarily lower all agent nodes to the smoke LLM tier."""
+
+    for node in state_machine.nodes.values():
+        if node.terminal or (node.agent is None and node.skill is None):
+            continue
+        llm_block = dict(node.llm or {})
+        llm_block["tier"] = tier
+        if profile:
+            llm_block["profile"] = profile
+        node.llm = llm_block
+
+
+def _write_smoke_literature_params(
+    workspace_dir: Path,
+    *,
+    active_pool_max: int,
+    deep_read_target: int,
+    abstract_sweep: int,
+    manuscript_language: str,
+    include_chinese_literature: str,
+    force: bool,
+    quiet: bool = False,
+) -> None:
+    """Write workspace-local T2/T3 parameters for quick real integration runs."""
+
+    literature_dir = workspace_dir / "literature"
+    literature_dir.mkdir(parents=True, exist_ok=True)
+    params_path = literature_dir / "literature_params.json"
+    confirmation_path = literature_dir / "literature_params_confirmation.json"
+    if params_path.exists() and not force:
+        if not quiet:
+            print(
+                "[Smoke] 已存在 literature/literature_params.json，保留现有参数；"
+                "如需覆盖请加 --force-smoke-params。",
+                flush=True,
+            )
+        if not confirmation_path.exists():
+            _write_smoke_literature_confirmation(workspace_dir, params_path, confirmation_path)
+        return
+
+    deep_min = max(1, min(int(deep_read_target), 3))
+    deep_max = max(int(deep_read_target), int(deep_read_target) + 1)
+    active_pool = max(10, int(active_pool_max))
+    abstract_num = max(0, int(abstract_sweep))
+    payload = {
+        "semantics": "workspace_literature_coverage_parameters_for_t2_t3",
+        "selected_option": "smoke",
+        "selected_label": "Smoke 快速联调",
+        "profile": "smoke",
+        "smoke_mode": True,
+        "t2_finalize": {
+            "active_pool_max": active_pool,
+            "screened_active_pool_cap": min(active_pool, 20),
+            "snowball_active_pool_cap": min(active_pool, 5),
+            "finish_finalize_min_raw": 10,
+            "access_audit_top_n": min(active_pool, 20),
+            "pre_active_light_backfill_max": min(active_pool * 2, 40),
+            "snowball_max_sources": 3,
+            "snowball_refs_per_source": 3,
+            "snowball_max_candidates": 8,
+        },
+        "reader": {
+            "deep_read_min": deep_min,
+            "deep_read_target": int(deep_read_target),
+            "deep_read_max": deep_max,
+            "require_deep_read_target": False,
+            "probe_pool": max(int(deep_read_target), 5),
+            "mainline_screened_cap": min(active_pool, 20),
+            "bridge_deep_floor": 1,
+            "bridge_screened_cap": 2,
+            "bridge_pool_cap": 4,
+            "citation_hub_slots": 1,
+            "abstract_sweep": {
+                "lite_paper_num": abstract_num,
+                "sources": ["papers_verified", "papers_dedup", "papers_backlog"],
+                "include_metadata_only": False,
+                "metadata_replacement_policy": "skip_metadata_only_in_smoke_mode",
+            },
+        },
+        "literature_quality": {
+            "enabled": True,
+            "manuscript_language": manuscript_language,
+            "include_chinese_literature": include_chinese_literature,
+            "chinese_literature_policy": "review_flag_only",
+        },
+        "selected_summary": {
+            "active_pool_max": active_pool,
+            "deep_read_min": deep_min,
+            "deep_read_target": int(deep_read_target),
+            "deep_read_max": deep_max,
+            "require_deep_read_target": False,
+            "abstract_sweep_target": abstract_num,
+            "manuscript_language": manuscript_language,
+            "include_chinese_literature": include_chinese_literature,
+        },
+        "confirmation_summary": (
+            "Smoke 快速联调：小候选池、小精读目标、少量摘要轻读；"
+            "用于验证流程/工具/输出，不用于正式研究质量判断。"
+        ),
+        "captured": {},
+        "resource_backfill_policy": {
+            "retained_candidates": "small smoke pool for real integration debugging",
+            "user_visible_budget_semantics": "smoke targets, not formal coverage targets",
+            "metadata_only": "metadata-only records do not count as smoke evidence",
+        },
+        "parameter_meanings": {
+            "active_pool_max": "Smoke 保留候选数上限。",
+            "deep_read_target": "Smoke 精读目标；默认不要求读满正式目标。",
+            "abstract_sweep.lite_paper_num": "Smoke 摘要轻读数量。",
+        },
+        "decided_at": datetime.now(timezone.utc).isoformat(),
+    }
+    params_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    _write_smoke_literature_confirmation(workspace_dir, params_path, confirmation_path)
+    if not quiet:
+        print(
+            "[Smoke] 已写入快速联调参数："
+            "literature/literature_params.json, literature/literature_params_confirmation.json",
+            flush=True,
+        )
+
+
+def _write_smoke_literature_confirmation(
+    workspace_dir: Path,
+    params_path: Path,
+    confirmation_path: Path,
+) -> None:
+    try:
+        params = json.loads(params_path.read_text(encoding="utf-8"))
+    except Exception:
+        params = {}
+    payload = {
+        "semantics": "human_final_confirmed_t2_literature_parameters_before_scout",
+        "task_id": "T2-PARAM-CONFIRM-GATE",
+        "gate_id": "t2_literature_param_confirm_gate",
+        "selected_option": "confirm_start_t2",
+        "confirmed_to_start_t2": True,
+        "captured": {"smoke_mode": "true"},
+        "next_task": "T2",
+        "human_interaction_id": "smoke_auto_confirm",
+        "selected_parameters_summary": params.get("selected_summary") or {},
+        "confirmation_summary": params.get("confirmation_summary") or "Smoke auto-confirmed.",
+        "parameter_source": "literature/literature_params.json",
+        "decided_at": datetime.now(timezone.utc).isoformat(),
+    }
+    confirmation_path.parent.mkdir(parents=True, exist_ok=True)
+    confirmation_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
 def _resolve_pipeline_start_task(args: argparse.Namespace) -> str | None:
     """Resolve `run --start-task` / `run --from` startup semantics."""
 
@@ -641,6 +891,7 @@ def _prepare_pipeline_start_workspace(
     start_task: str,
     from_workspace: Path | None,
     project_id: str,
+    quiet: bool = False,
 ) -> int:
     """Prepare a full pipeline workspace that starts from an intermediate task."""
 
@@ -672,6 +923,7 @@ def _prepare_pipeline_start_workspace(
             task_id=start_task,
             from_workspace=from_workspace,
             workspace_dir=workspace_dir,
+            quiet=quiet,
         )
         source_state_path = from_workspace / "state.yaml"
         if source_state_path.exists():
@@ -693,11 +945,20 @@ def _prepare_pipeline_start_workspace(
         source_state=source_state,
     )
     state.dump_yaml(state_path)
-    print(f"[进度] 已初始化 pipeline state: current_task={start_task}", flush=True)
+    if quiet:
+        print(f"[Pipeline] state={start_task}", flush=True)
+    else:
+        print(f"[进度] 已初始化 pipeline state: current_task={start_task}", flush=True)
     return 0
 
 
-def _copy_task_inputs_from_workspace(*, task_id: str, from_workspace: Path, workspace_dir: Path) -> None:
+def _copy_task_inputs_from_workspace(
+    *,
+    task_id: str,
+    from_workspace: Path,
+    workspace_dir: Path,
+    quiet: bool = False,
+) -> None:
     """Copy task input artifacts from another workspace for full-pipeline restart."""
 
     io_spec = get_task_io(task_id)
@@ -711,7 +972,8 @@ def _copy_task_inputs_from_workspace(*, task_id: str, from_workspace: Path, work
             shutil.copytree(src, dst, dirs_exist_ok=True)
         else:
             shutil.copy2(src, dst)
-        print(f"copied: {rel_path}", flush=True)
+        if not quiet:
+            print(f"copied: {rel_path}", flush=True)
 
 
 def _build_start_task_state(
@@ -977,6 +1239,7 @@ def validate_config_command(args: argparse.Namespace) -> int:
     """校验 workflow/gate/runtime 配置的一致性。"""
 
     runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
+    runtime_settings = _runtime_settings_for_args(runtime_settings, args)
     config_dir = Path("config").resolve()
     state_machine = StateMachine(
         Path(args.state_machine).resolve(),
@@ -1001,6 +1264,19 @@ def validate_config_command(args: argparse.Namespace) -> int:
         "parameter_audit": build_config_audit_summary(config_dir),
         "errors": errors,
     }
+    if runtime_settings.ui.quiet:
+        print(
+            yaml.safe_dump(
+                {
+                    "ok": payload["ok"],
+                    "state_machine": payload["state_machine"],
+                    "errors": errors,
+                },
+                allow_unicode=True,
+                sort_keys=False,
+            )
+        )
+        return 0 if not errors else 1
     print(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False))
     return 0 if not errors else 1
 
@@ -1176,6 +1452,46 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--startup-selftest", action="store_true")
     run_parser.add_argument("--skip-startup-selftest", action="store_true")
 
+    smoke_parser = subparsers.add_parser("run_smoke", help="运行真实 pipeline 快速联调模式")
+    _add_shared_cli_options(smoke_parser, runtime_settings, use_defaults=False)
+    smoke_parser.add_argument(
+        "--from",
+        dest="from_workspace",
+        default=None,
+        help="从另一个 workspace 复制 --start-task 的前置 artifact；未指定 --start-task 时默认从 T2 开始",
+    )
+    smoke_parser.add_argument(
+        "--start-task",
+        default="T2",
+        help="smoke 起始状态机节点，默认 T2；也可用 T3/T4/T8-STYLE-GATE 等真实节点",
+    )
+    smoke_parser.add_argument("--active-pool-max", type=int, default=20)
+    smoke_parser.add_argument("--deep-read-target", type=int, default=3)
+    smoke_parser.add_argument("--abstract-sweep", type=int, default=5)
+    smoke_parser.add_argument("--tier", default="medium", choices=["light", "medium", "heavy"])
+    smoke_parser.add_argument(
+        "--profile",
+        default=None,
+        help="可选：覆盖 LLM profile；不填则只把所有节点 tier 降到 medium",
+    )
+    smoke_parser.add_argument(
+        "--manuscript-language",
+        default="auto",
+        choices=["auto", "en", "zh", "mixed"],
+    )
+    smoke_parser.add_argument(
+        "--include-chinese-literature",
+        default="auto",
+        choices=["auto", "true", "false"],
+    )
+    smoke_parser.add_argument(
+        "--force-smoke-params",
+        action="store_true",
+        help="覆盖已有 literature/literature_params.json 和确认文件",
+    )
+    smoke_parser.add_argument("--startup-selftest", action="store_true")
+    smoke_parser.add_argument("--skip-startup-selftest", action="store_true")
+
     resume_parser = subparsers.add_parser("resume", help="恢复已暂停的 pipeline")
     _add_shared_cli_options(resume_parser, runtime_settings, use_defaults=False)
     resume_parser.add_argument("--startup-selftest", action="store_true")
@@ -1250,6 +1566,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "run":
         args.resume = False
         return asyncio.run(run_command(args))
+    if args.command == "run_smoke":
+        args.resume = False
+        return asyncio.run(run_smoke_command(args))
     if args.command == "resume":
         args.resume = True
         return asyncio.run(run_command(args))

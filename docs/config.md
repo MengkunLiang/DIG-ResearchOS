@@ -89,7 +89,9 @@ T3.6 和 T8 已经分离：T3.6 使用 `survey_writer`，产物在 `drafts/surve
 - `agents.scout.behavior.literature_quality`：写作语言与中文文献准入策略
 - `agents.reader.modes.read.behavior`：deep-read 目标、abstract sweep、metadata-only triage
 
-单个 workspace 的实际运行决策写在 `workspace/<name>/literature/literature_params.json`，由 `T2-PARAM-GATE` 生成，优先于全局默认。这个 gate 可以直接接受自然语言修改，例如“英文稿，不要中文论文，候选数300”。英文稿默认不主动检索中文论文；中文/双语或显式允许中文时，只允许 WJCI、SCI/SSCI、EI、北大核心、CSSCI、CSCD、AMI 顶级/权威/核心等显式权威来源或用户 seed 进入 active pool。
+单个 workspace 的实际运行决策写在 `workspace/<name>/literature/literature_params.json`，由 `T2-PARAM-GATE` 生成，优先于全局默认。这个 gate 可以直接接受自然语言修改，例如“英文稿，不要中文论文，候选数300”。英文稿且用户明确排除中文文献时，非 seed 中文论文不会进入 active pool；中文/双语或显式允许中文文献时，T2 不再因为缺少权威来源标签硬过滤中文候选，而是标记 `authority_review_needed`，后续 Reader/Writer 需要结合真实期刊目录、全文和人工判断决定是否引用。
+
+开发联调入口 `run_smoke` 也会写同一个 workspace-local 参数文件，并额外写 `literature/literature_params_confirmation.json`。它写入 `selected_option=smoke`、`smoke_mode=true` 和小规模覆盖参数，例如 `active_pool_max=20`、`deep_read_target=3`、`abstract_sweep_target=5`；这些值同样优先于全局 yaml。已有 `literature/literature_params.json` 默认不覆盖，除非显式传入 `--force-smoke-params`。`run_smoke` 只用于真实快速联调，不应把 smoke 产物当作正式文献覆盖结果。
 
 ### 2.2 Budget / 工具 / 路径相关优先级
 
@@ -605,13 +607,15 @@ agents:
 `T2-PARAM-GATE` 会在每个 workspace 写 `literature/literature_params.json`，用人类可读方式确认“保留候选数、精读目标、摘要轻读目标”。Gate 会显示当前检测到的任务类型、推荐选项、各档实际数值和自定义输入说明；直接回车采用当前推荐项。这个文件优先于全局 yaml；全局 yaml 仍作为默认值和无交互调试 fallback。`reader.modes.read.behavior.abstract_sweep` 当前默认是有上限的轻量补读取向：
 
 - `expected_notes_ratio: 1.0` 表示无 `deep_read_queue` 的旧 workspace fallback 也按输入池 100% 校验，不再按 80% 放行。
-- `lite_paper_num: 120` 表示研究论文默认最多处理 120 篇 abstract sweep 候选；综述 gate 可写 `all_readable`，表示尽量读完保留候选中所有可读摘要。
-- `sources: [papers_verified, papers_dedup]` 表示默认只覆盖保留候选；`papers_backlog` 是覆盖账本和人工/显式回捞池。若 gate 写入 `metadata_replacement_policy=replace_metadata_only_with_readable_backlog_when_available`，允许从 backlog 回捞有摘要/PDF 的候选补足可读覆盖。
+- `lite_paper_num: 120` 表示研究论文默认最多处理 120 个 abstract sweep 候选；综述均衡 gate 也默认使用 120，强覆盖默认 180。显式写 `all_readable` 时，只表示在保留候选 active pool 内不设上限，不会全读 `papers_backlog.jsonl`。
+- `sources: [papers_verified, papers_dedup]` 表示默认只覆盖保留候选；`papers_backlog` 是覆盖账本和人工/显式回捞池。若 gate 写入 `metadata_replacement_policy=replace_metadata_only_with_readable_backlog_when_available`，只允许在数值预算还有剩余时从 backlog 回捞有摘要/PDF 的候选补足可读覆盖。
 - `min_relevance: 0.0` 表示不靠 metadata priority hint 丢弃剩余候选。
 - `priority_weights` 默认 `relevance/resource/year = 0.70/0.20/0.10`，用于在候选预算内排序：`relevance_score` 仍是检索/元数据优先级提示，资源可获得性和发表年限只影响“先读谁/先补谁”。
 - `include_metadata_only: true` 表示缺摘要但有标题的论文会进入 `literature/metadata_triage.md` 批量 triage；正常完成路径调用 Reader LLM 做 metadata-only 审阅，中断/LLM 失败时用确定性 fallback。它不会生成逐篇 note、BibTeX 或 comparison evidence。
 - `metadata_triage_report: literature/metadata_triage.md` 是 metadata-only triage report 路径；该报告只能作为补资源/升级阅读线索，不能进入 claim evidence。
 - `exclude_semantic_excluded: true` 表示 LLM screen 为 `shared_keyword_only/unrelated` 或 `can_enter_deep_read=false` 的论文默认不写入 abstract sweep note/BibTeX/comparison table，避免被后续 synthesis/writer 当作可用证据；需要排除线索复核时可显式设为 `false`。
+
+`run_smoke` 会跳过人工 T2 参数 gate，直接写入相同格式的 workspace 参数文件与确认文件，用于快速验证真实状态机、工具调用、progress 输出和恢复路径。默认 smoke 参数为 `active_pool_max=20`、`deep_read_target=3`、`abstract_sweep_target=5`、`smoke_mode=true`，并会把状态机节点临时降到 `medium` tier；这些覆盖只存在于本次运行内存和目标 workspace 文件中，不修改全局配置。
 
 这和 T2 的“保留候选 / backlog”分层配套：保留候选中的 deep-read 由 T3 精读，shallow 由 abstract sweep 生成弱证据提示或 metadata-only 补资源线索；保留候选外的 backlog 默认只做覆盖审计和人工/显式回捞，综述强覆盖时可作为可读候选补位来源。
 

@@ -739,11 +739,23 @@ def test_t2_literature_param_gate_persists_clear_coverage_parameters(tmp_workspa
               bridge_domain_plan: literature/bridge_domain_plan.json
             outputs:
               literature_params: literature/literature_params.json
-            next_on_success: T2
+            next_on_success: T2-PARAM-CONFIRM-GATE
+          T2-PARAM-CONFIRM-GATE:
+            agent: scout
+            extra:
+              immediate_gate: true
+            gate: t2_literature_param_confirm_gate
+            inputs:
+              literature_params: literature/literature_params.json
+            outputs:
+              literature_params_confirmation: literature/literature_params_confirmation.json
+            next_on_success: __parse_from_output__
           T2:
             agent: scout
             outputs:
               papers_raw: literature/papers_raw.jsonl
+          done:
+            terminal: true
         """,
     )
     _write_yaml(
@@ -757,7 +769,22 @@ def test_t2_literature_param_gate_persists_clear_coverage_parameters(tmp_workspa
             options:
               - id: survey_balanced
                 label: Survey balanced
+                next: T2-PARAM-CONFIRM-GATE
+          t2_literature_param_confirm_gate:
+            presentation:
+              selected_parameters:
+                from_file: literature/literature_params.json
+                mode: path_summary
+            options:
+              - id: confirm_start_t2
+                label: Confirm
                 next: T2
+              - id: revise_params
+                label: Revise
+                next: T2-PARAM-GATE
+              - id: stop_project
+                label: Stop
+                next: done
         """,
     )
     (tmp_workspace / "project.yaml").write_text("project_id: p\n", encoding="utf-8")
@@ -771,7 +798,7 @@ def test_t2_literature_param_gate_persists_clear_coverage_parameters(tmp_workspa
     state = sm.pause_for_immediate_gate(state, workspace_dir=tmp_workspace)
     state = sm.resolve_pending_gate(state, {"option_id": "survey_balanced"}, workspace_dir=tmp_workspace)
 
-    assert state.current_task == "T2"
+    assert state.current_task == "T2-PARAM-CONFIRM-GATE"
     payload = json.loads((tmp_workspace / "literature" / "literature_params.json").read_text(encoding="utf-8"))
     assert payload["semantics"] == "workspace_literature_coverage_parameters_for_t2_t3"
     assert payload["selected_option"] == "survey_balanced"
@@ -780,6 +807,96 @@ def test_t2_literature_param_gate_persists_clear_coverage_parameters(tmp_workspa
     assert payload["reader"]["require_deep_read_target"] is True
     assert "保留候选数" in payload["parameter_meanings"]["active_pool_max"]
     assert payload["selected_summary"]["active_pool_max"] == 180
+
+    state = sm.pause_for_immediate_gate(state, workspace_dir=tmp_workspace)
+    assert state.pending_gate.gate_id == "t2_literature_param_confirm_gate"
+    state = sm.resolve_pending_gate(state, {"option_id": "confirm_start_t2"}, workspace_dir=tmp_workspace)
+
+    assert state.current_task == "T2"
+    confirmation = json.loads(
+        (tmp_workspace / "literature" / "literature_params_confirmation.json").read_text(encoding="utf-8")
+    )
+    assert confirmation["semantics"] == "human_final_confirmed_t2_literature_parameters_before_scout"
+    assert confirmation["confirmed_to_start_t2"] is True
+    assert confirmation["next_task"] == "T2"
+    assert confirmation["human_interaction_id"]
+
+
+def test_t2_literature_param_confirm_gate_can_return_to_parameter_selection(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    gates = tmp_workspace / "gates.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T2-PARAM-CONFIRM-GATE
+        states:
+          T2-PARAM-GATE:
+            agent: scout
+            extra:
+              immediate_gate: true
+            gate: t2_literature_param_gate
+            outputs:
+              literature_params: literature/literature_params.json
+            next_on_success: T2-PARAM-CONFIRM-GATE
+          T2-PARAM-CONFIRM-GATE:
+            agent: scout
+            extra:
+              immediate_gate: true
+            gate: t2_literature_param_confirm_gate
+            inputs:
+              literature_params: literature/literature_params.json
+            outputs:
+              literature_params_confirmation: literature/literature_params_confirmation.json
+            next_on_success: __parse_from_output__
+          T2:
+            agent: scout
+          done:
+            terminal: true
+        """,
+    )
+    _write_yaml(
+        gates,
+        """
+        gates:
+          t2_literature_param_gate:
+            presentation: {}
+            options:
+              - id: survey_balanced
+                label: Survey
+                next: T2-PARAM-CONFIRM-GATE
+          t2_literature_param_confirm_gate:
+            presentation:
+              selected_parameters:
+                from_file: literature/literature_params.json
+                mode: path_summary
+            options:
+              - id: confirm_start_t2
+                label: Confirm
+                next: T2
+              - id: revise_params
+                label: Revise
+                next: T2-PARAM-GATE
+              - id: stop_project
+                label: Stop
+                next: done
+        """,
+    )
+    literature = tmp_workspace / "literature"
+    literature.mkdir(parents=True)
+    (tmp_workspace / "project.yaml").write_text("project_id: p\n", encoding="utf-8")
+    params = build_literature_param_payload(selected_option="survey_balanced", workspace_dir=tmp_workspace)
+    (literature / "literature_params.json").write_text(json.dumps(params, ensure_ascii=False), encoding="utf-8")
+
+    sm = StateMachine(config, gates)
+    state = sm.pause_for_immediate_gate(sm.create_initial_state("p1"), workspace_dir=tmp_workspace)
+    state = sm.resolve_pending_gate(state, {"option_id": "revise_params"}, workspace_dir=tmp_workspace)
+
+    assert state.current_task == "T2-PARAM-GATE"
+    assert state.status == "RUNNING"
+    confirmation = json.loads((literature / "literature_params_confirmation.json").read_text(encoding="utf-8"))
+    assert confirmation["confirmed_to_start_t2"] is False
+    assert confirmation["selected_option"] == "revise_params"
+    assert confirmation["next_task"] == "T2-PARAM-GATE"
 
 
 def test_t2_literature_param_gate_displays_actual_values_and_profile_default(tmp_workspace):
@@ -843,8 +960,10 @@ def test_t2_literature_param_gate_displays_actual_values_and_profile_default(tmp
     standard = next(option for option in state.pending_gate.options if option["id"] == "standard_research")
     custom = next(option for option in state.pending_gate.options if option["id"] == "custom")
     assert balanced["is_default"] is True
-    assert "active_pool_max=180" in balanced["parameter_preview"]
-    assert "active_pool_max=120" in standard["parameter_preview"]
+    assert "保留候选：180 篇（active_pool_max=180；可选：120/180/240 或自定义）" in balanced["parameter_preview"]
+    assert "深入阅读：目标 60 篇（deep_read=50/60/70；格式：min/target/max）" in balanced["parameter_preview"]
+    assert "保留候选：120 篇（active_pool_max=120；可选：120/180/240 或自定义）" in standard["parameter_preview"]
+    assert "深入阅读：目标 35 篇（deep_read=35/35/45；格式：min/target/max）" in standard["parameter_preview"]
     assert "input_prompts" in custom
     assert "manuscript_language" in custom["collect_input"]
     assert "include_chinese_literature" in custom["collect_input"]
@@ -997,7 +1116,6 @@ def test_custom_t2_literature_params_can_override_multiple_numbers(tmp_workspace
         captured={
             "active_pool_max": "300",
             "deep_read_target": "80",
-            "abstract_sweep_target": "all_readable",
             "require_deep_read_target": "false",
             "base_option": "survey_balanced",
         },
@@ -1009,7 +1127,7 @@ def test_custom_t2_literature_params_can_override_multiple_numbers(tmp_workspace
     assert payload["reader"]["deep_read_target"] == 80
     assert payload["reader"]["deep_read_max"] >= 80
     assert payload["reader"]["require_deep_read_target"] is False
-    assert payload["reader"]["abstract_sweep"]["lite_paper_num"] == "all_readable"
+    assert payload["reader"]["abstract_sweep"]["lite_paper_num"] == 120
 
 
 def test_custom_t2_literature_params_can_disable_chinese_for_english_manuscript(tmp_workspace):
@@ -1029,7 +1147,7 @@ def test_custom_t2_literature_params_can_disable_chinese_for_english_manuscript(
     assert payload["t2_finalize"]["active_pool_max"] == 300
     assert payload["literature_quality"]["manuscript_language"] == "en"
     assert payload["literature_quality"]["include_chinese_literature"] == "false"
-    assert payload["literature_quality"]["chinese_literature_policy"] == "authoritative_or_seed"
+    assert payload["literature_quality"]["chinese_literature_policy"] == "review_flag_only"
     assert "literature_quality.include_chinese_literature" in payload["parameter_meanings"]
 
 
@@ -1081,6 +1199,68 @@ def test_t36_template_gate_persists_runtime_confirmed_template(tmp_workspace):
     assert payload["human_interaction_id"]
     interactions = (tmp_workspace / "_runtime" / "human_interactions.jsonl").read_text(encoding="utf-8")
     assert payload["human_interaction_id"] in interactions
+
+
+def test_t36_post_survey_gate_can_finish_or_continue(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    gates = tmp_workspace / "gates.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T3.6-POST-SURVEY-GATE
+        states:
+          T3.6-POST-SURVEY-GATE:
+            agent: survey_writer
+            mode: post_survey_gate
+            extra:
+              immediate_gate: true
+            gate: t36_post_survey_gate
+            outputs:
+              post_survey_decision: drafts/survey/post_survey_decision.json
+            next_on_success: __parse_from_output__
+          T4:
+            agent: ideation
+          done:
+            terminal: true
+        """,
+    )
+    _write_yaml(
+        gates,
+        """
+        gates:
+          t36_post_survey_gate:
+            options:
+              - id: continue_to_t4
+                label: 继续进入 T4
+                next: T4
+              - id: finish_after_survey
+                label: 结束项目
+                next: done
+        """,
+    )
+    (tmp_workspace / "drafts" / "survey").mkdir(parents=True)
+    (tmp_workspace / "ideation").mkdir()
+    (tmp_workspace / "project.yaml").write_text("project_id: p\n", encoding="utf-8")
+    (tmp_workspace / "drafts" / "survey" / "survey_summary.md").write_text("# Summary\n", encoding="utf-8")
+    (tmp_workspace / "drafts" / "survey" / "survey_compile_report.json").write_text("{}\n", encoding="utf-8")
+    (tmp_workspace / "ideation" / "survey_insights.json").write_text("{}\n", encoding="utf-8")
+
+    sm = StateMachine(config, gates)
+    state = sm.pause_for_immediate_gate(sm.create_initial_state("p1"), workspace_dir=tmp_workspace)
+    state = sm.resolve_pending_gate(state, {"option_id": "finish_after_survey"}, workspace_dir=tmp_workspace)
+
+    assert state.current_task == "done"
+    assert state.status == "COMPLETED"
+    payload = json.loads((tmp_workspace / "drafts" / "survey" / "post_survey_decision.json").read_text(encoding="utf-8"))
+    assert payload["semantics"] == "human_confirmed_post_survey_next_step"
+    assert payload["continue_to_t4"] is False
+
+    (tmp_workspace / "drafts" / "survey" / "post_survey_decision.json").unlink()
+    state = sm.pause_for_immediate_gate(sm.create_initial_state("p2"), workspace_dir=tmp_workspace)
+    state = sm.resolve_pending_gate(state, {"option_id": "continue_to_t4"}, workspace_dir=tmp_workspace)
+
+    assert state.current_task == "T4"
+    assert state.status == "RUNNING"
 
 
 def test_t8_style_template_gate_persists_runtime_confirmed_style(tmp_workspace):

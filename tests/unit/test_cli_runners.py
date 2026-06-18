@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import textwrap
 
@@ -551,6 +552,109 @@ def test_cli_run_from_defaults_to_t2(monkeypatch, tmp_path: Path):
     )
 
     assert exit_code == 0
+
+
+def test_cli_run_smoke_writes_small_params_and_medium_overrides(monkeypatch, tmp_path: Path):
+    source = tmp_path / "source"
+    workspace = tmp_path / "workspace"
+    _write_t2_source_workspace(source)
+
+    observed: dict[str, object] = {}
+
+    async def fake_prepare_runtime(args, workspace_dir):
+        observed["prepare_workspace"] = workspace_dir
+        return PreparedRuntime(
+            skill_roots=[],
+            registry=ToolRegistry(),
+            llm_client=object(),
+        )
+
+    async def fake_run(self, *, project_id: str, resume: bool = False):
+        state = StateYaml.load_yaml(self.workspace / "state.yaml")
+        assert state.current_task == "T2"
+        params = json.loads((self.workspace / "literature" / "literature_params.json").read_text(encoding="utf-8"))
+        confirmation = json.loads(
+            (self.workspace / "literature" / "literature_params_confirmation.json").read_text(encoding="utf-8")
+        )
+        assert params["selected_option"] == "smoke"
+        assert params["t2_finalize"]["active_pool_max"] == 18
+        assert params["reader"]["deep_read_target"] == 2
+        assert params["reader"]["abstract_sweep"]["lite_paper_num"] == 4
+        assert confirmation["confirmed_to_start_t2"] is True
+        assert self.state_machine.nodes["T2"].llm["tier"] == "medium"
+        assert self.state_machine.nodes["T3"].llm["tier"] == "medium"
+        return 0
+
+    monkeypatch.setattr("researchos.cli.install_signal_handlers", lambda: None)
+    monkeypatch.setattr("researchos.cli._prepare_runtime", fake_prepare_runtime)
+    monkeypatch.setattr("researchos.cli.CompletePipelineRunner.run", fake_run)
+
+    exit_code = main(
+        [
+            "--no-banner",
+            "--workspace",
+            str(workspace),
+            "run_smoke",
+            "--from",
+            str(source),
+            "--active-pool-max",
+            "18",
+            "--deep-read-target",
+            "2",
+            "--abstract-sweep",
+            "4",
+            "--skip-startup-selftest",
+        ]
+    )
+
+    assert exit_code == 0
+    assert observed["prepare_workspace"] == workspace.resolve()
+
+
+def test_cli_run_smoke_quiet_keeps_copy_and_state_output_silent(monkeypatch, tmp_path: Path, capsys):
+    source = tmp_path / "source"
+    workspace = tmp_path / "workspace"
+    _write_t2_source_workspace(source)
+
+    async def fake_prepare_runtime(args, workspace_dir):
+        return PreparedRuntime(
+            skill_roots=[],
+            registry=ToolRegistry(),
+            llm_client=object(),
+        )
+
+    async def fake_run(self, *, project_id: str, resume: bool = False):
+        return 0
+
+    monkeypatch.setattr("researchos.cli.install_signal_handlers", lambda: None)
+    monkeypatch.setattr("researchos.cli._prepare_runtime", fake_prepare_runtime)
+    monkeypatch.setattr("researchos.cli.CompletePipelineRunner.run", fake_run)
+
+    exit_code = main(
+        [
+            "--no-banner",
+            "--quiet",
+            "--workspace",
+            str(workspace),
+            "run_smoke",
+            "--from",
+            str(source),
+            "--active-pool-max",
+            "18",
+            "--deep-read-target",
+            "2",
+            "--abstract-sweep",
+            "4",
+            "--skip-startup-selftest",
+        ]
+    )
+
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "copied:" not in out
+    assert "[进度] 已初始化 pipeline state" not in out
+    assert "[Smoke] 已写入快速联调参数" not in out
+    assert "[Smoke] start_task=T2, tier=medium" in out
 
 
 def test_cli_run_from_start_task_t3_copies_t3_inputs_not_old_notes(monkeypatch, tmp_path: Path):

@@ -79,6 +79,14 @@ _T36_CORPUS_GATE_INPUT_PATHS = {
 }
 
 
+_T36_POST_SURVEY_GATE_INPUT_PATHS = {
+    "project": "project.yaml",
+    "survey_summary": "drafts/survey/survey_summary.md",
+    "survey_compile_report": "drafts/survey/survey_compile_report.json",
+    "survey_insights": "ideation/survey_insights.json",
+}
+
+
 _TEMPLATE_GATE_INPUT_PATHS = {
     "project": "project.yaml",
     "seed_outline_profile": "user_seeds/seed_outline_profile.json",
@@ -122,6 +130,13 @@ _T2_LITERATURE_PARAM_GATE_INPUT_PATHS = {
     "bridge_domain_plan": "literature/bridge_domain_plan.json",
 }
 
+_T2_LITERATURE_PARAM_CONFIRM_GATE_INPUT_PATHS = {
+    "project": "project.yaml",
+    "literature_params": "literature/literature_params.json",
+    "seed_outline_profile": "user_seeds/seed_outline_profile.json",
+    "bridge_domain_plan": "literature/bridge_domain_plan.json",
+}
+
 _T2_COVERAGE_GATE_INPUT_PATHS = {
     "search_log": "literature/search_log.md",
     "missing_areas": "literature/missing_areas.md",
@@ -160,7 +175,7 @@ _LITERATURE_PARAM_PRESETS: dict[str, dict[str, Any]] = {
             "deep_read_max": 70,
             "require_deep_read_target": True,
             "abstract_sweep": {
-                "lite_paper_num": "all_readable",
+                "lite_paper_num": 120,
                 "sources": ["papers_verified", "papers_dedup", "papers_backlog"],
                 "include_metadata_only": True,
                 "metadata_replacement_policy": "replace_metadata_only_with_readable_backlog_when_available",
@@ -176,7 +191,7 @@ _LITERATURE_PARAM_PRESETS: dict[str, dict[str, Any]] = {
             "deep_read_max": 95,
             "require_deep_read_target": True,
             "abstract_sweep": {
-                "lite_paper_num": "all_readable",
+                "lite_paper_num": 180,
                 "sources": ["papers_verified", "papers_dedup", "papers_backlog"],
                 "include_metadata_only": True,
                 "metadata_replacement_policy": "replace_metadata_only_with_readable_backlog_when_available",
@@ -196,8 +211,8 @@ _LITERATURE_PARAM_PRESET_LABELS = {
 
 _LITERATURE_PARAM_PRESET_NOTES = {
     "standard_research": "适合 research article：候选池和轻读覆盖较克制，精读目标 35 篇。",
-    "survey_balanced": "适合一般综述：扩大候选池，精读目标 60 篇，摘要轻读尽量覆盖可读候选。",
-    "survey_exhaustive": "适合正式综述/展示型综述：更宽候选池和更高精读目标，运行时间和 LLM 成本更高。",
+    "survey_balanced": "适合一般综述：保留候选 180 篇，精读目标 60 篇，摘要轻读最多 120 篇。",
+    "survey_exhaustive": "适合正式综述/展示型综述：保留候选 240 篇，精读目标 80 篇，摘要轻读最多 180 篇，运行时间和 LLM 成本更高。",
     "custom": "只改覆盖目标；网络补资源仍由系统自动尽量执行。",
 }
 
@@ -206,7 +221,7 @@ _LITERATURE_PARAM_SHORT_MEANINGS = {
     "active_pool_max": "保留候选数：T2 留给后续处置的候选上限；不是精读篇数，也不是最终引用数。",
     "deep_read": "精读 min/target/max：T3 的最低完成线、正常目标和硬上限。",
     "require_target": "是否必须读满 target：true 表示未达到精读目标不进入 T3.5。",
-    "abstract_sweep": "摘要轻读：T3 后对未精读但有摘要的候选做 LLM 轻读；all_readable 表示尽量覆盖可读摘要。",
+    "abstract_sweep": "摘要轻读：T3 后对 active/retained 中未精读但有摘要的候选做 LLM 轻读；all_readable 表示保留候选内不设上限。",
     "language": "稿件语言：影响 query 语言、中文文献准入和后续引用策略。",
 }
 
@@ -238,8 +253,30 @@ def _literature_param_summary_from_payload(payload: dict[str, Any]) -> dict[str,
         "metadata_replacement_policy": abstract_sweep.get("metadata_replacement_policy"),
         "manuscript_language": literature_quality.get("manuscript_language", "auto"),
         "include_chinese_literature": literature_quality.get("include_chinese_literature", "auto"),
-        "chinese_literature_policy": literature_quality.get("chinese_literature_policy", "authoritative_or_seed"),
+        "chinese_literature_policy": literature_quality.get("chinese_literature_policy", "review_flag_only"),
     }
+
+
+def _literature_param_explained_preview(summary: dict[str, Any]) -> str:
+    """Compact human-facing explanation for T2 coverage parameters."""
+
+    return "\n".join(_literature_param_explained_preview_lines(summary))
+
+
+def _literature_param_explained_preview_lines(summary: dict[str, Any]) -> list[str]:
+    deep_min = summary.get("deep_read_min")
+    deep_target = summary.get("deep_read_target")
+    deep_max = summary.get("deep_read_max")
+    require = summary.get("require_deep_read_target")
+    require_text = "未达目标不进入 T3.5" if require else "达到最低线即可继续"
+    return [
+        f"保留候选：{summary.get('active_pool_max')} 篇（active_pool_max={summary.get('active_pool_max')}；可选：120/180/240 或自定义）",
+        f"深入阅读：目标 {deep_target} 篇（deep_read={deep_min}/{deep_target}/{deep_max}；格式：min/target/max）",
+        f"读满目标门槛：{require_text}（require_target={require}；可选：true/false）",
+        f"摘要轻读：{summary.get('abstract_sweep_target')} 篇（abstract_sweep={summary.get('abstract_sweep_target')}；可选：数字或 all_readable）",
+        f"稿件语言：{summary.get('manuscript_language')}（language={summary.get('manuscript_language')}；可选：auto/en/zh/mixed）",
+        f"中文文献：{summary.get('include_chinese_literature')}（include_zh={summary.get('include_chinese_literature')}；可选：auto/true/false）",
+    ]
 
 
 def build_literature_param_gate_preview(workspace_dir: Path | None = None) -> dict[str, Any]:
@@ -253,6 +290,9 @@ def build_literature_param_gate_preview(workspace_dir: Path | None = None) -> di
             "label": _LITERATURE_PARAM_PRESET_LABELS[option_id],
             "recommended": option_id == recommended_option,
             "summary": _literature_param_summary_from_payload(payload),
+            "explained_preview": _literature_param_explained_preview(
+                _literature_param_summary_from_payload(payload),
+            ),
             "will_do": _LITERATURE_PARAM_PRESET_NOTES[option_id],
         }
     recommended_summary = options[recommended_option]["summary"]
@@ -277,10 +317,10 @@ def build_literature_param_gate_preview(workspace_dir: Path | None = None) -> di
             "deep_read_target": "例如 60；表示 T3 正常应完成 60 篇结构化精读笔记；也可输入 deep_read=35/35/45 一次指定 min/target/max",
             "deep_read_min": "可选；例如 35。留空则沿用所选基础档位并不超过 target",
             "deep_read_max": "可选；例如 45。留空则按所选基础档位或 target 自动设置",
-            "abstract_sweep_target": "例如 all_readable 或 120；表示 T3 后 LLM 摘要轻读多少篇",
+            "abstract_sweep_target": "例如 120 或 all_readable；表示 T3 后 LLM 摘要轻读多少篇；all_readable 只覆盖保留候选，不全读 backlog",
             "require_deep_read_target": "true/false；true 表示未读满 deep_read_target 不放行到 T3.5",
             "manuscript_language": "en/zh/mixed/auto；英文稿默认不检索也不引用中文非 seed 论文",
-            "include_chinese_literature": "auto/false/true；false 表示不要中文论文，true 表示只允许权威中文来源",
+            "include_chinese_literature": "auto/false/true；false 表示不要中文论文，true 表示允许中文候选并标记权威性复核状态",
         },
     }
 
@@ -300,19 +340,14 @@ def enrich_literature_param_gate_options(options: list[dict[str, Any]], workspac
             if item["is_default"] and "（推荐" not in str(item.get("label", "")):
                 item["label"] = f"{item.get('label', option_id)}（当前推荐）"
             item["description"] = _LITERATURE_PARAM_PRESET_NOTES[option_id]
-            item["parameter_preview"] = (
-                f"active_pool_max={summary['active_pool_max']}；"
-                f"deep_read={summary['deep_read_min']}/{summary['deep_read_target']}/{summary['deep_read_max']}；"
-                f"require_target={summary['require_deep_read_target']}；"
-                f"abstract_sweep={summary['abstract_sweep_target']}；"
-                f"language={summary['manuscript_language']}；"
-                f"include_zh={summary['include_chinese_literature']}"
-            )
+            item["parameter_preview"] = _literature_param_explained_preview(summary)
         elif option_id == "custom":
             item["description"] = _LITERATURE_PARAM_PRESET_NOTES["custom"]
             item["parameter_preview"] = (
-                "逐项输入 active_pool_max、deep_read_min/deep_read_target/deep_read_max、abstract_sweep_target、require_deep_read_target；"
-                "也可指定 manuscript_language/include_chinese_literature；未填或填错时使用推荐档位默认。"
+                "自定义覆盖目标：保留候选（active_pool_max）、深入阅读"
+                "（deep_read_min/deep_read_target/deep_read_max，或 deep_read=35/35/45）、"
+                "摘要轻读（abstract_sweep_target）、读满目标门槛（require_deep_read_target）；"
+                "也可指定稿件语言（manuscript_language）和是否允许中文文献（include_chinese_literature）。"
             )
             collect_input = list(item.get("collect_input") or [])
             for field_name in [
@@ -433,15 +468,15 @@ def _write_t4_selected_idea_brief_stub(
 {chr(10).join(captured_lines)}
 
 ## Final selected idea
-- **Idea IDs**: 待 T4 Gate1 后半段根据用户选择确认；如用户输入了 `selection`、`merge_plan` 或 `new_idea`，以上 captured feedback 是当前来源。
-- **One-line hypothesis**: 待 T4 后半段写入 `ideation/hypotheses.md`。
-- **Technical mechanism**: 待 T4 后半段从候选机制、prediction 和 counterfactual 中收敛。
-- **Practical / managerial / business implication**: 待 T4 后半段补全现实、管理、商业或部署意义。
-- **Core paper dependencies**: 待 T4 后半段从 `idea_scorecard.yaml` / `idea_rationales.json` / paper notes 中确认；不要把 weak-only 线索当强证据。
-- **Score rationale**: 待 T4 后半段引用候选评分和用户选择理由。
+- **Idea IDs**: 待 T4 后半段根据用户选择确认；如用户输入了 `selection`、`merge_plan` 或 `new_idea`，以上 captured feedback 是当前来源。
+- **One-line hypothesis**: T4 后半段会把最终假设写到 `ideation/hypotheses.md`，这里应与 H1/H2/H3 对齐。
+- **Technical mechanism**: T4 后半段会从候选机制、prediction 和 counterfactual 中收敛出可证伪表述。
+- **Practical / managerial / business implication**: T4 后半段会补全现实、管理、商业或部署意义。
+- **Core paper dependencies**: T4 后半段会从 `idea_scorecard.yaml` / `idea_rationales.json` / paper notes 中确认，不把 weak-only 线索当强证据。
+- **Score rationale**: T4 后半段会引用候选评分和用户选择理由。
 
 ## Hypothesis scope
-- T4 后半段必须把最终范围写入 `ideation/hypotheses.md`，并在此文件补充 H1/H2/H3 对应关系。
+- T4 后半段必须把最终范围写入 `ideation/hypotheses.md`，并在该文件补充 H1/H2/H3 对应关系。
 
 ## Source files
 - Candidate cards: `{cards_path.relative_to(workspace_dir).as_posix() if cards_path.exists() else 'ideation/_gate1_candidate_cards.md'}`
@@ -572,11 +607,11 @@ def build_literature_param_payload(
                 "active_pool_max": "保留候选数：T2 从检索结果里保留多少篇进入后续阅读处置；不是精读篇数，也不是最终引用篇数。",
                 "deep_read_target": "精读目标：正常完成 T3 前应完成多少篇结构化深读笔记。",
                 "deep_read_min": "最低精读：预算或资源异常时的最低可接受线；正常运行由 require_deep_read_target 决定是否必须读满 target。",
-                "abstract_sweep.lite_paper_num": "摘要轻读数量：T3 后对未精读但有摘要的论文做 LLM 摘要级轻读；all_readable 表示尽量读完可读摘要。",
+                "abstract_sweep.lite_paper_num": "摘要轻读数量：T3 后对 active/retained 中未精读但有摘要的论文做 LLM 摘要级轻读；all_readable 表示保留候选内不设上限，backlog 只作数值预算不足时的可读补位。",
                 "metadata_replacement_policy": "metadata-only 只做批量 triage，并尽量用 backlog 中有摘要/PDF 的候选补足可读覆盖。",
                 "literature_quality.manuscript_language": "写作语言：auto/en/zh/mixed；英文稿默认不搜索、不主动引用中文非 seed 论文。",
-                "literature_quality.include_chinese_literature": "是否允许中文论文进入候选池：auto/false/true；中文候选仍需命中权威来源或是用户 seed。",
-                "literature_quality.chinese_literature_policy": "中文论文来源底线：默认 authoritative_or_seed，仅 WJCI/SCI/EI/北大核心/CSSCI/CSCD/AMI 等显式权威来源或用户 seed 可进入 active pool。",
+                "literature_quality.include_chinese_literature": "是否允许中文论文进入候选池：auto/false/true；允许时不再因缺少权威标签硬过滤，但会标记 authority_review_needed。",
+                "literature_quality.chinese_literature_policy": "中文论文来源策略：默认 review_flag_only，只做权威性复核标记；英文稿且明确排除中文时仍不纳入非 seed 中文文献。",
             },
         }
     )
@@ -637,7 +672,7 @@ def _apply_literature_quality_overrides(
             "chinese_literature_policy": str(
                 captured.get("chinese_literature_policy")
                 or literature_quality.get("chinese_literature_policy")
-                or "authoritative_or_seed"
+                or "review_flag_only"
             ),
             "allow_user_seed_override": _safe_bool(
                 captured.get("allow_user_seed_override"),
@@ -710,15 +745,7 @@ def _safe_bool(value: Any, *, default: bool) -> bool:
 
 
 def _literature_param_sentence(label: str, summary: dict[str, Any]) -> str:
-    return (
-        f"{label}: 保留候选 {summary.get('active_pool_max')} 篇；"
-        f"精读 {summary.get('deep_read_min')}/{summary.get('deep_read_target')}/{summary.get('deep_read_max')} "
-        f"(min/target/max)；"
-        f"必须读满目标={summary.get('require_deep_read_target')}；"
-        f"摘要轻读={summary.get('abstract_sweep_target')}；"
-        f"稿件语言={summary.get('manuscript_language')}; "
-        f"中文文献={summary.get('include_chinese_literature')}。"
-    )
+    return f"{label}: " + _literature_param_explained_preview(summary)
 
 
 def _coverage_gate_summary(workspace_dir: Path) -> dict[str, Any]:
@@ -1697,6 +1724,56 @@ class StateMachine:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             return
+        if node.task_id == "T2-PARAM-CONFIRM-GATE":
+            option_id = str(gate_result.get("option_id") or gate_result.get("key") or "confirm_start_t2")
+            captured = gate_result.get("captured") or {}
+            if not isinstance(captured, dict):
+                captured = {}
+            params_path = workspace_dir / "literature" / "literature_params.json"
+            params = self._read_json_dict(params_path) or {}
+            human_interaction_id = _interaction_id_for_gate_result(
+                task_id=node.task_id,
+                gate_id=self._gate_id_for_node(node),
+                selected_option=option_id,
+                captured=captured,
+            )
+            _record_runtime_gate_interaction(
+                workspace_dir,
+                interaction_id=human_interaction_id,
+                task_id=node.task_id,
+                gate_id=self._gate_id_for_node(node),
+                selected_option=option_id,
+                captured=captured,
+            )
+            confirmed = option_id in {"confirm_start_t2", "confirm", "start", "continue"}
+            payload = {
+                "semantics": "human_final_confirmed_t2_literature_parameters_before_scout",
+                "task_id": node.task_id,
+                "gate_id": self._gate_id_for_node(node),
+                "selected_option": option_id,
+                "confirmed_to_start_t2": confirmed,
+                "captured": captured,
+                "next_task": next_task,
+                "human_interaction_id": human_interaction_id,
+                "selected_parameters_summary": params.get("selected_summary") or {},
+                "confirmation_summary": params.get("confirmation_summary") or "",
+                "parameter_source": "literature/literature_params.json",
+                "input_fingerprints": build_input_fingerprints(
+                    workspace_dir,
+                    _T2_LITERATURE_PARAM_CONFIRM_GATE_INPUT_PATHS,
+                ),
+                "decided_at": _now_iso(),
+            }
+            if option_id == "revise_params":
+                payload["decision_summary"] = "Return to T2-PARAM-GATE before starting T2."
+            elif option_id == "stop_project":
+                payload["decision_summary"] = "Stop the project before starting T2."
+            else:
+                payload["decision_summary"] = "Start T2 with the confirmed workspace-local literature parameters."
+            path = workspace_dir / "literature" / "literature_params_confirmation.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            return
         if node.task_id == "T2-COVERAGE-GATE":
             option_id = str(gate_result.get("option_id") or gate_result.get("key") or "continue_to_t3")
             captured = gate_result.get("captured") or {}
@@ -1776,6 +1853,29 @@ class StateMachine:
                 "decided_at": _now_iso(),
             }
             path = workspace_dir / "drafts" / "survey" / "corpus_decision.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            return
+        if node.task_id == "T3.6-POST-SURVEY-GATE":
+            option_id = str(gate_result.get("option_id") or gate_result.get("key") or "continue_to_t4")
+            continue_to_t4 = option_id in {"continue_to_t4", "continue", "t4", "idea", "生成idea"}
+            payload = {
+                "semantics": "human_confirmed_post_survey_next_step",
+                "task_id": node.task_id,
+                "gate_id": self._gate_id_for_node(node),
+                "selected_option": option_id,
+                "continue_to_t4": continue_to_t4,
+                "captured": gate_result.get("captured") or {},
+                "next_task": next_task,
+                "input_fingerprints": build_input_fingerprints(workspace_dir, _T36_POST_SURVEY_GATE_INPUT_PATHS),
+                "decided_at": _now_iso(),
+            }
+            payload["decision_summary"] = (
+                "Continue to T4 ideation using survey_insights as idea fuel."
+                if continue_to_t4
+                else "Finish the project after T3.6 survey outputs."
+            )
+            path = workspace_dir / "drafts" / "survey" / "post_survey_decision.json"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             return
@@ -1950,6 +2050,10 @@ class StateMachine:
             return self._parse_t36_survey_decision(workspace_dir)
         if current_task == "T3.6-GATE-CORPUS":
             return self._parse_t36_corpus_decision(workspace_dir)
+        if current_task == "T3.6-POST-SURVEY-GATE":
+            return self._parse_t36_post_survey_decision(workspace_dir)
+        if current_task == "T2-PARAM-CONFIRM-GATE":
+            return self._parse_t2_param_confirmation(workspace_dir)
 
         raise ValueError(f"Unsupported __parse_from_output__ task: {current_task}")
 
@@ -2052,6 +2156,55 @@ class StateMachine:
         if scope in {"complete", "full", "expand", "完整", "补检", "定向补检"}:
             return "T3.6-EXPAND" if "T3.6-EXPAND" in self.nodes else "T3.6-STATE"
         return "T3.6-STATE" if "T3.6-STATE" in self.nodes else "T4"
+
+    def _parse_t36_post_survey_decision(self, workspace_dir: Path) -> str:
+        """Route after survey completion according to the explicit user decision."""
+
+        path = workspace_dir / "drafts" / "survey" / "post_survey_decision.json"
+        data = self._read_json_dict(path)
+        if data is None:
+            return "T3.6-POST-SURVEY-GATE" if "T3.6-POST-SURVEY-GATE" in self.nodes else "T4"
+        fingerprints = data.get("input_fingerprints")
+        if fingerprints is not None:
+            ok, _ = validate_input_fingerprints(
+                workspace_dir,
+                fingerprints,
+                _T36_POST_SURVEY_GATE_INPUT_PATHS,
+                label_for_error="T3.6 post-survey gate decision",
+            )
+            if not ok:
+                return "T3.6-POST-SURVEY-GATE" if "T3.6-POST-SURVEY-GATE" in self.nodes else "T4"
+        selected = str(data.get("selected_option") or "").strip().lower()
+        continue_to_t4 = data.get("continue_to_t4")
+        if isinstance(continue_to_t4, str):
+            continue_to_t4 = continue_to_t4.strip().lower() in {"true", "1", "yes", "continue", "t4"}
+        if continue_to_t4 or selected in {"continue_to_t4", "continue", "t4"}:
+            return "T4" if "T4" in self.nodes else "done"
+        return "done" if "done" in self.nodes else "T4"
+
+    def _parse_t2_param_confirmation(self, workspace_dir: Path) -> str:
+        """Route T2 parameter confirmation from its explicit decision file."""
+
+        path = workspace_dir / "literature" / "literature_params_confirmation.json"
+        data = self._read_json_dict(path)
+        if data is None:
+            return "T2-PARAM-CONFIRM-GATE" if "T2-PARAM-CONFIRM-GATE" in self.nodes else "T2"
+        fingerprints = data.get("input_fingerprints")
+        if fingerprints is not None:
+            ok, _ = validate_input_fingerprints(
+                workspace_dir,
+                fingerprints,
+                _T2_LITERATURE_PARAM_CONFIRM_GATE_INPUT_PATHS,
+                label_for_error="T2 parameter confirmation",
+            )
+            if not ok:
+                return "T2-PARAM-CONFIRM-GATE" if "T2-PARAM-CONFIRM-GATE" in self.nodes else "T2"
+        selected = str(data.get("selected_option") or "").strip().lower()
+        if data.get("confirmed_to_start_t2") is True or selected in {"confirm_start_t2", "confirm", "start"}:
+            return "T2"
+        if selected in {"revise_params", "revise", "back"}:
+            return "T2-PARAM-GATE" if "T2-PARAM-GATE" in self.nodes else "T2"
+        return "done" if "done" in self.nodes else "failed"
 
     @staticmethod
     def _read_json_dict(path: Path) -> dict[str, Any] | None:

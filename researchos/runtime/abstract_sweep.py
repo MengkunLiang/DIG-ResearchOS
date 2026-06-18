@@ -25,6 +25,7 @@ from ..literature_identity import (
 )
 from ..tools.paper_utils import deduplicate_papers
 from ..tools.bibtex import dedupe_bibtex_entries, escape_bibtex_value, extract_bib_keys_from_text, stable_bib_key
+from .progress import format_cli_message
 
 
 # ---------------------------------------------------------------------------
@@ -80,9 +81,14 @@ def build_sweep_candidates(
     else:
         lite_num = int(lite_raw)
         if lite_num <= 0:
-            lite_num = None
+            return []
     min_rel = float(cfg.get("min_relevance", 0.4))
-    sources = cfg.get("sources", ["papers_verified", "papers_dedup"])
+    sources = _normalize_sources(cfg.get("sources", ["papers_verified", "papers_dedup"]))
+    primary_sources = [source for source in sources if not _is_backlog_source(source)]
+    backlog_sources = [source for source in sources if _is_backlog_source(source)]
+    if not primary_sources:
+        primary_sources = sources
+        backlog_sources = []
     exclude_read = cfg.get("exclude_already_read", True)
     include_metadata_only = bool(cfg.get("include_metadata_only", True))
     exclude_semantic_excluded = bool(cfg.get("exclude_semantic_excluded", False))
@@ -102,61 +108,174 @@ def build_sweep_candidates(
                     completed_keys.update(paper_note_match_keys(note_path))
 
     # 已有 abstract note 的 paper ID（避免重复 sweep）
+    existing_abstract_note_count = 0
     abstract_dir = workspace / "literature" / "paper_notes_abstract"
     if abstract_dir.exists():
         for note_path in abstract_dir.glob("*.md"):
             if is_paper_note_file(note_path):
+                existing_abstract_note_count += 1
                 completed_keys.update(paper_note_match_keys(note_path))
 
-    # 加载候选池
-    raw_pool: list[dict] = []
+    remaining_lite_slots = lite_num
+    if lite_num is not None:
+        remaining_lite_slots = max(0, lite_num - existing_abstract_note_count)
+        if remaining_lite_slots <= 0:
+            return []
+
+    seen_keys: set[str] = set()
+    primary_candidates = _filter_sweep_pool(
+        workspace,
+        primary_sources,
+        cfg,
+        completed_keys=completed_keys,
+        queue_disposition=queue_disposition,
+        seen_keys=seen_keys,
+        exclude_read=exclude_read,
+        include_metadata_only=include_metadata_only,
+        exclude_semantic_excluded=exclude_semantic_excluded,
+        min_rel=min_rel,
+        allow_cap_exceeded_backlog=False,
+        require_abstract=False,
+    )
+    _sort_sweep_candidates(primary_candidates)
+
+    # `all_readable` means all eligible records in the retained active pool. Backlog
+    # is only a bounded refill source for numeric targets, never an unbounded sweep.
+    if remaining_lite_slots is None:
+        return primary_candidates
+    if len(primary_candidates) >= remaining_lite_slots:
+        return primary_candidates[:remaining_lite_slots]
+
+    selected = list(primary_candidates)
+    refill_slots = remaining_lite_slots - len(selected)
+    if refill_slots > 0 and backlog_sources and _allow_readable_backlog_refill(cfg):
+        backlog_candidates = _filter_sweep_pool(
+            workspace,
+            backlog_sources,
+            cfg,
+            completed_keys=completed_keys,
+            queue_disposition=queue_disposition,
+            seen_keys=seen_keys,
+            exclude_read=exclude_read,
+            include_metadata_only=False,
+            exclude_semantic_excluded=exclude_semantic_excluded,
+            min_rel=min_rel,
+            allow_cap_exceeded_backlog=True,
+            require_abstract=True,
+        )
+        _sort_sweep_candidates(backlog_candidates)
+        selected.extend(backlog_candidates[:refill_slots])
+
+    return selected[:remaining_lite_slots]
+
+
+def _normalize_sources(raw: Any) -> list[str]:
+    if isinstance(raw, str):
+        items: list[Any] = [raw]
+    elif isinstance(raw, list):
+        items = raw
+    else:
+        items = ["papers_verified", "papers_dedup"]
+    sources: list[str] = []
+    for item in items:
+        source = str(item or "").strip()
+        if source and source not in sources:
+            sources.append(source)
+    return sources or ["papers_verified", "papers_dedup"]
+
+
+def _is_backlog_source(source_name: str) -> bool:
+    return source_name.strip() == "papers_backlog"
+
+
+def _filter_sweep_pool(
+    workspace: Path,
+    sources: list[str],
+    config: dict[str, Any],
+    *,
+    completed_keys: set[str],
+    queue_disposition: dict[str, dict[str, Any]],
+    seen_keys: set[str],
+    exclude_read: bool,
+    include_metadata_only: bool,
+    exclude_semantic_excluded: bool,
+    min_rel: float,
+    allow_cap_exceeded_backlog: bool,
+    require_abstract: bool,
+) -> list[dict[str, Any]]:
+    raw_pool: list[dict[str, Any]] = []
     for source_name in sources:
         path = workspace / "literature" / f"{source_name}.jsonl"
         if not path.exists():
             continue
         raw_pool.extend(load_jsonl(path))
-    pool: list[dict] = []
-    seen_keys: set[str] = set()
+
+    candidates: list[dict[str, Any]] = []
     for record in deduplicate_papers(raw_pool, doi_dedup=True, title_threshold=0.95):
         keys = _sweep_identity_keys(record)
         if not keys:
             continue
         if seen_keys & keys:
             continue
-        seen_keys.update(keys)
-        pool.append(record)
-
-    # 筛选
-    candidates: list[dict] = []
-    for record in pool:
-        rid = _normalize_id(record)
         if exclude_read and record_is_covered(record, completed_keys):
+            seen_keys.update(keys)
             continue
         disposition = _lookup_queue_disposition(record, queue_disposition)
-        if _is_deferred_by_queue_disposition(disposition, allow_cap_exceeded_backlog=_allow_readable_backlog_refill(cfg)):
+        if _is_deferred_by_queue_disposition(
+            disposition,
+            allow_cap_exceeded_backlog=allow_cap_exceeded_backlog,
+        ):
+            seen_keys.update(keys)
+            continue
+        if _is_pending_deep_read_disposition(disposition):
+            seen_keys.update(keys)
             continue
         if _is_deferred_by_queue_disposition(
             _record_disposition(record),
-            allow_cap_exceeded_backlog=_allow_readable_backlog_refill(cfg),
+            allow_cap_exceeded_backlog=allow_cap_exceeded_backlog,
         ):
+            seen_keys.update(keys)
             continue
         if _is_duplicate_record(record):
+            seen_keys.update(keys)
             continue
         if exclude_semantic_excluded and _is_semantic_excluded(record):
+            seen_keys.update(keys)
             continue
         if not str(record.get("title") or "").strip():
+            seen_keys.update(keys)
+            continue
+        has_abstract = bool(str(record.get("abstract") or "").strip())
+        if require_abstract and not has_abstract:
+            seen_keys.update(keys)
             continue
         relevance = _coerce_float(record.get("relevance_score"), 0.0)
         if relevance < min_rel:
+            seen_keys.update(keys)
             continue
-        if not include_metadata_only and not record.get("abstract", "").strip():
+        if not include_metadata_only and not has_abstract:
+            seen_keys.update(keys)
             continue
         enriched = dict(record)
-        score, components = _sweep_priority(record, cfg)
+        score, components = _sweep_priority(record, config)
         enriched["abstract_sweep_score"] = round(score, 4)
         enriched["abstract_sweep_score_components"] = components
         candidates.append(enriched)
+        seen_keys.update(keys)
+    return candidates
 
+
+def _is_pending_deep_read_disposition(disposition: dict[str, Any]) -> bool:
+    if not disposition:
+        return False
+    if str(disposition.get("read_disposition") or "").strip() != "deep_read":
+        return False
+    if disposition.get("triaged_out") is True:
+        return False
+    return True
+
+
+def _sort_sweep_candidates(candidates: list[dict[str, Any]]) -> None:
     candidates.sort(
         key=lambda r: (
             -float(r.get("abstract_sweep_score") or 0.0),
@@ -166,7 +285,44 @@ def build_sweep_candidates(
             str(r.get("title") or ""),
         )
     )
-    return candidates if lite_num is None else candidates[:lite_num]
+
+
+def _abstract_sweep_plan_summary(workspace: Path, config: dict[str, Any], candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    target = config.get("lite_paper_num")
+    existing_notes = _existing_abstract_note_count(workspace)
+    if target in (None, "", "all", "ALL", "all_readable", "ALL_READABLE", "unlimited", "UNLIMITED"):
+        target_total: int | str | None = "all_readable"
+        remaining_target: int | None = None
+    else:
+        try:
+            target_total = max(0, int(target))
+        except (TypeError, ValueError):
+            target_total = target
+        remaining_target = max(0, int(target_total) - existing_notes) if isinstance(target_total, int) else None
+    queue_disposition = _load_queue_disposition(workspace)
+    queue_counts: dict[str, int] = {}
+    source_roles: dict[str, int] = {}
+    for candidate in candidates:
+        disposition = _lookup_queue_disposition(candidate, queue_disposition)
+        read_disposition = str(disposition.get("read_disposition") or candidate.get("read_disposition") or "unknown")
+        queue_counts[read_disposition] = queue_counts.get(read_disposition, 0) + 1
+        role = str(candidate.get("t2_pool_role") or "unknown")
+        source_roles[role] = source_roles.get(role, 0) + 1
+    return {
+        "target_total": target_total,
+        "existing_abstract_notes": existing_notes,
+        "remaining_target": remaining_target,
+        "selected_for_this_run": len(candidates),
+        "candidate_queue_dispositions": queue_counts,
+        "candidate_source_roles": source_roles,
+    }
+
+
+def _existing_abstract_note_count(workspace: Path) -> int:
+    abstract_dir = workspace / "literature" / "paper_notes_abstract"
+    if not abstract_dir.exists():
+        return 0
+    return sum(1 for note_path in abstract_dir.glob("*.md") if is_paper_note_file(note_path))
 
 
 def _load_queue_disposition(workspace: Path) -> dict[str, dict[str, Any]]:
@@ -923,7 +1079,9 @@ def _run_abstract_sweep_sync(
 
     candidates = build_sweep_candidates(workspace, cfg)
     if not candidates:
-        return {"enabled": True, "candidates_found": 0, "notes_generated": 0}
+        plan_summary = _abstract_sweep_plan_summary(workspace, cfg, [])
+        return {"enabled": True, "candidates_found": 0, "notes_generated": 0, "sweep_plan": plan_summary}
+    plan_summary = _abstract_sweep_plan_summary(workspace, cfg, candidates)
 
     # 确保输出目录存在
     abstract_dir = workspace / "literature" / "paper_notes_abstract"
@@ -992,6 +1150,7 @@ def _run_abstract_sweep_sync(
         "enabled": True,
         "reader_mode": "deterministic_fallback",
         "candidates_found": len(candidates),
+        "sweep_plan": plan_summary,
         "notes_generated": notes_generated,
         "llm_notes_generated": 0,
         "fallback_notes_generated": notes_generated,
@@ -1015,7 +1174,9 @@ async def _run_abstract_sweep_async(
 
     candidates = build_sweep_candidates(workspace, cfg)
     if not candidates:
-        return {"enabled": True, "candidates_found": 0, "notes_generated": 0}
+        plan_summary = _abstract_sweep_plan_summary(workspace, cfg, [])
+        return {"enabled": True, "candidates_found": 0, "notes_generated": 0, "sweep_plan": plan_summary}
+    plan_summary = _abstract_sweep_plan_summary(workspace, cfg, candidates)
 
     abstract_dir = workspace / "literature" / "paper_notes_abstract"
     abstract_dir.mkdir(parents=True, exist_ok=True)
@@ -1038,6 +1199,20 @@ async def _run_abstract_sweep_async(
         progress_every = max(1, int(progress_cfg.get("print_every") or 10))
     except (TypeError, ValueError):
         progress_every = 10
+    if progress_enabled:
+        target_text = plan_summary.get("target_total")
+        if isinstance(target_text, int):
+            target_text = f"累计目标 {target_text}，已有 {plan_summary.get('existing_abstract_notes', 0)}，本轮剩余 {len(candidates)}"
+        else:
+            target_text = f"目标 {target_text}，本轮 retained/shallow 候选 {len(candidates)}"
+        print(
+            format_cli_message(
+                "[Agent] Abstract sweep plan: "
+                f"{target_text}; queue={plan_summary.get('candidate_queue_dispositions')}; "
+                f"sources={plan_summary.get('candidate_source_roles')}"
+            ),
+            flush=True,
+        )
 
     for candidate_index, paper in enumerate(candidates, start=1):
         paper_id = _normalize_id(paper)
@@ -1132,6 +1307,7 @@ async def _run_abstract_sweep_async(
             metadata_triage_llm=metadata_triage_llm,
         ),
         "candidates_found": len(candidates),
+        "sweep_plan": plan_summary,
         "notes_generated": notes_generated,
         "llm_notes_generated": llm_notes_generated,
         "fallback_notes_generated": fallback_notes_generated,

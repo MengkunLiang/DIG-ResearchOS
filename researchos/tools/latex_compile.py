@@ -336,18 +336,51 @@ def _sha256_file(path: Path) -> str:
 
 
 _COMPILE_GENERATED_SUFFIXES = {
+    ".dvi",
     ".aux",
     ".bbl",
     ".bcf",
     ".blg",
     ".fls",
     ".fdb_latexmk",
+    ".ilg",
+    ".ind",
+    ".lof",
     ".log",
+    ".lot",
+    ".nav",
     ".out",
-    ".pdf",
     ".run.xml",
+    ".snm",
     ".synctex.gz",
     ".toc",
+    ".vrb",
+    ".xdv",
+}
+
+_COMPILE_SOURCE_SUFFIXES = {
+    ".bbx",
+    ".bib",
+    ".bst",
+    ".cbx",
+    ".cfg",
+    ".cls",
+    ".clo",
+    ".csv",
+    ".dat",
+    ".def",
+    ".eps",
+    ".fd",
+    ".jpeg",
+    ".jpg",
+    ".ldf",
+    ".pdf",
+    ".png",
+    ".sty",
+    ".svg",
+    ".tex",
+    ".tikz",
+    ".txt",
 }
 
 
@@ -368,7 +401,9 @@ def _compile_dependency_fingerprint(workspace: Path, tex_abs: Path) -> dict[str,
         for path in sorted(item for item in base_dir.rglob("*") if item.is_file()):
             if report_abs is not None and path.resolve() == report_abs:
                 continue
-            if _is_generated_compile_artifact(path):
+            if _is_generated_compile_artifact(path, tex_abs):
+                continue
+            if not _is_latex_source_dependency(path):
                 continue
             try:
                 rel = path.relative_to(workspace).as_posix()
@@ -395,12 +430,18 @@ def _compile_dependency_fingerprint(workspace: Path, tex_abs: Path) -> dict[str,
     }
 
 
-def _is_generated_compile_artifact(path: Path) -> bool:
+def _is_generated_compile_artifact(path: Path, tex_abs: Path | None = None) -> bool:
     name = path.name
     suffix = path.suffix.lower()
+    if tex_abs is not None and suffix == ".pdf" and path.parent == tex_abs.parent and path.stem == tex_abs.stem:
+        return True
     if suffix in _COMPILE_GENERATED_SUFFIXES:
         return True
     return any(name.lower().endswith(item) for item in _COMPILE_GENERATED_SUFFIXES if item.startswith("."))
+
+
+def _is_latex_source_dependency(path: Path) -> bool:
+    return path.suffix.lower() in _COMPILE_SOURCE_SUFFIXES
 
 
 def _rel_to_workspace(workspace: Path, path: Path) -> str:

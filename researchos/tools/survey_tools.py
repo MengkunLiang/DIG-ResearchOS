@@ -23,6 +23,7 @@ from .bibtex import (
     extract_bib_keys_from_text,
     strip_internal_bibtex_notes,
 )
+from .citation_alignment import citation_alignment_issues, citation_support_text_by_key
 from .manuscript import _extract_latex_cites, has_formal_citation
 from .workspace_policy import ToolAccessDenied, WorkspaceAccessPolicy
 
@@ -322,6 +323,11 @@ SURVEY_SECTION_MIN_CITATIONS = {
     "challenges": 2,
     "future": 2,
 }
+
+_SURVEY_CITATION_DIVERSITY_RATIO = 0.35
+_SURVEY_CITATION_DIVERSITY_CAP = 32
+_SURVEY_CITATION_CONCENTRATION_LIMIT = 0.16
+_SURVEY_CITATION_REPEAT_LIMIT = 10
 
 _SURVEY_RUNTIME_PROCESS_RE = re.compile(
     r"(?i)"
@@ -814,7 +820,8 @@ class AuditSurveyCoverageTool(Tool):
         except (ToolAccessDenied, FileNotFoundError, ValueError) as exc:
             return ToolResult(ok=False, content=str(exc), error="invalid_input")
 
-        bib_keys = _bib_keys_optional(self.policy, params.related_work_bib_path)
+        bibtex = _bibtex_optional(self.policy, params.related_work_bib_path)
+        bib_keys = set(extract_bib_keys_from_text(bibtex))
         cited = _cited_keys(tex)
         writing_language = _survey_state_writing_language(state, self.policy.workspace_dir)
         section_texts = _survey_section_texts(tex, state)
@@ -894,12 +901,36 @@ class AuditSurveyCoverageTool(Tool):
                 f"Only {len(cited)} unique citation keys found; minimum={min_unique_citations}.",
             )
         )
+        citation_diversity_issues = _survey_citation_diversity_issues(tex, cited, bib_keys, state)
+        checks.append(
+            _check(
+                "citation_diversity",
+                not citation_diversity_issues,
+                "Citation diversity issues: " + "; ".join(citation_diversity_issues[:8]),
+            )
+        )
         citation_issues = _survey_section_citation_issues(section_texts, state)
         checks.append(
             _check(
                 "section_level_citation_density",
                 not citation_issues,
                 "Citation density issues: " + "; ".join(citation_issues[:8]),
+            )
+        )
+        citation_alignment = citation_alignment_issues(
+            tex=tex,
+            bibtex=bibtex,
+            support_text_by_key=citation_support_text_by_key(self.policy.workspace_dir, keys=cited),
+        )
+        checks.append(
+            _check(
+                "citation_claim_alignment",
+                not citation_alignment,
+                (
+                    "Citation/claim alignment issues: " + "; ".join(citation_alignment[:8])
+                    if citation_alignment
+                    else "Citation contexts are topically aligned with cited BibTeX titles, paper-note support text, or explicit evidence boundaries."
+                ),
             )
         )
         process_issues = _survey_runtime_process_issues(section_texts)
@@ -910,12 +941,7 @@ class AuditSurveyCoverageTool(Tool):
                 "Runtime process prose found: " + "; ".join(process_issues[:8]),
             )
         )
-        bib_quality_issues = _blocking_bibtex_quality_issues(
-            self.policy.resolve_read(params.related_work_bib_path).read_text(encoding="utf-8", errors="replace")
-            if bib_keys
-            else "",
-            cited,
-        )
+        bib_quality_issues = _blocking_bibtex_quality_issues(bibtex if bib_keys else "", cited)
         checks.append(
             _check(
                 "bibliography_quality",
@@ -966,6 +992,10 @@ class AuditSurveyCoverageTool(Tool):
                     "survey_state": params.state_path,
                     "survey_tex": params.survey_tex_path,
                     "related_work_bib": params.related_work_bib_path,
+                    "citation_map": "literature/citation_map.json",
+                    "paper_notes_dir": "literature/paper_notes",
+                    "abstract_notes_dir": "literature/paper_notes_abstract",
+                    "bridge_notes_dir": "literature/paper_notes_bridge",
                     "survey_assembly_manifest": "drafts/survey/survey_assembly_manifest.json",
                 },
             ),
@@ -974,6 +1004,7 @@ class AuditSurveyCoverageTool(Tool):
             "stats": {
                 "active_sections": active_sections,
                 "unique_citations": sorted(cited),
+                "citation_use_count": len(_latex_cite_key_occurrences(tex)),
                 "bib_key_count": len(bib_keys),
                 "latex_chars": len(tex),
                 "writing_language": writing_language,
@@ -2552,6 +2583,16 @@ def _bib_keys_optional(policy: WorkspaceAccessPolicy, rel_path: str) -> set[str]
     return set(extract_bib_keys_from_text(text))
 
 
+def _bibtex_optional(policy: WorkspaceAccessPolicy, rel_path: str) -> str:
+    try:
+        path = policy.resolve_read(rel_path)
+        if not path.exists():
+            return ""
+        return path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
 def _cited_keys(text: str) -> set[str]:
     return _extract_latex_cites(text)
 
@@ -2565,6 +2606,54 @@ def _survey_min_unique_citations(state: dict[str, Any]) -> int:
     if not active:
         return 0
     return max(6, min(14, sum(SURVEY_SECTION_MIN_CITATIONS.get(sid, 0) for sid in active) // 2))
+
+
+def _survey_min_diverse_citations(bib_keys: set[str], state: dict[str, Any]) -> int:
+    section_floor = _survey_min_unique_citations(state)
+    if not bib_keys:
+        return section_floor
+    scaled = int(round(len(bib_keys) * _SURVEY_CITATION_DIVERSITY_RATIO))
+    return max(section_floor, min(_SURVEY_CITATION_DIVERSITY_CAP, scaled))
+
+
+def _latex_cite_key_occurrences(text: str) -> list[str]:
+    keys: list[str] = []
+    for match in re.finditer(
+        r"\\(?:cite|citep|citet|citealp|citealt|citeauthor|citeyear|parencite|textcite|autocite|footcite|supercite)\*?"
+        r"(?:\[[^\]]*\]){0,2}\{([^}]+)\}",
+        text or "",
+        flags=re.IGNORECASE,
+    ):
+        keys.extend(key.strip() for key in match.group(1).split(",") if key.strip())
+    return keys
+
+
+def _survey_citation_diversity_issues(
+    tex: str,
+    cited: set[str],
+    bib_keys: set[str],
+    state: dict[str, Any],
+) -> list[str]:
+    issues: list[str] = []
+    minimum = _survey_min_diverse_citations(bib_keys, state)
+    if minimum and len(cited) < minimum:
+        issues.append(f"survey uses {len(cited)} unique citation keys; diversity minimum={minimum} for {len(bib_keys)} available bib entries")
+    uses = _latex_cite_key_occurrences(tex)
+    if not uses:
+        return issues
+    counts = {key: uses.count(key) for key in set(uses)}
+    total = len(uses)
+    concentrated = [
+        (key, count)
+        for key, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+        if count > _SURVEY_CITATION_REPEAT_LIMIT or (total >= 20 and count / total > _SURVEY_CITATION_CONCENTRATION_LIMIT)
+    ]
+    if concentrated:
+        issues.append(
+            "over-repeated citation keys: "
+            + ", ".join(f"{key}={count}/{total}" for key, count in concentrated[:6])
+        )
+    return issues
 
 
 def _survey_section_citation_issues(section_texts: dict[str, str], state: dict[str, Any]) -> list[str]:

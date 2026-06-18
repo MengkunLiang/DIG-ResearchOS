@@ -187,8 +187,9 @@ agents:
         include_chinese_literature: auto
         # 英文稿的中文候选处理策略：非用户 seed 的中文论文不进入 active pool。
         english_manuscript_policy: exclude_non_seed_chinese
-        # 中文候选进入 active pool 的最低来源要求：权威来源标记或用户 seed。
-        chinese_literature_policy: authoritative_or_seed
+        # 中文候选不再因为缺少权威标签被硬过滤；只打 authority_review_needed，
+        # 后续写作/引用阶段再结合真实期刊目录或人工判断。
+        chinese_literature_policy: review_flag_only
         # 用户上传的 seed 可保留和阅读，但若不符合英文稿/权威来源要求，
         # 会被标记 citation_allowed=false 或 needs_authority_review，供写作阶段避用/复核。
         allow_user_seed_override: true

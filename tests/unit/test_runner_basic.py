@@ -19,6 +19,7 @@ from researchos.runtime.agent import (
     ExecutionContext,
     resolve_effective_config,
 )
+from researchos.runtime.config import RuntimeSettings, UISettings
 from researchos.runtime.errors import LLMProviderError
 from researchos.runtime.message import Message, ToolCall
 from researchos.runtime.orchestrator import AgentRunner
@@ -231,6 +232,7 @@ def _write_minimal_passing_craft_audit(workspace):
         {"name": "intro_contribution_count", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "abstract_no_cite", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "abstract_no_section_heading", "level": "PASS", "passed": True, "detail": "ok"},
+        {"name": "citation_claim_alignment", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "no_internal_label_leakage", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "no_placeholder_tokens", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "number_traceability", "level": "PASS", "passed": True, "detail": "ok"},
@@ -866,6 +868,28 @@ class T35PrefinalizeAgent(Agent):
         from researchos.agents.reader import ReaderAgent
 
         return ReaderAgent(mode="synthesize").validate_outputs(ctx)
+
+
+class T36CompilePrefinalizeAgent(Agent):
+    def __init__(self):
+        super().__init__(
+            AgentSpec(
+                name="survey_writer",
+                model_tier="medium",
+                tool_names=["finish_task"],
+                allowed_read_prefixes=["", "drafts/"],
+                allowed_write_prefixes=["drafts/"],
+            )
+        )
+
+    def system_prompt(self, ctx):
+        return "compile survey"
+
+    def initial_user_message(self, ctx):
+        return "compile"
+
+    def validate_outputs(self, ctx):
+        return True, None
 
 
 class SyncPreHookAgent(Agent):
@@ -2762,6 +2786,43 @@ async def test_t3_resume_prefinalize_skips_llm_when_artifacts_validate(tmp_works
 
 
 @pytest.mark.asyncio
+async def test_t36_compile_resume_prefinalize_skips_llm_when_artifacts_validate(tmp_workspace, registry):
+    survey_dir = tmp_workspace / "drafts" / "survey"
+    survey_dir.mkdir(parents=True)
+    for name, content in {
+        "survey.pdf": b"%PDF-1.4\nmock pdf\n",
+        "survey.log": b"clean log\n",
+        "survey_compile_report.json": b'{"ok": true}\n',
+    }.items():
+        path = survey_dir / name
+        if isinstance(content, bytes):
+            path.write_bytes(content)
+        else:
+            path.write_text(content, encoding="utf-8")
+    llm = MockLLMClient(responses=[])
+    ctx = ExecutionContext(
+        workspace_dir=tmp_workspace,
+        project_id="p1",
+        task_id="T3.6-COMPILE",
+        run_id="r_t36_compile_resume_prefinalize",
+        mode="survey_compile",
+        extra={"is_resume": True, "resume_reason": "interrupted"},
+        outputs_expected={
+            "survey_pdf": survey_dir / "survey.pdf",
+            "survey_log": survey_dir / "survey.log",
+            "survey_compile_report": survey_dir / "survey_compile_report.json",
+        },
+    )
+    runner = AgentRunner(T36CompilePrefinalizeAgent(), registry, llm, MockHumanInterface())
+
+    result = await runner.run(ctx)
+
+    assert result.ok
+    assert result.metadata["completion_mode"] == "t36_compile_resume_prefinalize"
+    assert llm.call_count == 0
+
+
+@pytest.mark.asyncio
 async def test_t3_resume_prefinalize_refuses_stale_notes_manifest_when_queue_changes(tmp_workspace, registry):
     write_valid_t3_artifacts(tmp_workspace)
     queue_path = tmp_workspace / "literature" / "deep_read_queue.jsonl"
@@ -3131,7 +3192,13 @@ def test_task_start_summary_includes_task_goal(tmp_workspace, registry, capsys):
         outputs_expected={"pdf": tmp_workspace / "submission" / "bundle" / "main.pdf"},
         mode=None,
     )
-    runner = AgentRunner(MinimalAgent(), registry, MockLLMClient(responses=[]), MockHumanInterface())
+    runner = AgentRunner(
+        MinimalAgent(),
+        registry,
+        MockLLMClient(responses=[]),
+        MockHumanInterface(),
+        runtime_settings=RuntimeSettings(ui=UISettings(verbose=True)),
+    )
     eff = resolve_effective_config(runner.agent.spec, ctx)
 
     runner._print_task_start_summary(ctx, eff)
@@ -3141,3 +3208,104 @@ def test_task_start_summary_includes_task_goal(tmp_workspace, registry, capsys):
     assert "任务: T9" in out
     assert "目标: 构建投稿包" in out
     assert "submission/bundle/main.pdf" in out
+
+
+@pytest.mark.asyncio
+async def test_default_cli_progress_explains_tool_call_and_result(tmp_workspace, registry, capsys):
+    llm = MockLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="echo", arguments={"text": "hi"}, id="tc1")]
+                )
+            ),
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="finish_task", arguments={"summary": "done"}, id="tc2")]
+                )
+            ),
+        ]
+    )
+    ctx = ExecutionContext(workspace_dir=tmp_workspace, project_id="p1", task_id="T0", run_id="r_progress")
+    runner = AgentRunner(MinimalAgent(), registry, llm, MockHumanInterface())
+
+    result = await runner.run(ctx)
+
+    assert result.ok
+    out = capsys.readouterr().out
+    assert "[test] T0 启动" in out
+    assert "[Tool] echo:" in out
+    assert "[Tool] echo 完成:" in out
+    assert "[Validation] T0: 通过" in out
+    assert "[test] T0 阶段完成" in out
+    assert '{"text": "hi"}' not in out
+
+
+@pytest.mark.asyncio
+async def test_verbose_cli_progress_keeps_detailed_tool_narrative(tmp_workspace, registry, capsys):
+    llm = MockLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="echo", arguments={"text": "hi"}, id="tc1")]
+                )
+            ),
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="finish_task", arguments={"summary": "done"}, id="tc2")]
+                )
+            ),
+        ]
+    )
+    ctx = ExecutionContext(workspace_dir=tmp_workspace, project_id="p1", task_id="T0", run_id="r_verbose_progress")
+    runner = AgentRunner(
+        MinimalAgent(),
+        registry,
+        llm,
+        MockHumanInterface(),
+        runtime_settings=RuntimeSettings(ui=UISettings(verbose=True)),
+    )
+
+    result = await runner.run(ctx)
+
+    assert result.ok
+    out = capsys.readouterr().out
+    assert "[test] 阶段启动" in out
+    assert "[Tool Decision] test Agent 准备调用 echo" in out
+    assert "目的：" in out
+    assert "输入摘要：" in out
+
+
+@pytest.mark.asyncio
+async def test_quiet_cli_progress_hides_tool_narrative(tmp_workspace, registry, capsys):
+    llm = MockLLMClient(
+        responses=[
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="echo", arguments={"text": "hi"}, id="tc1")]
+                )
+            ),
+            FakeRawCompletion(
+                message=FakeLLMMessage(
+                    tool_calls=[FakeToolCall(name="finish_task", arguments={"summary": "done"}, id="tc2")]
+                )
+            ),
+        ]
+    )
+    ctx = ExecutionContext(workspace_dir=tmp_workspace, project_id="p1", task_id="T0", run_id="r_quiet_progress")
+    runner = AgentRunner(
+        MinimalAgent(),
+        registry,
+        llm,
+        MockHumanInterface(),
+        runtime_settings=RuntimeSettings(ui=UISettings(quiet=True)),
+    )
+
+    result = await runner.run(ctx)
+
+    assert result.ok
+    out = capsys.readouterr().out
+    assert "[test] 启动 T0" in out
+    assert "[Tool Decision]" not in out
+    assert "[Tool Result] echo 完成" not in out
+    assert "[test] T0 阶段完成" in out

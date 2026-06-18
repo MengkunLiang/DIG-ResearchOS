@@ -702,6 +702,21 @@ researchos run \
 和 `literature/bridge_domain_plan.json`；不会复制旧的 `papers_raw.jsonl`、`papers_verified.jsonl`
 或 `deep_read_queue.jsonl`。目标 workspace 如果已有 `state.yaml`，CLI 会拒绝覆盖，避免误删已有运行状态。
 
+开发排查时如果需要真实 pipeline，但不需要正式覆盖规模，使用 `run_smoke --from`：
+
+```bash
+researchos run_smoke \
+  --workspace ./workspace/new-test5-smoke \
+  --from ./workspace/new-test5 \
+  --start-task T2 \
+  --active-pool-max 20 \
+  --deep-read-target 3 \
+  --abstract-sweep 5
+```
+
+`run_smoke` 仍按目标 task 的 I/O 契约复制输入，不复制旧 task 输出；区别是它会在目标 workspace 写入小规模
+`literature/literature_params.json` 和 `literature/literature_params_confirmation.json`，并临时把状态机 agent/skill 节点降到 `medium` tier。已有参数文件默认不覆盖，需要重写时加 `--force-smoke-params`。
+
 ### 11.1 通用恢复快照
 
 由 [researchos/runtime/task_recovery.py](../researchos/runtime/task_recovery.py) 生成：

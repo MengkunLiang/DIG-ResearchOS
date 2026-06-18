@@ -241,19 +241,44 @@ python -m researchos.cli init-workspace \
   --topic "memory systems for llm agents"
 ```
 
-### 4. Run a smoke task
+### 4. Run the minimal smoke task
 
 ```bash
 python -m researchos.cli run-task HELLO --workspace ./workspace/local-test2
 ```
 
-### 5. Run the full pipeline
+`HELLO` only checks the runtime/tool/write/finish path. It does not exercise the
+research workflow.
+
+### 5. Run a real pipeline smoke
+
+For faster development debugging, use `run_smoke`. It runs the real state
+machine, but pre-writes small workspace-local literature parameters and lowers
+all agent nodes to the `medium` model tier.
+
+```bash
+python -m researchos.cli run_smoke \
+  --workspace ./workspace/smoke-t2 \
+  --from ./workspace/local-test2 \
+  --active-pool-max 20 \
+  --deep-read-target 3 \
+  --abstract-sweep 5 \
+  --skip-startup-selftest
+```
+
+By default `run_smoke` starts from `T2`, writes
+`literature/literature_params.json` and
+`literature/literature_params_confirmation.json`, and does not overwrite an
+existing `literature/literature_params.json` unless `--force-smoke-params` is
+provided. It is for integration debugging, not for final literature coverage.
+
+### 6. Run the full pipeline
 
 ```bash
 python -m researchos.cli run --workspace ./workspace/local-test2
 ```
 
-### 6. Resume an interrupted pipeline
+### 7. Resume an interrupted pipeline
 
 ```bash
 python -m researchos.cli resume --workspace ./workspace/local-test2
@@ -280,7 +305,7 @@ When `--start-task` is omitted, `run --from` defaults to `T2`. The target
 workspace must not already contain `state.yaml`; ResearchOS copies only the
 declared inputs for the chosen start task, not stale outputs from the old task.
 
-### 7. Survey Seed Outline
+### 8. Survey Seed Outline
 
 For a survey project, place a Markdown seed outline under `user_seeds/`:
 

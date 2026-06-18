@@ -29,7 +29,7 @@ def test_english_manuscript_filters_non_seed_chinese_records(tmp_path: Path):
     assert meta["filtered_count"] == 1
 
 
-def test_chinese_literature_requires_authoritative_source_or_seed(tmp_path: Path):
+def test_chinese_literature_marks_unverified_authority_without_filtering(tmp_path: Path):
     workspace = tmp_path / "ws"
     workspace.mkdir()
     (workspace / "project.yaml").write_text("language: zh\n", encoding="utf-8")
@@ -44,10 +44,12 @@ def test_chinese_literature_requires_authoritative_source_or_seed(tmp_path: Path
         workspace_dir=workspace,
     )
 
-    assert [item["id"] for item in kept] == ["cn-good", "cn-seed"]
+    assert [item["id"] for item in kept] == ["cn-good", "cn-bad", "cn-seed"]
     assert kept[0]["chinese_authority_status"] == "authoritative"
-    assert kept[1]["literature_quality_policy"]["reason"] == "user_seed_chinese_literature_needs_authority_review"
-    assert filtered[0]["triaged_reason"] == "chinese_literature_without_authoritative_source_label"
+    assert kept[1]["literature_quality_policy"]["reason"] == "chinese_literature_authority_unverified_review_needed"
+    assert kept[1]["authority_review_needed"] is True
+    assert kept[2]["literature_quality_policy"]["reason"] == "user_seed_chinese_literature_needs_authority_review"
+    assert filtered == []
 
 
 def test_detect_language_and_infer_mixed_from_seed_outline(tmp_path: Path):

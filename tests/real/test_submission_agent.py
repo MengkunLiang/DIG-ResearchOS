@@ -51,6 +51,7 @@ def _write_passing_craft_audit(workspace: Path) -> None:
         {"name": "intro_contribution_count", "level": "PASS", "passed": True},
         {"name": "abstract_no_cite", "level": "PASS", "passed": True},
         {"name": "abstract_no_section_heading", "level": "PASS", "passed": True},
+        {"name": "citation_claim_alignment", "level": "PASS", "passed": True},
         {"name": "no_internal_label_leakage", "level": "PASS", "passed": True},
         {"name": "no_placeholder_tokens", "level": "PASS", "passed": True},
         {"name": "number_traceability", "level": "PASS", "passed": True},

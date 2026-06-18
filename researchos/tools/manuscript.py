@@ -21,6 +21,7 @@ from ..literature_citations import load_or_build_citation_map
 from ..literature_identity import is_paper_note_file
 from .base import Tool, ToolResult
 from .bibtex import extract_bib_keys_from_text, strip_internal_bibtex_notes
+from .citation_alignment import citation_alignment_issues, citation_support_text_by_key
 from .manuscript_registries import (
     build_claim_ledger_seed,
     build_cdr_claim_ledger_seed,
@@ -469,6 +470,7 @@ class AuditManuscriptClaimsParams(BaseModel):
 class AuditWritingCraftParams(BaseModel):
     paper_path: str = Field(default="drafts/paper.tex", description="Paper draft path.")
     sections_dir: str = Field(default="drafts/sections", description="Section draft directory.")
+    related_work_bib_path: str = Field(default="literature/related_work.bib", description="Bibliography used for citation/context alignment.")
     paper_state_path: str = Field(default="drafts/paper_state.json", description="Shared paper state JSON.")
     alignment_matrix_path: str = Field(
         default="drafts/alignment_matrix.json",
@@ -1139,12 +1141,19 @@ class AuditWritingCraftTool(Tool):
             )
             sections_path = self.policy.resolve_read(params.sections_dir)
             section_texts = _read_section_texts(sections_path)
+            try:
+                related_work_bib = _read_optional_text(self.policy, params.related_work_bib_path)
+            except ToolAccessDenied:
+                related_work_bib = ""
+            support_text_by_key = citation_support_text_by_key(self.policy.workspace_dir)
             paper_state = _read_optional_json(self.policy, params.paper_state_path)
             alignment_matrix = _read_optional_json(self.policy, params.alignment_matrix_path)
             cdr_ledger = _read_optional_json(self.policy, params.cdr_claim_ledger_path)
             audit_doc = audit_writing_craft(
                 paper=paper,
                 section_texts=section_texts,
+                related_work_bib=related_work_bib,
+                support_text_by_key=support_text_by_key,
                 paper_state=paper_state,
                 alignment_matrix=alignment_matrix,
                 cdr_ledger=cdr_ledger,
@@ -1154,6 +1163,7 @@ class AuditWritingCraftTool(Tool):
                 self.policy.workspace_dir,
                 paper_path=params.paper_path,
                 sections_dir=params.sections_dir,
+                related_work_bib_path=params.related_work_bib_path,
                 paper_state_path=params.paper_state_path,
                 alignment_matrix_path=params.alignment_matrix_path,
                 cdr_claim_ledger_path=params.cdr_claim_ledger_path,
@@ -1170,6 +1180,8 @@ class AuditWritingCraftTool(Tool):
                 self.policy,
                 params=params,
                 section_texts=section_texts,
+                related_work_bib=related_work_bib,
+                support_text_by_key=support_text_by_key,
                 paper_state=paper_state,
                 alignment_matrix=alignment_matrix,
                 cdr_ledger=cdr_ledger,
@@ -2577,6 +2589,8 @@ def audit_writing_craft(
     *,
     paper: str,
     section_texts: dict[str, str],
+    related_work_bib: str = "",
+    support_text_by_key: dict[str, str] | None = None,
     paper_state: dict[str, Any],
     alignment_matrix: dict[str, Any],
     cdr_ledger: dict[str, Any],
@@ -2669,6 +2683,21 @@ def audit_writing_craft(
             "Citation density issues: " + "; ".join(citation_density_issues)
             if citation_density_issues
             else "Claim-bearing sections meet minimum unique citation counts."
+        ),
+    )
+    citation_alignment = citation_alignment_issues(
+        tex=paper,
+        bibtex=related_work_bib,
+        support_text_by_key=support_text_by_key,
+    )
+    add(
+        "citation_claim_alignment",
+        "FAIL",
+        not citation_alignment,
+        (
+            "Citation/claim alignment issues: " + "; ".join(citation_alignment[:8])
+            if citation_alignment
+            else "Citation contexts are topically aligned with cited BibTeX titles, paper-note support text, or explicit evidence boundaries."
         ),
     )
     internal_label_hits = _internal_label_leakages(paper, cids)
@@ -2788,6 +2817,8 @@ def _write_style_variant_craft_audits(
     *,
     params: AuditWritingCraftParams,
     section_texts: dict[str, str],
+    related_work_bib: str,
+    support_text_by_key: dict[str, str] | None,
     paper_state: dict[str, Any],
     alignment_matrix: dict[str, Any],
     cdr_ledger: dict[str, Any],
@@ -2805,6 +2836,8 @@ def _write_style_variant_craft_audits(
         audit_doc = audit_writing_craft(
             paper=paper,
             section_texts=variant_section_texts,
+            related_work_bib=related_work_bib,
+            support_text_by_key=support_text_by_key,
             paper_state=paper_state,
             alignment_matrix=alignment_matrix,
             cdr_ledger=cdr_ledger,
@@ -2814,6 +2847,7 @@ def _write_style_variant_craft_audits(
             policy.workspace_dir,
             paper_path=paper_rel,
             sections_dir=params.sections_dir,
+            related_work_bib_path=params.related_work_bib_path,
             paper_state_path=params.paper_state_path,
             alignment_matrix_path=params.alignment_matrix_path,
             cdr_claim_ledger_path=params.cdr_claim_ledger_path,
@@ -3337,6 +3371,11 @@ def craft_audit_input_fingerprints(
     *,
     paper_path: str = "drafts/paper.tex",
     sections_dir: str = "drafts/sections",
+    related_work_bib_path: str = "literature/related_work.bib",
+    citation_map_path: str = "literature/citation_map.json",
+    paper_notes_dir: str = "literature/paper_notes",
+    abstract_notes_dir: str = "literature/paper_notes_abstract",
+    bridge_notes_dir: str = "literature/paper_notes_bridge",
     paper_state_path: str = "drafts/paper_state.json",
     alignment_matrix_path: str = "drafts/alignment_matrix.json",
     cdr_claim_ledger_path: str = "drafts/cdr_claim_ledger.json",
@@ -3344,6 +3383,11 @@ def craft_audit_input_fingerprints(
     paths = {
         "paper": paper_path,
         "sections_dir": sections_dir,
+        "related_work_bib": related_work_bib_path,
+        "citation_map": citation_map_path,
+        "paper_notes_dir": paper_notes_dir,
+        "abstract_notes_dir": abstract_notes_dir,
+        "bridge_notes_dir": bridge_notes_dir,
         "paper_state": paper_state_path,
         "alignment_matrix": alignment_matrix_path,
         "cdr_claim_ledger": cdr_claim_ledger_path,

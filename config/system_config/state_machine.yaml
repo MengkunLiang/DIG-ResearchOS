@@ -76,7 +76,27 @@ states:
       literature_params: literature/literature_params.json
     gate:
       type: t2_literature_param_gate
-    next_on_success: T2
+    next_on_success: T2-PARAM-CONFIRM-GATE
+    next_on_failure: failed
+
+  # T2-PARAM-CONFIRM-GATE 状态：参数选择后的最终确认
+  # 用途：用户选完覆盖参数后，再用人类可读摘要确认是否正式进入 T2；
+  # 避免自定义数字输入后没有“确认/返回重选/结束”的明确 gate。
+  T2-PARAM-CONFIRM-GATE:
+    agent: scout
+    mode: literature_param_confirm_gate
+    extra:
+      immediate_gate: true
+    inputs:
+      project: project.yaml
+      literature_params: literature/literature_params.json
+      seed_outline_profile: user_seeds/seed_outline_profile.json
+      bridge_domain_plan: literature/bridge_domain_plan.json
+    outputs:
+      literature_params_confirmation: literature/literature_params_confirmation.json
+    gate:
+      type: t2_literature_param_confirm_gate
+    next_on_success: __parse_from_output__
     next_on_failure: failed
 
   # T2 状态：文献检索（Literature Scouting）
@@ -87,6 +107,7 @@ states:
     inputs:
       project: project.yaml                            # 项目配置
       literature_params: literature/literature_params.json # T2/T3 覆盖参数 gate 决策
+      literature_params_confirmation: literature/literature_params_confirmation.json # 参数最终确认；缺失时应回到 T2-PARAM-CONFIRM-GATE
       seed_papers: user_seeds/seed_papers.jsonl        # 种子论文（可选）
       seed_pdfs: user_seeds/pdfs                       # 种子 PDF（可选）
       seed_constraints: user_seeds/seed_constraints.md # 种子约束（可选）
@@ -715,7 +736,25 @@ states:
     outputs:
       survey_insights: ideation/survey_insights.json
       survey_summary: drafts/survey/survey_summary.md
-    next_on_success: T4
+    next_on_success: T3.6-POST-SURVEY-GATE
+    next_on_failure: failed
+
+  # T3.6-POST-SURVEY-GATE 状态：综述完成后询问是否结束
+  # 用途：T3.6 可能是用户的最终目标；不要在 survey 生成后未经确认自动进入 T4。
+  T3.6-POST-SURVEY-GATE:
+    agent: survey_writer
+    mode: post_survey_gate
+    extra:
+      immediate_gate: true
+    gate: t36_post_survey_gate
+    inputs:
+      project: project.yaml
+      survey_summary: drafts/survey/survey_summary.md
+      survey_compile_report: drafts/survey/survey_compile_report.json
+      survey_insights: ideation/survey_insights.json
+    outputs:
+      post_survey_decision: drafts/survey/post_survey_decision.json
+    next_on_success: __parse_from_output__
     next_on_failure: failed
 
   # T4 状态：假设生成（Hypothesis Generation）
