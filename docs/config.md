@@ -879,9 +879,9 @@ cp .env.example .env
 
 虽然这些不在 `config/` 目录下，但和配置使用方式高度相关。
 
-### 10.1 `requirements.txt`
+### 11.1 `requirements.txt`
 
-核心依赖：
+ResearchOS 只保留一个 Python 依赖文件：
 
 - `httpx`
 - `jinja2`
@@ -889,30 +889,26 @@ cp .env.example .env
 - `pydantic`
 - `pyyaml`
 - `structlog`
-- `pdfplumber`
-- `bibtexparser`
 - `python-dotenv`
-
-### 10.2 `requirements-llm.txt`
-
-在核心依赖上额外加：
-
 - `litellm`
-
-### 10.3 `requirements-dev.txt`
-
-在核心依赖上额外加：
-
+- `pdfplumber`
+- `PyMuPDF`
+- `PyPDF2`
+- `bibtexparser`
 - `pytest`
 - `pytest-asyncio`
+- `numpy`
+- `pandas`
+- `scikit-learn`
+- `matplotlib`
+- `seaborn`
+- `tqdm`
+- `wandb`
+- `transformers`
+- `datasets`
+- `accelerate`
 
-### 10.4 `requirements-optional-pdf.txt`
-
-额外加：
-
-- `PyMuPDF`
-
-适合 richer PDF 处理场景。
+这个文件覆盖本地开发、CLI 运行、LLM 调用、PDF/BibTeX 处理、单元测试和常用实验/分析依赖。Docker 镜像仍会单独安装 CUDA PyTorch，因为 CUDA wheels 需要专用 index，不适合放入通用 `requirements.txt`。
 
 ---
 

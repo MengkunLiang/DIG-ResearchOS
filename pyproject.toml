@@ -15,18 +15,12 @@ dependencies = [
   "pydantic>=2.7,<3",
   "pyyaml>=6,<7",
   "structlog>=24.1,<26",
-]
-
-[project.optional-dependencies]
-dev = [
-  "pytest>=8.2,<9",
-  "pytest-asyncio>=0.23,<1",
-]
-llm = [
+  "python-dotenv>=1.0,<2",
   "litellm>=1.65,<2",
-]
-pdf_extra = [
+  "pdfplumber>=0.10,<1",
   "PyMuPDF>=1.23,<2",
+  "PyPDF2>=3,<4",
+  "bibtexparser>=1.4,<2",
 ]
 
 [project.scripts]

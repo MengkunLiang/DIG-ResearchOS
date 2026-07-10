@@ -84,22 +84,14 @@ conda activate researchos
 ```bash
 cd ResearchOS
 pip install -r requirements.txt
-pip install -r requirements-dev.txt
 pip install -e .
-```
-
-如果你需要额外的 PDF 处理依赖：
-
-```bash
-pip install -r requirements-optional-pdf.txt
 ```
 
 说明：
 
-- `requirements.txt`：基础运行依赖
-- `requirements-dev.txt`：pytest、调试和开发辅助依赖
-- `requirements-optional-pdf.txt`：额外 PDF 处理能力
+- `requirements.txt`：唯一依赖文件，包含运行时、LLM 路由、PDF/BibTeX 处理、pytest 开发测试依赖和常用实验/分析包
 - `pip install -e .`：确保 `researchos` 命令和当前源码目录绑定
+- Docker 镜像仍会单独安装 CUDA PyTorch，因为 PyTorch CUDA wheels 需要专用 index
 
 ### 2.3 环境变量
 

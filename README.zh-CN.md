@@ -187,15 +187,10 @@ conda create -n researchos python=3.11 -y
 conda activate researchos
 
 pip install -r requirements.txt
-pip install -r requirements-dev.txt
 pip install -e .
 ```
 
-如果你还需要额外 PDF 能力：
-
-```bash
-pip install -r requirements-optional-pdf.txt
-```
+`requirements.txt` 是本地使用的唯一依赖文件，已经包含运行时、LLM 路由、PDF/BibTeX 处理、pytest 开发测试依赖和常用实验/分析包。Docker 会单独安装 CUDA PyTorch，因为对应 wheel 源和硬件相关。
 
 如果你发现 `researchos` 命令和当前源码行为不一致，优先用：
 

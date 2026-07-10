@@ -79,35 +79,22 @@ WORKDIR /app
 
 # 复制依赖文件
 COPY pyproject.toml ./
-COPY requirements.txt requirements-llm.txt requirements-dev.txt ./
+COPY requirements.txt ./
 
-# 安装 Python 依赖（ResearchOS runtime）
-# 注意：这里先安装依赖，后面再安装 ResearchOS 本身（利用 Docker 缓存）
-# 使用清华镜像加速下载
-RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt && \
-    pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements-llm.txt && \
-    pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements-dev.txt
-
-# 安装常用 ML 依赖（实验代码常用）
+# 安装 PyTorch CUDA 依赖（实验代码常用）
 # 使用 CUDA 12.4 与基础镜像 nvidia/cuda:12.4.0 匹配
-# 使用清华镜像加速下载
-# 依赖版本不写死，让 pip 自动解析兼容版本
+# 注意：PyTorch CUDA wheels 需要专用 index，因此不放入通用 requirements.txt。
+# 先安装 CUDA torch，避免 requirements.txt 中 accelerate 的依赖解析拉取 CPU torch。
 RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple \
     torch \
     torchvision \
     torchaudio \
-    --index-url https://download.pytorch.org/whl/cu124 && \
-    pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple \
-    numpy \
-    pandas \
-    scikit-learn \
-    matplotlib \
-    seaborn \
-    tqdm \
-    wandb \
-    transformers \
-    datasets \
-    accelerate
+    --index-url https://download.pytorch.org/whl/cu124
+
+# 安装 Python 依赖（ResearchOS runtime + LLM/PDF/test/common experiment packages）
+# 注意：这里先安装依赖，后面再安装 ResearchOS 本身（利用 Docker 缓存）
+# 使用清华镜像加速下载
+RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
 
 # 安装 MCP 服务器（可选）
 # 注意：@modelcontextprotocol/server-* 包目前不在公共 npm registry 中
