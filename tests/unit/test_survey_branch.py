@@ -399,6 +399,8 @@ async def test_survey_tools_build_state_assemble_audit_and_export(tmp_path: Path
     assert "Define core concepts" in background_outline
     assert "Carry the main explanatory framework" in taxonomy_outline
     assert "Section Writing Contract" in taxonomy_outline
+    assert "Note Card Retrieval Plan" in taxonomy_outline
+    assert "§14 Design Rationale" in taxonomy_outline
     assert "Every taxonomy class" in taxonomy_outline
     assert "Compact Theme Coverage Contract" in taxonomy_outline
     assert "T1: Perturbation mechanisms" in taxonomy_outline
@@ -754,11 +756,83 @@ async def test_t36_assemble_applies_informs_template_and_support_files(tmp_path:
     tex = (ws / "drafts" / "survey" / "survey.tex").read_text(encoding="utf-8")
 
     assert "ResearchOS template_source" not in tex
+    assert "\\documentclass[isre,dblanonrev]{informs4}" in tex
+    assert "\\TITLE{" in tex
+    assert "\\ARTICLEAUTHORS" in tex
+    assert "\\ABSTRACT{%" in tex
+    assert "\\begin{abstract}" not in tex
+    assert "tgtermes" not in tex
+    assert "newtxtext" not in tex
+    assert "newtxmath" not in tex
+    assert "\\usepackage{algorithm}" not in tex
+    assert "\\usepackage{algpseudocode}" not in tex
     assert "\\bibliographystyle{informs2014}" in tex
     assert tex.count("\\bibliographystyle") == 1
+    assert (ws / "drafts" / "survey" / "informs4.cls").exists()
+    assert (ws / "drafts" / "survey" / "eqndefns-left.sty").exists()
+    assert (ws / "drafts" / "survey" / "informs_Logo.pdf").exists()
     assert (ws / "drafts" / "survey" / "informs2014.bst").exists()
     manifest = json.loads((ws / "drafts" / "survey" / "survey_assembly_manifest.json").read_text(encoding="utf-8"))
     assert manifest["template_selection"]["template_family"] == "utd"
+
+
+@pytest.mark.parametrize(
+    ("template_id", "expected_tex", "support_files"),
+    [
+        ("neurips", "\\usepackage{neurips_2026}", ["neurips_2026.sty", "checklist.tex"]),
+        ("iclr", "\\usepackage{iclr2026_conference}", ["iclr2026_conference.sty", "iclr2026_basic.tex"]),
+        ("icml", "\\icmltitle{CCF Survey Smoke Test}", ["icml2026.sty", "icml2026.bst", "algorithm.sty", "algorithmic.sty", "fancyhdr.sty", "natbib.sty"]),
+        ("kdd", "\\documentclass[sigconf,anonymous,review]{acmart}", ["acmart.cls", "ACM-Reference-Format.bst"]),
+    ],
+)
+@pytest.mark.asyncio
+async def test_t36_assemble_applies_ccf_templates_and_support_files(
+    tmp_path: Path,
+    template_id: str,
+    expected_tex: str,
+    support_files: list[str],
+):
+    ws = tmp_path
+    plan = _survey_plan()
+    plan["template_selection"] = {
+        "template_family": "ccf",
+        "template_id": template_id,
+        "writing_language": "en",
+    }
+    _write_json(ws / "drafts" / "survey" / "survey_plan.json", plan)
+    _write_json(ws / "drafts" / "survey" / "corpus_decision.json", {"scope": "conservative"})
+    _write_valid_survey_bib(ws)
+    policy = _policy(ws)
+    result = await BuildSurveyStateTool(policy).execute()
+    assert result.ok, result.content
+    sections_dir = ws / "drafts" / "survey" / "sections"
+    sections_dir.mkdir(parents=True, exist_ok=True)
+    for section_id in [
+        "abstract",
+        "introduction",
+        "background",
+        "taxonomy",
+        "comparison",
+        "challenges",
+        "future",
+        "conclusion",
+    ]:
+        text = "Abstract text." if section_id == "abstract" else _valid_survey_section_body(section_id)
+        (sections_dir / f"{section_id}.tex").write_text(text, encoding="utf-8")
+        result = await UpdateSurveySectionStateTool(policy).execute(section_id=section_id)
+        assert result.ok, result.content
+
+    result = await AssembleSurveyTool(policy).execute(title="CCF Survey Smoke Test")
+
+    assert result.ok, result.content
+    tex = (ws / "drafts" / "survey" / "survey.tex").read_text(encoding="utf-8")
+    assert expected_tex in tex
+    assert "\\bibliography{references}" in tex
+    assert tex.count("\\bibliographystyle") == 1
+    assert "Hippocampus" not in tex
+    assert "Cranberry-Lemon" not in tex
+    for name in support_files:
+        assert (ws / "drafts" / "survey" / name).exists(), name
 
 
 @pytest.mark.asyncio

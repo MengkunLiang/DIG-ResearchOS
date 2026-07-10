@@ -2044,6 +2044,9 @@ def _section_outline_text(section_id: str, entry: dict[str, Any], plan: dict[str
         "## Citation Requirements",
         *_section_citation_requirement_lines(section_id),
         "",
+        "## Note Card Retrieval Plan",
+        *_survey_note_card_retrieval_lines(section_id),
+        "",
         "## Survey Quality Standard",
         "- A survey is a second-order research contribution: it reorganizes literature around a question, not a list of papers.",
         "- Every section needs an internal argument. Use claim -> evidence -> comparison -> evaluation paragraphs.",
@@ -2100,6 +2103,45 @@ def _section_citation_requirement_lines(section_id: str) -> list[str]:
         "- rule: Citation count is not a target by itself; every citation must anchor a concept, stream, comparison, challenge, or agenda item.",
         "- rule: Do not cite metadata-only or explicitly weak/do_not_cite records as mechanism evidence.",
     ]
+
+
+def _survey_note_card_retrieval_lines(section_id: str) -> list[str]:
+    common = [
+        "- Before using a citation, inspect the matching paper note or citation pool entry and verify that the note supports the exact sentence-level claim.",
+        "- Use FULL/PARTIAL notes for claim evidence; use abstract-only notes only for scope, trend, or resource-upgrade boundaries.",
+    ]
+    mapping = {
+        "introduction": [
+            "- Read note sections §6 Relevance, §9 Weaknesses / Gaps, §13 Mechanism Claim, and §19 Cross-Paper Tension to frame the review problem.",
+        ],
+        "background": [
+            "- Read note sections §1 Problem & Motivation, §6 Relevance, and §12 Reading Coverage to state public scope and evidence boundaries without runtime process prose.",
+        ],
+        "taxonomy": [
+            "- Read note sections §2 Method Overview, §13 Mechanism Claim, §14 Design Rationale, §15 Artifact & Design Principles, and abstract A/B bridge fields to classify studies by mechanism rather than title keywords.",
+        ],
+        "comparison": [
+            "- Read note sections §3 Key Results, §5 Limitations, §16 Data View & Evaluation Mode, §18 Boundary Conditions, and §19 Cross-Paper Tension to compare evidence strength and tradeoffs.",
+        ],
+        "challenges": [
+            "- Read note sections §9 Weaknesses / Gaps, §18 Boundary Conditions, and §19 Cross-Paper Tension to derive concrete challenges from observed tensions.",
+        ],
+        "future": [
+            "- Read note sections §11 My Questions, §18 Boundary Conditions, §19 Cross-Paper Tension, plus synthesis_workbench adjacent_transfers to form specific research agenda items.",
+        ],
+        "conclusion": [
+            "- Do not introduce new note evidence; use note cards only to verify the stated framework and coverage limits.",
+        ],
+        "abstract": [
+            "- Do not cite note cards in the abstract; use them only to verify that the abstract stays within established survey claims.",
+        ],
+    }
+    if section_id.startswith("theme_"):
+        return [
+            "- If this optional theme is explicitly enabled, read note sections §2/§13/§14/§18/§19 for the theme class; otherwise skip the section.",
+            *common,
+        ]
+    return [*(mapping.get(section_id) or ["- Read relevant paper note sections before making claim-level literature statements."]), *common]
 
 
 def _section_compact_theme_contract(section_id: str, entry: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
@@ -2284,14 +2326,32 @@ def _repo_root() -> Path:
 def _copy_latex_template_support_files(template_path: Path | None, target_dir: Path) -> None:
     if not template_path or not template_path.exists():
         return
-    for source in template_path.parent.iterdir():
-        if source.suffix.lower() not in {".sty", ".cls", ".bst"}:
+    for source in _template_support_sources(template_path):
+        if not _is_template_support_file(source):
             continue
         target = target_dir / source.name
         try:
             target.write_bytes(source.read_bytes())
         except OSError:
             continue
+
+
+def _template_support_sources(template_path: Path) -> list[Path]:
+    support = list(template_path.parent.iterdir())
+    if _is_ccf_template(template_path, "iclr") and template_path.suffix.lower() == ".sty":
+        shell = template_path.parent / "iclr2026_basic.tex"
+        if shell.exists():
+            support.append(shell)
+    return support
+
+
+def _is_template_support_file(source: Path) -> bool:
+    suffix = source.suffix.lower()
+    if suffix in {".sty", ".cls", ".bst"}:
+        return True
+    if source.name in {"checklist.tex", "iclr2026_basic.tex"}:
+        return True
+    return source.stem.lower() == "informs_logo" and suffix in {".pdf", ".eps"}
 
 
 _BIBTEX_BLOCKING_MARKERS = (
@@ -2356,7 +2416,37 @@ def _render_survey_document(
     body = _survey_document_body(title=title, abstract=abstract, body_sections=body_sections, bib_stem="references")
     if template_path and template_path.exists():
         template = template_path.read_text(encoding="utf-8", errors="replace")
-        rendered = _replace_template_document_body(template, body, bib_stem="references")
+        if _is_informs_template(template_path, template):
+            rendered = _render_informs_survey_document(
+                template,
+                title=title,
+                abstract=abstract,
+                body_sections=body_sections,
+                bib_stem="references",
+            )
+        elif _is_ccf_template(template_path, "neurips"):
+            rendered = _render_neurips_survey_document(
+                title=title,
+                abstract=abstract,
+                body_sections=body_sections,
+                bib_stem="references",
+            )
+        elif _is_ccf_template(template_path, "icml"):
+            rendered = _render_icml_survey_document(
+                title=title,
+                abstract=abstract,
+                body_sections=body_sections,
+                bib_stem="references",
+            )
+        elif _is_ccf_template(template_path, "iclr"):
+            rendered = _render_iclr_survey_document(
+                title=title,
+                abstract=abstract,
+                body_sections=body_sections,
+                bib_stem="references",
+            )
+        else:
+            rendered = _replace_template_document_body(template, body, bib_stem="references")
     else:
         rendered = _fallback_survey_document(
             title=title,
@@ -2448,6 +2538,203 @@ def _replace_template_document_body(template: str, body: str, *, bib_stem: str) 
     return preamble.rstrip() + "\n\n" + begin_cmd + "\n" + body.strip() + "\n\\end{document}" + suffix
 
 
+def _is_informs_template(template_path: Path | None, template_text: str) -> bool:
+    path_text = template_path.as_posix().lower() if template_path else ""
+    return "\\documentclass" in template_text and "informs4" in template_text and "/utd/informs/" in path_text
+
+
+def _is_ccf_template(template_path: Path | None, template_id: str) -> bool:
+    if not template_path:
+        return False
+    path_text = template_path.as_posix().lower()
+    aliases = {
+        "neurips": "/ccf-latex-templates/neurips/",
+        "kdd": "/ccf-latex-templates/sigkdd/",
+        "icml": "/ccf-latex-templates/icml/",
+        "iclr": "/ccf-latex-templates/iclr/",
+    }
+    return aliases.get(template_id, "") in path_text
+
+
+def _render_informs_survey_document(
+    template: str,
+    *,
+    title: str,
+    abstract: str,
+    body_sections: list[str],
+    bib_stem: str,
+) -> str:
+    preamble, begin_cmd, _rest = _split_template_at_begin_document(template)
+    if not begin_cmd:
+        return template.strip() + "\n\n" + _survey_document_body(
+            title=title,
+            abstract=abstract,
+            body_sections=body_sections,
+            bib_stem=bib_stem,
+        )
+    preamble = _prepare_informs_preamble(preamble)
+    title_tex = _escape_latex_title(title or "A Taxonomy-Driven Survey")
+    short_title = _short_latex_running_text(title or "A Taxonomy-Driven Survey", limit=72)
+    abstract_tex = _strip_survey_section_heading(abstract, "abstract").strip() or "Abstract text."
+    body = "\n\n".join(section.strip() for section in body_sections if section.strip())
+    return (
+        preamble.rstrip()
+        + "\n\n\\begin{document}\n\n"
+        + "\\RUNAUTHOR{Anonymous Author(s)}\n"
+        + f"\\RUNTITLE{{{short_title}}}\n"
+        + f"\\TITLE{{{title_tex}}}\n\n"
+        + "\\ARTICLEAUTHORS{%\n"
+        + "\\AUTHOR{Anonymous Author(s)}\n"
+        + "\\AFF{Affiliation omitted for review}\n"
+        + "}\n\n"
+        + "\\ABSTRACT{%\n"
+        + abstract_tex
+        + "\n}%\n\n"
+        + "\\KEYWORDS{literature review, taxonomy, information systems}\n\n"
+        + "\\maketitle\n\n"
+        + body
+        + f"\n\n\\bibliographystyle{{informs2014}}\n\\bibliography{{{bib_stem}}}\n\n"
+        + "\\end{document}\n"
+    )
+
+
+def _render_neurips_survey_document(
+    *,
+    title: str,
+    abstract: str,
+    body_sections: list[str],
+    bib_stem: str,
+) -> str:
+    title_tex = _escape_latex_title(title or "A Taxonomy-Driven Survey")
+    abstract_tex = _strip_survey_section_heading(abstract, "abstract").strip() or "Abstract text."
+    body = "\n\n".join(section.strip() for section in body_sections if section.strip())
+    return (
+        "\\documentclass{article}\n\n"
+        "\\usepackage{neurips_2026}\n"
+        "\\usepackage[utf8]{inputenc}\n"
+        "\\usepackage[T1]{fontenc}\n"
+        "\\usepackage{hyperref}\n"
+        "\\usepackage{url}\n"
+        "\\usepackage{booktabs}\n"
+        "\\usepackage{amsfonts}\n"
+        "\\usepackage{nicefrac}\n"
+        "\\usepackage{microtype}\n"
+        "\\usepackage{xcolor}\n\n"
+        f"\\title{{{title_tex}}}\n"
+        "\\author{Anonymous Author(s)}\n\n"
+        "\\begin{document}\n\n"
+        "\\maketitle\n\n"
+        f"\\begin{{abstract}}\n{abstract_tex}\n\\end{{abstract}}\n\n"
+        + body
+        + f"\n\n\\bibliographystyle{{plainnat}}\n\\bibliography{{{bib_stem}}}\n\n"
+        "\\end{document}\n"
+    )
+
+
+def _render_icml_survey_document(
+    *,
+    title: str,
+    abstract: str,
+    body_sections: list[str],
+    bib_stem: str,
+) -> str:
+    title_tex = _escape_latex_title(title or "A Taxonomy-Driven Survey")
+    short_title = _short_latex_running_text(title or "A Taxonomy-Driven Survey", limit=64)
+    abstract_tex = _strip_survey_section_heading(abstract, "abstract").strip() or "Abstract text."
+    body = "\n\n".join(section.strip() for section in body_sections if section.strip())
+    return (
+        "\\documentclass{article}\n\n"
+        "\\usepackage{microtype}\n"
+        "\\usepackage{graphicx}\n"
+        "\\usepackage{subcaption}\n"
+        "\\usepackage{booktabs}\n"
+        "\\usepackage{hyperref}\n"
+        "\\newcommand{\\theHalgorithm}{\\arabic{algorithm}}\n"
+        "\\usepackage{icml2026}\n"
+        "\\usepackage{amsmath}\n"
+        "\\usepackage{amssymb}\n"
+        "\\usepackage{mathtools}\n"
+        "\\usepackage{amsthm}\n"
+        "\\usepackage[capitalize,noabbrev]{cleveref}\n\n"
+        f"\\icmltitlerunning{{{short_title}}}\n\n"
+        "\\begin{document}\n\n"
+        "\\twocolumn[\n"
+        f"  \\icmltitle{{{title_tex}}}\n"
+        "  \\begin{icmlauthorlist}\n"
+        "    \\icmlauthor{Anonymous Author(s)}{anon}\n"
+        "  \\end{icmlauthorlist}\n"
+        "  \\icmlaffiliation{anon}{Affiliation omitted for review}\n"
+        "  \\icmlcorrespondingauthor{Anonymous Author}{anon@example.com}\n"
+        "  \\icmlkeywords{literature review, taxonomy}\n"
+        "  \\vskip 0.3in\n"
+        "]\n\n"
+        "\\printAffiliationsAndNotice{}\n\n"
+        f"\\begin{{abstract}}\n{abstract_tex}\n\\end{{abstract}}\n\n"
+        + body
+        + f"\n\n\\bibliography{{{bib_stem}}}\n\\bibliographystyle{{icml2026}}\n\n"
+        "\\end{document}\n"
+    )
+
+
+def _render_iclr_survey_document(
+    *,
+    title: str,
+    abstract: str,
+    body_sections: list[str],
+    bib_stem: str,
+) -> str:
+    title_tex = _escape_latex_title(title or "A Taxonomy-Driven Survey")
+    abstract_tex = _strip_survey_section_heading(abstract, "abstract").strip() or "Abstract text."
+    body = "\n\n".join(section.strip() for section in body_sections if section.strip())
+    return (
+        "\\documentclass{article}\n\n"
+        "\\usepackage{times}\n"
+        "\\usepackage{iclr2026_conference}\n"
+        "\\usepackage{hyperref}\n"
+        "\\usepackage{url}\n"
+        "\\usepackage{booktabs}\n"
+        "\\usepackage{graphicx}\n"
+        "\\usepackage{amsmath}\n"
+        "\\usepackage{amssymb}\n\n"
+        f"\\title{{{title_tex}}}\n"
+        "\\author{Anonymous Author(s)}\n\n"
+        "\\begin{document}\n\n"
+        "\\maketitle\n\n"
+        f"\\begin{{abstract}}\n{abstract_tex}\n\\end{{abstract}}\n\n"
+        + body
+        + f"\n\n\\bibliographystyle{{plainnat}}\n\\bibliography{{{bib_stem}}}\n\n"
+        "\\end{document}\n"
+    )
+
+
+def _prepare_informs_preamble(preamble: str) -> str:
+    cleaned = re.sub(
+        r"\\documentclass\[[^\]]*\]\{informs4\}",
+        r"\\documentclass[isre,dblanonrev]{informs4}",
+        preamble or "",
+        count=1,
+    )
+    cleaned = re.sub(r"(?m)^\\MANUSCRIPTNO\{[^}]*\}", r"\\MANUSCRIPTNO{}", cleaned)
+    cleaned = re.sub(
+        r"(?m)^\\RequirePackage\{(?:tgtermes|newtxtext|newtxmath)\}\s*",
+        "",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?m)^\\usepackage\{(?:algorithm|algpseudocode)\}\s*",
+        "",
+        cleaned,
+    )
+    return cleaned
+
+
+def _short_latex_running_text(value: str, *, limit: int) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(text) > limit:
+        text = text[:limit].rsplit(" ", 1)[0].rstrip() or text[:limit].rstrip()
+    return _escape_latex_title(text)
+
+
 def _split_template_at_begin_document(template: str) -> tuple[str, str, str]:
     match = re.search(r"\\begin\{document\}", template or "", flags=re.IGNORECASE)
     if not match:
@@ -2486,13 +2773,20 @@ def _set_document_bibliography(body: str, *, bib_stem: str, bib_style: str) -> s
 def _resolve_latex_template(repo_root: Path, family: str, template_id: str, writing_language: str) -> Path | None:
     base = repo_root / "latex_templete"
     candidates: list[Path] = []
-    if family == "basic_zh" or writing_language == "zh":
+    if family == "basic_zh":
         candidates.append(base / "normal" / "basic_zh.tex")
     elif family == "basic_en":
         candidates.append(base / "normal" / "basic_en.tex")
     elif family == "utd":
         tid = template_id or "informs"
         if tid in {"informs", "mnsc", "isre", "isr", "ijds"}:
+            candidates.append(
+                base
+                / "utd"
+                / "informs"
+                / "INFORMS-ISRE-Template-6-10-2024"
+                / "INFORMS-ISRE-Template.tex"
+            )
             candidates.append(base / "utd" / "informs" / "informs_fallback.tex")
         candidates.append(base / "utd" / "informs_basic.tex")
     elif family == "ccf":
@@ -2500,7 +2794,13 @@ def _resolve_latex_template(repo_root: Path, family: str, template_id: str, writ
         if tid == "neurips":
             candidates.append(base / "ccf-latex-templates" / "NeurIPS" / "neurips_2026.tex")
         elif tid == "kdd":
+            candidates.append(base / "ccf-latex-templates" / "SIGKDD" / "kdd_basic.tex")
             candidates.extend((base / "ccf-latex-templates" / "SIGKDD").glob("*.tex"))
+        elif tid == "icml":
+            candidates.append(base / "ccf-latex-templates" / "ICML" / "example_paper.tex")
+        elif tid == "iclr":
+            candidates.append(base / "ccf-latex-templates" / "ICLR" / "iclr2026_basic.tex")
+            candidates.append(base / "ccf-latex-templates" / "ICLR" / "iclr2026_conference.sty")
     if not candidates:
         candidates.append(base / "normal" / ("basic_zh.tex" if writing_language == "zh" else "basic_en.tex"))
     for candidate in candidates:

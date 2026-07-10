@@ -52,6 +52,14 @@ def _stable_json_fingerprint(payload: dict[str, Any]) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 _T36_SURVEY_GATE_INPUT_PATHS = {
     "project": "project.yaml",
     "synthesis": "literature/synthesis.md",
@@ -99,6 +107,9 @@ _TEMPLATE_GATE_DEFAULTS: dict[str, dict[str, str]] = {
     "basic_en": {"template_family": "basic_en", "template_id": "basic_en", "writing_language": "en"},
     "basic_zh": {"template_family": "basic_zh", "template_id": "basic_zh", "writing_language": "zh"},
     "ccf_neurips": {"template_family": "ccf", "template_id": "neurips", "writing_language": "en"},
+    "ccf_iclr": {"template_family": "ccf", "template_id": "iclr", "writing_language": "en"},
+    "ccf_icml": {"template_family": "ccf", "template_id": "icml", "writing_language": "en"},
+    "ccf_kdd": {"template_family": "ccf", "template_id": "kdd", "writing_language": "en"},
     "utd_informs": {"template_family": "utd", "template_id": "informs", "writing_language": "en"},
     "is_informs": {
         "venue_style": "is",
@@ -119,6 +130,8 @@ _SUPPORTED_RUNTIME_TEMPLATE_IDS = {
     "basic_zh",
     "basic_en",
     "neurips",
+    "iclr",
+    "icml",
     "kdd",
     "informs",
 }
@@ -1051,7 +1064,12 @@ def _normalize_template_family(value: Any) -> str:
         "ccf_a": "ccf",
         "ccf-a": "ccf",
         "neurips": "ccf",
+        "iclr": "ccf",
+        "iclr2026": "ccf",
+        "icml": "ccf",
+        "icml2026": "ccf",
         "kdd": "ccf",
+        "sigkdd": "ccf",
     }
     text = aliases.get(text, text)
     return text if text in {"basic_zh", "basic_en", "ccf", "utd", "other"} else "basic_en"
@@ -1068,7 +1086,16 @@ def _normalize_template_id(value: Any) -> str:
         "英文": "basic_en",
         "nips": "neurips",
         "neurips2026": "neurips",
+        "neurips_2026": "neurips",
+        "iclr2026": "iclr",
+        "iclr_2026": "iclr",
+        "iclr_conference": "iclr",
+        "iclr2026_conference": "iclr",
+        "icml2026": "icml",
+        "icml_2026": "icml",
         "sigkdd": "kdd",
+        "kdd2026": "kdd",
+        "kdd_2026": "kdd",
         "mnsc": "informs",
         "isr": "informs",
         "isre": "informs",
@@ -1588,6 +1615,15 @@ class StateMachine:
                 return state
         next_task = self._resolve_branch(node, gate_result, state, workspace_dir=workspace_dir)
         self._persist_immediate_gate_result(node, gate_result, next_task, workspace_dir)
+        if node.task_id == "T5-EXPR-MATERIAL-GATE" and next_task == "T5-EXPR-MATERIAL-GATE":
+            state.pending_gate = None
+            state.status = "PAUSED"
+            state.paused_at = _now_iso()
+            state.last_error = (
+                "WAITING_MATERIALS: place baseline models, datasets, repositories, weights, "
+                "and notes under external_executor/expr/, then resume."
+            )
+            return state
         if node.task_id == "T5-EXTERNAL-WAIT" and workspace_dir is not None and next_task == "T7-INGEST":
             readiness = validate_external_executor_ready(
                 workspace_dir,
@@ -2011,6 +2047,41 @@ class StateMachine:
             path.write_text(json.dumps(selection, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             patch_external_executor_files_with_selection(workspace_dir, selection)
             return
+        if node.task_id == "T5-EXPR-MATERIAL-GATE":
+            option_id = str(gate_result.get("option_id") or gate_result.get("key") or "pause_for_materials")
+            captured = gate_result.get("captured") or {}
+            expr_dir = workspace_dir / "external_executor" / "expr"
+            expr_dir.mkdir(parents=True, exist_ok=True)
+            files = []
+            for path in sorted(expr_dir.rglob("*")):
+                if not path.is_file():
+                    continue
+                rel = path.relative_to(workspace_dir).as_posix()
+                files.append(
+                    {
+                        "path": rel,
+                        "bytes": path.stat().st_size,
+                        "sha256": _sha256_file(path),
+                    }
+                )
+            payload = {
+                "version": "1.0",
+                "semantics": "external_executor_expr_materials_gate_decision",
+                "task_id": node.task_id,
+                "gate_id": self._gate_id_for_node(node),
+                "selected_option": option_id,
+                "materials_ready": option_id == "materials_ready",
+                "captured": captured if isinstance(captured, dict) else {},
+                "next_task": next_task,
+                "expr_dir": "external_executor/expr",
+                "expr_snapshot": files,
+                "decided_at": _now_iso(),
+                "resume_instruction": "After placing materials, run: python -m researchos.cli resume --workspace <workspace>",
+            }
+            path = workspace_dir / "external_executor" / "expr" / "materials_gate_decision.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            return
         outputs = node.outputs or {}
         for rel_path in outputs.values():
             path = workspace_dir / rel_path
@@ -2054,6 +2125,8 @@ class StateMachine:
             return self._parse_t36_post_survey_decision(workspace_dir)
         if current_task == "T2-PARAM-CONFIRM-GATE":
             return self._parse_t2_param_confirmation(workspace_dir)
+        if current_task == "T5-EXPR-MATERIAL-GATE":
+            return self._parse_t5_expr_material_decision(workspace_dir)
 
         raise ValueError(f"Unsupported __parse_from_output__ task: {current_task}")
 
@@ -2101,6 +2174,8 @@ class StateMachine:
             "continue_to_experiment",
         }
         if verdict_token in pass_tokens:
+            if "T5-REBOOST-GATE" in self.nodes:
+                return "T5-REBOOST-GATE"
             if "T5-HANDOFF" in self.nodes:
                 return "T5-HANDOFF"
             return "T7" if "T7" in self.nodes else "failed"
@@ -2206,6 +2281,22 @@ class StateMachine:
             return "T2-PARAM-GATE" if "T2-PARAM-GATE" in self.nodes else "T2"
         return "done" if "done" in self.nodes else "failed"
 
+    def _parse_t5_expr_material_decision(self, workspace_dir: Path) -> str:
+        """Route the T5 experiment-material gate from its explicit decision file."""
+
+        path = workspace_dir / "external_executor" / "expr" / "materials_gate_decision.json"
+        data = self._read_json_dict(path)
+        if data is None:
+            return "T5-EXPR-MATERIAL-GATE"
+        selected = str(data.get("selected_option") or "").strip().lower()
+        if data.get("materials_ready") is True or selected in {"materials_ready", "ready", "continue", "done"}:
+            return "T5-EXECUTOR-GATE"
+        if selected in {"back_to_t4", "t4", "rethink"}:
+            return "T4"
+        if selected in {"stop_project", "stop", "done"}:
+            return "done" if "done" in self.nodes else "failed"
+        return "T5-EXPR-MATERIAL-GATE"
+
     @staticmethod
     def _read_json_dict(path: Path) -> dict[str, Any] | None:
         try:
@@ -2248,6 +2339,8 @@ class StateMachine:
         return target
 
     def _default_experiment_entry(self) -> str:
+        if "T5-REBOOST-GATE" in self.nodes:
+            return "T5-REBOOST-GATE"
         if "T5-HANDOFF" in self.nodes:
             return "T5-HANDOFF"
         if "T7" in self.nodes:

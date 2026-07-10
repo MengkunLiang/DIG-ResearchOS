@@ -1,0 +1,19 @@
+{
+  "semantics": "researchos_latex_template_manifest",
+  "template_family": "utd",
+  "default_template_id": "informs",
+  "default_entry": "INFORMS-ISRE-Template-6-10-2024/INFORMS-ISRE-Template.tex",
+  "default_class": "informs4",
+  "default_bibliography_style": "informs2014",
+  "aliases": ["informs", "isre", "isr", "mnsc", "ijds", "management_science"],
+  "support_files": [
+    "INFORMS-ISRE-Template-6-10-2024/informs4.cls",
+    "INFORMS-ISRE-Template-6-10-2024/informs2014.bst",
+    "INFORMS-ISRE-Template-6-10-2024/eqndefns-left.sty",
+    "INFORMS-ISRE-Template-6-10-2024/eqndefns-center.sty",
+    "INFORMS-ISRE-Template-6-10-2024/informs_Logo.pdf",
+    "INFORMS-ISRE-Template-6-10-2024/informs_Logo.eps"
+  ],
+  "legacy_fallback": "informs_fallback.tex",
+  "notes": "ResearchOS uses the uploaded official INFORMS ISRE 2024 package as the compile-ready default for UTD/INFORMS drafts. Journal-specific INFORMS packages can be added as additional template ids later."
+}

@@ -1,0 +1,448 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% This file is copyright 2018 by TNQ. All rights reserved
+%
+% Author: LaTeX Software Team
+% Created On     : Thursday January 23 2018
+% Modified On   : Thursday January 23 2018
+% Description: LaTeX Style file developed for SJS INFORMS Layout and Formating the environments
+%                   `MNSC'
+%
+% You are not allowed to copy, modify or distribute this file in any form
+% without the explicit permission of the copyright holder.
+%%%%% KGL %%%%%
+% The equation environment has been redefined to fix the bug of section number appearing as equation number in cross references. This is due to the fleqn.sty
+% The fix from amsmath.sty has been used to redefine the equation environment. KGL (MS) 12/06/2023
+
+\NeedsTeXFormat{LaTeX2e}% LaTeX 2.09 can't be used (nor non-LaTeX)
+
+\usepackage[most]{tcolorbox}
+
+\gdef\AUCONTACT#1{#1}
+\gdef\ORCIDlogo{}
+
+\gdef\FigBoxdefns{\fbox{\hbox to100pt{\vbox to100pt{}}}}%
+
+\newlength{\maxdseq}
+\newdimen\EquationErrorMsgdimen%%
+\newdimen\EquationErrorBoxdimen%%
+% Add variable width using check for single or double column.% MS 12042024
+\EquationErrorMsgdimen=464.5pt%%
+\EquationErrorBoxdimen=470pt%%
+\setlength{\maxdseq}{440pt} % MS 12/04/2024
+%%%%%%%%%%%%%	KGL BEGIN	%%%%%%%%%%%%%%%%%%%%
+% Single Column Journals
+\if@STSY\else
+\if@MOOR\else
+\if@IJOO\else
+\if@IJOC\else
+% Double Column Journals
+\EquationErrorMsgdimen=234.5pt%%
+\EquationErrorBoxdimen=240pt%%
+\setlength{\maxdseq}{240pt} %
+\fi\fi\fi\fi
+%%%%%%%%%%%%%	KGL END		%%%%%%%%%%%%%%%%%%%%
+\def\ErrorTxt{ATTENTION: The following displayed equation, in its current form, exceeds the column width that will be used in the published edition of your article. Please break or rewrite this equation to fit, including the equation number, within a column width of 470 pt / 165.81 mm / 6.53 in (the width of this red box).}
+
+% Single Column Journals
+\if@STSY\else
+\if@MOOR\else
+\if@IJOO\else
+\if@IJOC\else
+% Double Column Journals
+\def\ErrorTxt{ATTENTION: The following displayed equation, in its current form, exceeds the column width that will be used in the published edition of your article. Please break or rewrite this equation to fit, including the equation number, within a column width of 240 pt / 84.67 mm / 3.33 in (the width of this red box).}
+\fi\fi\fi\fi
+%%%%%%%%%%%%%	KGL END		%%%%%%%%%%%%%%%%%%%%
+
+\gdef\EquationMarginNoteText{\smash{\if@twocolumn\if@firstcolumn\hspace*{-1pc}\raise-2pc\else\hspace*{.25pc}\raise.5pc\fi\else\hspace*{-1pc}\raise-2pc\fi\vbox{\fontsize{6}{7}\selectfont\raggedright\hsize=4.75pc Inline math changed to unnumbered display math}}}%
+
+\newlength{\mylen}%
+\newlength{\eqlen}%
+\newlength{\eqleni}%
+\newlength\dlf%
+
+\newif\ifInlineEqn%
+
+\long\def\MathErrmsg#1#2#3#4{\global\eqleni=#1\relax%
+\ifdim\eqleni > \maxdseq \relax \par%
+\vbox{\vspace*{3pt}\noindent\textcolor{red}{\fbox{\parbox{\EquationErrorMsgdimen}{\bf\tt\scriptsize\raggedright%
+\ErrorTxt}}}\par\nointerlineskip\nobreak\ifInlineEqn\if@twocolumn\if@firstcolumn\llap{\EquationMarginNoteText}\else\rlap{\hspace*{20pc}\EquationMarginNoteText}\fi\nobreak\else\llap{\EquationMarginNoteText}\nobreak\fi\fi%
+\begin{tcolorbox}[#3,standard jigsaw,boxsep=0pt,boxrule=0.4pt,left=0pt]%
+#2%
+\end{tcolorbox}}%
+\else%
+\ifx!#4!\par\box\z@%
+\else\begin{#4}%
+#2%
+\end{#4}%
+\fi\fi%
+\global\eqleni=0pt\relax%
+\global\eqlen=0pt\relax%
+}%
+
+\long\def\MultiMathErrmsg#1#2#3#4{\global\eqleni=#1\relax%
+\ifdim\eqleni > \maxdseq \relax \par%
+\vbox{\vspace*{3pt}\noindent\textcolor{red}{\fbox{\parbox{\EquationErrorMsgdimen}{\bf\tt\scriptsize\raggedright%
+\ErrorTxt}}}\par\nointerlineskip\nobreak\ifInlineEqn\if@twocolumn\if@firstcolumn\llap{\EquationMarginNoteText}\else\rlap{\hspace*{20pc}\EquationMarginNoteText}\fi\nobreak\else\llap{\EquationMarginNoteText}\nobreak\fi\fi%
+\begin{tcolorbox}[standard jigsaw,boxsep=0pt,boxrule=0.4pt,left=0pt]%
+\begin{#3}
+#2%
+\end{#3}
+\end{tcolorbox}}%
+\else%
+\ifx!#4!\par\box\z@%
+\else\begin{#4}%
+#2%
+\end{#4}%
+\fi\fi%
+\global\eqleni=0pt\relax%
+\global\eqlen=0pt\relax%
+}%
+
+\newbox\spgetwdeqbox%
+\newskip\spgetwdeqskip%
+
+\newif\ifEquationvalidate%
+\Equationvalidatetrue
+
+\renewenvironment{equation}{%
+\ifEquationvalidate
+	\setbox\spgetwdeqbox\hbox\bgroup$\displaystyle
+	\incr@eqnum
+	\mathdisplay@push
+	\st@rredfalse
+	\global\@eqnswtrue
+	\mathopen{}
+\else
+	\incr@eqnum
+	\mathdisplay@push
+	\st@rredfalse
+	\global\@eqnswtrue
+	\mathdisplay{equation}
+\fi
+}{%
+\ifEquationvalidate
+	$\egroup\spgetwdeqskip=\wd\spgetwdeqbox
+	\global\eqlen=\spgetwdeqskip
+	\ifdim\eqlen > \maxdseq \relax \par%
+		\vbox{\vspace*{3pt}\noindent\textcolor{red}{\fbox{\parbox{\EquationErrorMsgdimen}{\bf\tt\scriptsize\raggedright%
+		\ErrorTxt}}}\par\nointerlineskip\nobreak
+		\ifInlineEqn
+		\if@twocolumn
+			\if@firstcolumn
+				\llap{\EquationMarginNoteText}
+			\else
+				\rlap{\hspace*{20pc}\EquationMarginNoteText}
+			\fi
+			\nobreak
+		\else
+			\llap{\EquationMarginNoteText}
+			\nobreak
+		\fi
+		\fi%
+		\begin{tcolorbox}[standard jigsaw,boxsep=0pt,boxrule=0.4pt,left=0pt,width=\EquationErrorBoxdimen]%
+		\mathdisplay@push
+		\st@rredfalse
+		\global\@eqnswtrue
+		\mathdisplay{equation}
+		\copy\spgetwdeqbox%
+		\endmathdisplay{equation}%
+		\mathdisplay@pop
+		\ignorespacesafterend
+		\end{tcolorbox}}%
+	\else
+		\mathdisplay@push
+		\st@rredfalse
+		\global\@eqnswtrue
+		\mathdisplay{equation}
+		\copy\spgetwdeqbox%
+		\endmathdisplay{equation}%
+		\mathdisplay@pop
+		\ignorespacesafterend
+	\fi
+	\mathdisplay@pop
+	\ignorespacesafterend
+\else
+	\endmathdisplay{equation}%
+	\mathdisplay@pop
+	\ignorespacesafterend
+\fi
+}
+
+\newenvironment{oldequation}{%
+\incr@eqnum
+  \mathdisplay@push
+  \st@rredfalse\global\@eqnswtrue
+  \mathdisplay{equation}
+}{%
+\endmathdisplay{equation}%
+  \mathdisplay@pop
+  \ignorespacesafterend}
+
+\renewenvironment{equation*}{%
+\ifEquationvalidate\setbox\spgetwdeqbox\hbox\bgroup$\displaystyle\else%\incr@eqnum
+  \mathdisplay@push
+  \st@rredtrue\global\@eqnswfalse
+  \mathdisplay{equation*}\fi%
+}{%
+  \ifEquationvalidate$\egroup\spgetwdeqskip=\wd\spgetwdeqbox\global\eqlen=\spgetwdeqskip
+\ifdim\eqlen > \maxdseq \relax \par%
+\vbox{\vspace*{3pt}\noindent\textcolor{red}{\fbox{\parbox{\EquationErrorMsgdimen}{\bf\tt\scriptsize\raggedright%
+\ErrorTxt}}}\par\nointerlineskip\nobreak\ifInlineEqn\if@twocolumn\if@firstcolumn\llap{\EquationMarginNoteText}\else\rlap{\hspace*{20pc}\EquationMarginNoteText}\fi\nobreak\else\llap{\EquationMarginNoteText}\nobreak\fi\fi%
+\begin{tcolorbox}[standard jigsaw,boxsep=0pt,boxrule=0.4pt,left=0pt,width=\EquationErrorBoxdimen]%
+\copy\spgetwdeqbox%
+\end{tcolorbox}}
+%\incr@eqnum
+  \mathdisplay@push
+  \st@rredfalse\global\@eqnswtrue
+  \mathdisplay@pop
+  \ignorespacesafterend
+\noindent\else
+  \mathdisplay@push
+  \st@rredtrue \global\@eqnswfalse
+  \mathdisplay{equation*}%
+\copy\spgetwdeqbox%
+  \endmathdisplay{equation*}%
+  \mathdisplay@pop
+  \ignorespacesafterend
+\fi%
+\else\endmathdisplay{equation*}%
+  \mathdisplay@pop
+  \ignorespacesafterend
+\fi}
+
+\newbox\getwdalignbox%
+
+\newdimen\equationwidth
+\renewenvironment{align}{%
+\equationwidth=\EquationErrorBoxdimen%
+\setbox\getwdalignbox\vbox\bgroup\start@align\@ne\st@rredfalse\m@ne
+}{%
+  \math@cr \black@\totwidth@
+  \egroup
+  \ifingather@
+    \restorealignstate@
+    \egroup
+    \nonumber
+    \ifnum0=`{\fi\iffalse}\fi
+  \else
+    $$%
+  \fi
+    \ifmeasuring@\else\global\let\got@maxcolwd\maxcolumn@widths\fi%
+  \def\or{+}\edef\x{\mylen=\dimexpr\got@maxcolwd\relax}\x%
+\global\eqlen=\expandafter\the\mylen
+  \ignorespacesafterend
+\egroup\ifdim\eqlen > \maxdseq \relax \par%
+\advance\equationwidth by -\wd\getwdalignbox%
+\vbox{\vspace*{3pt}\noindent\textcolor{red}{\fbox{\parbox{\EquationErrorMsgdimen}{\bf\tt\scriptsize\raggedright%
+\ErrorTxt}}}\par\nointerlineskip\nobreak\ifInlineEqn\if@twocolumn\if@firstcolumn\llap{\EquationMarginNoteText}\else\rlap{\hspace*{20pc}\EquationMarginNoteText}\fi\nobreak\else\llap{\EquationMarginNoteText}\nobreak\fi\fi%
+\begin{tcolorbox}[standard jigsaw,boxsep=0pt,boxrule=0.4pt,left=-0.05\equationwidth,width=\EquationErrorBoxdimen]%
+\hbox to\EquationErrorBoxdimen{\hfil\box\getwdalignbox\hfil}%
+\end{tcolorbox}}%
+%\incr@eqnum
+  \mathdisplay@push
+  \st@rredfalse\global\@eqnswtrue
+  \mathdisplay@pop
+  \ignorespacesafterend
+\noindent\else
+$$\box\getwdalignbox$$\ignorespacesafterend
+\fi}
+
+\renewenvironment{align*}{%
+\equationwidth=\EquationErrorBoxdimen%
+\setbox\getwdalignbox\vbox\bgroup\start@align\@ne\st@rredtrue\m@ne
+}{%
+  \math@cr \black@\totwidth@
+  \egroup
+  \ifingather@
+    \restorealignstate@
+    \egroup
+    \nonumber
+    \ifnum0=`{\fi\iffalse}\fi
+  \else
+    $$%
+  \fi
+    \ifmeasuring@\else\global\let\got@maxcolwd\maxcolumn@widths\fi%
+  \def\or{+}\edef\x{\mylen=\dimexpr\got@maxcolwd\relax}\x%
+\global\eqlen=\expandafter\the\mylen
+  \ignorespacesafterend
+\egroup\ifdim\eqlen > \maxdseq \relax \par%
+\advance\equationwidth by -\wd\getwdalignbox%
+\vbox{\vspace*{3pt}\noindent\textcolor{red}{\fbox{\parbox{\EquationErrorMsgdimen}{\bf\tt\scriptsize\raggedright%
+\ErrorTxt}}}\par\nointerlineskip\nobreak\ifInlineEqn\if@twocolumn\if@firstcolumn\llap{\EquationMarginNoteText}\else\rlap{\hspace*{20pc}\EquationMarginNoteText}\fi\nobreak\else\llap{\EquationMarginNoteText}\nobreak\fi\fi%
+\begin{tcolorbox}[standard jigsaw,boxsep=0pt,boxrule=0.4pt,left=-0.0025\equationwidth,width=\EquationErrorBoxdimen]%
+\hbox to\EquationErrorBoxdimen{\hfill\box\getwdalignbox\hfill}%
+\end{tcolorbox}}%
+%\incr@eqnum
+  \mathdisplay@push
+  \st@rredfalse\global\@eqnswtrue
+  \mathdisplay@pop
+  \ignorespacesafterend
+\noindent\else
+$$\box\getwdalignbox$$\ignorespacesafterend\fi}
+
+\newbox\getwdgatherbox%
+
+\renewenvironment{gather}{%
+\setbox\getwdgatherbox\vbox\bgroup\start@align\@ne\st@rredfalse\m@ne
+}{%
+  \math@cr \black@\totwidth@
+  \egroup
+  \ifingather@
+    \restorealignstate@
+    \egroup
+    \nonumber
+    \ifnum0=`{\fi\iffalse}\fi
+  \else
+    $$%
+  \fi
+    \ifmeasuring@\else\global\let\got@maxcolwd\maxcolumn@widths\fi%
+   \begingroup%
+   \def\or{+}\edef\x{\endgroup\mylen=\dimexpr\got@maxcolwd\relax}\x%
+  \global\eqlen=\expandafter\the\mylen
+  \ignorespacesafterend
+\egroup\ifdim\eqlen > \maxdseq \relax \par%
+\vbox{\vspace*{3pt}\noindent\textcolor{red}{\fbox{\parbox{\EquationErrorMsgdimen}{\bf\tt\scriptsize\raggedright%
+\ErrorTxt}}}\par\nointerlineskip\nobreak\ifInlineEqn\if@twocolumn\if@firstcolumn\llap{\EquationMarginNoteText}\else\rlap{\hspace*{20pc}\EquationMarginNoteText}\fi\nobreak\else\llap{\EquationMarginNoteText}\nobreak\fi\fi%
+\begin{tcolorbox}[standard jigsaw,boxsep=0pt,boxrule=0.4pt,left=0pt]%
+\box\getwdgatherbox%
+\end{tcolorbox}}%
+%\incr@eqnum
+  \mathdisplay@push
+  \st@rredfalse\global\@eqnswtrue
+  \mathdisplay@pop
+  \ignorespacesafterend
+\noindent\else
+$$\box\getwdgatherbox$$\ignorespacesafterend\fi}
+
+\renewenvironment{gather*}{%
+\setbox\getwdgatherbox\vbox\bgroup\start@align\@ne\st@rredtrue\m@ne
+}{%
+  \math@cr \black@\totwidth@
+  \egroup
+  \ifingather@
+    \restorealignstate@
+    \egroup
+    \nonumber
+    \ifnum0=`{\fi\iffalse}\fi
+  \else
+    $$%
+  \fi
+    \ifmeasuring@\else\global\let\got@maxcolwd\maxcolumn@widths\fi%
+  \def\or{+}\edef\x{\mylen=\dimexpr\got@maxcolwd\relax}\x%
+\global\eqlen=\expandafter\the\mylen
+  \ignorespacesafterend
+\egroup
+\ifdim\eqlen > \maxdseq \relax \par%
+\vbox{\vspace*{3pt}\noindent\textcolor{red}{\fbox{\parbox{\EquationErrorMsgdimen}{\bf\tt\scriptsize\raggedright%
+\ErrorTxt}}}\par\nointerlineskip\nobreak\ifInlineEqn\if@twocolumn\if@firstcolumn\llap{\EquationMarginNoteText}\else\rlap{\hspace*{20pc}\EquationMarginNoteText}\fi\nobreak\else\llap{\EquationMarginNoteText}\nobreak\fi\fi%
+\begin{tcolorbox}[standard jigsaw,boxsep=0pt,boxrule=0.4pt,left=0pt]%
+\box\getwdgatherbox%
+\end{tcolorbox}}%
+%\incr@eqnum
+  \mathdisplay@push
+  \st@rredfalse\global\@eqnswtrue
+  \mathdisplay@pop
+  \ignorespacesafterend
+\noindent\else
+$$\box\getwdgatherbox$$\ignorespacesafterend\fi}
+
+\renewenvironment{multline}{%
+\setbox\getwdalignbox\vbox\bgroup\start@align\@ne\st@rredfalse\m@ne
+}{%
+  \math@cr \black@\totwidth@
+  \egroup
+  \ifingather@
+    \restorealignstate@
+    \egroup
+    \nonumber
+    \ifnum0=`{\fi\iffalse}\fi
+  \else
+    $$%
+  \fi
+    \ifmeasuring@\else\global\let\got@maxcolwd\maxcolumn@widths\fi%
+  \def\or{+}\edef\x{\mylen=\dimexpr\got@maxcolwd\relax}\x%
+\global\eqlen=\expandafter\the\mylen
+  \ignorespacesafterend
+\egroup\ifdim\eqlen > \maxdseq \relax \par%
+\vbox{\vspace*{3pt}\noindent\textcolor{red}{\fbox{\parbox{\EquationErrorMsgdimen}{\bf\tt\scriptsize\raggedright%
+\ErrorTxt}}}\par\nointerlineskip\nobreak\ifInlineEqn\if@twocolumn\if@firstcolumn\llap{\EquationMarginNoteText}\else\rlap{\hspace*{20pc}\EquationMarginNoteText}\fi\nobreak\else\llap{\EquationMarginNoteText}\nobreak\fi\fi%
+\begin{tcolorbox}[standard jigsaw,boxsep=0pt,boxrule=0.4pt,left=0pt]%
+\box\getwdalignbox%
+\end{tcolorbox}}%
+%\incr@eqnum
+  \mathdisplay@push
+  \st@rredfalse\global\@eqnswtrue
+  \mathdisplay@pop
+  \ignorespacesafterend
+\noindent\else
+$$\box\getwdalignbox$$\ignorespacesafterend\fi}
+
+\renewenvironment{multline*}{%
+\setbox\getwdalignbox\vbox\bgroup\start@align\@ne\st@rredtrue\m@ne
+}{%
+  \math@cr \black@\totwidth@
+  \egroup
+  \ifingather@
+    \restorealignstate@
+    \egroup
+    \nonumber
+    \ifnum0=`{\fi\iffalse}\fi
+  \else
+    $$%
+  \fi
+    \ifmeasuring@\else\global\let\got@maxcolwd\maxcolumn@widths\fi%
+  \def\or{+}\edef\x{\mylen=\dimexpr\got@maxcolwd\relax}\x%
+\global\eqlen=\expandafter\the\mylen
+  \ignorespacesafterend
+\egroup\ifdim\eqlen > \maxdseq \relax \par%
+\vbox{\vspace*{3pt}\noindent\textcolor{red}{\fbox{\parbox{\EquationErrorMsgdimen}{\bf\tt\scriptsize\raggedright%
+\ErrorTxt}}}\par\nointerlineskip\nobreak\ifInlineEqn\if@twocolumn\if@firstcolumn\llap{\EquationMarginNoteText}\else\rlap{\hspace*{20pc}\EquationMarginNoteText}\fi\nobreak\else\llap{\EquationMarginNoteText}\nobreak\fi\fi%
+\begin{tcolorbox}[standard jigsaw,boxsep=0pt,boxrule=0.4pt,left=0pt]%
+\box\getwdalignbox%
+\end{tcolorbox}}%
+%\incr@eqnum
+  \mathdisplay@push
+  \st@rredfalse\global\@eqnswtrue
+  \mathdisplay@pop
+  \ignorespacesafterend
+\noindent\else
+$$\box\getwdalignbox$$\ignorespacesafterend\fi}
+
+\newenvironment{floatalgorigthm}{\@dblfloat{figure}}{\end@dblfloat}
+
+\let\eqnarray\undefined%%
+
+%%%%%%%%%%%%%%%
+\def\makevruler[#1][#2][#3][#4][#5]{\begingroup\offinterlineskip
+\textheight=#5\vbadness=10000\vfuzz=120ex\overfullrule=0pt%
+\global\setbox\bufferbox=\vbox to \textheight{%
+\ifnum\thepage=0001{\parskip=0pt\hfuzz=150em\b@xheight=\textheight%
+\lineh@ight=#1\global\rulercount=#2%
+\tot@l\b@xheight\divide\tot@l\lineh@ight\advance\tot@l2%
+\refn@1\vskip-\lineh@ight\vskip5ex%%\vskip-\textheight%
+\loop\setbox\tempb@x=\hbox to1cm{{\fontsize{10}{12}\selectfont\hfil\fillzeros[#4]\rulercount}}%
+\ht\tempb@x\lineh@ight\dp\tempb@x0pt\box\tempb@x\break
+\advance\refn@1\global\advance\rulercount#3\relax
+\ifnum\refn@<\tot@l\repeat}{\parskip=0pt\hfuzz=150em\b@xheight=\textheight%
+\lineh@ight=#1\global\rulercount=#2%
+\tot@l\b@xheight\divide\tot@l\lineh@ight\advance\tot@l2%
+\refn@1\vskip-\lineh@ight\vskip8pt\vskip-\textheight%%%
+\loop\setbox\tempb@x=\hbox to1.15\textwidth{{\fontsize{10}{12}\selectfont\hfil\fillzeros[#4]\rulercount}}%
+\ht\tempb@x\lineh@ight\dp\tempb@x0pt\box\tempb@x\break
+\advance\refn@1\global\advance\rulercount#3\relax
+\ifnum\refn@<\tot@l\repeat}\else{\parskip=0pt\hfuzz=150em\b@xheight=1.01\textheight
+\lineh@ight=#1\global\rulercount=#2%
+\tot@l\b@xheight\divide\tot@l\lineh@ight\advance\tot@l2%
+\refn@2\vskip-\lineh@ight\vskip24pt%
+\loop\setbox\tempb@x=\hbox to1cm{{\fontsize{10}{12}\selectfont\hfil\fillzeros[#4]\rulercount}}%
+\ht\tempb@x\lineh@ight\dp\tempb@x0pt\box\tempb@x\break
+\advance\refn@1\global\advance\rulercount#3\relax
+\ifnum\refn@<\tot@l\repeat}{\parskip=0pt\hfuzz=150em\b@xheight=1.01\textheight%
+\lineh@ight=#1\global\rulercount=#2%
+\tot@l\b@xheight\divide\tot@l\lineh@ight\advance\tot@l2%
+\refn@2\vskip-\lineh@ight\vskip-\textheight\vskip8pt%
+\loop\setbox\tempb@x=\hbox to1.15\textwidth{{\fontsize{10}{12}\selectfont\hfil\fillzeros[#4]\rulercount}}%
+\ht\tempb@x\lineh@ight\dp\tempb@x0pt\box\tempb@x\break
+\advance\refn@1\global\advance\rulercount#3\relax
+\ifnum\refn@<\tot@l\repeat}\fi}\endgroup}
+\endinput

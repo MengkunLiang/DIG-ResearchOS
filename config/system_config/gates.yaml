@@ -179,8 +179,8 @@ gates:
         literal: |
           如何选择：
           - 只想先写内容稿：中文选“中文基础模板”，英文选“英文基础模板”。
-          - CCF/AI/CS 会议综述：选“CCF 默认 NeurIPS”；也可在自定义中指定 template_id=kdd。当前本地可编译入口主要支持 neurips/kdd。
-          - UTD/Management Science/ISR/INFORMS/CDS 风格：选“UTD/INFORMS”。这是本地可编译 fallback，最终投稿仍应替换为官方期刊 ZIP。
+          - CCF/AI/CS 会议综述：默认选“CCF 默认 NeurIPS”；若目标更明确，也可直接选 ICLR、ICML 或 KDD。当前本地可编译入口支持 template_id=neurips/iclr/icml/kdd。
+          - UTD/Management Science/ISR/INFORMS/CDS 风格：选“UTD/INFORMS”。默认使用本地官方 INFORMS ISRE 2024 模板包；若最终投稿到其他 INFORMS 期刊，可再替换为对应官方期刊包。
           - 不确定投哪里：先选基础英文或基础中文，后续 T8/T9 仍可重新确认。
       project_summary:
         from_file: project.yaml
@@ -216,9 +216,36 @@ gates:
           template_family: ccf
           template_id: neurips
           writing_language: en
+      - id: ccf_iclr
+        label: "CCF + ICLR"
+        description: "英文 CCF/AI/ML 会议稿，使用本地 ICLR 2026 样式入口。"
+        aliases: ["iclr", "iclr2026"]
+        next: T3.6-PLAN
+        captured_defaults:
+          template_family: ccf
+          template_id: iclr
+          writing_language: en
+      - id: ccf_icml
+        label: "CCF + ICML"
+        description: "英文 CCF/AI/ML 会议稿，使用本地 ICML 2026 样式入口。"
+        aliases: ["icml", "icml2026"]
+        next: T3.6-PLAN
+        captured_defaults:
+          template_family: ccf
+          template_id: icml
+          writing_language: en
+      - id: ccf_kdd
+        label: "CCF + KDD"
+        description: "英文 CCF/数据挖掘会议稿，使用本地 ACM/KDD 样式入口。"
+        aliases: ["kdd", "sigkdd", "kdd2026"]
+        next: T3.6-PLAN
+        captured_defaults:
+          template_family: ccf
+          template_id: kdd
+          writing_language: en
       - id: utd_informs
         label: "UTD/INFORMS"
-        description: "英文 UTD/Management Science/ISR/INFORMS/CDS 风格稿件，使用本地可编译 INFORMS fallback。"
+        description: "英文 UTD/Management Science/ISR/INFORMS/CDS 风格稿件，使用本地官方 INFORMS ISRE 2024 模板包。"
         aliases: ["utd", "informs", "management science", "isr", "misq", "cds", "commerce data science", "informs journal on data science"]
         next: T3.6-PLAN
         captured_defaults:
@@ -384,7 +411,7 @@ gates:
         next: T8-STYLE-GATE
       - id: rerun_t7
         label: "回到外部实验链补实验"
-        next: T5-HANDOFF
+        next: T5-REBOOST-GATE
       - id: rethink_t4
         label: "回到 T4 重构假设"
         next: T4
@@ -402,10 +429,10 @@ gates:
         literal: |
           如何选择：
           - IS/UTD/CDS 期刊稿：选“IS + INFORMS”，默认 template_family=utd, template_id=informs。
-          - CCF-A 会议稿：选“CCF-A + NeurIPS”，默认 template_family=ccf, template_id=neurips；当前本地可编译入口主要支持 neurips/kdd。
+          - CCF-A 会议稿：默认选“CCF-A + NeurIPS”，也可直接选 ICLR、ICML 或 KDD。当前本地可编译入口支持 template_id=neurips/iclr/icml/kdd。
           - 同时准备两套稿：选“Both + 基础英文”，先共享资源索引与 alignment matrix。
           - 只想确定中英、不套 venue：选中文基础或英文基础。
-          - Management Science/ISR/INFORMS 的本地模板是可编译 fallback；最终投稿仍需官方期刊 ZIP。
+          - Management Science/ISR/INFORMS 默认使用本地官方 INFORMS ISRE 2024 模板包；若最终投稿到其他 INFORMS 期刊，可再替换对应官方 ZIP。
       project_summary:
         from_file: project.yaml
         max_chars: 2500
@@ -415,7 +442,7 @@ gates:
     options:
       - id: is_informs
         label: "IS + INFORMS"
-        description: "IS/UTD/CDS 期刊写法，英文 INFORMS fallback 模板。"
+        description: "IS/UTD/CDS 期刊写法，英文 INFORMS 官方 ISRE 2024 模板。"
         aliases: ["is", "utd", "informs", "management science", "isr", "misq", "cds", "commerce data science", "informs journal on data science"]
         next: T8-RESOURCE
         captured_defaults:
@@ -432,6 +459,36 @@ gates:
           venue_style: ccf_a
           template_family: ccf
           template_id: neurips
+          writing_language: en
+      - id: ccf_iclr
+        label: "CCF-A + ICLR"
+        description: "CCF-A/AI/ML 会议写法，英文 ICLR 2026 样式入口。"
+        aliases: ["iclr", "iclr2026"]
+        next: T8-RESOURCE
+        captured_defaults:
+          venue_style: ccf_a
+          template_family: ccf
+          template_id: iclr
+          writing_language: en
+      - id: ccf_icml
+        label: "CCF-A + ICML"
+        description: "CCF-A/AI/ML 会议写法，英文 ICML 2026 样式入口。"
+        aliases: ["icml", "icml2026"]
+        next: T8-RESOURCE
+        captured_defaults:
+          venue_style: ccf_a
+          template_family: ccf
+          template_id: icml
+          writing_language: en
+      - id: ccf_kdd
+        label: "CCF-A + KDD"
+        description: "CCF-A/数据挖掘会议写法，英文 ACM/KDD 样式入口。"
+        aliases: ["kdd", "sigkdd", "kdd2026"]
+        next: T8-RESOURCE
+        captured_defaults:
+          venue_style: ccf_a
+          template_family: ccf
+          template_id: kdd
           writing_language: en
       - id: both_basic_en
         label: "Both + 基础英文"
@@ -504,7 +561,7 @@ gates:
     options:
       - id: continue_to_t7
         label: "继续进入外部实验链"
-        next: T5-HANDOFF
+        next: T5-REBOOST-GATE
       - id: return_to_t4
         label: "回到 T4 重构"
         next: T4
@@ -548,8 +605,51 @@ gates:
         label: "结束当前项目"
         next: done
 
-  # T5 外部执行器选择门：
-  # 真实实验启动前必须由用户显式选择执行器，完整 pipeline 不再默认使用 mock。
+  # T5 实验材料放置门：
+  # 真实实验启动前，用户把 baseline/dataset/weights 等材料放进 external_executor/expr/。
+  t5_expr_material_gate:
+    title: "T5 实验材料放置确认"
+    description: "T5 已完成 re-boost、handoff 和 LLM API 自动 skill 专属化。请先把 baseline model、dataset、外部代码、权重和材料说明放入 external_executor/expr/，再选择执行器。"
+    presentation:
+      expr_path:
+        literal: "external_executor/expr/"
+      expr_files:
+        from_dir: external_executor/expr
+        glob: "*"
+        max_items: 50
+      materials_checklist:
+        from_file: external_executor/expr/MATERIALS_CHECKLIST.json
+        max_chars: 4000
+      handoff_summary:
+        from_file: external_executor/handoff_pack.json
+        max_chars: 4000
+      launch_after_gate:
+        literal: |
+          材料就绪后，下一步会进入外部执行器选择 gate。
+          如果选择 Codex CLI，系统会提示你在 workspace 根目录启动 Codex CLI，让它读取 external_executor/AGENTS.md 并执行 external_executor/skills/research_execution/SKILL.md。
+          Codex 完成后应写回 external_executor/result_pack.json、external_executor/executor_status.json 和 external_executor/run_manifest.json，然后使用 python -m researchos.cli resume --workspace <workspace> 恢复。
+    options:
+      - id: materials_ready
+        label: "材料已放置，继续"
+        aliases: ["ready", "continue", "done"]
+        next: T5-EXECUTOR-GATE
+        collect_input:
+          - notes
+      - id: pause_for_materials
+        label: "暂停等待放置材料"
+        aliases: ["pause", "wait"]
+        next: T5-EXPR-MATERIAL-GATE
+        collect_input:
+          - notes
+      - id: back_to_t4
+        label: "回到 T4 重构实验设想"
+        aliases: ["t4", "rethink"]
+        next: T4
+      - id: stop_project
+        label: "结束当前项目"
+        aliases: ["stop"]
+        next: done
+
   t5_executor_gate:
     title: "T5 外部实验执行器选择"
     description: "ResearchOS 已生成 handoff 协议。请选择如何执行实验；mock 只用于协议联调，不是论文实验证据。"
@@ -566,6 +666,13 @@ gates:
       claude_prompt:
         from_file: external_executor/claude_code_prompt.md
         max_chars: 2500
+      codex_resume_instructions:
+        literal: |
+          Codex CLI 选择后的操作：
+          1. 在当前 workspace 根目录启动 Codex CLI。
+          2. 对 Codex 说：请读取 external_executor/AGENTS.md，并执行 external_executor/skills/research_execution/SKILL.md。
+          3. Codex 完成后必须写出 external_executor/result_pack.json、external_executor/executor_status.json 和 external_executor/run_manifest.json。
+          4. 回到 ResearchOS，运行 python -m researchos.cli resume --workspace <workspace>。
     options:
       - id: mock_dry_run
         label: "mock dry-run（协议测试）"
@@ -587,4 +694,4 @@ gates:
         next: T5-EXTERNAL-WAIT
       - id: revise_handoff
         label: "返回重建 handoff"
-        next: T5-HANDOFF
+        next: T5-REBOOST-GATE

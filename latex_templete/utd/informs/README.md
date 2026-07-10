@@ -1,25 +1,73 @@
-# INFORMS / UTD Template Notes
+# INFORMS / UTD LaTeX Templates
 
-Checked on 2026-06-11.
+This directory contains the local INFORMS template family used by ResearchOS
+when a T3.6 survey or T8 paper selects:
 
-Primary sources:
+```json
+{"template_family": "utd", "template_id": "informs", "writing_language": "en"}
+```
 
-- INFORMS Author Portal, "LaTeX Style Files": `https://pubsonline.informs.org/authorportal/latex-style-files`
-- Management Science official ZIP link exposed by the author portal:
-  `https://pubsonline.informs.org/pb-assets/LaTeX/INFORMS-MNSC-Template-6-10-2024-1718048504857.zip`
-- Overleaf template, "Template for INFORMS Journal on Data Science":
-  `https://www.overleaf.com/latex/templates/template-for-informs-journal-on-data-science/sbthszxgycfn`
-- Overleaf template, "Template for Management Science Journal":
-  `https://www.overleaf.com/latex/templates/template-for-management-science-journal/bjpqpdqhbshy`
+## Default Template
 
-The INFORMS author portal lists journal ZIP packages containing the template,
-submission class, BibTeX style, and documentation. Direct command-line download
-of the Management Science ZIP returned a Cloudflare challenge/403 in this
-environment, so the complete official `informs4.cls` package is not vendored
-here.
+ResearchOS now uses the uploaded official INFORMS Information Systems Research
+template package by default:
 
-`informs_fallback.tex` is a compile-ready ResearchOS fallback that uses ordinary
-LaTeX `article` layout plus INFORMS-style bibliography via `informs2014.bst`.
-It should be used for T3.6/T8 draft assembly. For final T9 submission to a
-specific INFORMS journal, download the current official journal ZIP and replace
-the fallback with the official class/style package.
+```text
+INFORMS-ISRE-Template-6-10-2024/
+  INFORMS-ISRE-Template.tex
+  informs4.cls
+  informs2014.bst
+  eqndefns-left.sty
+  eqndefns-center.sty
+  informs_Logo.pdf
+  informs_Logo.eps
+```
+
+The assembly code does not paste an `article` document into this class. It
+renders an INFORMS-native front matter block using `\TITLE`, `\ARTICLEAUTHORS`,
+`\ABSTRACT`, `\KEYWORDS`, and `\maketitle`, then appends the generated sections
+and `\bibliographystyle{informs2014}` / `\bibliography{...}`.
+
+The same default is used for aliases such as `informs`, `isre`, `isr`, `mnsc`,
+and `ijds` until separate official journal packages are added locally.
+
+## Legacy Fallback
+
+`informs_fallback.tex` remains only as an emergency legacy fallback. It is not
+the default for `template_id=informs`.
+
+## Required Support Files
+
+When ResearchOS assembles an INFORMS document, it copies the required local
+support files next to the generated `.tex` file:
+
+- `informs4.cls`
+- `informs2014.bst`
+- `eqndefns-left.sty`
+- `eqndefns-center.sty`
+- `informs_Logo.pdf`
+- `informs_Logo.eps`
+
+The logo files are required because `informs4.cls` includes `informs_Logo`.
+
+## Compile Expectations
+
+The template should be compiled with a full LaTeX environment such as the
+ResearchOS Docker image. The repository root environment may not have
+`pdflatex` or `latexmk` installed.
+
+Typical ResearchOS compile path:
+
+```bash
+python -m researchos.cli run-task T3.6-COMPILE --workspace <workspace>
+```
+
+or, inside the generated draft directory:
+
+```bash
+latexmk -pdflatex -interaction=nonstopmode -bibtex survey.tex
+```
+
+For final submission to a specific INFORMS journal, replace or extend this
+directory with the current official package for that journal if its class
+options or author instructions differ from the ISRE package.

@@ -422,7 +422,7 @@ LLM 判断包括：
 | T2 检索广度和跨域召回 | `researchos/prompts/scout.j2` 默认启用 `informs_search`，允许 `query_bucket=adjacent_field/theory_bridge` 和 `bridge_id` 作为召回意图；Scout LLM 优先对 seed 邻域、bridge/must_explore、高优先级主线候选输出 `semantic_screen`，`apply_semantic_screening` 只合并判定；`build_domain_map` 只让 LLM-screened 论文进入 core/theory/adjacent，`build_deep_read_queue` 则要求 verified 池 100% 保留为 deep_read 或 shallow_read/backlog，不把 bucket/retrieval_intent 当语义准入 | 已落地 |
 | T2 引用图主轴 | `fetch_outgoing_citations` 读取 OpenAlex outgoing references + related works，并解析少量一跳候选论文；OpenAlex/Crossref/seed 记录保留 `canonical_id`、`referenced_works`、`related_works`、`refs_unavailable`，runtime 会把 `data.papers` 自动追加进 `papers_raw.jsonl`，同时把 `source_id -> referenced_works/related_works` 独立追加到 `literature/citation_edges.json`；`build_domain_map` 生成含 `core/theory_bridge/adjacent/boundary/audit` 的 `domain_map.json` | 已落地 |
 | T3 note schema 扩展 | `researchos/prompts/reader.j2` read 模式从 13 节扩为 19 节，新增 `§14 Design Rationale` 到 `§19 Cross-Paper Tension`；`researchos/agents/reader.py::_validate_cdr_note_fields` 校验字段和 `contribution_type` 枚举 | 已落地 |
-| T3 abstract-only 桥接字段 | `abstract_sweep.py` 和 `reader.j2` 要求 abstract-only note 写 `## A. 核心做法/视角` 与 `## B. 桥接点`；`reader.py` 对 `paper_notes_abstract/` 以及 `paper_notes/` 中 `[ABSTRACT-ONLY]` note 都做结构校验 | 已落地 |
+| T3 abstract-only 桥接字段 | `abstract_sweep.py` 和 `reader.j2` 要求 abstract-only note 写 `## A. Core Approach / Perspective` 与 `## B. Bridge Point`；`reader.py` 对 `paper_notes_abstract/` 以及 `paper_notes/` 中 `[ABSTRACT-ONLY]` note 都做结构校验，并兼容旧中文标题读取 | 已落地 |
 | T3 FULL-TEXT / 截断校验 | `reader.j2` 要求分块重读覆盖全部页码；`reader.py` 校验 `Reading Coverage`、页码范围、最终 `Truncation` 状态和 Key Results evidence anchor | 已落地 |
 | T3 resume 防重读 | Reader 进入时优先 `deep_read_queue_pending.jsonl`，runtime 会刷新 `notes_manifest.json` 和 pending queue/meta；按 queue rank 记录 complete/incomplete/missing，多 key 匹配 `normalized_id`、原始 ID、标题、DOI，避免 resume 后把已读论文重写 | 已落地 |
 | T3.5 贡献空间综合 | `reader.j2` synthesize 模式改为 LLM 先分析，再把 `LLMInsights` 传给 `build_synthesis_workbench`；`literature_synthesis.py` 生成 `contribution_space` 与 `cross_paper_tensions` | 已落地 |
@@ -953,7 +953,7 @@ official-source verification 线索，不是 scholarly paper，不应进入 `pap
 
 1. `expand_queries` 如果无法从 `project.yaml`、真实 seed 标题、`llm_queries` 或 `domain_profile` 生成任何非空检索式，会返回 `error=empty_query_plan`，要求 Scout 重新设计 query 或调用 `ask_human` 补充研究边界。
 2. `detect_duplicate_queries` 会清洗列表；如果列表全空，也返回 `error=empty_query_plan`，避免空列表通过检索前检查。
-3. `multi_source_search`、`search_papers`、`openalex_search`、`crossref_search`、`arxiv_search`、`semantic_scholar_search`、`elsevier_scopus_search` 和 `informs_search` 都会在工具边界清洗 query；清洗后为空时返回 `error=empty_query`。`log_scout_progress(action="search_result")` 也必须显式提供非空 `query`、非空 `source` 和 `count`，否则返回 `invalid_progress_event`，不会再记录 `检索 '' -> 0 篇`。
+3. `multi_source_search`、`search_papers`、`openalex_search`、`crossref_search`、`arxiv_search`、`semantic_scholar_search`、`elsevier_scopus_search` 和 `informs_search` 都会在工具边界清洗 query；清洗后为空时返回 `error=empty_query`。`log_scout_progress(action="search_result")` 也必须显式提供非空 `query`、非空 `source` 和 `count`；缺参时返回 `skipped=true` 并跳过写入，不会再记录 `检索 '' -> 0 篇`，也不会把展示型进度事件显示成 T2 失败。
 
 raw 覆盖足够后，Scout 必须先执行一次机械摘要回填，再执行 `semantic_screen` 三步式：
 
@@ -1431,7 +1431,7 @@ PDF 获取顺序是：先读 queue/paper record 里的 `seed_pdf_path`，再查 
 
 `fetch_paper_pdf` 不是只靠传入的 ID 猜 URL。它会先回查 `literature/deep_read_queue.jsonl`、`papers_verified.jsonl`、`papers_dedup.jsonl` 和 `papers_raw.jsonl` 中同一论文的 metadata，把 `pdf_url`、OpenAlex OA location、arXiv ID、DOI 和 landing page 转成候选 PDF URL。这样即使 Reader 传入的是 canonical OpenAlex ID 或 `noopenalex::*` fallback ID，也能利用上游搜索阶段已经抓到的 PDF 线索。下载成功仍不等于 FULL-TEXT；只有 `extract_pdf_text` 覆盖全部页码且最终无截断，note 才能写 `[FULL-TEXT]`。
 
-拿到 PDF 后用 `extract_pdf_text` 按页读取，如果返回的 metadata 显示 `preview_truncated_by_max_chars=true` 或 runtime 上下文裁剪，就继续用更小的 `start_page/max_pages` 分块重读，直到 `Pages read` 覆盖 `1-total_pages`。写出时先组织完整 19 节 markdown，再调用 `save_paper_note(queue_rank=..., content=...)` 保存；工具会即时运行 note 结构校验，若返回 `note_incomplete`，Reader 必须按缺失字段修补同一 queue rank，而不是另建 alias 文件。`comparison_table.csv` 和 `related_work.bib` 仍由 `append_file` 或重写方式维护。如果这篇只能基于摘要，note 必须标 `[ABSTRACT-ONLY]`，并写 `## A. 核心做法/视角` 与 `## B. 桥接点` 两个轻字段。收尾时 validator 会读取 `notes_manifest.json` 和实际 note，检查 `- **Status**:`、核心章节、数字证据 `[Evidence: ...]`、全文页码覆盖、最终截断状态、CDR §14-§19、abstract A/B 字段、queue 覆盖率和 seed paper 覆盖情况。
+拿到 PDF 后用 `extract_pdf_text` 按页读取，如果返回的 metadata 显示 `preview_truncated_by_max_chars=true` 或 runtime 上下文裁剪，就继续用更小的 `start_page/max_pages` 分块重读，直到 `Pages read` 覆盖 `1-total_pages`。写出时先组织完整 19 节 markdown，再调用 `save_paper_note(queue_rank=..., content=...)` 保存；工具会即时运行 note 结构校验，若返回 `note_incomplete`，Reader 必须按缺失字段修补同一 queue rank，而不是另建 alias 文件。`comparison_table.csv` 和 `related_work.bib` 仍由 `append_file` 或重写方式维护。如果这篇只能基于摘要，note 必须标 `[ABSTRACT-ONLY]`，并写 `## A. Core Approach / Perspective` 与 `## B. Bridge Point` 两个轻字段。收尾时 validator 会读取 `notes_manifest.json` 和实际 note，检查 `- **Status**:`、核心章节、数字证据 `[Evidence: ...]`、全文页码覆盖、最终截断状态、CDR §14-§19、abstract A/B 字段、queue 覆盖率和 seed paper 覆盖情况。
 
 ### T3 如何判定 FULL-TEXT
 
@@ -1502,10 +1502,10 @@ Full/partial note 必须继续包含 §14-§19：
 任何 `[ABSTRACT-ONLY]` note（无论在 `paper_notes/` 还是 `paper_notes_abstract/`）还必须包含：
 
 ```markdown
-## A. 核心做法/视角
+## A. Core Approach / Perspective
 - {abstract-level 方法、理论视角或设计视角}
 
-## B. 桥接点
+## B. Bridge Point
 - {它与主线领域、邻接领域或 theory bridge 的连接点；没有则写 no obvious bridge}
 ```
 
@@ -1551,7 +1551,7 @@ T8/T9 会直接消费它，而不是重新从 note 手工抽引用。
 - note 结构合理，包含核心章节、`## 13. Mechanism Claim`、`## 14`-`## 19` CDR 字段
 - 每篇 note 包含 `## 12. Reading Coverage`
 - 每篇 note 包含 `## 13. Mechanism Claim`，三个 bullet（Stated mechanism / Evidence type / Supporting artifact）均非空
-- `[ABSTRACT-ONLY]` note 必须包含 `## A. 核心做法/视角` 和 `## B. 桥接点`
+- `[ABSTRACT-ONLY]` note 必须包含 `## A. Core Approach / Perspective` 和 `## B. Bridge Point`
 - `[FULL-TEXT]` note 必须记录完整页码覆盖和最终无截断；分块重读覆盖全篇是合法的
 - 如果 queue 存在，默认按 `deep_read_target` 校验；只有 `literature/literature_params.json` 或配置中 `require_deep_read_target=false` 时，才允许达到 `deep_read_min` 后放行
 - queue 中 seed papers 必须覆盖
@@ -1631,7 +1631,7 @@ reader:
 
 1. 有 abstract 的候选默认调用 Reader LLM 读取单篇 title/abstract，写出 5 节 + §13 的 abstract-only 轻量 note
 2. 缺 abstract 的 metadata-only 候选进入一次批量 Reader LLM triage；报告必须声明 metadata-only，不得声称读过摘要/全文，不得输出机制或实验 claim。LLM 失败或中断恢复路径才使用确定性 fallback report
-3. LLM note 必须保留行级 `## A. 核心做法/视角` 和 `## B. 桥接点`，供 T3.5/T4/T8 复用；runtime 会把常见的 `### A/B` heading 漂移确定性规范回 `## A/B`
+3. LLM note 必须保留行级 `## A. Core Approach / Perspective` 和 `## B. Bridge Point`，供 T3.5/T4/T8 复用；runtime 会把常见的 `### A/B` heading 漂移以及旧中文标题确定性规范回英文 `## A/B`
 4. `## 13. Mechanism Claim` 必须含 `Stated mechanism / Evidence type / Supporting artifact`；如果 LLM 漏字段，runtime 只补保守占位，不提升证据强度
 5. Reader LLM 调用失败时使用确定性 fallback 生成保守 note
 6. abstract sweep 的格式问题会在 T3 校验前确定性修复；若仍失败，完整 pipeline 会 `PAUSED` 并在控制台显示 `Pause reason`
@@ -1646,8 +1646,8 @@ reader:
 Abstract note 结构：
 - §1 Problem & Motivation（abstract opening snippet，标记 LLM_REVIEW_REQUIRED）
 - §2 Method Summary（abstract middle snippet，标记 LLM_REVIEW_REQUIRED）
-- §A 核心做法/视角（abstract-level 方法或理论视角）
-- §B 桥接点（与主线、邻接领域或 theory bridge 的连接点）
+- §A Core Approach / Perspective（abstract-level 方法或理论视角）
+- §B Bridge Point（与主线、邻接领域或 theory bridge 的连接点）
 - §3 Key Claimed Results（abstract closing snippet，标记 LLM_REVIEW_REQUIRED）
 - Raw Abstract（原始摘要全文）
 - §13 Mechanism Claim（Evidence type 固定为 `abstract_claim_hint`）
@@ -1860,8 +1860,8 @@ Reader 读取工具生成的 `synthesis_workbench.json`、`synthesis_outline.md`
 `adjacent_transfers` 是 T3.5 新增的关键中间产物。它来自：
 
 - `domain_map.adjacent`：T2 从 query bucket、snowball、related works 和引用连接得到的邻接候选
-- `paper_notes/*.md` / `paper_notes_abstract/*.md` 的 `## A. 核心做法/视角`
-- `## B. 桥接点`
+- `paper_notes/*.md` / `paper_notes_abstract/*.md` 的 `## A. Core Approach / Perspective`
+- `## B. Bridge Point`
 
 每个条目通常包含：
 
@@ -3134,7 +3134,17 @@ motivation -> contribution -> related_gap -> design_choice -> experiment -> anal
 
 `T8-STYLE-GATE` 是状态机级 immediate gate，不依赖 Writer 是否记得调用 `ask_human`。它读取 `project.yaml` 的 `target_venue` 并展示 IS/UTD、CCF-A、both、基础中文、基础英文和自定义模板选项；选择后由 runtime 写 `drafts/writing_style.json`。该 JSON 必须包含 `human_interaction_id`，并且这个 id 必须能在 `_runtime/human_interactions.jsonl` 中找到；这样可以区分“用户真实选择”和“模型自己编造的默认选择”。
 
-模板默认值是固定的：CCF-A 默认 `template_family=ccf, template_id=neurips, writing_language=en`；UTD/Management Science/ISR/INFORMS 默认 `template_family=utd, template_id=informs, writing_language=en`；只想确定中英、不套 venue 时用 `basic_en` 或 `basic_zh`。当前本地可编译 CCF 入口主要支持 NeurIPS/KDD；INFORMS 是可编译 fallback，最终投稿仍应替换为官方期刊 ZIP。
+模板默认值是固定的：CCF-A 默认 `template_family=ccf, template_id=neurips, writing_language=en`；UTD/Management Science/ISR/INFORMS 默认 `template_family=utd, template_id=informs, writing_language=en`；只想确定中英、不套 venue 时用 `basic_en` 或 `basic_zh`。当前本地可编译 CCF 入口支持 `neurips`、`iclr`、`icml` 和 `kdd`，gate 里会直接给出四个会议选项，自定义输入也会把 `neurips2026/iclr2026/icml2026/kdd2026` 归一化到对应 `template_id`。INFORMS 默认使用本地官方 ISRE 2024 模板包（`informs4.cls`、`informs2014.bst` 和 logo/support files），最终投稿到其他 INFORMS 期刊时可替换为对应官方期刊包。
+
+本地模板支持矩阵如下：
+
+| family/id | gate 可选 | T3.6 survey assembly | T8 manuscript assembly | support files | T9 bundle |
+| --- | --- | --- | --- | --- | --- |
+| `utd/informs` | 是 | INFORMS 原生 `\TITLE/\ARTICLEAUTHORS/\ABSTRACT` | INFORMS 原生 `\TITLE/\ARTICLEAUTHORS/\ABSTRACT` | `informs4.cls`、`informs2014.bst`、`eqndefns-*`、logo | 扫描并复制 class/style/bst/logo |
+| `ccf/neurips` | 是，默认 | NeurIPS `neurips_2026` article shell | NeurIPS `neurips_2026` article shell | `neurips_2026.sty`，同时保留 `checklist.tex` | 扫描并复制 style/checklist |
+| `ccf/iclr` | 是 | ICLR 2026 style shell | ICLR 2026 style shell | `iclr2026_conference.sty`、`iclr2026_basic.tex` | 扫描并复制 style/shell |
+| `ccf/icml` | 是 | ICML 原生 `\icmltitle` / `\twocolumn[...]` | ICML 原生 `\icmltitle` / `\twocolumn[...]` | `icml2026.sty`、`icml2026.bst`、`algorithm*.sty`、`fancyhdr.sty`、`natbib.sty` | 扫描并复制 style/bst/transitive deps |
+| `ccf/kdd` | 是 | ACM/KDD `acmart` shell | ACM/KDD `acmart` shell | `acmart.cls`、`ACM-Reference-Format.bst` 等同级 support | 扫描并复制 class/bst |
 
 如果当前环境没有可用人工输入，runtime 会暂停在该 run，等待用户 resume 或预置合法 `drafts/writing_style.json`；Writer 不会伪造默认选择。后续 prompt 从 `writing_style.json` 读取 `venue_style`。风格只影响篇幅分配和叙事重心，不改变 alignment matrix 的贡献骨架。
 
@@ -3384,7 +3394,7 @@ prefinalize 不是单纯复用旧 PDF：`bundle_manifest.json` 必须证明 bund
    - 将 `\bibliography{...}` 统一重写为 `\bibliography{references}`
    - 复制被主稿引用、read policy 允许且后缀为 `.pdf/.png/.jpg/.jpeg/.svg` 的图表到 `submission/bundle/figures/`，目标文件名带内容 hash，避免同名覆盖
    - 这一步是机械文件准备，不交给 LLM 手写路径，避免 “paper.tex 引用 related_work.bib 但 bundle 中没有该 bib” 的编译失败
-3. 迁移到目标会议模板或在 bundle 内补模板文件
+3. 复制已选模板所需的 class/style/bst/logo/checklist 等 support files
 4. 尝试编译
    - 优先调用 `latex_compile(tex_path="submission/bundle/main.tex")`
    - `latex_compile` 在容器内或宿主机有 `latexmk` 时直接本机编译

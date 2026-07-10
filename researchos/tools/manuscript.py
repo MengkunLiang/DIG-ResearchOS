@@ -1368,6 +1368,7 @@ def build_resource_index(workspace: Path, *, include_previews: bool = True) -> d
     bib_keys = _extract_bib_keys(workspace / "literature" / "related_work.bib")
     citation_refs = _extract_citation_reference_summary(workspace)
     citation_quality = _extract_citation_quality_summary(workspace / "literature" / "notes_manifest.json")
+    paper_note_cards = _extract_paper_note_cards(workspace)
     result_metrics = _extract_result_metrics(workspace / "experiments" / "results_summary.json")
     result_metrics.extend(_extract_evidence_pack_metrics(workspace / "drafts" / "experiment_evidence_pack.json"))
     result_metrics = _dedupe_metric_records(result_metrics)
@@ -1385,6 +1386,7 @@ def build_resource_index(workspace: Path, *, include_previews: bool = True) -> d
         "note_id_by_bib_key": citation_refs["note_id_by_bib_key"],
         "unmapped_note_ids": citation_refs["unmapped_note_ids"],
         "citation_quality": citation_quality,
+        "paper_note_cards": paper_note_cards,
         "result_metrics": result_metrics,
         "ablation_columns": ablation_columns,
         "writing_guidance": {
@@ -1483,6 +1485,109 @@ def _extract_citation_quality_summary(path: Path) -> dict[str, Any]:
         "low_or_do_not_cite_ids": low_or_do_not_cite[:40],
         "usage_rule": "Prefer score>=0.55 core_evidence/supporting_context for claims; lower scores are background or upgrade leads.",
     }
+
+
+def _extract_paper_note_cards(workspace: Path, *, limit: int = 80) -> list[dict[str, Any]]:
+    try:
+        citation_map = load_or_build_citation_map(workspace / "literature")
+    except Exception:
+        citation_map = {}
+    entries = citation_map.get("entries") if isinstance(citation_map, dict) else []
+    by_note_id: dict[str, dict[str, Any]] = {}
+    by_source_file: dict[str, dict[str, Any]] = {}
+    if isinstance(entries, list):
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            note_id = str(entry.get("note_id") or "").strip()
+            if note_id:
+                by_note_id[note_id] = entry
+            source_file = str(entry.get("source_file") or "").strip()
+            if source_file:
+                by_source_file[source_file] = entry
+
+    cards: list[dict[str, Any]] = []
+    note_roots = [
+        workspace / "literature" / "paper_notes",
+        workspace / "literature" / "paper_notes_bridge",
+        workspace / "literature" / "paper_notes_abstract",
+    ]
+    for root in note_roots:
+        if not root.exists():
+            continue
+        pattern = "**/*.md" if root.name == "paper_notes_bridge" else "*.md"
+        for path in sorted(root.glob(pattern)):
+            if not is_paper_note_file(path):
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            note_id = path.stem
+            entry = by_source_file.get(path.name) or by_note_id.get(note_id) or {}
+            card = {
+                "note_id": str(entry.get("note_id") or note_id),
+                "paper_id": _markdown_field(text, "ID") or str(entry.get("paper_id") or note_id),
+                "title": _first_markdown_heading(text) or str(entry.get("title") or note_id),
+                "path": _rel_path(workspace, path),
+                "bib_key": str(entry.get("bib_key") or ""),
+                "citation_ref": str(entry.get("citation_ref") or ""),
+                "evidence_level": _evidence_level_from_note(text),
+                "citation_use": _markdown_field(text, "Citation Use") or "unknown",
+                "citation_quality_score": _parse_float(_markdown_field(text, "Citation Quality Score")),
+                "method_overview": _note_section_excerpt(text, "2. Method Overview", "2. Method Summary"),
+                "gaps": _note_section_excerpt(text, "9. Weaknesses / Gaps"),
+                "mechanism_claim": _note_section_excerpt(text, "13. Mechanism Claim"),
+                "design_rationale": _note_section_excerpt(text, "14. Design Rationale"),
+                "boundary_conditions": _note_section_excerpt(text, "18. Boundary Conditions"),
+                "cross_paper_tension": _note_section_excerpt(text, "19. Cross-Paper Tension"),
+            }
+            cards.append(card)
+    cards.sort(
+        key=lambda item: (
+            str(item.get("evidence_level") or "") == "ABSTRACT_ONLY",
+            -float(item.get("citation_quality_score") or 0.0),
+            str(item.get("title") or ""),
+        )
+    )
+    return cards[:limit]
+
+
+def _markdown_field(text: str, name: str) -> str:
+    match = re.search(rf"(?m)^-\s+\*\*{re.escape(name)}\*\*:\s*(.+)$", text or "")
+    return match.group(1).strip() if match else ""
+
+
+def _evidence_level_from_note(text: str) -> str:
+    status = _markdown_field(text, "Status")
+    if "ABSTRACT-ONLY" in status:
+        return "ABSTRACT_ONLY"
+    if "PARTIAL-TEXT" in status:
+        return "PARTIAL_TEXT"
+    if "FULL-TEXT" in status:
+        return "FULL_TEXT"
+    return "UNKNOWN"
+
+
+def _note_section_excerpt(text: str, *headings: str, limit: int = 320) -> str:
+    for heading in headings:
+        match = re.search(
+            rf"(?ms)^##\s+{re.escape(heading)}\s*(?P<body>.*?)(?=^##\s+|\Z)",
+            text or "",
+        )
+        if not match:
+            continue
+        body = re.sub(r"\s+", " ", match.group("body")).strip()
+        if body:
+            return _shorten(body, limit)
+    return ""
+
+
+def _parse_float(value: str) -> float:
+    match = re.search(r"(?:0(?:\.\d+)?|1(?:\.0+)?)", str(value or ""))
+    if not match:
+        return 0.0
+    try:
+        return min(1.0, max(0.0, float(match.group(0))))
+    except ValueError:
+        return 0.0
 
 
 def build_section_plan(index: dict[str, Any], *, target_venue: str = "", paper_type: str = "auto") -> dict[str, Any]:
@@ -2004,6 +2109,7 @@ def build_paper_state(
     citation_ref_by_note_id = index.get("citation_ref_by_note_id", {}) if isinstance(index, dict) else {}
     note_id_by_bib_key = index.get("note_id_by_bib_key", {}) if isinstance(index, dict) else {}
     unmapped_note_ids = index.get("unmapped_note_ids", []) if isinstance(index, dict) else []
+    paper_note_cards = index.get("paper_note_cards", []) if isinstance(index, dict) else []
     sections: dict[str, dict[str, Any]] = {}
     planned_sections = {
         normalize_section_id(str(item.get("id", ""))): item
@@ -2054,6 +2160,7 @@ def build_paper_state(
             "citation_ref_by_note_id": citation_ref_by_note_id if isinstance(citation_ref_by_note_id, dict) else {},
             "note_id_by_bib_key": note_id_by_bib_key if isinstance(note_id_by_bib_key, dict) else {},
             "unmapped_note_ids": unmapped_note_ids if isinstance(unmapped_note_ids, list) else [],
+            "paper_note_cards": paper_note_cards if isinstance(paper_note_cards, list) else [],
             "result_metrics": metrics,
             "claim_slots": claim_slots,
             "planned_visuals": visuals,
@@ -2117,6 +2224,7 @@ def build_section_outlines(
     shared = state.get("shared_facts", {}) if isinstance(state, dict) else {}
     if isinstance(shared, dict) and isinstance(shared.get("alignment_matrix"), list):
         alignment_rows = [item for item in shared.get("alignment_matrix", []) if isinstance(item, dict)]
+    note_cards = shared.get("paper_note_cards", []) if isinstance(shared, dict) and isinstance(shared.get("paper_note_cards"), list) else []
 
     outlines: dict[str, str] = {}
     for section_id in SECTION_WRITING_SEQUENCE:
@@ -2162,6 +2270,8 @@ def build_section_outlines(
                 lines.append(f"- `{cid}`: internal `{column}` alignment lane; current seed = {value!r}")
         else:
             lines.append("- No seeded internal alignment id found; if the paper has a contribution, read `drafts/alignment_matrix.json` and fill the missing mapping.")
+        lines.extend(["", "## Note Card Retrieval Plan"])
+        lines.extend(_note_card_retrieval_lines(section_id, note_cards))
         lines.extend(["", "## Claim Slots"])
         for slot in slots_by_section.get(section_id, []):
             lines.append(
@@ -2198,6 +2308,81 @@ def build_section_outlines(
         )
         outlines[section_id] = "\n".join(lines)
     return outlines
+
+
+def _note_card_retrieval_lines(section_id: str, note_cards: list[Any]) -> list[str]:
+    section_targets = {
+        "introduction": [
+            "Use note cards for problem framing, high-quality gap evidence, and nearest prior work.",
+            "Inspect note sections: §6 Relevance, §9 Weaknesses / Gaps, §13 Mechanism Claim, §18 Boundary Conditions, §19 Cross-Paper Tension.",
+        ],
+        "related_work": [
+            "Use note cards to build rationale streams and citation-backed contrasts instead of relying only on synthesis.md.",
+            "Inspect note sections: §2 Method Overview, §6 Relevance, §9 Weaknesses / Gaps, §13 Mechanism Claim, §14 Design Rationale, §18 Boundary Conditions, §19 Cross-Paper Tension.",
+        ],
+        "methodology": [
+            "Use note cards only for design precedents and rejected alternatives; do not cite prior work as evidence for this paper's results.",
+            "Inspect note sections: §2 Method Overview, §14 Design Rationale, §15 Artifact & Design Principles, §18 Boundary Conditions.",
+        ],
+        "experiments": [
+            "Use note cards for baseline, metric, dataset, and protocol context; all reported numbers still need experiment artifacts.",
+            "Inspect note sections: §3 Key Results, §12 Reading Coverage, §16 Data View & Evaluation Mode.",
+        ],
+        "analysis": [
+            "Use note cards to interpret mechanisms, alternative explanations, and boundary conditions.",
+            "Inspect note sections: §13 Mechanism Claim, §14 Design Rationale, §18 Boundary Conditions, §19 Cross-Paper Tension.",
+        ],
+        "conclusion": [
+            "Use note cards only to restate established boundaries and future work; do not introduce new citations or new claims.",
+            "Inspect note sections: §9 Weaknesses / Gaps and §18 Boundary Conditions if limitations need grounding.",
+        ],
+        "abstract": [
+            "Do not cite note cards in the abstract. Use them only to verify that the abstract does not introduce unsupported claims.",
+        ],
+    }
+    lines = list(section_targets.get(section_id) or ["Use paper note cards only when they directly support this section's claim."])
+    cards = _section_note_cards(section_id, note_cards, limit=8)
+    if not cards:
+        lines.append("- No structured note cards are indexed; read `literature/paper_notes/` and `literature/synthesis_workbench.json` directly if citations are needed.")
+        return [f"- {line}" if not line.lstrip().startswith("-") else line for line in lines]
+    lines.append("- Relevant indexed note cards:")
+    for card in cards:
+        citation = str(card.get("citation_ref") or "").strip() or f"[note:{card.get('note_id')}]"
+        title = _shorten(card.get("title"), 110)
+        score = card.get("citation_quality_score")
+        use = card.get("citation_use") or "unknown"
+        evidence = card.get("evidence_level") or "unknown"
+        path = card.get("path") or ""
+        lines.append(f"  - {citation} {title} | evidence={evidence} | use={use} | score={score} | note={path}")
+    lines.append("- Before using a citation, read the matching note section and verify that the sentence-level claim matches the note evidence.")
+    return [f"- {line}" if not line.lstrip().startswith("-") else line for line in lines]
+
+
+def _section_note_cards(section_id: str, note_cards: list[Any], *, limit: int) -> list[dict[str, Any]]:
+    cards = [card for card in note_cards if isinstance(card, dict)]
+    if not cards:
+        return []
+    if section_id == "abstract":
+        return []
+    field_by_section = {
+        "introduction": ("gaps", "mechanism_claim", "boundary_conditions"),
+        "related_work": ("method_overview", "gaps", "design_rationale", "cross_paper_tension"),
+        "methodology": ("method_overview", "design_rationale", "boundary_conditions"),
+        "experiments": ("method_overview",),
+        "analysis": ("mechanism_claim", "design_rationale", "boundary_conditions", "cross_paper_tension"),
+        "conclusion": ("gaps", "boundary_conditions"),
+    }
+    fields = field_by_section.get(section_id, ("method_overview", "gaps"))
+
+    def score(card: dict[str, Any]) -> tuple[float, float, str]:
+        text_bonus = sum(1 for field in fields if str(card.get(field) or "").strip())
+        evidence_penalty = 0.5 if str(card.get("evidence_level") or "") == "ABSTRACT_ONLY" else 0.0
+        quality = float(card.get("citation_quality_score") or 0.0)
+        has_cite = 0.2 if str(card.get("citation_ref") or "").startswith("\\cite") else 0.0
+        return (text_bonus + quality + has_cite - evidence_penalty, quality, str(card.get("title") or ""))
+
+    ranked = sorted(cards, key=score, reverse=True)
+    return ranked[:limit]
 
 
 def _section_writing_contract(section_id: str) -> dict[str, Any]:
@@ -2261,7 +2446,38 @@ def assemble_sections(
     language = str(writing_language or "auto").strip().lower()
     template_path = _resolve_latex_template(_repo_root(), family, template, language)
     if template_path and template_path.exists():
-        rendered = _replace_template_document_body(template_path.read_text(encoding="utf-8", errors="replace"), body)
+        template_text = template_path.read_text(encoding="utf-8", errors="replace")
+        if _is_informs_template(template_path, template_text):
+            rendered = _render_informs_document(
+                template_text,
+                title=title,
+                abstract=abstract,
+                body_parts=body_parts,
+                bib_stem="related_work",
+            )
+        elif _is_ccf_template(template_path, "neurips"):
+            rendered = _render_neurips_document(
+                title=title,
+                abstract=abstract,
+                body_parts=body_parts,
+                bib_stem="related_work",
+            )
+        elif _is_ccf_template(template_path, "icml"):
+            rendered = _render_icml_document(
+                title=title,
+                abstract=abstract,
+                body_parts=body_parts,
+                bib_stem="related_work",
+            )
+        elif _is_ccf_template(template_path, "iclr"):
+            rendered = _render_iclr_document(
+                title=title,
+                abstract=abstract,
+                body_parts=body_parts,
+                bib_stem="related_work",
+            )
+        else:
+            rendered = _replace_template_document_body(template_text, body)
     else:
         rendered = _fallback_manuscript_document(
             title=title,
@@ -2341,20 +2557,34 @@ def _resolve_latex_template(repo_root: Path, family: str, template_id: str, writ
     template_id = str(template_id or "").strip().lower()
     writing_language = str(writing_language or "").strip().lower()
     candidates: list[Path] = []
-    if family == "basic_zh" or writing_language == "zh":
+    if family == "basic_zh":
         candidates.append(base / "normal" / "basic_zh.tex")
     elif family == "basic_en":
         candidates.append(base / "normal" / "basic_en.tex")
     elif family == "utd":
         tid = template_id or "informs"
         if tid in {"informs", "mnsc", "isre", "isr", "ijds"}:
+            candidates.append(
+                base
+                / "utd"
+                / "informs"
+                / "INFORMS-ISRE-Template-6-10-2024"
+                / "INFORMS-ISRE-Template.tex"
+            )
             candidates.append(base / "utd" / "informs" / "informs_fallback.tex")
         candidates.append(base / "utd" / "informs_basic.tex")
     elif family == "ccf":
-        if (template_id or "neurips") == "neurips":
+        tid = template_id or "neurips"
+        if tid == "neurips":
             candidates.append(base / "ccf-latex-templates" / "NeurIPS" / "neurips_2026.tex")
-        elif template_id == "kdd":
+        elif tid == "kdd":
+            candidates.append(base / "ccf-latex-templates" / "SIGKDD" / "kdd_basic.tex")
             candidates.extend((base / "ccf-latex-templates" / "SIGKDD").glob("*.tex"))
+        elif tid == "icml":
+            candidates.append(base / "ccf-latex-templates" / "ICML" / "example_paper.tex")
+        elif tid == "iclr":
+            candidates.append(base / "ccf-latex-templates" / "ICLR" / "iclr2026_basic.tex")
+            candidates.append(base / "ccf-latex-templates" / "ICLR" / "iclr2026_conference.sty")
     if not candidates:
         candidates.append(base / "normal" / ("basic_zh.tex" if writing_language == "zh" else "basic_en.tex"))
     for candidate in candidates:
@@ -2383,6 +2613,210 @@ def _replace_template_document_body(template: str, body: str) -> str:
     return preamble.rstrip() + "\n\n\\begin{document}\n" + body.strip() + "\n\\end{document}" + suffix
 
 
+def _is_informs_template(template_path: Path | None, template_text: str) -> bool:
+    path_text = template_path.as_posix().lower() if template_path else ""
+    return "\\documentclass" in template_text and "informs4" in template_text and "/utd/informs/" in path_text
+
+
+def _is_ccf_template(template_path: Path | None, template_id: str) -> bool:
+    if not template_path:
+        return False
+    path_text = template_path.as_posix().lower()
+    aliases = {
+        "neurips": "/ccf-latex-templates/neurips/",
+        "kdd": "/ccf-latex-templates/sigkdd/",
+        "icml": "/ccf-latex-templates/icml/",
+        "iclr": "/ccf-latex-templates/iclr/",
+    }
+    return aliases.get(template_id, "") in path_text
+
+
+def _render_informs_document(
+    template: str,
+    *,
+    title: str,
+    abstract: str,
+    body_parts: list[str],
+    bib_stem: str,
+) -> str:
+    preamble, begin_cmd, rest = _split_template_at_begin_document(template)
+    if not begin_cmd:
+        return template.strip() + "\n\n" + _manuscript_document_body(
+            title=title,
+            abstract=abstract,
+            body_parts=body_parts,
+            bib_stem=bib_stem,
+        )
+    preamble = _prepare_informs_preamble(preamble)
+    title_tex = _escape_latex_braces(title or "ResearchOS Manuscript Draft")
+    short_title = _short_latex_running_text(title or "ResearchOS Draft", limit=72)
+    abstract_tex = _strip_abstract_section_markup(abstract).strip() or "Abstract text."
+    body = "\n\n".join(part.strip() for part in body_parts if part.strip())
+    return (
+        preamble.rstrip()
+        + "\n\n\\begin{document}\n\n"
+        + "\\RUNAUTHOR{Anonymous Author(s)}\n"
+        + f"\\RUNTITLE{{{short_title}}}\n"
+        + f"\\TITLE{{{title_tex}}}\n\n"
+        + "\\ARTICLEAUTHORS{%\n"
+        + "\\AUTHOR{Anonymous Author(s)}\n"
+        + "\\AFF{Affiliation omitted for review}\n"
+        + "}\n\n"
+        + "\\ABSTRACT{%\n"
+        + abstract_tex
+        + "\n}%\n\n"
+        + "\\KEYWORDS{ResearchOS draft, literature review, information systems}\n\n"
+        + "\\maketitle\n\n"
+        + body
+        + f"\n\n\\bibliographystyle{{informs2014}}\n\\bibliography{{{bib_stem}}}\n\n"
+        + "\\end{document}\n"
+    )
+
+
+def _render_neurips_document(
+    *,
+    title: str,
+    abstract: str,
+    body_parts: list[str],
+    bib_stem: str,
+) -> str:
+    title_tex = _escape_latex_braces(title or "ResearchOS Manuscript Draft")
+    abstract_tex = _strip_abstract_section_markup(abstract).strip() or "Abstract text."
+    body = "\n\n".join(part.strip() for part in body_parts if part.strip())
+    return (
+        "\\documentclass{article}\n\n"
+        "\\usepackage{neurips_2026}\n"
+        "\\usepackage[utf8]{inputenc}\n"
+        "\\usepackage[T1]{fontenc}\n"
+        "\\usepackage{hyperref}\n"
+        "\\usepackage{url}\n"
+        "\\usepackage{booktabs}\n"
+        "\\usepackage{amsfonts}\n"
+        "\\usepackage{nicefrac}\n"
+        "\\usepackage{microtype}\n"
+        "\\usepackage{xcolor}\n\n"
+        f"\\title{{{title_tex}}}\n"
+        "\\author{Anonymous Author(s)}\n\n"
+        "\\begin{document}\n\n"
+        "\\maketitle\n\n"
+        f"\\begin{{abstract}}\n{abstract_tex}\n\\end{{abstract}}\n\n"
+        + body
+        + f"\n\n\\bibliographystyle{{plainnat}}\n\\bibliography{{{bib_stem}}}\n\n"
+        "\\end{document}\n"
+    )
+
+
+def _render_icml_document(
+    *,
+    title: str,
+    abstract: str,
+    body_parts: list[str],
+    bib_stem: str,
+) -> str:
+    title_tex = _escape_latex_braces(title or "ResearchOS Manuscript Draft")
+    short_title = _short_latex_running_text(title or "ResearchOS Draft", limit=64)
+    abstract_tex = _strip_abstract_section_markup(abstract).strip() or "Abstract text."
+    body = "\n\n".join(part.strip() for part in body_parts if part.strip())
+    return (
+        "\\documentclass{article}\n\n"
+        "\\usepackage{microtype}\n"
+        "\\usepackage{graphicx}\n"
+        "\\usepackage{subcaption}\n"
+        "\\usepackage{booktabs}\n"
+        "\\usepackage{hyperref}\n"
+        "\\newcommand{\\theHalgorithm}{\\arabic{algorithm}}\n"
+        "\\usepackage{icml2026}\n"
+        "\\usepackage{amsmath}\n"
+        "\\usepackage{amssymb}\n"
+        "\\usepackage{mathtools}\n"
+        "\\usepackage{amsthm}\n"
+        "\\usepackage[capitalize,noabbrev]{cleveref}\n\n"
+        f"\\icmltitlerunning{{{short_title}}}\n\n"
+        "\\begin{document}\n\n"
+        "\\twocolumn[\n"
+        f"  \\icmltitle{{{title_tex}}}\n"
+        "  \\begin{icmlauthorlist}\n"
+        "    \\icmlauthor{Anonymous Author(s)}{anon}\n"
+        "  \\end{icmlauthorlist}\n"
+        "  \\icmlaffiliation{anon}{Affiliation omitted for review}\n"
+        "  \\icmlcorrespondingauthor{Anonymous Author}{anon@example.com}\n"
+        "  \\icmlkeywords{ResearchOS draft, machine learning}\n"
+        "  \\vskip 0.3in\n"
+        "]\n\n"
+        "\\printAffiliationsAndNotice{}\n\n"
+        f"\\begin{{abstract}}\n{abstract_tex}\n\\end{{abstract}}\n\n"
+        + body
+        + f"\n\n\\bibliography{{{bib_stem}}}\n\\bibliographystyle{{icml2026}}\n\n"
+        "\\end{document}\n"
+    )
+
+
+def _render_iclr_document(
+    *,
+    title: str,
+    abstract: str,
+    body_parts: list[str],
+    bib_stem: str,
+) -> str:
+    title_tex = _escape_latex_braces(title or "ResearchOS Manuscript Draft")
+    abstract_tex = _strip_abstract_section_markup(abstract).strip() or "Abstract text."
+    body = "\n\n".join(part.strip() for part in body_parts if part.strip())
+    return (
+        "\\documentclass{article}\n\n"
+        "\\usepackage{times}\n"
+        "\\usepackage{iclr2026_conference}\n"
+        "\\usepackage{hyperref}\n"
+        "\\usepackage{url}\n"
+        "\\usepackage{booktabs}\n"
+        "\\usepackage{graphicx}\n"
+        "\\usepackage{amsmath}\n"
+        "\\usepackage{amssymb}\n\n"
+        f"\\title{{{title_tex}}}\n"
+        "\\author{Anonymous Author(s)}\n\n"
+        "\\begin{document}\n\n"
+        "\\maketitle\n\n"
+        f"\\begin{{abstract}}\n{abstract_tex}\n\\end{{abstract}}\n\n"
+        + body
+        + f"\n\n\\bibliographystyle{{plainnat}}\n\\bibliography{{{bib_stem}}}\n\n"
+        "\\end{document}\n"
+    )
+
+
+def _split_template_at_begin_document(template: str) -> tuple[str, str, str]:
+    match = re.search(r"\\begin\{document\}", template or "", flags=re.IGNORECASE)
+    if not match:
+        return template, "", ""
+    return template[: match.start()], match.group(0), template[match.end() :]
+
+
+def _prepare_informs_preamble(preamble: str) -> str:
+    cleaned = re.sub(
+        r"\\documentclass\[[^\]]*\]\{informs4\}",
+        r"\\documentclass[isre,dblanonrev]{informs4}",
+        preamble or "",
+        count=1,
+    )
+    cleaned = re.sub(r"(?m)^\\MANUSCRIPTNO\{[^}]*\}", r"\\MANUSCRIPTNO{}", cleaned)
+    cleaned = re.sub(
+        r"(?m)^\\RequirePackage\{(?:tgtermes|newtxtext|newtxmath)\}\s*",
+        "",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?m)^\\usepackage\{(?:algorithm|algpseudocode)\}\s*",
+        "",
+        cleaned,
+    )
+    return cleaned
+
+
+def _short_latex_running_text(value: str, *, limit: int) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(text) > limit:
+        text = text[:limit].rsplit(" ", 1)[0].rstrip() or text[:limit].rstrip()
+    return _escape_latex_braces(text)
+
+
 def _extract_template_bib_style(preamble: str, body: str = "") -> tuple[str, str]:
     combined = (preamble or "") + "\n" + (body or "")
     match = re.search(r"\\bibliographystyle\{([^}]*)\}", combined)
@@ -2407,13 +2841,31 @@ def _set_document_bibliography(body: str, *, bib_stem: str, bib_style: str) -> s
 def _copy_latex_template_support_files(template_path: Path | None, target_dir: Path) -> None:
     if not template_path or not template_path.exists():
         return
-    for source in template_path.parent.iterdir():
-        if source.suffix.lower() not in {".sty", ".cls", ".bst"}:
+    for source in _template_support_sources(template_path):
+        if not _is_template_support_file(source):
             continue
         try:
             (target_dir / source.name).write_bytes(source.read_bytes())
         except OSError:
             continue
+
+
+def _template_support_sources(template_path: Path) -> list[Path]:
+    support = list(template_path.parent.iterdir())
+    if _is_ccf_template(template_path, "iclr") and template_path.suffix.lower() == ".sty":
+        shell = template_path.parent / "iclr2026_basic.tex"
+        if shell.exists():
+            support.append(shell)
+    return support
+
+
+def _is_template_support_file(source: Path) -> bool:
+    suffix = source.suffix.lower()
+    if suffix in {".sty", ".cls", ".bst"}:
+        return True
+    if source.name in {"checklist.tex", "iclr2026_basic.tex"}:
+        return True
+    return source.stem.lower() == "informs_logo" and suffix in {".pdf", ".eps"}
 
 
 def _copy_manuscript_bibliography(
@@ -2437,7 +2889,7 @@ def _copy_manuscript_bibliography(
 
 
 _SUPPORT_FILE_COMMAND_RE = re.compile(
-    r"\\(?:bibliographystyle|usepackage|documentclass)(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}"
+    r"\\(?:bibliographystyle|usepackage|documentclass|input|include)(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}"
 )
 _LATEX_SUPPORT_SUFFIXES = {".bst", ".cls", ".sty"}
 
@@ -2493,7 +2945,36 @@ def _submission_latex_support_candidates(tex: str, source_dir: Path) -> list[Pat
                 if resolved not in seen:
                     seen.add(resolved)
                     candidates.append(path)
+            for path in _transitive_latex_support_candidates(name, source_dir):
+                resolved = path.resolve()
+                if resolved not in seen:
+                    seen.add(resolved)
+                    candidates.append(path)
+    if re.search(r"\\documentclass(?:\s*\[[^\]]*\])?\s*\{informs4\}", tex or ""):
+        for name in ("informs_Logo.pdf", "informs_Logo.eps"):
+            path = source_dir / name
+            resolved = path.resolve()
+            if resolved not in seen:
+                seen.add(resolved)
+                candidates.append(path)
     return candidates
+
+
+def _transitive_latex_support_candidates(name: str, source_dir: Path) -> list[Path]:
+    stem = Path(name).stem
+    if stem == "icml2026":
+        return [
+            source_dir / "algorithm.sty",
+            source_dir / "algorithmic.sty",
+            source_dir / "fancyhdr.sty",
+            source_dir / "natbib.sty",
+            source_dir / "icml2026.bst",
+        ]
+    if stem == "neurips_2026":
+        return [source_dir / "checklist.tex"]
+    if stem == "iclr2026_conference":
+        return [source_dir / "iclr2026_basic.tex"]
+    return []
 
 
 def _write_style_variant_manuscripts(
@@ -2779,6 +3260,17 @@ def audit_writing_craft(
         "WARN",
         not boilerplate_hits,
         "Detected boilerplate phrases: " + ", ".join(boilerplate_hits[:10]) if boilerplate_hits else "No banned boilerplate phrases detected.",
+    )
+    punctuation_hits = _mechanical_punctuation_style_hits(paper)
+    add(
+        "mechanical_punctuation_style",
+        "WARN",
+        not punctuation_hits,
+        (
+            "Detected repeated colon/dash template style: " + ", ".join(punctuation_hits[:10])
+            if punctuation_hits
+            else "No excessive colon/dash template style detected."
+        ),
     )
     add(
         "claim_strength_match",
@@ -3639,6 +4131,41 @@ def _ai_boilerplate_hits(text: str) -> list[str]:
             hits.append(pattern)
     if len(re.findall(r"(?:^|\n)\s*Furthermore\b", text)) >= 3:
         hits.append("3+ paragraph-initial Furthermore")
+    return hits
+
+
+def _mechanical_punctuation_style_hits(text: str) -> list[str]:
+    prose = re.sub(r"\\(?:section|subsection|subsubsection)\*?\{[^{}]*\}", " ", text or "")
+    prose = re.sub(r"\\begin\{[^{}]+\}.*?\\end\{[^{}]+\}", " ", prose, flags=re.DOTALL)
+    paragraphs = [
+        re.sub(r"\s+", " ", paragraph).strip()
+        for paragraph in re.split(r"\n\s*\n", prose)
+        if len(re.sub(r"\s+", " ", paragraph).strip()) >= 80
+    ]
+    hits: list[str] = []
+    colon_template = re.compile(
+        r"(?m)^\s*(?:[A-Z][A-Za-z ]{2,32}|[一-龥]{2,12})\s*[:：]\s+\S"
+    )
+    colon_count = sum(1 for paragraph in paragraphs if colon_template.search(paragraph))
+    if colon_count >= 4:
+        hits.append(f"{colon_count} paragraph-like colon labels")
+    dash_count = len(re.findall(r"\s(?:--|---|–|—)\s", prose))
+    if dash_count >= 8:
+        hits.append(f"{dash_count} spaced dash transitions")
+    repeated_label_sentences = len(
+        re.findall(
+            r"\b(?:Problem|Gap|Insight|Mechanism|Implication|Challenge|Future direction|Contribution)\s*[:：]",
+            prose,
+            flags=re.IGNORECASE,
+        )
+    )
+    if repeated_label_sentences >= 5:
+        hits.append(f"{repeated_label_sentences} repeated English label-colon phrases")
+    cjk_label_sentences = len(
+        re.findall(r"(?:背景|问题|缺口|机制|挑战|启示|未来方向|贡献)\s*[:：]", prose)
+    )
+    if cjk_label_sentences >= 5:
+        hits.append(f"{cjk_label_sentences} repeated Chinese label-colon phrases")
     return hits
 
 

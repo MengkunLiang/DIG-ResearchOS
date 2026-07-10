@@ -275,12 +275,14 @@ async def test_prepare_submission_bundle_copies_local_bibliography_style(temp_wo
     drafts = temp_workspace / "drafts"
     drafts.mkdir(parents=True, exist_ok=True)
     (drafts / "paper.tex").write_text(
-        "\\documentclass{article}\n\\begin{document}\n"
+        "\\documentclass[isre,dblanonrev]{informs4}\n\\begin{document}\n"
         "Body \\cite{test}.\n"
         "\\bibliographystyle{informs2014}\n\\bibliography{related_work}\n"
         "\\end{document}\n",
         encoding="utf-8",
     )
+    (drafts / "informs4.cls").write_text("\\ProvidesClass{informs4}\n", encoding="utf-8")
+    (drafts / "informs_Logo.pdf").write_bytes(b"%PDF-1.4\nmock logo\n")
     (drafts / "informs2014.bst").write_text("ENTRY {}{}{}\nREAD\n", encoding="utf-8")
     (temp_workspace / "literature" / "related_work.bib").write_text(
         "@article{test,author={Tester, Tina},title={T},year={2024}}\n",
@@ -295,11 +297,15 @@ async def test_prepare_submission_bundle_copies_local_bibliography_style(temp_wo
     result = await PrepareSubmissionBundleTool(policy).execute()
 
     assert result.ok, result.content
+    assert (temp_workspace / "submission" / "bundle" / "informs4.cls").exists()
+    assert (temp_workspace / "submission" / "bundle" / "informs_Logo.pdf").exists()
     assert (temp_workspace / "submission" / "bundle" / "informs2014.bst").exists()
     manifest = json.loads(
         (temp_workspace / "submission" / "bundle" / "bundle_manifest.json").read_text(encoding="utf-8")
     )
     support_paths = [item["path"] for item in manifest["bundle"]["copied_support_files"]]
+    assert "submission/bundle/informs4.cls" in support_paths
+    assert "submission/bundle/informs_Logo.pdf" in support_paths
     assert "submission/bundle/informs2014.bst" in support_paths
 
 
@@ -2742,13 +2748,129 @@ async def test_assemble_manuscript_applies_informs_template_and_support_files(te
     assert result.ok, result.content
     tex = (temp_workspace / "drafts" / "paper.tex").read_text(encoding="utf-8")
     assert "ResearchOS template_source" not in tex
+    assert "\\documentclass[isre,dblanonrev]{informs4}" in tex
+    assert "\\TITLE{INFORMS Template Smoke Test}" in tex
+    assert "\\ARTICLEAUTHORS" in tex
+    assert "\\ABSTRACT{%" in tex
+    assert "\\begin{abstract}" not in tex
+    assert "tgtermes" not in tex
+    assert "newtxtext" not in tex
+    assert "newtxmath" not in tex
+    assert "\\usepackage{algorithm}" not in tex
+    assert "\\usepackage{algpseudocode}" not in tex
     assert "\\bibliographystyle{informs2014}" in tex
     assert tex.count("\\bibliographystyle") == 1
+    assert (temp_workspace / "drafts" / "informs4.cls").exists()
+    assert (temp_workspace / "drafts" / "eqndefns-left.sty").exists()
+    assert (temp_workspace / "drafts" / "informs_Logo.pdf").exists()
     assert (temp_workspace / "drafts" / "informs2014.bst").exists()
     copied_bib = (temp_workspace / "drafts" / "related_work.bib").read_text(encoding="utf-8")
     assert "PARTIAL-TEXT" not in copied_bib
     assert "runtime status" not in copied_bib
     assert "test" in copied_bib
+
+
+@pytest.mark.parametrize(
+    ("template_id", "expected_tex", "support_files"),
+    [
+        ("neurips", "\\usepackage{neurips_2026}", ["neurips_2026.sty", "checklist.tex"]),
+        ("iclr", "\\usepackage{iclr2026_conference}", ["iclr2026_conference.sty", "iclr2026_basic.tex"]),
+        ("icml", "\\icmltitle{CCF Template Smoke Test}", ["icml2026.sty", "icml2026.bst", "algorithm.sty", "algorithmic.sty", "fancyhdr.sty", "natbib.sty"]),
+        ("kdd", "\\documentclass[sigconf,anonymous,review]{acmart}", ["acmart.cls", "ACM-Reference-Format.bst"]),
+    ],
+)
+@pytest.mark.asyncio
+async def test_assemble_manuscript_applies_ccf_templates_and_support_files(
+    temp_workspace,
+    template_id: str,
+    expected_tex: str,
+    support_files: list[str],
+):
+    section_dir = temp_workspace / "drafts" / "sections"
+    section_dir.mkdir(parents=True, exist_ok=True)
+    for section_id in [
+        "abstract",
+        "introduction",
+        "related_work",
+        "methodology",
+        "experiments",
+        "analysis",
+        "conclusion",
+    ]:
+        (section_dir / f"{section_id}.tex").write_text(_valid_section_body(section_id), encoding="utf-8")
+    (temp_workspace / "literature").mkdir(parents=True, exist_ok=True)
+    (temp_workspace / "literature" / "related_work.bib").write_text(_valid_bibtex(), encoding="utf-8")
+    policy = WorkspaceAccessPolicy(
+        temp_workspace,
+        ["", "drafts/", "literature/"],
+        ["drafts/", "submission/"],
+    )
+
+    result = await AssembleManuscriptTool(policy).execute(
+        title="CCF Template Smoke Test",
+        template_family="ccf",
+        template_id=template_id,
+        writing_language="en",
+    )
+
+    assert result.ok, result.content
+    tex = (temp_workspace / "drafts" / "paper.tex").read_text(encoding="utf-8")
+    assert expected_tex in tex
+    assert "\\bibliography{related_work}" in tex
+    assert tex.count("\\bibliographystyle") == 1
+    assert "Hippocampus" not in tex
+    assert "Cranberry-Lemon" not in tex
+    for name in support_files:
+        assert (temp_workspace / "drafts" / name).exists(), name
+
+
+@pytest.mark.parametrize(
+    ("template_id", "support_files"),
+    [
+        ("neurips", ["neurips_2026.sty", "checklist.tex"]),
+        ("iclr", ["iclr2026_conference.sty", "iclr2026_basic.tex"]),
+        ("icml", ["icml2026.sty", "icml2026.bst", "algorithm.sty", "algorithmic.sty", "fancyhdr.sty", "natbib.sty"]),
+        ("kdd", ["acmart.cls", "ACM-Reference-Format.bst"]),
+    ],
+)
+@pytest.mark.asyncio
+async def test_prepare_submission_bundle_copies_ccf_template_support_files(
+    temp_workspace,
+    template_id: str,
+    support_files: list[str],
+):
+    section_dir = temp_workspace / "drafts" / "sections"
+    section_dir.mkdir(parents=True, exist_ok=True)
+    for section_id in [
+        "abstract",
+        "introduction",
+        "related_work",
+        "methodology",
+        "experiments",
+        "analysis",
+        "conclusion",
+    ]:
+        (section_dir / f"{section_id}.tex").write_text(_valid_section_body(section_id), encoding="utf-8")
+    (temp_workspace / "literature").mkdir(parents=True, exist_ok=True)
+    (temp_workspace / "literature" / "related_work.bib").write_text(_valid_bibtex(), encoding="utf-8")
+    policy = WorkspaceAccessPolicy(
+        temp_workspace,
+        ["", "drafts/", "literature/"],
+        ["drafts/", "submission/"],
+    )
+    assembled = await AssembleManuscriptTool(policy).execute(
+        title="CCF Template Smoke Test",
+        template_family="ccf",
+        template_id=template_id,
+        writing_language="en",
+    )
+    assert assembled.ok, assembled.content
+
+    bundled = await PrepareSubmissionBundleTool(policy).execute()
+
+    assert bundled.ok, bundled.content
+    for name in support_files:
+        assert (temp_workspace / "submission" / "bundle" / name).exists(), name
 
 
 @pytest.mark.asyncio
@@ -2805,5 +2927,8 @@ async def test_t8_recovery_refresh_preserves_selected_informs_template(temp_work
 
     assert ok, err
     tex = (temp_workspace / "drafts" / "paper.tex").read_text(encoding="utf-8")
+    assert "\\documentclass[isre,dblanonrev]{informs4}" in tex
     assert "\\bibliographystyle{informs2014}" in tex
+    assert (temp_workspace / "drafts" / "informs4.cls").exists()
+    assert (temp_workspace / "drafts" / "informs_Logo.pdf").exists()
     assert (temp_workspace / "drafts" / "informs2014.bst").exists()
