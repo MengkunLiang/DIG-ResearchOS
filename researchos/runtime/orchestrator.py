@@ -2122,7 +2122,10 @@ class AgentRunner:
             oldest_staged_mtime = min(path.stat().st_mtime for path in staged_outputs)
             if oldest_staged_mtime >= newest_note_mtime:
                 self.progress.emit(
-                    "[Synthesizer Agent] T3.5 检测到现有 synthesis workbench 且未过期，跳过重复生成",
+                    "[Synthesizer Agent] T3.5 使用已有结构化综合材料\n"
+                    f"- 输入: 检测到 {len(note_files)} 份 paper notes，现有 workbench 未过期\n"
+                    "- 输出: literature/synthesis_workbench.json；literature/synthesis_outline.md；literature/synthesis_draft.md\n"
+                    "- 后续: LLM 将复核这些材料并写最终 synthesis.md",
                     important=True,
                 )
                 actions = ctx.extra.setdefault("runtime_actions", [])
@@ -2153,10 +2156,33 @@ class AgentRunner:
             self.log.warning("t35_workbench_failed", error=result.error, content=result.content)
             return False
 
+        data = result.data if isinstance(result.data, dict) else {}
+        outputs = data.get("outputs") if isinstance(data.get("outputs"), dict) else {}
+        output_bits = [
+            str(path)
+            for path in (
+                outputs.get("workbench"),
+                outputs.get("outline"),
+                outputs.get("draft"),
+            )
+            if path
+        ]
+        summary_bits = [
+            f"深读笔记 {data.get('note_count', 0)}",
+            f"摘要轻读 {data.get('abstract_note_count', 0)}",
+            f"方法家族 {data.get('family_count', 0)}",
+        ]
+        citation_target = data.get("citation_coverage_target")
+        if citation_target not in (None, ""):
+            summary_bits.append(f"建议覆盖引用 {citation_target}")
         self.progress.emit(
-            "[Synthesizer Agent] T3.5 synthesis workbench 已生成；继续交给 LLM 审阅并写最终 synthesis.md",
+            "[Synthesizer Agent] T3.5 结构化综合摘要\n"
+            f"- 输入: {'；'.join(summary_bits)}\n"
+            f"- 输出: {'；'.join(output_bits) if output_bits else 'literature/synthesis_workbench.json / synthesis_outline.md / synthesis_draft.md'}\n"
+            "- 后续: LLM 将复核 workbench 并写最终 synthesis.md",
             important=True,
         )
+
         actions = ctx.extra.setdefault("runtime_actions", [])
         if isinstance(actions, list):
             actions.append(

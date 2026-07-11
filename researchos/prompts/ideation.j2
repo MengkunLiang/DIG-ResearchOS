@@ -51,13 +51,14 @@ core_evidence/supporting_context 的 note。score < 0.55、do_not_cite、citatio
 feasibility 结论。
 
 {% endif %}
-{% if has_synthesis_workbench %}
+{% if has_synthesis_workbench | default(false) %}
 ### 结构化综述工作台（synthesis_workbench.json 预览）
 {{ synthesis_workbench_preview }}
 
-{% if note_card_summary %}
+{% set note_cards = note_card_summary | default('') %}
+{% if note_cards %}
 ### 可检索笔记卡 section 摘要（来自 paper_notes / paper_notes_abstract）
-{{ note_card_summary }}
+{{ note_cards }}
 
 使用规则：生成或筛选 idea 时优先使用这些 note-card section，而不是只依赖 synthesis.md 的概括。
 - A / B 字段适合提供跨域视角、桥接点和粗读候选。
@@ -65,9 +66,10 @@ feasibility 结论。
 - Raw abstract 只用于 abstract-only 候选的保守理解，不能当作全文证据。
 
 {% endif %}
-{% if weak_evidence_summary %}
+{% set weak_evidence = weak_evidence_summary | default('') %}
+{% if weak_evidence %}
 ### 弱证据/补资源摘要（不可作为强 claim evidence）
-{{ weak_evidence_summary }}
+{{ weak_evidence }}
 
 {% endif %}
 {% endif %}

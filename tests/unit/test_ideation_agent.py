@@ -24,6 +24,7 @@ from researchos.agents.ideation import (
     validate_t4_gate1_ready,
 )
 from researchos.runtime.agent import ExecutionContext
+from researchos.runtime.prompts import render_prompt
 from researchos.orchestration.task_io_contract import TASK_IO_CONTRACTS
 from researchos.schemas.validator import validate_record
 
@@ -937,6 +938,42 @@ def test_ideation_system_prompt(ideation_agent, temp_workspace):
     assert "Ideation Agent" in prompt or "假设生成" in prompt
     assert "Test research direction" in prompt
     assert "Gate" in prompt or "两轮" in prompt
+
+
+def test_ideation_prompt_tolerates_missing_optional_note_card_summary(temp_workspace):
+    """The template must not crash if an older render path omits optional summaries."""
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T4",
+        run_id="test-run-1",
+        mode=None,
+    )
+
+    prompt = render_prompt(
+        "ideation.j2",
+        ctx,
+        project={"research_direction": "Template resilience"},
+        cdr_schema_summary="",
+        synthesis_preview="# Synthesis",
+        missing_areas="",
+        seed_ideas="",
+        comparison_table_preview="",
+        domain_map_preview="",
+        bridge_domain_plan_preview="",
+        synthesis_workbench_preview='{"note_count": 1}',
+        survey_insights_preview="",
+        has_domain_map=False,
+        has_bridge_domain_plan=False,
+        has_synthesis_workbench=True,
+        has_survey_insights=False,
+        has_seed_ideas=False,
+        temperature=0.75,
+        agent_guidance="",
+    )
+
+    assert "Ideation Agent" in prompt or "假设生成" in prompt
+    assert "结构化综述工作台" in prompt
 
 
 def test_ideation_initial_user_message(ideation_agent, temp_workspace):

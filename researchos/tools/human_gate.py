@@ -67,6 +67,8 @@ def _humanize_presentation_key(key: str) -> str:
         "candidate_pool_fingerprints": "候选池校验",
         "input_fingerprints": "输入校验",
         "survey_summary": "综述摘要",
+        "synthesis_preview": "T3.5 综合摘要",
+        "weak_evidence_preview": "弱证据提示",
         "survey_compile_report": "编译报告",
         "survey_insights": "综述洞察",
         "how_to_choose": "如何选择",
@@ -259,6 +261,10 @@ class CLIHumanInterface(HumanInterface):
 
         if gate_id == "t2_coverage_gate":
             rendered = _format_t2_coverage_gate_field(key, value)
+            if rendered is not None:
+                return rendered
+        if gate_id == "t36_survey_gate":
+            rendered = _format_t36_survey_gate_field(key, value)
             if rendered is not None:
                 return rendered
         if gate_id == "t2_literature_param_confirm_gate" and key == "selected_parameters":
@@ -739,6 +745,91 @@ def _path_summary_text(value: Any, *, default_path: str = "") -> tuple[str, str]
     return default_path, str(value or "")
 
 
+def _path_summary_size(value: Any) -> int | None:
+    if isinstance(value, dict):
+        size = value.get("size_chars")
+        if isinstance(size, int):
+            return size
+        try:
+            return int(size)
+        except Exception:
+            return None
+    return None
+
+
+def _strip_gate_truncation_marker(text: str) -> str:
+    return re.sub(r"\n*\[open .+? for full content; truncated from \d+ chars\]\s*$", "", text).rstrip()
+
+
+def _format_t36_survey_gate_field(key: str, value: Any) -> str | None:
+    if key == "synthesis_preview":
+        return _format_t36_synthesis_preview(value)
+    if key == "weak_evidence_preview":
+        return _format_t36_weak_evidence_preview(value)
+    return None
+
+
+def _format_t36_synthesis_preview(value: Any) -> str:
+    path, raw_text = _path_summary_text(value, default_path="literature/synthesis.md")
+    text = _strip_gate_truncation_marker(raw_text)
+    size = _path_summary_size(value)
+    headings = _extract_markdown_headings(text, limit=7)
+    bullets = _extract_first_markdown_bullets(text, limit=5)
+    note_refs = len(set(re.findall(r"\[note:([^\]\s]+)\]", text)))
+    citation_keys = {
+        key.strip()
+        for group in re.findall(r"\\cite(?:t|p)?\{([^}]+)\}", text)
+        for key in group.split(",")
+        if key.strip()
+    }
+
+    lines = [
+        f"文件: {path}",
+        "T3.5 已完成 literature synthesis。它会继续作为 T4 idea fuel；是否写综述论文是额外分支选择。",
+    ]
+    if size is not None:
+        lines.append(f"规模: 约 {size} 字符")
+    signal_bits = []
+    if headings:
+        signal_bits.append("章节 " + str(len(headings)))
+    if note_refs:
+        signal_bits.append(f"note 引用 {note_refs}")
+    if citation_keys:
+        signal_bits.append(f"BibTeX 引用键 {len(citation_keys)}")
+    if signal_bits:
+        lines.append("结构信号: " + "；".join(signal_bits))
+    if headings:
+        lines.append("主要章节:")
+        for item in headings:
+            lines.append(f"- {item}")
+    if bullets:
+        lines.append("关键摘录:")
+        for item in bullets:
+            lines.append(f"- {_compact_text(item.lstrip('- ').strip(), 160)}")
+    lines.append("现在只需判断：是否额外撰写 taxonomy-driven survey。选择“不写综述”会直接进入 T4，不会丢弃 synthesis。")
+    return "\n".join(lines)
+
+
+def _format_t36_weak_evidence_preview(value: Any) -> str:
+    path, raw_text = _path_summary_text(value, default_path="literature/metadata_triage.md")
+    text = _strip_gate_truncation_marker(raw_text)
+    size = _path_summary_size(value)
+    bullets = _extract_first_markdown_bullets(text, limit=5)
+    lines = [
+        f"文件: {path}",
+        "作用: 标记 abstract-only / metadata-only / 低证据材料。它们可用于补资源或覆盖提示，不能直接支撑强 claim。",
+    ]
+    if size is not None:
+        lines.append(f"规模: 约 {size} 字符")
+    if bullets:
+        lines.append("提示摘录:")
+        for item in bullets:
+            lines.append(f"- {_compact_text(item.lstrip('- ').strip(), 150)}")
+    else:
+        lines.append("当前没有可压缩展示的条目；详情见文件。")
+    return "\n".join(lines)
+
+
 def _format_t2_coverage_gate_field(key: str, value: Any) -> str | None:
     if key == "search_log":
         return _format_t2_search_log_summary(value)
@@ -981,6 +1072,38 @@ def _find_bullet_starting_with(text: str, label: str) -> str | None:
         if stripped.startswith("- " + label):
             return stripped
     return None
+
+
+def _extract_markdown_headings(text: str, *, limit: int) -> list[str]:
+    headings: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("#"):
+            continue
+        match = re.match(r"^#{1,3}\s+(.+)$", stripped)
+        if not match:
+            continue
+        title = match.group(1).strip()
+        if title and title not in headings:
+            headings.append(_compact_text(title, 140))
+        if len(headings) >= limit:
+            break
+    return headings
+
+
+def _extract_first_markdown_bullets(text: str, *, limit: int) -> list[str]:
+    bullets: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith(("- ", "* ")):
+            continue
+        body = stripped[2:].strip()
+        if not body or set(body) <= {"-", "=", ":"}:
+            continue
+        bullets.append(body)
+        if len(bullets) >= limit:
+            break
+    return bullets
 
 
 def _extract_markdown_table_rows(text: str, heading: str) -> list[list[str]]:

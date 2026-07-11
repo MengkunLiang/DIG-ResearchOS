@@ -1,4 +1,5 @@
 from researchos.orchestration.gate_presenter import build_presentation
+from researchos.tools.human_gate import CLIHumanInterface
 
 
 def test_gate_presenter_builds_file_dir_state_and_literal(tmp_workspace):
@@ -80,3 +81,29 @@ def test_gate_presenter_can_show_file_path_summary_without_storing_full_file(tmp
     assert presentation["cards"]["size_chars"] > 30
     assert "D1 details" in presentation["cards"]["summary"]
     assert "truncated from" in presentation["cards"]["summary"]
+
+
+def test_t36_survey_gate_formats_synthesis_as_human_summary():
+    rendered = CLIHumanInterface._format_presentation_value(
+        "synthesis_preview",
+        {
+            "path": "literature/synthesis.md",
+            "size_chars": 12_345,
+            "summary": (
+                "# Literature Synthesis\n\n"
+                "## Method Families\n"
+                "- Graph-based methods connect sparse entities [note:p1].\n"
+                "## Cross-Paper Tensions\n"
+                "- Evaluation protocols differ across settings \\cite{paperA,paperB}.\n"
+            ),
+        },
+        gate_id="t36_survey_gate",
+    )
+
+    assert "T3.5 已完成 literature synthesis" in rendered
+    assert "规模: 约 12345 字符" in rendered
+    assert "主要章节" in rendered
+    assert "Method Families" in rendered
+    assert "Graph-based methods" in rendered
+    assert "BibTeX 引用键 2" in rendered
+    assert "是否额外撰写 taxonomy-driven survey" in rendered

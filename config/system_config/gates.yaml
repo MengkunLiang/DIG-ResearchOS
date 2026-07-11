@@ -156,10 +156,12 @@ gates:
     presentation:
       synthesis_preview:
         from_file: literature/synthesis.md
-        max_chars: 2500
+        mode: path_summary
+        summary_chars: 8000
       weak_evidence_preview:
         from_file: literature/metadata_triage.md
-        max_chars: 1200
+        mode: path_summary
+        summary_chars: 3000
     options:
       - id: "no"
         label: "不写综述，进入 T4"
