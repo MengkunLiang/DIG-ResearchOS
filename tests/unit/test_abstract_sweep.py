@@ -167,8 +167,8 @@ Not available because no abstract was supplied.
 """
 
     note = normalize_abstract_reader_note(raw, _sample_paper(id="p1", paper_id="p1"))
-    assert "\n## A. 核心做法/视角\n" in note
-    assert "\n## B. 桥接点\n" in note
+    assert "\n## A. Core Approach / Perspective\n" in note
+    assert "\n## B. Bridge Point\n" in note
     assert "\n### A. 核心做法/视角\n" not in note
     assert "- **Stated mechanism**: not available from abstract" in note
     assert "- **Evidence type**: abstract_claim_hint" in note
@@ -217,6 +217,8 @@ Abstract.
     repaired = note_path.read_text(encoding="utf-8")
 
     assert result == {"checked": 1, "repaired": 1}
+    assert "## A. Core Approach / Perspective" in repaired
+    assert "## B. Bridge Point" in repaired
     assert "- **Stated mechanism**:" in repaired
     assert "- **Supporting artifact**:" in repaired
 
@@ -978,10 +980,10 @@ Reader LLM identified the abstract-level problem.
 ## 2. Method Summary
 Reader LLM summarized the method.
 
-## A. 核心做法/视角
+## A. Core Approach / Perspective
 Reader LLM extracted a viewpoint.
 
-## B. 桥接点
+## B. Bridge Point
 Reader LLM identified a bridge.
 
 ## 3. Key Claimed Results
@@ -1010,6 +1012,8 @@ Abstract text with a method and claimed result.
     assert result["fallback_notes_generated"] == 0
     note = (workspace / "literature" / "paper_notes_abstract" / "p1.md").read_text(encoding="utf-8")
     assert "Reader LLM summarized the method" in note
+    assert "## A. Core Approach / Perspective" in note
+    assert "## B. Bridge Point" in note
     assert "LLM_REVIEW_REQUIRED" not in note
     audit = (workspace / "literature" / "access_audit.md").read_text(encoding="utf-8")
     assert "T3 Abstract Sweep" in audit

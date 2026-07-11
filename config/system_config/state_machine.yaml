@@ -700,7 +700,7 @@ states:
     next_on_failure: T3.6-REVIEW
 
   # T3.6-COMPILE 状态：编译 survey.tex 为 PDF
-  # 用途：验证 survey 分章节写作产物能形成可读 PDF；失败时暂停等待 TeX/Docker 环境或章节修复。
+  # 用途：验证 survey 分章节写作产物能形成可读 PDF；失败时暂停等待本机 LaTeX backend 或章节修复。
   T3.6-COMPILE:
     agent: survey_writer
     mode: survey_compile
@@ -833,7 +833,7 @@ states:
     optional_outputs:
       collision_cases: ideation/collision_cases.md       # 条件输出：High/Medium Overlap 时必须存在
     # 当前主链默认跳过 legacy T5 pilot 与 legacy T6 novelty-final，但必须尊重 T4.5 Final Gate Verdict。
-    # pass* 进入 T5-HANDOFF 外部实验协议链；return/drop/reject/collision 进入人工审阅 gate，
+    # pass* 进入 T5-REBOOST-GATE 外部实验协议链；return/drop/reject/collision 进入人工审阅 gate，
     # 由用户决定外部实验链/T4/stop。
     next_on_success: __parse_from_output__
     next_on_failure: failed
@@ -858,6 +858,29 @@ states:
     gate:
       type: t45_human_review_gate
     next_on_success: __parse_from_output__
+    next_on_failure: failed
+
+  # T5-REBOOST-GATE 状态：ResearchOS 直接调用 LLM API 对 Pre-T5 材料做 context re-boost
+  # 用途：把研究目标、方法机制、baseline、claim/evidence 边界重排成外部执行器上下文，
+  # 并写入 external_executor/handoff_pack.json#context_reboost。
+  T5-REBOOST-GATE:
+    agent: experimenter
+    mode: reboost
+    inputs:
+      project: project.yaml
+      hypotheses: ideation/hypotheses.md
+      exp_plan: ideation/exp_plan.yaml
+      risks: ideation/risks.md
+      novelty_audit: ideation/novelty_audit.md
+      idea_scorecard: ideation/idea_scorecard.yaml
+      synthesis: literature/synthesis.md
+      synthesis_workbench: literature/synthesis_workbench.json
+      domain_map: literature/domain_map.json
+      comparison_table: literature/comparison_table.csv
+    outputs:
+      handoff_pack: external_executor/handoff_pack.json
+      reboost_report: external_executor/reboost_report.json
+    next_on_success: T5-HANDOFF
     next_on_failure: failed
 
   # T5-HANDOFF 状态：外部实验执行器协议编译
@@ -890,7 +913,50 @@ states:
       external_readme: external_executor/README.md
       dir_guide: external_executor/_DIR_GUIDE.md
       job_state: external_executor/job_state.json
-    next_on_success: T5-EXECUTOR-GATE
+      expr_dir: external_executor/expr
+      skills_dir: external_executor/skills
+      skill_template_manifest: external_executor/skills/template_manifest.json
+    next_on_success: T5-SKILL-CUSTOMIZATION-GATE
+    next_on_failure: failed
+
+  # T5-SKILL-CUSTOMIZATION-GATE 状态：自动 LLM API 定制 skill 模板
+  # 用途：T5-HANDOFF 复制仓库级通用 skill 模板到 external_executor/skills/ 后，
+  # ResearchOS 直接调用当前配置的 LLM provider，读取 skills_customization 指导文件，
+  # 将 13 个模板原地改写为当前项目专属 skills。
+  T5-SKILL-CUSTOMIZATION-GATE:
+    agent: experimenter
+    mode: skill_customization
+    inputs:
+      handoff_pack: external_executor/handoff_pack.json
+      expected_outputs_schema: external_executor/expected_outputs_schema.json
+      allowed_paths: external_executor/allowed_paths.txt
+      skills_dir: external_executor/skills
+      skill_template_manifest: external_executor/skills/template_manifest.json
+      customization_skill: external_executor/skills/skills_customization/SKILL.md
+      agents_md: external_executor/AGENTS.md
+    outputs:
+      skill_customization_report: external_executor/skills/customization_report.json
+    next_on_success: T5-EXPR-MATERIAL-GATE
+    next_on_failure: failed
+
+  # T5-EXPR-MATERIAL-GATE 状态：实验材料放置确认
+  # 用途：T5 re-boost 与 skill 编译完成后，暂停等待用户把 baseline model、dataset、
+  # 外部代码、权重等实验材料放入 external_executor/expr/。
+  T5-EXPR-MATERIAL-GATE:
+    agent: experimenter
+    mode: executor_gate
+    extra:
+      immediate_gate: true
+    inputs:
+      handoff_pack: external_executor/handoff_pack.json
+      expected_outputs_schema: external_executor/expected_outputs_schema.json
+      expr_dir: external_executor/expr
+      agents_md: external_executor/AGENTS.md
+    outputs:
+      materials_gate_decision: external_executor/expr/materials_gate_decision.json
+    gate:
+      type: t5_expr_material_gate
+    next_on_success: __parse_from_output__
     next_on_failure: failed
 
   # T5-EXECUTOR-GATE 状态：外部执行器选择
@@ -981,7 +1047,11 @@ states:
       novelty_audit: ideation/novelty_audit.md
     outputs:
       integrity_audit: experiments/integrity_audit.json
+      result_audit: experiments/result_audit.json
       experiment_fairness_review: experiments/experiment_fairness_review.md
+      method_audit: experiments/method_audit.json
+      framework_figure_audit: experiments/framework_figure_audit.json
+      method_writing_resources: drafts/method_writing_resources.json
     next_on_success: T7-POST-NOVELTY
     next_on_failure: failed
 

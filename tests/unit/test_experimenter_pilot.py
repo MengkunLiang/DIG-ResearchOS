@@ -293,7 +293,7 @@ def test_t5_preflight_rejects_over_budget_plan(pilot_workspace):
     assert "over_budget" in err or "超过项目预算" in err
 
 
-def test_t5_preflight_pauses_when_docker_missing(monkeypatch, pilot_workspace):
+def test_t5_preflight_allows_native_mode_when_docker_missing(monkeypatch, pilot_workspace):
     monkeypatch.setattr("researchos.tools.docker_exec.shutil.which", lambda _name: None)
     ctx = ExecutionContext(
         workspace_dir=pilot_workspace,
@@ -305,8 +305,8 @@ def test_t5_preflight_pauses_when_docker_missing(monkeypatch, pilot_workspace):
 
     ok, err = run_experimenter_preflight(ctx)
 
-    assert not ok
-    assert "WAITING_ENVIRONMENT" in err
+    assert ok
+    assert err is None
 
 
 def test_pilot_validate_outputs_missing_smoke_test(experimenter_agent, pilot_workspace):

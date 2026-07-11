@@ -2,13 +2,9 @@ from __future__ import annotations
 
 """LaTeX 编译工具。
 
-容器内模式（方案 D1）：
-- 直接调用系统的 latexmk 命令（容器内已安装 texlive-full）
-- 不再通过 docker_exec 嵌套启动容器
-
-宿主机模式（方案 A）：
-- 通过 docker_exec 在 LaTeX 镜像中执行 latexmk
-- 保持原有行为
+默认使用当前环境的 latexmk。ResearchOS 不再把 Docker 作为隐式
+LaTeX fallback；缺少 TeX/latexmk 时返回 WAITING_ENVIRONMENT，用户安装
+TeX Live/MacTeX/MiKTeX 后 resume。
 """
 
 import asyncio
@@ -22,6 +18,8 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from ..runtime.errors import ToolRuntimeError
+from ..runtime.config import LatexSettings
+from ..runtime.environment import detect_latex_backends
 from ..runtime.logger import get_logger
 from .base import Tool, ToolResult
 from .docker_exec import DockerExecTool
@@ -34,16 +32,23 @@ class LatexCompileParams(BaseModel):
     engine: str = Field("pdflatex", pattern="^(pdflatex|xelatex|lualatex)$")
     bibtex: bool = Field(True, description="是否运行 bibtex")
     output_dir: str | None = Field(None, description="可选输出目录，相对 tex 文件目录")
+    backend: str = Field(
+        "auto",
+        pattern="^(auto|latexmk|tectonic|docker|export_only)$",
+        description="LaTeX backend；默认 auto，当前只自动使用本机 latexmk",
+    )
+    allow_docker_fallback: bool = Field(False, description="是否允许显式 Docker fallback；默认关闭")
 
 
 class LatexCompileTool(Tool):
     name = "latex_compile"
-    description = "使用本机 latexmk 或统一 Docker 镜像编译 .tex 文件并生成 PDF。"
+    description = "使用当前环境的 latexmk 编译 .tex 文件并生成 PDF。"
     parameters_schema = LatexCompileParams
     timeout_seconds = 1800.0
 
-    def __init__(self, docker_tool: DockerExecTool):
+    def __init__(self, docker_tool: DockerExecTool, latex_settings: LatexSettings | None = None):
         self.docker = docker_tool
+        self.latex_settings = latex_settings or LatexSettings()
 
     def _is_running_in_container(self) -> bool:
         """检测是否在容器内运行（使用共享工具）"""
@@ -53,6 +58,10 @@ class LatexCompileTool(Tool):
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         params = LatexCompileParams(**kwargs)
+        if params.backend == "auto" and self.latex_settings.default_backend != "auto":
+            params = params.model_copy(update={"backend": self.latex_settings.default_backend})
+        if not params.allow_docker_fallback and self.latex_settings.allow_docker_fallback:
+            params = params.model_copy(update={"allow_docker_fallback": True})
         tex_abs = self.docker.policy.resolve_read(params.tex_path)
         started_at = _now_iso()
         report_base = _compile_report_base(
@@ -61,6 +70,10 @@ class LatexCompileTool(Tool):
             params=params,
             started_at=started_at,
         )
+        backend_checks = detect_latex_backends(allow_docker=params.allow_docker_fallback or params.backend == "docker")
+        report_base["requested_backend"] = params.backend
+        report_base["selected_backend"] = _select_backend(params, backend_checks)
+        report_base["detected_backends"] = backend_checks
         cached = _cached_compile_result_if_redundant(
             self.docker.policy.workspace_dir,
             params=params,
@@ -69,31 +82,146 @@ class LatexCompileTool(Tool):
         if cached is not None:
             return cached
 
-        # 容器内模式或宿主机已有 TeX：直接调用 latexmk。
-        if self._is_running_in_container() or shutil.which("latexmk"):
-            if shutil.which("latexmk") is None:
-                report = _finalize_compile_report(report_base, success=False, engine="native", exit_code=None)
+        if params.backend == "export_only":
+            report = _finalize_compile_report(
+                report_base,
+                success=False,
+                engine="export_only",
+                exit_code=None,
+                error="export_only_requested",
+            )
+            _write_compile_report_for_known_target(self.docker.policy.workspace_dir, params.tex_path, report)
+            return ToolResult(
+                ok=False,
+                content=(
+                    "WAITING_ENVIRONMENT: PDF compilation skipped because backend=export_only.\n"
+                    f"TeX source is available at {params.tex_path}."
+                ),
+                error="export_only_requested",
+                data={"error": "export_only_requested", "compile_report": report},
+            )
+        if report_base["selected_backend"] == "latexmk" and shutil.which("latexmk") is None:
+            report = _finalize_compile_report(
+                report_base,
+                success=False,
+                engine="latexmk",
+                exit_code=None,
+                error="waiting_environment_latexmk_missing",
+            )
+            _write_compile_report_for_known_target(self.docker.policy.workspace_dir, params.tex_path, report)
+            return ToolResult(
+                ok=False,
+                content=(
+                    "WAITING_ENVIRONMENT: latexmk is not installed in the current environment.\n"
+                    "Install a local TeX distribution and latexmk, then resume.\n"
+                    "Ubuntu/Debian: sudo apt-get install texlive-latex-base texlive-latex-extra "
+                    "texlive-fonts-recommended texlive-xetex texlive-lang-chinese latexmk\n"
+                    "macOS: install MacTeX or BasicTeX plus latexmk.\n"
+                    "Windows: install MiKTeX or TeX Live and ensure latexmk is on PATH.\n"
+                    "If a Python import error says `No module named researchos`, do not run "
+                    "`pip install researchos` from PyPI; run from the repository root with "
+                    "`PYTHONPATH=/path/to/DIG-ResearchOS python -m researchos.cli ...` or install "
+                    "this local checkout with `pip install -e .`."
+                ),
+                error="waiting_environment_latexmk_missing",
+                data={"error": "waiting_environment_latexmk_missing", "compile_report": report},
+            )
+        if report_base["selected_backend"] == "tectonic":
+            if shutil.which("tectonic") is None:
+                report = _finalize_compile_report(
+                    report_base,
+                    success=False,
+                    engine="tectonic",
+                    exit_code=None,
+                    error="waiting_environment_tectonic_missing",
+                )
                 _write_compile_report_for_known_target(self.docker.policy.workspace_dir, params.tex_path, report)
                 return ToolResult(
                     ok=False,
                     content=(
-                        "WAITING_ENVIRONMENT: latexmk is not installed in the current container/native environment.\n"
-                        "Fix by installing TeX/latexmk in the active environment or by using the ResearchOS Docker image. "
-                        "If a Python import error says `No module named researchos`, do not run `pip install researchos` "
-                        "from PyPI; run from the repository root with `PYTHONPATH=/path/to/DIG-ResearchOS python -m researchos.cli ...` "
-                        "or install this local checkout with `pip install -e .`."
+                        "WAITING_ENVIRONMENT: tectonic is not installed in the current environment.\n"
+                        f"TeX source is available at {params.tex_path}."
                     ),
-                    error="waiting_environment_latexmk_missing",
-                    data={"error": "waiting_environment_latexmk_missing", "compile_report": report},
+                    error="waiting_environment_tectonic_missing",
+                    data={"error": "waiting_environment_tectonic_missing", "compile_report": report},
                 )
-            result = await self._compile_native(params, report_base=report_base)
-            return result
+            return await self._compile_tectonic(params, report_base=report_base)
+        if report_base["selected_backend"] == "docker":
+            report = _finalize_compile_report(
+                report_base,
+                success=False,
+                engine="docker",
+                exit_code=None,
+                error="waiting_environment_docker_backend_not_enabled",
+            )
+            _write_compile_report_for_known_target(self.docker.policy.workspace_dir, params.tex_path, report)
+            return ToolResult(
+                ok=False,
+                content=(
+                    "WAITING_ENVIRONMENT: Docker LaTeX backend is intentionally not enabled by default.\n"
+                    "Install local latexmk, use backend=export_only, or maintain a project-specific TeX image."
+                ),
+                error="waiting_environment_docker_backend_not_enabled",
+                data={"error": "waiting_environment_docker_backend_not_enabled", "compile_report": report},
+            )
+        return await self._compile_native(params, report_base=report_base)
 
-        # 宿主机模式：通过 docker_exec
-        return await self._compile_via_docker(params, report_base=report_base)
+    async def _compile_tectonic(self, params: LatexCompileParams, *, report_base: dict[str, Any]) -> ToolResult:
+        """Use the current environment's tectonic backend."""
+
+        tex_abs = self.docker.policy.resolve_read(params.tex_path)
+        tex_dir = tex_abs.parent
+        tex_name = tex_abs.name
+        cmd = ["tectonic", "--keep-logs", "--keep-intermediates", tex_name]
+
+        _LOG.info("latex_compile_tectonic", tex_path=params.tex_path, cwd=str(tex_dir))
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=tex_dir,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except OSError as exc:
+            raise ToolRuntimeError(self.name, exc) from exc
+
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=self.timeout_seconds)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            report = _finalize_compile_report(report_base, success=False, engine="tectonic", exit_code=None, error="timeout")
+            _write_compile_report_for_known_target(self.docker.policy.workspace_dir, params.tex_path, report)
+            return ToolResult(ok=False, content=f"Tectonic compilation timed out after {self.timeout_seconds}s", error="timeout", data={"compile_report": report})
+
+        out = stdout.decode("utf-8", errors="replace")
+        err = stderr.decode("utf-8", errors="replace")
+        content_parts = []
+        if out:
+            content_parts.append(f"STDOUT:\n{out}")
+        if err:
+            content_parts.append(f"STDERR:\n{err}")
+        content_parts.append(f"EXIT: {proc.returncode}")
+
+        if proc.returncode != 0:
+            report = _finalize_compile_report(report_base, success=False, engine="tectonic", exit_code=proc.returncode, error="nonzero_exit")
+            _write_compile_report_for_known_target(self.docker.policy.workspace_dir, params.tex_path, report)
+            return ToolResult(ok=False, content="\n\n".join(content_parts), error="nonzero_exit", data={"compile_report": report})
+
+        pdf_path = self._expected_pdf_path(tex_abs, params.output_dir)
+        if not pdf_path.exists():
+            report = _finalize_compile_report(report_base, success=False, engine="tectonic", exit_code=proc.returncode, error="pdf_missing")
+            _write_compile_report_for_known_target(self.docker.policy.workspace_dir, params.tex_path, report)
+            return ToolResult(ok=False, content=f"Tectonic finished but PDF was not generated: {pdf_path}", error="pdf_missing", data={"compile_report": report})
+
+        pdf_rel = pdf_path.relative_to(self.docker.policy.workspace_dir).as_posix()
+        content_parts.append(f"\nPDF: {pdf_rel}")
+        report = _finalize_compile_report(report_base, success=True, engine="tectonic", exit_code=proc.returncode, pdf_path=pdf_path)
+        _write_compile_report_for_known_target(self.docker.policy.workspace_dir, params.tex_path, report)
+        return ToolResult(ok=True, content="\n\n".join(content_parts), data={"pdf_path": pdf_rel, "exit_code": proc.returncode, "compile_report": report})
 
     async def _compile_native(self, params: LatexCompileParams, *, report_base: dict[str, Any]) -> ToolResult:
-        """容器内直接编译（方案 D1）"""
+        """Use the current environment's latexmk."""
         tex_abs = self.docker.policy.resolve_read(params.tex_path)
         tex_dir = tex_abs.parent
         tex_name = tex_abs.name
@@ -212,109 +340,6 @@ class LatexCompileTool(Tool):
             data={"pdf_path": pdf_rel, "exit_code": proc.returncode, "compile_report": report},
         )
 
-    async def _compile_via_docker(self, params: LatexCompileParams, *, report_base: dict[str, Any]) -> ToolResult:
-        """宿主机模式：通过 docker_exec 编译（方案 A）"""
-        tex_abs = self.docker.policy.resolve_read(params.tex_path)
-        tex_dir_rel = tex_abs.parent.relative_to(self.docker.policy.workspace_dir).as_posix()
-        tex_name = tex_abs.name
-
-        output_cmd = ""
-        if params.output_dir:
-            output_cmd = f"-outdir {params.output_dir}"
-
-        command = (
-            f"cd /workspace/{tex_dir_rel} && "
-            f"latexmk -{params.engine} -interaction=nonstopmode "
-            f"{'-bibtex' if params.bibtex else '-bibtex-'} {output_cmd} {tex_name}"
-        ).strip()
-
-        result = await self.docker.execute(
-            image="researchos/system:latest",
-            command=command,
-            cwd=f"/workspace/{tex_dir_rel}",
-            timeout_seconds=int(self.timeout_seconds),
-            allow_network=False,
-            gpu=False,
-            env={},
-            extra_mounts=[],
-        )
-        if not result.ok:
-            error_code = _classify_docker_compile_error(result)
-            if error_code in {
-                "docker_command_not_found",
-                "docker_daemon_unavailable",
-                "docker_image_missing",
-                "image_not_allowed",
-                "docker_entrypoint_misconfigured",
-                "researchos_module_missing",
-            }:
-                content = (
-                    "WAITING_ENVIRONMENT: Docker/LaTeX compile environment unavailable.\n"
-                    "If the Docker image reports `No module named researchos`, rebuild/install the local ResearchOS checkout "
-                    "in the image; do not install an unrelated PyPI package named researchos.\n\n"
-                    + result.content
-                )
-                report = _finalize_compile_report(
-                    report_base,
-                    success=False,
-                    engine="docker",
-                    exit_code=result.data.get("exit_code") if isinstance(result.data, dict) else None,
-                    error=error_code or "waiting_environment",
-                )
-                _write_compile_report_for_known_target(self.docker.policy.workspace_dir, params.tex_path, report)
-                return ToolResult(
-                    ok=False,
-                    content=content,
-                    error=f"waiting_environment_{error_code or 'docker'}",
-                    data={"error": "waiting_environment", "compile_report": report},
-                )
-            report = _finalize_compile_report(
-                report_base,
-                success=False,
-                engine="docker",
-                exit_code=result.data.get("exit_code") if isinstance(result.data, dict) else None,
-                error=result.error,
-            )
-            _write_compile_report_for_known_target(self.docker.policy.workspace_dir, params.tex_path, report)
-            result.data["compile_report"] = report
-            return result
-
-        pdf_path = self._expected_pdf_path(tex_abs, params.output_dir)
-        if not pdf_path.exists():
-            report = _finalize_compile_report(
-                report_base,
-                success=False,
-                engine="docker",
-                exit_code=result.data.get("exit_code") if isinstance(result.data, dict) else None,
-                error="pdf_missing",
-            )
-            _write_compile_report_for_known_target(self.docker.policy.workspace_dir, params.tex_path, report)
-            return ToolResult(
-                ok=False,
-                content=(
-                    f"LaTeX command finished but PDF was not generated: "
-                    f"{pdf_path.relative_to(self.docker.policy.workspace_dir)}"
-                ),
-                error="pdf_missing",
-                data={"compile_report": report},
-            )
-
-        report = _finalize_compile_report(
-            report_base,
-            success=True,
-            engine="docker",
-            exit_code=result.data.get("exit_code") if isinstance(result.data, dict) else 0,
-            pdf_path=pdf_path,
-        )
-        _write_compile_report_for_known_target(self.docker.policy.workspace_dir, params.tex_path, report)
-        result.data["pdf_path"] = pdf_path.relative_to(self.docker.policy.workspace_dir).as_posix()
-        result.data["compile_report"] = report
-        result.content += (
-            f"\n\nPDF: {pdf_path.relative_to(self.docker.policy.workspace_dir).as_posix()}"
-            f"\nCompile report: {_compile_report_target_for_tex(params.tex_path) or 'not persisted for this tex_path'}"
-        )
-        return result
-
     @staticmethod
     def _expected_pdf_path(tex_abs: Path, output_dir: str | None) -> Path:
         pdf_name = tex_abs.with_suffix(".pdf").name
@@ -325,6 +350,23 @@ class LatexCompileTool(Tool):
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _select_backend(params: LatexCompileParams, backend_checks: list[dict[str, Any]]) -> str:
+    available = {
+        str(item.get("name")): bool(item.get("available"))
+        for item in backend_checks
+        if isinstance(item, dict)
+    }
+    if params.backend != "auto":
+        return params.backend
+    if available.get("latexmk"):
+        return "latexmk"
+    if available.get("tectonic"):
+        return "tectonic"
+    if params.allow_docker_fallback and available.get("docker"):
+        return "docker"
+    return "latexmk"
 
 
 def _sha256_file(path: Path) -> str:
@@ -467,6 +509,9 @@ def _compile_report_base(
         "semantics": "latex_compile_attempt_report",
         "tex_path": tex_rel,
         "requested_engine": params.engine,
+        "requested_backend": params.backend,
+        "selected_backend": params.backend,
+        "detected_backends": [],
         "bibtex": params.bibtex,
         "output_dir": params.output_dir,
         "started_at": started_at,
@@ -500,7 +545,9 @@ def _finalize_compile_report(
             "attempts": [
                 {
                     "engine": engine,
+                    "selected_backend": base.get("selected_backend") or engine,
                     "requested_engine": base.get("requested_engine"),
+                    "requested_backend": base.get("requested_backend"),
                     "bibtex": base.get("bibtex"),
                     "output_dir": base.get("output_dir"),
                     "main_tex_sha256": base.get("main_tex_sha256"),
@@ -600,7 +647,7 @@ def _cached_compile_result_if_redundant(
     If the source hash and compile options are unchanged, a previous successful
     PDF can be reused and a previous source-level failure should not be repeated
     until the TeX changes. Environment wait failures are not cached because the
-    user may install TeX/Docker without editing the file.
+    user may install TeX/latexmk without editing the file.
     """
 
     _, existing = _load_compile_report(workspace, params.tex_path)
@@ -665,17 +712,6 @@ def _cached_compile_result_if_redundant(
     return None
 
 
-def _classify_docker_compile_error(result: ToolResult) -> str:
-    error = str(result.error or "")
-    content = str(result.content or "")
-    lowered = content.casefold()
-    if "no module named researchos" in lowered:
-        return "researchos_module_missing"
-    if "invalid choice: 'bash'" in lowered or "argument command: invalid choice" in lowered:
-        return "docker_entrypoint_misconfigured"
-    return error
-
-
 def _existing_pdf_can_be_revalidated(workspace: Path, report: dict[str, Any], base: dict[str, Any]) -> bool:
     tex_rel = str(report.get("tex_path") or base.get("tex_path") or "").strip()
     if not tex_rel:
@@ -735,6 +771,9 @@ def _same_compile_input(report: dict[str, Any], base: dict[str, Any]) -> bool:
         str(report.get("main_tex_sha256") or "") == str(base.get("main_tex_sha256") or "")
         and _dependency_hash(report) == _dependency_hash(base)
         and str(report.get("requested_engine") or "") == str(base.get("requested_engine") or "")
+        and str(report.get("selected_backend") or report.get("engine") or "") == str(
+            base.get("selected_backend") or base.get("engine") or ""
+        )
         and bool(report.get("bibtex")) == bool(base.get("bibtex"))
         and str(report.get("output_dir") or "") == str(base.get("output_dir") or "")
     )
@@ -765,6 +804,8 @@ def _attempts_for_compile_input(report: dict[str, Any], base: dict[str, Any]) ->
             or ""
         )
         attempt_engine = str(attempt.get("requested_engine") or attempt.get("engine") or report.get("requested_engine") or "")
+        attempt_backend = str(attempt.get("selected_backend") or attempt.get("engine") or report.get("selected_backend") or report.get("engine") or "")
+        current_backend = str(base.get("selected_backend") or base.get("engine") or "")
         attempt_bibtex = bool(attempt.get("bibtex", report.get("bibtex")))
         attempt_output_dir = str(attempt.get("output_dir") or report.get("output_dir") or "")
         if _is_environment_compile_error(str(attempt.get("error") or report.get("error") or "")):
@@ -773,6 +814,7 @@ def _attempts_for_compile_input(report: dict[str, Any], base: dict[str, Any]) ->
             attempt_hash == current_hash
             and attempt_dependency_hash == current_dependency_hash
             and attempt_engine == current_engine
+            and attempt_backend == current_backend
             and attempt_bibtex == current_bibtex
             and attempt_output_dir == current_output_dir
         ):
@@ -783,12 +825,7 @@ def _attempts_for_compile_input(report: dict[str, Any], base: dict[str, Any]) ->
 def _is_environment_compile_error(error: str) -> bool:
     return error in {
         "waiting_environment",
-        "waiting_environment_docker",
         "waiting_environment_latexmk_missing",
-        "docker_command_not_found",
-        "docker_daemon_unavailable",
-        "docker_image_missing",
-        "image_not_allowed",
     } or error.startswith("waiting_environment_")
 
 

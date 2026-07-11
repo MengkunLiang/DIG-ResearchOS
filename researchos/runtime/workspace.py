@@ -18,6 +18,8 @@ from typing import Any
 
 import yaml
 
+from .environment import write_runtime_environment
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -128,6 +130,7 @@ def initialize_workspace(
 
     # 创建 user_seeds 示例文件
     create_user_seeds_examples(workspace_dir)
+    write_runtime_environment(workspace_dir, runtime_dir_name)
     create_directory_guides(workspace_dir, runtime_dir_name=runtime_dir_name)
 
     return WorkspaceInitResult(
@@ -233,11 +236,11 @@ def create_directory_guides(workspace_dir: Path, *, runtime_dir_name: str = "_ru
         },
         "external_executor": {
             "purpose": "ResearchOS 与 Codex/Claude/manual 外部实验执行器的边界目录。",
-            "produced_by": "T5-HANDOFF, T5-EXECUTOR-GATE, external executor, T5-DRY-RUN.",
+            "produced_by": "T5-REBOOST-GATE, T5-HANDOFF, T5-SKILL-CUSTOMIZATION-GATE, T5-EXPR-MATERIAL-GATE, T5-EXECUTOR-GATE, external executor, T5-DRY-RUN.",
             "consumed_by": "T5-EXTERNAL-WAIT, T7-INGEST, T7-AUDIT, T7-POST-NOVELTY, T7-CLAIMS.",
-            "key_files": "AGENTS.md, CLAUDE.md, handoff_pack.json, expected_outputs_schema.json, allowed_paths.txt, result_pack.json, executor_status.json, run_manifest.json.",
-            "human_editable": "Manual executor outputs only.",
-            "agent_editable": "External executor may write only paths allowed by allowed_paths.txt.",
+            "key_files": "AGENTS.md, CLAUDE.md, handoff_pack.json, expected_outputs_schema.json, allowed_paths.txt, skills/, expr/, result_pack.json, executor_status.json, run_manifest.json.",
+            "human_editable": "Place experiment materials under expr/ and manual executor outputs only; skills/ is generated and customized by ResearchOS before execution.",
+            "agent_editable": "ResearchOS customizes skills/ during T5; external executor may write only paths allowed by allowed_paths.txt.",
             "do_not_put": "Final paper text, API keys, unrelated notebooks, ResearchOS source edits.",
             "validation": "Every metric must trace to raw result, config, log, run id, and sha256.",
         },
@@ -448,6 +451,8 @@ def _describe_key_file(item: str) -> str:
         "post_experiment_collision_cases.md": "实验后潜在撞车/claim 降级说明。",
         "AGENTS.md": "外部执行器给 Codex/agent 的工作约束。",
         "CLAUDE.md": "外部执行器给 Claude Code 的工作约束。",
+        "skills": "T5 编译出的项目特化外部执行器 skill suite。",
+        "expr": "用户手动放置 baseline model、dataset、权重和实验材料的位置。",
         "handoff_pack.json": "T5 编译的实验任务、协议、证据契约和 allowed paths。",
         "expected_outputs_schema.json": "外部执行器必须写回的 result pack/status/manifest schema。",
         "allowed_paths.txt": "外部执行器可读写路径边界。",

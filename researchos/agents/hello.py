@@ -19,7 +19,7 @@ class HelloAgent(Agent):
                     "max_wall_seconds": 300,
                     "max_validation_retries": 3,
                     "temperature": 0.3,
-                    "allowed_read_prefixes": [""],
+                    "allowed_read_prefixes": ["", "_runtime/resume/"],
                     "allowed_write_prefixes": [""],
                     "prompt_template": "hello.j2",
                 },

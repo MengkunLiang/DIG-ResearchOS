@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-"""Docker 隔离执行工具。
+"""Optional Docker isolation tool for legacy experiment/debug workflows.
 
-这个工具主要服务于后续 T5/T7/T9：
-- 训练/推理/批处理代码不直接污染宿主机；
-- 通过镜像 allowlist、网络开关、GPU 开关把执行边界固定下来；
-- 把 stdout/stderr/exit_code 结构化回填给 runtime。
+ResearchOS Core does not depend on this tool. The default T5/T7 path hands off
+work to an external executor in the user-visible workspace, and T9 uses local
+LaTeX backends. `docker_exec` remains available for explicit legacy experiment
+debugging or project-specific isolated commands.
 
 容器内模式（方案 D1）：
 - 当检测到运行在 Docker 容器内时，直接使用 subprocess 执行命令
@@ -38,6 +38,22 @@ _DEFAULT_ALLOWED_IMAGES = [
 ]
 
 
+def _runtime_config_paths() -> list[Path]:
+    """Return runtime config candidates, honoring deployment env overrides."""
+
+    candidates: list[Path] = []
+    configured = os.getenv("RESEARCHOS_RUNTIME_CONFIG", "").strip()
+    if configured:
+        candidates.append(Path(configured))
+    candidates.extend(
+        [
+            Path(__file__).parent.parent.parent / "config" / "runtime.yaml",
+            Path(__file__).parent.parent.parent.parent / "config" / "runtime.yaml",
+        ]
+    )
+    return candidates
+
+
 def get_default_image() -> str:
     """获取默认 Docker 镜像。
 
@@ -47,13 +63,7 @@ def get_default_image() -> str:
     Returns:
         str: 默认镜像名，如 "researchos/system:latest"
     """
-    # 尝试从 runtime.yaml 读取
-    config_paths = [
-        Path(__file__).parent.parent.parent / "config" / "runtime.yaml",
-        Path(__file__).parent.parent.parent.parent / "config" / "runtime.yaml",
-    ]
-
-    for config_path in config_paths:
+    for config_path in _runtime_config_paths():
         if config_path.exists():
             try:
                 runtime_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -81,12 +91,7 @@ def get_default_allowed_images() -> list[str]:
     Returns:
         list[str]: 允许的镜像列表
     """
-    config_paths = [
-        Path(__file__).parent.parent.parent / "config" / "runtime.yaml",
-        Path(__file__).parent.parent.parent.parent / "config" / "runtime.yaml",
-    ]
-
-    for config_path in config_paths:
+    for config_path in _runtime_config_paths():
         if config_path.exists():
             try:
                 runtime_config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -124,8 +129,8 @@ def check_docker_environment(
         details["error"] = "docker_command_not_found"
         return (
             False,
-            "WAITING_ENVIRONMENT: Docker 命令不可用。T5/T7 正式实验需要 Docker；"
-            "请安装 Docker，或进入已包含 ResearchOS 环境的容器后 resume。",
+            "WAITING_ENVIRONMENT: Docker 命令不可用。当前仅在显式选择 legacy Docker "
+            "执行或项目自定义隔离命令时需要 Docker；请安装 Docker，或改用默认外部执行器 handoff 后 resume。",
             details,
         )
 
@@ -236,7 +241,8 @@ class DockerExecParams(BaseModel):
 class DockerExecTool(Tool):
     name = "docker_exec"
     description = (
-        "在 Docker 容器中隔离执行命令。workspace 会挂载到 /workspace。"
+        "在 Docker 容器中隔离执行命令。宿主机模式会把 workspace 挂载到 /workspace；"
+        "ResearchOS 自身运行在容器内时，/workspace 会映射到当前实际 workspace。"
         "适合训练、评测、LaTeX 编译等需要较强环境隔离的场景。"
     )
     parameters_schema = DockerExecParams
@@ -471,10 +477,12 @@ class DockerExecTool(Tool):
         """
         # 容器内模式：直接执行命令
         if self._container_mode:
+            effective_cwd = self._container_native_cwd(params.cwd)
             _LOG.info(
                 "docker_exec_container_native_mode",
                 command=params.command,
                 cwd=params.cwd,
+                effective_cwd=str(effective_cwd),
                 env=params.env,
             )
 
@@ -489,9 +497,7 @@ class DockerExecTool(Tool):
                 )
                 cmd_parts.append(env_exports)
 
-            # 切换工作目录（如果不是默认的 /workspace）
-            if params.cwd != "/workspace":
-                cmd_parts.append(f"cd {shlex.quote(params.cwd)};")
+            cmd_parts.append(f"cd {shlex.quote(str(effective_cwd))};")
 
             # 添加实际命令
             cmd_parts.append(params.command)
@@ -531,6 +537,17 @@ class DockerExecTool(Tool):
         cmd.append(params.image)
         cmd.extend(["-lc", params.command])
         return cmd
+
+    def _container_native_cwd(self, cwd: str) -> Path:
+        """Map the legacy /workspace tool contract to the active workspace path."""
+
+        workspace = self.policy.workspace_dir.resolve()
+        if cwd == "/workspace":
+            return workspace
+        if cwd.startswith("/workspace/"):
+            suffix = cwd.removeprefix("/workspace/").strip("/")
+            return workspace / suffix
+        return Path(cwd)
 
     def _normalize_mount(self, mount: str) -> str:
         host_part, _, remainder = mount.partition(":")

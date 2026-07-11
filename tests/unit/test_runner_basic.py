@@ -2667,7 +2667,9 @@ Graph contrastive method for robust sparse recommendation.
                                     "evidence would falsify that change.\n\n"
                                     "## 技术趋势\n"
                                     "The trend across these notes is a shift from adding larger components toward "
-                                    "testing when the claimed mechanism is actually needed. Recent papers in the pool "
+                                    "testing when the claimed mechanism is actually needed. [paper_0] and [paper_1] "
+                                    "represent the earlier broad mechanism framing, while [paper_2] and [paper_3] "
+                                    "make the subgroup-sensitive boundary more visible. Recent papers in the pool "
                                     "place more emphasis on ablations, subgroup behavior, and simpler controls. The "
                                     "trend is not yet a conclusion; it is a working reading of the evidence that T4 "
                                     "should preserve as an explicit uncertainty.\n\n"
@@ -3120,12 +3122,8 @@ async def test_t9_prefinalize_skips_llm_and_environment_hook_when_bundle_valid(t
         raise AssertionError("T9 pre-hook should not run when bundle already validates")
 
     monkeypatch.setattr(
-        "researchos.agents.submission.check_docker_environment",
+        "researchos.agents.submission.check_submission_compile_environment",
         _blocked_environment,
-    )
-    monkeypatch.setattr(
-        "researchos.agents.submission.shutil.which",
-        lambda _name: None,
     )
     runner = AgentRunner(SubmissionAgent(), registry, llm, MockHumanInterface())
 

@@ -123,7 +123,7 @@ T9
   submission/bundle/
   submission/compile_report.json
   submission/migration_report.md
-  submission/main.pdf
+  submission/bundle/main.pdf
 ```
 
 ## Claim 进入论文的条件

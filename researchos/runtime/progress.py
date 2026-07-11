@@ -58,6 +58,8 @@ class CliProgressEmitter:
         if self.quiet and not important:
             return
         formatted = format_cli_message(message, previous_kind=self._last_message_kind)
+        if not formatted:
+            return
         self._emit_fn(formatted)
         self._last_message_kind = classify_cli_message(message)
 
@@ -379,7 +381,7 @@ def format_cli_message(message: str, *, previous_kind: str | None = None) -> str
     blank line.
     """
 
-    text = str(message or "").strip()
+    text = _drop_generic_next_step_lines(str(message or "").strip())
     if not text:
         return ""
     kind = classify_cli_message(text)
@@ -413,13 +415,30 @@ def _useful_next_step(next_step: str | None) -> str | None:
     lowered = text.casefold()
     generic_fragments = (
         "状态机将根据当前节点配置进入下一阶段",
+        "状态机会根据当前节点配置进入下一阶段",
+        "根据当前节点配置进入下一阶段",
         "推进下一步",
         "供 agent 回填上下文并推进下一步",
         "agent 将据此更新当前判断",
+        "进入下一阶段",
     )
     if any(fragment.casefold() in lowered for fragment in generic_fragments):
         return None
     return text
+
+
+def _drop_generic_next_step_lines(message: str) -> str:
+    if not message:
+        return ""
+    kept: list[str] = []
+    for line in message.splitlines():
+        clean = line.strip()
+        if clean.startswith(("下一步：", "下一步:", "Next:")):
+            candidate = re.sub(r"^(?:下一步：|下一步:|Next:)\s*", "", clean, flags=re.IGNORECASE)
+            if _useful_next_step(candidate) is None:
+                continue
+        kept.append(line)
+    return "\n".join(kept).strip()
 
 
 def describe_task_artifacts(task_id: str) -> str:
@@ -439,12 +458,15 @@ def describe_task_artifacts(task_id: str) -> str:
         "T4": "候选研究假设、idea 排序依据、实验计划、风险清单和 Gate1 展示材料",
         "T4-GATE1": "面向用户选择的 idea 卡片、候选池摘要和最终选择记录",
         "T4.5": "新颖性审计、撞车风险、机制 tuple 审计和 claim 降级建议",
-        "T5-HANDOFF": "外部实验 handoff pack、执行协议和交接提示",
+        "T5-REBOOST-GATE": "LLM 对 Pre-T5 材料做 context re-boost 并生成 handoff 上下文",
+        "T5-HANDOFF": "外部实验 handoff pack、执行协议、模板 skills 和交接提示",
+        "T5-SKILL-CUSTOMIZATION-GATE": "LLM API 自动定制外部执行 skills 并生成 customization_report",
+        "T5-EXPR-MATERIAL-GATE": "外部实验材料放置确认与 expr 目录快照",
         "T5-EXECUTOR-GATE": "用户选择实验执行方式的 gate 记录",
         "T5-DRY-RUN": "mock 外部执行器协议验证产物",
         "T5-EXTERNAL-WAIT": "外部执行器 result pack 的等待/校验状态",
         "T7-INGEST": "规范化实验结果、provenance 和结果摘要",
-        "T7-AUDIT": "实验完整性审计、hash/provenance 检查和风险标记",
+        "T7-AUDIT": "实验完整性、method drift、framework figure 和 provenance 审计",
         "T7-POST-NOVELTY": "结合实验结果后的新颖性复核和 claim 边界",
         "T7-CLAIMS": "result-to-claim 映射和写作 evidence pack",
         "T7.5": "判断实验与证据是否足够支撑进入论文写作",
@@ -626,6 +648,9 @@ def summarize_tool_result(
         return summary, path
 
     if tool_name == "log_scout_progress":
+        if data.get("skipped"):
+            reason = _compact_text(str(data.get("reason") or "缺少必要字段"), 160)
+            return f"Scout 进度记录已跳过：{reason}", "literature/temp/scout_progress.md"
         bullets = summarize_progress_text(content or "", max_items=3)
         summary = "Scout 进度已记录"
         if bullets:

@@ -16,10 +16,14 @@ ENV/
 .coverage
 htmlcov/
 *.cover
+tests/manual/
 
 # IDE 配置
 .vscode/
 .idea/
+.agents/
+.claude/
+.codex/
 *.swp
 *.swo
 *~
@@ -30,12 +34,23 @@ htmlcov/
 
 # Workspace 数据（不打包到镜像）
 workspace/
+workspaces/
+deploy/workspaces/
 tmp/
 
-# 文档
-docs/
+# 文档和运行资源需要进入镜像，保留 README、docs index、
+# agent guidance、runtime skills 和 LaTeX templates。
 *.md
 !README.md
+!README.zh-CN.md
+!AGENTS.md
+!BACKGROUND.md
+!docs/**/*.md
+!config/README.md
+!scripts/README.md
+!researchos/agent_guidance/**/*.md
+!researchos/schemas/json_schemas/README.md
+!skills/**/*.md
 
 # 日志
 *.log
@@ -43,11 +58,26 @@ docs/
 # 环境变量文件（敏感信息）
 .env
 .env.*
+deploy/.env
+deploy/config/
 
 # 构建产物
 dist/
 build/
 *.egg-info/
+
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.out
+*.run.xml
+*.synctex.gz
+*.toc
+*.xdv
 
 # 其他
 .DS_Store

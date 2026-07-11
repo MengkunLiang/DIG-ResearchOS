@@ -36,6 +36,8 @@
 11. 写作结构必须像真实论文，而不是把内部 artifact 清单翻译成段落。每个段落都要承担一个学术功能：定义问题、建立 gap、比较机制、解释设计、呈现实证、排除替代解释、陈述边界或收束贡献。
 12. 不要把章节拆成过多细碎 subsection。默认主论文只使用 Abstract、Introduction、Related Work、Method、Experiments、Analysis、Conclusion；Related Work 和 Method 内部 subsection 必须按论证功能组织，不按每篇论文、每个内部 claim id 或每个 artifact 拆章。
 13. 禁止展示内部工程/审计标号作为正文组织方式，包括 `C1`、`CID`、`claim_ledger`、`alignment_matrix`、`LLM_REVIEW_REQUIRED`、文件路径清单式段落和 “ResearchOS alignment”。
+14. 正文语言要凝练连贯。避免过度使用冒号、破折号、标签化小句和 slogan 式转折；不要把段落写成 “Problem: ... Method: ... Evidence: ...” 的清单式 prose。需要列贡献或定义时可以用冒号，普通论证句优先写完整句。
+15. 写作时必须回查相关 paper note card。`drafts/section_outlines/<section>.md` 中的 Note Card Retrieval Plan 指明应读哪些 note section；不能只依赖 synthesis preview 中少数代表论文。
 
 ## 项目信息
 
@@ -317,6 +319,7 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
    - related_work 主要读 `literature/synthesis.md`、`literature/comparison_table.csv`、`literature/related_work.bib`
    - analysis 主要读 ablations、iteration log、novelty audit
    - introduction/conclusion/abstract 根据本章 outline 读取对应来源；conclusion 必须额外读取 risks/novelty audit 并写 Limitations 子段
+   同时按照 `section_outlines/{{ section_id }}.md` 的 Note Card Retrieval Plan 读取相关 paper note sections。Related Work、Introduction、Method 和 Analysis 不能只使用 `synthesis.md` 的代表性 citation，应从 note cards 中核对 claim 与 citation 的对应关系。
 3. 只写 `drafts/sections/{{ section_id }}.tex`。
 4. 章节文件只能包含该章节内容。可以包含 `\section{...}`，但不能包含 `\documentclass`、`\begin{document}`、`\end{document}`。
    如果当前 section 是 `abstract`，文件只能写摘要纯正文；不要写 `\section{Abstract}`、`\section*{Abstract}`、`\begin{abstract}` 或 `\end{abstract}`。`assemble_manuscript` 会负责放入 abstract 环境。
@@ -345,6 +348,7 @@ ResearchOS 不允许在一次调用里写完整 paper，也不允许一次性写
 引用一致性底线：每个 citation bundle 内的 key 必须围绕同一流派、同一方法族、同一数据/任务或同一边界条件；不能把不相关论文混在一起抬高参考文献数量。引用不足时优先回到 `literature/synthesis.md`、paper notes 和 `related_work.bib` 选择真正匹配的论文，而不是重复使用少数熟悉 key。
 
 每一段先有功能再有 citation/数字。避免 “X et al. did A. Y et al. did B.” 的流水账，避免 “This section reviews...” 这类空话开头，避免用文件名、内部编号或 artifact 字段名替代自然学术论证。
+避免冒号/破折号模板化 prose：不要连续写 “Gap: ...”, “Insight: ...”, “Mechanism: ...” 作为正文段落；不要用破折号把每段压成口号。需要表达结构时，用自然段落、清晰 topic sentence 和短列表承载。
 
 不要设置僵硬字数下限；如果证据不足，在正文中用自然语言写 limitation 或删除/弱化对应 claim，不要留下 literal TODO。如果证据充足，就充分展开到目标 venue 所需的写作密度。
 

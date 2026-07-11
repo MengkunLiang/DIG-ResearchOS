@@ -10,13 +10,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import shutil
 from pathlib import Path
 
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec, get_agent_params
+from ..runtime.environment import detect_latex_backends
 from ..runtime.prompts import render_prompt
-from ..tools.docker_exec import check_docker_environment, get_default_image, load_project_config
 from ..tools.latex_compile import _compile_dependency_fingerprint
 from ..tools.manuscript import extract_bibliography_stems
 from ._common import load_project, prepend_resume_prefix, read_text_file
@@ -86,25 +85,22 @@ def check_anonymization(ctx: ExecutionContext) -> tuple[bool, str | None]:
 
 
 def check_submission_compile_environment(ctx: ExecutionContext) -> tuple[bool, str | None]:
-    """Pre-hook: ensure T9 has either native TeX or Docker before LLM work."""
+    """Pre-hook: ensure T9 has an enabled local PDF compile backend before LLM work."""
 
-    if shutil.which("latexmk"):
+    detected = detect_latex_backends(allow_docker=False)
+    available = {item["name"]: item for item in detected if item.get("available")}
+    if "latexmk" in available or "tectonic" in available:
         return True, None
 
-    project_config = load_project_config(ctx.workspace_dir)
-    ok, err, details = check_docker_environment(
-        project_config=project_config,
-        image=get_default_image(),
-        require_gpu=False,
+    ctx.extra["environment_blocker"] = {
+        "error": "latex_backend_missing",
+        "detected_backends": detected,
+    }
+    return False, (
+        "WAITING_ENVIRONMENT: 当前环境未检测到可用的本机 LaTeX backend。"
+        "T9 投稿包验证需要 latexmk 或 tectonic 生成真实 PDF 和日志；"
+        "请安装 TeX Live/MacTeX/MiKTeX 的 latexmk，或安装 tectonic，确认命令在 PATH 后 resume。"
     )
-    if not ok:
-        ctx.extra["environment_blocker"] = details
-        return False, (
-            (err or "WAITING_ENVIRONMENT: LaTeX 编译环境不可用")
-            + " T9 需要本机 latexmk 或可用的 ResearchOS Docker 统一镜像；"
-            "请安装 TeX Live/latexmk 或构建 Docker 镜像后 resume。"
-        )
-    return True, None
 
 
 class SubmissionAgent(Agent):
@@ -127,7 +123,6 @@ class SubmissionAgent(Agent):
                         "write_file",
                         "list_files",
                         "bash_run",
-                        "docker_exec",
                         "latex_compile",
                         "prepare_submission_bundle",
                         "finish_task",
@@ -359,6 +354,8 @@ def _validate_bundle_manifest(ws: Path) -> tuple[bool, str | None]:
 def _validate_compile_report(report: dict, ws: Path) -> tuple[bool, str | None]:
     if report.get("semantics") != "latex_compile_attempt_report":
         return False, "submission/compile_report.json semantics 不正确"
+    if report.get("selected_backend") == "export_only" or report.get("engine") == "export_only":
+        return False, "submission/compile_report.json 是 export_only 记录，不是投稿包编译成功证据"
     if report.get("success") is not True:
         return False, "submission/compile_report.json 未记录最终编译成功"
     if report.get("tex_path") != "submission/bundle/main.tex":

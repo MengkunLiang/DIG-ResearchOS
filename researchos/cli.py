@@ -20,7 +20,6 @@ import os
 from pathlib import Path
 import shutil
 import signal
-import subprocess
 import sys
 
 import yaml
@@ -48,7 +47,13 @@ from .pydantic_compat import model_dump
 from .runtime.agent import AgentResult
 from .runtime.config_audit import build_config_audit_summary
 from .runtime.cli_ui import format_startup_summary, show_startup_banner
-from .runtime.config import RuntimeSettings, UISettings, load_runtime_settings
+from .runtime.config import RuntimeSettings, UISettings, load_runtime_settings, resolve_runtime_config_path
+from .runtime.environment import (
+    collect_runtime_environment,
+    command_version,
+    detect_latex_backends,
+    write_runtime_environment,
+)
 from .runtime.llm_client import LLMClient
 from .runtime.logger import configure_file_logging, configure_logging
 from .runtime.system_config import system_config_path
@@ -249,6 +254,7 @@ def _runtime_settings_for_args(settings: RuntimeSettings, args: argparse.Namespa
             verbose=verbose,
         ),
         web_fetch=settings.web_fetch,
+        latex=settings.latex,
     )
 
 
@@ -395,46 +401,6 @@ def _validate_agent_tools(registry: ToolRegistry) -> None:
         raise SystemExit("Agent tool validation failed:\n" + "\n".join(missing))
 
 
-def _any_registered_agent_uses_any_tool(tool_names: set[str]) -> bool:
-    """判断当前 registry 中的正式 agent 是否依赖某类高门槛工具。"""
-
-    for agent_cls in AGENT_REGISTRY.values():
-        if tool_names & set(agent_cls().spec.tool_names):
-            return True
-    return False
-
-
-def _maybe_check_docker_availability() -> None:
-    """Emit an early Docker warning without blocking non-Docker stages."""
-    # 容器内模式：跳过 Docker 检查
-    container_env = _detect_container_environment()
-    if container_env["in_container"]:
-        return
-
-    if not _any_registered_agent_uses_any_tool({"docker_exec", "latex_compile"}):
-        return
-
-    if shutil.which("docker") is None:
-        print(
-            "[startup-warning] 未检测到 Docker。T5/T7 正式实验会在 preflight "
-            "暂停等待环境；T9 若本机没有 latexmk 也会暂停。详见 docs/docker.md。",
-            file=sys.stderr,
-        )
-        return
-
-    result = subprocess.run(
-        ["docker", "version"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        print(
-            "[startup-warning] Docker 命令存在但 daemon 不可用。需要 Docker 的阶段会暂停等待环境。",
-            file=sys.stderr,
-        )
-
-
 def _is_quiet_args(args: argparse.Namespace, runtime_settings: RuntimeSettings | None = None) -> bool:
     if bool(getattr(args, "quiet", False)):
         return True
@@ -549,7 +515,6 @@ async def _prepare_runtime(args: argparse.Namespace, workspace_dir: Path) -> Pre
     两种运行模式共享同一套启动检查：
     - 注册 builtin / skill tools；
     - 校验正式 agent 的 tool 是否齐全；
-    - 必要时检查 Docker；
     - 构造 LLMClient 并按需跑 endpoint selftest。
     """
 
@@ -561,7 +526,6 @@ async def _prepare_runtime(args: argparse.Namespace, workspace_dir: Path) -> Pre
     registry = _build_tool_registry(skill_roots, runtime_settings, discovered_skills=discovered_skills)
     mcp_server_count, mcp_tool_count = await _maybe_register_mcp_tools(args, registry)
     _validate_agent_tools(registry)
-    _maybe_check_docker_availability()
     llm_client = LLMClient(Path(args.model_routing).resolve())
     await _maybe_run_selftest(args, llm_client)
     return PreparedRuntime(
@@ -685,6 +649,7 @@ async def run_smoke_command(args: argparse.Namespace) -> int:
     )
     if prepare_code != 0:
         return prepare_code
+    _ensure_smoke_project_direction(workspace_dir)
 
     prepared = await _prepare_runtime(args, workspace_dir)
     _emit_startup_ui(
@@ -732,6 +697,34 @@ def _apply_smoke_llm_overrides(state_machine: StateMachine, *, tier: str, profil
         if profile:
             llm_block["profile"] = profile
         node.llm = llm_block
+
+
+def _ensure_smoke_project_direction(workspace_dir: Path) -> None:
+    """Make init-workspace's minimal topic usable by T2 smoke runs.
+
+    `init-workspace --topic` writes a `topic` field, while Scout prompts and
+    seed inspection primarily look for `research_direction` / `direction`.
+    Smoke mode should be able to run from that minimal template without asking
+    for human clarification, so we bridge the field only when no explicit
+    direction is already present.
+    """
+
+    project_path = workspace_dir / "project.yaml"
+    if not project_path.exists():
+        return
+    try:
+        payload = yaml.safe_load(project_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return
+    if not isinstance(payload, dict):
+        return
+    if str(payload.get("research_direction") or payload.get("direction") or "").strip():
+        return
+    topic = str(payload.get("topic") or payload.get("project_topic") or "").strip()
+    if not topic or topic in {"（暂无）", "(none)", "none", "N/A"}:
+        return
+    payload["research_direction"] = topic
+    project_path.write_text(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
 
 def _write_smoke_literature_params(
@@ -1195,6 +1188,119 @@ def init_workspace_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def doctor_command(args: argparse.Namespace) -> int:
+    """Deterministic local environment check for Native and Docker mode."""
+
+    runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
+    runtime_settings = _runtime_settings_for_args(runtime_settings, args)
+    workspace_dir = Path(args.workspace).expanduser().resolve()
+
+    checks: list[tuple[str, str, str]] = []
+
+    def add(status: str, name: str, detail: str) -> None:
+        checks.append((status, name, detail))
+
+    try:
+        import researchos
+
+        add("OK", "package", f"researchos {getattr(researchos, '__version__', 'unknown')} loaded")
+    except Exception as exc:
+        add("ERROR", "package", f"failed to import researchos: {exc}")
+
+    try:
+        runtime_path = resolve_runtime_config_path(Path("config/runtime.yaml"))
+        if runtime_path.exists():
+            add("OK", "runtime config", str(runtime_path.resolve()))
+        else:
+            add("WARN", "runtime config", f"{runtime_path} not found; built-in defaults will be used")
+        state_machine = StateMachine(
+            Path(args.state_machine).resolve(),
+            Path(args.gates).resolve() if args.gates else None,
+        )
+        definition_errors = state_machine.validate_definition()
+        if definition_errors:
+            add("ERROR", "state machine", "; ".join(definition_errors[:3]))
+        else:
+            add("OK", "state machine", str(Path(args.state_machine).resolve()))
+    except Exception as exc:
+        add("ERROR", "state machine", str(exc))
+
+    user_config = os.getenv("RESEARCHOS_CONFIG") or os.getenv("RESEARCHOS_USER_SETTINGS") or "config/user_settings.yaml"
+    if Path(user_config).exists():
+        add("OK", "user settings", str(Path(user_config).resolve()))
+    else:
+        add("WARN", "user settings", f"{user_config} not found; checked-in defaults remain active")
+
+    try:
+        workspace_dir.mkdir(parents=True, exist_ok=True)
+        probe = workspace_dir / ".researchos_write_test"
+        probe.write_text("ok\n", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+        add("OK", "workspace", f"writable: {workspace_dir}")
+        write_runtime_environment(workspace_dir, runtime_settings.workspace.runtime_dir)
+    except Exception as exc:
+        add("ERROR", "workspace", f"not writable: {workspace_dir} ({exc})")
+
+    deps = _dependency_selftest()
+    pdf_ok = deps["pdf_processing"]["ok"]
+    add("OK" if pdf_ok else "ERROR", "PDF tools", "pdfplumber available" if pdf_ok else "pdfplumber missing")
+
+    latex_backends = detect_latex_backends(allow_docker=bool(getattr(args, "allow_docker_latex", False)))
+    available_latex = [item["name"] for item in latex_backends if item.get("available") and item.get("name") != "export_only"]
+    if available_latex:
+        add("OK", "LaTeX backend", ", ".join(available_latex))
+    else:
+        add("WARN", "LaTeX backend", "no PDF compiler found; TeX export remains available")
+
+    docker_version = command_version("docker", "--version")
+    if docker_version:
+        add("INFO", "Docker", docker_version)
+    else:
+        add(
+            "INFO",
+            "Docker",
+            "CLI not found; Core/Compose runs are unaffected, only explicit Docker backends are unavailable",
+        )
+
+    codex_version = command_version("codex", "--version")
+    claude_version = command_version("claude", "--version") or command_version("claude-code", "--version")
+    add("INFO", "Codex CLI", codex_version or "not found; only needed if selected as external executor")
+    add("INFO", "Claude Code", claude_version or "not found; only needed if selected as external executor")
+
+    key_names = [
+        "SILICONFLOW_API_KEY",
+        "OPENROUTER_API_KEY",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "DEEPSEEK_API_KEY",
+    ]
+    present_keys = [name for name in key_names if os.getenv(name)]
+    if present_keys:
+        add("OK", "LLM keys", ", ".join(present_keys))
+    else:
+        add("WARN", "LLM keys", "no provider API key detected; LLM stages will wait/fail until configured")
+    if os.getenv("S2_API_KEY"):
+        add("OK", "paper API", "S2_API_KEY configured")
+    else:
+        add("INFO", "paper API", "S2_API_KEY not configured; some enrichment will be limited")
+
+    env = collect_runtime_environment(workspace_dir)
+    add("INFO", "runtime mode", f"{env['runtime_mode']} (containerized={env['containerized']})")
+    if env.get("workspace_host_hint") and env["workspace_host_hint"] != str(workspace_dir):
+        add("INFO", "host workspace hint", str(env["workspace_host_hint"]))
+
+    print("ResearchOS Doctor\n")
+    for status, name, detail in checks:
+        print(f"[{status:<5}] {name}: {detail}")
+
+    errors = [item for item in checks if item[0] == "ERROR"]
+    if errors:
+        print("\nResult: ResearchOS Core has blocking issues.")
+        return 1
+    print("\nResult: ResearchOS Core is ready. Optional warnings do not block Native Mode.")
+    return 0
+
+
 def validate_command(args: argparse.Namespace) -> int:
     """校验指定 task 的产物。"""
 
@@ -1251,6 +1357,7 @@ def validate_config_command(args: argparse.Namespace) -> int:
         "state_machine": str(Path(args.state_machine).resolve()),
         "gates": str(Path(args.gates).resolve()) if args.gates else None,
         "runtime": {
+            "config_path": str(resolve_runtime_config_path(Path("config/runtime.yaml")).resolve()),
             "workspace_default_root": runtime_settings.workspace.default_root,
             "runtime_dir": runtime_settings.workspace.runtime_dir,
             "log_level": runtime_settings.logging.level,
@@ -1526,6 +1633,14 @@ def build_parser() -> argparse.ArgumentParser:
     _add_shared_cli_options(selftest_parser, runtime_settings, use_defaults=False)
     selftest_parser.add_argument("--profile", action="append")
 
+    doctor_parser = subparsers.add_parser("doctor", help="检查 Native/Docker 运行环境")
+    _add_shared_cli_options(doctor_parser, runtime_settings, use_defaults=False)
+    doctor_parser.add_argument(
+        "--allow-docker-latex",
+        action="store_true",
+        help="仅在诊断中把 Docker 视为允许的 LaTeX fallback；默认不依赖 Docker",
+    )
+
     trace_parser = subparsers.add_parser("trace", help="查看某次 run 的 trace")
     _add_shared_cli_options(trace_parser, runtime_settings, use_defaults=False)
     trace_parser.add_argument("run_id")
@@ -1580,6 +1695,8 @@ def main(argv: list[str] | None = None) -> int:
         return list_skills_command(args)
     if args.command == "status":
         return status_command(args)
+    if args.command == "doctor":
+        return doctor_command(args)
     if args.command == "selftest":
         return asyncio.run(selftest_command(args))
     if args.command == "trace":

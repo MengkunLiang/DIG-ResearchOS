@@ -1,7 +1,7 @@
 """Submission Agent Integration Tests.
 
 测试论文提交 Agent（T9）。
-注意：submission 需要 Docker（LaTeX 编译）。
+注意：submission 默认使用本机 latexmk 编译 LaTeX，不依赖 Docker。
 """
 
 from __future__ import annotations
@@ -92,11 +92,12 @@ class TestSubmissionAgent:
         assert "write_file" in agent.spec.tool_names
         assert "finish_task" in agent.spec.tool_names
 
-    def test_agent_has_docker_exec(self):
-        """测试 submission agent 有 docker_exec 工具（LaTeX 编译）。"""
+    def test_agent_uses_native_latex_tools_not_docker_exec(self):
+        """测试 submission agent 默认使用本机 LaTeX 工具。"""
         agent = SubmissionAgent()
-        # submission agent 需要 docker_exec（因为编译 LaTeX）
-        assert "docker_exec" in agent.spec.tool_names
+        assert "docker_exec" not in agent.spec.tool_names
+        assert "latex_compile" in agent.spec.tool_names
+        assert "prepare_submission_bundle" in agent.spec.tool_names
 
     def test_agent_system_prompt(self, standard_workspace: Path, project_yaml: Path):
         """测试 system prompt 生成。"""
@@ -335,17 +336,17 @@ class TestSubmissionAgentValidateOutputs:
         assert ok is True, err
 
 
-class TestSubmissionAgentDockerDependency:
-    """Submission Agent Docker 依赖测试。"""
+class TestSubmissionAgentEnvironmentBoundary:
+    """Submission Agent 环境边界测试。"""
 
-    def test_submission_docker_boundary(self):
-        """测试 submission 在 Docker 边界内。"""
+    def test_submission_does_not_require_docker_exec(self):
+        """T9 默认不需要 docker_exec。"""
         agent = SubmissionAgent()
-        # submission 需要 Docker 执行 LaTeX 编译
-        assert "docker_exec" in agent.spec.tool_names
+        assert "docker_exec" not in agent.spec.tool_names
+        assert "latex_compile" in agent.spec.tool_names
 
-    def test_only_experimenter_and_submission_require_docker(self):
-        """测试只有 experimenter 和 submission 需要 Docker。"""
+    def test_no_default_writing_agent_requires_docker(self):
+        """测试默认写作/投稿相关 agent 不需要 Docker。"""
         from researchos.agents.hello import HelloAgent
         from researchos.agents.pi import PIAgent
         from researchos.agents.scout import ScoutAgent
@@ -356,7 +357,6 @@ class TestSubmissionAgentDockerDependency:
         from researchos.agents.writer import WriterAgent
         from researchos.agents.reviewer import ReviewerAgent
 
-        # 确认其他 agent 不需要 docker_exec
         non_docker_agents = [
             HelloAgent(),
             PIAgent(),
@@ -367,6 +367,7 @@ class TestSubmissionAgentDockerDependency:
             NoveltyAgent(),
             WriterAgent(),
             ReviewerAgent(),
+            SubmissionAgent(),
         ]
 
         for agent in non_docker_agents:

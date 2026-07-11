@@ -28,6 +28,11 @@ from ..runtime.errors import ToolAccessDenied
 from .base import Tool, ToolResult
 from .workspace_policy import WorkspaceAccessPolicy
 
+ABSTRACT_CORE_HEADING = "A. Core Approach / Perspective"
+ABSTRACT_BRIDGE_HEADING = "B. Bridge Point"
+LEGACY_ABSTRACT_CORE_HEADING = "A. 核心做法/视角"
+LEGACY_ABSTRACT_BRIDGE_HEADING = "B. 桥接点"
+
 
 class FamilyClassification(BaseModel):
     paper_id: str = Field(description="Normalized paper ID.")
@@ -207,6 +212,7 @@ class BuildSynthesisWorkbenchTool(Tool):
             metadata_triage,
         )
         citation_quality = _build_citation_quality_summary(all_notes)
+        citation_coverage_plan = _build_citation_coverage_plan(all_notes)
         workbench = {
             "note_count": len(notes),
             "abstract_note_count": len(abstract_notes),
@@ -218,6 +224,7 @@ class BuildSynthesisWorkbenchTool(Tool):
                 "allowed_use": "prompt_visible_guardrail_not_claim_evidence",
             },
             "citation_quality_summary": citation_quality,
+            "citation_coverage_plan": citation_coverage_plan,
             "paper_ids": [note["paper_id"] for note in all_notes],
             "paper_citation_refs": [note.get("citation_ref") for note in all_notes if note.get("citation_ref")],
             "citation_ref_by_paper_id": {
@@ -250,7 +257,11 @@ class BuildSynthesisWorkbenchTool(Tool):
         workbench["domain_consensus"] = workbench["mechanism_claim_clusters"]
 
         outline = _render_outline(workbench, missing_areas)
-        draft = _render_synthesis(workbench, missing_areas) if params.render_draft or params.write_final else _render_draft_guidance(workbench)
+        draft = (
+            _render_synthesis(workbench, missing_areas)
+            if params.render_draft or params.write_final
+            else _render_draft_guidance(workbench, missing_areas)
+        )
 
         output_dir.mkdir(parents=True, exist_ok=True)
         workbench_path = output_dir / "synthesis_workbench.json"
@@ -266,6 +277,9 @@ class BuildSynthesisWorkbenchTool(Tool):
 
         data = {
             "note_count": len(notes),
+            "abstract_note_count": len(abstract_notes),
+            "citation_coverage_target": citation_coverage_plan.get("recommended_min_unique_refs"),
+            "citable_ref_count": citation_coverage_plan.get("coverage_ref_count"),
             "family_count": len(families),
             "outputs": {
                 "workbench": str(workbench_path.relative_to(self.policy.workspace_dir)),
@@ -279,8 +293,9 @@ class BuildSynthesisWorkbenchTool(Tool):
             ok=True,
             content=(
                 "Built staged synthesis workbench from "
-                f"{len(notes)} notes into {data['outputs']['workbench']}, "
+                f"{len(notes)} deep notes and {len(abstract_notes)} abstract notes into {data['outputs']['workbench']}, "
                 f"{data['outputs']['outline']}, {data['outputs']['draft']}. "
+                f"Citation coverage target: {data['citation_coverage_target']} unique deep-note refs. "
                 "Final synthesis remains the Reader LLM's responsibility."
             ),
             data=data,
@@ -325,8 +340,8 @@ def _parse_note(
         "evidence_level": evidence_level,
         **citation_quality,
         "method_overview": _section(text, "2. Method Overview") or _section(text, "2. Method Summary"),
-        "core_approach_view": _section(text, "A. 核心做法/视角"),
-        "bridge_point": _section(text, "B. 桥接点"),
+        "core_approach_view": _first_section(text, ABSTRACT_CORE_HEADING, LEGACY_ABSTRACT_CORE_HEADING),
+        "bridge_point": _first_section(text, ABSTRACT_BRIDGE_HEADING, LEGACY_ABSTRACT_BRIDGE_HEADING),
         "key_results": _section(text, "3. Key Results"),
         "limitations": _section(text, "5. Limitations"),
         "relevance": _section(text, "6. Relevance to Our Research"),
@@ -425,6 +440,70 @@ def _build_citation_quality_summary(notes: list[dict[str, Any]]) -> dict[str, An
     }
 
 
+def _build_citation_coverage_plan(notes: list[dict[str, Any]]) -> dict[str, Any]:
+    citation_map = _citation_map_from_notes(notes)
+    coverage_refs: list[dict[str, Any]] = []
+    core_refs: list[dict[str, Any]] = []
+    weak_refs: list[dict[str, Any]] = []
+    for note in notes:
+        try:
+            score = float(note.get("citation_quality_score") or 0.0)
+        except (TypeError, ValueError):
+            score = 0.0
+        use = str(note.get("citation_use") or "unknown")
+        evidence_level = str(note.get("evidence_level") or "FULL_TEXT")
+        item = {
+            "note_id": note.get("note_id"),
+            "paper_id": note.get("paper_id"),
+            "title": note.get("title"),
+            "citation_ref": _ref(note, citation_map),
+            "bib_key": note.get("bib_key", ""),
+            "source_file": note.get("source_file", ""),
+            "evidence_level": evidence_level,
+            "citation_use": use,
+            "citation_quality_score": round(score, 3),
+        }
+        if evidence_level != "ABSTRACT_ONLY" and use != "do_not_cite" and score >= 0.25:
+            if score >= 0.55 and use in {"core_evidence", "supporting_context"}:
+                item["recommended_use"] = "main_claim_or_section_evidence"
+                core_refs.append(item)
+            else:
+                item["recommended_use"] = "background_boundary_or_trend_context"
+            coverage_refs.append(item)
+        elif use != "do_not_cite" and score >= 0.25:
+            item["recommended_use"] = "background_boundary_or_upgrade_context"
+            weak_refs.append(item)
+        else:
+            item["recommended_use"] = "do_not_use_as_claim_evidence"
+            weak_refs.append(item)
+    coverage_refs.sort(key=lambda item: float(item.get("citation_quality_score") or 0.0), reverse=True)
+    core_refs.sort(key=lambda item: float(item.get("citation_quality_score") or 0.0), reverse=True)
+    weak_refs.sort(key=lambda item: float(item.get("citation_quality_score") or 0.0), reverse=True)
+    target = _recommended_synthesis_ref_count(len(coverage_refs))
+    return {
+        "semantics": "coverage_plan_for_reader_synthesis_not_final_bibliography",
+        "main_claim_ref_count": len(core_refs),
+        "coverage_ref_count": len(coverage_refs),
+        "weak_or_context_ref_count": len(weak_refs),
+        "recommended_min_unique_refs": target,
+        "coverage_rule": (
+            "Final synthesis.md should cite a broad set of real FULL/PARTIAL note refs across all six required sections, "
+            "not only a short representative-paper list. Use low/background refs only for background, boundaries, trends, "
+            "or coverage context; use abstract-only refs only as coverage or upgrade context."
+        ),
+        "section_rule": "Each claim-bearing synthesis section should contain real note anchors or mapped \\cite{} keys.",
+        "main_claim_refs": core_refs[:80],
+        "coverage_refs": coverage_refs[:120],
+        "weak_or_context_refs": weak_refs[:50],
+    }
+
+
+def _recommended_synthesis_ref_count(citable_ref_count: int) -> int:
+    if citable_ref_count <= 0:
+        return 0
+    return min(citable_ref_count, max(5, min(24, int((citable_ref_count * 0.35) + 0.999))))
+
+
 def _section(text: str, heading: str) -> str:
     pattern = re.compile(
         rf"(?ms)^##\s+{re.escape(heading)}\s*(?P<body>.*?)(?=^##\s+|\Z)"
@@ -434,6 +513,14 @@ def _section(text: str, heading: str) -> str:
         return ""
     body = re.sub(r"\n{3,}", "\n\n", match.group("body").strip())
     return body[:1800]
+
+
+def _first_section(text: str, *headings: str) -> str:
+    for heading in headings:
+        value = _section(text, heading)
+        if value:
+            return value
+    return ""
 
 
 def _extract_year(value: str) -> int | None:
@@ -976,7 +1063,7 @@ def _build_questions(
             {
                 "id": rq.id,
                 "question": rq.question,
-                "why_unsolved": rq.why_unsolved or _shorten(missing_areas, 220) if missing_areas else "",
+                "why_unsolved": rq.why_unsolved or (_markdown_inline_summary(missing_areas, 220) if missing_areas else ""),
                 "related_papers": rq.related_papers or _cycle_refs(notes, 3),
             }
             for rq in llm_insights.research_questions
@@ -991,7 +1078,7 @@ def _build_questions(
     return [{
         "id": "Q_REVIEW",
         "question": "LLM_REVIEW_REQUIRED: formulate actionable research questions from notes and missing areas",
-        "why_unsolved": _shorten(missing_areas, 220) if missing_areas else "No LLM-generated question was provided.",
+        "why_unsolved": _markdown_inline_summary(missing_areas, 220) if missing_areas else "No LLM-generated question was provided.",
         "related_papers": refs,
         "review_required": True,
     }]
@@ -1186,6 +1273,38 @@ def _shorten(value: Any, limit: int) -> str:
     return text[:limit].rstrip() + ("..." if len(text) > limit else "")
 
 
+def _markdown_excerpt(value: Any, limit: int) -> str:
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not text:
+        return ""
+    text = re.sub(r"(?m)[ \t]+$", "", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = _demote_markdown_headings(text, levels=2)
+    if len(text) <= limit:
+        return text
+    cutoff = text.rfind("\n", 0, limit)
+    if cutoff < max(120, int(limit * 0.55)):
+        cutoff = limit
+    return text[:cutoff].rstrip() + "\n\n..."
+
+
+def _demote_markdown_headings(text: str, *, levels: int) -> str:
+    def repl(match: re.Match[str]) -> str:
+        hashes = match.group(1)
+        body = match.group(2)
+        return "#" * min(6, len(hashes) + levels) + " " + body
+
+    return re.sub(r"(?m)^(#{1,6})\s+(.+)$", repl, text)
+
+
+def _markdown_inline_summary(value: Any, limit: int) -> str:
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"(?m)^#{1,6}\s+", "", text)
+    text = re.sub(r"(?m)^>\s*", "", text)
+    text = re.sub(r"(?m)^[-*]\s+", "", text)
+    return _shorten(text, limit)
+
+
 def _render_outline(workbench: dict[str, Any], missing_areas: str) -> str:
     lines = ["# Synthesis Outline", ""]
     citation_map = workbench.get("citation_ref_by_paper_id") if isinstance(workbench.get("citation_ref_by_paper_id"), dict) else {}
@@ -1221,6 +1340,21 @@ def _render_outline(workbench: dict[str, Any], missing_areas: str) -> str:
         challengeable = [c for c in mechanism_clusters if c.get("challengeable_hint") or c.get("challengeable")]
         for item in challengeable[:5]:
             lines.append(f"- [review hint] {item['mechanism'][:100]} ({item['paper_count']} papers)")
+    coverage_plan = workbench.get("citation_coverage_plan") or {}
+    if coverage_plan:
+        lines.extend(["", "## Citation Coverage Plan"])
+        lines.append(
+            "- Final `synthesis.md` should cover at least "
+            f"{coverage_plan.get('recommended_min_unique_refs', 0)} unique deep-note refs "
+            f"from {coverage_plan.get('coverage_ref_count', coverage_plan.get('main_claim_ref_count', 0))} citable FULL/PARTIAL refs."
+        )
+        lines.append("- Do not keep citation use limited to representative-paper lists; cite evidence in claim sentences.")
+        for item in (coverage_plan.get("coverage_refs") or coverage_plan.get("main_claim_refs") or [])[:12]:
+            lines.append(
+                f"- {item.get('citation_ref')} {item.get('title')} "
+                f"(evidence={item.get('evidence_level')}, use={item.get('citation_use')}, "
+                f"score={item.get('citation_quality_score')})"
+            )
     weak_evidence = workbench.get("weak_evidence_and_resource_upgrade") or {}
     if weak_evidence:
         lines.extend(["", "## Weak Evidence / Resource Upgrade"])
@@ -1235,11 +1369,11 @@ def _render_outline(workbench: dict[str, Any], missing_areas: str) -> str:
     for item in workbench["research_question_candidates"]:
         lines.append(f"- {item['id']}: {item['question']}")
     if missing_areas.strip():
-        lines.extend(["", "## Missing Areas", _shorten(missing_areas, 1000)])
+        lines.extend(["", "## Missing Areas", _markdown_excerpt(missing_areas, 1400)])
     return "\n".join(lines) + "\n"
 
 
-def _render_draft_guidance(workbench: dict[str, Any]) -> str:
+def _render_draft_guidance(workbench: dict[str, Any], missing_areas: str = "") -> str:
     """Render non-final writing guidance from the evidence workbench.
 
     This file intentionally avoids producing polished domain conclusions. It is
@@ -1281,6 +1415,24 @@ def _render_draft_guidance(workbench: dict[str, Any]) -> str:
     for item in workbench.get("research_question_candidates", []):
         refs = ", ".join(_refs(item.get("related_papers", []), citation_map))
         lines.append(f"- {item.get('id', 'Q?')}: {item.get('question', '')} | related papers: {refs}")
+
+    coverage_plan = workbench.get("citation_coverage_plan") or {}
+    lines.extend(["", "## Citation Coverage Plan For Final Synthesis", ""])
+    if coverage_plan:
+        lines.append(
+            "- Use a broad evidence base: cite at least "
+            f"{coverage_plan.get('recommended_min_unique_refs', 0)} unique deep-note refs "
+            f"across the six required synthesis sections."
+        )
+        lines.append("- Representative papers are not enough; each claim-bearing subsection needs local evidence refs with appropriate claim strength.")
+        for item in (coverage_plan.get("coverage_refs") or coverage_plan.get("main_claim_refs") or [])[:20]:
+            lines.append(
+                f"- {item.get('citation_ref')} {item.get('title')} | "
+                f"use={item.get('citation_use')} | evidence={item.get('evidence_level')} | "
+                f"score={item.get('citation_quality_score')}"
+            )
+    else:
+        lines.append("- No citable deep-note refs were detected; Reader LLM must explain this evidence limitation.")
 
     lines.extend(["", "## Contribution-Space And Tensions To Review", ""])
     contribution_space = workbench.get("contribution_space", {})
@@ -1334,14 +1486,13 @@ def _render_draft_guidance(workbench: dict[str, Any]) -> str:
             "- Write `literature/synthesis.md` with explicit paper-ID evidence and no unsupported template prose.",
         ]
     )
+    if missing_areas.strip():
+        lines.extend(["", "## Missing Areas", "", _markdown_excerpt(missing_areas, 1800)])
     return "\n".join(lines).strip() + "\n"
 
 
 def _render_synthesis(workbench: dict[str, Any], missing_areas: str) -> str:
-    guidance = _render_draft_guidance(workbench)
-    if missing_areas.strip():
-        guidance += "\n## Missing Areas Context For LLM Review\n\n"
-        guidance += _shorten(missing_areas, 1400) + "\n"
+    guidance = _render_draft_guidance(workbench, missing_areas)
     guidance += (
         "\n> This file is a scaffold only. Do not submit it as final synthesis. "
         "The Reader LLM must write the final `literature/synthesis.md`.\n"

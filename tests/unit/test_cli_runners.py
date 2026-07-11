@@ -5,11 +5,14 @@ from pathlib import Path
 import textwrap
 
 import pytest
+import yaml
 
-from researchos.cli import PreparedRuntime, main
+from researchos.agents.hello import HelloAgent
+from researchos.cli import PreparedRuntime, build_parser, main
 from researchos.cli_runners import CompletePipelineRunner, SingleTaskRunner
 from researchos.orchestration.state_machine import StateMachine
 from researchos.runtime.agent import AgentResult
+from researchos.runtime.environment import workspace_host_hint
 from researchos.schemas.state import StateYaml, TaskHistoryEntry
 from researchos.testing.mocks import (
     FakeLLMMessage,
@@ -236,6 +239,12 @@ async def test_single_task_runner_runs_hello_happy_path(tmp_workspace: Path):
     state_text = (tmp_workspace / "state.yaml").read_text(encoding="utf-8")
     assert "COMPLETED" in state_text
     assert "DONE" in state_text
+
+
+def test_hello_agent_can_read_runtime_resume_state():
+    agent = HelloAgent()
+
+    assert "_runtime/resume/" in agent.spec.allowed_read_prefixes
 
 
 @pytest.mark.asyncio
@@ -611,6 +620,50 @@ def test_cli_run_smoke_writes_small_params_and_medium_overrides(monkeypatch, tmp
     assert observed["prepare_workspace"] == workspace.resolve()
 
 
+def test_cli_run_smoke_uses_topic_as_research_direction(monkeypatch, tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "project.yaml").write_text(
+        "project_id: smoke-topic\n"
+        "topic: graph uplift modeling smoke\n",
+        encoding="utf-8",
+    )
+
+    async def fake_prepare_runtime(args, workspace_dir):
+        return PreparedRuntime(
+            skill_roots=[],
+            registry=ToolRegistry(),
+            llm_client=object(),
+        )
+
+    async def fake_run(self, *, project_id: str, resume: bool = False):
+        project = yaml.safe_load((self.workspace / "project.yaml").read_text(encoding="utf-8"))
+        assert project["research_direction"] == "graph uplift modeling smoke"
+        return 0
+
+    monkeypatch.setattr("researchos.cli.install_signal_handlers", lambda: None)
+    monkeypatch.setattr("researchos.cli._prepare_runtime", fake_prepare_runtime)
+    monkeypatch.setattr("researchos.cli.CompletePipelineRunner.run", fake_run)
+
+    exit_code = main(
+        [
+            "--no-banner",
+            "--workspace",
+            str(workspace),
+            "run_smoke",
+            "--active-pool-max",
+            "12",
+            "--deep-read-target",
+            "2",
+            "--abstract-sweep",
+            "2",
+            "--skip-startup-selftest",
+        ]
+    )
+
+    assert exit_code == 0
+
+
 def test_cli_run_smoke_quiet_keeps_copy_and_state_output_silent(monkeypatch, tmp_path: Path, capsys):
     source = tmp_path / "source"
     workspace = tmp_path / "workspace"
@@ -818,6 +871,43 @@ def test_cli_init_workspace_accepts_shared_options_after_subcommand(tmp_path: Pa
     assert exit_code == 0
     assert (workspace / "_runtime" / "traces").exists()
     assert (workspace / "project.yaml").exists()
+    assert (workspace / "_runtime" / "runtime_environment.json").exists()
+
+
+def test_cli_doctor_allows_missing_docker_and_tex(tmp_path: Path, monkeypatch, capsys):
+    workspace = tmp_path / "doctor-ws"
+    monkeypatch.setattr("researchos.runtime.environment.shutil.which", lambda _name: None)
+    monkeypatch.setattr("researchos.cli.shutil.which", lambda _name: None)
+
+    exit_code = main(["--no-banner", "doctor", "--workspace", str(workspace)])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "[OK" in captured.out
+    assert "Docker: CLI not found" in captured.out
+    assert "LaTeX backend" in captured.out
+    assert (workspace / "_runtime" / "runtime_environment.json").exists()
+
+
+def test_researchos_workspace_root_overrides_parser_default(tmp_path: Path, monkeypatch):
+    root = tmp_path / "workspaces"
+    monkeypatch.setenv("RESEARCHOS_WORKSPACE_ROOT", str(root))
+
+    parser = build_parser()
+    args = parser.parse_args(["doctor"])
+
+    assert args.workspace == str(root)
+
+
+def test_workspace_host_hint_maps_container_root_and_projects(monkeypatch):
+    monkeypatch.setenv("RESEARCHOS_HOST_WORKSPACE_ROOT", "/host/researchos/workspaces")
+    monkeypatch.setenv("RESEARCHOS_WORKSPACE_ROOT", "/app/workspaces")
+
+    assert workspace_host_hint(Path("/app/workspaces")) == "/host/researchos/workspaces"
+    assert (
+        workspace_host_hint(Path("/app/workspaces/project-a"))
+        == "/host/researchos/workspaces/project-a"
+    )
 
 
 def test_cli_trace_renders_human_readable_output(tmp_path: Path, capsys):

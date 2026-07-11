@@ -5,7 +5,7 @@
 workspace:
   # 默认工作空间根目录
   # 所有研究项目的数据、文献、输出都存储在此目录下
-  default_root: "./workspace"
+  default_root: "./workspaces"
 
   # Runtime 私有目录名称
   # 用于存储运行时数据（日志、trace、状态等），与用户数据分离
@@ -76,16 +76,22 @@ web_fetch:
   # 留空表示不限制主机，只按 allowed_schemes 控制
   allowed_hosts: []
 
+# LaTeX backend 配置
+latex:
+  # auto: latexmk -> tectonic -> export/wait；Docker fallback 仅在 allow_docker_fallback=true 时允许
+  default_backend: "auto"
+  allow_docker_fallback: false
+  docker_image: "researchos/system:latest"
+
 # Docker 镜像配置
 docker:
-  # 统一镜像：researchos/system:latest
-  # 包含 Python 3.11 + ML 依赖 + LaTeX + MCP 服务器
+  # 可选轻量镜像：用于隔离运行 CLI，不是默认实验/LaTeX 环境
   default_image: "researchos/system:latest"
 
   # 允许使用的 Docker 镜像白名单
   # 注意：只需配置实际会使用的镜像
   allowed_images:
-    - "researchos/system:latest"  # 统一镜像（唯一）
+    - "researchos/system:latest"
 
   default_memory_limit: "16g"
   build_context: "infra/docker"

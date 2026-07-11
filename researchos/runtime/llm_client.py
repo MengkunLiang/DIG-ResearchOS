@@ -21,6 +21,7 @@ from .user_settings import (
     load_user_settings,
     should_apply_default_user_settings,
 )
+from .system_config import config_file_path
 
 
 def _pre_suppress_litellm_import_logs() -> None:
@@ -54,7 +55,7 @@ except Exception:  # pragma: no cover
 
 
 _log = get_logger("llm_client")
-DEFAULT_ROUTING_CONFIG_PATH = Path(__file__).parent.parent.parent / "config" / "model_routing.yaml"
+DEFAULT_ROUTING_CONFIG_PATH = config_file_path("model_routing.yaml")
 
 
 def suppress_litellm_info_logs() -> None:

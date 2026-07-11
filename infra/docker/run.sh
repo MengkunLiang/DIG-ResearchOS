@@ -9,13 +9,13 @@
 #   bash infra/docker/run.sh --help
 #
 #   # 初始化 workspace
-#   bash infra/docker/run.sh init-workspace --workspace /workspace
+#   bash infra/docker/run.sh init-workspace --workspace /app/workspaces/dev
 #
 #   # 运行完整 pipeline
-#   bash infra/docker/run.sh run --workspace /workspace
+#   bash infra/docker/run.sh run --workspace /app/workspaces/dev
 #
 #   # 单 task 调试
-#   bash infra/docker/run.sh run-task --workspace /workspace --task hello --mock
+#   bash infra/docker/run.sh run-task HELLO --workspace /app/workspaces/dev
 
 set -e
 
@@ -23,37 +23,54 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$SCRIPT_DIR"
 
-# 镜像名称
-IMAGE_NAME="${RESEARCHOS_IMAGE:-researchos/system:latest}"
-
-# Workspace 目录（宿主机路径）
-WORKSPACE_DIR="${RESEARCHOS_WORKSPACE:-$(pwd)/workspace}"
-RESEARCHOS_DOCKER_ROOT="${RESEARCHOS_DOCKER_ROOT:-/mnt/data/Docker}"
-if [ -z "${DOCKER_CONFIG:-}" ]; then
-    export DOCKER_CONFIG="$RESEARCHOS_DOCKER_ROOT/cli-config"
-fi
-mkdir -p "$DOCKER_CONFIG"
+load_env_defaults() {
+    local env_file="$1"
+    local line key value
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%$'\r'}"
+        if [ -z "$line" ] || [[ "$line" == \#* ]]; then
+            continue
+        fi
+        if [[ "$line" == export\ * ]]; then
+            line="${line#export }"
+        fi
+        if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            key="${BASH_REMATCH[1]}"
+            value="${BASH_REMATCH[2]}"
+            if [ -z "${!key+x}" ]; then
+                if [[ "$value" == \"*\" && "$value" == *\" ]]; then
+                    value="${value:1:${#value}-2}"
+                elif [[ "$value" == \'*\' && "$value" == *\' ]]; then
+                    value="${value:1:${#value}-2}"
+                fi
+                export "$key=$value"
+            fi
+        fi
+    done < "$env_file"
+}
 
 # 自动加载项目根目录的 .env，方便直接在 .env 里切换 provider。
 # shell 中已显式设置的环境变量会覆盖 .env 中的值。
 if [ -f ".env" ]; then
-    set -a
-    # shellcheck disable=SC1091
-    . ".env"
-    set +a
+    load_env_defaults ".env"
 fi
+
+# 镜像名称。必须在加载 .env 之后计算。
+IMAGE_NAME="${RESEARCHOS_IMAGE:-researchos/system:latest}"
+
+# Workspace 目录（宿主机路径）。必须在加载 .env 之后计算，
+# 这样 .env 中的 RESEARCHOS_WORKSPACE 才会生效。
+WORKSPACE_DIR="${RESEARCHOS_WORKSPACE:-$(pwd)/workspaces}"
+HOST_WORKSPACE_HINT="${RESEARCHOS_HOST_WORKSPACE_ROOT:-./workspaces}"
+HOST_UID="${RESEARCHOS_UID:-$(id -u 2>/dev/null || echo 1000)}"
+HOST_GID="${RESEARCHOS_GID:-$(id -g 2>/dev/null || echo 1000)}"
 
 # 检查 Docker 是否可用
 if ! command -v docker &> /dev/null; then
     echo "错误: Docker 未安装或不在 PATH 中"
     exit 1
 fi
-
-echo "[Docker 存储检查]"
-docker info --format '  Docker Root Dir: {{.DockerRootDir}}' || true
-echo "  Docker CLI config: $DOCKER_CONFIG"
-echo "  建议 Docker daemon data-root: $RESEARCHOS_DOCKER_ROOT"
-echo ""
 
 # 检查镜像是否存在
 if ! docker images "$IMAGE_NAME" --format "{{.Repository}}:{{.Tag}}" | grep -q "$IMAGE_NAME"; then
@@ -64,50 +81,23 @@ fi
 
 # 检查环境变量。
 # 当前推荐把 API key 放在 .env 中，再由本脚本自动透传到容器。
-if [ -z "$SILICONFLOW_API_KEY" ] && [ -z "$OPENAI_API_KEY" ] && [ -z "$OPENROUTER_API_KEY" ] && [ -z "$ANTHROPIC_API_KEY" ]; then
+if [ -z "$SILICONFLOW_API_KEY" ] && [ -z "$DEEPSEEK_API_KEY" ] && [ -z "$OPENAI_API_KEY" ] && [ -z "$OPENROUTER_API_KEY" ] && [ -z "$ANTHROPIC_API_KEY" ]; then
     echo "提示: 未检测到 LLM API 密钥"
-    echo "  - 请在 .env 中设置 SILICONFLOW_API_KEY / OPENROUTER_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY"
+    echo "  - 请在 .env 中设置 SILICONFLOW_API_KEY / DEEPSEEK_API_KEY / OPENROUTER_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY"
 fi
 
 # 创建 workspace 目录（如果不存在）
 mkdir -p "$WORKSPACE_DIR"
-
-# 检测 Docker 是否真的支持 GPU。
-# 仅宿主机上 nvidia-smi 正常还不够；还需要 nvidia-container-toolkit
-# 把 nvidia runtime/CDI 注册给 Docker。检测失败时自动 CPU 降级。
-GPU_FLAG=()
-RUNTIME_FLAG=()
-if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
-    if docker run --rm --gpus all --entrypoint nvidia-smi "$IMAGE_NAME" >/tmp/researchos_gpu_probe.out 2>/tmp/researchos_gpu_probe.err; then
-        GPU_FLAG=(--gpus all)
-        echo "检测到 Docker GPU 可用，将使用 --gpus all"
-    else
-        gpu_probe_error="$(cat /tmp/researchos_gpu_probe.err 2>/dev/null | head -3)"
-        if command -v nvidia-container-runtime &> /dev/null && docker run --rm --runtime=nvidia --gpus all --entrypoint nvidia-smi "$IMAGE_NAME" >/tmp/researchos_gpu_probe.out 2>/tmp/researchos_gpu_probe.err; then
-            RUNTIME_FLAG=(--runtime=nvidia)
-            GPU_FLAG=(--gpus all)
-            echo "检测到 Docker GPU 可用，将使用 --runtime=nvidia --gpus all"
-        else
-            echo "检测到宿主机 GPU，但 Docker GPU probe 失败，本次将以 CPU 模式启动容器"
-            if [ -n "$gpu_probe_error" ]; then
-                echo "  GPU probe error: $gpu_probe_error"
-            fi
-            echo "  请参考 docs/docker.md 注册 nvidia-container-toolkit / CDI 后再启用 GPU。"
-        fi
-    fi
-else
-    echo "未检测到宿主机 GPU，本次将以 CPU 模式启动容器"
-fi
 
 # 运行容器
 # --rm: 容器退出后自动删除
 # -it: 交互式终端
 # -v: 挂载 workspace
 # -e: 传递环境变量
-# --gpus/--runtime: GPU 支持（如果可用）
 echo "运行 ResearchOS 容器..."
 echo "镜像: $IMAGE_NAME"
 echo "Workspace: $WORKSPACE_DIR"
+echo "User: $HOST_UID:$HOST_GID"
 echo "命令: $@"
 echo ""
 
@@ -122,11 +112,15 @@ DOCKER_ENV_ARGS=()
 for env_name in \
     SILICONFLOW_API_KEY \
     SILICONFLOW_BASE_URL \
+    DEEPSEEK_API_KEY \
+    DEEPSEEK_BASE_URL \
     OPENROUTER_API_KEY \
     OPENAI_API_KEY \
     OPENAI_BASE_URL \
     ANTHROPIC_API_KEY \
     S2_API_KEY \
+    ELSEVIER_API_KEY \
+    ELSEVIER_INSTTOKEN \
     RESEARCHER_EMAIL \
     GITHUB_TOKEN
 do
@@ -136,11 +130,20 @@ do
     fi
 done
 
+DOCKER_MOUNT_ARGS=()
+if [ -d "$(pwd)/config" ]; then
+    DOCKER_MOUNT_ARGS+=(-v "$(pwd)/config:/app/config:ro")
+fi
+
 docker run --rm \
     "${DOCKER_TTY_ARGS[@]}" \
-    -v "$WORKSPACE_DIR:/workspace" \
+    --user "$HOST_UID:$HOST_GID" \
+    -v "$WORKSPACE_DIR:/app/workspaces" \
+    "${DOCKER_MOUNT_ARGS[@]}" \
+    -e "RESEARCHOS_WORKSPACE_ROOT=/app/workspaces" \
+    -e "RESEARCHOS_HOST_WORKSPACE_ROOT=$HOST_WORKSPACE_HINT" \
+    -e "RESEARCHOS_CONFIG=/app/config/user_settings.yaml" \
+    -e "RESEARCHOS_RUNTIME_CONFIG=/app/config/runtime.yaml" \
     "${DOCKER_ENV_ARGS[@]}" \
-    "${RUNTIME_FLAG[@]}" \
-    "${GPU_FLAG[@]}" \
     "$IMAGE_NAME" \
     "$@"

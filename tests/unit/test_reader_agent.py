@@ -388,10 +388,10 @@ Problem.
 ## 2. Method Summary
 Method.
 
-### A. 核心做法/视角
+### A. Core Approach / Perspective
 View.
 
-### B. 桥接点
+### B. Bridge Point
 Bridge.
 
 ## 3. Key Claimed Results
@@ -410,7 +410,7 @@ Result.
 
     ok, err = _validate_abstract_note_structure(note_path)
     assert not ok
-    assert "## A. 核心做法/视角" in str(err)
+    assert "## A. Core Approach / Perspective" in str(err)
 
 
 def test_validate_outputs_read_mode_fallback_requires_full_input_pool(reader_agent, temp_workspace):
@@ -1157,6 +1157,46 @@ def test_validate_outputs_synthesize_mode_maps_noopenalex_note_to_bib_cite(reade
     assert ok, f"Validation failed: {err}"
     citation_map = json.loads((temp_workspace / "literature" / "citation_map.json").read_text(encoding="utf-8"))
     assert citation_map["mapped_bib_count"] >= 5
+
+
+def test_validate_outputs_synthesize_mode_rejects_section_concentrated_citations(reader_agent, temp_workspace):
+    notes_dir = temp_workspace / "literature" / "paper_notes"
+    for paper_id in [f"paper{i}" for i in range(6)]:
+        (notes_dir / f"{paper_id}.md").write_text(_structured_note(paper_id), encoding="utf-8")
+    refs = " ".join(f"[note:paper{i}]" for i in range(6))
+    synthesis_content = f"""# 文献综述
+
+## 方法家族分类
+方法家族分类集中列出所有引用，但这不能替代后续章节的 claim-level evidence {refs}。
+
+## 共同假设
+共同假设需要真实已读论文支撑，但这里故意没有放置 citation。
+
+## 贡献空间地图
+贡献空间地图需要按 design rationale、artifact 类型、data view 和 evaluation mode 展开，但这里没有 citation。
+
+## 技术趋势
+技术趋势不能只靠前文代表论文列表继承。
+
+## 跨论文矛盾与张力
+跨论文矛盾需要在论证句中标出对应论文，而不是靠第一节集中引用。
+
+## 可操作研究问题
+可操作研究问题也需要关联具体已读论文。
+""" + "这一段继续展开机制、边界、证据强度和研究机会。" * 180
+    (temp_workspace / "literature" / "synthesis.md").write_text(synthesis_content, encoding="utf-8")
+
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T3.5",
+        run_id="test-run-concentrated-cites",
+        mode="synthesize",
+    )
+
+    ok, err = reader_agent.validate_outputs(ctx)
+    assert not ok
+    assert "章节级真实引用覆盖不足" in (err or "")
 
 
 def test_validate_outputs_synthesize_mode_does_not_count_unmapped_cites(reader_agent, temp_workspace):

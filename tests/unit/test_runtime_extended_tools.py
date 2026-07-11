@@ -876,6 +876,8 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
     assert resource_index["citation_quality"]["available"] is True
     assert "core_note" in resource_index["citation_quality"]["core_or_supporting_ids"]
     assert "weak_note" in resource_index["citation_quality"]["low_or_do_not_cite_ids"]
+    assert resource_index["paper_note_cards"]
+    assert resource_index["paper_note_cards"][0]["path"] == "literature/paper_notes/core_note.md"
     assert any(item.get("metric_id") == "m_external_acc" for item in resource_index["result_metrics"])
 
     plan_tool = PlanManuscriptSectionsTool(policy)
@@ -959,7 +961,10 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
     method_outline = (tmp_workspace / "drafts" / "section_outlines" / "methodology.md").read_text(encoding="utf-8")
     assert "## Internal Alignment IDs" in method_outline
     assert "## Section Writing Contract" in method_outline
+    assert "## Note Card Retrieval Plan" in method_outline
+    assert "literature/paper_notes/core_note.md" in method_outline
     assert paper_state["sections"]["methodology"]["writing_contract"]["purpose"].startswith("Explain what the artifact")
+    assert paper_state["shared_facts"]["paper_note_cards"]
     ok, err = validator.validate_outputs(_WriterContext(tmp_workspace, "section_plan"))
     assert ok, err
 
@@ -1407,7 +1412,10 @@ async def test_build_synthesis_workbench_writes_staged_outputs(tmp_workspace: Pa
         "paper_0,Paper 0,2025,TestConf,Graph,Dataset,Accuracy,88.1\n",
         encoding="utf-8",
     )
-    (literature / "missing_areas.md").write_text("# 缺口\n稀疏数据鲁棒性覆盖不足。\n", encoding="utf-8")
+    (literature / "missing_areas.md").write_text(
+        "# 缺口\n\n> runtime coverage hint, not final gap.\n\n## 覆盖不足\n- 稀疏数据鲁棒性覆盖不足。\n",
+        encoding="utf-8",
+    )
     policy = WorkspaceAccessPolicy(tmp_workspace, ["", "literature/"], ["", "literature/"])
     tool = BuildSynthesisWorkbenchTool(policy)
 
@@ -1422,8 +1430,17 @@ async def test_build_synthesis_workbench_writes_staged_outputs(tmp_workspace: Pa
     assert "bridge_note" in workbench["paper_ids"]
     assert "_DIR_GUIDE" not in workbench["paper_ids"]
     assert "README" not in workbench["paper_ids"]
+    assert workbench["citation_coverage_plan"]["recommended_min_unique_refs"] >= 5
+    outline = (literature / "synthesis_outline.md").read_text(encoding="utf-8")
+    assert "## Citation Coverage Plan" in outline
+    assert "#### 覆盖不足" in outline
+    assert "# 缺口 > runtime coverage hint" not in outline
     draft = (literature / "synthesis_draft.md").read_text(encoding="utf-8")
     assert "This is not a final literature synthesis" in draft
+    assert "## Citation Coverage Plan For Final Synthesis" in draft
+    assert "## Missing Areas" in draft
+    assert "#### 覆盖不足" in draft
+    assert "# 缺口 > runtime coverage hint" not in draft
     assert "[note:paper_0]" in draft
 
 
@@ -1475,7 +1492,7 @@ async def test_build_synthesis_workbench_exposes_weak_evidence_upgrade_channel(t
     (abstract_dir / "abstract_note.md").write_text(
         _note("abstract_note", family_hint="Abstract-only")
         .replace("- **Status**: [FULL-TEXT]", "- **Status**: [ABSTRACT-ONLY]")
-        + "\n## B. 桥接点\nAbstract-only bridge hint; verify with full text.\n",
+        + "\n## B. Bridge Point\nAbstract-only bridge hint; verify with full text.\n",
         encoding="utf-8",
     )
     (literature / "metadata_triage.md").write_text(
@@ -1515,8 +1532,8 @@ async def test_build_synthesis_workbench_uses_domain_map_for_adjacent_transfers(
     notes_dir.mkdir(parents=True)
     (notes_dir / "W_adj.md").write_text(
         _note("W_adj", family_hint="Control feedback")
-        + "\n## A. 核心做法/视角\nFeedback stabilization under noisy control.\n"
-        + "\n## B. 桥接点\nCan transfer to sparse recommender feedback loops.\n",
+        + "\n## A. Core Approach / Perspective\nFeedback stabilization under noisy control.\n"
+        + "\n## B. Bridge Point\nCan transfer to sparse recommender feedback loops.\n",
         encoding="utf-8",
     )
     (literature / "comparison_table.csv").write_text("id,title\nW_adj,Adjacent\n", encoding="utf-8")

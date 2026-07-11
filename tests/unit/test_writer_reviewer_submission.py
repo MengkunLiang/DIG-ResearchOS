@@ -112,7 +112,7 @@ def _write_compile_report(workspace: Path, *, success: bool = True) -> None:
         "output_dir": None,
         "started_at": "2026-05-28T00:00:00+00:00",
         "finished_at": "2026-05-28T00:00:01+00:00",
-        "engine": "docker",
+        "engine": "native",
         "exit_code": 0 if success else 1,
         "success": success,
         "error": None if success else "nonzero_exit",
@@ -129,7 +129,7 @@ def _write_compile_report(workspace: Path, *, success: bool = True) -> None:
         "pdf_mtime": main_pdf.stat().st_mtime if main_pdf.exists() else 0,
         "attempts": [
             {
-                "engine": "docker",
+                "engine": "native",
                 "exit_code": 0 if success else 1,
                 "success": success,
                 "started_at": "2026-05-28T00:00:00+00:00",
@@ -1926,7 +1926,7 @@ def test_submission_agent_initialization():
     assert agent.spec.name == "submission"
     assert agent.spec.max_steps == params["max_steps"]
     assert agent.spec.max_tokens_total == params["max_tokens_total"]
-    assert "docker_exec" in agent.spec.tool_names
+    assert "docker_exec" not in agent.spec.tool_names
     assert "latex_compile" in agent.spec.tool_names
     assert "prepare_submission_bundle" in agent.spec.tool_names
     assert "submission/" in agent.spec.allowed_write_prefixes
@@ -2691,7 +2691,7 @@ def test_check_anonymization_no_paper_file(temp_workspace):
 
 def test_submission_compile_environment_uses_native_latexmk(monkeypatch, temp_workspace):
     monkeypatch.setattr(
-        "researchos.agents.submission.shutil.which",
+        "researchos.runtime.environment.shutil.which",
         lambda name: "/usr/bin/latexmk" if name == "latexmk" else None,
     )
     ctx = MockExecutionContext("submission", temp_workspace)
@@ -2702,15 +2702,28 @@ def test_submission_compile_environment_uses_native_latexmk(monkeypatch, temp_wo
     assert err is None
 
 
-def test_submission_compile_environment_pauses_without_latex_or_docker(monkeypatch, temp_workspace):
-    monkeypatch.setattr("researchos.agents.submission.shutil.which", lambda _name: None)
-    monkeypatch.setattr("researchos.tools.docker_exec.shutil.which", lambda _name: None)
+def test_submission_compile_environment_uses_native_tectonic(monkeypatch, temp_workspace):
+    monkeypatch.setattr(
+        "researchos.runtime.environment.shutil.which",
+        lambda name: "/usr/bin/tectonic" if name == "tectonic" else None,
+    )
+    ctx = MockExecutionContext("submission", temp_workspace)
+
+    ok, err = check_submission_compile_environment(ctx)
+
+    assert ok
+    assert err is None
+
+
+def test_submission_compile_environment_pauses_without_latex_backend(monkeypatch, temp_workspace):
+    monkeypatch.setattr("researchos.runtime.environment.shutil.which", lambda _name: None)
     ctx = MockExecutionContext("submission", temp_workspace)
 
     ok, err = check_submission_compile_environment(ctx)
 
     assert not ok
     assert "WAITING_ENVIRONMENT" in err
+    assert ctx.extra["environment_blocker"]["error"] == "latex_backend_missing"
 
 
 @pytest.mark.asyncio

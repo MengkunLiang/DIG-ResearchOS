@@ -12,12 +12,14 @@ import csv
 import hashlib
 import json
 import re
+import shutil
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field
 
+from ..runtime.environment import workspace_host_hint
 from .base import Tool, ToolResult
 from .workspace_policy import ToolAccessDenied, WorkspaceAccessPolicy
 
@@ -59,6 +61,13 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _read_text(path: Path, *, max_chars: int | None = None) -> str:
+    if not path.exists() or path.stat().st_size <= 0:
+        return ""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    return text[:max_chars] if max_chars is not None else text
+
+
 def _write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -81,6 +90,687 @@ def _artifact_record(workspace: Path, rel_path: str, *, role: str, kind: str = "
     if path.exists() and path.is_file():
         record.update({"sha256": _sha256(path), "bytes": path.stat().st_size})
     return record
+
+
+def _rel_artifact_record(workspace: Path, path: Path, *, role: str, kind: str = "file") -> dict[str, Any]:
+    try:
+        rel_path = path.relative_to(workspace).as_posix()
+    except ValueError:
+        rel_path = path.as_posix()
+    return _artifact_record(workspace, rel_path, role=role, kind=kind)
+
+
+def _merge_artifact_records(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for group in groups:
+        for item in group:
+            if not isinstance(item, dict):
+                continue
+            path = str(item.get("path") or "").strip()
+            if not path:
+                continue
+            existing = merged.get(path, {})
+            merged[path] = {**existing, **item}
+    return list(merged.values())
+
+
+def _scan_external_artifacts(workspace: Path) -> dict[str, list[dict[str, Any]]]:
+    specs = {
+        "raw_results": ("external_executor/raw_results", "raw_result"),
+        "configs": ("external_executor/configs", "config"),
+        "logs": ("external_executor/logs", "log"),
+        "patches": ("external_executor/patches", "patch"),
+        "figures": ("external_executor/figures", "figure"),
+        "tables": ("external_executor/tables", "table"),
+    }
+    scanned: dict[str, list[dict[str, Any]]] = {}
+    for key, (rel_dir, role) in specs.items():
+        base = workspace / rel_dir
+        records: list[dict[str, Any]] = []
+        if base.exists():
+            for path in sorted(item for item in base.rglob("*") if item.is_file()):
+                records.append(_rel_artifact_record(workspace, path, role=role, kind=key.rstrip("s")))
+        scanned[key] = records
+    return scanned
+
+
+def _artifact_paths(records: list[dict[str, Any]]) -> list[str]:
+    return [str(item.get("path")) for item in records if isinstance(item, dict) and item.get("path")]
+
+
+def _result_pack_extra_fields(result_pack: dict[str, Any]) -> dict[str, Any]:
+    known = set(EXTERNAL_RESULT_REQUIRED_FIELDS) | {
+        "runs",
+        "raw_result_files",
+        "config_files",
+        "log_files",
+        "logs",
+        "scope_change_requests",
+        "failed_trials",
+        "replacement_baselines",
+        "additional_resources",
+        "manual_notes",
+        "evidence_grade",
+        "limitations",
+    }
+    return {key: value for key, value in result_pack.items() if key not in known}
+
+
+def _run_records_from_result_pack(result_pack: dict[str, Any], manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    source_runs = result_pack.get("experiment_runs")
+    if not isinstance(source_runs, list) or not source_runs:
+        source_runs = result_pack.get("runs")
+    if not isinstance(source_runs, list) or not source_runs:
+        source_runs = manifest.get("runs")
+    if not isinstance(source_runs, list) or not source_runs:
+        source_runs = [{"run_id": result_pack.get("run_id") or "external_run", "status": "unknown"}]
+    records: list[dict[str, Any]] = []
+    metrics = [item for item in result_pack.get("metrics", []) or [] if isinstance(item, dict)]
+    for idx, run in enumerate(source_runs, start=1):
+        run_payload = dict(run) if isinstance(run, dict) else {"run_id": str(run)}
+        run_id = str(run_payload.get("run_id") or run_payload.get("id") or f"run_{idx}")
+        run_metrics = [
+            metric
+            for metric in metrics
+            if str(metric.get("run_id") or metric.get("experiment_id") or result_pack.get("run_id") or "") in {run_id, ""}
+        ]
+        records.append(
+            {
+                "semantics": "external_executor_run_record",
+                "run_id": run_id,
+                "source": "external_executor/result_pack.json",
+                "run": run_payload,
+                "metrics": run_metrics,
+                "raw_result_refs": _coerce_str_list(run_payload.get("raw_results") or run_payload.get("raw_result_refs")),
+                "config_refs": _coerce_str_list(run_payload.get("configs") or run_payload.get("config_refs") or run_payload.get("config")),
+                "log_refs": _coerce_str_list(run_payload.get("logs") or run_payload.get("log_refs") or run_payload.get("log")),
+            }
+        )
+    records.append({"semantics": "external_executor_result_pack", "result_pack": result_pack})
+    return records
+
+
+def _coerce_str_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value if item]
+    if isinstance(value, str) and value:
+        return [value]
+    return []
+
+
+PRE_T5_SOURCE_FILES = [
+    "project.yaml",
+    "literature/synthesis.md",
+    "literature/synthesis_workbench.json",
+    "literature/domain_map.json",
+    "literature/comparison_table.csv",
+    "ideation/hypotheses.md",
+    "ideation/exp_plan.yaml",
+    "ideation/idea_scorecard.yaml",
+    "ideation/risks.md",
+    "ideation/novelty_audit.md",
+    "novelty/novelty_audit.md",
+    "resources/baseline_candidates.jsonl",
+    "literature/baseline_map.json",
+    "user_seeds/seed_external_resources.jsonl",
+    "user_seeds/bridge_domains.yaml",
+]
+
+
+EXTERNAL_RESULT_REQUIRED_FIELDS = [
+    "schema_version",
+    "semantics",
+    "run_id",
+    "executor",
+    "dry_run",
+    "mock_only",
+    "executor_status",
+    "context_alignment",
+    "resources",
+    "baseline_reproduction",
+    "experiment_runs",
+    "metrics",
+    "artifacts",
+    "baseline_coverage",
+    "result_diagnosis",
+    "module_attribution",
+    "realized_method_package",
+    "final_framework_figure",
+    "figure_table_inventory",
+    "writer_handoff",
+    "run_manifest",
+]
+
+
+SKILL_SUITE = [
+    "research_execution",
+    "context_alignment",
+    "resource_and_baseline_mining",
+    "baseline_reproduction",
+    "experiment_design",
+    "method_refinement",
+    "implementation",
+    "code_and_protocol_review",
+    "experiment_iteration",
+    "result_diagnosis",
+    "module_attribution",
+    "figure_table_packaging",
+    "writer_handoff",
+]
+
+SKILL_CUSTOMIZATION_CONTROLLER = "skills_customization"
+EXTERNAL_EXECUTOR_SKILL_TEMPLATE_ROOT = "skills/external_executor_skills"
+
+
+def validate_context_reboost_handoff(workspace_dir: Path) -> tuple[bool, str | None]:
+    """Validate the LLM-generated context re-boost handoff skeleton."""
+
+    path = workspace_dir / "external_executor" / "handoff_pack.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return False, f"external_executor/handoff_pack.json missing or invalid JSON: {exc}"
+    if not isinstance(data, dict):
+        return False, "external_executor/handoff_pack.json must be a JSON object"
+    if data.get("schema_version") != "external_executor_handoff.v1":
+        return False, "handoff_pack.schema_version must be external_executor_handoff.v1"
+    context = data.get("context_reboost")
+    if not isinstance(context, dict):
+        return False, "handoff_pack.context_reboost missing"
+    required = [
+        "project_goal",
+        "central_hypothesis",
+        "method_mechanism",
+        "required_baselines",
+        "baseline_matrix",
+        "claim_evidence_matrix",
+        "minimum_experiment_loop",
+        "iteration_budget",
+        "claim_boundaries",
+        "writer_handoff_contract",
+        "source_files_used",
+        "known_context_mismatches",
+    ]
+    missing = [key for key in required if key not in context]
+    if missing:
+        return False, "handoff_pack.context_reboost missing fields: " + ", ".join(missing)
+    mechanism = context.get("method_mechanism")
+    if not isinstance(mechanism, dict) or not mechanism.get("core_mechanism"):
+        return False, "handoff_pack.context_reboost.method_mechanism.core_mechanism missing"
+    if not isinstance(context.get("baseline_matrix"), list):
+        return False, "handoff_pack.context_reboost.baseline_matrix must be a list"
+    if not isinstance(context.get("claim_evidence_matrix"), list) or not context.get("claim_evidence_matrix"):
+        return False, "handoff_pack.context_reboost.claim_evidence_matrix must be a non-empty list"
+    if not isinstance(data.get("baseline_matrix"), list):
+        return False, "handoff_pack.baseline_matrix must be a list"
+    if not isinstance(data.get("claim_evidence_matrix"), list) or not data.get("claim_evidence_matrix"):
+        return False, "handoff_pack.claim_evidence_matrix must be a non-empty list"
+    return True, None
+
+
+def _source_artifacts(workspace: Path) -> list[dict[str, Any]]:
+    return [
+        _artifact_record(workspace, rel_path, role=_source_role(rel_path))
+        for rel_path in PRE_T5_SOURCE_FILES
+    ]
+
+
+def _source_role(rel_path: str) -> str:
+    if rel_path == "project.yaml":
+        return "project"
+    if rel_path.startswith("literature/"):
+        return "literature_context"
+    if rel_path.startswith("ideation/"):
+        return "ideation_context"
+    if rel_path.startswith("novelty/"):
+        return "novelty_context"
+    if rel_path.startswith("resources/"):
+        return "resource_hint"
+    if rel_path.startswith("user_seeds/"):
+        return "user_seed_hint"
+    return "source_context"
+
+
+def _first_existing_text(workspace: Path, rel_paths: list[str], *, max_chars: int | None = None) -> tuple[str, str]:
+    for rel_path in rel_paths:
+        text = _read_text(workspace / rel_path, max_chars=max_chars)
+        if text.strip():
+            return text, rel_path
+    return "", ""
+
+
+def _source_files_used(workspace: Path) -> list[str]:
+    return [rel for rel in PRE_T5_SOURCE_FILES if (workspace / rel).exists()]
+
+
+def _experiments_from_plan(exp_plan: dict[str, Any]) -> list[dict[str, Any]]:
+    experiments = exp_plan.get("experiments") if isinstance(exp_plan, dict) else []
+    return [item for item in experiments or [] if isinstance(item, dict)]
+
+
+def _baseline_names_from_exp_plan(exp_plan: dict[str, Any]) -> list[str]:
+    names: list[str] = []
+    for exp in _experiments_from_plan(exp_plan):
+        for key in ("baseline_methods", "baselines", "required_baselines"):
+            value = exp.get(key)
+            if isinstance(value, list):
+                for item in value:
+                    if isinstance(item, str):
+                        names.append(item)
+                    elif isinstance(item, dict):
+                        names.append(str(item.get("name") or item.get("baseline_name") or item.get("id") or ""))
+            elif isinstance(value, str):
+                names.append(value)
+    return list(dict.fromkeys(name.strip() for name in names if name and name.strip()))
+
+
+def _baseline_name(item: Any) -> str:
+    if isinstance(item, dict):
+        return str(item.get("baseline_name") or item.get("name") or item.get("baseline_id") or "").strip()
+    return str(item or "").strip()
+
+
+def _build_context_reboost(
+    *,
+    workspace: Path,
+    project: dict[str, Any],
+    exp_plan: dict[str, Any],
+    hypotheses: str,
+    synthesis: str,
+    novelty_audit: str,
+    novelty_source: str,
+    risks: str,
+    required_baselines: list[dict[str, Any]],
+    metrics: list[str],
+) -> dict[str, Any]:
+    project_goal = _infer_experiment_intent(project, hypotheses)
+    central_hypothesis = _first_non_heading_line(hypotheses) or project_goal
+    exp_baselines = _baseline_names_from_exp_plan(exp_plan)
+    required_names = [_baseline_name(item) for item in required_baselines]
+    required_names = [name for name in required_names if name]
+    missing_from_exp_plan = [name for name in required_names if name not in exp_baselines]
+    known_context_mismatches = []
+    if missing_from_exp_plan:
+        known_context_mismatches.append(
+            {
+                "type": "required_baseline_missing_from_exp_plan",
+                "source_of_truth": novelty_source or "novelty_audit",
+                "baselines": missing_from_exp_plan,
+                "resolution": "Treat novelty audit baselines as required in external execution.",
+            }
+        )
+    return {
+        "project_goal": project_goal,
+        "central_hypothesis": central_hypothesis,
+        "method_mechanism": {
+            "core_mechanism": _compact_text(_section_hint(hypotheses, ["mechanism", "方法", "机制"]) or central_hypothesis),
+            "must_preserve_components": _extract_bullets(hypotheses, limit=8),
+            "candidate_components": _extract_bullets(synthesis, limit=6),
+            "allowed_refinements": [
+                "implementation details may change when documented in result_pack.realized_method_package",
+                "claims may be narrowed when baseline, metric, or dataset evidence is incomplete",
+            ],
+            "forbidden_scope_changes": [
+                "replace_core_mechanism_without_review",
+                "drop_required_baseline_without_claim_risk",
+                "change_task_or_dataset_without_scope_change_record",
+                "treat_engineering_trick_as_paper_contribution",
+            ],
+        },
+        "required_baselines": required_baselines,
+        "baseline_matrix": _build_baseline_matrix(required_baselines, exp_baselines),
+        "claim_evidence_matrix": _build_claim_evidence_matrix(exp_plan, metrics, required_baselines),
+        "minimum_experiment_loop": _build_minimum_experiment_loop(exp_plan, metrics),
+        "iteration_budget": {
+            "max_rounds": 3,
+            "stop_conditions": [
+                "budget_exhausted",
+                "improvement_plateau",
+                "required_baseline_unavailable",
+                "audited_target_reached",
+                "implementation_blocked",
+                "claim_must_be_narrowed",
+            ],
+        },
+        "claim_boundaries": _claim_boundaries_from_context(novelty_audit, risks, required_baselines),
+        "writer_handoff_contract": [
+            "realized_method_package",
+            "final_framework_figure",
+            "figure_table_inventory",
+            "result_diagnosis",
+            "module_attribution",
+            "claim_boundaries",
+            "must_not_claim",
+        ],
+        "source_files_used": _source_files_used(workspace),
+        "known_context_mismatches": known_context_mismatches,
+    }
+
+
+def _existing_context_reboost_for_handoff(workspace: Path) -> dict[str, Any] | None:
+    handoff = _read_json(workspace / "external_executor" / "handoff_pack.json")
+    context = handoff.get("context_reboost") if isinstance(handoff, dict) else None
+    if not isinstance(context, dict):
+        return None
+    required = [
+        "project_goal",
+        "central_hypothesis",
+        "method_mechanism",
+        "required_baselines",
+        "baseline_matrix",
+        "claim_evidence_matrix",
+        "minimum_experiment_loop",
+        "iteration_budget",
+        "claim_boundaries",
+        "writer_handoff_contract",
+        "source_files_used",
+        "known_context_mismatches",
+    ]
+    if any(key not in context for key in required):
+        return None
+    mechanism = context.get("method_mechanism")
+    if not isinstance(mechanism, dict) or not mechanism.get("core_mechanism"):
+        return None
+    if not isinstance(context.get("baseline_matrix"), list):
+        return None
+    if not isinstance(context.get("claim_evidence_matrix"), list) or not context.get("claim_evidence_matrix"):
+        return None
+    copied = json.loads(json.dumps(context, ensure_ascii=False))
+    copied.setdefault("reboost_source", "external_executor/handoff_pack.json#context_reboost")
+    return copied
+
+
+def _build_method_intent(
+    *,
+    hypotheses: str,
+    exp_plan: dict[str, Any],
+    context_reboost: dict[str, Any],
+) -> dict[str, Any]:
+    experiments = _experiments_from_plan(exp_plan)
+    candidate_modules = []
+    for idx, exp in enumerate(experiments or [{}], start=1):
+        method = exp.get("our_method") if isinstance(exp, dict) else {}
+        if isinstance(method, str):
+            name = method
+            description = method
+        elif isinstance(method, dict):
+            name = str(method.get("name") or method.get("method_name") or f"candidate_module_{idx}")
+            description = str(method.get("description") or method.get("intended_role") or "")
+        else:
+            name = f"candidate_module_{idx}"
+            description = str(exp.get("description") or "") if isinstance(exp, dict) else ""
+        candidate_modules.append(
+            {
+                "module_id": f"M{idx}",
+                "name": name,
+                "intended_role": description or str(exp.get("description") or "external executor must refine this role"),
+                "expected_input": str(exp.get("dataset") or exp.get("input") or "dataset defined by exp_plan"),
+                "expected_output": "auditable metrics, raw results, logs, configs, and module attribution",
+                "why_it_may_help": _compact_text(str(exp.get("hypothesis_ref") or exp.get("rationale") or context_reboost.get("central_hypothesis") or "")),
+                "related_claim": str(exp.get("hypothesis_ref") or exp.get("name") or f"claim_{idx}"),
+                "planned_ablation": str(exp.get("ablation") or exp.get("planned_ablation") or "executor must define module-removal or replacement ablation"),
+            }
+        )
+    return {
+        "status": "draft_intent_only",
+        "not_final_method_source": True,
+        "central_mechanism_hypothesis": context_reboost.get("central_hypothesis") or _first_non_heading_line(hypotheses),
+        "candidate_modules": candidate_modules,
+        "expected_algorithm_flow": [
+            {
+                "step": idx,
+                "description": f"Implement and evaluate {module.get('name')}",
+                "related_module": module.get("module_id"),
+            }
+            for idx, module in enumerate(candidate_modules, start=1)
+        ],
+        "allowed_refinements": (context_reboost.get("method_mechanism") or {}).get("allowed_refinements", []),
+        "forbidden_silent_changes": [
+            "replace_core_mechanism",
+            "drop_required_baseline",
+            "change_task_or_benchmark",
+            "change_contribution_type_without_review",
+        ],
+        "mechanism_to_ablation_plan": [
+            {
+                "mechanism": module.get("name"),
+                "planned_test": module.get("planned_ablation"),
+                "expected_observation_if_supported": "module removal or replacement degrades the relevant audited metric",
+                "expected_observation_if_not_supported": "module removal has no meaningful effect or improves the metric",
+            }
+            for module in candidate_modules
+        ],
+        "initial_framework_figure_sketch": {
+            "status": "draft_intent_only",
+            "purpose": "guide implementation, not final paper figure",
+            "main_message": context_reboost.get("project_goal"),
+            "candidate_panels": ["problem/setup", "method modules", "experiment evidence"],
+            "candidate_nodes": [module.get("name") for module in candidate_modules],
+            "candidate_edges": ["data_flow", "module_dependency", "evidence_support"],
+            "must_not_be_used_directly_by_T8": True,
+        },
+    }
+
+
+def _first_non_heading_line(text: str) -> str:
+    for line in text.splitlines():
+        stripped = line.strip(" -*\t")
+        if stripped and not stripped.startswith("#"):
+            return stripped[:300]
+    return ""
+
+
+def _compact_text(text: str, *, limit: int = 300) -> str:
+    return re.sub(r"\s+", " ", text or "").strip()[:limit]
+
+
+def _section_hint(text: str, keys: list[str]) -> str:
+    lines = text.splitlines()
+    for idx, line in enumerate(lines):
+        lowered = line.lower()
+        if any(key.lower() in lowered for key in keys):
+            return "\n".join(lines[idx : idx + 6])
+    return ""
+
+
+def _extract_bullets(text: str, *, limit: int) -> list[str]:
+    items = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(("-", "*")):
+            item = stripped.lstrip("-* ").strip()
+            if item:
+                items.append(_compact_text(item, limit=180))
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _build_baseline_matrix(required_baselines: list[dict[str, Any]], exp_baselines: list[str]) -> list[dict[str, Any]]:
+    matrix: list[dict[str, Any]] = []
+    for idx, item in enumerate(required_baselines, start=1):
+        name = _baseline_name(item) or f"required_baseline_{idx}"
+        matrix.append(
+            {
+                "baseline_id": str(item.get("baseline_id") or f"required_baseline_{idx}") if isinstance(item, dict) else f"required_baseline_{idx}",
+                "baseline_name": name,
+                "priority": str(item.get("priority") or "must_run") if isinstance(item, dict) else "must_run",
+                "source": str(item.get("source") or "novelty_audit") if isinstance(item, dict) else "novelty_audit",
+                "reason_required": str(item.get("reason_required") or "required by novelty audit") if isinstance(item, dict) else "required by novelty audit",
+                "acceptable_substitute": item.get("acceptable_substitute") if isinstance(item, dict) else None,
+                "appears_in_exp_plan": name in exp_baselines,
+                "claim_risk_if_missing": (item.get("cannot_claim_without_it") if isinstance(item, dict) else None)
+                or ["outperforms prior work", "state-of-the-art", "strong empirical advantage"],
+            }
+        )
+    known_required = {_baseline_name(item) for item in required_baselines}
+    for idx, name in enumerate(exp_baselines, start=1):
+        if name in known_required:
+            continue
+        matrix.append(
+            {
+                "baseline_id": f"planned_baseline_{idx}",
+                "baseline_name": name,
+                "priority": "planned",
+                "source": "exp_plan",
+                "reason_required": "listed in exp_plan",
+                "acceptable_substitute": None,
+                "appears_in_exp_plan": True,
+                "claim_risk_if_missing": ["weaken comparative claims"],
+            }
+        )
+    return matrix
+
+
+def _build_claim_evidence_matrix(
+    exp_plan: dict[str, Any],
+    metrics: list[str],
+    required_baselines: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    experiments = _experiments_from_plan(exp_plan)
+    if not experiments:
+        experiments = [{"name": "minimum_loop", "metrics": metrics}]
+    required_names = [_baseline_name(item) for item in required_baselines if _baseline_name(item)]
+    rows = []
+    for idx, exp in enumerate(experiments, start=1):
+        exp_metrics = []
+        for metric in exp.get("metrics", []) or metrics:
+            if isinstance(metric, dict):
+                exp_metrics.append(str(metric.get("name") or metric.get("metric_id") or "metric"))
+            else:
+                exp_metrics.append(str(metric))
+        claim_id = str(exp.get("hypothesis_ref") or exp.get("claim_id") or exp.get("name") or f"claim_{idx}")
+        rows.append(
+            {
+                "claim_id": claim_id,
+                "claim_candidate": str(exp.get("description") or exp.get("name") or claim_id),
+                "reviewer_question": "Does the claimed mechanism improve the target metric under fair baseline and dataset conditions?",
+                "required_evidence": [
+                    "raw_result_file",
+                    "config_file",
+                    "log_file",
+                    "metric_provenance",
+                    "baseline_reproduction",
+                    "ablation_or_diagnostic_evidence",
+                ],
+                "metrics": exp_metrics,
+                "required_baselines": required_names,
+                "strong_claim_requires": [
+                    "all required baselines covered",
+                    "raw logs and configs indexed",
+                    "method audit pass",
+                    "non-mock execution",
+                ],
+                "weak_claim_when": [
+                    "baseline unavailable",
+                    "single dataset or seed only",
+                    "method drift is minor but documented",
+                    "diagnostic evidence only",
+                ],
+                "must_not_claim_when": [
+                    "mock_only",
+                    "missing metric source artifact",
+                    "major contribution drift",
+                    "required baseline silently dropped",
+                ],
+            }
+        )
+    return rows
+
+
+def _build_minimum_experiment_loop(exp_plan: dict[str, Any], metrics: list[str]) -> list[dict[str, Any]]:
+    experiments = _experiments_from_plan(exp_plan)
+    datasets = list(
+        dict.fromkeys(
+            str(exp.get("dataset") or exp.get("benchmark") or "dataset_from_exp_plan")
+            for exp in experiments
+        )
+    ) or ["dataset_from_exp_plan"]
+    return [
+        {"step": "context_alignment", "required_output": "result_pack.context_alignment"},
+        {"step": "resource_and_baseline_mining", "required_output": "result_pack.resources"},
+        {"step": "baseline_reproduction", "required_output": "result_pack.baseline_reproduction"},
+        {"step": "method_implementation", "required_output": "result_pack.realized_method_package"},
+        {
+            "step": "smoke_small_formal_runs",
+            "datasets": datasets,
+            "metrics": metrics,
+            "required_output": "result_pack.experiment_runs",
+        },
+        {"step": "diagnosis_and_attribution", "required_output": "result_pack.result_diagnosis/module_attribution"},
+        {"step": "writer_handoff", "required_output": "result_pack.writer_handoff"},
+    ]
+
+
+def _claim_boundaries_from_context(
+    novelty_audit: str,
+    risks: str,
+    required_baselines: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    boundaries = [
+        {
+            "boundary": "No strong comparative claim without required baseline coverage.",
+            "source": "required_baselines",
+            "affected_claims": ["state-of-the-art", "outperforms prior work", "strong empirical advantage"],
+        },
+        {
+            "boundary": "T5 method_intent is not final Method; T8 must use audited realized_method_package.",
+            "source": "external_executor_design",
+            "affected_claims": ["method definition", "framework figure"],
+        },
+    ]
+    if "must not" in novelty_audit.lower() or "不能" in novelty_audit:
+        boundaries.append(
+            {
+                "boundary": "Novelty audit contains explicit must-not-claim language; preserve it in result pack and T7 claims.",
+                "source": "novelty_audit",
+                "affected_claims": ["novelty", "contribution"],
+            }
+        )
+    if risks.strip():
+        boundaries.append(
+            {
+                "boundary": _compact_text(risks, limit=240),
+                "source": "ideation/risks.md",
+                "affected_claims": ["limitations", "scope"],
+            }
+        )
+    if not required_baselines:
+        boundaries.append(
+            {
+                "boundary": "No mandatory baseline was extracted; executor must document baseline limitations before strong claims.",
+                "source": "handoff_compiler",
+                "affected_claims": ["comparative performance"],
+            }
+        )
+    return boundaries
+
+
+def _build_expected_outputs_schema() -> dict[str, Any]:
+    return {
+        "version": "1.0",
+        "schema_version": "external_executor_result_pack.v1",
+        "semantics": "expected_external_executor_outputs_schema",
+        "required": EXTERNAL_RESULT_REQUIRED_FIELDS,
+        "required_files": [
+            "external_executor/result_pack.json",
+            "external_executor/executor_status.json",
+            "external_executor/run_manifest.json",
+            "external_executor/raw_results/",
+            "external_executor/configs/",
+            "external_executor/logs/",
+        ],
+        "metric_required": ["metric_id", "name", "value", "source_artifact", "dataset", "seed"],
+        "artifact_required": ["path", "kind", "role", "sha256"],
+        "status_required": ["semantics", "run_id", "status", "accepted", "dry_run", "mock_only"],
+        "run_manifest_required": ["semantics", "run_id", "executor", "raw_results", "configs", "logs", "artifacts"],
+        "field_semantics": {
+            "method_intent": "T5 draft intent only; never final method source.",
+            "realized_method_package": "External executor's implemented method package after runs and diagnosis.",
+            "final_framework_figure": "Framework figure candidate that T7 must audit before T8 use.",
+            "writer_handoff": "Structured method/experiment/figure handoff for T7 and T8.",
+        },
+    }
 
 
 def _executor_selection_payload(workspace: Path) -> tuple[dict[str, Any], str]:
@@ -253,7 +943,7 @@ def build_executor_selection_payload(
     notes: str = "",
 ) -> dict[str, Any]:
     real_allowed = selected_executor != "mock_dry_run"
-    requires_copy = selected_executor in {"claude_code_window", "manual"}
+    requires_copy = selected_executor in {"codex_cli", "claude_code_window", "manual"}
     next_state = "T5-DRY-RUN" if selected_executor == "mock_dry_run" else "T5-EXTERNAL-WAIT"
     payload: dict[str, Any] = {
         "version": "1.0",
@@ -272,6 +962,16 @@ def build_executor_selection_payload(
     if selected_executor == "codex_cli":
         payload["prompt_file"] = "external_executor/codex_prompt.md"
         payload["allowed_workdir"] = "external_executor/workdir"
+        payload["workspace_relative_workdir"] = "external_executor/workdir"
+        payload["workspace_relative_prompt"] = "external_executor/codex_prompt.md"
+        payload["launch_instruction"] = (
+            "On the host, enter <workspace>/external_executor/workdir, start Codex CLI, "
+            "and ask it to read external_executor/AGENTS.md and execute the project skill pack."
+        )
+        payload["resume_instruction"] = (
+            "After Codex writes external_executor/result_pack.json, executor_status.json, "
+            "and run_manifest.json, run: python -m researchos.cli resume --workspace <workspace>"
+        )
     if selected_executor == "manual":
         payload["prompt_to_copy"] = "external_executor/manual_instructions.md"
     return payload
@@ -374,6 +1074,9 @@ def validate_external_executor_ready(
         issues.append("result_pack semantics invalid")
     if status.get("semantics") != "external_executor_status":
         issues.append("executor_status semantics invalid")
+    missing_required_fields = [field for field in EXTERNAL_RESULT_REQUIRED_FIELDS if field not in result_pack]
+    if missing_required_fields:
+        issues.append("result_pack missing required fields: " + ", ".join(missing_required_fields))
     if selection.get("semantics") != "external_executor_selection" or not selected_executor:
         issues.append("executor_selection.json missing or semantics invalid")
     else:
@@ -396,7 +1099,7 @@ def validate_external_executor_ready(
     if status.get("accepted") is True:
         issues.append("executor_status.accepted cannot be true; external executor done is not ResearchOS accepted")
     current_state = status.get("current_state") or status.get("status")
-    allowed_terminal_states = {"done", "COMPLETED"}
+    allowed_terminal_states = {"done", "COMPLETED", "completed"}
     if allow_partial_results:
         allowed_terminal_states.add("PARTIAL_RESULTS_READY")
     if current_state not in allowed_terminal_states:
@@ -444,10 +1147,10 @@ def validate_external_executor_ready(
         if path.exists() and path.is_file() and _sha256(path) != expected_hash:
             issues.append(f"artifact hash mismatch: {rel_path}")
     if not result_pack.get("mock_only"):
-        runs = result_pack.get("runs")
+        runs = result_pack.get("experiment_runs") or result_pack.get("runs")
         manifest_runs = manifest.get("runs")
         if not isinstance(runs, list) or not runs:
-            issues.append("real result_pack must include non-empty runs")
+            issues.append("real result_pack must include non-empty experiment_runs/runs")
         if not isinstance(manifest_runs, list) or not manifest_runs:
             issues.append("real run_manifest.runs must be non-empty")
     if issues:
@@ -568,6 +1271,8 @@ def _write_external_executor_guides(
         + common_header
         + "## Role\n"
         "You are an external experiment executor for ResearchOS. You are not the paper writer and not the ResearchOS runtime.\n\n"
+        "## Start command\n"
+        "Read this file, then execute `external_executor/skills/research_execution/SKILL.md`.\n\n"
         "## This experiment in one line\n"
         f"{handoff.get('experiment_intent_oneliner')}\n\n"
         "## Read first\n"
@@ -575,10 +1280,13 @@ def _write_external_executor_guides(
         "2. external_executor/expected_outputs_schema.json\n"
         "3. external_executor/allowed_paths.txt\n"
         "4. external_executor/executor_selection.json\n"
-        "5. novelty/required_baselines.json\n"
-        "6. resources/baseline_candidates.jsonl\n"
-        "7. literature/baseline_map.json\n"
-        "8. ideation/novelty_audit.md\n\n"
+        "5. external_executor/skills/template_manifest.json\n"
+        "6. novelty/required_baselines.json\n"
+        "7. resources/baseline_candidates.jsonl\n"
+        "8. literature/baseline_map.json\n"
+        "9. ideation/novelty_audit.md\n\n"
+        "## Human-provided experiment materials\n"
+        "Inspect `external_executor/expr/` before real execution. This directory is the gate where the user places datasets, baseline models, repositories, weights, and material notes.\n\n"
         "## Metrics you must report\n"
         f"{metrics_block}\n\n"
         "## Required baselines\n"
@@ -635,6 +1343,8 @@ def _write_external_executor_guides(
         "| `handoff_pack.json` | T5 编译的实验任务、协议、证据契约和 allowed paths。 |\n"
         "| `expected_outputs_schema.json` | 外部执行器必须写回的 result pack/status/manifest schema。 |\n"
         "| `allowed_paths.txt` | 外部执行器可读写路径边界。 |\n"
+        "| `skills/` | Copied external executor skill templates; T5-SKILL-CUSTOMIZATION-GATE customizes them into a project-specific suite before execution. |\n"
+        "| `expr/` | Human-provided experimental materials gate directory. |\n"
         "| `result_pack.json` | 外部执行器写回的核心结果包，T7 只从这里摄取实验结果。 |\n"
         "| `executor_status.json` | 外部执行器状态、accepted/mock/dry-run 标记。 |\n"
         "| `run_manifest.json` | 运行记录、raw/config/log 路径和 provenance。 |\n\n"
@@ -680,6 +1390,125 @@ def _write_external_executor_guides(
             json.dumps({"time": _now_iso(), "state": "CREATED", "message": "Handoff files generated."}, ensure_ascii=False)
             + "\n",
             encoding="utf-8",
+        )
+
+
+def _copy_skill_templates_for_customization(policy: WorkspaceAccessPolicy, handoff: dict[str, Any]) -> None:
+    """Copy repository-level skill templates into this workspace.
+
+    T5 stages the generic templates after context re-boost. The project
+    specific rewrite is then performed by the automatic LLM API
+    T5-SKILL-CUSTOMIZATION-GATE task.
+    """
+
+    repo_root = Path(__file__).resolve().parents[2]
+    support_root = repo_root / "skills"
+    template_root = repo_root / EXTERNAL_EXECUTOR_SKILL_TEMPLATE_ROOT
+    skills_dir = policy.workspace_dir / "external_executor" / "skills"
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    copied: list[dict[str, Any]] = []
+    missing: list[str] = []
+    shared_source = support_root / "shared-references"
+    shared_destination = skills_dir / "shared-references"
+    if shared_source.is_dir():
+        if shared_destination.exists():
+            shutil.rmtree(shared_destination)
+        shutil.copytree(shared_source, shared_destination)
+    for skill_name in SKILL_SUITE:
+        template_dir = template_root / skill_name
+        template_file = template_dir / "SKILL.md"
+        destination_dir = skills_dir / skill_name
+        destination_file = destination_dir / "SKILL.md"
+        if not template_file.is_file():
+            missing.append(str(template_file.relative_to(repo_root)))
+            continue
+        if destination_dir.exists():
+            shutil.rmtree(destination_dir)
+        shutil.copytree(template_dir, destination_dir)
+        copied.append(
+            {
+                "skill": skill_name,
+                "source": template_file.relative_to(repo_root).as_posix(),
+                "destination": destination_file.relative_to(policy.workspace_dir).as_posix(),
+                "sha256": _sha256(destination_file),
+            }
+        )
+    if missing:
+        raise FileNotFoundError("missing repository skill templates: " + ", ".join(missing))
+    controller_source = support_root / SKILL_CUSTOMIZATION_CONTROLLER
+    controller_file = controller_source / "SKILL.md"
+    controller_destination = skills_dir / SKILL_CUSTOMIZATION_CONTROLLER
+    controller_destination_file = controller_destination / "SKILL.md"
+    if not controller_file.is_file():
+        raise FileNotFoundError(
+            "missing repository skill template: "
+            + str(controller_file.relative_to(repo_root))
+        )
+    if controller_destination.exists():
+        shutil.rmtree(controller_destination)
+    shutil.copytree(controller_source, controller_destination)
+    _write_json(
+        policy.resolve_write("external_executor/skills/template_manifest.json"),
+        {
+            "version": "1.0",
+            "semantics": "external_executor_skill_template_manifest",
+            "created_at": _now_iso(),
+            "handoff_pack": "external_executor/handoff_pack.json",
+            "template_root": EXTERNAL_EXECUTOR_SKILL_TEMPLATE_ROOT,
+            "support_root": "skills",
+            "destination_root": "external_executor/skills",
+            "shared_references": (
+                shared_destination.relative_to(policy.workspace_dir).as_posix()
+                if shared_destination.exists()
+                else None
+            ),
+            "customization_required": True,
+            "customization_task": "T5-SKILL-CUSTOMIZATION-GATE",
+            "customization_skill": {
+                "skill": SKILL_CUSTOMIZATION_CONTROLLER,
+                "source": controller_file.relative_to(repo_root).as_posix(),
+                "destination": controller_destination_file.relative_to(policy.workspace_dir).as_posix(),
+                "sha256": _sha256(controller_destination_file),
+                "instruction": (
+                    "ResearchOS runs T5-SKILL-CUSTOMIZATION-GATE to apply this guide via the configured LLM API."
+                ),
+            },
+            "run_instruction": "python -m researchos.cli run-task T5-SKILL-CUSTOMIZATION-GATE --workspace <workspace>",
+            "report_path": "external_executor/skills/customization_report.json",
+            "copied_skills": copied,
+        },
+    )
+
+
+def _write_expr_materials_scaffold(policy: WorkspaceAccessPolicy, handoff: dict[str, Any]) -> None:
+    expr_dir = policy.workspace_dir / "external_executor" / "expr"
+    expr_dir.mkdir(parents=True, exist_ok=True)
+    checklist = {
+        "version": "1.0",
+        "semantics": "external_executor_expr_materials_checklist",
+        "created_at": _now_iso(),
+        "purpose": "Place human-provided experimental materials here before selecting a real external executor.",
+        "expected_materials": [
+            "datasets or dataset access instructions",
+            "baseline model repositories or paths",
+            "pretrained weights or download notes",
+            "environment constraints and credentials notes without secrets",
+            "README describing material provenance",
+        ],
+        "required_baselines": handoff.get("required_baselines", []),
+        "minimum_experiment_loop": (handoff.get("context_reboost") or {}).get("minimum_experiment_loop", []),
+        "next_step": "After materials are ready, resume ResearchOS and select an external executor.",
+    }
+    checklist_path = expr_dir / "MATERIALS_CHECKLIST.json"
+    if not checklist_path.exists():
+        _write_json(checklist_path, checklist)
+    readme_path = expr_dir / "README.md"
+    if not readme_path.exists():
+        _write_text(
+            readme_path,
+            "# External Experiment Materials\n\n"
+            "Place baseline models, datasets, repositories, pretrained weights, and material notes here.\n"
+            "Do not commit secrets. After materials are ready, resume ResearchOS and choose Codex CLI, Claude Code, manual, or mock dry-run.\n",
         )
 
 
@@ -735,8 +1564,37 @@ def _baseline_coverage_from_metrics(
     }
 
 
+def _metrics_object(metrics: list[Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for idx, metric in enumerate(metrics, start=1):
+        if not isinstance(metric, dict):
+            continue
+        metric_id = str(metric.get("metric_id") or f"metric_{idx}")
+        out[metric_id] = {key: value for key, value in metric.items() if key != "metric_id"}
+    return out
+
+
+def _summary_metric_records(summary: dict[str, Any]) -> list[dict[str, Any]]:
+    records = summary.get("metric_records")
+    if isinstance(records, list):
+        return [item for item in records if isinstance(item, dict)]
+    metrics = summary.get("metrics")
+    if isinstance(metrics, list):
+        return [item for item in metrics if isinstance(item, dict)]
+    if isinstance(metrics, dict):
+        out = []
+        for metric_id, payload in metrics.items():
+            if isinstance(payload, dict):
+                item = dict(payload)
+                item.setdefault("metric_id", str(metric_id))
+                out.append(item)
+        return out
+    return []
+
+
 def _format_fairness_review(audit: dict[str, Any]) -> str:
     coverage = audit.get("required_baseline_coverage") or {}
+    result_audit = audit.get("result_audit") or {}
     return (
         "# Experiment Fairness Review\n\n"
         "This is a deterministic scaffold. LLM/human reviewers should inspect fairness before strong claims.\n\n"
@@ -744,7 +1602,340 @@ def _format_fairness_review(audit: dict[str, Any]) -> str:
         f"- evidence_grade: {audit.get('evidence_grade')}\n"
         f"- baseline_coverage_status: {coverage.get('status')}\n"
         f"- missing_baselines: {', '.join(coverage.get('missing_baselines', []) or []) or 'none'}\n"
+        f"- metric_provenance_status: {(result_audit.get('metric_provenance') or {}).get('status')}\n"
+        f"- mock_dry_run_status: {(result_audit.get('mock_dry_run') or {}).get('status')}\n"
     )
+
+
+def _indexed_paths(evidence: dict[str, Any]) -> set[str]:
+    paths: set[str] = set()
+    for item in evidence.get("artifacts", []) or []:
+        if isinstance(item, dict) and item.get("path"):
+            paths.add(str(item["path"]))
+    for key in ("raw_result_files", "config_files", "log_files", "patch_files", "figure_files", "table_files"):
+        for item in evidence.get(key, []) or []:
+            if isinstance(item, str):
+                paths.add(item)
+    return paths
+
+
+def _metric_ref(metric: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = metric.get(key)
+        if isinstance(value, str) and value:
+            return value
+        if isinstance(value, list) and value:
+            return str(value[0])
+    return ""
+
+
+def _build_result_audit(
+    *,
+    workspace: Path,
+    summary: dict[str, Any],
+    evidence: dict[str, Any],
+    baseline_coverage: dict[str, Any],
+) -> dict[str, Any]:
+    metric_records = _summary_metric_records(summary)
+    indexed_paths = _indexed_paths(evidence)
+    metric_issues: list[dict[str, Any]] = []
+    audited_metric_ids: list[str] = []
+    raw_result_files = set(evidence.get("raw_result_files") or [])
+    config_files = set(evidence.get("config_files") or [])
+    log_files = set(evidence.get("log_files") or [])
+    for metric in metric_records:
+        if not isinstance(metric, dict):
+            continue
+        metric_id = str(metric.get("metric_id") or metric.get("name") or "<unknown>")
+        source_artifact = _metric_ref(metric, "source_artifact", "raw_result", "raw_result_ref")
+        config_ref = _metric_ref(metric, "config", "config_path", "config_ref")
+        log_ref = _metric_ref(metric, "log", "log_path", "log_ref")
+        seed = metric.get("seed")
+        split = metric.get("dataset_split") or metric.get("split")
+        metric_direction = metric.get("metric_direction") or metric.get("direction")
+        metric_ok = True
+        checks = [
+            ("missing_source_artifact", source_artifact, raw_result_files),
+            ("missing_config_ref", config_ref, config_files),
+            ("missing_log_ref", log_ref, log_files),
+        ]
+        for code, rel_path, expected_group in checks:
+            if not rel_path:
+                metric_ok = False
+                metric_issues.append({"level": "FAIL", "code": code, "metric_id": metric_id})
+                continue
+            if rel_path not in indexed_paths and rel_path not in expected_group:
+                metric_ok = False
+                metric_issues.append({"level": "FAIL", "code": code + "_not_indexed", "metric_id": metric_id, "path": rel_path})
+            elif not (workspace / rel_path).exists():
+                metric_ok = False
+                metric_issues.append({"level": "FAIL", "code": code + "_missing_on_disk", "metric_id": metric_id, "path": rel_path})
+        if seed in {None, ""}:
+            metric_ok = False
+            metric_issues.append({"level": "WARN", "code": "missing_seed", "metric_id": metric_id})
+        if not split:
+            metric_ok = False
+            metric_issues.append({"level": "WARN", "code": "missing_split", "metric_id": metric_id})
+        if not metric_direction:
+            metric_ok = False
+            metric_issues.append({"level": "WARN", "code": "missing_metric_direction", "metric_id": metric_id})
+        if metric_ok:
+            audited_metric_ids.append(metric_id)
+
+    figure_issues: list[dict[str, Any]] = []
+    inventory = evidence.get("figure_table_inventory")
+    inventory_items: list[dict[str, Any]] = []
+    if isinstance(inventory, dict):
+        for key in ("figures", "tables"):
+            inventory_items.extend(item for item in inventory.get(key, []) or [] if isinstance(item, dict))
+    elif isinstance(inventory, list):
+        inventory_items = [item for item in inventory if isinstance(item, dict)]
+    for item in inventory_items:
+        item_id = str(item.get("figure_id") or item.get("table_id") or item.get("id") or "<unknown>")
+        evidence_refs = _coerce_str_list(item.get("evidence_refs"))
+        source_result = str(item.get("source_result") or item.get("source_artifact") or "")
+        if source_result:
+            evidence_refs.append(source_result)
+        if not evidence_refs:
+            figure_issues.append({"level": "WARN", "code": "figure_table_missing_source", "id": item_id})
+        elif not any(ref in indexed_paths for ref in evidence_refs):
+            figure_issues.append({"level": "WARN", "code": "figure_table_source_not_indexed", "id": item_id})
+
+    mock_status = "mock_only" if summary.get("mock_only") or summary.get("dry_run") else "pass"
+    cherry_pick_status = "warn" if any(run.get("status") in {"failed", "partial"} for run in summary.get("experiment_runs", []) or [] if isinstance(run, dict)) else "pass"
+    baseline_status = baseline_coverage.get("status") or "unknown"
+    status = "fail" if any(issue.get("level") == "FAIL" for issue in metric_issues) else ("mock_only" if mock_status == "mock_only" else "pass")
+    return {
+        "version": "1.0",
+        "semantics": "external_experiment_result_audit",
+        "status": status,
+        "baseline_fairness": {
+            "status": baseline_status,
+            "missing_baselines": baseline_coverage.get("missing_baselines", []) or [],
+            "claim_blocks": baseline_coverage.get("claim_blocks", []) or [],
+        },
+        "metric_provenance": {
+            "status": "fail" if any(issue.get("level") == "FAIL" for issue in metric_issues) else ("warn" if metric_issues else "pass"),
+            "audited_metric_ids": audited_metric_ids,
+            "issues": metric_issues,
+        },
+        "raw_log_config": {
+            "raw_result_count": len(raw_result_files),
+            "config_count": len(config_files),
+            "log_count": len(log_files),
+        },
+        "seed_split_consistency": {
+            "status": "warn" if any(issue.get("code") in {"missing_seed", "missing_split"} for issue in metric_issues) else "pass"
+        },
+        "mock_dry_run": {"status": mock_status, "dry_run": bool(summary.get("dry_run")), "mock_only": bool(summary.get("mock_only"))},
+        "cherry_pick": {"status": cherry_pick_status},
+        "result_figure_provenance": {
+            "status": "warn" if figure_issues else "pass",
+            "issues": figure_issues,
+        },
+    }
+
+
+def _build_method_and_figure_audits(
+    *,
+    workspace: Path,
+    summary: dict[str, Any],
+    evidence: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    handoff = _read_json(workspace / "external_executor" / "handoff_pack.json")
+    method_intent = handoff.get("method_intent") if isinstance(handoff.get("method_intent"), dict) else {}
+    realized = evidence.get("realized_method_package") if isinstance(evidence.get("realized_method_package"), dict) else {}
+    figure = evidence.get("final_framework_figure") if isinstance(evidence.get("final_framework_figure"), dict) else {}
+    inventory = evidence.get("figure_table_inventory") if isinstance(evidence.get("figure_table_inventory"), dict) else {}
+    issues: list[dict[str, Any]] = []
+    if not method_intent:
+        issues.append({"level": "FAIL", "code": "missing_method_intent", "detail": "handoff_pack.method_intent missing"})
+    elif method_intent.get("status") != "draft_intent_only" or method_intent.get("not_final_method_source") is not True:
+        issues.append({"level": "FAIL", "code": "method_intent_not_marked_draft", "detail": "T5 method intent must be draft-only"})
+    if not realized:
+        issues.append({"level": "FAIL", "code": "missing_realized_method_package", "detail": "result_pack.realized_method_package missing"})
+    elif realized.get("status") in {"mock_only", "missing"} or summary.get("mock_only"):
+        issues.append({"level": "WARN", "code": "realized_method_mock_only", "detail": "mock/dry-run method package is not a final Method source"})
+    intent_modules = {
+        str(item.get("module_id") or item.get("name") or "")
+        for item in method_intent.get("candidate_modules", []) or []
+        if isinstance(item, dict)
+    }
+    realized_module_items = realized.get("implemented_modules")
+    if not isinstance(realized_module_items, list):
+        realized_module_items = realized.get("modules", []) or []
+    realized_module_items = [item for item in realized_module_items if isinstance(item, dict)]
+    realized_modules = {
+        str(item.get("module_id") or item.get("name") or "")
+        for item in realized_module_items
+        if isinstance(item, dict)
+    }
+    missing_modules = sorted(item for item in intent_modules if item and item not in realized_modules)
+    if missing_modules and not summary.get("mock_only"):
+        issues.append({"level": "WARN", "code": "intent_modules_not_realized", "detail": ", ".join(missing_modules)})
+    code_path_issues = []
+    for module in realized_module_items:
+        module_id = str(module.get("module_id") or module.get("name") or "<unknown>")
+        code_paths = _coerce_str_list(module.get("code_paths") or module.get("code_refs") or module.get("code_path"))
+        if not code_paths:
+            code_path_issues.append(module_id)
+            continue
+        for rel_path in code_paths:
+            if rel_path.startswith("external_executor/") and not (workspace / rel_path).exists():
+                code_path_issues.append(module_id + ":" + rel_path)
+    if code_path_issues and not summary.get("mock_only"):
+        issues.append({"level": "WARN", "code": "realized_modules_missing_code_paths", "detail": ", ".join(code_path_issues)})
+    module_attribution = evidence.get("module_attribution") if isinstance(evidence.get("module_attribution"), dict) else {}
+    ablation_matches_modules = bool(module_attribution) and not code_path_issues
+    scope_changes = summary.get("scope_change_requests") or evidence.get("scope_change_requests") or []
+    contribution_drift = "none"
+    if any(item.get("level") == "FAIL" for item in issues) or scope_changes:
+        contribution_drift = "major"
+    elif any(item.get("level") == "WARN" for item in issues) or missing_modules:
+        contribution_drift = "minor"
+    required_action = "none"
+    if contribution_drift == "major":
+        required_action = "human_review"
+    elif contribution_drift == "minor":
+        required_action = "narrow_claim"
+    method_consistency_audit = {
+        "method_intent_matches_realized_method": bool(method_intent) and bool(realized) and not missing_modules,
+        "realized_method_matches_code": bool(realized) and not code_path_issues,
+        "framework_figure_matches_code": "pending_framework_audit",
+        "ablation_matches_modules": ablation_matches_modules,
+        "contribution_drift": contribution_drift,
+        "requires_post_novelty_check": contribution_drift in {"minor", "major"} or bool(scope_changes),
+        "required_action": required_action,
+    }
+    method_audit = {
+        "version": "1.0",
+        "semantics": "external_method_intent_vs_realized_audit",
+        "status": "fail" if any(item.get("level") == "FAIL" for item in issues) else ("mock_only" if summary.get("mock_only") else "pass"),
+        "contribution_drift": contribution_drift,
+        "method_consistency_audit": method_consistency_audit,
+        "method_intent_status": method_intent.get("status"),
+        "realized_method_status": realized.get("status"),
+        "missing_intent_modules": missing_modules,
+        "missing_or_invalid_code_paths": code_path_issues,
+        "scope_change_requests": scope_changes,
+        "issues": issues,
+        "method_intent_ref": "external_executor/handoff_pack.json#method_intent",
+        "realized_method_ref": "external_executor/result_pack.json#realized_method_package",
+    }
+    figure_issues: list[dict[str, Any]] = []
+    figure_path = str(figure.get("path") or "") if figure else ""
+    if not figure:
+        figure_issues.append({"level": "FAIL", "code": "missing_final_framework_figure", "detail": "result_pack.final_framework_figure missing"})
+    elif figure.get("status") in {"mock_only", "missing"} or summary.get("mock_only"):
+        figure_issues.append({"level": "WARN", "code": "framework_figure_mock_only", "detail": "mock/dry-run figure cannot be used by T8"})
+    elif figure_path and not (workspace / figure_path).exists():
+        figure_issues.append({"level": "FAIL", "code": "framework_figure_missing_on_disk", "detail": figure_path})
+    figure_nodes = figure.get("nodes") if isinstance(figure.get("nodes"), list) else []
+    missing_figure_modules: list[str] = []
+    missing_figure_code_refs: list[str] = []
+    for node in figure_nodes:
+        if not isinstance(node, dict):
+            continue
+        module_id = str(node.get("module_id") or "").strip()
+        if module_id and realized_modules and module_id not in realized_modules:
+            missing_figure_modules.append(module_id)
+        for rel_path in _coerce_str_list(node.get("code_refs") or node.get("code_path")):
+            if rel_path.startswith("external_executor/") and not (workspace / rel_path).exists():
+                missing_figure_code_refs.append(rel_path)
+    if missing_figure_modules:
+        figure_issues.append({"level": "FAIL", "code": "figure_node_not_implemented", "detail": ", ".join(sorted(set(missing_figure_modules)))})
+    if missing_figure_code_refs:
+        figure_issues.append({"level": "WARN", "code": "figure_code_ref_missing_on_disk", "detail": ", ".join(sorted(set(missing_figure_code_refs)))})
+    evidence_mapping = figure.get("evidence_mapping") if isinstance(figure.get("evidence_mapping"), list) else []
+    if figure_nodes and not evidence_mapping and not summary.get("mock_only"):
+        figure_issues.append({"level": "WARN", "code": "framework_figure_missing_evidence_mapping", "detail": "figure nodes lack evidence_mapping"})
+    inventory_figures = inventory.get("figures") if isinstance(inventory.get("figures"), list) else []
+    if figure_path and inventory_figures:
+        inv_paths = {str(item.get("path") or "") for item in inventory_figures if isinstance(item, dict)}
+        if figure_path not in inv_paths:
+            figure_issues.append({"level": "WARN", "code": "framework_figure_not_in_inventory", "detail": figure_path})
+    framework_matches_code = bool(figure) and not any(item.get("level") == "FAIL" for item in figure_issues)
+    method_consistency_audit["framework_figure_matches_code"] = framework_matches_code
+    framework_audit = {
+        "version": "1.0",
+        "semantics": "external_framework_figure_audit",
+        "status": "fail" if any(item.get("level") == "FAIL" for item in figure_issues) else ("mock_only" if summary.get("mock_only") else "pass"),
+        "figure_ref": "external_executor/result_pack.json#final_framework_figure",
+        "figure_path": figure_path or None,
+        "consistent_with_realized_method": False if summary.get("mock_only") else framework_matches_code,
+        "implemented_module_ids": sorted(item for item in realized_modules if item),
+        "figure_module_ids": sorted(
+            str(node.get("module_id"))
+            for node in figure_nodes
+            if isinstance(node, dict) and node.get("module_id")
+        ),
+        "missing_figure_modules": sorted(set(missing_figure_modules)),
+        "missing_figure_code_refs": sorted(set(missing_figure_code_refs)),
+        "issues": figure_issues,
+    }
+    return method_audit, framework_audit
+
+
+def _format_method_writing_resources(
+    *,
+    summary: dict[str, Any],
+    evidence: dict[str, Any],
+    audit: dict[str, Any],
+) -> dict[str, Any]:
+    method_audit = audit.get("method_audit") or {}
+    framework_audit = audit.get("framework_figure_audit") or {}
+    realized = evidence.get("realized_method_package") or {}
+    figure = evidence.get("final_framework_figure") or {}
+    method_consistency = method_audit.get("method_consistency_audit") or {}
+    implemented_modules = realized.get("implemented_modules") if isinstance(realized.get("implemented_modules"), list) else realized.get("modules", [])
+    implemented_modules = implemented_modules if isinstance(implemented_modules, list) else []
+    algorithm_flow = realized.get("actual_algorithm_flow") if isinstance(realized.get("actual_algorithm_flow"), list) else []
+    ablation_mapping = []
+    module_attribution = evidence.get("module_attribution") if isinstance(evidence.get("module_attribution"), dict) else {}
+    for key in ("ours_effective_modules", "ours_weak_modules", "mechanism_supported", "mechanism_not_supported"):
+        for item in module_attribution.get(key, []) or []:
+            ablation_mapping.append({"source": key, "item": item})
+    wrapper = {
+        "method_overview": realized.get("one_sentence_method") or realized.get("final_method_name") or "",
+        "realized_method_package": realized,
+        "module_graph": implemented_modules,
+        "algorithm_flow": algorithm_flow,
+        "final_framework_figure": figure,
+        "caption_draft": figure.get("caption_draft") if isinstance(figure, dict) else "",
+        "symbol_table": realized.get("symbol_table") if isinstance(realized.get("symbol_table"), list) else [],
+        "ablation_mapping": ablation_mapping,
+        "implementation_notes": realized.get("implementation_notes") if isinstance(realized.get("implementation_notes"), list) else [],
+        "method_consistency_audit": method_consistency,
+        "do_not_claim": [
+            "Do not use T5 method_intent as final Method.",
+            "Do not use external executor prose without audited evidence.",
+        ]
+        + (["Do not use mock/dry-run method or figure as paper evidence."] if summary.get("mock_only") else [])
+        + (["Do not use final framework figure until framework audit passes."] if framework_audit.get("status") != "pass" else []),
+    }
+    return {
+        "version": "1.0",
+        "semantics": "audited_method_writing_resources",
+        "source": "external_executor",
+        "dry_run": bool(summary.get("dry_run")),
+        "mock_only": bool(summary.get("mock_only")),
+        "use_realized_method_package": method_audit.get("status") == "pass",
+        "use_framework_figure": framework_audit.get("status") == "pass",
+        "contribution_drift": method_audit.get("contribution_drift", "unknown"),
+        "method_writing_resources": wrapper,
+        "realized_method_package": realized,
+        "final_framework_figure": figure,
+        "figure_table_inventory": evidence.get("figure_table_inventory") or {},
+        "writer_handoff": evidence.get("writer_handoff") or {},
+        "method_audit_ref": "experiments/method_audit.json",
+        "framework_figure_audit_ref": "experiments/framework_figure_audit.json",
+        "method_consistency_audit": method_consistency,
+        "must_not_use": [
+            "T5 method_intent as final Method",
+            "external executor natural language without raw evidence",
+        ]
+        + (["mock/dry-run method or figure as paper evidence"] if summary.get("mock_only") else []),
+    }
 
 
 def _forbidden_wording(summary: dict[str, Any], baseline_missing: bool) -> list[str]:
@@ -932,6 +2123,13 @@ class BuildExperimentHandoffPackTool(Tool):
             project = _read_yaml(ws / "project.yaml")
             exp_plan = _read_yaml(ws / "ideation" / "exp_plan.yaml")
             hypotheses = (ws / "ideation" / "hypotheses.md").read_text(encoding="utf-8", errors="replace") if (ws / "ideation" / "hypotheses.md").exists() else ""
+            synthesis = _read_text(ws / "literature" / "synthesis.md", max_chars=12000)
+            novelty_audit, novelty_source = _first_existing_text(
+                ws,
+                ["novelty/novelty_audit.md", "ideation/novelty_audit.md"],
+                max_chars=12000,
+            )
+            risks = _read_text(ws / "ideation" / "risks.md", max_chars=6000)
             metrics = _extract_exp_plan_metrics(exp_plan)
             seeds = _extract_exp_plan_seeds(project)
             required_baselines = _extract_required_baselines(ws)
@@ -945,20 +2143,30 @@ class BuildExperimentHandoffPackTool(Tool):
                         "required_baselines": required_baselines,
                     },
                 )
-            source_artifacts = [
-                _artifact_record(ws, "project.yaml", role="project"),
-                _artifact_record(ws, "ideation/hypotheses.md", role="hypotheses"),
-                _artifact_record(ws, "ideation/exp_plan.yaml", role="experiment_plan"),
-                _artifact_record(ws, "ideation/novelty_audit.md", role="novelty_audit"),
-                _artifact_record(ws, "novelty/required_baselines.json", role="required_baselines"),
-                _artifact_record(ws, "resources/baseline_candidates.jsonl", role="baseline_candidates"),
-                _artifact_record(ws, "literature/baseline_map.json", role="baseline_map"),
-                _artifact_record(ws, "literature/synthesis.md", role="literature_synthesis"),
-                _artifact_record(ws, "literature/comparison_table.csv", role="comparison_table"),
-            ]
+            source_artifacts = _source_artifacts(ws)
+            source_artifacts.append(_artifact_record(ws, "novelty/required_baselines.json", role="required_baselines"))
+            context_reboost = _existing_context_reboost_for_handoff(ws) or _build_context_reboost(
+                workspace=ws,
+                project=project,
+                exp_plan=exp_plan,
+                hypotheses=hypotheses,
+                synthesis=synthesis,
+                novelty_audit=novelty_audit,
+                novelty_source=novelty_source,
+                risks=risks,
+                required_baselines=required_baselines,
+                metrics=metrics,
+            )
+            method_intent = _build_method_intent(
+                hypotheses=hypotheses,
+                exp_plan=exp_plan,
+                context_reboost=context_reboost,
+            )
+            host_workspace = workspace_host_hint(ws)
+            host_workdir = str(Path(host_workspace) / "external_executor" / "workdir") if host_workspace else ""
             handoff = {
                 "version": "1.0",
-                "schema_version": "v3.1",
+                "schema_version": "external_executor_handoff.v1",
                 "semantics": "external_experiment_handoff_contract",
                 "legacy_semantics": "external_experiment_handoff_pack_not_execution_result",
                 "created_at": _now_iso(),
@@ -973,6 +2181,14 @@ class BuildExperimentHandoffPackTool(Tool):
                 "project_id": project.get("project_id") or project.get("name") or "unknown",
                 "experiment_intent_oneliner": _infer_experiment_intent(project, hypotheses),
                 "executor_special_notes": "Use structure and provenance from this contract; do not write paper claims.",
+                "workspace_relative_workdir": "external_executor/workdir",
+                "workspace_relative_prompt": "external_executor/codex_prompt.md",
+                "host_workspace_hint": host_workspace,
+                "host_workdir_hint": host_workdir,
+                "context_reboost": context_reboost,
+                "method_intent": method_intent,
+                "baseline_matrix": context_reboost["baseline_matrix"],
+                "claim_evidence_matrix": context_reboost["claim_evidence_matrix"],
                 "experiment_contract": {
                     "metrics": metrics,
                     "seeds": seeds,
@@ -1009,6 +2225,9 @@ class BuildExperimentHandoffPackTool(Tool):
                     "rw  external_executor/configs/",
                     "rw  external_executor/logs/",
                     "rw  external_executor/patches/",
+                    "rw  external_executor/figures/",
+                    "rw  external_executor/tables/",
+                    "rw  external_executor/expr/",
                     "rw  external_executor/result_pack.json",
                     "rw  external_executor/executor_status.json",
                     "rw  external_executor/run_manifest.json",
@@ -1033,8 +2252,11 @@ class BuildExperimentHandoffPackTool(Tool):
                         "external_executor/raw_results/",
                         "external_executor/configs/",
                         "external_executor/logs/",
+                        "external_executor/figures/",
+                        "external_executor/tables/",
                     ],
                     "result_pack_semantics": "external_executor_result_pack",
+                    "required_fields": EXTERNAL_RESULT_REQUIRED_FIELDS,
                 },
                 "hypotheses_preview": hypotheses[:1200],
             }
@@ -1056,34 +2278,22 @@ class BuildExperimentHandoffPackTool(Tool):
                 "requires_user_copy_paste": False,
                 "selected_by": "system_placeholder",
                 "selected_at": None,
-                "next_state": "T5-EXECUTOR-GATE",
-                "fallback_order": ["mock_dry_run", "claude_code_window", "manual"],
-                "notes": "Execution mode is intentionally UNSET until T5-EXECUTOR-GATE.",
-            }
+                "next_state": "T5-SKILL-CUSTOMIZATION-GATE",
+                    "fallback_order": ["mock_dry_run", "claude_code_window", "manual"],
+                    "notes": (
+                        "Execution mode is intentionally UNSET until T5-EXECUTOR-GATE; "
+                        "next step is automatic T5-SKILL-CUSTOMIZATION-GATE skill customization."
+                    ),
+                }
             _write_json(self.policy.resolve_write(params.executor_selection_path), executor_selection)
-            schema = {
-                "version": "1.0",
-                "semantics": "expected_external_executor_outputs_schema",
-                "required": ["semantics", "run_id", "executor", "dry_run", "metrics", "artifacts", "baseline_coverage"],
-                "required_files": [
-                    "external_executor/result_pack.json",
-                    "external_executor/executor_status.json",
-                    "external_executor/run_manifest.json",
-                    "external_executor/raw_results/",
-                    "external_executor/configs/",
-                    "external_executor/logs/",
-                ],
-                "metric_required": ["metric_id", "name", "value", "source_artifact", "dataset", "seed"],
-                "artifact_required": ["path", "kind", "role", "sha256"],
-                "status_required": ["semantics", "run_id", "status", "accepted", "dry_run"],
-                "run_manifest_required": ["semantics", "run_id", "executor", "raw_results", "configs", "logs"],
-            }
-            _write_json(self.policy.resolve_write(params.expected_schema_path), schema)
+            _write_json(self.policy.resolve_write(params.expected_schema_path), _build_expected_outputs_schema())
             _write_text(
                 self.policy.resolve_write(params.allowed_paths_path),
                 "\n".join(handoff["allowed_paths"]) + "\n",
             )
             _write_external_executor_guides(self.policy, handoff, selection=executor_selection)
+            _copy_skill_templates_for_customization(self.policy, handoff)
+            _write_expr_materials_scaffold(self.policy, handoff)
             prompt = _render_executor_prompt(handoff, executor=params.executor)
             _write_text(self.policy.resolve_write(params.prompt_output_path), prompt)
             _write_text(self.policy.resolve_write(params.codex_prompt_path), _render_executor_prompt(handoff, executor="codex_cli"))
@@ -1177,12 +2387,31 @@ class BuildPostExperimentNoveltyCheckTool(Tool):
                 claim_downgrades.append("integrity_audit_failed")
             if baseline_status in {"missing", "incomplete"}:
                 claim_downgrades.append("required_baselines_missing_or_incomplete")
+            contribution_drift = str(audit.get("contribution_drift") or (audit.get("method_audit") or {}).get("contribution_drift") or "unknown")
+            if contribution_drift == "major":
+                claim_downgrades.append("major_contribution_drift_requires_human_review")
+            elif contribution_drift == "minor":
+                claim_downgrades.append("minor_contribution_drift_requires_method_update")
+            if contribution_drift == "major":
+                required_action = "human_review"
+            elif baseline_status in {"missing", "incomplete"}:
+                required_action = "narrow_claim"
+            elif audit.get("status") == "fail":
+                required_action = "rerun_experiment"
+            elif contribution_drift == "minor":
+                required_action = "update_method"
+            else:
+                required_action = "none"
             novelty_after = "weak" if claim_downgrades else ("moderate" if audit.get("status") == "pass" else "collision_risk")
             check = {
                 "version": "1.0",
                 "semantics": "post_experiment_novelty_check",
                 "implementation_matches_original_idea": "partial" if summary.get("mock_only") else "unknown_requires_llm_review",
                 "novelty_after_implementation": novelty_after,
+                "contribution_drift": contribution_drift,
+                "required_action": required_action,
+                "method_audit_ref": "experiments/method_audit.json",
+                "framework_figure_audit_ref": "experiments/framework_figure_audit.json",
                 "collision_risks": [],
                 "claim_downgrades_required": claim_downgrades,
                 "additional_baselines_required": (audit.get("required_baseline_coverage") or {}).get("missing_baselines", []),
@@ -1251,8 +2480,12 @@ class MockExternalDryRunTool(Tool):
                         "value": round(0.7 + idx * 0.01, 4),
                         "unit": "score",
                         "dataset": "mock_dataset",
+                        "dataset_split": "mock_split",
                         "seed": ((handoff.get("experiment_contract") or {}).get("seeds") or [42])[0],
+                        "metric_direction": "higher_is_better",
                         "source_artifact": raw_result_rel,
+                        "config": config_rel,
+                        "log": log_rel,
                         "mock_only": True,
                     }
                 )
@@ -1286,6 +2519,96 @@ class MockExternalDryRunTool(Tool):
             ]
             required_baselines = (handoff.get("experiment_contract") or {}).get("required_baselines", []) or handoff.get("required_baselines", []) or []
             baseline_coverage = _baseline_coverage_from_metrics(required_baselines, metrics, mock_only=True)
+            experiment_runs = [
+                {
+                    "run_id": "mock_dry_run",
+                    "run_type": "smoke",
+                    "status": "completed",
+                    "dry_run": True,
+                    "mock_only": True,
+                    "dataset": "mock_dataset",
+                    "seed": ((handoff.get("experiment_contract") or {}).get("seeds") or [42])[0],
+                    "metrics": [metric.get("metric_id") for metric in metrics],
+                    "raw_result_refs": [raw_result_rel],
+                    "config_refs": [config_rel],
+                    "log_refs": [log_rel],
+                }
+            ]
+            context_alignment = {
+                "status": "pass",
+                "source_files_checked": (handoff.get("context_reboost") or {}).get("source_files_used", []),
+                "mismatches": (handoff.get("context_reboost") or {}).get("known_context_mismatches", []),
+                "resolution": ["mock_dry_run checks schema only; no scientific evidence produced"],
+            }
+            resources = {
+                "status": "mock_only",
+                "expr_dir": "external_executor/expr",
+                "resources_checked": [],
+                "baseline_candidates": [],
+                "notes": "Mock dry-run does not mine real resources.",
+            }
+            baseline_reproduction = [
+                {
+                    "baseline_name": _baseline_name(item) or "no_required_baseline",
+                    "status": "mock_only",
+                    "command": None,
+                    "config": config_rel,
+                    "raw_log_path": log_rel,
+                    "result": None,
+                    "failure_reason": "mock dry-run only",
+                    "claim_risk": "not publishable evidence",
+                }
+                for item in (required_baselines or [{"baseline_name": "no_required_baseline"}])
+            ]
+            result_diagnosis = {
+                "status": "mock_only",
+                "summary": "Protocol dry-run completed; no empirical diagnosis.",
+                "failure_modes": [],
+                "baseline_strengths": [],
+                "claim_risks": ["mock_only"],
+            }
+            module_attribution = {
+                "status": "mock_only",
+                "modules": [
+                    {
+                        "module_id": module.get("module_id"),
+                        "name": module.get("name"),
+                        "evidence_level": "unsupported",
+                        "attribution_summary": "Mock dry-run cannot attribute module effects.",
+                    }
+                    for module in ((handoff.get("method_intent") or {}).get("candidate_modules", []) or [])
+                ],
+            }
+            realized_method_package = {
+                "status": "mock_only",
+                "source": "mock_external_dry_run",
+                "method_summary": "No realized method; this is a schema-only dry-run.",
+                "modules": [],
+                "algorithm_flow": [],
+                "implementation_refs": [],
+                "not_final_method_source": True,
+            }
+            final_framework_figure = {
+                "status": "mock_only",
+                "figure_id": "fig:mock_framework",
+                "path": None,
+                "caption_draft": "Mock dry-run placeholder; not usable by T8.",
+                "evidence_level": "unsupported",
+                "consistent_with_realized_method": False,
+            }
+            figure_table_inventory = {
+                "status": "mock_only",
+                "figures": [],
+                "tables": [],
+                "notes": "No publishable figures or tables produced by mock dry-run.",
+            }
+            writer_handoff = {
+                "status": "mock_only",
+                "method_package_ref": "result_pack.realized_method_package",
+                "result_diagnosis_ref": "result_pack.result_diagnosis",
+                "figure_table_inventory_ref": "result_pack.figure_table_inventory",
+                "must_not_claim": ["Do not use mock dry-run outputs as empirical evidence."],
+            }
             run_manifest = {
                 "version": "1.0",
                 "semantics": "external_executor_run_manifest",
@@ -1297,20 +2620,37 @@ class MockExternalDryRunTool(Tool):
                 "configs": [config_rel],
                 "logs": [log_rel],
                 "artifacts": artifacts,
+                "runs": experiment_runs,
             }
             _write_json(self.policy.resolve_write(manifest_rel), run_manifest)
             result_pack = {
                 "version": "1.0",
+                "schema_version": "external_executor_result_pack.v1",
                 "semantics": "external_executor_result_pack",
                 "run_id": "mock_dry_run",
                 "executor": executor_type,
                 "dry_run": True,
                 "mock_only": True,
+                "executor_status": "completed",
+                "context_alignment": context_alignment,
+                "resources": resources,
+                "baseline_reproduction": baseline_reproduction,
+                "experiment_runs": experiment_runs,
+                "runs": experiment_runs,
                 "evidence_grade": "mock_only",
                 "metrics": metrics,
                 "artifacts": artifacts,
                 "baseline_coverage": baseline_coverage,
+                "result_diagnosis": result_diagnosis,
+                "module_attribution": module_attribution,
+                "realized_method_package": realized_method_package,
+                "final_framework_figure": final_framework_figure,
+                "figure_table_inventory": figure_table_inventory,
+                "writer_handoff": writer_handoff,
                 "run_manifest": manifest_rel,
+                "raw_result_files": [raw_result_rel],
+                "config_files": [config_rel],
+                "log_files": [log_rel],
                 "logs": [{"path": log_rel, "level": "info"}],
                 "limitations": ["mock_dry_run: not evidence for paper claims"],
             }
@@ -1366,6 +2706,13 @@ class IngestExternalResultsTool(Tool):
             metrics = result_pack.get("metrics")
             if not isinstance(metrics, list) or not metrics:
                 return ToolResult(ok=False, content="result_pack metrics missing", error="missing_metrics")
+            manifest_rel = str(result_pack.get("run_manifest") or "external_executor/run_manifest.json")
+            manifest = _read_json(self.policy.workspace_dir / manifest_rel)
+            scanned_artifacts = _scan_external_artifacts(self.policy.workspace_dir)
+            declared_artifacts = [item for item in result_pack.get("artifacts", []) or [] if isinstance(item, dict)]
+            manifest_artifacts = [item for item in manifest.get("artifacts", []) or [] if isinstance(item, dict)]
+            scanned_flat = [item for group in scanned_artifacts.values() for item in group]
+            all_artifacts = _merge_artifact_records(declared_artifacts, manifest_artifacts, scanned_flat)
             experiments = [
                 {
                     "experiment_id": str(metric.get("experiment_id") or result_pack.get("run_id") or "external_run"),
@@ -1396,19 +2743,36 @@ class IngestExternalResultsTool(Tool):
                 "evidence_grade": str(result_pack.get("evidence_grade") or ("mock_only" if result_pack.get("mock_only") else "external_unverified")),
                 "ingest_report_ref": params.ingest_report_path,
                 "experiments": experiments,
-                "metrics": metrics,
+                "metrics": _metrics_object(metrics),
+                "metric_records": metrics,
+                "experiment_runs": result_pack.get("experiment_runs") or result_pack.get("runs") or [],
+                "run_manifest": manifest_rel,
                 "baseline_coverage": result_pack.get("baseline_coverage") or {},
+                "context_alignment": result_pack.get("context_alignment") or {},
+                "result_diagnosis": result_pack.get("result_diagnosis") or {},
+                "module_attribution": result_pack.get("module_attribution") or {},
+                "realized_method_package": result_pack.get("realized_method_package") or {},
+                "final_framework_figure": result_pack.get("final_framework_figure") or {},
+                "figure_table_inventory": result_pack.get("figure_table_inventory") or {},
+                "writer_handoff": result_pack.get("writer_handoff") or {},
                 "quality_status": "mock_only" if result_pack.get("mock_only") else "ingested_unverified",
             }
             _write_json(self.policy.resolve_write(params.results_summary_path), summary)
             run_records = self.policy.resolve_write(params.run_records_path)
             run_records.parent.mkdir(parents=True, exist_ok=True)
-            run_records.write_text(json.dumps(result_pack, ensure_ascii=False) + "\n", encoding="utf-8")
+            run_records.write_text(
+                "\n".join(
+                    json.dumps(record, ensure_ascii=False)
+                    for record in _run_records_from_result_pack(result_pack, manifest)
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             evidence_index = {
                 "version": "1.0",
                 "semantics": "external_experiment_evidence_index",
                 "result_pack": params.result_pack_path,
-                "run_manifest": result_pack.get("run_manifest"),
+                "run_manifest": manifest_rel,
                 "executor_selection_ref": readiness.get("executor_selection"),
                 "result_pack_ref": params.result_pack_path,
                 "executor_status_ref": params.status_path,
@@ -1417,8 +2781,43 @@ class IngestExternalResultsTool(Tool):
                 "executor_status_sha256": readiness.get("executor_status_sha256"),
                 "metrics": metrics,
                 "baseline_coverage": result_pack.get("baseline_coverage") or {},
-                "artifacts": result_pack.get("artifacts", []),
+                "artifacts": all_artifacts,
                 "logs": result_pack.get("logs", []),
+                "raw_result_files": list(
+                    dict.fromkeys(
+                        _coerce_str_list(result_pack.get("raw_result_files"))
+                        + _coerce_str_list(manifest.get("raw_results"))
+                        + _artifact_paths(scanned_artifacts["raw_results"])
+                    )
+                ),
+                "config_files": list(
+                    dict.fromkeys(
+                        _coerce_str_list(result_pack.get("config_files"))
+                        + _coerce_str_list(manifest.get("configs"))
+                        + _artifact_paths(scanned_artifacts["configs"])
+                    )
+                ),
+                "log_files": list(
+                    dict.fromkeys(
+                        _coerce_str_list(result_pack.get("log_files"))
+                        + _coerce_str_list(manifest.get("logs"))
+                        + _artifact_paths(scanned_artifacts["logs"])
+                    )
+                ),
+                "patch_files": _artifact_paths(scanned_artifacts["patches"]),
+                "figure_files": _artifact_paths(scanned_artifacts["figures"]),
+                "table_files": _artifact_paths(scanned_artifacts["tables"]),
+                "scanned_artifacts": scanned_artifacts,
+                "experiment_runs": result_pack.get("experiment_runs") or result_pack.get("runs") or [],
+                "baseline_reproduction": result_pack.get("baseline_reproduction") or [],
+                "resources": result_pack.get("resources") or {},
+                "result_diagnosis": result_pack.get("result_diagnosis") or {},
+                "module_attribution": result_pack.get("module_attribution") or {},
+                "realized_method_package": result_pack.get("realized_method_package") or {},
+                "final_framework_figure": result_pack.get("final_framework_figure") or {},
+                "figure_table_inventory": result_pack.get("figure_table_inventory") or {},
+                "writer_handoff": result_pack.get("writer_handoff") or {},
+                "extra_fields": _result_pack_extra_fields(result_pack),
             }
             _write_json(self.policy.resolve_write(params.evidence_index_path), evidence_index)
             report = {
@@ -1436,6 +2835,10 @@ class IngestExternalResultsTool(Tool):
                 "executor_status_sha256": readiness.get("executor_status_sha256"),
                 "evidence_grade": summary["evidence_grade"],
                 "metric_count": len(metrics),
+                "artifact_count": len(all_artifacts),
+                "run_record_count": max(0, len(_run_records_from_result_pack(result_pack, manifest)) - 1),
+                "method_package_present": bool(result_pack.get("realized_method_package")),
+                "framework_figure_present": bool(result_pack.get("final_framework_figure")),
                 "results_summary": params.results_summary_path,
             }
             _write_json(self.policy.resolve_write(params.ingest_report_path), report)
@@ -1476,14 +2879,15 @@ class AuditExperimentIntegrityTool(Tool):
                 issues.append({"level": "FAIL", "code": "external_binding_fingerprint", "detail": issue})
             if summary.get("mock_only"):
                 issues.append({"level": "WARN", "code": "mock_only", "detail": "Dry-run result is not publishable evidence."})
-            if not summary.get("metrics"):
+            metric_records = _summary_metric_records(summary)
+            if not metric_records:
                 issues.append({"level": "FAIL", "code": "missing_metrics", "detail": "No metrics in results summary."})
             evidence_artifacts = [
                 item for item in (evidence.get("artifacts", []) or []) if isinstance(item, dict)
             ]
             artifact_by_path = {str(item.get("path")): item for item in evidence_artifacts if item.get("path")}
             seen_metric_ids: set[str] = set()
-            for metric in summary.get("metrics", []) or []:
+            for metric in metric_records:
                 if not isinstance(metric, dict):
                     continue
                 metric_id = str(metric.get("metric_id") or "")
@@ -1522,7 +2926,7 @@ class AuditExperimentIntegrityTool(Tool):
             required_baselines = _extract_required_baselines(self.policy.workspace_dir)
             baseline_coverage = _baseline_coverage_from_metrics(
                 required_baselines,
-                summary.get("metrics", []) or [],
+                metric_records,
                 mock_only=bool(summary.get("mock_only")),
                 existing=summary.get("baseline_coverage") if isinstance(summary.get("baseline_coverage"), dict) else None,
             )
@@ -1534,6 +2938,29 @@ class AuditExperimentIntegrityTool(Tool):
                         "detail": ", ".join(baseline_coverage.get("missing_baselines", []) or []),
                     }
                 )
+            result_audit = _build_result_audit(
+                workspace=self.policy.workspace_dir,
+                summary=summary,
+                evidence=evidence,
+                baseline_coverage=baseline_coverage,
+            )
+            for item in (result_audit.get("metric_provenance") or {}).get("issues", []) or []:
+                if isinstance(item, dict):
+                    issues.append({"level": item.get("level", "WARN"), "code": "result_audit:" + str(item.get("code") or "issue"), "detail": item.get("metric_id") or item.get("path") or item.get("id")})
+            for item in (result_audit.get("result_figure_provenance") or {}).get("issues", []) or []:
+                if isinstance(item, dict):
+                    issues.append({"level": item.get("level", "WARN"), "code": "result_audit:" + str(item.get("code") or "issue"), "detail": item.get("id") or item.get("path")})
+            method_audit, framework_figure_audit = _build_method_and_figure_audits(
+                workspace=self.policy.workspace_dir,
+                summary=summary,
+                evidence=evidence,
+            )
+            for item in method_audit.get("issues", []) or []:
+                if isinstance(item, dict):
+                    issues.append({"level": item.get("level", "WARN"), "code": "method_audit:" + str(item.get("code") or "issue"), "detail": item.get("detail")})
+            for item in framework_figure_audit.get("issues", []) or []:
+                if isinstance(item, dict):
+                    issues.append({"level": item.get("level", "WARN"), "code": "framework_figure_audit:" + str(item.get("code") or "issue"), "detail": item.get("detail")})
             audit = {
                 "version": "1.0",
                 "semantics": "external_experiment_integrity_audit",
@@ -1553,8 +2980,19 @@ class AuditExperimentIntegrityTool(Tool):
                 "artifact_count": len(evidence.get("artifacts", []) or []),
                 "checked_artifacts": len(evidence_artifacts),
                 "required_baseline_coverage": baseline_coverage,
+                "result_audit": result_audit,
+                "method_audit": method_audit,
+                "framework_figure_audit": framework_figure_audit,
+                "contribution_drift": method_audit.get("contribution_drift", "unknown"),
             }
             _write_json(self.policy.resolve_write(params.output_path), audit)
+            _write_json(self.policy.resolve_write("experiments/result_audit.json"), result_audit)
+            _write_json(self.policy.resolve_write("experiments/method_audit.json"), method_audit)
+            _write_json(self.policy.resolve_write("experiments/framework_figure_audit.json"), framework_figure_audit)
+            _write_json(
+                self.policy.resolve_write("drafts/method_writing_resources.json"),
+                _format_method_writing_resources(summary=summary, evidence=evidence, audit=audit),
+            )
             _write_text(
                 self.policy.resolve_write("experiments/experiment_fairness_review.md"),
                 _format_fairness_review(audit),
@@ -1584,20 +3022,40 @@ class MapResultsToClaimsTool(Tool):
             claims = []
             baseline_coverage = audit.get("required_baseline_coverage") if isinstance(audit.get("required_baseline_coverage"), dict) else {}
             baseline_missing = baseline_coverage.get("status") in {"missing", "incomplete"}
-            for metric in summary.get("metrics", []) or []:
+            method_audit = audit.get("method_audit") if isinstance(audit.get("method_audit"), dict) else {}
+            framework_figure_audit = audit.get("framework_figure_audit") if isinstance(audit.get("framework_figure_audit"), dict) else {}
+            contribution_drift = str(audit.get("contribution_drift") or method_audit.get("contribution_drift") or "unknown")
+            method_blocked = method_audit.get("status") in {"fail", "mock_only"} or contribution_drift == "major"
+            result_audit = audit.get("result_audit") if isinstance(audit.get("result_audit"), dict) else {}
+            metric_provenance = result_audit.get("metric_provenance") if isinstance(result_audit.get("metric_provenance"), dict) else {}
+            audited_metric_ids = {
+                str(item)
+                for item in metric_provenance.get("audited_metric_ids", []) or []
+                if item
+            }
+            result_audit_pass = result_audit.get("status") == "pass"
+            excluded_metric_ids: list[str] = []
+            for metric in _summary_metric_records(summary):
                 if not isinstance(metric, dict):
                     continue
-                status = "unsupported_mock_only" if summary.get("mock_only") else ("supported" if audit.get("status") == "pass" and not baseline_missing else "weak")
+                metric_id = str(metric.get("metric_id") or metric.get("name") or "")
+                metric_audited = result_audit_pass and metric_id in audited_metric_ids
+                if not metric_audited and not summary.get("mock_only"):
+                    excluded_metric_ids.append(metric_id)
+                    continue
+                status = "unsupported_mock_only" if summary.get("mock_only") else ("supported" if audit.get("status") == "pass" and not baseline_missing and not method_blocked and metric_audited else "weak")
                 claim_strength = "unsupported" if summary.get("mock_only") else ("strong" if status == "supported" else "weak")
                 if baseline_missing and claim_strength == "strong":
                     claim_strength = "weak"
-                claim_id = f"claim_{metric.get('metric_id') or len(mappings)+1}"
+                if method_blocked and claim_strength in {"strong", "moderate"}:
+                    claim_strength = "weak"
+                claim_id = f"claim_{metric_id or len(mappings)+1}"
                 mappings.append(
                     {
                         "claim_id": claim_id,
                         "support_status": status,
                         "claim_strength": claim_strength,
-                        "metric_refs": [metric.get("metric_id")],
+                        "metric_refs": [metric_id],
                         "evidence_refs": [metric.get("source_artifact")],
                         "allowed_wording": (
                             "Dry-run only; do not use as a paper result."
@@ -1605,7 +3063,10 @@ class MapResultsToClaimsTool(Tool):
                             else f"Reports {metric.get('name')}={metric.get('value')} under audited external execution."
                         ),
                         "forbidden_wording": _forbidden_wording(summary, baseline_missing),
-                        "limitations": _claim_limitations(summary, baseline_missing, baseline_coverage),
+                        "limitations": _claim_limitations(summary, baseline_missing, baseline_coverage)
+                        + ([] if metric_audited else ["metric_not_passed_result_audit"])
+                        + (["method_audit_not_pass"] if method_blocked else [])
+                        + ([f"contribution_drift:{contribution_drift}"] if contribution_drift in {"minor", "major"} else []),
                     }
                 )
                 claims.append(
@@ -1617,7 +3078,7 @@ class MapResultsToClaimsTool(Tool):
                             else f"Audited external result reports {metric.get('name')}={metric.get('value')}."
                         ),
                         "claim_strength": claim_strength,
-                        "supported_by": [metric.get("metric_id"), metric.get("source_artifact")],
+                        "supported_by": [metric_id, metric.get("source_artifact")],
                         "blocked_by": baseline_coverage.get("claim_blocks", []) if baseline_missing else [],
                         "must_not_say": _forbidden_wording(summary, baseline_missing),
                         "paper_sections": ["experiments", "analysis"],
@@ -1633,9 +3094,17 @@ class MapResultsToClaimsTool(Tool):
                 "evidence_grade": str(summary.get("evidence_grade") or audit.get("evidence_grade") or ""),
                 "integrity_audit": params.integrity_audit_path,
                 "required_baseline_coverage": baseline_coverage,
+                "method_audit": method_audit,
+                "framework_figure_audit": framework_figure_audit,
+                "result_audit": result_audit,
+                "contribution_drift": contribution_drift,
+                "excluded_metric_ids": excluded_metric_ids,
                 "claim_mappings": mappings,
                 "claims": claims,
-                "global_must_not_claim": _global_must_not_claim(summary, baseline_missing, baseline_coverage),
+                "global_must_not_claim": _global_must_not_claim(summary, baseline_missing, baseline_coverage)
+                + ([f"Do not claim results for metrics that failed result audit: {', '.join(excluded_metric_ids)}"] if excluded_metric_ids else [])
+                + (["Do not present the realized method as final Method until method audit passes."] if method_blocked else [])
+                + (["Do not use the final framework figure until framework figure audit passes."] if framework_figure_audit.get("status") != "pass" else []),
             }
             _write_json(self.policy.resolve_write(params.output_path), result)
             _write_json(self.policy.resolve_write(params.draft_output_path), result)
@@ -1651,10 +3120,16 @@ class MapResultsToClaimsTool(Tool):
                         {
                             "table_id": "tab:main_results",
                             "claim_ids": [claim.get("claim_id") for claim in claims],
-                            "metric_refs": [metric.get("metric_id") for metric in summary.get("metrics", []) or [] if isinstance(metric, dict)],
+                            "metric_refs": [metric.get("metric_id") for metric in _summary_metric_records(summary) if isinstance(metric, dict)],
                         }
                     ],
-                    "figures": [],
+                    "figures": [
+                        {
+                            "figure_id": (summary.get("final_framework_figure") or {}).get("figure_id", "fig:framework"),
+                            "audit_status": framework_figure_audit.get("status"),
+                            "usable_by_t8": framework_figure_audit.get("status") == "pass",
+                        }
+                    ],
                 },
             )
             iteration_log = self.policy.workspace_dir / "experiments" / "iteration_log.md"
@@ -1683,6 +3158,7 @@ class BuildExperimentEvidencePackTool(Tool):
             audit = _read_json(self.policy.resolve_read(params.integrity_audit_path))
             claims = _read_json(self.policy.resolve_read(params.experimental_claims_path))
             evidence = _read_json(self.policy.resolve_read(params.evidence_index_path))
+            method_resources = _read_json(self.policy.workspace_dir / "drafts" / "method_writing_resources.json")
             pack = {
                 "version": "1.0",
                 "semantics": "normalized_experiment_evidence_pack",
@@ -1692,13 +3168,22 @@ class BuildExperimentEvidencePackTool(Tool):
                 "evidence_grade": str(summary.get("evidence_grade") or audit.get("evidence_grade") or ""),
                 "source_packs": [{"path": params.results_summary_path}, {"path": params.integrity_audit_path}],
                 "artifacts": evidence.get("artifacts", []),
-                "metrics": summary.get("metrics", []),
+                "metrics": _summary_metric_records(summary),
                 "claims": claims.get("claim_mappings", []),
+                "method_writing_resources": method_resources,
+                "method_writing_resources_ref": "drafts/method_writing_resources.json",
+                "realized_method_package": evidence.get("realized_method_package") or {},
+                "final_framework_figure": evidence.get("final_framework_figure") or {},
+                "figure_table_inventory": evidence.get("figure_table_inventory") or {},
+                "writer_handoff": evidence.get("writer_handoff") or {},
                 "required_baseline_coverage": audit.get("required_baseline_coverage") or {},
                 "must_not_claim": claims.get("global_must_not_claim", []),
                 "integrity": {
                     "status": audit.get("status"),
                     "issues": audit.get("issues", []),
+                    "method_audit": audit.get("method_audit") or {},
+                    "framework_figure_audit": audit.get("framework_figure_audit") or {},
+                    "contribution_drift": audit.get("contribution_drift"),
                 },
                 "limitations": ["mock_only"] if summary.get("mock_only") else [],
             }

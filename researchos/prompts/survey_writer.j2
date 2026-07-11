@@ -17,6 +17,7 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - 少写单篇论文介绍，多写“现有研究形成了哪些认识、研究流派之间是什么关系、谁解决了什么、谁遗漏了什么”。
 - 标题和 subsection 名称要带判断或功能，不要像百科词条。比如“Data and Model Bias: Technical Origins of Decision Risk”比“Algorithmic Bias”更适合综述。
 - Future Directions 必须具体到问题、机制、场景、方法或治理路径；不要只写“加强理论研究/实证研究/跨学科研究”。
+- 语言要凝练连贯，避免过度使用冒号、破折号和标签化模板句。正文段落不要写成 “背景: ... 缺口: ... 启示: ...” 或 slogan 式破折号串联；除必要定义、贡献列表和表格外，用完整句表达因果、对比和边界。
 - 最终 TeX 正文和注释不得暴露内部运行标号，例如 `C1`、`[C1]`、`C1:`、`CID`、`ResearchOS alignment` 或 `% [C1]`。
 - 全文必须采用单一正文语言。`zh-en`、`mixed`、双语 seed 或中英混合文献只表示输入/检索来源可双语，不表示正文可以中英混写。若目标是中文期刊，全部 section 使用中文学术写作；若目标是英文学术期刊，全部 section 使用英文。标题、摘要、引言、正文、结论必须一致。
 - Survey section 不是摘要卡片。Introduction/Background/Taxonomy/Comparison/Challenges/Future/Conclusion 都必须有足够展开的论证；不能用短段落凑过。
@@ -345,6 +346,7 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - 每节必须围绕 `survey_plan.central_question` 和当前 `section_outline` 的 `reader_question` / `section_argument` 写。若 outline 过空，先从 survey_plan 的 central_question、scope_boundaries、quality_plan 中恢复本节论点，不要写成泛泛主题介绍。
 - 每节都要有“节内论点”。小节标题和段落开头应表达判断、关系或问题，而不是百科词条。
 - 段落应采用“观点 -> 文献证据 -> 比较 -> 评价”的综述逻辑。可以引用代表论文，但段落主语应是研究流派、机制、框架维度、证据边界或问题张力，不是一串作者名。
+- 必须按当前 section outline 的 Note Card Retrieval Plan 回查相关 paper note section。引用前先核对 note card 或 paper note 中的 mechanism、gap、boundary、design rationale 与当前句子是否对应。
 - 不要包含 `\documentclass`、`\begin{document}`、`\end{document}`。
 - 如果当前 section 是 `abstract`，文件只能写摘要纯正文；不要写 `\section{Abstract}`、`\section*{Abstract}`、`\begin{abstract}` 或 `\end{abstract}`。`assemble_survey` 会负责放入 abstract 环境。
 - 如果 section_id 是 `theme_1`-`theme_4` 且 survey_state 标记 skipped，直接调用 `update_survey_section_state(section_id="{{ section_id }}", status="skipped")` 并 finish。
@@ -363,6 +365,7 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - 不要把 citation bundle 堆在段末当 blanket support。若一句话包含强 claim（证明、显示、显著、因果、机制、实证、验证等），所引文献必须直接支持该 claim 类型；若文献只能支持背景/趋势/覆盖存在性，句子必须弱化为背景或趋势表述。
 - `abstract` 不写任何正式引用；具体 prior work attribution 放到 Introduction 或正文综述章节。
 - 对 abstract-only 文献，要标注 evidence 边界，不把 abstract claim 写成已验证机制。
+- 避免冒号/破折号模板化 prose。不要连续使用 “Challenge: ...”, “Implication: ...”, “Future direction: ...” 作为段落骨架；用自然 topic sentence 和流畅过渡承载综述判断。
 - 正文不得暴露 ResearchOS 的运行过程或内部语料状态：不要写 `metadata triage`、`candidate_count`、`FULL-TEXT`、`PARTIAL-TEXT`、`ABSTRACT-ONLY`、`backlog`、`保留候选`、`候选池`、`经过去重与初筛后共获得 N 篇` 等流水账。Background 可以写公开可读的范围、来源类型与证据边界，但不要写内部队列、精读/轻读统计或未获取全文候选数。
 - 避免 "this section reviews..." 这类空话；直接进入内容。
 - 不要输出内部运行标号或审计标记：`C1`、`[C1]`、`CID`、`ResearchOS alignment`、`LLM_REVIEW_REQUIRED`、`TODO/TBD/PLACEHOLDER` 都不得出现在 TeX 中。
@@ -493,7 +496,7 @@ Venue-aware survey framing:
 - `assemble_survey` 已经把 `literature/related_work.bib` 复制为 `drafts/survey/references.bib`。
 - `latex_compile` 会自动把编译报告写入 `drafts/survey/survey_compile_report.json`，你不需要再手工复制 `data.compile_report`。
 - 编译产物应包括 `drafts/survey/survey.pdf` 和 `drafts/survey/survey.log`。
-- 如果工具返回 `waiting_environment_*`，不要伪造 PDF 或 report；让 runtime 暂停，等 TeX/Docker 环境修好后 resume。
+- 如果工具返回 `waiting_environment_*`，不要伪造 PDF 或 report；让 runtime 暂停，等本机 LaTeX backend 修好后 resume。
 - 如果是 LaTeX 语法或引用错误，读取 log，修对应 section 文件或 references，再重新 `assemble_survey`、`audit_survey_coverage`、`latex_compile`；不要一次性重写整篇 survey.tex，也不要复用修订前的旧 `survey_audit.json`。
 
 最后调用 `finish_task`。

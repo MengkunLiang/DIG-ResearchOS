@@ -56,6 +56,11 @@ _DEFAULT_CONFIG = {
 AbstractReader = Callable[[dict[str, Any], str], str | Awaitable[str]]
 MetadataTriageReader = Callable[[list[dict[str, Any]], str], str | Awaitable[str]]
 
+ABSTRACT_CORE_HEADING = "## A. Core Approach / Perspective"
+ABSTRACT_BRIDGE_HEADING = "## B. Bridge Point"
+LEGACY_ABSTRACT_CORE_HEADING = "## A. 核心做法/视角"
+LEGACY_ABSTRACT_BRIDGE_HEADING = "## B. 桥接点"
+
 
 def _resolve_config(raw: dict[str, Any] | None) -> dict[str, Any]:
     cfg = dict(_DEFAULT_CONFIG)
@@ -603,11 +608,11 @@ LLM_REVIEW_REQUIRED. Abstract opening snippet:
 LLM_REVIEW_REQUIRED. Abstract middle snippet:
 {middle_hint}
 
-## A. 核心做法/视角
+{ABSTRACT_CORE_HEADING}
 LLM_REVIEW_REQUIRED. Abstract-only hint about the method, lens, or viewpoint:
 {middle_hint}
 
-## B. 桥接点
+{ABSTRACT_BRIDGE_HEADING}
 LLM_REVIEW_REQUIRED. Explain how this paper may connect to the target domain or adjacent transfer:
 {paper.get('why_relevant', '') or paper.get('source_bucket', '') or 'review required before use'}
 
@@ -657,8 +662,8 @@ def build_abstract_reader_prompt(paper: dict[str, Any]) -> str:
         "输出必须是 Markdown，并严格包含以下 section 标题：\n"
         "## 1. Problem & Motivation\n"
         "## 2. Method Summary\n"
-        "## A. 核心做法/视角\n"
-        "## B. 桥接点\n"
+        f"{ABSTRACT_CORE_HEADING}\n"
+        f"{ABSTRACT_BRIDGE_HEADING}\n"
         "## 3. Key Claimed Results\n"
         "## Raw Abstract\n"
         "## 13. Mechanism Claim\n"
@@ -789,8 +794,8 @@ def normalize_abstract_reader_note(note: str, paper: dict[str, Any]) -> str:
     required_sections = [
         "## 1. Problem & Motivation",
         "## 2. Method Summary",
-        "## A. 核心做法/视角",
-        "## B. 桥接点",
+        ABSTRACT_CORE_HEADING,
+        ABSTRACT_BRIDGE_HEADING,
         "## 3. Key Claimed Results",
         "## Raw Abstract",
         "## 13. Mechanism Claim",
@@ -898,8 +903,11 @@ def _normalize_abstract_note_headings(text: str) -> str:
     """Normalize common LLM heading drift in abstract-only notes."""
 
     replacements = {
-        r"(?m)^#{3,}\s*A\.\s*核心做法/视角\s*$": "## A. 核心做法/视角",
-        r"(?m)^#{3,}\s*B\.\s*桥接点\s*$": "## B. 桥接点",
+        r"(?m)^#{2,}\s*A\.\s*核心做法/视角\s*$": ABSTRACT_CORE_HEADING,
+        r"(?m)^#{2,}\s*B\.\s*桥接点\s*$": ABSTRACT_BRIDGE_HEADING,
+        r"(?m)^#{3,}\s*A\.\s*Core\s+Approach\s*/\s*Perspective\s*$": ABSTRACT_CORE_HEADING,
+        r"(?m)^#{3,}\s*B\.\s*Bridge\s+Point\s*$": ABSTRACT_BRIDGE_HEADING,
+        r"(?m)^#{2,}\s*A\.\s*Core\s+Approach\s*/\s*Viewpoint\s*$": ABSTRACT_CORE_HEADING,
     }
     for pattern, replacement in replacements.items():
         text = re.sub(pattern, replacement, text)

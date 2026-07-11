@@ -166,6 +166,14 @@ class _FakeProc:
         self.killed = True
 
 
+def _patch_latexmk(monkeypatch, fake_create):
+    monkeypatch.setattr(
+        "researchos.tools.latex_compile.shutil.which",
+        lambda name: "/usr/bin/latexmk" if name == "latexmk" else None,
+    )
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create)
+
+
 @pytest.mark.asyncio
 async def test_docker_exec_success(monkeypatch, tmp_workspace: Path, container_mode: bool):
     """测试 docker_exec 成功执行。
@@ -228,6 +236,36 @@ compute_budget:
         assert captured["args"][image_idx + 1 : image_idx + 3] == ("-lc", "python run.py")
 
 
+@pytest.mark.asyncio
+async def test_docker_exec_container_mode_maps_workspace_contract(monkeypatch, tmp_workspace: Path):
+    policy = WorkspaceAccessPolicy(tmp_workspace, [""], [""])
+    tool = DockerExecTool(policy, project_config={"compute_budget": {"gpu_enabled": False}})
+    tool._container_mode = True
+    captured = {}
+
+    async def fake_create(*args, **kwargs):
+        captured["args"] = args
+        return _FakeProc(stdout=b"ok", stderr=b"")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create)
+
+    result = await tool.execute(
+        image="researchos/system:latest",
+        command="pwd",
+        cwd="/workspace/subdir",
+        timeout_seconds=30,
+        allow_network=False,
+        gpu=False,
+        env={},
+        extra_mounts=[],
+    )
+
+    assert result.ok
+    assert captured["args"][0:2] == ("bash", "-lc")
+    command = captured["args"][2]
+    assert f"cd {tmp_workspace / 'subdir'};" in command
+
+
 def test_check_docker_environment_reports_missing_command(monkeypatch):
     monkeypatch.setattr("researchos.tools.docker_exec.shutil.which", lambda _name: None)
 
@@ -280,38 +318,20 @@ async def test_docker_exec_rejects_gpu_when_project_disallows(tmp_workspace: Pat
 
 @pytest.mark.asyncio
 async def test_latex_compile_reports_pdf_path(tmp_workspace: Path, monkeypatch, container_mode: bool):
-    """测试 LaTeX 编译并验证 PDF 路径。
-
-    容器内模式：直接调用 latexmk
-    宿主机模式：通过 docker_exec
-    """
+    """测试 LaTeX 编译并验证 PDF 路径。"""
     (tmp_workspace / "drafts").mkdir()
     tex_path = tmp_workspace / "drafts" / "paper.tex"
     tex_path.write_text("\\documentclass{article}", encoding="utf-8")
     pdf_path = tmp_workspace / "drafts" / "paper.pdf"
 
-    if container_mode:
-        # 容器内模式：mock latexmk 命令
-        async def fake_create(*args, **kwargs):
-            # 模拟 PDF 生成
-            pdf_path.write_text("pdf", encoding="utf-8")
-            return _FakeProc(stdout=b"compiled", stderr=b"")
+    async def fake_create(*args, **kwargs):
+        pdf_path.write_text("pdf", encoding="utf-8")
+        return _FakeProc(stdout=b"compiled", stderr=b"")
 
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create)
-
-        policy = WorkspaceAccessPolicy(tmp_workspace, ["", "drafts/"], ["", "drafts/"])
-        docker_tool = DockerExecTool(policy)
-        tool = LatexCompileTool(docker_tool)
-    else:
-        # 宿主机模式：使用 fake docker tool
-        class _FakeDockerTool:
-            policy = WorkspaceAccessPolicy(tmp_workspace, ["", "drafts/"], ["", "drafts/"])
-
-            async def execute(self, **kwargs):
-                pdf_path.write_text("pdf", encoding="utf-8")
-                return ToolResult(ok=True, content="compiled", data={})
-
-        tool = LatexCompileTool(_FakeDockerTool())
+    _patch_latexmk(monkeypatch, fake_create)
+    policy = WorkspaceAccessPolicy(tmp_workspace, ["", "drafts/"], ["", "drafts/"])
+    docker_tool = DockerExecTool(policy)
+    tool = LatexCompileTool(docker_tool)
 
     result = await tool.execute(tex_path="drafts/paper.tex")
 
@@ -330,14 +350,24 @@ async def test_latex_compile_writes_survey_compile_report(tmp_workspace: Path):
     (survey_dir / "survey.pdf").write_text("pdf", encoding="utf-8")
     (survey_dir / "survey.log").write_text("log", encoding="utf-8")
 
+    async def fake_create(*args, **kwargs):
+        return _FakeProc(stdout=b"compiled", stderr=b"")
+
     class _FakeDockerTool:
         policy = WorkspaceAccessPolicy(tmp_workspace, ["", "drafts/"], ["", "drafts/"])
 
-        async def execute(self, **kwargs):
-            return ToolResult(ok=True, content="compiled", data={"exit_code": 0})
+    import researchos.tools.latex_compile as latex_compile
 
+    original_which = latex_compile.shutil.which
+    original_create = asyncio.create_subprocess_exec
+    latex_compile.shutil.which = lambda name: "/usr/bin/latexmk" if name == "latexmk" else None
+    asyncio.create_subprocess_exec = fake_create
     tool = LatexCompileTool(_FakeDockerTool())
-    result = await tool.execute(tex_path="drafts/survey/survey.tex")
+    try:
+        result = await tool.execute(tex_path="drafts/survey/survey.tex")
+    finally:
+        latex_compile.shutil.which = original_which
+        asyncio.create_subprocess_exec = original_create
 
     assert result.ok
     report_path = survey_dir / "survey_compile_report.json"
@@ -352,18 +382,19 @@ async def test_latex_compile_skips_repeated_failure_for_same_tex(tmp_workspace: 
     tex_path = bundle / "main.tex"
     tex_path.write_text("\\documentclass{article}\\begin{document}Broken", encoding="utf-8")
 
-    class _FailingDockerTool:
+    class _FakeDockerTool:
         policy = WorkspaceAccessPolicy(tmp_workspace, ["", "submission/"], ["", "submission/"])
-        calls = 0
 
-        async def execute(self, **kwargs):
-            self.calls += 1
-            return ToolResult(ok=False, content="latex failed", error="nonzero_exit", data={"exit_code": 1})
+    calls = {"count": 0}
 
-    docker = _FailingDockerTool()
+    async def fake_create(*args, **kwargs):
+        calls["count"] += 1
+        return _FakeProc(returncode=1, stdout=b"latex failed", stderr=b"")
+
+    docker = _FakeDockerTool()
     tool = LatexCompileTool(docker)
     monkeypatch.setattr(tool, "_is_running_in_container", lambda: False)
-    monkeypatch.setattr("researchos.tools.latex_compile.shutil.which", lambda _name: None)
+    _patch_latexmk(monkeypatch, fake_create)
 
     first = await tool.execute(tex_path="submission/bundle/main.tex")
     second = await tool.execute(tex_path="submission/bundle/main.tex")
@@ -371,7 +402,7 @@ async def test_latex_compile_skips_repeated_failure_for_same_tex(tmp_workspace: 
     assert not first.ok
     assert not second.ok
     assert second.error == "cached_compile_failure_same_tex"
-    assert docker.calls == 1
+    assert calls["count"] == 1
     report = json.loads((tmp_workspace / "submission" / "compile_report.json").read_text(encoding="utf-8"))
     assert report["attempt_count"] == 1
 
@@ -418,21 +449,22 @@ async def test_latex_compile_retries_failed_report_when_pdf_exists(tmp_workspace
 
     class _DockerTool:
         policy = WorkspaceAccessPolicy(tmp_workspace, ["", "submission/"], ["", "submission/"])
-        calls = 0
 
-        async def execute(self, **kwargs):
-            self.calls += 1
-            return ToolResult(ok=True, content="compiled", data={"exit_code": 0})
+    calls = {"count": 0}
+
+    async def fake_create(*args, **kwargs):
+        calls["count"] += 1
+        return _FakeProc(stdout=b"compiled", stderr=b"")
 
     docker = _DockerTool()
     tool = LatexCompileTool(docker)
     monkeypatch.setattr(tool, "_is_running_in_container", lambda: False)
-    monkeypatch.setattr("researchos.tools.latex_compile.shutil.which", lambda _name: None)
+    _patch_latexmk(monkeypatch, fake_create)
 
     result = await tool.execute(tex_path="submission/bundle/main.tex")
 
     assert result.ok
-    assert docker.calls == 1
+    assert calls["count"] == 1
 
 
 def test_latex_compile_dependency_fingerprint_ignores_runtime_reports_but_tracks_sources(tmp_workspace: Path):
@@ -475,21 +507,13 @@ def test_latex_compile_dependency_fingerprint_ignores_runtime_reports_but_tracks
 
 
 @pytest.mark.asyncio
-async def test_latex_compile_treats_docker_entrypoint_error_as_environment(tmp_workspace: Path, monkeypatch):
+async def test_latex_compile_missing_latexmk_waits_for_local_tex_install(tmp_workspace: Path, monkeypatch):
     bundle = tmp_workspace / "submission" / "bundle"
     bundle.mkdir(parents=True)
     (bundle / "main.tex").write_text("\\documentclass{article}\\begin{document}OK\\end{document}", encoding="utf-8")
 
     class _DockerTool:
         policy = WorkspaceAccessPolicy(tmp_workspace, ["", "submission/"], ["", "submission/"])
-
-        async def execute(self, **kwargs):
-            return ToolResult(
-                ok=False,
-                content="researchos: error: argument command: invalid choice: 'bash'",
-                error="nonzero_exit",
-                data={"exit_code": 2},
-            )
 
     tool = LatexCompileTool(_DockerTool())
     monkeypatch.setattr(tool, "_is_running_in_container", lambda: False)
@@ -498,9 +522,37 @@ async def test_latex_compile_treats_docker_entrypoint_error_as_environment(tmp_w
     result = await tool.execute(tex_path="submission/bundle/main.tex")
 
     assert not result.ok
-    assert result.error == "waiting_environment_docker_entrypoint_misconfigured"
+    assert result.error == "waiting_environment_latexmk_missing"
+    assert "sudo apt-get install" in result.content
     report = json.loads((tmp_workspace / "submission" / "compile_report.json").read_text(encoding="utf-8"))
-    assert report["error"] == "docker_entrypoint_misconfigured"
+    assert report["error"] == "waiting_environment_latexmk_missing"
+    assert report["requested_backend"] == "auto"
+    assert report["selected_backend"] == "latexmk"
+    assert any(item["name"] == "latexmk" for item in report["detected_backends"])
+
+
+@pytest.mark.asyncio
+async def test_latex_compile_export_only_writes_environment_report(tmp_workspace: Path, monkeypatch):
+    bundle = tmp_workspace / "submission" / "bundle"
+    bundle.mkdir(parents=True)
+    (bundle / "main.tex").write_text("\\documentclass{article}\\begin{document}OK\\end{document}", encoding="utf-8")
+
+    class _DockerTool:
+        policy = WorkspaceAccessPolicy(tmp_workspace, ["", "submission/"], ["", "submission/"])
+
+    async def fake_create(*args, **kwargs):
+        raise AssertionError("export_only must not invoke a compiler")
+
+    _patch_latexmk(monkeypatch, fake_create)
+    tool = LatexCompileTool(_DockerTool())
+
+    result = await tool.execute(tex_path="submission/bundle/main.tex", backend="export_only")
+
+    assert not result.ok
+    assert result.error == "export_only_requested"
+    report = json.loads((tmp_workspace / "submission" / "compile_report.json").read_text(encoding="utf-8"))
+    assert report["selected_backend"] == "export_only"
+    assert report["success"] is False
 
 
 @pytest.mark.asyncio
@@ -510,15 +562,15 @@ async def test_latex_compile_attempt_history_appends_after_tex_changes(tmp_works
     tex_path = bundle / "main.tex"
     tex_path.write_text("\\documentclass{article}\\begin{document}Broken 1", encoding="utf-8")
 
-    class _FailingDockerTool:
+    class _FakeDockerTool:
         policy = WorkspaceAccessPolicy(tmp_workspace, ["", "submission/"], ["", "submission/"])
 
-        async def execute(self, **kwargs):
-            return ToolResult(ok=False, content="latex failed", error="nonzero_exit", data={"exit_code": 1})
+    async def fake_create(*args, **kwargs):
+        return _FakeProc(returncode=1, stdout=b"latex failed", stderr=b"")
 
-    tool = LatexCompileTool(_FailingDockerTool())
+    tool = LatexCompileTool(_FakeDockerTool())
     monkeypatch.setattr(tool, "_is_running_in_container", lambda: False)
-    monkeypatch.setattr("researchos.tools.latex_compile.shutil.which", lambda _name: None)
+    _patch_latexmk(monkeypatch, fake_create)
 
     await tool.execute(tex_path="submission/bundle/main.tex")
     tex_path.write_text("\\documentclass{article}\\begin{document}Broken 2", encoding="utf-8")
@@ -578,21 +630,22 @@ async def test_latex_compile_cached_success_requires_matching_log_and_hashes(tmp
 
     class _DockerTool:
         policy = WorkspaceAccessPolicy(tmp_workspace, ["", "submission/"], ["", "submission/"])
-        calls = 0
 
-        async def execute(self, **kwargs):
-            self.calls += 1
-            return ToolResult(ok=True, content="compiled", data={"exit_code": 0})
+    calls = {"count": 0}
+
+    async def fake_create(*args, **kwargs):
+        calls["count"] += 1
+        return _FakeProc(stdout=b"compiled", stderr=b"")
 
     docker = _DockerTool()
     tool = LatexCompileTool(docker)
     monkeypatch.setattr(tool, "_is_running_in_container", lambda: False)
-    monkeypatch.setattr("researchos.tools.latex_compile.shutil.which", lambda _name: None)
+    _patch_latexmk(monkeypatch, fake_create)
 
     result = await tool.execute(tex_path="submission/bundle/main.tex")
 
     assert result.ok
-    assert docker.calls == 1
+    assert calls["count"] == 1
 
 
 @pytest.mark.asyncio
@@ -648,18 +701,19 @@ async def test_latex_compile_cached_success_invalidated_by_bib_dependency(tmp_wo
 
     class _DockerTool:
         policy = WorkspaceAccessPolicy(tmp_workspace, ["", "submission/"], ["", "submission/"])
-        calls = 0
 
-        async def execute(self, **kwargs):
-            self.calls += 1
-            return ToolResult(ok=True, content="compiled", data={"exit_code": 0})
+    calls = {"count": 0}
+
+    async def fake_create(*args, **kwargs):
+        calls["count"] += 1
+        return _FakeProc(stdout=b"compiled", stderr=b"")
 
     docker = _DockerTool()
     tool = LatexCompileTool(docker)
     monkeypatch.setattr(tool, "_is_running_in_container", lambda: False)
-    monkeypatch.setattr("researchos.tools.latex_compile.shutil.which", lambda _name: None)
+    _patch_latexmk(monkeypatch, fake_create)
 
     result = await tool.execute(tex_path="submission/bundle/main.tex")
 
     assert result.ok
-    assert docker.calls == 1
+    assert calls["count"] == 1

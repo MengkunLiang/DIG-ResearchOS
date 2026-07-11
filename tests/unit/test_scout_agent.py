@@ -282,6 +282,43 @@ def test_scout_prompt_respects_english_no_chinese_literature_policy(scout_agent,
     assert "不得把它当作英文稿核心 citation" in prompt
 
 
+def test_scout_prompt_explains_smoke_completion_boundary(scout_agent, execution_context):
+    literature_dir = execution_context.workspace_dir / "literature"
+    literature_dir.mkdir(parents=True, exist_ok=True)
+    (literature_dir / "literature_params.json").write_text(
+        json.dumps(
+            {
+                "semantics": "workspace_literature_coverage_parameters_for_t2_t3",
+                "selected_option": "smoke",
+                "smoke_mode": True,
+                "t2_finalize": {
+                    "active_pool_max": 12,
+                    "finish_finalize_min_raw": 10,
+                },
+                "reader": {
+                    "deep_read_target": 2,
+                    "abstract_sweep": {"lite_paper_num": 2},
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    prompt = scout_agent.system_prompt(execution_context)
+
+    assert "Smoke 快速联调模式" in prompt
+    assert "finish_finalize_min_raw=10" in prompt
+    assert "active_pool_max=12" in prompt
+    assert "不要按正式 research article 或 survey 规模继续扩展" in prompt
+    assert "Smoke 模式使用 2-4 条多样化检索式即可" in prompt
+    assert "max_queries=4" in prompt
+
+    message = scout_agent.initial_user_message(execution_context)
+    assert "smoke 快速联调" in message
+    assert "max_queries<=4" in message
+
+
 def test_scout_initial_user_message(scout_agent, execution_context):
     """测试initial user message"""
     msg = scout_agent.initial_user_message(execution_context)

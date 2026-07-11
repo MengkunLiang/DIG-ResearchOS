@@ -1,7 +1,7 @@
 """Experimenter Agent — 外部实验协议主链与 legacy 内部实验兼容模式
 
 业务需求：
-- 主链模式：handoff / executor_gate / external_wait / dry_run / result_ingest / integrity_audit / post_novelty / result_to_claim
+- 主链模式：reboost / handoff / skill_customization / executor_gate / external_wait / dry_run / result_ingest / integrity_audit / post_novelty / result_to_claim
 - 主链语义：ResearchOS 编译协议、选择外部执行器、摄取和审计结果，再生成 result-to-claim
 - 兼容模式：pilot（T5）和 full（T7）仍可显式 run-task 调用
 - Pilot 兼容模式：小规模验证实验，强制 smoke test，产出 motivation_validation.md
@@ -11,12 +11,14 @@
 - ResearchOS 不接受执行器自然语言总结作为事实，只接受 raw artifact、config、log、hash、ingest/audit/result-to-claim
 
 外部实验主链输出：
-- T5-HANDOFF: external_executor/handoff_pack.json、AGENTS.md、CLAUDE.md、README.md、executor_prompt.md、codex_prompt.md、claude_code_prompt.md、expected_outputs_schema.json、allowed_paths.txt
+- T5-REBOOST-GATE: external_executor/handoff_pack.json、external_executor/reboost_report.json
+- T5-HANDOFF: external_executor/handoff_pack.json、AGENTS.md、CLAUDE.md、README.md、executor_prompt.md、codex_prompt.md、claude_code_prompt.md、expected_outputs_schema.json、allowed_paths.txt、external_executor/skills/template_manifest.json、external_executor/skills/skills_customization/SKILL.md
+- T5-SKILL-CUSTOMIZATION-GATE: external_executor/skills/customization_report.json
 - T5-EXECUTOR-GATE: external_executor/executor_selection.json
 - T5-EXTERNAL-WAIT: external_executor/wait_acceptance_report.json
 - T5-DRY-RUN: external_executor/result_pack.json、executor_status.json、run_manifest.json、heartbeat.json、raw_results/configs/logs
 - T7-INGEST: experiments/results_summary.json、run_records.jsonl、evidence_index.json、ingest_report.json
-- T7-AUDIT: experiments/integrity_audit.json、experiments/experiment_fairness_review.md
+- T7-AUDIT: experiments/integrity_audit.json、experiments/result_audit.json、experiments/method_audit.json、experiments/framework_figure_audit.json、experiments/experiment_fairness_review.md
 - T7-POST-NOVELTY: novelty/post_experiment_novelty_check.json、novelty/post_experiment_collision_cases.md
 - T7-CLAIMS: experiments/experimental_claims.json、drafts/result_to_claim.json、drafts/experiment_evidence_pack.json、experiments/iteration_log.md、drafts/must_not_claim.md
 
@@ -73,6 +75,7 @@ from ..runtime.prompts import render_prompt
 from ..schemas.validator import validate_record
 from ..schemas.validator import validate_task_artifacts
 from ..tools.docker_exec import check_docker_environment, get_default_image, load_project_config
+from ..tools.external_experiment import SKILL_SUITE, validate_context_reboost_handoff
 from ._common import (
     generate_findings_summary,
     generate_manifest,
@@ -389,10 +392,15 @@ def check_failure_modes(results: dict, log_content: str) -> list[dict]:
 
 
 EXTERNAL_EXPERIMENT_MODES = {
+    "reboost",
     "handoff",
+    "skill_customization",
+    "executor_gate",
+    "external_wait",
     "dry_run",
     "result_ingest",
     "integrity_audit",
+    "post_novelty",
     "result_to_claim",
 }
 
@@ -446,6 +454,9 @@ def _validate_external_handoff(ws: Path) -> tuple[bool, str | None]:
         "external_executor/README.md",
         "external_executor/_DIR_GUIDE.md",
         "external_executor/job_state.json",
+        "external_executor/skills/template_manifest.json",
+        "external_executor/skills/research_execution/SKILL.md",
+        "external_executor/expr",
     ]
     ok, err = _require_external_files(ws, required)
     if not ok:
@@ -460,6 +471,18 @@ def _validate_external_handoff(ws: Path) -> tuple[bool, str | None]:
         return False, "external_executor/handoff_pack.json semantics 不正确"
     if handoff.get("execution_mode") not in {"unselected", "dry_run", "external"}:
         return False, "handoff_pack.execution_mode 必须是 unselected/dry_run/external"
+    context_reboost = handoff.get("context_reboost")
+    if not isinstance(context_reboost, dict):
+        return False, "handoff_pack 缺少 context_reboost"
+    method_intent = handoff.get("method_intent")
+    if not isinstance(method_intent, dict):
+        return False, "handoff_pack 缺少 method_intent"
+    if method_intent.get("status") != "draft_intent_only" or method_intent.get("not_final_method_source") is not True:
+        return False, "handoff_pack.method_intent 必须标记 draft_intent_only 且不是最终 Method 来源"
+    if not isinstance(handoff.get("baseline_matrix"), list):
+        return False, "handoff_pack 缺少 baseline_matrix"
+    if not isinstance(handoff.get("claim_evidence_matrix"), list) or not handoff.get("claim_evidence_matrix"):
+        return False, "handoff_pack 缺少非空 claim_evidence_matrix"
     contract = handoff.get("experiment_contract")
     if not isinstance(contract, dict):
         return False, "handoff_pack 缺少 experiment_contract"
@@ -486,6 +509,21 @@ def _validate_external_handoff(ws: Path) -> tuple[bool, str | None]:
         return False, err
     if schema.get("semantics") != "expected_external_executor_outputs_schema":
         return False, "expected_outputs_schema.json semantics 不正确"
+    required_fields = schema.get("required")
+    for field in (
+        "context_alignment",
+        "resources",
+        "baseline_reproduction",
+        "experiment_runs",
+        "result_diagnosis",
+        "module_attribution",
+        "realized_method_package",
+        "final_framework_figure",
+        "figure_table_inventory",
+        "writer_handoff",
+    ):
+        if not isinstance(required_fields, list) or field not in required_fields:
+            return False, f"expected_outputs_schema.json required 缺少 {field}"
     selection, err = _read_json_artifact(ws, "external_executor/executor_selection.json")
     if err:
         return False, err
@@ -509,11 +547,134 @@ def _validate_external_handoff(ws: Path) -> tuple[bool, str | None]:
             return False, f"{rel} 必须包含执行模式说明"
         if "external_executor/result_pack.json" not in text and rel != "external_executor/README.md":
             return False, f"{rel} 必须明确 result_pack 输出协议"
+    agents_text = (ws / "external_executor" / "AGENTS.md").read_text(encoding="utf-8", errors="replace")
+    if "external_executor/skills/research_execution/SKILL.md" not in agents_text:
+        return False, "external_executor/AGENTS.md 必须能一句话启动 root skill"
+    skill_manifest, err = _read_json_artifact(ws, "external_executor/skills/template_manifest.json")
+    if err:
+        return False, err
+    if skill_manifest.get("semantics") != "external_executor_skill_template_manifest":
+        return False, "external_executor/skills/template_manifest.json semantics 不正确"
+    copied_skills = skill_manifest.get("copied_skills")
+    if not isinstance(copied_skills, list) or len(copied_skills) != len(SKILL_SUITE):
+        return False, "external_executor/skills/template_manifest.json 必须记录 13 个 copied_skills"
+    copied_names = {str(item.get("skill")) for item in copied_skills if isinstance(item, dict)}
+    missing_skills = [name for name in SKILL_SUITE if name not in copied_names]
+    if missing_skills:
+        return False, "external_executor/skills/template_manifest.json 缺少 copied skill: " + ", ".join(missing_skills)
+    customization_skill = skill_manifest.get("customization_skill")
+    if not isinstance(customization_skill, dict):
+        return False, "external_executor/skills/template_manifest.json 缺少 customization_skill"
+    if customization_skill.get("destination") != "external_executor/skills/skills_customization/SKILL.md":
+        return False, "customization_skill.destination 必须指向 external_executor/skills/skills_customization/SKILL.md"
+    if not (ws / "external_executor" / "skills" / "skills_customization" / "SKILL.md").is_file():
+        return False, "external_executor/skills/skills_customization/SKILL.md 缺失"
+    for skill_name in SKILL_SUITE:
+        skill_path = ws / "external_executor" / "skills" / skill_name / "SKILL.md"
+        if not skill_path.is_file():
+            return False, f"external_executor/skills/{skill_name}/SKILL.md 缺失"
+        text = skill_path.read_text(encoding="utf-8", errors="replace")
+        for section in (
+            "## Use for",
+            "## Do not use for",
+            "## Reads",
+            "## Writes",
+            "## Workflow",
+            "## Output contract",
+            "## Evidence rules",
+            "## Stop conditions",
+        ):
+            if section not in text:
+                return False, f"external_executor/skills/{skill_name}/SKILL.md 缺少 {section}"
     job_state, err = _read_json_artifact(ws, "external_executor/job_state.json")
     if err:
         return False, err
     if job_state.get("semantics") != "external_executor_job_state":
         return False, "external_executor/job_state.json semantics 不正确"
+    return True, None
+
+
+def _validate_external_skill_customization(ws: Path) -> tuple[bool, str | None]:
+    skill_manifest, err = _read_json_artifact(ws, "external_executor/skills/template_manifest.json")
+    if err:
+        return False, err
+    if skill_manifest.get("semantics") != "external_executor_skill_template_manifest":
+        return False, "external_executor/skills/template_manifest.json semantics 不正确"
+    copied_skills = skill_manifest.get("copied_skills")
+    if not isinstance(copied_skills, list) or len(copied_skills) != len(SKILL_SUITE):
+        return False, "external_executor/skills/template_manifest.json 必须记录 13 个 copied_skills"
+    copied_names = {str(item.get("skill")) for item in copied_skills if isinstance(item, dict)}
+    missing_manifest_skills = [name for name in SKILL_SUITE if name not in copied_names]
+    if missing_manifest_skills:
+        return False, "external_executor/skills/template_manifest.json 缺少 copied skill: " + ", ".join(missing_manifest_skills)
+    if not (ws / "external_executor" / "skills" / "skills_customization" / "SKILL.md").is_file():
+        return False, "external_executor/skills/skills_customization/SKILL.md 缺失"
+    for rel in (
+        "external_executor/handoff_pack.json",
+        "external_executor/expected_outputs_schema.json",
+        "external_executor/allowed_paths.txt",
+        "external_executor/AGENTS.md",
+    ):
+        if not (ws / rel).exists():
+            return False, f"{rel} 缺失"
+
+    for skill_name in SKILL_SUITE:
+        skill_path = ws / "external_executor" / "skills" / skill_name / "SKILL.md"
+        if not skill_path.is_file():
+            return False, f"external_executor/skills/{skill_name}/SKILL.md 缺失"
+        text = skill_path.read_text(encoding="utf-8", errors="replace")
+        if not text.startswith("---\n"):
+            return False, f"external_executor/skills/{skill_name}/SKILL.md 缺少 YAML frontmatter"
+        try:
+            raw_frontmatter = text.split("\n---\n", 1)[0].removeprefix("---\n")
+            frontmatter = yaml.safe_load(raw_frontmatter) or {}
+        except Exception as exc:
+            return False, f"external_executor/skills/{skill_name}/SKILL.md frontmatter 解析失败: {exc}"
+        if not isinstance(frontmatter, dict) or frontmatter.get("name") != skill_name:
+            return False, f"external_executor/skills/{skill_name}/SKILL.md frontmatter name 必须为 {skill_name}"
+        for section in (
+            "## Use for",
+            "## Do not use for",
+            "## Reads",
+            "## Writes",
+            "## Workflow",
+            "## Output contract",
+            "## Evidence rules",
+            "## Stop conditions",
+        ):
+            if section not in text:
+                return False, f"external_executor/skills/{skill_name}/SKILL.md 缺少 {section}"
+
+    report, err = _read_json_artifact(ws, "external_executor/skills/customization_report.json")
+    if err:
+        return False, err
+    if report.get("semantics") != "external_executor_skill_customization_report":
+        return False, "external_executor/skills/customization_report.json semantics 不正确"
+    if report.get("handoff_pack") != "external_executor/handoff_pack.json":
+        return False, "external_executor/skills/customization_report.json 必须指向 handoff_pack"
+    customized_skills = report.get("customized_skills")
+    if not isinstance(customized_skills, list):
+        return False, "external_executor/skills/customization_report.json customized_skills 必须是列表"
+    customized_names = set()
+    for item in customized_skills:
+        if isinstance(item, dict):
+            name = item.get("skill") or item.get("name") or item.get("skill_name")
+        else:
+            name = item
+        if name is not None:
+            customized_names.add(str(name))
+    missing_report_skills = [name for name in SKILL_SUITE if name not in customized_names]
+    if missing_report_skills:
+        return False, "external_executor/skills/customization_report.json 未覆盖 skill: " + ", ".join(missing_report_skills)
+    if not isinstance(report.get("unchanged_or_skipped"), list):
+        return False, "external_executor/skills/customization_report.json unchanged_or_skipped 必须是列表"
+    if not isinstance(report.get("project_specific_fields_used"), list):
+        return False, "external_executor/skills/customization_report.json project_specific_fields_used 必须是列表"
+    if not isinstance(report.get("next_instruction"), str) or not report.get("next_instruction"):
+        return False, "external_executor/skills/customization_report.json 缺少 next_instruction"
+    skipped = report.get("unchanged_or_skipped", [])
+    if skipped:
+        return False, "external_executor/skills/customization_report.json 存在未完成 skill: " + str(skipped)
     return True, None
 
 
@@ -581,6 +742,22 @@ def _validate_external_dry_run(ws: Path) -> tuple[bool, str | None]:
         return False, "external_executor/result_pack.json semantics 不正确"
     if result_pack.get("dry_run") is not True or result_pack.get("mock_only") is not True:
         return False, "dry-run result_pack 必须显式 dry_run=true 且 mock_only=true"
+    for field in (
+        "schema_version",
+        "executor_status",
+        "context_alignment",
+        "resources",
+        "baseline_reproduction",
+        "experiment_runs",
+        "result_diagnosis",
+        "module_attribution",
+        "realized_method_package",
+        "final_framework_figure",
+        "figure_table_inventory",
+        "writer_handoff",
+    ):
+        if field not in result_pack:
+            return False, f"dry-run result_pack 缺少 required 字段 {field}"
     metrics = result_pack.get("metrics")
     if not isinstance(metrics, list) or not metrics:
         return False, "result_pack.metrics 必须是非空列表"
@@ -649,8 +826,12 @@ def _validate_external_ingest(ws: Path) -> tuple[bool, str | None]:
         return False, "experiments/results_summary.json semantics 不正确"
     if summary.get("source") != "external_executor":
         return False, "experiments/results_summary.json source 必须是 external_executor"
-    if not isinstance(summary.get("metrics"), list) or not summary.get("metrics"):
-        return False, "experiments/results_summary.json 必须包含非空 metrics"
+    metrics_obj = summary.get("metrics")
+    metric_records = summary.get("metric_records")
+    if not isinstance(metrics_obj, dict) or not metrics_obj:
+        return False, "experiments/results_summary.json 必须包含非空 metrics 对象"
+    if not isinstance(metric_records, list) or not metric_records:
+        return False, "experiments/results_summary.json 必须包含非空 metric_records 列表"
     if not isinstance(summary.get("experiments"), list) or not summary.get("experiments"):
         return False, "experiments/results_summary.json 必须包含非空 experiments"
     if summary.get("ingest_report_ref") != "experiments/ingest_report.json":
@@ -660,6 +841,17 @@ def _validate_external_ingest(ws: Path) -> tuple[bool, str | None]:
         return False, err
     if evidence.get("semantics") != "external_experiment_evidence_index":
         return False, "experiments/evidence_index.json semantics 不正确"
+    for field in (
+        "baseline_reproduction",
+        "resources",
+        "experiment_runs",
+        "realized_method_package",
+        "final_framework_figure",
+        "figure_table_inventory",
+        "writer_handoff",
+    ):
+        if field not in evidence:
+            return False, f"experiments/evidence_index.json 缺少 {field}"
     report, err = _read_json_artifact(ws, "experiments/ingest_report.json")
     if err:
         return False, err
@@ -733,6 +925,47 @@ def _validate_external_integrity_audit(ws: Path) -> tuple[bool, str | None]:
     fairness = ws / "experiments" / "experiment_fairness_review.md"
     if not fairness.exists() or fairness.stat().st_size <= 0:
         return False, "缺少 experiments/experiment_fairness_review.md"
+    result_audit, err = _read_json_artifact(ws, "experiments/result_audit.json")
+    if err:
+        return False, err
+    if result_audit.get("semantics") != "external_experiment_result_audit":
+        return False, "experiments/result_audit.json semantics 不正确"
+    for field in ("baseline_fairness", "metric_provenance", "mock_dry_run", "result_figure_provenance"):
+        if not isinstance(result_audit.get(field), dict):
+            return False, f"experiments/result_audit.json 缺少 {field}"
+    for rel, semantics in {
+        "experiments/method_audit.json": "external_method_intent_vs_realized_audit",
+        "experiments/framework_figure_audit.json": "external_framework_figure_audit",
+        "drafts/method_writing_resources.json": "audited_method_writing_resources",
+    }.items():
+        data, err = _read_json_artifact(ws, rel)
+        if err:
+            return False, err
+        allowed_semantics = {semantics}
+        if rel == "drafts/method_writing_resources.json":
+            allowed_semantics.add("method_writing_resources")
+            allowed_semantics.add("external_method_writing_resources")
+        if data.get("semantics") not in allowed_semantics:
+            return False, f"{rel} semantics 不正确"
+        if rel == "experiments/method_audit.json":
+            consistency = data.get("method_consistency_audit")
+            if not isinstance(consistency, dict):
+                return False, "experiments/method_audit.json 缺少 method_consistency_audit"
+            for field in (
+                "method_intent_matches_realized_method",
+                "realized_method_matches_code",
+                "framework_figure_matches_code",
+                "ablation_matches_modules",
+                "contribution_drift",
+                "requires_post_novelty_check",
+                "required_action",
+            ):
+                if field not in consistency:
+                    return False, f"method_consistency_audit 缺少 {field}"
+        if rel == "drafts/method_writing_resources.json" and not isinstance(data.get("method_writing_resources"), dict):
+            return False, "drafts/method_writing_resources.json 缺少 method_writing_resources"
+    if audit.get("contribution_drift") not in {"none", "minor", "major", "unknown"}:
+        return False, "integrity_audit.contribution_drift 不正确"
     return True, None
 
 
@@ -746,6 +979,10 @@ def _validate_post_experiment_novelty(ws: Path) -> tuple[bool, str | None]:
         return False, "post_experiment_novelty_check.novelty_after_implementation 不正确"
     if check.get("recommended_next_task") not in {"T7-CLAIMS", "T5-HANDOFF", "T4"}:
         return False, "post_experiment_novelty_check.recommended_next_task 不正确"
+    if check.get("contribution_drift") not in {"none", "minor", "major", "unknown"}:
+        return False, "post_experiment_novelty_check.contribution_drift 不正确"
+    if check.get("required_action") not in {"none", "update_method", "rerun_experiment", "rerun_novelty", "human_review", "narrow_claim"}:
+        return False, "post_experiment_novelty_check.required_action 不正确"
     collision = ws / "novelty" / "post_experiment_collision_cases.md"
     if not collision.exists() or collision.stat().st_size <= 0:
         return False, "缺少 novelty/post_experiment_collision_cases.md"
@@ -762,6 +999,7 @@ def _validate_external_result_to_claim(ws: Path) -> tuple[bool, str | None]:
         "drafts/claim_support_matrix.csv",
         "drafts/limitations_from_experiments.md",
         "drafts/figure_table_evidence_map.json",
+        "drafts/method_writing_resources.json",
     ]
     ok, err = _require_external_files(ws, required)
     if not ok:
@@ -962,24 +1200,79 @@ class ExperimenterAgent(Agent):
         """初始用户消息，根据 mode 生成不同的指令。"""
         mode = ctx.mode or "full"
 
+        if mode == "reboost":
+            return prepend_resume_prefix(
+                ctx,
+                (
+                    "请执行 T5 context re-boost：直接调用当前 LLM 能力读取 Pre-T5 材料，"
+                    "不要要求用户手动拉起 Codex CLI，也不要执行实验、实现代码、选择执行器或写 result_pack。\n\n"
+                    "必须优先读取这些文件：project.yaml、literature/synthesis.md、"
+                    "literature/synthesis_workbench.json、literature/domain_map.json、"
+                    "literature/comparison_table.csv、ideation/hypotheses.md、ideation/exp_plan.yaml、"
+                    "ideation/idea_scorecard.yaml、ideation/risks.md、ideation/novelty_audit.md、"
+                    "novelty/novelty_audit.md。必要时可回查 literature/paper_notes/、"
+                    "literature/paper_notes_abstract/、resources/、user_seeds/seed_external_resources.jsonl "
+                    "和 user_seeds/bridge_domains.yaml。\n\n"
+                    "re-boost 不是摘要，而是把 Pre-T5 研究设计重排成外部执行器需要的执行语境。"
+                    "请回答：研究目标、central hypothesis、方法机制不可偏离点、核心/候选方法模块、"
+                    "required baselines、必须跑和可替代 baseline、最低实验闭环、强/弱 claim 支撑条件、"
+                    "当前不能说的 claim、结果如何反向精炼 method/idea、外部执行器必须交给 Writer 的内容。\n\n"
+                    "写入 external_executor/handoff_pack.json，至少包含 schema_version="
+                    "external_executor_handoff.v1、semantics=external_experiment_handoff_contract、"
+                    "status=context_reboost_completed、context_reboost、顶层 baseline_matrix 和顶层 "
+                    "claim_evidence_matrix。context_reboost 必须包含 project_goal、central_hypothesis、"
+                    "method_mechanism、required_baselines、baseline_matrix、claim_evidence_matrix、"
+                    "minimum_experiment_loop、iteration_budget、claim_boundaries、writer_handoff_contract、"
+                    "source_files_used、known_context_mismatches。claim_evidence_matrix 不能为空；"
+                    "如果证据不足，请写保守 claim/弱 claim/不能 claim 的边界，而不是编造结果。\n\n"
+                    "同时写 external_executor/reboost_report.json，记录 semantics="
+                    "external_executor_context_reboost_report、source_files_used、missing_optional_sources、"
+                    "known_context_mismatches 和 handoff_pack 路径。最后调用 finish_task。"
+                ),
+            )
         if mode == "handoff":
             return prepend_resume_prefix(
                 ctx,
                 (
                     "请执行外部实验 T5-HANDOFF：调用 build_experiment_handoff_pack，"
-                    "生成 external_executor/handoff_pack.json、executor_prompt.md、"
+                    "读取并保留 T5-REBOOST-GATE 已写入的 external_executor/handoff_pack.json#context_reboost，"
+                    "然后补全 external_executor/handoff_pack.json、executor_prompt.md、"
                     "expected_outputs_schema.json、allowed_paths.txt、AGENTS.md、CLAUDE.md、README.md、"
                     "job_state.json 和 Codex/Claude/manual prompt。不要运行真实实验；执行器选择由 "
                     "T5-EXECUTOR-GATE 完成。"
+                ),
+            )
+        if mode == "skill_customization":
+            return prepend_resume_prefix(
+                ctx,
+                (
+                    "请执行 T5 skill 专属化：直接调用当前 LLM 能力读取 "
+                    "external_executor/handoff_pack.json、external_executor/skills/template_manifest.json、"
+                    "external_executor/skills/skills_customization/SKILL.md、"
+                    "external_executor/skills/skills_customization/references/customization_checklist.md "
+                    "以及 external_executor/skills/shared-references/ 下的共享规则。不要要求用户手动拉起 Codex CLI。\n\n"
+                    "只处理 template_manifest.json#copied_skills 中列出的 13 个目标 skill；"
+                    "不要把 skills_customization 或 shared-references 当作目标 skill，不要运行实验、"
+                    "不要写 result_pack、executor_status 或 run_manifest。\n\n"
+                    "请根据 handoff_pack 中的 context_reboost、method_intent、baseline_matrix、"
+                    "claim_evidence_matrix、experiment_contract、allowed_paths 和 writer_handoff_contract，"
+                    "原地改写 external_executor/skills/<target_skill>/SKILL.md，使其成为当前项目专属 skill。"
+                    "每个目标 skill 必须保留 YAML frontmatter name、工具/路径边界，以及 Use for、Do not use for、"
+                    "Reads、Writes、Workflow、Output contract、Evidence rules、Stop conditions 八个边界章节。"
+                    "长项目背景应放入目标 skill 的 references/，不要把 SKILL.md 写成项目档案。\n\n"
+                    "最后写入 external_executor/skills/customization_report.json，semantics 必须为 "
+                    "external_executor_skill_customization_report，handoff_pack 必须为 "
+                    "external_executor/handoff_pack.json，customized_skills 必须覆盖全部 13 个目标 skill，"
+                    "unchanged_or_skipped 应为空。最后调用 finish_task。"
                 ),
             )
         if mode == "executor_gate":
             return prepend_resume_prefix(
                 ctx,
                 (
-                    "T5-EXECUTOR-GATE 是状态机 immediate gate，通常不会启动 LLM。"
-                    "如果被直接 run-task 调用，请调用 select_external_executor 写入真实选择，"
-                    "并确保 external_executor/*.md 中不再包含 UNSET，然后 finish_task。"
+                    "T5 的人工 gate 节点通常由状态机 immediate gate 处理，不会启动 LLM。"
+                    "若当前是 T5-EXECUTOR-GATE 且被直接 run-task 调用，请调用 "
+                    "select_external_executor 写入真实选择，并确保 external_executor/*.md 中不再包含 UNSET，然后 finish_task。"
                 ),
             )
         if mode == "external_wait":
@@ -1102,8 +1395,22 @@ class ExperimenterAgent(Agent):
         if not ok:
             return False, err
 
+        if mode == "reboost":
+            ok, err = validate_context_reboost_handoff(ws)
+            if not ok:
+                return False, err
+            report, report_err = _read_json_artifact(ws, "external_executor/reboost_report.json")
+            if report_err:
+                return False, report_err
+            if report.get("semantics") != "external_executor_context_reboost_report":
+                return False, "external_executor/reboost_report.json semantics 不正确"
+            if report.get("handoff_pack") != "external_executor/handoff_pack.json":
+                return False, "external_executor/reboost_report.json 必须指向 handoff_pack"
+            return True, None
         if mode == "handoff":
             return _validate_external_handoff(ws)
+        if mode == "skill_customization":
+            return _validate_external_skill_customization(ws)
         if mode == "executor_gate":
             return _validate_external_executor_selection(ws)
         if mode == "external_wait":

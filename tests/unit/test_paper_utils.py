@@ -220,14 +220,15 @@ async def test_detect_duplicate_queries_rejects_all_blank_queries():
 
 
 @pytest.mark.asyncio
-async def test_log_scout_progress_rejects_empty_search_result(tmp_path):
+async def test_log_scout_progress_skips_empty_search_result(tmp_path):
     tool = LogScoutProgressTool()
     tool.set_workspace_dir(str(tmp_path))
 
     result = await tool.execute(action="search_result", query=" ", source="", count=0)
 
-    assert not result.ok
-    assert result.error == "invalid_progress_event"
+    assert result.ok
+    assert result.data["skipped"] is True
+    assert "search_result" in result.data["reason"]
     assert not (tmp_path / "literature" / "temp" / "scout_progress.md").exists()
 
 

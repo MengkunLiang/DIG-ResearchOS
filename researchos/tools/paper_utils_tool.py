@@ -310,30 +310,26 @@ class LogScoutProgressTool(Tool):
                 if queries:
                     logger.log_queries_expanded(queries)
                 else:
-                    return ToolResult(ok=False, content="queries 参数缺失或全为空", error="missing_param")
+                    return _skip_invalid_progress_event("queries 参数缺失或全为空")
             elif action == "search":
                 query = _clean_progress_text(params.query)
                 source = _clean_progress_text(params.source)
                 if not query or not source:
-                    return ToolResult(
-                        ok=False,
-                        content="search 进度必须包含非空 query 和 source；空 query 表示上游检索式生成/传参有问题。",
-                        error="invalid_progress_event",
-                        data={"query": params.query, "source": params.source},
+                    return _skip_invalid_progress_event(
+                        "search 进度缺少非空 query 或 source",
+                        query=params.query,
+                        source=params.source,
                     )
                 logger.log_search_start(query, source)
             elif action == "search_result":
                 query = _clean_progress_text(params.query)
                 source = _clean_progress_text(params.source)
                 if not query or not source or params.count is None:
-                    return ToolResult(
-                        ok=False,
-                        content=(
-                            "search_result 进度必须包含非空 query、source 和显式 count；"
-                            "不能把普通状态说明记录成 `检索 '' -> 0 篇` 这类无法排障的事件。"
-                        ),
-                        error="invalid_progress_event",
-                        data={"query": params.query, "source": params.source, "count": params.count},
+                    return _skip_invalid_progress_event(
+                        "search_result 进度缺少非空 query、source 或显式 count",
+                        query=params.query,
+                        source=params.source,
+                        count=params.count,
                     )
                 logger.log_search_result(
                     query,
@@ -343,11 +339,9 @@ class LogScoutProgressTool(Tool):
             elif action == "search_error":
                 query = _clean_progress_text(params.query)
                 if not query:
-                    return ToolResult(
-                        ok=False,
-                        content="search_error 进度必须包含失败的非空 query。",
-                        error="invalid_progress_event",
-                        data={"query": params.query},
+                    return _skip_invalid_progress_event(
+                        "search_error 进度缺少失败的非空 query",
+                        query=params.query,
                     )
                 logger.log_search_error(query, params.detail)
             elif action == "dedup":
@@ -370,6 +364,23 @@ class LogScoutProgressTool(Tool):
 
 def _clean_progress_text(value: Any) -> str:
     return " ".join(str(value or "").split())
+
+
+def _skip_invalid_progress_event(reason: str, **data: Any) -> ToolResult:
+    """Return a successful no-op for malformed progress-only events.
+
+    `log_scout_progress` is a user-facing visualization aid.  Search tools
+    still reject empty queries, but a malformed progress event should not make
+    the CLI look as if the research task itself failed.
+    """
+
+    payload = {"skipped": True, "reason": reason}
+    payload.update(data)
+    return ToolResult(
+        ok=True,
+        content=f"进度记录已跳过：{reason}；该事件不会写入 scout_progress.md，且不影响研究流程。",
+        data=payload,
+    )
 
 
 def _safe_count_file(path: Path) -> int:

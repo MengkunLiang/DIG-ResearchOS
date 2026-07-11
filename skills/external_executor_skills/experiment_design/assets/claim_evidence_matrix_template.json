@@ -1,0 +1,22 @@
+{
+  "claim_evidence_matrix": [
+    {
+      "claim_id": "",
+      "claim": "",
+      "reviewer_question": "",
+      "evidence_needed": "",
+      "experiment_id": "",
+      "run_type": "",
+      "dataset": "",
+      "split": "",
+      "metric": "",
+      "metric_direction": "",
+      "baselines": [],
+      "ours_config": "",
+      "ablation_or_diagnostic": "",
+      "fairness_constraints": [],
+      "expected_artifacts": [],
+      "claim_boundary_if_unrun": ""
+    }
+  ]
+}

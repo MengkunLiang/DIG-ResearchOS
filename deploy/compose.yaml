@@ -1,0 +1,32 @@
+services:
+  researchos:
+    image: ${RESEARCHOS_IMAGE:-researchos/system:latest}
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile
+    working_dir: /app
+    env_file:
+      - path: ../.env
+        required: false
+      - path: .env
+        required: false
+    environment:
+      RESEARCHOS_CONFIG: /app/config/user_settings.yaml
+      RESEARCHOS_WORKSPACE_ROOT: /app/workspaces
+      RESEARCHOS_HOST_WORKSPACE_ROOT: ${RESEARCHOS_HOST_WORKSPACE_ROOT:-./workspaces}
+      RESEARCHOS_IMAGE: ${RESEARCHOS_IMAGE:-researchos/system:latest}
+      PYTHONUNBUFFERED: "1"
+    user: "${RESEARCHOS_UID:-0}:${RESEARCHOS_GID:-0}"
+    volumes:
+      - type: bind
+        source: ../workspaces
+        target: /app/workspaces
+      - type: bind
+        source: ../config
+        target: /app/config
+        read_only: true
+        bind:
+          create_host_path: false
+    stdin_open: true
+    tty: true
+    command: ["--help"]

@@ -29,9 +29,20 @@ researchos = "researchos.cli:main"
 [tool.setuptools]
 include-package-data = true
 
+[tool.setuptools.package-data]
+researchos = [
+  "prompts/*.j2",
+  "schemas/json_schemas/*.json",
+  "schemas/json_schemas/*.md",
+  "agent_guidance/*/*.md",
+]
+
 [tool.setuptools.packages.find]
 include = ["researchos*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
+testpaths = ["tests/unit"]
+markers = [
+  "real: tests that may require real credentials, external tools, network access, or larger fixtures",
+]

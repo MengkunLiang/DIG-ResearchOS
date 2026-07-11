@@ -10,12 +10,14 @@ from researchos.cli_runners.single_task import SingleTaskRunner
 from researchos.runtime.config_audit import build_config_audit_summary
 from researchos.runtime.config import (
     DebugSettings,
+    LatexSettings,
     LoggingSettings,
     RuntimeSettings,
     UISettings,
     WebFetchSettings,
     WorkspaceSettings,
     load_runtime_settings,
+    resolve_runtime_config_path,
 )
 from researchos.schemas import validator
 from researchos.testing.mocks import (
@@ -85,6 +87,10 @@ def test_load_runtime_settings_reads_shared_runtime_options(tmp_path: Path):
             web_fetch:
               allowed_schemes: ["https"]
               allowed_hosts: ["example.com", "openalex.org"]
+            latex:
+              default_backend: tectonic
+              allow_docker_fallback: false
+              docker_image: researchos/tex:latest
             """
         ).strip()
         + "\n",
@@ -102,6 +108,34 @@ def test_load_runtime_settings_reads_shared_runtime_options(tmp_path: Path):
         allowed_schemes=("https",),
         allowed_hosts=("example.com", "openalex.org"),
     )
+    assert settings.latex == LatexSettings(
+        default_backend="tectonic",
+        allow_docker_fallback=False,
+        docker_image="researchos/tex:latest",
+    )
+
+
+def test_runtime_workspace_root_env_override(tmp_path: Path, monkeypatch):
+    config_path = tmp_path / "runtime.yaml"
+    config_path.write_text("workspace:\n  default_root: ./from-yaml\n", encoding="utf-8")
+    monkeypatch.setenv("RESEARCHOS_WORKSPACE_ROOT", str(tmp_path / "from-env"))
+
+    settings = load_runtime_settings(config_path)
+
+    assert settings.workspace.default_root == str(tmp_path / "from-env")
+
+
+def test_runtime_config_env_override_wins_over_default_path(tmp_path: Path, monkeypatch):
+    default_path = tmp_path / "default-runtime.yaml"
+    env_path = tmp_path / "env-runtime.yaml"
+    default_path.write_text("workspace:\n  default_root: ./from-default\n", encoding="utf-8")
+    env_path.write_text("workspace:\n  default_root: ./from-env-config\n", encoding="utf-8")
+    monkeypatch.setenv("RESEARCHOS_RUNTIME_CONFIG", str(env_path))
+
+    settings = load_runtime_settings(default_path)
+
+    assert resolve_runtime_config_path(default_path) == env_path
+    assert settings.workspace.default_root == "./from-env-config"
 
 
 def test_t7_direct_full_prerequisites_do_not_require_t5_t6_outputs(tmp_path: Path):

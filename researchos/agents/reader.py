@@ -47,6 +47,11 @@ from ._common import (
 )
 from .guidance import load_agent_guidance
 
+ABSTRACT_CORE_HEADING = "## A. Core Approach / Perspective"
+ABSTRACT_BRIDGE_HEADING = "## B. Bridge Point"
+LEGACY_ABSTRACT_CORE_HEADING = "## A. 核心做法/视角"
+LEGACY_ABSTRACT_BRIDGE_HEADING = "## B. 桥接点"
+
 
 class ReaderAgent(Agent):
     """深度阅读Agent。read (T3)逐篇精读，synthesize (T3.5)综合。"""
@@ -493,13 +498,20 @@ class ReaderAgent(Agent):
 
         literature_dir = ctx.workspace_dir / "literature"
         note_ids = _paper_note_reference_ids(literature_dir)
+        note_count = len(_iter_paper_note_paths(literature_dir))
         bib_key_map = _bib_key_note_ref_map(literature_dir)
         known_refs = _known_evidence_refs_in_content(content, note_ids, bib_key_map)
-        if note_ids and len(known_refs) < min(5, len(note_ids)):
+        target_refs = _synthesis_reference_target(literature_dir, note_count)
+        if note_ids and len(known_refs) < target_refs:
             return False, (
                 f"synthesis.md中真实已读论文引用过少({len(known_refs)}个)，"
-                "应在 Markdown 正文中使用更多 paper note anchor（如 [paper_id]）或 related_work.bib 中的 \\cite{key}"
+                f"至少需要覆盖 {target_refs} 篇不同已读论文；"
+                "应在每个 claim-bearing 章节中使用更多 paper note anchor（如 [note:paper_id]）"
+                "或 related_work.bib 中可映射到真实 note 的 \\cite{key}，不要只在代表论文列表中集中引用"
             )
+        section_issues = _synthesis_section_reference_issues(content, note_ids, bib_key_map)
+        if note_ids and section_issues:
+            return False, "synthesis.md章节级真实引用覆盖不足: " + "; ".join(section_issues[:6])
 
         # 兼容没有 paper_notes 白名单的旧测试/workspace，仍接受规范论文ID样式。
         if note_ids:
@@ -593,6 +605,33 @@ def _iter_paper_note_paths(literature_dir: Path) -> list[Path]:
     return sorted(paths)
 
 
+def _synthesis_reference_target(literature_dir: Path, note_count: int) -> int:
+    if note_count <= 0:
+        return 0
+    target = min(note_count, max(5, min(24, math.ceil(note_count * 0.35))))
+    workbench_path = literature_dir / "synthesis_workbench.json"
+    if workbench_path.exists():
+        try:
+            import json
+            workbench = json.loads(workbench_path.read_text(encoding="utf-8"))
+        except Exception:
+            workbench = {}
+        plan = workbench.get("citation_coverage_plan") if isinstance(workbench, dict) else {}
+        if isinstance(plan, dict):
+            try:
+                planned = int(plan.get("recommended_min_unique_refs") or 0)
+            except (TypeError, ValueError):
+                planned = 0
+            try:
+                coverage_count = int(plan.get("coverage_ref_count") or plan.get("main_claim_ref_count") or 0)
+            except (TypeError, ValueError):
+                coverage_count = 0
+            if planned > 0:
+                cap = coverage_count if coverage_count > 0 else note_count
+                target = min(cap, max(1, planned))
+    return target
+
+
 def _paper_note_reference_ids(literature_dir: Path) -> set[str]:
     normalized: set[str] = set()
     for note_path in _iter_paper_note_paths(literature_dir):
@@ -624,6 +663,44 @@ def _known_evidence_refs_in_content(
         if mapped:
             found.add(mapped)
     return found
+
+
+def _synthesis_section_reference_issues(
+    content: str,
+    note_ids: set[str],
+    bib_key_map: dict[str, str] | None = None,
+) -> list[str]:
+    sections = [
+        ("方法家族", ("方法家族", "Method Families")),
+        ("共同假设", ("共同假设", "Shared Assumptions", "Assumptions")),
+        ("贡献空间", ("贡献空间", "Contribution-Space", "Contribution Space")),
+        ("趋势/矛盾", ("技术趋势", "Trends", "跨论文矛盾", "Cross-Paper")),
+        ("邻接迁移", ("邻接领域", "Adjacent", "Transferable Mechanisms", "理论桥接")),
+        ("研究问题", ("研究问题", "Research Questions", "Open Questions", "Actionable")),
+    ]
+    issues: list[str] = []
+    for label, aliases in sections:
+        section_text = _extract_synthesis_section(content, aliases)
+        if not section_text:
+            continue
+        refs = _known_evidence_refs_in_content(section_text, note_ids, bib_key_map)
+        minimum = 1 if label in {"邻接迁移", "研究问题"} else 2
+        if len(refs) < minimum:
+            issues.append(f"{label}章节仅识别到 {len(refs)} 个真实已读引用，至少需要 {minimum} 个")
+    return issues
+
+
+def _extract_synthesis_section(content: str, aliases: tuple[str, ...]) -> str:
+    headings = list(re.finditer(r"(?m)^##\s+(.+?)\s*$", content or ""))
+    if not headings:
+        return ""
+    for idx, match in enumerate(headings):
+        title = match.group(1)
+        if any(alias.lower() in title.lower() for alias in aliases):
+            start = match.end()
+            end = headings[idx + 1].start() if idx + 1 < len(headings) else len(content)
+            return content[start:end]
+    return ""
 
 
 def _latex_cite_keys(content: str) -> set[str]:
@@ -732,8 +809,11 @@ def _validate_note_structure(note_path: Path) -> tuple[bool, str | None]:
     status_text = content.partition("- **Status**:")[2].splitlines()[0] if "- **Status**:" in content else ""
     is_abstract_only = "ABSTRACT-ONLY" in status_text
     if is_abstract_only:
-        for marker in ("## A. 核心做法/视角", "## B. 桥接点"):
-            if not _has_required_marker(content, marker):
+        for marker, legacy in (
+            (ABSTRACT_CORE_HEADING, LEGACY_ABSTRACT_CORE_HEADING),
+            (ABSTRACT_BRIDGE_HEADING, LEGACY_ABSTRACT_BRIDGE_HEADING),
+        ):
+            if not _has_required_marker(content, marker) and not _has_required_marker(content, legacy):
                 return False, f"{note_path.name} ABSTRACT-ONLY note 缺少必要轻字段: {marker}"
     if not is_abstract_only and "Evidence Source" not in content and "| Claim | Evidence | Strength |" not in content:
         return False, f"{note_path.name} 缺少 evidence 锚点，无法支撑全文类结论"
@@ -873,14 +953,18 @@ def _validate_abstract_note_structure(note_path: Path) -> tuple[bool, str | None
         "- **Status**:",
         "## 1. Problem & Motivation",
         "## 2. Method Summary",
-        "## A. 核心做法/视角",
-        "## B. 桥接点",
         "## 3. Key Claimed Results",
         "## 13. Mechanism Claim",
         "## Source",
     ]
     for marker in required_markers:
         if not _has_required_marker(content, marker):
+            return False, f"{note_path.name} 缺少必要结构: {marker}"
+    for marker, legacy in (
+        (ABSTRACT_CORE_HEADING, LEGACY_ABSTRACT_CORE_HEADING),
+        (ABSTRACT_BRIDGE_HEADING, LEGACY_ABSTRACT_BRIDGE_HEADING),
+    ):
+        if not _has_required_marker(content, marker) and not _has_required_marker(content, legacy):
             return False, f"{note_path.name} 缺少必要结构: {marker}"
 
     # Status 必须是 ABSTRACT-ONLY

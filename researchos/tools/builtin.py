@@ -205,7 +205,8 @@ def register_builtin_tools(
             DockerExecTool(
                 ctx.policy,
                 project_config=load_project_config(ctx.policy.workspace_dir),
-            )
+            ),
+            runtime_settings.latex,
         ),
     )
     registry.register("process_seed_paper", lambda ctx: ProcessSeedPaperTool(ctx.policy))

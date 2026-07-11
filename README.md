@@ -17,9 +17,10 @@ idea
  -> literature scouting
  -> deep reading
  -> synthesis
+ -> optional taxonomy-driven survey paper
  -> hypothesis generation
  -> novelty audit
- -> external experiment handoff / executor wait
+ -> external experiment re-boost / handoff / automatic skill customization / executor wait
  -> result ingest / integrity audit / result-to-claim
  -> PI evaluation
  -> writing / review / revision
@@ -32,12 +33,29 @@ Current implemented workflow:
 
 ```text
 T1
+ -> T2-PARAM-GATE
+ -> T2-PARAM-CONFIRM-GATE
  -> T2
+ -> T2-COVERAGE-GATE
  -> T3
  -> T3.5
+ -> T3.6-GATE-SURVEY
+    -> no: T4
+    -> yes: T3.6-TEMPLATE-GATE -> T3.6-PLAN -> T3.6-GATE-OUTLINE -> T3.6-GATE-CORPUS
+            -> optional T3.6-EXPAND
+            -> T3.6-STATE
+            -> T3.6-SEC-* section-by-section
+            -> T3.6-ASSEMBLE -> T3.6-REVIEW -> T3.6-COMPILE -> T3.6-FEED
+            -> T3.6-POST-SURVEY-GATE
  -> T4
+    -> candidate pool ready: T4-GATE1 -> user selects/merges/reanalyzes -> T4
  -> T4.5
+    -> pass*: T5-REBOOST-GATE
+    -> reframe/drop/unknown: T4.5-HUMAN-REVIEW -> user chooses T5-REBOOST-GATE/T4/done
+ -> T5-REBOOST-GATE
  -> T5-HANDOFF
+ -> T5-SKILL-CUSTOMIZATION-GATE
+ -> T5-EXPR-MATERIAL-GATE
  -> T5-EXECUTOR-GATE
     -> mock_dry_run: T5-DRY-RUN
     -> codex_cli / claude_code_window / manual: T5-EXTERNAL-WAIT
@@ -68,13 +86,16 @@ Key runtime features already wired:
 - full pipeline execution via `run` / `resume`
 - single-task debugging via `run-task`
 - task resume / recovery for interrupted stages
+- T2 parameter confirmation and post-search coverage gates
+- optional T3.6 taxonomy-driven survey branch with template, outline, corpus, compile, and post-survey gates
+- T4 Gate1 candidate selection, merge, new-idea, and reanalysis flow
 - LLM routing with profile, tier, fallback, retries, and provider selftest
 - artifact validation after each task
 - human gates in the state machine
 - skill discovery and `run-skill`
 - MCP server loading and tool registration
-- external executor handoff / dry-run / ingest / integrity audit / result-to-claim
-- Docker-assisted LaTeX execution and optional legacy/internal experiment support
+- external executor context re-boost, handoff, automatic skill customization, material placement, dry-run/wait, ingest, integrity audit, and result-to-claim
+- local `latexmk` based LaTeX compilation and optional legacy Docker tooling
 - trace and log recording under each workspace
 
 ## Core Concepts
@@ -126,10 +147,16 @@ That is why resume and interruption recovery work best when the relevant outputs
 | `researchos/tools/` | builtin tools, MCP adapter, filesystem, paper tools |
 | `researchos/skills/` | skill loader, aliases, runner |
 | `config/` | user settings, model routing, agent params, runtime config, and `system_config/` workflow contracts |
-| `docs/` | detailed system documentation |
-| `infra/docker/` | Docker build and run scripts |
-| `tests/` | unit and real-environment tests |
-| `workspace/` | default local workspaces |
+| `docs/` | documentation index, quickstart, pipeline/runtime references, and design archive |
+| `deploy/` | user-facing Docker Compose deployment, Docker env example, and wrappers; project data stays in top-level `workspaces/` |
+| `infra/docker/` | low-level Docker image build assets and compatibility helpers |
+| `scripts/` | maintained utility scripts such as artifact validation and recovery helpers |
+| `tests/` | automated pytest coverage; `tests/unit/` is deterministic, `tests/real/` may need credentials/local tools, `tests/manual/` is local-only |
+| `workspaces/` | default generated workspace root for Native and Docker mode; do not commit |
+| `workspace/` | legacy/local generated workspace root still accepted when passed explicitly; do not commit |
+
+For the full directory contract, see [docs/project_structure.md](docs/project_structure.md).
+For a documentation map, see [docs/README.md](docs/README.md).
 
 ## Installation
 
@@ -149,9 +176,22 @@ pip install -e .
 ```
 
 `requirements.txt` is the single dependency file for local use. It includes the
-runtime, LLM routing, PDF/BibTeX processing, pytest development dependencies,
-and common experiment/analysis packages. Docker installs CUDA PyTorch separately
-because that wheel source is hardware-specific.
+runtime, LLM routing, PDF/BibTeX processing, and pytest development
+dependencies. It does not install a local experiment training stack by default.
+
+For T3.6 survey compilation or T9 submission compilation, install a host TeX
+distribution with `latexmk`. On Ubuntu/Debian:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  texlive-latex-base \
+  texlive-latex-extra \
+  texlive-fonts-recommended \
+  texlive-xetex \
+  texlive-lang-chinese \
+  latexmk
+```
 
 If `researchos` is not found or behaves differently from the current source tree, use:
 
@@ -161,26 +201,42 @@ PYTHONPATH=/absolute/path/to/ResearchOS python -m researchos.cli ...
 
 ### Option B: Docker installation
 
-Recommended for:
+Optional. Use this when you want to run the ResearchOS CLI in a clean Python
+container. Docker is not required for the default pipeline, external executor
+flow, or LaTeX compilation.
 
-- reproducible execution
-- T5 / T7 experiments
-- T9 LaTeX compilation
-- avoiding host dependency drift
+Use [deploy/](deploy/) for ordinary Docker Compose runs. `infra/docker/` is the
+lower-level image build area used by maintainers.
 
 ```bash
 cd ResearchOS
-bash infra/docker/build.sh
+cp deploy/.env.example deploy/.env
+mkdir -p workspaces
+docker compose -f deploy/compose.yaml build
+docker compose -f deploy/compose.yaml run --rm researchos doctor
 ```
 
-Then run commands through the wrapper:
+Then run the same CLI in Docker:
 
 ```bash
-bash infra/docker/run.sh selftest
-bash infra/docker/run.sh run-task T9 --workspace /workspace/local-test2
+docker compose -f deploy/compose.yaml run --rm researchos \
+  init-workspace --workspace /app/workspaces/local-test2 \
+  --project-id local-test2 \
+  --topic "memory systems for llm agents"
+
+docker compose -f deploy/compose.yaml run --rm researchos \
+  run-task HELLO --workspace /app/workspaces/local-test2
 ```
 
-See [docs/docker.md](./docs/docker.md) for full details.
+The host files live in `workspaces/local-test2`. See
+[deploy/README.md](./deploy/README.md) and [docs/docker.md](./docs/docker.md)
+for full details.
+
+On Linux, the wrapper scripts set the container UID/GID to the current user so
+bind-mounted workspace files stay editable on the host. Direct Compose defaults
+to `0:0` for compatibility with root-owned checkouts; set `RESEARCHOS_UID` and
+`RESEARCHOS_GID` in `deploy/.env` if you want direct Compose to write as your
+user.
 
 ## Environment Variables
 
@@ -194,6 +250,8 @@ The most commonly used variables are:
 
 | Variable | Purpose |
 | --- | --- |
+| `DEEPSEEK_API_KEY` | DeepSeek endpoint used by the checked-in default profile |
+| `DEEPSEEK_BASE_URL` | DeepSeek-compatible base URL override |
 | `SILICONFLOW_API_KEY` | SiliconFlow models |
 | `SILICONFLOW_BASE_URL` | SiliconFlow-compatible base URL override |
 | `OPENROUTER_API_KEY` | OpenRouter fallback/provider routing |
@@ -201,6 +259,8 @@ The most commonly used variables are:
 | `OPENAI_BASE_URL` | OpenAI-compatible custom base URL |
 | `ANTHROPIC_API_KEY` | Anthropic provider |
 | `S2_API_KEY` | Semantic Scholar API |
+| `ELSEVIER_API_KEY` | Elsevier / Scopus search API |
+| `ELSEVIER_INSTTOKEN` | Optional Elsevier institutional token |
 | `RESEARCHER_EMAIL` | email identity for paper APIs |
 | `GITHUB_TOKEN` | optional, for MCP / GitHub integrations |
 
@@ -234,7 +294,7 @@ This command now checks both provider connectivity and critical PDF-processing d
 
 ```bash
 python -m researchos.cli init-workspace \
-  --workspace ./workspace/local-test2 \
+  --workspace ./workspaces/local-test2 \
   --project-id local-test2 \
   --topic "memory systems for llm agents"
 ```
@@ -242,7 +302,7 @@ python -m researchos.cli init-workspace \
 ### 4. Run the minimal smoke task
 
 ```bash
-python -m researchos.cli run-task HELLO --workspace ./workspace/local-test2
+python -m researchos.cli run-task HELLO --workspace ./workspaces/local-test2
 ```
 
 `HELLO` only checks the runtime/tool/write/finish path. It does not exercise the
@@ -256,8 +316,8 @@ all agent nodes to the `medium` model tier.
 
 ```bash
 python -m researchos.cli run_smoke \
-  --workspace ./workspace/smoke-t2 \
-  --from ./workspace/local-test2 \
+  --workspace ./workspaces/smoke-t2 \
+  --from ./workspaces/local-test2 \
   --active-pool-max 20 \
   --deep-read-target 3 \
   --abstract-sweep 5 \
@@ -273,13 +333,13 @@ provided. It is for integration debugging, not for final literature coverage.
 ### 6. Run the full pipeline
 
 ```bash
-python -m researchos.cli run --workspace ./workspace/local-test2
+python -m researchos.cli run --workspace ./workspaces/local-test2
 ```
 
 ### 7. Resume an interrupted pipeline
 
 ```bash
-python -m researchos.cli resume --workspace ./workspace/local-test2
+python -m researchos.cli resume --workspace ./workspaces/local-test2
 ```
 
 `resume` only continues a paused/interrupted state in the same workspace. If you
@@ -289,13 +349,13 @@ state machine from a later task, create a new target workspace and use
 
 ```bash
 python -m researchos.cli run \
-  --workspace ./workspace/new-test5-t2-redo \
-  --from ./workspace/new-test5 \
+  --workspace ./workspaces/new-test5-t2-redo \
+  --from ./workspaces/new-test5 \
   --start-task T2
 
 python -m researchos.cli run \
-  --workspace ./workspace/new-test5-t3-redo \
-  --from ./workspace/new-test5 \
+  --workspace ./workspaces/new-test5-t3-redo \
+  --from ./workspaces/new-test5 \
   --start-task T3
 ```
 
@@ -309,7 +369,7 @@ For a survey project, place a Markdown seed outline under `user_seeds/`:
 
 ```bash
 cp /mnt/data/reference/算法风险综述_种子提纲.md \
-  ./workspace/algorithm-risk-survey/user_seeds/算法风险综述_种子提纲.md
+  ./workspaces/algorithm-risk-survey/user_seeds/算法风险综述_种子提纲.md
 ```
 
 T1/T2/T3/T3.6 normalize it into
@@ -341,7 +401,7 @@ To redo only the survey branch after T2/T3/T3.5 are already good, keep
 set `state.yaml` to `current_task: T3.6-PLAN` and `status: PAUSED`, then run:
 
 ```bash
-python -m researchos.cli resume --workspace ./workspace/local-test2
+python -m researchos.cli resume --workspace ./workspaces/local-test2
 ```
 
 ## Typical Usage Patterns
@@ -352,17 +412,17 @@ Best when you want the complete workflow, including gates and transitions.
 
 ```bash
 python -m researchos.cli init-workspace \
-  --workspace ./workspace/local-test2 \
+  --workspace ./workspaces/local-test2 \
   --project-id local-test2 \
   --topic "reflective memory for long-horizon llm agents"
 
-python -m researchos.cli run --workspace ./workspace/local-test2
+python -m researchos.cli run --workspace ./workspaces/local-test2
 ```
 
 If the run pauses or stops due to a gate, budget expansion decision, or intentional interruption:
 
 ```bash
-python -m researchos.cli resume --workspace ./workspace/local-test2
+python -m researchos.cli resume --workspace ./workspaces/local-test2
 ```
 
 ### Single-agent debugging
@@ -370,23 +430,32 @@ python -m researchos.cli resume --workspace ./workspace/local-test2
 Best when you are fixing or testing one stage.
 
 ```bash
-python -m researchos.cli run-task T3 --workspace ./workspace/local-test2
-python -m researchos.cli run-task T5-HANDOFF --workspace ./workspace/local-test2
-python -m researchos.cli run-task T5-EXECUTOR-GATE --workspace ./workspace/local-test2
-python -m researchos.cli run-task T5-DRY-RUN --workspace ./workspace/local-test2
-python -m researchos.cli run-task T7-INGEST --workspace ./workspace/local-test2  # only after dry-run/wait accepted
-python -m researchos.cli run-task T7.5 --workspace ./workspace/local-test2
-python -m researchos.cli run-task T9 --workspace ./workspace/local-test2
+python -m researchos.cli run-task T3 --workspace ./workspaces/local-test2
+python -m researchos.cli run-task T3.6-GATE-SURVEY --workspace ./workspaces/local-test2
+python -m researchos.cli run-task T3.6-TEMPLATE-GATE --workspace ./workspaces/local-test2
+python -m researchos.cli run-task T3.6-PLAN --workspace ./workspaces/local-test2
+python -m researchos.cli run-task T3.6-ASSEMBLE --workspace ./workspaces/local-test2
+python -m researchos.cli run-task T5-REBOOST-GATE --workspace ./workspaces/local-test2
+python -m researchos.cli run-task T5-HANDOFF --workspace ./workspaces/local-test2
+python -m researchos.cli run-task T5-SKILL-CUSTOMIZATION-GATE --workspace ./workspaces/local-test2
+python -m researchos.cli run-task T5-EXPR-MATERIAL-GATE --workspace ./workspaces/local-test2
+python -m researchos.cli run-task T5-EXECUTOR-GATE --workspace ./workspaces/local-test2
+python -m researchos.cli run-task T5-DRY-RUN --workspace ./workspaces/local-test2
+python -m researchos.cli run-task T7-INGEST --workspace ./workspaces/local-test2  # only after dry-run/wait accepted
+python -m researchos.cli run-task T7.5 --workspace ./workspaces/local-test2
+python -m researchos.cli run-task T9 --workspace ./workspaces/local-test2
 ```
 
-Plain `run-task T5/T6/T7` is retired to avoid accidentally entering the old internal experiment design. Use `T5-HANDOFF`, `T7-POST-NOVELTY`, or the explicit `LEGACY-* --allow-legacy` entries when debugging legacy behavior.
+For real external execution, `T5-REBOOST-GATE` calls the configured LLM provider directly to generate `external_executor/handoff_pack.json#context_reboost` and `external_executor/reboost_report.json`; no separate Codex CLI re-boost step is needed. `T5-HANDOFF` copies the 13 external executor templates into `external_executor/skills/`, and `T5-SKILL-CUSTOMIZATION-GATE` then calls the LLM provider directly to customize those copies and write `external_executor/skills/customization_report.json`. The chain still pauses for `external_executor/expr/` material placement. When `T5-EXECUTOR-GATE` selects `codex_cli`, `claude_code_window`, or `manual`, the external executor must write `external_executor/result_pack.json`, `executor_status.json`, and `run_manifest.json`, then `resume` continues into `T7-INGEST`.
+
+Plain `run-task T5/T6/T7` is retired to avoid accidentally entering the old internal experiment design. Use `T5-REBOOST-GATE`, `T5-HANDOFF`, `T7-POST-NOVELTY`, or the explicit `LEGACY-* --allow-legacy` entries when debugging legacy behavior.
 
 You can also copy upstream artifacts from another workspace:
 
 ```bash
 python -m researchos.cli run-task T8-WRITE \
-  --workspace ./workspace/scratch \
-  --from ./workspace/local-test2
+  --workspace ./workspaces/scratch \
+  --from ./workspaces/local-test2
 ```
 
 Notes:
@@ -398,9 +467,9 @@ Notes:
 ### Inspect status and trace
 
 ```bash
-python -m researchos.cli status --workspace ./workspace/local-test2
-python -m researchos.cli trace T7_single_xxxxxxxx --workspace ./workspace/local-test2
-python -m researchos.cli validate --workspace ./workspace/local-test2 --task T7-AUDIT
+python -m researchos.cli status --workspace ./workspaces/local-test2
+python -m researchos.cli trace T7_single_xxxxxxxx --workspace ./workspaces/local-test2
+python -m researchos.cli validate --workspace ./workspaces/local-test2 --task T7-AUDIT
 ```
 
 ## Skills
@@ -477,8 +546,13 @@ Many stages now support task-specific recovery. For example:
 
 Human confirmation can appear in the state machine. Current important examples include:
 
+- T2 literature-parameter and coverage confirmation
+- T3.6 survey template, outline, corpus, and post-survey decisions
+- T4 Gate1 idea selection / merge / reanalysis
+- T4.5 non-pass novelty review
+- T5 material placement and executor selection; skill customization is automatic
 - T7.5 evaluation decision
-- post-evaluation branch choice
+- T8 writing style/template selection
 - submission / final decision points
 
 These only fully participate when using `run` / `resume`, not when using isolated `run-task`.
@@ -488,11 +562,14 @@ These only fully participate when using `run` / `resume`, not when using isolate
 Start here depending on your role:
 
 - Workflow overview: [docs/agent_pipeline.md](./docs/agent_pipeline.md)
+- Project structure: [docs/project_structure.md](./docs/project_structure.md)
+- Docker deployment: [deploy/README.md](./deploy/README.md)
+- Manual diagnostics: [scripts/README.md](./scripts/README.md)
 - Runtime internals: [docs/runtime.md](./docs/runtime.md)
 - Docker: [docs/docker.md](./docs/docker.md)
 - Configuration: [docs/config.md](./docs/config.md)
 - Developer guide: [docs/dev.md](./docs/dev.md)
-- Full workflow and per-agent details: [docs/agent_pipeline.md](./docs/agent_pipeline.md)
+- Full documentation index: [docs/README.md](./docs/README.md)
 
 ## Current Implementation Status
 
@@ -502,6 +579,9 @@ Practical expectations:
 
 - the pipeline is runnable
 - resume and artifact recovery are implemented for major stages
+- T2 has parameter and coverage gates before deep reading
+- T3.6 can produce an optional survey paper before or instead of continuing to T4
+- T5 is an external-executor protocol chain, not an in-process experiment runner
 - T9 now behaves as a compile-and-repair submission stage
 - provider instability can still affect long runs
 - some config fields are fully wired, while others are declarative or partially wired
@@ -548,15 +628,16 @@ Use `run` or `resume` when you need:
 Look in this order:
 
 1. CLI error summary
-2. `workspace/<name>/_runtime/logs/researchos.log`
-3. `workspace/<name>/_runtime/traces/*.jsonl`
+2. `workspaces/<name>/_runtime/logs/researchos.log`
+3. `workspaces/<name>/_runtime/traces/*.jsonl`
 4. the actual task artifacts in the workspace
 
 ## License and Project-Specific Notes
 
 Check repository-local files such as:
 
-- `CLAUDE.md`
+- `AGENTS.md`
+- `BACKGROUND.md`
 - `config/README.md`
 - `docs/agent_pipeline.md`
 

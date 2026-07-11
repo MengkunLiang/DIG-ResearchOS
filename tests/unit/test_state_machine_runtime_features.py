@@ -1426,6 +1426,113 @@ def test_t5_executor_gate_persists_selection_and_patches_executor_files(tmp_work
     assert "UNSET" not in (ext / "AGENTS.md").read_text(encoding="utf-8")
 
 
+def test_t5_skill_customization_task_advances_without_human_gate(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    gates = tmp_workspace / "gates.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T5-SKILL-CUSTOMIZATION-GATE
+        states:
+          T5-SKILL-CUSTOMIZATION-GATE:
+            agent: experimenter
+            mode: skill_customization
+            outputs:
+              skill_customization_report: external_executor/skills/customization_report.json
+            next_on_success: T5-EXPR-MATERIAL-GATE
+          T5-EXPR-MATERIAL-GATE:
+            agent: experimenter
+        """,
+    )
+    _write_yaml(
+        gates,
+        """
+        gates: {}
+        """,
+    )
+
+    sm = StateMachine(config, gates)
+    state = sm.create_initial_state("p1")
+    assert sm.should_pause_for_immediate_gate(state, workspace_dir=tmp_workspace) is False
+
+    ctx = sm.build_execution_context(tmp_workspace, state)
+    assert ctx.mode == "skill_customization"
+    assert ctx.outputs_expected["skill_customization_report"].relative_to(tmp_workspace).as_posix() == (
+        "external_executor/skills/customization_report.json"
+    )
+
+    state = sm.start_task(state, "run1", workspace_dir=tmp_workspace)
+    state = sm.advance(
+        state,
+        AgentResult(
+            ok=True,
+            message="customized",
+            outputs_produced={},
+            steps_used=1,
+            tokens_in=0,
+            tokens_out=0,
+            cost_usd=0,
+            duration_seconds=0,
+            stop_reason=AgentResult.STOP_FINISHED,
+        ),
+        workspace_dir=tmp_workspace,
+    )
+    assert state.status == "RUNNING"
+    assert state.current_task == "T5-EXPR-MATERIAL-GATE"
+    assert state.pending_gate is None
+    assert not (tmp_workspace / "external_executor" / "skills" / "customization_gate_decision.json").exists()
+
+
+def test_t5_reboost_task_advances_to_handoff_without_human_gate(tmp_workspace):
+    config = tmp_workspace / "fsm.yaml"
+    gates = tmp_workspace / "gates.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: T5-REBOOST-GATE
+        states:
+          T5-REBOOST-GATE:
+            agent: experimenter
+            mode: reboost
+            outputs:
+              handoff_pack: external_executor/handoff_pack.json
+              reboost_report: external_executor/reboost_report.json
+            next_on_success: T5-HANDOFF
+          T5-HANDOFF:
+            agent: experimenter
+        """,
+    )
+    _write_yaml(gates, "gates: {}\n")
+
+    sm = StateMachine(config, gates)
+    state = sm.create_initial_state("p1")
+    state = sm.start_task(state, "run_1")
+    result = AgentResult(
+        ok=True,
+        message="reboost done",
+        outputs_produced={
+            "handoff_pack": tmp_workspace / "external_executor" / "handoff_pack.json",
+            "reboost_report": tmp_workspace / "external_executor" / "reboost_report.json",
+        },
+        steps_used=2,
+        tokens_in=100,
+        tokens_out=50,
+        cost_usd=0.0,
+        duration_seconds=1.0,
+        stop_reason=AgentResult.STOP_FINISHED,
+    )
+    state = sm.advance(
+        state,
+        result,
+        workspace_dir=tmp_workspace,
+    )
+
+    assert state.status == "RUNNING"
+    assert state.current_task == "T5-HANDOFF"
+    assert not (tmp_workspace / "external_executor" / "reboost_gate_decision.json").exists()
+    assert not (tmp_workspace / "external_executor" / "skills" / "context-re-boosting" / "SKILL.md").exists()
+
+
 def test_t5_external_wait_ready_option_requires_result_pack(tmp_workspace):
     config = tmp_workspace / "fsm.yaml"
     gates = tmp_workspace / "gates.yaml"

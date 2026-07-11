@@ -13,14 +13,14 @@
 
 假设你的 workspace 是：
 
-- `./workspace/local-test2`
+- `./workspaces/local-test2`
 
 那么最重要的两个位置是：
 
 - 日志：
-  - `./workspace/local-test2/_runtime/logs/researchos.log`
+  - `./workspaces/local-test2/_runtime/logs/researchos.log`
 - Trace：
-  - `./workspace/local-test2/_runtime/traces/*.jsonl`
+  - `./workspaces/local-test2/_runtime/traces/*.jsonl`
 
 简单理解：
 
@@ -101,7 +101,7 @@
 先看：
 
 ```bash
-tail -n 80 ./workspace/local-test2/_runtime/logs/researchos.log
+tail -n 80 ./workspaces/local-test2/_runtime/logs/researchos.log
 ```
 
 如果看到：
@@ -134,48 +134,48 @@ tail -n 80 ./workspace/local-test2/_runtime/logs/researchos.log
 ### 4.1 实时看日志
 
 ```bash
-tail -f ./workspace/local-test2/_runtime/logs/researchos.log
+tail -f ./workspaces/local-test2/_runtime/logs/researchos.log
 ```
 
 ### 4.2 只看最近 100 行
 
 ```bash
-tail -n 100 ./workspace/local-test2/_runtime/logs/researchos.log
+tail -n 100 ./workspaces/local-test2/_runtime/logs/researchos.log
 ```
 
 ### 4.3 看错误和警告
 
 ```bash
 grep -nE "ERROR|VALIDATION_FAILED|PAUSED|Budget exceeded|LLM failed|raw_persistence_mismatch" \
-  ./workspace/local-test2/_runtime/logs/researchos.log
+  ./workspaces/local-test2/_runtime/logs/researchos.log
 ```
 
 ### 4.4 看某个 task 的相关日志
 
 ```bash
-grep -n "T7" ./workspace/local-test2/_runtime/logs/researchos.log
-grep -n "T9" ./workspace/local-test2/_runtime/logs/researchos.log
+grep -n "T7" ./workspaces/local-test2/_runtime/logs/researchos.log
+grep -n "T9" ./workspaces/local-test2/_runtime/logs/researchos.log
 ```
 
 ### 4.5 看 trace（人类可读）
 
 ```bash
 cd ResearchOS
-researchos trace T7_single_12345678 --workspace ./workspace/local-test2
+researchos trace T7_single_12345678 --workspace ./workspaces/local-test2
 ```
 
 ### 4.6 看 trace（原始 JSONL）
 
 ```bash
 cd ResearchOS
-researchos trace T7_single_12345678 --workspace ./workspace/local-test2 --raw
+researchos trace T7_single_12345678 --workspace ./workspaces/local-test2 --raw
 ```
 
 ### 4.7 直接 grep trace
 
 ```bash
-grep -n "\"tool_result\"" ./workspace/local-test2/_runtime/traces/T8-REVIEW-1_single_0b0655e0.jsonl
-grep -n "\"tool_name\"" ./workspace/local-test2/_runtime/traces/T3_single_678acc5c.jsonl
+grep -n "\"tool_result\"" ./workspaces/local-test2/_runtime/traces/T8-REVIEW-1_single_0b0655e0.jsonl
+grep -n "\"tool_name\"" ./workspaces/local-test2/_runtime/traces/T3_single_678acc5c.jsonl
 ```
 
 ---
@@ -219,7 +219,7 @@ T2 里需要特别区分三类“没有论文”的情况：
 - `empty_query`：某个搜索工具实际收到空 query。这是工具调用参数错误，不是 API 正常返回 0 篇。
 - `reported_paper_count=0` 且 `query/source` 非空：这是某个真实检索式在某个 source 上没有命中，可以扩大/改写 query 或换 source。
 
-旧版 `scout_progress.md` 可能出现过 `检索 '' -> 0 篇 (来源: )`。这类记录通常不是 OpenAlex/Crossref/arXiv 真正执行了空检索，而是模型把普通状态说明误写成 `log_scout_progress(action="search_result", detail="...")`，旧工具把缺失的 `query/source/count` 默认成空字符串和 0。现在 `log_scout_progress(action="search_result")` 必须显式提供非空 `query`、非空 `source` 和 `count`，否则返回 `invalid_progress_event`。
+旧版 `scout_progress.md` 可能出现过 `检索 '' -> 0 篇 (来源: )`。这类记录通常不是 OpenAlex/Crossref/arXiv 真正执行了空检索，而是模型把普通状态说明误写成 `log_scout_progress(action="search_result", detail="...")`，旧工具把缺失的 `query/source/count` 默认成空字符串和 0。现在 `log_scout_progress(action="search_result")` 必须显式提供非空 `query`、非空 `source` 和 `count`；缺参时工具会跳过记录并返回 `skipped=true`，不会写入 `检索 '' -> 0 篇`，也不会把展示型进度事件显示成任务失败。真实搜索工具收到空 query 时仍会返回 `empty_query` 硬错误。
 
 `literature/temp/scout_progress.md` 现在也由 runtime 自动追加关键进度，不只依赖 Scout LLM 主动调用工具。T2 搜索工具自动保存 raw 后会写 `runtime_search_result`，T2 deterministic finalize 会写 `runtime_finalize_started`、`runtime_active_pool_pre_backfill`、`runtime_active_pool_final`、`runtime_finalize_done` 或 `runtime_finalize_failed`。这里的 `runtime_active_pool_*` 是兼容旧 trace 的事件名，含义是“保留候选/backlog 切分”。如果这个文件不更新，优先检查 `config/agent_params.yaml -> agents.scout.behavior.progress.enabled/update_on_tool_results/update_on_finalize`。
 
@@ -259,8 +259,8 @@ T2 里需要特别区分三类“没有论文”的情况：
 先看：
 
 ```bash
-grep -n "T2" ./workspace/local-test2/_runtime/logs/researchos.log
-ls ./workspace/local-test2/literature
+grep -n "T2" ./workspaces/local-test2/_runtime/logs/researchos.log
+ls ./workspaces/local-test2/literature
 ```
 
 再看：
@@ -283,8 +283,8 @@ ls ./workspace/local-test2/literature
 先看：
 
 ```bash
-ls ./workspace/local-test2/literature/paper_notes
-ls ./workspace/local-test2/literature/deep_read_queue_pending.jsonl
+ls ./workspaces/local-test2/literature/paper_notes
+ls ./workspaces/local-test2/literature/deep_read_queue_pending.jsonl
 ```
 
 再看日志里有没有：
@@ -306,9 +306,9 @@ ls ./workspace/local-test2/literature/deep_read_queue_pending.jsonl
 先看：
 
 ```bash
-tail -n 120 ./workspace/local-test2/_runtime/logs/researchos.log
-cat ./workspace/local-test2/experiments/results_summary.json
-cat ./workspace/local-test2/experiments/ablations.csv
+tail -n 120 ./workspaces/local-test2/_runtime/logs/researchos.log
+cat ./workspaces/local-test2/experiments/results_summary.json
+cat ./workspaces/local-test2/experiments/ablations.csv
 ```
 
 常见问题：
@@ -338,9 +338,9 @@ cat ./workspace/local-test2/experiments/ablations.csv
 先看：
 
 ```bash
-ls ./workspace/local-test2/submission/bundle
-tail -n 200 ./workspace/local-test2/submission/bundle/main.log
-cat ./workspace/local-test2/submission/migration_report.md
+ls ./workspaces/local-test2/submission/bundle
+tail -n 200 ./workspaces/local-test2/submission/bundle/main.log
+cat ./workspaces/local-test2/submission/migration_report.md
 ```
 
 判断重点：
@@ -357,20 +357,20 @@ cat ./workspace/local-test2/submission/migration_report.md
 
 例如：
 
-- 容器内：`/workspace/local-test2/_runtime/logs/researchos.log`
-- 宿主机：`./workspace/local-test2/_runtime/logs/researchos.log`
+- 容器内：`/app/workspaces/local-test2/_runtime/logs/researchos.log`
+- 宿主机：`./workspaces/local-test2/_runtime/logs/researchos.log`
 
 因此最简单的方式通常还是在宿主机直接看：
 
 ```bash
-tail -f ./workspace/local-test2/_runtime/logs/researchos.log
+tail -f ./workspaces/local-test2/_runtime/logs/researchos.log
 ```
 
 如果你确实要进容器：
 
 ```bash
 docker exec -it <container-id> bash
-tail -f /workspace/local-test2/_runtime/logs/researchos.log
+tail -f /app/workspaces/local-test2/_runtime/logs/researchos.log
 ```
 
 ---
@@ -397,7 +397,7 @@ tail -f /workspace/local-test2/_runtime/logs/researchos.log
 如果想临时调高 CLI 日志级别：
 
 ```bash
-researchos run-task T3 --workspace ./workspace/local-test2 --log-level DEBUG
+researchos run-task T3 --workspace ./workspaces/local-test2 --log-level DEBUG
 ```
 
 ---
@@ -432,48 +432,48 @@ Project paused: Validation failed 3 times. Last reason: ...
 实时看本地项目日志：
 
 ```bash
-tail -f ./workspace/local-test2/_runtime/logs/researchos.log
+tail -f ./workspaces/local-test2/_runtime/logs/researchos.log
 ```
 
 查最近一次 T9 的错误：
 
 ```bash
-grep -n "T9" ./workspace/local-test2/_runtime/logs/researchos.log | tail -n 30
+grep -n "T9" ./workspaces/local-test2/_runtime/logs/researchos.log | tail -n 30
 ```
 
 查所有 tool crash：
 
 ```bash
-grep -n "ERROR" ./workspace/local-test2/_runtime/logs/researchos.log
+grep -n "ERROR" ./workspaces/local-test2/_runtime/logs/researchos.log
 ```
 
 查所有预算问题：
 
 ```bash
-grep -n "Budget exceeded" ./workspace/local-test2/_runtime/logs/researchos.log
+grep -n "Budget exceeded" ./workspaces/local-test2/_runtime/logs/researchos.log
 ```
 
 查所有 validator 失败：
 
 ```bash
-grep -n "VALIDATION_FAILED" ./workspace/local-test2/_runtime/logs/researchos.log
+grep -n "VALIDATION_FAILED" ./workspaces/local-test2/_runtime/logs/researchos.log
 ```
 
 查所有 LLM 失败：
 
 ```bash
-grep -nE "LLM failed|kind=llm_provider|LLM_CALL|LLM_RESULT" ./workspace/local-test2/_runtime/logs/researchos.log
+grep -nE "LLM failed|kind=llm_provider|LLM_CALL|LLM_RESULT" ./workspaces/local-test2/_runtime/logs/researchos.log
 ```
 
 查 T2 搜索是否落盘：
 
 ```bash
 grep -nE "TOOL_RESULT.*(openalex_search|crossref_search|arxiv_search|multi_source_search|informs_search)" \
-  ./workspace/local-test2/_runtime/logs/researchos.log
+  ./workspaces/local-test2/_runtime/logs/researchos.log
 grep -nE "raw_persistence_mismatch|raw_append_failed|empty_query|empty_query_plan|invalid_progress_event" \
-  ./workspace/local-test2/_runtime/logs/researchos.log
+  ./workspaces/local-test2/_runtime/logs/researchos.log
 grep -nE "runtime_search_result|runtime_active_pool|runtime_finalize" \
-  ./workspace/local-test2/literature/temp/scout_progress.md
+  ./workspaces/local-test2/literature/temp/scout_progress.md
 ```
 
 ---

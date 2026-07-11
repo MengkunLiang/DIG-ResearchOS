@@ -60,7 +60,6 @@ researchos run-task T3
 - Python 3.11
 - Conda
 - 可选：Docker
-- 可选：GPU
 
 这个仓库在本机开发时，推荐使用专门的 conda 环境。
 
@@ -89,9 +88,9 @@ pip install -e .
 
 说明：
 
-- `requirements.txt`：唯一依赖文件，包含运行时、LLM 路由、PDF/BibTeX 处理、pytest 开发测试依赖和常用实验/分析包
+- `requirements.txt`：唯一依赖文件，包含运行时、LLM 路由、PDF/BibTeX 处理和 pytest 开发测试依赖
 - `pip install -e .`：确保 `researchos` 命令和当前源码目录绑定
-- Docker 镜像仍会单独安装 CUDA PyTorch，因为 PyTorch CUDA wheels 需要专用 index
+- 默认开发环境不安装 CUDA/PyTorch/本地训练栈；真实实验依赖由外部执行器或项目自定义环境管理
 
 ### 2.3 环境变量
 
@@ -153,7 +152,7 @@ python -m researchos.cli selftest
 
 ```bash
 python -m researchos.cli init-workspace \
-  --workspace ./workspace/dev-smoke \
+  --workspace ./workspaces/dev-smoke \
   --project-id dev-smoke \
   --topic "runtime smoke test"
 ```
@@ -161,7 +160,7 @@ python -m researchos.cli init-workspace \
 ### 3.4 跑 HELLO
 
 ```bash
-python -m researchos.cli run-task HELLO --workspace ./workspace/dev-smoke
+python -m researchos.cli run-task HELLO --workspace ./workspaces/dev-smoke
 ```
 
 预期：
@@ -177,8 +176,8 @@ python -m researchos.cli run-task HELLO --workspace ./workspace/dev-smoke
 
 ```bash
 python -m researchos.cli run_smoke \
-  --workspace ./workspace/dev-smoke-t2 \
-  --from ./workspace/dev-smoke \
+  --workspace ./workspaces/dev-smoke-t2 \
+  --from ./workspaces/dev-smoke \
   --active-pool-max 20 \
   --deep-read-target 3 \
   --abstract-sweep 5 \
@@ -190,8 +189,8 @@ python -m researchos.cli run_smoke \
 ### 3.6 看 trace 和状态
 
 ```bash
-python -m researchos.cli status --workspace ./workspace/dev-smoke
-python -m researchos.cli trace <run_id> --workspace ./workspace/dev-smoke
+python -m researchos.cli status --workspace ./workspaces/dev-smoke
+python -m researchos.cli trace <run_id> --workspace ./workspaces/dev-smoke
 ```
 
 如果 `HELLO` 都不稳定，不要继续往上排查 agent 逻辑。
@@ -206,14 +205,14 @@ python -m researchos.cli trace <run_id> --workspace ./workspace/dev-smoke
 
 ```bash
 python -m researchos.cli init-workspace \
-  --workspace ./workspace/demo \
+  --workspace ./workspaces/demo \
   --project-id demo \
   --topic "memory systems for llm agents"
 ```
 
 典型 case：
 
-- 新建一个最小调试工程 `./workspace/demo`
+- 新建一个最小调试工程 `./workspaces/demo`
 - 后续先跑 `HELLO`、再跑 `T1`
 
 ### 4.2 `run`
@@ -221,7 +220,7 @@ python -m researchos.cli init-workspace \
 从当前状态推进完整 pipeline。
 
 ```bash
-python -m researchos.cli run --workspace ./workspace/demo
+python -m researchos.cli run --workspace ./workspaces/demo
 ```
 
 典型 case：
@@ -234,7 +233,7 @@ python -m researchos.cli run --workspace ./workspace/demo
 恢复一个被 gate 暂停、预算中断或人工中断后的 workspace。
 
 ```bash
-python -m researchos.cli resume --workspace ./workspace/demo
+python -m researchos.cli resume --workspace ./workspaces/demo
 ```
 
 典型 case：
@@ -248,9 +247,9 @@ python -m researchos.cli resume --workspace ./workspace/demo
 单独跑某一个 task，用于本地调试。
 
 ```bash
-python -m researchos.cli run-task T3 --workspace ./workspace/demo
-python -m researchos.cli run-task T7.5 --workspace ./workspace/demo
-python -m researchos.cli run-task T9 --workspace ./workspace/demo
+python -m researchos.cli run-task T3 --workspace ./workspaces/demo
+python -m researchos.cli run-task T7.5 --workspace ./workspaces/demo
+python -m researchos.cli run-task T9 --workspace ./workspaces/demo
 ```
 
 典型 case：
@@ -264,7 +263,7 @@ python -m researchos.cli run-task T9 --workspace ./workspace/demo
 校验某个 workspace 当前产物是否符合约定。
 
 ```bash
-python -m researchos.cli validate --workspace ./workspace/demo --task T7-AUDIT
+python -m researchos.cli validate --workspace ./workspaces/demo --task T7-AUDIT
 ```
 
 典型 case：
@@ -277,7 +276,7 @@ python -m researchos.cli validate --workspace ./workspace/demo --task T7-AUDIT
 看当前状态机状态。
 
 ```bash
-python -m researchos.cli status --workspace ./workspace/demo
+python -m researchos.cli status --workspace ./workspaces/demo
 ```
 
 典型 case：
@@ -290,8 +289,8 @@ python -m researchos.cli status --workspace ./workspace/demo
 查看某一次运行的 JSONL trace。
 
 ```bash
-python -m researchos.cli trace T7_single_xxxxxxxx --workspace ./workspace/demo
-python -m researchos.cli trace T7_single_xxxxxxxx --workspace ./workspace/demo --raw
+python -m researchos.cli trace T7_single_xxxxxxxx --workspace ./workspaces/demo
+python -m researchos.cli trace T7_single_xxxxxxxx --workspace ./workspaces/demo --raw
 ```
 
 典型 case：
@@ -306,7 +305,7 @@ python -m researchos.cli trace T7_single_xxxxxxxx --workspace ./workspace/demo -
 
 ```bash
 python -m researchos.cli list-skills --skills-root ./skills
-python -m researchos.cli run-skill paper-compile "compile the paper in ./workspace/local-test2/drafts"
+python -m researchos.cli run-skill paper-compile "compile the paper in ./workspaces/local-test2/drafts"
 ```
 
 典型 case：
@@ -338,7 +337,7 @@ python -m researchos.cli run-skill paper-compile "compile the paper in ./workspa
 
 默认在：
 
-- `workspace/<name>/_runtime/`
+- `workspaces/<name>/_runtime/`
 
 重点看：
 
@@ -375,8 +374,8 @@ python -m researchos.cli run-skill paper-compile "compile the paper in ./workspa
 
 ```bash
 python -m researchos.cli run-task T8-RESOURCE \
-  --workspace ./workspace/scratch \
-  --from ./workspace/local-test2
+  --workspace ./workspaces/scratch \
+  --from ./workspaces/local-test2
 ```
 
 这会把当前 task 的前置 artifact 复制过来，再执行本 task。
@@ -385,8 +384,8 @@ python -m researchos.cli run-task T8-RESOURCE \
 
 ```bash
 python -m researchos.cli run \
-  --workspace ./workspace/new-test5-t2-redo \
-  --from ./workspace/new-test5 \
+  --workspace ./workspaces/new-test5-t2-redo \
+  --from ./workspaces/new-test5 \
   --start-task T2
 ```
 
@@ -396,8 +395,8 @@ python -m researchos.cli run \
 
 ```bash
 python -m researchos.cli run_smoke \
-  --workspace ./workspace/new-test5-smoke \
-  --from ./workspace/new-test5 \
+  --workspace ./workspaces/new-test5-smoke \
+  --from ./workspaces/new-test5 \
   --start-task T2
 ```
 
@@ -656,24 +655,23 @@ python -m researchos.cli run-skill deepxiv "summarize recent papers about memory
 
 当问题与以下内容相关时，优先用 Docker 复现：
 
-- T5/T7 代码运行
-- GPU 可用性
-- LaTeX 编译
 - 宿主机依赖漂移
+- 部署脚本或 bind mount 行为
+- Native/Docker workspace 兼容性
 
 基本命令：
 
 ```bash
 cd ResearchOS
-bash infra/docker/build.sh
-bash infra/docker/run.sh selftest
-bash infra/docker/run.sh run-task T9 --workspace /workspace
+cp deploy/.env.example deploy/.env
+docker compose -f deploy/compose.yaml build
+docker compose -f deploy/compose.yaml run --rm researchos doctor
 ```
 
 重点排查：
 
 - Docker image 是否是最新
-- `/workspace` 是否正确挂载
+- `/app/workspaces` 是否正确挂载
 - `.env` 是否透传
 - 容器内是否真在跑当前仓库代码
 

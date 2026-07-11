@@ -31,6 +31,7 @@ from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec, get_agent_params
 from ..runtime.t2_config import (
     detect_manuscript_profile,
+    get_effective_reader_read_params,
     load_literature_quality_policy,
     load_t2_finalize_config,
 )
@@ -176,6 +177,10 @@ class ScoutAgent(Agent):
             default="",
         )
         literature_quality_policy = load_literature_quality_policy(ctx.workspace_dir)
+        t2_config = load_t2_finalize_config(ctx.workspace_dir)
+        reader_params = get_effective_reader_read_params(ctx.workspace_dir)
+        abstract_sweep = reader_params.get("abstract_sweep") if isinstance(reader_params.get("abstract_sweep"), dict) else {}
+        smoke_mode = _is_smoke_literature_mode(ctx.workspace_dir)
         manuscript_language = infer_manuscript_language(
             ctx.workspace_dir,
             literature_quality_policy.manuscript_language,
@@ -206,11 +211,24 @@ class ScoutAgent(Agent):
             literature_quality_policy=literature_quality_policy.to_dict(),
             manuscript_language=manuscript_language,
             include_chinese_literature=allow_chinese_literature,
+            t2_active_pool_max=t2_config.active_pool_max,
+            t2_finish_finalize_min_raw=t2_config.finish_finalize_min_raw,
+            deep_read_target=reader_params.get("deep_read_target"),
+            abstract_sweep_target=abstract_sweep.get("lite_paper_num"),
+            smoke_mode=smoke_mode,
             agent_guidance=load_agent_guidance("literature-scout"),
         )
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
         """初始用户消息，简短指令。"""
+        smoke_clause = ""
+        if _is_smoke_literature_mode(ctx.workspace_dir):
+            t2_config = load_t2_finalize_config(ctx.workspace_dir)
+            smoke_clause = (
+                f"当前是 smoke 快速联调：expand_queries 请显式设置 max_queries<=4；"
+                f"raw 达到 finish_finalize_min_raw={t2_config.finish_finalize_min_raw} 且覆盖 2-3 个关键角度后，"
+                "请尽快 semantic_screen 并 finish_task，不要按正式覆盖规模扩检索。"
+            )
         return prepend_resume_prefix(
             ctx,
             (
@@ -223,6 +241,7 @@ class ScoutAgent(Agent):
             "raw 数量足够只是必要条件，你还要判断 query/source/bucket 覆盖是否足够；"
             "覆盖足够后调用 finish_task，runtime 才会完成去重、metadata verification 和 deep_read_queue.jsonl，"
             "最终 papers_dedup 会按 config/agent_params.yaml 的 agents.scout.behavior.t2_finalize.active_pool_max 控制保留候选数。"
+            f"{smoke_clause}"
             ),
         )
 
@@ -412,6 +431,19 @@ def _load_external_resources(path: Path) -> list[dict[str, str]]:
             }
         )
     return resources
+
+
+def _is_smoke_literature_mode(workspace_dir: Path) -> bool:
+    params_path = workspace_dir / "literature" / "literature_params.json"
+    if not params_path.exists():
+        return False
+    try:
+        payload = json.loads(params_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    return bool(payload.get("smoke_mode")) or str(payload.get("selected_option") or "").strip() == "smoke"
 
 
 def _dedupe_seed_papers(seed_papers: list[dict]) -> list[dict]:

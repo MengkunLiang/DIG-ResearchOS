@@ -18,6 +18,7 @@ from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
 from ..tools.latex_compile import _compile_dependency_fingerprint
 from ..literature_identity import is_paper_note_file, is_placeholder_text
+from ..tools.citation_alignment import citation_support_text_by_key
 from ..tools.manuscript import _extract_latex_cites, _extract_bib_keys, has_formal_citation
 from ..tools.survey_tools import (
     _SURVEY_MIN_PLAIN_CHARS,
@@ -370,6 +371,8 @@ class SurveyWriterAgent(Agent):
                 return False, "survey_compile_report.json semantics 不正确"
             if report.get("tex_path") != "drafts/survey/survey.tex":
                 return False, "survey_compile_report.tex_path 必须是 drafts/survey/survey.tex"
+            if report.get("selected_backend") == "export_only" or report.get("engine") == "export_only":
+                return False, "survey_compile_report 是 export_only 记录，不是 survey PDF 编译成功证据"
             if report.get("success") is not True:
                 return False, "survey_compile_report 未记录编译成功"
             if not pdf_path.exists() or pdf_path.stat().st_size <= 0:
@@ -480,6 +483,7 @@ def _human_interaction_exists(ws: Path, interaction_id: str) -> bool:
 def _citation_pool_preview(ws: Path, related_work_keys: list[str], *, max_items: int = 80) -> str:
     bib_entries = _parse_bib_preview(ws / "literature" / "related_work.bib")
     quality_by_id = _notes_quality_by_id(ws / "literature" / "notes_manifest.json")
+    support_by_key = citation_support_text_by_key(ws, keys=related_work_keys[:max_items])
     plan, _ = _load_json(ws / "drafts" / "survey" / "survey_plan.json")
     section_paper_ids = _survey_plan_paper_ids(plan)
     lines = [
@@ -508,9 +512,17 @@ def _citation_pool_preview(ws: Path, related_work_keys: list[str], *, max_items:
         suffix = f" ({'; '.join(flags)})" if flags else ""
         venue_part = f", {venue}" if venue else ""
         lines.append(f"{idx}. `{key}`: {title} ({year}{venue_part}){suffix}")
+        support = _preview_line(support_by_key.get(key, ""), 180)
+        if support:
+            lines.append(f"   note_support: {support}")
     if len(related_work_keys) > max_items:
         lines.append(f"... {len(related_work_keys) - max_items} more keys omitted from preview; read related_work.bib if needed.")
     return "\n".join(lines)
+
+
+def _preview_line(value: str, limit: int) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    return text[: limit - 1] + "…" if len(text) > limit else text
 
 
 def _parse_bib_preview(path: Path) -> dict[str, dict[str, str]]:
@@ -1118,7 +1130,23 @@ def _survey_section_craft_issues(text: str) -> list[str]:
         issues.append("疑似逐篇论文流水账")
     if len(re.findall(r"\\subsubsection\*?\{", text)) > 0:
         issues.append("综述 section 不应使用过细 subsubsection")
+    if _mechanical_punctuation_style_issue(text):
+        issues.append("冒号/破折号模板句过多，需改成凝练连贯的综述 prose")
     return issues
+
+
+def _mechanical_punctuation_style_issue(text: str) -> bool:
+    prose = re.sub(r"\\(?:section|subsection|subsubsection)\*?\{[^{}]*\}", " ", text or "")
+    label_hits = len(
+        re.findall(
+            r"\b(?:Background|Problem|Gap|Insight|Mechanism|Challenge|Implication|Future direction|Contribution)\s*[:：]"
+            r"|(?:背景|问题|缺口|机制|挑战|启示|未来方向|贡献)\s*[:：]",
+            prose,
+            flags=re.IGNORECASE,
+        )
+    )
+    dash_hits = len(re.findall(r"\s(?:--|---|–|—)\s", prose))
+    return label_hits >= 5 or dash_hits >= 8
 
 
 def _validate_fingerprint_map(ws: Path, fingerprints: object, label: str) -> tuple[bool, str | None]:

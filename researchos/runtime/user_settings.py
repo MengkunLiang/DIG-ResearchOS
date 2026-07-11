@@ -36,6 +36,11 @@ def resolve_user_settings_path(default_path: Path | None = None) -> Path:
     wins over any config-dir local default passed by validators/tests.
     """
 
+    if "RESEARCHOS_CONFIG" in os.environ:
+        env_path = os.environ.get("RESEARCHOS_CONFIG", "").strip()
+        if not env_path:
+            return Path("__researchos_user_settings_disabled__")
+        return Path(env_path)
     if "RESEARCHOS_USER_SETTINGS" in os.environ:
         env_path = os.environ.get("RESEARCHOS_USER_SETTINGS", "").strip()
         if not env_path:

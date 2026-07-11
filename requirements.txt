@@ -19,16 +19,3 @@ bibtexparser>=1.4,<2
 # Test and development tooling
 pytest>=8.2,<9
 pytest-asyncio>=0.23,<1
-
-# Common experiment and analysis packages used by generated or debug experiment code.
-# PyTorch is installed separately in Docker because CUDA wheels need a hardware-specific index.
-numpy>=1.26,<3
-pandas>=2.2,<4
-scikit-learn>=1.4,<2
-matplotlib>=3.8,<4
-seaborn>=0.13,<1
-tqdm>=4.66,<5
-wandb>=0.17,<1
-transformers>=4.40,<6
-datasets>=2.19,<5
-accelerate>=0.30,<2

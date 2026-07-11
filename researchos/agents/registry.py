@@ -69,7 +69,9 @@ TASK_TO_AGENT_MAP = {
     "T3.6-FEED": SurveyWriterAgent,
     "T4": IdeationAgent,  # 假设生成
     "T4.5": NoveltyAuditorAgent,  # 新颖性审计
+    "T5-REBOOST-GATE": ExperimenterAgent,  # 外部实验 context re-boost
     "T5-HANDOFF": ExperimenterAgent,  # 外部实验 handoff
+    "T5-SKILL-CUSTOMIZATION-GATE": ExperimenterAgent,  # 外部执行 skill 自动定制
     "T5-EXECUTOR-GATE": ExperimenterAgent,  # 外部实验执行器选择
     "T5-EXTERNAL-WAIT": ExperimenterAgent,  # 外部执行器等待/恢复
     "T5-DRY-RUN": ExperimenterAgent,  # 外部实验 dry-run

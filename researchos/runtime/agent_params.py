@@ -18,9 +18,10 @@ from .user_settings import (
     load_user_settings,
     should_apply_default_user_settings,
 )
+from .system_config import config_file_path
 
 
-DEFAULT_CONFIG_PATH = Path(__file__).parent.parent.parent / "config" / "agent_params.yaml"
+DEFAULT_CONFIG_PATH = config_file_path("agent_params.yaml", env_var="RESEARCHOS_AGENT_PARAMS")
 
 _config_cache: dict[str, Any] | None = None
 
@@ -31,7 +32,7 @@ def _get_config_path() -> Path:
     env_path = os.environ.get("RESEARCHOS_AGENT_PARAMS")
     if env_path:
         return Path(env_path)
-    return DEFAULT_CONFIG_PATH
+    return config_file_path("agent_params.yaml")
 
 
 def load_agent_params() -> dict[str, Any]:
