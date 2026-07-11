@@ -251,6 +251,8 @@ class BuildSynthesisWorkbenchTool(Tool):
             "mechanism_claim_clusters": _build_mechanism_claim_clusters(all_notes),
             "weak_evidence_and_resource_upgrade": weak_evidence,
             "notes": notes,
+            "abstract_notes": abstract_notes,
+            "all_note_cards": all_notes,
         }
         # Backward-compatible alias. Treat as mechanical mechanism-claim
         # clusters, not authoritative domain consensus.
@@ -343,6 +345,7 @@ def _parse_note(
         "core_approach_view": _first_section(text, ABSTRACT_CORE_HEADING, LEGACY_ABSTRACT_CORE_HEADING),
         "bridge_point": _first_section(text, ABSTRACT_BRIDGE_HEADING, LEGACY_ABSTRACT_BRIDGE_HEADING),
         "key_results": _section(text, "3. Key Results"),
+        "raw_abstract": _section(text, "Raw Abstract")[:1200],
         "limitations": _section(text, "5. Limitations"),
         "relevance": _section(text, "6. Relevance to Our Research"),
         "details": _section(text, "7. Technical Details Worth Noting"),

@@ -1532,13 +1532,44 @@ def _extract_paper_note_cards(workspace: Path, *, limit: int = 80) -> list[dict[
                 "evidence_level": _evidence_level_from_note(text),
                 "citation_use": _markdown_field(text, "Citation Use") or "unknown",
                 "citation_quality_score": _parse_float(_markdown_field(text, "Citation Quality Score")),
+                "problem_motivation": _note_section_excerpt(text, "1. Problem & Motivation"),
                 "method_overview": _note_section_excerpt(text, "2. Method Overview", "2. Method Summary"),
+                "core_approach_view": _note_section_excerpt(
+                    text,
+                    "A. Core Approach / Perspective",
+                    "A. 核心做法/视角",
+                ),
+                "bridge_point": _note_section_excerpt(text, "B. Bridge Point", "B. 桥接点"),
+                "key_results": _note_section_excerpt(text, "3. Key Results", "3. Key Claimed Results"),
                 "gaps": _note_section_excerpt(text, "9. Weaknesses / Gaps"),
+                "raw_abstract": _note_section_excerpt(text, "Raw Abstract", limit=480),
+                "reading_coverage": _note_section_excerpt(text, "12. Reading Coverage", "Source"),
                 "mechanism_claim": _note_section_excerpt(text, "13. Mechanism Claim"),
                 "design_rationale": _note_section_excerpt(text, "14. Design Rationale"),
+                "artifact_design": _note_section_excerpt(text, "15. Artifact & Design Principles"),
+                "data_view": _note_section_excerpt(text, "16. Data View & Evaluation Mode"),
                 "boundary_conditions": _note_section_excerpt(text, "18. Boundary Conditions"),
                 "cross_paper_tension": _note_section_excerpt(text, "19. Cross-Paper Tension"),
             }
+            card["sections_available"] = [
+                key
+                for key in (
+                    "problem_motivation",
+                    "method_overview",
+                    "core_approach_view",
+                    "bridge_point",
+                    "key_results",
+                    "gaps",
+                    "mechanism_claim",
+                    "design_rationale",
+                    "artifact_design",
+                    "data_view",
+                    "boundary_conditions",
+                    "cross_paper_tension",
+                    "raw_abstract",
+                )
+                if str(card.get(key) or "").strip()
+            ]
             cards.append(card)
     cards.sort(
         key=lambda item: (
@@ -2346,6 +2377,7 @@ def _note_card_retrieval_lines(section_id: str, note_cards: list[Any]) -> list[s
         lines.append("- No structured note cards are indexed; read `literature/paper_notes/` and `literature/synthesis_workbench.json` directly if citations are needed.")
         return [f"- {line}" if not line.lstrip().startswith("-") else line for line in lines]
     lines.append("- Relevant indexed note cards:")
+    fields = _note_card_fields_for_section(section_id)
     for card in cards:
         citation = str(card.get("citation_ref") or "").strip() or f"[note:{card.get('note_id')}]"
         title = _shorten(card.get("title"), 110)
@@ -2354,8 +2386,56 @@ def _note_card_retrieval_lines(section_id: str, note_cards: list[Any]) -> list[s
         evidence = card.get("evidence_level") or "unknown"
         path = card.get("path") or ""
         lines.append(f"  - {citation} {title} | evidence={evidence} | use={use} | score={score} | note={path}")
+        for cue in _note_card_section_cues(card, fields, limit=2):
+            lines.append(f"    - {cue}")
     lines.append("- Before using a citation, read the matching note section and verify that the sentence-level claim matches the note evidence.")
     return [f"- {line}" if not line.lstrip().startswith("-") else line for line in lines]
+
+
+def _note_card_fields_for_section(section_id: str) -> tuple[str, ...]:
+    return {
+        "introduction": ("problem_motivation", "gaps", "mechanism_claim", "boundary_conditions"),
+        "related_work": (
+            "method_overview",
+            "core_approach_view",
+            "bridge_point",
+            "gaps",
+            "design_rationale",
+            "cross_paper_tension",
+        ),
+        "methodology": ("method_overview", "core_approach_view", "design_rationale", "artifact_design", "boundary_conditions"),
+        "experiments": ("key_results", "reading_coverage", "data_view"),
+        "analysis": ("mechanism_claim", "design_rationale", "boundary_conditions", "cross_paper_tension"),
+        "conclusion": ("gaps", "boundary_conditions", "cross_paper_tension"),
+    }.get(section_id, ("method_overview", "gaps", "mechanism_claim"))
+
+
+def _note_card_section_cues(card: dict[str, Any], fields: tuple[str, ...], *, limit: int) -> list[str]:
+    labels = {
+        "problem_motivation": "§1",
+        "method_overview": "§2",
+        "core_approach_view": "A",
+        "bridge_point": "B",
+        "key_results": "§3",
+        "gaps": "§9",
+        "reading_coverage": "§12",
+        "mechanism_claim": "§13",
+        "design_rationale": "§14",
+        "artifact_design": "§15",
+        "data_view": "§16",
+        "boundary_conditions": "§18",
+        "cross_paper_tension": "§19",
+        "raw_abstract": "Raw abstract",
+    }
+    cues: list[str] = []
+    for field in fields:
+        value = _shorten(card.get(field), 150)
+        if not value:
+            continue
+        cues.append(f"{labels.get(field, field)}: {value}")
+        if len(cues) >= limit:
+            break
+    return cues
 
 
 def _section_note_cards(section_id: str, note_cards: list[Any], *, limit: int) -> list[dict[str, Any]]:
@@ -2364,15 +2444,7 @@ def _section_note_cards(section_id: str, note_cards: list[Any], *, limit: int) -
         return []
     if section_id == "abstract":
         return []
-    field_by_section = {
-        "introduction": ("gaps", "mechanism_claim", "boundary_conditions"),
-        "related_work": ("method_overview", "gaps", "design_rationale", "cross_paper_tension"),
-        "methodology": ("method_overview", "design_rationale", "boundary_conditions"),
-        "experiments": ("method_overview",),
-        "analysis": ("mechanism_claim", "design_rationale", "boundary_conditions", "cross_paper_tension"),
-        "conclusion": ("gaps", "boundary_conditions"),
-    }
-    fields = field_by_section.get(section_id, ("method_overview", "gaps"))
+    fields = _note_card_fields_for_section(section_id)
 
     def score(card: dict[str, Any]) -> tuple[float, float, str]:
         text_bonus = sum(1 for field in fields if str(card.get(field) or "").strip())

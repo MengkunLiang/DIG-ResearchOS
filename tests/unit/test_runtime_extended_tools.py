@@ -827,7 +827,24 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
     notes_dir = tmp_workspace / "literature" / "paper_notes"
     notes_dir.mkdir(parents=True, exist_ok=True)
     (notes_dir / "_DIR_GUIDE.md").write_text("# Guide\n", encoding="utf-8")
-    (notes_dir / "core_note.md").write_text("# A Paper\n- **ID**: core_note\n", encoding="utf-8")
+    (notes_dir / "core_note.md").write_text(
+        "# A Paper\n"
+        "- **ID**: core_note\n"
+        "- **Status**: [FULL-TEXT]\n"
+        "- **Citation Use**: core_evidence\n"
+        "- **Citation Quality Score**: 0.86\n\n"
+        "## 1. Problem & Motivation\nSparse recommendation robustness remains unresolved.\n\n"
+        "## 2. Method Overview\nA robust sparse recommendation method.\n\n"
+        "## A. Core Approach / Perspective\nFull-text design view for robust sparse recommendation.\n\n"
+        "## B. Bridge Point\nTransfers to adaptive perturbation settings.\n\n"
+        "## 3. Key Results\nAccuracy reaches 0.82 [Evidence: Table 1].\n\n"
+        "## 9. Weaknesses / Gaps\nNearest prior leaves subgroup sensitivity open.\n\n"
+        "## 13. Mechanism Claim\n- **Stated mechanism**: Robust sparse matching improves stability.\n\n"
+        "## 14. Design Rationale\n- **Rationale**: Sparse structure should reduce noise.\n\n"
+        "## 18. Boundary Conditions\n- **Works when**: Sparse signals are stable.\n\n"
+        "## 19. Cross-Paper Tension\n- **Tension**: Robustness conflicts with adaptivity.\n",
+        encoding="utf-8",
+    )
     (tmp_workspace / "literature" / "notes_manifest.json").write_text(
         json.dumps(
             {
@@ -878,6 +895,9 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
     assert "weak_note" in resource_index["citation_quality"]["low_or_do_not_cite_ids"]
     assert resource_index["paper_note_cards"]
     assert resource_index["paper_note_cards"][0]["path"] == "literature/paper_notes/core_note.md"
+    assert resource_index["paper_note_cards"][0]["core_approach_view"].startswith("Full-text design view")
+    assert resource_index["paper_note_cards"][0]["bridge_point"].startswith("Transfers to adaptive")
+    assert "core_approach_view" in resource_index["paper_note_cards"][0]["sections_available"]
     assert any(item.get("metric_id") == "m_external_acc" for item in resource_index["result_metrics"])
 
     plan_tool = PlanManuscriptSectionsTool(policy)
@@ -963,6 +983,7 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
     assert "## Section Writing Contract" in method_outline
     assert "## Note Card Retrieval Plan" in method_outline
     assert "literature/paper_notes/core_note.md" in method_outline
+    assert "A: Full-text design view" in method_outline
     assert paper_state["sections"]["methodology"]["writing_contract"]["purpose"].startswith("Explain what the artifact")
     assert paper_state["shared_facts"]["paper_note_cards"]
     ok, err = validator.validate_outputs(_WriterContext(tmp_workspace, "section_plan"))
@@ -1492,7 +1513,9 @@ async def test_build_synthesis_workbench_exposes_weak_evidence_upgrade_channel(t
     (abstract_dir / "abstract_note.md").write_text(
         _note("abstract_note", family_hint="Abstract-only")
         .replace("- **Status**: [FULL-TEXT]", "- **Status**: [ABSTRACT-ONLY]")
-        + "\n## B. Bridge Point\nAbstract-only bridge hint; verify with full text.\n",
+        + "\n## A. Core Approach / Perspective\nAbstract-level control feedback lens.\n"
+        + "\n## B. Bridge Point\nAbstract-only bridge hint; verify with full text.\n"
+        + "\n## Raw Abstract\nThis is the original abstract text used for conservative downstream checks.\n",
         encoding="utf-8",
     )
     (literature / "metadata_triage.md").write_text(
@@ -1509,6 +1532,11 @@ async def test_build_synthesis_workbench_exposes_weak_evidence_upgrade_channel(t
     assert result.ok, result.content
     workbench = json.loads((literature / "synthesis_workbench.json").read_text(encoding="utf-8"))
     weak = workbench["weak_evidence_and_resource_upgrade"]
+    abstract_note = next(item for item in workbench["abstract_notes"] if item["paper_id"] == "abstract_note")
+    assert abstract_note["core_approach_view"].startswith("Abstract-level control")
+    assert abstract_note["bridge_point"].startswith("Abstract-only bridge")
+    assert abstract_note["raw_abstract"].startswith("This is the original abstract")
+    assert any(item["paper_id"] == "abstract_note" for item in workbench["all_note_cards"])
     assert workbench["weak_evidence_summary"]["allowed_use"] == "prompt_visible_guardrail_not_claim_evidence"
     assert weak["semantics"] == "weak_evidence_and_resource_upgrade_not_claim_evidence"
     assert weak["abstract_only_count"] == 1

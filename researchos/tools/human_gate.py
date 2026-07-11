@@ -496,6 +496,8 @@ class CLIHumanInterface(HumanInterface):
             captured["include_chinese_literature"] = "false"
         elif any(token in normalized for token in ("允许中文论文", "允许中文文献", "检索中文", "包含中文", "包括中文")):
             captured["include_chinese_literature"] = "true"
+        if any(token in normalized for token in ("不粗读", "不要粗读", "不略读", "不要略读", "不做粗读", "不做摘要轻读")):
+            captured["abstract_sweep_target"] = "0"
 
         deep_triplet = re.search(
             r"\bdeep[_\s-]*read\b\s*(?:=|:|为)?\s*(\d+)\s*/\s*(\d+)\s*/\s*(\d+)",
@@ -514,6 +516,10 @@ class CLIHumanInterface(HumanInterface):
             captured["deep_read_max"] = deep_triplet.group(3)
 
         patterns = {
+            "coverage_total": [
+                r"\b(?:total|coverage[_\s-]*total|total[_\s-]*coverage|reading[_\s-]*total)\b\s*(?:=|:|改成|设为|设置为|到|为)?\s*(\d+)",
+                r"(?:总共|一共|总计|总量|总覆盖|覆盖总数|阅读总数|总阅读量)\s*(?:=|:|改成|设为|设置为|到|为)?\s*(\d+)",
+            ],
             "active_pool_max": [
                 r"\bactive[_\s-]*pool(?:[_\s-]*max)?\b\s*(?:=|:|改成|设为|设置为|到|为)?\s*(\d+)",
                 r"(?:保留候选数|候选池|候选数|保留候选|active\s*pool)\s*(?:=|:|改成|设为|设置为|到|为)?\s*(\d+)",
@@ -524,7 +530,7 @@ class CLIHumanInterface(HumanInterface):
             ],
             "abstract_sweep_target": [
                 r"\babstract[_\s-]*sweep(?:[_\s-]*target)?\b\s*(?:=|:|改成|设为|设置为|到|为)?\s*([A-Za-z0-9_\-]+|全部)",
-                r"(?:摘要轻读|轻读|摘要阅读)\s*(?:=|:|改成|设为|设置为|到|为)?\s*([A-Za-z0-9_\-]+|全部)",
+                r"(?:摘要轻读|轻读|略读|粗读|摘要阅读|浅读)\s*(?:=|:|改成|设为|设置为|到|为)?\s*([A-Za-z0-9_\-]+|全部)",
             ],
             "require_deep_read_target": [
                 r"\brequire(?:[_\s-]*deep)?(?:[_\s-]*read)?(?:[_\s-]*target)?\b\s*(?:=|:|改成|设为|设置为|到|为)?\s*(true|false|yes|no|y|n|1|0|是|否|需要|不需要)",
@@ -558,6 +564,10 @@ class CLIHumanInterface(HumanInterface):
             "active_pool": "active_pool_max",
             "active_pool_max": "active_pool_max",
             "pool": "active_pool_max",
+            "total": "coverage_total",
+            "coverage_total": "coverage_total",
+            "total_coverage": "coverage_total",
+            "reading_total": "coverage_total",
             "deep": "deep_read_target",
             "deep_read": "deep_read_target",
             "deep_read_min": "deep_read_min",
@@ -566,6 +576,12 @@ class CLIHumanInterface(HumanInterface):
             "abstract": "abstract_sweep_target",
             "abstract_sweep": "abstract_sweep_target",
             "abstract_sweep_target": "abstract_sweep_target",
+            "rough": "abstract_sweep_target",
+            "rough_read": "abstract_sweep_target",
+            "lite": "abstract_sweep_target",
+            "lite_read": "abstract_sweep_target",
+            "shallow": "abstract_sweep_target",
+            "shallow_read": "abstract_sweep_target",
             "require": "require_deep_read_target",
             "require_target": "require_deep_read_target",
             "require_deep_read_target": "require_deep_read_target",
@@ -1147,11 +1163,23 @@ def _format_t2_explained_summary_lines(summary: dict[str, Any]) -> list[str]:
     deep_max = summary.get("deep_read_max")
     require = summary.get("require_deep_read_target")
     require_text = "未达目标不进入 T3.5" if require is True else "达到最低线即可继续" if require is False else "按系统默认判断"
+    total_target = _t2_summary_total_read_target(summary)
     return [
+        f"总阅读覆盖：约 {total_target} 篇（total=deep_read_target+abstract_sweep；可选：total=30 或 总共30）",
         f"保留候选：{summary.get('active_pool_max')} 篇（active_pool_max={summary.get('active_pool_max')}；可选：120/180/240 或自定义）",
         f"深入阅读：目标 {deep_target} 篇（deep_read={deep_min}/{deep_target}/{deep_max}；格式：min/target/max）",
         f"读满目标门槛：{require_text}（require_target={require}；可选：true/false）",
-        f"摘要轻读：{summary.get('abstract_sweep_target')} 篇（abstract_sweep={summary.get('abstract_sweep_target')}；可选：数字或 all_readable）",
+        f"摘要轻读：{summary.get('abstract_sweep_target')} 篇（abstract_sweep={summary.get('abstract_sweep_target')}；别名：粗读/略读/rough；可选：数字或 all_readable）",
         f"稿件语言：{summary.get('manuscript_language', 'auto')}（manuscript_language={summary.get('manuscript_language', 'auto')}；可选：auto/en/zh/mixed）",
         f"中文文献：{summary.get('include_chinese_literature', 'auto')}（include_zh={summary.get('include_chinese_literature', 'auto')}；可选：auto/true/false；策略={summary.get('chinese_literature_policy', 'review_flag_only')}）",
     ]
+
+
+def _t2_summary_total_read_target(summary: dict[str, Any]) -> int | str | None:
+    abstract_target = summary.get("abstract_sweep_target")
+    if str(abstract_target).strip().casefold() in {"all", "all_readable", "unlimited", "全部"}:
+        return summary.get("active_pool_max")
+    try:
+        return int(summary.get("deep_read_target") or 0) + int(abstract_target or 0)
+    except (TypeError, ValueError):
+        return summary.get("active_pool_max")

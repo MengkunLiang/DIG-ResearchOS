@@ -1655,6 +1655,20 @@ Abstract note 结构：
 
 abstract sweep 的目标是让未进入 deep-read target 但有摘要的论文也形成可读的低成本证据提示。它仍然必须标注 abstract-only，不能被 T8 当作 FULL-TEXT 证据；metadata-only triage 只能提示“值得补 abstract/PDF/DOI 查证”，不能被 T8 当作论文证据。如果轻量阅读发现某篇论文对主线非常关键，应在后续 resume/人工补读中升级为 deep read，而不是在 abstract note 或 metadata report 里伪装全文阅读。
 
+#### Note card section index
+
+T3 生成的 deep notes、bridge notes 和 abstract notes 都会被后续阶段作为 note cards 读取。当前统一抽取的字段包括：
+
+- `problem_motivation`：§1，用于 Introduction 和问题重构。
+- `method_overview`：§2，用于 Related Work、Methodology 和 baseline 对比。
+- `core_approach_view`：A. Core Approach / Perspective，用于 abstract-only 粗读候选的视角提取、survey taxonomy 和 idea bridge。
+- `bridge_point`：B. Bridge Point，用于跨域类比、bridge synthesis 和 T4 Gate1 的交叉候选。
+- `key_results`：§3，用于实验/结果相关写作，但 abstract-only 的数字只能作为待验证 claim hint。
+- `gaps`、`mechanism_claim`、`design_rationale`、`boundary_conditions`、`cross_paper_tension`：§9、§13、§14、§18、§19，用于 T3.5 synthesis、T3.6 survey challenges/future agenda、T4 idea generation 和 T8 analysis。
+- `raw_abstract`：Raw Abstract 的短摘录，只用于 abstract-only 候选的保守理解和补读判断，不能作为全文机制证据。
+
+`build_synthesis_workbench` 会在 `literature/synthesis_workbench.json` 中保留 `notes`（deep/bridge notes）、`abstract_notes`（粗读 notes）和 `all_note_cards`（合并卡片）。`build_manuscript_resource_index` 会在 `drafts/manuscript_resource_index.json.paper_note_cards` 中写入同样的 section 摘录，并在每个 `drafts/section_outlines/*.md` 的 Note Card Retrieval Plan 中列出当前 section 最相关的 1-2 条 section cues。`IdeationAgent` 也会把这些 section cues 作为紧凑摘要注入 prompt，避免只依赖 `synthesis.md` 的概括。
+
 ### T3 的运行例子
 
 单独跑：
@@ -1769,7 +1783,7 @@ class LLMInsights(BaseModel):
 Reader 调用 `build_synthesis_workbench(write_final=false, render_draft=false, llm_insights={...})`，将阶段 1 的分析结果通过 `llm_insights` 参数传入工具。
 
 工具内部逻辑：
-1. 解析 `paper_notes/*.md` 和 `paper_notes_abstract/*.md`，提取每篇 note 的标题、年份、方法概述、关键结果、局限、问题、§13 Mechanism Claim、abstract A/B 桥接字段
+1. 解析 `paper_notes/*.md`、`paper_notes_bridge/**/*.md` 和 `paper_notes_abstract/*.md`，提取每篇 note 的标题、年份、方法概述、关键结果、局限、问题、§13 Mechanism Claim、§14-§19 CDR 字段、abstract A/B 桥接字段和 Raw Abstract 摘录；deep/bridge notes 写入 `notes`，粗读 notes 写入 `abstract_notes`，合并索引写入 `all_note_cards`
 2. 读取 `comparison_table.csv` 提取指标和效率线索
 3. 如果存在 `missing_areas.md`，纳入候选问题（只保留为 coverage hints，不写成已验证研究缺口）
 4. 如果存在 `domain_map.json`，读取 `citation_edges` 和 core/theory_bridge/adjacent/boundary 分桶，写入 `citation_graph_context`、`domain_map_bucket_summary`，并从 `domain_map.adjacent`、`domain_map.theory_bridge` 与 note 的 A/B 字段生成 `adjacent_transfers`

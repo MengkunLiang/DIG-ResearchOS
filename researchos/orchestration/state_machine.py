@@ -270,6 +270,18 @@ def _literature_param_summary_from_payload(payload: dict[str, Any]) -> dict[str,
     }
 
 
+def _summary_total_read_target(summary: dict[str, Any]) -> int | str | None:
+    active = summary.get("active_pool_max")
+    deep = summary.get("deep_read_target")
+    abstract_target = summary.get("abstract_sweep_target")
+    if str(abstract_target).strip().casefold() in {"all", "all_readable", "unlimited", "全部"}:
+        return active
+    try:
+        return int(deep or 0) + int(abstract_target or 0)
+    except (TypeError, ValueError):
+        return active
+
+
 def _literature_param_explained_preview(summary: dict[str, Any]) -> str:
     """Compact human-facing explanation for T2 coverage parameters."""
 
@@ -282,11 +294,13 @@ def _literature_param_explained_preview_lines(summary: dict[str, Any]) -> list[s
     deep_max = summary.get("deep_read_max")
     require = summary.get("require_deep_read_target")
     require_text = "未达目标不进入 T3.5" if require else "达到最低线即可继续"
+    total_target = _summary_total_read_target(summary)
     return [
+        f"总阅读覆盖：约 {total_target} 篇（total=deep_read_target+abstract_sweep；可自定义，如 total=30）",
         f"保留候选：{summary.get('active_pool_max')} 篇（active_pool_max={summary.get('active_pool_max')}；可选：120/180/240 或自定义）",
         f"深入阅读：目标 {deep_target} 篇（deep_read={deep_min}/{deep_target}/{deep_max}；格式：min/target/max）",
         f"读满目标门槛：{require_text}（require_target={require}；可选：true/false）",
-        f"摘要轻读：{summary.get('abstract_sweep_target')} 篇（abstract_sweep={summary.get('abstract_sweep_target')}；可选：数字或 all_readable）",
+        f"摘要轻读：{summary.get('abstract_sweep_target')} 篇（abstract_sweep={summary.get('abstract_sweep_target')}；别名：粗读/略读/rough；可选：数字或 all_readable）",
         f"稿件语言：{summary.get('manuscript_language')}（language={summary.get('manuscript_language')}；可选：auto/en/zh/mixed）",
         f"中文文献：{summary.get('include_chinese_literature')}（include_zh={summary.get('include_chinese_literature')}；可选：auto/true/false）",
     ]
@@ -326,11 +340,12 @@ def build_literature_param_gate_preview(workspace_dir: Path | None = None) -> di
         "parameter_meanings_short": _LITERATURE_PARAM_SHORT_MEANINGS,
         "options": options,
         "custom_input_examples": {
+            "coverage_total": "例如 total=30 或 总共30；表示本轮阅读覆盖约 30 篇，通常等于精读 + 摘要轻读",
             "active_pool_max": "例如 180；表示 T2 保留 180 篇进入阅读处置，超额进 papers_backlog.jsonl",
             "deep_read_target": "例如 60；表示 T3 正常应完成 60 篇结构化精读笔记；也可输入 deep_read=35/35/45 一次指定 min/target/max",
             "deep_read_min": "可选；例如 35。留空则沿用所选基础档位并不超过 target",
             "deep_read_max": "可选；例如 45。留空则按所选基础档位或 target 自动设置",
-            "abstract_sweep_target": "例如 120 或 all_readable；表示 T3 后 LLM 摘要轻读多少篇；all_readable 只覆盖保留候选，不全读 backlog",
+            "abstract_sweep_target": "例如 15、rough=15、粗读15 或 all_readable；表示 T3 后 LLM 摘要轻读多少篇；all_readable 只覆盖保留候选，不全读 backlog",
             "require_deep_read_target": "true/false；true 表示未读满 deep_read_target 不放行到 T3.5",
             "manuscript_language": "en/zh/mixed/auto；英文稿默认不检索也不引用中文非 seed 论文",
             "include_chinese_literature": "auto/false/true；false 表示不要中文论文，true 表示允许中文候选并标记权威性复核状态",
@@ -357,13 +372,14 @@ def enrich_literature_param_gate_options(options: list[dict[str, Any]], workspac
         elif option_id == "custom":
             item["description"] = _LITERATURE_PARAM_PRESET_NOTES["custom"]
             item["parameter_preview"] = (
-                "自定义覆盖目标：保留候选（active_pool_max）、深入阅读"
+                "自定义覆盖目标：总阅读覆盖（total/总共）、保留候选（active_pool_max）、深入阅读"
                 "（deep_read_min/deep_read_target/deep_read_max，或 deep_read=35/35/45）、"
-                "摘要轻读（abstract_sweep_target）、读满目标门槛（require_deep_read_target）；"
+                "摘要轻读/粗读（abstract_sweep_target/rough/粗读）、读满目标门槛（require_deep_read_target）；"
                 "也可指定稿件语言（manuscript_language）和是否允许中文文献（include_chinese_literature）。"
             )
             collect_input = list(item.get("collect_input") or [])
             for field_name in [
+                "coverage_total",
                 "active_pool_max",
                 "deep_read_min",
                 "deep_read_target",
@@ -542,16 +558,40 @@ def build_literature_param_payload(
             base_option = "survey_balanced"
         base_payload = _clone_literature_param_preset(base_option)
         base_summary = _literature_param_summary_from_payload(base_payload)
-        active_pool = _safe_int(
-            captured.get("active_pool_max"),
-            default=int(base_summary.get("active_pool_max") or 180),
-            minimum=30,
-        )
         deep_target = _safe_int(
             captured.get("deep_read_target"),
             default=int(base_summary.get("deep_read_target") or 60),
             minimum=1,
         )
+        abstract_target_raw: str | int = str(
+            captured.get("abstract_sweep_target") or base_summary.get("abstract_sweep_target") or "all_readable"
+        ).strip()
+        if abstract_target_raw.casefold() not in {"all", "all_readable", "unlimited", "全部"}:
+            abstract_target: str | int = _safe_int(
+                abstract_target_raw,
+                default=int(base_summary.get("abstract_sweep_target") or 0),
+                minimum=0,
+            )
+        else:
+            abstract_target = "all_readable"
+        coverage_total = _safe_optional_int(captured.get("coverage_total") or captured.get("total") or captured.get("reading_total"), minimum=1)
+        active_default = int(base_summary.get("active_pool_max") or 180)
+        if coverage_total is not None:
+            active_default = coverage_total
+        elif captured.get("abstract_sweep_target") not in (None, "") and isinstance(abstract_target, int):
+            active_default = deep_target + abstract_target
+        active_pool = _safe_int(
+            captured.get("active_pool_max"),
+            default=active_default,
+            minimum=1,
+        )
+        if captured.get("active_pool_max") in (None, ""):
+            if isinstance(abstract_target, int):
+                active_pool = max(active_pool, deep_target + abstract_target)
+            elif coverage_total is not None:
+                active_pool = max(active_pool, coverage_total)
+        if coverage_total is not None and captured.get("abstract_sweep_target") in (None, ""):
+            abstract_target = max(0, coverage_total - deep_target)
         if captured.get("deep_read_min") not in (None, ""):
             deep_min = _safe_int(captured.get("deep_read_min"), default=max(1, int(round(deep_target * 0.8))), minimum=1)
             deep_min = min(deep_min, deep_target)
@@ -564,15 +604,13 @@ def build_literature_param_payload(
         else:
             deep_max = max(
                 deep_target,
-                base_deep_max
-                if deep_target <= int(base_summary.get("deep_read_target") or deep_target)
-                else int(round(deep_target * 1.15)),
+                min(
+                    active_pool,
+                    base_deep_max
+                    if deep_target <= int(base_summary.get("deep_read_target") or deep_target)
+                    else int(round(deep_target * 1.15)),
+                ),
             )
-        abstract_target: str | int = str(
-            captured.get("abstract_sweep_target") or base_summary.get("abstract_sweep_target") or "all_readable"
-        ).strip()
-        if abstract_target.casefold() not in {"all", "all_readable", "unlimited", "全部"}:
-            abstract_target = _safe_int(abstract_target, default=active_pool, minimum=1)
         require_target = _safe_bool(
             captured.get("require_deep_read_target"),
             default=bool(base_summary.get("require_deep_read_target")),
@@ -742,6 +780,18 @@ def _safe_int(value: Any, *, default: int, minimum: int) -> int:
     except (TypeError, ValueError):
         result = default
     return max(minimum, result)
+
+
+def _safe_optional_int(value: Any, *, minimum: int | None = None) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        result = int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return None
+    if minimum is not None:
+        result = max(minimum, result)
+    return result
 
 
 def _safe_bool(value: Any, *, default: bool) -> bool:

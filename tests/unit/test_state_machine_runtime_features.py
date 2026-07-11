@@ -1108,6 +1108,59 @@ def test_custom_t2_literature_params_inherit_detected_recommended_profile(tmp_wo
     assert payload["selected_summary"]["active_pool_max"] == 300
 
 
+def test_t2_parameter_text_parses_total_deep_and_rough_reading(tmp_workspace):
+    captured = CLIHumanInterface._parse_t2_literature_param_text(
+        "英文稿，总共30篇，精读15篇，粗读15篇，base_option=standard_research"
+    )
+
+    assert captured["manuscript_language"] == "英文"
+    assert captured["coverage_total"] == "30"
+    assert captured["deep_read_target"] == "15"
+    assert captured["abstract_sweep_target"] == "15"
+
+    payload = build_literature_param_payload(
+        selected_option="custom",
+        captured=captured,
+        workspace_dir=tmp_workspace,
+    )
+
+    assert payload["t2_finalize"]["active_pool_max"] == 30
+    assert payload["reader"]["deep_read_target"] == 15
+    assert payload["reader"]["deep_read_max"] == 30
+    assert payload["reader"]["abstract_sweep"]["lite_paper_num"] == 15
+    assert payload["selected_summary"]["active_pool_max"] == 30
+    assert payload["selected_summary"]["abstract_sweep_target"] == 15
+
+
+def test_t2_parameter_text_derives_total_from_deep_and_rough_when_total_omitted(tmp_workspace):
+    captured = CLIHumanInterface._parse_t2_literature_param_text("精读15，略读15，英文")
+
+    payload = build_literature_param_payload(
+        selected_option="custom",
+        captured=captured,
+        workspace_dir=tmp_workspace,
+    )
+
+    assert payload["t2_finalize"]["active_pool_max"] == 30
+    assert payload["reader"]["deep_read_target"] == 15
+    assert payload["reader"]["deep_read_max"] == 30
+    assert payload["reader"]["abstract_sweep"]["lite_paper_num"] == 15
+
+
+def test_t2_parameter_text_allows_zero_rough_reading(tmp_workspace):
+    captured = CLIHumanInterface._parse_t2_literature_param_text("总共15，精读15，不粗读，英文")
+
+    payload = build_literature_param_payload(
+        selected_option="custom",
+        captured=captured,
+        workspace_dir=tmp_workspace,
+    )
+
+    assert payload["t2_finalize"]["active_pool_max"] == 15
+    assert payload["reader"]["deep_read_target"] == 15
+    assert payload["reader"]["abstract_sweep"]["lite_paper_num"] == 0
+
+
 def test_custom_t2_literature_params_can_override_multiple_numbers(tmp_workspace):
     (tmp_workspace / "project.yaml").write_text("metadata:\n  manuscript_type: survey\n", encoding="utf-8")
 

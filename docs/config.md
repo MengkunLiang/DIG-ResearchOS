@@ -604,7 +604,11 @@ agents:
 | `bridge_pool_cap` | `15` | `agents.reader.modes.read.behavior` | 每个 bridge 在 deep-read queue 中默认保留的候选总上限；超额记录不删除，标为 `read_disposition=deferred` 和 `triaged_reason=bridge_pool_cap_exceeded` |
 | `citation_hub_slots` | `3` | `agents.reader.modes.read.behavior` | citation graph 枢纽节点保护槽，仍需 Reader 复核 |
 
-`T2-PARAM-GATE` 会在每个 workspace 写 `literature/literature_params.json`，用人类可读方式确认“保留候选数、精读目标、摘要轻读目标”。Gate 会显示当前检测到的任务类型、推荐选项、各档实际数值和自定义输入说明；直接回车采用当前推荐项。这个文件优先于全局 yaml；全局 yaml 仍作为默认值和无交互调试 fallback。`reader.modes.read.behavior.abstract_sweep` 当前默认是有上限的轻量补读取向：
+`T2-PARAM-GATE` 会在每个 workspace 写 `literature/literature_params.json`，用人类可读方式确认“总阅读覆盖、保留候选数、精读目标、摘要轻读/粗读目标”。Gate 会显示当前检测到的任务类型、推荐选项、各档实际数值和自定义输入说明；直接回车采用当前推荐项。这个文件优先于全局 yaml；全局 yaml 仍作为默认值和无交互调试 fallback。
+
+自定义输入可以用自然语言表达，例如 `总共30，精读15，粗读15，英文稿`。ResearchOS 会规范成同一套结构化字段：`coverage_total=30`、`deep_read_target=15`、`abstract_sweep_target=15`、`manuscript_language=en`。如果用户给出“精读 X + 粗读/略读 Y”但没有显式写 `active_pool_max`，系统会把本轮保留候选目标设为 `X+Y`，避免沿用标准档的 120。`active_pool_max` 仍表示 T2 保留候选上限，不是精读数；用户说“总共 N”时默认表示本轮阅读覆盖总量，通常等于精读目标加粗读目标。
+
+这层解析目前先用确定性 parser 覆盖常见中英文表达，字段 schema 固定，后续可接入 LLM intent parser 产出同样字段；无 API key、CI、Docker 和 smoke 模式仍不会因为 LLM 不可用而阻塞。`reader.modes.read.behavior.abstract_sweep` 当前默认是有上限的轻量补读取向：
 
 - `expected_notes_ratio: 1.0` 表示无 `deep_read_queue` 的旧 workspace fallback 也按输入池 100% 校验，不再按 80% 放行。
 - `lite_paper_num: 120` 表示研究论文默认最多处理 120 个 abstract sweep 候选；综述均衡 gate 也默认使用 120，强覆盖默认 180。显式写 `all_readable` 时，只表示在保留候选 active pool 内不设上限，不会全读 `papers_backlog.jsonl`。

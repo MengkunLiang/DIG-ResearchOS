@@ -79,6 +79,56 @@ def _weak_evidence_prompt_summary(synthesis_workbench_text: str) -> str:
     return "\n".join(lines)
 
 
+def _shorten(text: str, limit: int) -> str:
+    clean = " ".join(str(text or "").split())
+    if len(clean) > limit:
+        return clean[: max(0, limit - 3)] + "..."
+    return clean
+
+
+def _note_card_prompt_summary(synthesis_workbench_text: str, *, limit: int = 10) -> str:
+    """Expose compact paper-note section cues for idea generation."""
+
+    try:
+        data = json.loads(synthesis_workbench_text) if synthesis_workbench_text.strip() else {}
+    except Exception:
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    cards = data.get("all_note_cards")
+    if not isinstance(cards, list):
+        cards = []
+        for key in ("notes", "abstract_notes"):
+            items = data.get(key)
+            if isinstance(items, list):
+                cards.extend(items)
+    rows: list[str] = []
+    for card in cards:
+        if not isinstance(card, dict):
+            continue
+        title = _shorten(str(card.get("title") or card.get("paper_id") or "unknown"), 120)
+        evidence = str(card.get("evidence_level") or "unknown")
+        use = str(card.get("citation_use") or "unknown")
+        score = card.get("citation_quality_score")
+        parts = [f"- {title} | evidence={evidence} | use={use} | score={score}"]
+        for label, key in (
+            ("A", "core_approach_view"),
+            ("B", "bridge_point"),
+            ("§9", "gaps"),
+            ("§13", "mechanism_claim"),
+            ("§14", "design_rationale"),
+            ("§18", "boundary_conditions"),
+            ("Raw abstract", "raw_abstract"),
+        ):
+            value = _shorten(str(card.get(key) or ""), 180)
+            if value:
+                parts.append(f"  {label}: {value}")
+        rows.append("\n".join(parts))
+        if len(rows) >= limit:
+            break
+    return "\n".join(rows)[:4500]
+
+
 class IdeationAgent(Agent):
     """假设生成Agent。深度推理+两轮Gate确认。"""
 
@@ -138,6 +188,7 @@ class IdeationAgent(Agent):
         synthesis_workbench = read_text_file(ws / "literature" / "synthesis_workbench.json", default="")
         survey_insights = read_text_file(ws / "ideation" / "survey_insights.json", default="")
         weak_evidence_summary = _weak_evidence_prompt_summary(synthesis_workbench)
+        note_card_summary = _note_card_prompt_summary(synthesis_workbench)
 
         return render_prompt(
             self.spec.prompt_template,
@@ -151,6 +202,7 @@ class IdeationAgent(Agent):
             bridge_domain_plan_preview=bridge_domain_plan[:2500],
             synthesis_workbench_preview=synthesis_workbench[:3000],
             weak_evidence_summary=weak_evidence_summary,
+            note_card_summary=note_card_summary,
             survey_insights_preview=survey_insights[:3000],
             has_domain_map=bool(domain_map.strip()),
             has_bridge_domain_plan=bool(bridge_domain_plan.strip()),
