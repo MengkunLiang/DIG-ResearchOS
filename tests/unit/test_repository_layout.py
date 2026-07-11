@@ -17,6 +17,7 @@ def test_single_compose_entrypoint_keeps_runtime_contract():
     assert not (REPO_ROOT / "docker-compose.yml").exists()
     assert not (REPO_ROOT / "compose.yaml").exists()
     assert not (REPO_ROOT / "deploy/config").exists()
+    assert not (REPO_ROOT / "deploy/.env.example").exists()
 
     service = _compose_service("deploy/compose.yaml")
     env = service["environment"]
@@ -26,6 +27,7 @@ def test_single_compose_entrypoint_keeps_runtime_contract():
     assert service["stdin_open"] is True
     assert service["tty"] is True
     assert service["user"] == "${RESEARCHOS_UID:-0}:${RESEARCHOS_GID:-0}"
+    assert service["env_file"] == [{"path": "../.env", "required": False}]
     assert env["RESEARCHOS_CONFIG"] == "/app/config/user_settings.yaml"
     assert env["RESEARCHOS_WORKSPACE_ROOT"] == "/app/workspace"
     assert env["RESEARCHOS_HOST_WORKSPACE_ROOT"] == "${RESEARCHOS_HOST_WORKSPACE_ROOT:-./workspace}"

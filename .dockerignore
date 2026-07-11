@@ -60,6 +60,7 @@ tmp/
 .env
 .env.*
 deploy/.env
+deploy/.env.example
 deploy/config/
 
 # 构建产物

@@ -663,7 +663,7 @@ python -m researchos.cli run-skill deepxiv "summarize recent papers about memory
 
 ```bash
 cd ResearchOS
-cp deploy/.env.example deploy/.env
+cp .env.example .env
 docker compose -f deploy/compose.yaml build
 docker compose -f deploy/compose.yaml run --rm researchos doctor
 ```

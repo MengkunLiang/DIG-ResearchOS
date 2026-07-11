@@ -25,9 +25,9 @@ USAGE
 
 require_deploy_files() {
   local missing=0
-  if [ ! -f "$SCRIPT_DIR/.env" ]; then
-    echo "[WARN] deploy/.env not found; provider secrets will only come from the shell or root .env."
-    echo "       Optional setup: cp deploy/.env.example deploy/.env"
+  if [ ! -f "$REPO_ROOT/.env" ]; then
+    echo "[WARN] .env not found; provider secrets will only come from the shell."
+    echo "       Optional setup: cp .env.example .env"
   fi
   if [ ! -f "$REPO_ROOT/config/user_settings.yaml" ]; then
     echo "[ERROR] config/user_settings.yaml not found."
@@ -49,7 +49,12 @@ validate_project() {
 }
 
 compose() {
-  docker compose -f "$COMPOSE_FILE" "$@"
+  local compose_args=()
+  if [ -f "$REPO_ROOT/.env" ]; then
+    compose_args+=(--env-file "$REPO_ROOT/.env")
+  fi
+  compose_args+=(-f "$COMPOSE_FILE")
+  docker compose "${compose_args[@]}" "$@"
 }
 
 cmd="${1:-}"

@@ -11,7 +11,7 @@ state machine, validators, gates, workspace layout, and artifact contracts.
 | `researchos/` | Main Python package. Agents, runtime, orchestration, tools, schemas, and skill loading live here. | Commit source and package data. Do not commit caches. |
 | `config/` | Checked-in defaults, runtime settings, model routing, agent parameters, and system contracts. | Commit safe defaults and schemas. Keep secrets out. |
 | `docs/` | User, developer, runtime, and design documentation. | Commit curated docs. Do not store generated artifacts. |
-| `deploy/` | User-facing Docker Compose deployment folder. Contains the single Compose file, Docker env example, and wrapper scripts. | Commit examples and wrappers. Do not commit `deploy/.env` or generated workspace. |
+| `deploy/` | User-facing Docker Compose deployment folder. Contains the single Compose file and wrapper scripts. | Commit wrappers and Compose. Env/config stay at the repository root; do not commit `.env` or generated workspace. |
 | `infra/docker/` | Low-level Docker image build assets and compatibility run helpers. | Commit Dockerfile and helper scripts. User-facing Docker docs should point to `deploy/` first. |
 | `scripts/` | Maintained utility scripts, currently artifact validation, model probing, and recovery helpers. | Commit small reusable utilities only. Do not use this for ad hoc debugging. |
 | `tests/` | Automated pytest coverage. `tests/unit/` is deterministic; `tests/real/` may need credentials or local tools; `tests/manual/` is local-only and ignored. | Commit `tests/unit/` and intentional `tests/real/` tests. Do not commit `tests/manual/`. |
@@ -26,7 +26,7 @@ Use `deploy/` when you are a ResearchOS user running the system through Docker
 Compose:
 
 ```bash
-cp deploy/.env.example deploy/.env
+cp .env.example .env
 mkdir -p workspace
 docker compose -f deploy/compose.yaml run --rm researchos doctor
 ```
@@ -38,7 +38,7 @@ the wrapper scripts from `deploy/`.
 The wrapper scripts set `${RESEARCHOS_UID}:${RESEARCHOS_GID}` automatically on
 systems that expose `id`, so bind-mounted workspace files remain host-editable.
 Direct Compose defaults to `0:0` for compatibility with root-owned checkouts;
-direct Compose users can set UID/GID in `deploy/.env` when needed.
+direct Compose users can set UID/GID in `.env` when needed.
 
 The top-level `workspace/` directory owns the host-visible workspace bind
 mount:
@@ -142,7 +142,7 @@ privileged container requirement in the default flow.
 
 Keep these out of git and Docker images:
 
-- `.env`, `deploy/.env`
+- `.env`, `.env`
 - `workspace/`
 - `_runtime/` logs and traces
 - generated PDFs, LaTeX auxiliary files, and submission build outputs

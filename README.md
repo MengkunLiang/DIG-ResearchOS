@@ -148,7 +148,7 @@ That is why resume and interruption recovery work best when the relevant outputs
 | `researchos/skills/` | skill loader, aliases, runner |
 | `config/` | user settings, model routing, agent params, runtime config, and `system_config/` workflow contracts |
 | `docs/` | documentation index, quickstart, pipeline/runtime references, and design archive |
-| `deploy/` | user-facing Docker Compose deployment, Docker env example, and wrappers; project data stays in top-level `workspace/` |
+| `deploy/` | user-facing Docker Compose deployment and wrappers; env/config stay at the repository root |
 | `infra/docker/` | low-level Docker image build assets and compatibility helpers |
 | `scripts/` | maintained utility scripts such as artifact validation and recovery helpers |
 | `tests/` | automated pytest coverage; `tests/unit/` is deterministic, `tests/real/` may need credentials/local tools, `tests/manual/` is local-only |
@@ -209,7 +209,7 @@ lower-level image build area used by maintainers.
 
 ```bash
 cd ResearchOS
-cp deploy/.env.example deploy/.env
+cp .env.example .env
 mkdir -p workspace
 docker compose -f deploy/compose.yaml build
 docker compose -f deploy/compose.yaml run --rm researchos doctor
@@ -234,7 +234,7 @@ for full details.
 On Linux, the wrapper scripts set the container UID/GID to the current user so
 bind-mounted workspace files stay editable on the host. Direct Compose defaults
 to `0:0` for compatibility with root-owned checkouts; set `RESEARCHOS_UID` and
-`RESEARCHOS_GID` in `deploy/.env` if you want direct Compose to write as your
+`RESEARCHOS_GID` in `.env` if you want direct Compose to write as your
 user.
 
 ## Environment Variables

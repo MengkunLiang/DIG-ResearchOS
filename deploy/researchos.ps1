@@ -30,9 +30,9 @@ function Show-Usage {
 
 function Require-DeployFiles {
   $missing = $false
-  if (-not (Test-Path (Join-Path $ScriptDir ".env"))) {
-    Write-Host "[WARN] deploy/.env not found; provider secrets will only come from the shell or root .env."
-    Write-Host "       Optional setup: Copy-Item deploy/.env.example deploy/.env"
+  if (-not (Test-Path (Join-Path $RepoRoot ".env"))) {
+    Write-Host "[WARN] .env not found; provider secrets will only come from the shell."
+    Write-Host "       Optional setup: Copy-Item .env.example .env"
   }
   if (-not (Test-Path (Join-Path $RepoRoot "config/user_settings.yaml"))) {
     Write-Host "[ERROR] config/user_settings.yaml not found."
@@ -52,7 +52,13 @@ function Validate-Project([string]$Name) {
 }
 
 function Compose([string[]]$ArgsList) {
-  & docker compose -f $ComposeFile @ArgsList
+  $composeArgs = @()
+  $RootEnv = Join-Path $RepoRoot ".env"
+  if (Test-Path $RootEnv) {
+    $composeArgs += @("--env-file", $RootEnv)
+  }
+  $composeArgs += @("-f", $ComposeFile)
+  & docker compose @composeArgs @ArgsList
   exit $LASTEXITCODE
 }
 

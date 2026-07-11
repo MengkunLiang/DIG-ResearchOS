@@ -157,7 +157,7 @@ python -m researchos.cli resume --workspace ./workspace/local-test2
 
 ```bash
 cd ResearchOS
-cp deploy/.env.example deploy/.env
+cp .env.example .env
 mkdir -p workspace
 ```
 

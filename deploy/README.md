@@ -12,13 +12,13 @@ Use this directory when you want to run ResearchOS through Docker Compose.
 It owns the user-facing files:
 
 - `compose.yaml`
-- `.env.example`
 - `researchos.sh`
 - `researchos.ps1`
 - top-level `workspace/` bind mount
 
 It does not own a separate config tree. Docker Mode reads the same root
-`config/` directory as Native Mode, with secrets coming from `.env`.
+`config/` directory as Native Mode, with secrets and local Docker overrides
+coming from the root `.env`.
 
 Use `infra/docker/` only when maintaining or debugging the Docker image itself.
 `infra/docker/Dockerfile` builds the runtime image used by this Compose file,
@@ -30,11 +30,11 @@ mode.
 From the repository root:
 
 ```bash
-cp deploy/.env.example deploy/.env
+cp .env.example .env
 mkdir -p workspace
 ```
 
-Fill API keys in `deploy/.env`. Do not commit that file.
+Fill API keys in `.env`. Do not commit that file.
 
 Edit non-secret runtime preferences in the root `config/` directory. Day-to-day
 settings normally belong in `config/user_settings.yaml`; workflow contracts stay
@@ -44,7 +44,7 @@ On Linux, the wrapper scripts set `${RESEARCHOS_UID}:${RESEARCHOS_GID}` to the
 current user before calling Compose, so bind-mounted workspace files stay
 editable. Direct `docker compose` defaults to `0:0` for compatibility with
 root-owned checkouts; if you want direct Compose to write as your user, set
-these in `deploy/.env`:
+these in `.env`:
 
 ```bash
 RESEARCHOS_UID=$(id -u)

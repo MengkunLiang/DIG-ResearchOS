@@ -46,7 +46,7 @@ tests/manual/
 .env.*
 !.env.example
 deploy/.env
-!deploy/.env.example
+deploy/.env.example
 deploy/config/
 .venv
 env/

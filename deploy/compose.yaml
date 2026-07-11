@@ -8,8 +8,6 @@ services:
     env_file:
       - path: ../.env
         required: false
-      - path: .env
-        required: false
     environment:
       RESEARCHOS_CONFIG: /app/config/user_settings.yaml
       RESEARCHOS_WORKSPACE_ROOT: /app/workspace

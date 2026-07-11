@@ -74,7 +74,7 @@ python -m researchos.cli selftest
 
 ```bash
 cd /mnt/data/DIG-ResearchOS
-cp deploy/.env.example deploy/.env
+cp .env.example .env
 mkdir -p workspace
 docker compose -f deploy/compose.yaml build
 docker compose -f deploy/compose.yaml run --rm researchos doctor
@@ -91,7 +91,7 @@ workspace -> /app/workspace
 Linux 下，`deploy/researchos.sh` 会自动把 `${RESEARCHOS_UID}:${RESEARCHOS_GID}`
 设置为当前用户，避免生成 root-owned workspace 文件。直接运行
 `docker compose` 时默认使用 `0:0` 保证 root-owned checkout 也能写入；如果希望
-直接 Compose 也按当前用户写入，可以在 `deploy/.env` 中设置
+直接 Compose 也按当前用户写入，可以在 `.env` 中设置
 `RESEARCHOS_UID=$(id -u)` 和 `RESEARCHOS_GID=$(id -g)`。
 
 ## 4. 构建轻量 Docker 镜像
