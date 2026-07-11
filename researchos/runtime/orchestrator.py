@@ -33,6 +33,7 @@ from .progress import (
     format_cli_message,
     next_step_for_task,
     safe_relative,
+    summarize_reader_note_progress,
     summarize_progress_markdown,
     summarize_tool_result,
 )
@@ -2651,7 +2652,7 @@ class AgentRunner:
         data = result.data if isinstance(result.data, dict) else {}
         progress = str(data.get("progress") or "").strip()
         if tool_name == "save_paper_note" and progress:
-            self.progress.emit(f"[Reader Agent] T3 深读进度：{progress}")
+            self.progress.emit(f"[Reader Agent] {summarize_reader_note_progress(data, progress=progress)}")
 
     @staticmethod
     def _looks_like_human_interaction_request(message: Message) -> bool:

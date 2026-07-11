@@ -299,6 +299,9 @@ async def test_save_paper_note_uses_queue_rank_and_refreshes_manifest(tmp_path: 
     assert result.ok, result.content
     assert result.data["path"] == "literature/paper_notes/noopenalex__496b8b9485c829bf.md"
     assert result.data["progress"] == "1/1 target notes complete"
+    assert result.data["paper_title"] == "Causal-Invariant Cross-Domain Out-of-Distribution Recommendation"
+    assert result.data["target_bucket"] == "seed"
+    assert result.data["note_status"] == "FULL-TEXT"
     assert "T3 deep read progress: 1/1 target notes complete" in result.content
     assert (workspace / result.data["path"]).exists()
     manifest = json.loads((workspace / "literature" / "notes_manifest.json").read_text(encoding="utf-8"))

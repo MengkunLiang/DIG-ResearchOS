@@ -89,6 +89,8 @@ class SavePaperNoteTool(Tool):
                 manifest = _build_manifest_for_source_queue(self.policy.workspace_dir, source_queue)
                 citation_maps = refresh_literature_citation_maps(self.policy.workspace_dir, write=True)
                 progress = _progress_summary(manifest)
+                entry = _find_manifest_entry(manifest, rel_path, params.queue_rank)
+                note_status = _extract_note_status(_safe_read_text(abs_path))
                 return ToolResult(
                     ok=True,
                     content=(
@@ -104,8 +106,14 @@ class SavePaperNoteTool(Tool):
                         "source_queue": source_queue,
                         "resolved_paper_id": record.get("paper_id") or record.get("canonical_id") or record.get("id") or "",
                         "record_display_key": display_record_key(record),
+                        "paper_title": _record_title(record, entry),
+                        "paper_year": _record_year(record),
+                        "paper_venue": _record_venue(record),
+                        "target_bucket": str(record.get("target_bucket") or entry.get("target_bucket") or ""),
+                        "note_status": note_status,
                         "status": "already_complete",
                         "validation_error": "",
+                        "manifest_entry": entry,
                         "progress": progress,
                         "paper_note_index_path": "literature/paper_note_index.json",
                         "citation_map_path": "literature/citation_map.json",
@@ -132,6 +140,11 @@ class SavePaperNoteTool(Tool):
             "source_queue": source_queue,
             "resolved_paper_id": record.get("paper_id") or record.get("canonical_id") or record.get("id") or "",
             "record_display_key": display_record_key(record),
+            "paper_title": _record_title(record, entry),
+            "paper_year": _record_year(record),
+            "paper_venue": _record_venue(record),
+            "target_bucket": str(record.get("target_bucket") or entry.get("target_bucket") or ""),
+            "note_status": _extract_note_status(params.content),
             "status": "complete" if ok else "incomplete",
             "validation_error": err or "",
             "manifest_path": "literature/notes_manifest.json",
@@ -226,3 +239,45 @@ def _progress_summary(manifest: dict[str, Any]) -> str:
     if target_total > 0:
         return f"{target_done}/{target_total} target notes complete"
     return f"{int(manifest.get('complete_count') or 0)}/{int(manifest.get('entry_count') or 0)} queue notes complete"
+
+
+def _record_title(record: dict[str, Any], entry: dict[str, Any] | None = None) -> str:
+    entry = entry if isinstance(entry, dict) else {}
+    return str(record.get("title") or entry.get("title") or "").strip()
+
+
+def _record_year(record: dict[str, Any]) -> str:
+    for key in ("year", "publication_year", "published_year"):
+        value = record.get(key)
+        if value not in (None, ""):
+            return str(value).strip()
+    return ""
+
+
+def _record_venue(record: dict[str, Any]) -> str:
+    for key in ("venue", "journal", "conference", "source_display_name", "source", "publication_venue"):
+        value = record.get(key)
+        if isinstance(value, dict):
+            value = value.get("display_name") or value.get("name")
+        if value not in (None, ""):
+            return str(value).strip()
+    return ""
+
+
+def _extract_note_status(content: str | None) -> str:
+    if not content:
+        return ""
+    for line in content.splitlines():
+        if "**Status**" not in line:
+            continue
+        _, _, tail = line.partition(":")
+        status = tail.strip() if tail else line.strip()
+        return status.strip("[] ").upper()
+    return ""
+
+
+def _safe_read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""

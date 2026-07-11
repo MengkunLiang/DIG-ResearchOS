@@ -62,6 +62,58 @@ def test_log_scout_progress_skipped_result_is_not_reported_as_failure():
     assert output_path == "literature/temp/scout_progress.md"
 
 
+def test_save_paper_note_result_names_the_paper_without_raw_payload():
+    summary, output_path = summarize_tool_result(
+        tool_name="save_paper_note",
+        ok=True,
+        content="raw note body should not be shown",
+        data={
+            "path": "literature/paper_notes/W123.md",
+            "queue_rank": 9,
+            "original_queue_rank": 12,
+            "paper_title": "Causal-Invariant Cross-Domain Out-of-Distribution Recommendation",
+            "paper_year": 2025,
+            "paper_venue": "TestConf",
+            "note_status": "FULL-TEXT",
+            "status": "complete",
+            "progress": "9/15 target notes complete",
+        },
+        error=None,
+    )
+
+    assert "Causal-Invariant Cross-Domain Out-of-Distribution Recommendation" in summary
+    assert "#12" in summary
+    assert "2025" in summary
+    assert "TestConf" in summary
+    assert "状态 FULL-TEXT" in summary
+    assert "精读 9/15 篇" in summary
+    assert "target notes complete" not in summary
+    assert "raw note body" not in summary
+    assert output_path == "literature/paper_notes/W123.md"
+
+
+def test_save_paper_note_failure_keeps_paper_identity():
+    summary, output_path = summarize_tool_result(
+        tool_name="save_paper_note",
+        ok=False,
+        content="missing required section",
+        data={
+            "path": "literature/paper_notes/W123.md",
+            "queue_rank": 3,
+            "paper_title": "A Paper That Needs Repair",
+            "status": "incomplete",
+            "progress": "2/5 target notes complete",
+        },
+        error="note_incomplete",
+    )
+
+    assert "A Paper That Needs Repair" in summary
+    assert "论文阅读笔记已保存但需修补" in summary
+    assert "精读 2/5 篇" in summary
+    assert "问题：note_incomplete" in summary
+    assert output_path == "literature/paper_notes/W123.md"
+
+
 def test_progress_emitter_quiet_keeps_only_important_messages(capsys):
     emitter = CliProgressEmitter(quiet=True)
     emitter.emit("normal")

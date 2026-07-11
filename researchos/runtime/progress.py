@@ -616,6 +616,11 @@ def summarize_tool_result(
     data = data if isinstance(data, dict) else {}
     metadata = metadata if isinstance(metadata, dict) else {}
     if not ok:
+        if tool_name == "save_paper_note" and data:
+            progress = str(data.get("progress") or "").strip()
+            summary = summarize_reader_note_progress(data, progress=progress)
+            detail = _compact_text(error or content or "工具返回失败", 180)
+            return f"{summary}；问题：{detail}", _extract_output_path(tool_name, data)
         return _compact_text(error or content or "工具返回失败", 280), _extract_output_path(tool_name, data)
 
     if tool_name in SEARCH_TOOL_NAMES:
@@ -660,9 +665,7 @@ def summarize_tool_result(
     if tool_name == "save_paper_note":
         progress = str(data.get("progress") or "").strip()
         path = _extract_output_path(tool_name, data) or data.get("note_path")
-        if progress:
-            return f"论文阅读笔记已保存；当前精读进度 {progress}", _string_or_none(path)
-        return "论文阅读笔记已保存", _string_or_none(path)
+        return summarize_reader_note_progress(data, progress=progress), _string_or_none(path)
 
     if tool_name == "finish_task":
         return "agent 请求进入输出校验；runtime 正在检查声明产物和 schema", None
@@ -705,6 +708,56 @@ def summarize_progress_text(text: str, *, max_items: int = 4) -> list[str]:
         if len(bullets) >= max_items:
             break
     return list(reversed(bullets))
+
+
+def summarize_reader_note_progress(data: dict[str, Any], *, progress: str | None = None) -> str:
+    """Build the compact T3 note summary shown in the CLI."""
+
+    entry = data.get("manifest_entry") if isinstance(data.get("manifest_entry"), dict) else {}
+    title = _first_present(data, "paper_title", "title") or entry.get("title")
+    title = _compact_text(title, 86)
+    rank = _first_present(data, "original_queue_rank", "queue_rank")
+    paper_label = title or str(_first_present(data, "resolved_paper_id", "record_display_key") or "").strip()
+    if paper_label and rank not in (None, ""):
+        paper_label = f"#{rank} {paper_label}"
+
+    status = _first_present(data, "note_status", "read_status")
+    if not status:
+        raw_status = str(data.get("status") or "").strip()
+        if raw_status == "already_complete":
+            status = "已完成"
+        elif raw_status:
+            status = raw_status
+    status = _format_note_status(status)
+
+    venue_bits = []
+    year = _string_or_none(_first_present(data, "paper_year", "year") or entry.get("year"))
+    venue = _string_or_none(_first_present(data, "paper_venue", "venue") or entry.get("venue"))
+    if year:
+        venue_bits.append(year)
+    if venue:
+        venue_bits.append(_compact_text(venue, 36))
+    venue_text = "，".join(venue_bits)
+
+    saved_status = str(data.get("status") or "").strip()
+    if saved_status == "already_complete":
+        head = "论文阅读笔记已存在且合格"
+    elif saved_status == "incomplete":
+        head = "论文阅读笔记已保存但需修补"
+    else:
+        head = "论文阅读笔记已保存"
+    if paper_label:
+        head += f"：{paper_label}"
+
+    pieces = [head]
+    if venue_text:
+        pieces.append(venue_text)
+    if status:
+        pieces.append(f"状态 {status}")
+    progress_label = _format_t3_progress(progress or str(data.get("progress") or ""))
+    if progress_label:
+        pieces.append(progress_label)
+    return "；".join(pieces)
 
 
 def safe_relative(path: Path | str | None, workspace_dir: Path | None) -> str | None:
@@ -862,6 +915,35 @@ def _compact_text(value: Any, max_len: int = 200) -> str:
     if len(text) > max_len:
         return text[: max(0, max_len - 3)] + "..."
     return text
+
+
+def _format_note_status(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = text.strip("[] ")
+    mapping = {
+        "FULL-TEXT": "FULL-TEXT",
+        "PARTIAL-TEXT": "PARTIAL-TEXT",
+        "ABSTRACT-ONLY": "ABSTRACT-ONLY",
+        "complete": "complete",
+        "incomplete": "incomplete",
+        "已完成": "已完成",
+    }
+    return mapping.get(text, _compact_text(text, 32))
+
+
+def _format_t3_progress(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    target = re.match(r"^(?P<done>\d+)\s*/\s*(?P<total>\d+)\s+target notes complete$", text)
+    if target:
+        return f"精读 {target.group('done')}/{target.group('total')} 篇"
+    queue = re.match(r"^(?P<done>\d+)\s*/\s*(?P<total>\d+)\s+queue notes complete$", text)
+    if queue:
+        return f"队列 {queue.group('done')}/{queue.group('total')} 篇"
+    return _compact_text(text, 60)
 
 
 def _string_or_none(value: Any) -> str | None:
