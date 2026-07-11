@@ -1933,7 +1933,7 @@ async def test_runner_pauses_after_configured_llm_timeout_cooldowns(tmp_workspac
     assert not result.ok
     assert result.stop_reason == AgentResult.STOP_INTERRUPTED
     assert "连续超时" in (result.error or "")
-    assert llm.call_count == 2
+    assert llm.call_count == 1
 
 
 @pytest.mark.asyncio

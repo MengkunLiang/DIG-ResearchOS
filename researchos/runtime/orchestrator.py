@@ -189,6 +189,51 @@ class AgentRunner:
             marker in text for marker in fatal_markers
         )
 
+    @classmethod
+    def _is_recoverable_provider_error(cls, exc: LLMProviderError) -> bool:
+        text = str(exc).lower()
+        if not text:
+            return False
+        timeout_or_connection_markers = (
+            "timeouterror",
+            "timeout",
+            "timed out",
+            "readtimeout",
+            "connecttimeout",
+            "connectionerror",
+            "connection error",
+            "server disconnected",
+            "超时",
+        )
+        if any(marker in text for marker in timeout_or_connection_markers):
+            return True
+        fatal_markers = (
+            "authentication",
+            "permissiondenied",
+            "permission denied",
+            "invalid_api_key",
+            "invalid api key",
+            "unauthorized",
+            "context_length",
+            "context window",
+            "badrequest",
+            "bad request",
+        )
+        if any(marker in text for marker in fatal_markers):
+            return False
+        transient_markers = (
+            "temporarily unavailable",
+            "service unavailable",
+            "bad gateway",
+            "gateway timeout",
+            "502",
+            "503",
+            "504",
+            "overloaded",
+            "超时",
+        )
+        return cls._is_timeout_provider_error(exc) or any(marker in text for marker in transient_markers)
+
     async def run(self, ctx: ExecutionContext) -> AgentResult:
         """执行一次完整 agent run。"""
         started = time.time()
@@ -492,24 +537,18 @@ class AgentRunner:
                         kind="llm_provider",
                         message=str(exc)[:300],
                     )
-                    if self._is_timeout_provider_error(exc):
-                        cooldown_raw = self.retry_policy.get("llm_timeout_cooldown_seconds")
-                        cooldown = 60.0 if cooldown_raw is None else float(cooldown_raw)
-                        pause_after = int(self.retry_policy.get("llm_timeout_pause_after_cooldowns") or 0)
+                    if self._is_recoverable_provider_error(exc):
                         llm_timeout_cooldowns_used += 1
-                        if pause_after > 0 and llm_timeout_cooldowns_used > pause_after:
-                            raise RecoverableRuntimePause(
-                                "LLM provider 连续超时，已暂停等待人工处理或稍后 resume；"
-                                f"最近错误: {exc}"
-                            ) from exc
-                        self._emit(
-                            "[Agent] LLM provider 连续超时，"
-                            f"冷却 {cooldown:g}s 后继续尝试（第 {llm_timeout_cooldowns_used} 轮）",
+                        stop_reason = AgentResult.STOP_INTERRUPTED
+                        error_msg = (
+                            "LLM provider 连续超时或暂时不可用，已暂停为可 resume 状态；"
+                            f"最近错误: {exc}"
+                        )
+                        self.progress.emit(
+                            "[Runtime] LLM provider 暂时不可用，当前任务已暂停；稍后 resume 会从当前 task 继续",
                             important=True,
                         )
-                        if cooldown > 0:
-                            await asyncio.sleep(cooldown)
-                        continue
+                        break
                     stop_reason = AgentResult.STOP_ERROR
                     error_msg = f"LLM failed: {exc}"
                     break

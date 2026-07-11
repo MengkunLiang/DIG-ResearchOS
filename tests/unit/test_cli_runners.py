@@ -13,6 +13,8 @@ from researchos.cli_runners import CompletePipelineRunner, SingleTaskRunner
 from researchos.orchestration.state_machine import StateMachine
 from researchos.runtime.agent import AgentResult
 from researchos.runtime.environment import workspace_host_hint
+from researchos.runtime.errors import LLMProviderError
+from researchos.runtime.orchestrator import AgentRunner
 from researchos.schemas.state import StateYaml, TaskHistoryEntry
 from researchos.testing.mocks import (
     FakeLLMMessage,
@@ -269,6 +271,7 @@ async def test_complete_pipeline_runner_advances_until_completed(tmp_workspace: 
         state_machine=StateMachine(config),
         llm_client=_hello_llm(),
         tool_registry=_registry(),
+        human_interface=_AutoGateHuman("continue_keep"),
     )
 
     exit_code = await runner.run(project_id="demo-project")
@@ -276,6 +279,119 @@ async def test_complete_pipeline_runner_advances_until_completed(tmp_workspace: 
     assert exit_code == 0
     assert (tmp_workspace / "state.yaml").exists()
     assert "COMPLETED" in (tmp_workspace / "state.yaml").read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_complete_pipeline_resume_retries_failed_state(tmp_workspace: Path):
+    config = tmp_workspace / "fsm.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: HELLO
+        states:
+          HELLO:
+            agent: hello
+            outputs:
+              hello_file: hello.txt
+            next_on_success: done
+            next_on_failure: failed
+          done:
+            terminal: true
+          failed:
+            terminal: true
+        """,
+    )
+    StateYaml(
+        project_id="demo-project",
+        current_task="failed",
+        status="FAILED",
+        last_error="LLM failed: All candidates failed: TimeoutError()",
+        history=[
+            TaskHistoryEntry(
+                task="HELLO",
+                run_id="hello_failed",
+                status="FAILED",
+                started_at="2026-01-01T00:00:00+00:00",
+                finished_at="2026-01-01T00:01:00+00:00",
+                stop_reason=AgentResult.STOP_ERROR,
+                error="LLM failed: All candidates failed: TimeoutError()",
+            )
+        ],
+    ).dump_yaml(tmp_workspace / "state.yaml")
+    runner = CompletePipelineRunner(
+        workspace=tmp_workspace,
+        state_machine=StateMachine(config),
+        llm_client=_hello_llm(),
+        tool_registry=_registry(),
+        human_interface=_AutoGateHuman("continue_keep"),
+    )
+
+    exit_code = await runner.run(project_id="demo-project", resume=True)
+
+    assert exit_code == 0
+    state_after = StateYaml.load_yaml(tmp_workspace / "state.yaml")
+    assert state_after.status == "COMPLETED"
+    assert state_after.history[0].status == "FAILED"
+    assert any(entry.status == "DONE" and entry.task == "HELLO" for entry in state_after.history)
+
+
+@pytest.mark.asyncio
+async def test_complete_pipeline_failed_resume_can_archive_declared_outputs(tmp_workspace: Path):
+    config = tmp_workspace / "fsm.yaml"
+    _write_yaml(
+        config,
+        """
+        initial_state: HELLO
+        states:
+          HELLO:
+            agent: hello
+            outputs:
+              hello_file: hello.txt
+            next_on_success: done
+            next_on_failure: failed
+          done:
+            terminal: true
+          failed:
+            terminal: true
+        """,
+    )
+    (tmp_workspace / "hello.txt").write_text("partial failed output\n", encoding="utf-8")
+    StateYaml(
+        project_id="demo-project",
+        current_task="failed",
+        status="FAILED",
+        last_error="LLM failed after partial output",
+        history=[
+            TaskHistoryEntry(
+                task="HELLO",
+                run_id="hello_failed",
+                status="FAILED",
+                started_at="2026-01-01T00:00:00+00:00",
+                finished_at="2026-01-01T00:01:00+00:00",
+                stop_reason=AgentResult.STOP_ERROR,
+                error="LLM failed after partial output",
+            )
+        ],
+    ).dump_yaml(tmp_workspace / "state.yaml")
+    runner = CompletePipelineRunner(
+        workspace=tmp_workspace,
+        state_machine=StateMachine(config),
+        llm_client=_hello_llm(),
+        tool_registry=_registry(),
+        human_interface=_AutoGateHuman("archive_outputs"),
+    )
+
+    exit_code = await runner.run(project_id="demo-project", resume=True)
+
+    assert exit_code == 0
+    archive_root = tmp_workspace / "_runtime" / "failed_artifact_archive"
+    manifests = list(archive_root.glob("HELLO_*/manifest.json"))
+    assert manifests
+    manifest = json.loads(manifests[0].read_text(encoding="utf-8"))
+    assert manifest["archived"][0]["from"] == "hello.txt"
+    archived_path = tmp_workspace / manifest["archived"][0]["to"]
+    assert archived_path.read_text(encoding="utf-8") == "partial failed output\n"
+    assert (tmp_workspace / "hello.txt").read_text(encoding="utf-8") == "Hello, Runtime!"
 
 
 @pytest.mark.asyncio
@@ -324,6 +440,21 @@ async def test_complete_pipeline_pauses_when_pending_gate_input_unavailable(tmp_
     state_after = StateYaml.load_yaml(tmp_workspace / "state.yaml")
     assert state_after.status == "PAUSED"
     assert "stdin closed" in (state_after.last_error or "")
+
+
+def test_agent_runner_classifies_recoverable_provider_errors():
+    assert AgentRunner._is_recoverable_provider_error(
+        LLMProviderError("All candidates failed: TimeoutError()")
+    )
+    assert AgentRunner._is_recoverable_provider_error(
+        LLMProviderError("upstream 502 bad gateway")
+    )
+    assert AgentRunner._is_recoverable_provider_error(
+        LLMProviderError("All candidates failed: TimeoutError(); fallback AuthenticationError invalid_api_key")
+    )
+    assert not AgentRunner._is_recoverable_provider_error(
+        LLMProviderError("AuthenticationError: invalid_api_key")
+    )
 
 
 @pytest.mark.asyncio

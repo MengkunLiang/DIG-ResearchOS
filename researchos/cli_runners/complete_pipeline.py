@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+import json
 from pathlib import Path
+import shutil
 
 from ..agents.registry import get_agent_by_id
 from ..orchestration.state_machine import StateMachine, validate_t4_gate1_selection_file
@@ -95,10 +97,15 @@ class CompletePipelineRunner:
                 task=state.current_task,
             )
 
+        if resume and state.status == "FAILED":
+            state, should_continue = await self._prepare_failed_resume(state, state_path)
+            if not should_continue:
+                return 130
+
         if resume and state.status not in {"PAUSED", "WAITING_HUMAN"}:
             self.progress.error_context(
                 stage="resume",
-                message=f"当前状态是 {state.status}，不是 PAUSED/WAITING_HUMAN",
+                message=f"当前状态是 {state.status}，不是 PAUSED/WAITING_HUMAN/FAILED",
                 log_path=str(self.workspace / self.runtime_settings.workspace.runtime_dir / "logs" / "researchos.log"),
             )
             self.run_logger.event(
@@ -152,6 +159,188 @@ class CompletePipelineRunner:
                 self.run_logger.event("ASK_HUMAN", project_id=state.project_id, task=state.current_task)
                 self.progress.emit("Project waiting for human input.", important=True)
                 return 130
+
+    async def _prepare_failed_resume(self, state: StateYaml, state_path: Path) -> tuple[StateYaml, bool]:
+        failed_history = self._last_failed_task_history(state)
+        original_error = state.last_error or (failed_history.error if failed_history else None)
+        if failed_history is not None:
+            state.current_task = failed_history.task
+        state.status = "PAUSED"
+        state.paused_at = _now_iso()
+        resume_context = {
+            "is_resume": True,
+            "resume_mode": True,
+            "resume_reason": "retry_after_failure",
+        }
+        if failed_history is not None:
+            resume_context["resumed_from"] = failed_history.run_id
+            resume_context["resumed_from_run_id"] = failed_history.run_id
+        state.task_context.update(resume_context)
+        state.last_error = (
+            "检测到上次运行失败，已转为可 resume 的 retry_after_failure 状态。"
+            + (f" 原错误摘要: {self._compact_error(original_error)}" if original_error else "")
+        )
+        state.dump_yaml(state_path)
+        self.progress.emit(
+            "检测到上次运行失败，ResearchOS 已恢复到可 resume 状态。",
+            important=True,
+        )
+        self.run_logger.event(
+            "RESUME",
+            project_id=state.project_id,
+            status="failed_marked_retryable",
+            task=state.current_task,
+            resumed_from=failed_history.run_id if failed_history else None,
+        )
+
+        try:
+            decision = await self.human.present_gate(
+                gate_id="failed_resume_recovery_gate",
+                presentation={
+                    "_title": "恢复失败任务",
+                    "_description": (
+                        "ResearchOS 可以从失败点继续。请确认是否保留当前 task 已写出的声明产物，"
+                        "或先把这些产物归档后重跑。"
+                    ),
+                    "failed_task": state.current_task,
+                    "failed_run_id": failed_history.run_id if failed_history else "(unknown)",
+                    "error_summary": self._compact_error(original_error),
+                    "declared_outputs": self._declared_output_status(state.current_task),
+                },
+                options=[
+                    {
+                        "id": "continue_keep",
+                        "label": "保留文件继续",
+                        "description": "默认选项；保留已有 artifacts，resume 时由当前 task 的恢复逻辑和 validator 判断能否复用。",
+                        "is_default": True,
+                    },
+                    {
+                        "id": "archive_outputs",
+                        "label": "归档产物重跑",
+                        "description": "把当前 task 声明的已存在文件输出移到 _runtime/failed_artifact_archive/，再从当前 task 重跑。",
+                    },
+                    {
+                        "id": "pause_review",
+                        "label": "暂停人工检查",
+                        "description": "保持 PAUSED，不继续运行；你可以查看日志或手动处理 artifacts，之后再次 resume 会继续当前 task。",
+                    },
+                ],
+            )
+        except HumanInputUnavailable as exc:
+            state.status = "PAUSED"
+            state.paused_at = _now_iso()
+            state.last_error = f"恢复失败任务需要用户选择，但当前输入不可用：{exc}"
+            state.dump_yaml(state_path)
+            self.progress.pipeline_paused(reason=state.last_error)
+            return state, False
+
+        option_id = str(decision.get("option_id") or decision.get("key") or "")
+        if option_id == "pause_review":
+            state.status = "PAUSED"
+            state.paused_at = _now_iso()
+            state.last_error = "用户选择暂停人工检查失败产物；手动处理后再次 resume 会继续当前 task。"
+            state.dump_yaml(state_path)
+            self.progress.pipeline_paused(reason=state.last_error)
+            return state, False
+        if option_id == "archive_outputs":
+            manifest = self._archive_declared_outputs_for_failed_resume(state.current_task)
+            state.task_context["failed_resume_archive_manifest"] = manifest
+            state.last_error = (
+                "用户选择归档当前 task 声明输出后重跑；"
+                f"归档清单: {manifest}"
+            )
+            state.dump_yaml(state_path)
+            self.progress.emit(
+                f"已归档当前 task 的声明文件输出：{manifest}",
+                important=True,
+            )
+        else:
+            state.last_error = "用户选择保留现有 artifacts 并继续 resume。"
+            state.dump_yaml(state_path)
+        return state, True
+
+    def _last_failed_task_history(self, state: StateYaml):
+        failed_history = next(
+            (
+                item
+                for item in reversed(state.history)
+                if item.task == state.current_task and item.status == "FAILED"
+            ),
+            None,
+        )
+        current_node = self.state_machine.nodes.get(state.current_task)
+        if failed_history is None and (
+            state.current_task.lower().startswith("fail")
+            or (current_node is not None and current_node.terminal)
+        ):
+            failed_history = next(
+                (
+                    item
+                    for item in reversed(state.history)
+                    if item.status == "FAILED"
+                    and item.task in self.state_machine.nodes
+                    and not self.state_machine.nodes[item.task].terminal
+                ),
+                None,
+            )
+        return failed_history
+
+    @staticmethod
+    def _compact_error(value: object, *, limit: int = 700) -> str:
+        text = " ".join(str(value or "").split())
+        if len(text) > limit:
+            return text[: max(0, limit - 3)] + "..."
+        return text
+
+    def _declared_output_status(self, task_id: str) -> list[str]:
+        node = self.state_machine.nodes.get(task_id)
+        if node is None or not node.outputs:
+            return ["该 task 未声明输出文件。"]
+        rows: list[str] = []
+        for label, rel in node.outputs.items():
+            path = self.workspace / rel
+            if path.exists():
+                kind = "dir" if path.is_dir() else "file"
+                rows.append(f"{label}: {rel} ({kind}, exists)")
+            else:
+                rows.append(f"{label}: {rel} (missing)")
+        return rows[:20]
+
+    def _archive_declared_outputs_for_failed_resume(self, task_id: str) -> str:
+        node = self.state_machine.nodes.get(task_id)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        archive_root = (
+            self.workspace
+            / self.runtime_settings.workspace.runtime_dir
+            / "failed_artifact_archive"
+            / f"{task_id}_{timestamp}"
+        )
+        archive_root.mkdir(parents=True, exist_ok=True)
+        manifest: dict[str, object] = {
+            "task_id": task_id,
+            "created_at": _now_iso(),
+            "archived": [],
+            "missing": [],
+            "skipped_directories": [],
+        }
+        if node is not None and node.outputs:
+            for label, rel in node.outputs.items():
+                src = self.workspace / rel
+                if not src.exists():
+                    manifest["missing"].append({"label": label, "path": rel})  # type: ignore[union-attr]
+                    continue
+                if src.is_dir():
+                    manifest["skipped_directories"].append({"label": label, "path": rel})  # type: ignore[union-attr]
+                    continue
+                dst = archive_root / rel
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(src), str(dst))
+                manifest["archived"].append(  # type: ignore[union-attr]
+                    {"label": label, "from": rel, "to": str(dst.relative_to(self.workspace))}
+                )
+        manifest_path = archive_root / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return str(manifest_path.relative_to(self.workspace))
 
     async def _run_one_step(self, state: StateYaml, state_path: Path) -> StateYaml:
         """推进一个状态机 step。"""

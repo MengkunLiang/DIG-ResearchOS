@@ -3601,6 +3601,13 @@ researchos run \
 - 如果进程异常退出导致 `state.yaml` 停在 `RUNNING`，`resume` 会把最近一次 run 标为
   `INTERRUPTED` 并自动转回 `PAUSED` 后继续，避免“当前状态不是 PAUSED/WAITING_HUMAN，
   无法 resume”的死状态。
+- 如果 LLM provider 超时、连接失败、502/503/504 或同一轮候选中混有 provider 临时错误，
+  `AgentRunner` 会把本轮标为 `INTERRUPTED/PAUSED`，而不是 `FAILED`；后续 `resume`
+  会从当前 task 重新构建上下文继续。如果旧 workspace 已经落到 terminal `failed`，
+  pipeline `resume` 会回退到 history 中最后一个真实失败 task，并注入
+  `resume_reason=retry_after_failure`，避免被 terminal failed 节点锁死。恢复前会展示
+  `failed_resume_recovery_gate`：默认保留 artifacts 继续，也可以把当前 task 声明的文件型输出
+  归档到 `_runtime/failed_artifact_archive/` 后重跑，或暂停人工检查。
 - `resume` 后不会恢复模型内部上下文，而是通过 `_runtime/resume/*.json`、T3 pending queue、已有输出文件和 task-specific recovery artifact 注入 `resume_mode`，让 agent 从已落盘事实继续
 - 对 T8 来说，`resume` 先看 `state.yaml.current_task`：如果当前 task 是 `T8-SECTION-PLAN` 且状态文件已合格，会确定性跳过；如果当前 task 已推进到某个 `T8-SEC-*`，只恢复该单章，不会回退重写 section plan 或其它章节
 - agent 调用 `finish_task` 后如果输出校验连续失败到上限，runtime 会先触发 `runtime_validation_retry_extension` gate，询问是否增加少量校验修复轮次继续；用户选择暂停、无交互输入或扩展次数耗尽时，任务会暂停为可恢复状态而不是直接 `FAILED`。错误信息会保留最后一次校验失败原因，后续 `resume` 可从已有 artifact 做定向修复
