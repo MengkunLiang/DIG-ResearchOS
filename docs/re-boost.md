@@ -33,14 +33,14 @@ T5-REBOOST-GATE
 完整主链中不需要单独操作：
 
 ```bash
-python -m researchos.cli run --workspace ./workspaces/local-test2
-python -m researchos.cli resume --workspace ./workspaces/local-test2
+python -m researchos.cli run --workspace ./workspace/local-test2
+python -m researchos.cli resume --workspace ./workspace/local-test2
 ```
 
 单阶段调试 re-boost：
 
 ```bash
-python -m researchos.cli run-task T5-REBOOST-GATE --workspace ./workspaces/local-test2
+python -m researchos.cli run-task T5-REBOOST-GATE --workspace ./workspace/local-test2
 ```
 
 这条命令会直接调用当前 ResearchOS 配置的 LLM provider。成功后应产生：

@@ -10,11 +10,11 @@
 #
 # 运行命令：
 #   docker run --rm -it \
-#     -v $(pwd)/workspaces:/app/workspaces \
+#     -v $(pwd)/workspace:/app/workspace \
 #     -e OPENAI_API_KEY=$OPENAI_API_KEY \
 #     -e OPENAI_BASE_URL=$OPENAI_BASE_URL \
 #     researchos/system:latest \
-#     run --workspace /app/workspaces/project-a
+#     run --workspace /app/workspace/project-a
 
 FROM python:3.11-slim-bookworm
 
@@ -82,11 +82,11 @@ COPY latex_templete /app/latex_templete
 RUN pip install --no-build-isolation .
 
 # 创建 workspace bind mount 挂载点
-RUN mkdir -p /app/workspaces
+RUN mkdir -p /app/workspace
 
 # 设置容器标识环境变量（用于环境检测）
 ENV CONTAINER_ID=researchos-docker
-ENV RESEARCHOS_WORKSPACE_ROOT=/app/workspaces
+ENV RESEARCHOS_WORKSPACE_ROOT=/app/workspace
 
 # 入口点：使用同一套 ResearchOS CLI
 ENTRYPOINT ["researchos"]

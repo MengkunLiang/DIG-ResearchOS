@@ -152,7 +152,7 @@ python -m researchos.cli selftest
 
 ```bash
 python -m researchos.cli init-workspace \
-  --workspace ./workspaces/dev-smoke \
+  --workspace ./workspace/dev-smoke \
   --project-id dev-smoke \
   --topic "runtime smoke test"
 ```
@@ -160,7 +160,7 @@ python -m researchos.cli init-workspace \
 ### 3.4 跑 HELLO
 
 ```bash
-python -m researchos.cli run-task HELLO --workspace ./workspaces/dev-smoke
+python -m researchos.cli run-task HELLO --workspace ./workspace/dev-smoke
 ```
 
 预期：
@@ -176,8 +176,8 @@ python -m researchos.cli run-task HELLO --workspace ./workspaces/dev-smoke
 
 ```bash
 python -m researchos.cli run_smoke \
-  --workspace ./workspaces/dev-smoke-t2 \
-  --from ./workspaces/dev-smoke \
+  --workspace ./workspace/dev-smoke-t2 \
+  --from ./workspace/dev-smoke \
   --active-pool-max 20 \
   --deep-read-target 3 \
   --abstract-sweep 5 \
@@ -189,8 +189,8 @@ python -m researchos.cli run_smoke \
 ### 3.6 看 trace 和状态
 
 ```bash
-python -m researchos.cli status --workspace ./workspaces/dev-smoke
-python -m researchos.cli trace <run_id> --workspace ./workspaces/dev-smoke
+python -m researchos.cli status --workspace ./workspace/dev-smoke
+python -m researchos.cli trace <run_id> --workspace ./workspace/dev-smoke
 ```
 
 如果 `HELLO` 都不稳定，不要继续往上排查 agent 逻辑。
@@ -205,14 +205,14 @@ python -m researchos.cli trace <run_id> --workspace ./workspaces/dev-smoke
 
 ```bash
 python -m researchos.cli init-workspace \
-  --workspace ./workspaces/demo \
+  --workspace ./workspace/demo \
   --project-id demo \
   --topic "memory systems for llm agents"
 ```
 
 典型 case：
 
-- 新建一个最小调试工程 `./workspaces/demo`
+- 新建一个最小调试工程 `./workspace/demo`
 - 后续先跑 `HELLO`、再跑 `T1`
 
 ### 4.2 `run`
@@ -220,7 +220,7 @@ python -m researchos.cli init-workspace \
 从当前状态推进完整 pipeline。
 
 ```bash
-python -m researchos.cli run --workspace ./workspaces/demo
+python -m researchos.cli run --workspace ./workspace/demo
 ```
 
 典型 case：
@@ -233,7 +233,7 @@ python -m researchos.cli run --workspace ./workspaces/demo
 恢复一个被 gate 暂停、预算中断或人工中断后的 workspace。
 
 ```bash
-python -m researchos.cli resume --workspace ./workspaces/demo
+python -m researchos.cli resume --workspace ./workspace/demo
 ```
 
 典型 case：
@@ -247,9 +247,9 @@ python -m researchos.cli resume --workspace ./workspaces/demo
 单独跑某一个 task，用于本地调试。
 
 ```bash
-python -m researchos.cli run-task T3 --workspace ./workspaces/demo
-python -m researchos.cli run-task T7.5 --workspace ./workspaces/demo
-python -m researchos.cli run-task T9 --workspace ./workspaces/demo
+python -m researchos.cli run-task T3 --workspace ./workspace/demo
+python -m researchos.cli run-task T7.5 --workspace ./workspace/demo
+python -m researchos.cli run-task T9 --workspace ./workspace/demo
 ```
 
 典型 case：
@@ -263,7 +263,7 @@ python -m researchos.cli run-task T9 --workspace ./workspaces/demo
 校验某个 workspace 当前产物是否符合约定。
 
 ```bash
-python -m researchos.cli validate --workspace ./workspaces/demo --task T7-AUDIT
+python -m researchos.cli validate --workspace ./workspace/demo --task T7-AUDIT
 ```
 
 典型 case：
@@ -276,7 +276,7 @@ python -m researchos.cli validate --workspace ./workspaces/demo --task T7-AUDIT
 看当前状态机状态。
 
 ```bash
-python -m researchos.cli status --workspace ./workspaces/demo
+python -m researchos.cli status --workspace ./workspace/demo
 ```
 
 典型 case：
@@ -289,8 +289,8 @@ python -m researchos.cli status --workspace ./workspaces/demo
 查看某一次运行的 JSONL trace。
 
 ```bash
-python -m researchos.cli trace T7_single_xxxxxxxx --workspace ./workspaces/demo
-python -m researchos.cli trace T7_single_xxxxxxxx --workspace ./workspaces/demo --raw
+python -m researchos.cli trace T7_single_xxxxxxxx --workspace ./workspace/demo
+python -m researchos.cli trace T7_single_xxxxxxxx --workspace ./workspace/demo --raw
 ```
 
 典型 case：
@@ -305,7 +305,7 @@ python -m researchos.cli trace T7_single_xxxxxxxx --workspace ./workspaces/demo 
 
 ```bash
 python -m researchos.cli list-skills --skills-root ./skills
-python -m researchos.cli run-skill paper-compile "compile the paper in ./workspaces/local-test2/drafts"
+python -m researchos.cli run-skill paper-compile "compile the paper in ./workspace/local-test2/drafts"
 ```
 
 典型 case：
@@ -337,7 +337,7 @@ python -m researchos.cli run-skill paper-compile "compile the paper in ./workspa
 
 默认在：
 
-- `workspaces/<name>/_runtime/`
+- `workspace/<name>/_runtime/`
 
 重点看：
 
@@ -374,8 +374,8 @@ python -m researchos.cli run-skill paper-compile "compile the paper in ./workspa
 
 ```bash
 python -m researchos.cli run-task T8-RESOURCE \
-  --workspace ./workspaces/scratch \
-  --from ./workspaces/local-test2
+  --workspace ./workspace/scratch \
+  --from ./workspace/local-test2
 ```
 
 这会把当前 task 的前置 artifact 复制过来，再执行本 task。
@@ -384,8 +384,8 @@ python -m researchos.cli run-task T8-RESOURCE \
 
 ```bash
 python -m researchos.cli run \
-  --workspace ./workspaces/new-test5-t2-redo \
-  --from ./workspaces/new-test5 \
+  --workspace ./workspace/new-test5-t2-redo \
+  --from ./workspace/new-test5 \
   --start-task T2
 ```
 
@@ -395,8 +395,8 @@ python -m researchos.cli run \
 
 ```bash
 python -m researchos.cli run_smoke \
-  --workspace ./workspaces/new-test5-smoke \
-  --from ./workspaces/new-test5 \
+  --workspace ./workspace/new-test5-smoke \
+  --from ./workspace/new-test5 \
   --start-task T2
 ```
 
@@ -671,7 +671,7 @@ docker compose -f deploy/compose.yaml run --rm researchos doctor
 重点排查：
 
 - Docker image 是否是最新
-- `/app/workspaces` 是否正确挂载
+- `/app/workspace` 是否正确挂载
 - `.env` 是否透传
 - 容器内是否真在跑当前仓库代码
 

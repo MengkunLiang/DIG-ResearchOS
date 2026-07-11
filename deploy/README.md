@@ -15,7 +15,7 @@ It owns the user-facing files:
 - `.env.example`
 - `researchos.sh`
 - `researchos.ps1`
-- top-level `workspaces/` bind mount
+- top-level `workspace/` bind mount
 
 It does not own a separate config tree. Docker Mode reads the same root
 `config/` directory as Native Mode, with secrets coming from `.env`.
@@ -31,7 +31,7 @@ From the repository root:
 
 ```bash
 cp deploy/.env.example deploy/.env
-mkdir -p workspaces
+mkdir -p workspace
 ```
 
 Fill API keys in `deploy/.env`. Do not commit that file.
@@ -83,15 +83,15 @@ Direct Compose:
 docker compose -f deploy/compose.yaml run --rm researchos doctor
 
 docker compose -f deploy/compose.yaml run --rm researchos \
-  init-workspace --workspace /app/workspaces/project-a \
+  init-workspace --workspace /app/workspace/project-a \
   --project-id project-a \
   --topic "memory systems for llm agents"
 
 docker compose -f deploy/compose.yaml run --rm researchos \
-  run --workspace /app/workspaces/project-a
+  run --workspace /app/workspace/project-a
 
 docker compose -f deploy/compose.yaml run --rm researchos \
-  resume --workspace /app/workspaces/project-a
+  resume --workspace /app/workspace/project-a
 ```
 
 Wrapper script on macOS/Linux:
@@ -122,21 +122,21 @@ The Compose file uses a host bind mount:
 
 ```yaml
 volumes:
-  - ../workspaces:/app/workspaces
+  - ../workspace:/app/workspace
   - ../config:/app/config:ro
 ```
 
 Host path:
 
 ```text
-workspaces/project-a
+workspace/project-a
 config/
 ```
 
 Container path:
 
 ```text
-/app/workspaces/project-a
+/app/workspace/project-a
 /app/config
 ```
 
@@ -152,11 +152,11 @@ time. Use one writer at a time.
 The default experiment path is host-side execution:
 
 1. ResearchOS runs in Native Mode or Docker Mode until T5 handoff.
-2. The workspace already exists on the host under `workspaces/<project>`.
+2. The workspace already exists on the host under `workspace/<project>`.
 3. On the host, open:
 
    ```bash
-   cd workspaces/project-a/external_executor/workdir
+   cd workspace/project-a/external_executor/workdir
    codex
    ```
 
@@ -168,7 +168,7 @@ The default experiment path is host-side execution:
 
    ```bash
    docker compose -f deploy/compose.yaml run --rm researchos \
-     resume --workspace /app/workspaces/project-a
+     resume --workspace /app/workspace/project-a
    ```
 
 There is no upload/download step, no Docker-in-Docker, no Docker socket mount,
@@ -176,7 +176,7 @@ and no requirement to run Codex inside the ResearchOS container.
 
 ## 6. Security And Scope
 
-The image must not contain API keys, user workspaces, seed papers, experiment
+The image must not contain API keys, user workspace, seed papers, experiment
 data, model weights, Codex credentials, SSH keys, or long-term results.
 
 The Compose file intentionally does not mount:

@@ -9,13 +9,13 @@
 #   bash infra/docker/run.sh --help
 #
 #   # 初始化 workspace
-#   bash infra/docker/run.sh init-workspace --workspace /app/workspaces/dev
+#   bash infra/docker/run.sh init-workspace --workspace /app/workspace/dev
 #
 #   # 运行完整 pipeline
-#   bash infra/docker/run.sh run --workspace /app/workspaces/dev
+#   bash infra/docker/run.sh run --workspace /app/workspace/dev
 #
 #   # 单 task 调试
-#   bash infra/docker/run.sh run-task HELLO --workspace /app/workspaces/dev
+#   bash infra/docker/run.sh run-task HELLO --workspace /app/workspace/dev
 
 set -e
 
@@ -61,8 +61,8 @@ IMAGE_NAME="${RESEARCHOS_IMAGE:-researchos/system:latest}"
 
 # Workspace 目录（宿主机路径）。必须在加载 .env 之后计算，
 # 这样 .env 中的 RESEARCHOS_WORKSPACE 才会生效。
-WORKSPACE_DIR="${RESEARCHOS_WORKSPACE:-$(pwd)/workspaces}"
-HOST_WORKSPACE_HINT="${RESEARCHOS_HOST_WORKSPACE_ROOT:-./workspaces}"
+WORKSPACE_DIR="${RESEARCHOS_WORKSPACE:-$(pwd)/workspace}"
+HOST_WORKSPACE_HINT="${RESEARCHOS_HOST_WORKSPACE_ROOT:-./workspace}"
 HOST_UID="${RESEARCHOS_UID:-$(id -u 2>/dev/null || echo 1000)}"
 HOST_GID="${RESEARCHOS_GID:-$(id -g 2>/dev/null || echo 1000)}"
 
@@ -138,9 +138,9 @@ fi
 docker run --rm \
     "${DOCKER_TTY_ARGS[@]}" \
     --user "$HOST_UID:$HOST_GID" \
-    -v "$WORKSPACE_DIR:/app/workspaces" \
+    -v "$WORKSPACE_DIR:/app/workspace" \
     "${DOCKER_MOUNT_ARGS[@]}" \
-    -e "RESEARCHOS_WORKSPACE_ROOT=/app/workspaces" \
+    -e "RESEARCHOS_WORKSPACE_ROOT=/app/workspace" \
     -e "RESEARCHOS_HOST_WORKSPACE_ROOT=$HOST_WORKSPACE_HINT" \
     -e "RESEARCHOS_CONFIG=/app/config/user_settings.yaml" \
     -e "RESEARCHOS_RUNTIME_CONFIG=/app/config/runtime.yaml" \

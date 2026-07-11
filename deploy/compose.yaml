@@ -12,15 +12,15 @@ services:
         required: false
     environment:
       RESEARCHOS_CONFIG: /app/config/user_settings.yaml
-      RESEARCHOS_WORKSPACE_ROOT: /app/workspaces
-      RESEARCHOS_HOST_WORKSPACE_ROOT: ${RESEARCHOS_HOST_WORKSPACE_ROOT:-./workspaces}
+      RESEARCHOS_WORKSPACE_ROOT: /app/workspace
+      RESEARCHOS_HOST_WORKSPACE_ROOT: ${RESEARCHOS_HOST_WORKSPACE_ROOT:-./workspace}
       RESEARCHOS_IMAGE: ${RESEARCHOS_IMAGE:-researchos/system:latest}
       PYTHONUNBUFFERED: "1"
     user: "${RESEARCHOS_UID:-0}:${RESEARCHOS_GID:-0}"
     volumes:
       - type: bind
-        source: ../workspaces
-        target: /app/workspaces
+        source: ../workspace
+        target: /app/workspace
       - type: bind
         source: ../config
         target: /app/config

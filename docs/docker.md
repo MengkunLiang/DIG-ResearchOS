@@ -75,7 +75,7 @@ python -m researchos.cli selftest
 ```bash
 cd /mnt/data/DIG-ResearchOS
 cp deploy/.env.example deploy/.env
-mkdir -p workspaces
+mkdir -p workspace
 docker compose -f deploy/compose.yaml build
 docker compose -f deploy/compose.yaml run --rm researchos doctor
 ```
@@ -83,10 +83,10 @@ docker compose -f deploy/compose.yaml run --rm researchos doctor
 Compose 使用宿主机 bind mount：
 
 ```text
-workspaces -> /app/workspaces
+workspace -> /app/workspace
 ```
 
-容器删除、镜像升级或 `docker compose down` 都不会删除 `workspaces` 下的真实项目文件。
+容器删除、镜像升级或 `docker compose down` 都不会删除 `workspace` 下的真实项目文件。
 
 Linux 下，`deploy/researchos.sh` 会自动把 `${RESEARCHOS_UID}:${RESEARCHOS_GID}`
 设置为当前用户，避免生成 root-owned workspace 文件。直接运行
@@ -119,7 +119,7 @@ docker compose -f deploy/compose.yaml run --rm researchos doctor
 ```bash
 docker compose -f deploy/compose.yaml run --rm researchos \
   init-workspace \
-  --workspace /app/workspaces/local-test2 \
+  --workspace /app/workspace/local-test2 \
   --project-id local-test2 \
   --topic "memory systems for llm agents"
 ```
@@ -128,14 +128,14 @@ docker compose -f deploy/compose.yaml run --rm researchos \
 
 ```bash
 docker compose -f deploy/compose.yaml run --rm researchos \
-  run --workspace /app/workspaces/local-test2
+  run --workspace /app/workspace/local-test2
 docker compose -f deploy/compose.yaml run --rm researchos \
-  resume --workspace /app/workspaces/local-test2
+  resume --workspace /app/workspace/local-test2
 ```
 
-宿主机 `workspaces` 会挂载到容器内 `/app/workspaces`。容器写入 `/app/workspaces/local-test2/...`，宿主机会在 `workspaces/local-test2/...` 看到同一份文件。
+宿主机 `workspace` 会挂载到容器内 `/app/workspace`。容器写入 `/app/workspace/local-test2/...`，宿主机会在 `workspace/local-test2/...` 看到同一份文件。
 
-低层 `infra/docker/run.sh` 仍保留给直接 `docker run` 调试，也使用相同的 `/app/workspaces` 容器路径。
+低层 `infra/docker/run.sh` 仍保留给直接 `docker run` 调试，也使用相同的 `/app/workspace` 容器路径。
 
 ## 6. 环境变量
 
@@ -174,7 +174,7 @@ T3.6 和 T9 使用 `latex_compile` 工具。当前行为是：
 最小 TeX 验证：
 
 ```bash
-cd workspaces/your-project/submission/bundle
+cd workspace/your-project/submission/bundle
 latexmk -pdf -interaction=nonstopmode main.tex
 ```
 
@@ -236,9 +236,9 @@ pip install -e .
 
 ```bash
 docker run --rm -it \
-  -v "$(pwd)/workspaces:/app/workspaces" \
+  -v "$(pwd)/workspace:/app/workspace" \
   researchos/system:latest \
-  run --workspace /app/workspaces/local-test2
+  run --workspace /app/workspace/local-test2
 ```
 
 ## 10. 维护原则

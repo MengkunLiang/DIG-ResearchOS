@@ -152,7 +152,7 @@ CLI
 ```bash
 cd ResearchOS
 PYTHONPATH=. python -m researchos.cli run \
-  --workspace ./workspaces/local-test2
+  --workspace ./workspace/local-test2
 ```
 
 恢复一个已经暂停的 workspace：
@@ -160,7 +160,7 @@ PYTHONPATH=. python -m researchos.cli run \
 ```bash
 cd ResearchOS
 PYTHONPATH=. python -m researchos.cli resume \
-  --workspace ./workspaces/local-test2
+  --workspace ./workspace/local-test2
 ```
 
 只调一个任务：
@@ -168,7 +168,7 @@ PYTHONPATH=. python -m researchos.cli resume \
 ```bash
 cd ResearchOS
 PYTHONPATH=. python -m researchos.cli run-task T3 \
-  --workspace ./workspaces/local-test2
+  --workspace ./workspace/local-test2
 ```
 
 只调一个 skill：
@@ -691,8 +691,8 @@ workspace 的上游输入，但从某个中间 task 重新跑后续完整状态�
 
 ```bash
 researchos run \
-  --workspace ./workspaces/new-test5-t2-redo \
-  --from ./workspaces/new-test5 \
+  --workspace ./workspace/new-test5-t2-redo \
+  --from ./workspace/new-test5 \
   --start-task T2
 ```
 
@@ -706,8 +706,8 @@ researchos run \
 
 ```bash
 researchos run_smoke \
-  --workspace ./workspaces/new-test5-smoke \
-  --from ./workspaces/new-test5 \
+  --workspace ./workspace/new-test5-smoke \
+  --from ./workspace/new-test5 \
   --start-task T2 \
   --active-pool-max 20 \
   --deep-read-target 3 \
@@ -985,7 +985,7 @@ skills/my-skill/
 ### 15.3 运行方式
 
 ```bash
-researchos run-skill my-skill "your request" --workspace ./workspaces/demo
+researchos run-skill my-skill "your request" --workspace ./workspace/demo
 ```
 
 ---

@@ -5,7 +5,7 @@
 workspace:
   # 默认工作空间根目录
   # 所有研究项目的数据、文献、输出都存储在此目录下
-  default_root: "./workspaces"
+  default_root: "./workspace"
 
   # Runtime 私有目录名称
   # 用于存储运行时数据（日志、trace、状态等），与用户数据分离

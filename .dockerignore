@@ -35,6 +35,7 @@ tests/manual/
 # Workspace 数据（不打包到镜像）
 workspace/
 workspaces/
+deploy/workspace/
 deploy/workspaces/
 tmp/
 

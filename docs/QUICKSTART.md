@@ -95,7 +95,7 @@ python -m researchos.cli selftest
 ```bash
 cd ResearchOS
 python -m researchos.cli init-workspace \
-  --workspace ./workspaces/local-test2 \
+  --workspace ./workspace/local-test2 \
   --project-id local-test2 \
   --topic "memory systems for llm agents"
 ```
@@ -104,12 +104,12 @@ python -m researchos.cli init-workspace \
 
 ```bash
 cd ResearchOS
-python -m researchos.cli run-task HELLO --workspace ./workspaces/local-test2
+python -m researchos.cli run-task HELLO --workspace ./workspace/local-test2
 ```
 
 成功后应看到：
 
-- `workspaces/local-test2/hello.txt`
+- `workspace/local-test2/hello.txt`
 
 `HELLO` 只验证 runtime、工具调用、写文件和 finish_task 的最小闭环，不会进入真实文献检索、阅读或写作流程。
 
@@ -120,8 +120,8 @@ python -m researchos.cli run-task HELLO --workspace ./workspaces/local-test2
 ```bash
 cd ResearchOS
 python -m researchos.cli run_smoke \
-  --workspace ./workspaces/smoke-t2 \
-  --from ./workspaces/local-test2 \
+  --workspace ./workspace/smoke-t2 \
+  --from ./workspace/local-test2 \
   --active-pool-max 20 \
   --deep-read-target 3 \
   --abstract-sweep 5 \
@@ -139,14 +139,14 @@ python -m researchos.cli run_smoke \
 
 ```bash
 cd ResearchOS
-python -m researchos.cli run --workspace ./workspaces/local-test2
+python -m researchos.cli run --workspace ./workspace/local-test2
 ```
 
 ### 2.9 恢复中断的 pipeline
 
 ```bash
 cd ResearchOS
-python -m researchos.cli resume --workspace ./workspaces/local-test2
+python -m researchos.cli resume --workspace ./workspace/local-test2
 ```
 
 ---
@@ -158,7 +158,7 @@ python -m researchos.cli resume --workspace ./workspaces/local-test2
 ```bash
 cd ResearchOS
 cp deploy/.env.example deploy/.env
-mkdir -p workspaces
+mkdir -p workspace
 ```
 
 ### 3.2 构建镜像并运行 doctor
@@ -173,7 +173,7 @@ docker compose -f deploy/compose.yaml run --rm researchos doctor
 ```bash
 docker compose -f deploy/compose.yaml run --rm researchos \
   init-workspace \
-  --workspace /app/workspaces/local-test2 \
+  --workspace /app/workspace/local-test2 \
   --project-id local-test2 \
   --topic "memory systems for llm agents"
 ```
@@ -182,29 +182,29 @@ docker compose -f deploy/compose.yaml run --rm researchos \
 
 ```bash
 docker compose -f deploy/compose.yaml run --rm researchos \
-  run --workspace /app/workspaces/local-test2
+  run --workspace /app/workspace/local-test2
 ```
 
 ### 3.5 在 Docker 中恢复
 
 ```bash
 docker compose -f deploy/compose.yaml run --rm researchos \
-  resume --workspace /app/workspaces/local-test2
+  resume --workspace /app/workspace/local-test2
 ```
 
 ### 3.6 在 Docker 中单独调任务
 
 ```bash
 docker compose -f deploy/compose.yaml run --rm researchos \
-  run-task HELLO --workspace /app/workspaces/local-test2
+  run-task HELLO --workspace /app/workspace/local-test2
 ```
 
 ### 3.7 一定要记住路径映射
 
 Docker 模式下：
 
-- 宿主机路径：`./workspaces/local-test2`
-- 容器内路径：`/app/workspaces/local-test2`
+- 宿主机路径：`./workspace/local-test2`
+- 容器内路径：`/app/workspace/local-test2`
 
 它们指向的是同一份 workspace。
 
@@ -216,7 +216,7 @@ Docker 模式下：
 
 ```bash
 researchos init-workspace \
-  --workspace ./workspaces/local-test2 \
+  --workspace ./workspace/local-test2 \
   --project-id local-test2 \
   --topic "reflective memory for llm agents"
 ```
@@ -224,33 +224,33 @@ researchos init-workspace \
 ### 4.2 运行完整链路
 
 ```bash
-researchos run --workspace ./workspaces/local-test2
+researchos run --workspace ./workspace/local-test2
 ```
 
 ### 4.3 恢复完整链路
 
 ```bash
-researchos resume --workspace ./workspaces/local-test2
+researchos resume --workspace ./workspace/local-test2
 ```
 
 ### 4.4 单独跑一个阶段
 
 ```bash
-researchos run-task T2 --workspace ./workspaces/local-test2
-researchos run-task T3 --workspace ./workspaces/local-test2
-researchos run-task T5-REBOOST-GATE --workspace ./workspaces/local-test2
-researchos run-task T5-HANDOFF --workspace ./workspaces/local-test2
-researchos run-task T5-SKILL-CUSTOMIZATION-GATE --workspace ./workspaces/local-test2
-researchos run-task T5-EXPR-MATERIAL-GATE --workspace ./workspaces/local-test2
-researchos run-task T5-EXECUTOR-GATE --workspace ./workspaces/local-test2
-researchos run-task T5-DRY-RUN --workspace ./workspaces/local-test2
-researchos run-task T5-EXTERNAL-WAIT --workspace ./workspaces/local-test2  # 真实外部执行器写完 result_pack/status/manifest 后再跑
-researchos run-task T7-INGEST --workspace ./workspaces/local-test2  # 已有 dry-run 或 T5-EXTERNAL-WAIT 验收结果后再跑
-researchos run-task T7-AUDIT --workspace ./workspaces/local-test2
-researchos run-task T7-POST-NOVELTY --workspace ./workspaces/local-test2
-researchos run-task T7-CLAIMS --workspace ./workspaces/local-test2
-researchos run-task T7.5 --workspace ./workspaces/local-test2
-researchos run-task T9 --workspace ./workspaces/local-test2
+researchos run-task T2 --workspace ./workspace/local-test2
+researchos run-task T3 --workspace ./workspace/local-test2
+researchos run-task T5-REBOOST-GATE --workspace ./workspace/local-test2
+researchos run-task T5-HANDOFF --workspace ./workspace/local-test2
+researchos run-task T5-SKILL-CUSTOMIZATION-GATE --workspace ./workspace/local-test2
+researchos run-task T5-EXPR-MATERIAL-GATE --workspace ./workspace/local-test2
+researchos run-task T5-EXECUTOR-GATE --workspace ./workspace/local-test2
+researchos run-task T5-DRY-RUN --workspace ./workspace/local-test2
+researchos run-task T5-EXTERNAL-WAIT --workspace ./workspace/local-test2  # 真实外部执行器写完 result_pack/status/manifest 后再跑
+researchos run-task T7-INGEST --workspace ./workspace/local-test2  # 已有 dry-run 或 T5-EXTERNAL-WAIT 验收结果后再跑
+researchos run-task T7-AUDIT --workspace ./workspace/local-test2
+researchos run-task T7-POST-NOVELTY --workspace ./workspace/local-test2
+researchos run-task T7-CLAIMS --workspace ./workspace/local-test2
+researchos run-task T7.5 --workspace ./workspace/local-test2
+researchos run-task T9 --workspace ./workspace/local-test2
 ```
 
 如果这些 task 已经在同一个 workspace 里落过产物，再次运行时通常会优先基于已有 artifact 继续，而不是无条件从空白开始。
@@ -259,8 +259,8 @@ T5-T7 外部实验链路推荐直接用 `researchos run` / `researchos resume` �
 
 - `T5-REBOOST-GATE`：直接调用当前配置的 LLM provider 生成 `external_executor/handoff_pack.json#context_reboost` 和 `external_executor/reboost_report.json`，不会暂停等待手动 Codex
 - `T5-SKILL-CUSTOMIZATION-GATE`：直接调用 LLM provider 读取 `external_executor/skills/skills_customization/SKILL.md` 和 `template_manifest.json`，把 13 个模板 skill 原地改写为项目专属版本，并写出 `external_executor/skills/customization_report.json`
-- `T5-EXPR-MATERIAL-GATE`：把 baseline model、dataset、外部代码、权重和材料说明放入 `external_executor/expr/`，完成后运行 `researchos resume --workspace ./workspaces/local-test2`
-- `T5-EXECUTOR-GATE`：如果选择 Codex CLI 真实执行，启动 Codex CLI，提交 `请读取 external_executor/AGENTS.md，并执行 external_executor/skills/research_execution/SKILL.md。`；外部执行写完 `result_pack.json`、`executor_status.json`、`run_manifest.json` 后运行 `researchos resume --workspace ./workspaces/local-test2`
+- `T5-EXPR-MATERIAL-GATE`：把 baseline model、dataset、外部代码、权重和材料说明放入 `external_executor/expr/`，完成后运行 `researchos resume --workspace ./workspace/local-test2`
+- `T5-EXECUTOR-GATE`：如果选择 Codex CLI 真实执行，启动 Codex CLI，提交 `请读取 external_executor/AGENTS.md，并执行 external_executor/skills/research_execution/SKILL.md。`；外部执行写完 `result_pack.json`、`executor_status.json`、`run_manifest.json` 后运行 `researchos resume --workspace ./workspace/local-test2`
 
 `T5-DRY-RUN` 只验证外部执行器协议和 T7 摄取链路，不是论文实验结果，也不能作为 claim 证据。
 
@@ -268,16 +268,16 @@ T5-T7 外部实验链路推荐直接用 `researchos run` / `researchos resume` �
 
 ```bash
 researchos run-task T8-RESOURCE \
-  --workspace ./workspaces/scratch-write \
-  --from ./workspaces/local-test2
+  --workspace ./workspace/scratch-write \
+  --from ./workspace/local-test2
 ```
 
 如果想从另一个 workspace 继承 T1/seed，并从 T2 重新跑完整后续流程：
 
 ```bash
 researchos run \
-  --workspace ./workspaces/new-test5-t2-redo \
-  --from ./workspaces/new-test5 \
+  --workspace ./workspace/new-test5-t2-redo \
+  --from ./workspace/new-test5 \
   --start-task T2
 ```
 
@@ -287,8 +287,8 @@ researchos run \
 
 ```bash
 researchos run \
-  --workspace ./workspaces/new-test5-t3-redo \
-  --from ./workspaces/new-test5 \
+  --workspace ./workspace/new-test5-t3-redo \
+  --from ./workspace/new-test5 \
   --start-task T3
 ```
 
@@ -296,7 +296,7 @@ researchos run \
 
 ```bash
 cp /mnt/data/reference/算法风险综述_种子提纲.md \
-  ./workspaces/algorithm-risk-survey/user_seeds/算法风险综述_种子提纲.md
+  ./workspace/algorithm-risk-survey/user_seeds/算法风险综述_种子提纲.md
 ```
 
 系统会生成 `user_seeds/seed_outline_profile.json`，并把提纲中的框架、关键词和代表性方向
@@ -306,23 +306,23 @@ cp /mnt/data/reference/算法风险综述_种子提纲.md \
 ### 4.7 查看状态
 
 ```bash
-researchos status --workspace ./workspaces/local-test2
+researchos status --workspace ./workspace/local-test2
 ```
 
 ### 4.8 查看 trace
 
 ```bash
-researchos trace T7_single_12345678 --workspace ./workspaces/local-test2
-researchos trace T7_single_12345678 --workspace ./workspaces/local-test2 --raw
+researchos trace T7_single_12345678 --workspace ./workspace/local-test2
+researchos trace T7_single_12345678 --workspace ./workspace/local-test2 --raw
 ```
 
 ### 4.8 校验某阶段产物
 
 ```bash
-researchos validate --workspace ./workspaces/local-test2 --task T7-AUDIT
-researchos validate --workspace ./workspaces/local-test2 --task T7-INGEST
-researchos validate --workspace ./workspaces/local-test2 --task T7-POST-NOVELTY
-researchos validate --workspace ./workspaces/local-test2 --task T7-CLAIMS
+researchos validate --workspace ./workspace/local-test2 --task T7-AUDIT
+researchos validate --workspace ./workspace/local-test2 --task T7-INGEST
+researchos validate --workspace ./workspace/local-test2 --task T7-POST-NOVELTY
+researchos validate --workspace ./workspace/local-test2 --task T7-CLAIMS
 ```
 
 ### 4.9 列出 skills
@@ -345,27 +345,27 @@ researchos run-skill deepxiv "summarize recent memory papers for llm agents"
 
 先看：
 
-- `workspaces/local-test2/state.yaml`
-- `workspaces/local-test2/_runtime/logs/researchos.log`
+- `workspace/local-test2/state.yaml`
+- `workspace/local-test2/_runtime/logs/researchos.log`
 
 ### 5.2 如果 T2 已经跑了
 
 看：
 
-- `workspaces/local-test2/literature/papers_raw.jsonl`
-- `workspaces/local-test2/literature/papers_dedup.jsonl`
-- `workspaces/local-test2/literature/papers_verified.jsonl`
-- `workspaces/local-test2/literature/deep_read_queue.jsonl`
-- `workspaces/local-test2/literature/access_audit.md`
+- `workspace/local-test2/literature/papers_raw.jsonl`
+- `workspace/local-test2/literature/papers_dedup.jsonl`
+- `workspace/local-test2/literature/papers_verified.jsonl`
+- `workspace/local-test2/literature/deep_read_queue.jsonl`
+- `workspace/local-test2/literature/access_audit.md`
 
 ### 5.3 如果 T3 已经跑了
 
 看：
 
-- `workspaces/local-test2/literature/paper_notes/`
-- `workspaces/local-test2/literature/comparison_table.csv`
-- `workspaces/local-test2/literature/related_work.bib`
-- `workspaces/local-test2/literature/deep_read_queue_pending.jsonl`
+- `workspace/local-test2/literature/paper_notes/`
+- `workspace/local-test2/literature/comparison_table.csv`
+- `workspace/local-test2/literature/related_work.bib`
+- `workspace/local-test2/literature/deep_read_queue_pending.jsonl`
 
 每篇 `paper_notes/*.md` 还应该包含 `## 12. Reading Coverage`。如果 note 标为 `[FULL-TEXT]`，重点检查：
 
@@ -377,34 +377,34 @@ researchos run-skill deepxiv "summarize recent memory papers for llm agents"
 
 看：
 
-- `workspaces/local-test2/external_executor/handoff_pack.json`
-- `workspaces/local-test2/external_executor/skills/template_manifest.json`
-- `workspaces/local-test2/external_executor/skills/customization_report.json`
-- `workspaces/local-test2/external_executor/expr/MATERIALS_CHECKLIST.json`
-- `workspaces/local-test2/external_executor/result_pack.json`
-- `workspaces/local-test2/external_executor/executor_status.json`
-- `workspaces/local-test2/external_executor/run_manifest.json`
-- `workspaces/local-test2/experiments/results_summary.json`
-- `workspaces/local-test2/experiments/result_audit.json`
-- `workspaces/local-test2/experiments/method_audit.json`
-- `workspaces/local-test2/experiments/integrity_audit.json`
-- `workspaces/local-test2/experiments/evidence_index.json`
-- `workspaces/local-test2/novelty/post_experiment_novelty_check.json`
-- `workspaces/local-test2/drafts/result_to_claim.json`
-- `workspaces/local-test2/drafts/method_writing_resources.json`
-- `workspaces/local-test2/drafts/must_not_claim.md`
-- `workspaces/local-test2/drafts/claim_support_matrix.csv`
-- `workspaces/local-test2/drafts/experiment_evidence_pack.json`
-- `workspaces/local-test2/experiments/iteration_log.md`
+- `workspace/local-test2/external_executor/handoff_pack.json`
+- `workspace/local-test2/external_executor/skills/template_manifest.json`
+- `workspace/local-test2/external_executor/skills/customization_report.json`
+- `workspace/local-test2/external_executor/expr/MATERIALS_CHECKLIST.json`
+- `workspace/local-test2/external_executor/result_pack.json`
+- `workspace/local-test2/external_executor/executor_status.json`
+- `workspace/local-test2/external_executor/run_manifest.json`
+- `workspace/local-test2/experiments/results_summary.json`
+- `workspace/local-test2/experiments/result_audit.json`
+- `workspace/local-test2/experiments/method_audit.json`
+- `workspace/local-test2/experiments/integrity_audit.json`
+- `workspace/local-test2/experiments/evidence_index.json`
+- `workspace/local-test2/novelty/post_experiment_novelty_check.json`
+- `workspace/local-test2/drafts/result_to_claim.json`
+- `workspace/local-test2/drafts/method_writing_resources.json`
+- `workspace/local-test2/drafts/must_not_claim.md`
+- `workspace/local-test2/drafts/claim_support_matrix.csv`
+- `workspace/local-test2/drafts/experiment_evidence_pack.json`
+- `workspace/local-test2/experiments/iteration_log.md`
 
 ### 5.5 如果 T8/T9 已经跑了
 
 看：
 
-- `workspaces/local-test2/drafts/paper.tex`
-- `workspaces/local-test2/drafts/review_rounds/`
-- `workspaces/local-test2/submission/bundle/`
-- `workspaces/local-test2/submission/migration_report.md`
+- `workspace/local-test2/drafts/paper.tex`
+- `workspace/local-test2/drafts/review_rounds/`
+- `workspace/local-test2/submission/bundle/`
+- `workspace/local-test2/submission/migration_report.md`
 
 ---
 
@@ -416,21 +416,21 @@ researchos run-skill deepxiv "summarize recent memory papers for llm agents"
 cd ResearchOS
 python -m researchos.cli validate-config
 python -m researchos.cli selftest
-python -m researchos.cli run-task HELLO --workspace ./workspaces/local-test2
+python -m researchos.cli run-task HELLO --workspace ./workspace/local-test2
 ```
 
 ### 起手式 B：我想调某个阶段
 
 ```bash
 cd ResearchOS
-python -m researchos.cli run-task T3 --workspace ./workspaces/local-test2
+python -m researchos.cli run-task T3 --workspace ./workspace/local-test2
 ```
 
 ### 起手式 C：我想继续之前中断的项目
 
 ```bash
 cd ResearchOS
-python -m researchos.cli resume --workspace ./workspaces/local-test2
+python -m researchos.cli resume --workspace ./workspace/local-test2
 ```
 
 ---
@@ -476,8 +476,8 @@ pip install -e .
 想测完整状态机，应该用：
 
 ```bash
-researchos run --workspace ./workspaces/local-test2
-researchos resume --workspace ./workspaces/local-test2
+researchos run --workspace ./workspace/local-test2
+researchos resume --workspace ./workspace/local-test2
 ```
 
 ---

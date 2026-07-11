@@ -14,7 +14,7 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptDir
 $ComposeFile = Join-Path $ScriptDir "compose.yaml"
-$env:RESEARCHOS_HOST_WORKSPACE_ROOT = if ($env:RESEARCHOS_HOST_WORKSPACE_ROOT) { $env:RESEARCHOS_HOST_WORKSPACE_ROOT } else { Join-Path $RepoRoot "workspaces" }
+$env:RESEARCHOS_HOST_WORKSPACE_ROOT = if ($env:RESEARCHOS_HOST_WORKSPACE_ROOT) { $env:RESEARCHOS_HOST_WORKSPACE_ROOT } else { Join-Path $RepoRoot "workspace" }
 if (-not $env:RESEARCHOS_UID) { $env:RESEARCHOS_UID = "1000" }
 if (-not $env:RESEARCHOS_GID) { $env:RESEARCHOS_GID = "1000" }
 
@@ -64,7 +64,7 @@ function NonEmpty([object[]]$Items) {
   return $out
 }
 
-New-Item -ItemType Directory -Force -Path (Join-Path $RepoRoot "workspaces") | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $RepoRoot "workspace") | Out-Null
 
 switch ($Command) {
   "doctor" {
@@ -75,7 +75,7 @@ switch ($Command) {
     if (-not $Project) { Show-Usage; exit 2 }
     Validate-Project $Project
     Require-DeployFiles
-    $argsList = @("run", "--rm", "researchos", "init-workspace", "--workspace", "/app/workspaces/$Project", "--project-id", $Project)
+    $argsList = @("run", "--rm", "researchos", "init-workspace", "--workspace", "/app/workspace/$Project", "--project-id", $Project)
     if ($Topic) {
       $argsList += @("--topic", $Topic)
     }
@@ -86,19 +86,19 @@ switch ($Command) {
     if (-not $Project) { Show-Usage; exit 2 }
     Validate-Project $Project
     Require-DeployFiles
-    Compose (NonEmpty (@("run", "--rm", "researchos", "run", "--workspace", "/app/workspaces/$Project", $Task) + $Rest))
+    Compose (NonEmpty (@("run", "--rm", "researchos", "run", "--workspace", "/app/workspace/$Project", $Task) + $Rest))
   }
   "resume" {
     if (-not $Project) { Show-Usage; exit 2 }
     Validate-Project $Project
     Require-DeployFiles
-    Compose (NonEmpty (@("run", "--rm", "researchos", "resume", "--workspace", "/app/workspaces/$Project", $Task) + $Rest))
+    Compose (NonEmpty (@("run", "--rm", "researchos", "resume", "--workspace", "/app/workspace/$Project", $Task) + $Rest))
   }
   "run-task" {
     if (-not $Project -or -not $Task) { Show-Usage; exit 2 }
     Validate-Project $Project
     Require-DeployFiles
-    Compose (NonEmpty (@("run", "--rm", "researchos", "run-task", $Task, "--workspace", "/app/workspaces/$Project") + $Rest))
+    Compose (NonEmpty (@("run", "--rm", "researchos", "run-task", $Task, "--workspace", "/app/workspace/$Project") + $Rest))
   }
   "pull" {
     Compose @("pull")

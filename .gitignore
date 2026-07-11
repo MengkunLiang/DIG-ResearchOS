@@ -72,6 +72,7 @@ logs/
 # Workspace (runtime artifacts)
 workspace/
 workspaces/
+deploy/workspace/
 deploy/workspaces/
 
 # Temporary files and debug reports

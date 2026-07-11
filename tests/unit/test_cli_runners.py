@@ -890,7 +890,7 @@ def test_cli_doctor_allows_missing_docker_and_tex(tmp_path: Path, monkeypatch, c
 
 
 def test_researchos_workspace_root_overrides_parser_default(tmp_path: Path, monkeypatch):
-    root = tmp_path / "workspaces"
+    root = tmp_path / "workspace"
     monkeypatch.setenv("RESEARCHOS_WORKSPACE_ROOT", str(root))
 
     parser = build_parser()
@@ -900,14 +900,16 @@ def test_researchos_workspace_root_overrides_parser_default(tmp_path: Path, monk
 
 
 def test_workspace_host_hint_maps_container_root_and_projects(monkeypatch):
-    monkeypatch.setenv("RESEARCHOS_HOST_WORKSPACE_ROOT", "/host/researchos/workspaces")
-    monkeypatch.setenv("RESEARCHOS_WORKSPACE_ROOT", "/app/workspaces")
+    monkeypatch.setenv("RESEARCHOS_HOST_WORKSPACE_ROOT", "/host/researchos/workspace")
+    monkeypatch.setenv("RESEARCHOS_WORKSPACE_ROOT", "/app/workspace")
 
-    assert workspace_host_hint(Path("/app/workspaces")) == "/host/researchos/workspaces"
+    assert workspace_host_hint(Path("/app/workspace")) == "/host/researchos/workspace"
     assert (
-        workspace_host_hint(Path("/app/workspaces/project-a"))
-        == "/host/researchos/workspaces/project-a"
+        workspace_host_hint(Path("/app/workspace/project-a"))
+        == "/host/researchos/workspace/project-a"
     )
+    monkeypatch.delenv("RESEARCHOS_HOST_WORKSPACE_ROOT")
+    assert workspace_host_hint(Path("/app/workspaces/legacy-a")) == "./workspace/legacy-a"
 
 
 def test_cli_trace_renders_human_readable_output(tmp_path: Path, capsys):

@@ -89,7 +89,7 @@ T3.6 和 T8 已经分离：T3.6 使用 `survey_writer`，产物在 `drafts/surve
 - `agents.scout.behavior.literature_quality`：写作语言与中文文献准入策略
 - `agents.reader.modes.read.behavior`：deep-read 目标、abstract sweep、metadata-only triage
 
-单个 workspace 的实际运行决策写在 `workspaces/<name>/literature/literature_params.json`，由 `T2-PARAM-GATE` 生成，优先于全局默认。这个 gate 可以直接接受自然语言修改，例如“英文稿，不要中文论文，候选数300”。英文稿且用户明确排除中文文献时，非 seed 中文论文不会进入 active pool；中文/双语或显式允许中文文献时，T2 不再因为缺少权威来源标签硬过滤中文候选，而是标记 `authority_review_needed`，后续 Reader/Writer 需要结合真实期刊目录、全文和人工判断决定是否引用。
+单个 workspace 的实际运行决策写在 `workspace/<name>/literature/literature_params.json`，由 `T2-PARAM-GATE` 生成，优先于全局默认。这个 gate 可以直接接受自然语言修改，例如“英文稿，不要中文论文，候选数300”。英文稿且用户明确排除中文文献时，非 seed 中文论文不会进入 active pool；中文/双语或显式允许中文文献时，T2 不再因为缺少权威来源标签硬过滤中文候选，而是标记 `authority_review_needed`，后续 Reader/Writer 需要结合真实期刊目录、全文和人工判断决定是否引用。
 
 开发联调入口 `run_smoke` 也会写同一个 workspace-local 参数文件，并额外写 `literature/literature_params_confirmation.json`。它写入 `selected_option=smoke`、`smoke_mode=true` 和小规模覆盖参数，例如 `active_pool_max=20`、`deep_read_target=3`、`abstract_sweep_target=5`；这些值同样优先于全局 yaml。已有 `literature/literature_params.json` 默认不覆盖，除非显式传入 `--force-smoke-params`。`run_smoke` 只用于真实快速联调，不应把 smoke 产物当作正式文献覆盖结果。
 
@@ -101,7 +101,7 @@ T3.6 和 T8 已经分离：T3.6 使用 `survey_writer`，产物在 `drafts/surve
 2. `system_config/state_machine.yaml` 中当前节点的少数强覆盖（默认主链不写）
 3. `config/user_settings.yaml` 中 `budget.agents.<agent>` / `budget.agents.<agent>.modes.<mode>` 的 budget
 4. `agent_params.yaml` 中 agent 工具能力和路径权限
-5. `runtime.yaml` 中 workspaces/UI/logging 等基础运行行为
+5. `runtime.yaml` 中 workspace/UI/logging 等基础运行行为
 
 ### 2.3 环境变量优先级
 
@@ -221,18 +221,18 @@ runtime:
 
 ```yaml
 workspace:
-  default_root: "./workspaces"
+  default_root: "./workspace"
   runtime_dir: "_runtime"
 ```
 
 含义：
 
-- `default_root`：默认 workspace 根目录。新项目默认写入顶层 `workspaces/`；历史项目仍可通过 `--workspace ./workspace/<name>` 显式使用。
+- `default_root`：默认 workspace 根目录。新项目默认写入顶层 `workspace/`；其他位置的项目仍可通过 `--workspace <path>` 显式使用。
 - `runtime_dir`：runtime 私有目录名
 
 影响：
 
-- trace/log/resume 文件都写进单个项目 workspace 下的 `workspaces/<project>/_runtime/`
+- trace/log/resume 文件都写进单个项目 workspace 下的 `workspace/<project>/_runtime/`
 
 ### 3.2 `logging`
 

@@ -72,7 +72,7 @@ def workspace_host_hint(workspace_dir: Path | None) -> str:
         return explicit
     root = os.getenv("RESEARCHOS_HOST_WORKSPACE_ROOT")
     if root:
-        container_root = (os.getenv("RESEARCHOS_WORKSPACE_ROOT") or "/app/workspaces").rstrip("/")
+        container_root = (os.getenv("RESEARCHOS_WORKSPACE_ROOT") or "/app/workspace").rstrip("/")
         normalized = workspace_dir.as_posix().rstrip("/")
         if normalized == container_root:
             return str(Path(root))
@@ -87,10 +87,14 @@ def workspace_host_hint(workspace_dir: Path | None) -> str:
         return str(Path(root) / project)
 
     normalized = workspace_dir.as_posix()
+    if normalized.startswith("/app/workspace/"):
+        return "./workspace/" + normalized.removeprefix("/app/workspace/")
+    if normalized == "/app/workspace":
+        return "./workspace"
     if normalized.startswith("/app/workspaces/"):
-        return "./workspaces/" + normalized.removeprefix("/app/workspaces/")
+        return "./workspace/" + normalized.removeprefix("/app/workspaces/")
     if normalized == "/app/workspaces":
-        return "./workspaces"
+        return "./workspace"
     if normalized.startswith("/workspace/"):
         return "./workspace/" + normalized.removeprefix("/workspace/")
     if normalized == "/workspace":

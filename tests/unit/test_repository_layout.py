@@ -27,14 +27,14 @@ def test_single_compose_entrypoint_keeps_runtime_contract():
     assert service["tty"] is True
     assert service["user"] == "${RESEARCHOS_UID:-0}:${RESEARCHOS_GID:-0}"
     assert env["RESEARCHOS_CONFIG"] == "/app/config/user_settings.yaml"
-    assert env["RESEARCHOS_WORKSPACE_ROOT"] == "/app/workspaces"
-    assert env["RESEARCHOS_HOST_WORKSPACE_ROOT"] == "${RESEARCHOS_HOST_WORKSPACE_ROOT:-./workspaces}"
+    assert env["RESEARCHOS_WORKSPACE_ROOT"] == "/app/workspace"
+    assert env["RESEARCHOS_HOST_WORKSPACE_ROOT"] == "${RESEARCHOS_HOST_WORKSPACE_ROOT:-./workspace}"
 
     workspace_mount = volumes[0]
     config_mount = volumes[1]
     assert workspace_mount["type"] == "bind"
-    assert workspace_mount["source"] == "../workspaces"
-    assert workspace_mount["target"] == "/app/workspaces"
+    assert workspace_mount["source"] == "../workspace"
+    assert workspace_mount["target"] == "/app/workspace"
     assert config_mount["type"] == "bind"
     assert config_mount["source"] == "../config"
     assert config_mount["target"] == "/app/config"
@@ -52,6 +52,8 @@ def test_docker_context_has_single_current_ignore_policy():
 
     dockerignore = (REPO_ROOT / ".dockerignore").read_text(encoding="utf-8")
     assert "workspace/" in dockerignore
+    assert "workspaces/" in dockerignore
+    assert "deploy/workspace/" in dockerignore
     assert "deploy/workspaces/" in dockerignore
     assert "deploy/config/" in dockerignore
     assert ".env" in dockerignore

@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMPOSE_FILE="$SCRIPT_DIR/compose.yaml"
 
-export RESEARCHOS_HOST_WORKSPACE_ROOT="${RESEARCHOS_HOST_WORKSPACE_ROOT:-$REPO_ROOT/workspaces}"
+export RESEARCHOS_HOST_WORKSPACE_ROOT="${RESEARCHOS_HOST_WORKSPACE_ROOT:-$REPO_ROOT/workspace}"
 if command -v id >/dev/null 2>&1; then
   export RESEARCHOS_UID="${RESEARCHOS_UID:-$(id -u)}"
   export RESEARCHOS_GID="${RESEARCHOS_GID:-$(id -g)}"
@@ -59,7 +59,7 @@ if [ -z "$cmd" ]; then
 fi
 shift || true
 
-mkdir -p "$REPO_ROOT/workspaces"
+mkdir -p "$REPO_ROOT/workspace"
 
 case "$cmd" in
   doctor)
@@ -73,7 +73,7 @@ case "$cmd" in
     shift
     require_deploy_files
     compose run --rm researchos init-workspace \
-      --workspace "/app/workspaces/$project" \
+      --workspace "/app/workspace/$project" \
       --project-id "$project" \
       "$@"
     ;;
@@ -83,7 +83,7 @@ case "$cmd" in
     validate_project "$project"
     shift
     require_deploy_files
-    compose run --rm researchos run --workspace "/app/workspaces/$project" "$@"
+    compose run --rm researchos run --workspace "/app/workspace/$project" "$@"
     ;;
   resume)
     project="${1:-}"
@@ -91,7 +91,7 @@ case "$cmd" in
     validate_project "$project"
     shift
     require_deploy_files
-    compose run --rm researchos resume --workspace "/app/workspaces/$project" "$@"
+    compose run --rm researchos resume --workspace "/app/workspace/$project" "$@"
     ;;
   run-task)
     project="${1:-}"
@@ -100,7 +100,7 @@ case "$cmd" in
     validate_project "$project"
     shift 2
     require_deploy_files
-    compose run --rm researchos run-task "$task" --workspace "/app/workspaces/$project" "$@"
+    compose run --rm researchos run-task "$task" --workspace "/app/workspace/$project" "$@"
     ;;
   pull)
     compose pull
