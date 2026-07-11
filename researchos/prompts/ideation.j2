@@ -65,6 +65,15 @@ feasibility 结论。
 - §9 / §13 / §14 / §18 适合形成机制挑战、设计论证和边界条件。
 - Raw abstract 只用于 abstract-only 候选的保守理解，不能当作全文证据。
 
+{% else %}
+### 可检索笔记卡 section 摘要
+当前 prompt 未收到压缩后的 note-card section 摘要。不要因此只依赖 synthesis.md。
+你必须在生成候选 idea 前主动用 `read_file` 读取 `literature/synthesis_workbench.json`，
+必要时再读取 `literature/paper_notes/` 和 `literature/paper_notes_abstract/` 中的相关 note。
+重点抽取 `core_approach_view`、`bridge_point`、`gaps`、`mechanism_claim`、
+`design_rationale`、`boundary_conditions` 和 `raw_abstract` 字段；abstract-only /
+metadata-only 信息只能作为覆盖提示或补资源线索，不能作为强 claim evidence。
+
 {% endif %}
 {% set weak_evidence = weak_evidence_summary | default('') %}
 {% if weak_evidence %}

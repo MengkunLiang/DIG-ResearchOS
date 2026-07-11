@@ -19,6 +19,7 @@ import yaml
 
 from researchos.agents.ideation import (
     IdeationAgent,
+    _note_card_prompt_summary,
     _validate_bridge_coverage_review,
     _validate_candidate_directions,
     validate_t4_gate1_ready,
@@ -974,6 +975,44 @@ def test_ideation_prompt_tolerates_missing_optional_note_card_summary(temp_works
 
     assert "Ideation Agent" in prompt or "假设生成" in prompt
     assert "结构化综述工作台" in prompt
+    assert "当前 prompt 未收到压缩后的 note-card section 摘要" in prompt
+    assert "literature/synthesis_workbench.json" in prompt
+
+
+def test_note_card_prompt_summary_filters_low_quality_cards():
+    workbench = {
+        "all_note_cards": [
+            {
+                "paper_id": "bad",
+                "title": "Irrelevant Paper",
+                "evidence_level": "ABSTRACT_ONLY",
+                "citation_use": "do_not_cite",
+                "citation_quality_score": 0.15,
+                "gaps": "与项目无关",
+                "core_approach_view": "irrelevant",
+            },
+            {
+                "paper_id": "good",
+                "title": "Useful Grounding Paper",
+                "evidence_level": "FULL_TEXT",
+                "citation_use": "core_evidence",
+                "citation_quality_score": 0.82,
+                "core_approach_view": "A usable mechanism view.",
+                "bridge_point": "A concrete bridge.",
+                "gaps": "A tractable gap.",
+                "mechanism_claim": "A supported mechanism.",
+                "design_rationale": "A useful rationale.",
+                "boundary_conditions": "Works when data are sparse.",
+            },
+        ]
+    }
+
+    summary = _note_card_prompt_summary(json.dumps(workbench), limit=5)
+
+    assert "Useful Grounding Paper" in summary
+    assert "A tractable gap" in summary
+    assert "Irrelevant Paper" not in summary
+    assert "do_not_cite" not in summary
 
 
 def test_ideation_initial_user_message(ideation_agent, temp_workspace):

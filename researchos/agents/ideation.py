@@ -86,6 +86,45 @@ def _shorten(text: str, limit: int) -> str:
     return clean
 
 
+def _float_or_none(value: object) -> float | None:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except Exception:
+        return None
+
+
+def _note_card_usable_for_t4(card: dict[str, object]) -> bool:
+    use = str(card.get("citation_use") or "").strip().lower()
+    if use in {"do_not_cite", "do-not-cite", "excluded", "unrelated"}:
+        return False
+    if card.get("citation_allowed") is False:
+        return False
+    score = _float_or_none(card.get("citation_quality_score"))
+    if score is not None and score < 0.55:
+        return False
+    combined = " ".join(
+        str(card.get(key) or "")
+        for key in ("gaps", "mechanism_claim", "design_rationale", "core_approach_view", "bridge_point")
+    )
+    if "与项目无关" in combined or "unrelated" in combined.lower():
+        return False
+    return True
+
+
+def _note_card_t4_priority(card: dict[str, object]) -> tuple[int, float, int]:
+    use = str(card.get("citation_use") or "").strip().lower()
+    evidence = str(card.get("evidence_level") or "").strip().upper()
+    use_priority = {
+        "core_evidence": 4,
+        "supporting_context": 3,
+        "background_context": 2,
+        "background": 1,
+    }.get(use, 1)
+    evidence_priority = 1 if "FULL" in evidence else 0
+    score = _float_or_none(card.get("citation_quality_score"))
+    return use_priority + evidence_priority, score if score is not None else 0.0, len(str(card.get("gaps") or ""))
+
+
 def _note_card_prompt_summary(synthesis_workbench_text: str, *, limit: int = 10) -> str:
     """Expose compact paper-note section cues for idea generation."""
 
@@ -102,10 +141,10 @@ def _note_card_prompt_summary(synthesis_workbench_text: str, *, limit: int = 10)
             items = data.get(key)
             if isinstance(items, list):
                 cards.extend(items)
+    cards = [card for card in cards if isinstance(card, dict) and _note_card_usable_for_t4(card)]
+    cards.sort(key=_note_card_t4_priority, reverse=True)
     rows: list[str] = []
     for card in cards:
-        if not isinstance(card, dict):
-            continue
         title = _shorten(str(card.get("title") or card.get("paper_id") or "unknown"), 120)
         evidence = str(card.get("evidence_level") or "unknown")
         use = str(card.get("citation_use") or "unknown")
