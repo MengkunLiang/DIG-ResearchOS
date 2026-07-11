@@ -257,10 +257,19 @@ class CLIHumanInterface(HumanInterface):
     def _format_presentation_value(key: str, value: Any, *, gate_id: str = "") -> str:
         """Render gate presentation values for humans instead of dumping JSON by default."""
 
+        if gate_id == "t2_coverage_gate":
+            rendered = _format_t2_coverage_gate_field(key, value)
+            if rendered is not None:
+                return rendered
+        if gate_id == "t2_literature_param_confirm_gate" and key == "selected_parameters":
+            if isinstance(value, str):
+                return _format_t2_selected_parameters_summary(
+                    {"path": "literature/literature_params.json", "summary": value}
+                )
+            if _is_path_summary(value):
+                return _format_t2_selected_parameters_summary(value)
         if isinstance(value, str):
             return value
-        if gate_id == "t2_literature_param_confirm_gate" and _is_path_summary(value):
-            return _format_t2_selected_parameters_summary(value)
         if _is_path_summary(value):
             path = str(value.get("path") or "")
             size_chars = value.get("size_chars")
@@ -706,6 +715,306 @@ def _is_path_summary(value: Any) -> bool:
         and "summary" in value
         and "size_chars" in value
     )
+
+
+def _path_summary_text(value: Any, *, default_path: str = "") -> tuple[str, str]:
+    if isinstance(value, dict):
+        return str(value.get("path") or default_path), str(value.get("summary") or "")
+    return default_path, str(value or "")
+
+
+def _format_t2_coverage_gate_field(key: str, value: Any) -> str | None:
+    if key == "search_log":
+        return _format_t2_search_log_summary(value)
+    if key == "missing_areas":
+        return _format_t2_missing_areas_summary(value)
+    if key == "domain_map":
+        return _format_t2_domain_map_summary(value)
+    if key == "access_audit":
+        return _format_t2_access_audit_summary(value)
+    if key == "deep_read_queue_preview":
+        return _format_t2_deep_read_queue_summary(value)
+    return None
+
+
+def _format_t2_search_log_summary(value: Any) -> str:
+    path, text = _path_summary_text(value, default_path="literature/search_log.md")
+    raw_count = _find_first_int(text, r"原始结果:\s*([0-9,]+)")
+    dedup_count = _find_first_int(text, r"去重后:\s*([0-9,]+)")
+    retained = _find_first_int(text, r"\bretained=([0-9,]+)")
+    backlog = _find_first_int(text, r"\bbacklog=([0-9,]+)")
+    deep_target = _find_first_int(text, r"\bdeep_read_target=([0-9,]+)")
+
+    lines = [f"文件: {path}", "T2 已完成检索、去重、保留候选切分和 deep-read queue 构建。"]
+    metrics = []
+    if raw_count is not None:
+        metrics.append(f"原始结果 {raw_count}")
+    if dedup_count is not None:
+        metrics.append(f"去重后 {dedup_count}")
+    if retained is not None:
+        metrics.append(f"保留候选 {retained}")
+    if backlog is not None:
+        metrics.append(f"backlog {backlog}")
+    if deep_target is not None:
+        metrics.append(f"精读目标 {deep_target}")
+    if metrics:
+        lines.append("- " + "；".join(metrics))
+
+    bucket_rows = _extract_markdown_table_rows(text, "Bucket 覆盖")
+    bucket_bits = []
+    for row in bucket_rows[:6]:
+        if len(row) >= 4:
+            bucket_bits.append(f"{row[0]}: {row[3]} retained")
+    if bucket_bits:
+        lines.append("- 覆盖桶: " + "；".join(bucket_bits))
+
+    bridge_rows = _extract_markdown_table_rows(text, "Bridge Domain Plan 覆盖")
+    if bridge_rows:
+        status_counts: dict[str, int] = {}
+        for row in bridge_rows:
+            status = row[-1] if row else "unknown"
+            status_counts[status] = status_counts.get(status, 0) + 1
+        lines.append(
+            "- Bridge plan: "
+            + "；".join(f"{status} {count}" for status, count in sorted(status_counts.items()))
+        )
+
+    for label in (
+        "Active 切分前轻量补全",
+        "多源摘要回填",
+        "OpenAlex citation snowball 补全",
+        "Crossref citation snowball 补全",
+        "T2 raw 元数据缓存回写",
+    ):
+        line = _find_bullet_starting_with(text, label)
+        if line:
+            lines.append("- " + _format_t2_diagnostic_line(label, line))
+
+    lines.append("详情保存在该文件；CLI 只展示摘要，不展开完整检索表。")
+    return "\n".join(lines)
+
+
+def _format_t2_diagnostic_line(label: str, line: str) -> str:
+    values = _parse_key_values(line)
+    if label == "Active 切分前轻量补全":
+        return (
+            "资源轻量补全: "
+            f"候选 {values.get('candidate', '?')}/{values.get('input', '?')}；"
+            f"摘要线索 {values.get('abstract_after', '?')}；"
+            f"PDF 线索 {values.get('pdf_hint_after', '?')}；"
+            f"引用线索 {values.get('reference_hint_after', '?')}"
+        )
+    if label == "多源摘要回填":
+        return (
+            "摘要补全: "
+            f"尝试 {values.get('attempted_single', values.get('attempted', '?'))}；"
+            f"填充 {values.get('filled', '?')}；"
+            f"仍缺 {values.get('remaining_missing_abstract', '?')}"
+        )
+    if label == "OpenAlex citation snowball 补全":
+        return (
+            "OpenAlex 引用扩展: "
+            f"来源 {values.get('sources_used', '?')}；"
+            f"看到引用 {values.get('reference_items_seen', '?')}；"
+            f"新增/合并 {values.get('raw_persisted_or_merged', values.get('added', '?'))}；"
+            f"失败 {values.get('failed', '?')}"
+        )
+    if label == "Crossref citation snowball 补全":
+        return (
+            "Crossref 引用扩展: "
+            f"来源 {values.get('sources_used', '?')}；"
+            f"看到引用 {values.get('reference_items_seen', '?')}；"
+            f"title 解析 {values.get('title_references_resolved', '?')}；"
+            f"新增 {values.get('raw_persisted', values.get('added', '?'))}；"
+            f"失败 {values.get('failed', '?')}"
+        )
+    if label == "T2 raw 元数据缓存回写":
+        return (
+            "raw 元数据缓存: "
+            f"总记录 {values.get('records_after', '?')}；"
+            f"合并 {values.get('merged', '?')}；"
+            f"新增 {values.get('appended', '?')}"
+        )
+    return _compact_text(line.lstrip("- ").strip(), 180)
+
+
+def _parse_key_values(line: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for match in re.finditer(r"\b([A-Za-z_][A-Za-z0-9_]*)=([^,;。]+)", line):
+        values[match.group(1)] = match.group(2).strip()
+    return values
+
+
+def _format_t2_missing_areas_summary(value: Any) -> str:
+    path, text = _path_summary_text(value, default_path="literature/missing_areas.md")
+    lines = [
+        f"文件: {path}",
+        "这是检索覆盖提示，不是最终研究缺口结论；进入 T3 后还需要结合阅读笔记复核。",
+    ]
+    good = _extract_bullets_under_heading(text, "覆盖较好的主题", limit=3)
+    weak = _extract_bullets_under_heading(text, "覆盖不足的主题", limit=5)
+    hints = _extract_hint_titles(text, limit=5)
+    if good:
+        lines.append("覆盖较好: " + "；".join(item.lstrip("- ").strip() for item in good))
+    if weak:
+        lines.append("建议关注/补检:")
+        for item in weak:
+            lines.append(f"- {item.lstrip('- ').strip()}")
+    elif hints:
+        lines.append("建议关注/补检:")
+        for item in hints:
+            lines.append(f"- {item}")
+    lines.append("如果这些提示与你的研究边界不符，可以选择回到 T2 扩检/调整 query。")
+    return "\n".join(lines)
+
+
+def _format_t2_domain_map_summary(value: Any) -> str:
+    path, text = _path_summary_text(value, default_path="literature/domain_map.json")
+    lines = [f"文件: {path}"]
+    try:
+        data = json.loads(text)
+    except Exception:
+        data = None
+    if isinstance(data, dict):
+        counts = []
+        for key, label in (
+            ("core", "core"),
+            ("theory_bridge", "theory_bridge"),
+            ("adjacent", "adjacent"),
+            ("citation_edges", "citation_edges"),
+        ):
+            value = data.get(key)
+            if isinstance(value, list):
+                counts.append(f"{label} {len(value)}")
+        if counts:
+            lines.append("Domain map: " + "；".join(counts))
+    else:
+        lines.append("Domain map 已生成，用于 T3.5 synthesis 和 T4 idea；CLI 不展开原始 JSON。")
+    lines.append("重点看它是否覆盖 core / theory_bridge / adjacent 三类角色；详情见文件。")
+    return "\n".join(lines)
+
+
+def _format_t2_access_audit_summary(value: Any) -> str:
+    path, text = _path_summary_text(value, default_path="literature/access_audit.md")
+    lines = [f"文件: {path}", "可读性与证据级别摘要:"]
+    wanted_prefixes = (
+        "候选论文总数",
+        "`literature/pdfs/` 本地 PDF",
+        "`user_seeds/pdfs/` 可匹配的 seed PDF",
+        "`FULL_TEXT`",
+        "`ABSTRACT_ONLY`",
+        "`METADATA_ONLY`",
+        "Access hint `POSSIBLE_FULL_TEXT`",
+    )
+    found = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("- "):
+            continue
+        body = stripped[2:].strip()
+        if any(body.startswith(prefix) for prefix in wanted_prefixes):
+            found.append(body)
+    for item in found[:8]:
+        lines.append(f"- {item}")
+    lines.append("Top candidate 表保存在文件中；CLI 不展开完整表格。")
+    return "\n".join(lines)
+
+
+def _format_t2_deep_read_queue_summary(value: Any) -> str:
+    path, text = _path_summary_text(value, default_path="literature/deep_read_queue.jsonl")
+    entries = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            item = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(item, dict):
+            entries.append(item)
+        if len(entries) >= 5:
+            break
+    lines = [f"文件: {path}", "T3 将优先按这个 deep-read queue 阅读。前几条预览:"]
+    if entries:
+        for item in entries:
+            rank = item.get("queue_rank") or item.get("rank") or "?"
+            title = _compact_text(item.get("title") or item.get("paper_id") or "untitled", 100)
+            bucket = item.get("target_bucket") or item.get("search_bucket") or item.get("queue_reason") or "unknown"
+            evidence = item.get("evidence_level") or item.get("access_level_hint") or "unknown"
+            lines.append(f"- #{rank} {title}（{bucket}; {evidence}）")
+    else:
+        lines.append("- 暂无法解析预览；请打开文件查看。")
+    lines.append("如果队列方向明显不对，选择回到 T2 扩检/调整 query。")
+    return "\n".join(lines)
+
+
+def _find_first_int(text: str, pattern: str) -> int | None:
+    match = re.search(pattern, text)
+    if not match:
+        return None
+    try:
+        return int(match.group(1).replace(",", ""))
+    except Exception:
+        return None
+
+
+def _find_bullet_starting_with(text: str, label: str) -> str | None:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- " + label):
+            return stripped
+    return None
+
+
+def _extract_markdown_table_rows(text: str, heading: str) -> list[list[str]]:
+    rows: list[list[str]] = []
+    in_section = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            if in_section:
+                break
+            in_section = heading in stripped
+            continue
+        if not in_section or not stripped.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if not cells or cells[0] in {"---", "Bucket", "Bridge", "#"} or set(cells[0]) <= {"-", ":"}:
+            continue
+        if len(cells) >= 2 and all(set(cell) <= {"-", ":"} for cell in cells):
+            continue
+        rows.append(cells)
+    return rows
+
+
+def _extract_bullets_under_heading(text: str, heading: str, *, limit: int) -> list[str]:
+    bullets: list[str] = []
+    in_section = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            if in_section:
+                break
+            in_section = heading in stripped
+            continue
+        if in_section and stripped.startswith("- "):
+            bullets.append(stripped)
+            if len(bullets) >= limit:
+                break
+    return bullets
+
+
+def _extract_hint_titles(text: str, *, limit: int) -> list[str]:
+    hints: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        match = re.match(r"^###\s+提示\s+\d+\s*:\s*(.+)$", stripped)
+        if match:
+            hints.append(match.group(1).strip())
+            if len(hints) >= limit:
+                break
+    return hints
 
 
 def _format_t2_parameter_preview(value: dict[str, Any]) -> str:

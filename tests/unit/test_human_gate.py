@@ -227,6 +227,97 @@ def test_t2_literature_confirm_gate_formats_truncated_json_summary_without_raw_d
     assert "摘要:" not in rendered
 
 
+def test_t2_coverage_gate_formats_search_log_as_summary():
+    text = """# T2 Scout 检索日志
+
+## Bucket 覆盖
+
+| Bucket | Query Calls | Results | Persisted |
+|---|---:|---:|---:|
+| core | 5 | 100 | 80 |
+| theory_bridge | 3 | 60 | 45 |
+
+## Bridge Domain Plan 覆盖
+
+| Bridge | Priority | Planned Queries | Actual Query Calls | Persisted | Status |
+|---|---|---|---:|---:|---|
+| b1 | should_explore | curriculum | 2 | 30 | covered |
+| b2 | should_explore | alignment | 0 | 0 | missing |
+
+## 检索统计
+
+- 原始结果: 200 篇
+- 去重后: 120 篇
+
+## 说明
+
+- T2 保留候选集: input=200, retained=120, backlog=80, max=120
+- T2/T3 阈值配置来源: finish_finalize_min_raw=30, active_pool_max=120, deep_read_target=15, deep_read_max=45。
+- Active 切分前轻量补全: enabled=True, input=120, candidate=80
+"""
+
+    rendered = CLIHumanInterface._format_presentation_value(
+        "search_log",
+        {"path": "literature/search_log.md", "size_chars": len(text), "summary": text},
+        gate_id="t2_coverage_gate",
+    )
+
+    assert "T2 已完成检索、去重、保留候选切分和 deep-read queue 构建" in rendered
+    assert "原始结果 200；去重后 120；保留候选 120；backlog 80；精读目标 15" in rendered
+    assert "core: 80 retained" in rendered
+    assert "covered 1" in rendered
+    assert "missing 1" in rendered
+    assert "资源轻量补全: 候选 80/120" in rendered
+    assert "| Bucket |" not in rendered
+
+
+def test_t2_coverage_gate_formats_missing_areas_as_actionable_hints():
+    text = """# 文献缺口分析
+
+## 覆盖较好的主题
+
+- `课程群`: 15 篇论文显式提及
+
+## 覆盖不足的主题
+
+- `核心能力`: 仅 4 篇论文显式提及，建议继续补检
+- `学科建设`: 仅 1 篇论文显式提及，建议继续补检
+
+## Retrieval Coverage Hints（不是研究缺口结论）
+
+### 提示 1: `核心能力` 相关检索覆盖不足
+"""
+
+    rendered = CLIHumanInterface._format_presentation_value(
+        "missing_areas",
+        {"path": "literature/missing_areas.md", "size_chars": len(text), "summary": text},
+        gate_id="t2_coverage_gate",
+    )
+
+    assert "这是检索覆盖提示，不是最终研究缺口结论" in rendered
+    assert "覆盖较好: `课程群`: 15 篇论文显式提及" in rendered
+    assert "`核心能力`: 仅 4 篇论文显式提及" in rendered
+    assert "### 提示" not in rendered
+
+
+def test_t2_coverage_gate_formats_deep_read_queue_preview_without_jsonl_dump():
+    text = (
+        '{"queue_rank":1,"title":"Seed Paper","target_bucket":"seed","evidence_level":"FULL_TEXT"}\n'
+        '{"queue_rank":2,"title":"Bridge Paper","target_bucket":"bridge_deep","evidence_level":"ABSTRACT_ONLY"}\n'
+    )
+
+    rendered = CLIHumanInterface._format_presentation_value(
+        "deep_read_queue_preview",
+        {"path": "literature/deep_read_queue.jsonl", "size_chars": len(text), "summary": text},
+        gate_id="t2_coverage_gate",
+    )
+
+    assert "T3 将优先按这个 deep-read queue 阅读" in rendered
+    assert "#1 Seed Paper（seed; FULL_TEXT）" in rendered
+    assert "#2 Bridge Paper（bridge_deep; ABSTRACT_ONLY）" in rendered
+    assert '"queue_rank"' not in rendered
+
+
 def test_t2_literature_gate_parses_multiple_inline_customizations():
     options = [
         {"id": "standard_research", "label": "标准研究论文覆盖"},

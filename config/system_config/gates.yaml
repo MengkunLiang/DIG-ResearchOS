@@ -578,19 +578,24 @@ gates:
     presentation:
       search_log:
         from_file: literature/search_log.md
-        max_chars: 3500
+        mode: path_summary
+        summary_chars: 20000
       missing_areas:
         from_file: literature/missing_areas.md
-        max_chars: 6000
+        mode: path_summary
+        summary_chars: 12000
       domain_map:
         from_file: literature/domain_map.json
-        max_chars: 4500
+        mode: path_summary
+        summary_chars: 20000
       access_audit:
         from_file: literature/access_audit.md
-        max_chars: 3500
+        mode: path_summary
+        summary_chars: 8000
       deep_read_queue_preview:
         from_file: literature/deep_read_queue.jsonl
-        max_chars: 3500
+        mode: path_summary
+        summary_chars: 12000
     options:
       - id: continue_to_t3
         label: "进入 T3 精读"
