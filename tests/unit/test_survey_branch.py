@@ -7,7 +7,7 @@ import pytest
 import yaml
 
 from researchos.agents.registry import get_agent_by_id
-from researchos.agents.survey_writer import SurveyWriterAgent
+from researchos.agents.survey_writer import SurveyWriterAgent, _citation_pool_preview
 from researchos.orchestration.task_io_contract import TASK_IO_CONTRACTS
 from researchos.orchestration.state_machine import StateMachine
 from researchos.runtime.system_config import system_config_path
@@ -533,6 +533,60 @@ def test_survey_writer_registry_and_phase():
     agent = get_agent_by_id("survey_writer", mode="survey_section")
     assert isinstance(agent, SurveyWriterAgent)
     assert agent._mode == "survey_section"
+
+
+def test_survey_citation_pool_preview_prioritizes_usable_note_cards(tmp_path: Path):
+    ws = tmp_path
+    (ws / "literature").mkdir(parents=True)
+    (ws / "drafts" / "survey").mkdir(parents=True)
+    (ws / "literature" / "related_work.bib").write_text(
+        """
+@article{weak2024,
+  title={Weak record},
+  author={Weak, A.},
+  year={2024},
+  note={metadata-only}
+}
+@article{core2025,
+  title={Core record},
+  author={Core, B.},
+  year={2025}
+}
+""",
+        encoding="utf-8",
+    )
+    _write_json(
+        ws / "literature" / "notes_manifest.json",
+        {
+            "entries": [
+                {
+                    "status": "complete",
+                    "bib_key": "weak2024",
+                    "citation_use": "do_not_cite",
+                    "citation_quality_score": 0.2,
+                },
+                {
+                    "status": "complete",
+                    "bib_key": "core2025",
+                    "citation_use": "core_evidence",
+                    "citation_quality_score": 0.9,
+                },
+            ]
+        },
+    )
+    _write_json(
+        ws / "drafts" / "survey" / "survey_plan.json",
+        {
+            "semantics": "llm_authored_taxonomy_driven_survey_plan",
+            "sections": [{"section_id": "taxonomy", "paper_ids": ["core2025"]}],
+        },
+    )
+
+    preview = _citation_pool_preview(ws, ["weak2024", "core2025"])
+
+    assert preview.index("`core2025`") < preview.index("`weak2024`")
+    assert "use=core_evidence" in preview
+    assert "weak_context_only" in preview
 
 
 def test_survey_writer_prompt_includes_seed_outline_profile_as_taxonomy_prior(tmp_path: Path):

@@ -1570,15 +1570,71 @@ def _extract_paper_note_cards(workspace: Path, *, limit: int = 80) -> list[dict[
                 )
                 if str(card.get(key) or "").strip()
             ]
+            card["claim_usable"] = _paper_note_card_claim_usable(card)
+            warning = _paper_note_card_quality_warning(card)
+            if warning:
+                card["quality_warning"] = warning
             cards.append(card)
     cards.sort(
         key=lambda item: (
+            not bool(item.get("claim_usable")),
             str(item.get("evidence_level") or "") == "ABSTRACT_ONLY",
             -float(item.get("citation_quality_score") or 0.0),
             str(item.get("title") or ""),
         )
     )
     return cards[:limit]
+
+
+def _paper_note_card_claim_usable(card: dict[str, Any]) -> bool:
+    use = str(card.get("citation_use") or "").strip().lower()
+    if use in {"do_not_cite", "do-not-cite", "excluded", "unrelated"}:
+        return False
+    if card.get("citation_allowed") is False:
+        return False
+    try:
+        score = float(card.get("citation_quality_score") or 0.0)
+    except (TypeError, ValueError):
+        score = 0.0
+    if score < 0.55:
+        return False
+    combined = " ".join(
+        str(card.get(key) or "")
+        for key in (
+            "problem_motivation",
+            "method_overview",
+            "core_approach_view",
+            "bridge_point",
+            "gaps",
+            "mechanism_claim",
+            "design_rationale",
+            "boundary_conditions",
+        )
+    )
+    if "与项目无关" in combined or "unrelated" in combined.lower():
+        return False
+    return True
+
+
+def _paper_note_card_quality_warning(card: dict[str, Any]) -> str:
+    use = str(card.get("citation_use") or "").strip().lower()
+    if use in {"do_not_cite", "do-not-cite", "excluded", "unrelated"}:
+        return "do_not_use_for_claims"
+    if card.get("citation_allowed") is False:
+        return "citation_not_allowed"
+    try:
+        score = float(card.get("citation_quality_score") or 0.0)
+    except (TypeError, ValueError):
+        score = 0.0
+    if score < 0.55:
+        return "low_citation_quality"
+    combined = " ".join(
+        str(card.get(key) or "")
+        for key in ("core_approach_view", "bridge_point", "gaps", "mechanism_claim", "design_rationale")
+    )
+    if "与项目无关" in combined or "unrelated" in combined.lower():
+        return "unrelated_to_project"
+    return ""
 
 
 def _markdown_field(text: str, name: str) -> str:
@@ -2374,7 +2430,10 @@ def _note_card_retrieval_lines(section_id: str, note_cards: list[Any]) -> list[s
     lines = list(section_targets.get(section_id) or ["Use paper note cards only when they directly support this section's claim."])
     cards = _section_note_cards(section_id, note_cards, limit=8)
     if not cards:
-        lines.append("- No structured note cards are indexed; read `literature/paper_notes/` and `literature/synthesis_workbench.json` directly if citations are needed.")
+        if any(isinstance(card, dict) for card in note_cards):
+            lines.append("- Indexed note cards exist, but none meet the claim-usable threshold for this section; read `literature/paper_notes/` directly and use weak cards only as background or limitations.")
+        else:
+            lines.append("- No structured note cards are indexed; read `literature/paper_notes/` and `literature/synthesis_workbench.json` directly if citations are needed.")
         return [f"- {line}" if not line.lstrip().startswith("-") else line for line in lines]
     lines.append("- Relevant indexed note cards:")
     fields = _note_card_fields_for_section(section_id)
@@ -2439,7 +2498,11 @@ def _note_card_section_cues(card: dict[str, Any], fields: tuple[str, ...], *, li
 
 
 def _section_note_cards(section_id: str, note_cards: list[Any], *, limit: int) -> list[dict[str, Any]]:
-    cards = [card for card in note_cards if isinstance(card, dict)]
+    cards = [
+        card
+        for card in note_cards
+        if isinstance(card, dict) and _paper_note_card_claim_usable(card)
+    ]
     if not cards:
         return []
     if section_id == "abstract":

@@ -845,6 +845,18 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
         "## 19. Cross-Paper Tension\n- **Tension**: Robustness conflicts with adaptivity.\n",
         encoding="utf-8",
     )
+    (notes_dir / "weak_note.md").write_text(
+        "# Weak Paper\n"
+        "- **ID**: weak_note\n"
+        "- **Status**: [FULL-TEXT]\n"
+        "- **Citation Use**: do_not_cite\n"
+        "- **Citation Quality Score**: 0.20\n\n"
+        "## 2. Method Overview\nA weak method overview that should not be proposed as writing evidence.\n\n"
+        "## A. Core Approach / Perspective\nWeak design view.\n\n"
+        "## 9. Weaknesses / Gaps\n与项目无关。\n\n"
+        "## 14. Design Rationale\n- **Rationale**: Weak rationale.\n",
+        encoding="utf-8",
+    )
     (tmp_workspace / "literature" / "notes_manifest.json").write_text(
         json.dumps(
             {
@@ -898,6 +910,9 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
     assert resource_index["paper_note_cards"][0]["core_approach_view"].startswith("Full-text design view")
     assert resource_index["paper_note_cards"][0]["bridge_point"].startswith("Transfers to adaptive")
     assert "core_approach_view" in resource_index["paper_note_cards"][0]["sections_available"]
+    weak_card = next(item for item in resource_index["paper_note_cards"] if item["note_id"] == "weak_note")
+    assert weak_card["claim_usable"] is False
+    assert weak_card["quality_warning"] == "do_not_use_for_claims"
     assert any(item.get("metric_id") == "m_external_acc" for item in resource_index["result_metrics"])
 
     plan_tool = PlanManuscriptSectionsTool(policy)
@@ -984,6 +999,8 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
     assert "## Note Card Retrieval Plan" in method_outline
     assert "literature/paper_notes/core_note.md" in method_outline
     assert "A: Full-text design view" in method_outline
+    assert "literature/paper_notes/weak_note.md" not in method_outline
+    assert "Weak design view" not in method_outline
     assert paper_state["sections"]["methodology"]["writing_contract"]["purpose"].startswith("Explain what the artifact")
     assert paper_state["shared_facts"]["paper_note_cards"]
     ok, err = validator.validate_outputs(_WriterContext(tmp_workspace, "section_plan"))

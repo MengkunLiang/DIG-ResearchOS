@@ -483,15 +483,19 @@ def _human_interaction_exists(ws: Path, interaction_id: str) -> bool:
 def _citation_pool_preview(ws: Path, related_work_keys: list[str], *, max_items: int = 80) -> str:
     bib_entries = _parse_bib_preview(ws / "literature" / "related_work.bib")
     quality_by_id = _notes_quality_by_id(ws / "literature" / "notes_manifest.json")
-    support_by_key = citation_support_text_by_key(ws, keys=related_work_keys[:max_items])
     plan, _ = _load_json(ws / "drafts" / "survey" / "survey_plan.json")
     section_paper_ids = _survey_plan_paper_ids(plan)
+    sorted_keys = sorted(
+        related_work_keys,
+        key=lambda key: _citation_pool_sort_key(key, bib_entries, quality_by_id, section_paper_ids),
+    )
+    support_by_key = citation_support_text_by_key(ws, keys=sorted_keys[:max_items])
     lines = [
         "# Citation Pool",
         "",
-        "Use exact BibTeX keys. Prefer entries marked core/supporting and avoid weak/do_not_cite entries for mechanism claims.",
+        "Use exact BibTeX keys. Entries are sorted to show planned, core/supporting, higher-quality notes first; weak/do_not_cite entries remain visible only as boundary or upgrade context.",
     ]
-    for idx, key in enumerate(related_work_keys[:max_items], start=1):
+    for idx, key in enumerate(sorted_keys[:max_items], start=1):
         meta = bib_entries.get(key, {})
         quality = quality_by_id.get(key) or quality_by_id.get(str(meta.get("title", "")).casefold()) or {}
         title = str(meta.get("title") or "").strip() or "title unavailable"
@@ -515,9 +519,44 @@ def _citation_pool_preview(ws: Path, related_work_keys: list[str], *, max_items:
         support = _preview_line(support_by_key.get(key, ""), 180)
         if support:
             lines.append(f"   note_support: {support}")
-    if len(related_work_keys) > max_items:
-        lines.append(f"... {len(related_work_keys) - max_items} more keys omitted from preview; read related_work.bib if needed.")
+    if len(sorted_keys) > max_items:
+        lines.append(f"... {len(sorted_keys) - max_items} more keys omitted from preview; read related_work.bib if needed.")
     return "\n".join(lines)
+
+
+def _citation_pool_sort_key(
+    key: str,
+    bib_entries: dict[str, dict[str, str]],
+    quality_by_id: dict[str, dict],
+    section_paper_ids: dict[str, list[str]],
+) -> tuple[int, int, float, int, str]:
+    meta = bib_entries.get(key, {})
+    quality = quality_by_id.get(key) or quality_by_id.get(str(meta.get("title", "")).casefold()) or {}
+    use = str(quality.get("citation_use") or "").strip().lower()
+    try:
+        score = float(quality.get("citation_quality_score") or 0.0)
+    except (TypeError, ValueError):
+        score = 0.0
+    planned = any(key in paper_ids for paper_ids in section_paper_ids.values())
+    weak_note = (
+        "abstract-only" in str(meta.get("note") or "").casefold()
+        or "metadata-only" in str(meta.get("note") or "").casefold()
+        or use in {"do_not_cite", "do-not-cite", "excluded", "unrelated"}
+        or score < 0.55
+    )
+    use_rank = {
+        "core_evidence": 0,
+        "supporting_context": 1,
+        "background_context": 2,
+        "background": 3,
+    }.get(use, 4)
+    return (
+        0 if planned else 1,
+        1 if weak_note else 0,
+        -score,
+        use_rank,
+        key,
+    )
 
 
 def _preview_line(value: str, limit: int) -> str:
