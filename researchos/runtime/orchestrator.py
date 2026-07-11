@@ -260,6 +260,14 @@ class AgentRunner:
         stop_reason = AgentResult.STOP_ERROR
         error_msg: str | None = None
 
+        primary_binding = self.llm.resolve(
+            profile=eff.llm_profile,
+            tier=eff.llm_tier,
+            model_override=eff.llm_model_override,
+            endpoint_override=eff.llm_endpoint_override,
+            max_context_override=eff.llm_max_context_override,
+        )[0][0]
+
         policy = self.workspace_policy_factory(ctx, eff)
         build_ctx = ToolBuildContext(
             policy=policy,
@@ -267,6 +275,9 @@ class AgentRunner:
             skill_dir=Path(ctx.extra["skill_dir"]) if "skill_dir" in ctx.extra else None,
             task_id=ctx.task_id,
             run_id=ctx.run_id,
+            llm_model=primary_binding.model,
+            llm_tier=eff.llm_tier,
+            llm_max_context=primary_binding.max_context,
         )
         tool_map = self.tool_registry.build(eff.tool_names, build_ctx)
         tool_schemas = self.tool_registry.to_openai_schemas(tool_map)
@@ -276,14 +287,6 @@ class AgentRunner:
         messages: list[Message] = [sys_msg, user_msg]
         trace.write_message(sys_msg)
         trace.write_message(user_msg)
-
-        primary_binding = self.llm.resolve(
-            profile=eff.llm_profile,
-            tier=eff.llm_tier,
-            model_override=eff.llm_model_override,
-            endpoint_override=eff.llm_endpoint_override,
-            max_context_override=eff.llm_max_context_override,
-        )[0][0]
 
         empty_count = 0
         nudge_count = 0

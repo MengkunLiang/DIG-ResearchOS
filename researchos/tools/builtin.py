@@ -114,7 +114,10 @@ def register_builtin_tools(
 ) -> None:
     """注册 runtime 默认内置工具。"""
     runtime_settings = runtime_settings or RuntimeSettings()
-    registry.register("read_file", lambda ctx: ReadFileTool(ctx.policy))
+    registry.register(
+        "read_file",
+        lambda ctx: ReadFileTool(ctx.policy, llm_max_context=ctx.llm_max_context),
+    )
     registry.register("write_file", lambda ctx: WriteFileTool(ctx.policy))
     registry.register("write_structured_file", lambda ctx: WriteStructuredFileTool(ctx.policy))
     registry.register("append_file", lambda ctx: AppendFileTool(ctx.policy))

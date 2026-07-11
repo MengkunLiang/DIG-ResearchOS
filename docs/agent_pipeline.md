@@ -1423,6 +1423,12 @@ seed papers 是最高优先级，不是普通候选。
 9. 如果连全文都拿不到，再退化成 `[ABSTRACT-ONLY]`
 10. 用 `save_paper_note(queue_rank=..., content=...)` 保存完整 markdown；工具自动生成 `paper_notes/{id}.md`、即时校验并刷新 `notes_manifest.json`
 
+普通文本工具 `read_file` 会按本轮 agent 的模型上下文窗口估算文件是否能整读；
+能放入当前模型窗口时直接返回完整文件，放不下时才分页。显式传入 `max_chars`
+时以显式值为准。PDF 正文读取仍以 `extract_pdf_text` 返回的
+`preview_truncated_by_max_chars`、`complete_pdf_read` 和页码覆盖为准，不能因为单次
+文本预览没有截断就假设整篇 PDF 已读完。
+
 ### 实际执行过程
 
 `ReaderAgent(read)` 进入时会先列出 `literature/paper_notes/`，再读取或刷新 `literature/notes_manifest.json`；如果存在 `literature/deep_read_queue_pending.jsonl`，就按 pending queue 的 queue rank 继续，否则读 `deep_read_queue.jsonl`，再回退到 `papers_verified.jsonl`，最后才回退到 `papers_dedup.jsonl`。处理每篇论文前，它优先用 `lookup_paper_record(queue_rank=...)` 取该论文 metadata；只有没有 queue rank 的旧 workspace 才用 `paper_id` / `title` 查找。已有 note 只有在结构、Evidence 锚点和 `Reading Coverage` 都合格时才算完成。`notes_manifest.json` 会把每条队列记录标为 `complete`、`incomplete` 或 `missing`：同名 note 存在但缺章节时是 `incomplete`，不会再被误报成“没读”。

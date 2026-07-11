@@ -27,6 +27,9 @@ class ToolBuildContext:
     skill_dir: Path | None = None
     task_id: str | None = None
     run_id: str | None = None
+    llm_model: str | None = None
+    llm_tier: str | None = None
+    llm_max_context: int | None = None
 
 
 class ToolRegistry:

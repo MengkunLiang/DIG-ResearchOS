@@ -16,6 +16,13 @@ from ..runtime.errors import ToolAccessDenied, ToolRuntimeError
 from ..runtime.logger import get_logger
 
 _LOG = get_logger("filesystem")
+READ_FILE_FALLBACK_MAX_CHARS = 50_000
+READ_FILE_MIN_DYNAMIC_MAX_CHARS = 8_000
+READ_FILE_TRANSPORT_SAFETY_CAP = 1_000_000
+READ_FILE_RESERVED_CONTEXT_FRACTION = 0.15
+READ_FILE_RESERVED_CONTEXT_MIN_TOKENS = 8_000
+READ_FILE_RESERVED_CONTEXT_MAX_TOKENS = 64_000
+READ_FILE_TOOL_OUTPUT_CONTEXT_SHARE = 0.70
 STRUCTURED_ONLY_WRITE_PATHS = {
     "bridge_domain_plan.json": "bridge_domain_plan",
     "literature/bridge_domain_plan.json": "bridge_domain_plan",
@@ -35,11 +42,14 @@ class ReadFileParams(BaseModel):
         ge=0,
         description="从第几个字符开始读取；用于分页读取大文件",
     )
-    max_chars: int = Field(
-        default=50_000,
+    max_chars: int | None = Field(
+        default=None,
         ge=1,
-        le=200_000,
-        description="最多返回多少字符，防止大文件挤爆模型上下文",
+        le=READ_FILE_TRANSPORT_SAFETY_CAP,
+        description=(
+            "最多返回多少字符；不传时 ResearchOS 会根据当前模型上下文窗口动态选择，"
+            "防止大文件挤爆模型上下文"
+        ),
     )
 
 
@@ -49,22 +59,86 @@ class ReadFileTool(Tool):
     parameters_schema = ReadFileParams
     timeout_seconds = 10.0
 
-    def __init__(self, policy: WorkspaceAccessPolicy):
+    def __init__(self, policy: WorkspaceAccessPolicy, *, llm_max_context: int | None = None):
         self.policy = policy
+        self.llm_max_context = llm_max_context
+
+    def _usable_context_tokens(self) -> int | None:
+        if self.llm_max_context is None or self.llm_max_context <= 0:
+            return None
+        reserved = min(
+            READ_FILE_RESERVED_CONTEXT_MAX_TOKENS,
+            max(
+                READ_FILE_RESERVED_CONTEXT_MIN_TOKENS,
+                int(self.llm_max_context * READ_FILE_RESERVED_CONTEXT_FRACTION),
+            ),
+        )
+        return max(
+            1,
+            int((self.llm_max_context - reserved) * READ_FILE_TOOL_OUTPUT_CONTEXT_SHARE),
+        )
+
+    @staticmethod
+    def _looks_cjk(char: str) -> bool:
+        return (
+            "\u3400" <= char <= "\u4dbf"
+            or "\u4e00" <= char <= "\u9fff"
+            or "\uf900" <= char <= "\ufaff"
+            or "\u3040" <= char <= "\u30ff"
+            or "\uac00" <= char <= "\ud7af"
+        )
+
+    @classmethod
+    def _estimate_text_tokens(cls, content: str) -> int:
+        if not content:
+            return 0
+        cjk_chars = sum(1 for char in content if cls._looks_cjk(char))
+        non_cjk_chars = len(content) - cjk_chars
+        return max(1, int(cjk_chars * 1.1 + non_cjk_chars / 4.0))
+
+    def _default_max_chars(self, content: str) -> tuple[int, str, int | None, int | None]:
+        """Return a read budget and debug labels based on current model capacity."""
+        usable_tokens = self._usable_context_tokens()
+        if usable_tokens is None:
+            return READ_FILE_FALLBACK_MAX_CHARS, "fallback_default", None, None
+
+        size = len(content)
+        estimated_tokens = self._estimate_text_tokens(content)
+        if estimated_tokens <= usable_tokens and size <= READ_FILE_TRANSPORT_SAFETY_CAP:
+            return size, "model_context_full", estimated_tokens, usable_tokens
+
+        avg_chars_per_token = max(1.0, size / max(estimated_tokens, 1))
+        dynamic_budget = int(usable_tokens * avg_chars_per_token)
+        max_chars = max(
+            READ_FILE_MIN_DYNAMIC_MAX_CHARS,
+            min(READ_FILE_TRANSPORT_SAFETY_CAP, dynamic_budget, size),
+        )
+        return max_chars, "model_context_chunk", estimated_tokens, usable_tokens
 
     async def execute(self, **kwargs) -> ToolResult:
         path = kwargs["path"]
         offset = int(kwargs.get("offset") or 0)
-        max_chars = int(kwargs.get("max_chars") or 50_000)
+        requested_max_chars = kwargs.get("max_chars")
         try:
             abs_path = self.policy.resolve_read(path)
             full_content = abs_path.read_text(encoding="utf-8")
             size = len(full_content)
+            if requested_max_chars is None:
+                max_chars, max_chars_source, estimated_tokens, usable_context_tokens = (
+                    self._default_max_chars(full_content)
+                )
+            else:
+                max_chars = int(requested_max_chars)
+                max_chars_source = "explicit"
+                estimated_tokens = self._estimate_text_tokens(full_content)
+                usable_context_tokens = self._usable_context_tokens()
             content = full_content[offset : offset + max_chars]
             truncated = offset > 0 or offset + max_chars < size
             if truncated:
                 content = (
-                    f"[Runtime] 文件较大或请求了分页读取；仅返回字符区间 "
+                    f"[Runtime] 文件较大或请求了分页读取；当前 read_file 按"
+                    f"{'模型上下文容量估算' if max_chars_source.startswith('model_context') else '本次读取预算'}"
+                    f"返回字符区间 "
                     f"{offset}:{min(offset + max_chars, size)} / {size}。"
                     "如需继续读取，请再次调用 read_file 并设置 offset。\n\n"
                     + content
@@ -76,6 +150,11 @@ class ReadFileTool(Tool):
                     "path": path,
                     "size": size,
                     "offset": offset,
+                    "max_chars": max_chars,
+                    "max_chars_source": max_chars_source,
+                    "llm_max_context": self.llm_max_context,
+                    "estimated_text_tokens": estimated_tokens,
+                    "usable_context_tokens": usable_context_tokens,
                     "returned_chars": len(content),
                     "truncated": truncated,
                 },

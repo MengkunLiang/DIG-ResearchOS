@@ -443,12 +443,16 @@ runtime 不会立刻死掉，而是会主动发“继续推进或调用 finish_t
 - `policy`
 - `human`
 - `skill_dir`
+- `task_id` / `run_id`
+- `llm_model` / `llm_tier` / `llm_max_context`
 
-这三个字段分别提供：
+这些字段分别提供：
 
 - 读写边界
 - 人工审批/交互入口
 - skill 运行时的相对脚本工作目录语义
+- 当前 task/run 标识
+- 当前 agent 解析后的模型与上下文窗口，供工具做上下文预算
 
 ### 7.3 内置工具
 
@@ -464,6 +468,16 @@ runtime 不会立刻死掉，而是会主动发“继续推进或调用 finish_t
 - 提交相关：`latex_compile`
 - gate：`ask_human`
 - completion：`finish_task`
+
+`read_file` 的单次读取默认大小不是固定业务参数。未显式传入 `max_chars`
+时，runtime 会按当前 LLM 绑定的 `max_context` 估算文件 token 量，并给 prompt、
+历史消息、工具 schema 和后续回答预留上下文。如果估算后整文件能放入当前模型窗口，
+工具会一次性返回完整文件；只有估算放不下时才分页。模型或 agent 显式传入
+`max_chars` 时，以显式参数为准；没有模型上下文的离线工具调用仍使用旧 fallback
+`50000` 字符。为避免一次工具消息破坏 runtime 传输，动态读取仍有
+`1000000` 字符的传输安全上限。工具返回 metadata 会包含 `max_chars`、
+`max_chars_source`、`llm_max_context`、`estimated_text_tokens` 和
+`usable_context_tokens`，用于调试分页原因。
 
 ### 7.4 WorkspaceAccessPolicy
 
