@@ -8,6 +8,38 @@ import re
 from typing import Any
 
 
+_READLINE_CONFIGURED = False
+
+
+def _configure_readline_once() -> None:
+    """Enable predictable line editing for CLI gates when readline is available."""
+
+    global _READLINE_CONFIGURED
+    if _READLINE_CONFIGURED:
+        return
+    _READLINE_CONFIGURED = True
+    try:
+        import readline  # type: ignore
+    except Exception:
+        return
+    for binding in (
+        '"\\C-h": backward-delete-char',
+        '"\\C-?": backward-delete-char',
+        '"\\e[3~": delete-char',
+    ):
+        try:
+            readline.parse_and_bind(binding)
+        except Exception:
+            continue
+
+
+def _read_cli_line(prompt: str) -> str:
+    """Read one terminal line with best-effort readline editing support."""
+
+    _configure_readline_once()
+    return input(prompt)
+
+
 def _compact_text(value: Any, limit: int = 220) -> str:
     text = " ".join(str(value or "").split())
     if len(text) > limit:
@@ -87,7 +119,7 @@ class CLIHumanInterface(HumanInterface):
         print(f"输入摘要：{_summarize_arguments(arguments)}")
         print("═" * 60)
         try:
-            answer = input("批准执行? [y/N]: ").strip().lower()
+            answer = _read_cli_line("批准执行? [y/N]: ").strip().lower()
         except EOFError as exc:
             raise HumanInputUnavailable(f"{tool_name} 需要用户批准，但当前输入不可用。") from exc
         return answer in {"y", "yes"}
@@ -110,7 +142,7 @@ class CLIHumanInterface(HumanInterface):
             lines: list[str] = []
             try:
                 while True:
-                    line = input("> ")
+                    line = _read_cli_line("> ")
                     if line.strip() == "END":
                         break
                     lines.append(line)
@@ -167,7 +199,7 @@ class CLIHumanInterface(HumanInterface):
         selected = None
         while selected is None:
             try:
-                raw_answer = input("请选择: ").strip()
+                raw_answer = _read_cli_line("请选择: ").strip()
             except EOFError:
                 raise HumanInputUnavailable(f"Gate {gate_id} 需要用户选择，但当前输入不可用。") from None
             inline_result = self._parse_inline_gate_customization(gate_id, raw_answer, options)
@@ -194,7 +226,7 @@ class CLIHumanInterface(HumanInterface):
         for field_name in selected.get("collect_input", []):
             prompt = self._collect_input_prompt(selected, field_name)
             try:
-                captured[field_name] = input(f"{prompt}: ").strip()
+                captured[field_name] = _read_cli_line(f"{prompt}: ").strip()
             except EOFError as exc:
                 raise HumanInputUnavailable(f"Gate {gate_id} 需要输入 {field_name}，但当前输入不可用。") from exc
         defaults = selected.get("captured_defaults")
@@ -208,7 +240,9 @@ class CLIHumanInterface(HumanInterface):
                 "可能消耗较多算力/时间。"
             )
             try:
-                confirm = input("确认允许真实实验？输入 yes 继续，其它任意输入降级为 Claude Code 窗口: ").strip()
+                confirm = _read_cli_line(
+                    "确认允许真实实验？输入 yes 继续，其它任意输入降级为 Claude Code 窗口: "
+                ).strip()
             except EOFError as exc:
                 raise HumanInputUnavailable("codex_cli 真实执行需要二次确认，但当前输入不可用。") from exc
             if confirm.lower() != "yes":

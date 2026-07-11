@@ -2,7 +2,20 @@ from __future__ import annotations
 
 import pytest
 
-from researchos.tools.human_gate import CLIHumanInterface, HumanInputUnavailable
+from researchos.tools.human_gate import CLIHumanInterface, HumanInputUnavailable, _read_cli_line
+
+
+def test_cli_line_reader_forwards_prompt_to_builtin_input(monkeypatch):
+    seen: list[str] = []
+
+    def fake_input(prompt: str = "") -> str:
+        seen.append(prompt)
+        return "answer"
+
+    monkeypatch.setattr("builtins.input", fake_input)
+
+    assert _read_cli_line("请选择: ") == "answer"
+    assert seen == ["请选择: "]
 
 
 def test_cli_gate_parse_accepts_budget_extension_aliases():

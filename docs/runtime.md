@@ -294,6 +294,7 @@ workspace 初始化由 [researchos/runtime/workspace.py](../researchos/runtime/w
 
 - Agent 在当前 step 中显式调用工具，runtime 通过 CLI 收集回答并记录到 `_runtime/human_interactions.jsonl`
 - CLI 输入完成后用单独一行 `END` 或 Ctrl+D 提交；提交非空回答后会立即显示 `已收到输入，继续处理...`，下一行输出一整行 `-----` 分隔线，让用户知道输入已经进入 runtime
+- CLI 输入是 line-based：Backspace/Delete 只编辑当前行，按 Enter 后该行已经进入本轮回答；如果 Docker/IDE 终端里 Backspace 显示异常，优先确认当前终端是 TTY，必要时在终端运行 `stty sane` 或 `stty erase ^?` 后重新 `resume`
 - 如果收到空回答，CLI 会最多重试 3 次；只有连续空回答或 stdin 不可用时，当前 task 才进入可恢复暂停，不会把空输入当成“确认”
 - 如果 Agent 明确输出“请选择/请确认/请提供”等人工决策请求但忘记调用工具，AgentRunner 会自动桥接成 `ask_human`，并在问题中说明“为什么需要输入”；普通状态说明和内部计划不会触发桥接
 
