@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from datetime import datetime, timezone
 
 import yaml
 
@@ -42,6 +43,10 @@ CROSS_DOMAIN_RELATIONS = {
     "baseline_or_dataset_relevance",
     "adjacent_application",
 }
+
+T4_CONTEXT_PACK_JSON = Path("ideation/t4_context_pack.json")
+T4_CONTEXT_PACK_MD = Path("ideation/t4_context_pack.md")
+T4_PROGRESS_MD = Path("ideation/t4_progress.md")
 
 CROSS_DOMAIN_IDEA_ORIGINS = {
     "cross_domain_analogy",
@@ -168,6 +173,481 @@ def _note_card_prompt_summary(synthesis_workbench_text: str, *, limit: int = 10)
     return "\n".join(rows)[:4500]
 
 
+def _json_loads_or_empty(text: str) -> dict[str, object]:
+    try:
+        data = json.loads(text) if text.strip() else {}
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _read_json_file(path: Path) -> dict[str, object]:
+    try:
+        return _json_loads_or_empty(path.read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return {}
+
+
+def _workspace_rel(path: Path, workspace_dir: Path) -> str:
+    try:
+        return path.resolve().relative_to(workspace_dir.resolve()).as_posix()
+    except Exception:
+        return path.as_posix()
+
+
+def _source_file_info(workspace_dir: Path, rel: str) -> dict[str, object]:
+    path = workspace_dir / rel
+    info: dict[str, object] = {"path": rel, "exists": path.exists()}
+    if path.exists() and path.is_file():
+        try:
+            info["size"] = path.stat().st_size
+        except OSError:
+            pass
+    return info
+
+
+def _collect_workbench_note_cards(workbench: dict[str, object]) -> list[dict[str, object]]:
+    cards = workbench.get("all_note_cards")
+    if isinstance(cards, list):
+        return [card for card in cards if isinstance(card, dict)]
+    collected: list[dict[str, object]] = []
+    for key in ("notes", "abstract_notes"):
+        items = workbench.get(key)
+        if isinstance(items, list):
+            collected.extend(card for card in items if isinstance(card, dict))
+    return collected
+
+
+def _section_excerpt_from_markdown(text: str, names: tuple[str, ...], *, limit: int = 450) -> str:
+    lines = text.splitlines()
+    normalized_names = tuple(name.lower() for name in names)
+    capture: list[str] = []
+    active = False
+    for line in lines:
+        stripped = line.strip()
+        heading_match = re.match(r"^(#{2,6})\s*(.+?)\s*$", stripped)
+        if heading_match:
+            title = re.sub(r"^[A-Z]\.\s*", "", heading_match.group(2).strip(), flags=re.IGNORECASE)
+            title = re.sub(r"^§\d+\s*", "", title).strip().lower()
+            if any(name in title for name in normalized_names):
+                active = True
+                continue
+            if active:
+                break
+        if active:
+            capture.append(stripped)
+    return _shorten(" ".join(line for line in capture if line), limit)
+
+
+def _markdown_note_card(path: Path, workspace_dir: Path) -> dict[str, object] | None:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    title_match = re.search(r"^#\s+(.+?)\s*$", text, flags=re.MULTILINE)
+    title = title_match.group(1).strip() if title_match else path.stem
+    abstract_only = "abstract-only" in text.lower() or "paper_notes_abstract" in path.as_posix()
+    if "do_not_cite" in text.lower() or "do-not-cite" in text.lower():
+        citation_use = "do_not_cite"
+    elif abstract_only:
+        citation_use = "background_context"
+    else:
+        citation_use = "supporting_context"
+    card: dict[str, object] = {
+        "note_id": path.stem,
+        "paper_id": path.stem,
+        "title": title,
+        "source_file": _workspace_rel(path, workspace_dir),
+        "evidence_level": "ABSTRACT_ONLY" if abstract_only else "FULL_TEXT",
+        "citation_use": citation_use,
+        "citation_quality_score": 0.55 if abstract_only else 0.7,
+        "core_approach_view": _section_excerpt_from_markdown(
+            text,
+            ("core approach", "core approach/view", "core method", "核心做法", "核心视角"),
+        ),
+        "bridge_point": _section_excerpt_from_markdown(
+            text,
+            ("bridge point", "bridge", "桥接点", "迁移"),
+        ),
+        "gaps": _section_excerpt_from_markdown(
+            text,
+            ("gap", "gaps", "missing", "limitation", "缺口", "局限"),
+        ),
+        "mechanism_claim": _section_excerpt_from_markdown(
+            text,
+            ("mechanism claim", "mechanism", "机制"),
+        ),
+        "design_rationale": _section_excerpt_from_markdown(
+            text,
+            ("design rationale", "rationale", "设计论证", "设计理由"),
+        ),
+        "boundary_conditions": _section_excerpt_from_markdown(
+            text,
+            ("boundary condition", "boundary", "scope", "边界"),
+        ),
+        "raw_abstract": _section_excerpt_from_markdown(text, ("raw abstract", "abstract"), limit=320),
+    }
+    return card
+
+
+def _collect_markdown_note_cards(workspace_dir: Path, *, limit: int = 40) -> list[dict[str, object]]:
+    roots = [
+        workspace_dir / "literature" / "paper_notes",
+        workspace_dir / "literature" / "paper_notes_bridge",
+        workspace_dir / "literature" / "paper_notes_abstract",
+    ]
+    cards: list[dict[str, object]] = []
+    for root in roots:
+        if not root.exists():
+            continue
+        for path in sorted(root.glob("**/*.md")):
+            if path.name.startswith("_") or path.name.startswith("."):
+                continue
+            card = _markdown_note_card(path, workspace_dir)
+            if card is not None:
+                cards.append(card)
+            if len(cards) >= limit:
+                return cards
+    return cards
+
+
+def _compact_note_card(card: dict[str, object], workspace_dir: Path) -> dict[str, object]:
+    source_file = card.get("source_file") or card.get("path") or card.get("note_path")
+    if isinstance(source_file, str) and source_file:
+        source_file = source_file.strip()
+        if "/" not in source_file:
+            for rel_root in (
+                Path("literature/paper_notes"),
+                Path("literature/paper_notes_bridge"),
+                Path("literature/paper_notes_abstract"),
+            ):
+                root = workspace_dir / rel_root
+                if not root.exists():
+                    continue
+                matches = list(root.glob(f"**/{source_file}"))
+                if matches:
+                    source_file = _workspace_rel(matches[0], workspace_dir)
+                    break
+    compact: dict[str, object] = {
+        "note_id": str(card.get("note_id") or card.get("paper_id") or card.get("id") or "").strip(),
+        "paper_id": str(card.get("paper_id") or card.get("raw_paper_id") or card.get("note_id") or "").strip(),
+        "title": _shorten(str(card.get("title") or card.get("display_label") or "unknown"), 180),
+        "year": card.get("year"),
+        "venue": _shorten(str(card.get("venue") or ""), 100),
+        "evidence_level": str(card.get("evidence_level") or "unknown"),
+        "citation_use": str(card.get("citation_use") or "unknown"),
+        "citation_quality_score": card.get("citation_quality_score"),
+        "citation_ref": str(card.get("citation_ref") or "").strip(),
+        "source_file": str(source_file or "").strip(),
+    }
+    for key in (
+        "core_approach_view",
+        "bridge_point",
+        "gaps",
+        "mechanism_claim",
+        "design_rationale",
+        "boundary_conditions",
+        "raw_abstract",
+    ):
+        value = _shorten(_stringify_note_card_field(card.get(key)), 300)
+        if value:
+            compact[key] = value
+    if not compact["source_file"] and compact["note_id"]:
+        candidate = workspace_dir / "literature" / "paper_notes" / f"{compact['note_id']}.md"
+        if candidate.exists():
+            compact["source_file"] = _workspace_rel(candidate, workspace_dir)
+    return compact
+
+
+def _stringify_note_card_field(value: object) -> str:
+    if value in (None, "", [], {}):
+        return ""
+    if isinstance(value, dict):
+        preferred = (
+            "stated_mechanism",
+            "rationale",
+            "works_when",
+            "may_fail_when",
+            "untested_boundary",
+            "rationale_evidence",
+            "rationale_weakness",
+            "supporting_artifact",
+            "evidence_type",
+        )
+        parts: list[str] = []
+        for key in preferred:
+            item = value.get(key)
+            if item in (None, "", [], {}):
+                continue
+            parts.append(f"{key}: {_stringify_note_card_field(item)}")
+            if len(parts) >= 3:
+                break
+        if not parts:
+            for key, item in value.items():
+                if item in (None, "", [], {}):
+                    continue
+                parts.append(f"{key}: {_stringify_note_card_field(item)}")
+                if len(parts) >= 3:
+                    break
+        return "; ".join(parts)
+    if isinstance(value, list):
+        return "; ".join(_stringify_note_card_field(item) for item in value[:5] if item not in (None, "", [], {}))
+    return " ".join(str(value).split())
+
+
+def _compact_items(items: object, *, limit: int, fields: tuple[str, ...]) -> list[dict[str, object]]:
+    if not isinstance(items, list):
+        return []
+    compact: list[dict[str, object]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        row: dict[str, object] = {}
+        for field in fields:
+            if field in item and item.get(field) not in (None, "", []):
+                value = item.get(field)
+                if isinstance(value, (dict, list)):
+                    row[field] = _shorten(_stringify_note_card_field(value), 360)
+                elif isinstance(value, str):
+                    row[field] = _shorten(value, 360)
+                else:
+                    row[field] = value
+        if row:
+            compact.append(row)
+        if len(compact) >= limit:
+            break
+    return compact
+
+
+def _comparison_table_summary(path: Path) -> dict[str, object]:
+    if not path.exists() or not path.is_file():
+        return {"path": "literature/comparison_table.csv", "exists": False}
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return {"path": "literature/comparison_table.csv", "exists": True, "readable": False}
+    header = lines[0].split(",")[:12] if lines else []
+    return {
+        "path": "literature/comparison_table.csv",
+        "exists": True,
+        "row_count_estimate": max(0, len(lines) - 1),
+        "columns_preview": [_shorten(col, 80) for col in header],
+        "sample_rows": [_shorten(line, 260) for line in lines[1:4]],
+    }
+
+
+def prepare_t4_context_pack(workspace_dir: Path, *, card_limit: int = 18) -> dict[str, object]:
+    """Build compact T4 context artifacts before the LLM starts."""
+
+    workspace_dir = Path(workspace_dir)
+    ideation_dir = workspace_dir / "ideation"
+    ideation_dir.mkdir(parents=True, exist_ok=True)
+    workbench_path = workspace_dir / "literature" / "synthesis_workbench.json"
+    workbench = _read_json_file(workbench_path)
+    raw_cards = _collect_workbench_note_cards(workbench)
+    if not raw_cards:
+        raw_cards = _collect_markdown_note_cards(workspace_dir)
+    usable_cards = [
+        _compact_note_card(card, workspace_dir)
+        for card in raw_cards
+        if isinstance(card, dict) and _note_card_usable_for_t4(card)
+    ]
+    usable_cards.sort(key=_note_card_t4_priority, reverse=True)
+    selected_cards = usable_cards[:card_limit]
+
+    bridge_plan = _read_json_file(workspace_dir / "literature" / "bridge_domain_plan.json")
+    domain_map = _read_json_file(workspace_dir / "literature" / "domain_map.json")
+    pack: dict[str, object] = {
+        "version": "1.0",
+        "semantics": "t4_compact_ideation_context_pack",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "recommended_use": [
+            "Use ideation/t4_context_pack.md or this JSON before broad-scanning paper_notes.",
+            "Open individual note files only when a specific claim or citation needs verification.",
+            "Keep abstract-only material as weak idea fuel, not as strong claim evidence.",
+        ],
+        "source_files": [
+            _source_file_info(workspace_dir, rel)
+            for rel in (
+                "literature/synthesis.md",
+                "literature/missing_areas.md",
+                "literature/synthesis_workbench.json",
+                "literature/comparison_table.csv",
+                "literature/domain_map.json",
+                "literature/bridge_domain_plan.json",
+                "ideation/survey_insights.json",
+            )
+        ],
+        "note_card_summary": {
+            "source": "synthesis_workbench.json" if workbench else "paper_note_markdown_scan",
+            "raw_card_count": len(raw_cards),
+            "usable_card_count": len(usable_cards),
+            "selected_card_count": len(selected_cards),
+            "deep_note_count": workbench.get("note_count", 0),
+            "abstract_note_count": workbench.get("abstract_note_count", 0),
+            "total_note_count": workbench.get("total_note_count", 0),
+        },
+        "note_cards": selected_cards,
+        "mechanism_claim_clusters": _compact_items(
+            workbench.get("mechanism_claim_clusters") or workbench.get("domain_consensus"),
+            limit=6,
+            fields=(
+                "mechanism",
+                "paper_count",
+                "citation_refs",
+                "evidence_strength_hint",
+                "challengeable_hint",
+                "allowed_use",
+            ),
+        ),
+        "bridge_transfer_drafts": _compact_items(
+            workbench.get("bridge_transfer_drafts"),
+            limit=6,
+            fields=(
+                "bridge_id",
+                "bridge_name",
+                "relation_to_project",
+                "transferable_mechanism",
+                "how_it_maps_to_project",
+                "why_potentially_novel",
+                "risk",
+                "allowed_use",
+            ),
+        ),
+        "adjacent_transfers": _compact_items(
+            workbench.get("adjacent_transfers"),
+            limit=5,
+            fields=(
+                "source_field",
+                "mechanism",
+                "transfer_hypothesis_hint",
+                "why_unused_in_target",
+                "evidence_level",
+                "allowed_use",
+            ),
+        ),
+        "cross_paper_tensions": _compact_items(
+            workbench.get("cross_paper_tensions"),
+            limit=6,
+            fields=("tension", "papers", "evidence", "why_it_matters"),
+        ),
+        "research_question_candidates": _compact_items(
+            workbench.get("research_question_candidates"),
+            limit=6,
+            fields=("question", "rationale", "related_papers", "evidence_level"),
+        ),
+        "comparison_table": _comparison_table_summary(workspace_dir / "literature" / "comparison_table.csv"),
+        "bridge_domain_plan": {
+            "source": bridge_plan.get("source"),
+            "bridge_domains": bridge_plan.get("bridge_domains", []),
+        }
+        if bridge_plan
+        else {},
+        "domain_map_preview": {
+            "bucket_summary": domain_map.get("bucket_summary") or domain_map.get("domain_map_bucket_summary"),
+            "theory_bridge": domain_map.get("theory_bridge"),
+        }
+        if domain_map
+        else {},
+    }
+
+    pack["outputs"] = [T4_CONTEXT_PACK_JSON.as_posix(), T4_CONTEXT_PACK_MD.as_posix(), T4_PROGRESS_MD.as_posix()]
+    json_path = workspace_dir / T4_CONTEXT_PACK_JSON
+    md_path = workspace_dir / T4_CONTEXT_PACK_MD
+    progress_path = workspace_dir / T4_PROGRESS_MD
+    json_path.write_text(json.dumps(pack, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    md_path.write_text(_render_t4_context_pack_markdown(pack), encoding="utf-8")
+    progress_path.write_text(_render_t4_progress_markdown(pack), encoding="utf-8")
+    return pack
+
+
+def _render_t4_context_pack_markdown(pack: dict[str, object]) -> str:
+    summary = pack.get("note_card_summary") if isinstance(pack.get("note_card_summary"), dict) else {}
+    cards = pack.get("note_cards") if isinstance(pack.get("note_cards"), list) else []
+    lines = [
+        "# T4 Compact Context Pack",
+        "",
+        "This pack is the first-stop context for T4 ideation. It summarizes the usable note-card sections and compact grounding signals so the agent does not need to broad-scan every paper note.",
+        "",
+        "## Coverage",
+        f"- Usable note cards: {summary.get('usable_card_count', 0)}",
+        f"- Selected for prompt use: {summary.get('selected_card_count', 0)}",
+        f"- Deep notes recorded in workbench: {summary.get('deep_note_count', 0)}",
+        f"- Abstract/light notes recorded in workbench: {summary.get('abstract_note_count', 0)}",
+        "",
+        "## Reading Rule",
+        "- Read this pack before opening individual note files.",
+        "- Open a note file only to verify a specific claim, citation, or boundary condition.",
+        "- Treat abstract-only material as weak idea fuel unless upgraded by a full note.",
+        "",
+        "## Selected Note Cards",
+    ]
+    for idx, card in enumerate(cards[:18], start=1):
+        if not isinstance(card, dict):
+            continue
+        title = card.get("title") or card.get("note_id") or "unknown"
+        lines.extend(
+            [
+                f"{idx}. {title}",
+                f"   - evidence={card.get('evidence_level', 'unknown')} | use={card.get('citation_use', 'unknown')} | score={card.get('citation_quality_score', 'unknown')} | ref={card.get('citation_ref', '')}",
+            ]
+        )
+        if card.get("source_file"):
+            lines.append(f"   - source={card.get('source_file')}")
+        for label, key in (
+            ("Approach", "core_approach_view"),
+            ("Bridge", "bridge_point"),
+            ("Gap", "gaps"),
+            ("Mechanism", "mechanism_claim"),
+            ("Design rationale", "design_rationale"),
+            ("Boundary", "boundary_conditions"),
+            ("Raw abstract", "raw_abstract"),
+        ):
+            value = str(card.get(key) or "").strip()
+            if value:
+                lines.append(f"   - {label}: {value}")
+    bridge_drafts = pack.get("bridge_transfer_drafts") if isinstance(pack.get("bridge_transfer_drafts"), list) else []
+    if bridge_drafts:
+        lines.extend(["", "## Bridge Transfer Seeds"])
+        for item in bridge_drafts[:6]:
+            if not isinstance(item, dict):
+                continue
+            lines.append(f"- {item.get('bridge_id', '')}: {_shorten(str(item.get('bridge_name') or item.get('transferable_mechanism') or ''), 220)}")
+    mechanisms = pack.get("mechanism_claim_clusters") if isinstance(pack.get("mechanism_claim_clusters"), list) else []
+    if mechanisms:
+        lines.extend(["", "## Mechanism Challenge Seeds"])
+        for item in mechanisms[:6]:
+            if not isinstance(item, dict):
+                continue
+            lines.append(f"- {_shorten(str(item.get('mechanism') or ''), 240)}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _render_t4_progress_markdown(pack: dict[str, object]) -> str:
+    summary = pack.get("note_card_summary") if isinstance(pack.get("note_card_summary"), dict) else {}
+    outputs = pack.get("outputs") if isinstance(pack.get("outputs"), list) else [
+        T4_CONTEXT_PACK_JSON.as_posix(),
+        T4_CONTEXT_PACK_MD.as_posix(),
+    ]
+    return "\n".join(
+        [
+            "# T4 Progress",
+            "",
+            "- [ready] 已生成 Gate1 候选构思用 compact context pack。",
+            (
+                "- [evidence] 已从 "
+                f"{summary.get('raw_card_count', 0)} 张候选笔记卡中筛出 "
+                f"{summary.get('selected_card_count', 0)} 张可用卡片。"
+            ),
+            "- [rule] T4 会先读 compact pack，只在核验具体 claim 时打开单篇 note。",
+            "- [outputs] " + "; ".join(str(item) for item in outputs),
+            "- [pending] 待写入 Pass1 候选、Pass2 接地复核、候选方向和 Gate1 brief。",
+            "",
+        ]
+    )
+
+
 class IdeationAgent(Agent):
     """假设生成Agent。深度推理+两轮Gate确认。"""
 
@@ -226,8 +706,9 @@ class IdeationAgent(Agent):
         bridge_domain_plan = read_text_file(ws / "literature" / "bridge_domain_plan.json", default="")
         synthesis_workbench = read_text_file(ws / "literature" / "synthesis_workbench.json", default="")
         survey_insights = read_text_file(ws / "ideation" / "survey_insights.json", default="")
+        t4_context_pack = read_text_file(ws / T4_CONTEXT_PACK_MD, default="")
         weak_evidence_summary = _weak_evidence_prompt_summary(synthesis_workbench)
-        note_card_summary = _note_card_prompt_summary(synthesis_workbench)
+        note_card_summary = "" if t4_context_pack.strip() else _note_card_prompt_summary(synthesis_workbench)
 
         return render_prompt(
             self.spec.prompt_template,
@@ -240,12 +721,14 @@ class IdeationAgent(Agent):
             domain_map_preview=domain_map[:2500],
             bridge_domain_plan_preview=bridge_domain_plan[:2500],
             synthesis_workbench_preview=synthesis_workbench[:3000],
+            t4_context_pack_preview=t4_context_pack[:6500],
             weak_evidence_summary=weak_evidence_summary,
             note_card_summary=note_card_summary,
             survey_insights_preview=survey_insights[:3000],
             has_domain_map=bool(domain_map.strip()),
             has_bridge_domain_plan=bool(bridge_domain_plan.strip()),
             has_synthesis_workbench=bool(synthesis_workbench.strip()),
+            has_t4_context_pack=bool(t4_context_pack.strip()),
             has_survey_insights=bool(survey_insights.strip()),
             has_seed_ideas=bool(seed_ideas.strip()),
             temperature=self.spec.temperature,
@@ -264,6 +747,8 @@ class IdeationAgent(Agent):
                 (
                 "请执行 T4 Gate1 前半段。当前尚无合法 ideation/_gate1_user_selection.json"
                 f"（{gate1_selection_error}），所以本轮只生成并写入 Gate1 候选池中间产物："
+                "先读取 ideation/t4_context_pack.md 或 ideation/t4_context_pack.json，"
+                "并立刻更新 ideation/t4_progress.md 说明正在从 compact pack 生成候选；"
                 "ideation/_pass1_forward_candidates.json、ideation/_pass2_grounding_review.json、"
                 "ideation/_candidate_directions.json、ideation/_family_distribution.md、"
                 "ideation/_gate1_candidate_cards.md、ideation/_gate1_selection_brief.md，"
@@ -278,6 +763,7 @@ class IdeationAgent(Agent):
             ctx,
             (
             "请执行 T4 Gate1 后半段。必须先读取 ideation/_gate1_user_selection.json，"
+            "再参考 ideation/t4_context_pack.md 或 ideation/t4_context_pack.json 做定向证据核对；"
             "并根据用户已确认/合并/重构的候选方向产出 hypotheses.md + exp_plan.yaml + "
             "risks.md + idea_rationales.json + idea_scorecard.yaml + "
             "rejected_ideas.md + selected_idea_brief.md + gate_decisions.json。"

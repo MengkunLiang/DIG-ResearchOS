@@ -45,7 +45,7 @@ from .t3_notes_manifest import validate_t3_input_fingerprints
 from .artifact_fingerprints import validate_t45_fingerprint_report
 from .task_recovery import prepare_generic_resume_artifacts
 from .run_logger import RunLogger
-from ..agents.ideation import validate_t4_gate1_ready
+from ..agents.ideation import prepare_t4_context_pack, validate_t4_gate1_ready
 from .trace import NullTraceWriter, TraceWriter
 from ..tools.base import Tool, ToolResult
 from ..tools.workspace_policy import WorkspaceAccessPolicy
@@ -269,6 +269,8 @@ class AgentRunner:
         )[0][0]
 
         policy = self.workspace_policy_factory(ctx, eff)
+        if ctx.task_id == "T4":
+            self._maybe_prepare_t4_context_pack_before_prompt(ctx)
         build_ctx = ToolBuildContext(
             policy=policy,
             human=self.human,
@@ -625,6 +627,7 @@ class AgentRunner:
                         self._emit(
                             f"[{self.agent.spec.name} Agent] 本轮将按顺序处理 {len(tool_names)} 个工具调用："
                             f"{', '.join(tool_names)}",
+                            verbose_only=True,
                         )
                     for tc in assistant_msg.tool_calls:
                         run_logger.tool_call(tc.name, tc.arguments, step=budget.steps)
@@ -1476,6 +1479,56 @@ class AgentRunner:
             },
             action_type="t36_compile_resume_prefinalize",
         )
+        return True
+
+    def _maybe_prepare_t4_context_pack_before_prompt(self, ctx: ExecutionContext) -> bool:
+        """Prepare compact T4 inputs before rendering the ideation prompt."""
+
+        if ctx.task_id != "T4":
+            return False
+        if not self._t4_gate1_user_selection_exists(ctx):
+            gate1_ready, _gate1_err = validate_t4_gate1_ready(ctx.workspace_dir)
+            if gate1_ready:
+                return False
+        try:
+            pack = prepare_t4_context_pack(ctx.workspace_dir)
+        except Exception as exc:
+            self.log.warning("t4_context_pack_prepare_failed", error=str(exc))
+            self.progress.emit(
+                "[Ideation Agent] T4 compact context pack 准备失败；将回退到原始材料读取",
+                important=True,
+            )
+            return False
+
+        summary = pack.get("note_card_summary") if isinstance(pack.get("note_card_summary"), dict) else {}
+        outputs = pack.get("outputs") if isinstance(pack.get("outputs"), list) else []
+        selected = summary.get("selected_card_count", 0)
+        usable = summary.get("usable_card_count", 0)
+        raw = summary.get("raw_card_count", 0)
+        self.progress.emit(
+            "[Ideation Agent] T4 已准备 compact context pack\n"
+            f"- 笔记卡: 已选 {selected} 张；可用 {usable} 张；原始 {raw} 张\n"
+            f"- 写入: {'；'.join(str(item) for item in outputs[:3])}\n"
+            "- 用途: 让 T4 先基于压缩证据生成 Gate1 候选，减少无目标分页读取",
+            important=True,
+        )
+        self.progress.progress_file_update(
+            label="Ideation/T4 进度",
+            path="ideation/t4_progress.md",
+            bullets=summarize_progress_markdown(ctx.workspace_dir / "ideation" / "t4_progress.md", max_items=4),
+        )
+        actions = ctx.extra.setdefault("runtime_actions", [])
+        if isinstance(actions, list):
+            actions.append(
+                {
+                    "type": "t4_context_pack_prepared",
+                    "mode": "t4_context_pack_prepared",
+                    "outputs": outputs,
+                    "selected_note_cards": selected,
+                    "usable_note_cards": usable,
+                }
+            )
+        ctx.extra["t4_context_pack_prepared"] = True
         return True
 
     async def _maybe_finalize_t4_before_llm(self, ctx: ExecutionContext) -> bool:

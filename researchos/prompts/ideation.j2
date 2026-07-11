@@ -11,6 +11,19 @@
 
 ## 输入材料
 
+{% set t4_pack = t4_context_pack_preview | default('') %}
+{% if t4_pack %}
+### T4 Compact Context Pack（优先读取）
+{{ t4_pack }}
+
+使用规则：
+- 本轮优先基于 `ideation/t4_context_pack.md` / `ideation/t4_context_pack.json` 生成和接地候选。
+- 不要一开始就 `list_files` 或分页扫 `literature/paper_notes/`、`literature/paper_notes_abstract/`、`literature/comparison_table.csv`。
+- 只有当某个候选的机制、引用或边界条件需要核验时，才定向打开对应 note 文件或 synthesis 片段。
+- 若读取了新增证据，应同步更新 `ideation/t4_progress.md`，用 1-4 条短 bullet 说明当前 Pass、关键发现和已写入文件。
+
+{% endif %}
+
 ### 文献综述（synthesis.md前8000字符）
 {{ synthesis_preview }}
 
@@ -65,11 +78,17 @@ feasibility 结论。
 - §9 / §13 / §14 / §18 适合形成机制挑战、设计论证和边界条件。
 - Raw abstract 只用于 abstract-only 候选的保守理解，不能当作全文证据。
 
+{% elif has_t4_context_pack | default(false) %}
+### 可检索笔记卡 section 摘要
+本轮的 note-card sections 已并入 `ideation/t4_context_pack.md` / `ideation/t4_context_pack.json`。
+请优先使用 compact pack 中的 Approach、Bridge、Gap、Mechanism、Design rationale、
+Boundary 和 Raw abstract 字段；只有具体 claim 需要核验时再读取单篇 note。
+
 {% else %}
 ### 可检索笔记卡 section 摘要
 当前 prompt 未收到压缩后的 note-card section 摘要。不要因此只依赖 synthesis.md。
 你必须在生成候选 idea 前主动用 `read_file` 读取 `literature/synthesis_workbench.json`，
-必要时再读取 `literature/paper_notes/` 和 `literature/paper_notes_abstract/` 中的相关 note。
+必要时再定向读取 `literature/paper_notes/` 和 `literature/paper_notes_abstract/` 中的相关 note。
 重点抽取 `core_approach_view`、`bridge_point`、`gaps`、`mechanism_claim`、
 `design_rationale`、`boundary_conditions` 和 `raw_abstract` 字段；abstract-only /
 metadata-only 信息只能作为覆盖提示或补资源线索，不能作为强 claim evidence。
@@ -123,10 +142,20 @@ T4 已拆成两个 runtime 阶段：
 ## 阶段A：发散候选方向 + Gate1（T4-DECIDE-1）
 
 ### Step 1: 深度分析文献综述
+{% if has_t4_context_pack | default(false) %}
+先读取 `ideation/t4_context_pack.md` 或 `ideation/t4_context_pack.json`，把其中的 note-card sections、机制 challenge seeds、bridge transfer seeds 和 comparison_table 摘要作为第一轮上下文。
+如果 compact pack 已足够支撑候选生成，不要再广泛分页读取 `comparison_table.csv` 或成批打开 paper notes；只在具体 claim 需要核验时定向读取。
+{% else %}
 用 `read_file` 读取完整的 `literature/synthesis.md`，理解：
+{% endif %}
 - Q1-QN: 文献综述中提出的核心问题
 - 现有方法的局限性
 - missing_areas.md 中的检索覆盖提示；它们不是研究缺口结论，必须结合 synthesis 和 paper notes 复核
+
+在开始 Pass 1 后，先写入或更新 `ideation/t4_progress.md`，简要记录：
+- 当前阶段是 Gate1 前半段还是 Gate1 后半段；
+- 已采用的主要输入文件；
+- 当前准备写入的 T4 产物。
 
 ### Step 2: Pass 1 前向生成：自由推理 + 综述整体格局 + seed idea
 基于问题结构、synthesis gestalt、design-rationale tension、未解释现象和用户 seed，先生成 3-5 个主线候选方向。文献在这一步是背景和燃料，不是 provenance 约束；一个好 idea 可以来自问题重构、第一性原理设计推导、跨域类比或与现有工作正交的自由推理。

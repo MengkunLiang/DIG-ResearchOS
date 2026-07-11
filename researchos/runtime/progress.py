@@ -637,7 +637,20 @@ def summarize_tool_result(
             return summary, "literature/papers_raw.jsonl"
         return f"返回 {reported} 条候选", None
 
-    if tool_name in {"read_file", "list_files", "glob_files", "grep_search"}:
+    if tool_name == "read_file":
+        path = _extract_output_path(tool_name, data)
+        size = data.get("size")
+        offset = data.get("offset")
+        max_chars = data.get("max_chars")
+        truncated = bool(data.get("truncated"))
+        if isinstance(size, int) and isinstance(offset, int) and isinstance(max_chars, int):
+            end = min(offset + max_chars, size)
+            if truncated:
+                return f"已读取字符区间 {offset}:{end} / {size}；如需核验更多内容可继续按 offset 定向读取", path
+            return f"已读取完整文件，约 {size} 字符", path
+        return _compact_text(content or "读取完成", 240 if verbose else 160), path
+
+    if tool_name in {"list_files", "glob_files", "grep_search"}:
         count = _first_present(data, "count", "matched_count", "file_count", "item_count")
         path = _extract_output_path(tool_name, data)
         if count is not None:

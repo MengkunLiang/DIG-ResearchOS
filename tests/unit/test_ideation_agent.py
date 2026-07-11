@@ -19,9 +19,13 @@ import yaml
 
 from researchos.agents.ideation import (
     IdeationAgent,
+    T4_CONTEXT_PACK_JSON,
+    T4_CONTEXT_PACK_MD,
+    T4_PROGRESS_MD,
     _note_card_prompt_summary,
     _validate_bridge_coverage_review,
     _validate_candidate_directions,
+    prepare_t4_context_pack,
     validate_t4_gate1_ready,
 )
 from researchos.runtime.agent import ExecutionContext
@@ -1013,6 +1017,111 @@ def test_note_card_prompt_summary_filters_low_quality_cards():
     assert "A tractable gap" in summary
     assert "Irrelevant Paper" not in summary
     assert "do_not_cite" not in summary
+
+
+def test_prepare_t4_context_pack_writes_compact_artifacts(temp_workspace):
+    workbench = {
+        "note_count": 2,
+        "abstract_note_count": 1,
+        "total_note_count": 3,
+        "notes": [
+            {
+                "note_id": "bad",
+                "paper_id": "bad",
+                "title": "Weak unrelated paper",
+                "evidence_level": "ABSTRACT_ONLY",
+                "citation_use": "do_not_cite",
+                "citation_quality_score": 0.1,
+                "gaps": "与项目无关",
+            },
+            {
+                "note_id": "good",
+                "paper_id": "good",
+                "title": "Useful Mechanism Paper",
+                "evidence_level": "FULL_TEXT",
+                "citation_use": "core_evidence",
+                "citation_quality_score": 0.86,
+                "citation_ref": "\\cite{good2026}",
+                "source_file": "literature/paper_notes/good.md",
+                "core_approach_view": "A compact but usable approach view.",
+                "bridge_point": "A bridge that can seed a design transfer.",
+                "gaps": "A concrete untested mechanism.",
+                "mechanism_claim": "The mechanism is testable.",
+                "design_rationale": "The design rationale is explicit.",
+                "boundary_conditions": "Works under sparse feedback.",
+            },
+        ],
+        "mechanism_claim_clusters": [
+            {
+                "mechanism": "A common causal mechanism may be underspecified.",
+                "paper_count": 2,
+                "challengeable_hint": True,
+            }
+        ],
+    }
+    (temp_workspace / "literature" / "synthesis_workbench.json").write_text(
+        json.dumps(workbench, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (temp_workspace / "literature" / "comparison_table.csv").write_text(
+        "paper_id,title\np1,Useful Mechanism Paper\n",
+        encoding="utf-8",
+    )
+
+    pack = prepare_t4_context_pack(temp_workspace, card_limit=5)
+
+    assert (temp_workspace / T4_CONTEXT_PACK_JSON).exists()
+    assert (temp_workspace / T4_CONTEXT_PACK_MD).exists()
+    assert (temp_workspace / T4_PROGRESS_MD).exists()
+    assert pack["note_card_summary"]["selected_card_count"] == 1
+    cards = pack["note_cards"]
+    assert cards[0]["title"] == "Useful Mechanism Paper"
+    assert "Weak unrelated paper" not in json.dumps(pack, ensure_ascii=False)
+    progress = (temp_workspace / T4_PROGRESS_MD).read_text(encoding="utf-8")
+    assert "已生成 Gate1 候选构思用 compact context pack" in progress
+    assert "Pass1 候选" in progress
+
+
+def test_ideation_prompt_prefers_t4_context_pack(ideation_agent, temp_workspace):
+    (temp_workspace / "project.yaml").write_text(
+        yaml.safe_dump({"research_direction": "Agentic uplift"}),
+        encoding="utf-8",
+    )
+    (temp_workspace / "literature" / "synthesis.md").write_text("# Synthesis\nQ1", encoding="utf-8")
+    (temp_workspace / "literature" / "synthesis_workbench.json").write_text(
+        json.dumps(
+            {
+                "notes": [
+                    {
+                        "note_id": "good",
+                        "title": "Useful Note",
+                        "evidence_level": "FULL_TEXT",
+                        "citation_use": "core_evidence",
+                        "citation_quality_score": 0.8,
+                        "gaps": "A useful gap.",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    prepare_t4_context_pack(temp_workspace, card_limit=5)
+    ctx = ExecutionContext(
+        workspace_dir=temp_workspace,
+        project_id="test_project",
+        task_id="T4",
+        run_id="test-run-pack",
+        mode=None,
+    )
+
+    prompt = ideation_agent.system_prompt(ctx)
+    msg = ideation_agent.initial_user_message(ctx)
+
+    assert "T4 Compact Context Pack" in prompt
+    assert "不要一开始就 `list_files`" in prompt
+    assert "ideation/t4_context_pack.md" in msg
+    assert "ideation/t4_progress.md" in msg
 
 
 def test_ideation_initial_user_message(ideation_agent, temp_workspace):
