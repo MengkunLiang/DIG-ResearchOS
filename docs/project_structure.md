@@ -142,7 +142,7 @@ privileged container requirement in the default flow.
 
 Keep these out of git and Docker images:
 
-- `.env`, `.env`
+- `.env`, `.env.*`
 - `workspace/`
 - `_runtime/` logs and traces
 - generated PDFs, LaTeX auxiliary files, and submission build outputs

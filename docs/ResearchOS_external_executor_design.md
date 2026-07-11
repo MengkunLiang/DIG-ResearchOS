@@ -1,5 +1,11 @@
 # ResearchOS 外部执行器阶段设计文档
 
+> Historical design note. This document records the deeper design rationale for
+> the external executor stage. For the current operational runbook, start from
+> [agent_pipeline.md](./agent_pipeline.md), [re-boost.md](./re-boost.md), and
+> `config/system_config/state_machine.yaml`. Do not treat this file as the
+> shortest or sole source of truth for day-to-day runs.
+
 这一部分要注意前后衔接，前面Pre\-T5会传入一些文件信息，或者你可以让CC/Codex自己读某些文件夹，困难的任务都交给他，比如方法设计、抓资源、跑实验、改方法、重跑实验直至Sota，然后整理方法与绘图，以及实验结果与绘图。将对应的资料传给后续writer agent。
 
 我感觉传入文件信息给cc/codex的时候，可以让cc/codex re\-boosting这个文件，要不然会有一定的misalignment，这也是一种增强。

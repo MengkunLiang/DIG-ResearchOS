@@ -770,8 +770,5 @@ pip install -e .
 5. [docs/docker.md](./docker.md)
 6. [docs/logging.md](./logging.md)
 
-如果你在本地维护当前仓库，建议再结合：
-
-- [../tmp/researchos-local-debug-guide.md](../tmp/researchos-local-debug-guide.md)
-
-一起使用。
+更完整的文档索引见 [docs/README.md](./README.md)。本地临时调试记录应放在
+`tmp/` 或 `tests/manual/`，不要从正式文档链接到这些未提交文件。

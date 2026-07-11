@@ -32,8 +32,8 @@ doing, then move to the deeper references only when needed.
 | Document | Status | Scope |
 | --- | --- | --- |
 | [agent_pipeline.md](agent_pipeline.md) | Canonical reference | T5 external handoff, T7 ingest, T8 writing, review, revision, and T9 submission behavior. |
-| [ResearchOS_external_executor_design.md](ResearchOS_external_executor_design.md) | Design reference | External executor handoff flow, result pack expectations, and host-side execution model. |
 | [resource_search.md](resource_search.md) | Reference | Resource and literature search behavior. |
+| [../latex_templete/README.md](../latex_templete/README.md) | Reference | LaTeX template registry used by T3.6 and T8/T9 assembly. |
 
 ## Design Archive
 
@@ -53,8 +53,8 @@ work, but they are not the shortest path for ordinary operation:
 | Current state-machine topology | `config/system_config/state_machine.yaml` |
 | Runtime configuration precedence | [config.md](config.md) |
 | Native vs Docker operation | [docker.md](docker.md) |
-| External executor handoff and result ingest | [agent_pipeline.md](agent_pipeline.md), [ResearchOS_external_executor_design.md](ResearchOS_external_executor_design.md) |
-| Writing, LaTeX, and submission bundle | [agent_pipeline.md](agent_pipeline.md) |
+| External executor handoff and result ingest | [agent_pipeline.md](agent_pipeline.md), `config/system_config/state_machine.yaml` |
+| Writing, LaTeX, and submission bundle | [agent_pipeline.md](agent_pipeline.md), [../latex_templete/README.md](../latex_templete/README.md) |
 
 ## Generated Artifacts
 

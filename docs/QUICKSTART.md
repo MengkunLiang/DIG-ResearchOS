@@ -316,7 +316,7 @@ researchos trace T7_single_12345678 --workspace ./workspace/local-test2
 researchos trace T7_single_12345678 --workspace ./workspace/local-test2 --raw
 ```
 
-### 4.8 校验某阶段产物
+### 4.9 校验某阶段产物
 
 ```bash
 researchos validate --workspace ./workspace/local-test2 --task T7-AUDIT
@@ -325,13 +325,13 @@ researchos validate --workspace ./workspace/local-test2 --task T7-POST-NOVELTY
 researchos validate --workspace ./workspace/local-test2 --task T7-CLAIMS
 ```
 
-### 4.9 列出 skills
+### 4.10 列出 skills
 
 ```bash
 researchos list-skills --skills-root ./skills
 ```
 
-### 4.10 运行 skill
+### 4.11 运行 skill
 
 ```bash
 researchos run-skill deepxiv "summarize recent memory papers for llm agents"

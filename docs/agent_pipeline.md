@@ -1454,7 +1454,7 @@ PDF 获取顺序是：先读 queue/paper record 里的 `seed_pdf_path`，再查 
 每篇 note 现在必须包含：
 
 ```markdown
-## 12. Reading Coverage
+  ## 12. Reading Coverage
 - **PDF source**: literature/pdfs/{id}.pdf
 - **Pages read**: 1-12 / 12
 - **Extraction calls**: extract_pdf_text pages 1-4, 5-8, 9-12
@@ -1465,7 +1465,7 @@ PDF 获取顺序是：先读 queue/paper record 里的 `seed_pdf_path`，再查 
 如果没有 PDF：
 
 ```markdown
-## 12. Reading Coverage
+  ## 12. Reading Coverage
 - **PDF source**: not available
 - **Pages read**: 0 / unknown
 - **Extraction calls**: none
@@ -1478,7 +1478,7 @@ PDF 获取顺序是：先读 queue/paper record 里的 `seed_pdf_path`，再查 
 每篇 note 现在还必须包含第 13 节，用于后续 T4/T4.5 的 mechanism-aware 假设生成和碰撞检测：
 
 ```markdown
-## 13. Mechanism Claim
+  ## 13. Mechanism Claim
 - **Stated mechanism**: {一句话，作者声称是什么导致 improvement；实在抽不出来写 "not clearly stated"}
 - **Evidence type**: {ablation_supported | theoretically_justified | empirical_correlation | claimed_untested}
 - **Supporting artifact**: {Fig X / Table Y / Section Z / "none"}
@@ -1502,10 +1502,10 @@ Full/partial note 必须继续包含 §14-§19：
 任何 `[ABSTRACT-ONLY]` note（无论在 `paper_notes/` 还是 `paper_notes_abstract/`）还必须包含：
 
 ```markdown
-## A. Core Approach / Perspective
+  ## A. Core Approach / Perspective
 - {abstract-level 方法、理论视角或设计视角}
 
-## B. Bridge Point
+  ## B. Bridge Point
 - {它与主线领域、邻接领域或 theory bridge 的连接点；没有则写 no obvious bridge}
 ```
 
@@ -2946,7 +2946,7 @@ novelty/post_experiment_collision_cases.md
 
 ---
 
-## 6.12 T7.5：PIAgent（evaluate）
+## 6.13 T7.5：PIAgent（evaluate）
 
 ### 角色
 
@@ -3057,7 +3057,7 @@ researchos resume --workspace ./workspace/local-test2
 
 ---
 
-## 6.13 T8：Writer / Reviewer 多阶段写作链
+## 6.14 T8：Writer / Reviewer 多阶段写作链
 
 本节记录当前真实 pipeline 的 T8/T9 写作、审稿、修订和提交运行视角。
 
@@ -3108,7 +3108,7 @@ motivation -> contribution -> related_gap -> design_choice -> experiment -> anal
 
 `build_alignment_matrix` 的行来自 `cdr_claim_ledger.json` 中的 `contribution_chains`，不是原始 CDR evidence slots。`contribution_chains` 是 3-4 条最终 contribution bullet 的机械 lane，用来避免把 7 个左右的 evidence/section slot 误当成论文贡献。工具只生成 seed 和审计 hint；motivation、gap、contribution wording、设计解释和分析判断必须由 LLM 阅读 artifact 后完成。`cid` 只允许作为 `alignment_matrix.json` / `paper_state.json` 的内部追踪 id；最终 TeX 正文和注释都不能出现 `C1`、`[C1]`、`C1:`、`C1 is ...`、`CID C1` 或 `% [C1]` 这类内部编号。
 
-### 6.12.0 实现边界
+### 6.14.0 实现边界
 
 `WriterAgent` 负责 style gate、resource、outline、section_plan、section_draft、draft、self_check、revise。代码在 [researchos/agents/writer.py](../researchos/agents/writer.py)，prompt 在 [researchos/prompts/writer.j2](../researchos/prompts/writer.j2)，通用写作 skill 在 [researchos/agent_guidance/manuscript-writing/SKILL.md](../researchos/agent_guidance/manuscript-writing/SKILL.md)，跨 section craft 在 [researchos/prompts/paper_craft.j2](../researchos/prompts/paper_craft.j2)。
 
@@ -3130,7 +3130,7 @@ motivation -> contribution -> related_gap -> design_choice -> experiment -> anal
 
 这些工具只处理机械重复、可解析、可校验的工作；论文贡献判断、理论定位、gap 表达、section prose 和修订取舍仍由 LLM 完成。
 
-### 6.12.1 T8-STYLE-GATE：WriterAgent（style_gate）
+### 6.14.1 T8-STYLE-GATE：WriterAgent（style_gate）
 
 `T8-STYLE-GATE` 是状态机级 immediate gate，不依赖 Writer 是否记得调用 `ask_human`。它读取 `project.yaml` 的 `target_venue` 并展示 IS/UTD、CCF-A、both、基础中文、基础英文和自定义模板选项；选择后由 runtime 写 `drafts/writing_style.json`。该 JSON 必须包含 `human_interaction_id`，并且这个 id 必须能在 `_runtime/human_interactions.jsonl` 中找到；这样可以区分“用户真实选择”和“模型自己编造的默认选择”。
 
@@ -3150,7 +3150,7 @@ motivation -> contribution -> related_gap -> design_choice -> experiment -> anal
 
 `venue_style=both` 的当前实现语义是：资源索引、CDR/claim/figure registry、alignment matrix、section files 共用一套，`T8-DRAFT` 在拼装主 `drafts/paper.tex` 后额外派生 `drafts/is/paper.tex` 与 `drafts/ccf_a/paper.tex`，并为两套变体分别生成 craft audit。派生文件只是入口，Writer 必须用 LLM 对两套稿件做风格化改写，并分别写 `drafts/is/style_revision_notes.md` 与 `drafts/ccf_a/style_revision_notes.md` 说明改写取舍；validator 会拒绝“两个变体只是主稿加注释”的假双稿。这样既不把学术写作知识硬编码进 tool，也保证双稿件有实际产物和校验入口。
 
-### 6.12.2 T8-RESOURCE：WriterAgent（resource_index）
+### 6.14.2 T8-RESOURCE：WriterAgent（resource_index）
 
 `T8-RESOURCE` 输入包括 `project.yaml`、`literature/synthesis.md`、`literature/synthesis_workbench.json`、`literature/domain_map.json`、`literature/related_work.bib`、`ideation/hypotheses.md`、`ideation/idea_scorecard.yaml`、`experiments/results_summary.json`，以及可选的 `exp_plan.yaml`、`novelty_audit.md`、`comparison_table.csv`、`ablations.csv`。
 
@@ -3166,7 +3166,7 @@ motivation -> contribution -> related_gap -> design_choice -> experiment -> anal
 
 Validator 会要求 resource 阶段产物包含 resource index、section/evidence/figure plans、三个 registry 和 alignment matrix，并检查关键 semantics 和最小结构。Alignment matrix 必须有 rows，后续 outline 阶段还会检查它是 3-5 条贡献 lane，而不是任意数量的 evidence slot。进入正文写作前，`WriterAgent` 会拒绝关键 alignment 字段仍停留在 `LLM_REVIEW_REQUIRED` / `TODO` / `TBD`：这些占位可以作为 T8-RESOURCE 的 seed，但不能作为已确认的跨章节贡献链。
 
-### 6.12.3 T8-WRITE：WriterAgent（outline）
+### 6.14.3 T8-WRITE：WriterAgent（outline）
 
 `T8-WRITE` 读取 resource index、section plan、evidence plan、figure/table plan、CDR ledger、claim ledger、figure registry、alignment matrix、synthesis、hypotheses、results 和 bib 预览，写 `drafts/outline.md`。
 
@@ -3174,7 +3174,7 @@ Validator 会要求 resource 阶段产物包含 resource index、section/evidenc
 
 大纲必须包含标题候选、paper thesis、contribution map、section-by-section argument、figure/table plan、claim ledger 和 alignment matrix refinement。Validator 检查 `outline.md` 不是空文件、包含 `##` 结构，覆盖 Introduction、Related Work、Method、Experiments 等核心章节，并要求 `alignment_matrix.json` 保持合法 semantics、3-5 条 rows、每行具备 cid、motivation、contribution、related_gap、design_choice、experiment 和 analysis 字段。字段可以在 T8-RESOURCE seed 中临时带 `LLM_REVIEW_REQUIRED`，但 Writer 必须在 outline / section-plan 前把关键字段补成可写作的学术判断；否则后续校验会暂停，不允许把占位符带进正文。
 
-### 6.12.4 T8-SECTION-PLAN：WriterAgent（section_plan）
+### 6.14.4 T8-SECTION-PLAN：WriterAgent（section_plan）
 
 `T8-SECTION-PLAN` 不写正文。Writer 调用：
 
@@ -3196,19 +3196,19 @@ initialize_manuscript_state(
 
 Orchestrator 在进入 LLM 前有确定性恢复逻辑：如果 `outline/resource/section/evidence/figure/alignment` 计划文件已存在，但 `paper_state.json` 或 section outlines 不合格，会直接调用 `initialize_manuscript_state` 修复并跳过 LLM。这保证 resume 不会在 T8-SECTION-PLAN 反复消耗模型重写机械状态。
 
-### 6.12.5 T8-SEC-METHOD：WriterAgent（section_draft, section_id=methodology）
+### 6.14.5 T8-SEC-METHOD：WriterAgent（section_draft, section_id=methodology）
 
 `T8-SEC-METHOD` 只写 `drafts/sections/methodology.tex`。Writer 读取 `paper_state.json`、`section_outlines/methodology.md`、`alignment_matrix.json` 的 design_choice 列、`ideation/hypotheses.md`、`ideation/exp_plan.yaml`、`ideation/idea_scorecard.yaml`、novelty/CDR tuples、实验 configs 和可用 code artifacts。
 
 本章先定义 artifact 和 design rationale，再讲整体架构、组件、notation、算法和实现。每个设计选择都要解释 why，不用实验结果证明方法有效；贡献对应关系用自然语言闭环，内部追踪只保存在 `paper_state.json` / `alignment_matrix.json`。写完必须调用 `update_manuscript_section_state(section_id="methodology", status="written")`。
 
-### 6.12.6 T8-SEC-EXPERIMENTS：WriterAgent（section_draft, section_id=experiments）
+### 6.14.6 T8-SEC-EXPERIMENTS：WriterAgent（section_draft, section_id=experiments）
 
 `T8-SEC-EXPERIMENTS` 只写 `drafts/sections/experiments.tex`。Writer 读取 `alignment_matrix.json` 的 experiment 列、`results_summary.json`、`ablations.csv`、runs/configs、seed ensemble、`exp_plan.yaml` 和 `figure_table_plan.json`。
 
 本章要把 RQ 前置，并用自然语言说明每个 RQ 验证哪类贡献逻辑；随后写 setup、datasets、baselines、metrics、seeds、compute、main results 和 ablations。所有数字必须来自结果 artifact；缺 seed/error bar/baseline 时删除或弱化对应强 claim，或转入 Conclusion 的 Limitations 子段，不能编造，也不能在最终 TeX 中留下 literal TODO。写完更新 `paper_state.json` 中 `experiments.status`。
 
-### 6.12.7 T8-SEC-RELATED：WriterAgent（section_draft, section_id=related_work）
+### 6.14.7 T8-SEC-RELATED：WriterAgent（section_draft, section_id=related_work）
 
 `T8-SEC-RELATED` 只写 `drafts/sections/related_work.tex`。Writer 读取 `alignment_matrix.json` 的 related_gap、`literature/synthesis.md`、`literature/synthesis_workbench.json`、`literature/domain_map.json`、`ideation/idea_scorecard.yaml`、`comparison_table.csv`、paper notes 和 `related_work.bib`。在 task contract 中，`synthesis_workbench`、`domain_map`、`idea_scorecard` 和 `alignment_matrix` 都是强前置；缺失时应先回到 T3.5/T4/T8-RESOURCE 修复。
 
@@ -3216,31 +3216,31 @@ Related Work 按 competing design rationale 组织，不按论文流水账。每
 
 `T8-DRAFT` 的 `audit_writing_craft` 会做一个非阻断的 `related_work_pre_t5_signal_consumption` 检查：如果 Related Work 完全看不到 nearest-prior-work、adjacent-transfer、cross-paper tension 或对应文本片段，就给 WARN。它不会替代 LLM 判断某篇工作是否相关，只提示“上游花资源生成的 Pre-T5 素材可能没被写作消费”。
 
-### 6.12.8 T8-SEC-ANALYSIS：WriterAgent（section_draft, section_id=analysis）
+### 6.14.8 T8-SEC-ANALYSIS：WriterAgent（section_draft, section_id=analysis）
 
 `T8-SEC-ANALYSIS` 只写 `drafts/sections/analysis.tex`。Writer 读取 `alignment_matrix.json` 的 analysis 列、已写 Method/Experiments、`ablations.csv`、`iteration_log.md` 和 `novelty_audit.md`。
 
 本章解释实验和消融如何支持、削弱或仅部分支持 design rationale；至少提出并排除一个 alternative explanation，呈现 failure case 和 sensitivity。不能把未做的 T5/T6 或额外实验写成已完成。分析段落必须用自然语言闭环贡献逻辑，不使用内部 cid 注释。
 
-### 6.12.9 T8-SEC-INTRO：WriterAgent（section_draft, section_id=introduction）
+### 6.14.9 T8-SEC-INTRO：WriterAgent（section_draft, section_id=introduction）
 
 `T8-SEC-INTRO` 在 Method、Experiments、Related Work 和 Analysis 之后运行，只写 `drafts/sections/introduction.tex`。Writer 读取 `alignment_matrix.json` 的 motivation/contribution、CDR ledger、synthesis、hypotheses、results，以及已写 Method/Experiments/Related Work。
 
 Introduction 采用 5-move：Problem、Gap、Approach、numbered Contributions、venue-specific closing。gap/motivation 通常不超过 3 个，contribution 3-4 条，并应和 alignment matrix 的内部 lane 形成清晰逻辑对应；这种对应关系只写在 `paper_state.json` / `alignment_matrix.json`，正文贡献 bullet 使用自然语言。`ccf_a` 风格需要量化 results headline；`is` 风格需要理论或 reference anchor。Intro 不能超过已有 evidence。
 
-### 6.12.10 T8-SEC-CONCLUSION：WriterAgent（section_draft, section_id=conclusion）
+### 6.14.10 T8-SEC-CONCLUSION：WriterAgent（section_draft, section_id=conclusion）
 
 `T8-SEC-CONCLUSION` 只写 `drafts/sections/conclusion.tex`，同时承担 Limitations。Writer 读取 `alignment_matrix.json`、Introduction、Experiments、`ideation/risks.md`、`novelty_audit.md`、`iteration_log.md` 和 `paper_state.json`。
 
 Conclusion 先收束本文证明了什么和可迁移 design knowledge，然后必须写 `\subsection{Limitations}`。Limitations 子段要具体说明外部执行器证据边界、mock/dry-run 是否仅为协议测试、baseline 覆盖、数据规模、外部有效性、compute/seed 和复现风险。Conclusion 不允许引入新 claim、新数字或新引用；如果需要新信息，应回到对应章节和 artifact。
 
-### 6.12.11 T8-SEC-ABSTRACT：WriterAgent（section_draft, section_id=abstract）
+### 6.14.11 T8-SEC-ABSTRACT：WriterAgent（section_draft, section_id=abstract）
 
 `T8-SEC-ABSTRACT` 最后运行，只写 `drafts/sections/abstract.tex`。Writer 读取 `paper_state.json`、`section_outlines/abstract.md`、`alignment_matrix.json` 和已写的 introduction/methodology/experiments/analysis/conclusion。
 
 Abstract 用 5 句骨架压缩全文：Problem、Gap、Approach、Key result、Contribution type。`drafts/sections/abstract.tex` 只能写摘要纯正文，不能写 `\section{Abstract}`、`\section*{Abstract}`、`\begin{abstract}` 或 `\end{abstract}`；`assemble_manuscript` 会负责最终 abstract 环境。它不放正式引用：不使用 LaTeX citation command，不写作者-年份括号引用，也不写数字引用；具体 prior work citation 放到 Introduction 或 Related Work。它也不能引入正文没有的数字、claim 或术语。`ccf_a` 风格通常 150-300 词，`is` 风格通常 200-300 词。
 
-### 6.12.12 T8-DRAFT：WriterAgent（draft）
+### 6.14.12 T8-DRAFT：WriterAgent（draft）
 
 `T8-DRAFT` 先调用 `assemble_manuscript(section_dir="drafts/sections", output_path="drafts/paper.tex", outline_path="drafts/outline.md", target_venue=<target_venue>, venue_style=<venue_style>)`。该工具按 Introduction、Related Work、Method、Experiments、Analysis、Conclusion 顺序拼装正文，把 Abstract 放入 `abstract` 环境，并自动加入 `\documentclass`、基础 package、title 和 `\bibliography{related_work}`。如果旧 workspace 残留 `drafts/sections/limitations.tex`，assemble 会把它合并到 Conclusion 的 `\subsection{Limitations}`，不会生成独立 `\section{Limitations}`。如果 `venue_style=both`，assemble 还会派生 `drafts/is/paper.tex` 和 `drafts/ccf_a/paper.tex`，两者共享同一 alignment matrix 和 section source，作为后续风格化 revision 的入口；随后 Writer 需要分别改写这两个文件，使 IS 稿更强调 theory/design knowledge/validity，使 CCF-A 稿更强调紧凑 problem framing、量化结果和可复现实验。
 
@@ -3253,19 +3253,19 @@ Abstract 用 5 句骨架压缩全文：Problem、Gap、Approach、Key result、C
 
 Validator 要求 `paper.tex`、`manuscript_audit.md`、`craft_audit.md` 和 `craft_audit.json` 存在，并检查 LaTeX wrapper、必要章节、BibTeX key、关键 craft check 是否存在且没有 FAIL。如果 `writing_style.json` 选择 `both`，还要求 `drafts/is/paper.tex`、`drafts/is/craft_audit.json`、`drafts/is/style_revision_notes.md`、`drafts/ccf_a/paper.tex`、`drafts/ccf_a/craft_audit.json` 和 `drafts/ccf_a/style_revision_notes.md` 存在；去掉 ResearchOS 注释后，两个变体不能与主稿正文完全相同。
 
-### 6.12.13 T8-SELF-CHECK：WriterAgent（self_check）
+### 6.14.13 T8-SELF-CHECK：WriterAgent（self_check）
 
 `T8-SELF-CHECK` 读取 `paper.tex`、`manuscript_audit.md`、`craft_audit.md`、`alignment_matrix.json`、`results_summary.json` 和 `related_work.bib`，写 `drafts/self_check.md`。
 
 自查包括 argument chain、number audit、citation audit、figure/table audit、reproducibility audit、外部执行器证据边界和 revision TODO。`craft_audit.md` / `paper_claim_audit.md` 的 FAIL 必须进入 High TODO，WARN 进入 Medium TODO，并说明是否已在正文处理。
 
-### 6.12.14 T8-REVIEW-1 / T8-REVIEW-2：ReviewerAgent
+### 6.14.14 T8-REVIEW-1 / T8-REVIEW-2：ReviewerAgent
 
 Reviewer 先读取 `paper_state.json`、`sections/*.tex`、`paper.tex`、`manuscript_audit.md`、`craft_audit.md`、`alignment_matrix.json`、`self_check.md`、`results_summary.json` 和 `.bib`。它对 7 个 section 逐章生成：abstract、introduction、related_work、methodology、experiments、analysis、conclusion。没有独立 `limitations.md` review；Conclusion review 必须检查 Limitations 子段。
 
 每个逐章 review 至少包含 Section Purpose Check、Evidence And Number Check、Logic And Writing Issues、CDR Alignment Check、Alignment Matrix Check、Writing Craft Check 和 Actionable Fixes。综合 `round_N.md` 至少包含 `## 总体评价`、`## 主要问题`、`## 次要问题`、`## 写作范式与对齐核查` 和 `## CDR Contribution Verdict`。第二轮还要检查上一轮 High/Medium 问题是否闭环。
 
-### 6.12.15 T8-REVISE-1 / T8-REVISE-2：WriterAgent（revise）
+### 6.14.15 T8-REVISE-1 / T8-REVISE-2：WriterAgent（revise）
 
 `WriterAgent(revise)` 先调用 `build_manuscript_revision_patches(round_num=N)`，把综合 review 和逐章节 review 解析成 `drafts/patches/round_N_patches.json`。Patch list 只定位 issue，不替代 LLM 的修订判断。
 
@@ -3313,7 +3313,7 @@ researchos run-task T8-REVISE-1 --workspace ./workspace/local-test2
 
 ---
 
-## 6.14 T9：SubmissionAgent
+## 6.15 T9：SubmissionAgent
 
 ### 角色
 

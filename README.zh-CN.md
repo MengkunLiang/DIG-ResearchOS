@@ -659,12 +659,16 @@ ResearchOS 可以加载 MCP server 配置，并把 MCP tool 暴露给 agent。
 
 建议按角色阅读：
 
+- 快速开始：[docs/QUICKSTART.md](./docs/QUICKSTART.md)
 - 系统流程总览：[docs/agent_pipeline.md](./docs/agent_pipeline.md)
+- 仓库结构：[docs/project_structure.md](./docs/project_structure.md)
+- Docker 部署：[deploy/README.md](./deploy/README.md)
+- 手工维护工具：[scripts/README.md](./scripts/README.md)
 - Runtime 实现：[docs/runtime.md](./docs/runtime.md)
 - Docker 使用：[docs/docker.md](./docs/docker.md)
 - 配置说明：[docs/config.md](./docs/config.md)
 - 开发者手册：[docs/dev.md](./docs/dev.md)
-- 各阶段与各 Agent 细节：[docs/agent_pipeline.md](./docs/agent_pipeline.md)
+- 完整文档索引：[docs/README.md](./docs/README.md)
 
 ## 当前实现状态
 

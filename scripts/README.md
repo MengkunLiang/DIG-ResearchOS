@@ -58,6 +58,6 @@ Examples:
 
 ```bash
 python scripts/validate_llm_model.py --profile deepseek --tier medium
-python scripts/validate_artifact.py --workspace ./workspaces/dev --task T2
+python scripts/validate_artifact.py --workspace ./workspace/dev --task T2
 python scripts/recover_t2_papers_raw_from_trace.py --help
 ```
