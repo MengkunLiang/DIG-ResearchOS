@@ -436,7 +436,7 @@ def _comparison_table_summary(path: Path) -> dict[str, object]:
     }
 
 
-def prepare_t4_context_pack(workspace_dir: Path, *, card_limit: int = 18) -> dict[str, object]:
+def prepare_t4_context_pack(workspace_dir: Path) -> dict[str, object]:
     """Build compact T4 context artifacts before the LLM starts."""
 
     workspace_dir = Path(workspace_dir)
@@ -453,7 +453,7 @@ def prepare_t4_context_pack(workspace_dir: Path, *, card_limit: int = 18) -> dic
         if isinstance(card, dict) and _note_card_usable_for_t4(card)
     ]
     usable_cards.sort(key=_note_card_t4_priority, reverse=True)
-    selected_cards = usable_cards[:card_limit]
+    selected_cards = usable_cards
 
     bridge_plan = _read_json_file(workspace_dir / "literature" / "bridge_domain_plan.json")
     domain_map = _read_json_file(workspace_dir / "literature" / "domain_map.json")
@@ -571,7 +571,7 @@ def _render_t4_context_pack_markdown(pack: dict[str, object]) -> str:
         "",
         "## Coverage",
         f"- Usable note cards: {summary.get('usable_card_count', 0)}",
-        f"- Selected for prompt use: {summary.get('selected_card_count', 0)}",
+        f"- Included in pack: {summary.get('selected_card_count', 0)}",
         f"- Deep notes recorded in workbench: {summary.get('deep_note_count', 0)}",
         f"- Abstract/light notes recorded in workbench: {summary.get('abstract_note_count', 0)}",
         "",
@@ -638,7 +638,7 @@ def _render_t4_progress_markdown(pack: dict[str, object]) -> str:
             (
                 "- [evidence] 已从 "
                 f"{summary.get('raw_card_count', 0)} 张候选笔记卡中筛出 "
-                f"{summary.get('selected_card_count', 0)} 张可用卡片。"
+                f"{summary.get('selected_card_count', 0)} 张可用卡片并全部写入 context pack。"
             ),
             "- [rule] T4 会先读 compact pack，只在核验具体 claim 时打开单篇 note。",
             "- [outputs] " + "; ".join(str(item) for item in outputs),

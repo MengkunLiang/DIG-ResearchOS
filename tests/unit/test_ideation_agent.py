@@ -1069,7 +1069,7 @@ def test_prepare_t4_context_pack_writes_compact_artifacts(temp_workspace):
         encoding="utf-8",
     )
 
-    pack = prepare_t4_context_pack(temp_workspace, card_limit=5)
+    pack = prepare_t4_context_pack(temp_workspace)
 
     assert (temp_workspace / T4_CONTEXT_PACK_JSON).exists()
     assert (temp_workspace / T4_CONTEXT_PACK_MD).exists()
@@ -1107,7 +1107,7 @@ def test_ideation_prompt_prefers_t4_context_pack(ideation_agent, temp_workspace)
         ),
         encoding="utf-8",
     )
-    prepare_t4_context_pack(temp_workspace, card_limit=5)
+    prepare_t4_context_pack(temp_workspace)
     ctx = ExecutionContext(
         workspace_dir=temp_workspace,
         project_id="test_project",
