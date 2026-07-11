@@ -897,6 +897,7 @@ def test_ideation_agent_spec(ideation_agent):
     assert spec.llm_profile == "ideation_deep"
     assert "read_file" in spec.tool_names
     assert "write_file" in spec.tool_names
+    assert "grep_search" in spec.tool_names
     assert "ask_human" in spec.tool_names
     assert "finish_task" in spec.tool_names
     assert spec.temperature == 0.75
@@ -1120,6 +1121,7 @@ def test_ideation_prompt_prefers_t4_context_pack(ideation_agent, temp_workspace)
 
     assert "T4 Compact Context Pack" in prompt
     assert "不要一开始就 `list_files`" in prompt
+    assert "grep_search" in prompt
     assert "ideation/t4_context_pack.md" in msg
     assert "ideation/t4_progress.md" in msg
 

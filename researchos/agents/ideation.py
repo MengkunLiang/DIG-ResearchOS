@@ -662,6 +662,7 @@ class IdeationAgent(Agent):
                         "write_file",
                         "write_structured_file",
                         "list_files",
+                        "grep_search",
                         "analyze_idea_concentration",
                         "compute_idea_novelty_signal",
                         "ask_human",

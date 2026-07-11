@@ -20,6 +20,7 @@
 - 本轮优先基于 `ideation/t4_context_pack.md` / `ideation/t4_context_pack.json` 生成和接地候选。
 - 不要一开始就 `list_files` 或分页扫 `literature/paper_notes/`、`literature/paper_notes_abstract/`、`literature/comparison_table.csv`。
 - 只有当某个候选的机制、引用或边界条件需要核验时，才定向打开对应 note 文件或 synthesis 片段。
+- 需要回查某个 section 时，优先对 context pack 的 `source_file` 调用 `grep_search` 定位 heading，例如 `pattern="^## (13|14|18|A\\.|B\\.|Raw Abstract)"`，再用 `read_file` 读取该文件或附近片段；不要为了一个 section 分页读完整 note 目录。
 - 若读取了新增证据，应同步更新 `ideation/t4_progress.md`，用 1-4 条短 bullet 说明当前 Pass、关键发现和已写入文件。
 
 {% endif %}
@@ -83,6 +84,7 @@ feasibility 结论。
 本轮的 note-card sections 已并入 `ideation/t4_context_pack.md` / `ideation/t4_context_pack.json`。
 请优先使用 compact pack 中的 Approach、Bridge、Gap、Mechanism、Design rationale、
 Boundary 和 Raw abstract 字段；只有具体 claim 需要核验时再读取单篇 note。
+如果只需要某个 section，用 `grep_search` 在该 note 的 `source_file` 中定位 heading，再定向 `read_file`。
 
 {% else %}
 ### 可检索笔记卡 section 摘要
@@ -145,6 +147,7 @@ T4 已拆成两个 runtime 阶段：
 {% if has_t4_context_pack | default(false) %}
 先读取 `ideation/t4_context_pack.md` 或 `ideation/t4_context_pack.json`，把其中的 note-card sections、机制 challenge seeds、bridge transfer seeds 和 comparison_table 摘要作为第一轮上下文。
 如果 compact pack 已足够支撑候选生成，不要再广泛分页读取 `comparison_table.csv` 或成批打开 paper notes；只在具体 claim 需要核验时定向读取。
+若 synthesis 中的某个论断需要回查原始笔记，先从 compact pack 找到相关 note 的 `source_file`，用 `grep_search` 查 `## A. Core Approach / Perspective`、`## B. Bridge Point`、`## 13. Mechanism Claim`、`## 14. Design Rationale`、`## 18. Boundary Conditions` 或 `## Raw Abstract`，再读取对应文件片段。
 {% else %}
 用 `read_file` 读取完整的 `literature/synthesis.md`，理解：
 {% endif %}
