@@ -744,13 +744,15 @@ def _format_t2_parameter_preview(value: dict[str, Any]) -> str:
 def _format_t2_selected_parameters_summary(value: dict[str, Any]) -> str:
     path = str(value.get("path") or "literature/literature_params.json")
     raw = str(value.get("summary") or "")
-    try:
-        data = json.loads(raw)
-    except Exception:
-        header = [f"文件: {path}"]
-        if raw:
-            header.extend(["摘要:", raw])
-        return "\n".join(header)
+    data = _parse_t2_params_summary(raw)
+    if data is None:
+        return "\n".join(
+            [
+                f"文件: {path}",
+                "关键参数摘要暂无法解析；完整参数仍已写入该文件。",
+                "请打开文件检查，或选择“返回重选参数”。",
+            ]
+        )
     if not isinstance(data, dict):
         return f"文件: {path}"
 
@@ -761,9 +763,8 @@ def _format_t2_selected_parameters_summary(value: dict[str, Any]) -> str:
     lines = [
         f"文件: {path}",
         f"已选择档位: {data.get('selected_label') or data.get('selected_option')}",
+        "关键参数:",
     ]
-    if data.get("confirmation_summary"):
-        lines.append(f"确认摘要: {data['confirmation_summary']}")
     explained_summary = {
         "active_pool_max": summary.get("active_pool_max") or (data.get("t2_finalize") or {}).get("active_pool_max"),
         "deep_read_min": reader.get("deep_read_min"),
@@ -783,6 +784,48 @@ def _format_t2_selected_parameters_summary(value: dict[str, Any]) -> str:
             lines.append(f"用户自定义输入: {compact}")
     lines.append("确认后才会启动 T2；如果这里不符合预期，请选择返回重选参数。")
     return "\n".join(lines)
+
+
+def _parse_t2_params_summary(raw: str) -> dict[str, Any] | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        data = json.loads(text)
+    except Exception:
+        data = {}
+        for key in (
+            "selected_label",
+            "selected_option",
+            "confirmation_summary",
+            "selected_summary",
+            "t2_finalize",
+            "reader",
+            "literature_quality",
+            "captured",
+        ):
+            value = _extract_json_value_for_key(text, key)
+            if value is not None:
+                data[key] = value
+        if not data:
+            return None
+    return data if isinstance(data, dict) else None
+
+
+def _extract_json_value_for_key(text: str, key: str) -> Any | None:
+    marker = f'"{key}"'
+    start = text.find(marker)
+    if start < 0:
+        return None
+    colon = text.find(":", start + len(marker))
+    if colon < 0:
+        return None
+    payload = text[colon + 1 :].lstrip()
+    try:
+        value, _ = json.JSONDecoder().raw_decode(payload)
+    except Exception:
+        return None
+    return value
 
 
 def _format_t2_explained_summary(summary: dict[str, Any]) -> str:

@@ -166,6 +166,67 @@ def test_t2_literature_confirm_gate_formats_selected_parameters_without_raw_json
     assert '"selected_label"' not in rendered
 
 
+def test_t2_literature_confirm_gate_formats_truncated_json_summary_without_raw_dump():
+    truncated_summary = """{
+  "profile": "custom",
+  "t2_finalize": {
+    "active_pool_max": 120
+  },
+  "reader": {
+    "deep_read_min": 15,
+    "deep_read_target": 15,
+    "deep_read_max": 45,
+    "require_deep_read_target": true,
+    "abstract_sweep": {
+      "lite_paper_num": 120
+    }
+  },
+  "literature_quality": {
+    "manuscript_language": "en",
+    "include_chinese_literature": "auto",
+    "chinese_literature_policy": "review_flag_only"
+  },
+  "selected_label": "自定义关键数字",
+  "selected_summary": {
+    "active_pool_max": 120,
+    "deep_read_min": 15,
+    "deep_read_target": 15,
+    "deep_read_max": 45,
+    "require_deep_read_target": true,
+    "abstract_sweep_target": 120,
+    "manuscript_language": "en",
+    "include_chinese_literature": "auto",
+    "chinese_literature_policy": "review_flag_only"
+  },
+  "confirmation_summary": "自定义关键数字: 保留候选：120 篇（active_pool_max=120；可选：120/180/240 或自定义）\\n深入阅读：目标 15 篇（deep_read=15/15/45；格式：min/target/max）",
+  "captured": {
+    "manuscript_language": "英文",
+    "deep_read_target": "15",
+    "base_option": "standard_research"
+  },
+  "parameter_meanings": {
+    "active_pool_max": "保留候选数：T2 从检索结果里保留多少篇进入后续阅读处置",
+"""
+    rendered = CLIHumanInterface._format_presentation_value(
+        "selected_parameters",
+        {
+            "path": "literature/literature_params.json",
+            "size_chars": 3995,
+            "summary": truncated_summary,
+        },
+        gate_id="t2_literature_param_confirm_gate",
+    )
+
+    assert "已选择档位: 自定义关键数字" in rendered
+    assert "保留候选：120 篇（active_pool_max=120；可选：120/180/240 或自定义）" in rendered
+    assert "深入阅读：目标 15 篇（deep_read=15/15/45；格式：min/target/max）" in rendered
+    assert "稿件语言：en（manuscript_language=en；可选：auto/en/zh/mixed）" in rendered
+    assert "用户自定义输入: manuscript_language=英文; deep_read_target=15; base_option=standard_research" in rendered
+    assert '"profile"' not in rendered
+    assert '"parameter_meanings"' not in rendered
+    assert "摘要:" not in rendered
+
+
 def test_t2_literature_gate_parses_multiple_inline_customizations():
     options = [
         {"id": "standard_research", "label": "标准研究论文覆盖"},
