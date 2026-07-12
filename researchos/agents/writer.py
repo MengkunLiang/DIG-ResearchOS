@@ -17,6 +17,7 @@ from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
 from ..runtime.system_config import system_config_path
+from ..writing_profiles import resolve_venue_writing_profile
 from ..tools.manuscript import (
     CORE_SECTIONS,
     SECTION_TITLES,
@@ -48,12 +49,14 @@ class WriterAgent(Agent):
                         "read_file",
                         "write_file",
                         "list_files",
+                        "grep_search",
                         "build_manuscript_resource_index",
                         "plan_manuscript_sections",
                         "plan_manuscript_evidence",
                         "build_manuscript_registries",
                         "build_alignment_matrix",
                         "initialize_manuscript_state",
+                        "build_section_evidence_supplement",
                         "update_manuscript_section_state",
                         "assemble_manuscript",
                         "audit_manuscript_claims",
@@ -149,6 +152,9 @@ class WriterAgent(Agent):
         alignment_matrix = read_text_file(ws / "drafts" / "alignment_matrix.json", default="")
         writing_style_text = read_text_file(ws / "drafts" / "writing_style.json", default="")
         writing_style = _parse_writing_style(writing_style_text)
+        writing_storyline = read_text_file(ws / "drafts" / "writing_storyline.md", default="")
+        target_venue = project.get("target_venue", "neurips")
+        writing_profile = resolve_venue_writing_profile(target_venue, writing_style)
 
         # 根据phase选择不同的prompt策略
         phase = self._phase(ctx)
@@ -202,8 +208,11 @@ class WriterAgent(Agent):
             paper_state_preview=paper_state[:5000],
             alignment_matrix_preview=alignment_matrix[:5000],
             writing_style=writing_style,
-            suggested_style=_suggest_venue_style(project.get("target_venue", "neurips")),
-            suggested_template=_suggest_template_selection(project.get("target_venue", "neurips")),
+            writing_profile=writing_profile,
+            writing_storyline_preview=writing_storyline[:5000],
+            suggested_style=_suggest_venue_style(target_venue),
+            suggested_template=_suggest_template_selection(target_venue),
+            suggested_profile=resolve_venue_writing_profile(target_venue),
             section_id=section_id,
             section_title=SECTION_TITLES.get(section_id or "", (section_id or "").replace("_", " ").title()),
             section_outline_preview=section_outline[:5000],
@@ -215,7 +224,7 @@ class WriterAgent(Agent):
             user_corrections_preview=user_corrections[:2000],
             phase=phase,
             round_num=round_num,
-            target_venue=project.get("target_venue", "neurips"),
+            target_venue=target_venue,
             agent_guidance=load_agent_guidance("manuscript-writing"),
             temperature=self.spec.temperature,
         )
@@ -244,7 +253,8 @@ class WriterAgent(Agent):
                 "请执行 T8 Writer Phase -1: 写作风格确认。\n\n"
                 "根据 target_venue 和系统建议，调用 ask_human 让用户确认写作风格与 LaTeX 模板。"
                 "写作风格为 is / ccf_a / both；模板族为 basic_zh / basic_en / ccf / utd / other。"
-                "CCF 默认 template_id=neurips，UTD 默认 template_id=informs，也允许用户指定其它模板。"
+                "CCF 可选 template_id=neurips/icml/iclr/kdd，UTD 默认 template_id=informs，也允许用户指定其它模板。"
+                "确认后需写入 venue_profile；它只描述内部叙事和篇幅目标，不是投稿官方页数规则。"
                 "如果当前运行环境不支持人工输入，runtime 会暂停等待 resume；不要写入伪造默认选择。"
                 "若 drafts/writing_style.json 已存在且 venue_style 与模板字段合法，可直接 finish_task。"
                 "否则必须在收到真实选择后写 drafts/writing_style.json，然后 finish_task。"
@@ -269,6 +279,8 @@ class WriterAgent(Agent):
                 "drafts/alignment_matrix.json、实验结果和文献综述，生成 drafts/outline.md。"
                 "大纲应包含：标题候选、Abstract要点、Introduction结构、"
                 "Related Work分类、Method结构、Experiments结构、Conclusion要点。"
+                "同时生成 drafts/writing_storyline.md，将问题、rationale/根本原因、核心洞见、"
+                "设计选择、贡献—证据映射、替代解释、边界与 venue-specific reviewer questions 写成可审计链条。"
                 ),
             )
         elif phase == "section_draft":
@@ -279,7 +291,9 @@ class WriterAgent(Agent):
                 (
                 f"请执行 T8 Writer Phase 2: 单章节写作 `{section_id}` ({section_title})。\n\n"
                 f"只写 drafts/sections/{section_id}.tex 这一章。读取 drafts/paper_state.json、"
-                f"drafts/section_outlines/{section_id}.md 和本章必需证据文件。"
+                f"drafts/section_outlines/{section_id}.md 和本章必需证据文件。\n"
+                "如果本章证据或引用不足，先调用 build_section_evidence_supplement(section_id=\""
+                f"{section_id}\") 生成章节级补证据材料，再按材料读取对应 paper note section；"
                 "不要写其它章节，不要生成 drafts/paper.tex，不要包含整篇 LaTeX wrapper。"
                 "写完后调用 update_manuscript_section_state 记录该章节 status=written，然后 finish_task。"
                 ),
@@ -304,7 +318,8 @@ class WriterAgent(Agent):
                 "先调用 assemble_manuscript 将 drafts/sections/ 下的章节草稿拼装为 drafts/paper.tex，"
                 "再做一致性 spot-check；如发现需要修改正文，请回改对应 drafts/sections/<section>.tex "
                 "并重新 assemble，而不是一次性重写整篇 paper.tex。最后调用 audit_manuscript_claims "
-                "生成 drafts/manuscript_audit.md，调用 audit_writing_craft 生成 drafts/craft_audit.md，"
+                "生成 drafts/manuscript_audit.md，调用 audit_writing_craft 生成 drafts/craft_audit.md 和 "
+                "drafts/citation_provenance_audit.md/json，"
                 "如果 drafts/experiment_evidence_pack.json 存在，还必须调用 audit_paper_claims 生成 "
                 "drafts/paper_claim_audit.md/json。"
                 "**重要**: 所有实验数字必须来自 paper_state.shared_facts.result_metrics、"
@@ -332,7 +347,8 @@ class WriterAgent(Agent):
                 f"drafts/patches/round_{round_num}_patches.json，再按 patch 定位修订对应 "
                 "drafts/sections/<section>.tex。修订后调用 update_manuscript_section_state(status=\"revised\")，"
                 "再 assemble_manuscript 重新拼装 drafts/paper.tex，并调用 audit_manuscript_claims 刷新 "
-                f"drafts/manuscript_audit.md；如果 drafts/experiment_evidence_pack.json 存在，还必须调用 "
+                f"drafts/manuscript_audit.md，并调用 audit_writing_craft 刷新 craft/citation provenance audits；"
+                "如果 drafts/experiment_evidence_pack.json 存在，还必须调用 "
                 f"audit_paper_claims 刷新 drafts/paper_claim_audit.md/json。最后写 "
                 f"drafts/revision_response_round_{round_num}.md。"
                 ),
@@ -422,6 +438,17 @@ class WriterAgent(Agent):
             ok, err = _validate_alignment_matrix(ws)
             if not ok:
                 return False, err
+            storyline = read_text_file(ws / "drafts" / "writing_storyline.md", default="")
+            if len(storyline.strip()) < 180:
+                return False, "outline phase 必须生成不少于 180 字符的 drafts/writing_storyline.md"
+            profile = resolve_venue_writing_profile(
+                load_project(ctx).get("target_venue", ""),
+                _parse_writing_style(read_text_file(ws / "drafts" / "writing_style.json", default="")),
+            )
+            headings = [str(item).lower() for item in profile.get("storyline_headings", [])]
+            missing = [heading for heading in headings if heading not in storyline.lower()]
+            if missing:
+                return False, "writing_storyline.md 缺少 venue profile 必需标题: " + ", ".join(missing[:4])
             return True, None
 
         elif phase == "section_draft":
@@ -736,7 +763,11 @@ def _validate_single_section(ws: Path, section_id: str) -> tuple[bool, str | Non
     cited = _extract_latex_cites(text)
     minimum = MANUSCRIPT_SECTION_MIN_CITATIONS.get(section_id, 0)
     if minimum and len(cited) < minimum:
-        return False, f"章节草稿 {section_id} 引用过少: unique citations={len(cited)} < {minimum}"
+        return False, (
+            f"章节草稿 {section_id} 引用过少: unique citations={len(cited)} < {minimum}；"
+            f"请先调用 build_section_evidence_supplement(section_id=\"{section_id}\") "
+            "按 paper note section 补证据，找不到直接证据则弱化或删除 claim"
+        )
     if cited:
         bib_keys = _extract_bib_keys_from_workspace(ws)
         if bib_keys:
@@ -918,6 +949,7 @@ def _validate_required_craft_checks(ws: Path) -> tuple[bool, str | None]:
         "abstract_no_cite",
         "abstract_no_section_heading",
         "citation_claim_alignment",
+        "citation_provenance",
         "no_internal_label_leakage",
         "no_placeholder_tokens",
         "number_traceability",
@@ -937,6 +969,18 @@ def _validate_required_craft_checks(ws: Path) -> tuple[bool, str | None]:
     ]
     if fail_items:
         return False, "craft_audit.json 存在 FAIL: " + ", ".join(fail_items[:8])
+    provenance_path = ws / "drafts" / "citation_provenance_audit.json"
+    provenance, err = _load_json_file(provenance_path)
+    if err:
+        return False, "缺少或无法解析 citation provenance audit: " + err
+    if provenance.get("semantics") != "citation_provenance_audit_for_final_manuscript":
+        return False, "citation_provenance_audit.json semantics 不正确"
+    provenance_summary = provenance.get("summary") if isinstance(provenance.get("summary"), dict) else {}
+    if int(provenance_summary.get("hard_fail_count") or 0) > 0:
+        return False, "citation_provenance_audit.json 存在硬性引用来源错误，必须先修订"
+    provenance_fingerprints = provenance.get("input_fingerprints")
+    if provenance_fingerprints != craft_audit_input_fingerprints(ws):
+        return False, "citation_provenance_audit.json 已过期，必须重新运行 audit_writing_craft"
     return True, None
 
 
@@ -1165,6 +1209,12 @@ def _suggest_template_selection(target_venue: object) -> dict[str, str]:
         return {"template_family": "utd", "template_id": "informs", "writing_language": "en"}
     if any(token in venue for token in ("中文", "管理世界", "管理科学学报", "系统工程理论与实践", "cssci", "cscd")):
         return {"template_family": "basic_zh", "template_id": "basic_zh", "writing_language": "zh"}
-    if any(token in venue for token in ("neurips", "kdd", "icml", "sigir", "aaai", "ijcai", "ccf")):
+    if "kdd" in venue or "sigkdd" in venue:
+        return {"template_family": "ccf", "template_id": "kdd", "writing_language": "en"}
+    if "icml" in venue:
+        return {"template_family": "ccf", "template_id": "icml", "writing_language": "en"}
+    if "iclr" in venue:
+        return {"template_family": "ccf", "template_id": "iclr", "writing_language": "en"}
+    if any(token in venue for token in ("neurips", "nips", "sigir", "aaai", "ijcai", "ccf")):
         return {"template_family": "ccf", "template_id": "neurips", "writing_language": "en"}
     return {"template_family": "basic_en", "template_id": "basic_en", "writing_language": "en"}

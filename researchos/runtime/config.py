@@ -94,7 +94,7 @@ class LatexSettings:
     """LaTeX backend selection."""
 
     default_backend: str = "auto"
-    allow_docker_fallback: bool = False
+    allow_docker_fallback: bool = True
     docker_image: str = "researchos/system:latest"
 
 
@@ -207,7 +207,7 @@ def load_runtime_settings(config_path: Path | None = None) -> RuntimeSettings:
         ),
         latex=LatexSettings(
             default_backend=str(latex_block.get("default_backend", "auto")),
-            allow_docker_fallback=bool(latex_block.get("allow_docker_fallback", False)),
+            allow_docker_fallback=bool(latex_block.get("allow_docker_fallback", True)),
             docker_image=str(latex_block.get("docker_image", "researchos/system:latest")),
         ),
     )

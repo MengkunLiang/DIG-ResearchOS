@@ -533,6 +533,7 @@ def test_survey_writer_registry_and_phase():
     agent = get_agent_by_id("survey_writer", mode="survey_section")
     assert isinstance(agent, SurveyWriterAgent)
     assert agent._mode == "survey_section"
+    assert "grep_search" in agent.spec.tool_names
 
 
 def test_survey_citation_pool_preview_prioritizes_usable_note_cards(tmp_path: Path):

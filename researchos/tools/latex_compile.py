@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-"""LaTeX 编译工具。
+"""LaTeX compilation with native-first, Docker-backed execution.
 
-默认使用当前环境的 latexmk。ResearchOS 不再把 Docker 作为隐式
-LaTeX fallback；缺少 TeX/latexmk 时返回 WAITING_ENVIRONMENT，用户安装
-TeX Live/MacTeX/MiKTeX 后 resume。
+``auto`` prefers a local TeX installation, then uses the configured, allowlisted
+Docker image when the host has no usable TeX toolchain.  The container receives
+only the current workspace bind mount, no network, and the same compile report
+contract as native execution.  This keeps T3.6, T8, and T9 runnable on a slim
+host without pretending that a PDF was compiled.
 """
 
 import asyncio
@@ -13,6 +15,9 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+import shlex
+import subprocess
+import re
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -22,9 +27,105 @@ from ..runtime.config import LatexSettings
 from ..runtime.environment import detect_latex_backends
 from ..runtime.logger import get_logger
 from .base import Tool, ToolResult
-from .docker_exec import DockerExecTool
+from .docker_exec import DockerExecTool, check_docker_environment
 
 _LOG = get_logger("latex_compile")
+
+
+def latex_backend_preflight(latex_settings: LatexSettings) -> dict[str, Any]:
+    """Probe the backend that ``auto`` will use before an LLM writing stage.
+
+    The probe is intentionally stricter than merely finding a ``docker`` binary:
+    for Docker fallback it validates daemon access, the configured allowlisted
+    image, and the TeX commands needed by both survey and submission paths.
+    """
+
+    if shutil.which("latexmk"):
+        return {
+            "ok": True,
+            "selected_backend": "latexmk",
+            "reason": "latexmk_found_on_current_path",
+            "image": "",
+        }
+    if shutil.which("tectonic"):
+        return {
+            "ok": True,
+            "selected_backend": "tectonic",
+            "reason": "tectonic_found_on_current_path",
+            "image": "",
+        }
+    if not latex_settings.allow_docker_fallback:
+        return {
+            "ok": False,
+            "selected_backend": "none",
+            "reason": "no_local_tex_and_docker_fallback_disabled",
+            "image": latex_settings.docker_image,
+        }
+
+    from ..runtime.container_detection import is_running_in_container
+
+    image = latex_settings.docker_image
+    if is_running_in_container():
+        return {
+            "ok": False,
+            "selected_backend": "none",
+            "reason": "container_missing_local_tex_toolchain",
+            "image": image,
+        }
+    docker_ok, docker_error, docker_details = check_docker_environment(image=image)
+    if not docker_ok:
+        return {
+            "ok": False,
+            "selected_backend": "docker",
+            "reason": str((docker_details or {}).get("error") or "docker_unavailable"),
+            "message": docker_error or "Docker TeX backend is unavailable.",
+            "image": image,
+            "details": docker_details,
+        }
+
+    try:
+        probe = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "none",
+                "--entrypoint",
+                "sh",
+                image,
+                "-lc",
+                "command -v latexmk && command -v pdflatex && command -v xelatex && command -v bibtex",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "ok": False,
+            "selected_backend": "docker",
+            "reason": "docker_tex_probe_timeout",
+            "image": image,
+            "details": docker_details,
+        }
+    if probe.returncode != 0:
+        return {
+            "ok": False,
+            "selected_backend": "docker",
+            "reason": "docker_tex_commands_missing",
+            "message": (probe.stderr or probe.stdout or "").strip()[:1000],
+            "image": image,
+            "details": docker_details,
+        }
+    return {
+        "ok": True,
+        "selected_backend": "docker",
+        "reason": "docker_tex_image_verified",
+        "image": image,
+        "details": docker_details,
+    }
 
 
 class LatexCompileParams(BaseModel):
@@ -35,14 +136,18 @@ class LatexCompileParams(BaseModel):
     backend: str = Field(
         "auto",
         pattern="^(auto|latexmk|tectonic|docker|export_only)$",
-        description="LaTeX backend；默认 auto，当前只自动使用本机 latexmk",
+        description="LaTeX backend；auto 优先本机 latexmk/tectonic，缺失时可回退到允许的 Docker TeX 镜像",
     )
-    allow_docker_fallback: bool = Field(False, description="是否允许显式 Docker fallback；默认关闭")
+    allow_docker_fallback: bool = Field(False, description="是否允许 Docker TeX fallback；可由 runtime.yaml 默认开启")
+    auto_fit_wide_tables: bool = Field(
+        True,
+        description="Safely wrap structurally wide standard tabular blocks in resizebox when the active template permits it.",
+    )
 
 
 class LatexCompileTool(Tool):
     name = "latex_compile"
-    description = "使用当前环境的 latexmk 编译 .tex 文件并生成 PDF。"
+    description = "编译 .tex 并生成 PDF；auto 优先本机 TeX，宿主缺失时可安全回退到配置的 Docker TeX 镜像。"
     parameters_schema = LatexCompileParams
     timeout_seconds = 1800.0
 
@@ -63,6 +168,7 @@ class LatexCompileTool(Tool):
         if not params.allow_docker_fallback and self.latex_settings.allow_docker_fallback:
             params = params.model_copy(update={"allow_docker_fallback": True})
         tex_abs = self.docker.policy.resolve_read(params.tex_path)
+        table_layout = _apply_table_layout_policy(tex_abs, enabled=params.auto_fit_wide_tables)
         started_at = _now_iso()
         report_base = _compile_report_base(
             tex_abs=tex_abs,
@@ -70,6 +176,7 @@ class LatexCompileTool(Tool):
             params=params,
             started_at=started_at,
         )
+        report_base["table_layout"] = table_layout
         backend_checks = detect_latex_backends(allow_docker=params.allow_docker_fallback or params.backend == "docker")
         report_base["requested_backend"] = params.backend
         report_base["selected_backend"] = _select_backend(params, backend_checks)
@@ -113,7 +220,7 @@ class LatexCompileTool(Tool):
                 ok=False,
                 content=(
                     "WAITING_ENVIRONMENT: latexmk is not installed in the current environment.\n"
-                    "Install a local TeX distribution and latexmk, then resume.\n"
+                    "Install a local TeX distribution and latexmk, or enable/configure the Docker TeX backend, then resume.\n"
                     "Ubuntu/Debian: sudo apt-get install texlive-latex-base texlive-latex-extra "
                     "texlive-fonts-recommended texlive-xetex texlive-lang-chinese latexmk\n"
                     "macOS: install MacTeX or BasicTeX plus latexmk.\n"
@@ -147,23 +254,7 @@ class LatexCompileTool(Tool):
                 )
             return await self._compile_tectonic(params, report_base=report_base)
         if report_base["selected_backend"] == "docker":
-            report = _finalize_compile_report(
-                report_base,
-                success=False,
-                engine="docker",
-                exit_code=None,
-                error="waiting_environment_docker_backend_not_enabled",
-            )
-            _write_compile_report_for_known_target(self.docker.policy.workspace_dir, params.tex_path, report)
-            return ToolResult(
-                ok=False,
-                content=(
-                    "WAITING_ENVIRONMENT: Docker LaTeX backend is intentionally not enabled by default.\n"
-                    "Install local latexmk, use backend=export_only, or maintain a project-specific TeX image."
-                ),
-                error="waiting_environment_docker_backend_not_enabled",
-                data={"error": "waiting_environment_docker_backend_not_enabled", "compile_report": report},
-            )
+            return await self._compile_docker(params, report_base=report_base)
         return await self._compile_native(params, report_base=report_base)
 
     async def _compile_tectonic(self, params: LatexCompileParams, *, report_base: dict[str, Any]) -> ToolResult:
@@ -340,6 +431,142 @@ class LatexCompileTool(Tool):
             data={"pdf_path": pdf_rel, "exit_code": proc.returncode, "compile_report": report},
         )
 
+    async def _compile_docker(self, params: LatexCompileParams, *, report_base: dict[str, Any]) -> ToolResult:
+        """Compile through the configured TeX image and persist normal artifacts.
+
+        ``DockerExecTool`` handles the allowlist, daemon/image checks, network
+        isolation and workspace bind mount.  In container-native deployments it
+        deliberately executes the current container's TeX toolchain instead of
+        attempting Docker-in-Docker, so a slim application image gets a clear
+        actionable error instead of an opaque nested-Docker failure.
+        """
+
+        tex_abs = self.docker.policy.resolve_read(params.tex_path)
+        workspace = self.docker.policy.workspace_dir.resolve()
+        try:
+            tex_dir_rel = tex_abs.parent.resolve().relative_to(workspace).as_posix()
+        except ValueError:
+            report = _finalize_compile_report(
+                report_base,
+                success=False,
+                engine="docker",
+                exit_code=None,
+                error="tex_path_outside_workspace",
+            )
+            _write_compile_report_for_known_target(workspace, params.tex_path, report)
+            return ToolResult(
+                ok=False,
+                content="LaTeX source must remain within the active workspace for Docker compilation.",
+                error="tex_path_outside_workspace",
+                data={"compile_report": report},
+            )
+
+        if self._is_running_in_container() and shutil.which("latexmk") is None:
+            report = _finalize_compile_report(
+                report_base,
+                success=False,
+                engine="docker",
+                exit_code=None,
+                error="waiting_environment_container_tex_missing",
+            )
+            _write_compile_report_for_known_target(workspace, params.tex_path, report)
+            return ToolResult(
+                ok=False,
+                content=(
+                    "WAITING_ENVIRONMENT: ResearchOS is already running in a container, but that "
+                    "container has no latexmk. Rebuild/run the configured ResearchOS image with its TeX "
+                    "toolchain, or run ResearchOS on the host so it can start the configured Docker TeX image."
+                ),
+                error="waiting_environment_container_tex_missing",
+                data={"compile_report": report},
+            )
+
+        command = [
+            "latexmk",
+            f"-{params.engine}",
+            "-interaction=nonstopmode",
+            "-bibtex" if params.bibtex else "-bibtex-",
+        ]
+        if params.output_dir:
+            command.extend(["-outdir", params.output_dir])
+        command.append(tex_abs.name)
+        container_cwd = "/workspace" if tex_dir_rel in {"", "."} else f"/workspace/{tex_dir_rel}"
+        image = self.latex_settings.docker_image
+        _LOG.info(
+            "latex_compile_docker",
+            tex_path=params.tex_path,
+            engine=params.engine,
+            image=image,
+            cwd=container_cwd,
+        )
+        docker_result = await self.docker.execute(
+            image=image,
+            command=shlex.join(command),
+            cwd=container_cwd,
+            timeout_seconds=int(self.timeout_seconds),
+            allow_network=False,
+            gpu=False,
+            env={},
+            extra_mounts=[],
+        )
+        exit_code = docker_result.data.get("exit_code") if isinstance(docker_result.data, dict) else None
+        if not docker_result.ok:
+            error = str(docker_result.error or "docker_compile_failed")
+            report = _finalize_compile_report(
+                report_base,
+                success=False,
+                engine="docker",
+                exit_code=exit_code if isinstance(exit_code, int) else None,
+                error=error,
+            )
+            _write_compile_report_for_known_target(workspace, params.tex_path, report)
+            return ToolResult(
+                ok=False,
+                content=docker_result.content,
+                error=error,
+                data={"compile_report": report, "docker": docker_result.data},
+            )
+
+        pdf_path = self._expected_pdf_path(tex_abs, params.output_dir)
+        if not pdf_path.exists():
+            report = _finalize_compile_report(
+                report_base,
+                success=False,
+                engine="docker",
+                exit_code=exit_code if isinstance(exit_code, int) else 0,
+                error="pdf_missing",
+            )
+            _write_compile_report_for_known_target(workspace, params.tex_path, report)
+            return ToolResult(
+                ok=False,
+                content=(
+                    "Docker LaTeX command completed but did not create the expected PDF: "
+                    f"{pdf_path.relative_to(workspace)}\n\n{docker_result.content}"
+                ),
+                error="pdf_missing",
+                data={"compile_report": report, "docker": docker_result.data},
+            )
+
+        pdf_rel = pdf_path.relative_to(workspace).as_posix()
+        report = _finalize_compile_report(
+            report_base,
+            success=True,
+            engine="docker",
+            exit_code=exit_code if isinstance(exit_code, int) else 0,
+            pdf_path=pdf_path,
+        )
+        _write_compile_report_for_known_target(workspace, params.tex_path, report)
+        return ToolResult(
+            ok=True,
+            content=docker_result.content + f"\n\nPDF: {pdf_rel}",
+            data={
+                "pdf_path": pdf_rel,
+                "exit_code": exit_code if isinstance(exit_code, int) else 0,
+                "compile_report": report,
+                "docker": docker_result.data,
+            },
+        )
+
     @staticmethod
     def _expected_pdf_path(tex_abs: Path, output_dir: str | None) -> Path:
         pdf_name = tex_abs.with_suffix(".pdf").name
@@ -350,6 +577,163 @@ class LatexCompileTool(Tool):
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+_TABLE_ENV_RE = re.compile(r"\\begin\{table\*?\}(?P<body>.*?)\\end\{table\*?\}", re.DOTALL)
+_TABULAR_RE = re.compile(
+    r"\\begin\{tabular\}(?:\[[^\]]*\])?\{(?P<spec>[^}]*)\}(?P<body>.*?)\\end\{tabular\}",
+    re.DOTALL,
+)
+
+
+def inspect_latex_table_layout(tex: str) -> dict[str, Any]:
+    """Inspect standard tables without changing LaTeX source."""
+
+    candidates: list[dict[str, Any]] = []
+    skipped: list[dict[str, str]] = []
+    if _template_disallows_resizebox(tex):
+        return {
+            "template_allows_resizebox": False,
+            "wide_table_count": 0,
+            "candidates": [],
+            "skipped": [{"reason": "template_disallows_resizebox"}],
+        }
+    for table_index, table_match in enumerate(_TABLE_ENV_RE.finditer(tex), start=1):
+        table_body = table_match.group("body")
+        if "\\resizebox" in table_body or "\\adjustbox" in table_body:
+            skipped.append({"table": str(table_index), "reason": "already_scaled"})
+            continue
+        if any(marker in table_body for marker in ("\\begin{tabularx}", "\\begin{longtable}", "\\begin{supertabular}")):
+            skipped.append({"table": str(table_index), "reason": "nonstandard_table_environment"})
+            continue
+        tabular_match = _TABULAR_RE.search(table_body)
+        if tabular_match is None:
+            continue
+        column_count = _tabular_column_count(tabular_match.group("spec"))
+        row_width = _max_tabular_row_columns(tabular_match.group("body"))
+        if max(column_count, row_width) >= 6:
+            candidates.append(
+                {
+                    "table": table_index,
+                    "column_count": column_count,
+                    "row_column_count": row_width,
+                }
+            )
+        else:
+            skipped.append({"table": str(table_index), "reason": "not_structurally_wide"})
+    return {
+        "template_allows_resizebox": True,
+        "wide_table_count": len(candidates),
+        "candidates": candidates,
+        "skipped": skipped,
+    }
+
+
+def apply_safe_resizebox_to_wide_tables(tex: str) -> tuple[str, dict[str, Any]]:
+    """Wrap only wide ordinary ``tabular`` blocks in ``\\resizebox``.
+
+    The transform intentionally avoids ``tabularx``, ``longtable``, existing
+    wrappers, and templates that explicitly prohibit table resizing.  It is a
+    layout fallback, not a general LaTeX rewriter.
+    """
+
+    inspection = inspect_latex_table_layout(tex)
+    report: dict[str, Any] = {
+        "auto_fit_enabled": True,
+        "template_allows_resizebox": inspection["template_allows_resizebox"],
+        "wide_table_count": inspection["wide_table_count"],
+        "resizebox_inserted": 0,
+        "skipped": inspection["skipped"],
+    }
+    if not inspection["template_allows_resizebox"] or not inspection["candidates"]:
+        return tex, report
+
+    candidate_numbers = {int(item["table"]) for item in inspection["candidates"]}
+    pieces: list[str] = []
+    cursor = 0
+    for table_index, table_match in enumerate(_TABLE_ENV_RE.finditer(tex), start=1):
+        pieces.append(tex[cursor:table_match.start()])
+        whole = table_match.group(0)
+        if table_index in candidate_numbers:
+            tabular_match = _TABULAR_RE.search(whole)
+            if tabular_match is not None:
+                tabular = tabular_match.group(0)
+                wrapped = "\\resizebox{\\textwidth}{!}{%\n" + tabular + "%\n}"
+                whole = whole[:tabular_match.start()] + wrapped + whole[tabular_match.end():]
+                report["resizebox_inserted"] = int(report["resizebox_inserted"]) + 1
+        pieces.append(whole)
+        cursor = table_match.end()
+    pieces.append(tex[cursor:])
+    transformed = "".join(pieces)
+    if report["resizebox_inserted"] and not _has_graphicx_package(transformed):
+        transformed = _ensure_graphicx_package(transformed)
+        report["graphicx_added"] = True
+    else:
+        report["graphicx_added"] = False
+    return transformed, report
+
+
+def _apply_table_layout_policy(tex_path: Path, *, enabled: bool) -> dict[str, Any]:
+    """Apply the opt-out-safe table transform and return its audit record."""
+
+    if not enabled:
+        return {
+            "auto_fit_enabled": False,
+            "wide_table_count": 0,
+            "resizebox_inserted": 0,
+            "skipped": [{"reason": "disabled_by_request"}],
+        }
+    try:
+        original = tex_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return {
+            "auto_fit_enabled": True,
+            "wide_table_count": 0,
+            "resizebox_inserted": 0,
+            "skipped": [{"reason": f"source_unreadable:{exc}"}],
+        }
+    transformed, report = apply_safe_resizebox_to_wide_tables(original)
+    if transformed != original:
+        tex_path.write_text(transformed, encoding="utf-8")
+        report["source_updated"] = True
+    else:
+        report["source_updated"] = False
+    return report
+
+
+def _template_disallows_resizebox(tex: str) -> bool:
+    lowered = tex.casefold()
+    return "aaai" in lowered and ("\\usepackage{aaai" in lowered or "\\documentclass{aaai" in lowered)
+
+
+def _tabular_column_count(spec: str) -> int:
+    cleaned = re.sub(r"@[^{]*\{[^}]*\}|>[^{]*\{[^}]*\}|<[^{]*\{[^}]*\}", "", spec or "")
+    count = 0
+    index = 0
+    while index < len(cleaned):
+        char = cleaned[index]
+        if char in "lcrXSD":
+            count += 1
+        elif char in "pmb" and index + 1 < len(cleaned) and cleaned[index + 1] == "{":
+            count += 1
+        index += 1
+    return count
+
+
+def _max_tabular_row_columns(body: str) -> int:
+    rows = re.split(r"\\\\(?:\[[^\]]*\])?", body or "")
+    return max((row.count("&") + 1 for row in rows if row.strip()), default=0)
+
+
+def _has_graphicx_package(tex: str) -> bool:
+    return bool(re.search(r"\\usepackage(?:\[[^\]]*\])?\{[^}]*graphicx[^}]*\}", tex))
+
+
+def _ensure_graphicx_package(tex: str) -> str:
+    documentclass = re.search(r"\\documentclass(?:\[[^\]]*\])?\{[^}]+\}", tex)
+    if documentclass is None:
+        return "\\usepackage{graphicx}\n" + tex
+    return tex[:documentclass.end()] + "\n\\usepackage{graphicx}" + tex[documentclass.end():]
 
 
 def _select_backend(params: LatexCompileParams, backend_checks: list[dict[str, Any]]) -> str:

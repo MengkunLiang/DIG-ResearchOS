@@ -18,11 +18,11 @@
 `{{ mode }}`
 
 {% if mode == "reboost" %}
-读取 Pre-T5 材料，生成 `external_executor/handoff_pack.json#context_reboost` 和 `external_executor/reboost_report.json`。只做执行语境重排，不运行实验、不实现方法、不选择执行器。
+读取 Pre-T5 材料，生成 `external_executor/handoff_pack.json#context_reboost` 和 `external_executor/reboost_report.json`；随后调用 `build_experiment_handoff_pack` 且 `specialize_skills=false`，补全 Codex/Claude/manual prompt、expected schema、allowed paths 和 AGENTS/CLAUDE。只做执行语境重排与 handoff 编译，不运行实验、不实现方法、不选择执行器、不生成 `external_executor/skills/`。
 {% elif mode == "handoff" %}
 调用 `build_experiment_handoff_pack`，生成 `external_executor/handoff_pack.json`、`external_executor/executor_prompt.md`、`external_executor/expected_outputs_schema.json` 和 `external_executor/allowed_paths.txt`。只编译外部执行协议，不运行真实实验。
 {% elif mode == "skill_customization" %}
-读取 `external_executor/handoff_pack.json`、`external_executor/skills/template_manifest.json` 和 `external_executor/skills/skills_customization/SKILL.md`，把 13 个 copied skill 模板原地改写为项目专属 skill suite，并写入 `external_executor/skills/customization_report.json`。不要运行实验，也不要要求用户手动拉起 Codex CLI。
+读取 `external_executor/skill_specialization_report.json`、`external_executor/project_skill_context.yaml` 和 `external_executor/skills/`，确认 13 个项目专属 skill 已由 `researchos specialize-executor-skills` 调用 LLM 完成专属化。不要在 gate 中再次改写 skill，不要运行实验。
 {% elif mode == "executor_gate" %}
 这是 immediate gate 模式。若被直接运行，只能调用 `select_external_executor` 写入选择并 patch handoff 文件；不要运行实验。
 {% elif mode == "external_wait" %}
@@ -165,7 +165,7 @@
 {% elif mode == "full" %}
 ## T7 Full 模式核心要求（legacy 兼容节点）
 
-注意：默认完整主链现在使用 `T5-REBOOST-GATE -> T5-HANDOFF -> T5-SKILL-CUSTOMIZATION-GATE -> T5-EXPR-MATERIAL-GATE -> T5-EXECUTOR-GATE -> T5-DRY-RUN/T5-EXTERNAL-WAIT -> T7-INGEST -> T7-AUDIT -> T7-POST-NOVELTY -> T7-CLAIMS` 外部实验链。普通 `run-task T7` 也会映射到新版入口；只有显式 `run-task LEGACY-T7-FULL` 或旧 workspace 恢复到 legacy T7 时，才执行本内部完整实验模式。
+注意：默认完整主链现在使用 `T5-REBOOST -> specialize-executor-skills -> T5-EXECUTOR-GATE -> T5-DRY-RUN/T5-EXTERNAL-WAIT -> T7-INGEST -> T7-AUDIT -> T7-POST-NOVELTY -> T7-CLAIMS` 外部实验链。普通 `run-task T7` 也会映射到新版入口；只有显式 `run-task LEGACY-T7-FULL` 或旧 workspace 恢复到 legacy T7 时，才执行本内部完整实验模式。
 
 {% if direct_full_mode %}
 ### 0. Legacy Direct-Full 入口

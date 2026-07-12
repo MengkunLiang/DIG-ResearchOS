@@ -10,6 +10,9 @@ does that work section by section.
 import json
 import hashlib
 import re
+import csv
+import textwrap
+from collections import Counter
 from pathlib import Path
 from typing import Any, Literal
 
@@ -72,6 +75,20 @@ SURVEY_SECTION_TITLES = {
     "challenges": "Open Challenges",
     "future": "Future Directions",
     "conclusion": "Conclusion",
+}
+
+# Survey sections use fewer cards than a full paper's related-work section at
+# a time, but taxonomy/comparison need broader coverage than background.  The
+# quota is a retrieval starting point, never a citation quota.
+SURVEY_NOTE_CARD_BUDGETS: dict[str, tuple[int, int]] = {
+    "introduction": (6, 10),
+    "background": (6, 10),
+    "taxonomy": (10, 14),
+    "comparison": (10, 14),
+    "challenges": (8, 12),
+    "future": (6, 10),
+    "conclusion": (3, 5),
+    "abstract": (0, 0),
 }
 
 SURVEY_SECTION_TITLE_ALIASES = {
@@ -413,6 +430,350 @@ class AssembleSurveyParams(BaseModel):
     output_path: str = Field(default="drafts/survey/survey.tex")
     title: str = Field(default="", description="Optional title override.")
     related_work_bib_path: str = Field(default="literature/related_work.bib")
+
+
+class BuildSurveyFiguresParams(BaseModel):
+    comparison_table_path: str = Field(default="literature/comparison_table.csv")
+    domain_map_path: str = Field(default="literature/domain_map.json")
+    survey_plan_path: str = Field(default="drafts/survey/survey_plan.json")
+    output_dir: str = Field(default="drafts/survey/figures")
+    manifest_path: str = Field(default="drafts/survey/figures/survey_visual_manifest.json")
+    dpi: int = Field(default=150, ge=100, le=300)
+    min_rows_per_figure: int = Field(
+        default=8,
+        ge=4,
+        le=1000,
+        description="Minimum valid rows required by each data-derived figure; sparse corpora produce a skipped manifest.",
+    )
+
+
+class BuildSurveyFiguresTool(Tool):
+    """Generate evidence-derived survey visuals, never decorative illustrations."""
+
+    name = "build_survey_figures"
+    description = (
+        "Create deterministic academic survey figures from the comparison table. "
+        "The tool writes a manifest and generates only figures supported by sufficient tabular data."
+    )
+    parameters_schema = BuildSurveyFiguresParams
+    timeout_seconds = 60.0
+
+    def __init__(self, policy: WorkspaceAccessPolicy):
+        self.policy = policy
+
+    async def execute(self, **kwargs: Any) -> ToolResult:
+        params = BuildSurveyFiguresParams(**kwargs)
+        try:
+            comparison_path = self.policy.resolve_read(params.comparison_table_path)
+            output_dir = self.policy.resolve_write(params.output_dir)
+            manifest_path = self.policy.resolve_write(params.manifest_path)
+        except ToolAccessDenied as exc:
+            return ToolResult(ok=False, content=str(exc), error="access_denied")
+        if not comparison_path.exists() or comparison_path.stat().st_size <= 0:
+            return ToolResult(
+                ok=False,
+                content=f"comparison table missing or empty: {params.comparison_table_path}",
+                error="missing_comparison_table",
+            )
+        try:
+            import matplotlib
+            matplotlib.use("Agg", force=True)
+            import matplotlib.pyplot as plt
+            from matplotlib import font_manager
+        except ImportError:
+            return ToolResult(
+                ok=False,
+                content=(
+                    "WAITING_ENVIRONMENT: matplotlib is required for deterministic survey visuals. "
+                    "Install the project requirements (`pip install -r requirements.txt`) and resume."
+                ),
+                error="waiting_environment_matplotlib_missing",
+            )
+
+        try:
+            with comparison_path.open("r", encoding="utf-8", errors="replace", newline="") as handle:
+                rows = [dict(row) for row in csv.DictReader(handle) if isinstance(row, dict)]
+        except (OSError, csv.Error) as exc:
+            return ToolResult(ok=False, content=f"cannot read comparison table: {exc}", error="invalid_comparison_table")
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        font_name = _select_survey_figure_font(font_manager)
+        matplotlib.rcParams.update(
+            {
+                "font.family": "serif",
+                "font.serif": [font_name],
+                "font.size": 9,
+                "axes.titlesize": 11,
+                "axes.labelsize": 9,
+                "xtick.labelsize": 8,
+                "ytick.labelsize": 8,
+                "legend.fontsize": 8,
+                "figure.dpi": params.dpi,
+                "savefig.dpi": params.dpi,
+            }
+        )
+        generated: list[dict[str, Any]] = []
+        skipped: list[dict[str, str]] = []
+        years = _survey_figure_year_counts(rows)
+        year_points = sum(years.values())
+        if len(years) >= 2 and year_points >= params.min_rows_per_figure:
+            figure_path = output_dir / "survey_corpus_landscape.png"
+            _render_survey_year_landscape(
+                plt,
+                years,
+                figure_path,
+                dpi=params.dpi,
+                source_rows=len(rows),
+            )
+            generated.append(
+                {
+                    "id": "corpus_landscape",
+                    "path": _workspace_relative(self.policy.workspace_dir, figure_path),
+                    "kind": "publication_year_distribution",
+                    "title": "Evidence Landscape of the Survey Corpus",
+                    "data_points": year_points,
+                    "data_coverage": _survey_figure_coverage(year_points, len(rows)),
+                    "recommended_sections": ["background", "comparison"],
+                    "latex_example": "\\includegraphics[width=\\textwidth]{figures/survey_corpus_landscape.png}",
+                }
+            )
+        else:
+            skipped.append(
+                {
+                    "id": "corpus_landscape",
+                    "reason": (
+                        "requires at least two valid publication years and "
+                        f"{params.min_rows_per_figure} valid rows; found years={len(years)}, rows={year_points}"
+                    ),
+                }
+            )
+        families = _survey_figure_method_counts(rows)
+        family_points = sum(families.values())
+        if len(families) >= 2 and family_points >= params.min_rows_per_figure:
+            figure_path = output_dir / "survey_method_taxonomy.png"
+            _render_survey_method_taxonomy(
+                plt,
+                families,
+                figure_path,
+                dpi=params.dpi,
+                source_rows=len(rows),
+            )
+            generated.append(
+                {
+                    "id": "method_taxonomy",
+                    "path": _workspace_relative(self.policy.workspace_dir, figure_path),
+                    "kind": "method_family_distribution",
+                    "title": "Method-Family Distribution in the Survey Corpus",
+                    "data_points": family_points,
+                    "data_coverage": _survey_figure_coverage(family_points, len(rows)),
+                    "recommended_sections": ["taxonomy", "comparison"],
+                    "latex_example": "\\includegraphics[width=\\textwidth]{figures/survey_method_taxonomy.png}",
+                }
+            )
+        else:
+            skipped.append(
+                {
+                    "id": "method_taxonomy",
+                    "reason": (
+                        "requires at least two non-empty method families and "
+                        f"{params.min_rows_per_figure} classified rows; found families={len(families)}, rows={family_points}"
+                    ),
+                }
+            )
+
+        optional_inputs = {
+            "domain_map": params.domain_map_path,
+            "survey_plan": params.survey_plan_path,
+        }
+        manifest = {
+            "semantics": "deterministic_survey_data_visual_manifest",
+            "status": "generated" if generated else "skipped",
+            "generation_policy": {
+                "decorative_images_forbidden": True,
+                "only_data_derived_figures": True,
+                "dpi": params.dpi,
+                "min_rows_per_figure": params.min_rows_per_figure,
+                "font_requested": ["Times New Roman", "Times", "Nimbus Roman", "DejaVu Serif"],
+                "font_selected": font_name,
+                "language": "English academic labels",
+                "palette": ["#1F5A7A", "#2F7E8D", "#C47B4D", "#8E5A89", "#66717E"],
+            },
+            "source": {
+                "comparison_table": params.comparison_table_path,
+                "row_count": len(rows),
+                "year_coverage": _survey_figure_coverage(year_points, len(rows)),
+                "method_family_coverage": _survey_figure_coverage(family_points, len(rows)),
+                **optional_inputs,
+            },
+            "figures": generated,
+            "skipped": skipped,
+            "input_fingerprints": _input_fingerprints(
+                self.policy.workspace_dir,
+                {
+                    "comparison_table": params.comparison_table_path,
+                    "domain_map": params.domain_map_path,
+                    "survey_plan": params.survey_plan_path,
+                },
+            ),
+        }
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return ToolResult(
+            ok=True,
+            content=(
+                f"Survey visual manifest written to {params.manifest_path}: "
+                f"{len(generated)} generated, {len(skipped)} skipped."
+            ),
+            data={
+                "manifest_path": params.manifest_path,
+                "status": manifest["status"],
+                "figure_paths": [item["path"] for item in generated],
+                "font_selected": font_name,
+                "skipped": skipped,
+            },
+        )
+
+
+def _select_survey_figure_font(font_manager: Any) -> str:
+    for candidate in ("Times New Roman", "Times", "Nimbus Roman", "DejaVu Serif"):
+        try:
+            path = font_manager.findfont(candidate, fallback_to_default=False)
+        except (ValueError, OSError):
+            continue
+        if path:
+            return candidate
+    return "DejaVu Serif"
+
+
+def _survey_figure_year_counts(rows: list[dict[str, str]]) -> Counter[int]:
+    counts: Counter[int] = Counter()
+    for row in rows:
+        value = str(row.get("year") or "").strip()
+        match = re.search(r"(?:19|20)\d{2}", value)
+        if match:
+            counts[int(match.group(0))] += 1
+    return counts
+
+
+def _survey_figure_method_counts(rows: list[dict[str, str]]) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    for row in rows:
+        family = " ".join(str(row.get("method_family") or "").split())
+        if family:
+            counts[family] += 1
+    return counts
+
+
+def _survey_figure_coverage(valid_rows: int, total_rows: int) -> dict[str, Any]:
+    total = max(0, int(total_rows))
+    valid = max(0, int(valid_rows))
+    return {
+        "valid_rows": valid,
+        "total_rows": total,
+        "share": round(valid / total, 4) if total else 0.0,
+    }
+
+
+def _render_survey_year_landscape(
+    plt: Any,
+    counts: Counter[int],
+    output_path: Path,
+    *,
+    dpi: int,
+    source_rows: int,
+) -> None:
+    palette = ["#1F5A7A", "#2F7E8D", "#C47B4D", "#8E5A89", "#66717E"]
+    years = sorted(counts)
+    values = [counts[year] for year in years]
+    total = sum(values)
+    figure, axis = plt.subplots(figsize=(7.25, 4.1), dpi=dpi)
+    axis.bar(
+        [str(year) for year in years],
+        values,
+        color=[palette[index % len(palette)] for index in range(len(values))],
+        edgecolor="#FFFFFF",
+        linewidth=0.8,
+        width=0.72,
+    )
+    for position, value in enumerate(values):
+        axis.text(
+            position,
+            value + max(0.08, max(values) * 0.035),
+            f"{value}\n({value / total:.0%})",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+        )
+    axis.set_title("Evidence Landscape of the Survey Corpus", pad=12)
+    axis.set_xlabel("Publication Year")
+    axis.set_ylabel("Studies")
+    axis.spines[["top", "right"]].set_visible(False)
+    axis.grid(axis="y", color="#D6DCE1", linewidth=0.6, alpha=0.8)
+    axis.set_axisbelow(True)
+    axis.set_ylim(0, max(values) * 1.24)
+    figure.text(
+        0.99,
+        0.012,
+        f"Source: ResearchOS comparison table; valid year rows n={total}/{source_rows}.",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="#4B5563",
+    )
+    figure.tight_layout(rect=(0, 0.055, 1, 0.985))
+    figure.savefig(output_path, bbox_inches="tight", facecolor="white")
+    plt.close(figure)
+
+
+def _render_survey_method_taxonomy(
+    plt: Any,
+    counts: Counter[str],
+    output_path: Path,
+    *,
+    dpi: int,
+    source_rows: int,
+) -> None:
+    palette = ["#1F5A7A", "#2F7E8D", "#C47B4D", "#8E5A89", "#66717E"]
+    items = sorted(counts.items(), key=lambda item: (-item[1], item[0].casefold()))[:10]
+    labels = ["\n".join(textwrap.wrap(item[0], width=23)) or item[0] for item in reversed(items)]
+    values = [item[1] for item in reversed(items)]
+    total = sum(values)
+    figure, axis = plt.subplots(figsize=(7.45, max(3.85, 0.48 * len(labels) + 1.7)), dpi=dpi)
+    colors = [palette[index % len(palette)] for index in range(len(labels))]
+    bars = axis.barh(labels, values, color=list(reversed(colors)), edgecolor="#FFFFFF", linewidth=0.8)
+    for bar, value in zip(bars, values):
+        axis.text(
+            value + max(0.08, max(values) * 0.03),
+            bar.get_y() + bar.get_height() / 2,
+            f"{value} ({value / total:.0%})",
+            va="center",
+            fontsize=8,
+        )
+    axis.set_title("Method-Family Distribution in the Survey Corpus", pad=12)
+    axis.set_xlabel("Studies (share of classified corpus)")
+    axis.spines[["top", "right", "left"]].set_visible(False)
+    axis.grid(axis="x", color="#D6DCE1", linewidth=0.6, alpha=0.8)
+    axis.set_axisbelow(True)
+    axis.set_xlim(0, max(values) * 1.2)
+    figure.text(
+        0.99,
+        0.012,
+        f"Source: ResearchOS comparison table; classified rows n={total}/{source_rows}.",
+        ha="right",
+        va="bottom",
+        fontsize=7,
+        color="#4B5563",
+    )
+    figure.tight_layout(rect=(0, 0.055, 1, 0.985))
+    figure.savefig(output_path, bbox_inches="tight", facecolor="white")
+    plt.close(figure)
+
+
+def _workspace_relative(workspace: Path, path: Path) -> str:
+    try:
+        return path.resolve().relative_to(workspace.resolve()).as_posix()
+    except ValueError:
+        return path.as_posix()
 
 
 class AuditSurveyCoverageParams(BaseModel):
@@ -779,6 +1140,7 @@ class AssembleSurveyTool(Tool):
                     "survey_state": params.state_path,
                     "sections_dir": params.section_dir,
                     "related_work_bib": params.related_work_bib_path,
+                    "survey_visual_manifest": "drafts/survey/figures/survey_visual_manifest.json",
                     "survey_tex": params.output_path,
                     "references_bib": "drafts/survey/references.bib",
                     **{f"section_{sid}": str(((state.get("sections") or {}).get(sid) or {}).get("file") or "") for sid in included},
@@ -893,6 +1255,14 @@ class AuditSurveyCoverageTool(Tool):
         )
         missing_cites = sorted(cited - bib_keys) if bib_keys else []
         checks.append(_check("all_citations_in_bib", not missing_cites, f"Citation keys missing from bib: {missing_cites}"))
+        missing_graphics = _missing_survey_graphics(tex, tex_path.parent)
+        checks.append(
+            _check(
+                "survey_graphics_exist",
+                not missing_graphics,
+                f"Missing local graphics referenced by survey.tex: {missing_graphics}",
+            )
+        )
         min_unique_citations = _survey_min_unique_citations(state)
         checks.append(
             _check(
@@ -997,6 +1367,7 @@ class AuditSurveyCoverageTool(Tool):
                     "abstract_notes_dir": "literature/paper_notes_abstract",
                     "bridge_notes_dir": "literature/paper_notes_bridge",
                     "survey_assembly_manifest": "drafts/survey/survey_assembly_manifest.json",
+                    "survey_visual_manifest": "drafts/survey/figures/survey_visual_manifest.json",
                 },
             ),
             "passed": passed,
@@ -2106,9 +2477,15 @@ def _section_citation_requirement_lines(section_id: str) -> list[str]:
 
 
 def _survey_note_card_retrieval_lines(section_id: str) -> list[str]:
+    initial, maximum = SURVEY_NOTE_CARD_BUDGETS.get(
+        section_id,
+        (8, 12) if section_id.startswith("theme_") else (6, 10),
+    )
     common = [
+        f"- Retrieval budget: start from {initial} high-quality, diverse note cards; never read more than {maximum} without identifying a concrete section-level evidence gap.",
         "- Before using a citation, inspect the matching paper note or citation pool entry and verify that the note supports the exact sentence-level claim.",
         "- Use FULL/PARTIAL notes for claim evidence; use abstract-only notes only for scope, trend, or resource-upgrade boundaries.",
+        "- Recovery ladder: selected cards -> exact note section via grep_search/read_file -> weak cards only for boundary context -> bounded query plan only if a named gap remains; do not broad-scan every note file.",
     ]
     mapping = {
         "introduction": [
@@ -2926,6 +3303,22 @@ def _latex_cite_key_occurrences(text: str) -> list[str]:
     ):
         keys.extend(key.strip() for key in match.group(1).split(",") if key.strip())
     return keys
+
+
+def _missing_survey_graphics(tex: str, tex_dir: Path) -> list[str]:
+    """Return local includegraphics targets that have no resolvable image file."""
+
+    missing: list[str] = []
+    pattern = re.compile(r"\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}")
+    for raw_path in pattern.findall(tex):
+        candidate = raw_path.strip()
+        if not candidate or candidate.startswith(("http://", "https://")):
+            continue
+        path = tex_dir / candidate
+        candidates = [path] if path.suffix else [path.with_suffix(ext) for ext in (".pdf", ".png", ".jpg", ".jpeg", ".eps")]
+        if not any(item.exists() and item.is_file() for item in candidates):
+            missing.append(candidate)
+    return sorted(set(missing))
 
 
 def _survey_citation_diversity_issues(

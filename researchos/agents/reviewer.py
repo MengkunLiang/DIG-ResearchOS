@@ -29,6 +29,7 @@ class ReviewerAgent(Agent):
                     "tool_names": [
                         "read_file",
                         "list_files",
+                        "grep_search",
                         "write_file",
                         "bind_review_round",
                         "finish_task",

@@ -52,6 +52,7 @@ def _write_passing_craft_audit(workspace: Path) -> None:
         {"name": "abstract_no_cite", "level": "PASS", "passed": True},
         {"name": "abstract_no_section_heading", "level": "PASS", "passed": True},
         {"name": "citation_claim_alignment", "level": "PASS", "passed": True},
+        {"name": "citation_provenance", "level": "PASS", "passed": True},
         {"name": "no_internal_label_leakage", "level": "PASS", "passed": True},
         {"name": "no_placeholder_tokens", "level": "PASS", "passed": True},
         {"name": "number_traceability", "level": "PASS", "passed": True},
@@ -69,6 +70,22 @@ def _write_passing_craft_audit(workspace: Path) -> None:
             },
             ensure_ascii=False,
             indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (drafts / "citation_provenance_audit.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "citation_provenance_audit_for_final_manuscript",
+                "summary": {"hard_fail_count": 0, "warning_count": 0},
+                "input_fingerprints": craft_audit_input_fingerprints(workspace),
+                "records": [],
+                "hard_failures": [],
+                "warnings": [],
+            },
+            ensure_ascii=False,
         )
         + "\n",
         encoding="utf-8",

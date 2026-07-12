@@ -14,9 +14,9 @@ from pathlib import Path
 
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec, get_agent_params
-from ..runtime.environment import detect_latex_backends
+from ..runtime.config import load_runtime_settings
 from ..runtime.prompts import render_prompt
-from ..tools.latex_compile import _compile_dependency_fingerprint
+from ..tools.latex_compile import _compile_dependency_fingerprint, latex_backend_preflight
 from ..tools.manuscript import extract_bibliography_stems
 from ._common import load_project, prepend_resume_prefix, read_text_file
 from .writer import _validate_paper_claim_audit_if_needed, _validate_required_craft_checks
@@ -85,21 +85,23 @@ def check_anonymization(ctx: ExecutionContext) -> tuple[bool, str | None]:
 
 
 def check_submission_compile_environment(ctx: ExecutionContext) -> tuple[bool, str | None]:
-    """Pre-hook: ensure T9 has an enabled local PDF compile backend before LLM work."""
+    """Pre-hook: prove T9 has a real native or configured Docker PDF backend."""
 
-    detected = detect_latex_backends(allow_docker=False)
-    available = {item["name"]: item for item in detected if item.get("available")}
-    if "latexmk" in available or "tectonic" in available:
+    latex_settings = load_runtime_settings(Path("config/runtime.yaml")).latex
+    readiness = latex_backend_preflight(latex_settings)
+    if readiness.get("ok"):
+        ctx.extra["latex_backend_preflight"] = readiness
         return True, None
 
     ctx.extra["environment_blocker"] = {
-        "error": "latex_backend_missing",
-        "detected_backends": detected,
+        "error": str(readiness.get("reason") or "latex_backend_missing"),
+        "latex_backend_preflight": readiness,
     }
     return False, (
-        "WAITING_ENVIRONMENT: 当前环境未检测到可用的本机 LaTeX backend。"
-        "T9 投稿包验证需要 latexmk 或 tectonic 生成真实 PDF 和日志；"
-        "请安装 TeX Live/MacTeX/MiKTeX 的 latexmk，或安装 tectonic，确认命令在 PATH 后 resume。"
+        "WAITING_ENVIRONMENT: 当前环境未检测到可用的 LaTeX 编译后端。"
+        "T9 需要本机 latexmk/tectonic，或可访问且包含 latexmk、pdflatex、xelatex、bibtex 的 "
+        "ResearchOS Docker TeX 镜像，才能生成真实 PDF 和日志；"
+        f"当前原因：{readiness.get('message') or readiness.get('reason') or 'unknown'}。"
     )
 
 
@@ -122,6 +124,7 @@ class SubmissionAgent(Agent):
                         "read_file",
                         "write_file",
                         "list_files",
+                        "grep_search",
                         "bash_run",
                         "latex_compile",
                         "prepare_submission_bundle",

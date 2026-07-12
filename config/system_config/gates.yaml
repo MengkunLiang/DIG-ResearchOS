@@ -59,7 +59,7 @@ gates:
   # 会对保留候选尽可能尝试；工程 safety cap 仍由系统内部控制，不要求用户填写。
   t2_literature_param_gate:
     title: "T2 文献覆盖参数确认"
-    description: "请确认本轮文献检索与阅读覆盖强度。系统会先展示当前推荐档位和各档实际数值；你只需要判断是否沿用推荐，或改成更轻/更强/自定义。"
+    description: "确认本轮文献检索与阅读覆盖强度。可选档位，也可直接输入一句中文调整要求；未提到的字段保留当前推荐。"
     presentation:
       how_to_choose:
         literal: |
@@ -327,7 +327,7 @@ gates:
   # 候选池已经写入 artifact，runtime 在这里暂停，让用户选择、合并、重构或要求重分析。
   t4_gate1_selection_gate:
     title: "T4 Gate1 候选方向选择"
-    description: "T4 已生成候选方向。请优先阅读 Markdown 候选卡片，JSON 只作为机器可读附录，不需要直接阅读原始 JSON。"
+    description: "候选池已就绪。中文决策面板会完整展示问题、机制、预测、反事实、实验、评分、证据和文件导航；请直接选择、合并、重构或要求重新分析。"
     presentation:
       gate1_candidate_cards:
         from_file: ideation/_gate1_candidate_cards.md
@@ -616,7 +616,7 @@ gates:
   # 真实实验启动前，用户把 baseline/dataset/weights 等材料放进 external_executor/expr/。
   t5_expr_material_gate:
     title: "T5 实验材料放置确认"
-    description: "T5 已完成 re-boost、handoff 和 LLM API 自动 skill 专属化。请先把 baseline model、dataset、外部代码、权重和材料说明放入 external_executor/expr/，再选择执行器。"
+    description: "T5 已完成 re-boost、handoff 和项目专属 skill suite 生成。请先把 baseline model、dataset、外部代码、权重和材料说明放入 external_executor/expr/，再选择执行器。"
     presentation:
       expr_path:
         literal: "external_executor/expr/"
@@ -633,7 +633,7 @@ gates:
       launch_after_gate:
         literal: |
           材料就绪后，下一步会进入外部执行器选择 gate。
-          如果选择 Codex CLI，系统会提示你在 workspace 根目录启动 Codex CLI，让它读取 external_executor/AGENTS.md 并执行 external_executor/skills/research_execution/SKILL.md。
+          如果选择 Codex CLI，系统会提示你在 workspace 根目录启动 Codex CLI，让它读取 external_executor/AGENTS.md 并执行 external_executor/skills/research-execution/SKILL.md。
           Codex 完成后应写回 external_executor/result_pack.json、external_executor/executor_status.json 和 external_executor/run_manifest.json，然后使用 python -m researchos.cli resume --workspace <workspace> 恢复。
     options:
       - id: materials_ready
@@ -659,13 +659,16 @@ gates:
 
   t5_executor_gate:
     title: "T5 外部实验执行器选择"
-    description: "ResearchOS 已生成 handoff 协议。请选择如何执行实验；mock 只用于协议联调，不是论文实验证据。"
+    description: "ResearchOS 已生成 handoff 协议和项目专属 skill suite。默认使用 Codex CLI 真实执行；mock 只用于协议联调，不是论文实验证据。"
     presentation:
       handoff_summary:
         from_file: external_executor/handoff_pack.json
         max_chars: 5000
       allowed_paths:
         from_file: external_executor/allowed_paths.txt
+        max_chars: 2500
+      skill_specialization_report:
+        from_file: external_executor/skill_specialization_report.json
         max_chars: 2500
       codex_prompt:
         from_file: external_executor/codex_prompt.md
@@ -677,28 +680,29 @@ gates:
         literal: |
           Codex CLI 选择后的操作：
           1. 在当前 workspace 根目录启动 Codex CLI。
-          2. 对 Codex 说：请读取 external_executor/AGENTS.md，并执行 external_executor/skills/research_execution/SKILL.md。
+          2. 对 Codex 说：请读取 external_executor/AGENTS.md，并执行 external_executor/skills/research-execution/SKILL.md。
           3. Codex 完成后必须写出 external_executor/result_pack.json、external_executor/executor_status.json 和 external_executor/run_manifest.json。
           4. 回到 ResearchOS，运行 python -m researchos.cli resume --workspace <workspace>。
+          如果上方 skill_specialization_report 显示 file not found，请先运行 researchos specialize-executor-skills --workspace <workspace>，再回到本 gate。
     options:
-      - id: mock_dry_run
-        label: "mock dry-run（协议测试）"
-        aliases: ["mock", "dry", "dry_run"]
-        next: T5-DRY-RUN
-      - id: claude_code_window
-        label: "Claude Code 窗口执行"
-        aliases: ["claude", "cc"]
-        next: T5-EXTERNAL-WAIT
       - id: codex_cli
         label: "Codex CLI 真实执行"
         aliases: ["codex"]
         next: T5-EXTERNAL-WAIT
         collect_input:
           - notes
+      - id: claude_code_window
+        label: "Claude Code 窗口执行"
+        aliases: ["claude", "cc"]
+        next: T5-EXTERNAL-WAIT
       - id: manual
         label: "人工/其它执行器"
         aliases: ["manual", "human"]
         next: T5-EXTERNAL-WAIT
+      - id: mock_dry_run
+        label: "mock dry-run（协议测试）"
+        aliases: ["mock", "dry", "dry_run"]
+        next: T5-DRY-RUN
       - id: revise_handoff
         label: "返回重建 handoff"
         next: T5-REBOOST-GATE

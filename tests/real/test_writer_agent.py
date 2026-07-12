@@ -210,6 +210,7 @@ def _write_valid_draft_support(workspace: Path, *, short_section: bool = False) 
                     {"name": "abstract_no_cite", "level": "PASS", "passed": True},
                     {"name": "abstract_no_section_heading", "level": "PASS", "passed": True},
                     {"name": "citation_claim_alignment", "level": "PASS", "passed": True},
+                    {"name": "citation_provenance", "level": "PASS", "passed": True},
                     {"name": "no_internal_label_leakage", "level": "PASS", "passed": True},
                     {"name": "no_placeholder_tokens", "level": "PASS", "passed": True},
                     {"name": "number_traceability", "level": "PASS", "passed": True},
@@ -217,6 +218,20 @@ def _write_valid_draft_support(workspace: Path, *, short_section: bool = False) 
                     {"name": "conclusion_has_limitations_subsection", "level": "PASS", "passed": True},
                 ],
                 "input_fingerprints": craft_audit_input_fingerprints(workspace),
+            }
+        ),
+        encoding="utf-8",
+    )
+    (workspace / "drafts" / "citation_provenance_audit.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "citation_provenance_audit_for_final_manuscript",
+                "summary": {"hard_fail_count": 0, "warning_count": 0},
+                "input_fingerprints": craft_audit_input_fingerprints(workspace),
+                "records": [],
+                "hard_failures": [],
+                "warnings": [],
             }
         ),
         encoding="utf-8",
@@ -407,6 +422,41 @@ class TestWriterAgentValidateOutputs:
             "Without these markers the document will not pass validation checks.\n" * 5,
             encoding="utf-8",
         )
+        (standard_workspace / "drafts" / "writing_storyline.md").write_text(
+            """# Writing Storyline
+
+## Research Problem
+Define the bounded research problem.
+
+## Technical Bottleneck
+State the concrete limitation in current methods.
+
+## Root Technical Reason
+Explain the mechanism behind that limitation.
+
+## Core Insight
+State the evidence-bounded insight.
+
+## Method Mapping
+Map each design choice to the insight.
+
+## Contribution Claims
+Keep claims proportional to available evidence.
+
+## Evidence and Ablation Map
+Map claims to results, ablations, or analysis.
+
+## Alternative Explanations
+Name competing explanations to test.
+
+## Failure Modes and Limitations
+State known boundaries and failure modes.
+
+## Reviewer Questions
+Record the reviewer questions the draft must answer.
+""",
+            encoding="utf-8",
+        )
         _write_alignment_matrix(standard_workspace)
 
         agent = WriterAgent()
@@ -444,6 +494,41 @@ class TestWriterAgentValidateOutputs:
             "## 5. Conclusion\n\n"
             "Conclusion content.\n\n"
             "This is a complete outline with all required sections.\n" * 5,
+            encoding="utf-8",
+        )
+        (standard_workspace / "drafts" / "writing_storyline.md").write_text(
+            """# Writing Storyline
+
+## Research Problem
+Define the bounded research problem.
+
+## Technical Bottleneck
+State the concrete limitation in current methods.
+
+## Root Technical Reason
+Explain the mechanism behind that limitation.
+
+## Core Insight
+State the evidence-bounded insight.
+
+## Method Mapping
+Map each design choice to the insight.
+
+## Contribution Claims
+Keep claims proportional to available evidence.
+
+## Evidence and Ablation Map
+Map claims to results, ablations, or analysis.
+
+## Alternative Explanations
+Name competing explanations to test.
+
+## Failure Modes and Limitations
+State known boundaries and failure modes.
+
+## Reviewer Questions
+Record the reviewer questions the draft must answer.
+""",
             encoding="utf-8",
         )
         _write_alignment_matrix(standard_workspace)

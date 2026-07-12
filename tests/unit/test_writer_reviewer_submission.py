@@ -638,6 +638,7 @@ def _write_passing_craft_audit(workspace: Path) -> None:
         {"name": "abstract_no_cite", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "abstract_no_section_heading", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "citation_claim_alignment", "level": "PASS", "passed": True, "detail": "ok"},
+        {"name": "citation_provenance", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "no_internal_label_leakage", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "no_placeholder_tokens", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "number_traceability", "level": "PASS", "passed": True, "detail": "ok"},
@@ -662,6 +663,20 @@ def _write_passing_craft_audit(workspace: Path) -> None:
                 "alignment_cids": ["C1", "C2", "C3"],
                 "input_fingerprints": craft_audit_input_fingerprints(workspace),
                 "checks": checks,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (workspace / "drafts" / "citation_provenance_audit.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "citation_provenance_audit_for_final_manuscript",
+                "summary": {"hard_fail_count": 0, "warning_count": 0},
+                "input_fingerprints": craft_audit_input_fingerprints(workspace),
+                "records": [],
+                "hard_failures": [],
+                "warnings": [],
             }
         ),
         encoding="utf-8",
@@ -762,6 +777,7 @@ def test_writer_agent_initialization():
     assert agent.spec.max_steps == params["max_steps"]
     assert agent.spec.max_tokens_total == params["max_tokens_total"]
     assert "write_file" in agent.spec.tool_names
+    assert "grep_search" in agent.spec.tool_names
     assert "drafts/" in agent.spec.allowed_write_prefixes
 
 
@@ -1024,6 +1040,41 @@ def test_writer_validate_outputs_outline_success(temp_workspace):
 实验章节
     """
     (temp_workspace / "drafts" / "outline.md").write_text(outline_content)
+    (temp_workspace / "drafts" / "writing_storyline.md").write_text(
+        """# Writing Storyline
+
+## Research Problem
+The paper defines a bounded research problem and its scope.
+
+## Technical Bottleneck
+Existing approaches make a concrete technical assumption that fails in the target setting.
+
+## Root Technical Reason
+The failure follows from an identified representation or optimization mismatch.
+
+## Core Insight
+The proposed idea targets that mismatch without claiming unsupported benefits.
+
+## Method Mapping
+Each method component maps to a named design choice and validation plan.
+
+## Contribution Claims
+Claims remain conditional on the available evidence.
+
+## Evidence and Ablation Map
+Each claim will be checked with a result, ablation, or analysis artifact.
+
+## Alternative Explanations
+The analysis distinguishes the proposed explanation from competing causes.
+
+## Failure Modes and Limitations
+Known boundary conditions and missing evidence remain visible.
+
+## Reviewer Questions
+The draft identifies the questions a technical reviewer will ask.
+""",
+        encoding="utf-8",
+    )
     _write_manuscript_registries(temp_workspace)
 
     ok, err = agent.validate_outputs(ctx)
@@ -1702,6 +1753,7 @@ def test_reviewer_agent_initialization():
     assert agent.spec.max_tokens_total == params["max_tokens_total"]
     assert "read_file" in agent.spec.tool_names
     assert "list_files" in agent.spec.tool_names
+    assert "grep_search" in agent.spec.tool_names
     assert "drafts/review_rounds/" in agent.spec.allowed_write_prefixes
 
 
@@ -1927,6 +1979,7 @@ def test_submission_agent_initialization():
     assert agent.spec.max_steps == params["max_steps"]
     assert agent.spec.max_tokens_total == params["max_tokens_total"]
     assert "docker_exec" not in agent.spec.tool_names
+    assert "grep_search" in agent.spec.tool_names
     assert "latex_compile" in agent.spec.tool_names
     assert "prepare_submission_bundle" in agent.spec.tool_names
     assert "submission/" in agent.spec.allowed_write_prefixes
@@ -2691,7 +2744,7 @@ def test_check_anonymization_no_paper_file(temp_workspace):
 
 def test_submission_compile_environment_uses_native_latexmk(monkeypatch, temp_workspace):
     monkeypatch.setattr(
-        "researchos.runtime.environment.shutil.which",
+        "researchos.tools.latex_compile.shutil.which",
         lambda name: "/usr/bin/latexmk" if name == "latexmk" else None,
     )
     ctx = MockExecutionContext("submission", temp_workspace)
@@ -2704,7 +2757,7 @@ def test_submission_compile_environment_uses_native_latexmk(monkeypatch, temp_wo
 
 def test_submission_compile_environment_uses_native_tectonic(monkeypatch, temp_workspace):
     monkeypatch.setattr(
-        "researchos.runtime.environment.shutil.which",
+        "researchos.tools.latex_compile.shutil.which",
         lambda name: "/usr/bin/tectonic" if name == "tectonic" else None,
     )
     ctx = MockExecutionContext("submission", temp_workspace)
@@ -2716,14 +2769,18 @@ def test_submission_compile_environment_uses_native_tectonic(monkeypatch, temp_w
 
 
 def test_submission_compile_environment_pauses_without_latex_backend(monkeypatch, temp_workspace):
-    monkeypatch.setattr("researchos.runtime.environment.shutil.which", lambda _name: None)
+    monkeypatch.setattr("researchos.tools.latex_compile.shutil.which", lambda _name: None)
+    monkeypatch.setattr(
+        "researchos.tools.latex_compile.check_docker_environment",
+        lambda **_kwargs: (False, "Docker unavailable", {"error": "docker_daemon_unavailable"}),
+    )
     ctx = MockExecutionContext("submission", temp_workspace)
 
     ok, err = check_submission_compile_environment(ctx)
 
     assert not ok
     assert "WAITING_ENVIRONMENT" in err
-    assert ctx.extra["environment_blocker"]["error"] == "latex_backend_missing"
+    assert ctx.extra["environment_blocker"]["error"] == "docker_daemon_unavailable"
 
 
 @pytest.mark.asyncio

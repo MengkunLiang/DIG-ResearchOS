@@ -67,16 +67,20 @@ async def test_mine_reference_projects_records_missing_reference(tmp_path: Path)
     assert "reference_missing: `True`" in review
 
 
-def test_new_researchos_skills_are_discoverable():
+def test_current_top_level_researchos_skills_are_discoverable():
     skills = discover_skills(Path("skills"))
 
     for name in [
+        "idea-fanout-jury",
+        "literature-evidence-scout",
+        "literature-resource-scout",
         "reference-project-miner",
-        "external-executor-bridge",
-        "experiment-integrity-audit",
-        "result-to-claim",
         "paper-claim-audit",
-        "experiment-to-writing-handoff",
+        "paper-outline",
+        "paper-polish",
+        "paper-revision",
+        "paper-write",
+        "paper-compile",
     ]:
         assert name in skills
-
+    assert "deepxiv" not in skills

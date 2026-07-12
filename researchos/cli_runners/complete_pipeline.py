@@ -23,10 +23,12 @@ from ..schemas.validator import register_builtin_task_checkers, validate_task_ar
 from ..skills.agent import SkillAgent
 from ..skills.loader import resolve_skill
 from ..tools.human_gate import CLIHumanInterface, HumanInputUnavailable, HumanInterface
+from ..tools.latex_compile import latex_backend_preflight
 from ..tools.registry import ToolRegistry
 
 
 _LOG = get_logger("complete_pipeline")
+_LATEX_PREFLIGHT_TASKS = {"T3.6-COMPILE", "T9"}
 
 
 def _now_iso() -> str:
@@ -397,6 +399,32 @@ class CompletePipelineRunner:
             state.dump_yaml(state_path)
             self.run_logger.event("ERROR", task=state.current_task, kind="build_context", message=state.last_error)
             return state
+        if ctx.task_id in _LATEX_PREFLIGHT_TASKS:
+            readiness = latex_backend_preflight(self.runtime_settings.latex)
+            ctx.extra["latex_backend_preflight"] = readiness
+            if readiness.get("ok"):
+                backend = str(readiness.get("selected_backend") or "unknown")
+                detail = str(readiness.get("reason") or "ready")
+                image = str(readiness.get("image") or "")
+                suffix = f"; image={image}" if image else ""
+                self.progress.emit(
+                    f"[Environment] {ctx.task_id} LaTeX preflight 通过：backend={backend}；{detail}{suffix}",
+                    important=True,
+                )
+            else:
+                detail = str(readiness.get("message") or readiness.get("reason") or "no usable LaTeX backend")
+                state.status = "PAUSED"
+                state.paused_at = _now_iso()
+                state.last_error = f"WAITING_ENVIRONMENT: {ctx.task_id} LaTeX preflight failed: {detail}"
+                state.dump_yaml(state_path)
+                self.run_logger.event(
+                    "PAUSED",
+                    task=ctx.task_id,
+                    reason=state.last_error,
+                    latex_preflight=readiness,
+                )
+                self.progress.pipeline_paused(reason=state.last_error)
+                return state
         state = self.state_machine.start_task(state, ctx.run_id, workspace_dir=self.workspace)
         self.run_logger.event("TASK_START", task=ctx.task_id, run_id=ctx.run_id, status=state.status)
         state.dump_yaml(state_path)
@@ -480,6 +508,11 @@ class CompletePipelineRunner:
 
         if state.pending_gate is None:
             return state
+        state = self.state_machine.refresh_pending_gate_presentation(
+            state,
+            workspace_dir=self.workspace,
+        )
+        state.dump_yaml(state_path)
         gate_id = state.pending_gate.gate_id
         self.run_logger.event(
             "HUMAN_GATE",

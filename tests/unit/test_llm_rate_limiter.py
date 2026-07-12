@@ -303,6 +303,53 @@ async def test_llm_client_aclose_closes_litellm_global_sessions(tmp_path, monkey
 
 
 @pytest.mark.asyncio
+async def test_llm_client_chat_closes_sessions_when_cancelled(tmp_path, monkeypatch):
+    routing = tmp_path / "model_routing.yaml"
+    _write_routing(routing)
+    monkeypatch.setenv("TEST_API_KEY", "secret")
+    session = _FakeAsyncSession()
+    cached_session = _FakeAsyncSession()
+    entered = asyncio.Event()
+
+    async def slow_acompletion(**_kwargs):
+        entered.set()
+        await asyncio.Event().wait()
+
+    fake_litellm = types.SimpleNamespace(
+        acompletion=slow_acompletion,
+        token_counter=lambda **_: 12,
+        client_session=session,
+        in_memory_llm_clients_cache={"relay": cached_session},
+    )
+    monkeypatch.setattr("researchos.runtime.llm_client.litellm", fake_litellm)
+    client = LLMClient(routing)
+
+    async def noop_wait(*_args, **_kwargs):
+        return None
+
+    client.rate_limiter.wait = noop_wait
+
+    task = asyncio.create_task(
+        client.chat(
+            messages=[{"role": "user", "content": "ping"}],
+            tools=None,
+            temperature=0.0,
+            tier="medium",
+            timeout=30,
+        )
+    )
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert session.closed is True
+    assert cached_session.closed is True
+    assert fake_litellm.client_session is None
+    assert fake_litellm.in_memory_llm_clients_cache == {}
+
+
+@pytest.mark.asyncio
 async def test_llm_client_chat_uses_configurable_retry_delay(tmp_path, monkeypatch):
     routing = tmp_path / "model_routing.yaml"
     _write_routing(routing)

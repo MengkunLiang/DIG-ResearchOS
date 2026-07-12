@@ -10,6 +10,9 @@
 #
 # Optional package index:
 #   PIP_INDEX_URL=https://pypi.org/simple bash infra/docker/build.sh
+#
+# Optional build network (Linux hosts with a slow Docker bridge route):
+#   RESEARCHOS_DOCKER_BUILD_NETWORK=host bash infra/docker/build.sh
 
 set -e  # 遇到错误立即退出
 
@@ -21,7 +24,7 @@ cd "$SCRIPT_DIR"
 TAG="${1:-latest}"
 IMAGE_NAME="researchos/system:${TAG}"
 echo "=========================================="
-echo "ResearchOS 可选轻量 Docker 镜像构建"
+echo "ResearchOS CLI + TeX Docker 镜像构建"
 echo "=========================================="
 echo "工作目录: $SCRIPT_DIR"
 echo "镜像名称: $IMAGE_NAME"
@@ -75,12 +78,21 @@ if [ -n "${PIP_INDEX_URL:-}" ]; then
     BUILD_ARGS+=(--build-arg "PIP_INDEX_URL=$PIP_INDEX_URL")
 fi
 
+BUILD_NETWORK_ARGS=()
+if [ -n "${RESEARCHOS_DOCKER_BUILD_NETWORK:-}" ]; then
+    BUILD_NETWORK_ARGS+=(--network "$RESEARCHOS_DOCKER_BUILD_NETWORK")
+    echo "构建网络: $RESEARCHOS_DOCKER_BUILD_NETWORK"
+else
+    echo "构建网络: Docker 默认网络（可用 RESEARCHOS_DOCKER_BUILD_NETWORK=host 覆盖）"
+fi
+
 # 显示构建命令
-echo "构建命令: docker build ${BUILD_ARGS[@]} --file infra/docker/Dockerfile --tag $IMAGE_NAME --progress=plain ."
+echo "构建命令: docker build ${BUILD_NETWORK_ARGS[@]} ${BUILD_ARGS[@]} --file infra/docker/Dockerfile --tag $IMAGE_NAME --progress=plain ."
 echo ""
 
 # 构建镜像
 docker build \
+    "${BUILD_NETWORK_ARGS[@]}" \
     "${BUILD_ARGS[@]}" \
     --file infra/docker/Dockerfile \
     --tag "$IMAGE_NAME" \

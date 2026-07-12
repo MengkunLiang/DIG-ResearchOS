@@ -37,6 +37,7 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
     gates_path = system_config_path_for(config_dir, "gates.yaml")
     cdr_schema_path = system_config_path_for(config_dir, "cdr_schema.yaml")
     venue_style_path = system_config_path_for(config_dir, "venue_style_map.yaml")
+    venue_writing_profiles_path = system_config_path_for(config_dir, "venue_writing_profiles.yaml")
     state_machine = _load_yaml(state_machine_path)
 
     return {
@@ -45,8 +46,9 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
             "gates_yaml": str(gates_path),
             "cdr_schema_yaml": str(cdr_schema_path),
             "venue_style_map_yaml": str(venue_style_path),
+            "venue_writing_profiles_yaml": str(venue_writing_profiles_path),
             "purpose": (
-                "系统契约配置：状态机拓扑、human gate 展示、CDR schema 和 venue style 建议；"
+                "系统契约配置：状态机拓扑、human gate 展示、CDR schema、venue style 建议和内部 writing profile；"
                 "普通用户日常不需要修改。"
             ),
         },
@@ -102,7 +104,7 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
         "configuration_layers": [
             "模型/预算/timeout/retry 日常只改 config/user_settings.yaml：llm.* 管模型，budget.* 管预算，runtime.* 管 timeout/retry/budget escalation。",
             "T2/T3 文献流程机械阈值默认来自 config/agent_params.yaml 的 scout.behavior.t2_finalize/progress/literature_quality 和 reader.modes.read.behavior；完整 run 会先经 T2-PARAM-GATE 写 workspace-local literature/literature_params.json，覆盖保留候选数、精读目标、摘要轻读目标和写作语言/中文文献策略。",
-            "状态机、gate、CDR schema 和 venue style map 属于 config/system_config/ 系统契约；CLI 默认读取新路径，并保留 config/*.yaml 旧路径 fallback。",
+            "状态机、gate、CDR schema、venue style map 和 venue writing profiles 属于 config/system_config/ 系统契约；CLI 默认读取新路径，并保留 config/*.yaml 旧路径 fallback。",
             "config/user_settings.yaml 会覆盖默认 agent_params.yaml 与 model_routing.yaml，但不改变状态机拓扑。",
             "state_machine.yaml 只定义拓扑、IO、gate 和少数 extra；默认配置不应写 llm/budget 强覆盖。",
             "agent_params.yaml 是 agent capability registry；T2/T3 文献流程阈值属于 behavior，不属于普通 LLM/budget 参数。",

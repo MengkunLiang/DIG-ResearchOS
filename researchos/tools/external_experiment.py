@@ -12,7 +12,6 @@ import csv
 import hashlib
 import json
 import re
-import shutil
 from pathlib import Path
 from typing import Any, Literal
 
@@ -20,6 +19,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from ..runtime.environment import workspace_host_hint
+from ..skills.project_specialization import specialize_project_skills
 from .base import Tool, ToolResult
 from .workspace_policy import ToolAccessDenied, WorkspaceAccessPolicy
 
@@ -243,24 +243,20 @@ EXTERNAL_RESULT_REQUIRED_FIELDS = [
 
 
 SKILL_SUITE = [
-    "research_execution",
-    "context_alignment",
-    "resource_and_baseline_mining",
-    "baseline_reproduction",
-    "experiment_design",
-    "method_refinement",
+    "research-execution",
+    "context-alignment",
+    "resource-and-baseline-preparation",
+    "experiment-design",
+    "baseline-reproduction",
+    "method-refinement",
     "implementation",
-    "code_and_protocol_review",
-    "experiment_iteration",
-    "result_diagnosis",
-    "module_attribution",
-    "figure_table_packaging",
-    "writer_handoff",
+    "code-and-protocol-review",
+    "experiment-run",
+    "result-diagnosis",
+    "module-attribution",
+    "evidence-packaging",
+    "writer-handoff",
 ]
-
-SKILL_CUSTOMIZATION_CONTROLLER = "skills_customization"
-EXTERNAL_EXECUTOR_SKILL_TEMPLATE_ROOT = "skills/external_executor_skills"
-
 
 def validate_context_reboost_handoff(workspace_dir: Path) -> tuple[bool, str | None]:
     """Validate the LLM-generated context re-boost handoff skeleton."""
@@ -964,9 +960,12 @@ def build_executor_selection_payload(
         payload["allowed_workdir"] = "external_executor/workdir"
         payload["workspace_relative_workdir"] = "external_executor/workdir"
         payload["workspace_relative_prompt"] = "external_executor/codex_prompt.md"
+        payload["codex_user_input"] = (
+            "请读取 external_executor/AGENTS.md，并执行 "
+            "external_executor/skills/research-execution/SKILL.md。"
+        )
         payload["launch_instruction"] = (
-            "On the host, enter <workspace>/external_executor/workdir, start Codex CLI, "
-            "and ask it to read external_executor/AGENTS.md and execute the project skill pack."
+            "On the host, enter the <workspace> root, start Codex CLI, and paste codex_user_input."
         )
         payload["resume_instruction"] = (
             "After Codex writes external_executor/result_pack.json, executor_status.json, "
@@ -1272,7 +1271,7 @@ def _write_external_executor_guides(
         + "## Role\n"
         "You are an external experiment executor for ResearchOS. You are not the paper writer and not the ResearchOS runtime.\n\n"
         "## Start command\n"
-        "Read this file, then execute `external_executor/skills/research_execution/SKILL.md`.\n\n"
+        "Read this file, then execute `external_executor/skills/research-execution/SKILL.md`.\n\n"
         "## This experiment in one line\n"
         f"{handoff.get('experiment_intent_oneliner')}\n\n"
         "## Read first\n"
@@ -1280,11 +1279,12 @@ def _write_external_executor_guides(
         "2. external_executor/expected_outputs_schema.json\n"
         "3. external_executor/allowed_paths.txt\n"
         "4. external_executor/executor_selection.json\n"
-        "5. external_executor/skills/template_manifest.json\n"
-        "6. novelty/required_baselines.json\n"
-        "7. resources/baseline_candidates.jsonl\n"
-        "8. literature/baseline_map.json\n"
-        "9. ideation/novelty_audit.md\n\n"
+        "5. external_executor/skill_specialization_report.json\n"
+        "6. external_executor/project_skill_context.yaml\n"
+        "7. novelty/required_baselines.json\n"
+        "8. resources/baseline_candidates.jsonl\n"
+        "9. literature/baseline_map.json\n"
+        "10. ideation/novelty_audit.md\n\n"
         "## Human-provided experiment materials\n"
         "Inspect `external_executor/expr/` before real execution. This directory is the gate where the user places datasets, baseline models, repositories, weights, and material notes.\n\n"
         "## Metrics you must report\n"
@@ -1329,7 +1329,7 @@ def _write_external_executor_guides(
         "| 项目 | 说明 |\n"
         "|---|---|\n"
         "| 目录用途 | ResearchOS 与 Codex/Claude/manual 外部实验执行器的边界目录。 |\n"
-        "| 生成阶段/来源 | T5-HANDOFF, T5-EXECUTOR-GATE, external executor, T5-DRY-RUN. |\n"
+        "| 生成阶段/来源 | T5-REBOOST/T5-HANDOFF, T5-EXECUTOR-GATE, external executor, T5-DRY-RUN. |\n"
         "| 下游使用方 | T5-EXTERNAL-WAIT, T7-INGEST, T7-AUDIT, T7-POST-NOVELTY, T7-CLAIMS, T8-RESOURCE. |\n"
         "| 人工可编辑范围 | Manual executor outputs only. |\n"
         "| Agent 可写范围 | External executor may write only paths allowed by allowed_paths.txt. |\n"
@@ -1343,7 +1343,7 @@ def _write_external_executor_guides(
         "| `handoff_pack.json` | T5 编译的实验任务、协议、证据契约和 allowed paths。 |\n"
         "| `expected_outputs_schema.json` | 外部执行器必须写回的 result pack/status/manifest schema。 |\n"
         "| `allowed_paths.txt` | 外部执行器可读写路径边界。 |\n"
-        "| `skills/` | Copied external executor skill templates; T5-SKILL-CUSTOMIZATION-GATE customizes them into a project-specific suite before execution. |\n"
+        "| `skills/` | Project-specific external executor skill suite generated by `researchos specialize-executor-skills` from root templates and LLM project guidance. |\n"
         "| `expr/` | Human-provided experimental materials gate directory. |\n"
         "| `result_pack.json` | 外部执行器写回的核心结果包，T7 只从这里摄取实验结果。 |\n"
         "| `executor_status.json` | 外部执行器状态、accepted/mock/dry-run 标记。 |\n"
@@ -1391,93 +1391,6 @@ def _write_external_executor_guides(
             + "\n",
             encoding="utf-8",
         )
-
-
-def _copy_skill_templates_for_customization(policy: WorkspaceAccessPolicy, handoff: dict[str, Any]) -> None:
-    """Copy repository-level skill templates into this workspace.
-
-    T5 stages the generic templates after context re-boost. The project
-    specific rewrite is then performed by the automatic LLM API
-    T5-SKILL-CUSTOMIZATION-GATE task.
-    """
-
-    repo_root = Path(__file__).resolve().parents[2]
-    support_root = repo_root / "skills"
-    template_root = repo_root / EXTERNAL_EXECUTOR_SKILL_TEMPLATE_ROOT
-    skills_dir = policy.workspace_dir / "external_executor" / "skills"
-    skills_dir.mkdir(parents=True, exist_ok=True)
-    copied: list[dict[str, Any]] = []
-    missing: list[str] = []
-    shared_source = support_root / "shared-references"
-    shared_destination = skills_dir / "shared-references"
-    if shared_source.is_dir():
-        if shared_destination.exists():
-            shutil.rmtree(shared_destination)
-        shutil.copytree(shared_source, shared_destination)
-    for skill_name in SKILL_SUITE:
-        template_dir = template_root / skill_name
-        template_file = template_dir / "SKILL.md"
-        destination_dir = skills_dir / skill_name
-        destination_file = destination_dir / "SKILL.md"
-        if not template_file.is_file():
-            missing.append(str(template_file.relative_to(repo_root)))
-            continue
-        if destination_dir.exists():
-            shutil.rmtree(destination_dir)
-        shutil.copytree(template_dir, destination_dir)
-        copied.append(
-            {
-                "skill": skill_name,
-                "source": template_file.relative_to(repo_root).as_posix(),
-                "destination": destination_file.relative_to(policy.workspace_dir).as_posix(),
-                "sha256": _sha256(destination_file),
-            }
-        )
-    if missing:
-        raise FileNotFoundError("missing repository skill templates: " + ", ".join(missing))
-    controller_source = support_root / SKILL_CUSTOMIZATION_CONTROLLER
-    controller_file = controller_source / "SKILL.md"
-    controller_destination = skills_dir / SKILL_CUSTOMIZATION_CONTROLLER
-    controller_destination_file = controller_destination / "SKILL.md"
-    if not controller_file.is_file():
-        raise FileNotFoundError(
-            "missing repository skill template: "
-            + str(controller_file.relative_to(repo_root))
-        )
-    if controller_destination.exists():
-        shutil.rmtree(controller_destination)
-    shutil.copytree(controller_source, controller_destination)
-    _write_json(
-        policy.resolve_write("external_executor/skills/template_manifest.json"),
-        {
-            "version": "1.0",
-            "semantics": "external_executor_skill_template_manifest",
-            "created_at": _now_iso(),
-            "handoff_pack": "external_executor/handoff_pack.json",
-            "template_root": EXTERNAL_EXECUTOR_SKILL_TEMPLATE_ROOT,
-            "support_root": "skills",
-            "destination_root": "external_executor/skills",
-            "shared_references": (
-                shared_destination.relative_to(policy.workspace_dir).as_posix()
-                if shared_destination.exists()
-                else None
-            ),
-            "customization_required": True,
-            "customization_task": "T5-SKILL-CUSTOMIZATION-GATE",
-            "customization_skill": {
-                "skill": SKILL_CUSTOMIZATION_CONTROLLER,
-                "source": controller_file.relative_to(repo_root).as_posix(),
-                "destination": controller_destination_file.relative_to(policy.workspace_dir).as_posix(),
-                "sha256": _sha256(controller_destination_file),
-                "instruction": (
-                    "ResearchOS runs T5-SKILL-CUSTOMIZATION-GATE to apply this guide via the configured LLM API."
-                ),
-            },
-            "run_instruction": "python -m researchos.cli run-task T5-SKILL-CUSTOMIZATION-GATE --workspace <workspace>",
-            "report_path": "external_executor/skills/customization_report.json",
-            "copied_skills": copied,
-        },
-    )
 
 
 def _write_expr_materials_scaffold(policy: WorkspaceAccessPolicy, handoff: dict[str, Any]) -> None:
@@ -2029,6 +1942,13 @@ class BuildExperimentHandoffPackParams(BaseModel):
     codex_prompt_path: str = Field(default="external_executor/codex_prompt.md")
     claude_prompt_path: str = Field(default="external_executor/claude_code_prompt.md")
     manual_instructions_path: str = Field(default="external_executor/manual_instructions.md")
+    specialize_skills: bool = Field(
+        default=True,
+        description=(
+            "Whether to generate external_executor/skills in the same handoff call. "
+            "T5-REBOOST uses false so specialize-executor-skills remains an explicit step."
+        ),
+    )
 
 
 class SelectExternalExecutorParams(BaseModel):
@@ -2270,6 +2190,16 @@ class BuildExperimentHandoffPackTool(Tool):
                 "required_executor_outputs": handoff["executor_outputs"],
             }
             _write_json(self.policy.resolve_write(params.input_manifest_path), input_manifest)
+            placeholder_next_state = "T5-SKILL-CUSTOMIZATION-GATE" if params.specialize_skills else "T5-EXECUTOR-GATE"
+            placeholder_notes = (
+                "Execution mode is intentionally UNSET until T5-EXECUTOR-GATE; "
+                "next step is T5-SKILL-CUSTOMIZATION-GATE specialization report review."
+                if params.specialize_skills
+                else (
+                    "Execution mode is intentionally UNSET until T5-EXECUTOR-GATE; "
+                    "run researchos specialize-executor-skills before selecting Codex or another executor."
+                )
+            )
             executor_selection = {
                 "version": "1.0",
                 "semantics": "external_executor_selection",
@@ -2278,13 +2208,10 @@ class BuildExperimentHandoffPackTool(Tool):
                 "requires_user_copy_paste": False,
                 "selected_by": "system_placeholder",
                 "selected_at": None,
-                "next_state": "T5-SKILL-CUSTOMIZATION-GATE",
-                    "fallback_order": ["mock_dry_run", "claude_code_window", "manual"],
-                    "notes": (
-                        "Execution mode is intentionally UNSET until T5-EXECUTOR-GATE; "
-                        "next step is automatic T5-SKILL-CUSTOMIZATION-GATE skill customization."
-                    ),
-                }
+                "next_state": placeholder_next_state,
+                "fallback_order": ["mock_dry_run", "claude_code_window", "manual"],
+                "notes": placeholder_notes,
+            }
             _write_json(self.policy.resolve_write(params.executor_selection_path), executor_selection)
             _write_json(self.policy.resolve_write(params.expected_schema_path), _build_expected_outputs_schema())
             _write_text(
@@ -2292,7 +2219,14 @@ class BuildExperimentHandoffPackTool(Tool):
                 "\n".join(handoff["allowed_paths"]) + "\n",
             )
             _write_external_executor_guides(self.policy, handoff, selection=executor_selection)
-            _copy_skill_templates_for_customization(self.policy, handoff)
+            specialization_status = "skipped"
+            if params.specialize_skills:
+                specialization = specialize_project_skills(workspace=ws)
+                specialization_status = specialization.status
+                if specialization.status == "failed":
+                    raise RuntimeError(
+                        "project skill specialization failed; see external_executor/skill_specialization_report.json"
+                    )
             _write_expr_materials_scaffold(self.policy, handoff)
             prompt = _render_executor_prompt(handoff, executor=params.executor)
             _write_text(self.policy.resolve_write(params.prompt_output_path), prompt)
@@ -2306,7 +2240,12 @@ class BuildExperimentHandoffPackTool(Tool):
         return ToolResult(
             ok=True,
             content=f"Wrote external experiment handoff pack to {params.output_path}.",
-            data={"path": params.output_path, "executor": params.executor},
+            data={
+                "path": params.output_path,
+                "executor": params.executor,
+                "specialize_skills": params.specialize_skills,
+                "skill_specialization_status": specialization_status,
+            },
         )
 
 

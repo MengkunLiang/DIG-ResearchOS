@@ -34,6 +34,7 @@ from .survey_tools import (
     AssembleSurveyTool,
     AuditSurveyCoverageTool,
     BindSurveyReviewTool,
+    BuildSurveyFiguresTool,
     BuildSurveyStateTool,
     ExpandSurveyCorpusTool,
     ExportSurveyForIdeationTool,
@@ -50,6 +51,7 @@ from .manuscript import (
     AuditWritingCraftTool,
     BindReviewRoundTool,
     BuildAlignmentMatrixTool,
+    BuildSectionEvidenceSupplementTool,
     BuildManuscriptRegistriesTool,
     BuildManuscriptRevisionPatchesTool,
     BuildManuscriptResourceIndexTool,
@@ -159,6 +161,7 @@ def register_builtin_tools(
     registry.register("build_manuscript_registries", lambda ctx: BuildManuscriptRegistriesTool(ctx.policy))
     registry.register("build_alignment_matrix", lambda ctx: BuildAlignmentMatrixTool(ctx.policy))
     registry.register("initialize_manuscript_state", lambda ctx: InitializeManuscriptStateTool(ctx.policy))
+    registry.register("build_section_evidence_supplement", lambda ctx: BuildSectionEvidenceSupplementTool(ctx.policy))
     registry.register("update_manuscript_section_state", lambda ctx: UpdateManuscriptSectionStateTool(ctx.policy))
     registry.register("assemble_manuscript", lambda ctx: AssembleManuscriptTool(ctx.policy))
     registry.register("prepare_submission_bundle", lambda ctx: PrepareSubmissionBundleTool(ctx.policy))
@@ -177,6 +180,7 @@ def register_builtin_tools(
     registry.register("build_experiment_evidence_pack", lambda ctx: BuildExperimentEvidencePackTool(ctx.policy))
     registry.register("audit_paper_claims", lambda ctx: AuditPaperClaimsTool(ctx.policy))
     registry.register("build_survey_state", lambda ctx: BuildSurveyStateTool(ctx.policy))
+    registry.register("build_survey_figures", lambda ctx: BuildSurveyFiguresTool(ctx.policy))
     registry.register("update_survey_section_state", lambda ctx: UpdateSurveySectionStateTool(ctx.policy))
     registry.register("assemble_survey", lambda ctx: AssembleSurveyTool(ctx.policy))
     registry.register("audit_survey_coverage", lambda ctx: AuditSurveyCoverageTool(ctx.policy))

@@ -7,6 +7,9 @@ import pytest
 
 from researchos.agents.experimenter import ExperimenterAgent
 from researchos.runtime.agent import ExecutionContext
+from researchos.schemas.validator import register_builtin_task_checkers, validate_prerequisites
+from researchos.skills.project_specialization import specialize_project_skills_with_llm
+from researchos.testing.mocks import FakeLLMMessage, FakeRawCompletion, MockLLMClient
 from researchos.tools.external_experiment import (
     AuditExperimentIntegrityTool,
     AuditPaperClaimsTool,
@@ -243,13 +246,63 @@ def _write_reboost_outputs(ws: Path, context_reboost: dict | None = None) -> Non
     )
 
 
-def test_reboost_validation_accepts_required_handoff_shape(tmp_path: Path):
+def _mock_skill_specialization_llm() -> MockLLMClient:
+    skill_names = [path.parent.name for path in sorted(Path("skills/external_executor_skills").glob("*/SKILL.md"))]
+    payload = {
+        "skills": {
+            name: {
+                "focus": f"LLM focus for {name}",
+                "priorities": ["run the project-specific executor workflow"],
+                "constraints": ["do not invent results"],
+                "completion_criteria": ["write required artifacts"],
+                "uncertainty_handling": ["escalate unresolved context"],
+            }
+            for name in skill_names
+        }
+    }
+    return MockLLMClient([FakeRawCompletion(message=FakeLLMMessage(content=json.dumps(payload)))])
+
+
+@pytest.mark.asyncio
+async def test_reboost_validation_accepts_compiled_handoff_without_skills(tmp_path: Path):
     _write_minimal_workspace(tmp_path)
     _write_reboost_outputs(tmp_path)
+    policy = WorkspaceAccessPolicy(
+        tmp_path,
+        ["", "ideation/", "literature/", "external_executor/", "experiments/", "drafts/", "novelty/", "resources/"],
+        ["external_executor/", "experiments/", "drafts/", "novelty/"],
+    )
+    result = await BuildExperimentHandoffPackTool(policy).execute(specialize_skills=False)
 
+    assert result.ok
     assert validate_context_reboost_handoff(tmp_path) == (True, None)
+    assert (tmp_path / "external_executor" / "AGENTS.md").exists()
+    assert (tmp_path / "external_executor" / "allowed_paths.txt").exists()
+    assert not (tmp_path / "external_executor" / "skills").exists()
     ctx = ExecutionContext(tmp_path, "p", "T5-REBOOST-GATE", "r", mode="reboost")
     assert ExperimenterAgent().validate_outputs(ctx) == (True, None)
+
+
+@pytest.mark.asyncio
+async def test_reboost_handoff_then_skill_specializer_satisfies_executor_gate_inputs(tmp_path: Path):
+    _write_minimal_workspace(tmp_path)
+    _write_reboost_outputs(tmp_path)
+    policy = WorkspaceAccessPolicy(
+        tmp_path,
+        ["", "ideation/", "literature/", "external_executor/", "experiments/", "drafts/", "novelty/", "resources/"],
+        ["external_executor/", "experiments/", "drafts/", "novelty/"],
+    )
+
+    handoff = await BuildExperimentHandoffPackTool(policy).execute(specialize_skills=False)
+    llm = _mock_skill_specialization_llm()
+    specialization = await specialize_project_skills_with_llm(workspace=tmp_path, repo_root=Path.cwd(), llm_client=llm)
+    register_builtin_task_checkers()
+    ok, err = validate_prerequisites(tmp_path, "T5-EXECUTOR-GATE")
+
+    assert handoff.ok
+    assert specialization.status in {"ready", "incomplete"}
+    assert llm.call_count == 1
+    assert ok, err
 
 
 def test_reboost_prompt_uses_external_bridge_mode(tmp_path: Path):
@@ -261,8 +314,10 @@ def test_reboost_prompt_uses_external_bridge_mode(tmp_path: Path):
 
     assert "External Experiment Bridge" in prompt
     assert "handoff_pack.json#context_reboost" in prompt
+    assert "specialize_skills=false" in prompt
     assert "直接调用当前 LLM 能力" in message
     assert "context_reboost" in message
+    assert "specialize_skills=false" in message
 
 
 def test_reboost_validation_rejects_empty_claim_evidence_matrix(tmp_path: Path):
@@ -536,6 +591,30 @@ async def test_paper_claim_audit_accepts_percentage_equivalent_metric(tmp_path: 
 
 
 @pytest.mark.asyncio
+async def test_codex_executor_selection_records_manual_launch_instruction(tmp_path: Path):
+    _write_minimal_workspace(tmp_path)
+    policy = WorkspaceAccessPolicy(
+        tmp_path,
+        ["", "ideation/", "literature/", "external_executor/", "experiments/", "drafts/", "novelty/", "resources/"],
+        ["external_executor/", "experiments/", "drafts/", "novelty/"],
+    )
+
+    await BuildExperimentHandoffPackTool(policy).execute(specialize_skills=False)
+    selection = await SelectExternalExecutorTool(policy).execute(selected_executor="codex_cli", notes="real run")
+
+    assert selection.ok
+    payload = json.loads((tmp_path / "external_executor" / "executor_selection.json").read_text(encoding="utf-8"))
+    assert payload["selected_executor"] == "codex_cli"
+    assert payload["next_state"] == "T5-EXTERNAL-WAIT"
+    assert payload["requires_user_copy_paste"] is True
+    assert payload["codex_user_input"] == (
+        "请读取 external_executor/AGENTS.md，并执行 "
+        "external_executor/skills/research-execution/SKILL.md。"
+    )
+    assert "UNSET" not in (tmp_path / "external_executor" / "codex_prompt.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
 async def test_paper_claim_audit_preserves_negative_metric_sign(tmp_path: Path):
     (tmp_path / "drafts").mkdir(parents=True)
     (tmp_path / "drafts" / "paper.tex").write_text(
@@ -589,7 +668,7 @@ async def test_experimenter_validates_external_modes(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_handoff_copies_repository_skill_templates_to_workspace(tmp_path: Path):
+async def test_handoff_specializes_repository_skill_templates_to_workspace(tmp_path: Path):
     _write_minimal_workspace(tmp_path)
     policy = WorkspaceAccessPolicy(
         tmp_path,
@@ -600,56 +679,44 @@ async def test_handoff_copies_repository_skill_templates_to_workspace(tmp_path: 
     result = await BuildExperimentHandoffPackTool(policy).execute()
 
     assert result.ok
-    manifest_path = tmp_path / "external_executor" / "skills" / "template_manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert manifest["semantics"] == "external_executor_skill_template_manifest"
-    assert manifest["customization_required"] is True
-    assert manifest["customization_task"] == "T5-SKILL-CUSTOMIZATION-GATE"
-    assert manifest["template_root"] == "skills/external_executor_skills"
-    assert len(manifest["copied_skills"]) == 13
-    assert manifest["customization_skill"]["destination"] == "external_executor/skills/skills_customization/SKILL.md"
-    copied_names = {item["skill"] for item in manifest["copied_skills"]}
-    assert "research_execution" in copied_names
-    assert (tmp_path / "external_executor" / "skills" / "research_execution" / "SKILL.md").exists()
-    assert (tmp_path / "external_executor" / "skills" / "skills_customization" / "SKILL.md").exists()
-    customization_text = (
-        tmp_path / "external_executor" / "skills" / "skills_customization" / "SKILL.md"
-    ).read_text(encoding="utf-8")
-    assert "customization_report.json" in customization_text
-    assert "configured LLM API" in manifest["customization_skill"]["instruction"]
-    assert manifest["run_instruction"] == (
-        "python -m researchos.cli run-task T5-SKILL-CUSTOMIZATION-GATE --workspace <workspace>"
-    )
-    assert manifest["report_path"] == "external_executor/skills/customization_report.json"
-    assert manifest["shared_references"] == "external_executor/skills/shared-references"
+    report_path = tmp_path / "external_executor" / "skill_specialization_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["schema_version"] == "skill_specialization_report.v1"
+    assert report["status"] in {"ready", "incomplete"}
+    assert report["template_root"] == "skills/external_executor_skills"
+    assert report["skills_total"] == 13
+    assert report["skills_specialized"] == 13
+    assert (tmp_path / "external_executor" / "project_skill_context.yaml").exists()
     assert (
         tmp_path
         / "external_executor"
-        / "skills"
-        / "shared-references"
-        / "result-pack-contract.md"
+        / "schemas"
+        / "project_skill_context.schema.json"
     ).exists()
+    assert (tmp_path / "external_executor" / "skills" / "research-execution" / "SKILL.md").exists()
+    assert not (tmp_path / "external_executor" / "skills" / "skills_customization").exists()
     assert (
         tmp_path
         / "external_executor"
         / "skills"
-        / "research_execution"
+        / "research-execution"
         / "references"
-        / "execution_loop.md"
+        / "child-skill-contracts.md"
     ).exists()
     assert (
         tmp_path
         / "external_executor"
         / "skills"
-        / "experiment_design"
-        / "assets"
-        / "claim_evidence_matrix_template.json"
+        / "experiment-design"
+        / "scripts"
+        / "build_experiment_plan.py"
     ).exists()
-    assert "resume_instruction" not in manifest
+    root_text = (tmp_path / "external_executor" / "skills" / "research-execution" / "SKILL.md").read_text(encoding="utf-8")
+    assert "## Project-Specific Guidance" in root_text
 
 
 @pytest.mark.asyncio
-async def test_experimenter_validates_skill_customization_report(tmp_path: Path):
+async def test_experimenter_validates_skill_specialization_report(tmp_path: Path):
     _write_minimal_workspace(tmp_path)
     policy = WorkspaceAccessPolicy(
         tmp_path,
@@ -657,21 +724,8 @@ async def test_experimenter_validates_skill_customization_report(tmp_path: Path)
         ["external_executor/", "experiments/", "drafts/", "novelty/"],
     )
     await BuildExperimentHandoffPackTool(policy).execute()
-    report_path = tmp_path / "external_executor" / "skills" / "customization_report.json"
-    report_path.write_text(
-        json.dumps(
-            {
-                "version": "1.0",
-                "semantics": "external_executor_skill_customization_report",
-                "handoff_pack": "external_executor/handoff_pack.json",
-                "customized_skills": [{"skill": name} for name in SKILL_SUITE],
-                "unchanged_or_skipped": [],
-                "project_specific_fields_used": ["context_reboost", "baseline_matrix"],
-                "next_instruction": "python -m researchos.cli resume --workspace <workspace>",
-            }
-        ),
-        encoding="utf-8",
-    )
+    await specialize_project_skills_with_llm(workspace=tmp_path, repo_root=Path.cwd(), llm_client=_mock_skill_specialization_llm())
+    report_path = tmp_path / "external_executor" / "skill_specialization_report.json"
 
     agent = ExperimenterAgent(mode="skill_customization")
     ctx = ExecutionContext(
@@ -680,14 +734,14 @@ async def test_experimenter_validates_skill_customization_report(tmp_path: Path)
         "T5-SKILL-CUSTOMIZATION-GATE",
         "r",
         mode="skill_customization",
-        outputs_expected={"skill_customization_report": report_path},
+        outputs_expected={"skill_specialization_report": report_path},
     )
 
     assert agent.validate_outputs(ctx) == (True, None)
 
 
 @pytest.mark.asyncio
-async def test_experimenter_rejects_incomplete_skill_customization_report(tmp_path: Path):
+async def test_experimenter_rejects_incomplete_skill_specialization_report(tmp_path: Path):
     _write_minimal_workspace(tmp_path)
     policy = WorkspaceAccessPolicy(
         tmp_path,
@@ -695,20 +749,11 @@ async def test_experimenter_rejects_incomplete_skill_customization_report(tmp_pa
         ["external_executor/", "experiments/", "drafts/", "novelty/"],
     )
     await BuildExperimentHandoffPackTool(policy).execute()
-    report_path = tmp_path / "external_executor" / "skills" / "customization_report.json"
-    report_path.write_text(
-        json.dumps(
-            {
-                "version": "1.0",
-                "semantics": "external_executor_skill_customization_report",
-                "handoff_pack": "external_executor/handoff_pack.json",
-                "customized_skills": [{"skill": SKILL_SUITE[0]}],
-                "unchanged_or_skipped": [],
-                "project_specific_fields_used": [],
-            }
-        ),
-        encoding="utf-8",
-    )
+    await specialize_project_skills_with_llm(workspace=tmp_path, repo_root=Path.cwd(), llm_client=_mock_skill_specialization_llm())
+    report_path = tmp_path / "external_executor" / "skill_specialization_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["skills"] = report["skills"][:1]
+    report_path.write_text(json.dumps(report), encoding="utf-8")
 
     agent = ExperimenterAgent(mode="skill_customization")
     ctx = ExecutionContext(
@@ -717,12 +762,12 @@ async def test_experimenter_rejects_incomplete_skill_customization_report(tmp_pa
         "T5-SKILL-CUSTOMIZATION-GATE",
         "r",
         mode="skill_customization",
-        outputs_expected={"skill_customization_report": report_path},
+        outputs_expected={"skill_specialization_report": report_path},
     )
 
     ok, err = agent.validate_outputs(ctx)
     assert ok is False
-    assert "未覆盖 skill" in (err or "")
+    assert "缺少 skill" in (err or "")
 
 
 @pytest.mark.asyncio

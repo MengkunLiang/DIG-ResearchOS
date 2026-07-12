@@ -47,11 +47,10 @@ from .pydantic_compat import model_dump
 from .runtime.agent import AgentResult
 from .runtime.config_audit import build_config_audit_summary
 from .runtime.cli_ui import format_startup_summary, show_startup_banner
-from .runtime.config import RuntimeSettings, UISettings, load_runtime_settings, resolve_runtime_config_path
+from .runtime.config import LatexSettings, RuntimeSettings, UISettings, load_runtime_settings, resolve_runtime_config_path
 from .runtime.environment import (
     collect_runtime_environment,
     command_version,
-    detect_latex_backends,
     write_runtime_environment,
 )
 from .runtime.llm_client import LLMClient
@@ -67,10 +66,42 @@ from .schemas.validator import (
     validate_prerequisites,
     validate_task_artifacts,
 )
+from .skills.contracts import (
+    check_skill_readiness,
+    expected_outputs_from_metadata,
+    parse_skill_interaction,
+    prepare_skill_intake_packet,
+)
+from .skills.catalog import (
+    catalog_entries,
+    ordered_skills,
+    render_skill_catalog,
+    search_skills,
+    skills_in_category,
+)
 from .skills.loader import discover_skills_from_roots, register_skill_tools, resolve_skill
-from .skills.runner import run_skill
+from .skills.runner import run_skill, run_skill_intake
+from .skills.session import (
+    iter_sessions,
+    load_session,
+    record_input_collection_finished,
+    record_input_collection_started,
+    record_readiness,
+    record_runtime_pause,
+    record_run_result,
+    record_run_started,
+    render_skill_completion_panel,
+    render_readiness_panel,
+    render_skill_description,
+    render_skill_status_panel,
+)
 from .tools.builtin import register_builtin_tools
-from .tools.human_gate import CLIHumanInterface, HumanInterface
+from .tools.human_gate import (
+    CLIHumanInterface,
+    HumanInterface,
+    build_t2_parameter_llm_interpreter,
+)
+from .tools.latex_compile import latex_backend_preflight
 from .tools.mcp_adapter import load_mcp_server_configs, register_mcp_servers
 from .tools.registry import ToolRegistry
 
@@ -258,7 +289,11 @@ def _runtime_settings_for_args(settings: RuntimeSettings, args: argparse.Namespa
     )
 
 
-def _build_human_interface(runtime_settings: RuntimeSettings) -> HumanInterface:
+def _build_human_interface(
+    runtime_settings: RuntimeSettings,
+    *,
+    llm_client: LLMClient | None = None,
+) -> HumanInterface:
     """按 runtime 配置构造人机接口。
 
     当前 runtime 只实现了 CLI backend，因此对未知 backend 直接 fail fast，
@@ -267,7 +302,8 @@ def _build_human_interface(runtime_settings: RuntimeSettings) -> HumanInterface:
 
     backend = runtime_settings.human_interface.backend.lower().strip()
     if backend in {"", "cli"}:
-        return CLIHumanInterface()
+        interpreter = build_t2_parameter_llm_interpreter(llm_client) if llm_client is not None else None
+        return CLIHumanInterface(t2_parameter_interpreter=interpreter)
     raise SystemExit(f"Unsupported human_interface.backend: {runtime_settings.human_interface.backend}")
 
 
@@ -527,7 +563,16 @@ async def _prepare_runtime(args: argparse.Namespace, workspace_dir: Path) -> Pre
     mcp_server_count, mcp_tool_count = await _maybe_register_mcp_tools(args, registry)
     _validate_agent_tools(registry)
     llm_client = LLMClient(Path(args.model_routing).resolve())
-    await _maybe_run_selftest(args, llm_client)
+    try:
+        await _maybe_run_selftest(args, llm_client)
+    except BaseException:
+        # A startup selftest can create aiohttp sessions before a provider
+        # reports its first failure. Close them on this early exit so a
+        # recoverable Skill/provider pause does not leak client warnings.
+        close = getattr(llm_client, "aclose", None)
+        if callable(close):
+            await close()
+        raise
     return PreparedRuntime(
         skill_roots=skill_roots,
         skill_count=len(discovered_skills),
@@ -576,7 +621,15 @@ async def run_command(args: argparse.Namespace) -> int:
         if prepare_code != 0:
             return prepare_code
 
-    prepared = await _prepare_runtime(args, workspace_dir)
+    try:
+        prepared = await _prepare_runtime(args, workspace_dir)
+    except Exception as exc:
+        print(
+            "运行环境尚未就绪；修复 provider、配置或依赖后重新运行或 resume。\n"
+            f"原因：{exc}",
+            file=sys.stderr,
+        )
+        return 1
     _emit_startup_ui(
         args=args,
         runtime_settings=runtime_settings,
@@ -594,7 +647,7 @@ async def run_command(args: argparse.Namespace) -> int:
             llm_client=prepared.llm_client,
             tool_registry=prepared.registry,
             skill_roots=prepared.skill_roots,
-            human_interface=_build_human_interface(runtime_settings),
+            human_interface=_build_human_interface(runtime_settings, llm_client=prepared.llm_client),
             runtime_settings=runtime_settings,
         )
         return await runner.run(project_id=args.project_id, resume=getattr(args, "resume", False))
@@ -651,7 +704,15 @@ async def run_smoke_command(args: argparse.Namespace) -> int:
         return prepare_code
     _ensure_smoke_project_direction(workspace_dir)
 
-    prepared = await _prepare_runtime(args, workspace_dir)
+    try:
+        prepared = await _prepare_runtime(args, workspace_dir)
+    except Exception as exc:
+        print(
+            "运行环境尚未就绪；修复 provider、配置或依赖后重新运行或 resume。\n"
+            f"原因：{exc}",
+            file=sys.stderr,
+        )
+        return 1
     _emit_startup_ui(
         args=args,
         runtime_settings=runtime_settings,
@@ -678,7 +739,7 @@ async def run_smoke_command(args: argparse.Namespace) -> int:
             llm_client=prepared.llm_client,
             tool_registry=prepared.registry,
             skill_roots=prepared.skill_roots,
-            human_interface=_build_human_interface(runtime_settings),
+            human_interface=_build_human_interface(runtime_settings, llm_client=prepared.llm_client),
             runtime_settings=runtime_settings,
         )
         return await runner.run(project_id=args.project_id, resume=False)
@@ -1015,7 +1076,15 @@ async def run_task_command(args: argparse.Namespace) -> int:
         show_summary=False,
     )
     install_signal_handlers()
-    prepared = await _prepare_runtime(args, workspace_dir)
+    try:
+        prepared = await _prepare_runtime(args, workspace_dir)
+    except Exception as exc:
+        print(
+            "运行环境尚未就绪；修复 provider、配置或依赖后重新运行此任务。\n"
+            f"原因：{exc}",
+            file=sys.stderr,
+        )
+        return 1
     _emit_startup_ui(
         args=args,
         runtime_settings=runtime_settings,
@@ -1036,7 +1105,7 @@ async def run_task_command(args: argparse.Namespace) -> int:
                 tool_registry=prepared.registry,
                 from_workspace=from_workspace,
                 override_profile=args.profile,
-                human_interface=_build_human_interface(runtime_settings),
+                human_interface=_build_human_interface(runtime_settings, llm_client=prepared.llm_client),
                 runtime_settings=runtime_settings,
                 allow_legacy=bool(getattr(args, "allow_legacy", False)),
             )
@@ -1049,7 +1118,7 @@ async def run_task_command(args: argparse.Namespace) -> int:
 
 
 async def run_skill_command(args: argparse.Namespace) -> int:
-    """独立运行一个 skill。"""
+    """Run one standalone skill after a deterministic guided-input check."""
 
     runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
     runtime_settings = _runtime_settings_for_args(runtime_settings, args)
@@ -1063,7 +1132,146 @@ async def run_skill_command(args: argparse.Namespace) -> int:
         show_summary=False,
     )
     install_signal_handlers()
-    prepared = await _prepare_runtime(args, workspace_dir)
+
+    # The deterministic check always precedes runtime preparation. A
+    # noninteractive invocation keeps this as the complete missing-input
+    # behavior, so it remains safe and resumable without a provider.
+    skill_roots = _resolve_skill_roots(args, workspace_dir)
+    try:
+        skill = resolve_skill(args.skill_name, skill_roots)
+        interaction = parse_skill_interaction(skill.metadata)
+        session_id = args.session_id or skill.name
+        previous = load_session(workspace_dir, session_id)
+        request = " ".join(args.request).strip()
+        if args.resume and not request and previous:
+            request = str(previous.get("request", "")).strip()
+        if args.interactive and not request:
+            prompt = (
+                interaction.request_prompt
+                if interaction is not None
+                else "请说明希望这个 Skill 完成什么。"
+            )
+            request = await CLIHumanInterface().ask_clarification(question=prompt)
+        readiness = check_skill_readiness(
+            skill_name=skill.name,
+            metadata=skill.metadata,
+            workspace=workspace_dir,
+            request=request,
+        )
+        intake_packet = prepare_skill_intake_packet(readiness)
+        session_file, _session = record_readiness(
+            workspace=workspace_dir,
+            session_id=session_id,
+            skill_name=skill.name,
+            skill_path=skill.skill_dir,
+            readiness=readiness,
+            resume=bool(args.resume),
+            intake_packet_path=intake_packet,
+        )
+    except Exception as exc:
+        print(f"Skill 启动前检查失败: {exc}", file=sys.stderr)
+        return 2
+
+    print(
+        render_readiness_panel(
+            skill_name=skill.name,
+            session_id=session_id,
+            session_file=session_file,
+            readiness=readiness,
+        )
+    )
+    prepared = None
+    if not readiness.ready:
+        if not args.interactive:
+            return 2
+        if not sys.stdin.isatty():
+            print(
+                "当前没有可交互终端；已保留 WAITING_INPUT 会话。请上传文件后以同一会话恢复，"
+                "或在可交互终端添加 --interactive 粘贴材料。"
+            )
+            return 2
+        if interaction is None or interaction.mode != "guided":
+            print("当前 Skill 没有 guided 输入契约，无法启动受限材料收集。", file=sys.stderr)
+            return 2
+        try:
+            prepared = await _prepare_runtime(args, workspace_dir)
+            human = _build_human_interface(runtime_settings, llm_client=prepared.llm_client)
+            record_input_collection_started(workspace_dir, session_id)
+            intake_result = await run_skill_intake(
+                skill_name=skill.name,
+                interaction=interaction,
+                user_request=request,
+                workspace=workspace_dir,
+                tool_registry=prepared.registry,
+                llm_client=prepared.llm_client,
+                human_interface=human,
+                session_id=session_id,
+                intake_packet_path=(
+                    str(intake_packet.relative_to(workspace_dir)) if intake_packet is not None else ""
+                ),
+                runtime_settings=runtime_settings,
+                llm_profile=args.profile,
+            )
+            readiness = check_skill_readiness(
+                skill_name=skill.name,
+                metadata=skill.metadata,
+                workspace=workspace_dir,
+                request=request,
+            )
+            intake_packet = prepare_skill_intake_packet(readiness)
+            session_file, _session = record_readiness(
+                workspace=workspace_dir,
+                session_id=session_id,
+                skill_name=skill.name,
+                skill_path=skill.skill_dir,
+                readiness=readiness,
+                resume=True,
+                intake_packet_path=intake_packet,
+            )
+            intake_message = (
+                "材料收集完成，已通过确定性输入检查；将继续执行 Skill。"
+                if readiness.ready
+                else "材料收集已暂停或信息仍不足；已保留缺口，等待下一轮补充。"
+            )
+            record_input_collection_finished(
+                workspace=workspace_dir,
+                session_id=session_id,
+                ready=readiness.ready,
+                message=intake_message,
+            )
+            print(
+                render_readiness_panel(
+                    skill_name=skill.name,
+                    session_id=session_id,
+                    session_file=session_file,
+                    readiness=readiness,
+                )
+            )
+            if not intake_result.ok or not readiness.ready:
+                print(render_skill_completion_panel(workspace=workspace_dir, session_id=session_id))
+                return 2
+        except Exception as exc:
+            record_runtime_pause(workspace=workspace_dir, session_id=session_id, error=exc)
+            print(
+                "Skill 交互式材料收集尚未完成，已保留会话；修复运行环境或在同一会话继续补充。\n"
+                f"原因：{exc}",
+                file=sys.stderr,
+            )
+            print(render_skill_completion_panel(workspace=workspace_dir, session_id=session_id))
+            return 1
+
+    if prepared is None:
+        try:
+            prepared = await _prepare_runtime(args, workspace_dir)
+        except Exception as exc:
+            record_runtime_pause(workspace=workspace_dir, session_id=session_id, error=exc)
+            print(
+                "Skill 运行环境尚未就绪，已保留会话；修复 provider、配置或依赖后使用同一 "
+                f"`--session-id {session_id} --resume` 重试。\n原因：{exc}",
+                file=sys.stderr,
+            )
+            print(render_skill_completion_panel(workspace=workspace_dir, session_id=session_id))
+            return 1
     _emit_startup_ui(
         args=args,
         runtime_settings=runtime_settings,
@@ -1076,15 +1284,15 @@ async def run_skill_command(args: argparse.Namespace) -> int:
     )
 
     try:
+        # Resolve again from the prepared roots so custom tool registration and
+        # the execution object are guaranteed to use the same skill source.
         skill = resolve_skill(args.skill_name, prepared.skill_roots)
-        outputs_expected = {
-            name: workspace_dir / rel_path
-            for name, rel_path in (skill.metadata.get("outputs_expected") or {}).items()
-        }
-        human = _build_human_interface(runtime_settings)
+        outputs_expected = expected_outputs_from_metadata(skill.metadata, workspace_dir)
+        human = _build_human_interface(runtime_settings, llm_client=prepared.llm_client)
+        record_run_started(workspace_dir, session_id)
         result = await run_skill(
             skill=skill,
-            user_request=" ".join(args.request).strip() or f"Execute skill '{skill.name}'.",
+            user_request=request or f"Execute skill '{skill.name}'.",
             workspace=workspace_dir,
             tool_registry=prepared.registry,
             llm_client=prepared.llm_client,
@@ -1092,6 +1300,13 @@ async def run_skill_command(args: argparse.Namespace) -> int:
             outputs_expected=outputs_expected,
             llm_profile=args.profile,
             runtime_settings=runtime_settings,
+            skill_session_path=str(session_file.relative_to(workspace_dir)),
+            skill_session_id=session_id,
+            selected_inputs=readiness.selected_inputs,
+            workspace_mode=readiness.workspace_mode,
+            intake_packet_path=(
+                str(intake_packet.relative_to(workspace_dir)) if intake_packet is not None else ""
+            ),
         )
     finally:
         await prepared.aclose()
@@ -1103,19 +1318,14 @@ async def run_skill_command(args: argparse.Namespace) -> int:
             result.error = "Skill output validation failed: " + "; ".join(errors)
             result.message = result.error
 
-    print(
-        yaml.safe_dump(
-            {
-                "ok": result.ok,
-                "stop_reason": result.stop_reason,
-                "trace_file": str(result.trace_file) if result.trace_file else None,
-                "outputs": {k: str(v) for k, v in result.outputs_produced.items()},
-                "error": result.error,
-            },
-            allow_unicode=True,
-            sort_keys=False,
-        )
+    result_session = record_run_result(
+        workspace=workspace_dir,
+        session_id=session_id,
+        result=result,
+        outputs_expected=outputs_expected,
     )
+
+    print(render_skill_completion_panel(workspace=workspace_dir, session_id=session_id))
     return 0 if result.ok else 1
 
 
@@ -1245,12 +1455,23 @@ def doctor_command(args: argparse.Namespace) -> int:
     pdf_ok = deps["pdf_processing"]["ok"]
     add("OK" if pdf_ok else "ERROR", "PDF tools", "pdfplumber available" if pdf_ok else "pdfplumber missing")
 
-    latex_backends = detect_latex_backends(allow_docker=bool(getattr(args, "allow_docker_latex", False)))
-    available_latex = [item["name"] for item in latex_backends if item.get("available") and item.get("name") != "export_only"]
-    if available_latex:
-        add("OK", "LaTeX backend", ", ".join(available_latex))
+    latex_settings = runtime_settings.latex
+    if bool(getattr(args, "allow_docker_latex", False)) and not latex_settings.allow_docker_fallback:
+        latex_settings = LatexSettings(
+            default_backend=latex_settings.default_backend,
+            allow_docker_fallback=True,
+            docker_image=latex_settings.docker_image,
+        )
+    latex_preflight = latex_backend_preflight(latex_settings)
+    if latex_preflight.get("ok"):
+        backend = latex_preflight.get("selected_backend")
+        detail = str(latex_preflight.get("reason") or backend)
+        if latex_preflight.get("image"):
+            detail += f"; image={latex_preflight['image']}"
+        add("OK", "LaTeX backend", detail)
     else:
-        add("WARN", "LaTeX backend", "no PDF compiler found; TeX export remains available")
+        detail = str(latex_preflight.get("message") or latex_preflight.get("reason") or "no usable PDF compiler")
+        add("WARN", "LaTeX backend", detail)
 
     docker_version = command_version("docker", "--version")
     if docker_version:
@@ -1297,7 +1518,8 @@ def doctor_command(args: argparse.Namespace) -> int:
     if errors:
         print("\nResult: ResearchOS Core has blocking issues.")
         return 1
-    print("\nResult: ResearchOS Core is ready. Optional warnings do not block Native Mode.")
+    runtime_label = "Docker/Compose Mode" if env.get("containerized") else "Native Mode"
+    print(f"\nResult: ResearchOS Core is ready. Optional warnings do not block {runtime_label}.")
     return 0
 
 
@@ -1388,6 +1610,58 @@ def validate_config_command(args: argparse.Namespace) -> int:
     return 0 if not errors else 1
 
 
+async def specialize_executor_skills_command(args: argparse.Namespace) -> int:
+    """Compile the project-specific external executor skill suite."""
+
+    from .skills.project_specialization import specialize_project_skills, specialize_project_skills_with_llm
+
+    workspace = Path(args.workspace).resolve()
+    dry_run = bool(getattr(args, "dry_run", False))
+    validate_only = bool(getattr(args, "validate_only", False))
+    if dry_run:
+        result = specialize_project_skills(
+            workspace=workspace,
+            dry_run=dry_run,
+            validate_only=False,
+        )
+    elif validate_only:
+        result = await specialize_project_skills_with_llm(
+            workspace=workspace,
+            llm_client=None,
+            validate_only=True,
+        )
+    else:
+        llm_client = LLMClient(Path(args.model_routing).resolve())
+        try:
+            result = await specialize_project_skills_with_llm(
+                workspace=workspace,
+                llm_client=llm_client,
+                profile=getattr(args, "profile", None),
+                tier=getattr(args, "tier", "medium"),
+            )
+        finally:
+            await llm_client.aclose()
+    report = result.report or {}
+    print(f"Project Skill Specialization: {result.status}")
+    method = report.get("specialization_method") or ("dry_run" if dry_run else "deterministic_validation")
+    print(f"Method: {method}")
+    llm_info = report.get("llm_specialization") if isinstance(report.get("llm_specialization"), dict) else {}
+    if llm_info:
+        print(
+            "LLM: "
+            f"{llm_info.get('model', 'n/a')} via {llm_info.get('endpoint', 'n/a')} "
+            f"({llm_info.get('skills_specialized', 0)} skills)"
+        )
+    print("Context: external_executor/project_skill_context.yaml")
+    print(f"Skills: {report.get('skills_specialized', 0)}/{report.get('skills_total', 13)}")
+    print(f"Required uncertain fields: {len(report.get('required_uncertain_fields') or [])}")
+    print("Report: external_executor/skill_specialization_report.json")
+    if result.status == "failed" and result.errors:
+        first = result.errors[0]
+        print(f"First error: {first.get('code', 'error')} - {first.get('message', '')}")
+    return 1 if result.status == "failed" else 0
+
+
 def status_command(args: argparse.Namespace) -> int:
     """输出 workspace 当前的 state.yaml。"""
 
@@ -1412,7 +1686,7 @@ def trace_command(args: argparse.Namespace) -> int:
 
 
 def list_skills_command(args: argparse.Namespace) -> int:
-    """列出所有可用的 skills。"""
+    """List every discoverable standalone skill and its guided interaction mode."""
     workspace_dir = Path(args.workspace).resolve()
     skills_roots = _resolve_skill_roots(args, workspace_dir)
 
@@ -1423,7 +1697,8 @@ def list_skills_command(args: argparse.Namespace) -> int:
         print(f"Failed to discover skills: {e}", file=sys.stderr)
         return 1
 
-    for skill in discovered.values():
+    for skill in ordered_skills(discovered.values()):
+        interaction = parse_skill_interaction(skill.metadata)
         skill_info = {
             "name": skill.name,
             "description": skill.description,
@@ -1433,6 +1708,37 @@ def list_skills_command(args: argparse.Namespace) -> int:
             "llm_profile": skill.metadata.get("llm_profile"),
             "max_steps": skill.metadata.get("max_steps"),
             "max_tokens_total": skill.metadata.get("max_tokens_total"),
+            "interaction": {
+                "mode": interaction.mode,
+                "language": interaction.language,
+                "request_required": interaction.request_required,
+                "required_inputs": [
+                    {
+                        "id": requirement.key,
+                        "label": requirement.label,
+                        "paths": list(requirement.paths),
+                    }
+                    for requirement in interaction.required_inputs
+                ],
+                "optional_inputs": [
+                    {
+                        "id": requirement.key,
+                        "label": requirement.label,
+                        "paths": list(requirement.paths),
+                    }
+                    for requirement in interaction.optional_inputs
+                ],
+                "outputs": [
+                    {
+                        "id": output.key,
+                        "label": output.label,
+                        "path": output.path,
+                    }
+                    for output in interaction.outputs
+                ],
+            }
+            if interaction
+            else {"mode": "legacy"},
         }
         all_skills.append(skill_info)
 
@@ -1442,18 +1748,163 @@ def list_skills_command(args: argparse.Namespace) -> int:
         return 0
 
     if args.verbose:
-        # 详细模式：显示完整信息
         print(yaml.safe_dump(
-            {"skills": all_skills},
+            {"catalog": catalog_entries(discovered.values()), "skills": all_skills},
             allow_unicode=True,
             sort_keys=False,
         ))
     else:
-        # 简洁模式：只显示名称和描述
-        print(f"Found {len(all_skills)} skill(s):\n")
-        for skill in all_skills:
-            print(f"  {skill['name']:<20} {skill['description']}")
+        print(f"Found {len(all_skills)} skill(s) / 发现 {len(all_skills)} 个可识别 Skill：\n")
+        print(render_skill_catalog(skills=discovered.values(), workspace=workspace_dir))
 
+    return 0
+
+
+def browse_skills_command(args: argparse.Namespace) -> int:
+    """Interactive terminal browser for guided standalone Skills.
+
+    The browser deliberately remains line-based and copyable: it works through
+    SSH, tmux, redirected logs, and ordinary terminals without relying on
+    terminal-private control sequences.
+    """
+
+    workspace_dir = Path(args.workspace).resolve()
+    try:
+        discovered = discover_skills_from_roots(_resolve_skill_roots(args, workspace_dir))
+    except Exception as exc:
+        print(f"Failed to discover skills: {exc}", file=sys.stderr)
+        return 1
+    skills = ordered_skills(discovered.values())
+    if not skills:
+        print("没有找到可浏览的 Skill。")
+        return 0
+    print(render_skill_catalog(skills=skills, workspace=workspace_dir))
+    by_index = {index: skill for index, skill in enumerate(skills, start=1)}
+    index_by_name = {skill.name: index for index, skill in by_index.items()}
+    print(_skill_browser_help())
+    while True:
+        try:
+            command = input("Skill> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n已退出 Skill 浏览。")
+            return 0
+        if not command or command.lower() in {"q", "quit", "exit"}:
+            return 0
+        lowered = command.casefold()
+        if lowered in {"help", "h", "?", "帮助"}:
+            print(_skill_browser_help())
+            continue
+        if lowered in {"all", "list", "全部"}:
+            print(render_skill_catalog(skills=skills, workspace=workspace_dir, index_by_name=index_by_name))
+            continue
+        category_prefixes = ("category ", "分类 ")
+        category_prefix = next((prefix for prefix in category_prefixes if lowered.startswith(prefix)), None)
+        if category_prefix:
+            category = command[len(category_prefix):].strip()
+            matches = skills_in_category(skills, category)
+            if not matches:
+                print(f"未找到分类“{category}”。可输入 `all` 查看分类，或使用 `search <关键词>`。")
+                continue
+            print(
+                render_skill_catalog(
+                    skills=matches,
+                    workspace=workspace_dir,
+                    index_by_name=index_by_name,
+                    heading="ResearchOS · Skill 分类筛选",
+                    notice=f"筛选：分类“{category}” · {len(matches)}/{len(skills)} 个 Skill；序号保持全目录编号。",
+                )
+            )
+            continue
+        search_prefixes = ("search ", "搜索 ")
+        search_prefix = next((prefix for prefix in search_prefixes if lowered.startswith(prefix)), None)
+        if search_prefix:
+            query = command[len(search_prefix):].strip()
+            matches = search_skills(skills, query)
+            if not matches:
+                print(f"没有匹配“{query}”的 Skill。可尝试 `search 文献`、`search 写作`、`search citation`。")
+                continue
+            print(
+                render_skill_catalog(
+                    skills=matches,
+                    workspace=workspace_dir,
+                    index_by_name=index_by_name,
+                    heading="ResearchOS · Skill 搜索结果",
+                    notice=f"筛选：关键词“{query}” · {len(matches)}/{len(skills)} 个 Skill；序号保持全目录编号。",
+                )
+            )
+            continue
+        run_requested = command.lower().startswith("run ")
+        target = command[4:].strip() if run_requested else command
+        skill = None
+        if target.isdigit():
+            skill = by_index.get(int(target))
+        else:
+            skill = discovered.get(target)
+        if skill is None:
+            print("未找到该 Skill。请输入目录中的序号或完整名称。")
+            continue
+        if not run_requested:
+            print(
+                render_skill_description(
+                    skill_name=skill.name,
+                    skill_path=skill.skill_dir,
+                    description=skill.description,
+                    interaction=parse_skill_interaction(skill.metadata),
+                )
+            )
+            print(f"启动：run {next(index for index, item in by_index.items() if item.name == skill.name)}")
+            continue
+        args.command = "run-skill"
+        args.skill_name = skill.name
+        args.request = []
+        args.profile = None
+        args.session_id = None
+        args.resume = False
+        args.interactive = True
+        args.startup_selftest = False
+        args.skip_startup_selftest = False
+        return asyncio.run(run_skill_command(args))
+
+
+def _skill_browser_help() -> str:
+    return (
+        "输入序号或 Skill 名称查看详情；`run <序号或名称>` 启动引导式会话。\n"
+        "筛选：`search <关键词>` / `搜索 <关键词>`，`category <分类>` / `分类 <分类>`，`all` 返回全目录。\n"
+        "示例：`search citation`、`搜索 文献`、`分类 论文写作`、`run 10`；输入 `help` 查看本提示，`q` 退出。"
+    )
+
+
+def describe_skill_command(args: argparse.Namespace) -> int:
+    """Render a full, deterministic input/output contract for one skill."""
+
+    workspace_dir = Path(args.workspace).resolve()
+    try:
+        skill = resolve_skill(args.skill_name, _resolve_skill_roots(args, workspace_dir))
+        print(
+            render_skill_description(
+                skill_name=skill.name,
+                skill_path=skill.skill_dir,
+                description=skill.description,
+                interaction=parse_skill_interaction(skill.metadata),
+            )
+        )
+    except Exception as exc:
+        print(f"无法读取 Skill 描述: {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
+def skill_status_command(args: argparse.Namespace) -> int:
+    """Show persistent guided-skill sessions without contacting an LLM."""
+
+    workspace_dir = Path(args.workspace).resolve()
+    entries = list(iter_sessions(workspace_dir))
+    if args.skill_name:
+        entries = [entry for entry in entries if entry[1].get("skill_name") == args.skill_name]
+    if not entries:
+        print("没有找到 Skill 会话。")
+        return 0
+    print(render_skill_status_panel(workspace=workspace_dir, entries=entries))
     return 0
 
 
@@ -1638,7 +2089,7 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument(
         "--allow-docker-latex",
         action="store_true",
-        help="仅在诊断中把 Docker 视为允许的 LaTeX fallback；默认不依赖 Docker",
+        help="诊断时临时允许 Docker LaTeX fallback；runtime.yaml 已启用时无需传入",
     )
 
     trace_parser = subparsers.add_parser("trace", help="查看某次 run 的 trace")
@@ -1653,16 +2104,51 @@ def build_parser() -> argparse.ArgumentParser:
     validate_config_parser = subparsers.add_parser("validate-config", help="校验状态机与 runtime 配置")
     _add_shared_cli_options(validate_config_parser, runtime_settings, use_defaults=False)
 
-    run_skill_parser = subparsers.add_parser("run-skill", help="独立运行一个 skill")
+    specialize_parser = subparsers.add_parser(
+        "specialize-executor-skills",
+        help="调用 LLM 生成项目专属 external executor skill suite",
+    )
+    _add_shared_cli_options(specialize_parser, runtime_settings, use_defaults=False)
+    specialize_parser.add_argument("--dry-run", action="store_true", help="只构建和校验，不发布产物")
+    specialize_parser.add_argument("--validate-only", action="store_true", help="只校验现有专属化产物")
+    specialize_parser.add_argument("--profile", help="覆盖本次 skill 专属化使用的 LLM profile")
+    specialize_parser.add_argument("--tier", default="medium", help="本次 skill 专属化使用的 LLM tier，默认 medium")
+
+    run_skill_parser = subparsers.add_parser("run-skill", help="启动或恢复一个带输入检查的独立 Skill")
     _add_shared_cli_options(run_skill_parser, runtime_settings, use_defaults=False)
     run_skill_parser.add_argument("skill_name")
     run_skill_parser.add_argument("request", nargs="*")
     run_skill_parser.add_argument("--profile")
+    run_skill_parser.add_argument(
+        "--session-id",
+        help="可恢复会话标识；默认使用 Skill 名称。并行处理多个稿件时请显式指定。",
+    )
+    run_skill_parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="从同一 Skill 会话恢复；若未提供新请求，沿用上次保存的请求。",
+    )
+    run_skill_parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="未给出任务说明时，在终端中以多行方式输入；输入单独一行 END 提交。",
+    )
     run_skill_parser.add_argument("--startup-selftest", action="store_true")
     run_skill_parser.add_argument("--skip-startup-selftest", action="store_true")
 
     list_skills_parser = subparsers.add_parser("list-skills", help="列出所有可用的 skills")
     _add_shared_cli_options(list_skills_parser, runtime_settings, use_defaults=False)
+
+    browse_skills_parser = subparsers.add_parser("browse-skills", help="以终端卡片浏览、查看并启动 Skill")
+    _add_shared_cli_options(browse_skills_parser, runtime_settings, use_defaults=False)
+
+    describe_skill_parser = subparsers.add_parser("describe-skill", help="查看一个 Skill 的上传、输出与恢复契约")
+    _add_shared_cli_options(describe_skill_parser, runtime_settings, use_defaults=False)
+    describe_skill_parser.add_argument("skill_name")
+
+    skill_status_parser = subparsers.add_parser("skill-status", help="查看 workspace 中可恢复的 Skill 会话")
+    _add_shared_cli_options(skill_status_parser, runtime_settings, use_defaults=False)
+    skill_status_parser.add_argument("skill_name", nargs="?", help="可选：仅查看指定 Skill")
 
     return parser
 
@@ -1693,6 +2179,12 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(run_skill_command(args))
     if args.command == "list-skills":
         return list_skills_command(args)
+    if args.command == "browse-skills":
+        return browse_skills_command(args)
+    if args.command == "describe-skill":
+        return describe_skill_command(args)
+    if args.command == "skill-status":
+        return skill_status_command(args)
     if args.command == "status":
         return status_command(args)
     if args.command == "doctor":
@@ -1705,6 +2197,8 @@ def main(argv: list[str] | None = None) -> int:
         return validate_command(args)
     if args.command == "validate-config":
         return validate_config_command(args)
+    if args.command == "specialize-executor-skills":
+        return asyncio.run(specialize_executor_skills_command(args))
     parser.error(f"Unknown command: {args.command}")
     return 2
 

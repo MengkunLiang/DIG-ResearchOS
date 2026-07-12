@@ -89,6 +89,13 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 {{ survey_state_preview }}
 {% endif %}
 
+{% if survey_visual_manifest_preview %}
+### Deterministic survey visual manifest
+{{ survey_visual_manifest_preview }}
+
+使用规则：只在 manifest 的 `status=generated` 且图路径存在时，才可在 Taxonomy 或 Comparative Analysis 中引用该图；图必须解释其数据来源和读者问题，不能作为装饰。使用同目录相对路径，例如 `\includegraphics[width=\textwidth]{figures/survey_method_taxonomy.png}`。若 manifest 为 skipped，不得补造图像或强行预留图位。
+{% endif %}
+
 {% if section_outline_preview %}
 ### 当前 section outline
 {{ section_outline_preview }}
@@ -347,6 +354,7 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - 每节都要有“节内论点”。小节标题和段落开头应表达判断、关系或问题，而不是百科词条。
 - 段落应采用“观点 -> 文献证据 -> 比较 -> 评价”的综述逻辑。可以引用代表论文，但段落主语应是研究流派、机制、框架维度、证据边界或问题张力，不是一串作者名。
 - 必须按当前 section outline 的 Note Card Retrieval Plan 回查相关 paper note section。引用前先核对 note card 或 paper note 中的 mechanism、gap、boundary、design rationale 与当前句子是否对应。
+- 若当前 section 的证据不足，先用 `grep_search` 在 Note Card Retrieval Plan 或 citation pool 指向的 `source_file` 中定位 `## A/B`、`## 13`、`## 14`、`## 18`、`## Raw Abstract` 等 section，再定向 `read_file`。不要为了补一个 claim 成批分页读全部 notes；仍找不到直接证据时，把该内容写成 coverage boundary、弱化表述或删除。
 - 不要包含 `\documentclass`、`\begin{document}`、`\end{document}`。
 - 如果当前 section 是 `abstract`，文件只能写摘要纯正文；不要写 `\section{Abstract}`、`\section*{Abstract}`、`\begin{abstract}` 或 `\end{abstract}`。`assemble_survey` 会负责放入 abstract 环境。
 - 如果 section_id 是 `theme_1`-`theme_4` 且 survey_state 标记 skipped，直接调用 `update_survey_section_state(section_id="{{ section_id }}", status="skipped")` 并 finish。
@@ -496,7 +504,7 @@ Venue-aware survey framing:
 - `assemble_survey` 已经把 `literature/related_work.bib` 复制为 `drafts/survey/references.bib`。
 - `latex_compile` 会自动把编译报告写入 `drafts/survey/survey_compile_report.json`，你不需要再手工复制 `data.compile_report`。
 - 编译产物应包括 `drafts/survey/survey.pdf` 和 `drafts/survey/survey.log`。
-- 如果工具返回 `waiting_environment_*`，不要伪造 PDF 或 report；让 runtime 暂停，等本机 LaTeX backend 修好后 resume。
+- `latex_compile` 的 `auto` 后端会优先使用本机 TeX；宿主机没有 TeX 时会使用配置的 ResearchOS Docker TeX 镜像。只有本机和 Docker 后端都不可用时才会返回 `waiting_environment_*`；不要伪造 PDF 或 report。先运行 `researchos doctor` 检查 daemon、镜像和 TeX 工具链，再修复后 resume。
 - 如果是 LaTeX 语法或引用错误，读取 log，修对应 section 文件或 references，再重新 `assemble_survey`、`audit_survey_coverage`、`latex_compile`；不要一次性重写整篇 survey.tex，也不要复用修订前的旧 `survey_audit.json`。
 
 最后调用 `finish_task`。

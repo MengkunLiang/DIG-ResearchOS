@@ -5,10 +5,41 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 import json
 import re
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 
 _READLINE_CONFIGURED = False
+
+
+_T2_LLM_CAPTURE_FIELDS = {
+    "coverage_total",
+    "active_pool_max",
+    "deep_read_min",
+    "deep_read_target",
+    "deep_read_max",
+    "abstract_sweep_target",
+    "require_deep_read_target",
+    "manuscript_language",
+    "include_chinese_literature",
+    "base_option",
+}
+
+
+def _strip_terminal_control_sequences(value: str) -> str:
+    """Remove terminal replies/paste artifacts before parsing a human answer.
+
+    Some terminal emulators paste OSC colour queries such as
+    ``]10;rgb:cccc/cccc/cccc\\`` into stdin.  They are neither user intent nor
+    a parameter, so remove both well-formed ANSI/OSC sequences and the common
+    visible fragment before the answer is echoed or interpreted.
+    """
+
+    text = str(value or "")
+    text = re.sub(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)", "", text)
+    text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
+    text = re.sub(r"\]?\d{1,3};rgb:[0-9A-Fa-f/]{3,64}\\?", "", text)
+    text = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", text)
+    return text
 
 
 def _configure_readline_once() -> None:
@@ -37,7 +68,93 @@ def _read_cli_line(prompt: str) -> str:
     """Read one terminal line with best-effort readline editing support."""
 
     _configure_readline_once()
-    return input(prompt)
+    return _strip_terminal_control_sequences(input(prompt))
+
+
+def _parse_json_object_from_llm_content(value: Any) -> dict[str, Any] | None:
+    """Extract one JSON object from a short structured LLM response."""
+
+    text = str(value or "").strip()
+    if not text:
+        return None
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE).strip()
+    start = text.find("{")
+    if start < 0:
+        return None
+    try:
+        decoded, _ = json.JSONDecoder().raw_decode(text[start:])
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    return decoded if isinstance(decoded, dict) else None
+
+
+def _sanitize_t2_llm_capture(value: Any) -> dict[str, str]:
+    """Keep only the bounded T2 parameter contract from an LLM response."""
+
+    if not isinstance(value, dict):
+        return {}
+    captured: dict[str, str] = {}
+    for key in _T2_LLM_CAPTURE_FIELDS:
+        item = value.get(key)
+        if item in (None, ""):
+            continue
+        if isinstance(item, bool):
+            captured[key] = "true" if item else "false"
+        elif isinstance(item, (str, int, float)):
+            captured[key] = _strip_terminal_control_sequences(str(item)).strip()
+    return {key: item for key, item in captured.items() if item}
+
+
+def build_t2_parameter_llm_interpreter(
+    llm_client: Any,
+) -> Callable[[str], Awaitable[dict[str, str]]]:
+    """Build a narrow LLM adapter for one-line T2 parameter intent parsing.
+
+    The model only proposes a small JSON object.  ``CLIHumanInterface`` applies
+    deterministic parsing and StateMachine-level range/language validation
+    afterwards, so a malformed or overreaching model response cannot change
+    search boundaries directly.
+    """
+
+    async def interpret(raw_answer: str) -> dict[str, str]:
+        prompt = """You parse one user's T2 literature-coverage request for a research CLI.
+Return exactly one JSON object and no Markdown. Do not explain your reasoning.
+Only include values explicitly stated or unambiguously requested by the user.
+Allowed keys: coverage_total, active_pool_max, deep_read_min, deep_read_target,
+deep_read_max, abstract_sweep_target, require_deep_read_target,
+manuscript_language, include_chinese_literature, base_option.
+
+Rules:
+- Numeric values must be decimal strings. abstract_sweep_target may also be all_readable.
+- manuscript_language must be one of auto, en, zh, mixed when stated.
+- include_chinese_literature must be one of true, false, auto when stated.
+- English manuscript means non-seed Chinese literature will be excluded by a later
+  deterministic policy. Do not invent a language when the user did not state one.
+- Do not infer omitted numeric fields.
+
+User input:
+""" + _strip_terminal_control_sequences(raw_answer)
+        response = await llm_client.chat(
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a strict JSON parser. Return only the requested object.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            tools=None,
+            temperature=0.0,
+            tier="light",
+            profile=None,
+            timeout=25,
+            max_retries_per_model=1,
+            retry_base_delay=0.0,
+        )
+        choice = response.raw.choices[0].message
+        parsed = _parse_json_object_from_llm_content(getattr(choice, "content", ""))
+        return _sanitize_t2_llm_capture(parsed)
+
+    return interpret
 
 
 def _compact_text(value: Any, limit: int = 220) -> str:
@@ -64,6 +181,7 @@ def _humanize_presentation_key(key: str) -> str:
         "selected_parameters": "已选参数",
         "gate1_candidate_cards": "候选 idea 卡片",
         "gate1_selection_brief": "选择建议",
+        "candidate_overview": "候选方向（中文决策面板）",
         "candidate_pool_fingerprints": "候选池校验",
         "input_fingerprints": "输入校验",
         "survey_summary": "综述摘要",
@@ -113,6 +231,13 @@ class CLIHumanInterface(HumanInterface):
 
     CLARIFICATION_EMPTY_RETRIES = 3
     SEPARATOR_WIDTH = 80
+
+    def __init__(
+        self,
+        *,
+        t2_parameter_interpreter: Callable[[str], Awaitable[dict[str, str]]] | None = None,
+    ) -> None:
+        self._t2_parameter_interpreter = t2_parameter_interpreter
 
     async def ask_approval(self, *, tool_name: str, arguments: dict) -> bool:
         print("\n" + "═" * 60)
@@ -179,32 +304,47 @@ class CLIHumanInterface(HumanInterface):
         for key, value in presentation.items():
             if key.startswith("_"):
                 continue
+            if not self._should_render_presentation_field(gate_id, key):
+                continue
             rendered = self._format_presentation_value(key, value, gate_id=gate_id)
             if not rendered.strip():
                 continue
             print(f"\n【{_humanize_presentation_key(key)}】")
             print(rendered)
-        for idx, option in enumerate(options, start=1):
-            default_marker = " [默认]" if option.get("is_default") else ""
-            print(f"[{idx}] {option['label']}{default_marker}")
-            if option.get("parameter_preview"):
-                preview = str(option["parameter_preview"])
-                if "\n" in preview:
-                    print("    参数:")
-                    for line in preview.splitlines():
-                        if line.strip():
-                            print(f"      - {line.strip()}")
-                else:
-                    print(f"    参数: {preview}")
-            if option.get("description"):
-                print(f"    作用: {option['description']}")
+        if gate_id == "t4_gate1_selection_gate":
+            print("\n输入一行即可选择、合并、重构或提出新想法；无需先选择菜单项。")
+        else:
+            for idx, option in enumerate(options, start=1):
+                default_marker = " [默认]" if option.get("is_default") else ""
+                print(f"[{idx}] {option['label']}{default_marker}")
+                if option.get("parameter_preview"):
+                    preview = str(option["parameter_preview"])
+                    if "\n" in preview:
+                        print("    参数:")
+                        for line in preview.splitlines():
+                            if line.strip():
+                                print(f"      - {line.strip()}")
+                    else:
+                        print(f"    参数: {preview}")
+                if option.get("description"):
+                    print(f"    作用: {option['description']}")
         selected = None
         while selected is None:
             try:
-                raw_answer = _read_cli_line("请选择: ").strip()
+                prompt = "选择或说明: " if gate_id == "t4_gate1_selection_gate" else "请选择: "
+                raw_answer = _read_cli_line(prompt).strip()
             except EOFError:
                 raise HumanInputUnavailable(f"Gate {gate_id} 需要用户选择，但当前输入不可用。") from None
-            inline_result = self._parse_inline_gate_customization(gate_id, raw_answer, options)
+            if gate_id == "t2_literature_param_gate":
+                menu_answer = self._parse_option_index(raw_answer, options)
+                if menu_answer is not None:
+                    selected = options[menu_answer]
+                    break
+            inline_result = await self._parse_inline_gate_customization_async(
+                gate_id,
+                raw_answer,
+                options,
+            )
             if inline_result is not None:
                 print(self._format_gate_selection_confirmation(gate_id, inline_result, options))
                 return inline_result
@@ -221,21 +361,27 @@ class CLIHumanInterface(HumanInterface):
                         print(f"请输入 1-{len(options)}，或输入选项别名。")
                         continue
                     break
-                print(f"无效选择: {raw_answer!r}。请输入 1-{len(options)}。")
+                if gate_id == "t4_gate1_selection_gate":
+                    print("未识别。示例：选 D1，强调上下文控制；合并 D1+D3；新想法：……；重新分析：……")
+                else:
+                    print(f"无效选择: {raw_answer!r}。请输入 1-{len(options)}，或直接输入一句参数修改要求。")
                 continue
             selected = options[answer]
         captured: dict[str, str] = {}
-        for field_name in selected.get("collect_input", []):
-            prompt = self._collect_input_prompt(selected, field_name)
-            try:
-                captured[field_name] = _read_cli_line(f"{prompt}: ").strip()
-            except EOFError as exc:
-                raise HumanInputUnavailable(f"Gate {gate_id} 需要输入 {field_name}，但当前输入不可用。") from exc
+        option_id = selected.get("id") or selected.get("key")
+        if gate_id == "t2_literature_param_gate" and option_id == "custom":
+            captured = await self._collect_t2_customization_line(options)
+        else:
+            for field_name in selected.get("collect_input", []):
+                prompt = self._collect_input_prompt(selected, field_name)
+                try:
+                    captured[field_name] = _read_cli_line(f"{prompt}: ").strip()
+                except EOFError as exc:
+                    raise HumanInputUnavailable(f"Gate {gate_id} 需要输入 {field_name}，但当前输入不可用。") from exc
         defaults = selected.get("captured_defaults")
         if isinstance(defaults, dict):
             for key, value in defaults.items():
                 captured.setdefault(str(key), str(value))
-        option_id = selected.get("id") or selected.get("key")
         if gate_id == "t5_executor_gate" and option_id == "codex_cli":
             print(
                 "codex_cli 将允许在 external_executor/workdir 内运行真实实验，"
@@ -256,6 +402,78 @@ class CLIHumanInterface(HumanInterface):
         return result
 
     @staticmethod
+    def _should_render_presentation_field(gate_id: str, key: str) -> bool:
+        """Keep interactive gates focused on a single decision surface."""
+
+        if gate_id == "t4_gate1_selection_gate":
+            return key == "candidate_overview"
+        if gate_id == "t2_literature_param_gate":
+            return key == "current_parameter_preview"
+        return True
+
+    async def _collect_t2_customization_line(self, options: list[dict]) -> dict[str, str]:
+        """Collect T2/T3 coverage changes once instead of field by field."""
+
+        default_id = self._default_option_id("t2_literature_param_gate", options)
+        print(
+            "一次输入覆盖数字、写作语言和中文文献策略；未提到的字段保持当前推荐。\n"
+            "系统会先用 LLM 解释意图，再用本地规则校验数值和检索边界。\n"
+            "示例：英文稿，候选30篇，精读15篇，粗读15篇；或：中文稿，允许中文文献，精读30篇。"
+        )
+        for attempt in range(1, 4):
+            try:
+                raw = _read_cli_line("自定义参数: ").strip()
+            except EOFError as exc:
+                raise HumanInputUnavailable("T2 自定义参数需要一行输入，但当前输入不可用。") from exc
+            captured = await self._interpret_t2_literature_param_text(raw)
+            has_parameters = any(
+                key not in {"parser_source", "parser_fallback_reason"}
+                for key in captured
+            )
+            if has_parameters or not raw:
+                if default_id and default_id != "custom":
+                    captured.setdefault("base_option", str(default_id))
+                return captured
+            if attempt < 3:
+                print("未识别可调整的参数。请直接写数字或语言，例如：精读10篇，粗读20篇。")
+        if default_id and default_id != "custom":
+            return {"base_option": str(default_id)}
+        return {}
+
+    async def _interpret_t2_literature_param_text(self, raw_answer: str) -> dict[str, str]:
+        """Interpret free text through an LLM, then enforce deterministic parsing.
+
+        Explicit local matches take precedence over an LLM proposal.  This is
+        deliberate: the model makes natural-language input ergonomic, while
+        exact numeric and language policy enforcement remains auditable.
+        """
+
+        cleaned = _strip_terminal_control_sequences(raw_answer).strip()
+        deterministic = self._parse_t2_literature_param_text(cleaned)
+        if not cleaned:
+            return deterministic
+        if self._t2_parameter_interpreter is None:
+            deterministic["parser_source"] = "deterministic_fallback"
+            print("[参数解析] 当前未配置 LLM 解释器，已使用本地规则解析并会在确认页展示最终策略。")
+            return deterministic
+
+        print("[参数解析] 正在用 LLM 解释本句参数意图，并执行本地规则校验...")
+        try:
+            llm_capture = _sanitize_t2_llm_capture(
+                await self._t2_parameter_interpreter(cleaned)
+            )
+        except Exception as exc:
+            deterministic["parser_source"] = "llm_fallback"
+            deterministic["parser_fallback_reason"] = type(exc).__name__
+            print("[参数解析] LLM 暂不可用，已降级为本地规则解析；最终参数仍需在下一页确认。")
+            return deterministic
+
+        llm_capture.update(deterministic)
+        llm_capture["parser_source"] = "llm_validated"
+        print("[参数解析] 已完成 LLM 意图解析；本地规则已校验显式数字、语言与中文文献策略。")
+        return llm_capture
+
+    @staticmethod
     def _format_presentation_value(key: str, value: Any, *, gate_id: str = "") -> str:
         """Render gate presentation values for humans instead of dumping JSON by default."""
 
@@ -274,6 +492,8 @@ class CLIHumanInterface(HumanInterface):
                 )
             if _is_path_summary(value):
                 return _format_t2_selected_parameters_summary(value)
+        if gate_id == "t4_gate1_selection_gate" and key == "candidate_overview":
+            return _format_t4_candidate_overview(value)
         if isinstance(value, str):
             return value
         if _is_path_summary(value):
@@ -382,6 +602,31 @@ class CLIHumanInterface(HumanInterface):
             captured.setdefault("base_option", str(default_id))
         return {"option_id": "custom", "captured": captured}
 
+    async def _parse_inline_gate_customization_async(
+        self,
+        gate_id: str,
+        raw_answer: str,
+        options: list[dict],
+    ) -> dict | None:
+        """Async gate parser used by CLI so T2 can call its LLM interpreter."""
+
+        if gate_id != "t2_literature_param_gate":
+            return self._parse_inline_gate_customization(gate_id, raw_answer, options)
+        captured = await self._interpret_t2_literature_param_text(raw_answer)
+        parameter_capture = {
+            key: value
+            for key, value in captured.items()
+            if key not in {"parser_source", "parser_fallback_reason"}
+        }
+        if not parameter_capture:
+            return None
+        if not any((option.get("id") or option.get("key")) == "custom" for option in options):
+            return None
+        default_id = self._default_option_id(gate_id, options)
+        if default_id and default_id != "custom":
+            captured.setdefault("base_option", str(default_id))
+        return {"option_id": "custom", "captured": captured}
+
     @staticmethod
     def _parse_t4_gate1_text(raw_answer: str, options: list[dict]) -> dict | None:
         text = str(raw_answer or "").strip()
@@ -390,7 +635,9 @@ class CLIHumanInterface(HumanInterface):
         normalized = text.replace("，", ",").replace("＋", "+").strip()
         lowered = normalized.casefold()
         option_ids = {str(option.get("id") or option.get("key") or "") for option in options}
-        candidate_pattern = r"\b[DS]\d+\b"
+        # ``\b`` treats Chinese characters as word characters, so a normal
+        # answer such as "选D1作为主线" used to miss the candidate code.
+        candidate_pattern = r"(?<![A-Za-z0-9])[DS]\d+(?![A-Za-z0-9])"
         candidates = [item.upper() for item in re.findall(candidate_pattern, normalized, flags=re.IGNORECASE)]
         unique_candidates = list(dict.fromkeys(candidates))
 
@@ -437,10 +684,16 @@ class CLIHumanInterface(HumanInterface):
         )):
             captured.update({"template_family": "utd", "template_id": "informs", "writing_language": "en"})
             option_id = "utd_informs" if gate_id == "t36_template_gate" else "is_informs"
-        elif any(token in normalized for token in ("ccf", "neurips", "kdd", "conference", "会议", "ccf-a", "ccf_a")):
-            template_id = "kdd" if "kdd" in normalized else "neurips"
+        elif any(token in normalized for token in ("ccf", "neurips", "iclr", "icml", "kdd", "conference", "会议", "ccf-a", "ccf_a")):
+            if "kdd" in normalized or "sigkdd" in normalized:
+                template_id, option_id = "kdd", "ccf_kdd"
+            elif "icml" in normalized:
+                template_id, option_id = "icml", "ccf_icml"
+            elif "iclr" in normalized:
+                template_id, option_id = "iclr", "ccf_iclr"
+            else:
+                template_id, option_id = "neurips", "ccf_neurips"
             captured.update({"template_family": "ccf", "template_id": template_id, "writing_language": "en"})
-            option_id = "ccf_neurips"
         elif any(token in normalized for token in ("英文", "english", "basic_en", "不用模板", "不要模板", "no template")) or normalized == "en":
             captured.update({"template_family": "basic_en", "template_id": "basic_en", "writing_language": "en"})
             option_id = "basic_en"
@@ -476,6 +729,11 @@ class CLIHumanInterface(HumanInterface):
 
         if not captured:
             return None
+        # Older/custom gate definitions may expose only the generic CCF option.
+        # Preserve the requested concrete template id, but route through that
+        # generic option rather than incorrectly declaring the input invalid.
+        if option_id not in option_ids and option_id in {"ccf_iclr", "ccf_icml", "ccf_kdd"} and "ccf_neurips" in option_ids:
+            option_id = "ccf_neurips"
         if not option_id or option_id not in option_ids:
             option_id = "custom" if "custom" in option_ids else next(iter(option_ids), "")
         if not option_id:
@@ -484,7 +742,7 @@ class CLIHumanInterface(HumanInterface):
 
     @staticmethod
     def _parse_t2_literature_param_text(raw_answer: str) -> dict[str, str]:
-        text = str(raw_answer or "").strip()
+        text = _strip_terminal_control_sequences(str(raw_answer or "")).strip()
         if not text:
             return {}
         normalized = text.replace("，", ",").replace("；", ";").replace("：", ":")
@@ -500,8 +758,14 @@ class CLIHumanInterface(HumanInterface):
             captured["manuscript_language"] = "中文"
         if any(token in normalized for token in ("不要中文论文", "不要中文文献", "不检索中文", "不引用中文", "排除中文")):
             captured["include_chinese_literature"] = "false"
-        elif any(token in normalized for token in ("允许中文论文", "允许中文文献", "检索中文", "包含中文", "包括中文")):
+        elif any(token in normalized for token in ("允许中文论文", "允许中文文献", "中文论文允许", "中文文献允许", "检索中文", "包含中文", "包括中文")):
             captured["include_chinese_literature"] = "true"
+        if any(token in normalized for token in ("稿件中文", "论文中文", "写作中文", "中文写作")):
+            captured["manuscript_language"] = "中文"
+        if any(token in normalized for token in ("不必读满目标", "无需读满目标", "达到最低即可", "读到最低线即可")):
+            captured["require_deep_read_target"] = "false"
+        elif any(token in normalized for token in ("必须读满目标", "一定读满目标")):
+            captured["require_deep_read_target"] = "true"
         if any(token in normalized for token in ("不粗读", "不要粗读", "不略读", "不要略读", "不做粗读", "不做摘要轻读")):
             captured["abstract_sweep_target"] = "0"
 
@@ -512,7 +776,7 @@ class CLIHumanInterface(HumanInterface):
         )
         if not deep_triplet:
             deep_triplet = re.search(
-                r"(?:精读|深读)\s*(?:=|:|为)?\s*(\d+)\s*/\s*(\d+)\s*/\s*(\d+)",
+                r"(?:精读|深读|深入阅读)\s*(?:=|:|为)?\s*(\d+)\s*/\s*(\d+)\s*/\s*(\d+)",
                 normalized,
                 flags=re.IGNORECASE,
             )
@@ -528,15 +792,15 @@ class CLIHumanInterface(HumanInterface):
             ],
             "active_pool_max": [
                 r"\bactive[_\s-]*pool(?:[_\s-]*max)?\b\s*(?:=|:|改成|设为|设置为|到|为)?\s*(\d+)",
-                r"(?:保留候选数|候选池|候选数|保留候选|active\s*pool)\s*(?:=|:|改成|设为|设置为|到|为)?\s*(\d+)",
+                r"(?:保留候选数|候选池|候选数|保留候选|候选|active\s*pool)\s*(?:=|:|改成|设为|设置为|到|为)?\s*(\d+)\s*(?:篇)?",
             ],
             "deep_read_target": [
                 r"\bdeep[_\s-]*read(?:[_\s-]*target)?\b\s*(?:=|:|改成|设为|设置为|到|为)?\s*(\d+)",
-                r"(?:精读目标|精读|深读目标|深读)\s*(?:=|:|改成|设为|设置为|到|为)?\s*(\d+)",
+                r"(?:精读目标|精读|深读目标|深读|深入阅读)\s*(?:=|:|改成|设为|设置为|到|为)?\s*(\d+)\s*(?:篇)?",
             ],
             "abstract_sweep_target": [
                 r"\babstract[_\s-]*sweep(?:[_\s-]*target)?\b\s*(?:=|:|改成|设为|设置为|到|为)?\s*([A-Za-z0-9_\-]+|全部)",
-                r"(?:摘要轻读|轻读|略读|粗读|摘要阅读|浅读)\s*(?:=|:|改成|设为|设置为|到|为)?\s*([A-Za-z0-9_\-]+|全部)",
+                r"(?:摘要轻读|轻读|略读|粗读|粗略阅读|摘要阅读|浅读)\s*(?:=|:|改成|设为|设置为|到|为)?\s*([A-Za-z0-9_\-]+|全部)\s*(?:篇)?",
             ],
             "require_deep_read_target": [
                 r"\brequire(?:[_\s-]*deep)?(?:[_\s-]*read)?(?:[_\s-]*target)?\b\s*(?:=|:|改成|设为|设置为|到|为)?\s*(true|false|yes|no|y|n|1|0|是|否|需要|不需要)",
@@ -623,7 +887,7 @@ class CLIHumanInterface(HumanInterface):
         if gate_id == "t2_literature_param_confirm_gate":
             return "confirm_start_t2"
         if gate_id == "t5_executor_gate":
-            return "mock_dry_run"
+            return "codex_cli"
         return None
 
     @staticmethod
@@ -759,6 +1023,118 @@ def _path_summary_size(value: Any) -> int | None:
 
 def _strip_gate_truncation_marker(text: str) -> str:
     return re.sub(r"\n*\[open .+? for full content; truncated from \d+ chars\]\s*$", "", text).rstrip()
+
+
+def _format_t4_candidate_overview(value: Any) -> str:
+    """Render complete, boxed Gate1 candidate cards from audited fields."""
+
+    if not isinstance(value, dict):
+        return "候选方向概览暂不可用；请检查 ideation/_candidate_directions.json。"
+    candidates = value.get("candidates") if isinstance(value.get("candidates"), list) else []
+    if not candidates:
+        return "候选方向概览暂不可用；请检查 ideation/_candidate_directions.json。"
+    width = 92
+    divider = "=" * width
+    lines = [
+        divider,
+        "T4 Gate1 完整候选方向卡片",
+        "请比较问题、机制、可证伪预测、最小验证、证据基础和风险。D 类可作为主方向；S 类仅作消融补充。",
+        "以下展示的是可审计候选与文献证据，不展示模型内部推理。选择后 T4 后半段必须重新打开列出的论文笔记 section。",
+        divider,
+    ]
+    score_labels = (
+        ("novelty", "新颖性"),
+        ("feasibility", "可行性"),
+        ("impact", "影响力"),
+        ("evaluability", "可评估性"),
+        ("differentiation", "差异化"),
+        ("cost", "资源/实施成本"),
+        ("contribution_strength", "贡献强度"),
+    )
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        candidate_id = str(item.get("id") or "?")
+        lane = str(item.get("lane") or "候选方向")
+        title = str(item.get("title") or "未命名候选")
+        original = str(item.get("original_title") or "")
+        value_text = str(item.get("value") or "待补充")
+        mechanism = str(item.get("mechanism") or "待补充")
+        minimum = item.get("minimum_validation") if isinstance(item.get("minimum_validation"), dict) else {}
+        dataset = str(minimum.get("dataset") or "待确定")
+        baseline = str(minimum.get("baseline") or "待确定")
+        metric = str(minimum.get("metric") or "待确定")
+        signal = str(minimum.get("expected_signal") or "待确定")
+        evidence = str(item.get("evidence") or "需回查文献笔记")
+        count = item.get("support_count")
+        scores = item.get("scores") if isinstance(item.get("scores"), dict) else {}
+        score_text = " | ".join(
+            f"{label} {scores[key]}/5"
+            for key, label in score_labels
+            if scores.get(key) is not None
+        ) or "未评分"
+        warning = str(item.get("warning") or "选择后需回查证据。")
+        lines.extend(
+            [
+                "",
+                "+" + "-" * (width - 2) + "+",
+                f"| {candidate_id} | {lane} | {title}",
+                "+" + "-" * (width - 2) + "+",
+                f"研究问题：{item.get('target_problem') or '待补充'}",
+                f"候选来源：{item.get('origin') or '未标注'} | 机制家族：{item.get('mechanism_family') or '未标注'}",
+                f"核心主张：{value_text}",
+                f"技术机制：{mechanism}",
+                f"可检验预测：{item.get('prediction') or '待补充'}",
+                f"反事实 / 证伪条件：{item.get('counterfactual') or '待补充'}",
+                f"实践 / 管理含义：{item.get('practical_implication') or '待补充'}",
+                "最小验证：",
+                f"  数据/任务：{dataset}",
+                f"  对照基线：{baseline}",
+                f"  指标：{metric}",
+                f"  预期信号：{signal}",
+                "评分（1-5）：" + score_text,
+                "证据基础："
+                + evidence
+                + (f"；关联文献笔记 {count} 篇" if count else ""),
+                f"接地摘要：{item.get('basis_summary') or '待补充'}",
+                f"选择建议：{item.get('selection_recommendation') or '未标注'} | 反事实复核：{item.get('counterfactual_check') or '未标注'}",
+                f"最近先例：{item.get('nearest_prior_work') or '待核验'} | 新颖性信号：{item.get('novelty_signal') or '待核验'}",
+                f"风险 / Kill criteria：{warning}",
+            ]
+        )
+        if original:
+            lines.append(f"英文原题：{original}")
+        support = item.get("supporting_papers") if isinstance(item.get("supporting_papers"), list) else []
+        lines.append("支撑文献与对应笔记 section：")
+        if not support:
+            lines.append("  - 当前候选未附带支撑论文；选择前需要补证据。")
+        for index, paper in enumerate(support, start=1):
+            if not isinstance(paper, dict):
+                continue
+            lines.extend(
+                [
+                    f"  {index}. {paper.get('title') or '未命名论文'}",
+                    f"     引用：{paper.get('citation') or '未提供'} | 证据等级：{paper.get('evidence_level') or '未标注'}",
+                    f"     笔记路径：{paper.get('note_path') or '未提供'}",
+                    f"     该候选使用的证据（原文摘录）：{paper.get('claim_used') or '未提供'}",
+                ]
+            )
+        lines.append("+" + "-" * (width - 2) + "+")
+    hint = str(value.get("input_hint") or "")
+    if hint:
+        lines.extend(["", divider, "如何提交选择", hint])
+    detail_path = str(value.get("detail_path") or "")
+    if detail_path:
+        lines.append(f"完整卡片（含原始证据摘录）：{detail_path}")
+    navigation = value.get("file_navigation") if isinstance(value.get("file_navigation"), list) else []
+    if navigation:
+        lines.extend(["", divider, "文件导航（可直接打开核验）"])
+        for item in navigation:
+            if not isinstance(item, dict):
+                continue
+            lines.append(f"- {item.get('path')}: {item.get('purpose')}")
+    lines.append(divider)
+    return "\n".join(lines)
 
 
 def _format_t36_survey_gate_field(key: str, value: Any) -> str | None:
@@ -1157,35 +1533,39 @@ def _extract_hint_titles(text: str, *, limit: int) -> list[str]:
 
 
 def _format_t2_parameter_preview(value: dict[str, Any]) -> str:
+    """Render a compact preset comparison plus explicit language policy."""
+
     lines = [
-        f"检测到的任务类型: {value.get('detected_profile', 'unknown')}",
-        f"当前推荐: {value.get('recommended_label') or value.get('recommended_option')}",
+        f"任务类型：{value.get('detected_profile', 'unknown')}",
+        f"当前推荐：{value.get('recommended_label') or value.get('recommended_option')}",
     ]
-    if value.get("recommended_human_summary"):
-        lines.append("默认回车将写入:")
-        for line in str(value["recommended_human_summary"]).splitlines():
-            if line.strip():
-                lines.append(f"- {line.strip()}")
-    meanings = value.get("parameter_meanings_short")
-    if isinstance(meanings, dict) and meanings:
-        lines.append("")
-        lines.append("关键参数含义:")
-        for item in meanings.values():
-            lines.append(f"- {item}")
+    recommended_summary = value.get("recommended_summary") if isinstance(value.get("recommended_summary"), dict) else {}
+    if recommended_summary:
+        lines.append("回车将采用：" + _format_t2_compact_summary(recommended_summary))
+    lines.extend(
+        [
+            "自定义输入使用 LLM 意图解析，并由本地规则验证数值和语言策略；LLM 不可用时会明确降级提示。",
+            "可直接输入：英文稿，候选30篇，精读15篇，粗读15篇；或：中文稿，允许中文文献，精读30篇。",
+            "",
+            "写作语言与检索边界：",
+            "- 英文稿（en）：自动排除所有非 seed 中文文献，不检索、不主动引用；中文 seed 仅保留为上下文线索。",
+            "- 中文稿（zh）：中文和英文文献均可进入候选池，中文来源会标记权威性复核状态。",
+            "- 双语稿（mixed）：中文和英文均可保留，并在后续引用审计中标识语言与证据等级。",
+            "- 自动（auto）：根据项目和你的输入推断；最终确认页会展示实际生效语言和中文文献动作。",
+        ]
+    )
     options = value.get("options")
     if isinstance(options, dict) and options:
         lines.append("")
-        lines.append("各档位实际数值:")
+        lines.append("档位比较：")
         for option_id, option in options.items():
             if not isinstance(option, dict):
                 continue
             summary = option.get("summary") if isinstance(option.get("summary"), dict) else {}
             marker = "（推荐）" if option.get("recommended") else ""
-            explained = option.get("explained_preview") or _format_t2_explained_summary(summary)
-            lines.append(f"- {option.get('label') or option_id}{marker}:")
-            for explained_line in str(explained).splitlines():
-                if explained_line.strip():
-                    lines.append(f"  - {explained_line.strip()}")
+            compact = option.get("compact_preview") or _format_t2_compact_summary(summary)
+            lines.append(f"- {option.get('label') or option_id}{marker}：{compact}")
+    lines.append("选“自定义”后只需输入一次整句；未写字段保留当前推荐，确认页会显示 LLM/规则解析来源。")
     return "\n".join(lines)
 
 
@@ -1223,9 +1603,18 @@ def _format_t2_selected_parameters_summary(value: dict[str, Any]) -> str:
         "manuscript_language": quality.get("manuscript_language", "auto"),
         "include_chinese_literature": quality.get("include_chinese_literature", "auto"),
         "chinese_literature_policy": quality.get("chinese_literature_policy", "review_flag_only"),
+        "effective_non_seed_chinese_action": quality.get("effective_non_seed_chinese_action"),
     }
     lines.extend(_format_t2_explained_summary_lines(explained_summary))
     captured = data.get("captured") if isinstance(data.get("captured"), dict) else {}
+    parser_source = str(captured.get("parser_source") or "").strip()
+    if parser_source:
+        parser_labels = {
+            "llm_validated": "LLM 意图解析 + 本地规则校验",
+            "llm_fallback": "LLM 不可用后已降级为本地规则解析",
+            "deterministic_fallback": "本次运行未配置 LLM，已使用本地规则解析",
+        }
+        lines.append(f"参数解析：{parser_labels.get(parser_source, parser_source)}")
     if captured:
         compact = "; ".join(f"{key}={value}" for key, value in captured.items() if value not in (None, ""))
         if compact:
@@ -1280,6 +1669,15 @@ def _format_t2_explained_summary(summary: dict[str, Any]) -> str:
     return "；".join(_format_t2_explained_summary_lines(summary))
 
 
+def _format_t2_compact_summary(summary: dict[str, Any]) -> str:
+    total_target = _t2_summary_total_read_target(summary)
+    require = "读满目标" if summary.get("require_deep_read_target") is True else "达到最低线可继续"
+    return (
+        f"候选 {summary.get('active_pool_max')} | 精读 {summary.get('deep_read_target')} | "
+        f"摘要轻读 {summary.get('abstract_sweep_target')} | 总覆盖约 {total_target} | {require}"
+    )
+
+
 def _format_t2_explained_summary_lines(summary: dict[str, Any]) -> list[str]:
     deep_min = summary.get("deep_read_min")
     deep_target = summary.get("deep_read_target")
@@ -1287,15 +1685,27 @@ def _format_t2_explained_summary_lines(summary: dict[str, Any]) -> list[str]:
     require = summary.get("require_deep_read_target")
     require_text = "未达目标不进入 T3.5" if require is True else "达到最低线即可继续" if require is False else "按系统默认判断"
     total_target = _t2_summary_total_read_target(summary)
-    return [
+    manuscript_language = str(summary.get("manuscript_language", "auto"))
+    include_chinese = str(summary.get("include_chinese_literature", "auto"))
+    effective_action = str(summary.get("effective_non_seed_chinese_action") or "")
+    lines = [
         f"总阅读覆盖：约 {total_target} 篇（total=deep_read_target+abstract_sweep；可选：total=30 或 总共30）",
         f"保留候选：{summary.get('active_pool_max')} 篇（active_pool_max={summary.get('active_pool_max')}；可选：120/180/240 或自定义）",
         f"深入阅读：目标 {deep_target} 篇（deep_read={deep_min}/{deep_target}/{deep_max}；格式：min/target/max）",
         f"读满目标门槛：{require_text}（require_target={require}；可选：true/false）",
         f"摘要轻读：{summary.get('abstract_sweep_target')} 篇（abstract_sweep={summary.get('abstract_sweep_target')}；别名：粗读/略读/rough；可选：数字或 all_readable）",
-        f"稿件语言：{summary.get('manuscript_language', 'auto')}（manuscript_language={summary.get('manuscript_language', 'auto')}；可选：auto/en/zh/mixed）",
-        f"中文文献：{summary.get('include_chinese_literature', 'auto')}（include_zh={summary.get('include_chinese_literature', 'auto')}；可选：auto/true/false；策略={summary.get('chinese_literature_policy', 'review_flag_only')}）",
+        f"稿件语言：{manuscript_language}（manuscript_language={manuscript_language}；可选：auto/en/zh/mixed）",
+        f"中文文献：{include_chinese}（include_zh={include_chinese}；可选：auto/true/false；策略={summary.get('chinese_literature_policy', 'review_flag_only')}）",
     ]
+    if manuscript_language == "en" or effective_action == "exclude":
+        lines.append("生效检索策略：英文稿，自动排除非 seed 中文文献；不会将其加入检索候选或主动引用。")
+    elif manuscript_language == "zh":
+        lines.append("生效检索策略：中文和英文文献均可进入候选池；中文来源会进行权威性复核标记。")
+    elif manuscript_language == "mixed":
+        lines.append("生效检索策略：中文和英文文献均可进入候选池；后续引用审计会保留语言和证据等级。")
+    else:
+        lines.append("生效检索策略：尚为自动推断；开始 T2 前请确认中文文献准入设置。")
+    return lines
 
 
 def _t2_summary_total_read_target(summary: dict[str, Any]) -> int | str | None:

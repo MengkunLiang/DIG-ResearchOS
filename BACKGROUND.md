@@ -99,7 +99,7 @@ tmp/                       临时输出
 - T3.6 是可选 taxonomy-driven survey paper 支线，不是把 `synthesis.md` 直接转 TeX。它有模板 gate、outline gate、corpus gate、逐 section 写作、审计、编译和 post-survey 去向 gate。
 - T4 先生成候选池与 Markdown 候选卡片，进入状态机级 `T4-GATE1`。用户可选择、合并、补充新 idea 或要求重新分析，之后才生成最终假设和实验计划。
 - T4.5 做 novelty/collision 与 mechanism tuple 审计。非通过 verdict 进入人工决策 gate，不自动拒绝或死循环回 T4。
-- T5 现在是外部执行链：LLM API context re-boost、handoff pack、LLM API skill customization、实验材料放置、执行器选择。`T5-REBOOST-GATE` 会自动写 `external_executor/handoff_pack.json#context_reboost` 和 `external_executor/reboost_report.json`，`T5-SKILL-CUSTOMIZATION-GATE` 会自动写 `external_executor/skills/customization_report.json`；re-boost 和 skill 定制都不再要求用户手动拉起 Codex。真实实验由外部执行器写回 `result_pack.json`、`executor_status.json`、`run_manifest.json`。
+- T5 现在是外部执行链：LLM API context re-boost、handoff pack、确定性 Project Skill Specializer、实验材料放置、执行器选择。`T5-REBOOST-GATE` 会自动写 `external_executor/handoff_pack.json#context_reboost` 和 `external_executor/reboost_report.json`，`T5-HANDOFF` 会写 `external_executor/project_skill_context.yaml`、`external_executor/skills/` 和 `external_executor/skill_specialization_report.json`；re-boost 和 skill 专属化都不要求用户手动拉起 Codex。真实实验由外部执行器写回 `result_pack.json`、`executor_status.json`、`run_manifest.json`。
 - T7 摄取外部结果，做 integrity audit、post-experiment novelty、result-to-claim，生成写作 evidence pack 和 must-not-claim 边界。
 - T7.5 由 PI 评估实验结果并通过 human gate 分流到写作、补实验、回 T4 或结束。
 - T8 先确认写作风格/模板，再生成资源索引、证据计划、章节状态，逐章写作、拼装、自查、两轮审稿修订，最后做 paper claim audit。
@@ -163,7 +163,7 @@ python -m researchos.cli list-skills --skills-root ./skills
 python -m researchos.cli run-skill deepxiv "summarize recent memory papers for llm agents"
 ```
 
-`T5-REBOOST-GATE` 会直接调用 LLM API 生成 re-boost 上下文；`T5-HANDOFF` 会把 `skills/external_executor_skills/` 下的 13 个模板复制到 `external_executor/skills/`；`T5-SKILL-CUSTOMIZATION-GATE` 随后直接调用当前配置的 LLM provider，读取 `external_executor/skills/skills_customization/SKILL.md` 和 manifest，把通用模板原地改写成项目专属执行 skills，并写出 `external_executor/skills/customization_report.json`。真实执行时 Codex/Claude/manual executor 应读取 `external_executor/AGENTS.md` 和项目定制 skills，不应修改 ResearchOS runtime/config/drafts/submission。
+`T5-REBOOST-GATE` 会直接调用 LLM API 生成 re-boost 上下文；`T5-HANDOFF` 会调用 Project Skill Specializer，按 `skills/external_executor_skills/skill_specialization.yaml` 和统一 Schema 生成 `external_executor/project_skill_context.yaml`，并把 13 个通用模板渲染为 `external_executor/skills/` 下的项目专属执行 skills，报告写入 `external_executor/skill_specialization_report.json`。`T5-SKILL-CUSTOMIZATION-GATE` 只检查该报告，不再调用 LLM 自由改写 Skill。真实执行时 Codex/Claude/manual executor 应读取 `external_executor/AGENTS.md` 和项目定制 skills，不应修改 ResearchOS runtime/config/drafts/submission。
 
 ## 测试与验证
 

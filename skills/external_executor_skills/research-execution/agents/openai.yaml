@@ -1,0 +1,12 @@
+interface:
+  display_name: Research Execution
+  short_description: Orchestrate auditable external research experiments
+  default_prompt: Use $research-execution to run or resume the ResearchOS external
+    experiment workflow.
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

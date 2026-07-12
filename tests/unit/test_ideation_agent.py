@@ -26,6 +26,7 @@ from researchos.agents.ideation import (
     _validate_bridge_coverage_review,
     _validate_candidate_directions,
     prepare_t4_context_pack,
+    recover_t4_gate1_candidate_pool,
     validate_t4_gate1_ready,
 )
 from researchos.runtime.agent import ExecutionContext
@@ -2127,6 +2128,86 @@ def test_validate_t4_gate1_ready_accepts_candidate_pool_without_final_outputs(te
 
     assert not (temp_workspace / "ideation" / "hypotheses.md").exists()
     assert not (temp_workspace / "ideation" / "exp_plan.yaml").exists()
+
+
+def test_recover_t4_gate1_candidate_pool_from_context_pack(temp_workspace):
+    (temp_workspace / "literature" / "bridge_domain_plan.json").write_text(
+        json.dumps(
+            {
+                "semantics": "bridge_domain_plan",
+                "source": "user",
+                "bridge_domains": [
+                    {
+                        "bridge_id": "b2",
+                        "name": "LLM Agent Decision Psychology",
+                        "priority": "should_explore",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (temp_workspace / T4_CONTEXT_PACK_JSON).write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "t4_compact_ideation_context_pack",
+                "note_cards": [
+                    {
+                        "note_id": "n1",
+                        "paper_id": "n1",
+                        "title": "Agent Context Effects",
+                        "evidence_level": "FULL_TEXT",
+                        "citation_use": "core_evidence",
+                        "citation_quality_score": 0.86,
+                        "citation_ref": "\\cite{agent2026}",
+                        "source_file": "literature/paper_notes/n1.md",
+                        "bridge_point": "LLM behavior changes under source and context shifts.",
+                        "gaps": "Existing uplift does not handle context carryover.",
+                        "mechanism_claim": "Context carryover creates measurable response shifts.",
+                        "design_rationale": "A control design can separate treatment effects from prompt artifacts.",
+                        "boundary_conditions": "Works when interactions and prompts are logged.",
+                        "cross_paper_tension": "Static uplift conflicts with stateful LLM behavior.",
+                    },
+                    {
+                        "note_id": "n2",
+                        "paper_id": "n2",
+                        "title": "Uplift Baseline",
+                        "evidence_level": "FULL_TEXT",
+                        "citation_use": "supporting_context",
+                        "citation_quality_score": 0.78,
+                        "citation_ref": "\\cite{uplift2015}",
+                        "source_file": "literature/paper_notes/n2.md",
+                        "core_approach_view": "Uplift trees directly model treatment-control divergence.",
+                        "gaps": "Human assumptions remain untested for agents.",
+                        "mechanism_claim": "Weak uplift signals need stable evaluation.",
+                        "design_rationale": "Direct divergence criteria are useful baselines.",
+                        "boundary_conditions": "Works under randomized treatment assignment.",
+                    },
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    recovery = recover_t4_gate1_candidate_pool(temp_workspace, reason="unit_test_provider_timeout")
+
+    assert recovery["ok"], recovery
+    ok, err = validate_t4_gate1_ready(temp_workspace)
+    assert ok, err
+    candidate_data = json.loads((temp_workspace / "ideation" / "_candidate_directions.json").read_text(encoding="utf-8"))
+    origins = {item["idea_origin"] for item in candidate_data["candidates"]}
+    assert "bridge_synthesis" in origins
+    assert "reverse_operation" in origins
+    cards = (temp_workspace / "ideation" / "_gate1_candidate_cards.md").read_text(encoding="utf-8")
+    assert "技术机制" in cards
+    bridge_review = json.loads((temp_workspace / "ideation" / "bridge_coverage_review.json").read_text(encoding="utf-8"))
+    assert bridge_review["bridge_reviews"][0]["bridge_id"] == "b2"
 
 
 def test_idea_scorecard_schema_accepts_survey_driven_origin(temp_workspace):

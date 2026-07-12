@@ -29,6 +29,16 @@ _BLOCK_PREFIXES = (
 )
 
 
+_T4_GATE1_ARTIFACTS: dict[str, tuple[int, str]] = {
+    "ideation/_pass1_forward_candidates.json": (1, "Pass 1 原始候选池"),
+    "ideation/_pass2_grounding_review.json": (2, "Pass 2 接地复核"),
+    "ideation/_candidate_directions.json": (3, "Gate1 结构化候选池"),
+    "ideation/_family_distribution.md": (4, "候选谱系分布检查"),
+    "ideation/_gate1_candidate_cards.md": (5, "Gate1 完整候选卡片"),
+    "ideation/_gate1_selection_brief.md": (6, "Gate1 选择简报"),
+}
+
+
 @dataclass(frozen=True)
 class ToolNarrative:
     purpose: str
@@ -39,6 +49,8 @@ class ToolNarrative:
 
 class CliProgressEmitter:
     """Small output gate for human-readable CLI progress."""
+
+    SEPARATOR = "-" * 76
 
     def __init__(
         self,
@@ -51,6 +63,9 @@ class CliProgressEmitter:
         self.verbose = bool(verbose)
         self._emit_fn = emit_fn or (lambda message: print(message, flush=True))
         self._last_message_kind: str | None = None
+        self._active_task_id: str | None = None
+        self._t4_input_trace_emitted = False
+        self._suppressed_t4_tool_results: dict[str, int] = {}
 
     def emit(self, message: str, *, important: bool = False, verbose_only: bool = False) -> None:
         if verbose_only and not self.verbose:
@@ -76,6 +91,9 @@ class CliProgressEmitter:
         llm_tier: str,
         step_limit: str,
     ) -> None:
+        self._active_task_id = task_id
+        self._t4_input_trace_emitted = False
+        self._suppressed_t4_tool_results = {}
         if self.quiet:
             self.emit(f"[{agent}] 启动 {task_id}: {_compact_text(objective, 120)}", important=True)
             return
@@ -88,6 +106,7 @@ class CliProgressEmitter:
         if self.verbose:
             self.emit(
                 "\n"
+                f"{self.SEPARATOR}\n"
                 f"[{agent}] 阶段启动\n"
                 f"任务：{task_id} | 阶段：{phase}\n"
                 f"目标：{objective}\n"
@@ -97,15 +116,20 @@ class CliProgressEmitter:
                 f"运行设置：模型层级 {llm_tier}，最大步数 {step_limit}"
             )
             return
-        self.emit(
-            "\n".join(
+        lines = [
+            self.SEPARATOR,
+            f"[{agent}] {task_id} 启动",
+            f"目标：{_compact_text(objective, 150)}",
+            f"产物：{_compact_text(expected_artifacts, 150)}",
+        ]
+        if task_id == "T4":
+            lines.extend(
                 [
-                    f"[{agent}] {task_id} 启动",
-                    f"目标：{_compact_text(objective, 150)}",
-                    f"产物：{_compact_text(expected_artifacts, 150)}",
+                    "执行轨迹：准备证据包 -> 生成候选 -> 接地复核 -> 写入 Gate1 卡片 -> 等待人工选择",
+                    "说明：轨迹来自工具调用和已落盘产物，不展示模型内部推理。",
                 ]
             )
-        )
+        self.emit("\n".join(lines), important=True)
 
     def agent_step(
         self,
@@ -122,9 +146,63 @@ class CliProgressEmitter:
             verbose_only=True,
         )
 
+    def llm_request_started(self, *, task_id: str, step: int) -> None:
+        """Show that the provider request was actually submitted immediately.
+
+        This is deliberately separate from the delayed heartbeat.  It tells a
+        user that the runtime reached the provider boundary without implying
+        anything about hidden model reasoning.
+        """
+
+        label = task_id.removeprefix("SKILL_") if task_id.startswith("SKILL_") else task_id
+        self.emit(
+            f"[运行中] {label} · step {step} | 模型请求已提交，正在等待下一组可执行动作。"
+        )
+
+    def llm_waiting(
+        self,
+        *,
+        task_id: str,
+        agent: str,
+        step: int,
+        elapsed_seconds: int,
+    ) -> None:
+        """Show a heartbeat for an in-flight provider call.
+
+        This is intentionally a runtime fact, not a claim about private model
+        reasoning.  It is visible by default for Skills and T4 where the next
+        durable artifact can otherwise take a while to appear.
+        """
+
+        label = task_id.removeprefix("SKILL_") if task_id.startswith("SKILL_") else task_id
+        self.emit(
+            f"[运行中] {label} · step {step} | 正在等待模型返回下一组可执行动作；"
+            f"本次调用已持续 {elapsed_seconds}s。",
+        )
+
     def tool_call(self, *, agent: str, tool_name: str, narrative: ToolNarrative) -> None:
         if self.quiet:
             return
+        if self._active_task_id == "T4" and tool_name in {"read_file", "list_files", "glob_files", "grep_search"}:
+            self._suppressed_t4_tool_results[tool_name] = self._suppressed_t4_tool_results.get(tool_name, 0) + 1
+            if not self._t4_input_trace_emitted:
+                self._t4_input_trace_emitted = True
+                self.emit("[轨迹] T4 正在核验上游证据和文献笔记 section。")
+            return
+        if self._active_task_id == "T4" and tool_name in {"write_file", "write_structured_file", "append_file"}:
+            gate1_artifact = _t4_gate1_artifact(narrative.output_path)
+            if gate1_artifact:
+                index, label = gate1_artifact
+                self.emit(
+                    f"[T4 Gate1] {index}/6 写入中 · {label}\n"
+                    f"文件：{narrative.output_path}"
+                )
+                return
+            stage = _t4_artifact_stage(narrative.output_path)
+            if stage:
+                self.emit(f"[轨迹] T4 {stage}")
+        if self._active_task_id == "T4" and tool_name == "finish_task":
+            self.emit("[轨迹] T4 正在校验 Gate1 候选产物，并准备转入人工选择。")
         if not self.verbose:
             line = (
                 f"[Tool] {tool_name}: {_compact_text(narrative.purpose, 90)}；"
@@ -155,10 +233,34 @@ class CliProgressEmitter:
         next_step: str | None = None,
         duration_ms: int | None = None,
     ) -> None:
+        suppressed = self._suppressed_t4_tool_results.get(tool_name, 0)
+        if suppressed:
+            if suppressed == 1:
+                self._suppressed_t4_tool_results.pop(tool_name, None)
+            else:
+                self._suppressed_t4_tool_results[tool_name] = suppressed - 1
+            return
         important = not ok
         if self.quiet and not important:
             return
         status = "完成" if ok else "失败"
+        if self._active_task_id == "T4":
+            gate1_artifact = _t4_gate1_artifact(output_path)
+            if gate1_artifact:
+                index, label = gate1_artifact
+                if ok:
+                    self.emit(
+                        f"[T4 Gate1] {index}/6 已保存 · {label}\n"
+                        f"文件：{output_path}"
+                    )
+                else:
+                    self.emit(
+                        f"[T4 Gate1] {index}/6 写入失败 · {label}\n"
+                        f"文件：{output_path or '未确定'}\n"
+                        f"原因：{_compact_text(result_summary, 220)}",
+                        important=True,
+                    )
+                return
         if ok and not self.verbose:
             line = f"[Tool] {tool_name} {status}: {_compact_text(result_summary, 150)}"
             if output_path:
@@ -204,24 +306,23 @@ class CliProgressEmitter:
     ) -> None:
         important = True
         status = "阶段完成" if ok else "阶段停止"
-        if ok and not self.verbose:
-            lines = [
-                f"[{agent}] {task_id} {status}",
-                f"结果：{_compact_text(summary, 180)}",
-            ]
-        else:
-            lines = [
-                f"[{agent}] {status}",
-                f"任务：{task_id} | stop_reason={stop_reason}",
-                f"完成内容：{summary}",
-            ]
+        lines = [
+            self.SEPARATOR,
+            f"[{agent}] {task_id} {status}",
+            "阶段总结",
+            f"- 完成了什么：{summary if self.verbose else _compact_text(summary, 320)}",
+            f"- 本阶段职责：{describe_task_artifacts(task_id)}",
+        ]
+        if not ok:
+            lines.insert(2, f"停止原因：{stop_reason}")
         if artifacts:
-            artifact_limit = 4 if not self.verbose else 8
-            lines.append("输出：" + ", ".join(artifacts[:artifact_limit]))
-            if len(artifacts) > artifact_limit:
-                lines.append(f"更多输出：还有 {len(artifacts) - artifact_limit} 个文件已生成")
+            lines.append("- 已产出文件：")
+            for artifact in artifacts:
+                lines.append(f"  - {artifact}：{describe_output_artifact(artifact, task_id=task_id)}")
         elif not ok and trace_file:
             lines.append(f"详细日志：{trace_file}")
+        elif ok:
+            lines.append("- 已产出文件：当前任务未声明独立文件；请以上方阶段结果和状态机校验为准。")
         if artifacts and trace_file and self.verbose:
             lines.append(f"详细日志：{trace_file}")
         if error:
@@ -233,6 +334,12 @@ class CliProgressEmitter:
         next_step = _useful_next_step(next_step)
         if next_step and not ok:
             lines.append(f"建议：{next_step}")
+        if ok:
+            completion_next = next_step_after_completed_task(task_id)
+            if completion_next:
+                lines.append(f"- 下一步：{completion_next}")
+            else:
+                lines.append("- 下一步：状态机会校验上述产物，然后推进到配置的后续节点。")
         self.emit("\n".join(lines), important=important)
 
     def validation_start(self, *, task_id: str) -> None:
@@ -275,10 +382,10 @@ class CliProgressEmitter:
             self.emit("[Pipeline] 已暂停", important=True)
 
     def gate_needed(self, *, gate_id: str, task: str) -> None:
-        self.emit(f"[Gate] {task}: 等待用户选择 ({gate_id})", important=True)
+        self.emit(f"{self.SEPARATOR}\n[Gate] {task}: 等待用户选择 ({gate_id})", important=True)
 
     def gate_resolved(self, *, from_task: str, to_task: str, gate_id: str) -> None:
-        self.emit(f"[Gate] 已确认 {gate_id}: {from_task} -> {to_task}", important=True)
+        self.emit(f"{self.SEPARATOR}\n[Gate] 已确认 {gate_id}: {from_task} -> {to_task}", important=True)
 
     def runtime_validation_failed(
         self,
@@ -301,7 +408,7 @@ class CliProgressEmitter:
         from_task: str,
         to_task: str,
     ) -> None:
-        self.emit(f"[State] {from_task} -> {to_task}", important=True)
+        self.emit(f"{self.SEPARATOR}\n[State] {from_task} -> {to_task}", important=True)
 
     def legacy_agent_done(
         self,
@@ -346,11 +453,11 @@ class CliProgressEmitter:
     ) -> None:
         if self.verbose:
             self.emit(
-                f"[State] {from_task} 已结束，系统进入 {to_task}。原因：{_compact_text(reason, 160)}",
+                f"{self.SEPARATOR}\n[State] {from_task} 已结束，系统进入 {to_task}。原因：{_compact_text(reason, 160)}",
                 important=True,
             )
             return
-        self.emit(f"[State] {from_task} -> {to_task}", important=True)
+        self.emit(f"{self.SEPARATOR}\n[State] {from_task} -> {to_task}", important=True)
 
     def error_context(
         self,
@@ -441,6 +548,98 @@ def _drop_generic_next_step_lines(message: str) -> str:
     return "\n".join(kept).strip()
 
 
+def _t4_artifact_stage(output_path: str | None) -> str | None:
+    """Translate durable T4 artifact milestones into a user-facing trace."""
+
+    path = str(output_path or "")
+    stages = {
+        "ideation/t4_progress.md": "正在记录候选构建阶段和输入范围。",
+        "ideation/bridge_coverage_review.json": "正在记录桥接候选的证据边界和暂缓原因。",
+    }
+    return stages.get(path)
+
+
+def _t4_gate1_artifact(output_path: str | None) -> tuple[int, str] | None:
+    normalized = str(output_path or "").replace("\\", "/").lstrip("./")
+    return _T4_GATE1_ARTIFACTS.get(normalized)
+
+
+def describe_output_artifact(path: str, *, task_id: str = "") -> str:
+    """Explain a durable output path without pretending it was inspected here."""
+
+    normalized = str(path or "").replace("\\", "/").lstrip("./")
+    exact = {
+        "literature/search_log.md": "检索、去重、回填、候选切分和覆盖缺口的审计记录。",
+        "literature/papers_raw.jsonl": "多源原始检索结果；用于追溯每条候选的来源。",
+        "literature/papers_dedup.jsonl": "合并标识符和标题重复后的候选池。",
+        "literature/papers_verified.jsonl": "经过字段与可读性核验、可进入后续阅读处置的候选池。",
+        "literature/papers_backlog.jsonl": "未进入当前 active pool 的可追溯候选，后续可回捞。",
+        "literature/deep_read_queue.jsonl": "T3 的结构化精读优先队列与排序依据。",
+        "literature/literature_params.json": "本轮 T2/T3 覆盖、语言和中文文献策略的最终参数记录。",
+        "literature/comparison_table.csv": "跨论文的方法、数据、证据和限制的对照表。",
+        "literature/synthesis.md": "T3.5 的文献综合，供 T4 idea 和论文写作引用。",
+        "literature/missing_areas.md": "已覆盖内容、证据缺口与后续补检索建议。",
+        "literature/domain_map.json": "领域、方法家族和桥接主题的结构化地图。",
+        "ideation/_pass1_forward_candidates.json": "T4 Pass 1 的原始发散候选池，供覆盖审计。",
+        "ideation/_pass2_grounding_review.json": "T4 Pass 2 对候选的接地复核、风险和上桌建议。",
+        "ideation/_candidate_directions.json": "完整的 Gate1 候选结构、评分、实验和支撑论文数据。",
+        "ideation/_family_distribution.md": "候选来源和机制谱系的集中度检查。",
+        "ideation/_gate1_candidate_cards.md": "供人工比较的完整 Gate1 候选卡片。",
+        "ideation/_gate1_selection_brief.md": "候选选择、合并与风险提示的决策简报。",
+        "ideation/selected_idea_brief.md": "用户 Gate1 选择和 T4 后半段收敛方向的可读记录。",
+        "ideation/hypotheses.md": "可证伪研究假设、边界条件与预期方向。",
+        "ideation/experiment_plan.md": "实验设计、对照、指标、风险和停止条件。",
+        "ideation/novelty_audit.md": "与相邻工作的差异、撞车风险和 claim 降级建议。",
+        "drafts/paper.tex": "整篇论文 TeX 草稿，后续审稿和提交的主输入。",
+        "drafts/related_work.bib": "论文引用所需的 BibTeX 条目；会接受 provenance 审计。",
+        "drafts/citation_provenance_audit.md": "每条文内引用与文献笔记/证据边界的可读审计报告。",
+        "drafts/citation_provenance_audit.json": "引用 provenance 审计的机器可读结果。",
+        "drafts/claim_audit.md": "论文 claim、证据来源和强度限制的审计结果。",
+        "submission/submission_checklist.md": "投稿前格式、匿名化、编译和材料核对清单。",
+    }
+    if normalized in exact:
+        return exact[normalized]
+    prefix_rules = (
+        ("literature/paper_notes/", "一篇结构化精读笔记，包含可引用 section、证据等级和边界。"),
+        ("literature/paper_notes_bridge/", "桥接领域论文的结构化笔记，用于核验跨域机制迁移。"),
+        ("literature/abstract_notes/", "摘要级轻读笔记，只能支撑背景或待核验线索。"),
+        ("drafts/section_outlines/", "章节级证据补充或局部写作大纲，供对应论文段落回查。"),
+        ("drafts/sections/", "单个论文章节的草稿与局部证据绑定结果。"),
+        ("experiments/", "实验运行、结果或审计材料，供结果摄取和写作 evidence pack 使用。"),
+        ("external_executor/", "外部执行器交接、运行或结果回传材料。"),
+        ("submission/", "投稿包、模板迁移或最终编译核验材料。"),
+    )
+    for prefix, description in prefix_rules:
+        if normalized.startswith(prefix):
+            return description
+    if task_id.startswith("T8"):
+        return "本论文写作阶段声明的产物；用于后续审稿、修订或提交校验。"
+    return "本阶段声明并写入的可追溯产物；详细结构请在该文件中查看。"
+
+
+def next_step_after_completed_task(task_id: str) -> str | None:
+    """Give a stable user-facing next action for common completed stages."""
+
+    hints = {
+        "T1": "进入 T2 文献参数 Gate，确认覆盖规模、稿件语言和中文文献策略。",
+        "T2": "进入 T2 文献覆盖 Gate，确认候选池是否足够或是否需要补检索。",
+        "T3": "进入 T3.5 文献综合，形成可审计的 synthesis 和研究缺口。",
+        "T3.5": "进入综述分支/写作决策 Gate；无论是否写综述，synthesis 都会继续供 T4 使用。",
+        "T4": "进入 Gate1，由你选择、合并、重构或重新分析候选方向。",
+        "T4.5": "进入 T5 前的 context re-boost 与外部实验交接准备。",
+        "T5-HANDOFF": "进入项目专属 skill 和实验材料确认流程。",
+        "T7-INGEST": "进入实验完整性审计与 result-to-claim 映射。",
+        "T7-CLAIMS": "进入写作放行评估，确认实验与证据是否足够支撑论文。",
+        "T8-RESOURCE": "进入论文结构与章节级写作计划。",
+        "T8-WRITE": "进入章节级写作与证据绑定。",
+        "T8-DRAFT": "进入作者自查、双轮审稿和修订流程。",
+        "T9": "核对投稿包、PDF 编译结果与 submission checklist。",
+    }
+    if task_id.startswith("T8-SEC-"):
+        return "继续完成剩余章节，并在整稿拼装时运行 claim 与 citation provenance 审计。"
+    return hints.get(task_id)
+
+
 def describe_task_artifacts(task_id: str) -> str:
     """Return a concise user-facing explanation of a task's expected products."""
 
@@ -459,8 +658,8 @@ def describe_task_artifacts(task_id: str) -> str:
         "T4-GATE1": "面向用户选择的 idea 卡片、候选池摘要和最终选择记录",
         "T4.5": "新颖性审计、撞车风险、机制 tuple 审计和 claim 降级建议",
         "T5-REBOOST-GATE": "LLM 对 Pre-T5 材料做 context re-boost 并生成 handoff 上下文",
-        "T5-HANDOFF": "外部实验 handoff pack、执行协议、模板 skills 和交接提示",
-        "T5-SKILL-CUSTOMIZATION-GATE": "LLM API 自动定制外部执行 skills 并生成 customization_report",
+        "T5-HANDOFF": "外部实验 handoff pack、执行协议、项目专属 skills 和交接提示",
+        "T5-SKILL-CUSTOMIZATION-GATE": "检查项目专属 skill suite 和 specialization report",
         "T5-EXPR-MATERIAL-GATE": "外部实验材料放置确认与 expr 目录快照",
         "T5-EXECUTOR-GATE": "用户选择实验执行方式的 gate 记录",
         "T5-DRY-RUN": "mock 外部执行器协议验证产物",

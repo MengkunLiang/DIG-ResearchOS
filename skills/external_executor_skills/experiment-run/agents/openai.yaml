@@ -1,0 +1,12 @@
+interface:
+  display_name: Experiment Run
+  short_description: Run approved research experiments with provenance
+  default_prompt: Use $experiment-run to execute the approved experiment runs and
+    create auditable checkpoints.
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Academic Paper Revision"
+  short_description: "Apply reviewer feedback with a traceable revision report"
+  default_prompt: "Revise my paper from reviewer comments and prepare a response."

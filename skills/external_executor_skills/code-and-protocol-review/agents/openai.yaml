@@ -1,0 +1,12 @@
+interface:
+  display_name: Code and Protocol Review
+  short_description: Gate research code and experiment protocols
+  default_prompt: Use $code-and-protocol-review to review the current implementation
+    and protocol before experiments run.
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

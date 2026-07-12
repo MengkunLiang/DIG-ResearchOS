@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from jinja2 import StrictUndefined, Template
 
+from ..runtime.errors import ConfigurationError
 from ..runtime.agent import Agent, AgentSpec, ExecutionContext
 from .loader import Skill
 from .tool_aliases import translate_tool_names
@@ -26,10 +27,26 @@ class SkillAgent(Agent):
         llm_profile: str | None = None,
     ):
         translated, warnings = translate_tool_names(skill.allowed_tools, available_tools=available_tools)
+        if skill.metadata.get("strict_tools") and warnings:
+            raise ConfigurationError(
+                f"Skill '{skill.name}' declares strict_tools but has unavailable tools: "
+                + "; ".join(warnings)
+            )
         if "finish_task" in available_tools and "finish_task" not in translated:
             translated.append("finish_task")
         metadata = skill.metadata
+        interaction = metadata.get("interaction") if isinstance(metadata.get("interaction"), dict) else {}
+        guided = str(interaction.get("mode") or "guided") == "guided"
         model_tier = str(metadata.get("model_tier") or metadata.get("tier") or "medium")
+        if guided and "ask_human" in available_tools and "ask_human" not in translated:
+            # Guided Skills need one safe channel for a semantic evidence gap
+            # discovered after deterministic file checks have passed.
+            translated.append("ask_human")
+        allowed_write_prefixes = list(metadata.get("allowed_write_prefixes", [""]))
+        if guided:
+            intake_prefix = f"user_inputs/{skill.name}/"
+            if intake_prefix not in allowed_write_prefixes:
+                allowed_write_prefixes.append(intake_prefix)
         super().__init__(
             AgentSpec(
                 name=f"skill_{skill.name}",
@@ -42,7 +59,7 @@ class SkillAgent(Agent):
                 llm_profile=llm_profile or metadata.get("llm_profile"),
                 prompt_template=None,
                 allowed_read_prefixes=list(metadata.get("allowed_read_prefixes", [""])),
-                allowed_write_prefixes=list(metadata.get("allowed_write_prefixes", [""])),
+                allowed_write_prefixes=allowed_write_prefixes,
             )
         )
         self.skill = skill
@@ -74,6 +91,32 @@ class SkillAgent(Agent):
             f"- task_id: {ctx.task_id}\n"
             "- Edit is mapped to Write; provide full file content when editing.\n\n"
         )
+        session_path = ctx.extra.get("skill_session_path")
+        selected_inputs = ctx.extra.get("skill_selected_inputs")
+        if session_path:
+            header += (
+                "# Guided Skill Session\n"
+                f"- session state: {session_path}\n"
+                "- The runtime checked the declared required inputs before this LLM turn.\n"
+                "- Read the session state when prior-turn decisions or input provenance matter.\n"
+            )
+            if selected_inputs:
+                header += "- verified inputs:\n" + "\n".join(
+                    f"  - {key}: {value}" for key, value in selected_inputs.items()
+                ) + "\n"
+            header += "\n"
+        workspace_mode = str(ctx.extra.get("skill_workspace_mode") or "standalone")
+        intake_packet = str(ctx.extra.get("skill_intake_packet_path") or "").strip()
+        if intake_packet:
+            header += (
+                "# Material Intake Protocol\n"
+                f"- workspace mode: {workspace_mode}\n"
+                f"- deterministic intake packet: {intake_packet}\n"
+                "- Read the intake packet and the selected inputs before substantive work. Existing project files are candidates, not proof that their claims are sufficient.\n"
+                "- If a source, result, citation, venue decision, or constraint is semantically missing, write "
+                f"`user_inputs/{self.skill.name}/_followup_request.md` with the exact gap, why it matters, and a preferred answer/file path. Then call ask_human and wait for the response.\n"
+                "- Do not create final deliverables by guessing missing material. Record the resolved answer in the follow-up file before continuing.\n\n"
+            )
         return header + warning_block + body
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:

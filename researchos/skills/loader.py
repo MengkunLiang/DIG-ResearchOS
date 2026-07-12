@@ -14,6 +14,7 @@ import yaml
 from ..runtime.errors import ConfigurationError
 from ..tools.base import Tool
 from ..tools.registry import ToolRegistry
+from .contracts import validate_skill_metadata
 
 
 @dataclass
@@ -62,6 +63,7 @@ def load_skill(skill_dir: Path) -> Skill:
         tools = [t.strip() for t in tools.split(",") if t.strip()]
     if not isinstance(tools, list):
         raise ConfigurationError(f"Skill tools must be a list: {skill_md}")
+    validate_skill_metadata(meta, source=skill_md)
     return Skill(
         name=name,
         description=meta.get("description", ""),

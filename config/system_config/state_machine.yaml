@@ -357,8 +357,28 @@ states:
     outputs:
       survey_state: drafts/survey/survey_state.json
       survey_section_outlines_dir: drafts/survey/section_outlines
-    next_on_success: T3.6-SEC-BACKGROUND
+    next_on_success: T3.6-VISUALS
     next_on_failure: failed
+
+  # T3.6-VISUALS：仅从已验证的 comparison table 生成可复现数据图。
+  # 数据不足时仍会写 manifest(status=skipped)，流程不因没有装饰图而失败。
+  T3.6-VISUALS:
+    agent: survey_writer
+    mode: survey_visuals
+    inputs:
+      project: project.yaml
+      survey_plan: drafts/survey/survey_plan.json
+      survey_state: drafts/survey/survey_state.json
+      comparison_table: literature/comparison_table.csv
+      domain_map: literature/domain_map.json
+      seed_outline_profile: user_seeds/seed_outline_profile.json
+      seed_ideas: user_seeds/seed_ideas.md
+      seed_constraints: user_seeds/seed_constraints.md
+      seed_external_resources: user_seeds/seed_external_resources.jsonl
+    outputs:
+      survey_visual_manifest: drafts/survey/figures/survey_visual_manifest.json
+    next_on_success: T3.6-SEC-BACKGROUND
+    next_on_failure: T3.6-VISUALS
 
   T3.6-SEC-BACKGROUND:
     agent: survey_writer
@@ -371,6 +391,7 @@ states:
       section_outline: drafts/survey/section_outlines/background.md
       synthesis: literature/synthesis.md
       domain_map: literature/domain_map.json
+      survey_visual_manifest: drafts/survey/figures/survey_visual_manifest.json
       comparison_table: literature/comparison_table.csv
       related_work_bib: literature/related_work.bib
       seed_outline_profile: user_seeds/seed_outline_profile.json
@@ -393,6 +414,7 @@ states:
       section_outline: drafts/survey/section_outlines/taxonomy.md
       survey_plan: drafts/survey/survey_plan.json
       synthesis_workbench: literature/synthesis_workbench.json
+      survey_visual_manifest: drafts/survey/figures/survey_visual_manifest.json
       domain_map: literature/domain_map.json
       related_work_bib: literature/related_work.bib
       seed_outline_profile: user_seeds/seed_outline_profile.json
@@ -527,6 +549,7 @@ states:
       section_outline: drafts/survey/section_outlines/comparison.md
       comparison_table: literature/comparison_table.csv
       synthesis_workbench: literature/synthesis_workbench.json
+      survey_visual_manifest: drafts/survey/figures/survey_visual_manifest.json
       related_work_bib: literature/related_work.bib
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
@@ -700,7 +723,7 @@ states:
     next_on_failure: T3.6-REVIEW
 
   # T3.6-COMPILE 状态：编译 survey.tex 为 PDF
-  # 用途：验证 survey 分章节写作产物能形成可读 PDF；失败时暂停等待本机 LaTeX backend 或章节修复。
+  # 用途：验证 survey 分章节写作产物能形成可读 PDF；auto 后端优先本机 TeX，缺失时使用配置的 Docker TeX 镜像；仅在两者均不可用或源文件有误时暂停。
   T3.6-COMPILE:
     agent: survey_writer
     mode: survey_compile
@@ -862,7 +885,8 @@ states:
 
   # T5-REBOOST-GATE 状态：ResearchOS 直接调用 LLM API 对 Pre-T5 材料做 context re-boost
   # 用途：把研究目标、方法机制、baseline、claim/evidence 边界重排成外部执行器上下文，
-  # 并写入 external_executor/handoff_pack.json#context_reboost。
+  # 并编译外部执行器 handoff、prompt、schema 和 allowed paths；skill suite 由
+  # `researchos specialize-executor-skills` 显式调用 LLM 生成。
   T5-REBOOST-GATE:
     agent: experimenter
     mode: reboost
@@ -880,12 +904,26 @@ states:
     outputs:
       handoff_pack: external_executor/handoff_pack.json
       reboost_report: external_executor/reboost_report.json
-    next_on_success: T5-HANDOFF
+      executor_prompt: external_executor/executor_prompt.md
+      expected_outputs_schema: external_executor/expected_outputs_schema.json
+      allowed_paths: external_executor/allowed_paths.txt
+      executor_selection: external_executor/executor_selection.json
+      input_manifest: external_executor/input_manifest.json
+      codex_prompt: external_executor/codex_prompt.md
+      claude_code_prompt: external_executor/claude_code_prompt.md
+      manual_instructions: external_executor/manual_instructions.md
+      agents_md: external_executor/AGENTS.md
+      claude_md: external_executor/CLAUDE.md
+      external_readme: external_executor/README.md
+      dir_guide: external_executor/_DIR_GUIDE.md
+      job_state: external_executor/job_state.json
+      expr_dir: external_executor/expr
+    next_on_success: T5-EXECUTOR-GATE
     next_on_failure: failed
 
-  # T5-HANDOFF 状态：外部实验执行器协议编译
+  # T5-HANDOFF 状态：legacy 兼容入口，外部实验执行器协议编译
   # 用途：ResearchOS 编译实验契约、allowed paths 与 Codex/Claude/manual/mock 执行 prompt。
-  # 注意：主链不在 ResearchOS 内部实现或运行实验。
+  # 注意：推荐新路径为 T5-REBOOST -> specialize-executor-skills -> T5-EXECUTOR-GATE。
   T5-HANDOFF:
     agent: experimenter
     mode: handoff
@@ -914,15 +952,15 @@ states:
       dir_guide: external_executor/_DIR_GUIDE.md
       job_state: external_executor/job_state.json
       expr_dir: external_executor/expr
+      project_skill_context: external_executor/project_skill_context.yaml
+      project_skill_context_schema: external_executor/schemas/project_skill_context.schema.json
       skills_dir: external_executor/skills
-      skill_template_manifest: external_executor/skills/template_manifest.json
+      skill_specialization_report: external_executor/skill_specialization_report.json
     next_on_success: T5-SKILL-CUSTOMIZATION-GATE
     next_on_failure: failed
 
-  # T5-SKILL-CUSTOMIZATION-GATE 状态：自动 LLM API 定制 skill 模板
-  # 用途：T5-HANDOFF 复制仓库级通用 skill 模板到 external_executor/skills/ 后，
-  # ResearchOS 直接调用当前配置的 LLM provider，读取 skills_customization 指导文件，
-  # 将 13 个模板原地改写为当前项目专属 skills。
+  # T5-SKILL-CUSTOMIZATION-GATE 状态：Project Skill Specialization Review Gate
+  # 用途：检查 specialize-executor-skills 通过 LLM 生成的 project_skill_context、13 个项目专属 Skill 和 report。
   T5-SKILL-CUSTOMIZATION-GATE:
     agent: experimenter
     mode: skill_customization
@@ -931,12 +969,13 @@ states:
       expected_outputs_schema: external_executor/expected_outputs_schema.json
       allowed_paths: external_executor/allowed_paths.txt
       skills_dir: external_executor/skills
-      skill_template_manifest: external_executor/skills/template_manifest.json
-      customization_skill: external_executor/skills/skills_customization/SKILL.md
+      project_skill_context: external_executor/project_skill_context.yaml
+      project_skill_context_schema: external_executor/schemas/project_skill_context.schema.json
+      skill_specialization_report: external_executor/skill_specialization_report.json
       agents_md: external_executor/AGENTS.md
     outputs:
-      skill_customization_report: external_executor/skills/customization_report.json
-    next_on_success: T5-EXPR-MATERIAL-GATE
+      skill_specialization_report: external_executor/skill_specialization_report.json
+    next_on_success: T5-EXECUTOR-GATE
     next_on_failure: failed
 
   # T5-EXPR-MATERIAL-GATE 状态：实验材料放置确认
@@ -972,6 +1011,10 @@ states:
       allowed_paths: external_executor/allowed_paths.txt
       agents_md: external_executor/AGENTS.md
       claude_md: external_executor/CLAUDE.md
+      project_skill_context: external_executor/project_skill_context.yaml
+      project_skill_context_schema: external_executor/schemas/project_skill_context.schema.json
+      skills_dir: external_executor/skills
+      skill_specialization_report: external_executor/skill_specialization_report.json
     outputs:
       executor_selection: external_executor/executor_selection.json
     gate:
@@ -1101,7 +1144,7 @@ states:
     next_on_failure: failed
 
   # T5 状态：legacy 试点实验（仅兼容显式 run-task，不在主链自动使用）
-  # 用途：旧模式由 ResearchOS 内部执行小规模试点实验；新主链使用 T5-HANDOFF。
+  # 用途：旧模式由 ResearchOS 内部执行小规模试点实验；新主链使用 T5-REBOOST + external executor。
   T5:
     agent: experimenter
     mode: pilot
@@ -1284,6 +1327,7 @@ states:
       alignment_matrix: drafts/alignment_matrix.json
     outputs:
       outline: drafts/outline.md                       # 论文大纲
+      writing_storyline: drafts/writing_storyline.md   # venue-aware argument and evidence chain
     next_on_success: T8-SECTION-PLAN
     next_on_failure: failed
 

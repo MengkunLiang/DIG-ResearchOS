@@ -625,6 +625,8 @@ def register_builtin_task_checkers():
             mode = "survey_expand"
         elif task_id == "T3.6-STATE":
             mode = "survey_state"
+        elif task_id == "T3.6-VISUALS":
+            mode = "survey_visuals"
         elif task_id in section_modes:
             mode = "survey_section"
             section_id = section_modes[task_id]
@@ -688,6 +690,7 @@ def register_builtin_task_checkers():
         "T3.6-GATE-CORPUS",
         "T3.6-EXPAND",
         "T3.6-STATE",
+        "T3.6-VISUALS",
         "T3.6-SEC-BACKGROUND",
         "T3.6-SEC-TAXONOMY",
         "T3.6-SEC-THEME-1",

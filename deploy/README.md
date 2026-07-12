@@ -59,6 +59,22 @@ Build locally:
 docker compose -f deploy/compose.yaml build
 ```
 
+`researchos/system:latest` is a reproducible CLI and PDF-validation image. It
+contains `latexmk`, pdfLaTeX, XeLaTeX, BibTeX, and Chinese TeX packages, so the
+Compose service can compile T3.6/T9 documents directly without Docker-in-Docker.
+
+On a Linux machine where Docker's bridge network is much slower than the host
+network during a first TeX Live build, build the same image with host networking:
+
+```bash
+docker build --network=host \
+  -t researchos/system:latest \
+  -f infra/docker/Dockerfile .
+```
+
+This is only a build-time optimization. Do not add a Docker socket or host
+network to the running Compose service.
+
 `deploy/compose.yaml` is the single Compose entry point. Use
 `docker compose -f deploy/compose.yaml ...` from the repository root, or use the
 wrapper scripts in this directory.
@@ -191,14 +207,21 @@ privileges.
 
 ## 7. LaTeX
 
-The default image is lightweight and does not include full TeX Live. T3.6/T9
-compilation uses the configured LaTeX backend:
+The default image deliberately contains the TeX toolchain required for real
+T3.6/T9 PDF verification. In Compose mode, `latex_compile` uses that local
+container toolchain. The service does not mount `/var/run/docker.sock` and does
+not attempt Docker-in-Docker.
 
-- `latexmk` if available
-- `tectonic` if available
-- Docker backend only if explicitly enabled in runtime config
-- otherwise export TeX artifacts and return a clear environment wait report
+The same runtime configuration also supports native execution: `auto` prefers
+host `latexmk`, then host `tectonic`, then the configured Docker TeX image when
+host TeX is unavailable. Use the actual preflight rather than guessing:
 
-For formal PDF compilation, install TeX on the host in Native Mode or maintain a
-project-specific TeX image. Do not expand the default ResearchOS runtime image
-with a large TeX distribution unless your team intentionally owns that image.
+```bash
+docker compose -f deploy/compose.yaml run --rm researchos \
+  doctor --workspace /app/workspace/project-a
+```
+
+If a custom image is substituted through `RESEARCHOS_IMAGE`, it must retain
+`latexmk`, pdfLaTeX, XeLaTeX, and BibTeX. Otherwise T3.6-COMPILE and T9 pause
+before invoking an LLM with an actionable environment reason. See
+[../docs/docker.md](../docs/docker.md) for the backend order and repair table.

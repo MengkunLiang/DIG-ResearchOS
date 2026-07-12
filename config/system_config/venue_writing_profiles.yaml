@@ -1,0 +1,324 @@
+# Internal drafting profiles for ResearchOS paper writing.
+#
+# These are *not* submission page limits, formatting rules, or a substitute for
+# a venue's current call for papers. They state how the Writer should allocate
+# explanatory effort while drafting. Before submission, users must check the
+# current official template, anonymity policy, page budget, and checklist.
+version: 1
+default_profile: ccf_generic_concise
+
+profiles:
+  informs_story:
+    aliases:
+      - management science
+      - information systems research
+      - isr
+      - misq
+      - mis quarterly
+      - jmis
+      - ejis
+      - isj
+      - informs
+      - utd
+      - cds
+      - commerce data science
+    venue_style: is
+    template_family: utd
+    template_ids: [informs]
+    writing_language: en
+    label_zh: UTD/IS/INFORMS 理论—机制叙事稿
+    narrative_mode: rationale_mechanism_story
+    profile_summary_zh: >-
+      用完整研究故事把 phenomenon、理论/实践张力、机制解释、设计选择、证据与边界条件串起来；
+      结论必须区分理论贡献、可迁移 design knowledge 与管理/实践含义。
+    contribution_emphasis:
+      - 明确 phenomenon 或管理决策问题为何重要
+      - 解释既有理论、设计或治理机制为何不足
+      - 给出 theory/rationale → mechanism → design choice 的可追溯链条
+      - 用证据讨论机制、效度威胁、边界条件与实践/管理含义
+    rationale_requirements:
+      - Introduction 先交代现实/理论 tension，再提出可检验的缺口；不要只罗列技术模块。
+      - Method 中每个关键 design principle 都要说明它如何回应构念、机制或决策过程。
+      - Analysis 区分结果、机制解释、替代解释、boundary condition 和 validity threat。
+      - Conclusion 明确理论贡献、design knowledge 与可操作但不过度外推的实践/管理含义。
+    storyline_headings:
+      - Research Problem
+      - Why It Matters
+      - Prior-Work Tension
+      - Root Theoretical or Design Reason
+      - Core Insight
+      - Design Choice
+      - Contribution Claims
+      - Evidence Map
+      - Alternative Explanations
+      - Limitations and Boundary Conditions
+      - Reviewer Questions
+    section_word_budgets:
+      abstract: [200, 300]
+      introduction: [1100, 1800]
+      related_work: [900, 1500]
+      methodology: [1200, 2200]
+      experiments: [1000, 1800]
+      analysis: [900, 1600]
+      conclusion: [450, 850]
+
+  neurips_concise:
+    aliases: [neurips, nips]
+    venue_style: ccf_a
+    template_family: ccf
+    template_ids: [neurips]
+    writing_language: en
+    label_zh: NeurIPS 技术贡献优先稿
+    narrative_mode: technical_bottleneck_first
+    profile_summary_zh: >-
+      前两段明确技术瓶颈、核心 insight 和可验证贡献；将篇幅集中于方法、实验、消融、机制解释与失败边界，
+      避免以泛泛应用背景取代技术动机。
+    contribution_emphasis:
+      - 在 Introduction 早期给出明确 technical bottleneck 与 core insight
+      - 每个方法模块映射到一项可审计的 evidence、ablation 或 analysis
+      - 实验强调 baseline、setting、metric、reproducibility、robustness 与 failure mode
+    rationale_requirements:
+      - Motivation 必须说明为何现有技术假设、优化或表示机制不能处理该 bottleneck。
+      - Method 先给总览与核心机制，再给算法、复杂度或实现路径。
+      - Analysis 回答 why it works、when it fails 和何时不应使用。
+    storyline_headings:
+      - Research Problem
+      - Technical Bottleneck
+      - Root Technical Reason
+      - Core Insight
+      - Method Mapping
+      - Contribution Claims
+      - Evidence and Ablation Map
+      - Alternative Explanations
+      - Failure Modes and Limitations
+      - Reviewer Questions
+    section_word_budgets:
+      abstract: [150, 250]
+      introduction: [650, 1050]
+      related_work: [550, 950]
+      methodology: [1300, 2300]
+      experiments: [1250, 2200]
+      analysis: [700, 1300]
+      conclusion: [300, 550]
+
+  icml_concise:
+    aliases: [icml]
+    venue_style: ccf_a
+    template_family: ccf
+    template_ids: [icml]
+    writing_language: en
+    label_zh: ICML 技术洞见与学习机制稿
+    narrative_mode: technical_bottleneck_first
+    profile_summary_zh: >-
+      突出学习问题的精确定义、核心技术洞见、理论或经验依据，以及对学习机制的可复核分析；
+      以高信息密度写作替代冗长背景。
+    contribution_emphasis:
+      - 精确表述学习问题、假设或优化/泛化瓶颈
+      - 让每项技术贡献有方法定位和相应的理论、实证或消融证据
+      - 说明计算、数据与可复现性边界
+    rationale_requirements:
+      - 先说明现有学习机制在何种假设下失效，再给出新的建模或优化 insight。
+      - Method 交代目标、符号、算法与计算代价；不要将技术细节藏在附录式叙述中。
+      - Analysis 检验机制、敏感性和反例，而不仅报告平均提升。
+    storyline_headings:
+      - Research Problem
+      - Learning Bottleneck
+      - Root Technical Reason
+      - Core Insight
+      - Method Mapping
+      - Contribution Claims
+      - Evidence and Ablation Map
+      - Alternative Explanations
+      - Failure Modes and Limitations
+      - Reviewer Questions
+    section_word_budgets:
+      abstract: [150, 250]
+      introduction: [650, 1050]
+      related_work: [500, 900]
+      methodology: [1350, 2350]
+      experiments: [1250, 2200]
+      analysis: [750, 1350]
+      conclusion: [300, 550]
+
+  iclr_concise:
+    aliases: [iclr]
+    venue_style: ccf_a
+    template_family: ccf
+    template_ids: [iclr]
+    writing_language: en
+    label_zh: ICLR 表征与可解释机制稿
+    narrative_mode: technical_bottleneck_first
+    profile_summary_zh: >-
+      突出表示、泛化、学习动态或机制层面的 insight；方法和实证必须共同证明该 insight，而非仅展示单一排行榜提升。
+    contribution_emphasis:
+      - 明确 representation/optimization/generalization bottleneck
+      - 将方法设计与可解释机制、诊断实验或反例关联
+      - 报告 robust evaluation、ablation 与 limitations
+    rationale_requirements:
+      - 将设计动机连到已有表征或学习假设的具体缺陷。
+      - Analysis 优先提供机制诊断、sensitivity、failure case 和替代解释。
+      - 避免用未核验的广泛影响替代技术证据。
+    storyline_headings:
+      - Research Problem
+      - Representation or Learning Bottleneck
+      - Root Technical Reason
+      - Core Insight
+      - Method Mapping
+      - Contribution Claims
+      - Evidence and Ablation Map
+      - Alternative Explanations
+      - Failure Modes and Limitations
+      - Reviewer Questions
+    section_word_budgets:
+      abstract: [150, 250]
+      introduction: [650, 1050]
+      related_work: [500, 900]
+      methodology: [1300, 2300]
+      experiments: [1200, 2150]
+      analysis: [800, 1400]
+      conclusion: [300, 550]
+
+  kdd_technical:
+    aliases: [kdd, sigkdd]
+    venue_style: ccf_a
+    template_family: ccf
+    template_ids: [kdd]
+    writing_language: en
+    label_zh: KDD 问题—数据—方法—价值稿
+    narrative_mode: data_mining_technical_story
+    profile_summary_zh: >-
+      以真实数据挖掘问题、技术挑战和可部署/可扩展价值为主线；技术方法、数据设定、强基线和稳健评估均需紧密对应。
+    contribution_emphasis:
+      - 先界定数据/决策问题的实际重要性与技术约束
+      - 说明方法如何处理规模、异质性、稀疏性、偏差或效率等特定挑战
+      - 用强基线、消融、效率与鲁棒性证据支撑贡献
+    rationale_requirements:
+      - 不把应用背景写成泛泛行业介绍；必须落到数据生成过程或计算挑战。
+      - Method 包括问题形式化、系统/算法路径与必要的复杂度/可扩展性说明。
+      - Experiments 覆盖实际任务、数据切分、防泄漏、baseline、效率及 failure case。
+    storyline_headings:
+      - Research Problem
+      - Data or Deployment Challenge
+      - Root Technical Reason
+      - Core Insight
+      - Method Mapping
+      - Contribution Claims
+      - Evidence and Scalability Map
+      - Alternative Explanations
+      - Failure Modes and Limitations
+      - Reviewer Questions
+    section_word_budgets:
+      abstract: [150, 250]
+      introduction: [700, 1150]
+      related_work: [550, 1000]
+      methodology: [1250, 2200]
+      experiments: [1350, 2300]
+      analysis: [650, 1200]
+      conclusion: [300, 550]
+
+  ccf_generic_concise:
+    aliases: [ccf, conference, ai, machine learning]
+    venue_style: ccf_a
+    template_family: ccf
+    template_ids: [neurips, icml, iclr, kdd]
+    writing_language: en
+    label_zh: CCF-A/AI/CS 紧凑技术稿
+    narrative_mode: technical_bottleneck_first
+    profile_summary_zh: >-
+      用紧凑、技术贡献优先的结构，尽早给出 bottleneck、insight、方法和证据映射；
+      篇幅优先保证 Method、Experiments、ablation 与边界分析。
+    contribution_emphasis:
+      - 3–6 个可核验技术贡献，不用宽泛口号代替证据
+      - 每个主要模块必须有主结果、消融、机制分析或 failure evidence 中至少一种支撑
+      - 强调实验可复现性和限制，而非扩展性叙事
+    rationale_requirements:
+      - 以明确技术缺口开场，避免过长领域史。
+      - 说明 core insight 如何针对根本技术原因，而不是只罗列模块。
+      - 以 ablation、robustness 和失效模式检验贡献强度。
+    storyline_headings:
+      - Research Problem
+      - Technical Bottleneck
+      - Root Technical Reason
+      - Core Insight
+      - Method Mapping
+      - Contribution Claims
+      - Evidence and Ablation Map
+      - Alternative Explanations
+      - Failure Modes and Limitations
+      - Reviewer Questions
+    section_word_budgets:
+      abstract: [150, 250]
+      introduction: [650, 1050]
+      related_work: [500, 950]
+      methodology: [1250, 2250]
+      experiments: [1200, 2200]
+      analysis: [700, 1300]
+      conclusion: [300, 550]
+
+  basic_en_research:
+    aliases: [basic_en, normal, general, english]
+    venue_style: ccf_a
+    template_family: basic_en
+    template_ids: [basic_en]
+    writing_language: en
+    label_zh: 通用英文研究论文稿
+    narrative_mode: balanced_research_story
+    profile_summary_zh: >-
+      在问题动机、研究设计和可审计证据之间保持平衡；不假定任何会议的官方篇幅或格式限制。
+    contribution_emphasis:
+      - 清楚界定问题、近邻工作缺口、方法与证据边界
+      - 贡献必须可定位到方法或结果，而非泛化的影响宣称
+    rationale_requirements:
+      - 用问题 → 既有不足 → insight → design → evidence → boundary 的完整链条写作。
+      - 不确定的 venue 要求必须保留为后续人工确认项目。
+    storyline_headings:
+      - Research Problem
+      - Why It Matters
+      - Prior-Work Tension
+      - Root Reason
+      - Core Insight
+      - Design Choice
+      - Contribution Claims
+      - Evidence Map
+      - Alternative Explanations
+      - Limitations and Boundary Conditions
+      - Reviewer Questions
+    section_word_budgets:
+      abstract: [150, 275]
+      introduction: [800, 1400]
+      related_work: [650, 1200]
+      methodology: [1000, 2000]
+      experiments: [1000, 2000]
+      analysis: [650, 1300]
+      conclusion: [350, 650]
+
+  basic_zh_research:
+    aliases: [basic_zh, chinese, zh, 中文]
+    venue_style: is
+    template_family: basic_zh
+    template_ids: [basic_zh]
+    writing_language: zh
+    label_zh: 通用中文研究论文稿
+    narrative_mode: balanced_research_story
+    profile_summary_zh: >-
+      使用中文学术论文的概念界定、研究现状、问题提出、方法、实证/分析与讨论结构；
+      仍需明确问题为什么重要、方案为什么成立和证据边界。
+    contribution_emphasis:
+      - 概念、问题、机制/设计和证据保持同一术语体系
+      - 单列理论、方法或实践启示时必须有相应证据边界
+    rationale_requirements:
+      - 不将文献综述写成作者名单；用争议、缺口和机制组织。
+      - 讨论区分结果解释、限制和未来工作。
+    storyline_headings:
+      - Research Problem
+      - Why It Matters
+      - Prior-Work Tension
+      - Root Reason
+      - Core Insight
+      - Design Choice
+      - Contribution Claims
+      - Evidence Map
+      - Alternative Explanations
+      - Limitations and Boundary Conditions
+      - Reviewer Questions
+    section_word_budgets: {}

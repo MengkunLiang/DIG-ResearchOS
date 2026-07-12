@@ -1,63 +1,47 @@
 # ResearchOS Documentation
 
-This directory contains user, developer, and design documentation for
-ResearchOS. Start with the shortest document that matches the task you are
-doing, then move to the deeper references only when needed.
+Use this index to choose the shortest document that answers the current task.
+The root README is intentionally an operating guide; it does not duplicate the
+stage-by-stage contract.
 
-## Start Here
+## Start With Your Job
 
-| Document | Status | Use When |
+| You need to... | Read |
+| --- | --- |
+| Install, configure keys, run a project, or recover it | [../README.md](../README.md) or [../README.zh-CN.md](../README.zh-CN.md) |
+| Get a first local or Compose run working | [QUICKSTART.md](QUICKSTART.md) |
+| Run a standalone literature, idea, drafting, polishing, revision, audit, or compile Skill | [QUICKSTART.md](QUICKSTART.md) and [runtime.md](runtime.md) |
+| Choose a native/Docker TeX backend or fix a build | [docker.md](docker.md) |
+| Change models, budgets, language, search, runtime settings, or internal venue-aware writing profiles | [config.md](config.md) and [../config/README.md](../config/README.md) |
+| Inspect a pause, provider failure, tool call, or artifact validation error | [logging.md](logging.md) |
+| Understand a repository or workspace path | [project_structure.md](project_structure.md) |
+| Use maintained validation or recovery utilities | [../scripts/README.md](../scripts/README.md) |
+| Understand all research stages and their artifact contracts | [agent_pipeline.md](agent_pipeline.md) |
+| Extend the runtime, an agent, a tool, or a validator | [runtime.md](runtime.md) and [dev.md](dev.md) |
+| Run or maintain Docker Compose | [../deploy/README.md](../deploy/README.md) |
+
+## Documentation Boundaries
+
+| Document | Purpose | Does not duplicate |
 | --- | --- | --- |
-| [../README.md](../README.md) | Canonical entry | You need the main project overview and first run commands. |
-| [QUICKSTART.md](QUICKSTART.md) | Canonical guide | You want to create a workspace and run the core CLI quickly. |
-| [project_structure.md](project_structure.md) | Canonical reference | You need to understand repository directories such as `deploy/`, `infra/docker/`, `scripts/`, and `tests/`. |
-| [../deploy/README.md](../deploy/README.md) | Docker deployment guide | You want to run ResearchOS through Docker Compose and host-visible workspace. |
-| [../scripts/README.md](../scripts/README.md) | Utility scripts guide | You need to understand which helper scripts are maintained in git. |
-| [../config/README.md](../config/README.md) | Configuration map | You are editing checked-in defaults or local user settings. |
-| [docker.md](docker.md) | Operations guide | You want the Native Mode vs Docker Mode model and Docker troubleshooting details. |
-| [dev.md](dev.md) | Developer guide | You are changing ResearchOS code and need development workflows. |
-
-## Runtime And Pipeline
-
-| Document | Status | Scope |
-| --- | --- | --- |
-| [agent_pipeline.md](agent_pipeline.md) | Reference | Full state-machine and agent-stage reference. |
-| [runtime.md](runtime.md) | Reference | Runtime, tracing, resume, task execution, and operational internals. |
-| [config.md](config.md) | Canonical reference | Configuration precedence and runtime settings. |
-| [logging.md](logging.md) | Operations guide | CLI output, logs, traces, and debugging commands. |
-| [artifact_flow_map.md](artifact_flow_map.md) | Reference | High-level artifact movement between stages. |
-
-## Writing, Submission, And External Execution
-
-| Document | Status | Scope |
-| --- | --- | --- |
-| [agent_pipeline.md](agent_pipeline.md) | Canonical reference | T5 external handoff, T7 ingest, T8 writing, review, revision, and T9 submission behavior. |
-| [resource_search.md](resource_search.md) | Reference | Resource and literature search behavior. |
-| [../latex_templete/README.md](../latex_templete/README.md) | Reference | LaTeX template registry used by T3.6 and T8/T9 assembly. |
-
-## Design Archive
-
-The following documents are useful for historical context and deeper design
-work, but they are not the shortest path for ordinary operation:
-
-| Document | Status | Notes |
-| --- | --- | --- |
-| [ResearchOS_external_executor_design.md](ResearchOS_external_executor_design.md) | Design archive | Extended external executor design notes. |
-| [re-boost.md](re-boost.md) | Design / operations note | Context re-boost design and operational notes. |
-| [reference_project_review.md](reference_project_review.md) | Design archive | Reference project review notes. |
+| Root README | User installation, configuration, run, resume, guided Skill entry, and first diagnostics | Full stage semantics |
+| `QUICKSTART.md` | Copyable first-run checklist | Configuration reference |
+| `docker.md` | Native versus Compose operation, TeX backends, build troubleshooting | External experiment protocol |
+| `logging.md` | CLI progress, logs, traces, and failure triage | Full runtime implementation |
+| `project_structure.md` | Ownership of repository and workspace directories | Artifact schema details |
+| `agent_pipeline.md` | Canonical state-machine, stage, T4 observability, and artifact reference | Installation instructions |
+| `runtime.md` | Runtime internals, guided Skill contract, session model, and extension points | User walkthrough |
+| `dev.md` | Contributor setup, tests, and change checklist | End-user deployment |
 
 ## Sources Of Truth
 
 | Question | Source |
 | --- | --- |
-| Current state-machine topology | `config/system_config/state_machine.yaml` |
-| Runtime configuration precedence | [config.md](config.md) |
-| Native vs Docker operation | [docker.md](docker.md) |
-| External executor handoff and result ingest | [agent_pipeline.md](agent_pipeline.md), `config/system_config/state_machine.yaml` |
-| Writing, LaTeX, and submission bundle | [agent_pipeline.md](agent_pipeline.md), [../latex_templete/README.md](../latex_templete/README.md) |
+| State-machine topology and task I/O | `config/system_config/state_machine.yaml` |
+| Gate options and presentation | `config/system_config/gates.yaml` |
+| Runtime defaults | `config/runtime.yaml` and `config/user_settings.yaml` |
+| Current Python behavior | `researchos/` and tests |
+| Current project progress | `<workspace>/state.yaml` and `<workspace>/_runtime/` |
 
-## Generated Artifacts
-
-Do not put generated workspace, traces, logs, PDFs, Docker test projects, or
-local `.env` files into docs. Runtime outputs belong in `workspace/` or a
-temporary directory outside the repo.
+Generated workspaces, traces, logs, PDFs, Docker test directories, and `.env`
+files do not belong in this documentation tree.

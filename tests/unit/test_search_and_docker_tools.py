@@ -12,6 +12,7 @@ from researchos.tools.base import ToolResult
 from researchos.tools.docker_exec import DockerExecTool, check_docker_environment
 from researchos.tools.latex_compile import LatexCompileTool
 from researchos.tools.latex_compile import _compile_dependency_fingerprint
+from researchos.runtime.config import LatexSettings
 from researchos.tools.search_papers import FetchPaperMetadataTool, SearchPapersTool
 from researchos.tools.workspace_policy import WorkspaceAccessPolicy
 
@@ -515,7 +516,10 @@ async def test_latex_compile_missing_latexmk_waits_for_local_tex_install(tmp_wor
     class _DockerTool:
         policy = WorkspaceAccessPolicy(tmp_workspace, ["", "submission/"], ["", "submission/"])
 
-    tool = LatexCompileTool(_DockerTool())
+    tool = LatexCompileTool(
+        _DockerTool(),
+        LatexSettings(allow_docker_fallback=False),
+    )
     monkeypatch.setattr(tool, "_is_running_in_container", lambda: False)
     monkeypatch.setattr("researchos.tools.latex_compile.shutil.which", lambda _name: None)
 
@@ -529,6 +533,79 @@ async def test_latex_compile_missing_latexmk_waits_for_local_tex_install(tmp_wor
     assert report["requested_backend"] == "auto"
     assert report["selected_backend"] == "latexmk"
     assert any(item["name"] == "latexmk" for item in report["detected_backends"])
+
+
+@pytest.mark.asyncio
+async def test_latex_compile_auto_falls_back_to_configured_docker_tex_image(tmp_workspace: Path, monkeypatch):
+    bundle = tmp_workspace / "submission" / "bundle"
+    bundle.mkdir(parents=True)
+    tex_path = bundle / "main.tex"
+    tex_path.write_text("\\documentclass{article}\\begin{document}OK\\end{document}", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    class _DockerTool:
+        policy = WorkspaceAccessPolicy(tmp_workspace, ["", "submission/"], ["", "submission/"])
+
+        async def execute(self, **kwargs):
+            captured.update(kwargs)
+            (bundle / "main.pdf").write_bytes(b"%PDF-1.4\nDocker compile\n%%EOF")
+            (bundle / "main.log").write_text("docker latexmk log\n", encoding="utf-8")
+            return ToolResult(ok=True, content="docker compiled", data={"exit_code": 0})
+
+    monkeypatch.setattr(
+        "researchos.tools.latex_compile.shutil.which",
+        lambda name: "/usr/bin/docker" if name == "docker" else None,
+    )
+    tool = LatexCompileTool(
+        _DockerTool(),
+        LatexSettings(allow_docker_fallback=True, docker_image="researchos/system:latest"),
+    )
+
+    result = await tool.execute(tex_path="submission/bundle/main.tex", engine="xelatex")
+
+    assert result.ok
+    assert result.data["pdf_path"] == "submission/bundle/main.pdf"
+    assert captured["image"] == "researchos/system:latest"
+    assert captured["cwd"] == "/workspace/submission/bundle"
+    assert captured["allow_network"] is False
+    assert "-xelatex" in str(captured["command"])
+    report = json.loads((tmp_workspace / "submission" / "compile_report.json").read_text(encoding="utf-8"))
+    assert report["selected_backend"] == "docker"
+    assert report["engine"] == "docker"
+    assert report["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_latex_compile_docker_failure_is_persisted_as_actionable_report(tmp_workspace: Path, monkeypatch):
+    bundle = tmp_workspace / "submission" / "bundle"
+    bundle.mkdir(parents=True)
+    (bundle / "main.tex").write_text("\\documentclass{article}\\begin{document}OK\\end{document}", encoding="utf-8")
+
+    class _DockerTool:
+        policy = WorkspaceAccessPolicy(tmp_workspace, ["", "submission/"], ["", "submission/"])
+
+        async def execute(self, **_kwargs):
+            return ToolResult(
+                ok=False,
+                content="WAITING_ENVIRONMENT: Docker daemon unavailable",
+                error="docker_daemon_unavailable",
+                data={"error": "docker_daemon_unavailable"},
+            )
+
+    monkeypatch.setattr(
+        "researchos.tools.latex_compile.shutil.which",
+        lambda name: "/usr/bin/docker" if name == "docker" else None,
+    )
+    tool = LatexCompileTool(_DockerTool(), LatexSettings(allow_docker_fallback=True))
+
+    result = await tool.execute(tex_path="submission/bundle/main.tex")
+
+    assert not result.ok
+    assert result.error == "docker_daemon_unavailable"
+    report = json.loads((tmp_workspace / "submission" / "compile_report.json").read_text(encoding="utf-8"))
+    assert report["selected_backend"] == "docker"
+    assert report["engine"] == "docker"
+    assert report["error"] == "docker_daemon_unavailable"
 
 
 @pytest.mark.asyncio

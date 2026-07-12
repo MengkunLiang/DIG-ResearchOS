@@ -33,6 +33,7 @@ from ..runtime.artifact_fingerprints import (
     validate_input_fingerprints,
     validate_t45_fingerprint_report,
 )
+from ..writing_profiles import resolve_venue_writing_profile
 from ..schemas.state import BudgetCumulative, GateState, StateYaml, TaskHistoryEntry
 from .gate_presenter import build_presentation
 from .task_io_contract import get_task_io
@@ -288,6 +289,22 @@ def _literature_param_explained_preview(summary: dict[str, Any]) -> str:
     return "\n".join(_literature_param_explained_preview_lines(summary))
 
 
+def _literature_param_compact_preview(summary: dict[str, Any]) -> str:
+    """One-line preset comparison for an interactive gate.
+
+    The detailed explanation remains available in the saved parameter file.  At
+    the first gate users need to compare the quantities that change between
+    presets, rather than read the same seven fields four times.
+    """
+
+    total = _summary_total_read_target(summary)
+    target = summary.get("deep_read_target")
+    sweep = summary.get("abstract_sweep_target")
+    pool = summary.get("active_pool_max")
+    require = "读满目标" if summary.get("require_deep_read_target") else "达到最低线可继续"
+    return f"候选 {pool} | 精读 {target} | 摘要轻读 {sweep} | 总覆盖约 {total} | {require}"
+
+
 def _literature_param_explained_preview_lines(summary: dict[str, Any]) -> list[str]:
     deep_min = summary.get("deep_read_min")
     deep_target = summary.get("deep_read_target")
@@ -317,6 +334,9 @@ def build_literature_param_gate_preview(workspace_dir: Path | None = None) -> di
             "label": _LITERATURE_PARAM_PRESET_LABELS[option_id],
             "recommended": option_id == recommended_option,
             "summary": _literature_param_summary_from_payload(payload),
+            "compact_preview": _literature_param_compact_preview(
+                _literature_param_summary_from_payload(payload),
+            ),
             "explained_preview": _literature_param_explained_preview(
                 _literature_param_summary_from_payload(payload),
             ),
@@ -368,31 +388,18 @@ def enrich_literature_param_gate_options(options: list[dict[str, Any]], workspac
             if item["is_default"] and "（推荐" not in str(item.get("label", "")):
                 item["label"] = f"{item.get('label', option_id)}（当前推荐）"
             item["description"] = _LITERATURE_PARAM_PRESET_NOTES[option_id]
-            item["parameter_preview"] = _literature_param_explained_preview(summary)
+            item["parameter_preview"] = _literature_param_compact_preview(summary)
         elif option_id == "custom":
             item["description"] = _LITERATURE_PARAM_PRESET_NOTES["custom"]
             item["parameter_preview"] = (
-                "自定义覆盖目标：总阅读覆盖（total/总共）、保留候选（active_pool_max）、深入阅读"
-                "（deep_read_min/deep_read_target/deep_read_max，或 deep_read=35/35/45）、"
-                "摘要轻读/粗读（abstract_sweep_target/rough/粗读）、读满目标门槛（require_deep_read_target）；"
-                "也可指定稿件语言（manuscript_language）和是否允许中文文献（include_chinese_literature）。"
+                "一次输入数字、稿件语言与中文文献策略；LLM 解释意图后由本地规则校验，未提到的字段沿用当前推荐。"
             )
-            collect_input = list(item.get("collect_input") or [])
-            for field_name in [
-                "coverage_total",
-                "active_pool_max",
-                "deep_read_min",
-                "deep_read_target",
-                "deep_read_max",
-                "abstract_sweep_target",
-                "require_deep_read_target",
-                "manuscript_language",
-                "include_chinese_literature",
-            ]:
-                if field_name not in collect_input:
-                    collect_input.append(field_name)
-            item["collect_input"] = collect_input
-            item["input_prompts"] = preview["custom_input_examples"]
+            # CLIHumanInterface collects one natural-language line for this
+            # option.  Keeping the individual fields out of the option avoids
+            # a tedious question-by-question form while retaining the same
+            # payload contract for build_literature_param_payload().
+            item.pop("collect_input", None)
+            item["single_input_examples"] = preview["custom_input_examples"]
         enriched.append(item)
     return enriched
 
@@ -419,6 +426,253 @@ def _t4_gate1_candidate_pool_fingerprints(workspace_dir: Path) -> dict[str, dict
             item["size"] = path.stat().st_size
         fingerprints[label] = item
     return fingerprints
+
+
+_T4_RECOVERY_UI_TEXT: dict[str, dict[str, str]] = {
+    "Context-contamination controls for agent-targeted uplift": {
+        "title": "智能体增益的上下文污染控制",
+        "value": "先区分真实干预效应与提示重复、上下文残留造成的表观增益，再估计智能体 uplift。",
+        "mechanism": "用负向对照提示、重复基线和仅上下文对照，识别响应变化究竟来自商业干预还是提示/上下文污染。",
+    },
+    "State-dependent uplift model for agent saturation and carryover": {
+        "title": "面向饱和与残留效应的状态依赖 uplift 模型",
+        "value": "把会话状态、既往暴露和饱和度纳入 uplift，而不是假设智能体对干预的反应恒定。",
+        "mechanism": "以状态变量调节处理效应，检验静态 uplift 模型遗漏的异质响应是否可被解释。",
+    },
+    "Source-provenance uplift for commercial LLM agents": {
+        "title": "商业 LLM 智能体的来源可信度 uplift",
+        "value": "把内容来源标记视为可操纵的干预维度，检验相同内容在不同来源下是否改变智能体响应。",
+        "mechanism": "在内容不变时随机改变平台、专家、同伴和中性来源标记，测量来源可信度先验带来的响应差异。",
+    },
+    "Bridge synthesis from LLM Agent Decision Psychology to agent uplift": {
+        "title": "从 LLM 智能体决策心理学到 uplift 的桥接综合",
+        "value": "将已确认桥接领域中的行为或策略机制转为智能体 uplift 的可检验调节变量。",
+        "mechanism": "比较桥接机制与人类 uplift 假设，判断它能否解释不同的智能体子群响应与失败模式。",
+    },
+    "Reverse-operation ablation for agent uplift mechanisms": {
+        "title": "智能体 uplift 机制的反向操作消融",
+        "value": "逐一移除或反转声称有效的组成部分，检验所选主机制是否真正必要。",
+        "mechanism": "把来源、状态或上下文成分逐项关闭，观察解释力与处理响应分离是否消失。",
+    },
+}
+
+
+_T4_RECOVERY_COMMON_ZH = {
+    "Human-targeted uplift assumptions may fail when the decision-maker is an LLM-based commerce agent.": "当决策者变为基于 LLM 的商业智能体时，以人为目标的 uplift 假设可能失效。",
+    "human-targeted uplift baseline plus agent-agnostic LLM response baseline": "人类目标 uplift 基线 + 不考虑智能体差异的 LLM 响应基线",
+    "AUUC/Qini-style ranking when labels exist": "有标签时的 AUUC/Qini 排序",
+    "calibration": "校准度",
+    "task-completion or choice-rate delta": "任务完成率或选择率差异",
+    "candidate-specific treatment-response separation beyond baseline prompt sensitivity": "相对提示敏感性基线出现候选特定的处理响应分离",
+    "controlled agentic-commerce vignette or task suite with randomized treatments": "带有随机化处理的受控智能体商业情境或任务集",
+    "context artifact diagnostics": "上下文伪效应诊断",
+    "state-dependent treatment effects": "状态依赖处理效应",
+    "behavioral credibility transfer": "行为可信度迁移",
+    "adjacent bridge synthesis": "相邻领域桥接综合",
+    "ablation and falsification": "消融与证伪",
+    "problem_reframing": "问题重构",
+    "design_rationale_derivation": "设计理据推导",
+    "cross_domain_analogy": "跨领域类比",
+    "bridge_synthesis": "桥接综合",
+    "reverse_operation": "反向操作",
+    "revise_before_selection": "选择前需要重构/补证据",
+    "defer_recommended": "建议暂缓，作为补充模块",
+    "survives_weakened": "弱化表述后仍可进入复核",
+    "independent": "可独立作为证伪检查",
+    "adjacent_zone": "相邻创新区",
+    "marginal_zone": "边际创新区",
+    "no_nearby_cluster": "未发现近邻聚类",
+    "Bridge candidate is visible because T1 confirmed bridge domains; select only if mechanism evidence is strong enough after note-section verification.": "桥接候选因 T1 已确认 bridge domain 而展示；只有在文献笔记 section 核验机制证据后才可作为主方向选择。",
+    "Runtime-generated Gate1 candidate after provider failure; select only after T4后半段 re-checks exact note sections.": "恢复候选：进入最终假设前必须回查对应文献笔记 section。",
+}
+
+
+_T4_RECOVERY_FIELD_ZH: dict[str, dict[str, str]] = {
+    "D1": {
+        "prediction": "对于主要由提示重复或来源/上下文敏感性造成表观提升的干预，在加入控制后，智能体 uplift 估计将缩小或改变方向。",
+        "counterfactual": "若干预具有真实处理效应，关闭重复/上下文控制不应完全解释观察到的响应差异。",
+        "practical_implication": "部署前先排除提示和上下文伪效应，避免把模型状态噪声误当成可运营的商业干预效果。",
+    },
+    "D2": {
+        "prediction": "状态条件化估计器将解释静态 uplift 树或双模型基线遗漏的异质智能体响应变化。",
+        "counterfactual": "若智能体响应函数是稳定的，加入状态与饱和变量不应改善校准度或 AUUC 类排序。",
+        "practical_implication": "将干预触达时机、既往暴露和饱和度纳入目标策略，避免对同一智能体重复投放无效干预。",
+    },
+    "D3": {
+        "prediction": "智能体的购买或推荐跟随行为会随平台、专家、同伴和中性来源标签而系统性变化。",
+        "counterfactual": "若智能体忽略来源信息，在内容相同的情况下改变来源标签不应产生可测量的 uplift 差异。",
+        "practical_implication": "把来源标记作为可审计的干预因素，帮助平台区分内容效应与来源可信度效应。",
+    },
+    "D4": {
+        "prediction": "桥接领域特有的调节变量将识别出处理响应不同于人类 uplift 基线和智能体无差别 LLM 基线的智能体子群。",
+        "counterfactual": "若桥接机制无关，加入该调节变量不应改变 uplift 排序、校准度或失败模式检测。",
+        "practical_implication": "把跨领域机制转为可检验调节变量，明确哪些行为假设可迁移、哪些不能迁移到智能体决策。",
+    },
+    "S1": {
+        "prediction": "当移除某一机制对应的组成部分时，成立的机制应失去解释力或处理响应分离能力。",
+        "counterfactual": "若移除后估计不变，该机制应被弱化、否定或重构为非必要设计选择。",
+        "practical_implication": "把它用作主方向的证伪与消融模块，降低将不可验证机制直接写成论文贡献的风险。",
+    },
+}
+
+
+def _localize_t4_recovery_text(value: Any) -> str:
+    text = str(value or "")
+    if not text:
+        return ""
+    for source, translated in _T4_RECOVERY_COMMON_ZH.items():
+        text = text.replace(source, translated)
+    return text
+
+
+def _t4_basis_summary_for_gate(candidate: dict[str, Any]) -> str:
+    """Translate recovery metadata into a concise, auditable Chinese basis."""
+
+    explicit = candidate.get("basis_summary_zh")
+    if explicit:
+        return str(explicit)
+    if str(candidate.get("generation_stage") or "").startswith("deterministic_recovery"):
+        support = candidate.get("supporting_papers") if isinstance(candidate.get("supporting_papers"), list) else []
+        return (
+            "该候选由论文笔记的机制主张、边界条件、设计理据或缺口字段恢复生成；"
+            f"当前关联 {len(support)} 篇文献笔记。它仅适合 Gate1 比较，最终假设前必须回查下列具体 section。"
+        )
+    return _localize_t4_recovery_text(candidate.get("basis_summary") or "待补充")
+
+
+def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
+    """Build a complete, Chinese-first, auditable Gate1 candidate deck.
+
+    The display intentionally exposes candidate claims and durable evidence
+    paths, but never internal model reasoning, provider exceptions, or hashes.
+    It is a human decision surface, not a chain-of-thought transcript.
+    """
+
+    candidate_path = workspace_dir / "ideation" / "_candidate_directions.json"
+    candidates: list[dict[str, Any]] = []
+    try:
+        raw = json.loads(candidate_path.read_text(encoding="utf-8"))
+        raw_candidates = raw.get("candidates") if isinstance(raw, dict) else []
+    except Exception:
+        raw_candidates = []
+    if not isinstance(raw_candidates, list):
+        raw_candidates = []
+
+    for candidate in raw_candidates:
+        if not isinstance(candidate, dict):
+            continue
+        candidate_id = str(candidate.get("id") or candidate.get("idea_id") or "").strip()
+        if not candidate_id:
+            continue
+        source_title = str(candidate.get("title") or "未命名候选").strip()
+        localized = _T4_RECOVERY_UI_TEXT.get(source_title, {})
+        localized_fields = _T4_RECOVERY_FIELD_ZH.get(candidate_id, {})
+        title = str(candidate.get("title_zh") or localized.get("title") or source_title)
+        value = str(candidate.get("pitch_zh") or localized.get("value") or candidate.get("pitch") or candidate.get("core_claim") or "待补充")
+        mechanism = str(candidate.get("mechanism_zh") or localized.get("mechanism") or candidate.get("mechanism") or "待补充")
+        minimum = candidate.get("minimum_experiment") if isinstance(candidate.get("minimum_experiment"), dict) else {}
+        metrics = minimum.get("metric") or minimum.get("metrics") or "待确定"
+        if isinstance(metrics, list):
+            metrics = "、".join(_localize_t4_recovery_text(item) for item in metrics[:3])
+        else:
+            metrics = _localize_t4_recovery_text(metrics)
+        score = candidate.get("scores") if isinstance(candidate.get("scores"), dict) else {}
+        support = candidate.get("supporting_papers") if isinstance(candidate.get("supporting_papers"), list) else []
+        evidence_levels = {
+            str(item.get("evidence_level") or "").upper()
+            for item in support
+            if isinstance(item, dict) and str(item.get("evidence_level") or "").strip()
+        }
+        evidence = "；".join(sorted(evidence_levels)) if evidence_levels else "需回查对应文献笔记 section"
+        pass2 = candidate.get("pass2_screening") if isinstance(candidate.get("pass2_screening"), dict) else {}
+        warning = _localize_t4_recovery_text(
+            pass2.get("selection_warning")
+            or candidate.get("selection_warning")
+            or "选择后需在 T4 后半段回查对应文献笔记 section。"
+        )
+        if "Runtime-generated" in warning or "Runtime recovery" in warning:
+            warning = "恢复候选：进入最终假设前必须回查对应文献笔记 section。"
+        if candidate_id.startswith("S") or str(candidate.get("constraint_status") or "").lower() == "supplement":
+            warning = "建议作为所选主方向的消融/证伪模块，不建议单独作为论文主贡献。"
+        lane = {
+            "mainline": "主方向",
+            "bridge": "桥接方向",
+            "supplement": "消融补充",
+            "not_supported_by_current_evidence": "证据待补",
+        }.get(str(candidate.get("constraint_status") or "").lower(), "候选方向")
+        candidates.append(
+            {
+                "id": candidate_id,
+                "lane": lane,
+                "title": title,
+                "original_title": source_title if title != source_title else "",
+                "origin": _localize_t4_recovery_text(candidate.get("idea_origin") or "未标注"),
+                "mechanism_family": _localize_t4_recovery_text(candidate.get("mechanism_family") or "未标注"),
+                "target_problem": _localize_t4_recovery_text(candidate.get("target_problem") or "待补充"),
+                "value": value,
+                "mechanism": mechanism,
+                "prediction": str(candidate.get("prediction_zh") or localized_fields.get("prediction") or _localize_t4_recovery_text(candidate.get("prediction") or "待补充")),
+                "counterfactual": str(candidate.get("counterfactual_zh") or localized_fields.get("counterfactual") or _localize_t4_recovery_text(candidate.get("counterfactual") or "待补充")),
+                "practical_implication": str(candidate.get("practical_implication_zh") or candidate.get("practical_implication") or localized_fields.get("practical_implication") or "待 T4 后半段在回查文献笔记 section 后收敛。"),
+                "minimum_validation": {
+                    "dataset": _localize_t4_recovery_text(minimum.get("dataset") or "待确定"),
+                    "baseline": _localize_t4_recovery_text(minimum.get("baseline") or "待确定"),
+                    "metric": str(metrics),
+                    "expected_signal": _localize_t4_recovery_text(minimum.get("expected_signal") or "待确定"),
+                },
+                "evidence": evidence,
+                "support_count": len(support),
+                "basis_summary": _t4_basis_summary_for_gate(candidate),
+                "supporting_papers": [
+                    {
+                        "title": str(item.get("title") or "未命名论文"),
+                        "citation": str(item.get("ref") or "未提供引用键"),
+                        "note_path": str(item.get("source_file") or "未提供笔记路径"),
+                        "evidence_level": str(item.get("evidence_level") or "未标注"),
+                        "claim_used": _localize_t4_recovery_text(item.get("claim_used") or "未提供证据摘录"),
+                    }
+                    for item in support
+                    if isinstance(item, dict)
+                ],
+                "scores": {
+                    key: score.get(key)
+                    for key in (
+                        "novelty",
+                        "feasibility",
+                        "impact",
+                        "evaluability",
+                        "differentiation",
+                        "cost",
+                        "contribution_strength",
+                    )
+                    if score.get(key) is not None
+                },
+                "selection_recommendation": _localize_t4_recovery_text(pass2.get("screening_recommendation") or "未标注"),
+                "counterfactual_check": _localize_t4_recovery_text(pass2.get("counterfactual_check") or "未标注"),
+                "nearest_prior_work": _localize_t4_recovery_text(
+                    (pass2.get("nearest_prior_work") or candidate.get("nearest_prior_work") or {}).get("work")
+                    if isinstance(pass2.get("nearest_prior_work") or candidate.get("nearest_prior_work"), dict)
+                    else "待核验"
+                ),
+                "novelty_signal": _localize_t4_recovery_text(pass2.get("novelty_signal") or candidate.get("novelty_signal") or "待核验"),
+                "warning": warning,
+            }
+        )
+
+    return {
+        "language": "zh",
+        "candidates": candidates,
+        "input_hint": "直接输入一行即可：选 D1，强调上下文控制；合并 D1+D3，把 D3 作为来源机制；新想法：……；重新分析：希望补足状态变量证据。",
+        "detail_path": "ideation/_gate1_candidate_cards.md",
+        "file_navigation": [
+            {"path": "ideation/_gate1_candidate_cards.md", "purpose": "人工阅读版完整候选卡片，适合逐项比较。"},
+            {"path": "ideation/_gate1_selection_brief.md", "purpose": "候选池、合并建议、风险提示和选择顺序的简报。"},
+            {"path": "ideation/_candidate_directions.json", "purpose": "机器可读的完整候选结构、评分、实验和支撑论文数据。"},
+            {"path": "ideation/_pass1_forward_candidates.json", "purpose": "Pass 1 发散产生的原始候选池，用于检查覆盖范围。"},
+            {"path": "ideation/_pass2_grounding_review.json", "purpose": "Pass 2 对每个候选的文献接地、风险和上桌建议。"},
+            {"path": "ideation/bridge_coverage_review.json", "purpose": "桥接领域候选为何展示、暂缓或需要补证据的审计记录。"},
+        ],
+    }
 
 
 def validate_t4_gate1_selection_file(workspace_dir: Path) -> tuple[bool, str | None]:
@@ -663,6 +917,7 @@ def build_literature_param_payload(
                 "literature_quality.manuscript_language": "写作语言：auto/en/zh/mixed；英文稿默认不搜索、不主动引用中文非 seed 论文。",
                 "literature_quality.include_chinese_literature": "是否允许中文论文进入候选池：auto/false/true；允许时不再因缺少权威标签硬过滤，但会标记 authority_review_needed。",
                 "literature_quality.chinese_literature_policy": "中文论文来源策略：默认 review_flag_only，只做权威性复核标记；英文稿且明确排除中文时仍不纳入非 seed 中文文献。",
+                "literature_quality.effective_non_seed_chinese_action": "生效的非 seed 中文文献动作：英文稿固定为 exclude；中文、双语或自动稿件按中文文献设置决定准入与复核。",
             },
         }
     )
@@ -709,6 +964,12 @@ def _apply_literature_quality_overrides(
     if include_raw in (None, ""):
         include_raw = literature_quality.get("include_chinese_literature", "auto")
     include_chinese = _normalize_include_chinese_value(include_raw)
+    # English manuscripts deliberately keep non-seed Chinese literature out of
+    # retrieval and citation candidates.  A user may still provide a Chinese
+    # seed as context, but "include_zh=true" must not silently expand an
+    # English-language search after the user selected English.
+    if manuscript_language == "en":
+        include_chinese = "false"
     default_enabled = _safe_bool(literature_quality.get("enabled"), default=True)
     default_seed_override = _safe_bool(literature_quality.get("allow_user_seed_override"), default=True)
 
@@ -719,6 +980,9 @@ def _apply_literature_quality_overrides(
             "include_chinese_literature": include_chinese,
             "english_manuscript_policy": str(
                 literature_quality.get("english_manuscript_policy") or "exclude_non_seed_chinese"
+            ),
+            "effective_non_seed_chinese_action": (
+                "exclude" if manuscript_language == "en" else "allow_or_review_by_setting"
             ),
             "chinese_literature_policy": str(
                 captured.get("chinese_literature_policy")
@@ -1089,6 +1353,10 @@ def _template_selection_from_gate(
     }
     if task_id == "T8-STYLE-GATE":
         payload["venue_style"] = venue_style
+        payload["venue_profile"] = resolve_venue_writing_profile("", payload).get("id", "")
+        payload["venue_profile_note"] = (
+            "Internal drafting profile only; verify current official venue page limits, template, and submission rules separately."
+        )
     if warning:
         payload["template_warning"] = warning
     return payload
@@ -1467,6 +1735,7 @@ class StateMachine:
             presentation["current_parameter_preview"] = build_literature_param_gate_preview(workspace_dir)
             options = enrich_literature_param_gate_options(options, workspace_dir)
         if node.task_id == "T4-GATE1" and workspace_dir is not None:
+            presentation["candidate_overview"] = _t4_gate1_candidate_overview(workspace_dir)
             presentation["candidate_pool_fingerprints"] = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
         state.pending_gate = GateState(
             gate_id=gate_id,
@@ -1482,6 +1751,43 @@ class StateMachine:
         """Public helper for runners/tests: T4 has candidate artifacts ready but no Gate1 choice."""
 
         return self._t4_gate1_ready_without_selection(workspace_dir)
+
+    def refresh_pending_gate_presentation(
+        self,
+        state: StateYaml,
+        *,
+        workspace_dir: Path | None = None,
+    ) -> StateYaml:
+        """Refresh dynamic decision panels when a waiting workspace is resumed.
+
+        Gate state is deliberately persisted so a process can stop at a human
+        decision.  Dynamic panels must nevertheless reflect newer renderer
+        code and current artifacts when that workspace is resumed.
+        """
+
+        if state.pending_gate is None:
+            return state
+        node = self.nodes.get(state.current_task)
+        if node is None:
+            return state
+        presentation = dict(state.pending_gate.presentation or {})
+        options = list(state.pending_gate.options or [])
+        gate_spec = self._find_gate(state.pending_gate.gate_id)
+        if gate_spec.get("title"):
+            presentation["_title"] = gate_spec["title"]
+        if gate_spec.get("description"):
+            presentation["_description"] = gate_spec["description"]
+        if node.task_id == "T2-PARAM-GATE":
+            presentation["current_parameter_preview"] = build_literature_param_gate_preview(workspace_dir)
+            options = enrich_literature_param_gate_options(options, workspace_dir)
+        elif node.task_id == "T4-GATE1" and workspace_dir is not None:
+            presentation["candidate_overview"] = _t4_gate1_candidate_overview(workspace_dir)
+            presentation["candidate_pool_fingerprints"] = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
+        else:
+            return state
+        state.pending_gate.presentation = presentation
+        state.pending_gate.options = options
+        return state
 
     @staticmethod
     def _t4_gate1_ready_without_selection(workspace_dir: Path) -> bool:
@@ -1607,6 +1913,7 @@ class StateMachine:
                 presentation["current_parameter_preview"] = build_literature_param_gate_preview(workspace_dir)
                 options = enrich_literature_param_gate_options(options, workspace_dir)
             if state.current_task == "T4-GATE1" and workspace_dir is not None:
+                presentation["candidate_overview"] = _t4_gate1_candidate_overview(workspace_dir)
                 presentation["candidate_pool_fingerprints"] = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
             state.pending_gate = GateState(
                 gate_id=gate_id,
@@ -1648,6 +1955,7 @@ class StateMachine:
                     model_dump(state, mode="json"),
                     workspace_dir,
                 )
+                presentation["candidate_overview"] = _t4_gate1_candidate_overview(workspace_dir)
                 presentation["candidate_pool_fingerprints"] = current_pool
                 presentation["stale_reason"] = (
                     "T4-GATE1 candidate pool changed while waiting for human selection: "
@@ -2066,7 +2374,7 @@ class StateMachine:
                     }
                     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
                     return
-            option_id = str(gate_result.get("option_id") or gate_result.get("key") or "mock_dry_run")
+            option_id = str(gate_result.get("option_id") or gate_result.get("key") or "codex_cli")
             aliases = {
                 "mock": "mock_dry_run",
                 "dry": "mock_dry_run",
@@ -2077,7 +2385,7 @@ class StateMachine:
             }
             selected_executor = aliases.get(option_id, option_id)
             if selected_executor not in {"mock_dry_run", "codex_cli", "claude_code_window", "manual"}:
-                selected_executor = "mock_dry_run"
+                selected_executor = "codex_cli"
             captured = gate_result.get("captured") or {}
             notes = str(captured.get("notes") or captured.get("note") or "")
             if captured.get("downgraded_from"):

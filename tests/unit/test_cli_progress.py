@@ -5,6 +5,7 @@ from pathlib import Path
 from researchos.runtime.progress import (
     CliProgressEmitter,
     build_tool_narrative,
+    describe_output_artifact,
     format_cli_message,
     summarize_tool_result,
 )
@@ -124,6 +125,40 @@ def test_progress_emitter_quiet_keeps_only_important_messages(capsys):
     assert "important" in out
 
 
+def test_agent_done_explains_actual_artifacts_and_next_step():
+    messages: list[str] = []
+    emitter = CliProgressEmitter(emit_fn=messages.append)
+
+    emitter.agent_done(
+        task_id="T2",
+        agent="scout",
+        ok=True,
+        stop_reason="finished",
+        summary="完成检索、去重和阅读队列构建。",
+        artifacts=[
+            "literature/search_log.md",
+            "literature/deep_read_queue.jsonl",
+            "literature/papers_backlog.jsonl",
+        ],
+        next_step=None,
+    )
+
+    rendered = "\n".join(messages)
+    assert "阶段总结" in rendered
+    assert "完成了什么：完成检索、去重和阅读队列构建。" in rendered
+    assert "literature/search_log.md：检索、去重、回填、候选切分和覆盖缺口的审计记录。" in rendered
+    assert "literature/deep_read_queue.jsonl：T3 的结构化精读优先队列与排序依据。" in rendered
+    assert "literature/papers_backlog.jsonl：未进入当前 active pool 的可追溯候选" in rendered
+    assert "下一步：进入 T2 文献覆盖 Gate" in rendered
+
+
+def test_output_artifact_description_covers_writing_evidence_supplement():
+    assert "章节级证据补充" in describe_output_artifact(
+        "drafts/section_outlines/introduction_evidence_supplement.md",
+        task_id="T8-SEC-INTRODUCTION",
+    )
+
+
 def test_format_cli_message_adds_spacing_before_blocks():
     assert format_cli_message("[Tool] echo 完成").startswith("\n[Tool]")
     assert format_cli_message("plain line") == "plain line"
@@ -152,3 +187,56 @@ def test_progress_emitter_does_not_add_blank_between_consecutive_streams():
     assert messages[0].startswith("\n[Tool]")
     assert messages[1].startswith("\n[Agent] Abstract sweep progress")
     assert not messages[2].startswith("\n")
+
+
+def test_t4_progress_aggregates_routine_reads_and_emits_auditable_trace():
+    messages: list[str] = []
+    emitter = CliProgressEmitter(emit_fn=messages.append)
+    emitter.agent_start(
+        task_id="T4",
+        agent="ideation",
+        phase="-",
+        objective="生成候选方向",
+        inputs=[],
+        expected_outputs=[],
+        expected_artifacts="Gate1 候选池",
+        llm_tier="heavy",
+        step_limit="20",
+    )
+    narrative = build_tool_narrative(
+        task_id="T4",
+        agent="ideation",
+        tool_name="read_file",
+        arguments={"path": "literature/synthesis.md"},
+    )
+    emitter.tool_call(agent="ideation", tool_name="read_file", narrative=narrative)
+    emitter.tool_result(
+        agent="ideation",
+        tool_name="read_file",
+        ok=True,
+        result_summary="已读取完整文件",
+    )
+    write_narrative = build_tool_narrative(
+        task_id="T4",
+        agent="ideation",
+        tool_name="write_file",
+        arguments={"path": "ideation/_pass1_forward_candidates.json"},
+    )
+    emitter.tool_call(agent="ideation", tool_name="write_file", narrative=write_narrative)
+    emitter.tool_result(
+        agent="ideation",
+        tool_name="write_file",
+        ok=True,
+        result_summary="文件写入完成",
+        output_path="ideation/_pass1_forward_candidates.json",
+    )
+    emitter.llm_request_started(task_id="T4", step=2)
+
+    combined = "\n".join(messages)
+    assert "执行轨迹：准备证据包 -> 生成候选 -> 接地复核 -> 写入 Gate1 卡片 -> 等待人工选择" in combined
+    assert "正在核验上游证据和文献笔记 section" in combined
+    assert "[T4 Gate1] 1/6 写入中 · Pass 1 原始候选池" in combined
+    assert "[T4 Gate1] 1/6 已保存 · Pass 1 原始候选池" in combined
+    assert "[运行中] T4 · step 2 | 模型请求已提交" in combined
+    assert "[Tool] read_file 完成" not in combined
+    assert "[Tool] write_file 完成" not in combined

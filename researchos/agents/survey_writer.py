@@ -51,8 +51,10 @@ class SurveyWriterAgent(Agent):
                         "read_file",
                         "write_file",
                         "list_files",
+                        "grep_search",
                         "expand_corpus_for_survey",
                         "build_survey_state",
+                        "build_survey_figures",
                         "update_survey_section_state",
                         "assemble_survey",
                         "audit_survey_coverage",
@@ -126,6 +128,9 @@ class SurveyWriterAgent(Agent):
             survey_state_preview=read_text_file(ws / "drafts" / "survey" / "survey_state.json", default="")[:7000],
             corpus_decision_preview=read_text_file(ws / "drafts" / "survey" / "corpus_decision.json", default="")[:2000],
             survey_audit_preview=read_text_file(ws / "drafts" / "survey" / "survey_audit.md", default="")[:3000],
+            survey_visual_manifest_preview=read_text_file(
+                ws / "drafts" / "survey" / "figures" / "survey_visual_manifest.json", default=""
+            )[:4000],
             section_outline_preview=section_outline[:5000],
             related_work_preview=read_text_file(related_work_bib_path, default="")[:3000],
             related_work_keys=related_work_keys,
@@ -183,6 +188,12 @@ class SurveyWriterAgent(Agent):
             message = (
                 "请执行 T3.6-STATE：调用 build_survey_state 初始化 survey_state.json 和逐 section outline。"
                 "不要写正文。"
+            )
+        elif phase == "survey_visuals":
+            message = (
+                "请执行 T3.6-VISUALS：调用 build_survey_figures，从 comparison_table.csv 生成可复现、"
+                "数据驱动的综述图及 manifest。若数据不够，manifest 必须记录 skipped，不能编造装饰图。"
+                "写完 manifest 后 finish_task；不要在本阶段改写正文。"
             )
         elif phase == "survey_section":
             section_id = self._section_id(ctx)
@@ -269,6 +280,22 @@ class SurveyWriterAgent(Agent):
             return True, None
         if phase == "survey_state":
             return _validate_survey_state(ws)
+        if phase == "survey_visuals":
+            manifest, err = _load_json(ws / "drafts" / "survey" / "figures" / "survey_visual_manifest.json")
+            if err:
+                return False, err
+            if manifest.get("semantics") != "deterministic_survey_data_visual_manifest":
+                return False, "survey_visual_manifest.json semantics 不正确"
+            status = manifest.get("status")
+            if status not in {"generated", "skipped"}:
+                return False, "survey_visual_manifest.json status 必须为 generated/skipped"
+            for item in manifest.get("figures") or []:
+                if not isinstance(item, dict) or not str(item.get("path") or "").strip():
+                    return False, "survey visual manifest figure 条目缺少 path"
+                figure_path = ws / str(item["path"])
+                if not figure_path.exists() or figure_path.stat().st_size <= 0:
+                    return False, f"survey visual manifest 指向缺失图像: {item['path']}"
+            return True, None
         if phase == "survey_section":
             return _validate_survey_section(ws, self._section_id(ctx))
         if phase == "survey_assemble":

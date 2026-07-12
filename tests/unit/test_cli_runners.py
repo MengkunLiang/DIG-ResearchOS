@@ -217,6 +217,10 @@ def test_single_task_runner_t36_alias_points_to_survey_gate():
     assert SingleTaskRunner._normalize_task_id("SURVEY") == "T3.6-GATE-SURVEY"
 
 
+def test_single_task_runner_t5_reboost_alias_points_to_reboost_gate():
+    assert SingleTaskRunner._normalize_task_id("T5-REBOOST") == "T5-REBOOST-GATE"
+
+
 def test_single_task_runner_retires_plain_legacy_experiment_tasks():
     with pytest.raises(ValueError, match="retired"):
         SingleTaskRunner._normalize_task_id("T7")
@@ -1018,6 +1022,24 @@ def test_cli_doctor_allows_missing_docker_and_tex(tmp_path: Path, monkeypatch, c
     assert "Docker: CLI not found" in captured.out
     assert "LaTeX backend" in captured.out
     assert (workspace / "_runtime" / "runtime_environment.json").exists()
+
+
+def test_cli_doctor_labels_container_runtime_mode(tmp_path: Path, monkeypatch, capsys):
+    workspace = tmp_path / "doctor-container-ws"
+    monkeypatch.setattr(
+        "researchos.cli.collect_runtime_environment",
+        lambda _workspace: {
+            "runtime_mode": "docker",
+            "containerized": True,
+            "workspace_host_hint": "",
+        },
+    )
+
+    exit_code = main(["--no-banner", "doctor", "--workspace", str(workspace)])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "Optional warnings do not block Docker/Compose Mode." in captured.out
 
 
 def test_researchos_workspace_root_overrides_parser_default(tmp_path: Path, monkeypatch):

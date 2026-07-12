@@ -1,8 +1,9 @@
-# ResearchOS Docker 镜像 - 可选轻量 CLI 环境
+# ResearchOS Docker 镜像 - 可复现 CLI 与 PDF 编译环境
 #
 # 这个镜像包含：
 # - Python 3.11 运行时
 # - ResearchOS runtime 及其依赖
+# - latexmk、pdfLaTeX、XeLaTeX 与中文语言包（T3.6/T9 真实 PDF 验证）
 #
 # 构建命令：
 #   cd /mnt/data/DIG-ResearchOS
@@ -19,7 +20,7 @@
 FROM python:3.11-slim-bookworm
 
 LABEL maintainer="ResearchOS Team"
-LABEL description="Optional lightweight ResearchOS CLI runtime"
+LABEL description="ResearchOS CLI runtime with reproducible LaTeX compilation"
 LABEL version="0.1.0"
 
 # 设置环境变量，避免交互式提示
@@ -39,11 +40,23 @@ ARG PIP_INDEX_URL=
 # 安装系统依赖
 # - git, curl, wget: 版本控制和下载工具
 # - ripgrep: 快速文本搜索（某些工具可能需要）
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# - TeX Live + latexmk: 容器内不依赖 Docker-in-Docker 即可完成 T3.6/T9 编译
+# A bounded retry policy keeps first-time image builds diagnosable on flaky
+# mirrors.  Disabling HTTP pipelining avoids a known class of proxy/mirror
+# stalls that otherwise leaves `apt-get` silent indefinitely during TeX Live
+# downloads.
+RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=45 -o Acquire::https::Timeout=45 -o Acquire::http::Pipeline-Depth=0 update \
+    && apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=45 -o Acquire::https::Timeout=45 -o Acquire::http::Pipeline-Depth=0 install -y --no-install-recommends \
     git \
     curl \
     wget \
     ripgrep \
+    latexmk \
+    texlive-latex-base \
+    texlive-latex-extra \
+    texlive-fonts-recommended \
+    texlive-xetex \
+    texlive-lang-chinese \
     && rm -rf /var/lib/apt/lists/*
 
 RUN if [ -n "$PIP_INDEX_URL" ]; then \

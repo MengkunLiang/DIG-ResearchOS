@@ -10,7 +10,7 @@ For precedence rules, examples, and field-level guidance, read
 | Path | Role | Edit In Daily Use |
 | --- | --- | --- |
 | `user_settings.yaml` | User-facing model, budget, timeout, and retry preferences. | Yes |
-| `runtime.yaml` | Workspace root, runtime directory, logging, UI, web fetch, Docker image, and environment defaults. | Occasionally |
+| `runtime.yaml` | Workspace root, runtime directory, logging, UI, web fetch, LaTeX backend/Docker image, and environment defaults. | Occasionally |
 | `model_routing.yaml` | Endpoint, provider, profile, tier, fallback, and context truncation routing. | Only when changing providers or models |
 | `agent_params.yaml` | Agent capability registry, tool permissions, prompts, modes, and mechanical behavior thresholds. | Only when changing agent behavior |
 | `mcp.example.yaml` | Example MCP server configuration. | Copy when needed |
@@ -19,6 +19,7 @@ For precedence rules, examples, and field-level guidance, read
 | `system_config/gates.yaml` | Human gate presentation and option metadata. | System contract |
 | `system_config/cdr_schema.yaml` | CDR schema used by reading, ideation, and writing prompts. | System contract |
 | `system_config/venue_style_map.yaml` | Venue/style defaults for IS, UTD, CCF-A, and related writing paths. | System contract |
+| `system_config/venue_writing_profiles.yaml` | Internal venue-aware argument, evidence, and section-budget profiles. They are not official venue limits. | System contract |
 
 ## Single Source Rules
 
@@ -59,6 +60,12 @@ For Docker Mode:
 docker compose -f deploy/compose.yaml config --quiet
 docker compose -f deploy/compose.yaml run --rm researchos doctor
 ```
+
+`runtime.yaml: latex` is a runtime backend policy, not a replacement for system
+packages. `auto` prefers current-environment `latexmk`, then `tectonic`, then
+the configured Docker TeX image when fallback is enabled. The Compose image
+must contain TeX itself because it intentionally has no Docker socket. See
+[docs/docker.md](../docs/docker.md) for the complete contract.
 
 Use `docker compose ... config --quiet` for path validation. The non-quiet form
 can print resolved environment values, so avoid pasting it when `.env` contains

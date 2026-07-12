@@ -11,9 +11,10 @@
 - ResearchOS 不接受执行器自然语言总结作为事实，只接受 raw artifact、config、log、hash、ingest/audit/result-to-claim
 
 外部实验主链输出：
-- T5-REBOOST-GATE: external_executor/handoff_pack.json、external_executor/reboost_report.json
-- T5-HANDOFF: external_executor/handoff_pack.json、AGENTS.md、CLAUDE.md、README.md、executor_prompt.md、codex_prompt.md、claude_code_prompt.md、expected_outputs_schema.json、allowed_paths.txt、external_executor/skills/template_manifest.json、external_executor/skills/skills_customization/SKILL.md
-- T5-SKILL-CUSTOMIZATION-GATE: external_executor/skills/customization_report.json
+- T5-REBOOST-GATE/T5-REBOOST: external_executor/handoff_pack.json、external_executor/reboost_report.json、AGENTS.md、CLAUDE.md、README.md、executor_prompt.md、codex_prompt.md、claude_code_prompt.md、expected_outputs_schema.json、allowed_paths.txt
+- specialize-executor-skills: 调用 LLM 专属化 root skill suite，输出 external_executor/project_skill_context.yaml、external_executor/skill_specialization_report.json、external_executor/skills/
+- T5-HANDOFF: legacy 兼容入口，生成 handoff 并可同步生成 skill suite
+- T5-SKILL-CUSTOMIZATION-GATE: external_executor/skill_specialization_report.json
 - T5-EXECUTOR-GATE: external_executor/executor_selection.json
 - T5-EXTERNAL-WAIT: external_executor/wait_acceptance_report.json
 - T5-DRY-RUN: external_executor/result_pack.json、executor_status.json、run_manifest.json、heartbeat.json、raw_results/configs/logs
@@ -438,7 +439,7 @@ def _require_external_files(ws: Path, rel_paths: list[str]) -> tuple[bool, str |
     return True, None
 
 
-def _validate_external_handoff(ws: Path) -> tuple[bool, str | None]:
+def _validate_external_handoff(ws: Path, *, require_specialization: bool = True) -> tuple[bool, str | None]:
     required = [
         "external_executor/handoff_pack.json",
         "external_executor/executor_prompt.md",
@@ -454,10 +455,17 @@ def _validate_external_handoff(ws: Path) -> tuple[bool, str | None]:
         "external_executor/README.md",
         "external_executor/_DIR_GUIDE.md",
         "external_executor/job_state.json",
-        "external_executor/skills/template_manifest.json",
-        "external_executor/skills/research_execution/SKILL.md",
         "external_executor/expr",
     ]
+    if require_specialization:
+        required.extend(
+            [
+                "external_executor/project_skill_context.yaml",
+                "external_executor/schemas/project_skill_context.schema.json",
+                "external_executor/skills/research-execution/SKILL.md",
+                "external_executor/skill_specialization_report.json",
+            ]
+        )
     ok, err = _require_external_files(ws, required)
     if not ok:
         return False, err
@@ -548,44 +556,25 @@ def _validate_external_handoff(ws: Path) -> tuple[bool, str | None]:
         if "external_executor/result_pack.json" not in text and rel != "external_executor/README.md":
             return False, f"{rel} 必须明确 result_pack 输出协议"
     agents_text = (ws / "external_executor" / "AGENTS.md").read_text(encoding="utf-8", errors="replace")
-    if "external_executor/skills/research_execution/SKILL.md" not in agents_text:
+    if "external_executor/skills/research-execution/SKILL.md" not in agents_text:
         return False, "external_executor/AGENTS.md 必须能一句话启动 root skill"
-    skill_manifest, err = _read_json_artifact(ws, "external_executor/skills/template_manifest.json")
-    if err:
-        return False, err
-    if skill_manifest.get("semantics") != "external_executor_skill_template_manifest":
-        return False, "external_executor/skills/template_manifest.json semantics 不正确"
-    copied_skills = skill_manifest.get("copied_skills")
-    if not isinstance(copied_skills, list) or len(copied_skills) != len(SKILL_SUITE):
-        return False, "external_executor/skills/template_manifest.json 必须记录 13 个 copied_skills"
-    copied_names = {str(item.get("skill")) for item in copied_skills if isinstance(item, dict)}
-    missing_skills = [name for name in SKILL_SUITE if name not in copied_names]
-    if missing_skills:
-        return False, "external_executor/skills/template_manifest.json 缺少 copied skill: " + ", ".join(missing_skills)
-    customization_skill = skill_manifest.get("customization_skill")
-    if not isinstance(customization_skill, dict):
-        return False, "external_executor/skills/template_manifest.json 缺少 customization_skill"
-    if customization_skill.get("destination") != "external_executor/skills/skills_customization/SKILL.md":
-        return False, "customization_skill.destination 必须指向 external_executor/skills/skills_customization/SKILL.md"
-    if not (ws / "external_executor" / "skills" / "skills_customization" / "SKILL.md").is_file():
-        return False, "external_executor/skills/skills_customization/SKILL.md 缺失"
-    for skill_name in SKILL_SUITE:
-        skill_path = ws / "external_executor" / "skills" / skill_name / "SKILL.md"
-        if not skill_path.is_file():
-            return False, f"external_executor/skills/{skill_name}/SKILL.md 缺失"
-        text = skill_path.read_text(encoding="utf-8", errors="replace")
-        for section in (
-            "## Use for",
-            "## Do not use for",
-            "## Reads",
-            "## Writes",
-            "## Workflow",
-            "## Output contract",
-            "## Evidence rules",
-            "## Stop conditions",
-        ):
-            if section not in text:
-                return False, f"external_executor/skills/{skill_name}/SKILL.md 缺少 {section}"
+    if require_specialization:
+        context_path = ws / "external_executor" / "project_skill_context.yaml"
+        schema_path = ws / "external_executor" / "schemas" / "project_skill_context.schema.json"
+        if not context_path.is_file():
+            return False, "external_executor/project_skill_context.yaml 缺失"
+        if not schema_path.is_file():
+            return False, "external_executor/schemas/project_skill_context.schema.json 缺失"
+        report, err = _read_json_artifact(ws, "external_executor/skill_specialization_report.json")
+        if err:
+            return False, err
+        ok, err = _validate_specialization_report(report)
+        if not ok:
+            return False, err
+        for skill_name in SKILL_SUITE:
+            ok, err = _validate_specialized_skill_file(ws, skill_name)
+            if not ok:
+                return False, err
     job_state, err = _read_json_artifact(ws, "external_executor/job_state.json")
     if err:
         return False, err
@@ -594,87 +583,78 @@ def _validate_external_handoff(ws: Path) -> tuple[bool, str | None]:
     return True, None
 
 
+def _validate_specialized_skill_file(ws: Path, skill_name: str) -> tuple[bool, str | None]:
+    skill_path = ws / "external_executor" / "skills" / skill_name / "SKILL.md"
+    if not skill_path.is_file():
+        return False, f"external_executor/skills/{skill_name}/SKILL.md 缺失"
+    text = skill_path.read_text(encoding="utf-8", errors="replace")
+    if not text.startswith("---\n"):
+        return False, f"external_executor/skills/{skill_name}/SKILL.md 缺少 YAML frontmatter"
+    try:
+        raw_frontmatter = text.split("\n---\n", 1)[0].removeprefix("---\n")
+        frontmatter = yaml.safe_load(raw_frontmatter) or {}
+    except Exception as exc:
+        return False, f"external_executor/skills/{skill_name}/SKILL.md frontmatter 解析失败: {exc}"
+    if not isinstance(frontmatter, dict) or frontmatter.get("name") != skill_name:
+        return False, f"external_executor/skills/{skill_name}/SKILL.md frontmatter name 必须为 {skill_name}"
+    if text.count("<!-- PROJECT-SPECIFIC-GUIDANCE:BEGIN -->") != 1 or text.count("<!-- PROJECT-SPECIFIC-GUIDANCE:END -->") != 1:
+        return False, f"external_executor/skills/{skill_name}/SKILL.md Project-Specific Guidance marker 不完整"
+    if "## Project-Specific Guidance" not in text:
+        return False, f"external_executor/skills/{skill_name}/SKILL.md 缺少 Project-Specific Guidance"
+    return True, None
+
+
+def _validate_specialization_report(report: dict[str, Any], *, require_llm: bool = False) -> tuple[bool, str | None]:
+    if report.get("schema_version") != "skill_specialization_report.v1":
+        return False, "external_executor/skill_specialization_report.json schema_version 不正确"
+    if report.get("status") not in {"ready", "incomplete"}:
+        return False, "external_executor/skill_specialization_report.json status 必须为 ready 或 incomplete"
+    if report.get("context_file") != "external_executor/project_skill_context.yaml":
+        return False, "skill_specialization_report.context_file 不正确"
+    if report.get("context_schema") != "external_executor/schemas/project_skill_context.schema.json":
+        return False, "skill_specialization_report.context_schema 不正确"
+    if report.get("skills_total") != len(SKILL_SUITE):
+        return False, "skill_specialization_report.skills_total 必须为 13"
+    if report.get("skills_specialized") != len(SKILL_SUITE):
+        return False, "skill_specialization_report.skills_specialized 必须为 13"
+    skills = report.get("skills")
+    if not isinstance(skills, list):
+        return False, "skill_specialization_report.skills 必须是列表"
+    reported = {str(item.get("skill_name")) for item in skills if isinstance(item, dict)}
+    missing = [name for name in SKILL_SUITE if name not in reported]
+    if missing:
+        return False, "skill_specialization_report 缺少 skill（未覆盖 skill）: " + ", ".join(missing)
+    if require_llm:
+        llm = report.get("llm_specialization")
+        if not isinstance(llm, dict) or llm.get("enabled") is not True:
+            return False, "skill_specialization_report 缺少 LLM 专属化记录"
+        if int(llm.get("skills_specialized") or 0) != len(SKILL_SUITE):
+            return False, "skill_specialization_report.llm_specialization.skills_specialized 必须为 13"
+    return True, None
+
+
 def _validate_external_skill_customization(ws: Path) -> tuple[bool, str | None]:
-    skill_manifest, err = _read_json_artifact(ws, "external_executor/skills/template_manifest.json")
+    report, err = _read_json_artifact(ws, "external_executor/skill_specialization_report.json")
     if err:
         return False, err
-    if skill_manifest.get("semantics") != "external_executor_skill_template_manifest":
-        return False, "external_executor/skills/template_manifest.json semantics 不正确"
-    copied_skills = skill_manifest.get("copied_skills")
-    if not isinstance(copied_skills, list) or len(copied_skills) != len(SKILL_SUITE):
-        return False, "external_executor/skills/template_manifest.json 必须记录 13 个 copied_skills"
-    copied_names = {str(item.get("skill")) for item in copied_skills if isinstance(item, dict)}
-    missing_manifest_skills = [name for name in SKILL_SUITE if name not in copied_names]
-    if missing_manifest_skills:
-        return False, "external_executor/skills/template_manifest.json 缺少 copied skill: " + ", ".join(missing_manifest_skills)
-    if not (ws / "external_executor" / "skills" / "skills_customization" / "SKILL.md").is_file():
-        return False, "external_executor/skills/skills_customization/SKILL.md 缺失"
+    ok, err = _validate_specialization_report(report, require_llm=True)
+    if not ok:
+        return False, err
     for rel in (
         "external_executor/handoff_pack.json",
         "external_executor/expected_outputs_schema.json",
         "external_executor/allowed_paths.txt",
         "external_executor/AGENTS.md",
+        "external_executor/project_skill_context.yaml",
+        "external_executor/schemas/project_skill_context.schema.json",
     ):
         if not (ws / rel).exists():
             return False, f"{rel} 缺失"
 
     for skill_name in SKILL_SUITE:
-        skill_path = ws / "external_executor" / "skills" / skill_name / "SKILL.md"
-        if not skill_path.is_file():
-            return False, f"external_executor/skills/{skill_name}/SKILL.md 缺失"
-        text = skill_path.read_text(encoding="utf-8", errors="replace")
-        if not text.startswith("---\n"):
-            return False, f"external_executor/skills/{skill_name}/SKILL.md 缺少 YAML frontmatter"
-        try:
-            raw_frontmatter = text.split("\n---\n", 1)[0].removeprefix("---\n")
-            frontmatter = yaml.safe_load(raw_frontmatter) or {}
-        except Exception as exc:
-            return False, f"external_executor/skills/{skill_name}/SKILL.md frontmatter 解析失败: {exc}"
-        if not isinstance(frontmatter, dict) or frontmatter.get("name") != skill_name:
-            return False, f"external_executor/skills/{skill_name}/SKILL.md frontmatter name 必须为 {skill_name}"
-        for section in (
-            "## Use for",
-            "## Do not use for",
-            "## Reads",
-            "## Writes",
-            "## Workflow",
-            "## Output contract",
-            "## Evidence rules",
-            "## Stop conditions",
-        ):
-            if section not in text:
-                return False, f"external_executor/skills/{skill_name}/SKILL.md 缺少 {section}"
-
-    report, err = _read_json_artifact(ws, "external_executor/skills/customization_report.json")
-    if err:
-        return False, err
-    if report.get("semantics") != "external_executor_skill_customization_report":
-        return False, "external_executor/skills/customization_report.json semantics 不正确"
-    if report.get("handoff_pack") != "external_executor/handoff_pack.json":
-        return False, "external_executor/skills/customization_report.json 必须指向 handoff_pack"
-    customized_skills = report.get("customized_skills")
-    if not isinstance(customized_skills, list):
-        return False, "external_executor/skills/customization_report.json customized_skills 必须是列表"
-    customized_names = set()
-    for item in customized_skills:
-        if isinstance(item, dict):
-            name = item.get("skill") or item.get("name") or item.get("skill_name")
-        else:
-            name = item
-        if name is not None:
-            customized_names.add(str(name))
-    missing_report_skills = [name for name in SKILL_SUITE if name not in customized_names]
-    if missing_report_skills:
-        return False, "external_executor/skills/customization_report.json 未覆盖 skill: " + ", ".join(missing_report_skills)
-    if not isinstance(report.get("unchanged_or_skipped"), list):
-        return False, "external_executor/skills/customization_report.json unchanged_or_skipped 必须是列表"
-    if not isinstance(report.get("project_specific_fields_used"), list):
-        return False, "external_executor/skills/customization_report.json project_specific_fields_used 必须是列表"
-    if not isinstance(report.get("next_instruction"), str) or not report.get("next_instruction"):
-        return False, "external_executor/skills/customization_report.json 缺少 next_instruction"
-    skipped = report.get("unchanged_or_skipped", [])
-    if skipped:
-        return False, "external_executor/skills/customization_report.json 存在未完成 skill: " + str(skipped)
+        ok, err = _validate_specialized_skill_file(ws, skill_name)
+        if not ok:
+            return False, err
     return True, None
 
 
@@ -977,7 +957,7 @@ def _validate_post_experiment_novelty(ws: Path) -> tuple[bool, str | None]:
         return False, "post_experiment_novelty_check.json semantics 不正确"
     if check.get("novelty_after_implementation") not in {"strong", "moderate", "weak", "collision_risk"}:
         return False, "post_experiment_novelty_check.novelty_after_implementation 不正确"
-    if check.get("recommended_next_task") not in {"T7-CLAIMS", "T5-HANDOFF", "T4"}:
+    if check.get("recommended_next_task") not in {"T7-CLAIMS", "T5-REBOOST-GATE", "T5-HANDOFF", "T4"}:
         return False, "post_experiment_novelty_check.recommended_next_task 不正确"
     if check.get("contribution_drift") not in {"none", "minor", "major", "unknown"}:
         return False, "post_experiment_novelty_check.contribution_drift 不正确"
@@ -1227,7 +1207,15 @@ class ExperimenterAgent(Agent):
                     "如果证据不足，请写保守 claim/弱 claim/不能 claim 的边界，而不是编造结果。\n\n"
                     "同时写 external_executor/reboost_report.json，记录 semantics="
                     "external_executor_context_reboost_report、source_files_used、missing_optional_sources、"
-                    "known_context_mismatches 和 handoff_pack 路径。最后调用 finish_task。"
+                    "known_context_mismatches 和 handoff_pack 路径。\n\n"
+                    "写完 re-boost skeleton 后，必须调用 build_experiment_handoff_pack，传入 "
+                    "executor=UNSET、specialize_skills=false。该工具会保留 "
+                    "external_executor/handoff_pack.json#context_reboost，并补全 executor_prompt.md、"
+                    "codex_prompt.md、claude_code_prompt.md、manual_instructions.md、"
+                    "expected_outputs_schema.json、allowed_paths.txt、AGENTS.md、CLAUDE.md、README.md、"
+                    "job_state.json 和 external_executor/expr/。不要在本步骤生成或改写 "
+                    "external_executor/skills/；下一步由用户显式运行 researchos specialize-executor-skills。"
+                    "最后调用 finish_task。"
                 ),
             )
         if mode == "handoff":
@@ -1246,24 +1234,14 @@ class ExperimenterAgent(Agent):
             return prepend_resume_prefix(
                 ctx,
                 (
-                    "请执行 T5 skill 专属化：直接调用当前 LLM 能力读取 "
-                    "external_executor/handoff_pack.json、external_executor/skills/template_manifest.json、"
-                    "external_executor/skills/skills_customization/SKILL.md、"
-                    "external_executor/skills/skills_customization/references/customization_checklist.md "
-                    "以及 external_executor/skills/shared-references/ 下的共享规则。不要要求用户手动拉起 Codex CLI。\n\n"
-                    "只处理 template_manifest.json#copied_skills 中列出的 13 个目标 skill；"
-                    "不要把 skills_customization 或 shared-references 当作目标 skill，不要运行实验、"
-                    "不要写 result_pack、executor_status 或 run_manifest。\n\n"
-                    "请根据 handoff_pack 中的 context_reboost、method_intent、baseline_matrix、"
-                    "claim_evidence_matrix、experiment_contract、allowed_paths 和 writer_handoff_contract，"
-                    "原地改写 external_executor/skills/<target_skill>/SKILL.md，使其成为当前项目专属 skill。"
-                    "每个目标 skill 必须保留 YAML frontmatter name、工具/路径边界，以及 Use for、Do not use for、"
-                    "Reads、Writes、Workflow、Output contract、Evidence rules、Stop conditions 八个边界章节。"
-                    "长项目背景应放入目标 skill 的 references/，不要把 SKILL.md 写成项目档案。\n\n"
-                    "最后写入 external_executor/skills/customization_report.json，semantics 必须为 "
-                    "external_executor_skill_customization_report，handoff_pack 必须为 "
-                    "external_executor/handoff_pack.json，customized_skills 必须覆盖全部 13 个目标 skill，"
-                    "unchanged_or_skipped 应为空。最后调用 finish_task。"
+                    "请执行 T5 Project Skill Specialization Review Gate：读取 "
+                    "external_executor/skill_specialization_report.json、"
+                    "external_executor/project_skill_context.yaml 和 external_executor/skills/ 下的 13 个 "
+                    "SKILL.md，确认它们已经由 researchos specialize-executor-skills 调用 LLM 完成项目专属化。不要在 gate 中再次改写 skill，"
+                    "不要运行实验，不要写 result_pack、executor_status 或 run_manifest。\n\n"
+                    "报告 status 为 ready 或 incomplete 均表示专属化产物已生成；incomplete 只说明存在 "
+                    "required uncertain 字段，后续由运行期 skill 做 context alignment。若报告为 failed "
+                    "或产物缺失，应停止并说明缺失项。最后调用 finish_task。"
                 ),
             )
         if mode == "executor_gate":
@@ -1406,7 +1384,7 @@ class ExperimenterAgent(Agent):
                 return False, "external_executor/reboost_report.json semantics 不正确"
             if report.get("handoff_pack") != "external_executor/handoff_pack.json":
                 return False, "external_executor/reboost_report.json 必须指向 handoff_pack"
-            return True, None
+            return _validate_external_handoff(ws, require_specialization=False)
         if mode == "handoff":
             return _validate_external_handoff(ws)
         if mode == "skill_customization":

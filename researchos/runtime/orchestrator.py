@@ -3,6 +3,7 @@ from __future__ import annotations
 """AgentRunner 主循环。"""
 
 import asyncio
+from contextlib import suppress
 from datetime import datetime, timezone
 import inspect
 import json
@@ -45,7 +46,12 @@ from .t3_notes_manifest import validate_t3_input_fingerprints
 from .artifact_fingerprints import validate_t45_fingerprint_report
 from .task_recovery import prepare_generic_resume_artifacts
 from .run_logger import RunLogger
-from ..agents.ideation import prepare_t4_context_pack, validate_t4_gate1_ready
+from ..agents.ideation import (
+    T4_GATE1_ARTIFACTS,
+    prepare_t4_context_pack,
+    refresh_t4_gate1_progress,
+    validate_t4_gate1_ready,
+)
 from .trace import NullTraceWriter, TraceWriter
 from ..tools.base import Tool, ToolResult
 from ..tools.workspace_policy import WorkspaceAccessPolicy
@@ -300,6 +306,18 @@ class AgentRunner:
             llm_tier=eff.llm_tier,
             step_limit="unlimited" if eff.unlimited_budget else str(eff.max_steps),
         )
+        if ctx.task_id == "T4" and not self._t4_gate1_user_selection_exists(ctx):
+            # Write and render the first durable checkpoint before provider work
+            # begins. This lets the CLI distinguish "preparing evidence" from a
+            # silent provider wait without exposing private reasoning.
+            self._refresh_t4_gate1_progress(ctx, active_path=None)
+        self._record_skill_progress(
+            ctx,
+            step=0,
+            step_limit="unlimited" if eff.unlimited_budget else eff.max_steps,
+            phase="starting",
+            detail="已建立运行上下文，正在准备第一组可执行动作。",
+        )
         last_model_used: str | None = None
         last_endpoint_used: str | None = None
         stop_reason = AgentResult.STOP_ERROR
@@ -469,6 +487,14 @@ class AgentRunner:
             while not deterministic_pre_finalized:
                 # 每进入一轮 while，就代表一次“agent step”。
                 budget.tick_step()
+                step_limit = "unlimited" if budget.unlimited_budget else str(budget.max_steps)
+                self._record_skill_progress(
+                    ctx,
+                    step=budget.steps,
+                    step_limit=step_limit,
+                    phase="preparing_step",
+                    detail="正在整理当前 workspace 产物并请求下一组可执行动作。",
+                )
                 run_logger.event(
                     "AGENT_STEP",
                     task=ctx.task_id,
@@ -479,7 +505,6 @@ class AgentRunner:
 
                 # 每5步输出一次进度
                 if budget.steps % 5 == 1 or budget.steps == 1:
-                    step_limit = "unlimited" if budget.unlimited_budget else str(budget.max_steps)
                     self.progress.agent_step(
                         agent=self.agent.spec.name,
                         step=budget.steps,
@@ -516,7 +541,10 @@ class AgentRunner:
                         profile=eff.llm_profile,
                         tool_count=len(tool_schemas or []),
                     )
-                    llm_resp = await self.llm.chat(
+                    llm_resp = await self._await_llm_with_progress(
+                        ctx=ctx,
+                        step=budget.steps,
+                        progress_step_limit=step_limit,
                         messages=[item.to_openai_dict() for item in messages],
                         tools=tool_schemas or None,
                         temperature=eff.llm_temperature,
@@ -548,6 +576,14 @@ class AgentRunner:
                             "[Runtime] LLM provider 暂时不可用，当前任务已暂停；稍后 resume 会从当前 task 继续",
                             important=True,
                         )
+                        self._record_skill_progress(
+                            ctx,
+                            step=budget.steps,
+                            step_limit=step_limit,
+                            phase="waiting_runtime",
+                            detail=error_msg,
+                        )
+                        self._refresh_t4_gate1_progress(ctx, active_path=None, paused_reason=error_msg)
                         break
                     stop_reason = AgentResult.STOP_ERROR
                     error_msg = f"LLM failed: {exc}"
@@ -555,6 +591,13 @@ class AgentRunner:
 
                 last_model_used = llm_resp.model_used
                 last_endpoint_used = llm_resp.endpoint_used
+                self._record_skill_progress(
+                    ctx,
+                    step=budget.steps,
+                    step_limit=step_limit,
+                    phase="llm_response_received",
+                    detail="模型已返回；正在校验并执行声明的工具调用。",
+                )
                 budget.add_tokens(llm_resp.tokens_in, llm_resp.tokens_out, llm_resp.cost_usd)
                 run_logger.event(
                     "LLM_RESULT",
@@ -689,22 +732,57 @@ class AgentRunner:
                             verbose_only=True,
                         )
 
-                # 同一轮 assistant 发出的多个 tool call 可以并行执行，但回填顺序保持原顺序。
-                tool_msgs = await asyncio.gather(
-                    *[
-                        self._execute_one_tool_call(
-                            tc,
-                            tool_map,
-                            ctx=ctx,
-                            policy=policy,
-                            budget=budget,
+                # T4 Gate1 has ordered durable artifacts.  Executing its calls
+                # one by one makes both artifact dependencies and the CLI
+                # progress truthful.  Other tasks retain parallel tool calls.
+                if self._requires_sequential_tool_execution(ctx, assistant_msg.tool_calls):
+                    tool_msgs = []
+                    for tc in assistant_msg.tool_calls:
+                        self._record_skill_progress(
+                            ctx,
                             step=budget.steps,
-                            tool_failure_cache=tool_failure_cache,
-                            run_logger=run_logger,
+                            step_limit=step_limit,
+                            phase="tool_running",
+                            tool_name=tc.name,
+                            detail=f"正在执行工具 {tc.name}。",
                         )
-                        for tc in assistant_msg.tool_calls
-                    ]
-                )
+                        tool_msgs.append(
+                            await self._execute_one_tool_call(
+                                tc,
+                                tool_map,
+                                ctx=ctx,
+                                policy=policy,
+                                budget=budget,
+                                step=budget.steps,
+                                tool_failure_cache=tool_failure_cache,
+                                run_logger=run_logger,
+                            )
+                        )
+                else:
+                    for tc in assistant_msg.tool_calls:
+                        self._record_skill_progress(
+                            ctx,
+                            step=budget.steps,
+                            step_limit=step_limit,
+                            phase="tool_running",
+                            tool_name=tc.name,
+                            detail=f"正在调度工具 {tc.name}。",
+                        )
+                    tool_msgs = await asyncio.gather(
+                        *[
+                            self._execute_one_tool_call(
+                                tc,
+                                tool_map,
+                                ctx=ctx,
+                                policy=policy,
+                                budget=budget,
+                                step=budget.steps,
+                                tool_failure_cache=tool_failure_cache,
+                                run_logger=run_logger,
+                            )
+                            for tc in assistant_msg.tool_calls
+                        ]
+                    )
 
                 finish_requested = False
                 pause_requested = False
@@ -731,6 +809,16 @@ class AgentRunner:
                         next_step=next_step_for_task(ctx.task_id, ok=tool_ok) if not tool_ok else None,
                         duration_ms=tool_msg.duration_ms,
                     )
+                    self._record_skill_progress(
+                        ctx,
+                        step=budget.steps,
+                        step_limit=step_limit,
+                        phase="tool_completed" if tool_ok else "tool_failed",
+                        tool_name=tool_call.name,
+                        detail=("工具完成：" if tool_ok else "工具失败：") + tool_summary,
+                    )
+                    if ctx.task_id == "T4" and tool_call.name in {"write_file", "write_structured_file", "append_file"}:
+                        self._refresh_t4_gate1_progress(ctx, active_path=output_path if tool_ok else None)
                     if tool_call.name == "finish_task" and not tool_msg.metadata.get("is_error"):
                         finish_requested = True
                     if self._is_recoverable_tool_pause(tool_call.name, tool_msg):
@@ -963,6 +1051,140 @@ class AgentRunner:
         )
 
     @staticmethod
+    def _requires_sequential_tool_execution(ctx: ExecutionContext, tool_calls: list[ToolCall]) -> bool:
+        """Return whether this response has order-sensitive durable writes."""
+
+        if ctx.task_id != "T4":
+            return False
+        return bool(tool_calls)
+
+    @staticmethod
+    def _t4_artifact_write_order_error(ctx: ExecutionContext, tc: ToolCall) -> str | None:
+        """Reject a Gate1 artifact write that skips a durable predecessor."""
+
+        if ctx.task_id != "T4" or tc.name not in {"write_file", "write_structured_file", "append_file"}:
+            return None
+        path = str(tc.arguments.get("path") or "").replace("\\", "/").lstrip("./")
+        ordered_paths = [item[0] for item in T4_GATE1_ARTIFACTS]
+        if path not in ordered_paths:
+            return None
+        index = ordered_paths.index(path)
+        missing = [candidate for candidate in ordered_paths[:index] if not (ctx.workspace_dir / candidate).exists()]
+        if not missing:
+            return None
+        return (
+            f"T4 Gate1 artifact order violation: cannot write {path} before "
+            f"{', '.join(missing)}. Write the missing predecessor(s) first."
+        )
+
+    def _record_skill_progress(
+        self,
+        ctx: ExecutionContext,
+        *,
+        step: int | None,
+        step_limit: int | str | None,
+        phase: str,
+        detail: str,
+        tool_name: str | None = None,
+    ) -> None:
+        """Persist observable runtime events for standalone Skill sessions."""
+
+        session_id = str(ctx.extra.get("skill_session_id") or "").strip()
+        if not session_id or not ctx.task_id.startswith("SKILL_"):
+            return
+        try:
+            from ..skills.session import record_run_progress
+
+            record_run_progress(
+                workspace=ctx.workspace_dir,
+                session_id=session_id,
+                step=step,
+                step_limit=step_limit,
+                phase=phase,
+                detail=detail,
+                tool_name=tool_name,
+            )
+        except Exception as exc:  # pragma: no cover - progress must not break a run
+            self.log.warning("skill_session_progress_write_failed", error=str(exc))
+
+    def _refresh_t4_gate1_progress(
+        self,
+        ctx: ExecutionContext,
+        *,
+        active_path: str | Path | None,
+        paused_reason: str | None = None,
+    ) -> None:
+        """Refresh the durable T4 status file from real artifact existence."""
+
+        if ctx.task_id != "T4":
+            return
+        try:
+            refreshed = refresh_t4_gate1_progress(
+                ctx.workspace_dir,
+                active_path=str(active_path) if active_path else None,
+                paused_reason=paused_reason,
+            )
+            current = str(refreshed.get("current_label") or "正在更新 Gate1 进度")
+            completed = int(refreshed.get("completed_count") or 0)
+            total = int(refreshed.get("total_count") or 0)
+            self.progress.emit(
+                f"[T4 Gate1 {completed}/{total}] {current}",
+                important=True,
+            )
+        except Exception as exc:  # pragma: no cover - progress is observational
+            self.log.warning("t4_progress_refresh_failed", error=str(exc))
+
+    async def _await_llm_with_progress(
+        self,
+        *,
+        ctx: ExecutionContext,
+        step: int,
+        progress_step_limit: int | str | None,
+        **kwargs,
+    ):
+        """Await one LLM call while emitting a bounded observable heartbeat."""
+
+        self._record_skill_progress(
+            ctx,
+            step=step,
+            step_limit=progress_step_limit,
+            phase="awaiting_llm",
+            detail="已提交模型请求，正在等待下一组可执行动作。",
+        )
+        if ctx.task_id == "T4" and not self._t4_gate1_user_selection_exists(ctx):
+            self._refresh_t4_gate1_progress(ctx, active_path=None)
+        self.progress.llm_request_started(task_id=ctx.task_id, step=step)
+        task = asyncio.create_task(self.llm.chat(**kwargs))
+        started = time.monotonic()
+        timeout = 12.0
+        try:
+            while True:
+                done, _pending = await asyncio.wait({task}, timeout=timeout)
+                if done:
+                    return task.result()
+                elapsed = int(time.monotonic() - started)
+                self.progress.llm_waiting(
+                    task_id=ctx.task_id,
+                    agent=self.agent.spec.name,
+                    step=step,
+                    elapsed_seconds=elapsed,
+                )
+                self._record_skill_progress(
+                    ctx,
+                    step=step,
+                    step_limit=progress_step_limit,
+                    phase="awaiting_llm",
+                    detail=f"模型调用仍在等待，已持续 {elapsed}s。",
+                )
+                timeout = 20.0
+        except BaseException:
+            if not task.done():
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+            raise
+
+    @staticmethod
     def _centered_separator(title: str, *, width: int = 80, fill: str = "=") -> str:
         label = f" {title.strip()} "
         if len(label) >= width:
@@ -990,8 +1212,8 @@ class AgentRunner:
             "T4": "生成候选研究假设、实验计划和风险分析",
             "T4.5": "做新颖性预审和 mechanism tuple 审计",
             "T5-REBOOST-GATE": "调用 LLM API 对 Pre-T5 材料做 context re-boost",
-            "T5-HANDOFF": "编译外部实验协议、复制模板 skills 和 handoff prompt",
-            "T5-SKILL-CUSTOMIZATION-GATE": "调用 LLM API 自动定制 external_executor/skills",
+            "T5-HANDOFF": "编译外部实验协议、生成项目专属 skills 和 handoff prompt",
+            "T5-SKILL-CUSTOMIZATION-GATE": "检查 external_executor skill specialization report",
             "T5-EXPR-MATERIAL-GATE": "等待用户放置外部实验材料并确认继续",
             "T5-EXECUTOR-GATE": "由用户选择 mock、Claude Code、Codex CLI 或人工外部执行器",
             "T5-EXTERNAL-WAIT": "等待外部执行器写回 result_pack 并在 resume 时校验",
@@ -1551,6 +1773,7 @@ class AgentRunner:
             "- 用途: 让 T4 先基于压缩证据生成 Gate1 候选，减少无目标分页读取",
             important=True,
         )
+        self._refresh_t4_gate1_progress(ctx, active_path=None)
         self.progress.progress_file_update(
             label="Ideation/T4 进度",
             path="ideation/t4_progress.md",
@@ -1638,6 +1861,21 @@ class AgentRunner:
 
         ensure_t4_gate1_candidate_cards(ctx.workspace_dir)
         ok, err = validate_t4_gate1_ready(ctx.workspace_dir)
+        if not ok and self._is_resume_run(ctx) and self._t4_last_error_allows_gate1_recovery(ctx):
+            from ..agents.ideation import recover_t4_gate1_candidate_pool
+
+            recovery = recover_t4_gate1_candidate_pool(
+                ctx.workspace_dir,
+                reason=f"resume_prefinalize_after_provider_failure:{err}",
+            )
+            if recovery.get("ok"):
+                self.log.info("t4_gate1_recovered_before_llm", recovery=recovery)
+                self.progress.emit(
+                    "[轨迹] T4 provider 暂不可用；已从已验证文献卡恢复 Gate1 候选池，正在校验候选与证据边界。",
+                    important=True,
+                )
+                ensure_t4_gate1_candidate_cards(ctx.workspace_dir)
+                ok, err = validate_t4_gate1_ready(ctx.workspace_dir)
         if not ok:
             self.log.info("t4_gate1_prefinalize_skipped", reason=err)
             return False
@@ -1651,7 +1889,7 @@ class AgentRunner:
         ):
             return False
         self.progress.emit(
-            "[Ideation Agent] T4 Gate1 候选池已就绪，转入人工选择 gate",
+            "[轨迹] T4 Gate1 候选池已就绪：Pass1、Pass2、候选卡片和选择简报均已落盘，转入人工选择。",
             important=True,
         )
         self._record_runtime_completion(
@@ -1688,6 +1926,21 @@ class AgentRunner:
 
         ensure_t4_gate1_candidate_cards(ctx.workspace_dir)
         ok, err = validate_t4_gate1_ready(ctx.workspace_dir)
+        if not ok and self._t4_stop_reason_allows_gate1_recovery(stop_reason, error_msg):
+            from ..agents.ideation import recover_t4_gate1_candidate_pool
+
+            recovery = recover_t4_gate1_candidate_pool(
+                ctx.workspace_dir,
+                reason=f"runner_exit_after_provider_failure:{err}",
+            )
+            if recovery.get("ok"):
+                self.log.info("t4_gate1_recovered_on_exit", recovery=recovery)
+                self.progress.emit(
+                    "[轨迹] T4 provider 暂不可用；已从已验证文献卡恢复 Gate1 候选池，正在校验候选与证据边界。",
+                    important=True,
+                )
+                ensure_t4_gate1_candidate_cards(ctx.workspace_dir)
+                ok, err = validate_t4_gate1_ready(ctx.workspace_dir)
         if not ok:
             self.log.info("t4_gate1_finalize_skipped", reason=err)
             return stop_reason, error_msg
@@ -1701,7 +1954,7 @@ class AgentRunner:
         ):
             return stop_reason, error_msg
         self.progress.emit(
-            "[Ideation Agent] T4 Gate1 候选池已就绪，暂停进入人工选择 gate",
+            "[轨迹] T4 Gate1 候选池已就绪：Pass1、Pass2、候选卡片和选择简报均已落盘，暂停进入人工选择。",
             important=True,
         )
         self._record_runtime_completion(
@@ -1786,6 +2039,40 @@ class AgentRunner:
         if bridge_review.exists():
             paths.append(bridge_review)
         return paths
+
+    @staticmethod
+    def _t4_stop_reason_allows_gate1_recovery(stop_reason: str, error_msg: str | None) -> bool:
+        if stop_reason not in {AgentResult.STOP_INTERRUPTED, AgentResult.STOP_ERROR, AgentResult.STOP_MAX_STEPS}:
+            return False
+        text = str(error_msg or "").casefold()
+        return any(
+            marker in text
+            for marker in (
+                "llm provider",
+                "provider",
+                "timeout",
+                "temporarily unavailable",
+                "暂时不可用",
+                "连续超时",
+                "all candidates failed",
+            )
+        )
+
+    def _t4_last_error_allows_gate1_recovery(self, ctx: ExecutionContext) -> bool:
+        resume_path = ctx.workspace_dir / "_runtime" / "resume" / "t4_resume_state.json"
+        text = ""
+        if resume_path.exists():
+            try:
+                text += resume_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                pass
+        state_path = ctx.workspace_dir / "state.yaml"
+        if state_path.exists():
+            try:
+                text += "\n" + state_path.read_text(encoding="utf-8", errors="replace")[-12000:]
+            except OSError:
+                pass
+        return self._t4_stop_reason_allows_gate1_recovery(AgentResult.STOP_INTERRUPTED, text)
 
     def _t4_upstream_input_paths(self, ctx: ExecutionContext) -> list[Path]:
         return [
@@ -2464,6 +2751,30 @@ class AgentRunner:
                     content=tool_msg.content,
                     data={},
                     error="unknown_tool",
+                    duration_ms=tool_msg.duration_ms,
+                    metadata=tool_msg.metadata,
+                    step=step,
+                )
+            return tool_msg
+
+        t4_order_error = self._t4_artifact_write_order_error(ctx, tc)
+        if t4_order_error:
+            tool_msg = Message.tool(
+                tool_call_id=tc.id,
+                name=tc.name,
+                content=f"ERROR: {t4_order_error}",
+                is_error=True,
+                step=step,
+                duration_ms=int((time.time() - started) * 1000),
+            )
+            if run_logger is not None:
+                run_logger.tool_result(
+                    tc.name,
+                    tc.arguments,
+                    ok=False,
+                    content=tool_msg.content,
+                    data={},
+                    error="t4_artifact_order_violation",
                     duration_ms=tool_msg.duration_ms,
                     metadata=tool_msg.metadata,
                     step=step,

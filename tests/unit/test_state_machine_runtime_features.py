@@ -548,6 +548,13 @@ def test_t4_gate1_presentation_prioritizes_readable_candidate_cards(tmp_workspac
     assert "candidate_directions" not in presentation
     assert "ideation/_candidate_directions.json" in presentation["machine_readable_artifacts"]
 
+    state.pending_gate.presentation["candidate_overview"] = {"candidates": []}
+    refreshed = sm.refresh_pending_gate_presentation(state, workspace_dir=tmp_workspace)
+    overview = refreshed.pending_gate.presentation["candidate_overview"]
+    assert overview["candidates"]
+    assert overview["file_navigation"]
+    assert "supporting_papers" in overview["candidates"][0]
+
 
 def test_t4_gate1_reanalyze_does_not_write_user_selection(tmp_workspace):
     config = tmp_workspace / "fsm.yaml"
@@ -960,13 +967,12 @@ def test_t2_literature_param_gate_displays_actual_values_and_profile_default(tmp
     standard = next(option for option in state.pending_gate.options if option["id"] == "standard_research")
     custom = next(option for option in state.pending_gate.options if option["id"] == "custom")
     assert balanced["is_default"] is True
-    assert "保留候选：180 篇（active_pool_max=180；可选：120/180/240 或自定义）" in balanced["parameter_preview"]
-    assert "深入阅读：目标 60 篇（deep_read=50/60/70；格式：min/target/max）" in balanced["parameter_preview"]
-    assert "保留候选：120 篇（active_pool_max=120；可选：120/180/240 或自定义）" in standard["parameter_preview"]
-    assert "深入阅读：目标 35 篇（deep_read=35/35/45；格式：min/target/max）" in standard["parameter_preview"]
-    assert "input_prompts" in custom
-    assert "manuscript_language" in custom["collect_input"]
-    assert "include_chinese_literature" in custom["collect_input"]
+    assert balanced["parameter_preview"] == "候选 180 | 精读 60 | 摘要轻读 120 | 总覆盖约 180 | 读满目标"
+    assert standard["parameter_preview"] == "候选 120 | 精读 35 | 摘要轻读 120 | 总覆盖约 155 | 读满目标"
+    assert "LLM 解释意图后由本地规则校验" in custom["parameter_preview"]
+    assert "稿件语言与中文文献策略" in custom["parameter_preview"]
+    assert "single_input_examples" in custom
+    assert "collect_input" not in custom
     assert CLIHumanInterface._default_option_id("t2_literature_param_gate", state.pending_gate.options) == "survey_balanced"
 
 
@@ -1204,6 +1210,24 @@ def test_custom_t2_literature_params_can_disable_chinese_for_english_manuscript(
     assert "literature_quality.include_chinese_literature" in payload["parameter_meanings"]
 
 
+def test_english_manuscript_always_excludes_non_seed_chinese_candidates(tmp_workspace):
+    payload = build_literature_param_payload(
+        selected_option="custom",
+        captured={
+            "manuscript_language": "英文",
+            "include_chinese_literature": "true",
+            "base_option": "standard_research",
+        },
+        workspace_dir=tmp_workspace,
+    )
+
+    quality = payload["literature_quality"]
+    assert quality["manuscript_language"] == "en"
+    assert quality["include_chinese_literature"] == "false"
+    assert quality["english_manuscript_policy"] == "exclude_non_seed_chinese"
+    assert quality["effective_non_seed_chinese_action"] == "exclude"
+
+
 def test_t36_template_gate_persists_runtime_confirmed_template(tmp_workspace):
     config = tmp_workspace / "fsm.yaml"
     gates = tmp_workspace / "gates.yaml"
@@ -1363,6 +1387,7 @@ def test_t8_style_template_gate_persists_runtime_confirmed_style(tmp_workspace):
     assert payload["template_family"] == "ccf"
     assert payload["template_id"] == "neurips"
     assert payload["human_interaction_id"]
+    assert payload["venue_profile"] == "neurips_concise"
 
 
 def test_template_gate_custom_cds_normalizes_to_informs(tmp_workspace):
@@ -1491,9 +1516,9 @@ def test_t5_skill_customization_task_advances_without_human_gate(tmp_workspace):
             agent: experimenter
             mode: skill_customization
             outputs:
-              skill_customization_report: external_executor/skills/customization_report.json
-            next_on_success: T5-EXPR-MATERIAL-GATE
-          T5-EXPR-MATERIAL-GATE:
+              skill_specialization_report: external_executor/skill_specialization_report.json
+            next_on_success: T5-EXECUTOR-GATE
+          T5-EXECUTOR-GATE:
             agent: experimenter
         """,
     )
@@ -1510,8 +1535,8 @@ def test_t5_skill_customization_task_advances_without_human_gate(tmp_workspace):
 
     ctx = sm.build_execution_context(tmp_workspace, state)
     assert ctx.mode == "skill_customization"
-    assert ctx.outputs_expected["skill_customization_report"].relative_to(tmp_workspace).as_posix() == (
-        "external_executor/skills/customization_report.json"
+    assert ctx.outputs_expected["skill_specialization_report"].relative_to(tmp_workspace).as_posix() == (
+        "external_executor/skill_specialization_report.json"
     )
 
     state = sm.start_task(state, "run1", workspace_dir=tmp_workspace)
@@ -1531,12 +1556,12 @@ def test_t5_skill_customization_task_advances_without_human_gate(tmp_workspace):
         workspace_dir=tmp_workspace,
     )
     assert state.status == "RUNNING"
-    assert state.current_task == "T5-EXPR-MATERIAL-GATE"
+    assert state.current_task == "T5-EXECUTOR-GATE"
     assert state.pending_gate is None
     assert not (tmp_workspace / "external_executor" / "skills" / "customization_gate_decision.json").exists()
 
 
-def test_t5_reboost_task_advances_to_handoff_without_human_gate(tmp_workspace):
+def test_t5_reboost_task_advances_to_executor_gate_without_human_gate(tmp_workspace):
     config = tmp_workspace / "fsm.yaml"
     gates = tmp_workspace / "gates.yaml"
     _write_yaml(
@@ -1550,8 +1575,8 @@ def test_t5_reboost_task_advances_to_handoff_without_human_gate(tmp_workspace):
             outputs:
               handoff_pack: external_executor/handoff_pack.json
               reboost_report: external_executor/reboost_report.json
-            next_on_success: T5-HANDOFF
-          T5-HANDOFF:
+            next_on_success: T5-EXECUTOR-GATE
+          T5-EXECUTOR-GATE:
             agent: experimenter
         """,
     )
@@ -1581,7 +1606,7 @@ def test_t5_reboost_task_advances_to_handoff_without_human_gate(tmp_workspace):
     )
 
     assert state.status == "RUNNING"
-    assert state.current_task == "T5-HANDOFF"
+    assert state.current_task == "T5-EXECUTOR-GATE"
     assert not (tmp_workspace / "external_executor" / "reboost_gate_decision.json").exists()
     assert not (tmp_workspace / "external_executor" / "skills" / "context-re-boosting" / "SKILL.md").exists()
 

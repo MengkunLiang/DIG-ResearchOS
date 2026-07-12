@@ -1,149 +1,117 @@
-# Project Structure
+# ResearchOS Project Structure
 
-ResearchOS keeps one core implementation and supports two launch modes:
-Native Mode and Docker Mode. Docker is a packaging layer around the same CLI,
-state machine, validators, gates, workspace layout, and artifact contracts.
+ResearchOS has one implementation and one workspace contract. Native and
+Docker Compose runs use the same source tree, configuration hierarchy, state
+machine, and artifacts.
 
-## Top-Level Directories
+## Repository Directories
 
-| Path | Role | Commit Policy |
+| Path | Owns | Commit policy |
 | --- | --- | --- |
-| `researchos/` | Main Python package. Agents, runtime, orchestration, tools, schemas, and skill loading live here. | Commit source and package data. Do not commit caches. |
-| `config/` | Checked-in defaults, runtime settings, model routing, agent parameters, and system contracts. | Commit safe defaults and schemas. Keep secrets out. |
-| `docs/` | User, developer, runtime, and design documentation. | Commit curated docs. Do not store generated artifacts. |
-| `deploy/` | User-facing Docker Compose deployment folder. Contains the single Compose file and wrapper scripts. | Commit wrappers and Compose. Env/config stay at the repository root; do not commit `.env` or generated workspace. |
-| `infra/docker/` | Low-level Docker image build assets and compatibility run helpers. | Commit Dockerfile and helper scripts. User-facing Docker docs should point to `deploy/` first. |
-| `scripts/` | Maintained utility scripts, currently artifact validation, model probing, and recovery helpers. | Commit small reusable utilities only. Do not use this for ad hoc debugging. |
-| `tests/` | Automated pytest coverage. `tests/unit/` is deterministic; `tests/real/` may need credentials or local tools; `tests/manual/` is local-only and ignored. | Commit `tests/unit/` and intentional `tests/real/` tests. Do not commit `tests/manual/`. |
-| `skills/` | Runtime and external executor skills copied or referenced by handoff stages. | Commit skill source and shared references. |
-| `latex_templete/` | Local LaTeX venue templates used by T3.6 and T8/T9 assembly. | Commit template source/assets. Ignore LaTeX build outputs. |
-| `workspace/` | Default local workspace root for Native and Docker mode. Existing user projects and smoke runs live here. | Generated. Do not commit. |
-| `tmp/` | Local temporary experiments and debug output. | Generated. Do not commit. |
+| `researchos/` | Python package: agents, runtime, orchestration, tools, schemas, and skills loader | Commit source; never commit caches. |
+| `config/` | Checked-in defaults and workflow contracts | Commit safe defaults; secrets remain outside. |
+| `docs/` | User, operations, runtime, and contributor documentation | Commit curated documents only. |
+| `deploy/` | User-facing Compose entry point and wrappers | Commit; it has no duplicate config tree. |
+| `infra/docker/` | Dockerfile and low-level image build helpers | Commit; maintainers use it to build `researchos/system:latest`. |
+| `latex_templete/` | Local venue templates used by T3.6/T8/T9 | Commit source/template assets; ignore generated auxiliaries. |
+| `skills/` | Standalone guided Skill source plus the separately governed `external_executor_skills/` protocol tree | Commit source/contracts and references; do not put workspace uploads here. |
+| `scripts/` | Reusable repository maintenance utilities | Commit maintained tools, not ad hoc debugging. |
+| `tests/unit/` | Deterministic automated tests | Commit. |
+| `tests/real/` | Real API, Docker, or local-tool integration tests | Commit intentional tests; they may require local capabilities. |
+| `workspace/` | Default user project root | Generated; do not commit. |
+| `tmp/` | Local scratch work | Generated; do not commit. |
 
-## `deploy/` vs `infra/docker/`
-
-Use `deploy/` when you are a ResearchOS user running the system through Docker
-Compose:
-
-```bash
-cp .env.example .env
-mkdir -p workspace
-docker compose -f deploy/compose.yaml run --rm researchos doctor
-```
-
-`deploy/compose.yaml` is the only Docker Compose entry point. Use
-`docker compose -f deploy/compose.yaml ...` from the repository root, or call
-the wrapper scripts from `deploy/`.
-
-The wrapper scripts set `${RESEARCHOS_UID}:${RESEARCHOS_GID}` automatically on
-systems that expose `id`, so bind-mounted workspace files remain host-editable.
-Direct Compose defaults to `0:0` for compatibility with root-owned checkouts;
-direct Compose users can set UID/GID in `.env` when needed.
-
-The top-level `workspace/` directory owns the host-visible workspace bind
-mount:
+## The Runtime Boundary
 
 ```text
-workspace/<project>  <->  /app/workspace/<project>
+Native:  repository + host Python + host workspace
+Docker:  repository -> image + /app/workspace bind mount
 ```
 
-Use `infra/docker/` when you are maintaining the image itself:
-
-```bash
-docker build -t researchos:test -f infra/docker/Dockerfile .
-bash infra/docker/run.sh doctor --workspace /app/workspace/dev
-```
-
-`infra/docker/` is intentionally lower-level. It should not become a second
-ResearchOS implementation and it should not own user workspace.
-
-Docker Compose also bind-mounts the root `config/` directory read-only into
-`/app/config`, so Docker Mode and Native Mode share one non-secret
-configuration tree. There is intentionally no `deploy/config/` copy.
-
-There is intentionally no root `docker-compose.yml` or root `compose.yaml`.
-`deploy/compose.yaml` is the single Compose entry point. `pyproject.toml` is not
-a deployment duplicate; it is the Python package, console script, package data,
-and pytest configuration file.
-
-## `scripts/` vs `tests/`
-
-`tests/` is the automated test suite:
-
-```bash
-python -m pytest tests/unit -q
-```
-
-The repository default pytest discovery is intentionally scoped to
-`tests/unit/`, so a plain `python -m pytest -q` does not accidentally run real
-API, Docker, or local-tool integration checks. Run those explicitly:
-
-```bash
-python -m pytest tests/real -q
-```
-
-`scripts/` is for maintained utilities that are useful across projects. Ad hoc
-manual diagnostics belong in local ignored `tests/manual/`. Repeatable tests
-belong under `tests/unit/` or `tests/real/`.
-
-## Native Mode Workspace
-
-Native Mode works directly on a host path:
-
-```bash
-researchos init-workspace --workspace ./workspace/project-a \
-  --project-id project-a \
-  --topic "memory systems for llm agents"
-researchos run --workspace ./workspace/project-a
-```
-
-The workspace contains the research artifacts and `_runtime/` provenance. It is
-the source of truth for resume.
-
-## Docker Mode Workspace
-
-Docker Mode uses the same workspace structure through a bind mount:
-
-```bash
-docker compose -f deploy/compose.yaml run --rm researchos \
-  run --workspace /app/workspace/project-a
-```
-
-The real files are on the host:
+Compose mounts the same two authoritative paths:
 
 ```text
-workspace/project-a
+./workspace  <->  /app/workspace      writable project artifacts
+./config     ->   /app/config          read-only shared configuration
 ```
 
-Container paths such as `/app/workspace/project-a` may appear in runtime
-provenance logs, but artifact contracts should prefer workspace-relative paths.
+`deploy/compose.yaml` is the only Compose entry point. `infra/docker/` is not a
+second deployment or configuration tree. Never create a `deploy/config/` copy.
 
-## External Executor
+## TeX Ownership
 
-The default external executor flow is host-side:
+| Location | Purpose | Required contents |
+| --- | --- | --- |
+| Host OS | Native compilation or first choice for `auto` | `latexmk`, pdfLaTeX, XeLaTeX, BibTeX, and Chinese TeX packages when Chinese output is needed. |
+| `infra/docker/Dockerfile` | Compose-native compilation and native Docker fallback image | The same TeX toolchain is installed in `researchos/system:latest`. |
+| `requirements.txt` | Python runtime, PDF/BibTeX tooling and deterministic survey-figure dependencies | Never add TeX packages here; matplotlib is Python-level, TeX remains system/image-owned. |
+| Workspace | TeX source and generated evidence | `drafts/survey/` and `submission/bundle/`; PDFs/logs are generated, not source. |
 
-```bash
-cd workspace/project-a/external_executor/workdir
-codex
-```
+The running Compose service does not receive a Docker socket. It compiles with
+the TeX packages already inside its own image. See [docker.md](docker.md).
 
-The executor writes results back into the same workspace. Then ResearchOS
-resumes through the same CLI:
+## Workspace Directories
 
-```bash
-docker compose -f deploy/compose.yaml run --rm researchos \
-  resume --workspace /app/workspace/project-a
-```
+Each `init-workspace`, `run`, `resume`, and `run-task` operation initializes
+missing directories and writes non-destructive `_DIR_GUIDE.md` files.
 
-There is no upload/download step, Docker-in-Docker, Docker socket mount, or
-privileged container requirement in the default flow.
+| Path | Primary content | Main consumers |
+| --- | --- | --- |
+| `project.yaml` | Research topic and project-level settings | All stages. |
+| `state.yaml` | Current task, status, and pending gate | State machine and `resume`. |
+| `user_seeds/` | User-provided PDFs, initial ideas, and scope constraints | T1-T4 and writing. |
+| `literature/` | Search records, retained pool, notes, synthesis, and citation provenance | T2-T4/T8. |
+| `ideation/` | Candidate pool, Gate1 selection, hypotheses, and experiment plan | T4-T5. |
+| `external_executor/` | Handoff protocol, skills, materials gate, result pack | T5-T7. |
+| `experiments/` | Ingested runs, integrity audit, and result-to-claim artifacts | T7-T8. |
+| `drafts/` | Survey/paper sections, audits, templates, deterministic figures, and compile evidence | T3.6/T8/T9. |
+| `user_inputs/` | Standalone Skill uploads, deterministic intake checklist, and focused multi-turn follow-up requests | Guided Skills. |
+| `submission/` | Migrated submission bundle and compile report | T9. |
+| `_runtime/` | Logs, traces, pipeline resume states, guided Skill sessions, and failed-artifact archives | Operations and recovery. |
 
-## Files That Should Stay Local
+### Guided Skill uploads and sessions
 
-Keep these out of git and Docker images:
+Standalone Skills never ask users to copy material into the repository's `skills/`
+source tree. Each Skill declares its accepted workspace paths. User-supplied
+standalone material normally belongs under a named directory such as
+`user_inputs/paper-outline/brief.md` or `user_inputs/paper-revision/reviews.md`.
+Existing pipeline artifacts (for example `drafts/outline.md` or
+`literature/synthesis.md`) may be accepted as alternatives when the Skill
+contract says so.
 
-- `.env`, `.env.*`
-- `workspace/`
-- `_runtime/` logs and traces
-- generated PDFs, LaTeX auxiliary files, and submission build outputs
-- external datasets, model weights, credentials, and executor scratch results
+Each invocation stores only interaction state—not the uploaded contents—at
+`_runtime/skill_sessions/<session-id>.json`. The file records the request,
+which declared input path passed validation, the last observable step/phase/tool,
+output existence, final stop reason, metrics, and trace path. It is safe to inspect and is the source of truth for
+`researchos run-skill ... --resume` and `researchos skill-status`.
+
+Every guided Skill also writes `user_inputs/<skill>/_intake.md`. It distinguishes an independent workspace,
+where the user supplies the declared upload paths, from a project workspace, where known artifacts are only candidate
+inputs. A running Skill that finds a semantic gap writes `user_inputs/<skill>/_followup_request.md` before asking the
+human; this keeps the question, answer path and later resume visible in project data. These two files are process
+metadata, not paper evidence and not final Skill outputs.
+
+T8 keeps a venue-aware writing contract in `drafts/writing_style.json` and a visible research-story contract in
+`drafts/writing_storyline.md`. The latter links the problem, rationale or technical root reason, insight, design,
+evidence, alternative explanations, limitations and reviewer questions. `drafts/craft_audit.*` then records internal
+profile diagnostics and section counts; neither file defines official submission requirements.
+
+`drafts/survey/figures/` is generated project data. Its
+`survey_visual_manifest.json` records which comparison-table-derived figures exist, their input fingerprints,
+font/DPI, and explicit skipped reasons. Do not upload arbitrary images there or treat a skipped manifest as a request
+to fabricate a visual.
+
+The workspace is durable project data. Do not delete it when rebuilding a
+Docker image. Do not make Native and Docker processes write it concurrently.
+
+## Repository Versus Project Data
+
+Keep these local and out of Git/Docker images:
+
+- `.env` and provider credentials
+- `workspace/` artifacts, traces, PDFs, and submission build outputs
+- datasets, model weights, external code checkouts, and executor scratch data
+- `tests/manual/` diagnostics and temporary images
+
+Use `docs/agent_pipeline.md` for the full artifact contract and
+`docs/logging.md` for diagnosing a specific workspace.

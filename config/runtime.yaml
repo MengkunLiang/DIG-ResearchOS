@@ -78,14 +78,15 @@ web_fetch:
 
 # LaTeX backend 配置
 latex:
-  # auto: latexmk -> tectonic -> export/wait；Docker fallback 仅在 allow_docker_fallback=true 时允许
+  # auto: 优先 latexmk -> tectonic；宿主缺少 TeX 时自动使用下方 allowlist 中的 Docker TeX 镜像。
+  # 在已经运行于容器内的部署中，镜像自身必须包含 latexmk；不会尝试 Docker-in-Docker。
   default_backend: "auto"
-  allow_docker_fallback: false
+  allow_docker_fallback: true
   docker_image: "researchos/system:latest"
 
 # Docker 镜像配置
 docker:
-  # 可选轻量镜像：用于隔离运行 CLI，不是默认实验/LaTeX 环境
+  # 可复现 CLI + TeX 镜像：用于 Compose 运行与宿主机缺 TeX 时的编译 fallback；不是 GPU 实验环境。
   default_image: "researchos/system:latest"
 
   # 允许使用的 Docker 镜像白名单

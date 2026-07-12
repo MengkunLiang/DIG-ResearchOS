@@ -44,7 +44,19 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-`requirements.txt` 是唯一依赖文件，包含 ResearchOS runtime、LLM 路由、PDF/BibTeX 处理和单元测试依赖。默认安装不包含 CUDA、PyTorch、WandB 或本地实验训练栈；真实实验由外部执行器或项目自定义环境负责。
+`requirements.txt` 是唯一的 Python 依赖文件，包含 ResearchOS runtime、LLM 路由、PDF/BibTeX 处理、确定性综述数据图（matplotlib）和单元测试依赖。默认安装不包含 CUDA、PyTorch、WandB 或本地实验训练栈；真实实验由外部执行器或项目自定义环境负责。
+
+`requirements.txt` 不包含 TeX Live。若要在宿主机真实编译 T3.6 综述或 T9 投稿包，安装系统级 TeX：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  latexmk texlive-latex-base texlive-latex-extra \
+  texlive-fonts-recommended texlive-xetex texlive-lang-chinese
+```
+
+本地运行时 `auto` 优先使用这些本机工具；本机缺失时会回退到配置的 Docker TeX 镜像。运行
+`python -m researchos.cli doctor --workspace ./workspace/local-test2` 可查看实际后端。
 
 ### 2.2 配置 `.env`
 
@@ -168,6 +180,12 @@ docker compose -f deploy/compose.yaml build
 docker compose -f deploy/compose.yaml run --rm researchos doctor
 ```
 
+Compose 镜像已内置 `latexmk`、pdfLaTeX、XeLaTeX、BibTeX 和中文 TeX 包，T3.6/T9 在容器内直接编译，不依赖 Docker-in-Docker。首次构建较大；若 Linux 上 Docker bridge 下载包明显慢于宿主机，可用：
+
+```bash
+docker build --network=host -t researchos/system:latest -f infra/docker/Dockerfile .
+```
+
 ### 3.3 初始化容器内 workspace
 
 ```bash
@@ -238,14 +256,7 @@ researchos resume --workspace ./workspace/local-test2
 ```bash
 researchos run-task T2 --workspace ./workspace/local-test2
 researchos run-task T3 --workspace ./workspace/local-test2
-researchos run-task T5-REBOOST-GATE --workspace ./workspace/local-test2
-researchos run-task T5-HANDOFF --workspace ./workspace/local-test2
-researchos run-task T5-SKILL-CUSTOMIZATION-GATE --workspace ./workspace/local-test2
-researchos run-task T5-EXPR-MATERIAL-GATE --workspace ./workspace/local-test2
-researchos run-task T5-EXECUTOR-GATE --workspace ./workspace/local-test2
-researchos run-task T5-DRY-RUN --workspace ./workspace/local-test2
-researchos run-task T5-EXTERNAL-WAIT --workspace ./workspace/local-test2  # 真实外部执行器写完 result_pack/status/manifest 后再跑
-researchos run-task T7-INGEST --workspace ./workspace/local-test2  # 已有 dry-run 或 T5-EXTERNAL-WAIT 验收结果后再跑
+researchos run-task T7-INGEST --workspace ./workspace/local-test2  # 外部执行器写回结果并 resume 验收后再跑
 researchos run-task T7-AUDIT --workspace ./workspace/local-test2
 researchos run-task T7-POST-NOVELTY --workspace ./workspace/local-test2
 researchos run-task T7-CLAIMS --workspace ./workspace/local-test2
@@ -255,14 +266,32 @@ researchos run-task T9 --workspace ./workspace/local-test2
 
 如果这些 task 已经在同一个 workspace 里落过产物，再次运行时通常会优先基于已有 artifact 继续，而不是无条件从空白开始。
 
-T5-T7 外部实验链路推荐直接用 `researchos run` / `researchos resume` 跑完整状态机。关键节点如下，其中 re-boost 和 skill 专属化都会自动调用当前配置的 LLM provider；后续材料放置和真实外部执行仍需要人工配合：
+T5 外部实验链路推荐按三步手动执行：
 
-- `T5-REBOOST-GATE`：直接调用当前配置的 LLM provider 生成 `external_executor/handoff_pack.json#context_reboost` 和 `external_executor/reboost_report.json`，不会暂停等待手动 Codex
-- `T5-SKILL-CUSTOMIZATION-GATE`：直接调用 LLM provider 读取 `external_executor/skills/skills_customization/SKILL.md` 和 `template_manifest.json`，把 13 个模板 skill 原地改写为项目专属版本，并写出 `external_executor/skills/customization_report.json`
-- `T5-EXPR-MATERIAL-GATE`：把 baseline model、dataset、外部代码、权重和材料说明放入 `external_executor/expr/`，完成后运行 `researchos resume --workspace ./workspace/local-test2`
-- `T5-EXECUTOR-GATE`：如果选择 Codex CLI 真实执行，启动 Codex CLI，提交 `请读取 external_executor/AGENTS.md，并执行 external_executor/skills/research_execution/SKILL.md。`；外部执行写完 `result_pack.json`、`executor_status.json`、`run_manifest.json` 后运行 `researchos resume --workspace ./workspace/local-test2`
+```bash
+researchos run-task T5-REBOOST --workspace ./workspace/local-test2
+researchos specialize-executor-skills --workspace ./workspace/local-test2
+researchos run-task T5-EXECUTOR-GATE --workspace ./workspace/local-test2
+```
 
-`T5-DRY-RUN` 只验证外部执行器协议和 T7 摄取链路，不是论文实验结果，也不能作为 claim 证据。
+三步含义：
+
+- `T5-REBOOST`：调用当前 LLM provider 读取 Pre-T5 产物，生成 `external_executor/handoff_pack.json#context_reboost` 和 `external_executor/reboost_report.json`，并补全 `AGENTS.md`、`codex_prompt.md`、`expected_outputs_schema.json`、`allowed_paths.txt` 等 handoff 控制文件
+- `specialize-executor-skills`：调用当前 LLM provider，读取根目录 `skills/external_executor_skills/`、handoff、schema 和来源 artifact，生成 `external_executor/project_skill_context.yaml`、`external_executor/schemas/project_skill_context.schema.json`、`external_executor/skills/` 和 `external_executor/skill_specialization_report.json`
+- `T5-EXECUTOR-GATE`：选择 Codex CLI 后退出 ResearchOS，按提示在 workspace 根目录启动 Codex，并输入：`请读取 external_executor/AGENTS.md，并执行 external_executor/skills/research-execution/SKILL.md。`
+
+Codex 完成后必须写出 `external_executor/result_pack.json`、`external_executor/executor_status.json` 和 `external_executor/run_manifest.json`。随后回到 ResearchOS：
+
+```bash
+researchos resume --workspace ./workspace/local-test2
+```
+
+Skill suite 专属化也支持预演或检查已有 LLM 专属化产物：
+
+```bash
+researchos specialize-executor-skills --workspace ./workspace/local-test2 --dry-run
+researchos specialize-executor-skills --workspace ./workspace/local-test2 --validate-only
+```
 
 ### 4.5 从其他 workspace 复制前置产物
 
@@ -325,17 +354,69 @@ researchos validate --workspace ./workspace/local-test2 --task T7-POST-NOVELTY
 researchos validate --workspace ./workspace/local-test2 --task T7-CLAIMS
 ```
 
-### 4.10 列出 skills
+### 4.10 查看可用 Skill 与输入契约
 
 ```bash
 researchos list-skills --skills-root ./skills
+researchos browse-skills --workspace ./workspace/local-test2 --skills-root ./skills
+researchos describe-skill paper-outline --workspace ./workspace/local-test2
 ```
 
-### 4.11 运行 skill
+`list-skills` 只读取并校验根目录 `skills/*/SKILL.md`；不会调用 LLM。它会按研究流程显示卡片；
+`browse-skills` 可输入序号/名称看完整功能与上传契约，输入 `run <序号>` 才开始引导会话；还支持
+`搜索 文献` / `search citation`、`分类 论文写作` / `category 论文写作`、`all`、`help` 和 `q`。
+`describe-skill` 是开始前的首选命令：它会展示必需/可选上传文件、每个文件应放在
+workspace 的哪个相对路径、输出产物及恢复方式。
+
+### 4.11 启动可恢复的论文 Skill
+
+先按契约准备输入。`paper-outline` 的最小输入是：
+
+```text
+workspace/local-test2/user_inputs/paper-outline/brief.md
+```
+
+该文件至少写明问题、方法设想、已有证据、目标读者和限制。然后启动会话：
 
 ```bash
-researchos run-skill deepxiv "summarize recent memory papers for llm agents"
+researchos run-skill paper-outline \
+  "为英文实证论文建立 NeurIPS 风格大纲" \
+  --workspace ./workspace/local-test2 \
+  --session-id outline-v1
 ```
+
+若文件缺失或格式不对，CLI 只写
+`_runtime/skill_sessions/outline-v1.json` 与 `user_inputs/paper-outline/_intake.md` 并返回等待输入；不会消耗 LLM。独立 workspace 的 `_intake.md` 是上传清单。项目 workspace 会自动发现候选文件，但运行时仍会语义核验；若材料不足，会写 `user_inputs/paper-outline/_followup_request.md`，说明需要补什么及其路径。补齐后：
+
+```bash
+researchos run-skill paper-outline \
+  --workspace ./workspace/local-test2 \
+  --session-id outline-v1 \
+  --resume
+
+researchos skill-status --workspace ./workspace/local-test2
+```
+
+使用 `--interactive` 可在任务说明缺失时输入多行内容，以单独一行 `END` 提交：
+
+```bash
+researchos run-skill literature-evidence-scout \
+  --workspace ./workspace/local-test2 \
+  --session-id intro-evidence \
+  --interactive
+```
+
+常用学术 Skill 的顺序是：`research-scope`（范围）→ `literature-query-plan` 或
+`literature-evidence-scout`（检索）→ `paper-note-review`（回查笔记 section）→
+`idea-fanout-jury` / `hypothesis-compiler`（Idea/假设）→ `experiment-design-review`
+（实验设计审查）→ `paper-outline` / `paper-write`（论证和初稿）→
+`citation-provenance-audit` / `paper-polish` / `paper-revision`（审阅修订）→
+`paper-compile` / `submission-readiness`（真实 PDF 和投稿核对）。综述可用
+`survey-visuals`：它只生成由 `comparison_table.csv` 支撑的 150 DPI 英文学术图，数据不够
+时写 `skipped` manifest，不生成装饰图。每一步都可单独 `describe-skill <名称>` 查询，不需要猜文件名。
+
+`paper-outline` 和 `paper-write` 会生成 `drafts/writing_storyline.md`，再按
+`drafts/writing_style.json` 的 venue profile 组织论文。UTD/IS/INFORMS 强调 rationale、机制、设计知识与有边界的实践含义；NeurIPS/ICML/ICLR/KDD 强调技术瓶颈、core insight、方法和 ablation/analysis/failure evidence。profile 中的章节密度只是内部提示，投稿页数与格式仍以当前官方 CFP/template 为准。
 
 ---
 
@@ -378,8 +459,10 @@ researchos run-skill deepxiv "summarize recent memory papers for llm agents"
 看：
 
 - `workspace/local-test2/external_executor/handoff_pack.json`
-- `workspace/local-test2/external_executor/skills/template_manifest.json`
-- `workspace/local-test2/external_executor/skills/customization_report.json`
+- `workspace/local-test2/external_executor/project_skill_context.yaml`
+- `workspace/local-test2/external_executor/schemas/project_skill_context.schema.json`
+- `workspace/local-test2/external_executor/skill_specialization_report.json`
+- `workspace/local-test2/external_executor/skills/research-execution/SKILL.md`
 - `workspace/local-test2/external_executor/expr/MATERIALS_CHECKLIST.json`
 - `workspace/local-test2/external_executor/result_pack.json`
 - `workspace/local-test2/external_executor/executor_status.json`
@@ -402,6 +485,9 @@ researchos run-skill deepxiv "summarize recent memory papers for llm agents"
 看：
 
 - `workspace/local-test2/drafts/paper.tex`
+- `workspace/local-test2/drafts/writing_style.json`
+- `workspace/local-test2/drafts/writing_storyline.md`
+- `workspace/local-test2/drafts/craft_audit.md`
 - `workspace/local-test2/drafts/review_rounds/`
 - `workspace/local-test2/submission/bundle/`
 - `workspace/local-test2/submission/migration_report.md`

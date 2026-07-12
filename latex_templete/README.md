@@ -2,6 +2,15 @@
 
 This directory contains local template fallbacks and uploaded venue templates.
 
+## Compiler Environment
+
+Template source is versioned here; compilers and fonts are not Python
+dependencies. `basic_zh` and Chinese survey/paper output require XeLaTeX plus
+Chinese TeX packages. ResearchOS supports either a host TeX Live installation
+or the built-in `researchos/system:latest` Compose image, both with `latexmk`,
+pdfLaTeX, XeLaTeX, BibTeX, and Chinese TeX support. See
+[../docs/docker.md](../docs/docker.md) for backend selection and recovery.
+
 - `normal/basic_en.tex`: minimal English article fallback.
 - `normal/basic_zh.tex`: minimal Chinese article fallback for XeLaTeX/CJK-capable environments.
 - `utd/informs/INFORMS-ISRE-Template-6-10-2024/`: uploaded official INFORMS ISRE 2024 package, used by default for `template_id=informs`.

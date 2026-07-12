@@ -34,6 +34,7 @@ from researchos.tools.manuscript import (
     BuildManuscriptRegistriesTool,
     BuildManuscriptRevisionPatchesTool,
     BuildManuscriptResourceIndexTool,
+    BuildSectionEvidenceSupplementTool,
     InitializeManuscriptStateTool,
     PlanManuscriptEvidenceTool,
     PlanManuscriptSectionsTool,
@@ -908,6 +909,18 @@ async def test_manuscript_resource_index_plan_assemble_and_audit(tmp_workspace: 
     assert resource_index["paper_note_cards"]
     assert resource_index["paper_note_cards"][0]["path"] == "literature/paper_notes/core_note.md"
     assert resource_index["paper_note_cards"][0]["core_approach_view"].startswith("Full-text design view")
+
+    supplement_tool = BuildSectionEvidenceSupplementTool(policy)
+    supplement = await supplement_tool.execute(section_id="related_work", min_cards=2)
+    assert supplement.ok, supplement.content
+    supplement_path = tmp_workspace / "drafts" / "section_outlines" / "related_work_evidence_supplement.md"
+    assert supplement_path.exists()
+    supplement_text = supplement_path.read_text(encoding="utf-8")
+    assert "Section Evidence Supplement: Related Work" in supplement_text
+    assert "Full-text design view" in supplement_text
+    assert "Transfers to adaptive perturbation settings" in supplement_text
+    assert "background-only" in supplement_text
+    assert "weak_note" in supplement_text
     assert resource_index["paper_note_cards"][0]["bridge_point"].startswith("Transfers to adaptive")
     assert "core_approach_view" in resource_index["paper_note_cards"][0]["sections_available"]
     weak_card = next(item for item in resource_index["paper_note_cards"] if item["note_id"] == "weak_note")

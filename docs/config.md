@@ -34,6 +34,7 @@
 - [config/system_config/gates.yaml](../config/system_config/gates.yaml)
 - [config/system_config/cdr_schema.yaml](../config/system_config/cdr_schema.yaml)
 - [config/system_config/venue_style_map.yaml](../config/system_config/venue_style_map.yaml)
+- [config/system_config/venue_writing_profiles.yaml](../config/system_config/venue_writing_profiles.yaml)
 - [config/mcp.example.yaml](../config/mcp.example.yaml)
 - [config/mcp.yaml](../config/mcp.yaml)
 - [.env.example](../.env.example)
@@ -41,13 +42,14 @@
 一句话理解：
 
 - `user_settings.yaml`：模型、预算、timeout/retry/budget escalation 的日常入口，`llm.*` 管模型，`budget.*` 管预算，`runtime.*` 管运行时扩限和重试
-- `runtime.yaml`：workspace、日志、UI、human interface、web_fetch、Docker 镜像等 runtime 基础行为
+- `runtime.yaml`：workspace、日志、UI、human interface、web_fetch、LaTeX backend、Docker 镜像等 runtime 基础行为
 - `model_routing.yaml`：endpoint/profile/fallback 候选定义
 - `agent_params.yaml`：agent capability registry，包含工具、权限、prompt/schema、behavior、mode 说明；T2/T3 文献流程机械阈值也只在这里配置
 - `system_config/state_machine.yaml`：任务图，系统契约，不是日常参数表
 - `system_config/gates.yaml`：human gate 展示与分支，系统契约，不是日常参数表
 - `system_config/cdr_schema.yaml`：Reader/Ideation/Writer 共用的 CDR schema
 - `system_config/venue_style_map.yaml`：T8 style gate 的 venue 默认建议
+- `system_config/venue_writing_profiles.yaml`：T8 与论文 Skills 的内部叙事、证据强调、storyline headings 与 section 写作密度档案；不是官方页数或投稿政策
 - `mcp*.yaml`：MCP server 描述
 - `.env`：密钥和少量环境变量
 
@@ -80,6 +82,20 @@
 - `llm.agents.submission.tier: heavy`：T9 投稿包、LaTeX 修复和最终格式检查
 
 T3.6 和 T8 已经分离：T3.6 使用 `survey_writer`，产物在 `drafts/survey/`，只把 `ideation/survey_insights.json` 作为可选素材传给 T4；T8 使用 `writer`，产物在 `drafts/sections/`、`drafts/paper.tex` 和 `submission/` 链路中。要调综述写作，只改 `survey_writer`；要调主论文写作，只改 `writer`。
+
+### 2.1.3 Venue writing profiles
+
+`venue_style_map.yaml` 只做粗粒度 IS/CCF-A 建议；
+`venue_writing_profiles.yaml` 决定 Writer 的内部论证重心和写作密度，例如：
+
+- `informs_story`：问题/理论理由 -> 机制 -> design principle -> evidence -> 有边界的理论与实践含义。
+- `neurips_concise`、`icml_concise`、`iclr_concise`：技术瓶颈 -> 根因 -> insight -> method -> result/ablation/analysis/failure evidence。
+- `kdd_technical`：数据/部署约束 -> 技术挑战 -> 方法 -> 强基线、效率和稳健性证据。
+
+T8 gate 会将解析结果写进 `drafts/writing_style.json: venue_profile`。T8-WRITE 再生成
+`drafts/writing_storyline.md`，`audit_writing_craft` 仅以 WARN 形式报告 profile、section word count
+和 storyline coverage。不要把这份配置当作任何会议的当年 page limit、anonymity rule、format policy
+或 checklist；最终提交前必须用当前官方材料复核。
 
 ### 2.1.2 T2/T3 文献运行参数
 
@@ -216,6 +232,9 @@ runtime:
 - `ui.no_banner`
 - `web_fetch.allowed_schemes`
 - `web_fetch.allowed_hosts`
+- `latex.default_backend`
+- `latex.allow_docker_fallback`
+- `latex.docker_image`
 
 ### 4.1 `workspace`
 
@@ -310,6 +329,26 @@ web_fetch:
 作用：
 
 - 控制 `web_fetch` 工具的 allowlist
+
+### 4.8 `latex`
+
+```yaml
+latex:
+  default_backend: "auto"
+  allow_docker_fallback: true
+  docker_image: "researchos/system:latest"
+```
+
+这是 T3.6/T9 真实 PDF 编译的后端策略，不是 Python 依赖配置。`auto` 的顺序是：
+
+1. 当前环境的 `latexmk`
+2. 当前环境的 `tectonic`
+3. 已配置且 allowlist 允许的 Docker TeX 镜像（仅当 fallback 为 `true`）
+
+宿主机运行时第 3 项会启动隔离的 Docker 编译容器；Compose 运行时，应用容器必须自身安装
+TeX，runtime 不会尝试 Docker-in-Docker。默认镜像已包含 `latexmk`、pdfLaTeX、XeLaTeX、
+BibTeX 与中文 TeX 包。用 `researchos doctor --workspace ...` 查看实际选择，而不是依赖
+某个命令是否恰好在 PATH。
 
 ---
 
@@ -608,7 +647,7 @@ agents:
 
 自定义输入可以用自然语言表达，例如 `总共30，精读15，粗读15，英文稿`。ResearchOS 会规范成同一套结构化字段：`coverage_total=30`、`deep_read_target=15`、`abstract_sweep_target=15`、`manuscript_language=en`。如果用户给出“精读 X + 粗读/略读 Y”但没有显式写 `active_pool_max`，系统会把本轮保留候选目标设为 `X+Y`，避免沿用标准档的 120。`active_pool_max` 仍表示 T2 保留候选上限，不是精读数；用户说“总共 N”时默认表示本轮阅读覆盖总量，通常等于精读目标加粗读目标。
 
-这层解析目前先用确定性 parser 覆盖常见中英文表达，字段 schema 固定，后续可接入 LLM intent parser 产出同样字段；无 API key、CI、Docker 和 smoke 模式仍不会因为 LLM 不可用而阻塞。`reader.modes.read.behavior.abstract_sweep` 当前默认是有上限的轻量补读取向：
+这层先调用当前 LLM 路由的参数意图解释器，把完整自然语言输入映射到固定 schema；确定性 parser 同时运行作为本地/CI/provider 不可用时的 fallback，且明确字段规则优先于 LLM 猜测。这样用户可一次输入中英文混合需求，同时不会因为短暂 provider 故障而失去参数 gate。最终保存的 `parser_source` 与 fallback 原因会写入参数决策，便于审计。`reader.modes.read.behavior.abstract_sweep` 当前默认是有上限的轻量补读取向：
 
 - `expected_notes_ratio: 1.0` 表示无 `deep_read_queue` 的旧 workspace fallback 也按输入池 100% 校验，不再按 80% 放行。
 - `lite_paper_num: 120` 表示研究论文默认最多处理 120 个 abstract sweep 候选；综述均衡 gate 也默认使用 120，强覆盖默认 180。显式写 `all_readable` 时，只表示在保留候选 active pool 内不设上限，不会全读 `papers_backlog.jsonl`。
@@ -904,6 +943,9 @@ ResearchOS 只保留一个 Python 依赖文件：
 
 这个文件覆盖本地开发、CLI 运行、LLM 调用、PDF/BibTeX 处理和单元测试。默认依赖不包含 CUDA、PyTorch、WandB、Transformers 或本地训练栈；真实实验依赖应放在外部执行器 workdir、项目自定义环境或用户自己的实验容器中。
 
+TeX Live、`latexmk` 和 CJK 字体同样不属于 `requirements.txt`：它们是系统二进制/字体依赖。
+本地安装和 Compose 镜像策略见 [docker.md](docker.md)。
+
 ---
 
 ## 12. 当前哪些字段已经接线，哪些只是部分接线
@@ -1053,7 +1095,7 @@ budget:
 
 - `.env`
 - `config/user_settings.yaml`
-- 偶尔 `runtime.yaml`（workspace、日志、UI、web_fetch、Docker 镜像等基础行为）
+- 偶尔 `runtime.yaml`（workspace、日志、UI、web_fetch、LaTeX backend、Docker 镜像等基础行为）
 
 ### 14.2 开发者
 

@@ -1,0 +1,594 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ResearchOS Project Skill Context",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schema_version",
+    "generated_at",
+    "source_artifacts",
+    "project",
+    "research",
+    "method",
+    "baselines",
+    "experiment",
+    "resources",
+    "implementation",
+    "execution",
+    "outputs",
+    "field_metadata"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "project_skill_context.v1"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source_artifacts": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/pathOrNull"
+      },
+      "required": [
+        "handoff",
+        "project",
+        "hypothesis",
+        "experiment_plan",
+        "novelty_audit",
+        "expected_outputs",
+        "agents_policy",
+        "allowed_paths"
+      ]
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_id",
+        "title",
+        "goal",
+        "domain"
+      ],
+      "properties": {
+        "project_id": {
+          "$ref": "#/$defs/stringOrNull"
+        },
+        "title": {
+          "$ref": "#/$defs/stringOrNull"
+        },
+        "goal": {
+          "$ref": "#/$defs/stringOrNull"
+        },
+        "domain": {
+          "$ref": "#/$defs/stringOrNull"
+        }
+      }
+    },
+    "research": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "central_hypothesis",
+        "contribution_type",
+        "novelty_boundary",
+        "core_claims",
+        "claim_boundaries",
+        "must_not_claim",
+        "reviewer_questions"
+      ],
+      "properties": {
+        "central_hypothesis": {
+          "$ref": "#/$defs/stringOrNull"
+        },
+        "contribution_type": {
+          "$ref": "#/$defs/stringOrNull"
+        },
+        "novelty_boundary": {
+          "$ref": "#/$defs/stringList"
+        },
+        "core_claims": {
+          "$ref": "#/$defs/objectList"
+        },
+        "claim_boundaries": {
+          "$ref": "#/$defs/stringList"
+        },
+        "must_not_claim": {
+          "$ref": "#/$defs/stringList"
+        },
+        "reviewer_questions": {
+          "$ref": "#/$defs/stringList"
+        }
+      }
+    },
+    "method": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "intent_status",
+        "central_mechanism_hypothesis",
+        "core_mechanism",
+        "must_preserve_components",
+        "candidate_components",
+        "expected_algorithm_flow",
+        "allowed_refinements",
+        "forbidden_silent_changes",
+        "mechanism_to_ablation",
+        "implementation_questions",
+        "implementation_acceptance",
+        "scope_change_triggers",
+        "attribution_requirements",
+        "initial_framework_figure_intent"
+      ],
+      "properties": {
+        "intent_status": {
+          "const": "draft_intent_only"
+        },
+        "central_mechanism_hypothesis": {
+          "$ref": "#/$defs/stringOrNull"
+        },
+        "core_mechanism": {
+          "$ref": "#/$defs/stringOrNull"
+        },
+        "must_preserve_components": {
+          "$ref": "#/$defs/objectList"
+        },
+        "candidate_components": {
+          "$ref": "#/$defs/objectList"
+        },
+        "expected_algorithm_flow": {
+          "$ref": "#/$defs/objectList"
+        },
+        "allowed_refinements": {
+          "$ref": "#/$defs/stringList"
+        },
+        "forbidden_silent_changes": {
+          "$ref": "#/$defs/stringList"
+        },
+        "mechanism_to_ablation": {
+          "$ref": "#/$defs/objectList"
+        },
+        "implementation_questions": {
+          "$ref": "#/$defs/stringList"
+        },
+        "implementation_acceptance": {
+          "$ref": "#/$defs/stringList"
+        },
+        "scope_change_triggers": {
+          "$ref": "#/$defs/stringList"
+        },
+        "attribution_requirements": {
+          "$ref": "#/$defs/stringList"
+        },
+        "initial_framework_figure_intent": {
+          "$ref": "#/$defs/object"
+        }
+      }
+    },
+    "baselines": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required",
+        "optional",
+        "replacement_policy",
+        "identity_requirements",
+        "fairness_constraints",
+        "expected_reference_results",
+        "allowed_repairs",
+        "forbidden_repairs",
+        "reproduction_acceptance",
+        "known_risks"
+      ],
+      "properties": {
+        "required": {
+          "$ref": "#/$defs/objectList"
+        },
+        "optional": {
+          "$ref": "#/$defs/objectList"
+        },
+        "replacement_policy": {
+          "$ref": "#/$defs/object"
+        },
+        "identity_requirements": {
+          "$ref": "#/$defs/stringList"
+        },
+        "fairness_constraints": {
+          "$ref": "#/$defs/stringList"
+        },
+        "expected_reference_results": {
+          "$ref": "#/$defs/objectList"
+        },
+        "allowed_repairs": {
+          "$ref": "#/$defs/stringList"
+        },
+        "forbidden_repairs": {
+          "$ref": "#/$defs/stringList"
+        },
+        "reproduction_acceptance": {
+          "$ref": "#/$defs/stringList"
+        },
+        "known_risks": {
+          "$ref": "#/$defs/stringList"
+        }
+      }
+    },
+    "experiment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "task",
+        "benchmarks",
+        "datasets",
+        "splits",
+        "preprocessing",
+        "primary_metrics",
+        "secondary_metrics",
+        "seed_policy",
+        "minimum_experiment_loop",
+        "claim_evidence_matrix",
+        "required_experiment_types",
+        "comparison_axes",
+        "practical_thresholds",
+        "important_subsets",
+        "known_confounders",
+        "interpretation_boundaries",
+        "protocol_constraints",
+        "statistical_policy"
+      ],
+      "properties": {
+        "task": {
+          "$ref": "#/$defs/stringOrNull"
+        },
+        "benchmarks": {
+          "$ref": "#/$defs/objectList"
+        },
+        "datasets": {
+          "$ref": "#/$defs/objectList"
+        },
+        "splits": {
+          "$ref": "#/$defs/objectList"
+        },
+        "preprocessing": {
+          "$ref": "#/$defs/stringList"
+        },
+        "primary_metrics": {
+          "$ref": "#/$defs/objectList"
+        },
+        "secondary_metrics": {
+          "$ref": "#/$defs/objectList"
+        },
+        "seed_policy": {
+          "$ref": "#/$defs/object"
+        },
+        "minimum_experiment_loop": {
+          "$ref": "#/$defs/stringList"
+        },
+        "claim_evidence_matrix": {
+          "$ref": "#/$defs/objectList"
+        },
+        "required_experiment_types": {
+          "$ref": "#/$defs/stringList"
+        },
+        "comparison_axes": {
+          "$ref": "#/$defs/stringList"
+        },
+        "practical_thresholds": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "important_subsets": {
+          "$ref": "#/$defs/stringList"
+        },
+        "known_confounders": {
+          "$ref": "#/$defs/stringList"
+        },
+        "interpretation_boundaries": {
+          "$ref": "#/$defs/object"
+        },
+        "protocol_constraints": {
+          "$ref": "#/$defs/stringList"
+        },
+        "statistical_policy": {
+          "$ref": "#/$defs/object"
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "acquisition_policy",
+        "resource_requirements",
+        "known_materials",
+        "known_gaps",
+        "acceptance_criteria",
+        "license_constraints",
+        "security_constraints"
+      ],
+      "properties": {
+        "acquisition_policy": {
+          "$ref": "#/$defs/object"
+        },
+        "resource_requirements": {
+          "$ref": "#/$defs/objectList"
+        },
+        "known_materials": {
+          "$ref": "#/$defs/objectList"
+        },
+        "known_gaps": {
+          "$ref": "#/$defs/stringList"
+        },
+        "acceptance_criteria": {
+          "$ref": "#/$defs/stringList"
+        },
+        "license_constraints": {
+          "$ref": "#/$defs/stringList"
+        },
+        "security_constraints": {
+          "$ref": "#/$defs/stringList"
+        }
+      }
+    },
+    "implementation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "language",
+        "framework",
+        "work_root",
+        "repository_layout",
+        "extension_points",
+        "config_conventions",
+        "entrypoint_conventions",
+        "metric_output_contract",
+        "logging_requirements",
+        "checkpoint_requirements",
+        "testing_requirements",
+        "review_requirements",
+        "ablation_switch_requirements",
+        "diagnostic_switch_requirements",
+        "dependency_policy",
+        "protected_paths",
+        "known_risks"
+      ],
+      "properties": {
+        "language": {
+          "$ref": "#/$defs/stringOrNull"
+        },
+        "framework": {
+          "$ref": "#/$defs/stringOrNull"
+        },
+        "work_root": {
+          "$ref": "#/$defs/stringOrNull"
+        },
+        "repository_layout": {
+          "$ref": "#/$defs/stringMap"
+        },
+        "extension_points": {
+          "$ref": "#/$defs/stringList"
+        },
+        "config_conventions": {
+          "$ref": "#/$defs/stringList"
+        },
+        "entrypoint_conventions": {
+          "$ref": "#/$defs/stringList"
+        },
+        "metric_output_contract": {
+          "$ref": "#/$defs/stringList"
+        },
+        "logging_requirements": {
+          "$ref": "#/$defs/stringList"
+        },
+        "checkpoint_requirements": {
+          "$ref": "#/$defs/stringList"
+        },
+        "testing_requirements": {
+          "$ref": "#/$defs/stringList"
+        },
+        "review_requirements": {
+          "$ref": "#/$defs/stringList"
+        },
+        "ablation_switch_requirements": {
+          "$ref": "#/$defs/stringList"
+        },
+        "diagnostic_switch_requirements": {
+          "$ref": "#/$defs/stringList"
+        },
+        "dependency_policy": {
+          "$ref": "#/$defs/stringList"
+        },
+        "protected_paths": {
+          "$ref": "#/$defs/stringList"
+        },
+        "known_risks": {
+          "$ref": "#/$defs/stringList"
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_iterations",
+        "budget",
+        "stop_conditions",
+        "allowed_paths",
+        "forbidden_paths",
+        "isolation_requirements",
+        "allowed_run_levels",
+        "timeout_policy",
+        "resume_policy",
+        "human_review_triggers"
+      ],
+      "properties": {
+        "max_iterations": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "budget": {
+          "$ref": "#/$defs/object"
+        },
+        "stop_conditions": {
+          "$ref": "#/$defs/stringList"
+        },
+        "allowed_paths": {
+          "$ref": "#/$defs/stringList"
+        },
+        "forbidden_paths": {
+          "$ref": "#/$defs/stringList"
+        },
+        "isolation_requirements": {
+          "$ref": "#/$defs/stringList"
+        },
+        "allowed_run_levels": {
+          "$ref": "#/$defs/stringList"
+        },
+        "timeout_policy": {
+          "$ref": "#/$defs/stringList"
+        },
+        "resume_policy": {
+          "$ref": "#/$defs/stringList"
+        },
+        "human_review_triggers": {
+          "$ref": "#/$defs/stringList"
+        }
+      }
+    },
+    "outputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "result_schema_version",
+        "required_result_sections",
+        "required_artifact_types",
+        "realized_method_requirements",
+        "framework_figure_requirements",
+        "required_figure_types",
+        "required_table_types",
+        "visual_traceability_requirements",
+        "writer_handoff_requirements",
+        "t7_requirements",
+        "handoff_readiness_requirements",
+        "evidence_ceiling_policy"
+      ],
+      "properties": {
+        "result_schema_version": {
+          "$ref": "#/$defs/stringOrNull"
+        },
+        "required_result_sections": {
+          "$ref": "#/$defs/stringList"
+        },
+        "required_artifact_types": {
+          "$ref": "#/$defs/stringList"
+        },
+        "realized_method_requirements": {
+          "$ref": "#/$defs/stringList"
+        },
+        "framework_figure_requirements": {
+          "$ref": "#/$defs/object"
+        },
+        "required_figure_types": {
+          "$ref": "#/$defs/stringList"
+        },
+        "required_table_types": {
+          "$ref": "#/$defs/stringList"
+        },
+        "visual_traceability_requirements": {
+          "$ref": "#/$defs/stringList"
+        },
+        "writer_handoff_requirements": {
+          "$ref": "#/$defs/stringList"
+        },
+        "t7_requirements": {
+          "$ref": "#/$defs/stringList"
+        },
+        "handoff_readiness_requirements": {
+          "$ref": "#/$defs/stringList"
+        },
+        "evidence_ceiling_policy": {
+          "$ref": "#/$defs/stringMap"
+        }
+      }
+    },
+    "field_metadata": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/fieldMetadata"
+      }
+    }
+  },
+  "$defs": {
+    "stringOrNull": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "pathOrNull": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^(?!/)(?!.*\\.\\./).*$"
+    },
+    "stringList": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "objectList": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "object": {
+      "type": "object"
+    },
+    "stringMap": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "fieldMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "sources"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "confirmed",
+            "confirmed_from_source",
+            "uncertain"
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "note": {
+          "type": "string"
+        },
+        "handoff_value_ignored": {}
+      }
+    }
+  }
+}

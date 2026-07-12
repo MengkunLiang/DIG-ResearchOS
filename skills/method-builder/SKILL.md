@@ -12,4 +12,3 @@ temperature: 0.3
 # Method Builder
 
 This skill provides implementation-planning guidance for external executors. It should produce method design, implementation plan, ablation plan, and risk notes. It should not write unscoped code inside the ResearchOS main repository.
-

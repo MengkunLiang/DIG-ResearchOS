@@ -233,6 +233,7 @@ def _write_minimal_passing_craft_audit(workspace):
         {"name": "abstract_no_cite", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "abstract_no_section_heading", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "citation_claim_alignment", "level": "PASS", "passed": True, "detail": "ok"},
+        {"name": "citation_provenance", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "no_internal_label_leakage", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "no_placeholder_tokens", "level": "PASS", "passed": True, "detail": "ok"},
         {"name": "number_traceability", "level": "PASS", "passed": True, "detail": "ok"},
@@ -250,6 +251,22 @@ def _write_minimal_passing_craft_audit(workspace):
             },
             ensure_ascii=False,
             indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (drafts / "citation_provenance_audit.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "semantics": "citation_provenance_audit_for_final_manuscript",
+                "summary": {"hard_fail_count": 0, "warning_count": 0},
+                "input_fingerprints": craft_audit_input_fingerprints(workspace),
+                "records": [],
+                "hard_failures": [],
+                "warnings": [],
+            },
+            ensure_ascii=False,
         )
         + "\n",
         encoding="utf-8",
@@ -661,24 +678,53 @@ def write_valid_t8_revise_artifacts(workspace):
     experiments.mkdir(parents=True, exist_ok=True)
     (literature / "related_work.bib").write_text(
         "\n".join(
-            f"@article{{smith2024_{idx},\n  title={{Prior Work {idx}}},\n  year={{2024}}\n}}\n"
+            f"@article{{smith2024_{idx},\n  title={{Mechanism Design and Implementation Gaps {idx}}},\n  author={{Smith, Jane}},\n  year={{2024}}\n}}\n"
             for idx in range(1, 7)
         )
-        + "@article{smith2024,\n  title={Prior Work},\n  year={2024}\n}\n",
+        + "@article{smith2024,\n  title={Mechanism Design and Implementation Gaps},\n  author={Smith, Jane},\n  year={2024}\n}\n",
+        encoding="utf-8",
+    )
+    note_dir = literature / "paper_notes"
+    note_dir.mkdir(parents=True, exist_ok=True)
+    citation_entries = []
+    for index, key in enumerate(["smith2024", *[f"smith2024_{idx}" for idx in range(1, 7)]], start=1):
+        note_name = f"P{index}.md"
+        (note_dir / note_name).write_text(
+            f"# Mechanism Design and Implementation Gaps {index}\n\n"
+            "- **Status**: [FULL-TEXT]\n"
+            "- **Citation Quality Score**: 0.80\n"
+            "- **Citation Use**: core_evidence\n\n"
+            "## 1. Problem & Motivation\n"
+            "Mechanism design and implementation gaps motivate the study.\n\n"
+            "## 13. Mechanism Claim\n"
+            "Mechanism design supports implementation evidence.\n",
+            encoding="utf-8",
+        )
+        citation_entries.append(
+            {
+                "note_id": f"P{index}",
+                "title": f"Mechanism Design and Implementation Gaps {index}",
+                "source_file": f"paper_notes/{note_name}",
+                "bib_key": key,
+                "evidence_level": "FULL_TEXT",
+            }
+        )
+    (literature / "citation_map.json").write_text(
+        json.dumps({"entries": citation_entries}, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
     (experiments / "results_summary.json").write_text('{"metrics":{"accuracy":0.82}}\n', encoding="utf-8")
     sections_dir = drafts / "sections"
     sections_dir.mkdir(parents=True, exist_ok=True)
     section_bodies = {
-        "methodology": "\\section{Method}\nMethod builds on the prior mechanism design~\\cite{smith2024} and implementation details.",
+        "methodology": "\\section{Method}\nMethod builds on prior mechanism design and implementation evidence~\\cite{smith2024}.",
         "experiments": "\\section{Experiments}\nExperiments report accuracy 0.82 in Table~\\ref{tab:main_results}.",
         "related_work": (
-            "\\section{Related Work}\nPrior work motivates the gap~"
+            "\\section{Related Work}\nMechanism design exposes implementation gaps~"
             "\\cite{smith2024_1,smith2024_2,smith2024_3,smith2024_4,smith2024_5,smith2024_6}."
         ),
-        "analysis": "\\section{Analysis}\nThe result supports the mechanism while noting uncertainty~\\cite{smith2024_1}.",
-        "introduction": "\\section{Introduction}\nThis paper makes three contributions to the problem~\\cite{smith2024_1,smith2024_2}.",
+        "analysis": "\\section{Analysis}\nThe result supports the mechanism design while noting uncertainty~\\cite{smith2024_1}.",
+        "introduction": "\\section{Introduction}\nMechanism design and implementation gaps motivate the problem~\\cite{smith2024_1,smith2024_2}.",
         "conclusion": "\\section{Conclusion}\nWe summarize the findings.\\subsection{Limitations}\nEvidence remains bounded.",
         "abstract": "This paper studies efficient memory retrieval and reports accuracy 0.82.",
     }

@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from researchos.tools.human_gate import CLIHumanInterface, HumanInputUnavailable, _read_cli_line
+from researchos.tools.human_gate import (
+    CLIHumanInterface,
+    HumanInputUnavailable,
+    _read_cli_line,
+    build_t2_parameter_llm_interpreter,
+)
 
 
 def test_cli_line_reader_forwards_prompt_to_builtin_input(monkeypatch):
@@ -16,6 +21,15 @@ def test_cli_line_reader_forwards_prompt_to_builtin_input(monkeypatch):
 
     assert _read_cli_line("请选择: ") == "answer"
     assert seen == ["请选择: "]
+
+
+def test_cli_line_reader_removes_terminal_colour_response(monkeypatch):
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda _prompt="": "]10;rgb:cccc/cccc/cccc\\英文稿，候选30，精读15，粗读15",
+    )
+
+    assert _read_cli_line("请选择: ") == "英文稿，候选30，精读15，粗读15"
 
 
 def test_cli_gate_parse_accepts_budget_extension_aliases():
@@ -95,6 +109,20 @@ async def test_cli_gate_presentation_uses_human_labels_and_compact_machine_field
         presentation={
             "_title": "选择 idea",
             "_description": "请选择后续研究方向。",
+            "candidate_overview": {
+                "candidates": [
+                    {
+                        "id": "D1",
+                        "lane": "主方向",
+                        "title": "候选方向摘要",
+                        "value": "一句话价值",
+                        "mechanism": "测试机制",
+                        "minimum_validation": {},
+                        "evidence": "FULL_TEXT",
+                        "warning": "回查笔记",
+                    }
+                ]
+            },
             "gate1_candidate_cards": {
                 "path": "ideation/_gate1_candidate_cards.md",
                 "size_chars": 1200,
@@ -113,10 +141,10 @@ async def test_cli_gate_presentation_uses_human_labels_and_compact_machine_field
 
     out = capsys.readouterr().out
     assert result["option_id"] == "select_or_reframe"
-    assert "【候选 idea 卡片】" in out
-    assert "D1: 候选方向摘要" in out
-    assert "【候选池校验】" in out
-    assert "1 个文件已锁定" in out
+    assert "【候选方向（中文决策面板）】" in out
+    assert "| D1 | 主方向 | 候选方向摘要" in out
+    assert "【候选 idea 卡片】" not in out
+    assert "【候选池校验】" not in out
     assert "ideation/_candidate_directions.json" not in out
     assert '"sha256"' not in out
 
@@ -138,6 +166,165 @@ def test_t2_literature_gate_parses_inline_active_pool_customization():
         "option_id": "custom",
         "captured": {"active_pool_max": "300", "base_option": "standard_research"},
     }
+
+
+def test_t2_literature_gate_parses_direct_chinese_coverage_sentence():
+    captured = CLIHumanInterface._parse_t2_literature_param_text(
+        "候选30篇，深入阅读10篇，粗略阅读20篇，稿件中文，中文文献允许，不必读满目标"
+    )
+
+    assert captured["active_pool_max"] == "30"
+    assert captured["deep_read_target"] == "10"
+    assert captured["abstract_sweep_target"] == "20"
+    assert captured["manuscript_language"] == "中文"
+    assert captured["include_chinese_literature"] == "true"
+    assert captured["require_deep_read_target"] == "false"
+
+
+@pytest.mark.asyncio
+async def test_t2_literature_gate_uses_llm_interpretation_and_rules_take_precedence(capsys):
+    calls: list[str] = []
+
+    async def interpret(raw: str) -> dict[str, str]:
+        calls.append(raw)
+        return {
+            "active_pool_max": "99",
+            "deep_read_target": "99",
+            "manuscript_language": "en",
+            "include_chinese_literature": "true",
+        }
+
+    human = CLIHumanInterface(t2_parameter_interpreter=interpret)
+    captured = await human._interpret_t2_literature_param_text(
+        "]10;rgb:cccc/cccc/cccc\\英文稿，候选30，精读15，粗读15"
+    )
+
+    assert calls == ["英文稿，候选30，精读15，粗读15"]
+    assert captured["active_pool_max"] == "30"
+    assert captured["deep_read_target"] == "15"
+    assert captured["abstract_sweep_target"] == "15"
+    assert captured["manuscript_language"] == "英文"
+    assert captured["parser_source"] == "llm_validated"
+    assert "LLM 意图解析" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_t2_literature_gate_reports_llm_fallback_without_losing_rule_parse(capsys):
+    async def unavailable(_: str) -> dict[str, str]:
+        raise TimeoutError("provider unavailable")
+
+    captured = await CLIHumanInterface(
+        t2_parameter_interpreter=unavailable
+    )._interpret_t2_literature_param_text("英文稿，候选30，精读15，粗读15")
+
+    assert captured["active_pool_max"] == "30"
+    assert captured["manuscript_language"] == "英文"
+    assert captured["parser_source"] == "llm_fallback"
+    assert captured["parser_fallback_reason"] == "TimeoutError"
+    assert "LLM 暂不可用" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_t2_llm_adapter_requests_small_structured_parse():
+    class _Message:
+        content = '{"active_pool_max":"30","manuscript_language":"en"}'
+
+    class _Raw:
+        choices = [type("_Choice", (), {"message": _Message()})()]
+
+    class _Response:
+        raw = _Raw()
+
+    class _Client:
+        def __init__(self) -> None:
+            self.kwargs = None
+
+        async def chat(self, **kwargs):
+            self.kwargs = kwargs
+            return _Response()
+
+    client = _Client()
+    captured = await build_t2_parameter_llm_interpreter(client)("英文稿，候选30")
+
+    assert captured == {"active_pool_max": "30", "manuscript_language": "en"}
+    assert client.kwargs["tier"] == "light"
+    assert client.kwargs["temperature"] == 0.0
+
+
+def test_t4_gate_parses_chinese_candidate_code_without_word_boundary():
+    options = [
+        {"id": "select_or_reframe", "label": "按说明选择/重构"},
+        {"id": "merge", "label": "合并多个候选"},
+        {"id": "new_idea", "label": "补充新想法"},
+        {"id": "reanalyze", "label": "重新分析候选池"},
+    ]
+
+    assert CLIHumanInterface._parse_t4_gate1_text("选D1作为主线，并强调上下文控制", options) == {
+        "option_id": "select_or_reframe",
+        "captured": {"selection": "选D1作为主线,并强调上下文控制"},
+    }
+    assert CLIHumanInterface._parse_t4_gate1_text("合并D1+D3，把D3作为机制模块", options) == {
+        "option_id": "merge",
+        "captured": {"merge_plan": "合并D1+D3,把D3作为机制模块"},
+    }
+
+
+def test_t4_candidate_overview_uses_fixed_chinese_decision_shape():
+    rendered = CLIHumanInterface._format_presentation_value(
+        "candidate_overview",
+        {
+            "candidates": [
+                {
+                    "id": "D1",
+                    "lane": "主方向",
+                    "title": "上下文污染控制",
+                    "original_title": "Context contamination control",
+                    "target_problem": "智能体决策改变了 uplift 假设。",
+                    "origin": "problem_reframing",
+                    "mechanism_family": "上下文诊断",
+                    "value": "区分真实效应与上下文残留。",
+                    "mechanism": "使用负向对照。",
+                    "prediction": "控制后效应收缩。",
+                    "counterfactual": "真实效应不会被完全解释。",
+                    "practical_implication": "避免错误部署。",
+                    "minimum_validation": {"dataset": "受控任务", "baseline": "baseline", "metric": "AUUC", "expected_signal": "效应收缩"},
+                    "evidence": "FULL_TEXT",
+                    "support_count": 3,
+                    "basis_summary": "来自完整笔记 section。",
+                    "supporting_papers": [
+                        {
+                            "title": "Evidence paper",
+                            "citation": "\\cite{evidence}",
+                            "note_path": "literature/paper_notes/evidence.md",
+                            "evidence_level": "FULL_TEXT",
+                            "claim_used": "机制证据摘录。",
+                        }
+                    ],
+                    "scores": {"novelty": 4, "feasibility": 4, "differentiation": 5, "cost": 3},
+                    "selection_recommendation": "revise_before_selection",
+                    "counterfactual_check": "survives_weakened",
+                    "nearest_prior_work": "Prior work",
+                    "novelty_signal": "adjacent_zone",
+                    "warning": "选择后回查笔记。",
+                }
+            ],
+            "input_hint": "选 D1，强调……",
+            "detail_path": "ideation/_gate1_candidate_cards.md",
+            "file_navigation": [
+                {"path": "ideation/_candidate_directions.json", "purpose": "完整结构化候选数据。"}
+            ],
+        },
+        gate_id="t4_gate1_selection_gate",
+    )
+
+    assert "| D1 | 主方向 | 上下文污染控制" in rendered
+    assert "核心主张：区分真实效应与上下文残留。" in rendered
+    assert "可检验预测：控制后效应收缩。" in rendered
+    assert "评分（1-5）：新颖性 4/5 | 可行性 4/5 | 差异化 5/5 | 资源/实施成本 3/5" in rendered
+    assert "笔记路径：literature/paper_notes/evidence.md" in rendered
+    assert "ideation/_candidate_directions.json: 完整结构化候选数据。" in rendered
+    assert "ideation/_gate1_candidate_cards.md" in rendered
+    assert "sha256" not in rendered
 
 
 def test_t2_literature_confirm_gate_formats_selected_parameters_without_raw_json():
@@ -586,8 +773,8 @@ async def test_ask_clarification_pauses_after_repeated_empty_submissions(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_t5_executor_gate_empty_input_defaults_to_mock(monkeypatch):
-    answers = iter([""])
+async def test_t5_executor_gate_empty_input_defaults_to_codex(monkeypatch):
+    answers = iter(["", "yes"])
 
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
 
@@ -596,12 +783,13 @@ async def test_t5_executor_gate_empty_input_defaults_to_mock(monkeypatch):
         gate_id="t5_executor_gate",
         presentation={},
         options=[
-            {"id": "mock_dry_run", "label": "mock dry-run"},
+            {"id": "codex_cli", "label": "Codex CLI"},
             {"id": "claude_code_window", "label": "Claude Code"},
+            {"id": "mock_dry_run", "label": "mock dry-run"},
         ],
     )
 
-    assert result["option_id"] == "mock_dry_run"
+    assert result["option_id"] == "codex_cli"
 
 
 @pytest.mark.asyncio

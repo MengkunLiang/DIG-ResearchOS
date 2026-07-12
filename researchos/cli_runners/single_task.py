@@ -25,12 +25,14 @@ from ..runtime.workspace import initialize_workspace
 from ..schemas.state import StateYaml, TaskHistoryEntry
 from ..schemas.validator import register_builtin_task_checkers, validate_prerequisites, validate_task_artifacts
 from ..tools.human_gate import CLIHumanInterface, HumanInputUnavailable, HumanInterface
+from ..tools.latex_compile import latex_backend_preflight
 from ..tools.registry import ToolRegistry
 
 
 _LOG = get_logger("single_task")
 _DEFAULT_STATE_MACHINE_PATH = system_config_path("state_machine.yaml")
 _DEFAULT_GATES_PATH = system_config_path("gates.yaml")
+_LATEX_PREFLIGHT_TASKS = {"T3.6-COMPILE", "T9"}
 
 
 def _now_iso() -> str:
@@ -99,6 +101,7 @@ class SingleTaskRunner:
             "T3.6": "T3.6-GATE-SURVEY",
             "T3.6-SURVEY": "T3.6-GATE-SURVEY",
             "SURVEY": "T3.6-GATE-SURVEY",
+            "T5-REBOOST": "T5-REBOOST-GATE",
             "T8": "T8-STYLE-GATE",
             "T8-WRITE": "T8-STYLE-GATE",
             "T8-SECTIONS": "T8-SECTION-PLAN",
@@ -212,6 +215,23 @@ class SingleTaskRunner:
         ):
             return await self._run_immediate_gate_task(state, state_path, state_machine)
 
+        if ctx.task_id in _LATEX_PREFLIGHT_TASKS:
+            readiness = latex_backend_preflight(self.runtime_settings.latex)
+            ctx.extra["latex_backend_preflight"] = readiness
+            if not readiness.get("ok"):
+                detail = str(readiness.get("message") or readiness.get("reason") or "no usable LaTeX backend")
+                state.status = "PAUSED"
+                state.paused_at = _now_iso()
+                state.last_error = f"WAITING_ENVIRONMENT: {ctx.task_id} LaTeX preflight failed: {detail}"
+                state.dump_yaml(state_path)
+                self.progress.emit(f"[Environment] {state.last_error}", important=True)
+                return 130
+            backend = str(readiness.get("selected_backend") or "unknown")
+            self.progress.emit(
+                f"[Environment] {ctx.task_id} LaTeX preflight 通过：backend={backend}；{readiness.get('reason') or 'ready'}",
+                important=True,
+            )
+
         state = self._record_started(state, ctx.run_id)
         state.dump_yaml(state_path)
 
@@ -292,6 +312,10 @@ class SingleTaskRunner:
         state_machine: StateMachine,
     ) -> int:
         state = state_machine.pause_for_immediate_gate(state, workspace_dir=self.workspace)
+        state = state_machine.refresh_pending_gate_presentation(
+            state,
+            workspace_dir=self.workspace,
+        )
         state.dump_yaml(state_path)
         try:
             gate_result = await self.human.present_gate(
@@ -484,17 +508,17 @@ class SingleTaskRunner:
     def _print_result(self, result) -> None:
         lines = [
             "=" * 60,
-            "[SingleTask] 运行摘要",
-            f"stop_reason: {result.stop_reason}",
-            f"steps: {result.steps_used}",
-            f"tokens: {result.tokens_in} in / {result.tokens_out} out",
-            f"cost: ${result.cost_usd:.4f}",
-            f"duration: {result.duration_seconds:.1f}s",
+            "[SingleTask] 运行指标（产物说明见上方阶段总结）",
+            f"停止原因: {result.stop_reason}",
+            f"步骤: {result.steps_used}",
+            f"Token: 输入 {result.tokens_in} / 输出 {result.tokens_out}",
+            f"估算成本: ${result.cost_usd:.4f}",
+            f"耗时: {result.duration_seconds:.1f}s",
         ]
         if (result.metadata or {}).get("completion_mode"):
-            lines.append(f"completion_mode: {result.metadata['completion_mode']}")
-        lines.append(f"outputs: {list(result.outputs_produced.keys())}")
+            lines.append(f"完成模式: {result.metadata['completion_mode']}")
+        lines.append(f"声明产物数: {len(result.outputs_produced)}")
         if result.error:
-            lines.append(f"error: {result.error}")
+            lines.append(f"错误: {result.error}")
         lines.append("=" * 60)
         self.progress.emit("\n".join(lines), important=True)

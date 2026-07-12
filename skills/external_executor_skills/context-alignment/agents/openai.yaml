@@ -1,0 +1,12 @@
+interface:
+  display_name: Context Alignment
+  short_description: Validate ResearchOS external-executor context
+  default_prompt: Use $context-alignment to verify the ResearchOS handoff, scope,
+    permissions, and execution context.
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

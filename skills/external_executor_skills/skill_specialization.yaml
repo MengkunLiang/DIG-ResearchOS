@@ -1,0 +1,1251 @@
+schema_version: skill_specialization.v1
+context_schema: skills/external_executor_skills/schemas/project_skill_context.schema.json
+context_file: external_executor/project_skill_context.yaml
+guidance:
+  begin_marker: <!-- PROJECT-SPECIFIC-GUIDANCE:BEGIN -->
+  end_marker: <!-- PROJECT-SPECIFIC-GUIDANCE:END -->
+  heading: '## Project-Specific Guidance'
+  sections:
+  - id: project_focus
+    title: '### Project focus'
+  - id: project_priorities
+    title: '### Project priorities'
+  - id: hard_constraints
+    title: '### Hard project constraints'
+  - id: decision_criteria
+    title: '### Project-specific decision and completion criteria'
+  - id: detailed_context
+    title: '### Detailed project context'
+  - id: uncertain_fields
+    title: '### Uncertain project fields'
+rendering:
+  confirmed_statuses:
+  - confirmed
+  - confirmed_from_source
+  uncertain_status: uncertain
+  missing_path_policy: error
+  empty_confirmed_value_policy: omit
+  uncertain_value_policy: move_to_uncertain_fields
+  list_style: markdown_bullets
+  max_items_default: 8
+  detail_reference_format: '`<workspace>/external_executor/project_skill_context.yaml#{path}`'
+  runtime_note: Current iteration state and execution evidence remain authoritative in runtime artifacts.
+skills:
+  research-execution:
+    inject:
+      project_focus:
+      - path: project.goal
+        label: Project goal
+        render: scalar
+        required: true
+      - path: research.central_hypothesis
+        label: Central hypothesis
+        render: scalar
+        required: true
+      project_priorities:
+      - path: baselines.required
+        label: Required baselines
+        render: object_list
+        required: true
+        max_items: 8
+        display_fields:
+        - baseline_id
+        - name
+        - reason_included
+      - path: experiment.minimum_experiment_loop
+        label: Minimum experiment loop
+        render: list
+        required: true
+        max_items: 8
+      - path: outputs.required_artifact_types
+        label: Required final artifact types
+        render: list
+        required: false
+        max_items: 10
+      hard_constraints:
+      - path: execution.budget
+        label: Execution budget
+        render: mapping
+        required: false
+      - path: execution.stop_conditions
+        label: Stop conditions
+        render: list
+        required: true
+        max_items: 10
+      - path: execution.human_review_triggers
+        label: Human-review triggers
+        render: list
+        required: true
+        max_items: 10
+      - path: research.must_not_claim
+        label: Must-not-claim boundaries
+        render: list
+        required: false
+        max_items: 8
+      decision_criteria:
+      - path: outputs.writer_handoff_requirements
+        label: Writer handoff requirements
+        render: list
+        required: true
+        max_items: 10
+      - path: outputs.t7_requirements
+        label: T7 ingest requirements
+        render: list
+        required: true
+        max_items: 10
+      - path: outputs.handoff_readiness_requirements
+        label: Handoff readiness requirements
+        render: list
+        required: false
+        max_items: 10
+    detail_refs:
+    - research
+    - baselines
+    - experiment
+    - execution
+    - outputs
+  context-alignment:
+    inject:
+      project_focus:
+      - path: project.goal
+        label: Expected project goal
+        render: scalar
+        required: true
+      - path: research.central_hypothesis
+        label: Expected central hypothesis
+        render: scalar
+        required: true
+      project_priorities:
+      - path: method.core_mechanism
+        label: Expected core mechanism
+        render: scalar
+        required: true
+      - path: method.must_preserve_components
+        label: Must-preserve components
+        render: object_list
+        required: true
+        max_items: 8
+        display_fields:
+        - component_id
+        - name
+        - intended_role
+      - path: baselines.required
+        label: Required baselines
+        render: object_list
+        required: true
+        max_items: 8
+        display_fields:
+        - baseline_id
+        - name
+      - path: experiment.benchmarks
+        label: Formal benchmarks
+        render: object_list
+        required: true
+        max_items: 8
+        display_fields:
+        - id
+        - name
+        - version
+      - path: experiment.datasets
+        label: Formal datasets
+        render: object_list
+        required: true
+        max_items: 8
+        display_fields:
+        - dataset_id
+        - name
+        - version
+      - path: experiment.primary_metrics
+        label: Primary metrics
+        render: object_list
+        required: true
+        max_items: 8
+        display_fields:
+        - name
+        - direction
+        - aggregation
+      hard_constraints:
+      - path: resources.acquisition_policy
+        label: Resource acquisition policy
+        render: mapping
+        required: true
+      - path: execution.allowed_paths
+        label: Allowed paths
+        render: list
+        required: true
+        max_items: 10
+      - path: execution.forbidden_paths
+        label: Forbidden paths
+        render: list
+        required: true
+        max_items: 10
+      - path: outputs.result_schema_version
+        label: Result schema version
+        render: scalar
+        required: true
+      decision_criteria:
+      - path: research.claim_boundaries
+        label: Claim boundaries to confirm
+        render: list
+        required: true
+        max_items: 10
+      - path: research.must_not_claim
+        label: Must-not-claim items
+        render: list
+        required: false
+        max_items: 10
+      - path: experiment.minimum_experiment_loop
+        label: Minimum loop to confirm
+        render: list
+        required: true
+        max_items: 8
+    detail_refs:
+    - source_artifacts
+    - project
+    - research
+    - method
+    - baselines
+    - experiment
+    - resources
+    - execution
+    - outputs
+    - field_metadata
+  resource-and-baseline-preparation:
+    inject:
+      project_focus:
+      - path: experiment.minimum_experiment_loop
+        label: 'Resource target: minimum experiment loop'
+        render: list
+        required: true
+        max_items: 8
+      - path: resources.resource_requirements
+        label: Required resource classes
+        render: object_list
+        required: true
+        max_items: 10
+        display_fields:
+        - requirement_id
+        - resource_type
+        - name
+        - required
+      project_priorities:
+      - path: baselines.required
+        label: Required baselines
+        render: object_list
+        required: true
+        max_items: 10
+        display_fields:
+        - baseline_id
+        - name
+        - reason_included
+      - path: experiment.datasets
+        label: Required datasets
+        render: object_list
+        required: true
+        max_items: 10
+        display_fields:
+        - dataset_id
+        - name
+        - version
+      - path: experiment.splits
+        label: Required dataset splits
+        render: object_list
+        required: true
+        max_items: 10
+        display_fields:
+        - split_id
+        - dataset_id
+        - description
+      - path: resources.known_materials
+        label: Known local materials
+        render: object_list
+        required: false
+        max_items: 10
+        display_fields:
+        - resource_id
+        - name
+        - resource_type
+        - path
+      - path: resources.known_gaps
+        label: Known resource gaps
+        render: list
+        required: false
+        max_items: 10
+      hard_constraints:
+      - path: resources.acquisition_policy
+        label: Acquisition permissions
+        render: mapping
+        required: true
+      - path: baselines.replacement_policy
+        label: Baseline replacement policy
+        render: mapping
+        required: true
+      - path: resources.license_constraints
+        label: License and access constraints
+        render: list
+        required: false
+        max_items: 10
+      - path: resources.security_constraints
+        label: Security constraints
+        render: list
+        required: false
+        max_items: 10
+      decision_criteria:
+      - path: resources.acceptance_criteria
+        label: General resource acceptance criteria
+        render: list
+        required: true
+        max_items: 10
+      - path: baselines.identity_requirements
+        label: Baseline identity requirements
+        render: list
+        required: true
+        max_items: 10
+      - path: baselines.fairness_constraints
+        label: Baseline fairness constraints
+        render: list
+        required: true
+        max_items: 10
+    detail_refs:
+    - resources
+    - baselines
+    - experiment
+    - execution
+  experiment-design:
+    inject:
+      project_focus:
+      - path: research.central_hypothesis
+        label: Central hypothesis
+        render: scalar
+        required: true
+      - path: research.core_claims
+        label: Core claims
+        render: object_list
+        required: true
+        max_items: 10
+        display_fields:
+        - claim_id
+        - statement
+        - priority
+      project_priorities:
+      - path: research.reviewer_questions
+        label: Reviewer questions
+        render: list
+        required: true
+        max_items: 10
+      - path: experiment.minimum_experiment_loop
+        label: Minimum experiment loop
+        render: list
+        required: true
+        max_items: 10
+      - path: baselines.required
+        label: Required baselines
+        render: object_list
+        required: true
+        max_items: 10
+        display_fields:
+        - baseline_id
+        - name
+      - path: experiment.primary_metrics
+        label: Primary metrics
+        render: object_list
+        required: true
+        max_items: 10
+        display_fields:
+        - name
+        - direction
+        - aggregation
+      - path: method.mechanism_to_ablation
+        label: Mechanism-to-ablation commitments
+        render: object_list
+        required: true
+        max_items: 10
+        display_fields:
+        - mechanism
+        - planned_test
+      - path: experiment.required_experiment_types
+        label: Required experiment types
+        render: list
+        required: false
+        max_items: 10
+      hard_constraints:
+      - path: experiment.seed_policy
+        label: Seed and repeat policy
+        render: mapping
+        required: true
+      - path: experiment.protocol_constraints
+        label: Protocol constraints
+        render: list
+        required: true
+        max_items: 10
+      - path: experiment.statistical_policy
+        label: Statistical and anti-cherry-picking policy
+        render: mapping
+        required: true
+      - path: execution.budget
+        label: Experiment budget
+        render: mapping
+        required: true
+      - path: research.claim_boundaries
+        label: Claim boundaries
+        render: list
+        required: true
+        max_items: 10
+      - path: research.must_not_claim
+        label: Must-not-claim items
+        render: list
+        required: false
+        max_items: 10
+      decision_criteria:
+      - path: experiment.claim_evidence_matrix
+        label: Claim-evidence obligations
+        render: object_list
+        required: true
+        max_items: 12
+        display_fields:
+        - claim_id
+        - reviewer_question
+        - planned_experiment_types
+      - path: experiment.interpretation_boundaries
+        label: Positive, negative, and inconclusive interpretation rules
+        render: mapping
+        required: true
+    detail_refs:
+    - research
+    - method
+    - baselines
+    - experiment
+    - execution
+  baseline-reproduction:
+    inject:
+      project_focus:
+      - path: baselines.required
+        label: Baselines to reproduce
+        render: object_list
+        required: true
+        max_items: 10
+        display_fields:
+        - baseline_id
+        - name
+        - source_reference
+      - path: experiment.primary_metrics
+        label: Target metrics
+        render: object_list
+        required: true
+        max_items: 8
+        display_fields:
+        - name
+        - direction
+        - aggregation
+      project_priorities:
+      - path: experiment.datasets
+        label: Datasets
+        render: object_list
+        required: true
+        max_items: 8
+        display_fields:
+        - dataset_id
+        - name
+        - version
+      - path: experiment.splits
+        label: Dataset splits
+        render: object_list
+        required: true
+        max_items: 8
+        display_fields:
+        - split_id
+        - dataset_id
+        - description
+      - path: experiment.preprocessing
+        label: Required preprocessing
+        render: list
+        required: false
+        max_items: 10
+      - path: baselines.expected_reference_results
+        label: Reference or sanity results
+        render: object_list
+        required: false
+        max_items: 10
+        display_fields:
+        - baseline_id
+        - dataset
+        - metric
+        - value
+        - purpose
+      - path: baselines.known_risks
+        label: Known baseline risks
+        render: list
+        required: false
+        max_items: 10
+      hard_constraints:
+      - path: baselines.identity_requirements
+        label: Identity and mechanism fidelity requirements
+        render: list
+        required: true
+        max_items: 10
+      - path: baselines.fairness_constraints
+        label: Fairness constraints
+        render: list
+        required: true
+        max_items: 10
+      - path: baselines.allowed_repairs
+        label: Allowed repair classes
+        render: list
+        required: false
+        max_items: 10
+      - path: baselines.forbidden_repairs
+        label: Forbidden repairs
+        render: list
+        required: true
+        max_items: 10
+      - path: resources.security_constraints
+        label: Execution security constraints
+        render: list
+        required: false
+        max_items: 10
+      decision_criteria:
+      - path: baselines.reproduction_acceptance
+        label: Reproduction and comparability acceptance
+        render: list
+        required: true
+        max_items: 10
+      - path: baselines.replacement_policy
+        label: Replacement escalation policy
+        render: mapping
+        required: true
+    detail_refs:
+    - baselines
+    - experiment
+    - resources
+  method-refinement:
+    inject:
+      project_focus:
+      - path: research.central_hypothesis
+        label: Central hypothesis
+        render: scalar
+        required: true
+      - path: method.central_mechanism_hypothesis
+        label: Central mechanism hypothesis
+        render: scalar
+        required: true
+      - path: method.core_mechanism
+        label: Core mechanism
+        render: scalar
+        required: true
+      project_priorities:
+      - path: method.must_preserve_components
+        label: Must-preserve components
+        render: object_list
+        required: true
+        max_items: 10
+        display_fields:
+        - component_id
+        - name
+        - intended_role
+      - path: method.candidate_components
+        label: Candidate or supporting components
+        render: object_list
+        required: false
+        max_items: 10
+        display_fields:
+        - component_id
+        - name
+        - intended_role
+      - path: method.expected_algorithm_flow
+        label: Expected algorithm flow
+        render: object_list
+        required: false
+        max_items: 12
+        display_fields:
+        - step
+        - description
+        - related_component
+      - path: method.mechanism_to_ablation
+        label: Mechanism-to-ablation mapping
+        render: object_list
+        required: true
+        max_items: 10
+        display_fields:
+        - mechanism
+        - planned_test
+      - path: method.implementation_questions
+        label: Unresolved implementation questions
+        render: list
+        required: false
+        max_items: 10
+      hard_constraints:
+      - path: research.contribution_type
+        label: Contribution type
+        render: scalar
+        required: true
+      - path: method.allowed_refinements
+        label: Allowed refinements
+        render: list
+        required: true
+        max_items: 10
+      - path: method.forbidden_silent_changes
+        label: Forbidden silent changes
+        render: list
+        required: true
+        max_items: 10
+      - path: method.scope_change_triggers
+        label: Major scope-change triggers
+        render: list
+        required: true
+        max_items: 10
+      - path: research.claim_boundaries
+        label: Claim boundaries
+        render: list
+        required: true
+        max_items: 10
+      - path: research.must_not_claim
+        label: Must-not-claim items
+        render: list
+        required: false
+        max_items: 10
+      decision_criteria:
+      - path: method.implementation_acceptance
+        label: Implementation-spec acceptance requirements
+        render: list
+        required: true
+        max_items: 10
+    detail_refs:
+    - research
+    - method
+    - baselines
+    - experiment
+  implementation:
+    inject:
+      project_focus:
+      - path: method.core_mechanism
+        label: Mechanism the implementation must preserve
+        render: scalar
+        required: true
+      - path: method.must_preserve_components
+        label: Required method components
+        render: object_list
+        required: true
+        max_items: 10
+        display_fields:
+        - component_id
+        - name
+        - intended_role
+      project_priorities:
+      - path: implementation.language
+        label: Implementation language
+        render: scalar
+        required: false
+      - path: implementation.framework
+        label: Framework
+        render: scalar
+        required: false
+      - path: implementation.repository_layout
+        label: Repository layout
+        render: mapping
+        required: false
+      - path: implementation.extension_points
+        label: Preferred extension points
+        render: list
+        required: false
+        max_items: 10
+      - path: implementation.config_conventions
+        label: Configuration conventions
+        render: list
+        required: false
+        max_items: 10
+      - path: implementation.entrypoint_conventions
+        label: Entrypoint conventions
+        render: list
+        required: false
+        max_items: 10
+      - path: implementation.ablation_switch_requirements
+        label: Required ablation switches
+        render: list
+        required: true
+        max_items: 10
+      - path: implementation.diagnostic_switch_requirements
+        label: Required diagnostic switches
+        render: list
+        required: false
+        max_items: 10
+      hard_constraints:
+      - path: implementation.work_root
+        label: Writable implementation root
+        render: scalar
+        required: true
+      - path: implementation.protected_paths
+        label: Protected paths
+        render: list
+        required: true
+        max_items: 10
+      - path: implementation.dependency_policy
+        label: Dependency-change policy
+        render: list
+        required: false
+        max_items: 10
+      - path: execution.allowed_paths
+        label: Allowed paths
+        render: list
+        required: true
+        max_items: 10
+      - path: execution.forbidden_paths
+        label: Forbidden paths
+        render: list
+        required: true
+        max_items: 10
+      - path: method.forbidden_silent_changes
+        label: Contribution-drift constraints
+        render: list
+        required: true
+        max_items: 10
+      decision_criteria:
+      - path: implementation.metric_output_contract
+        label: Machine-readable metric output requirements
+        render: list
+        required: true
+        max_items: 10
+      - path: implementation.logging_requirements
+        label: Logging requirements
+        render: list
+        required: true
+        max_items: 10
+      - path: implementation.checkpoint_requirements
+        label: Checkpoint requirements
+        render: list
+        required: false
+        max_items: 10
+      - path: implementation.testing_requirements
+        label: Testing requirements
+        render: list
+        required: true
+        max_items: 10
+    detail_refs:
+    - method
+    - implementation
+    - experiment
+    - execution
+  code-and-protocol-review:
+    inject:
+      project_focus:
+      - path: method.core_mechanism
+        label: Core mechanism to verify
+        render: scalar
+        required: true
+      - path: method.must_preserve_components
+        label: Must-preserve components
+        render: object_list
+        required: true
+        max_items: 10
+        display_fields:
+        - component_id
+        - name
+        - intended_role
+      - path: baselines.required
+        label: Required baseline identities
+        render: object_list
+        required: true
+        max_items: 10
+        display_fields:
+        - baseline_id
+        - name
+      project_priorities:
+      - path: experiment.datasets
+        label: Datasets
+        render: object_list
+        required: true
+        max_items: 8
+        display_fields:
+        - dataset_id
+        - name
+        - version
+      - path: experiment.splits
+        label: Splits
+        render: object_list
+        required: true
+        max_items: 8
+        display_fields:
+        - split_id
+        - dataset_id
+        - description
+      - path: experiment.preprocessing
+        label: Preprocessing contract
+        render: list
+        required: false
+        max_items: 10
+      - path: experiment.primary_metrics
+        label: Primary metrics
+        render: object_list
+        required: true
+        max_items: 8
+        display_fields:
+        - name
+        - direction
+        - aggregation
+      - path: experiment.seed_policy
+        label: Seed/repeat policy
+        render: mapping
+        required: true
+      - path: baselines.fairness_constraints
+        label: Baseline fairness rules
+        render: list
+        required: true
+        max_items: 10
+      - path: implementation.ablation_switch_requirements
+        label: Ablation switches to verify
+        render: list
+        required: true
+        max_items: 10
+      hard_constraints:
+      - path: experiment.protocol_constraints
+        label: Protocol constraints
+        render: list
+        required: true
+        max_items: 10
+      - path: research.claim_boundaries
+        label: Claim boundaries
+        render: list
+        required: true
+        max_items: 10
+      - path: research.must_not_claim
+        label: Must-not-claim items
+        render: list
+        required: false
+        max_items: 10
+      - path: resources.security_constraints
+        label: Security constraints
+        render: list
+        required: false
+        max_items: 10
+      - path: execution.allowed_paths
+        label: Allowed paths
+        render: list
+        required: true
+        max_items: 10
+      - path: execution.forbidden_paths
+        label: Forbidden paths
+        render: list
+        required: true
+        max_items: 10
+      decision_criteria:
+      - path: implementation.review_requirements
+        label: Project-specific review requirements
+        render: list
+        required: true
+        max_items: 12
+      - path: implementation.testing_requirements
+        label: Required fresh verification
+        render: list
+        required: true
+        max_items: 10
+      - path: implementation.metric_output_contract
+        label: Metric/log observability contract
+        render: list
+        required: true
+        max_items: 10
+      - path: baselines.reproduction_acceptance
+        label: Baseline comparability requirements
+        render: list
+        required: true
+        max_items: 10
+    detail_refs:
+    - research
+    - method
+    - baselines
+    - experiment
+    - resources
+    - implementation
+    - execution
+  experiment-run:
+    inject:
+      project_focus:
+      - path: experiment.task
+        label: Experiment task
+        render: scalar
+        required: true
+      - path: execution.allowed_run_levels
+        label: Allowed run levels
+        render: list
+        required: true
+        max_items: 10
+      project_priorities:
+      - path: implementation.framework
+        label: Runtime framework
+        render: scalar
+        required: false
+      - path: implementation.work_root
+        label: Run work root
+        render: scalar
+        required: true
+      - path: implementation.entrypoint_conventions
+        label: Entrypoint conventions
+        render: list
+        required: false
+        max_items: 10
+      - path: implementation.metric_output_contract
+        label: Metric output contract
+        render: list
+        required: true
+        max_items: 10
+      - path: implementation.logging_requirements
+        label: Logging requirements
+        render: list
+        required: true
+        max_items: 10
+      - path: implementation.checkpoint_requirements
+        label: Checkpoint requirements
+        render: list
+        required: false
+        max_items: 10
+      hard_constraints:
+      - path: execution.budget
+        label: Execution budget
+        render: mapping
+        required: true
+      - path: execution.timeout_policy
+        label: Timeout policy
+        render: list
+        required: false
+        max_items: 10
+      - path: execution.isolation_requirements
+        label: Isolation requirements
+        render: list
+        required: true
+        max_items: 10
+      - path: execution.allowed_paths
+        label: Allowed paths
+        render: list
+        required: true
+        max_items: 10
+      - path: execution.forbidden_paths
+        label: Forbidden paths
+        render: list
+        required: true
+        max_items: 10
+      - path: resources.acquisition_policy
+        label: Network/acquisition restrictions
+        render: mapping
+        required: true
+      decision_criteria:
+      - path: outputs.required_artifact_types
+        label: Mandatory run artifacts
+        render: list
+        required: true
+        max_items: 12
+      - path: execution.resume_policy
+        label: Resume and retry policy
+        render: list
+        required: true
+        max_items: 10
+    detail_refs:
+    - experiment
+    - implementation
+    - execution
+    - outputs
+  result-diagnosis:
+    inject:
+      project_focus:
+      - path: research.central_hypothesis
+        label: Central hypothesis
+        render: scalar
+        required: true
+      - path: research.core_claims
+        label: Claims under diagnosis
+        render: object_list
+        required: true
+        max_items: 10
+        display_fields:
+        - claim_id
+        - statement
+        - priority
+      project_priorities:
+      - path: baselines.required
+        label: Required comparison baselines
+        render: object_list
+        required: true
+        max_items: 10
+        display_fields:
+        - baseline_id
+        - name
+      - path: experiment.primary_metrics
+        label: Primary metrics
+        render: object_list
+        required: true
+        max_items: 8
+        display_fields:
+        - name
+        - direction
+        - aggregation
+      - path: experiment.comparison_axes
+        label: Required comparison axes
+        render: list
+        required: false
+        max_items: 10
+      - path: experiment.important_subsets
+        label: Important settings or subsets
+        render: list
+        required: false
+        max_items: 10
+      - path: experiment.practical_thresholds
+        label: Practical effect thresholds
+        render: mapping
+        required: false
+      hard_constraints:
+      - path: experiment.known_confounders
+        label: Known confounders
+        render: list
+        required: false
+        max_items: 12
+      - path: experiment.interpretation_boundaries
+        label: Interpretation boundaries
+        render: mapping
+        required: true
+      - path: experiment.statistical_policy
+        label: Statistical interpretation policy
+        render: mapping
+        required: true
+      - path: research.claim_boundaries
+        label: Claim boundaries
+        render: list
+        required: true
+        max_items: 10
+      - path: research.must_not_claim
+        label: Must-not-claim items
+        render: list
+        required: false
+        max_items: 10
+      decision_criteria:
+      - path: experiment.claim_evidence_matrix
+        label: Claim-evidence questions
+        render: object_list
+        required: true
+        max_items: 12
+        display_fields:
+        - claim_id
+        - reviewer_question
+        - evidence_needed
+      - path: outputs.evidence_ceiling_policy
+        label: Pre-audit evidence ceilings
+        render: mapping
+        required: true
+    detail_refs:
+    - research
+    - baselines
+    - experiment
+    - outputs
+  module-attribution:
+    inject:
+      project_focus:
+      - path: method.central_mechanism_hypothesis
+        label: Mechanism hypothesis
+        render: scalar
+        required: true
+      - path: method.core_mechanism
+        label: Core mechanism
+        render: scalar
+        required: true
+      project_priorities:
+      - path: method.must_preserve_components
+        label: Ours modules
+        render: object_list
+        required: true
+        max_items: 10
+        display_fields:
+        - component_id
+        - name
+        - intended_role
+      - path: method.candidate_components
+        label: Candidate/supporting modules
+        render: object_list
+        required: false
+        max_items: 10
+        display_fields:
+        - component_id
+        - name
+        - intended_role
+      - path: method.mechanism_to_ablation
+        label: Planned mechanism interventions
+        render: object_list
+        required: true
+        max_items: 10
+        display_fields:
+        - mechanism
+        - planned_test
+      - path: baselines.required
+        label: Baseline modules/methods to compare
+        render: object_list
+        required: true
+        max_items: 10
+        display_fields:
+        - baseline_id
+        - name
+      - path: experiment.important_subsets
+        label: Important subsets
+        render: list
+        required: false
+        max_items: 10
+      - path: experiment.known_confounders
+        label: Attribution confounders
+        render: list
+        required: false
+        max_items: 12
+      hard_constraints:
+      - path: experiment.protocol_constraints
+        label: Comparability constraints
+        render: list
+        required: true
+        max_items: 10
+      - path: research.claim_boundaries
+        label: Claim boundaries
+        render: list
+        required: true
+        max_items: 10
+      - path: research.must_not_claim
+        label: Must-not-claim items
+        render: list
+        required: false
+        max_items: 10
+      - path: outputs.evidence_ceiling_policy
+        label: Evidence-level ceiling
+        render: mapping
+        required: true
+      decision_criteria:
+      - path: method.attribution_requirements
+        label: Attribution acceptance and recommendation requirements
+        render: list
+        required: true
+        max_items: 12
+    detail_refs:
+    - research
+    - method
+    - baselines
+    - experiment
+    - outputs
+  evidence-packaging:
+    inject:
+      project_focus:
+      - path: method.core_mechanism
+        label: Method mechanism to reconstruct from final evidence
+        render: scalar
+        required: true
+      - path: research.claim_boundaries
+        label: Claim boundaries
+        render: list
+        required: true
+        max_items: 10
+      project_priorities:
+      - path: outputs.realized_method_requirements
+        label: Realized method package requirements
+        render: list
+        required: true
+        max_items: 12
+      - path: outputs.framework_figure_requirements
+        label: Framework figure requirements
+        render: mapping
+        required: true
+      - path: outputs.required_figure_types
+        label: Required figure types
+        render: list
+        required: false
+        max_items: 10
+      - path: outputs.required_table_types
+        label: Required table types
+        render: list
+        required: false
+        max_items: 10
+      - path: outputs.visual_traceability_requirements
+        label: Visual traceability requirements
+        render: list
+        required: true
+        max_items: 10
+      hard_constraints:
+      - path: research.must_not_claim
+        label: Must-not-claim items
+        render: list
+        required: false
+        max_items: 10
+      - path: method.forbidden_silent_changes
+        label: Intent-to-realized-method comparison constraints
+        render: list
+        required: true
+        max_items: 10
+      - path: outputs.evidence_ceiling_policy
+        label: Evidence ceilings
+        render: mapping
+        required: true
+      - path: method.initial_framework_figure_intent
+        label: Initial figure intent is guidance only
+        render: mapping
+        required: false
+      decision_criteria:
+      - path: outputs.required_artifact_types
+        label: Required package artifacts
+        render: list
+        required: true
+        max_items: 12
+      - path: outputs.writer_handoff_requirements
+        label: Downstream writer-handoff requirements
+        render: list
+        required: true
+        max_items: 10
+    detail_refs:
+    - research
+    - method
+    - experiment
+    - outputs
+  writer-handoff:
+    inject:
+      project_focus:
+      - path: project.goal
+        label: Project goal
+        render: scalar
+        required: true
+      - path: research.core_claims
+        label: Claim candidates to organize
+        render: object_list
+        required: true
+        max_items: 10
+        display_fields:
+        - claim_id
+        - statement
+        - priority
+      project_priorities:
+      - path: outputs.writer_handoff_requirements
+        label: Writer/T7 handoff contents
+        render: list
+        required: true
+        max_items: 12
+      - path: outputs.t7_requirements
+        label: T7 ingest requirements
+        render: list
+        required: true
+        max_items: 12
+      - path: outputs.required_artifact_types
+        label: Artifact types to index
+        render: list
+        required: true
+        max_items: 12
+      hard_constraints:
+      - path: research.claim_boundaries
+        label: Claim boundaries
+        render: list
+        required: true
+        max_items: 10
+      - path: research.must_not_claim
+        label: Must-not-claim items
+        render: list
+        required: true
+        max_items: 10
+      - path: outputs.evidence_ceiling_policy
+        label: Pre-audit evidence ceilings
+        render: mapping
+        required: true
+      decision_criteria:
+      - path: outputs.handoff_readiness_requirements
+        label: Ready/partial/blocked handoff criteria
+        render: list
+        required: true
+        max_items: 12
+    detail_refs:
+    - project
+    - research
+    - outputs

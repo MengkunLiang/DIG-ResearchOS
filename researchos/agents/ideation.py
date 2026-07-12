@@ -48,6 +48,16 @@ T4_CONTEXT_PACK_JSON = Path("ideation/t4_context_pack.json")
 T4_CONTEXT_PACK_MD = Path("ideation/t4_context_pack.md")
 T4_PROGRESS_MD = Path("ideation/t4_progress.md")
 
+T4_GATE1_ARTIFACTS: tuple[tuple[str, str], ...] = (
+    ("ideation/_pass1_forward_candidates.json", "Pass1 候选发散"),
+    ("ideation/_pass2_grounding_review.json", "Pass2 接地复核"),
+    ("ideation/_candidate_directions.json", "结构化候选方向池"),
+    ("ideation/_family_distribution.md", "候选谱系与集中度检查"),
+    ("ideation/_gate1_candidate_cards.md", "Gate1 完整候选卡片"),
+    ("ideation/_gate1_selection_brief.md", "Gate1 选择简报"),
+)
+T4_BRIDGE_COVERAGE_PATH = "ideation/bridge_coverage_review.json"
+
 CROSS_DOMAIN_IDEA_ORIGINS = {
     "cross_domain_analogy",
     "bridge_synthesis",
@@ -128,6 +138,58 @@ def _note_card_t4_priority(card: dict[str, object]) -> tuple[int, float, int]:
     evidence_priority = 1 if "FULL" in evidence else 0
     score = _float_or_none(card.get("citation_quality_score"))
     return use_priority + evidence_priority, score if score is not None else 0.0, len(str(card.get("gaps") or ""))
+
+
+def _note_card_t4_lane(card: dict[str, object]) -> str:
+    """Return one evidence lane used to keep compact T4 inputs diverse."""
+
+    for key in ("method_family", "domain", "source_bucket", "venue"):
+        value = str(card.get(key) or "").strip().casefold()
+        if value:
+            return f"{key}:{value}"
+    if str(card.get("bridge_point") or "").strip():
+        return "bridge"
+    if str(card.get("gaps") or "").strip() or str(card.get("boundary_conditions") or "").strip():
+        return "gap_or_boundary"
+    if str(card.get("mechanism_claim") or "").strip():
+        return "mechanism"
+    return f"source:{str(card.get('source_file') or card.get('note_id') or '').casefold()}"
+
+
+def _select_t4_compact_note_cards(
+    cards: list[dict[str, object]],
+    *,
+    initial_limit: int = 12,
+    max_limit: int = 18,
+) -> list[dict[str, object]]:
+    """Select a bounded, high-quality and lane-diverse T4 evidence set."""
+
+    if not cards:
+        return []
+    target = min(max(1, initial_limit), max_limit, len(cards))
+    ranked = sorted(cards, key=_note_card_t4_priority, reverse=True)
+    selected: list[dict[str, object]] = []
+    selected_ids: set[str] = set()
+    seen_lanes: set[str] = set()
+    for card in ranked:
+        lane = _note_card_t4_lane(card)
+        card_id = str(card.get("note_id") or card.get("source_file") or card.get("title") or "")
+        if lane in seen_lanes or card_id in selected_ids:
+            continue
+        selected.append(card)
+        selected_ids.add(card_id)
+        seen_lanes.add(lane)
+        if len(selected) >= target:
+            return selected
+    for card in ranked:
+        card_id = str(card.get("note_id") or card.get("source_file") or card.get("title") or "")
+        if card_id in selected_ids:
+            continue
+        selected.append(card)
+        selected_ids.add(card_id)
+        if len(selected) >= target:
+            break
+    return selected
 
 
 def _note_card_prompt_summary(synthesis_workbench_text: str, *, limit: int = 10) -> str:
@@ -452,8 +514,7 @@ def prepare_t4_context_pack(workspace_dir: Path) -> dict[str, object]:
         for card in raw_cards
         if isinstance(card, dict) and _note_card_usable_for_t4(card)
     ]
-    usable_cards.sort(key=_note_card_t4_priority, reverse=True)
-    selected_cards = usable_cards
+    selected_cards = _select_t4_compact_note_cards(usable_cards)
 
     bridge_plan = _read_json_file(workspace_dir / "literature" / "bridge_domain_plan.json")
     domain_map = _read_json_file(workspace_dir / "literature" / "domain_map.json")
@@ -483,6 +544,11 @@ def prepare_t4_context_pack(workspace_dir: Path) -> dict[str, object]:
             "raw_card_count": len(raw_cards),
             "usable_card_count": len(usable_cards),
             "selected_card_count": len(selected_cards),
+            "selection_policy": {
+                "initial_limit": 12,
+                "maximum_limit": 18,
+                "strategy": "quality-ranked with method/bridge/gap/source lane diversity",
+            },
             "deep_note_count": workbench.get("note_count", 0),
             "abstract_note_count": workbench.get("abstract_note_count", 0),
             "total_note_count": workbench.get("total_note_count", 0),
@@ -558,6 +624,7 @@ def prepare_t4_context_pack(workspace_dir: Path) -> dict[str, object]:
     json_path.write_text(json.dumps(pack, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     md_path.write_text(_render_t4_context_pack_markdown(pack), encoding="utf-8")
     progress_path.write_text(_render_t4_progress_markdown(pack), encoding="utf-8")
+    refresh_t4_gate1_progress(workspace_dir)
     return pack
 
 
@@ -642,10 +709,123 @@ def _render_t4_progress_markdown(pack: dict[str, object]) -> str:
             ),
             "- [rule] T4 会先读 compact pack，只在核验具体 claim 时打开单篇 note。",
             "- [outputs] " + "; ".join(str(item) for item in outputs),
-            "- [pending] 待写入 Pass1 候选、Pass2 接地复核、候选方向和 Gate1 brief。",
+            "- [running] Gate1 前半段已开始；后续状态以本文件中的 artifact checkpoint 为准。",
             "",
         ]
     )
+
+
+def _t4_bridge_coverage_required(workspace_dir: Path) -> bool:
+    """Return whether T1/T3 declared a bridge lane that needs Gate1 audit."""
+
+    plan = _read_json_file(workspace_dir / "literature" / "bridge_domain_plan.json")
+    domains = plan.get("bridge_domains") if isinstance(plan.get("bridge_domains"), list) else []
+    return bool(domains)
+
+
+def _relative_t4_path(workspace_dir: Path, value: str | None) -> str:
+    if not value:
+        return ""
+    path = Path(value)
+    try:
+        return path.resolve().relative_to(workspace_dir.resolve()).as_posix()
+    except (OSError, ValueError):
+        return path.as_posix().lstrip("./")
+
+
+def refresh_t4_gate1_progress(
+    workspace_dir: Path,
+    *,
+    active_path: str | None = None,
+    paused_reason: str | None = None,
+) -> dict[str, object]:
+    """Render T4 Gate1 progress from persisted files, never from assumptions.
+
+    This function is intentionally deterministic so that a provider timeout,
+    restart, or resume shows the same checkpoint state.  It distinguishes
+    Gate1's required pre-selection artifacts from the post-selection work,
+    avoiding a misleading wall of ``pending`` files.
+    """
+
+    workspace_dir = Path(workspace_dir)
+    ideation_dir = workspace_dir / "ideation"
+    ideation_dir.mkdir(parents=True, exist_ok=True)
+    active_rel = _relative_t4_path(workspace_dir, active_path)
+    compact_pack_paths = (
+        "ideation/t4_context_pack.json",
+        "ideation/t4_context_pack.md",
+    )
+    compact_pack_ready = all((workspace_dir / path).exists() for path in compact_pack_paths)
+    completed_count = sum(1 for rel_path, _label in T4_GATE1_ARTIFACTS if (workspace_dir / rel_path).exists())
+    total_count = len(T4_GATE1_ARTIFACTS)
+    bridge_required = _t4_bridge_coverage_required(workspace_dir)
+    bridge_exists = (workspace_dir / T4_BRIDGE_COVERAGE_PATH).exists()
+
+    lines = ["# T4 Gate1 Progress", ""]
+    lines.append("## Gate1 前半段（候选池，自动执行）")
+    if compact_pack_ready:
+        compact_state = "done"
+        compact_note = "已生成 Gate1 候选构思用 compact context pack；具体 claim 仅在需要时回查对应笔记 section。"
+    elif paused_reason:
+        compact_state = "paused"
+        compact_note = "前置 compact context pack 尚未完整落盘；恢复后会先继续构建它。"
+    else:
+        compact_state = "running"
+        compact_note = "正在构建 Gate1 候选构思用 compact context pack。"
+    lines.append(
+        f"- [{compact_state}] compact context pack：`ideation/t4_context_pack.json`、`ideation/t4_context_pack.md`"
+    )
+    lines.append(f"- [{compact_state}] {compact_note}")
+    current_label = "正在准备 Pass 1 候选发散" if compact_pack_ready else "正在构建 Gate1 compact context pack"
+    first_incomplete_seen = False
+    for index, (rel_path, label) in enumerate(T4_GATE1_ARTIFACTS, start=1):
+        exists = (workspace_dir / rel_path).exists()
+        if exists:
+            state = "done"
+        elif not compact_pack_ready:
+            state = "queued"
+        elif paused_reason:
+            state = "paused" if not first_incomplete_seen else "queued"
+            first_incomplete_seen = True
+        elif active_rel == rel_path:
+            state = "running"
+            first_incomplete_seen = True
+            current_label = f"正在写入 {label}：`{rel_path}`"
+        elif not first_incomplete_seen:
+            state = "running"
+            first_incomplete_seen = True
+            current_label = f"正在生成 {label}：`{rel_path}`"
+        else:
+            state = "queued"
+        lines.append(f"- [{state}] {index}/{total_count} {label}：`{rel_path}`")
+
+    bridge_state = "done" if bridge_exists else ("queued" if bridge_required else "not_required")
+    bridge_note = "T1/T3 已声明 bridge domain，Gate1 必须留下覆盖审计。" if bridge_required else "上游没有 bridge domain；仅在候选实际采用跨域桥接时生成。"
+    lines.extend(
+        [
+            f"- [{bridge_state}] bridge coverage review：`{T4_BRIDGE_COVERAGE_PATH}`（{bridge_note}）",
+            "",
+            "## Gate1 后半段（等待人工选择后才开始）",
+            "- [waiting_human] 用户可选择、合并、重构候选，或请求重新分析。",
+            "- [waiting_human] 后续才会生成 `ideation/idea_scorecard.yaml`、`ideation/hypotheses.md`、`ideation/exp_plan.yaml` 和风险/决策记录。",
+        ]
+    )
+    if paused_reason:
+        current_label = f"已暂停：{paused_reason}"
+        lines.append("")
+        lines.append(f"- [paused] {paused_reason}")
+    elif completed_count == total_count:
+        current_label = "Gate1 候选池必需产物已落盘，正在等待人工选择"
+    lines.append("")
+    (workspace_dir / T4_PROGRESS_MD).write_text("\n".join(lines), encoding="utf-8")
+    return {
+        "completed_count": completed_count,
+        "total_count": total_count,
+        "bridge_required": bridge_required,
+        "bridge_exists": bridge_exists,
+        "current_label": current_label,
+        "path": T4_PROGRESS_MD.as_posix(),
+    }
 
 
 class IdeationAgent(Agent):
@@ -1388,6 +1568,101 @@ def ensure_t4_gate1_candidate_cards(ws: Path) -> bool:
     return True
 
 
+_T4_RECOVERY_DISPLAY_ZH: dict[str, dict[str, str]] = {
+    "Context-contamination controls for agent-targeted uplift": {
+        "title": "智能体增益的上下文污染控制",
+        "pitch": "先区分真实干预效应与提示重复、上下文残留造成的表观增益，再估计智能体 uplift。",
+        "mechanism": "用负向对照提示、重复基线和仅上下文对照，识别响应变化究竟来自商业干预还是提示/上下文污染。",
+        "prediction": "若表观增益主要来自重复或来源/上下文敏感性，加入控制后估计值应缩小甚至改变方向。",
+        "counterfactual": "若是真实干预效应，关闭重复/上下文控制不能完全解释观察到的响应差异。",
+    },
+    "State-dependent uplift model for agent saturation and carryover": {
+        "title": "面向饱和与残留效应的状态依赖 uplift 模型",
+        "pitch": "把会话状态、既往暴露和饱和度纳入 uplift，而不是假设智能体对干预的反应恒定。",
+        "mechanism": "以会话状态、先前暴露和饱和区间调节处理效应，替代稳定的人类式单元响应假设。",
+        "prediction": "状态条件化估计能解释静态 uplift 树或双模型基线遗漏的异质智能体响应。",
+        "counterfactual": "若智能体响应函数在状态间稳定，加入状态和饱和变量不应改善校准或 AUUC 排序。",
+    },
+    "Source-provenance uplift for commercial LLM agents": {
+        "title": "商业 LLM 智能体的来源可信度 uplift",
+        "pitch": "把内容来源归属视为可操纵的干预维度，而不是仅作为元数据。",
+        "mechanism": "智能体对来源类型带有学习到的可信度先验；内容不变时，来源标记变化仍会改变响应概率。",
+        "prediction": "相同商业内容在平台、专家、同伴和中性来源标记下会系统性改变购买或推荐跟随行为。",
+        "counterfactual": "若智能体忽略来源归属，相同内容的来源标签变化不应产生可测 uplift 差异。",
+    },
+    "Bridge synthesis from LLM Agent Decision Psychology to agent uplift": {
+        "title": "从 LLM 智能体决策心理学到 uplift 的桥接综合",
+        "pitch": "将已确认桥接领域作为解释智能体商业决策中非人类响应函数的候选视角。",
+        "mechanism": "桥接领域中的行为或策略机制成为处理效应调节变量，揭示人类 uplift 假设未覆盖的响应模式。",
+        "prediction": "桥接调节变量会识别出与人类 uplift 基线和通用 LLM 行为基线均不同的智能体子群。",
+        "counterfactual": "若桥接机制无关，加入该调节变量不应改变 uplift 排序、校准或失败模式识别。",
+    },
+    "Reverse-operation ablation for agent uplift mechanisms": {
+        "title": "智能体 uplift 机制的反向操作消融",
+        "pitch": "逐一移除或反转所声称的智能体 uplift 机制，检验效应是否仍然存在。",
+        "mechanism": "通过关闭来源、状态或上下文成分，把推测性机制转为可证伪的消融检验。",
+        "prediction": "有效机制在对应成分被移除或反转后，应失去解释力或处理响应分离能力。",
+        "counterfactual": "若移除成分不改变估计结果，该机制应被弱化、否决或重构为非必要设计选择。",
+    },
+}
+
+
+def _candidate_display_text(candidate: dict) -> dict[str, str]:
+    """Prefer Chinese candidate fields; localize deterministic recovery decks."""
+
+    title = str(candidate.get("title") or "Untitled candidate").strip()
+    localized = _T4_RECOVERY_DISPLAY_ZH.get(title, {})
+    return {
+        "title": str(candidate.get("title_zh") or localized.get("title") or title),
+        "original_title": title if (candidate.get("title_zh") or localized.get("title")) else "",
+        "pitch": str(candidate.get("pitch_zh") or localized.get("pitch") or candidate.get("pitch") or candidate.get("core_claim") or "待补充"),
+        "mechanism": str(candidate.get("mechanism_zh") or localized.get("mechanism") or candidate.get("mechanism") or "待补充"),
+        "prediction": str(candidate.get("prediction_zh") or localized.get("prediction") or candidate.get("prediction") or "待补充"),
+        "counterfactual": str(candidate.get("counterfactual_zh") or localized.get("counterfactual") or candidate.get("counterfactual") or "待补充"),
+    }
+
+
+def refresh_t4_gate1_candidate_presentation(ws: Path) -> bool:
+    """Refresh only the human-facing Gate1 card deck and decision brief.
+
+    Unlike provider-failure recovery this never touches Pass1, Pass2, or the
+    structured candidate pool.  It is therefore safe to run for a paused
+    workspace whose candidates are already awaiting a human decision.
+    """
+
+    candidate_path = ws / "ideation" / "_candidate_directions.json"
+    if not candidate_path.exists():
+        return False
+    try:
+        data = json.loads(candidate_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    candidates = data.get("candidates") if isinstance(data, dict) else []
+    if not isinstance(candidates, list) or not candidates:
+        return False
+    pass2_by_id: dict[str, dict] = {}
+    reviews: list[dict] = []
+    pass2_path = ws / "ideation" / "_pass2_grounding_review.json"
+    if pass2_path.exists():
+        try:
+            pass2 = json.loads(pass2_path.read_text(encoding="utf-8"))
+            reviews = [item for item in pass2.get("reviews") or [] if isinstance(item, dict)]
+            for item in reviews:
+                idea_id = str(item.get("idea_id") or item.get("id") or "").strip()
+                if idea_id:
+                    pass2_by_id[idea_id] = item
+        except Exception:
+            pass
+    cards_path = ws / "ideation" / "_gate1_candidate_cards.md"
+    brief_path = ws / "ideation" / "_gate1_selection_brief.md"
+    cards_path.write_text(_render_gate1_candidate_cards(candidates, pass2_by_id), encoding="utf-8")
+    brief_path.write_text(
+        _render_fallback_gate1_selection_brief(candidates, reviews, reason="已刷新中文 Gate1 决策展示；候选池未改写。"),
+        encoding="utf-8",
+    )
+    return True
+
+
 def _render_gate1_candidate_cards(candidates: list[dict], pass2_by_id: dict[str, dict]) -> str:
     score_order = [
         "novelty",
@@ -1399,19 +1674,20 @@ def _render_gate1_candidate_cards(candidates: list[dict], pass2_by_id: dict[str,
         "contribution_strength",
     ]
     lines = [
-        "# T4 Gate1 Candidate Cards",
+        "# T4 Gate1 候选方向卡片",
         "",
-        "## How to Use",
-        "- **排序 / 推荐动作**: 优先比较 recommendation、技术机制、现实含义、评分依据、核心论文依赖、风险和 kill criteria。",
-        "- JSON 只作为机器可读附录；用户主要阅读本文件和 `_gate1_selection_brief.md`。",
-        "- 可选动作：选择 Dn、选择 Dn 并重构、合并 D1+D3、新想法、重新分析。",
+        "## 使用方式",
+        "- 优先比较：研究价值、技术机制、最小验证、证据边界和风险；不要把分数当成自动选择结果。",
+        "- 可直接在 Gate 输入：`选 D1，强调……`、`合并 D1+D3，把……`、`新想法：……` 或 `重新分析：……`。",
+        "- 这些是 Gate1 候选而非最终假设；选择后 T4 后半段必须回查文献笔记中的具体 section。",
         "",
     ]
     for rank, candidate in enumerate(candidates, start=1):
         if not isinstance(candidate, dict):
             continue
         idea_id = str(candidate.get("id") or candidate.get("idea_id") or f"D{rank}").strip()
-        title = str(candidate.get("title") or "Untitled candidate").strip()
+        display = _candidate_display_text(candidate)
+        title = display["title"]
         pass2 = candidate.get("pass2_screening") if isinstance(candidate.get("pass2_screening"), dict) else {}
         review = pass2_by_id.get(idea_id, {})
         recommendation = str(
@@ -1454,31 +1730,568 @@ def _render_gate1_candidate_cards(candidates: list[dict], pass2_by_id: dict[str,
         nearest = candidate.get("nearest_prior_work") if isinstance(candidate.get("nearest_prior_work"), dict) else {}
         lines.extend(
             [
-                f"## Rank {rank} / {idea_id}: {title}",
-                f"- **Recommended action**: {recommendation}; warning: {warning}",
-                f"- **One-line hypothesis**: {candidate.get('pitch') or candidate.get('core_claim') or 'TBD'}",
-                f"- **Technical mechanism**: {candidate.get('mechanism') or 'TBD'} Prediction: {candidate.get('prediction') or 'TBD'} Counterfactual: {candidate.get('counterfactual') or 'TBD'}",
-                f"- **Practical / managerial / business implication**: {practical}",
-                f"- **Scores + score rationale**: {score_text}; rationale: {candidate.get('basis_summary') or candidate.get('contribution_character') or 'see candidate pool'}",
-                f"- **Core paper dependencies**: {paper_text}",
-                f"- **Nearest prior work / novelty delta**: {nearest.get('work', 'not_computed')} (distance={nearest.get('distance', 'not_computed')}); novelty_signal={candidate.get('novelty_signal') or 'not_computed'}",
-                f"- **Minimum convincing evidence**: dataset={minimum.get('dataset', 'TBD')}; baseline={minimum.get('baseline', 'TBD')}; metric={metrics_text}; expected_signal={minimum.get('expected_signal', 'TBD')}",
-                f"- **Top risks / kill criteria**: {risk_text}",
-                "- **User-edit hint**: edit mechanism, practical implication, core paper dependencies, or merge plan before selecting if the card feels under-specified.",
+                f"## 候选 {idea_id}：{title}",
+                *( [f"- **英文原题**：{display['original_title']}"] if display["original_title"] else [] ),
+                f"- **建议动作**：{recommendation}；**风险提示**：{warning}",
+                f"- **一句话主张**：{display['pitch']}",
+                f"- **技术机制**：{display['mechanism']}\n  - 预测：{display['prediction']}\n  - 反事实：{display['counterfactual']}",
+                f"- **实践/管理含义**：{practical}",
+                f"- **评分及依据**：{score_text}；依据：{candidate.get('basis_summary') or candidate.get('contribution_character') or '见候选池'}",
+                f"- **核心文献依赖**：{paper_text}",
+                f"- **最近工作/新颖性差异**：{nearest.get('work', 'not_computed')}（distance={nearest.get('distance', 'not_computed')}）；novelty_signal={candidate.get('novelty_signal') or 'not_computed'}",
+                f"- **最小说服性验证**：数据={minimum.get('dataset', '待定')}；基线={minimum.get('baseline', '待定')}；指标={metrics_text}；预期信号={minimum.get('expected_signal', '待定')}",
+                f"- **主要风险/否决条件**：{risk_text}",
+                "- **可编辑提示**：可在选择时补充机制、实践含义、文献依赖或合并方案；T4 后半段会据此收敛，不能直接把弱证据升级为结论。",
                 "",
             ]
         )
     lines.extend(
         [
-            "## Machine-Readable Artifact Paths",
-            "- `ideation/_candidate_directions.json`: complete structured candidate pool",
-            "- `ideation/_pass2_grounding_review.json`: grounding review and risk flags",
-            "- `ideation/_pass1_forward_candidates.json`: raw forward candidates",
-            "- `ideation/bridge_coverage_review.json`: bridge visibility and escape-hatch review if present",
+            "## 审计材料",
+            "- `ideation/_candidate_directions.json`：结构化候选池",
+            "- `ideation/_pass2_grounding_review.json`：接地检查和风险标记",
+            "- `ideation/_pass1_forward_candidates.json`：前向发散候选",
+            "- `ideation/bridge_coverage_review.json`：桥接候选可见性与暂缓原因（如存在）",
             "",
         ]
     )
     return "\n".join(lines)
+
+
+def recover_t4_gate1_candidate_pool(
+    workspace_dir: Path,
+    *,
+    reason: str = "runtime_fallback_after_provider_failure",
+    overwrite: bool = False,
+) -> dict[str, object]:
+    """Build a conservative Gate1 candidate pool from the compact context pack.
+
+    This is a recovery path, not the primary ideation path. It exists so a T4
+    run that already prepared section-aware note-card context can still reach
+    the human Gate1 decision when the LLM provider times out before writing the
+    required Pass1/Pass2 artifacts. It writes only pre-Gate candidate artifacts;
+    final hypotheses, scorecards, and experiment plans remain LLM/user-gated.
+    """
+
+    ws = Path(workspace_dir)
+    ideation_dir = ws / "ideation"
+    ideation_dir.mkdir(parents=True, exist_ok=True)
+    if not overwrite:
+        ok, err = validate_t4_gate1_ready(ws)
+        if ok:
+            return {"ok": True, "changed": False, "reason": "already_gate1_ready", "validation_error": None}
+        existing_core = [
+            ideation_dir / "_pass1_forward_candidates.json",
+            ideation_dir / "_pass2_grounding_review.json",
+            ideation_dir / "_candidate_directions.json",
+        ]
+        if any(path.exists() and path.stat().st_size > 0 for path in existing_core):
+            return {
+                "ok": False,
+                "changed": False,
+                "reason": "partial_candidate_artifacts_exist",
+                "validation_error": err,
+            }
+
+    pack = _read_json_file(ws / T4_CONTEXT_PACK_JSON)
+    if not pack:
+        pack = prepare_t4_context_pack(ws)
+    raw_cards = pack.get("note_cards") if isinstance(pack.get("note_cards"), list) else []
+    cards = [card for card in raw_cards if isinstance(card, dict)]
+    if not cards:
+        cards = [
+            _compact_note_card(card, ws)
+            for card in _collect_markdown_note_cards(ws, limit=24)
+            if isinstance(card, dict) and _note_card_usable_for_t4(card)
+        ]
+    if not cards:
+        return {
+            "ok": False,
+            "changed": False,
+            "reason": "no_note_cards_for_t4_fallback",
+            "validation_error": "T4 context pack has no usable note cards",
+        }
+
+    bridge_plan = _load_bridge_plan(ws)
+    bridge_domains = _bridge_domains(bridge_plan)
+    bridge_id = str((bridge_domains[0] or {}).get("bridge_id") or "bridge_context").strip() if bridge_domains else ""
+    bridge_name = str((bridge_domains[0] or {}).get("name") or "adjacent decision-behavior bridge").strip() if bridge_domains else ""
+
+    topic = _fallback_project_topic(ws)
+    candidates = _build_fallback_gate1_candidates(
+        cards,
+        bridge_id=bridge_id,
+        bridge_name=bridge_name,
+        topic=topic,
+    )
+    reviews = [_fallback_pass2_review(candidate) for candidate in candidates]
+    review_by_id = {
+        str(review.get("idea_id") or ""): review
+        for review in reviews
+        if isinstance(review, dict)
+    }
+    gate_candidates = [
+        {
+            **candidate,
+            "pass2_screening": review_by_id.get(str(candidate.get("id") or ""), {}),
+            "gate_visibility": "visible",
+            "can_select_despite_risk": True,
+        }
+        for candidate in candidates
+    ]
+
+    _write_json(
+        ideation_dir / "_pass1_forward_candidates.json",
+        {
+            "version": "1.0",
+            "semantics": "raw_forward_generation_candidates_visible_to_gate",
+            "generated_by": "deterministic_t4_gate1_recovery",
+            "recovery_reason": reason,
+            "source_context_pack": T4_CONTEXT_PACK_JSON.as_posix(),
+            "candidates": candidates,
+        },
+    )
+    _write_json(
+        ideation_dir / "_pass2_grounding_review.json",
+        {
+            "version": "1.0",
+            "semantics": "grounding_review_flags_not_deletion_or_final_quality_gate",
+            "generated_by": "deterministic_t4_gate1_recovery",
+            "recovery_reason": reason,
+            "reviews": reviews,
+        },
+    )
+    _write_json(
+        ideation_dir / "_candidate_directions.json",
+        {
+            "version": "1.0",
+            "semantics": "gate_visible_candidate_pool_after_grounding_review",
+            "generated_by": "deterministic_t4_gate1_recovery",
+            "recovery_reason": reason,
+            "candidates": gate_candidates,
+        },
+    )
+    (ideation_dir / "_family_distribution.md").write_text(
+        _render_fallback_family_distribution(gate_candidates),
+        encoding="utf-8",
+    )
+    (ideation_dir / "_gate1_candidate_cards.md").write_text(
+        _render_gate1_candidate_cards(gate_candidates, review_by_id),
+        encoding="utf-8",
+    )
+    (ideation_dir / "_gate1_selection_brief.md").write_text(
+        _render_fallback_gate1_selection_brief(gate_candidates, reviews, reason=reason),
+        encoding="utf-8",
+    )
+    if bridge_domains:
+        _write_json(
+            ideation_dir / "bridge_coverage_review.json",
+            _render_fallback_bridge_coverage_review(bridge_domains, gate_candidates),
+        )
+    _append_t4_progress_recovery_note(ws, reason=reason, candidate_count=len(gate_candidates))
+
+    ok, err = validate_t4_gate1_ready(ws)
+    return {
+        "ok": ok,
+        "changed": True,
+        "reason": reason,
+        "candidate_count": len(gate_candidates),
+        "validation_error": err,
+    }
+
+
+def _write_json(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _fallback_project_topic(ws: Path) -> str:
+    try:
+        project = yaml.safe_load((ws / "project.yaml").read_text(encoding="utf-8")) or {}
+    except Exception:
+        project = {}
+    if not isinstance(project, dict):
+        return "the current research problem"
+    for key in ("research_direction", "title", "name", "project_id"):
+        value = str(project.get(key) or "").strip()
+        if value:
+            return _shorten(value, 110)
+    metadata = project.get("metadata") if isinstance(project.get("metadata"), dict) else {}
+    for key in ("research_direction", "title", "topic", "manuscript_title"):
+        value = str(metadata.get(key) or "").strip()
+        if value:
+            return _shorten(value, 110)
+    return "the current research problem"
+
+
+def _build_fallback_gate1_candidates(
+    cards: list[dict[str, object]],
+    *,
+    bridge_id: str,
+    bridge_name: str,
+    topic: str,
+) -> list[dict[str, object]]:
+    source_bridge = bridge_id or "cross_domain_context"
+    source_bridge_name = bridge_name or "adjacent domain evidence"
+    topic_phrase = topic or "the current research problem"
+    blueprints = [
+        {
+            "id": "D1",
+            "title": f"Evidence-boundary controls for {topic_phrase}",
+            "idea_origin": "problem_reframing",
+            "constraint_status": "mainline",
+            "mechanism_family": "evidence-boundary diagnostics",
+            "pitch": f"Separate the proposed effect in {topic_phrase} from measurement, context, retrieval, or protocol artifacts before making a final claim.",
+            "mechanism": "Negative controls, artifact-only controls, and boundary-condition checks isolate whether an observed shift is caused by the proposed mechanism or by a confounding evidence artifact.",
+            "prediction": "Claims whose apparent support is mostly artifact-driven will shrink, reverse, or become boundary-limited after the controls are applied.",
+            "counterfactual": "If the proposed mechanism is real, removing artifact-only explanations should not fully eliminate the observed signal.",
+            "fields": ("mechanism_claim", "boundary_conditions", "gaps"),
+            "scores": {"novelty": 4, "feasibility": 4, "impact": 4, "evaluability": 5, "differentiation": 4, "cost": 4, "contribution_strength": 4},
+        },
+        {
+            "id": "D2",
+            "title": f"Condition-dependent response model for {topic_phrase}",
+            "idea_origin": "design_rationale_derivation",
+            "constraint_status": "mainline",
+            "mechanism_family": "condition-dependent effects",
+            "pitch": f"Model when and where the central mechanism in {topic_phrase} should hold, fail, or require a different design choice.",
+            "mechanism": "The candidate conditions the effect on state, setting, subgroup, data regime, or intervention timing rather than assuming one stable average effect.",
+            "prediction": "Condition-aware modeling will explain heterogeneity that a static baseline or one-size-fits-all design misses.",
+            "counterfactual": "If the effect is truly stable across conditions, adding condition variables should not improve calibration, ranking, or explanatory fit.",
+            "fields": ("design_rationale", "mechanism_claim", "boundary_conditions"),
+            "scores": {"novelty": 4, "feasibility": 3, "impact": 4, "evaluability": 4, "differentiation": 4, "cost": 3, "contribution_strength": 4},
+        },
+        {
+            "id": "D3",
+            "title": f"Cross-domain mechanism transfer for {topic_phrase}",
+            "idea_origin": "cross_domain_analogy",
+            "constraint_status": "mainline",
+            "mechanism_family": "cross-domain mechanism transfer",
+            "pitch": f"Transfer a mechanism from an adjacent domain into {topic_phrase} and test whether it changes the design rationale rather than only the application setting.",
+            "mechanism": "A mechanism observed in the adjacent domain becomes a moderator, diagnostic, or design principle for the target problem.",
+            "prediction": "The transferred mechanism will expose a response pattern, failure mode, or design tradeoff not captured by target-domain baselines alone.",
+            "counterfactual": "If the transfer is only superficial, adding the adjacent-domain mechanism should not change predictions, evaluation outcomes, or the nearest-prior-work distinction.",
+            "fields": ("bridge_point", "mechanism_claim", "cross_paper_tension"),
+            "cross_domain_sources": [source_bridge],
+            "cross_domain_relation": "mechanism_bridge",
+            "scores": {"novelty": 4, "feasibility": 4, "impact": 3, "evaluability": 5, "differentiation": 4, "cost": 4, "contribution_strength": 3},
+        },
+        {
+            "id": "D4",
+            "title": f"Bridge synthesis from {source_bridge_name} to {topic_phrase}",
+            "idea_origin": "bridge_synthesis",
+            "constraint_status": "bridge",
+            "mechanism_family": "adjacent bridge synthesis",
+            "pitch": f"Use the confirmed bridge domain as a Gate1-visible candidate for reframing {topic_phrase}.",
+            "mechanism": "A bridge-domain mechanism becomes a candidate design principle, treatment moderator, evaluation lens, or boundary condition for the target contribution.",
+            "prediction": "The bridge-specific lens will identify a testable distinction from both the nearest target-domain baseline and a generic adjacent-domain import.",
+            "counterfactual": "If the bridge mechanism is irrelevant, adding it should not change the problem framing, design rationale, evaluation setup, or failure-mode interpretation.",
+            "fields": ("bridge_point", "mechanism_claim", "design_rationale"),
+            "cross_domain_sources": [source_bridge],
+            "cross_domain_relation": "method_transfer",
+            "scores": {"novelty": 5, "feasibility": 3, "impact": 4, "evaluability": 3, "differentiation": 5, "cost": 3, "contribution_strength": 3},
+        },
+        {
+            "id": "S1",
+            "title": f"Reverse-operation ablation for {topic_phrase}",
+            "idea_origin": "reverse_operation",
+            "constraint_status": "supplement",
+            "mechanism_family": "ablation and falsification",
+            "pitch": "For each selected mechanism, deliberately remove or invert the claimed active component to test whether the effect survives.",
+            "mechanism": "Reverse-operation tests convert speculative mechanism claims into falsifiable ablations by disabling or inverting the proposed active component one at a time.",
+            "prediction": "A valid mechanism should lose explanatory power or outcome separation when its corresponding component is removed or inverted.",
+            "counterfactual": "If removal does not change estimates, the mechanism should be weakened, rejected, or reframed as a nonessential design choice.",
+            "fields": ("gaps", "boundary_conditions", "design_rationale"),
+            "scores": {"novelty": 3, "feasibility": 5, "impact": 3, "evaluability": 5, "differentiation": 3, "cost": 5, "contribution_strength": 2},
+        },
+    ]
+    out: list[dict[str, object]] = []
+    for blueprint in blueprints:
+        fields = tuple(str(item) for item in blueprint.pop("fields"))  # type: ignore[arg-type]
+        papers = _fallback_supporting_papers(cards, fields=fields, limit=3)
+        nearest = papers[0]["title"] if papers else "current synthesis / no single nearest work"
+        candidate = {
+            **blueprint,
+            "generation_stage": "deterministic_recovery_pass1",
+            "core_claim": blueprint["pitch"],
+            "target_problem": f"Current evidence suggests {topic_phrase} needs a better-grounded contribution candidate before final hypotheses are written.",
+            "basis_summary": _fallback_basis_summary(papers, fields),
+            "supporting_papers": papers,
+            "basis_sources": [
+                {
+                    "type": "paper_note_section",
+                    "ref": paper.get("ref") or paper.get("title"),
+                    "source_file": paper.get("source_file"),
+                    "claim": paper.get("claim_used"),
+                }
+                for paper in papers
+            ],
+            "minimum_experiment": {
+                "dataset": "controlled agentic-commerce vignette or task suite with randomized treatments",
+                "baseline": "human-targeted uplift baseline plus agent-agnostic LLM response baseline",
+                "metric": ["AUUC/Qini-style ranking when labels exist", "calibration", "task-completion or choice-rate delta"],
+                "expected_signal": "candidate-specific treatment-response separation beyond baseline prompt sensitivity",
+            },
+            "nearest_prior_work": {"work": nearest, "distance": "moderate" if papers else "not_computed"},
+            "novelty_signal": "adjacent_zone" if papers else "not_computed",
+            "generated_by": "deterministic_t4_gate1_recovery",
+            "selection_warning": "Runtime-generated Gate1 candidate after provider failure; select only after T4后半段 re-checks exact note sections.",
+        }
+        out.append(candidate)
+    return out
+
+
+def _fallback_supporting_papers(
+    cards: list[dict[str, object]],
+    *,
+    fields: tuple[str, ...],
+    limit: int,
+) -> list[dict[str, object]]:
+    def score(card: dict[str, object]) -> tuple[int, float, int]:
+        field_hits = sum(1 for field in fields if str(card.get(field) or "").strip())
+        try:
+            quality = float(card.get("citation_quality_score") or 0.0)
+        except (TypeError, ValueError):
+            quality = 0.0
+        full_text = 1 if "FULL" in str(card.get("evidence_level") or "").upper() else 0
+        return (field_hits + full_text, quality, len(str(card.get("title") or "")))
+
+    ranked = sorted(cards, key=score, reverse=True)
+    papers: list[dict[str, object]] = []
+    for card in ranked:
+        claim = ""
+        for field in fields:
+            claim = _shorten(str(card.get(field) or ""), 240)
+            if claim:
+                break
+        if not claim:
+            continue
+        papers.append(
+            {
+                "title": str(card.get("title") or card.get("paper_id") or "paper").strip(),
+                "paper_id": str(card.get("paper_id") or card.get("note_id") or "").strip(),
+                "ref": str(card.get("citation_ref") or "").strip(),
+                "source_file": str(card.get("source_file") or card.get("path") or "").strip(),
+                "evidence_level": str(card.get("evidence_level") or "unknown"),
+                "claim_used": claim,
+            }
+        )
+        if len(papers) >= limit:
+            break
+    return papers
+
+
+def _fallback_basis_summary(papers: list[dict[str, object]], fields: tuple[str, ...]) -> str:
+    if not papers:
+        return (
+            "Recovered from the T4 compact context pack and synthesis because the LLM provider failed before Pass1 artifacts were written; "
+            "this candidate must be re-grounded against individual note sections before final selection."
+        )
+    titles = "; ".join(str(paper.get("title") or "paper") for paper in papers[:3])
+    return (
+        f"Recovered from section-aware note-card cues ({', '.join(fields)}). "
+        f"Candidate is grounded for Gate1 discussion in: {titles}. "
+        "Final T4 must re-open exact note sections before turning this into hypotheses."
+    )
+
+
+def _fallback_pass2_review(candidate: dict[str, object]) -> dict[str, object]:
+    idea_id = str(candidate.get("id") or "")
+    status = str(candidate.get("constraint_status") or "")
+    if status == "supplement":
+        recommendation = "defer_recommended"
+        warning = "Use as an ablation or falsification supplement, not as the standalone paper contribution."
+        counterfactual = "independent"
+        novelty = "marginal_zone"
+    elif status == "bridge":
+        recommendation = "revise_before_selection"
+        warning = "Bridge candidate is visible because T1 confirmed bridge domains; select only if mechanism evidence is strong enough after note-section verification."
+        counterfactual = "survives_weakened"
+        novelty = "no_nearby_cluster"
+    else:
+        recommendation = "revise_before_selection"
+        warning = "Runtime recovery candidate: suitable for Gate1 discussion but requires T4后半段 grounding before final hypotheses."
+        counterfactual = "survives_weakened"
+        novelty = "adjacent_zone"
+    nearest = candidate.get("nearest_prior_work") if isinstance(candidate.get("nearest_prior_work"), dict) else {}
+    return {
+        "idea_id": idea_id,
+        "screening_recommendation": recommendation,
+        "visible_to_gate": True,
+        "selection_warning": warning,
+        "counterfactual_check": counterfactual,
+        "counterfactual_note": str(candidate.get("counterfactual") or "Recovered candidate has an explicit falsification condition."),
+        "nearest_prior_work": {
+            "work": str(nearest.get("work") or "not computed during runtime recovery"),
+            "distance": str(nearest.get("distance") or "not_computed"),
+        },
+        "novelty_signal": novelty,
+    }
+
+
+def _render_fallback_family_distribution(candidates: list[dict[str, object]]) -> str:
+    origin_counts: dict[str, int] = {}
+    family_counts: dict[str, int] = {}
+    for candidate in candidates:
+        origin = str(candidate.get("idea_origin") or "unknown")
+        family = str(candidate.get("mechanism_family") or "unknown")
+        origin_counts[origin] = origin_counts.get(origin, 0) + 1
+        family_counts[family] = family_counts.get(family, 0) + 1
+    lines = [
+        "# T4 Gate1 候选谱系分布",
+        "",
+        "该文件来自 T4 Gate1 的确定性恢复，用于帮助人工比较候选，不是最终学术判断。",
+        "",
+        "## 来源分布",
+    ]
+    lines.extend(f"- {key}: {value}" for key, value in sorted(origin_counts.items()))
+    lines.extend(["", "## 机制谱系分布"])
+    lines.extend(f"- {key}: {value}" for key, value in sorted(family_counts.items()))
+    lines.extend(
+        [
+            "",
+            "## 恢复边界",
+            "- 候选池保留主线、跨域/桥接和补充通道，供 Gate1 选择、合并、重构或要求重新分析。",
+            "- 写最终假设、评分卡或实验计划前，T4 后半段必须重新打开相应 paper note 的具体 section。",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+def _render_fallback_gate1_selection_brief(
+    candidates: list[dict[str, object]],
+    reviews: list[dict[str, object]],
+    *,
+    reason: str,
+) -> str:
+    review_by_id = {str(item.get("idea_id") or ""): item for item in reviews}
+    origin_counts: dict[str, int] = {}
+    for candidate in candidates:
+        origin = str(candidate.get("idea_origin") or "unknown")
+        origin_counts[origin] = origin_counts.get(origin, 0) + 1
+    ids = [str(candidate.get("id") or "") for candidate in candidates]
+    lines = [
+        "# T4 Gate1 选择简报",
+        "",
+        "- 当前候选池已就绪，可直接选择、合并、重构或要求重新分析。",
+        "- 本简报不替代证据核验：最终假设前，T4 后半段必须回查对应文献笔记的具体 section。",
+        f"- 运行记录：{reason}",
+        "",
+        "## 候选池",
+    ]
+    for candidate in candidates:
+        idea_id = str(candidate.get("id") or "")
+        review = review_by_id.get(idea_id, {})
+        display = _candidate_display_text(candidate)
+        lines.append(
+            f"- {idea_id}：{display['title']}｜来源={candidate.get('idea_origin')}｜"
+            f"建议={review.get('screening_recommendation') or '需复核'}｜风险={review.get('selection_warning') or candidate.get('selection_warning') or '选择后回查证据'}"
+        )
+    lines.extend(
+        [
+            "",
+            "## 接地复核提醒",
+        ]
+    )
+    for review in reviews:
+        lines.append(f"- {review.get('idea_id')}：{review.get('selection_warning')}")
+    merge_a = ids[0] if ids else "D1"
+    merge_b = ids[1] if len(ids) > 1 else "D2"
+    merge_c = ids[-1] if ids else "S1"
+    lines.extend(
+        [
+            "",
+            "## 合并建议",
+            f"- 合并 {merge_a}+{merge_b}：保留更强的主机制，把另一个候选作为状态扩展或验证通道。",
+            f"- 合并 {merge_a}+{merge_c}：把补充候选作为所选主方向的证伪/消融模块。",
+            "",
+            "## 集中度提示",
+            "候选池覆盖主线、跨域/桥接和补充通道。在 T4 后半段回查具体笔记前，不应把它视为已经收敛到某一篇论文或某一类机制。",
+            "",
+            "## Origin 分布",
+            "; ".join(f"{key}: {value}" for key, value in sorted(origin_counts.items())),
+            "",
+            "## Novelty-Utility 谱系排布",
+            "D1/D2：实用性高、创新风险适中；D3/D4：创新空间较高但接地风险更高；S1：可行性高，但更适合作为消融而非独立主贡献。",
+            "",
+            "## 审计材料",
+            "- `ideation/_candidate_directions.json`",
+            "- `ideation/_pass2_grounding_review.json`",
+            "- `ideation/_pass1_forward_candidates.json`",
+            "- `ideation/bridge_coverage_review.json`（如配置了 bridge domain）",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _render_fallback_bridge_coverage_review(
+    bridge_domains: list[dict],
+    candidates: list[dict[str, object]],
+) -> dict[str, object]:
+    candidate_by_bridge: dict[str, list[str]] = {}
+    for candidate in candidates:
+        idea_id = str(candidate.get("id") or "").strip()
+        for source in _cross_domain_sources(candidate):
+            candidate_by_bridge.setdefault(source, []).append(idea_id)
+    reviews: list[dict[str, object]] = []
+    warnings: list[str] = []
+    for bridge in bridge_domains:
+        bridge_id = str(bridge.get("bridge_id") or "").strip()
+        priority = str(bridge.get("priority") or "should_explore").strip()
+        if priority not in {"must_explore", "should_explore"}:
+            priority = "should_explore"
+        candidate_ids = candidate_by_bridge.get(bridge_id, [])
+        visible = bool(candidate_ids)
+        if priority == "must_explore" and not visible:
+            warnings.append(f"{bridge_id}: must_explore bridge not covered by deterministic recovery candidate")
+        status = "deferred" if visible else ("no_candidate_available" if priority == "must_explore" else "deferred")
+        reviews.append(
+            {
+                "bridge_id": bridge_id,
+                "priority": priority,
+                "candidate_ids": candidate_ids,
+                "visible_to_gate": visible,
+                "forced_surfaced": False,
+                "selected_into_hypotheses": False,
+                "decision_summary": (
+                    f"Recovered Gate1 candidate(s) {candidate_ids} cover this bridge for user review."
+                    if visible
+                    else "No deterministic candidate was generated for this bridge; it remains a deferred context lane."
+                ),
+                "escape_hatch": {
+                    "status": status,
+                    "reason": (
+                        "Bridge was surfaced through deterministic recovery; final selection requires exact note-section verification."
+                        if visible
+                        else "Context pack did not provide enough section-specific mechanism evidence for a separate bridge candidate."
+                    ),
+                    "falsification_or_kill_criteria": "Drop or merge this bridge if exact note sections cannot support a testable moderator, mechanism, or evaluation transfer.",
+                    "can_revisit_if": "Revisit after T2/T3 adds stronger bridge-specific paper notes or the user explicitly selects this bridge framing at Gate1.",
+                },
+            }
+        )
+    return {
+        "version": "1.0",
+        "semantics": "bridge_candidate_visibility_and_escape_hatch_review",
+        "source_bridge_plan": "literature/bridge_domain_plan.json",
+        "bridge_reviews": reviews,
+        "warnings": warnings,
+    }
+
+
+def _append_t4_progress_recovery_note(ws: Path, *, reason: str, candidate_count: int) -> None:
+    path = ws / T4_PROGRESS_MD
+    existing = read_text_file(path, default="")
+    lines = existing.rstrip().splitlines() if existing.strip() else ["# T4 Progress", ""]
+    lines.extend(
+        [
+            f"- [recovered] Runtime generated {candidate_count} Gate1 candidates from section-aware note-card context after interruption.",
+            f"- [reason] {reason}",
+            "- [next] Human Gate1 should select, merge, reframe, or request reanalysis; final hypotheses still require T4后半段 grounding.",
+        ]
+    )
+    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
 def _format_card_papers(items: object) -> str:

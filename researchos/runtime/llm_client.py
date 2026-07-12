@@ -497,47 +497,48 @@ class LLMClient:
         """对 profile 涉及的 endpoint 做最小连通性检查。"""
         if litellm is None:
             raise LLMProviderError("litellm is not installed")
+        try:
+            profiles = profiles_to_check or [self.default_profile_name]
+            endpoints_to_check: set[str] = set()
+            for profile_name in profiles:
+                profile = self.profiles.get(profile_name)
+                if profile is None:
+                    continue
+                for tier in profile.tiers.values():
+                    endpoints_to_check.add(tier.primary.endpoint)
+                    for fallback in tier.fallback:
+                        endpoints_to_check.add(fallback.endpoint)
 
-        profiles = profiles_to_check or [self.default_profile_name]
-        endpoints_to_check: set[str] = set()
-        for profile_name in profiles:
-            profile = self.profiles.get(profile_name)
-            if profile is None:
-                continue
-            for tier in profile.tiers.values():
-                endpoints_to_check.add(tier.primary.endpoint)
-                for fallback in tier.fallback:
-                    endpoints_to_check.add(fallback.endpoint)
-
-        results: dict[str, dict[str, Any]] = {}
-        for endpoint_name in sorted(endpoints_to_check):
-            endpoint = self.endpoints[endpoint_name]
-            binding = self._any_binding_for(endpoint_name)
-            if binding is None:
-                results[endpoint_name] = {"ok": False, "error": "no binding", "latency_ms": 0}
-                continue
-            started = time.time()
-            try:
-                await litellm.acompletion(
-                    model=binding.qualified(endpoint),
-                    messages=[{"role": "user", "content": "ping"}],
-                    max_tokens=1,
-                    timeout=10,
-                    **endpoint.to_litellm_kwargs(),
-                )
-                results[endpoint_name] = {
-                    "ok": True,
-                    "error": None,
-                    "latency_ms": int((time.time() - started) * 1000),
-                }
-            except Exception as exc:
-                results[endpoint_name] = {
-                    "ok": False,
-                    "error": str(exc)[:200],
-                    "latency_ms": int((time.time() - started) * 1000),
-                }
-        await self.aclose()
-        return results
+            results: dict[str, dict[str, Any]] = {}
+            for endpoint_name in sorted(endpoints_to_check):
+                endpoint = self.endpoints[endpoint_name]
+                binding = self._any_binding_for(endpoint_name)
+                if binding is None:
+                    results[endpoint_name] = {"ok": False, "error": "no binding", "latency_ms": 0}
+                    continue
+                started = time.time()
+                try:
+                    await litellm.acompletion(
+                        model=binding.qualified(endpoint),
+                        messages=[{"role": "user", "content": "ping"}],
+                        max_tokens=1,
+                        timeout=10,
+                        **endpoint.to_litellm_kwargs(),
+                    )
+                    results[endpoint_name] = {
+                        "ok": True,
+                        "error": None,
+                        "latency_ms": int((time.time() - started) * 1000),
+                    }
+                except Exception as exc:
+                    results[endpoint_name] = {
+                        "ok": False,
+                        "error": str(exc)[:200],
+                        "latency_ms": int((time.time() - started) * 1000),
+                    }
+            return results
+        finally:
+            await self.aclose()
 
     async def chat(
         self,
@@ -563,66 +564,66 @@ class LLMClient:
         if litellm is None:
             raise LLMProviderError("litellm is not installed")
 
-        errors: list[str] = []
-        candidates = self.resolve(
-            profile=profile,
-            tier=tier,
-            model_override=model_override,
-            endpoint_override=endpoint_override,
-            max_context_override=max_context_override,
-        )
-        for attempt in range(max_retries_per_model):
-            for binding, endpoint in candidates:
-                qualified = binding.qualified(endpoint)
-                started = time.time()
-                try:
-                    # 先做本地限流，避免一撞 provider rate limit 就误触 fallback。
-                    estimated_tokens = self.count_tokens(messages, binding) + 4000
-                    await self.rate_limiter.wait(endpoint.name, estimated_tokens)
-                    kwargs: dict[str, Any] = {
-                        "model": qualified,
-                        "messages": messages,
-                        "temperature": temperature,
-                        "timeout": timeout,
-                        **endpoint.to_litellm_kwargs(),
-                    }
-                    if tools:
-                        kwargs["tools"] = tools
-                        kwargs["tool_choice"] = "auto"
-                    # 对 LiteLLM 再包一层 runtime 级硬超时，避免 provider/SDK
-                    # 未按预期尊重 timeout 时单次调用悬挂过久。
+        try:
+            errors: list[str] = []
+            candidates = self.resolve(
+                profile=profile,
+                tier=tier,
+                model_override=model_override,
+                endpoint_override=endpoint_override,
+                max_context_override=max_context_override,
+            )
+            for attempt in range(max_retries_per_model):
+                for binding, endpoint in candidates:
+                    qualified = binding.qualified(endpoint)
+                    started = time.time()
                     try:
+                        # 先做本地限流，避免一撞 provider rate limit 就误触 fallback。
+                        estimated_tokens = self.count_tokens(messages, binding) + 4000
+                        await self.rate_limiter.wait(endpoint.name, estimated_tokens)
+                        kwargs: dict[str, Any] = {
+                            "model": qualified,
+                            "messages": messages,
+                            "temperature": temperature,
+                            "timeout": timeout,
+                            **endpoint.to_litellm_kwargs(),
+                        }
+                        if tools:
+                            kwargs["tools"] = tools
+                            kwargs["tool_choice"] = "auto"
+                        # 对 LiteLLM 再包一层 runtime 级硬超时，避免 provider/SDK
+                        # 未按预期尊重 timeout 时单次调用悬挂过久。
                         raw = await asyncio.wait_for(
                             litellm.acompletion(**kwargs),
                             timeout=max(float(timeout), 0.001),
                         )
-                    finally:
-                        await self.aclose()
-                    choices = getattr(raw, "choices", None)
-                    if not choices:
-                        raise RuntimeError("LLM provider returned an empty choices list")
-                    usage = getattr(raw, "usage", None)
-                    hidden = getattr(raw, "_hidden_params", {}) or {}
-                    return LLMResponse(
-                        raw=raw,
-                        model_used=qualified,
-                        endpoint_used=endpoint.name,
-                        tokens_in=getattr(usage, "prompt_tokens", 0),
-                        tokens_out=getattr(usage, "completion_tokens", 0),
-                        cost_usd=float(hidden.get("response_cost") or 0.0),
-                        duration_ms=int((time.time() - started) * 1000),
-                    )
-                except Exception as exc:
-                    errors.append(
-                        f"{qualified}@{endpoint.name} attempt {attempt + 1}: {exc!r} "
-                        f"({self._endpoint_debug_hint(endpoint, qualified)})"
-                    )
-            if attempt < max_retries_per_model - 1:
-                await asyncio.sleep(min(retry_base_delay * (2**attempt), 8))
-        raise LLMProviderError(
-            f"All candidates failed (profile={profile or self.default_profile_name}, "
-            f"tier={tier}). Errors: {errors}"
-        )
+                        choices = getattr(raw, "choices", None)
+                        if not choices:
+                            raise RuntimeError("LLM provider returned an empty choices list")
+                        usage = getattr(raw, "usage", None)
+                        hidden = getattr(raw, "_hidden_params", {}) or {}
+                        return LLMResponse(
+                            raw=raw,
+                            model_used=qualified,
+                            endpoint_used=endpoint.name,
+                            tokens_in=getattr(usage, "prompt_tokens", 0),
+                            tokens_out=getattr(usage, "completion_tokens", 0),
+                            cost_usd=float(hidden.get("response_cost") or 0.0),
+                            duration_ms=int((time.time() - started) * 1000),
+                        )
+                    except Exception as exc:
+                        errors.append(
+                            f"{qualified}@{endpoint.name} attempt {attempt + 1}: {exc!r} "
+                            f"({self._endpoint_debug_hint(endpoint, qualified)})"
+                        )
+                if attempt < max_retries_per_model - 1:
+                    await asyncio.sleep(min(retry_base_delay * (2**attempt), 8))
+            raise LLMProviderError(
+                f"All candidates failed (profile={profile or self.default_profile_name}, "
+                f"tier={tier}). Errors: {errors}"
+            )
+        finally:
+            await self.aclose()
 
     @staticmethod
     def _endpoint_debug_hint(endpoint: Endpoint, qualified_model: str) -> str:
@@ -647,7 +648,14 @@ class LLMClient:
                 maybe_awaitable = closer()
                 if inspect.isawaitable(maybe_awaitable):
                     await maybe_awaitable
-            for attr_name in ("client_session", "aclient_session"):
+            for attr_name in (
+                "client_session",
+                "aclient_session",
+                "async_client",
+                "_async_client",
+                "httpx_async_client",
+                "_httpx_async_client",
+            ):
                 session = getattr(litellm, attr_name, None)
                 if session is None:
                     continue
@@ -656,6 +664,11 @@ class LLMClient:
                     setattr(litellm, attr_name, None)
                 except Exception:
                     pass
+            cache = getattr(litellm, "in_memory_llm_clients_cache", None)
+            if isinstance(cache, dict):
+                for client in list(cache.values()):
+                    await self._close_async_client_like(client)
+                cache.clear()
         except Exception as exc:  # pragma: no cover - cleanup failure should not mask LLM error
             _log.warning("litellm_async_client_cleanup_failed", error=repr(exc))
 

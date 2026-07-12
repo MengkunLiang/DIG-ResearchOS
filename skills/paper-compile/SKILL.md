@@ -1,266 +1,88 @@
 ---
 name: paper-compile
-description: "Compile LaTeX paper to PDF, fix errors, and verify output. Use when user says \"编译论文\", \"compile paper\", \"build PDF\", \"生成PDF\", or wants to compile LaTeX into a submission-ready PDF."
-argument-hint: [paper-directory]
-allowed_tools: Bash(*), Read, Write, Edit, Grep, Glob
+description: Prepare a ResearchOS manuscript as a submission bundle and compile it with the configured native or Docker LaTeX backend. Use when the user needs a real PDF, compile diagnostics, and an auditable summary rather than shell-only LaTeX instructions.
+tools:
+  - read_file
+  - write_file
+  - list_files
+  - prepare_submission_bundle
+  - latex_compile
+  - finish_task
+strict_tools: true
+model_tier: medium
+max_steps: 14
+max_tokens_total: 90000
+temperature: 0.1
+allowed_read_prefixes:
+  - user_inputs/paper-compile/
+  - drafts/
+  - literature/
+  - submission/
+  - _runtime/skill_sessions/
+allowed_write_prefixes:
+  - drafts/
+  - literature/
+  - submission/
+outputs_expected:
+  pdf: submission/bundle/main.pdf
+  compile_report: submission/compile_report.json
+  summary: submission/compile_summary.md
+interaction:
+  mode: guided
+  language: zh-CN
+  summary: 将已写好的 ResearchOS 稿件打包并用真实 LaTeX 后端编译；会保留报告和失败原因，不伪造 PDF。
+  request_required: false
+  request_prompt: 可选：说明需要的引擎（pdflatex/xelatex）或目标会议限制。
+  example_request: 使用 xelatex 编译并保留所有警告，目标是中文论文。
+  required_inputs:
+    - id: manuscript
+      label: 已组装的论文 LaTeX
+      description: 由 paper-write 或 T8 生成的完整 manuscript，不是单独章节文件。
+      paths:
+        - user_inputs/paper-compile/paper.tex
+        - drafts/paper.tex
+      extensions: [.tex]
+      min_bytes: 120
+      example: drafts/paper.tex
+    - id: bibliography
+      label: 已核验的参考文献库
+      description: 打包阶段会将它复制为 submission/bundle/references.bib。
+      paths:
+        - user_inputs/paper-compile/references.bib
+        - literature/related_work.bib
+      extensions: [.bib]
+      min_bytes: 40
+      example: literature/related_work.bib
+  optional_inputs:
+    - id: figures
+      label: 图表资源
+      description: 可选；存在 drafts/figures/ 或 figures/ 时，打包工具会复制被稿件引用的资源。
+      paths:
+        - drafts/figures/manifest.json
+      extensions: [.json]
+      min_bytes: 2
+      example: drafts/figures/manifest.json
+  outputs:
+    - id: pdf
+      label: 编译后的 PDF
+      path: submission/bundle/main.pdf
+      description: 只有 LaTeX 后端实际成功时才会存在。
+    - id: compile_report
+      label: 编译报告
+      path: submission/compile_report.json
+      description: 记录后端、引擎、日志摘要和成功/失败状态。
+    - id: summary
+      label: 编译总结
+      path: submission/compile_summary.md
+      description: 说明输入、PDF 路径、警告和需要人工处理的问题。
 ---
 
-# Paper Compile: LaTeX to Submission-Ready PDF
+# Real LaTeX Compilation
 
-Compile the LaTeX paper and fix any issues: **$ARGUMENTS**
+Read `user_inputs/paper-compile/_intake.md` first. In an existing project workspace, inspect the selected source and bibliography semantically before compiling. If a file is missing, its figure paths are unclear, or the requested engine conflicts with the manuscript, write `user_inputs/paper-compile/_followup_request.md` and call `ask_human`; do not claim a predicted PDF exists.
 
-## Constants
-
-- **COMPILER = `latexmk`** — LaTeX build tool. Handles multi-pass compilation automatically.
-- **ENGINE = `pdflatex`** — LaTeX engine. Options: `pdflatex` (default), `xelatex` (for CJK/custom fonts), `lualatex`.
-- **MAX_COMPILE_ATTEMPTS = 3** — Maximum attempts to fix errors and recompile.
-- **PAPER_DIR = `paper/`** — Directory containing LaTeX source files.
-- **MAX_PAGES** — Page limit. ML conferences: main body to Conclusion end (excluding references & appendix). ICLR=9, NeurIPS=9, ICML=8. **IEEE venues: references ARE included in page count.** IEEE journal ≈ 12-14 pages, IEEE conference ≈ 5-8 pages (all inclusive).
-
-## Workflow
-
-### Step 1: Verify Prerequisites
-
-Check that the compilation environment is ready:
-
-```bash
-# Check LaTeX installation
-which pdflatex && which latexmk && which bibtex
-
-# If not installed, provide instructions:
-# macOS: brew install --cask mactex-no-gui
-# Ubuntu: sudo apt-get install texlive-full
-# Server: conda install -c conda-forge texlive-core
-```
-
-Verify all required files exist:
-
-```bash
-# Must exist
-ls $PAPER_DIR/main.tex
-
-# Should exist
-ls $PAPER_DIR/references.bib
-ls $PAPER_DIR/sections/*.tex
-ls $PAPER_DIR/figures/*.pdf 2>/dev/null || ls $PAPER_DIR/figures/*.png 2>/dev/null
-```
-
-### Step 2: First Compilation Attempt
-
-```bash
-cd $PAPER_DIR
-
-# Clean previous build artifacts
-latexmk -C
-
-# Full compilation (pdflatex + bibtex + pdflatex × 2)
-latexmk -pdf -interaction=nonstopmode -halt-on-error main.tex 2>&1 | tee compile.log
-```
-
-### Step 3: Error Diagnosis and Auto-Fix
-
-If compilation fails, read `compile.log` and fix common errors:
-
-**Missing packages:**
-```
-! LaTeX Error: File `somepackage.sty' not found.
-```
-→ Install via `tlmgr install somepackage` or remove the `\usepackage` if unused.
-
-**Undefined references:**
-```
-LaTeX Warning: Reference `fig:xyz' on page 3 undefined
-```
-→ Check `\label{fig:xyz}` exists in the correct figure environment.
-
-**Missing figures:**
-```
-! LaTeX Error: File `figures/fig1.pdf' not found.
-```
-→ Check if the file exists with a different extension (.png vs .pdf). Update the `\includegraphics` path.
-
-**Citation undefined:**
-```
-LaTeX Warning: Citation `smith2024' undefined
-```
-→ Add the missing entry to `references.bib` or fix the citation key.
-
-**`[VERIFY]` markers in text:**
-→ Search for `[VERIFY]` markers left by `/paper-write`. These indicate unverified citations or facts. Search for the correct information or flag to the user.
-
-**Overfull hbox:**
-```
-Overfull \hbox (12.5pt too wide) in paragraph at lines 42--45
-```
-→ Minor: usually ignorable. If severe (>20pt), rephrase the text or adjust figure width.
-
-**BibTeX errors:**
-```
-I was expecting a `,' or a `}'---line 15 of references.bib
-```
-→ Fix BibTeX syntax (missing comma, unmatched braces, special characters in title).
-
-**`\crefname` undefined for custom theorem types:**
-→ Ensure `\crefname{assumption}{Assumption}{Assumptions}` and similar are in the preamble after `\newtheorem{assumption}`.
-
-### Step 4: Iterative Fix Loop
-
-```
-for attempt in 1..MAX_COMPILE_ATTEMPTS:
-    compile()
-    if success:
-        break
-    parse_errors()
-    auto_fix()
-```
-
-For each error:
-1. Read the error message from `compile.log`
-2. Locate the source file and line number
-3. Apply the fix
-4. Recompile
-
-**Stuck after 2 attempts?** If Codex plugin is installed, invoke `/codex:rescue` — Codex can independently read the LaTeX source and `compile.log` to spot issues Claude missed (e.g., conflicting packages, encoding problems, subtle macro errors). If not installed, continue with Claude's own diagnosis.
-
-### Step 5: Post-Compilation Checks
-
-After successful compilation, verify the output:
-
-```bash
-# Check PDF exists and has content
-ls -la main.pdf
-# Check page count
-pdfinfo main.pdf | grep Pages
-
-# macOS: open for visual inspection
-# open main.pdf
-```
-
-**Visual review (automated):**
-If the compiled PDF exists, read it directly to check visual presentation:
-- Figure quality: readable labels, legible text, distinguishable colors
-- Layout: no orphaned section headers, no awkward page breaks
-- Figures appear near their first text reference (not pages away)
-- Tables: aligned columns, consistent decimal precision
-- No overfull content visibly extending past margins
-
-This is a quick visual scan, not a full review — the improvement loop does deeper visual review.
-
-**Automated checks:**
-
-- [ ] PDF file exists and is > 100KB (not empty/corrupt)
-- [ ] Total page count is reasonable (MAX_PAGES + appendix + references)
-- [ ] No "??" in the PDF (undefined references — grep the log)
-- [ ] No "[?]" in the PDF (undefined citations — grep the log)
-- [ ] Figures are rendered (not missing image placeholders)
-
-```bash
-# Check for undefined references
-grep -c "LaTeX Warning.*undefined" compile.log
-
-# Check for missing citations
-grep -c "Citation.*undefined" compile.log
-```
-
-### Step 6: Page Count Verification
-
-**CRITICAL**: Verify paper fits within MAX_PAGES.
-
-**For ML conferences (ICLR/NeurIPS/ICML/CVPR/ACL/AAAI):** Main body = first page through end of Conclusion section (not necessarily §5 — could be §6, §7, or §8 depending on structure). References and appendix are NOT counted.
-
-**For IEEE venues:** The TOTAL page count (including references) must fit within the limit. There is no separate "main body" counting — everything up to and including the references counts.
-
-**Precise check using `pdftotext`:**
-```bash
-# Extract text and find where Conclusion ends vs References begin
-pdftotext main.pdf - | python3 -c "
-import sys
-text = sys.stdin.read()
-pages = text.split('\f')
-for i, page in enumerate(pages):
-    if 'Ethics Statement' in page or 'Reproducibility' in page:
-        print(f'Conclusion ends on page {i+1}')
-    if any(w in page for w in ['References', 'Bibliography']):
-        lines = [l for l in page.split('\n') if l.strip()]
-        for l in lines[:3]:
-            if 'References' in l or 'Bibliography' in l:
-                print(f'References start on page {i+1}')
-                break
-"
-```
-
-If Conclusion ends mid-page and References start on the same page, the main body is that page number (e.g., if both are on page 9, main body = ~8.5 pages, which is fine for a 9-page limit since it leaves room for the References header).
-
-If over limit:
-- Identify which sections are longest
-- Suggest specific cuts (move proofs to appendix, compress tables, tighten writing)
-- Report: "Main body is X pages (limit: MAX_PAGES). Suggestion: move [specific content] to appendix."
-
-### Step 6.5: Stale File Detection
-
-Check for orphaned section files not referenced by `main.tex`:
-
-```bash
-# Find all .tex files in sections/ and check which are \input'ed by main.tex
-for f in paper/sections/*.tex; do
-    base=$(basename "$f")
-    if ! grep -q "$base" paper/main.tex; then
-        echo "WARNING: $f is not referenced by main.tex — consider removing"
-    fi
-done
-```
-
-This prevents confusion from leftover files when section structure changes (e.g., old `5_conclusion.tex` left behind after restructuring to 7 sections).
-
-### Step 7: Submission Readiness
-
-For conference submission, additional checks:
-
-- [ ] **Anonymous**: no author names, affiliations, or self-citations that reveal identity
-- [ ] **Page limit**: main body within MAX_PAGES (to end of Conclusion)
-- [ ] **Font embedding**: all fonts embedded in PDF
-  ```bash
-  pdffonts main.pdf | grep -v "yes"  # should return nothing (or only header)
-  ```
-- [ ] **No supplementary mixed in**: appendix clearly after `\newpage\appendix`
-- [ ] **File size**: reasonable (< 50MB for most venues, < 10MB preferred)
-- [ ] **No `[VERIFY]` markers**: search the PDF text for leftover markers
-
-### Step 8: Output Summary
-
-```markdown
-## Compilation Report
-
-- **Status**: SUCCESS / FAILED
-- **PDF**: paper/main.pdf
-- **Pages**: X (main body to Conclusion) + Y (references) + Z (appendix)
-- **Within page limit**: YES/NO (MAX_PAGES = N)
-- **Errors fixed**: [list of auto-fixed issues]
-- **Warnings remaining**: [list of non-critical warnings]
-- **Undefined references**: 0
-- **Undefined citations**: 0
-
-### Next Steps
-- [ ] Visual inspection of PDF
-- [ ] Run `/paper-write` to fix any content issues
-- [ ] Submit to [venue] via OpenReview / CMT / HotCRP
-```
-
-## Key Rules
-
-- **Never delete the user's source files** — only modify to fix errors
-- **Keep compile.log** — useful for debugging
-- **Don't suppress warnings** — report them, let the user decide
-- **If LaTeX is not installed**, provide clear installation instructions rather than failing silently
-- **Font embedding is critical** — some venues reject PDFs with non-embedded fonts
-- **Page count rules differ by venue** — ML conferences: main body to Conclusion (refs excluded). **IEEE venues: total pages including references.**
-
-## Common Venue Requirements
-
-| Venue | Style File | Citation | Page Limit | Refs in limit? | Submission |
-|-------|-----------|----------|------------|----------------|------------|
-| ICLR 2026 | `iclr2026_conference.sty` | `natbib` (`\citep`/`\citet`) | 9 pages (to Conclusion end) | No | OpenReview |
-| NeurIPS 2025 | `neurips_2025.sty` | `natbib` (`\citep`/`\citet`) | 9 pages (to Conclusion end) | No | OpenReview |
-| ICML 2025 | `icml2025.sty` | `natbib` (`\citep`/`\citet`) | 8 pages (to Conclusion end) | No | OpenReview |
-| IEEE Journal | `IEEEtran.cls` [journal] | `cite` (`\cite{}`, numeric) | ~12-14 pages (Transactions) / ~4-5 (Letters) | **Yes** | IEEE Author Portal / ScholarOne |
-| IEEE Conference | `IEEEtran.cls` [conference] | `cite` (`\cite{}`, numeric) | 5-8 pages (varies by conf) | **Yes** | EDAS / IEEE Author Portal |
+1. For a standalone upload, copy the exact contents of `user_inputs/paper-compile/paper.tex` to `drafts/paper.tex` and `user_inputs/paper-compile/references.bib` to `literature/related_work.bib` before calling the packaging tool; record those staging paths in the summary. In a project workspace, retain the existing standard files. Use `prepare_submission_bundle` with `paper_path="drafts/paper.tex"`, `bib_path="literature/related_work.bib"`, and `bundle_dir="submission/bundle"`.
+2. Select `xelatex` only for CJK or font requirements explicitly present in the manuscript/request; otherwise use `pdflatex`. Call `latex_compile` on `submission/bundle/main.tex` with `backend="auto"` and allow the configured Docker fallback.
+3. Read the returned compile report. Never claim success without `submission/bundle/main.pdf` and a successful report. Do not use `export_only` as a successful result.
+4. Write `submission/compile_summary.md` with the selected backend/engine, PDF path, `submission/compile_report.json`, warning/error summary, and exact next repair action. Do not rewrite scientific prose or bibliography metadata in this Skill.
+5. Finish only when all declared outputs exist. On a real compilation failure, preserve the report and finish with a failure reason so the session can be resumed after repair.
