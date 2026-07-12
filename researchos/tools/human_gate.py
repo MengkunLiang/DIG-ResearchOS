@@ -1242,6 +1242,14 @@ def _format_t4_candidate_overview(value: Any) -> str:
         }
         raw_refs = minimum.get("source_refs")
         protocol_refs = ", ".join(str(value).strip() for value in raw_refs if str(value).strip()) if isinstance(raw_refs, list) else ""
+        if protocol_status == "legacy_unverified":
+            # Old candidate files can contain plausible-looking protocol text
+            # that predates source-bound proposal records. Do not repeat that
+            # text to a researcher: its provenance cannot be established.
+            dataset = "未验证；需由项目材料或人工输入确定"
+            baseline = "未验证；需由最近工作和项目约束确定"
+            metric = "未验证；需由可追溯协议确定"
+            signal = "未验证；需在 T4 后半段形成可证伪预测"
         evidence = str(item.get("evidence") or "需回查文献笔记")
         count = item.get("support_count")
         scores = item.get("scores") if isinstance(item.get("scores"), dict) else {}

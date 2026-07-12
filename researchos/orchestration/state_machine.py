@@ -631,17 +631,29 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
         value = str(candidate.get("pitch_zh") or localized.get("value") or candidate.get("pitch") or candidate.get("core_claim") or "待补充")
         mechanism = str(candidate.get("mechanism_zh") or localized.get("mechanism") or candidate.get("mechanism") or "待补充")
         minimum = candidate.get("minimum_experiment") if isinstance(candidate.get("minimum_experiment"), dict) else {}
+        protocol_status = str(minimum.get("evidence_status") or "legacy_unverified").strip().lower()
+        legacy_protocol = protocol_status == "legacy_unverified"
         metrics = minimum.get("metric") or minimum.get("metrics") or "待确定"
         if isinstance(metrics, list):
             metrics = "、".join(_localize_t4_recovery_text(item) for item in metrics[:3])
         else:
             metrics = _localize_t4_recovery_text(metrics)
+        prediction = str(candidate.get("prediction_zh") or localized_fields.get("prediction") or _localize_t4_recovery_text(candidate.get("prediction") or "待补充"))
+        counterfactual = str(candidate.get("counterfactual_zh") or localized_fields.get("counterfactual") or _localize_t4_recovery_text(candidate.get("counterfactual") or "待补充"))
+        if legacy_protocol:
+            # A historical candidate may contain plausible metrics, benchmark
+            # names, and evaluation claims without any source boundary. Keep
+            # its conceptual pitch visible, but never present those protocol
+            # details as an executable or falsifiable project claim.
+            prediction = "未验证；需由已确认项目材料和文献证据编译为可检验预测。"
+            counterfactual = "未验证；需在 T4 后半段依据可追溯证据定义反事实检验。"
         score = candidate.get("scores") if isinstance(candidate.get("scores"), dict) else {}
         score_rationale = (
             candidate.get("score_rationale")
             if isinstance(candidate.get("score_rationale"), dict)
             else {}
         )
+        legacy_evidence_note = "遗留候选缺少可追溯协议来源；需在 Pass2/T4 后半段重审计，不能据此确定具体实验配置。"
         support = candidate.get("supporting_papers") if isinstance(candidate.get("supporting_papers"), list) else []
         evidence_levels = {
             str(item.get("evidence_level") or "").upper()
@@ -677,8 +689,8 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
                 "target_problem": _localize_t4_recovery_text(candidate.get("target_problem") or "待补充"),
                 "value": value,
                 "mechanism": mechanism,
-                "prediction": str(candidate.get("prediction_zh") or localized_fields.get("prediction") or _localize_t4_recovery_text(candidate.get("prediction") or "待补充")),
-                "counterfactual": str(candidate.get("counterfactual_zh") or localized_fields.get("counterfactual") or _localize_t4_recovery_text(candidate.get("counterfactual") or "待补充")),
+                "prediction": prediction,
+                "counterfactual": counterfactual,
                 "practical_implication": str(candidate.get("practical_implication_zh") or candidate.get("practical_implication") or localized_fields.get("practical_implication") or "待 T4 后半段在回查文献笔记 section 后收敛。"),
                 "minimum_validation": {
                     "dataset": _localize_t4_recovery_text(minimum.get("dataset") or "待确定"),
@@ -701,7 +713,7 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
                 },
                 "evidence": evidence,
                 "support_count": len(support),
-                "basis_summary": _t4_basis_summary_for_gate(candidate),
+                "basis_summary": legacy_evidence_note if legacy_protocol else _t4_basis_summary_for_gate(candidate),
                 "supporting_papers": [
                     {
                         "title": str(item.get("title") or "未命名论文"),
@@ -728,27 +740,40 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
                 },
                 "selection_recommendation": _localize_t4_recovery_text(pass2.get("screening_recommendation") or "未标注"),
                 "counterfactual_check": _localize_t4_recovery_text(pass2.get("counterfactual_check") or "未标注"),
-                "nearest_prior_work": _localize_t4_recovery_text(
+                "nearest_prior_work": legacy_evidence_note if legacy_protocol else _localize_t4_recovery_text(
                     (pass2.get("nearest_prior_work") or candidate.get("nearest_prior_work") or {}).get("work")
                     if isinstance(pass2.get("nearest_prior_work") or candidate.get("nearest_prior_work"), dict)
                     else "待核验"
                 ),
                 "novelty_signal": _localize_t4_recovery_text(pass2.get("novelty_signal") or candidate.get("novelty_signal") or "待核验"),
                 "warning": warning,
-                "innovation": _t4_candidate_innovation(candidate),
+                "innovation": (
+                    {
+                        "summary": legacy_evidence_note,
+                        "type": "待在 Pass2/T4 后半段基于可追溯先例界定",
+                        "delta": legacy_evidence_note,
+                        "non_incremental": legacy_evidence_note,
+                    }
+                    if legacy_protocol
+                    else _t4_candidate_innovation(candidate)
+                ),
                 "candidate_hypotheses": _t4_candidate_hypotheses(
-                    candidate,
+                    candidate if not legacy_protocol else {**candidate, "candidate_hypotheses": []},
                     candidate_id,
                     value=value,
                     mechanism=mechanism,
-                    prediction=str(candidate.get("prediction_zh") or localized_fields.get("prediction") or _localize_t4_recovery_text(candidate.get("prediction") or "待补充")),
-                    counterfactual=str(candidate.get("counterfactual_zh") or localized_fields.get("counterfactual") or _localize_t4_recovery_text(candidate.get("counterfactual") or "待补充")),
+                    prediction=prediction,
+                    counterfactual=counterfactual,
                 ),
                 "merge_opportunities": _t4_merge_opportunities(candidate),
-                "score_rationale": {
-                    str(key): _localize_t4_recovery_text(reason)
-                    for key, reason in score_rationale.items()
-                },
+                "score_rationale": (
+                    {str(key): legacy_evidence_note for key in score}
+                    if legacy_protocol
+                    else {
+                        str(key): _localize_t4_recovery_text(reason)
+                        for key, reason in score_rationale.items()
+                    }
+                ),
             }
         )
 
