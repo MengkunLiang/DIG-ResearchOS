@@ -1231,7 +1231,8 @@ states:
       runs_dir: experiments/runs                       # 运行结果目录
       configs_dir: experiments/configs                  # 配置目录
       iteration_log: experiments/iteration_log.md     # 迭代日志
-      ablations: experiments/ablations.csv            # 消融实验结果
+      # `experiments/ablations.csv` is protocol-dependent: legacy T7 writes
+      # it only when exp_plan.yaml or an explicit human decision requires it.
     next_on_success: T7.5
     next_on_failure: failed
 

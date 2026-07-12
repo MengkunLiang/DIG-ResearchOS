@@ -846,8 +846,11 @@ def _build_claim_evidence_matrix(
     required_baselines: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     experiments = _experiments_from_plan(exp_plan)
+    # An empty plan is a protocol gap, not permission to manufacture a generic
+    # experiment/claim row. The handoff records the gap separately and the
+    # executor must wait for a source-backed plan.
     if not experiments:
-        experiments = [{"name": "minimum_loop", "metrics": metrics}]
+        return []
     required_names = [_baseline_name(item) for item in required_baselines if _baseline_name(item)]
     rows = []
     for idx, exp in enumerate(experiments, start=1):
@@ -900,10 +903,28 @@ def _build_minimum_experiment_loop(exp_plan: dict[str, Any], metrics: list[str])
     experiments = _experiments_from_plan(exp_plan)
     datasets = list(
         dict.fromkeys(
-            str(exp.get("dataset") or exp.get("benchmark") or "dataset_from_exp_plan")
+            str(exp.get("dataset") or exp.get("benchmark") or "").strip()
             for exp in experiments
+            if str(exp.get("dataset") or exp.get("benchmark") or "").strip()
         )
-    ) or ["dataset_from_exp_plan"]
+    )
+    if not experiments or not datasets or not metrics:
+        missing = []
+        if not experiments:
+            missing.append("experiments")
+        if not datasets:
+            missing.append("dataset_or_benchmark")
+        if not metrics:
+            missing.append("metrics")
+        return [
+            {
+                "step": "protocol_input_required",
+                "status": "blocked_missing_protocol",
+                "missing_fields": missing,
+                "required_output": "source-backed exp_plan.yaml or explicit human protocol decision",
+                "claim_boundary": "Do not run, compare, or claim results until the missing protocol fields are supplied.",
+            }
+        ]
     return [
         {"step": "context_alignment", "required_output": "result_pack.context_alignment"},
         {"step": "resource_and_baseline_mining", "required_output": "result_pack.resources"},
@@ -1071,7 +1092,7 @@ def _extract_exp_plan_metrics(exp_plan: dict[str, Any]) -> list[str]:
                 metrics.append(str(metric["name"]))
             elif isinstance(metric, str):
                 metrics.append(metric)
-    return list(dict.fromkeys(metrics)) or ["task_score"]
+    return list(dict.fromkeys(metric for metric in metrics if metric.strip()))
 
 
 def _extract_exp_plan_seeds(project: dict[str, Any]) -> list[int]:
@@ -1084,7 +1105,7 @@ def _extract_exp_plan_seeds(project: dict[str, Any]) -> list[int]:
                     seeds.append(int(value))
                 except Exception:
                     continue
-    return list(dict.fromkeys(seeds)) or [42]
+    return list(dict.fromkeys(seeds))
 
 
 def _handoff_metrics_for_execution(handoff: dict[str, Any]) -> list[str]:
@@ -1098,7 +1119,7 @@ def _handoff_metrics_for_execution(handoff: dict[str, Any]) -> list[str]:
         for req in claim.get("evidence_requirements", []) or []:
             if isinstance(req, dict) and req.get("metric_or_observation"):
                 names.append(str(req["metric_or_observation"]))
-    return list(dict.fromkeys(name for name in names if name)) or ["task_score"]
+    return list(dict.fromkeys(name for name in names if name))
 
 
 def _handoff_seeds_for_execution(handoff: dict[str, Any]) -> list[int]:
@@ -1112,7 +1133,7 @@ def _handoff_seeds_for_execution(handoff: dict[str, Any]) -> list[int]:
                 continue
         if result:
             return list(dict.fromkeys(result))
-    return [42]
+    return []
 
 
 def _handoff_required_baselines_for_execution(handoff: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1283,12 +1304,14 @@ def _extract_datasets(exp_plan: dict[str, Any]) -> list[str]:
         for key in ("dataset", "benchmark"):
             if exp.get(key):
                 names.append(str(exp.get(key)).strip())
-    return list(dict.fromkeys(item for item in names if item)) or ["dataset_or_setting_declared_in_exp_plan"]
+    return list(dict.fromkeys(item for item in names if item))
 
 
 def _exp_plan_seed_policy(project: dict[str, Any]) -> str:
     seeds = _extract_exp_plan_seeds(project)
-    return "Use the predeclared ResearchOS seed ensemble: " + ", ".join(str(seed) for seed in seeds)
+    if seeds:
+        return "Use the predeclared ResearchOS seed ensemble: " + ", ".join(str(seed) for seed in seeds)
+    return "unknown; a source-backed seed policy or explicit human decision is required before formal execution"
 
 
 def _exp_baseline_records(exp_plan: dict[str, Any], workspace: Path) -> list[dict[str, Any]]:
@@ -1332,17 +1355,7 @@ def _exp_baseline_records(exp_plan: dict[str, Any], workspace: Path) -> list[dic
             elif "m1-" in lowered:
                 role = "component_source"
             records.append({"name": name, "source": source, "why": why, "requirement": "required", "role": role})
-    if records:
-        return records
-    return [
-        {
-            "name": "Target-only baseline from the experiment plan",
-            "source": "ideation/exp_plan.yaml",
-            "why": "Fallback lower-bound comparison required before strong transfer claims.",
-            "requirement": "required",
-            "role": "lower_bound",
-        }
-    ]
+    return records
 
 
 def _build_reboost_baseline_matrix(exp_plan: dict[str, Any], workspace: Path, claim_ids: list[str]) -> list[dict[str, Any]]:
@@ -1388,7 +1401,9 @@ def _build_reboost_baseline_matrix(exp_plan: dict[str, Any], workspace: Path, cl
 
 
 def _build_reboost_claims(exp_plan: dict[str, Any], metrics: list[str], baseline_ids: list[str], module_ids: list[str]) -> list[dict[str, Any]]:
-    experiments = _experiments_from_plan(exp_plan) or [{"id": "exp_main", "name": str(exp_plan.get("goal") or "Main evaluation")}]
+    experiments = _experiments_from_plan(exp_plan)
+    if not experiments:
+        return []
     claims: list[dict[str, Any]] = []
     for idx, exp in enumerate(experiments[:4], start=1):
         claim_id = f"C{idx}"
@@ -1396,7 +1411,9 @@ def _build_reboost_claims(exp_plan: dict[str, Any], metrics: list[str], baseline
         exp_metrics = []
         for metric in exp.get("metrics", []) or metrics:
             if isinstance(metric, dict):
-                exp_metrics.append(str(metric.get("name") or metric.get("metric_id") or "task_score"))
+                name = str(metric.get("name") or metric.get("metric_id") or "").strip()
+                if name:
+                    exp_metrics.append(name)
             else:
                 exp_metrics.append(str(metric))
         metric_text = ", ".join(list(dict.fromkeys(item for item in exp_metrics if item)) or metrics)
@@ -1418,7 +1435,7 @@ def _build_reboost_claims(exp_plan: dict[str, Any], metrics: list[str], baseline
                         "experiment_id": "E_FORMAL",
                         "evidence_type": "main_result" if idx == 1 else "ablation",
                         "dataset_or_setting": _compact_text(name, limit=160),
-                        "metric_or_observation": metric_text or "task_score",
+                        "metric_or_observation": metric_text or "unknown_metric_requires_protocol",
                         "comparison": "Compare against every required baseline under the same split, seed policy, and metric definition.",
                         "acceptance_criterion": "Support only if raw metrics, configs, logs, and baseline coverage pass T7 audit.",
                     }
@@ -1509,8 +1526,9 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
     research_question = _extract_research_question(project, goal)
     metrics = _extract_exp_plan_metrics(exp_plan)
     datasets = _extract_datasets(exp_plan)
+    experiments = _experiments_from_plan(exp_plan)
     module_id = "M1"
-    claim_ids = [f"C{idx}" for idx, _exp in enumerate((_experiments_from_plan(exp_plan) or [{}])[:4], start=1)]
+    claim_ids = [f"C{idx}" for idx, _exp in enumerate(experiments[:4], start=1)]
     baselines = _build_reboost_baseline_matrix(exp_plan, workspace, claim_ids)
     baseline_ids = [item["baseline_id"] for item in baselines]
     claims = _build_reboost_claims(exp_plan, metrics, baseline_ids, [module_id])
@@ -1574,6 +1592,77 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
                 }
             )
 
+    protocol_missing: list[str] = []
+    if not experiments:
+        protocol_missing.append("experiments")
+    if not datasets:
+        protocol_missing.append("dataset_or_benchmark")
+    if not metrics:
+        protocol_missing.append("metrics")
+    if not claims:
+        protocol_missing.append("claim_evidence_mapping")
+    if protocol_missing:
+        status = "blocked"
+        unresolved_items.append(
+            {
+                "item_id": f"U{len(unresolved_items) + 1}",
+                "severity": "blocking",
+                "question": "The experiment protocol is incomplete; no default dataset, baseline, metric, seed, or claim mapping was inferred.",
+                "why_unresolved": "ResearchOS may preserve the handoff draft, but external execution cannot start from unspecified protocol fields.",
+                "affected_fields": protocol_missing,
+                "blocking": True,
+                "owner": "human",
+                "required_action": "Provide or approve source-backed experiment entries, datasets/benchmarks, metrics, and claim mappings in ideation/exp_plan.yaml, then rerun T5-REBOOST.",
+                "source_refs": [_source_ref("SRC_EXP_PLAN", "experiments", "Deterministic protocol completeness check")],
+            }
+        )
+
+        # Claim rows reference formal experiment IDs.  With no formal protocol
+        # there is no valid experiment to reference, so retain the source
+        # deficiency in ``unresolved_items`` rather than emitting dangling
+        # claim mappings that look executable.
+        claims = []
+        claim_ids = []
+        for baseline in baselines:
+            baseline["linked_claim_ids"] = []
+
+    # A blocked handoff is a durable record of what is missing, not an
+    # incomplete formal experiment with invented dataset/metric placeholders.
+    # The reboost validator requires reproduction and formal entries only once
+    # the protocol is complete.
+    required_experiments: list[dict[str, Any]] = []
+    if not protocol_missing:
+        required_experiments = [
+            {
+                "experiment_id": "E_REPRO",
+                "run_type": "reproduction",
+                "purpose": "Reproduce or audit required baselines before formal claims.",
+                "datasets_or_settings": datasets,
+                "metrics_or_observations": metrics,
+                "baseline_ids": baseline_ids,
+                "module_ids": [module_id],
+                "claim_ids": claim_ids,
+                "seed_policy": _exp_plan_seed_policy(project),
+                "pass_conditions": ["Every required baseline has raw artifacts or an audited unavailable status."],
+                "failure_interpretation": "Strong comparative claims must be narrowed or blocked.",
+                "required": True,
+            },
+            {
+                "experiment_id": "E_FORMAL",
+                "run_type": "formal",
+                "purpose": "Run the proposed method and required comparisons under the fixed protocol.",
+                "datasets_or_settings": datasets,
+                "metrics_or_observations": metrics,
+                "baseline_ids": baseline_ids,
+                "module_ids": [module_id],
+                "claim_ids": claim_ids,
+                "seed_policy": _exp_plan_seed_policy(project),
+                "pass_conditions": ["Formal metrics, configs, logs, and hashes are complete enough for T7 audit."],
+                "failure_interpretation": "Report a negative or narrowed result; do not invent support.",
+                "required": True,
+            },
+        ]
+
     pack = {
         "schema_version": "external_executor_handoff.v1",
         "pack_id": f"HP_{_safe_schema_id('P', project.get('project_id') or 'project', 1)}",
@@ -1622,7 +1711,11 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
             },
             "study_scope": {
                 "target_setting": _compact_text(research_question, limit=500),
-                "tasks": [str(exp_plan.get("task") or "external experimental evaluation")],
+                "tasks": [
+                    str(exp.get("task") or exp.get("name") or exp.get("id") or "").strip()
+                    for exp in experiments
+                    if str(exp.get("task") or exp.get("name") or exp.get("id") or "").strip()
+                ],
                 "datasets": datasets,
                 "metrics": metrics,
                 "constraints": [
@@ -1794,36 +1887,7 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
         "baseline_matrix": baselines,
         "claim_evidence_matrix": claims,
         "minimum_experiment_loop": {
-            "required_experiments": [
-                {
-                    "experiment_id": "E_REPRO",
-                    "run_type": "reproduction",
-                    "purpose": "Reproduce or audit required baselines before formal claims.",
-                    "datasets_or_settings": datasets,
-                    "metrics_or_observations": metrics,
-                    "baseline_ids": baseline_ids,
-                    "module_ids": [module_id],
-                    "claim_ids": claim_ids,
-                    "seed_policy": _exp_plan_seed_policy(project),
-                    "pass_conditions": ["Every required baseline has raw artifacts or an audited unavailable status."],
-                    "failure_interpretation": "Strong comparative claims must be narrowed or blocked.",
-                    "required": True,
-                },
-                {
-                    "experiment_id": "E_FORMAL",
-                    "run_type": "formal",
-                    "purpose": "Run the proposed method and required comparisons under the fixed protocol.",
-                    "datasets_or_settings": datasets,
-                    "metrics_or_observations": metrics,
-                    "baseline_ids": baseline_ids,
-                    "module_ids": [module_id],
-                    "claim_ids": claim_ids,
-                    "seed_policy": _exp_plan_seed_policy(project),
-                    "pass_conditions": ["Formal metrics, configs, logs, and hashes are complete enough for T7 audit."],
-                    "failure_interpretation": "Report a negative or narrowed result; do not invent support.",
-                    "required": True,
-                },
-            ],
+            "required_experiments": required_experiments,
             "ordered_gates": _build_reboost_ordered_gates(),
         },
         "iteration_budget": {
@@ -2315,8 +2379,10 @@ def validate_external_executor_ready(
             if allowed_states.index(state_value) < allowed_states.index(job_current):
                 issues.append(f"executor_status state regressed from job_state current_state: {job_current} -> {state_value}")
     metrics = result_pack.get("metrics")
-    if not isinstance(metrics, list) or not metrics:
-        issues.append("result_pack.metrics missing")
+    if not isinstance(metrics, list):
+        issues.append("result_pack.metrics must be a list")
+    elif not metrics and not result_pack.get("mock_only"):
+        issues.append("real result_pack.metrics missing")
     if manifest.get("semantics") != "external_executor_run_manifest":
         issues.append("run_manifest semantics invalid or missing")
     for rel_path in _referenced_executor_paths(result_pack, manifest):
@@ -2447,14 +2513,18 @@ def _write_external_executor_guides(
     ext_dir = policy.workspace_dir / "external_executor"
     ext_dir.mkdir(parents=True, exist_ok=True)
     project_id = str(handoff.get("project_id") or handoff.get("project", {}).get("project_id") or "unknown")
-    metrics_block = "\n".join(f"- {metric.get('name')}" for metric in handoff.get("metrics", []) if isinstance(metric, dict)) or "- task_score"
+    metrics_block = "\n".join(
+        f"- {metric.get('name')}"
+        for metric in handoff.get("metrics", [])
+        if isinstance(metric, dict) and str(metric.get("name") or "").strip()
+    ) or "- unknown; a source-backed metric definition is required before execution"
     baselines = handoff.get("required_baselines") or []
     baselines_block = _format_required_baselines_block(baselines)
     allowed_paths = "\n".join(f"- {path}" for path in handoff.get("allowed_paths", []))
     resource_policy = handoff.get("resource_acquisition_policy") or default_resource_acquisition_policy()
     resource_policy_block = json.dumps(resource_policy, ensure_ascii=False, indent=2)
     required_outputs = "\n".join(f"- `{path}`" for path in (handoff.get("executor_outputs_contract") or {}).get("must_write", []))
-    seeds = ", ".join(str(seed) for seed in handoff.get("seeds", []) or [42])
+    seeds = ", ".join(str(seed) for seed in handoff.get("seeds", []) or []) or "unknown; require a declared seed policy"
     common_header = (
         "> EXECUTION MODE NOT YET SELECTED - see executor_selection.json after T5-EXECUTOR-GATE\n\n"
         f"- dry_run: UNSET\n- mock_only: UNSET\n- real_experiment_allowed: UNSET\n\n"
@@ -3739,29 +3809,11 @@ class MockExternalDryRunTool(Tool):
                 "run_id": "mock_dry_run",
                 "metrics": [],
             }
-            metrics = []
-            handoff_metrics = _handoff_metrics_for_execution(handoff)
+            # A protocol dry run verifies handoff shape only.  It must not
+            # manufacture metric values, a dataset name, split, or seed that
+            # could later be mistaken for a scientific result.
+            metrics: list[dict[str, Any]] = []
             handoff_seeds = _handoff_seeds_for_execution(handoff)
-            for idx, name in enumerate(handoff_metrics, start=1):
-                metric = (
-                    {
-                        "metric_id": f"mock_metric_{idx}",
-                        "experiment_id": "mock_dry_run",
-                        "name": str(name),
-                        "value": round(0.7 + idx * 0.01, 4),
-                        "unit": "score",
-                        "dataset": "mock_dataset",
-                        "dataset_split": "mock_split",
-                        "seed": handoff_seeds[0],
-                        "metric_direction": "higher_is_better",
-                        "source_artifact": raw_result_rel,
-                        "config": config_rel,
-                        "log": log_rel,
-                        "mock_only": True,
-                    }
-                )
-                metrics.append(metric)
-                raw_result["metrics"].append(metric)
             _write_json(self.policy.resolve_write(raw_result_rel), raw_result)
             config = {
                 "version": "1.0",
@@ -3797,8 +3849,8 @@ class MockExternalDryRunTool(Tool):
                     "status": "completed",
                     "dry_run": True,
                     "mock_only": True,
-                    "dataset": "mock_dataset",
-                    "seed": handoff_seeds[0],
+                    "dataset": None,
+                    "seed": handoff_seeds[0] if handoff_seeds else None,
                     "metrics": [metric.get("metric_id") for metric in metrics],
                     "raw_result_refs": [raw_result_rel],
                     "config_refs": [config_rel],
@@ -3975,8 +4027,10 @@ class IngestExternalResultsTool(Tool):
             if result_pack.get("semantics") != "external_executor_result_pack":
                 return ToolResult(ok=False, content="result_pack semantics invalid", error="invalid_result_pack")
             metrics = result_pack.get("metrics")
-            if not isinstance(metrics, list) or not metrics:
-                return ToolResult(ok=False, content="result_pack metrics missing", error="missing_metrics")
+            if not isinstance(metrics, list):
+                return ToolResult(ok=False, content="result_pack metrics must be a list", error="invalid_metrics")
+            if not metrics and not result_pack.get("mock_only"):
+                return ToolResult(ok=False, content="real result_pack metrics missing", error="missing_metrics")
             manifest_rel = str(result_pack.get("run_manifest") or "external_executor/run_manifest.json")
             manifest = _read_json(self.policy.workspace_dir / manifest_rel)
             scanned_artifacts = _scan_external_artifacts(self.policy.workspace_dir)
@@ -3997,6 +4051,17 @@ class IngestExternalResultsTool(Tool):
                 for metric in metrics
                 if isinstance(metric, dict) and metric.get("name") and metric.get("value") is not None
             ]
+            if not experiments and result_pack.get("mock_only"):
+                experiments = [
+                    {
+                        "experiment_id": str(result_pack.get("run_id") or "mock_dry_run"),
+                        "metrics": {},
+                        "seed": None,
+                        "source_artifact": None,
+                        "mock_only": True,
+                        "protocol_only": True,
+                    }
+                ]
             summary = {
                 "version": "1.0",
                 "semantics": "external_executor_results_summary",
@@ -4152,7 +4217,15 @@ class AuditExperimentIntegrityTool(Tool):
                 issues.append({"level": "WARN", "code": "mock_only", "detail": "Dry-run result is not publishable evidence."})
             metric_records = _summary_metric_records(summary)
             if not metric_records:
-                issues.append({"level": "FAIL", "code": "missing_metrics", "detail": "No metrics in results summary."})
+                issues.append(
+                    {
+                        "level": "WARN" if summary.get("mock_only") else "FAIL",
+                        "code": "no_scientific_metrics_in_mock" if summary.get("mock_only") else "missing_metrics",
+                        "detail": "Protocol-only dry run contains no scientific metrics."
+                        if summary.get("mock_only")
+                        else "No metrics in results summary.",
+                    }
+                )
             evidence_artifacts = [
                 item for item in (evidence.get("artifacts", []) or []) if isinstance(item, dict)
             ]

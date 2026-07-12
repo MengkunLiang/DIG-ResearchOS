@@ -2,8 +2,9 @@
 
 This map describes user-facing, standalone Skills. Every public Skill is a
 guided, workspace-backed session: `describe-skill` shows exact upload paths;
-`--interactive` can collect pasted material through the restricted intake
-turn; `skill-status` shows persisted work and the recovery command. A missing
+a TTY `run-skill` collects pasted material through the restricted intake turn
+by default, then asks for explicit execution confirmation; `skill-status` shows
+persisted work and the recovery command. A missing
 input never becomes invented research evidence.
 
 ```bash
@@ -105,22 +106,22 @@ researchos run-skill pdf-note-card \
 # DOI/arXiv/title list -> verified/ambiguous/unresolved records
 researchos run-skill paper-identifier-resolver \
   "为 Related Work 解析这些标识符，不补造任何引用字段" \
-  --workspace ./workspace/project-a --interactive
+  --workspace ./workspace/project-a
 
 # A set of notes -> comparison or evidence matrix
 researchos run-skill paper-comparison \
   "比较 treatment heterogeneity 的机制与可用基线" \
-  --workspace ./workspace/project-a --interactive
+  --workspace ./workspace/project-a
 
 # One focused question -> section and page anchored source evidence
 researchos run-skill paper-section-evidence \
   "核验该方法的处理异质性机制与实际报告的局限" \
-  --workspace ./workspace/project-a --interactive
+  --workspace ./workspace/project-a
 
 # Source notes -> a conservative map of research opportunities and missing evidence
 researchos run-skill literature-gap-map \
   "区分可进入 Idea 讨论的问题与仍需补检的文献覆盖不足" \
-  --workspace ./workspace/project-a --interactive
+  --workspace ./workspace/project-a
 ```
 
 For every command, `describe-skill <name>` is the source of truth for upload

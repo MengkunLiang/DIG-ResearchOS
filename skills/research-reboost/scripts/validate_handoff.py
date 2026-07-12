@@ -257,12 +257,18 @@ class SemanticValidator:
         try:
             self._validate_sources()
             ids = self._collect_ids()
-            self._validate_references(ids)
-            self._validate_ordering()
-            self._validate_novelty_baselines(ids)
-            self._validate_claim_experiment_coverage(ids)
-            self._validate_method_coverage(ids)
-            self._validate_required_policies()
+            # A blocked pack is a recoverable protocol-gap record. It must be
+            # structurally valid and explain the blocker, but it intentionally
+            # has no executable experiment/claim graph to cross-reference.
+            # Full graph and policy validation applies only once a completed
+            # contract has source-backed datasets, metrics and claim mappings.
+            if self.pack["generation_status"] == "completed":
+                self._validate_references(ids)
+                self._validate_ordering()
+                self._validate_novelty_baselines(ids)
+                self._validate_claim_experiment_coverage(ids)
+                self._validate_method_coverage(ids)
+                self._validate_required_policies()
             self._validate_status()
         except (KeyError, TypeError, AttributeError) as exc:
             self.error("semantic.skipped", "/", f"semantic validation stopped after malformed structure: {exc}")

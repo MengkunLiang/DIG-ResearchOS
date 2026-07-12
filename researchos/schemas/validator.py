@@ -322,8 +322,8 @@ def _format_structured_output_error(rel_path: str, schema_name: str, err: str | 
             hints.append(f"缺少字段: {field}")
             if field == "experiments":
                 hints.append("实验")
-    if "is not one of [42]" in detail:
-        hints.append("seed=42")
+    if "seed" in lowered:
+        hints.append("seed policy")
         hints.append("种子")
     hint_text = "；".join(dict.fromkeys(hints))
     if hint_text:

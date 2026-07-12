@@ -458,13 +458,9 @@ _T4_RECOVERY_UI_TEXT: dict[str, dict[str, str]] = {
 
 
 _T4_RECOVERY_COMMON_ZH = {
-    "Human-targeted uplift assumptions may fail when the decision-maker is an LLM-based commerce agent.": "当决策者变为基于 LLM 的商业智能体时，以人为目标的 uplift 假设可能失效。",
-    "human-targeted uplift baseline plus agent-agnostic LLM response baseline": "人类目标 uplift 基线 + 不考虑智能体差异的 LLM 响应基线",
-    "AUUC/Qini-style ranking when labels exist": "有标签时的 AUUC/Qini 排序",
     "calibration": "校准度",
     "task-completion or choice-rate delta": "任务完成率或选择率差异",
-    "candidate-specific treatment-response separation beyond baseline prompt sensitivity": "相对提示敏感性基线出现候选特定的处理响应分离",
-    "controlled agentic-commerce vignette or task suite with randomized treatments": "带有随机化处理的受控智能体商业情境或任务集",
+    "candidate-specific treatment-response separation beyond baseline prompt sensitivity": "相对项目已声明对照出现候选特定的处理响应差异",
     "context artifact diagnostics": "上下文伪效应诊断",
     "state-dependent treatment effects": "状态依赖处理效应",
     "behavioral credibility transfer": "行为可信度迁移",
@@ -495,7 +491,7 @@ _T4_RECOVERY_FIELD_ZH: dict[str, dict[str, str]] = {
     },
     "D2": {
         "prediction": "状态条件化估计器将解释静态 uplift 树或双模型基线遗漏的异质智能体响应变化。",
-        "counterfactual": "若智能体响应函数是稳定的，加入状态与饱和变量不应改善校准度或 AUUC 类排序。",
+        "counterfactual": "若智能体响应函数是稳定的，加入状态与饱和变量不应改善项目预先声明且可追溯的评估指标。",
         "practical_implication": "将干预触达时机、既往暴露和饱和度纳入目标策略，避免对同一智能体重复投放无效干预。",
     },
     "D3": {
@@ -689,6 +685,19 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
                     "baseline": _localize_t4_recovery_text(minimum.get("baseline") or "待确定"),
                     "metric": str(metrics),
                     "expected_signal": _localize_t4_recovery_text(minimum.get("expected_signal") or "待确定"),
+                    # Preserve the candidate's protocol boundary in the human
+                    # decision surface. Omitting these fields makes a sourced
+                    # proposal look legacy/unverified, while an old candidate
+                    # could make unsourced protocol text appear more settled
+                    # than it is.
+                    "evidence_status": str(minimum.get("evidence_status") or "legacy_unverified"),
+                    "source_refs": [
+                        str(reference).strip()
+                        for reference in minimum.get("source_refs", [])
+                        if str(reference).strip()
+                    ]
+                    if isinstance(minimum.get("source_refs"), list)
+                    else [],
                 },
                 "evidence": evidence,
                 "support_count": len(support),

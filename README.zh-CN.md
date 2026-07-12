@@ -163,9 +163,9 @@ python -m researchos.cli run-skill paper-outline \
 
 非交互命令缺少必需文件时，会写入
 `_runtime/skill_sessions/neuri-2026-outline.json`，明确指出需要上传什么、放到哪里，
-并停在可恢复状态。真实终端可加 `--interactive`：受限 intake Agent 会逐项询问上传或粘贴，
+并停在可恢复状态。真实 TTY 终端默认进入受限 intake Agent：它会逐项询问上传或粘贴，
 仅将人工提供的材料整理到该 Skill 的 `user_inputs/<skill>/`；如果材料仍缺少必要事实，
-它会继续提出聚焦问题并重检，通过后才开始真正 Skill。它不会写论文、实验结果或引用。补齐后使用同一会话继续：
+它会继续提出聚焦问题并重检；通过后还会要求输入“执行”或“暂停”，只有明确授权才开始真正 Skill。它不会写论文、实验结果或引用。补齐后使用同一会话继续：
 
 ```bash
 python -m researchos.cli run-skill paper-outline \
@@ -176,7 +176,7 @@ python -m researchos.cli run-skill paper-outline \
 python -m researchos.cli skill-status --workspace ./workspace/project-a
 ```
 
-每个 guided 会话还会写入 `user_inputs/<skill>/_intake.md`。独立 workspace 中它是可编辑的上传清单；项目 workspace 中它会记录系统发现的候选文件，但“文件存在”不等于材料足以支撑要写的结论。运行中的 Skill 必须做语义核验；若发现缺少目标 venue、证据、引用、结果或约束，会写
+自动化或管道运行可使用 `--non-interactive`：缺输入时只写可恢复的 `WAITING_INPUT` 会话，不初始化 provider。每个 guided 会话还会写入 `user_inputs/<skill>/_intake.md`。独立 workspace 中它是可编辑的上传清单；项目 workspace 中它会记录系统发现的候选文件，但“文件存在”不等于材料足以支撑要写的结论。运行中的 Skill 必须做语义核验；若发现缺少目标 venue、证据、引用、结果或约束，会写
 `user_inputs/<skill>/_followup_request.md`，提出精确问题和建议补充路径，再等待真实人工回答并用同一 `--session-id ... --resume` 继续。这样多轮交互可追溯，而不会把聊天记忆或文件名当作证据。
 
 独立运行与项目内运行的 Skill 均**不设 token 上限，也不设 step 上限**。它们只会因明确完成、等待人工输入、人工取消、provider/runtime 故障或产物校验结果而结束/暂停；这不意味着可以突破 provider 的上下文窗口、限流、可用性或账户限制。

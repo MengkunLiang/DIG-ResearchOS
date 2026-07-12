@@ -70,7 +70,7 @@
     },
     "seed_ensemble": {
       "type": "object",
-      "description": "Seed ensemble configuration for experiments",
+      "description": "Optional, explicitly declared seed policy for experiments; absence means unknown, not a default policy",
       "required": ["tier1_seeds", "tier2_seeds", "tier3_seeds"],
       "properties": {
         "tier1_seeds": {
@@ -79,8 +79,7 @@
           "items": {
             "type": "integer"
           },
-          "minItems": 1,
-          "default": [42, 123, 456]
+          "minItems": 1
         },
         "tier2_seeds": {
           "type": "array",
@@ -88,8 +87,7 @@
           "items": {
             "type": "integer"
           },
-          "minItems": 1,
-          "default": [789]
+          "minItems": 1
         },
         "tier3_seeds": {
           "type": "array",
@@ -97,14 +95,8 @@
           "items": {
             "type": "integer"
           },
-          "minItems": 1,
-          "default": [999]
+          "minItems": 1
         }
-      },
-      "default": {
-        "tier1_seeds": [42, 123, 456],
-        "tier2_seeds": [789],
-        "tier3_seeds": [999]
       }
     }
   }

@@ -132,8 +132,8 @@ CLI
 2. 在**不创建 LLMClient、不做 endpoint selftest**的情况下检查请求和文件；
 3. 把结果写入 `<workspace>/_runtime/skill_sessions/<session-id>.json`，并写 `user_inputs/<skill>/_intake.md`；
 4. **非交互**缺输入时展示上传位置并退出 `WAITING_INPUT`，不创建 LLM client；
-5. **交互终端**（`--interactive`）缺输入时，可启动受限 intake Agent：它只读取清单、向人询问、并把人上传或粘贴的材料整理到 `user_inputs/<skill>/...`，随后重新做确定性检查；它不能写论文、实验、引用或最终 Skill 产物；
-6. 输入通过后才构造或复用 runtime、`ToolRegistry`、`LLMClient` 与 `SkillAgent`；
+5. **TTY 交互终端**默认在缺输入时启动受限 intake Agent：它只读取清单、向人询问、并把人上传或粘贴的材料整理到 `user_inputs/<skill>/...`，随后重新做确定性检查；它不能写论文、实验、引用或最终 Skill 产物；
+6. 输入通过后会写 `WAITING_CONFIRMATION` 并要求明确输入“执行”或“暂停”；只有“执行”才构造或复用 runtime、`ToolRegistry`、`LLMClient` 与 `SkillAgent`；
 7. 用 `AgentRunner` 执行，并在同一会话中持久化可观察的 `awaiting_llm`、`tool_running`、`tool_completed` 等进度事件；
 8. 把最终结果、运行统计、trace、输出存在性和恢复命令回写会话。
 
@@ -150,7 +150,7 @@ pipeline agent 相同的工具策略、trace、预算和输出校验；会话文
 
 - `--session-id NAME`：为并行的稿件或任务设置独立会话名；默认是 Skill 名。
 - `--resume`：沿用同一会话的请求和已验证输入，重新检查后继续。
-- `--interactive`：没有位置参数 request 时，从终端接受多行任务说明；若必需材料缺失，继续通过受限 intake Agent 询问上传/粘贴并写入声明的 `user_inputs/<skill>/...`。以 `END` 单独成行提交任务说明。
+- TTY 默认交互：没有位置参数 request 时，从终端接受多行任务说明；若必需材料缺失，继续通过受限 intake Agent 询问上传/粘贴并写入声明的 `user_inputs/<skill>/...`。以 `END` 单独成行提交任务说明。`--interactive` 保留为显式强制开关；`--non-interactive` 禁用该行为。
 - `--skip-startup-selftest`：仅在输入已就绪且确实要执行时跳过 provider 启动自检；不能绕过输入检查。
 
 ### 3.5 `list-skills`
@@ -710,9 +710,9 @@ standalone `list-skills` 扫描或在本节的公共 Skill 契约中改写。
 1. `resolve_skill` 并读取 input/output contract；
 2. 在**不创建 LLMClient、不运行 provider selftest**时检查 request 和必需输入；
 3. 写 `<workspace>/_runtime/skill_sessions/<session-id>.json`，状态为 `WAITING_INPUT` 或 `READY`；
-4. 非交互缺输入保持 `WAITING_INPUT`，不访问 provider；交互终端可先运行受限 intake Agent，反复收集人提供的材料并重检；
+4. 非交互缺输入保持 `WAITING_INPUT`，不访问 provider；TTY 交互终端默认先运行受限 intake Agent，反复收集人提供的材料并重检；
 5. intake 只能写该 Skill 的 `user_inputs/<skill>/`，不能产生 `drafts/`、`literature/`、`ideation/` 或其他最终输出；
-6. 只有 `READY` 才构造或复用 runtime、`ToolRegistry`、`LLMClient`、`SkillAgent` 和 `AgentRunner`；
+6. `READY` 后先等待人工“执行/暂停”确认；只有明确“执行”才构造或复用 runtime、`ToolRegistry`、`LLMClient`、`SkillAgent` 和 `AgentRunner`；
 7. 把会话文件及已经验证的输入路径注入 `ExecutionContext.extra`；
 8. 将 `RUNNING`、`COMPLETED` 或 `FAILED`、trace 和输出存在性写回同一会话。
 
@@ -731,7 +731,7 @@ researchos skill-status --workspace ./workspace/project-a
 ```
 
 第一次**非交互**命令缺输入时返回 code `2`，但不是模型或 provider 故障；它已经持久化上传位置和
-恢复信息。`--interactive` 除了让用户以多行输入 request，也会在文件缺失时让受限 intake Agent
+恢复信息。TTY 默认交互除了让用户以多行输入 request，也会在文件缺失时让受限 intake Agent
 询问“上传还是粘贴”，仅整理人提供的内容后重新检查；`--session-id` 允许同一 workspace 内并行处理多个稿件。会话
 记录的 `step` 是可观察进度，不是独立 Skill 的停止阈值。
 

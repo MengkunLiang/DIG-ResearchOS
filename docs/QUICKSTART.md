@@ -412,13 +412,12 @@ researchos run-skill paper-outline \
 researchos skill-status --workspace ./workspace/local-test2
 ```
 
-使用 `--interactive` 可在任务说明缺失时输入多行内容；如果必需材料也缺失，受限 intake Agent 会询问上传或粘贴，并只将人提供的内容整理到 `user_inputs/<skill>/` 后重检。以单独一行 `END` 提交任务说明：
+TTY 终端默认可在任务说明缺失时输入多行内容；如果必需材料也缺失，受限 intake Agent 会询问上传或粘贴，并只将人提供的内容整理到 `user_inputs/<skill>/` 后重检。材料通过后还必须明确输入“执行”才启动 Skill；以单独一行 `END` 提交任务说明：
 
 ```bash
 researchos run-skill literature-evidence-scout \
   --workspace ./workspace/local-test2 \
-  --session-id intro-evidence \
-  --interactive
+  --session-id intro-evidence
 ```
 
 常用学术 Skill 的顺序是：`research-scope`（范围）→ `paper-identifier-resolver`（DOI/arXiv/标题解析）或
@@ -435,7 +434,7 @@ manifest，不生成装饰图。每一步都可单独 `describe-skill <名称>` 
 
 完整原子能力、输入路径和边界见 [skills.md](skills.md)。例如，单篇 PDF 先放到
 `user_inputs/pdf-note-card/paper.pdf`，DOI/arXiv/标题则一行一个放到
-`user_inputs/paper-identifier-resolver/identifiers.md`；两者均可通过 `--interactive` 让 intake Agent
+`user_inputs/paper-identifier-resolver/identifiers.md`；两者均可由 TTY 默认 intake Agent
 整理人工粘贴内容，并在同一 session 中恢复。
 
 `paper-outline` 和 `paper-write` 会生成 `drafts/writing_storyline.md`，再按

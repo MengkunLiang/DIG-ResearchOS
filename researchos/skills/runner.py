@@ -86,8 +86,9 @@ async def run_skill_intake(
     intake_packet_path: str,
     runtime_settings: RuntimeSettings | None = None,
     llm_profile: str | None = None,
+    intake_round: int = 1,
 ) -> AgentResult:
-    """Run a bounded material-collection phase before normal Skill execution."""
+    """Run one unbounded, human-directed material-collection round before execution."""
 
     agent = SkillIntakeAgent(skill_name=skill_name, interaction=interaction)
     ctx = ExecutionContext(
@@ -100,6 +101,7 @@ async def run_skill_intake(
             "user_request": user_request,
             "skill_session_id": session_id,
             "skill_intake_packet_path": intake_packet_path,
+            "skill_intake_round": intake_round,
         },
     )
     runner = AgentRunner(

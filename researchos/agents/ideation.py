@@ -1475,25 +1475,34 @@ class IdeationAgent(Agent):
             )
 
         project = load_project(ctx)
-        max_budget = project.get("constraints", {}).get("max_budget_usd", 100.0)
+        raw_budget = (project.get("constraints") or {}).get("max_budget_usd") if isinstance(project, dict) else None
+        try:
+            max_budget = float(raw_budget) if raw_budget is not None else None
+        except (TypeError, ValueError):
+            max_budget = None
         total_estimated_cost = 0.0
+        has_complete_cost_estimates = True
         for exp in experiments:
             estimate = exp.get("compute_estimate", {}) or {}
-            gpu_hours = float(estimate.get("gpu_hours", 0) or 0)
             estimated_cost = estimate.get("estimated_cost_usd")
-            exp_cost = float(estimated_cost) if estimated_cost is not None else gpu_hours * 3.0
+            if estimated_cost is None:
+                has_complete_cost_estimates = False
+                continue
+            try:
+                exp_cost = float(estimated_cost)
+            except (TypeError, ValueError):
+                has_complete_cost_estimates = False
+                continue
             total_estimated_cost += exp_cost
-            if exp_cost > max_budget * 0.85:
-                return False, f"实验'{exp.get('name', '?')}'成本超预算85%"
 
         declared_total = plan_data.get("total_estimated_cost_usd")
-        if declared_total is not None and float(declared_total) > max_budget:
+        if max_budget is not None and declared_total is not None and float(declared_total) > max_budget:
             return False, (
                 f"exp_plan.yaml 声明总成本 ${float(declared_total):.2f} "
                 f"超过项目预算 ${float(max_budget):.2f}"
             )
 
-        if total_estimated_cost > max_budget:
+        if max_budget is not None and has_complete_cost_estimates and total_estimated_cost > max_budget:
             return False, (
                 f"实验总成本 ${total_estimated_cost:.2f} "
                 f"超过项目预算 ${float(max_budget):.2f}"
@@ -1568,6 +1577,27 @@ def _validate_candidate_directions(ws: Path) -> tuple[bool, str | None]:
             return False, f"_candidate_directions.json 第{idx}条候选缺少 constraint_status"
         if len(basis) < 20:
             return False, f"_candidate_directions.json 第{idx}条候选 basis_summary 过短"
+        minimum = candidate.get("minimum_experiment")
+        if isinstance(minimum, dict) and minimum.get("evidence_status") is not None:
+            protocol_status = str(minimum.get("evidence_status") or "").strip().lower()
+            allowed_protocol_statuses = {
+                "supported",
+                "user_provided",
+                "proposed_not_verified",
+                "unknown",
+            }
+            if protocol_status not in allowed_protocol_statuses:
+                return False, (
+                    f"_candidate_directions.json 候选 {idea_id} 的 minimum_experiment.evidence_status "
+                    f"无效：{protocol_status or 'empty'}"
+                )
+            refs = minimum.get("source_refs")
+            valid_refs = [str(item).strip() for item in refs if str(item).strip()] if isinstance(refs, list) else []
+            if protocol_status in {"supported", "user_provided"} and not valid_refs:
+                return False, (
+                    f"_candidate_directions.json 候选 {idea_id} 将最小验证标为 {protocol_status}，"
+                    "但缺少 source_refs；不得把无来源的实验提议写成既定协议"
+                )
         ok, err = _validate_cross_domain_provenance(candidate, idea_id, "_candidate_directions.json")
         if not ok:
             return False, err
@@ -1720,7 +1750,7 @@ _T4_RECOVERY_DISPLAY_ZH: dict[str, dict[str, str]] = {
         "pitch": "把会话状态、既往暴露和饱和度纳入 uplift，而不是假设智能体对干预的反应恒定。",
         "mechanism": "以会话状态、先前暴露和饱和区间调节处理效应，替代稳定的人类式单元响应假设。",
         "prediction": "状态条件化估计能解释静态 uplift 树或双模型基线遗漏的异质智能体响应。",
-        "counterfactual": "若智能体响应函数在状态间稳定，加入状态和饱和变量不应改善校准或 AUUC 排序。",
+        "counterfactual": "若智能体响应函数在状态间稳定，加入状态和饱和变量不应改善项目预先声明且可追溯的评估指标。",
     },
     "Source-provenance uplift for commercial LLM agents": {
         "title": "商业 LLM 智能体的来源可信度 uplift",
@@ -1875,6 +1905,22 @@ def _candidate_card_merges(candidate: dict) -> list[dict[str, str]]:
     return result
 
 
+def _candidate_minimum_experiment_display(minimum: dict) -> tuple[str, str]:
+    """Render a candidate protocol without presenting unsourced details as facts."""
+
+    status = str(minimum.get("evidence_status") or "legacy_unverified").strip().lower()
+    sources = minimum.get("source_refs")
+    refs = [str(item).strip() for item in sources if str(item).strip()] if isinstance(sources, list) else []
+    labels = {
+        "supported": "已由可追溯材料支持",
+        "user_provided": "由人工明确提供",
+        "proposed_not_verified": "待验证的实验提议，不是既有协议",
+        "unknown": "当前未知，必须补充材料后确定",
+        "legacy_unverified": "遗留候选未声明协议来源；不得视为既定实验配置",
+    }
+    return labels.get(status, f"协议状态未识别：{status}"), ", ".join(refs) if refs else "无；需要补充证据或人工决策"
+
+
 def _candidate_card_lane_description(candidate: dict, idea_id: str) -> str:
     """Explain the candidate's public Gate1 role from durable fields only."""
 
@@ -1947,6 +1993,7 @@ def _render_gate1_candidate_cards(candidates: list[dict], pass2_by_id: dict[str,
         metrics_text = ", ".join(str(item) for item in metrics) if isinstance(metrics, list) else str(metrics or "待定")
         risks = candidate.get("key_risks") or candidate.get("risks") or []
         nearest = candidate.get("nearest_prior_work") if isinstance(candidate.get("nearest_prior_work"), dict) else {}
+        protocol_status, protocol_sources = _candidate_minimum_experiment_display(minimum)
         lines.extend(
             [
                 "=" * 88,
@@ -1993,7 +2040,8 @@ def _render_gate1_candidate_cards(candidates: list[dict], pass2_by_id: dict[str,
             [
                 "",
                 "### 最小验证与证据边界",
-                f"- **最小验证**：数据/任务={minimum.get('dataset', '待定')}；基线={minimum.get('baseline', '待定')}；指标={metrics_text}；预期信号={minimum.get('expected_signal', '待定')}",
+                f"- **最小验证（候选提议）**：数据/任务={minimum.get('dataset', '待定')}；基线={minimum.get('baseline', '待定')}；指标={metrics_text}；预期信号={minimum.get('expected_signal', '待定')}",
+                f"  - **协议证据状态**：{protocol_status}；来源={protocol_sources}",
                 f"- **核心文献依赖**：{_format_card_papers(papers)}",
                 f"- **最近工作与差异**：{nearest.get('work', 'not_computed')}（distance={nearest.get('distance', 'not_computed')}）；novelty_signal={candidate.get('novelty_signal') or review.get('novelty_signal') or 'not_computed'}",
                 f"- **接地摘要**：{candidate.get('basis_summary') or candidate.get('contribution_character') or '见结构化候选池'}",
@@ -2349,6 +2397,8 @@ def _build_fallback_gate1_candidates(
                 "baseline": "待基于最近工作和项目约束确定；当前恢复路径不推断。",
                 "metric": [],
                 "expected_signal": "待选定方向并回查证据后明确为可证伪预测。",
+                "evidence_status": "unknown",
+                "source_refs": [],
             },
             "nearest_prior_work": {"work": nearest, "distance": "moderate" if papers else "not_computed"},
             "novelty_signal": "adjacent_zone" if papers else "not_computed",

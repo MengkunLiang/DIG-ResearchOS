@@ -1227,10 +1227,21 @@ def _format_t4_candidate_overview(value: Any) -> str:
         value_text = str(item.get("value") or "待补充")
         mechanism = str(item.get("mechanism") or "待补充")
         minimum = item.get("minimum_validation") if isinstance(item.get("minimum_validation"), dict) else {}
-        dataset = str(minimum.get("dataset") or "待确定")
-        baseline = str(minimum.get("baseline") or "待确定")
-        metric = str(minimum.get("metric") or "待确定")
-        signal = str(minimum.get("expected_signal") or "待确定")
+        dataset = str(minimum.get("dataset") or "unknown")
+        baseline = str(minimum.get("baseline") or "unknown")
+        raw_metric = minimum.get("metric")
+        metric = ", ".join(str(value) for value in raw_metric) if isinstance(raw_metric, list) else str(raw_metric or "unknown")
+        signal = str(minimum.get("expected_signal") or "unknown")
+        protocol_status = str(minimum.get("evidence_status") or "legacy_unverified").strip().lower()
+        protocol_labels = {
+            "supported": "已由可追溯材料支持",
+            "user_provided": "由人工明确提供",
+            "proposed_not_verified": "待验证的候选提议，不是既有协议",
+            "unknown": "当前未知，必须补充材料后确定",
+            "legacy_unverified": "遗留候选未声明来源；不得视为既定协议",
+        }
+        raw_refs = minimum.get("source_refs")
+        protocol_refs = ", ".join(str(value).strip() for value in raw_refs if str(value).strip()) if isinstance(raw_refs, list) else ""
         evidence = str(item.get("evidence") or "需回查文献笔记")
         count = item.get("support_count")
         scores = item.get("scores") if isinstance(item.get("scores"), dict) else {}
@@ -1298,6 +1309,8 @@ def _format_t4_candidate_overview(value: Any) -> str:
         lines.extend(_t4_wrap_terminal_field("对照基线", baseline, indent=4, width=width))
         lines.extend(_t4_wrap_terminal_field("指标", metric, indent=4, width=width))
         lines.extend(_t4_wrap_terminal_field("预期信号", signal, indent=4, width=width))
+        lines.extend(_t4_wrap_terminal_field("协议证据状态", protocol_labels.get(protocol_status, f"未识别：{protocol_status}"), indent=4, width=width))
+        lines.extend(_t4_wrap_terminal_field("协议来源", protocol_refs or "无；需要补充证据或人工决策", indent=4, width=width))
         lines.append("  评分与依据（1-5）：")
         if scores:
             for key, label in score_labels:

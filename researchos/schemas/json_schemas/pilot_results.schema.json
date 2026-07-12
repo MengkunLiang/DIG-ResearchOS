@@ -13,7 +13,7 @@
           "experiment_id": {"type": "string", "minLength": 1},
           "hypothesis_ref": {"type": "string"},
           "status": {"type": "string", "enum": ["DONE", "FAILED", "TIMEOUT", "SKIPPED"]},
-          "seed": {"type": "integer", "enum": [42]},
+          "seed": {"type": "integer", "minimum": 0},
           "metrics": {"type": "object"},
           "duration_seconds": {"type": "number", "minimum": 0},
           "smoke_test_passed": {"type": "boolean"},

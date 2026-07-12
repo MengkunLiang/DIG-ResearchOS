@@ -16,27 +16,68 @@ from rich.panel import Panel
 from rich.text import Text
 
 
-_BRAND_WIDTH = 84
+_BRAND_WIDTH = 96
 _DIG_FRAME_MARKS = ("D", "DI", "DIG")
+_DIG_GLYPHS = {
+    "D": (
+        "██████╗ ",
+        "██╔══██╗",
+        "██║  ██║",
+        "██║  ██║",
+        "██████╔╝",
+        "╚═════╝ ",
+    ),
+    "I": (
+        "██╗",
+        "██║",
+        "██║",
+        "██║",
+        "██║",
+        "╚═╝",
+    ),
+    "G": (
+        " ██████╗ ",
+        "██╔════╝ ",
+        "██║  ███╗",
+        "██║   ██║",
+        "╚██████╔╝",
+        " ╚═════╝ ",
+    ),
+}
+_DIG_COLORS = {
+    "D": ("bright_cyan", "rgb(0, 44, 67)"),
+    "I": ("spring_green2", "rgb(0, 54, 38)"),
+    "G": ("bright_magenta", "rgb(55, 18, 65)"),
+}
 
 
-def _brand_mark(mark: str) -> Text:
-    """Return the compact DIG mark with stable, restrained lab colors."""
+def _logo_line(mark: str, line_index: int) -> Text:
+    """Render one large, shaded line of the progressive DIG mark."""
 
-    colors = ("bright_cyan", "spring_green2", "bright_magenta")
     text = Text()
     for index, character in enumerate(mark[:3]):
-        text.append(character, style=f"bold {colors[index]}")
+        foreground, background = _DIG_COLORS[character]
+        # The dim leading/trailing block gives the terminal glyph a consistent
+        # offset extrusion while the colored face remains readable without it.
+        text.append("░", style=f"dim {foreground}")
+        text.append(
+            _DIG_GLYPHS[character][line_index],
+            style=f"bold {foreground} on {background}",
+        )
+        text.append("▓", style=f"dim {foreground}")
         if index < len(mark[:3]) - 1:
-            text.append(" ")
+            text.append("  ")
     return text
 
 
 def _banner_renderable(command_name: str, *, width: int, frame_mark: str = "DIG") -> Panel:
-    """Build a compact product identity rather than an ASCII-art splash screen."""
+    """Build the large DIG mark and its restrained ResearchOS product context."""
 
-    headline = _brand_mark(frame_mark)
-    headline.append("   ResearchOS", style="bold bright_white")
+    logo_lines = [Align.center(_logo_line(frame_mark, line)) for line in range(6)]
+    logo_shadow = Text("╲" + "▄" * 31 + "╱", style="dim cyan")
+
+    product_name = Text("ResearchOS", style="bold bright_white")
+    product_name.append("  ·  Research Intelligence Operating System", style="dim")
 
     subline = Text()
     subline.append("DIG Lab", style="bold bright_cyan")
@@ -50,8 +91,10 @@ def _banner_renderable(command_name: str, *, width: int, frame_mark: str = "DIG"
     status.append(command_name, style="bold yellow")
 
     body = Group(
-        Align.center(headline),
+        *logo_lines,
+        Align.center(logo_shadow),
         Text(""),
+        Align.center(product_name),
         Align.center(subline),
         Text(""),
         Align.center(status),
@@ -59,10 +102,10 @@ def _banner_renderable(command_name: str, *, width: int, frame_mark: str = "DIG"
     return Panel(
         body,
         title="[bold bright_cyan]DIG LAB[/]",
-        subtitle="[dim]ResearchOS[/]",
+        subtitle="[dim]ResearchOS · Research Workflow[/]",
         box=box.ROUNDED,
         border_style="bright_cyan",
-        padding=(1, 3),
+        padding=(1, 4),
         width=width,
     )
 

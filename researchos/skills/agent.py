@@ -123,6 +123,12 @@ class SkillAgent(Agent):
                 f"`user_inputs/{self.skill.name}/_followup_request.md` with the exact gap, why it matters, and a preferred answer/file path. Then call ask_human and wait for the response.\n"
                 "- Do not create final deliverables by guessing missing material. Record the resolved answer in the follow-up file before continuing.\n\n"
             )
+        header += (
+            "# Experimental-Detail Integrity\n"
+            "- A concrete dataset, benchmark, split, baseline, metric, seed, compute budget, implementation command, or performance number may be used only when an allowed input or audited workspace artifact explicitly identifies it. Record the source path and section/field whenever that detail affects a plan or claim.\n"
+            "- If the user asks for a plan but the detail is not yet sourced, label it `proposed_not_verified` or `unknown`; state what material would resolve it. Do not turn a plausible convention into an existing protocol.\n"
+            "- Never infer experimental details from the project topic, a method name, an adjacent paper, a generic benchmark convention, or an earlier example. Missing protocol inputs require a focused human question, not a fabricated default.\n\n"
+        )
         return header + warning_block + body
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:

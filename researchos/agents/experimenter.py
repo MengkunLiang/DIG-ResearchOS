@@ -5,7 +5,7 @@
 - 主链语义：ResearchOS 编译协议、选择外部执行器、摄取和审计结果，再生成 result-to-claim
 - 兼容模式：pilot（T5）和 full（T7）仍可显式 run-task 调用
 - Pilot 兼容模式：小规模验证实验，强制 smoke test，产出 motivation_validation.md
-- Full 兼容模式：完整实验，强制 ablation，支持 seed ensemble 和迭代多样性检查
+- Full 兼容模式：完整实验；消融、seed policy 和迭代检查只在项目协议明确要求时执行
 - 读取 ideation/exp_plan.yaml（T4 的输出）
 - 主链不在 ResearchOS runtime 中实现或运行真实实验；真实执行由 Codex/Claude Code/manual executor 在隔离路径完成
 - ResearchOS 不接受执行器自然语言总结作为事实，只接受 raw artifact、config、log、hash、ingest/audit/result-to-claim
@@ -31,10 +31,10 @@ Legacy Pilot 模式（T5）输入：
 Legacy Pilot 模式（T5）输出：
 - pilot/pilot_plan.yaml: 试点实验计划
 - pilot/pilot_code/run_pilot.py: 可执行的试点代码（必须支持 --smoke_test 和 --seed 参数）
-- pilot/pilot_results.json: 试点结果（必须包含 seed=42）
+- pilot/pilot_results.json: 试点结果（必须记录与 pilot_plan 一致、且有来源的 seed）
 - pilot/motivation_validation.md: 动机验证报告（必须包含 PASS/REVISE/FAIL 判定）
 - pilot/smoke_test_passed.marker: 烟测通过标记（鲁棒性要求 §3.1）
-- pilot/docker_digests.txt: Docker 镜像 digest（鲁棒性要求 §8.2）
+- pilot/docker_digests.txt: 已实际使用的 Docker 镜像 digest
 
 Legacy Full 模式（T7）输入：
 - ideation/exp_plan.yaml: 实验计划
@@ -48,9 +48,9 @@ Legacy Full 模式（T7）输入：
 Legacy Full 模式（T7）输出：
 - experiments/results_summary.json: 实验结果汇总（必须包含 quality_status 字段）
 - experiments/iteration_log.md: 实验迭代日志
-- experiments/ablations.csv: Ablation 结果（最少 3 条，鲁棒性要求 §5.3）
-- experiments/seed_ensemble_summary.json: Seed ensemble 汇总（鲁棒性要求 §3.3）
-- experiments/iteration_diversity_check.md: 迭代多样性检查（鲁棒性要求 §5.1）
+- experiments/ablations.csv: 仅在已声明消融协议时生成的结果
+- experiments/seed_ensemble_summary.json: 仅在项目明确声明多 seed policy 时生成的汇总
+- experiments/iteration_diversity_check.md: 实际迭代与非结果导向修改理由
 - experiments/runs/{run_id}/: 每个实验的详细结果
 - experiments/code/run_exp.py: 可执行的实验代码
 - experiments/docker_digests.txt: Docker 镜像 digest
@@ -177,7 +177,11 @@ def run_experimenter_preflight(ctx: ExecutionContext) -> tuple[bool, str | None]
 
     ws = ctx.workspace_dir
     project = load_project(ctx)
-    max_budget = float(project.get("constraints", {}).get("max_budget_usd", 100.0) or 100.0)
+    raw_budget = (project.get("constraints") or {}).get("max_budget_usd") if isinstance(project, dict) else None
+    try:
+        max_budget = float(raw_budget) if raw_budget is not None else None
+    except (TypeError, ValueError):
+        max_budget = None
     exp_plan_path = ws / "ideation" / "exp_plan.yaml"
     try:
         plan = yaml.safe_load(exp_plan_path.read_text(encoding="utf-8")) or {}
@@ -189,19 +193,25 @@ def run_experimenter_preflight(ctx: ExecutionContext) -> tuple[bool, str | None]
         return False, "T5 preflight 失败：exp_plan.yaml budget_check.over_budget=true"
 
     declared_total = plan.get("total_estimated_cost_usd")
-    if declared_total is not None and float(declared_total) > max_budget:
+    if max_budget is not None and declared_total is not None and float(declared_total) > max_budget:
         return False, (
             f"T5 preflight 失败：实验计划总成本 ${float(declared_total):.2f} "
             f"超过项目预算 ${max_budget:.2f}"
         )
 
     total_from_experiments = 0.0
+    has_complete_cost_estimates = True
     for exp in plan.get("experiments", []) or []:
         estimate = exp.get("compute_estimate", {}) or {}
         cost = estimate.get("estimated_cost_usd")
-        gpu_hours = float(estimate.get("gpu_hours", 0) or 0)
-        total_from_experiments += float(cost) if cost is not None else gpu_hours * 3.0
-    if total_from_experiments > max_budget:
+        if cost is None:
+            has_complete_cost_estimates = False
+            continue
+        try:
+            total_from_experiments += float(cost)
+        except (TypeError, ValueError):
+            has_complete_cost_estimates = False
+    if max_budget is not None and has_complete_cost_estimates and total_from_experiments > max_budget:
         return False, (
             f"T5 preflight 失败：实验计划逐项成本总和 ${total_from_experiments:.2f} "
             f"超过项目预算 ${max_budget:.2f}"
@@ -286,56 +296,38 @@ def check_failure_modes(results: dict, log_content: str) -> list[dict]:
             "severity": "HIGH",
         })
 
-    # FM2: Hallucinated Results - 交叉验证关键数字
-    # 检查关键指标是否在合理范围内
+    # FM2: Hallucinated Results - only verify numeric integrity here. Metric
+    # scales vary by project, so generic accuracy/BLEU ranges would turn a
+    # convention into an unsupported quality judgment.
     for exp in experiments:
         metrics = exp.get("metrics", {})
         for metric, value in metrics.items():
             if isinstance(value, (int, float)):
-                # 通用合理性检查
-                if metric.lower() in ["accuracy", "precision", "recall", "f1"]:
-                    if not 0 <= value <= 1.5:  # 允许一些误差
-                        issues.append({
-                            "id": "FM2",
-                            "mode": "Hallucinated Results",
-                            "description": f"实验 {exp.get('experiment_id', 'unknown')} 的 {metric}={value} 超出合理范围",
-                            "severity": "MEDIUM",
-                        })
-                elif metric.lower() in ["bleu", "rouge", "meteor"]:
-                    if not 0 <= value <= 100:
-                        issues.append({
-                            "id": "FM2",
-                            "mode": "Hallucinated Results",
-                            "description": f"实验 {exp.get('experiment_id', 'unknown')} 的 {metric}={value} 超出合理范围",
-                            "severity": "MEDIUM",
-                        })
+                if value != value or value in {float("inf"), float("-inf")}:
+                    issues.append({
+                        "id": "FM2",
+                        "mode": "Non-finite Metric",
+                        "description": f"实验 {exp.get('experiment_id', 'unknown')} 的 {metric} 不是有限数值",
+                        "severity": "HIGH",
+                    })
 
-    # FM3: Shortcut Reliance - 消融实验是否分离组件
-    # 检查 ablation 实验是否真正分离了组件
+    # FM3: Shortcuts can only be assessed against a declared ablation plan.
+    # This structural check records that variants exist but does not invent a
+    # minimum number of components.
     ablations = results.get("ablation_results", [])
     if len(ablations) > 0:
-        # 检查是否有足够的 ablation 变体
         component_count = len(set(a.get("ablation_type", "") for a in ablations))
-        if component_count < 2:
+        if component_count == 0:
             issues.append({
                 "id": "FM3",
                 "mode": "Shortcut Reliance",
-                "description": "消融实验数量不足，可能未充分分离组件",
+                "description": "消融记录未声明可识别的操作；无法核验其是否对应预先定义的机制检验",
                 "severity": "MEDIUM",
             })
 
-    # FM4: Bug-as-Insight Reframing - 检查结果是否符合预期
-    # 简单检查：如果 improvement 太大，可能需要怀疑
-    for exp in experiments:
-        improvement = exp.get("improvement", {})
-        for metric, delta in improvement.items():
-            if isinstance(delta, (int, float)) and abs(delta) > 0.5:  # 50% 提升太离谱
-                issues.append({
-                    "id": "FM4",
-                    "mode": "Bug-as-Insight Reframing",
-                    "description": f"实验 {exp.get('experiment_id', 'unknown')} 的 {metric} 提升 {delta} 过大，需验证",
-                    "severity": "LOW",
-                })
+    # FM4: Do not classify a large/small delta by a generic threshold. A
+    # surprising value is an audit cue only when a project-specific range or
+    # preregistered expectation is present in the source-backed protocol.
 
     # FM5: Methodology Fabrication - 验证方法描述与实现一致
     # 这个需要更深入的分析，这里做简单检查
@@ -756,8 +748,10 @@ def _validate_external_dry_run(ws: Path) -> tuple[bool, str | None]:
         if field not in result_pack:
             return False, f"dry-run result_pack 缺少 required 字段 {field}"
     metrics = result_pack.get("metrics")
-    if not isinstance(metrics, list) or not metrics:
-        return False, "result_pack.metrics 必须是非空列表"
+    if not isinstance(metrics, list):
+        return False, "result_pack.metrics 必须是列表"
+    if not metrics and result_pack.get("mock_only") is not True:
+        return False, "真实执行的 result_pack.metrics 必须是非空列表"
     artifacts = result_pack.get("artifacts")
     if not isinstance(artifacts, list) or not artifacts:
         return False, "result_pack.artifacts 必须是非空列表"
@@ -825,10 +819,11 @@ def _validate_external_ingest(ws: Path) -> tuple[bool, str | None]:
         return False, "experiments/results_summary.json source 必须是 external_executor"
     metrics_obj = summary.get("metrics")
     metric_records = summary.get("metric_records")
-    if not isinstance(metrics_obj, dict) or not metrics_obj:
-        return False, "experiments/results_summary.json 必须包含非空 metrics 对象"
-    if not isinstance(metric_records, list) or not metric_records:
-        return False, "experiments/results_summary.json 必须包含非空 metric_records 列表"
+    mock_only = summary.get("mock_only") is True
+    if not isinstance(metrics_obj, dict) or (not metrics_obj and not mock_only):
+        return False, "experiments/results_summary.json 必须包含 metrics 对象；非 mock 执行必须非空"
+    if not isinstance(metric_records, list) or (not metric_records and not mock_only):
+        return False, "experiments/results_summary.json 必须包含 metric_records 列表；非 mock 执行必须非空"
     if not isinstance(summary.get("experiments"), list) or not summary.get("experiments"):
         return False, "experiments/results_summary.json 必须包含非空 experiments"
     if summary.get("ingest_report_ref") != "experiments/ingest_report.json":
@@ -1014,8 +1009,14 @@ def _validate_external_result_to_claim(ws: Path) -> tuple[bool, str | None]:
         if data.get("semantics") != "mechanical_result_to_claim_map_not_final_scientific_judgment":
             return False, f"{rel} semantics 不正确"
         mappings = data.get("claim_mappings")
-        if not isinstance(mappings, list) or not mappings:
-            return False, f"{rel} 必须包含非空 claim_mappings"
+        if not isinstance(mappings, list):
+            return False, f"{rel}.claim_mappings 必须是列表"
+        if not mappings:
+            if data.get("mock_only") is not True:
+                return False, f"{rel} 非 mock 执行必须包含非空 claim_mappings"
+            must_not_claim = data.get("global_must_not_claim")
+            if not isinstance(must_not_claim, list) or not must_not_claim:
+                return False, f"{rel} 的空 mock claim_mappings 必须附带 global_must_not_claim"
         for idx, mapping in enumerate(mappings, start=1):
             if not isinstance(mapping, dict):
                 return False, f"{rel} claim_mappings[{idx}] 必须是对象"
@@ -1032,10 +1033,10 @@ def _validate_external_result_to_claim(ws: Path) -> tuple[bool, str | None]:
         return False, "drafts/experiment_evidence_pack.json semantics 不正确"
     if pack.get("source") != "external_executor":
         return False, "experiment_evidence_pack.source 必须是 external_executor"
-    if not isinstance(pack.get("metrics"), list) or not pack.get("metrics"):
-        return False, "experiment_evidence_pack.metrics 必须是非空列表"
-    if not isinstance(pack.get("claims"), list) or not pack.get("claims"):
-        return False, "experiment_evidence_pack.claims 必须是非空列表"
+    if not isinstance(pack.get("metrics"), list) or (not pack.get("metrics") and pack.get("mock_only") is not True):
+        return False, "experiment_evidence_pack.metrics 必须是列表；非 mock 执行必须非空"
+    if not isinstance(pack.get("claims"), list) or (not pack.get("claims") and pack.get("mock_only") is not True):
+        return False, "experiment_evidence_pack.claims 必须是列表；非 mock 执行必须非空"
     log = (ws / "experiments" / "iteration_log.md").read_text(encoding="utf-8", errors="replace")
     if "External Experiment Iteration Log" not in log:
         return False, "experiments/iteration_log.md 必须记录 External Experiment Iteration Log"
@@ -1045,8 +1046,8 @@ def _validate_external_result_to_claim(ws: Path) -> tuple[bool, str | None]:
 class ExperimenterAgent(Agent):
     """实验执行 Agent。支持 pilot（T5）和 full（T7）两种模式。
 
-    - pilot 模式：小规模验证实验，强制 smoke test，固定 seed=42
-    - full 模式：完整实验，强制 ablation（最少 3 条），支持 seed ensemble
+    - pilot 模式：小规模验证实验，强制 smoke test，使用 pilot_plan 中明确声明的 seed
+    - full 模式：完整实验；ablation 与 seed policy 仅按来源明确的协议执行
     """
 
     def __init__(self, mode: str | None = None):
@@ -1151,18 +1152,14 @@ class ExperimenterAgent(Agent):
                     + novelty_audit[:1200]
                 )
 
-        # 读取 seed_ensemble 配置（§2.5）
-        seed_ensemble = project.get("seed_ensemble", {
-            "tier1_seeds": [42, 123, 456],
-            "tier2_seeds": [789],
-            "tier3_seeds": [999]
-        })
-
-        # 根据 mode 设置预算提示
-        if mode == "pilot":
-            budget_hint = "建议 100 步内完成，2 小时内，400K tokens"
-        else:
-            budget_hint = "最多 150 步，4 小时，600K tokens"
+        # Seeds and budgets are research protocol inputs, not runtime defaults.
+        # Preserve their absence so the prompt can request an explicit source
+        # rather than silently converting a missing policy into an experiment.
+        seed_ensemble = project.get("seed_ensemble") if isinstance(project.get("seed_ensemble"), dict) else {}
+        budget_hint = (
+            "仅使用 project.yaml constraints、ideation/exp_plan.yaml 或人工确认中可追溯的预算与资源限制；"
+            "未声明时标记 unknown，并在执行前请求补充，不得使用系统默认的步数、时长或 token 配额。"
+        )
 
         resume_state = {
             "resume_mode": bool(ctx.extra.get("resume_mode")),
@@ -1326,8 +1323,8 @@ class ExperimenterAgent(Agent):
                 (
                 "请按 system prompt 执行 T5 Pilot 实验任务。\n"
                 "实验计划在 ideation/exp_plan.yaml 中。\n"
-                "请执行小规模试点实验（5-10% 数据），强制执行 smoke test，"
-                "使用固定 seed=42，生成 pilot/pilot_plan.yaml、pilot/pilot_results.json 和 "
+                "请先从 ideation/exp_plan.yaml 或人工确认材料中提取数据比例与 seed；若任一项未声明，"
+                "暂停并请求补充，不得写默认值。随后执行已声明的小规模试点与 smoke test，生成 pilot/pilot_plan.yaml、pilot/pilot_results.json 和 "
                 "pilot/motivation_validation.md（必须包含 PASS/REVISE/FAIL 判定）。"
                 ),
             )
@@ -1349,13 +1346,73 @@ class ExperimenterAgent(Agent):
                 "注意：默认主链现在使用外部实验 handoff/ingest/audit/claims；本模式仅用于显式 legacy 调试。"
                 "如果 pilot 或 novelty_final 产物不存在，"
                 "请基于 hypotheses、exp_plan、ideation/novelty_audit.md、synthesis.md 和 comparison_table.csv "
-                "建立完整实验计划，并在 iteration_log.md 中明确记录 direct_full_from_t45。\n"
-                "请执行完整实验，包含至少 3 条 ablation 实验，"
-                "使用 seed ensemble（headline: 3 seeds, final_method: 2 seeds），"
-                "生成 experiments/results_summary.json、experiments/ablations.csv 和 "
-                "experiments/iteration_log.md。"
+                "只编译已被这些材料或人工确认支持的实验协议，并在 iteration_log.md 中明确记录 direct_full_from_t45。\n"
+                "消融、baseline、指标、seed、数据集和资源上限均必须有可追溯来源；缺失时写入 blocker 并请求补充，"
+                "不要以常见实验配置代替协议。生成实际运行支持的 experiments/results_summary.json 和 iteration_log；"
+                "仅在协议明确要求时生成 ablation 或 seed ensemble 多-seed 汇总。"
                 ),
             )
+
+    @staticmethod
+    def _legacy_full_protocol_requirements(ws: Path) -> dict[str, object]:
+        """Read explicit legacy-only validation requirements without defaults.
+
+        The external-executor path owns the current formal protocol.  This
+        compatibility branch must therefore never reinterpret a missing
+        ablation or seed policy as a generic research requirement.
+        """
+
+        plan_path = ws / "ideation" / "exp_plan.yaml"
+        try:
+            plan = yaml.safe_load(plan_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            plan = {}
+        plan = plan if isinstance(plan, dict) else {}
+        requirements = plan.get("validation_requirements")
+        requirements = requirements if isinstance(requirements, dict) else {}
+        required_outputs = plan.get("required_outputs")
+        output_names = {str(item).strip() for item in required_outputs} if isinstance(required_outputs, list) else set()
+
+        ablation_spec = plan.get("ablation_plan") or requirements.get("ablation")
+        require_ablation = bool(ablation_spec) or "experiments/ablations.csv" in output_names
+        min_count_raw = requirements.get("minimum_ablation_count")
+        if isinstance(ablation_spec, dict):
+            min_count_raw = ablation_spec.get("minimum_count", min_count_raw)
+        try:
+            minimum_ablation_count = max(0, int(min_count_raw)) if min_count_raw is not None else 0
+        except (TypeError, ValueError):
+            minimum_ablation_count = 0
+        # An explicit positive minimum is itself an explicit ablation
+        # requirement, even when a separate ``ablation_plan`` block is absent.
+        require_ablation = require_ablation or minimum_ablation_count > 0
+
+        project_path = ws / "project.yaml"
+        try:
+            project = yaml.safe_load(project_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            project = {}
+        seed_policy = project.get("seed_ensemble") if isinstance(project, dict) else {}
+        declared_seed_count = 0
+        if isinstance(seed_policy, dict):
+            declared_seed_count = len(
+                {
+                    int(seed)
+                    for tier in ("tier1_seeds", "tier2_seeds", "tier3_seeds")
+                    for seed in (seed_policy.get(tier) or [])
+                    if isinstance(seed, int)
+                }
+            )
+        require_seed_summary = (
+            bool(requirements.get("require_seed_ensemble_summary"))
+            or "experiments/seed_ensemble_summary.json" in output_names
+            or declared_seed_count > 1
+        )
+        return {
+            "require_ablation": require_ablation,
+            "minimum_ablation_count": minimum_ablation_count,
+            "require_seed_summary": require_seed_summary,
+            "declared_seed_count": declared_seed_count,
+        }
 
     def validate_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:
         """验证 Experimenter 输出，包含完整的鲁棒性检查。
@@ -1443,16 +1500,18 @@ class ExperimenterAgent(Agent):
             if not any(x in validation for x in ["PASS", "REVISE", "FAIL"]):
                 return False, "pilot/motivation_validation.md 必须包含明确判定（PASS/REVISE/FAIL）"
 
-            # 4. 固定 seed 检查（§3.3 - 可复现性）
-            # 为什么需要：pilot 实验必须可复现，便于调试和验证
-            # 检查逻辑：pilot_results.json 中的 seed 必须为 42
-            # 失败影响：无法保证 pilot 实验的可复现性
+            # 4. Seed source check: reproducibility requires a seed explicitly
+            # declared in the source-backed pilot plan, not a global default.
             try:
                 results = json.loads((ws / "pilot" / "pilot_results.json").read_text(encoding="utf-8"))
             except Exception as e:
                 return False, f"pilot/pilot_results.json 解析失败: {e}"
 
-            seed_ok, seed_err = self._validate_pilot_seed(results)
+            try:
+                pilot_plan = yaml.safe_load((ws / "pilot" / "pilot_plan.yaml").read_text(encoding="utf-8")) or {}
+            except Exception as e:
+                return False, f"pilot/pilot_plan.yaml 解析失败: {e}"
+            seed_ok, seed_err = self._validate_pilot_seed(results, pilot_plan)
             if not seed_ok:
                 return False, seed_err
 
@@ -1519,12 +1578,16 @@ class ExperimenterAgent(Agent):
             # ═══════════════════════════════════════════════════════
 
             # 1. 基本文件存在性检查
+            protocol = self._legacy_full_protocol_requirements(ws)
             required_files = [
                 "experiments/results_summary.json",
                 "experiments/iteration_log.md",
-                "experiments/ablations.csv",
                 "experiments/docker_digests.txt",
             ]
+            if protocol["require_ablation"]:
+                required_files.append("experiments/ablations.csv")
+            if protocol["require_seed_summary"]:
+                required_files.append("experiments/seed_ensemble_summary.json")
             ok, err = validate_files_exist(ctx, required_files)
             if not ok:
                 return False, err
@@ -1540,18 +1603,22 @@ class ExperimenterAgent(Agent):
             if docker_success_count is not None and int(docker_success_count or 0) < 1:
                 return False, "T7 要求至少一次成功的 docker_exec 执行，不能只用 bash_run 本地运行"
 
-            # 2. Ablation 最少 3 条（§5.3 - 鲁棒性要求）
-            # 为什么需要：ablation 实验是验证方法有效性的关键，至少需要 3 条才能充分验证
-            # 检查逻辑：ablations.csv 至少包含 3 条记录（不含表头）
-            # 失败影响：无法充分验证方法的有效性，论文可能被拒
+            # 2. Ablation validation follows only the declared experiment
+            # protocol.  A missing plan does not authorize a generic three-row
+            # table or a fabricated component-removal study.
             ablations_path = ws / "experiments" / "ablations.csv"
-            try:
-                ablation_lines = ablations_path.read_text(encoding="utf-8").strip().split("\n")
-                ablation_count = len(ablation_lines) - 1  # 减去表头
-                if ablation_count < 3:
-                    return False, f"experiments/ablations.csv 必须至少 3 条，当前 {ablation_count} 条（§5.3）"
-            except Exception as e:
-                return False, f"experiments/ablations.csv 读取失败: {e}"
+            if protocol["require_ablation"]:
+                try:
+                    ablation_lines = ablations_path.read_text(encoding="utf-8").strip().split("\n")
+                    ablation_count = max(0, len(ablation_lines) - 1)
+                    required_count = int(protocol["minimum_ablation_count"])
+                    if required_count and ablation_count < required_count:
+                        return False, (
+                            "experiments/ablations.csv 未满足 exp_plan.yaml 已声明的 minimum_ablation_count="
+                            f"{required_count}；当前 {ablation_count} 条"
+                        )
+                except Exception as exc:
+                    return False, f"experiments/ablations.csv 读取失败: {exc}"
 
             # 3. Results summary 解析和基本检查
             try:
@@ -1595,42 +1662,17 @@ class ExperimenterAgent(Agent):
                         metadata={"issues": fm_issues},
                     )
 
-            # 4. Seed ensemble 检查（§3.3 - 鲁棒性要求）
-            # 为什么需要：多 seed 平均可以减少随机性影响，提高结果可靠性
-            # 检查逻辑：headline 实验至少 3 个 seed，final_method 实验至少 2 个 seed
-            # 失败影响：结果可能受随机性影响，不够可靠
-            def _seed_count(exp: dict) -> int:
-                """兼容两种结果格式：`seed_runs`（新）与 `seeds`（旧/简化）。"""
-
-                seed_runs = exp.get("seed_runs")
-                if isinstance(seed_runs, list) and seed_runs:
-                    return len(seed_runs)
-                seeds = exp.get("seeds")
-                if isinstance(seeds, list):
-                    return len(seeds)
-                return 0
-
-            # 检查 headline 实验（必须 3 个 seed）
-            headline_exps = [e for e in experiments if e.get("tier") == "headline"]
-            for exp in headline_exps:
-                seed_count = _seed_count(exp)
-                if seed_count < 3:
+            # 4. Seed validation does not impose a tier-specific count.  A
+            # summary is required only when the project explicitly selected a
+            # multi-seed policy or named this artifact as a required output.
+            if protocol["require_seed_summary"]:
+                ensemble_path = ws / "experiments" / "seed_ensemble_summary.json"
+                if not ensemble_path.exists():
                     return False, (
-                        f"headline 实验 {exp.get('experiment_id', 'unknown')} 必须至少 3 个 seed，"
-                        f"当前 {seed_count} 个（§3.3）"
+                        "项目协议声明了多 seed policy，但缺少 experiments/seed_ensemble_summary.json"
                     )
 
-            # 检查 final_method 实验（必须 2 个 seed）
-            final_exps = [e for e in experiments if e.get("tier") == "final_method"]
-            for exp in final_exps:
-                seed_count = _seed_count(exp)
-                if seed_count < 2:
-                    return False, (
-                        f"final_method 实验 {exp.get('experiment_id', 'unknown')} 必须至少 2 个 seed，"
-                        f"当前 {seed_count} 个（§3.3）"
-                    )
-
-            # 5. 迭代多样性检查（§5.1 - 鲁棒性要求）
+            # 5. Iteration diversity records actual iteration history.
             # 为什么需要：防止重复调参，确保每次迭代都有实质性改进
             # 检查逻辑：必须存在 iteration_diversity_check.md 文件
             # 失败影响：可能浪费资源在重复实验上
@@ -1650,15 +1692,7 @@ class ExperimenterAgent(Agent):
                         f"请检查 logs（§3.2）"
                     )
 
-            # 7. Seed ensemble summary 检查
-            # 为什么需要：汇总多 seed 实验的统计信息，便于分析
-            # 检查逻辑：必须存在 seed_ensemble_summary.json 文件
-            # 失败影响：缺少多 seed 实验的统计分析
-            ensemble_path = ws / "experiments" / "seed_ensemble_summary.json"
-            if not ensemble_path.exists():
-                return False, "缺少 experiments/seed_ensemble_summary.json（§3.3）"
-
-            # 8. Iteration log 长度检查
+            # 8. Iteration log length check
             log_path = ws / "experiments" / "iteration_log.md"
             log_content = read_text_file(log_path)
             if len(log_content) < 100:
@@ -1674,11 +1708,11 @@ class ExperimenterAgent(Agent):
                 artifacts=[
                     {"path": "results_summary.json", "type": "json"},
                     {"path": "iteration_log.md", "type": "markdown"},
-                    {"path": "ablations.csv", "type": "csv"},
-                    {"path": "seed_ensemble_summary.json", "type": "json"},
                     {"path": "iteration_diversity_check.md", "type": "markdown"},
                     {"path": "docker_digests.txt", "type": "text"},
-                ],
+                ]
+                + ([{"path": "ablations.csv", "type": "csv"}] if protocol["require_ablation"] else [])
+                + ([{"path": "seed_ensemble_summary.json", "type": "json"}] if protocol["require_seed_summary"] else []),
                 inputs=[
                     {"path": "ideation/hypotheses.md", "required": True},
                     {"path": "ideation/exp_plan.yaml", "required": True},
@@ -1689,30 +1723,35 @@ class ExperimenterAgent(Agent):
             return True, None
 
     @staticmethod
-    def _validate_pilot_seed(results: dict) -> tuple[bool, str | None]:
-        """兼容顶层 seed 和逐实验 seed，但必须全为 42。"""
+    def _validate_pilot_seed(results: dict, pilot_plan: dict) -> tuple[bool, str | None]:
+        """Require result seeds to match an explicitly declared pilot-plan policy."""
 
-        top_seed = results.get("seed")
-        if top_seed is not None and top_seed != 42:
-            return False, "pilot 模式必须使用固定 seed=42（顶层 seed 不是 42）"
+        declared: set[int] = set()
+        if isinstance(pilot_plan, dict):
+            if isinstance(pilot_plan.get("seed"), int):
+                declared.add(int(pilot_plan["seed"]))
+            for plan_experiment in pilot_plan.get("experiments", []) or []:
+                if isinstance(plan_experiment, dict) and isinstance(plan_experiment.get("seed"), int):
+                    declared.add(int(plan_experiment["seed"]))
+        if not declared:
+            return False, "pilot_plan 未声明 seed；请由 exp_plan 或人工输入提供 seed policy，不能使用系统默认值"
 
-        experiments = results.get("experiments", [])
-        if isinstance(experiments, list) and experiments:
-            missing_or_wrong = [
-                exp.get("experiment_id", f"#{idx + 1}")
-                for idx, exp in enumerate(experiments)
-                if exp.get("seed") != 42
-            ]
-            if missing_or_wrong:
-                return False, (
-                    "pilot 模式每个实验都必须记录 seed=42，异常实验: "
-                    + ", ".join(str(item) for item in missing_or_wrong[:5])
-                )
-            return True, None
-
-        if top_seed == 42:
-            return True, None
-        return False, "pilot_results.json 必须包含顶层 seed=42 或每个实验的 seed=42"
+        observed: list[tuple[str, object]] = []
+        if results.get("seed") is not None:
+            observed.append(("top_level", results.get("seed")))
+        for idx, experiment in enumerate(results.get("experiments", []) or [], start=1):
+            if isinstance(experiment, dict):
+                observed.append((str(experiment.get("experiment_id") or f"#{idx}"), experiment.get("seed")))
+        if not observed:
+            return False, "pilot_results.json 必须记录顶层或逐实验 seed，并与 pilot_plan 一致"
+        invalid = [name for name, value in observed if not isinstance(value, int) or int(value) not in declared]
+        if invalid:
+            return False, (
+                "pilot_results 的 seed 未在 pilot_plan 声明: "
+                + ", ".join(invalid[:5])
+                + f"；pilot_plan 允许的 seed={sorted(declared)}"
+            )
+        return True, None
 
     @staticmethod
     def _has_reproducible_docker_evidence(digest_text: str) -> bool:

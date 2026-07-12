@@ -133,7 +133,8 @@ class PIAgent(Agent):
                 f"- 第2.5轮：收集外部资源（数据集、代码仓库、benchmark、预训练模型等）。\n"
                 f"- 第3轮：展示草案并确认，然后生成所有文件。\n\n"
                 f"重要：必须严格按照 prompt 中的 project.yaml 格式要求生成文件，"
-                f"包含所有必需字段（project_id, research_direction, keywords, constraints, created_at, seed_ensemble）。"
+                f"包含所有必需字段（project_id, research_direction, created_at）；keywords 和 constraints 应来自人工材料。"
+                f"seed_ensemble 仅在用户明确提供 seed policy 时写入，不能使用系统默认值。"
                 ),
             )
         elif mode == "evaluate":
@@ -304,12 +305,12 @@ class PIAgent(Agent):
         seed_ensemble 应该只包含随机种子（整数数组），
         不应该包含论文信息（title, authors, source, doi 等）。
 
-        注意：如果 seed_ensemble 不存在，会使用默认值（schema default），
-        所以这里只检查存在且格式错误的情况。
+        seed_ensemble 是可选的实验协议输入。缺失时不得补造默认值；
+        只有真正进入需要随机种子的执行协议时，才应请求人工提供。
         """
         seed_ensemble = project_data.get("seed_ensemble")
 
-        # 如果 seed_ensemble 不存在，使用默认值，不报错
+        # 它是可选输入；缺失时保留未知，而不是安装隐式 seed policy。
         if not seed_ensemble:
             return True, None
 

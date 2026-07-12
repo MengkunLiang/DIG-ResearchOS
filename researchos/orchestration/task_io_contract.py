@@ -1023,7 +1023,6 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "runs_dir": "experiments/runs",
             "configs_dir": "experiments/configs",
             "iteration_log": "experiments/iteration_log.md",
-            "ablations": "experiments/ablations.csv",
         },
         "required_inputs": [
             "project",

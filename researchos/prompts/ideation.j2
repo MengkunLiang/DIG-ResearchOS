@@ -3,6 +3,12 @@
 
 {{ cdr_schema_summary }}
 
+## 实验细节证据边界（强制）
+
+- 不得根据研究主题、方法名称、相邻论文或常见领域惯例，补造具体数据集、benchmark、split、baseline、metric、seed、预算、命令或预期数值。
+- `minimum_experiment` 是候选验证提议，不是已经存在的实验协议。每个具体字段必须标记 `evidence_status`：`supported`、`user_provided`、`proposed_not_verified` 或 `unknown`，并在 `source_refs` 写入支持它的项目文件、paper note section 或人工输入；`supported` / `user_provided` 不得没有来源。
+- 材料不足时写 `unknown` 或 `proposed_not_verified`，说明需要补充什么，而不是用“合理”的默认 benchmark、基线或指标通过格式检查。未经审计的提议不能写成可预期提升，更不能成为最终 claim。
+
 ## 项目信息
 - 研究方向: {{ project.get('research_direction', '未指定') }}
 - 关键词: {{ project.get('keywords', []) | join(', ') if project.get('keywords') else '未指定' }}
@@ -216,7 +222,7 @@ T4 已拆成两个 runtime 阶段：
   - Differentiation: 与最接近工作是否有清楚差异
   - Cost: 低预算可验证程度（5=便宜）
   - Contribution strength: 贡献强度（由 contribution_type 和 design_rationale 论证决定）
-- **最低可行实验**: 每个方向都要有 cheap pilot（dataset / baseline / metric / expected signal / cost）
+- **候选验证提议**: 每个方向记录 dataset / baseline / metric / expected signal / cost 的当前证据状态；未有来源时写 `unknown` 或 `proposed_not_verified`，而不是生成 cheap pilot。
 - **关键风险和kill criteria**: 最大的1-2个风险点，以及什么时候停止
 
 **重要规则**：
@@ -512,11 +518,13 @@ Bridge 候选的语义是“必须上 Gate1 桌面供用户看见”，不是“
         "contribution_strength": "为何是这个分数"
       },
       "minimum_experiment": {
-        "dataset": "小规模可控任务",
-        "baseline": "最接近基线",
-        "metric": ["主要指标1", "成本指标"],
-        "expected_signal": "同等成本下主要指标提升X%",
-        "estimated_cost_usd": 10
+        "dataset": "unknown until a source-backed protocol is selected",
+        "baseline": "unknown until nearest-work evidence and project constraints are checked",
+        "metric": [],
+        "expected_signal": "unknown until a falsifiable, evidence-backed protocol is defined",
+        "estimated_cost_usd": null,
+        "evidence_status": "unknown",
+        "source_refs": []
       },
       "key_risks": [
         {
@@ -661,7 +669,7 @@ counterfactual: "if it fails, metric does not improve"
 - `counterfactual_check` / `nearest_prior_work` / `novelty_signal`: 必填软诊断字段；它们只帮助用户选择，不是质量 gate。`counterfactual_check=collapses` 的候选仍必须保留可见；材料不足时可写 `insufficient_evidence`、`not_computed` 或 `domain_map_unavailable` 并解释原因，不能为过校验硬编。
 - `scores`: 七维评分，使用 `contribution_strength` 衡量贡献力度
 - `risks`: risk、early_signal、mitigation、kill_criteria
-- `minimum_experiment`: cheap pilot
+- `minimum_experiment`: 候选验证提议，必须含 `evidence_status` 与 `source_refs`。没有来源时只写 `unknown` 或 `proposed_not_verified`，不能把“cheap pilot”或常见实验配置写成既定协议。
 
 Gate1 和 Gate2 后必须回写 `decision` 字段：
 - 选中：`status: selected`，写 `selected_reason`、`selected_by`、`user_feedback`
@@ -981,11 +989,11 @@ experiments:
         details: "在验证集上评估两个模型"
 
     compute_estimate:
-      gpu_hours: 50
-      gpu_type: "A100"
-      estimated_cost_usd: 150.0
+      gpu_hours: <source-backed estimate or unknown>
+      gpu_type: "<user-provided resource or unknown>"
+      estimated_cost_usd: <source-backed estimate or null>
 
-    expected_duration_days: 3
+    expected_duration_days: <source-backed estimate or unknown>
 
   - id: "exp2"
     name: "Ablation Study"
@@ -994,7 +1002,7 @@ experiments:
 
 **关键约束**：
 - `hypothesis_ref` 必须指向 hypotheses.md 中存在的 anchor（如 "#H1"）
-- 单个实验成本不得超过项目预算 × 0.85，所有实验总成本不得超过项目预算
+- 仅在项目给出预算且计划给出可追溯成本估计时检查总成本；单实验预算比例必须由人工或项目约束明确给出，不能使用固定比例。
 - 每个实验必须有明确的 `success_criteria`
 - `metrics` 中至少有一个 `primary: true`
 
@@ -1066,11 +1074,13 @@ ideas:
         mitigation: "<缓解方案>"
         kill_criteria: "<停止条件>"
     minimum_experiment:
-      dataset: "<预算内数据/任务>"
-      baseline: "<最接近 baseline>"
-      metric: ["<主指标>", "<成本/鲁棒性指标>"]
-      expected_signal: "<可证伪的预期信号>"
-      estimated_cost_usd: 10
+      dataset: "<source-backed item or unknown>"
+      baseline: "<source-backed item or unknown>"
+      metric: []
+      expected_signal: "<unknown until protocol is evidence-backed>"
+      estimated_cost_usd: null
+      evidence_status: "supported | user_provided | proposed_not_verified | unknown"
+      source_refs: ["<workspace path + section, or user input reference>"]
 
   - idea:
       id: "D2"
@@ -1365,7 +1375,7 @@ Top 3 风险分析，诚实列出最大的风险。
 - idea_rationales.json 必须**严格符合** idea_rationales.schema.json
 - gate_decisions.json 必须**严格符合** gate_decisions.schema.json
 - Top 3风险必须**诚实列出**（不要粉饰太平）
-- 单个实验成本必须 ≤ 预算 × 0.85（留15%缓冲），所有实验总成本必须 ≤ 预算
+- 只对项目明确声明的预算和成本估计执行预算检查；未声明字段保留 unknown 并请求补充。
 
 ### 2. 避免伪创新模式
 ❌ **禁止**以下模式：

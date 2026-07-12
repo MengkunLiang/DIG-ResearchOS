@@ -13,20 +13,9 @@ write_structured_file(
     data={                    # ⚠️ 参数名是 data，不是 content！
         "project_id": "{{ project_id }}",
         "research_direction": "...",
-        "keywords": ["..."],
-        "constraints": {      # ⚠️ constraints 是对象，不是数组
-            "max_budget_usd": 100.0,
-            "compute_resources": {
-                "allow_gpu": true,
-                "max_memory_gb": 16
-            }
-        },
+        "keywords": ["..."],  # 仅写入用户提供或已审计材料支持的关键词
+        "constraints": {},      # 可选；只写入用户明确声明的预算/算力/截止日期
         "created_at": "2026-01-01T00:00:00Z",  # ⚠️ 必须用引号包裹
-        "seed_ensemble": {    # ⚠️ seed_ensemble 是对象，不是数组，只包含整数
-            "tier1_seeds": [42, 123, 456],
-            "tier2_seeds": [789],
-            "tier3_seeds": [999]
-        },
         "metadata": {
             "manuscript_type": "research_article",  # 或 "survey"
             "seed_outline_profile": "user_seeds/seed_outline_profile.json"
@@ -35,9 +24,10 @@ write_structured_file(
 )
 ```
 
-### 2. seed_ensemble 只包含随机种子数字
-- ✅ 正确：`{tier1_seeds: [42, 123], tier2_seeds: [789], tier3_seeds: [999]}`
-- ❌ 错误：`{source: "arxiv", title: "..."}`  ← 论文信息应该写入 seed_papers.jsonl
+### 2. 实验 seed policy 是可选的人工协议，不是初始化默认值
+- 只有用户或已审计项目材料明确给出随机种子策略时，才写入 `seed_ensemble`；数值必须保持原样并可追溯。
+- 未提供时省略该字段。后续实验阶段会将其显示为 `unknown` 并请求人工补充，绝不能使用示例数字或惯例填充。
+- 论文信息仍应写入 `seed_papers.jsonl`，不能混入 `seed_ensemble`。
 
 {% if user_topic %}
 ## 用户提供的初始研究方向
@@ -182,18 +172,13 @@ keywords:
   - 关键词1
   - 关键词2
 constraints:
-  max_budget_usd: 100.0
-  compute_resources:
-    allow_gpu: true
-    max_memory_gb: 16
+  # 只保留用户明确给出的约束；未知时可省略整个 constraints 字段
+  max_budget_usd: <user_provided_or_omit>
 metadata:
   manuscript_type: "research_article"  # 如用户目标是综述，写 "survey"
   seed_outline_profile: "user_seeds/seed_outline_profile.json"  # 如存在
 created_at: "2026-04-24T10:00:00Z"
-seed_ensemble:
-  tier1_seeds: [42, 123, 456]
-  tier2_seeds: [789]
-  tier3_seeds: [999]
+# seed_ensemble 可选：只在用户明确给出 protocol 时写入；不得写示例数字。
 ```
 
 ## 常见错误（不要犯）
@@ -203,7 +188,7 @@ seed_ensemble:
 | 使用 write_file 而不是 write_structured_file | 格式错误 |
 | 参数名写 content 而不是 data | 工具失败 |
 | constraints 是数组而不是对象 | schema 验证失败 |
-| seed_ensemble 包含论文信息 | schema 验证失败 |
+| 为缺失实验协议填入示例 seed / 预算 / 硬件 | 会伪造项目条件；必须省略并在需要时询问 |
 | created_at 没有用引号包裹 | YAML 解析为 date 对象 |
 
 ## 重要规则

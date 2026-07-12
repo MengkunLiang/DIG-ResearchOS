@@ -203,6 +203,36 @@ def record_input_collection_finished(
     return write_session(workspace, session_id, session)
 
 
+def record_skill_execution_confirmation_pending(
+    *,
+    workspace: Path,
+    session_id: str,
+    message: str,
+    input_ready: bool,
+) -> Path:
+    """Persist an explicit human decision point before a Skill can execute."""
+
+    session = load_session(workspace, session_id)
+    if session is None:
+        raise ConfigurationError(f"skill session '{session_id}' does not exist")
+    session["status"] = "WAITING_CONFIRMATION" if input_ready else "WAITING_INPUT"
+    session["progress"] = {
+        "phase": "awaiting_execution_confirmation" if input_ready else "waiting_input",
+        "tool_name": None,
+        "detail": message,
+        "updated_at": _now(),
+    }
+    _append_turn(
+        session,
+        {
+            "event": "execution_confirmation_pending",
+            "input_ready": input_ready,
+            "detail": message[:500],
+        },
+    )
+    return write_session(workspace, session_id, session)
+
+
 def record_runtime_pause(*, workspace: Path, session_id: str, error: Exception | str) -> Path:
     """Preserve a recoverable pre-run failure such as an unavailable provider."""
 
@@ -378,8 +408,8 @@ def render_readiness_panel(
     if readiness.ready:
         lines.append("下一步：现在可开始运行；完成后使用 skill-status 查看持久化结果与文件路径。")
     else:
-        lines.append("下一步：可上传文件到上面的路径后恢复；交互式运行也可粘贴材料，由受限收集流程整理到对应 user_inputs 文件。")
-        lines.append("非交互模式：尚未调用 LLM，始终保留为可恢复 WAITING_INPUT。")
+        lines.append("下一步：TTY 终端默认进入定向材料收集。你可上传文件、粘贴内容，或让系统逐项询问并整理到对应 user_inputs 文件。")
+        lines.append("使用 --non-interactive 或管道运行时，系统不调用 LLM，只保留可恢复 WAITING_INPUT。")
         lines.append(
             f"恢复示例：researchos run-skill {skill_name} --workspace {readiness.workspace} --session-id {session_id} --resume"
         )
@@ -451,11 +481,11 @@ def render_readiness_panel_rich(
     else:
         body.append(
             Text(
-                "下一步：可在交互式会话中粘贴材料，或把文件上传到上表路径后以同一 session resume。",
+                "下一步：TTY 终端会默认进入定向材料收集。你可粘贴材料，或上传到上表路径后以同一 session resume。",
                 style="yellow",
             )
         )
-        body.append(Text("状态：尚未调用 LLM；不会开始研究/写作产出。", style="yellow", no_wrap=True))
+        body.append(Text("使用 --non-interactive 或管道运行时：尚未调用 LLM；不会开始研究/写作产出。", style="yellow", no_wrap=True))
         body.append(
             Text(
                 f"Resume: researchos run-skill {skill_name} --workspace {readiness.workspace} --session-id {session_id} --resume",
@@ -500,8 +530,8 @@ def render_skill_description(*, skill_name: str, skill_path: Path, description: 
         lines.append(f"• {output.path} — {output.description}")
     lines.append("会话与恢复")
     lines.append("• 非交互运行会先校验输入；缺文件时只写 `_runtime/skill_sessions/<session>.json`，不调用 LLM。")
-    lines.append("• 使用 `--interactive` 时，可上传文件或粘贴材料；受限 intake Agent 只整理人工提供的内容到 `user_inputs/<skill>/`，不产生论文/实验产物。")
-    lines.append("• 补齐后会在同一命令中重新校验并继续；中断后可添加 `--resume --session-id <同一会话>`。")
+    lines.append("• TTY 终端默认进入多轮材料收集；可上传文件或粘贴材料。受限 intake Agent 只整理人工提供的内容到 `user_inputs/<skill>/`，不产生论文/实验产物。")
+    lines.append("• 初始材料通过检查后，系统会再次询问“执行/暂停”；只有明确执行授权才会启动 Skill。中断后可添加 `--resume --session-id <同一会话>`。")
     lines.append("═" * width)
     return "\n".join(lines)
 
@@ -592,6 +622,7 @@ def render_skill_completion_panel(*, workspace: Path, session_id: str) -> str:
         "FAILED": "执行失败",
         "WAITING_RUNTIME": "等待运行环境恢复",
         "WAITING_INPUT": "等待补齐输入",
+        "WAITING_CONFIRMATION": "等待人工确认执行",
         "COLLECTING_INPUT": "正在收集输入",
         "RUNNING": "仍在运行",
     }.get(status, status)
@@ -624,7 +655,7 @@ def render_skill_completion_panel(*, workspace: Path, session_id: str) -> str:
     if trace_file:
         lines.append(f"运行轨迹：{trace_file}")
     lines.append("─" * width)
-    if status in {"WAITING_RUNTIME", "WAITING_INPUT", "FAILED"}:
+    if status in {"WAITING_RUNTIME", "WAITING_INPUT", "WAITING_CONFIRMATION", "FAILED"}:
         lines.append(
             "恢复：researchos run-skill "
             f"{session.get('skill_name', 'SKILL')} --workspace {workspace} "
@@ -652,6 +683,7 @@ def render_skill_completion_panel_rich(*, workspace: Path, session_id: str, no_c
         "FAILED": ("FAILED", "bright_red"),
         "WAITING_RUNTIME": ("WAITING RUNTIME", "yellow"),
         "WAITING_INPUT": ("WAITING INPUT", "yellow"),
+        "WAITING_CONFIRMATION": ("WAITING CONFIRMATION", "bright_yellow"),
         "COLLECTING_INPUT": ("COLLECTING INPUT", "cyan"),
         "RUNNING": ("RUNNING", "cyan"),
     }
@@ -693,7 +725,7 @@ def render_skill_completion_panel_rich(*, workspace: Path, session_id: str, no_c
     trace_file = result.get("trace_file")
     if trace_file:
         body.append(Text(f"Trace: {trace_file}", style="dim"))
-    if status in {"WAITING_RUNTIME", "WAITING_INPUT", "FAILED"}:
+    if status in {"WAITING_RUNTIME", "WAITING_INPUT", "WAITING_CONFIRMATION", "FAILED"}:
         body.append(
             Text(
                 f"Resume: researchos run-skill {session.get('skill_name', 'SKILL')} --workspace {workspace} --session-id {session_id} --resume",
@@ -722,6 +754,7 @@ def render_skill_status_panel(
         "READY": "输入已就绪",
         "RUNNING": "运行中",
         "WAITING_INPUT": "等待补齐输入",
+        "WAITING_CONFIRMATION": "等待人工确认执行",
         "WAITING_RUNTIME": "等待运行环境恢复",
         "COMPLETED": "已完成",
         "FAILED": "执行失败",
@@ -780,7 +813,7 @@ def render_skill_status_panel(
         intake_packet = session.get("intake_packet")
         if intake_packet:
             lines.append(f"│ 材料清单：{intake_packet}")
-        if raw_status in {"WAITING_INPUT", "WAITING_RUNTIME", "FAILED"}:
+        if raw_status in {"WAITING_INPUT", "WAITING_CONFIRMATION", "WAITING_RUNTIME", "FAILED"}:
             lines.append(
                 "│ 恢复：researchos run-skill "
                 f"{skill_name} --workspace {workspace} --session-id {session_id} --resume"
@@ -818,6 +851,7 @@ def render_skill_status_panel_rich(
         "READY": ("READY", "green"),
         "RUNNING": ("RUNNING", "cyan"),
         "WAITING_INPUT": ("WAITING INPUT", "yellow"),
+        "WAITING_CONFIRMATION": ("WAITING CONFIRMATION", "bright_yellow"),
         "WAITING_RUNTIME": ("WAITING RUNTIME", "yellow"),
         "COMPLETED": ("COMPLETED", "green"),
         "FAILED": ("FAILED", "bright_red"),
@@ -851,7 +885,7 @@ def render_skill_status_panel_rich(
         detail = _status_compact(progress.get("detail") or session.get("request"), 180)
         if missing:
             detail = (detail + "\n" if detail else "") + "Missing: " + "、".join(missing)
-        if raw_status in {"WAITING_INPUT", "WAITING_RUNTIME", "FAILED"}:
+        if raw_status in {"WAITING_INPUT", "WAITING_CONFIRMATION", "WAITING_RUNTIME", "FAILED"}:
             action = f"resume --session-id {session_id}"
         elif raw_status == "COMPLETED":
             action = "Inspect declared outputs"

@@ -406,7 +406,6 @@
               },
               "metric": {
                 "type": "array",
-                "minItems": 1,
                 "items": {
                   "type": "string"
                 }
@@ -416,8 +415,19 @@
                 "minLength": 1
               },
               "estimated_cost_usd": {
-                "type": "number",
+                "type": ["number", "null"],
                 "minimum": 0
+              },
+              "evidence_status": {
+                "type": "string",
+                "enum": ["supported", "user_provided", "proposed_not_verified", "unknown"]
+              },
+              "source_refs": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
               }
             },
             "required": [
@@ -426,6 +436,26 @@
               "metric",
               "expected_signal",
               "estimated_cost_usd"
+            ],
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "evidence_status": {
+                      "enum": ["supported", "user_provided"]
+                    }
+                  },
+                  "required": ["evidence_status"]
+                },
+                "then": {
+                  "required": ["source_refs"],
+                  "properties": {
+                    "source_refs": {
+                      "minItems": 1
+                    }
+                  }
+                }
+              }
             ],
             "additionalProperties": true
           }

@@ -267,10 +267,9 @@ class WriteFileTool(Tool):
         """自动修正 project.yaml 的常见格式错误。
 
         常见错误：
-        1. constraints 是空对象 {} - 填充默认值
-        2. constraints 是数组 [] - 转换为对象
-        3. seed_ensemble 是数组 [] - 转换为对象
-        4. seed_ensemble 包含论文信息 - 移除论文信息，只保留随机种子
+        1. constraints 是数组 [] - 移除无效字段，等待人工补充
+        2. seed_ensemble 是数组 [] - 移除无效字段，等待人工决定 seed policy
+        3. seed_ensemble 包含论文信息 - 移除无效字段，保留论文材料入口
         5. created_at 格式错误 - 修正为 ISO 8601
         6. keywords 是字符串 - 转换为数组
         """
@@ -281,41 +280,30 @@ class WriteFileTool(Tool):
 
             fixed = False
 
-            # 修正 1: constraints 是空对象、缺失、或是数组
+            # 项目范围和资源约束不能由修复器臆测。空/缺失约束是允许的，
+            # 后续需要预算或算力时由交互式协议显式补齐。
             constraints = data.get("constraints")
-            if not constraints or constraints == {} or isinstance(constraints, list):
-                data["constraints"] = {
-                    "max_budget_usd": 100.0,
-                    "compute_resources": {
-                        "allow_gpu": True,
-                        "max_memory_gb": 16
-                    }
-                }
+            if isinstance(constraints, list):
+                data.pop("constraints", None)
                 fixed = True
-                reason = "array" if isinstance(constraints, list) else "empty or missing"
-                _LOG.info("auto_fix_project_yaml", field="constraints", reason=reason)
+                _LOG.info(
+                    "auto_fix_project_yaml",
+                    field="constraints",
+                    reason="array removed; source-backed constraints still required when needed",
+                )
 
-            # 修正 2: seed_ensemble 是数组
+            # 随机种子是实验协议的一部分。格式修复不能替人指定数字，
+            # 所以仅删除无效字段并让协议阶段明确追问。
             if isinstance(data.get("seed_ensemble"), list):
-                data["seed_ensemble"] = {
-                    "tier1_seeds": [42, 123, 456],
-                    "tier2_seeds": [789],
-                    "tier3_seeds": [999]
-                }
+                data.pop("seed_ensemble", None)
                 fixed = True
-                _LOG.info("auto_fix_project_yaml", field="seed_ensemble", reason="array instead of object")
+                _LOG.info(
+                    "auto_fix_project_yaml",
+                    field="seed_ensemble",
+                    reason="array removed; seed policy must be explicitly declared",
+                )
 
-            # 修正 3: seed_ensemble 缺失
-            if not data.get("seed_ensemble"):
-                data["seed_ensemble"] = {
-                    "tier1_seeds": [42, 123, 456],
-                    "tier2_seeds": [789],
-                    "tier3_seeds": [999]
-                }
-                fixed = True
-                _LOG.info("auto_fix_project_yaml", field="seed_ensemble", reason="missing")
-
-            # 修正 3.5: seed_ensemble 包含论文信息（而非随机种子）
+            # 修正 3: seed_ensemble 包含论文信息（而非随机种子）
             # 检测：seed_ensemble 是对象，但没有 tier1_seeds/tier2_seeds/tier3_seeds 字段
             # 或者包含论文相关字段（title, authors, source, doi 等）
             seed_ensemble = data.get("seed_ensemble")
@@ -338,14 +326,14 @@ class WriteFileTool(Tool):
                     "papers" in seed_ensemble
                 )
                 if not has_seed_fields or has_paper_fields:
-                    data["seed_ensemble"] = {
-                        "tier1_seeds": [42, 123, 456],
-                        "tier2_seeds": [789],
-                        "tier3_seeds": [999]
-                    }
+                    data.pop("seed_ensemble", None)
                     fixed = True
                     reason = "paper_fields" if has_paper_fields else "missing_seed_fields"
-                    _LOG.info("auto_fix_project_yaml", field="seed_ensemble", reason=reason)
+                    _LOG.info(
+                        "auto_fix_project_yaml",
+                        field="seed_ensemble",
+                        reason=f"{reason}; removed rather than inventing seed values",
+                    )
 
             # 修正 4: created_at 格式错误
             if "created_at" in data:

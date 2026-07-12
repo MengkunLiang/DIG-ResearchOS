@@ -206,11 +206,12 @@ python -m researchos.cli run-skill paper-outline \
 
 For a noninteractive command, a missing required file writes
 `_runtime/skill_sessions/neuri-2026-outline.json`, prints what to upload and
-where, and returns a resumable waiting state. In a real terminal,
-`--interactive` starts a restricted multi-turn intake: it asks the human to
+where, and returns a resumable waiting state. In a real TTY terminal,
+`run-skill` starts a restricted multi-turn intake by default: it asks the human to
 upload or paste material, can organize only the supplied material under the
 declared `user_inputs/<skill>/` path, and asks again when a required fact is
-still absent. It then rechecks before running the actual Skill. Intake cannot
+still absent. It then rechecks before asking for an explicit `execute` or `pause`
+decision; it never starts the actual Skill from an ambiguous answer. Intake cannot
 create paper, experiment, citation, or other final outputs. After adding the
 file or completing intake, continue with the same session:
 
@@ -223,7 +224,9 @@ python -m researchos.cli run-skill paper-outline \
 python -m researchos.cli skill-status --workspace ./workspace/project-a
 ```
 
-Every guided session also writes `user_inputs/<skill>/_intake.md`. In a
+Use `--non-interactive` for automation or pipes: missing inputs then create only a
+recoverable `WAITING_INPUT` session and do not initialize a provider. Every guided
+session also writes `user_inputs/<skill>/_intake.md`. In a
 standalone workspace it is the editable upload checklist. In a project
 workspace it records files discovered from the project, but those files remain
 candidate material: the running Skill must inspect whether they semantically

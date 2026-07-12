@@ -75,6 +75,7 @@ class SkillIntakeAgent(Agent):
             )
         paths = "\n".join(f"- `{path}`" for path in self.intake_paths)
         intake_packet = str(ctx.extra.get("skill_intake_packet_path") or "")
+        intake_round = int(ctx.extra.get("skill_intake_round") or 1)
         return f"""# Restricted Guided-Skill Intake
 
 You are collecting initial human material for the Skill `{self.skill_name}`.
@@ -85,7 +86,7 @@ This is not the Skill itself and must not create final outputs.
 - Ask one focused human question at a time with `ask_human`.
 - When the human pastes prose, organize only that supplied material into one declared path under `user_inputs/{self.skill_name}/` using `write_file`.
 - When the human says they uploaded a file, inspect the declared intake path. Do not copy an uninspected file or claim it is semantically sufficient.
-- Repeat focused questions until all required material has a usable declared file, or the human explicitly pauses.
+- Repeat focused questions until all required material has a usable declared file, or the human explicitly pauses. This is material-collection round {intake_round}; if previous rounds did not satisfy the checklist, start by reading the latest checklist and ask only for the next unresolved requirement.
 - Call `finish_task` only after you have staged what the human provided or recorded that the user paused.
 
 ## Strict boundaries
@@ -104,8 +105,9 @@ The CLI runs a deterministic readiness check after you finish. Passing that chec
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
         request = str(ctx.extra.get("user_request") or "").strip()
+        intake_round = int(ctx.extra.get("skill_intake_round") or 1)
         return (
-            "Start interactive intake. Read the checklist, then explain the first missing required item "
-            "and ask whether the human will upload it or paste the content. "
+            f"Start interactive intake round {intake_round}. Read the checklist, then explain the first missing required item "
+            "and ask whether the human will upload it to the declared path or paste the content for exact staging. "
             f"User's stated task: {request or 'not yet specified'}"
         )

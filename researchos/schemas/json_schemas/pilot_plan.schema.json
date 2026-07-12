@@ -13,8 +13,8 @@
           "name": {"type": "string", "minLength": 1},
           "hypothesis_ref": {"type": "string", "minLength": 1},
           "dataset": {"type": "string"},
-          "data_fraction": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.1},
-          "seed": {"type": "integer", "enum": [42]},
+          "data_fraction": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+          "seed": {"type": "integer", "minimum": 0},
           "smoke_test_required": {"type": "boolean"},
           "success_criteria": {"type": "array"}
         },

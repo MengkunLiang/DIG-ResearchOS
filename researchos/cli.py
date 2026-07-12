@@ -86,6 +86,7 @@ from .skills.runner import run_skill, run_skill_intake
 from .skills.session import (
     iter_sessions,
     load_session,
+    record_skill_execution_confirmation_pending,
     record_input_collection_finished,
     record_input_collection_started,
     record_readiness,
@@ -105,6 +106,7 @@ from .tools.builtin import register_builtin_tools
 from .tools.human_gate import (
     CLIHumanInterface,
     HumanInterface,
+    HumanInputUnavailable,
     build_t2_parameter_llm_interpreter,
 )
 from .tools.latex_compile import latex_backend_preflight
@@ -1225,8 +1227,24 @@ async def run_task_command(args: argparse.Namespace) -> int:
         await prepared.aclose()
 
 
+_SKILL_EXECUTE_ANSWERS = {"执行", "开始", "运行", "确认执行", "yes", "y", "run", "execute", "start"}
+_SKILL_PAUSE_ANSWERS = {"暂停", "稍后", "退出", "取消", "不执行", "no", "n", "pause", "cancel", "stop"}
+
+
+def _normalized_skill_answer(value: str) -> str:
+    return " ".join(str(value or "").casefold().split())
+
+
+def _skill_user_confirms_execution(value: str) -> bool:
+    return _normalized_skill_answer(value) in _SKILL_EXECUTE_ANSWERS
+
+
+def _skill_user_paused(value: str) -> bool:
+    return _normalized_skill_answer(value) in _SKILL_PAUSE_ANSWERS
+
+
 async def run_skill_command(args: argparse.Namespace) -> int:
-    """Run one standalone skill after a deterministic guided-input check."""
+    """Run a Skill through guided intake, explicit confirmation, then execution."""
 
     runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
     runtime_settings = _runtime_settings_for_args(runtime_settings, args)
@@ -1241,6 +1259,14 @@ async def run_skill_command(args: argparse.Namespace) -> int:
     )
     install_signal_handlers()
 
+    # A human at an interactive terminal should not have to discover a hidden
+    # flag before the system starts collecting the material it explicitly says
+    # it needs. Automation/pipes remain noninteractive by default.
+    interactive_session = bool(
+        getattr(args, "interactive", False)
+        or (sys.stdin.isatty() and not getattr(args, "non_interactive", False))
+    )
+
     # The deterministic check always precedes runtime preparation. A
     # noninteractive invocation keeps this as the complete missing-input
     # behavior, so it remains safe and resumable without a provider.
@@ -1253,13 +1279,13 @@ async def run_skill_command(args: argparse.Namespace) -> int:
         request = " ".join(args.request).strip()
         if args.resume and not request and previous:
             request = str(previous.get("request", "")).strip()
-        if args.interactive and not request:
+        if interactive_session and not request:
             prompt = (
                 interaction.request_prompt
                 if interaction is not None
                 else "请说明希望这个 Skill 完成什么。"
             )
-            request = await CLIHumanInterface(no_color=runtime_settings.ui.no_color).ask_clarification(question=prompt)
+            request = await _build_human_interface(runtime_settings).ask_clarification(question=prompt)
         readiness = check_skill_readiness(
             skill_name=skill.name,
             metadata=skill.metadata,
@@ -1290,13 +1316,14 @@ async def run_skill_command(args: argparse.Namespace) -> int:
         )
     )
     prepared = None
+    human: HumanInterface | None = None
     if not readiness.ready:
-        if not args.interactive:
+        if not interactive_session:
             return 2
         if not sys.stdin.isatty():
             print(
                 "当前没有可交互终端；已保留 WAITING_INPUT 会话。请上传文件后以同一会话恢复，"
-                "或在可交互终端添加 --interactive 粘贴材料。"
+                "或在可交互终端恢复该会话以启动材料收集。"
             )
             return 2
         if interaction is None or interaction.mode != "guided":
@@ -1305,63 +1332,87 @@ async def run_skill_command(args: argparse.Namespace) -> int:
         try:
             prepared = await _prepare_runtime(args, workspace_dir)
             human = _build_human_interface(runtime_settings, llm_client=prepared.llm_client)
-            record_input_collection_started(workspace_dir, session_id)
-            intake_result = await run_skill_intake(
-                skill_name=skill.name,
-                interaction=interaction,
-                user_request=request,
-                workspace=workspace_dir,
-                tool_registry=prepared.registry,
-                llm_client=prepared.llm_client,
-                human_interface=human,
-                session_id=session_id,
-                intake_packet_path=(
-                    str(intake_packet.relative_to(workspace_dir)) if intake_packet is not None else ""
-                ),
-                runtime_settings=runtime_settings,
-                llm_profile=args.profile,
-            )
-            readiness = check_skill_readiness(
-                skill_name=skill.name,
-                metadata=skill.metadata,
-                workspace=workspace_dir,
-                request=request,
-            )
-            intake_packet = prepare_skill_intake_packet(readiness)
-            session_file, _session = record_readiness(
-                workspace=workspace_dir,
-                session_id=session_id,
-                skill_name=skill.name,
-                skill_path=skill.skill_dir,
-                readiness=readiness,
-                resume=True,
-                intake_packet_path=intake_packet,
-            )
-            intake_message = (
-                "材料收集完成，已通过确定性输入检查；将继续执行 Skill。"
-                if readiness.ready
-                else "材料收集已暂停或信息仍不足；已保留缺口，等待下一轮补充。"
-            )
-            record_input_collection_finished(
-                workspace=workspace_dir,
-                session_id=session_id,
-                ready=readiness.ready,
-                message=intake_message,
-            )
-            print(
-                _render_skill_readiness_for_cli(
-                    args,
+            intake_round = 1
+            while not readiness.ready:
+                record_input_collection_started(workspace_dir, session_id)
+                intake_result = await run_skill_intake(
                     skill_name=skill.name,
+                    interaction=interaction,
+                    user_request=request,
+                    workspace=workspace_dir,
+                    tool_registry=prepared.registry,
+                    llm_client=prepared.llm_client,
+                    human_interface=human,
                     session_id=session_id,
-                    session_file=session_file,
-                    readiness=readiness,
+                    intake_packet_path=(
+                        str(intake_packet.relative_to(workspace_dir)) if intake_packet is not None else ""
+                    ),
+                    runtime_settings=runtime_settings,
+                    llm_profile=args.profile,
+                    intake_round=intake_round,
                 )
-            )
-            if not intake_result.ok or not readiness.ready:
-                print(_render_skill_completion_for_cli(args, workspace=workspace_dir, session_id=session_id))
-                await prepared.aclose()
-                prepared = None
-                return 2
+                readiness = check_skill_readiness(
+                    skill_name=skill.name,
+                    metadata=skill.metadata,
+                    workspace=workspace_dir,
+                    request=request,
+                )
+                intake_packet = prepare_skill_intake_packet(readiness)
+                session_file, _session = record_readiness(
+                    workspace=workspace_dir,
+                    session_id=session_id,
+                    skill_name=skill.name,
+                    skill_path=skill.skill_dir,
+                    readiness=readiness,
+                    resume=True,
+                    intake_packet_path=intake_packet,
+                )
+                intake_message = (
+                    f"第 {intake_round} 轮材料收集完成，已通过确定性输入检查；等待人工确认是否执行 Skill。"
+                    if readiness.ready
+                    else f"第 {intake_round} 轮材料收集后仍有缺口；将继续由 intake Agent 逐项询问，或由人工暂停。"
+                )
+                record_input_collection_finished(
+                    workspace=workspace_dir,
+                    session_id=session_id,
+                    ready=readiness.ready,
+                    message=intake_message,
+                )
+                print(
+                    _render_skill_readiness_for_cli(
+                        args,
+                        skill_name=skill.name,
+                        session_id=session_id,
+                        session_file=session_file,
+                        readiness=readiness,
+                    )
+                )
+                if not intake_result.ok:
+                    print(_render_skill_completion_for_cli(args, workspace=workspace_dir, session_id=session_id))
+                    await prepared.aclose()
+                    prepared = None
+                    return 2
+                if readiness.ready:
+                    break
+                action = await human.ask_clarification(
+                    question=(
+                        "当前材料仍不足以启动该 Skill。输入“继续”让系统开始下一轮定向材料收集；"
+                        "输入“暂停”保留当前会话，稍后再继续。"
+                    ),
+                    suggestions=["继续收集缺失材料", "暂停并保留会话"],
+                )
+                if _skill_user_paused(action):
+                    record_skill_execution_confirmation_pending(
+                        workspace=workspace_dir,
+                        session_id=session_id,
+                        message="人工在材料未齐时暂停；会话保留为 WAITING_INPUT。",
+                        input_ready=False,
+                    )
+                    print(_render_skill_completion_for_cli(args, workspace=workspace_dir, session_id=session_id))
+                    await prepared.aclose()
+                    prepared = None
+                    return 2
+                intake_round += 1
         except Exception as exc:
             if prepared is not None:
                 await prepared.aclose()
@@ -1374,6 +1425,51 @@ async def run_skill_command(args: argparse.Namespace) -> int:
             )
             print(_render_skill_completion_for_cli(args, workspace=workspace_dir, session_id=session_id))
             return 1
+
+    if interactive_session and not getattr(args, "yes", False):
+        confirmation_human = human or _build_human_interface(runtime_settings)
+        record_skill_execution_confirmation_pending(
+            workspace=workspace_dir,
+            session_id=session_id,
+            message="输入已就绪，等待人工确认是否开始执行当前 Skill。",
+            input_ready=True,
+        )
+        try:
+            while True:
+                decision = await confirmation_human.ask_clarification(
+                    question=(
+                        f"Skill `{skill.name}` 的初始输入已通过检查。是否现在执行？\n"
+                        "输入“执行”开始；输入“暂停”只保留已整理的材料和会话。"
+                    ),
+                    suggestions=["执行当前 Skill", "暂停，稍后使用 --resume 继续"],
+                )
+                if _skill_user_confirms_execution(decision):
+                    break
+                if _skill_user_paused(decision):
+                    record_skill_execution_confirmation_pending(
+                        workspace=workspace_dir,
+                        session_id=session_id,
+                        message="人工确认材料已就绪，但选择暂不执行。",
+                        input_ready=True,
+                    )
+                    print(_render_skill_completion_for_cli(args, workspace=workspace_dir, session_id=session_id))
+                    if prepared is not None:
+                        await prepared.aclose()
+                        prepared = None
+                    return 0
+                print("请明确输入“执行”或“暂停”；系统不会把模糊回答当作执行授权。")
+        except HumanInputUnavailable as exc:
+            record_skill_execution_confirmation_pending(
+                workspace=workspace_dir,
+                session_id=session_id,
+                message=f"等待执行确认：{exc}",
+                input_ready=True,
+            )
+            print(_render_skill_completion_for_cli(args, workspace=workspace_dir, session_id=session_id))
+            if prepared is not None:
+                await prepared.aclose()
+                prepared = None
+            return 2
 
     if prepared is None:
         try:
@@ -1403,7 +1499,7 @@ async def run_skill_command(args: argparse.Namespace) -> int:
         # the execution object are guaranteed to use the same skill source.
         skill = resolve_skill(args.skill_name, prepared.skill_roots)
         outputs_expected = expected_outputs_from_metadata(skill.metadata, workspace_dir)
-        human = _build_human_interface(runtime_settings, llm_client=prepared.llm_client)
+        human = human or _build_human_interface(runtime_settings, llm_client=prepared.llm_client)
         record_run_started(workspace_dir, session_id)
         result = await run_skill(
             skill=skill,
@@ -2297,7 +2393,17 @@ def build_parser() -> argparse.ArgumentParser:
     run_skill_parser.add_argument(
         "--interactive",
         action="store_true",
-        help="未给出任务说明时，在终端中以多行方式输入；输入单独一行 END 提交。",
+        help="强制启用终端引导式材料收集；交互终端默认已启用。",
+    )
+    run_skill_parser.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="禁用默认终端互动；缺输入时仅写入可恢复 WAITING_INPUT 会话。",
+    )
+    run_skill_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="输入已通过检查后直接执行；仅用于显式授权的自动化或批处理。",
     )
     run_skill_parser.add_argument("--startup-selftest", action="store_true")
     run_skill_parser.add_argument("--skip-startup-selftest", action="store_true")
