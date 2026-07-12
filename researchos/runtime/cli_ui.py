@@ -77,12 +77,12 @@ def _banner_renderable(command_name: str, *, width: int, frame_mark: str = "DIG"
     logo_shadow = Text("╲" + "▄" * 31 + "╱", style="dim cyan")
 
     product_name = Text("ResearchOS", style="bold bright_white")
-    product_name.append("  ·  Research Intelligence Operating System", style="dim")
+    product_name.append("  ·  Research Workflow Runtime", style="dim")
 
     subline = Text()
     subline.append("DIG Lab", style="bold bright_cyan")
-    subline.append("  /  Digital Intelligence Group", style="dim")
-    subline.append("\nResearch intelligence operating system", style="italic dim")
+    subline.append("  ·  BUAA", style="dim")
+    subline.append("\nEvidence-bound research workflow", style="italic dim")
 
     status = Text()
     status.append("RESEARCH WORKFLOW", style="bold cyan")
@@ -101,7 +101,7 @@ def _banner_renderable(command_name: str, *, width: int, frame_mark: str = "DIG"
     )
     return Panel(
         body,
-        title="[bold bright_cyan]DIG LAB[/]",
+        title="[bold bright_cyan]DIG Lab · BUAA[/]",
         subtitle="[dim]ResearchOS · Research Workflow[/]",
         box=box.ROUNDED,
         border_style="bright_cyan",
@@ -130,7 +130,7 @@ def _render_banner(command_name: str, *, color: bool, frame_mark: str = "DIG") -
 
 
 def render_final_banner(command_name: str, *, color: bool = False) -> str:
-    """Render the final DIG Lab / ResearchOS brand panel.
+    """Render the final DIG Lab / BUAA ResearchOS brand panel.
 
     ``color=False`` deliberately produces portable output for redirected logs,
     CI, and shell pipes. Interactive calls opt in to Rich ANSI styling.

@@ -126,6 +126,7 @@ class SkillAgent(Agent):
         header += (
             "# Experimental-Detail Integrity\n"
             "- A concrete dataset, benchmark, split, baseline, metric, seed, compute budget, implementation command, or performance number may be used only when an allowed input or audited workspace artifact explicitly identifies it. Record the source path and section/field whenever that detail affects a plan or claim.\n"
+            "- This is a provenance rule, not a metric ban: AUUC, Qini, accuracy, F1, and any other metric are valid when the current project's allowed inputs or audited artifacts explicitly declare them.\n"
             "- If the user asks for a plan but the detail is not yet sourced, label it `proposed_not_verified` or `unknown`; state what material would resolve it. Do not turn a plausible convention into an existing protocol.\n"
             "- Never infer experimental details from the project topic, a method name, an adjacent paper, a generic benchmark convention, or an earlier example. Missing protocol inputs require a focused human question, not a fabricated default.\n\n"
         )

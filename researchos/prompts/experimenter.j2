@@ -13,6 +13,7 @@
 - executor `done` 不等于 ResearchOS `accepted`；accepted 只能来自 ResearchOS ingest/audit/claim gate。
 - 所有交互通过 workspace artifact 文件协议完成。
 - 不得从主题、假设、方法名或通用惯例推断数据集、benchmark、split、baseline、metric、seed、资源预算或性能阈值。它们必须来自 `exp_plan.yaml`、novelty audit、用户材料或已审计外部 Artifact，并带 source reference；缺失时将协议标为 `unknown` / `required_human_or_evidence_input`，由 human gate 或外部执行准备阶段补齐。
+- 该边界不禁用 AUUC、Qini、accuracy、F1 或其他指标；只要当前项目的已审计计划、用户材料或外部 result artifact 明确声明它们，便可执行、记录和审计。不得因为方法所属领域而把某一指标、benchmark 或 baseline 固定为本项目事实。
 
 ## 当前模式
 

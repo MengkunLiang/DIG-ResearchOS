@@ -632,13 +632,17 @@ def _emit_startup_ui(
 ) -> None:
     """打印 CLI 启动动画与启动摘要。"""
 
-    if show_banner and _startup_banner_enabled(args, runtime_settings):
-        show_startup_banner(
-            args.command,
-            no_banner=getattr(args, "no_banner", False),
-            default_no_banner=runtime_settings.ui.no_banner,
-            no_color=runtime_settings.ui.no_color,
-        )
+    if show_banner and not getattr(args, "_startup_banner_emitted", False):
+        if _startup_banner_enabled(args, runtime_settings):
+            show_startup_banner(
+                args.command,
+                no_banner=getattr(args, "no_banner", False),
+                default_no_banner=runtime_settings.ui.no_banner,
+                no_color=runtime_settings.ui.no_color,
+            )
+        # All command paths share a single banner. Runtime commands call this
+        # helper again after discovery to add their startup summary only.
+        args._startup_banner_emitted = True
     if not show_summary:
         return
     summary = format_startup_summary(
@@ -2433,6 +2437,16 @@ def main(argv: list[str] | None = None) -> int:
     _emit_environment_warnings()
     runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
     runtime_settings = _runtime_settings_for_args(runtime_settings, args)
+    # Show the common entry panel for every actual CLI command. Commands that
+    # later prepare a workspace reuse the same helper for a richer summary,
+    # but never replay the animation or hide the initial debug surface.
+    workspace_arg = getattr(args, "workspace", None)
+    _emit_startup_ui(
+        args=args,
+        runtime_settings=runtime_settings,
+        workspace_dir=Path(workspace_arg).resolve() if workspace_arg else None,
+        show_summary=False,
+    )
     # Skill listing/status commands do not otherwise receive RuntimeSettings.
     # Preserve the same effective `--no-color` policy used by pipeline runs.
     args._effective_no_color = runtime_settings.ui.no_color

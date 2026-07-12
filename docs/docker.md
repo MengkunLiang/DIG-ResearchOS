@@ -1,122 +1,49 @@
-# ResearchOS: Native, Docker, And LaTeX
+# Native, Docker, And LaTeX
 
-ResearchOS has two supported runtime modes. They execute the same Python CLI,
-state machine, validators, human gates, and workspace contracts. Docker is not
-a second implementation.
+ResearchOS has one runtime contract. Native and Docker Compose execute the same
+CLI, artifacts, validators, human gates, and state machine.
 
-| Mode | Start command | Workspace path | TeX compiler location |
+| Mode | Workspace path | TeX location | Use when |
 | --- | --- | --- | --- |
-| Native | `python -m researchos.cli ...` | host path, for example `workspace/project-a` | host TeX, then configured Docker fallback when needed |
-| Docker Compose | `docker compose ... researchos ...` | `/app/workspace/project-a` in the container | the ResearchOS container itself |
+| Native | Host path, for example `workspace/project-a` | Host TeX, then allowed Docker fallback | Development and direct local use |
+| Docker Compose | `/app/workspace/project-a` | TeX inside ResearchOS image | Reproducible CLI environment |
 
-Do not run both modes against the same workspace simultaneously.
+Do not use both modes as concurrent writers for a workspace.
 
-## 1. LaTeX Backend Contract
+## Native TeX
 
-T3.6 survey compilation and T9 submission compilation require a real PDF and
-log. They call `latex_compile`, which writes a compile report with source,
-dependency, PDF, and log fingerprints.
+`latex.default_backend: auto` selects, in order:
 
-### Native Mode
-
-`backend=auto` chooses the first usable option in this order:
-
-1. Host `latexmk`.
-2. Host `tectonic`.
-3. The configured allowlisted Docker TeX image, when
-   `latex.allow_docker_fallback: true`.
-
-The checked-in default is:
-
-```yaml
-latex:
-  default_backend: auto
-  allow_docker_fallback: true
-  docker_image: researchos/system:latest
-```
-
-The fallback bind-mounts only the active workspace, runs with `--network none`,
-does not mount a GPU, and uses the Docker execution policy. It is intended for
-a host that runs ResearchOS but does not have TeX installed.
-
-### Compose Mode
-
-Compose intentionally does **not** mount `/var/run/docker.sock` and does not
-use Docker-in-Docker. The `researchos/system:latest` image includes:
-
-- `latexmk`
-- pdfLaTeX and XeLaTeX
-- BibTeX
-- `texlive-latex-base`, `texlive-latex-extra`, and recommended fonts
-- `texlive-lang-chinese`
-
-When ResearchOS itself runs in Compose, `latex_compile` invokes this local
-container toolchain directly. A custom slim Compose image without TeX fails the
-preflight with `container_missing_local_tex_toolchain`; rebuild it from the
-provided Dockerfile or add an equivalent TeX toolchain.
-
-## 2. Native Setup
-
-Python dependencies remain in `requirements.txt`; system TeX packages do not.
-The Python set includes matplotlib for deterministic survey visuals. It is installed in both native Python
-environments and the ResearchOS image through `requirements.txt`; it is unrelated to the TeX toolchain.
-On Ubuntu/Debian:
-
-```bash
-sudo apt-get update
-sudo apt-get install -y \
-  latexmk \
-  texlive-latex-base \
-  texlive-latex-extra \
-  texlive-fonts-recommended \
-  texlive-xetex \
-  texlive-lang-chinese
-```
-
-Then verify actual selection:
+1. Local `latexmk`.
+2. Local `tectonic`.
+3. The allowlisted `latex.docker_image` when Docker fallback is enabled.
 
 ```bash
 python -m researchos.cli doctor --workspace ./workspace/project-a
 ```
 
-Expected native result after installation:
+Install host TeX on Ubuntu/Debian:
 
-```text
-[OK   ] LaTeX backend: latexmk_found_on_current_path
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  latexmk texlive-latex-base texlive-latex-extra \
+  texlive-fonts-recommended texlive-xetex texlive-lang-chinese
 ```
 
-If no host TeX exists but Docker is healthy and the image contains TeX, expected
-output is:
+macOS requires MacTeX or BasicTeX plus `latexmk`. Windows requires MiKTeX or
+TeX Live with `latexmk`, `pdflatex`, `xelatex`, and `bibtex` on `PATH`.
 
-```text
-[OK   ] LaTeX backend: docker_tex_image_verified; image=researchos/system:latest
-```
-
-## 3. Compose Setup
-
-From the repository root:
+## Compose
 
 ```bash
 cp .env.example .env
 mkdir -p workspace
-docker compose -f deploy/compose.yaml build
+docker compose -f deploy/compose.yaml build researchos
 docker compose -f deploy/compose.yaml run --rm researchos doctor
 ```
 
-The only Compose entry point is `deploy/compose.yaml`. Its bind mounts are:
-
-```text
-host workspace/  <->  /app/workspace/
-host config/     ->   /app/config/ (read-only)
-```
-
-Example commands:
-
 ```bash
-docker compose -f deploy/compose.yaml run --rm researchos \
-  init-workspace --workspace /app/workspace/project-a \
-  --project-id project-a --topic "memory systems for LLM agents"
-
 docker compose -f deploy/compose.yaml run --rm researchos \
   run --workspace /app/workspace/project-a
 
@@ -124,98 +51,27 @@ docker compose -f deploy/compose.yaml run --rm researchos \
   resume --workspace /app/workspace/project-a
 ```
 
-On Linux, set `RESEARCHOS_UID=$(id -u)` and `RESEARCHOS_GID=$(id -g)` in `.env`
-when direct Compose should write host-editable files as the current user. The
-provided shell wrapper does this automatically.
+The Compose service does not mount the Docker socket and does not use
+Docker-in-Docker. The image must contain TeX itself. On Linux, set
+`RESEARCHOS_UID=$(id -u)` and `RESEARCHOS_GID=$(id -g)` in `.env` when needed
+for host-writable outputs.
 
-## 4. Build The Image
+## Why TeX Is Not In requirements.txt
 
-Standard build:
+`requirements.txt` installs Python packages, including matplotlib for the one
+deterministic Survey taxonomy figure. TeX Live, `latexmk`, and fonts are system
+dependencies; install them through the host package manager or bake them into
+`infra/docker/Dockerfile`.
 
-```bash
-docker compose -f deploy/compose.yaml build researchos
-```
+## Repair And Resume
 
-The TeX image is intentionally larger than a pure Python image because PDF
-validation is a correctness requirement, not an optional export feature.
+| `doctor` / preflight result | Repair |
+| --- | --- |
+| `latexmk_found_on_current_path` | Continue. |
+| `docker_tex_image_verified` | Continue with configured Docker fallback. |
+| Docker daemon/image unavailable | Start Docker and build the configured image, or install host TeX. |
+| Image lacks TeX commands | Rebuild `researchos/system:latest` from `infra/docker/Dockerfile`. |
+| Compile error in a `.tex` file | Read the compile report/log, repair the named source or asset, then `resume`. |
 
-Some Linux hosts have a slow Docker bridge route to package mirrors while the
-host network is healthy. In that situation build the same Dockerfile through
-the host network:
-
-```bash
-docker build --network=host \
-  -t researchos/system:latest \
-  -f infra/docker/Dockerfile .
-```
-
-This is a build-time workaround only. Never add a Docker socket or a host
-network to the running Compose service merely to compile TeX.
-
-## 5. Preflight, Failure, And Resume
-
-Before `T3.6-COMPILE` and `T9`, the runtime executes a LaTeX preflight before
-consuming LLM steps. It checks the selected local or Docker path and reports
-what is missing.
-
-| Doctor/preflight result | Meaning | Repair |
-| --- | --- | --- |
-| `latexmk_found_on_current_path` | Native TeX is ready | Continue. |
-| `docker_tex_image_verified` | Native process will use the Docker TeX image | Start Docker/build the image, then continue. |
-| `docker_command_not_found` or daemon unavailable | Docker fallback cannot start | Install/start Docker, or install host TeX. |
-| `docker_image_missing` | Configured image is absent | Build or pull the configured allowlisted image. |
-| `docker_tex_commands_missing` | Image is not a TeX image | Rebuild from `infra/docker/Dockerfile`. |
-| `container_missing_local_tex_toolchain` | A custom application container lacks TeX | Rebuild the container with the required packages. |
-
-After repair, do not restart a project from scratch:
-
-```bash
-python -m researchos.cli doctor --workspace ./workspace/project-a
-python -m researchos.cli resume --workspace ./workspace/project-a
-```
-
-For a LaTeX source error rather than an environment failure, inspect the log
-next to the source, repair the relevant section/template/bibliography, and
-resume. Do not manually create `survey.pdf`, `main.pdf`, or a compile report.
-
-### Table and Figure Layout
-
-`latex_compile` safely inspects ordinary wide `tabular` blocks before compiling. When `auto_fit_wide_tables=true`
-(the default), a structurally wide table is wrapped as `\resizebox{\textwidth}{!}{% ... }` only when the active
-source does not already use a sizing wrapper and the template does not explicitly prohibit it. The compile report
-records `table_layout.resizebox_inserted`; this is an auditable source adjustment, not a visual guess. Templates such
-as AAAI that explicitly forbid `resizebox` are skipped. Pass `auto_fit_wide_tables=false` when a venue or author
-requires manual table layout.
-
-Survey visuals are generated before section writing from the explicit taxonomy tree in
-`drafts/survey/survey_plan.json`. The only permitted output is the vector PDF
-`drafts/survey/figures/fig_taxonomy_overview.pdf`; it contains class labels and directly linked paper-ID counts only.
-It deliberately does not use `comparison_table.csv` metrics, T2 relevance scores, inferred safety values, cross-paper
-baselines, or relative gains. The manifest records the policy, source fingerprint, DPI/font, and generated or skipped
-reason. Every direct paper ID must resolve to a local structured note card under `literature/paper_notes/` or
-`literature/paper_notes_bridge/`; the complete resolution list is `source.paper_link_audit`. If a link is unresolved,
-the canonical PDF is removed and `status=skipped` is valid. Resolution is a source-link check, not a claim of evidence
-strength, and a skipped visual must not be replaced by a decorative or manually invented figure.
-
-Native and Docker `latexmk` commands use `-halt-on-error -file-line-error`. A source error therefore terminates at the
-first TeX error rather than consuming the full compile timeout. Native compilation starts a process group so a timeout
-also terminates spawned TeX children; the runtime serializes multiple `latex_compile` calls in one Agent response.
-
-## 6. Scope And Security
-
-The ResearchOS image is a CLI and PDF-validation runtime. It is not the default
-GPU training environment. The external executor owns project-specific datasets,
-weights, CUDA/PyTorch stacks, and real experiment execution.
-
-The Compose service intentionally does not mount:
-
-- `/var/run/docker.sock`
-- the host root filesystem
-- model weights or credentials beyond explicit `.env` variables
-
-Do not bake API keys, workspaces, seed papers, experiment outputs, or Codex/
-Claude credentials into the image.
-
-For the Compose wrapper and host-side external executor workflow, see
-[../deploy/README.md](../deploy/README.md). For the short operational path, see
-[../README.zh-CN.md](../README.zh-CN.md).
+Never solve a TeX preflight failure by increasing LLM retries. The runtime
+pauses before writing more prose so the environment can be repaired first.

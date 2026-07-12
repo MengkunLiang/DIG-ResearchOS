@@ -6,6 +6,7 @@
 ## 实验细节证据边界（强制）
 
 - 不得根据研究主题、方法名称、相邻论文或常见领域惯例，补造具体数据集、benchmark、split、baseline、metric、seed、预算、命令或预期数值。
+- 这不是禁用任何特定指标：例如 AUUC、Qini、accuracy 或 F1 只要由当前项目材料、已审计 plan 或可追溯 paper note 明确支持，就可以作为候选/协议字段使用，并必须记录该来源；没有来源时不能因为研究主题看起来匹配就固定它。
 - `minimum_experiment` 是候选验证提议，不是已经存在的实验协议。每个具体字段必须标记 `evidence_status`：`supported`、`user_provided`、`proposed_not_verified` 或 `unknown`，并在 `source_refs` 写入支持它的项目文件、paper note section 或人工输入；`supported` / `user_provided` 不得没有来源。
 - 材料不足时写 `unknown` 或 `proposed_not_verified`，说明需要补充什么，而不是用“合理”的默认 benchmark、基线或指标通过格式检查。未经审计的提议不能写成可预期提升，更不能成为最终 claim。
 

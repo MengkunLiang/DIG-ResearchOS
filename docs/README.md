@@ -1,49 +1,35 @@
 # ResearchOS Documentation
 
-Use this index to choose the shortest document that answers the current task.
-The root README is intentionally an operating guide; it does not duplicate the
-stage-by-stage contract.
+The root [README](../README.md) and [Chinese README](../README.zh-CN.md) are
+the operational entry points. This directory contains one source of truth per
+topic; generated workspaces, provider traces, PDFs, and secrets do not belong
+here.
 
-## Start With Your Job
-
-| You need to... | Read |
+| Task | Read |
 | --- | --- |
-| Install, configure keys, run a project, or recover it | [../README.md](../README.md) or [../README.zh-CN.md](../README.zh-CN.md) |
-| Get a first local or Compose run working | [QUICKSTART.md](QUICKSTART.md) |
-| Run a standalone literature, idea, drafting, polishing, revision, audit, or compile Skill | [QUICKSTART.md](QUICKSTART.md) and [runtime.md](runtime.md) |
-| Choose an atomic Skill for PDF, DOI, notes, matrices, claims, peer review, or writing | [skills.md](skills.md) |
-| Choose a native/Docker TeX backend or fix a build | [docker.md](docker.md) |
-| Change models, budgets, language, search, runtime settings, or internal venue-aware writing profiles | [config.md](config.md) and [../config/README.md](../config/README.md) |
-| Inspect a pause, provider failure, stage progress, event JSONL, tool call, or artifact validation error | [logging.md](logging.md) |
-| Understand a repository or workspace path | [project_structure.md](project_structure.md) |
-| Use maintained validation or recovery utilities | [../scripts/README.md](../scripts/README.md) |
-| Understand all research stages and their artifact contracts | [agent_pipeline.md](agent_pipeline.md) |
-| Extend the runtime, an agent, a tool, or a validator | [runtime.md](runtime.md) and [dev.md](dev.md) |
-| Run or maintain Docker Compose | [../deploy/README.md](../deploy/README.md) |
+| Install, create a workspace, run, resume, or use a Skill | [../README.md](../README.md) / [../README.zh-CN.md](../README.zh-CN.md) |
+| Copyable local/Docker first run and recovery recipes | [QUICKSTART.md](QUICKSTART.md) |
+| Understand T1-T9, gates, branches, and stage artifacts | [agent_pipeline.md](agent_pipeline.md) |
+| Change models, budgets, UI, language, retrieval, or TeX policy | [config.md](config.md) |
+| Inspect the configuration directory's maintained file-level notes | [../config/README.md](../config/README.md) |
+| Use native TeX, Compose, or Docker fallback | [docker.md](docker.md) |
+| Maintain Compose/deployment assets | [../deploy/README.md](../deploy/README.md) |
+| Inspect console events, logs, traces, and validation failures | [logging.md](logging.md) |
+| Use maintained repository scripts | [../scripts/README.md](../scripts/README.md) |
+| Find repository and workspace ownership boundaries | [project_structure.md](project_structure.md) |
+| Understand runtime, tool, state, and extension contracts | [runtime.md](runtime.md) |
+| Browse and run atomic Skills | [skills.md](skills.md) |
+| Develop, test, and release changes | [dev.md](dev.md) |
 
-## Documentation Boundaries
+## Current Operating Contract
 
-| Document | Purpose | Does not duplicate |
-| --- | --- | --- |
-| Root README | User installation, configuration, run, resume, guided Skill entry, and first diagnostics | Full stage semantics |
-| `QUICKSTART.md` | Copyable first-run checklist | Configuration reference |
-| `docker.md` | Native versus Compose operation, TeX backends, build troubleshooting | External experiment protocol |
-| `logging.md` | Stage Start/Progress/Summary, event JSONL, logs, traces, and failure triage | Full runtime implementation |
-| `project_structure.md` | Ownership of repository and workspace directories | Artifact schema details |
-| `agent_pipeline.md` | Canonical state-machine, stage, T4 observability, and artifact reference | Installation instructions |
-| `runtime.md` | Runtime internals, guided Skill contract, session model, and extension points | User walkthrough |
-| `skills.md` | User-facing atomic Skill capability map, boundaries, and examples | Runtime implementation details |
-| `dev.md` | Contributor setup, tests, and change checklist | End-user deployment |
-
-## Sources Of Truth
-
-| Question | Source |
-| --- | --- |
-| State-machine topology and task I/O | `config/system_config/state_machine.yaml` |
-| Gate options and presentation | `config/system_config/gates.yaml` |
-| Runtime defaults | `config/runtime.yaml` and `config/user_settings.yaml` |
-| Current Python behavior | `researchos/` and tests |
-| Current project progress | `<workspace>/state.yaml` and `<workspace>/_runtime/` |
-
-Generated workspaces, traces, logs, PDFs, Docker test directories, and `.env`
-files do not belong in this documentation tree.
+1. A workspace is the project source of truth. One writer owns it at a time.
+2. `run`, `resume`, `run-task`, tools, Skills, and human gates use the same
+   artifact validation and observable event model.
+3. Concrete experimental details are allowed only when their current-project
+   provenance is explicit. A metric such as AUUC or Qini is valid when sourced;
+   it is invalid when guessed from the topic.
+4. Every CLI command shows the DIG Lab · BUAA / ResearchOS entry panel once
+   unless `--no-banner` or `--quiet` suppresses it.
+5. `T3.6` and `T9` validate real TeX compilation. Use `doctor` before a long
+   run and repair the named backend before `resume`.

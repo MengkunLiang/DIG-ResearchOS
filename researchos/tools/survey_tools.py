@@ -375,7 +375,11 @@ _SURVEY_MIN_PLAIN_CHARS = {
 
 _SURVEY_SECTION_QUALITY_PATTERNS = {
     "introduction": {
-        "problem": r"central problem|review problem|research question|why this review|问题意识|核心问题|研究问题|为什么需要综述",
+        # A survey can formulate its motivating problem in prose or in an
+        # explicit subsection heading. Do not reject a well-formed introduction
+        # merely because it did not use one particular phrase such as
+        # "central problem".
+        "problem": r"(?:central|review|survey|research)\s+(?:problem|question)|(?:the\s+)?(?:problem|challenge)\s+(?:is|of|this survey|address|persists|arises)|问题意识|核心问题|研究问题|为什么需要综述",
         "gap": r"gap|fragment|underexplored|insufficient|limitation|不足|割裂|分散|缺乏|尚未",
         "contribution": r"contribution|this survey|we propose|本文|本综述|贡献|框架|结构安排",
     },
@@ -522,6 +526,7 @@ class BuildSurveyFiguresTool(Tool):
                 "font.family": "serif",
                 "font.serif": [font_name],
                 "font.size": 9,
+                "mathtext.fontset": "stix",
                 "axes.titlesize": 11,
                 "axes.labelsize": 9,
                 "xtick.labelsize": 8,
@@ -597,7 +602,17 @@ class BuildSurveyFiguresTool(Tool):
                 "inferred_safety_or_risk_heatmaps_forbidden": True,
                 "dpi": params.dpi,
                 "min_top_level_classes": params.min_top_level_classes,
-                "font_requested": ["Times New Roman", "Times", "Nimbus Roman", "DejaVu Serif"],
+                "font_requested": [
+                    "Times New Roman",
+                    "Times",
+                    "Nimbus Roman No9 L",
+                    "Nimbus Roman",
+                    "Liberation Serif",
+                    "TeX Gyre Termes",
+                    "STIX Two Text",
+                    "STIXGeneral",
+                    "DejaVu Serif",
+                ],
                 "font_selected": font_name,
                 "language": "English academic labels",
                 "palette": ["#1F5A7A", "#2F7E8D", "#C47B4D", "#66717E"],
@@ -742,7 +757,20 @@ def _audit_taxonomy_paper_links(
 
 
 def _select_survey_figure_font(font_manager: Any) -> str:
-    for candidate in ("Times New Roman", "Times", "Nimbus Roman", "DejaVu Serif"):
+    # Times New Roman is preferred when it is installed. The remaining fonts
+    # are metrically and stylistically suitable serif fallbacks commonly
+    # available in TeX, Linux, or Matplotlib environments.
+    for candidate in (
+        "Times New Roman",
+        "Times",
+        "Nimbus Roman No9 L",
+        "Nimbus Roman",
+        "Liberation Serif",
+        "TeX Gyre Termes",
+        "STIX Two Text",
+        "STIXGeneral",
+        "DejaVu Serif",
+    ):
         try:
             path = font_manager.findfont(candidate, fallback_to_default=False)
         except (ValueError, OSError):
@@ -760,177 +788,175 @@ def _render_survey_taxonomy_overview(
     dpi: int,
     taxonomy_dimension: str,
 ) -> None:
-    """Render a vector taxonomy map without introducing scientific quantities."""
+    """Render an evidence-neutral, publication-ready taxonomy overview.
 
-    from matplotlib.patches import FancyBboxPatch
+    The figure communicates only the explicit class hierarchy and direct
+    note-card links in ``survey_plan.json``. It intentionally omits empty
+    child placeholders, performance quantities, and inferred evidence ranks.
+    """
 
-    palette = ["#1F5A7A", "#2F7E8D", "#C47B4D", "#66717E"]
-    column_count = 2 if len(top_level) > 1 else 1
-    rows_per_column = (len(top_level) + column_count - 1) // column_count
-    source_columns: list[list[dict[str, Any]]] = [
-        top_level[index * rows_per_column : (index + 1) * rows_per_column]
-        for index in range(column_count)
-    ]
+    from matplotlib.patches import Rectangle
 
-    heading_wrap = 36 if column_count == 2 else 62
-    child_wrap = 34 if column_count == 2 else 59
+    palette = ["#175B73", "#287A8C", "#647A52", "#B36B3E", "#80584F"]
+    item_count = len(top_level)
+    column_count = 1 if item_count == 1 else 2 if item_count <= 4 else 3
+    row_count = max(1, (item_count + column_count - 1) // column_count)
+    # Compact top-level taxonomies should read as a figure, not a set of empty
+    # dashboard cards. The canvas and row height therefore track actual title
+    # and child content instead of reserving space for absent children.
+    row_heights: list[float] = []
+    for row_index in range(row_count):
+        row_items = top_level[row_index * column_count : (row_index + 1) * column_count]
+        required_height = 16.5
+        for item in row_items:
+            children = item.get("children") if isinstance(item.get("children"), list) else []
+            if children:
+                required_height = max(required_height, 18.0 + min(3, len(children)) * 3.2)
+        row_heights.append(required_height)
+    figure_height = max(4.25, 2.0 + sum(row_heights) * 0.06 + (row_count - 1) * 0.16)
+    figure, axis = plt.subplots(figsize=(11.8, figure_height), dpi=dpi)
+    figure.patch.set_facecolor("#FFFFFF")
+    axis.set_facecolor("#FFFFFF")
+    axis.set_xlim(0, 100)
+    axis.set_ylim(20, 100)
+    axis.axis("off")
 
     def _lines(value: str, width: int) -> list[str]:
         return textwrap.wrap(value, width=width, break_long_words=False, break_on_hyphens=False) or [value]
 
-    blocks: list[list[dict[str, Any]]] = []
-    for source_column in source_columns:
-        rendered_column: list[dict[str, Any]] = []
-        for item in source_column:
-            children = item.get("children") if isinstance(item.get("children"), list) else []
-            display_children = children or [{"class_id": "", "name": "No explicit child class recorded", "paper_ids": []}]
-            child_rows = []
-            for child in display_children:
-                label = (f"{child.get('class_id', '')}  {child.get('name', '')}").strip()
-                lines = _lines(label, child_wrap)
-                child_rows.append({"item": child, "lines": lines, "height": max(0.52, 0.23 * len(lines) + 0.28)})
-            heading_lines = _lines(f"{item['class_id']}  {item['name']}", heading_wrap)
-            heading_height = max(0.78, 0.25 * len(heading_lines) + 0.39)
-            block_height = heading_height + sum(row["height"] for row in child_rows) + 0.18 * len(child_rows) + 0.30
-            rendered_column.append(
-                {
-                    "item": item,
-                    "heading_lines": heading_lines,
-                    "heading_height": heading_height,
-                    "children": child_rows,
-                    "explicit_child_count": len(children),
-                    "height": block_height,
-                }
-            )
-        blocks.append(rendered_column)
-    max_block_units = max(
-        (sum(float(item["height"]) + 0.28 for item in column) for column in blocks),
-        default=2.0,
-    )
-    figure, axis = plt.subplots(
-        figsize=(10.5, min(12.5, max(5.8, max_block_units + 1.9))),
-        dpi=dpi,
-    )
-    axis.set_xlim(0, 100)
-    axis.set_ylim(0, max_block_units + 1.9)
-    axis.axis("off")
-    # A plan's taxonomy dimension can be a full paragraph.  It belongs in the
-    # surrounding survey prose, not in an overlong figure title.
-    title = "Survey Taxonomy Overview"
-    axis.text(50, max_block_units + 1.54, title, ha="center", va="center", fontsize=12, fontweight="bold", color="#15212B")
     axis.text(
-        50,
-        max_block_units + 1.14,
-        "Analytical framework from the survey plan; source-card links only, not evidence strength or performance.",
-        ha="center",
+        5.5,
+        94.0,
+        "Survey Taxonomy of Method Families",
+        ha="left",
         va="center",
-        fontsize=8,
-        color="#4B5563",
+        fontsize=15.5,
+        fontweight="bold",
+        color="#17212B",
+    )
+    axis.text(
+        5.5,
+        89.0,
+        "Top-level classes declared in the survey plan; badges report resolved direct local note-card links.",
+        ha="left",
+        va="center",
+        fontsize=9.1,
+        color="#52616F",
+    )
+    axis.plot([5.5, 94.5], [84.5, 84.5], color="#B8C3CB", linewidth=0.75)
+    axis.text(
+        5.5,
+        80.7,
+        "METHOD FAMILIES",
+        ha="left",
+        va="center",
+        fontsize=8.3,
+        fontweight="bold",
+        color="#52616F",
     )
 
-    column_width = 44.0 if column_count == 2 else 72.0
-    x_positions = [4.0, 52.0] if column_count == 2 else [14.0]
-    for column_index, column in enumerate(blocks):
-        x = x_positions[column_index]
-        y = max_block_units + 0.72
-        for item_index, block in enumerate(column):
-            item = block["item"]
-            block_height = float(block["height"])
-            heading_height = float(block["heading_height"])
-            y -= block_height
-            color = palette[(column_index * rows_per_column + item_index) % len(palette)]
-            axis.add_patch(
-                FancyBboxPatch(
-                    (x, y + block_height - heading_height),
-                    column_width,
-                    heading_height,
-                    boxstyle="round,pad=0.025,rounding_size=0.06",
-                    linewidth=0.9,
-                    edgecolor=color,
-                    facecolor=color,
-                )
+    outer_margin = 5.5
+    column_gap = 3.4
+    row_gap = 4.0
+    grid_top = 76.0
+    card_width = (100 - 2 * outer_margin - (column_count - 1) * column_gap) / column_count
+    name_width = 25 if column_count == 3 else 39
+
+    row_y_positions: list[float] = []
+    cursor = grid_top
+    for row_height in row_heights:
+        cursor -= row_height
+        row_y_positions.append(cursor)
+        cursor -= row_gap
+
+    for index, item in enumerate(top_level):
+        row_index = index // column_count
+        column_index = index % column_count
+        row_items = min(column_count, item_count - row_index * column_count)
+        row_span = row_items * card_width + (row_items - 1) * column_gap
+        row_start = (100 - row_span) / 2
+        x = row_start + column_index * (card_width + column_gap)
+        card_height = row_heights[row_index]
+        y = row_y_positions[row_index]
+        color = palette[index % len(palette)]
+        direct_count = len(item.get("paper_ids") or [])
+        children = item.get("children") if isinstance(item.get("children"), list) else []
+
+        axis.add_patch(
+            Rectangle(
+                (x, y),
+                card_width,
+                card_height,
+                linewidth=0.72,
+                edgecolor="#C7D0D6",
+                facecolor="#FCFDFD",
             )
-            axis.text(
-                x + 0.55,
-                y + block_height - heading_height / 2,
-                "\n".join(block["heading_lines"]),
-                ha="left",
-                va="center",
-                fontsize=7.7,
-                color="white",
-                fontweight="bold",
-            )
-            explicit_child_count = int(block["explicit_child_count"])
-            parent_descriptor = (
-                f"{explicit_child_count} sub-class" + ("es" if explicit_child_count != 1 else "")
-                if explicit_child_count
-                else f"{len(item.get('paper_ids') or [])} direct source card(s)"
-            )
-            axis.text(
-                x + column_width - 0.55,
-                y + block_height - heading_height / 2,
-                parent_descriptor,
-                ha="right",
-                va="center",
-                fontsize=6.9,
-                color="white",
-            )
-            child_top = y + block_height - heading_height - 0.15
-            for child_row in block["children"]:
-                child = child_row["item"]
-                child_height = float(child_row["height"])
-                child_top -= child_height
-                child_y = child_top + child_height / 2
-                child_count_linked = len(child.get("paper_ids") or [])
-                child_descriptor = (
-                    f"{child_count_linked} resolved card" + ("s" if child_count_linked != 1 else "")
-                    if child_count_linked
-                    else "no direct paper ID"
-                )
-                axis.add_patch(
-                    FancyBboxPatch(
-                        (x + 0.35, child_top),
-                        column_width - 0.70,
-                        child_height,
-                        boxstyle="round,pad=0.015,rounding_size=0.035",
-                        linewidth=0.55,
-                        edgecolor="#B7C3CC",
-                        facecolor="#F7F9FA",
-                    )
-                )
+        )
+        axis.add_patch(Rectangle((x, y), 1.15, card_height, linewidth=0, facecolor=color))
+        axis.add_patch(Rectangle((x + 1.15, y + card_height - 2.15), card_width - 1.15, 2.15, linewidth=0, facecolor="#F1F4F5"))
+        axis.text(
+            x + 2.25,
+            y + card_height - 1.08,
+            str(item.get("class_id") or f"T{index + 1}"),
+            ha="left",
+            va="center",
+            fontsize=8.1,
+            fontweight="bold",
+            color=color,
+        )
+        note_label = f"Direct links: {direct_count}"
+        axis.text(
+            x + card_width - 1.35,
+            y + card_height - 1.08,
+            note_label,
+            ha="right",
+            va="center",
+            fontsize=7.1,
+            color="#596976",
+        )
+        title_lines = _lines(str(item.get("name") or "Unnamed taxonomy class"), name_width)
+        title_y = y + card_height / 2 if not children else y + card_height - 4.2
+        axis.text(
+            x + 2.25,
+            title_y,
+            "\n".join(title_lines),
+            ha="left",
+            va="center" if not children else "top",
+            fontsize=10.1,
+            fontweight="bold",
+            color="#17212B",
+            linespacing=1.13,
+        )
+        if children:
+            child_labels = []
+            for child in children[:3]:
+                if not isinstance(child, dict):
+                    continue
+                label = (f"{child.get('class_id', '')}  {child.get('name', '')}").strip()
+                if label:
+                    child_labels.append(label)
+            if child_labels:
+                child_text = "\n".join("- " + line for label in child_labels for line in _lines(label, name_width - 2))
                 axis.text(
-                    x + 0.66,
-                    child_y,
-                    "\n".join(child_row["lines"]),
+                    x + 2.25,
+                    y + 2.25,
+                    child_text,
                     ha="left",
-                    va="center",
-                    fontsize=6.6,
-                    color="#1F2933",
+                    va="bottom",
+                    fontsize=7.6,
+                    color="#52616F",
+                    linespacing=1.2,
                 )
-                axis.text(
-                    x + column_width - 0.62,
-                    child_y,
-                    child_descriptor,
-                    ha="right",
-                    va="center",
-                    fontsize=6.2,
-                    color="#4B5563",
-                )
-                child_top -= 0.18
-            y -= 0.28
     figure.text(
-        0.99,
-        0.012,
-        "Source: survey_plan.json taxonomy tree and resolved local note-card paths. Counts are class-to-card links; no direct paper ID is a taxonomy property, not evidence absence. Not study counts, evidence strength, or research gaps.",
-        ha="right",
+        0.055,
+        0.035,
+        "Source: explicit taxonomy labels and resolved direct note-card links in survey_plan.json.",
+        ha="left",
         va="bottom",
-        fontsize=6.8,
-        color="#4B5563",
+        fontsize=7.3,
+        color="#52616F",
     )
-    # The node map has deliberately fixed coordinates; tight_layout can shrink
-    # them unpredictably for long taxonomy labels and emits warnings in headless
-    # batch runs.  Reserve stable margins instead.
-    figure.subplots_adjust(left=0.025, right=0.975, bottom=0.055, top=0.92)
+    figure.subplots_adjust(left=0.02, right=0.98, bottom=0.075, top=0.96)
     figure.savefig(output_path, format="pdf", bbox_inches="tight", facecolor="white")
     plt.close(figure)
 
@@ -1027,6 +1053,15 @@ class BuildSurveyStateTool(Tool):
                 ),
                 error="too_many_theme_sections",
             )
+        previous_state: dict[str, Any] = {}
+        if state_path.exists() and state_path.stat().st_size > 0:
+            try:
+                previous_state = _read_json(state_path)
+            except (OSError, ValueError, json.JSONDecodeError):
+                # A corrupt prior state must not make a deterministic rebuild
+                # impossible. The resulting state starts clean and remains
+                # auditable through the tool result.
+                previous_state = {}
         theme_entries = [] if compact_mode else _theme_entries(outline, max_theme_sections=max_theme_sections)
         theme_by_slot = {f"theme_{idx}": entry for idx, entry in enumerate(theme_entries, start=1)}
         writing_language = _infer_survey_writing_language(self.policy.workspace_dir, plan)
@@ -1119,22 +1154,100 @@ class BuildSurveyStateTool(Tool):
             },
             "revision_log": [],
         }
-        state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
         outline_dir.mkdir(parents=True, exist_ok=True)
         for section_id, entry in sections.items():
             outline_path = outline_dir / f"{section_id}.md"
             outline_path.write_text(_section_outline_text(section_id, entry, plan), encoding="utf-8")
 
+        preserved_sections = _preserve_completed_survey_sections(
+            workspace=self.policy.workspace_dir,
+            previous_state=previous_state,
+            rebuilt_state=state,
+        )
+        state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
         return ToolResult(
             ok=True,
-            content=f"Built survey_state with {len(state['write_order'])} active sections.",
+            content=(
+                f"Built survey_state with {len(state['write_order'])} active sections; "
+                f"preserved {len(preserved_sections)} completed section(s)."
+            ),
             data={
                 "state_path": params.state_output_path,
                 "active_sections": state["write_order"],
                 "skipped_sections": [sid for sid, entry in sections.items() if entry["status"] == "skipped"],
+                "preserved_sections": preserved_sections,
             },
         )
+
+
+def _preserve_completed_survey_sections(
+    *,
+    workspace: Path,
+    previous_state: dict[str, Any],
+    rebuilt_state: dict[str, Any],
+) -> list[str]:
+    """Carry durable section progress through an idempotent state rebuild.
+
+    ``build_survey_state`` is sometimes reissued during recovery. Replacing a
+    valid state with a fresh all-``pending`` file makes later validators reject
+    already-written sections and wastes an LLM repair loop. Preservation is
+    deliberately narrow: the survey-plan fingerprint must be unchanged, the
+    section file must still exist, and a prior outline fingerprint (when
+    present) must match the regenerated outline.
+    """
+
+    previous_fingerprints = previous_state.get("input_fingerprints")
+    rebuilt_fingerprints = rebuilt_state.get("input_fingerprints")
+    previous_plan = previous_fingerprints.get("survey_plan") if isinstance(previous_fingerprints, dict) else {}
+    rebuilt_plan = rebuilt_fingerprints.get("survey_plan") if isinstance(rebuilt_fingerprints, dict) else {}
+    previous_sha = previous_plan.get("sha256") if isinstance(previous_plan, dict) else ""
+    rebuilt_sha = rebuilt_plan.get("sha256") if isinstance(rebuilt_plan, dict) else ""
+    if not previous_sha or previous_sha != rebuilt_sha:
+        return []
+
+    previous_sections = previous_state.get("sections")
+    rebuilt_sections = rebuilt_state.get("sections")
+    if not isinstance(previous_sections, dict) or not isinstance(rebuilt_sections, dict):
+        return []
+
+    preserved: list[str] = []
+    for section_id, rebuilt_entry in rebuilt_sections.items():
+        if not isinstance(rebuilt_entry, dict):
+            continue
+        previous_entry = previous_sections.get(section_id)
+        if not isinstance(previous_entry, dict) or previous_entry.get("status") not in {"written", "revised"}:
+            continue
+        section_path = workspace / str(rebuilt_entry.get("file") or f"drafts/survey/sections/{section_id}.tex")
+        outline_path = workspace / str(rebuilt_entry.get("outline_file") or f"drafts/survey/section_outlines/{section_id}.md")
+        if not section_path.is_file() or not outline_path.is_file():
+            continue
+        previous_inputs = previous_entry.get("input_fingerprints")
+        previous_outline = previous_inputs.get("section_outline") if isinstance(previous_inputs, dict) else {}
+        previous_outline_sha = previous_outline.get("sha256") if isinstance(previous_outline, dict) else ""
+        if previous_outline_sha and previous_outline_sha != _sha256_file(outline_path):
+            # The writing contract changed; retain the file for inspection but
+            # require a section rewrite under the updated contract.
+            continue
+        rebuilt_entry["status"] = str(previous_entry["status"])
+        rebuilt_entry["file"] = str(rebuilt_entry.get("file") or f"drafts/survey/sections/{section_id}.tex")
+        if str(previous_entry.get("note") or "").strip():
+            rebuilt_entry["note"] = str(previous_entry["note"]).strip()
+        rebuilt_entry["input_fingerprints"] = _input_fingerprints(
+            workspace,
+            {
+                "section_outline": str(rebuilt_entry.get("outline_file")),
+                "section_file": str(rebuilt_entry.get("file")),
+            },
+        )
+        preserved.append(section_id)
+
+    if preserved:
+        previous_log = previous_state.get("revision_log")
+        if isinstance(previous_log, list):
+            rebuilt_state["revision_log"] = previous_log
+    return preserved
 
 
 class UpdateSurveySectionStateTool(Tool):
