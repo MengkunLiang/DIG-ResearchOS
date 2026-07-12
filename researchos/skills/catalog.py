@@ -199,7 +199,7 @@ def render_skill_catalog(
         for line in _wrap_catalog_text(description, width=card_content_width - 4):
             lines.append(_catalog_card_line(line, width=width, indent="    "))
         for line in _wrap_catalog_text(
-            f"输入：必需 {required} / 可选 {optional} | 输出：{outputs}",
+            f"输入契约：必需材料 {required} 项；可选补充 {optional} 项。完成后预计生成 {outputs} 项产物。",
             width=card_content_width - 4,
         ):
             lines.append(_catalog_card_line(line, width=width, indent="    "))
@@ -287,9 +287,9 @@ def render_skill_catalog_rich(
             details.append("用途：", style="bold dim")
             details.append(_compact(description, 180) + "\n")
             details.append("输入：", style="bold dim")
-            details.append(f"必需 {required} 项， 可选 {optional} 项    ")
-            details.append("产物：", style="bold dim")
-            details.append(f"{outputs} 项\n")
+            details.append(f"必需 {required} 项材料；可选 {optional} 项补充\n")
+            details.append("预期产物：", style="bold dim")
+            details.append(f"完成后生成 {outputs} 项\n")
             details.append("适用：", style="bold dim")
             details.append(profile.action_hint + "\n")
             details.append("操作：", style="bold dim")

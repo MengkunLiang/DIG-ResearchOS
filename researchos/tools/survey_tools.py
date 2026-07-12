@@ -1262,6 +1262,7 @@ class UpdateSurveySectionStateTool(Tool):
         params = UpdateSurveySectionStateParams(**kwargs)
         section_id = _normalize_section_id(params.section_id)
         try:
+            self.policy.require_survey_section(section_id)
             state_path = self.policy.resolve_write(params.state_path)
             state = _read_json(state_path)
         except (ToolAccessDenied, FileNotFoundError, ValueError) as exc:
@@ -1277,6 +1278,17 @@ class UpdateSurveySectionStateTool(Tool):
             )
 
         section_path = params.section_path.strip() or f"drafts/survey/sections/{section_id}.tex"
+        if self.policy.allowed_survey_section_ids is not None:
+            expected_path = f"drafts/survey/sections/{section_id}.tex"
+            if Path(section_path).as_posix() != expected_path:
+                return ToolResult(
+                    ok=False,
+                    content=(
+                        f"Survey section task {self.policy.task_id or ''} may only register "
+                        f"its declared section file: {expected_path}"
+                    ).strip(),
+                    error="access_denied",
+                )
         sections[section_id]["status"] = params.status
         sections[section_id]["file"] = section_path
         fingerprint_paths = {

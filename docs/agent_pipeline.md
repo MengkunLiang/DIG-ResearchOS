@@ -62,6 +62,9 @@ Analysis, Challenges, Future Directions, Conclusion, and Abstract.
   or inferred evidence strength.
 - `latex_compile` requires a real backend. Repair TeX/Docker environment errors
   before resume rather than spending further writing retries.
+- Each `T3.6-SEC-*` worker is sandboxed to its one declared section plus the
+  matching shared state entry. A valid interrupted section is validator-checked
+  and advanced on resume instead of being silently rewritten.
 
 ## T4 Candidate Governance
 
@@ -83,6 +86,20 @@ grounding, routine risk, feasibility, contribution character, and recommendation
 without silently deleting candidates. Gate1 cards present a short title,
 innovation, H1/H2/H3 drafts, merge opportunities, scoring rationale, supporting
 note sections, risk, and protocol boundary.
+
+The CLI first shows a compact candidate index with lane, innovation type,
+hypothesis count, and Pass2 recommendation, then prints the complete card. A
+long direction description or supporting-paper title is wrapped into the card
+body rather than being used as an unbounded heading. Candidate cards retain the
+full direction, source-note paths, and protocol evidence status for inspection.
+
+During generation, T4 writes a durable progress ledger and emits only bounded
+public events: context-pack preparation, per-candidate Pass1 persistence,
+supplement-channel state, Pass2 recommendation, persisted score snapshot, and
+Gate1-card completion. It never emits hidden model deliberation. The Gate1
+selection is fingerprinted against the displayed pool; changed candidates force
+a new presentation, while `select`, `merge`, `new idea`, and `reanalyze` keep
+their own durable lineage records.
 
 `minimum_experiment` is a candidate proposal. `supported` and `user_provided`
 details require `source_refs`; `proposed_not_verified` and `unknown` remain

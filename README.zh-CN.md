@@ -126,6 +126,9 @@ python -m researchos.cli run --workspace ./workspace/project-a
 `run --from <source-workspace> --start-task <task>`。它不是两个项目的合并操作。恢复细节见
 [docs/QUICKSTART.md](docs/QUICKSTART.md)。
 
+综述单节被中断时，应先执行 `validate --task T3.6-SEC-...` 再 `resume`。校验通过的章节会直接
+推进，不会再次让模型改写；单节任务只能写自己的 `.tex` 文件和对应的 `survey_state` 条目。
+
 ## 引导式 Skill
 
 系统提供可恢复的原子 Skill：PDF/DOI 导入、文献卡、证据矩阵、Idea、论文撰写、审稿、润色、编译
@@ -142,6 +145,9 @@ TTY 终端中的 `run-skill` 会对缺失材料进行多轮收集，只把人工
 `user_inputs/<skill>/`；重新检查材料后，必须明确输入“执行”或“暂停”才开始 Skill。缺少输入时
 不会启动 provider，也不会写论文、实验或引用最终产物。自动化/管道运行请显式加
 `--non-interactive`，它会保留 `WAITING_INPUT` 可恢复会话。
+
+目录中展示的每个输入/输出路径都会在 Skill 发现阶段与该 Skill 的读写权限交叉校验，因此不会出现
+“界面提示可以使用某文件、运行后却 `access_denied`”的契约漂移。
 
 ```bash
 python -m researchos.cli run-skill pdf-note-card \

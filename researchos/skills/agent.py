@@ -97,6 +97,15 @@ class SkillAgent(Agent):
             f"- task_id: {ctx.task_id}\n"
             "- Edit is mapped to Write; provide full file content when editing.\n\n"
         )
+        readable = ", ".join(self.spec.allowed_read_prefixes) or "(none)"
+        writable = ", ".join(self.spec.allowed_write_prefixes) or "(none)"
+        header += (
+            "# Workspace Capability Boundary\n"
+            f"- Read only these declared workspace areas: {readable}\n"
+            f"- Write only these declared workspace areas: {writable}\n"
+            "- Start with the verified inputs listed below. Do not probe unrelated workspace paths just because they are conventional names. "
+            "When a needed material is absent, request it through the guided follow-up protocol instead of attempting an unauthorized read.\n\n"
+        )
         session_path = ctx.extra.get("skill_session_path")
         selected_inputs = ctx.extra.get("skill_selected_inputs")
         if session_path:

@@ -53,6 +53,39 @@ def _as_string_list(value: Any, *, label: str) -> tuple[str, ...]:
     return tuple(_as_string(item, label=label) for item in value)
 
 
+def _permission_prefixes(metadata: Mapping[str, Any], *, field: str, source: Path) -> tuple[str, ...]:
+    """Normalize a Skill's declared workspace capability prefixes."""
+
+    raw = metadata.get(field, [""])
+    if raw is None:
+        raw = []
+    if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
+        raise ConfigurationError(f"{field} must be a list of workspace-relative prefixes: {source}")
+    normalized: list[str] = []
+    for item in raw:
+        value = item.strip().replace("\\", "/")
+        if value in {"", ".", "./"}:
+            normalized.append("")
+            continue
+        path = Path(value)
+        if path.is_absolute() or ".." in path.parts:
+            raise ConfigurationError(f"{field} contains an unsafe workspace prefix {item!r}: {source}")
+        normalized.append(path.as_posix().rstrip("/") + "/")
+    return tuple(dict.fromkeys(normalized))
+
+
+def _path_matches_prefix(path: str, prefixes: tuple[str, ...]) -> bool:
+    normalized = Path(path).as_posix()
+    for prefix in prefixes:
+        trimmed = prefix.rstrip("/")
+        if prefix == "":
+            if "/" not in normalized:
+                return True
+        elif normalized == trimmed or normalized.startswith(trimmed + "/"):
+            return True
+    return False
+
+
 @dataclass(frozen=True)
 class SkillInputRequirement:
     """One user-visible input requirement with alternative workspace paths."""
@@ -254,6 +287,8 @@ def validate_skill_metadata(metadata: Mapping[str, Any], *, source: Path) -> Non
     """Reject malformed public contracts at discovery time, before an LLM run."""
 
     interaction = parse_skill_interaction(metadata)
+    read_prefixes = _permission_prefixes(metadata, field="allowed_read_prefixes", source=source)
+    write_prefixes = _permission_prefixes(metadata, field="allowed_write_prefixes", source=source)
     outputs_expected = metadata.get("outputs_expected", {})
     if outputs_expected is None:
         outputs_expected = {}
@@ -272,6 +307,31 @@ def validate_skill_metadata(metadata: Mapping[str, Any], *, source: Path) -> Non
     if declared_paths and interaction_paths and declared_paths != interaction_paths:
         raise ConfigurationError(
             f"interaction.outputs and outputs_expected must describe the same paths: {source}"
+        )
+
+    # The deterministic readiness screen must never promise an input/output
+    # location which the eventual Skill session cannot access.  This catches a
+    # class of late ``access_denied`` failures before an LLM is started.
+    inaccessible_inputs = [
+        path
+        for requirement in interaction.required_inputs + interaction.optional_inputs
+        for path in requirement.paths
+        if not _path_matches_prefix(path, read_prefixes)
+    ]
+    if inaccessible_inputs:
+        raise ConfigurationError(
+            "guided Skill input path is outside allowed_read_prefixes: "
+            + ", ".join(sorted(set(inaccessible_inputs)))
+            + f" ({source})"
+        )
+    inaccessible_outputs = [
+        output.path for output in interaction.outputs if not _path_matches_prefix(output.path, write_prefixes)
+    ]
+    if inaccessible_outputs:
+        raise ConfigurationError(
+            "guided Skill output path is outside allowed_write_prefixes: "
+            + ", ".join(sorted(set(inaccessible_outputs)))
+            + f" ({source})"
         )
 
 

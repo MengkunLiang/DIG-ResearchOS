@@ -37,6 +37,12 @@ In a TTY, the default flow is:
 7. Persist observable phase, current tool, outputs, summary, and a resume
    command in `_runtime/skill_sessions/<session-id>.json`.
 
+Before a guided Skill is listed or run, ResearchOS validates that every input
+path in its contract is readable and every declared output is writable under
+that Skill's workspace permissions. The runtime displays the same capability
+boundary to the Skill. This is intentionally strict: a public Skill must not
+advertise a file location that later becomes `access_denied`.
+
 When a running Skill identifies a semantic evidence gap, it writes
 `user_inputs/<skill>/_followup_request.md` before asking the human. It may not
 guess missing source, venue, citation, experiment, or result information.
@@ -80,6 +86,12 @@ resource numbers only when its current-project allowed inputs or audited
 artifacts explicitly identify them. This is not a ban on those names. It is a
 provenance requirement: missing details remain `unknown` or
 `proposed_not_verified` and trigger a focused follow-up.
+
+`idea-fanout-jury` illustrates the boundary. With an evidence-backed synthesis
+or paper cards it can produce scored, source-anchored directions. Without them
+it may only produce a labelled preliminary concept set with a missing-evidence
+ledger. It must not invent the current project's dataset, baseline, metric,
+AUUC/Qini value, budget, seed, command, or numerical expectation.
 
 ## Status
 

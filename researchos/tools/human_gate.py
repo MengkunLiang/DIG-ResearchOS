@@ -1213,6 +1213,41 @@ def _format_t4_candidate_overview(value: Any) -> str:
         ("cost", "资源/实施成本"),
         ("contribution_strength", "贡献强度"),
     )
+    lane_counts: dict[str, int] = {}
+    for item in candidates:
+        if isinstance(item, dict):
+            lane = str(item.get("lane") or "候选方向")
+            lane_counts[lane] = lane_counts.get(lane, 0) + 1
+    lines.extend(
+        [
+            "候选快速总览（先比较，再阅读下方完整卡片）：",
+            *_t4_wrap_terminal_prose(
+                "总数 " + str(len(candidates)) + "；" + "；".join(
+                    f"{lane} {count}" for lane, count in lane_counts.items()
+                ),
+                indent=2,
+                width=width,
+            ),
+        ]
+    )
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        candidate_id = str(item.get("id") or "?")
+        title = _t4_truncate_terminal_title(
+            str(item.get("title") or "未命名候选"),
+            columns=42,
+        )
+        innovation = item.get("innovation") if isinstance(item.get("innovation"), dict) else {}
+        hypotheses = item.get("candidate_hypotheses") if isinstance(item.get("candidate_hypotheses"), list) else []
+        quick_label = f"{candidate_id} · {item.get('lane') or '候选方向'} · {title}"
+        quick_detail = (
+            f"创新：{innovation.get('type') or '待界定'}；"
+            f"候选假设 {len(hypotheses)} 条；"
+            f"建议：{item.get('selection_recommendation') or '待复核'}"
+        )
+        lines.extend(_t4_wrap_terminal_field(quick_label, quick_detail, indent=2, width=width))
+    lines.append(divider)
     for item in candidates:
         if not isinstance(item, dict):
             continue
@@ -1346,9 +1381,11 @@ def _format_t4_candidate_overview(value: Any) -> str:
             if not isinstance(paper, dict):
                 continue
             lines.extend(
-                [
-                    f"    {index}. {paper.get('title') or '未命名论文'}",
-                ]
+                _t4_wrap_terminal_prose(
+                    f"{index}. {paper.get('title') or '未命名论文'}",
+                    indent=4,
+                    width=width,
+                )
             )
             lines.extend(_t4_wrap_terminal_field("引用", paper.get("citation"), indent=6, width=width))
             lines.extend(_t4_wrap_terminal_field("证据等级", paper.get("evidence_level"), indent=6, width=width))

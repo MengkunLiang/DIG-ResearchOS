@@ -14,6 +14,7 @@ allowed_read_prefixes:
   - ideation/
   - literature/
   - experiments/
+  - drafts/
   - _runtime/skill_sessions/
 allowed_write_prefixes:
   - ideation/

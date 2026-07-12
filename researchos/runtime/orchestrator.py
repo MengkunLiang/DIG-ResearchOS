@@ -178,10 +178,42 @@ class AgentRunner:
     ) -> "WorkspaceAccessPolicy":
         from ..tools.workspace_policy import WorkspaceAccessPolicy
 
+        allowed_write_prefixes = list(eff.allowed_write_prefixes)
+        allowed_survey_section_ids: frozenset[str] | None = None
+
+        # A T3.6 section worker has historically inherited drafts/survey/ and
+        # could therefore rewrite Abstract, Conclusion, outlines, or trigger
+        # assembly while writing Introduction.  The task I/O contract already
+        # declares exactly one section output; make it an enforced capability
+        # boundary instead of a prompt-only convention.
+        if ctx.task_id.startswith("T3.6-SEC-"):
+            section_id = str(ctx.extra.get("section_id") or "").strip()
+            if not section_id:
+                section_id = ctx.task_id.removeprefix("T3.6-SEC-").lower().replace("-", "_")
+            section_path = ctx.outputs_expected.get("section")
+            if section_path is None:
+                section_path = ctx.workspace_dir / "drafts" / "survey" / "sections" / f"{section_id}.tex"
+            try:
+                section_rel = section_path.relative_to(ctx.workspace_dir).as_posix()
+            except ValueError:
+                section_rel = f"drafts/survey/sections/{section_id}.tex"
+            scoped_writes = [
+                section_rel,
+                "drafts/survey/survey_state.json",
+            ]
+            allowed_write_prefixes = [
+                path
+                for path in scoped_writes
+                if WorkspaceAccessPolicy.path_allowed(path, allowed_write_prefixes)
+            ]
+            allowed_survey_section_ids = frozenset({section_id})
+
         return WorkspaceAccessPolicy(
             workspace_dir=ctx.workspace_dir,
             allowed_read_prefixes=eff.allowed_read_prefixes,
-            allowed_write_prefixes=eff.allowed_write_prefixes,
+            allowed_write_prefixes=allowed_write_prefixes,
+            task_id=ctx.task_id,
+            allowed_survey_section_ids=allowed_survey_section_ids,
         )
 
     @staticmethod
@@ -440,19 +472,41 @@ class AgentRunner:
             t35_prepared = False
             if not (deterministic_pre_finalized or t2_pre_finalized or t3_pre_finalized):
                 t35_prepared = await self._maybe_prepare_t35_before_llm(ctx, policy)
-            t36_visuals_pre_finalized = False
+            t36_section_pre_finalized = False
             if not (deterministic_pre_finalized or t2_pre_finalized or t3_pre_finalized):
+                t36_section_pre_finalized = await self._maybe_finalize_t36_section_before_llm(ctx)
+            t36_visuals_pre_finalized = False
+            if not (
+                deterministic_pre_finalized
+                or t2_pre_finalized
+                or t3_pre_finalized
+                or t36_section_pre_finalized
+            ):
                 t36_visuals_pre_finalized = await self._maybe_finalize_t36_visuals_before_llm(ctx)
             t36_compile_pre_finalized = False
-            if not (deterministic_pre_finalized or t2_pre_finalized or t3_pre_finalized or t36_visuals_pre_finalized):
+            if not (
+                deterministic_pre_finalized
+                or t2_pre_finalized
+                or t3_pre_finalized
+                or t36_section_pre_finalized
+                or t36_visuals_pre_finalized
+            ):
                 t36_compile_pre_finalized = await self._maybe_finalize_t36_compile_before_llm(ctx)
-            if not (deterministic_pre_finalized or t2_pre_finalized or t3_pre_finalized or t36_visuals_pre_finalized or t36_compile_pre_finalized):
+            if not (
+                deterministic_pre_finalized
+                or t2_pre_finalized
+                or t3_pre_finalized
+                or t36_section_pre_finalized
+                or t36_visuals_pre_finalized
+                or t36_compile_pre_finalized
+            ):
                 t4_pre_finalized = await self._maybe_finalize_t4_before_llm(ctx)
             t4_gate1_pre_finalized = False
             if not (
                 deterministic_pre_finalized
                 or t2_pre_finalized
                 or t3_pre_finalized
+                or t36_section_pre_finalized
                 or t36_visuals_pre_finalized
                 or t36_compile_pre_finalized
                 or t4_pre_finalized
@@ -463,6 +517,7 @@ class AgentRunner:
                 deterministic_pre_finalized
                 or t2_pre_finalized
                 or t3_pre_finalized
+                or t36_section_pre_finalized
                 or t36_visuals_pre_finalized
                 or t36_compile_pre_finalized
                 or t4_pre_finalized
@@ -474,6 +529,7 @@ class AgentRunner:
                 deterministic_pre_finalized
                 or t2_pre_finalized
                 or t3_pre_finalized
+                or t36_section_pre_finalized
                 or t36_visuals_pre_finalized
                 or t36_compile_pre_finalized
                 or t4_pre_finalized
@@ -486,6 +542,7 @@ class AgentRunner:
                 deterministic_pre_finalized
                 or t2_pre_finalized
                 or t3_pre_finalized
+                or t36_section_pre_finalized
                 or t36_visuals_pre_finalized
                 or t36_compile_pre_finalized
                 or t4_pre_finalized
@@ -500,6 +557,7 @@ class AgentRunner:
                 or
                 t2_pre_finalized
                 or t3_pre_finalized
+                or t36_section_pre_finalized
                 or t36_visuals_pre_finalized
                 or t36_compile_pre_finalized
                 or t4_pre_finalized
@@ -518,6 +576,7 @@ class AgentRunner:
                 or
                 t2_pre_finalized
                 or t3_pre_finalized
+                or t36_section_pre_finalized
                 or t36_visuals_pre_finalized
                 or t36_compile_pre_finalized
                 or t4_pre_finalized
@@ -531,6 +590,7 @@ class AgentRunner:
             deterministic_pre_finalized = deterministic_pre_finalized or (
                     t2_pre_finalized
                     or t3_pre_finalized
+                    or t36_section_pre_finalized
                     or t36_visuals_pre_finalized
                     or t36_compile_pre_finalized
                     or t4_pre_finalized
@@ -1886,6 +1946,43 @@ class AgentRunner:
                 ],
             },
             action_type="t3_resume_prefinalize",
+        )
+        return True
+
+    async def _maybe_finalize_t36_section_before_llm(self, ctx: ExecutionContext) -> bool:
+        """Advance a validated survey section after a pause without rewriting it.
+
+        Section writing is the only T3.6 phase where an interrupted provider
+        run can leave a complete, valid single-file artifact while the global
+        survey remains unfinished.  Replaying the model call is harmful: it
+        needlessly changes a reviewed section and used to combine with broad
+        write privileges to disturb later sections.  A resumed section task
+        therefore validates its declared output/state pair first and advances
+        directly when both remain current.
+        """
+
+        if not ctx.task_id.startswith("T3.6-SEC-") or not self._is_resume_run(ctx):
+            return False
+        section_path = ctx.outputs_expected.get("section")
+        if section_path is None or not section_path.exists() or section_path.stat().st_size <= 0:
+            return False
+        state_path = ctx.workspace_dir / "drafts" / "survey" / "survey_state.json"
+        if not state_path.exists() or state_path.stat().st_size <= 0:
+            return False
+        ok, err = self.agent.validate_outputs(ctx)
+        if not ok:
+            self.log.info("t36_section_resume_prefinalize_skipped", task=ctx.task_id, reason=err)
+            return False
+        relative_section = safe_relative(section_path, ctx.workspace_dir) or str(section_path)
+        self.progress.emit(
+            f"[Survey Writer Agent] {ctx.task_id} 的章节、状态与证据校验已通过；恢复时不重写 {relative_section}。",
+            important=True,
+        )
+        self._record_runtime_completion(
+            ctx,
+            "t36_section_resume_prefinalize",
+            {"outputs": [relative_section, "drafts/survey/survey_state.json"]},
+            action_type="t36_section_resume_prefinalize",
         )
         return True
 

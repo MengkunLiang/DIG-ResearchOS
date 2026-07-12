@@ -11,6 +11,7 @@ model_tier: medium
 temperature: 0.2
 allowed_read_prefixes:
   - user_inputs/research-scope/
+  - user_seeds/
   - literature/
   - ideation/
   - _runtime/skill_sessions/

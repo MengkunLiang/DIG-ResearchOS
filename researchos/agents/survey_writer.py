@@ -90,6 +90,20 @@ class SurveyWriterAgent(Agent):
             self.spec.tool_names = ["read_file", "build_survey_figures", "finish_task"]
             self.spec.allowed_read_prefixes = ["literature/", "drafts/survey/"]
             self.spec.allowed_write_prefixes = ["drafts/survey/figures/"]
+        elif mode == "survey_section":
+            # The runtime additionally intersects write permissions with the
+            # declared T3.6-SEC output.  Restricting the tool surface here
+            # prevents a section writer from even attempting assembly, state
+            # reconstruction, figure generation, or another section's output.
+            self.spec.tool_names = [
+                "ask_human",
+                "read_file",
+                "list_files",
+                "grep_search",
+                "write_file",
+                "update_survey_section_state",
+                "finish_task",
+            ]
 
     def _phase(self, ctx: ExecutionContext) -> str:
         return ctx.mode or str(ctx.extra.get("phase") or self._mode or "survey_plan")

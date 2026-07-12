@@ -88,6 +88,13 @@ idempotent for an unchanged survey plan: completed `written`/`revised` sections
 with existing section files and matching outline fingerprints survive a rebuild.
 Plan or contract changes intentionally invalidate the affected section state.
 
+Each `T3.6-SEC-*` task is also a task-scoped write sandbox. It may write only
+its own `drafts/survey/sections/<section>.tex` file and update the shared
+`drafts/survey/survey_state.json` entry for that same section. It cannot rebuild
+section outlines, write another section, assemble the survey, generate figures,
+or compile PDF. On `resume`, a section whose file and state pass its validator
+is advanced without a second LLM rewrite.
+
 The survey visual tool generates at most one vector PDF:
 
 ```text
@@ -107,6 +114,20 @@ current project explicitly supplies it through an allowed input or audited
 artifact. The relevant source path and section/field must accompany its use.
 Otherwise the value is `unknown`, `proposed_not_verified`, or a blocker. This
 applies to AUUC/Qini just as it applies to accuracy/F1.
+
+## Skill Capability Contracts
+
+Every guided public Skill is loaded only after deterministic validation of its
+`SKILL.md` contract. Every advertised input location must fall under its
+`allowed_read_prefixes`; every advertised output must fall under its
+`allowed_write_prefixes`. The runtime repeats those boundaries in the Skill
+system context. This prevents a readiness panel from advertising a path that
+would later fail with `access_denied`.
+
+This check covers workspace-relative paths. A special-purpose tool that works
+with an explicitly approved external local source keeps its external-path
+validation inside that tool; a Skill must not use `read_file` to probe an
+absolute path outside the workspace.
 
 ## Extension Points
 

@@ -83,6 +83,13 @@ python -m researchos.cli validate \
 completed sections whose file and outline fingerprints remain valid. A changed
 plan or writing contract deliberately returns affected sections to pending.
 
+For `T3.6-SEC-*`, `resume` first validates the one declared section and its
+matching `survey_state` entry. When both are valid, the console reports that
+the section is being advanced without another provider rewrite. A section task
+cannot write sibling sections, outlines, survey assembly files, figures, or
+compile outputs; an attempted cross-section mutation is an explicit access
+error rather than a hidden state change.
+
 ## What Not To Infer From Logs
 
 - A retrieval coverage gap is not a research gap.

@@ -12,7 +12,6 @@ model_tier: medium
 temperature: 0.2
 allowed_read_prefixes:
   - user_inputs/reference-project-miner/
-  - /mnt/data/reference/
   - _runtime/skill_sessions/
 allowed_write_prefixes:
   - researchos_reference/
@@ -55,4 +54,4 @@ interaction:
 
 # Reference Project Miner
 
-Read the verified manifest first. Call `mine_reference_projects` only for the permitted local sources. Separate facts observed in source code from your transfer judgment. Do not copy project code, credentials, licenses, or undocumented behaviour into ResearchOS. Write the declared outputs and make every recommendation point to a source location and a testable migration hypothesis.
+Read the verified manifest first. The manifest is the only material you may read directly. Pass its explicitly approved local roots to `mine_reference_projects`; do not use `read_file` or `list_files` on an external absolute path, and do not fall back to an unstated default repository. Separate facts observed by the deterministic tool from your transfer judgment. Do not copy project code, credentials, licenses, or undocumented behaviour into ResearchOS. Write the declared outputs and make every recommendation point to a source location and a testable migration hypothesis.

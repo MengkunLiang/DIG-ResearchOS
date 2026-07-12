@@ -138,6 +138,10 @@ new target workspace from another project's validated upstream artifacts. It is
 not a merge operation. The recovery guide is in
 [docs/QUICKSTART.md](docs/QUICKSTART.md).
 
+For an interrupted survey section, validate before resuming. A valid
+`T3.6-SEC-*` output advances without rewriting the completed section; the
+section worker is restricted to that file and its matching survey state entry.
+
 ## Guided Skills
 
 ResearchOS also exposes atomic, resumable Skills for paper intake, DOI/title
@@ -157,6 +161,10 @@ rechecks readiness, then asks for an explicit `执行` / `暂停` decision. It d
 not start a provider or generate final deliverables while required input is
 missing. Automation should use `--non-interactive`; missing inputs then create
 a resumable `WAITING_INPUT` session.
+
+The catalog's input/output paths are checked against each Skill's workspace
+permissions at discovery time. A listed public Skill therefore cannot advertise
+a path which will later be rejected as `access_denied`.
 
 ```bash
 python -m researchos.cli run-skill pdf-note-card \

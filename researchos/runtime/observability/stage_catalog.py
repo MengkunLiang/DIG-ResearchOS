@@ -68,6 +68,24 @@ def stage_profile(task_id: str) -> StageProfile:
         return StageProfile(f"{task_id} · Manuscript Section Draft", "写作一个有证据边界的论文章节", "本节是否只使用允许的主张、引用和实验事实？", ("section evidence", "draft", "state update"))
     if task_id.startswith("T8-REVIEW") or task_id.startswith("T8-REVISE") or task_id == "T8-SELF-CHECK":
         return StageProfile(f"{task_id} · Manuscript Review & Revision", "审查或修订当前论文版本", "发现的问题是否被追溯到证据、章节和具体 patch？", ("review findings", "patches", "audit"))
+    if task_id.startswith("SKILL_INTAKE_"):
+        skill_name = task_id.removeprefix("SKILL_INTAKE_")
+        return StageProfile(
+            f"Skill Intake · {skill_name}",
+            "以多轮人机交互收集并整理启动材料",
+            "研究材料是否已被放入可验证路径，并足以开始该原子能力？",
+            ("材料检查", "定向追问", "受限整理", "等待确认"),
+            "本阶段不会生成论文、实验结果或最终 Skill 产物。",
+        )
+    if task_id.startswith("SKILL_"):
+        skill_name = task_id.removeprefix("SKILL_")
+        return StageProfile(
+            f"Skill · {skill_name}",
+            "在明确输入、证据边界和输出契约下执行原子科研能力",
+            "已提供材料实际支持什么，哪些结论仍需用户补充或标为未验证？",
+            ("读取已验证材料", "执行专属分析", "记录风险/未支持项", "写入可恢复产物"),
+            "工具调用、输入边界和产物路径会单独记录；不把工具提示当作学术结论。",
+        )
     return StageProfile(f"{task_id} · ResearchOS Stage", "推进当前研究工作流节点", "该节点的输入、判断和输出是否满足下游需要？", ("读取 Artifact", "执行阶段判断", "写入可审计结果"))
 
 
