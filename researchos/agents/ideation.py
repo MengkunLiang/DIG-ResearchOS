@@ -47,6 +47,8 @@ CROSS_DOMAIN_RELATIONS = {
 T4_CONTEXT_PACK_JSON = Path("ideation/t4_context_pack.json")
 T4_CONTEXT_PACK_MD = Path("ideation/t4_context_pack.md")
 T4_PROGRESS_MD = Path("ideation/t4_progress.md")
+T4_EXECUTION_EVENTS = Path("ideation/t4_execution_events.jsonl")
+T4_GATE1_CARD_SCHEMA_MARKER = "<!-- ResearchOS Gate1 candidate-card schema: v2 -->"
 
 T4_GATE1_ARTIFACTS: tuple[tuple[str, str], ...] = (
     ("ideation/_pass1_forward_candidates.json", "Pass1 候选发散"),
@@ -733,6 +735,105 @@ def _relative_t4_path(workspace_dir: Path, value: str | None) -> str:
         return path.as_posix().lstrip("./")
 
 
+def _read_t4_execution_events(workspace_dir: Path, *, limit: int = 120) -> list[dict[str, object]]:
+    """Read only structured public T4 telemetry; malformed lines are ignored."""
+
+    path = workspace_dir / T4_EXECUTION_EVENTS
+    if not path.exists():
+        return []
+    events: list[dict[str, object]] = []
+    try:
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:]:
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(item, dict) and item.get("phase") and item.get("status"):
+                events.append(item)
+    except OSError:
+        return []
+    return events
+
+
+def _render_t4_execution_event(event: dict[str, object]) -> str:
+    phase_labels = {
+        "context_pack": "上下文包",
+        "pass1_mainline": "Pass1 主线",
+        "pass1_supplement": "Pass1 补充通道",
+        "pass2_grounding": "Pass2 接地复核",
+        "scoring": "评分整理",
+        "gate_cards": "Gate1 卡片",
+    }
+    status_labels = {
+        "started": "已开始",
+        "candidate_started": "候选开始",
+        "candidate_completed": "候选完成",
+        "channel_started": "通道开始",
+        "channel_completed": "通道完成",
+        "completed": "已完成",
+    }
+    phase = phase_labels.get(str(event.get("phase") or ""), str(event.get("phase") or "T4"))
+    status = status_labels.get(str(event.get("status") or ""), str(event.get("status") or "更新"))
+    completed = event.get("completed")
+    total = event.get("total")
+    count = f" {completed}/{total}" if completed is not None and total is not None else ""
+    subject = str(event.get("candidate_id") or event.get("channel") or "").strip()
+    title = _shorten(str(event.get("candidate_title") or ""), 76)
+    suffix = ""
+    if subject:
+        suffix += f" · {subject}"
+    if title:
+        suffix += f" · {title}"
+    if event.get("recommendation"):
+        suffix += f" · 建议={event.get('recommendation')}"
+    scores = event.get("score_snapshot") if isinstance(event.get("score_snapshot"), dict) else {}
+    if scores:
+        suffix += " · 评分=" + ", ".join(f"{key}={value}/5" for key, value in scores.items())
+    return f"- [event] {phase}{count} · {status}{suffix}"
+
+
+_T4_SUPPLEMENT_CHANNELS: tuple[tuple[str, str, str], ...] = (
+    (
+        "mechanism_challenge",
+        "S1 机制挑战",
+        "检验替代机制与失效边界；通常作为主线的反证模块。",
+    ),
+    (
+        "reverse_operation",
+        "S2 反向操作",
+        "移除、关闭或反转机制成分，形成消融或反事实检验。",
+    ),
+    (
+        "subgroup_failure",
+        "S3 子群失败",
+        "定位子群、状态或数据条件下的失败模式与边界。",
+    ),
+    (
+        "missing_area_exploration",
+        "S4 缺口探索",
+        "探索已确认空白；证据不足时先补检，不能直接升级为主张。",
+    ),
+)
+
+
+def _t4_supplement_channel_states(events: list[dict[str, object]]) -> dict[str, str]:
+    """Reduce durable public events to one visible state per supplement lane."""
+
+    states = {channel: "queued" for channel, _label, _note in _T4_SUPPLEMENT_CHANNELS}
+    for event in events:
+        if str(event.get("phase") or "") != "pass1_supplement":
+            continue
+        channel = str(event.get("channel") or "").strip()
+        if channel not in states:
+            continue
+        status = str(event.get("status") or "")
+        if status == "channel_completed":
+            states[channel] = "done"
+        elif status in {"channel_started", "candidate_started", "candidate_completed"} and states[channel] != "done":
+            states[channel] = "running"
+    return states
+
+
 def refresh_t4_gate1_progress(
     workspace_dir: Path,
     *,
@@ -760,8 +861,24 @@ def refresh_t4_gate1_progress(
     total_count = len(T4_GATE1_ARTIFACTS)
     bridge_required = _t4_bridge_coverage_required(workspace_dir)
     bridge_exists = (workspace_dir / T4_BRIDGE_COVERAGE_PATH).exists()
+    events = _read_t4_execution_events(workspace_dir)
+    supplement_states = _t4_supplement_channel_states(events)
 
     lines = ["# T4 Gate1 Progress", ""]
+    lines.extend(
+        [
+            "## 通道说明（公开执行角色，不含模型内部推理）",
+            "- **D 主线**：面向论文主贡献的候选路线；可被选择、合并或重构。",
+            "- **Bridge**：跨领域机制迁移路线；后半段必须回查 bridge 文献笔记 section。",
+            "- **证据不足**：保留可见性，但补足明确证据前不应作为最终主张。",
+            "- **S 补充**：反证、失败分析或消融路线；默认服务于 D 主线，不单独承担论文主贡献。",
+            "",
+            "### Pass1 补充通道状态",
+        ]
+    )
+    for channel, label, note in _T4_SUPPLEMENT_CHANNELS:
+        lines.append(f"- [{supplement_states[channel]}] `{channel}` / {label}：{note}")
+    lines.append("")
     lines.append("## Gate1 前半段（候选池，自动执行）")
     if compact_pack_ready:
         compact_state = "done"
@@ -810,6 +927,21 @@ def refresh_t4_gate1_progress(
             "- [waiting_human] 后续才会生成 `ideation/idea_scorecard.yaml`、`ideation/hypotheses.md`、`ideation/exp_plan.yaml` 和风险/决策记录。",
         ]
     )
+    if events:
+        lines.extend(["", "## 可观察执行轨迹（不含模型内部推理）"])
+        for event in events:
+            lines.append(_render_t4_execution_event(event))
+        latest = events[-1]
+        if not paused_reason and str(latest.get("status") or "") not in {"completed", "channel_completed", "candidate_completed"}:
+            current_label = _render_t4_execution_event(latest).removeprefix("- [event] ")
+    else:
+        lines.extend(
+            [
+                "",
+                "## 可观察执行轨迹（不含模型内部推理）",
+                "- [waiting] 尚未写入候选级事件；runtime 会在候选文件落盘时补充可验证摘要。",
+            ]
+        )
     if paused_reason:
         current_label = f"已暂停：{paused_reason}"
         lines.append("")
@@ -845,6 +977,7 @@ class IdeationAgent(Agent):
                         "grep_search",
                         "analyze_idea_concentration",
                         "compute_idea_novelty_signal",
+                        "log_t4_ideation_progress",
                         "ask_human",
                         "finish_task",
                     ],
@@ -1533,14 +1666,20 @@ def validate_t4_gate1_ready(ws: Path) -> tuple[bool, str | None]:
 def ensure_t4_gate1_candidate_cards(ws: Path) -> bool:
     """Backfill the human-readable Gate1 card deck for upgraded workspaces.
 
-    Returns True when a file was written. This is intentionally conservative:
-    it never overwrites an existing card deck, and it only uses the structured
-    candidate pool that T4 already produced.
+    Returns True when a file was written. Candidate cards are a derived,
+    human-facing projection of the structured candidate pool, not an editable
+    source of truth. Decks from the pre-v2 long-heading format are refreshed
+    once so resumed workspaces get the same D -> H -> innovation layout as new
+    runs. v2 decks are never overwritten here.
     """
 
     cards_path = ws / "ideation" / "_gate1_candidate_cards.md"
     if cards_path.exists() and cards_path.stat().st_size > 0:
-        return False
+        try:
+            if T4_GATE1_CARD_SCHEMA_MARKER in cards_path.read_text(encoding="utf-8", errors="replace"):
+                return False
+        except OSError:
+            return False
     candidate_path = ws / "ideation" / "_candidate_directions.json"
     if not candidate_path.exists():
         return False
@@ -1663,23 +1802,124 @@ def refresh_t4_gate1_candidate_presentation(ws: Path) -> bool:
     return True
 
 
-def _render_gate1_candidate_cards(candidates: list[dict], pass2_by_id: dict[str, dict]) -> str:
-    score_order = [
-        "novelty",
-        "feasibility",
-        "impact",
-        "evaluability",
-        "differentiation",
-        "cost",
-        "contribution_strength",
+def _candidate_card_short_title(candidate: dict, display: dict[str, str]) -> str:
+    """Return a bounded label suitable for a terminal/Markdown heading."""
+
+    raw = str(
+        candidate.get("display_title")
+        or candidate.get("title_short_zh")
+        or candidate.get("short_title")
+        or display.get("title")
+        or "未命名方向"
+    ).strip()
+    limit = 32 if re.search(r"[\u4e00-\u9fff]", raw) else 80
+    return _shorten(" ".join(raw.split()), limit)
+
+
+def _candidate_card_hypotheses(candidate: dict, idea_id: str, display: dict[str, str]) -> list[dict[str, str]]:
+    raw = candidate.get("candidate_hypotheses")
+    hypotheses: list[dict[str, str]] = []
+    if isinstance(raw, list):
+        for index, item in enumerate(raw[:3], start=1):
+            if not isinstance(item, dict):
+                continue
+            hypotheses.append(
+                {
+                    "id": str(item.get("id") or f"{idea_id}-H{index}").strip(),
+                    "statement": str(item.get("statement") or item.get("hypothesis") or "待补充").strip(),
+                    "mechanism": str(item.get("mechanism") or "待补充").strip(),
+                    "prediction": str(item.get("observable_prediction") or item.get("prediction") or "待补充").strip(),
+                    "test": str(item.get("discriminating_test") or item.get("test") or "待补充").strip(),
+                }
+            )
+    if hypotheses:
+        return hypotheses
+    # Compatibility/recovery paths expose only the one testable proposition
+    # already present in the durable candidate. They must not invent H2/H3.
+    return [
+        {
+            "id": f"{idea_id}-H1",
+            "statement": display["pitch"],
+            "mechanism": display["mechanism"],
+            "prediction": display["prediction"],
+            "test": display["counterfactual"],
+        }
     ]
+
+
+def _candidate_card_innovation(candidate: dict) -> dict[str, str]:
+    raw = candidate.get("innovation") if isinstance(candidate.get("innovation"), dict) else {}
+    return {
+        "summary": str(raw.get("summary") or "未提供明确创新说明；选择前需要补写，不能把假设本身当成创新。"),
+        "type": str(raw.get("type") or "待界定"),
+        "delta": str(raw.get("novelty_delta") or "未提供相对最近工作的明确差异。"),
+        "non_incremental": str(raw.get("non_incremental_reason") or "未提供非增量理由；Pass2 需继续核验。"),
+    }
+
+
+def _candidate_card_merges(candidate: dict) -> list[dict[str, str]]:
+    raw = candidate.get("merge_opportunities")
+    if not isinstance(raw, list):
+        return []
+    result: list[dict[str, str]] = []
+    for item in raw[:4]:
+        if not isinstance(item, dict):
+            continue
+        result.append(
+            {
+                "with": str(item.get("with_candidate") or item.get("candidate_id") or "未指定"),
+                "combine": str(item.get("combine") or "未提供假设组合"),
+                "rationale": str(item.get("rationale") or "未提供组合理由"),
+            }
+        )
+    return result
+
+
+def _candidate_card_lane_description(candidate: dict, idea_id: str) -> str:
+    """Explain the candidate's public Gate1 role from durable fields only."""
+
+    lane = str(candidate.get("constraint_status") or candidate.get("lane") or "").strip().lower()
+    origin = str(candidate.get("idea_origin") or candidate.get("origin") or "").strip().lower()
+    if "not_supported" in lane or ("evidence" in lane and "not" in lane):
+        return "证据不足候选：保留可见性以供讨论；补足对应笔记 section 的机制证据前，不应升级为最终主张。"
+    if "bridge" in lane or "bridge" in origin:
+        return "桥接候选：来自已确认的跨领域机制；选择后必须重新核验 bridge 文献笔记 section 的可迁移边界。"
+    if idea_id.upper().startswith("S") or "supplement" in lane:
+        return "补充候选：用于反证、失败分析或消融；默认服务于 D 主线，而非单独承担论文主贡献。"
+    return "主线候选：可作为论文主贡献路线被选择、合并或重构；仍需完成后半段的定向证据回查。"
+
+
+def _render_gate1_candidate_cards(candidates: list[dict], pass2_by_id: dict[str, dict]) -> str:
+    score_order = ["novelty", "feasibility", "impact", "evaluability", "differentiation", "cost", "contribution_strength"]
+    score_labels = {
+        "novelty": "新颖性",
+        "feasibility": "可行性",
+        "impact": "影响力",
+        "evaluability": "可评估性",
+        "differentiation": "差异化",
+        "cost": "资源成本",
+        "contribution_strength": "贡献强度",
+    }
     lines = [
         "# T4 Gate1 候选方向卡片",
+        T4_GATE1_CARD_SCHEMA_MARKER,
         "",
-        "## 使用方式",
-        "- 优先比较：研究价值、技术机制、最小验证、证据边界和风险；不要把分数当成自动选择结果。",
-        "- 可直接在 Gate 输入：`选 D1，强调……`、`合并 D1+D3，把……`、`新想法：……` 或 `重新分析：……`。",
-        "- 这些是 Gate1 候选而非最终假设；选择后 T4 后半段必须回查文献笔记中的具体 section。",
+        "## 阅读与选择",
+        "- 每个 `D#` 是可选研究方向；其下 `D#-H#` 是候选假设/机制，并非最终 `hypotheses.md`。",
+        "- 先比较创新变化、可证伪命题、最小验证、证据边界和 kill criteria；分数只支持判断，不替代人工选择。",
+        "- 可直接输入：`选 D1，强调……`、`合并 D1-H2 + D3-H1`、`新想法：……` 或 `重新分析：……`。",
+        "",
+        "## 通道说明",
+        "- **D 主线**：面向论文主贡献的候选路线，可选择、合并或重构。",
+        "- **Bridge**：从已确认跨领域机制导出的路线；后半段必须回查 bridge 文献笔记 section，不能把类比直接写成结论。",
+        "- **证据不足**：保持可见以供人工判断，但补足明确机制证据前不应成为最终主张。",
+        "- **S 补充**：服务于反证、失败分析或消融，默认不单独构成论文主贡献。",
+        "",
+        "### 四个补充通道",
+        "- **S1 / mechanism_challenge**：挑战声称机制，检验替代解释和失效边界。",
+        "- **S2 / reverse_operation**：移除、反转或关闭机制成分，形成消融或反事实检验。",
+        "- **S3 / subgroup_failure**：定位子群、状态或数据条件下的失败模式。",
+        "- **S4 / missing_area_exploration**：探索已确认研究空白；先补证据，再决定是否升级为主线。",
         "",
     ]
     for rank, candidate in enumerate(candidates, start=1):
@@ -1687,71 +1927,110 @@ def _render_gate1_candidate_cards(candidates: list[dict], pass2_by_id: dict[str,
             continue
         idea_id = str(candidate.get("id") or candidate.get("idea_id") or f"D{rank}").strip()
         display = _candidate_display_text(candidate)
-        title = display["title"]
+        short_title = _candidate_card_short_title(candidate, display)
+        full_title = str(candidate.get("title") or "").strip()
         pass2 = candidate.get("pass2_screening") if isinstance(candidate.get("pass2_screening"), dict) else {}
         review = pass2_by_id.get(idea_id, {})
-        recommendation = str(
-            pass2.get("screening_recommendation")
-            or review.get("screening_recommendation")
-            or "review_needed"
-        ).strip()
-        warning = str(
-            pass2.get("selection_warning")
-            or review.get("selection_warning")
-            or "none"
-        ).strip()
+        recommendation = str(pass2.get("screening_recommendation") or review.get("screening_recommendation") or "review_needed").strip()
+        warning = str(pass2.get("selection_warning") or review.get("selection_warning") or "none").strip()
+        innovation = _candidate_card_innovation(candidate)
+        hypotheses = _candidate_card_hypotheses(candidate, idea_id, display)
+        merges = _candidate_card_merges(candidate)
         scores = candidate.get("scores") if isinstance(candidate.get("scores"), dict) else {}
-        score_text = ", ".join(
-            f"{key}={scores.get(key)}" for key in score_order if scores.get(key) is not None
-        ) or "not scored"
+        rationale = candidate.get("score_rationale") if isinstance(candidate.get("score_rationale"), dict) else {}
         basis_sources = candidate.get("basis_sources") if isinstance(candidate.get("basis_sources"), list) else []
         papers = candidate.get("supporting_papers") if isinstance(candidate.get("supporting_papers"), list) else []
         if not papers and basis_sources:
-            papers = [
-                {
-                    "title": str(item.get("ref") or item.get("type") or "source"),
-                    "claim_used": str(item.get("claim") or ""),
-                }
-                for item in basis_sources
-                if isinstance(item, dict)
-            ]
-        paper_text = _format_card_papers(papers)
-        if paper_text == "none":
-            paper_text = "none; forward-generated from synthesis/problem reframing/cross-domain analogy"
+            papers = [{"title": str(item.get("ref") or item.get("type") or "source"), "claim_used": str(item.get("claim") or "")} for item in basis_sources if isinstance(item, dict)]
         minimum = candidate.get("minimum_experiment") if isinstance(candidate.get("minimum_experiment"), dict) else {}
         metrics = minimum.get("metric")
-        if isinstance(metrics, list):
-            metrics_text = ", ".join(str(item) for item in metrics)
-        else:
-            metrics_text = str(metrics or "metric TBD")
+        metrics_text = ", ".join(str(item) for item in metrics) if isinstance(metrics, list) else str(metrics or "待定")
         risks = candidate.get("key_risks") or candidate.get("risks") or []
-        risk_text = _format_card_risks(risks)
-        practical = _candidate_practical_implication(candidate)
         nearest = candidate.get("nearest_prior_work") if isinstance(candidate.get("nearest_prior_work"), dict) else {}
         lines.extend(
             [
-                f"## 候选 {idea_id}：{title}",
-                *( [f"- **英文原题**：{display['original_title']}"] if display["original_title"] else [] ),
-                f"- **建议动作**：{recommendation}；**风险提示**：{warning}",
-                f"- **一句话主张**：{display['pitch']}",
-                f"- **技术机制**：{display['mechanism']}\n  - 预测：{display['prediction']}\n  - 反事实：{display['counterfactual']}",
-                f"- **实践/管理含义**：{practical}",
-                f"- **评分及依据**：{score_text}；依据：{candidate.get('basis_summary') or candidate.get('contribution_character') or '见候选池'}",
-                f"- **核心文献依赖**：{paper_text}",
-                f"- **最近工作/新颖性差异**：{nearest.get('work', 'not_computed')}（distance={nearest.get('distance', 'not_computed')}）；novelty_signal={candidate.get('novelty_signal') or 'not_computed'}",
-                f"- **最小说服性验证**：数据={minimum.get('dataset', '待定')}；基线={minimum.get('baseline', '待定')}；指标={metrics_text}；预期信号={minimum.get('expected_signal', '待定')}",
-                f"- **主要风险/否决条件**：{risk_text}",
-                "- **可编辑提示**：可在选择时补充机制、实践含义、文献依赖或合并方案；T4 后半段会据此收敛，不能直接把弱证据升级为结论。",
+                "=" * 88,
+                f"## {idea_id} · {short_title}",
+                f"**方向类型**：{candidate.get('constraint_status') or '未标注'} | **来源**：{candidate.get('idea_origin') or '未标注'} | **Pass2 建议**：{recommendation}",
+                f"**候选角色**：{_candidate_card_lane_description(candidate, idea_id)}",
+                f"**核心命题**：{display['pitch']}",
+                f"**选择风险**：{warning}",
                 "",
+                "### 方向概要",
+                f"- **研究问题**：{candidate.get('target_problem') or '待补充'}",
+                f"- **技术机制主线**：{display['mechanism']}",
+                f"- **完整方向描述**：{_shorten(full_title or display['pitch'], 760)}",
+                f"- **实践/管理含义**：{_candidate_practical_implication(candidate)}",
+                "",
+                "### 核心创新",
+                f"- **创新是什么**：{innovation['summary']}",
+                f"- **创新类型**：{innovation['type']}",
+                f"- **相对最近工作的变化**：{innovation['delta']}",
+                f"- **为何不是普通增量**：{innovation['non_incremental']}",
+                "",
+                "### 候选假设与机制（Gate1 草案，非最终假设）",
             ]
         )
+        for hypothesis in hypotheses:
+            lines.extend(
+                [
+                    f"- **{hypothesis['id']}**",
+                    f"  - **可证伪命题**：{hypothesis['statement']}",
+                    f"  - **机制**：{hypothesis['mechanism']}",
+                    f"  - **可观测预测**：{hypothesis['prediction']}",
+                    f"  - **判别测试**：{hypothesis['test']}",
+                ]
+            )
+        if len(hypotheses) < 2:
+            lines.append("- 当前只有一条由已落盘字段支持的候选假设；H2/H3 必须在重分析或后半段定向回查笔记 section 后补充，不能在展示层编造。")
+        lines.extend(["", "### 可组合关系"])
+        if merges:
+            for merge in merges:
+                lines.append(f"- `{merge['combine']}`（与 `{merge['with']}`）：{merge['rationale']}")
+        else:
+            lines.append("- 当前候选池未提供可组合关系；可在 Gate 输入 `合并 D1-H1 + D3-H1` 提出具体组合。")
+        lines.extend(
+            [
+                "",
+                "### 最小验证与证据边界",
+                f"- **最小验证**：数据/任务={minimum.get('dataset', '待定')}；基线={minimum.get('baseline', '待定')}；指标={metrics_text}；预期信号={minimum.get('expected_signal', '待定')}",
+                f"- **核心文献依赖**：{_format_card_papers(papers)}",
+                f"- **最近工作与差异**：{nearest.get('work', 'not_computed')}（distance={nearest.get('distance', 'not_computed')}）；novelty_signal={candidate.get('novelty_signal') or review.get('novelty_signal') or 'not_computed'}",
+                f"- **接地摘要**：{candidate.get('basis_summary') or candidate.get('contribution_character') or '见结构化候选池'}",
+                f"- **主要风险 / kill criteria**：{_format_card_risks(risks)}",
+                "",
+                "### 评分与依据",
+            ]
+        )
+        for key in score_order:
+            if scores.get(key) is None:
+                continue
+            reason = str(rationale.get(key) or candidate.get("basis_summary") or "未提供单维依据；需以接地材料复核。")
+            lines.append(f"- **{score_labels[key]}：{scores[key]}/5**\n  - 依据：{reason}")
+        if not scores:
+            lines.append("- **未评分**：当前候选未附评分；不能据此自动排序。")
+        lines.extend(["", "### 文献笔记锚点"])
+        if not papers:
+            lines.append("- 当前没有直接支撑论文；这是证据缺口，不是已证实结论。")
+        for paper in papers[:5]:
+            if not isinstance(paper, dict):
+                continue
+            lines.extend(
+                [
+                    f"- **{_shorten(str(paper.get('title') or paper.get('paper_id') or 'paper'), 150)}**",
+                    f"  - 笔记：`{paper.get('source_file') or paper.get('path') or '未提供笔记路径'}`",
+                    f"  - 使用内容：{_shorten(str(paper.get('claim_used') or paper.get('claim') or '未提供'), 360)}",
+                ]
+            )
+        lines.append("")
     lines.extend(
         [
             "## 审计材料",
-            "- `ideation/_candidate_directions.json`：结构化候选池",
-            "- `ideation/_pass2_grounding_review.json`：接地检查和风险标记",
-            "- `ideation/_pass1_forward_candidates.json`：前向发散候选",
-            "- `ideation/bridge_coverage_review.json`：桥接候选可见性与暂缓原因（如存在）",
+            "- `ideation/_candidate_directions.json`：机器可读候选、创新、候选假设、评分和实验信息。",
+            "- `ideation/_pass2_grounding_review.json`：Pass2 接地检查、风险与上桌建议。",
+            "- `ideation/_pass1_forward_candidates.json`：Pass1 原始发散候选，检查是否遗漏通道。",
+            "- `ideation/t4_execution_events.jsonl`：公开执行轨迹，不含模型内部推理。",
+            "- `ideation/bridge_coverage_review.json`：桥接候选可见性与暂缓原因（如存在）。",
             "",
         ]
     )
@@ -1937,6 +2216,7 @@ def _build_fallback_gate1_candidates(
     blueprints = [
         {
             "id": "D1",
+            "display_title": "证据边界与污染控制",
             "title": f"Evidence-boundary controls for {topic_phrase}",
             "idea_origin": "problem_reframing",
             "constraint_status": "mainline",
@@ -1947,9 +2227,16 @@ def _build_fallback_gate1_candidates(
             "counterfactual": "If the proposed mechanism is real, removing artifact-only explanations should not fully eliminate the observed signal.",
             "fields": ("mechanism_claim", "boundary_conditions", "gaps"),
             "scores": {"novelty": 4, "feasibility": 4, "impact": 4, "evaluability": 5, "differentiation": 4, "cost": 4, "contribution_strength": 4},
+            "innovation": {
+                "summary": "把本应被默认接受的测量、上下文或协议前提转为可直接证伪的证据边界设计。",
+                "type": "measurement",
+                "novelty_delta": "从仅估计表观效应，改为同时判别真实机制与证据/协议伪影。",
+                "non_incremental_reason": "贡献目标是改变何种证据可支持后续主张，而非为既有模型附加一个常规模块。",
+            },
         },
         {
             "id": "D2",
+            "display_title": "条件依赖的响应机制",
             "title": f"Condition-dependent response model for {topic_phrase}",
             "idea_origin": "design_rationale_derivation",
             "constraint_status": "mainline",
@@ -1960,9 +2247,16 @@ def _build_fallback_gate1_candidates(
             "counterfactual": "If the effect is truly stable across conditions, adding condition variables should not improve calibration, ranking, or explanatory fit.",
             "fields": ("design_rationale", "mechanism_claim", "boundary_conditions"),
             "scores": {"novelty": 4, "feasibility": 3, "impact": 4, "evaluability": 4, "differentiation": 4, "cost": 3, "contribution_strength": 4},
+            "innovation": {
+                "summary": "将平均效应假设转为状态、场景或子群条件下可被检验的响应机制。",
+                "type": "mechanism",
+                "novelty_delta": "不再只报告整体改进，而是要求解释效应何时成立、何时失效。",
+                "non_incremental_reason": "设计的核心是可区分的机制边界，而非给静态模型增加任意特征。",
+            },
         },
         {
             "id": "D3",
+            "display_title": "跨域机制迁移验证",
             "title": f"Cross-domain mechanism transfer for {topic_phrase}",
             "idea_origin": "cross_domain_analogy",
             "constraint_status": "mainline",
@@ -1975,9 +2269,16 @@ def _build_fallback_gate1_candidates(
             "cross_domain_sources": [source_bridge],
             "cross_domain_relation": "mechanism_bridge",
             "scores": {"novelty": 4, "feasibility": 4, "impact": 3, "evaluability": 5, "differentiation": 4, "cost": 4, "contribution_strength": 3},
+            "innovation": {
+                "summary": "把跨域知识作为可被反驳的机制迁移，而不是将相似术语或应用场景直接移植。",
+                "type": "theory_transfer",
+                "novelty_delta": "要求迁移后改变设计理由、可观测预测或失败模式，而不只是更换数据场景。",
+                "non_incremental_reason": "若无法与目标域基线区分，该方向会被降级或合并，而不会作为装饰性类比。",
+            },
         },
         {
             "id": "D4",
+            "display_title": "桥接机制的可证伪迁移",
             "title": f"Bridge synthesis from {source_bridge_name} to {topic_phrase}",
             "idea_origin": "bridge_synthesis",
             "constraint_status": "bridge",
@@ -1990,9 +2291,16 @@ def _build_fallback_gate1_candidates(
             "cross_domain_sources": [source_bridge],
             "cross_domain_relation": "method_transfer",
             "scores": {"novelty": 5, "feasibility": 3, "impact": 4, "evaluability": 3, "differentiation": 5, "cost": 3, "contribution_strength": 3},
+            "innovation": {
+                "summary": "把已确认 bridge domain 的机制转化为目标问题中的可验证设计原则、调节变量或评估视角。",
+                "type": "theory_transfer",
+                "novelty_delta": "迁移必须经由具体的机制、边界和判别实验，而非把 bridge 名称作为结论。",
+                "non_incremental_reason": "若 exact note section 不能支持可迁移机制，候选会被删除或并入主线，而不会以泛化类比保留。",
+            },
         },
         {
             "id": "S1",
+            "display_title": "反向操作与机制证伪",
             "title": f"Reverse-operation ablation for {topic_phrase}",
             "idea_origin": "reverse_operation",
             "constraint_status": "supplement",
@@ -2003,6 +2311,12 @@ def _build_fallback_gate1_candidates(
             "counterfactual": "If removal does not change estimates, the mechanism should be weakened, rejected, or reframed as a nonessential design choice.",
             "fields": ("gaps", "boundary_conditions", "design_rationale"),
             "scores": {"novelty": 3, "feasibility": 5, "impact": 3, "evaluability": 5, "differentiation": 3, "cost": 5, "contribution_strength": 2},
+            "innovation": {
+                "summary": "将已选主线的活性机制逐一移除或反转，形成比普通删模块更强的反事实检验。",
+                "type": "evaluation",
+                "novelty_delta": "检验机制是否必要，而不是只观察性能是否随模块数量变化。",
+                "non_incremental_reason": "它是主线贡献的证伪支撑；没有主线机制时不应被包装为独立论文贡献。",
+            },
         },
     ]
     out: list[dict[str, object]] = []
@@ -2026,16 +2340,29 @@ def _build_fallback_gate1_candidates(
                 }
                 for paper in papers
             ],
+            # A recovery path cannot infer a project's dataset, baselines, or
+            # metrics safely. T4's second half must derive them from selected
+            # evidence and user constraints rather than emitting a plausible
+            # but fabricated experimental protocol.
             "minimum_experiment": {
-                "dataset": "controlled agentic-commerce vignette or task suite with randomized treatments",
-                "baseline": "human-targeted uplift baseline plus agent-agnostic LLM response baseline",
-                "metric": ["AUUC/Qini-style ranking when labels exist", "calibration", "task-completion or choice-rate delta"],
-                "expected_signal": "candidate-specific treatment-response separation beyond baseline prompt sensitivity",
+                "dataset": "待 T4 后半段从 project.yaml、可用材料与笔记卡中明确；当前恢复路径不推断。",
+                "baseline": "待基于最近工作和项目约束确定；当前恢复路径不推断。",
+                "metric": [],
+                "expected_signal": "待选定方向并回查证据后明确为可证伪预测。",
             },
             "nearest_prior_work": {"work": nearest, "distance": "moderate" if papers else "not_computed"},
             "novelty_signal": "adjacent_zone" if papers else "not_computed",
             "generated_by": "deterministic_t4_gate1_recovery",
             "selection_warning": "Runtime-generated Gate1 candidate after provider failure; select only after T4后半段 re-checks exact note sections.",
+            "candidate_hypotheses": [
+                {
+                    "id": f"{blueprint['id']}-H1",
+                    "statement": blueprint["pitch"],
+                    "mechanism": blueprint["mechanism"],
+                    "observable_prediction": blueprint["prediction"],
+                    "discriminating_test": blueprint["counterfactual"],
+                }
+            ],
         }
         out.append(candidate)
     return out

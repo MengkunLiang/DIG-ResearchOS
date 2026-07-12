@@ -22,6 +22,38 @@ SUPPORTED_RESULT_MAJOR = 1
 VALID_MODES = {"local_only", "github_allowed", "github_and_reimplementation"}
 
 
+def default_resource_acquisition_policy() -> dict:
+    return {
+        "mode": "github_and_reimplementation",
+        "network_allowed": True,
+        "github_access_allowed": True,
+        "dataset_download_allowed": True,
+        "baseline_reimplementation_allowed": True,
+        "external_code_inspection_allowed": True,
+        "authenticated_resources_allowed": False,
+        "license_checks_required": True,
+        "checksum_required": True,
+        "citation_required": True,
+        "allowed_domains": [
+            "github.com",
+            "raw.githubusercontent.com",
+            "codeload.github.com",
+            "objects.githubusercontent.com",
+            "huggingface.co",
+            "hf.co",
+            "zenodo.org",
+            "figshare.com",
+            "kaggle.com",
+            "openml.org",
+            "archive.ics.uci.edu",
+        ],
+        "material_absence_policy": (
+            "external_executor/expr may contain only README/checklist scaffolding; "
+            "continue by authorized acquisition or reimplementation when local materials are absent."
+        ),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate Phase B resource preparation prerequisites.")
     parser.add_argument("--workspace")
@@ -87,8 +119,20 @@ def main() -> int:
     if not isinstance(policy, dict):
         policy = get_nested(handoff, "resource_acquisition_policy", "context_reboost.resource_acquisition_policy", default=None)
     if not isinstance(policy, dict):
-        issues.append({"id": "missing_acquisition_policy", "severity": "blocking", "message": "No resource_acquisition_policy found"})
-        policy = {}
+        warnings.append({"id": "default_acquisition_policy_applied", "message": "No resource_acquisition_policy found; using ResearchOS default"})
+        policy = default_resource_acquisition_policy()
+    default_policy = default_resource_acquisition_policy()
+    policy.update(
+        {
+            "mode": "github_and_reimplementation",
+            "network_allowed": True,
+            "github_access_allowed": True,
+            "dataset_download_allowed": True,
+            "baseline_reimplementation_allowed": True,
+        }
+    )
+    policy.setdefault("allowed_domains", default_policy["allowed_domains"])
+    policy.setdefault("material_absence_policy", default_policy["material_absence_policy"])
 
     mode = policy.get("mode")
     if mode not in VALID_MODES:

@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from .abstract_utils import clean_abstract
 from .base import Tool, ToolResult
+from .http_outcomes import bounded_retry_sleep, retry_after_hint_seconds, scholarly_http_failure
 from .search_validation import clean_search_query, empty_query_result, filter_usable_papers
 
 
@@ -292,22 +293,48 @@ class InformsSearchTool(Tool):
             "User-Agent": f"ResearchOS/0.1.0 (mailto:{self.email})",
         }
 
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(self.base_url, params=request_params, headers=headers)
-                response.raise_for_status()
-                payload = response.json()
-        except httpx.HTTPStatusError as exc:
-            return ToolResult(
-                ok=False,
-                content=f"INFORMS 搜索失败: Crossref HTTP {exc.response.status_code}",
-                error=f"http_{exc.response.status_code}",
-            )
-        except Exception as exc:
-            return ToolResult(
-                ok=False,
-                content=f"INFORMS 搜索失败: {exc}",
-                error="search_failed",
+        payload: dict[str, Any] | None = None
+        last_error: Exception | None = None
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                    response = await client.get(self.base_url, params=request_params, headers=headers)
+                    response.raise_for_status()
+                    payload = response.json()
+                break
+            except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+                last_error = exc
+                status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+                retriable = isinstance(exc, httpx.RequestError) or status == 429 or (status is not None and status >= 500)
+                retry_after = retry_after_hint_seconds(exc.response if isinstance(exc, httpx.HTTPStatusError) else None)
+                if status == 429 and retry_after is not None and retry_after > 10:
+                    return scholarly_http_failure(
+                        source="INFORMS/Crossref",
+                        exc=exc,
+                        attempts=attempt + 1,
+                        action="搜索",
+                        response=exc.response,
+                    )
+                if retriable and attempt < max_attempts - 1:
+                    await bounded_retry_sleep(exc.response if isinstance(exc, httpx.HTTPStatusError) else None, attempt=attempt)
+                    continue
+                failure = scholarly_http_failure(
+                    source="INFORMS/Crossref",
+                    exc=exc,
+                    attempts=attempt + 1,
+                    action="搜索",
+                    response=exc.response if isinstance(exc, httpx.HTTPStatusError) else None,
+                )
+                if status == 429:
+                    failure.data["cooldown_seconds"] = retry_after if retry_after is not None else 60.0
+                return failure
+        if payload is None:
+            return scholarly_http_failure(
+                source="INFORMS/Crossref",
+                exc=last_error or RuntimeError("unknown Crossref failure"),
+                attempts=max_attempts,
+                action="搜索",
             )
 
         message = payload.get("message", {})

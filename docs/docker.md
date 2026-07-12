@@ -187,10 +187,19 @@ records `table_layout.resizebox_inserted`; this is an auditable source adjustmen
 as AAAI that explicitly forbid `resizebox` are skipped. Pass `auto_fit_wide_tables=false` when a venue or author
 requires manual table layout.
 
-Survey figures are generated before section writing from `comparison_table.csv`. They are normal local PNG files under
-`drafts/survey/figures/`; each corpus-landscape or method-taxonomy visual requires at least two categories and eight
-valid corresponding rows by default. The manifest records DPI/font/palette, source-row coverage, year/method coverage,
-and generated or skipped reasons. A manifest with `status=skipped` is valid and must not be replaced by decorative images.
+Survey visuals are generated before section writing from the explicit taxonomy tree in
+`drafts/survey/survey_plan.json`. The only permitted output is the vector PDF
+`drafts/survey/figures/fig_taxonomy_overview.pdf`; it contains class labels and directly linked paper-ID counts only.
+It deliberately does not use `comparison_table.csv` metrics, T2 relevance scores, inferred safety values, cross-paper
+baselines, or relative gains. The manifest records the policy, source fingerprint, DPI/font, and generated or skipped
+reason. Every direct paper ID must resolve to a local structured note card under `literature/paper_notes/` or
+`literature/paper_notes_bridge/`; the complete resolution list is `source.paper_link_audit`. If a link is unresolved,
+the canonical PDF is removed and `status=skipped` is valid. Resolution is a source-link check, not a claim of evidence
+strength, and a skipped visual must not be replaced by a decorative or manually invented figure.
+
+Native and Docker `latexmk` commands use `-halt-on-error -file-line-error`. A source error therefore terminates at the
+first TeX error rather than consuming the full compile timeout. Native compilation starts a process group so a timeout
+also terminates spawned TeX children; the runtime serializes multiple `latex_compile` calls in one Agent response.
 
 ## 6. Scope And Security
 

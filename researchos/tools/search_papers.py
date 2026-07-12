@@ -274,6 +274,15 @@ class FetchPaperMetadataTool(Tool):
                     content=f"Paper not found: {params.id} ({exc.response.status_code})",
                     error="not_found",
                 )
+            if httpx is not None and isinstance(exc, httpx.RequestError):
+                from .http_outcomes import scholarly_http_failure
+
+                return scholarly_http_failure(
+                    source="论文元数据服务",
+                    exc=exc,
+                    attempts=1,
+                    action="元数据获取",
+                )
             raise ToolRuntimeError(self.name, exc) from exc
 
         return ToolResult(

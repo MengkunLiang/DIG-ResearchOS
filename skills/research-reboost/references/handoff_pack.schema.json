@@ -1,0 +1,1541 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://researchos.local/schemas/external_executor_handoff.v1.schema.json",
+  "title": "ResearchOS External Executor Handoff Pack",
+  "description": "Normative contract produced by the ResearchOS T5 reboost module. Method intent is compiled inside reboost and remains draft-only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "pack_id",
+    "generated_at",
+    "generation_status",
+    "project",
+    "source_manifest",
+    "context_reboost",
+    "method_intent",
+    "baseline_matrix",
+    "claim_evidence_matrix",
+    "minimum_experiment_loop",
+    "iteration_budget",
+    "claim_boundaries",
+    "writer_handoff_contract",
+    "execution_contract",
+    "unresolved_items",
+    "validation_summary"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "external_executor_handoff.v1"
+    },
+    "pack_id": {
+      "$ref": "#/$defs/id"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "generation_status": {
+      "enum": ["completed", "needs_review", "blocked"]
+    },
+    "project": {
+      "$ref": "#/$defs/project"
+    },
+    "source_manifest": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/source_entry"
+      }
+    },
+    "context_reboost": {
+      "$ref": "#/$defs/context_reboost"
+    },
+    "method_intent": {
+      "$ref": "#/$defs/method_intent"
+    },
+    "baseline_matrix": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/baseline"
+      }
+    },
+    "claim_evidence_matrix": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/claim"
+      }
+    },
+    "minimum_experiment_loop": {
+      "$ref": "#/$defs/minimum_experiment_loop"
+    },
+    "iteration_budget": {
+      "$ref": "#/$defs/iteration_budget"
+    },
+    "claim_boundaries": {
+      "$ref": "#/$defs/claim_boundaries"
+    },
+    "writer_handoff_contract": {
+      "$ref": "#/$defs/writer_handoff_contract"
+    },
+    "execution_contract": {
+      "$ref": "#/$defs/execution_contract"
+    },
+    "resource_acquisition_policy": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "paper_card_evidence_index": {
+      "$ref": "#/$defs/relative_path"
+    },
+    "paper_card_evidence_policy": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "unresolved_items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/unresolved_item"
+      }
+    },
+    "validation_summary": {
+      "$ref": "#/$defs/validation_summary"
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Backward-compatible project or future fields. Core semantics must not be overridden here.",
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "non_empty_string": {
+      "type": "string",
+      "minLength": 1
+    },
+    "string_list": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/non_empty_string"
+      }
+    },
+    "non_empty_string_list": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/non_empty_string"
+      }
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_.:-]{1,127}$"
+    },
+    "id_list": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/id"
+      }
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:[\\\\/])(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "source_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "locator", "note", "support_type"],
+      "properties": {
+        "source_id": {
+          "$ref": "#/$defs/id"
+        },
+        "locator": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "note": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "support_type": {
+          "enum": ["direct", "reconciled", "inferred"]
+        }
+      }
+    },
+    "source_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/source_ref"
+      }
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id", "title", "research_area", "task_type", "workspace_root"],
+      "properties": {
+        "project_id": {
+          "$ref": "#/$defs/id"
+        },
+        "title": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "research_area": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "task_type": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "workspace_root": {
+          "const": "."
+        }
+      }
+    },
+    "source_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id",
+        "path",
+        "category",
+        "requirement",
+        "availability",
+        "used",
+        "purpose",
+        "precedence",
+        "used_for"
+      ],
+      "properties": {
+        "source_id": {
+          "$ref": "#/$defs/id"
+        },
+        "path": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "category": {
+          "enum": [
+            "project",
+            "literature_synthesis",
+            "synthesis_workbench",
+            "domain_map",
+            "comparison_table",
+            "hypotheses",
+            "experiment_plan",
+            "idea_scorecard",
+            "risks",
+            "novelty_audit",
+            "paper_note",
+            "abstract_note",
+            "resource",
+            "user_seed",
+            "other"
+          ]
+        },
+        "requirement": {
+          "enum": ["required", "optional_backtrack"]
+        },
+        "availability": {
+          "enum": ["available", "missing", "unreadable", "malformed"]
+        },
+        "used": {
+          "type": "boolean"
+        },
+        "purpose": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "precedence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "used_for": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "project_scope",
+              "research_goal",
+              "hypothesis",
+              "method_mechanism",
+              "novelty_boundary",
+              "baseline_selection",
+              "experiment_protocol",
+              "claim_boundary",
+              "risk_analysis",
+              "resource_hint",
+              "writer_contract"
+            ]
+          }
+        },
+        "content_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "omission_reason": {
+          "$ref": "#/$defs/non_empty_string"
+        }
+      }
+    },
+    "sourced_statement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["statement", "source_refs"],
+      "properties": {
+        "statement": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "source_refs": {
+          "$ref": "#/$defs/source_refs"
+        }
+      }
+    },
+    "project_goal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["statement", "success_criteria", "out_of_scope", "source_refs"],
+      "properties": {
+        "statement": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "success_criteria": {
+          "$ref": "#/$defs/non_empty_string_list"
+        },
+        "out_of_scope": {
+          "$ref": "#/$defs/string_list"
+        },
+        "source_refs": {
+          "$ref": "#/$defs/source_refs"
+        }
+      }
+    },
+    "central_hypothesis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hypothesis_id",
+        "statement",
+        "causal_rationale",
+        "assumptions",
+        "falsification_criteria",
+        "source_refs"
+      ],
+      "properties": {
+        "hypothesis_id": {
+          "$ref": "#/$defs/id"
+        },
+        "statement": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "causal_rationale": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "assumptions": {
+          "$ref": "#/$defs/non_empty_string_list"
+        },
+        "falsification_criteria": {
+          "$ref": "#/$defs/non_empty_string_list"
+        },
+        "source_refs": {
+          "$ref": "#/$defs/source_refs"
+        }
+      }
+    },
+    "study_scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_setting", "tasks", "datasets", "metrics", "constraints", "exclusions", "source_refs"],
+      "properties": {
+        "target_setting": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "tasks": {
+          "$ref": "#/$defs/non_empty_string_list"
+        },
+        "datasets": {
+          "$ref": "#/$defs/string_list"
+        },
+        "metrics": {
+          "$ref": "#/$defs/string_list"
+        },
+        "constraints": {
+          "$ref": "#/$defs/string_list"
+        },
+        "exclusions": {
+          "$ref": "#/$defs/string_list"
+        },
+        "source_refs": {
+          "$ref": "#/$defs/source_refs"
+        }
+      }
+    },
+    "mechanism_invariant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["invariant_id", "statement", "rationale", "source_refs"],
+      "properties": {
+        "invariant_id": {
+          "$ref": "#/$defs/id"
+        },
+        "statement": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "rationale": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "source_refs": {
+          "$ref": "#/$defs/source_refs"
+        }
+      }
+    },
+    "method_mechanism": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "core_mechanism",
+        "contribution_intent",
+        "mechanism_invariants",
+        "must_preserve_module_ids",
+        "candidate_module_ids",
+        "source_refs"
+      ],
+      "properties": {
+        "core_mechanism": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "contribution_intent": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "mechanism_invariants": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/mechanism_invariant"
+          }
+        },
+        "must_preserve_module_ids": {
+          "$ref": "#/$defs/id_list"
+        },
+        "candidate_module_ids": {
+          "$ref": "#/$defs/id_list"
+        },
+        "source_refs": {
+          "$ref": "#/$defs/source_refs"
+        }
+      }
+    },
+    "novelty_resolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "nearest_work", "distinguishing_mechanism", "required_baseline_ids", "claim_constraints", "source_refs"],
+      "properties": {
+        "status": {
+          "enum": ["aligned", "mismatch", "no_explicit_requirements", "unavailable"]
+        },
+        "nearest_work": {
+          "$ref": "#/$defs/string_list"
+        },
+        "distinguishing_mechanism": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "required_baseline_ids": {
+          "$ref": "#/$defs/id_list"
+        },
+        "claim_constraints": {
+          "$ref": "#/$defs/string_list"
+        },
+        "source_refs": {
+          "$ref": "#/$defs/source_refs"
+        }
+      }
+    },
+    "risk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["risk_id", "category", "description", "likelihood", "impact", "mitigation", "source_refs"],
+      "properties": {
+        "risk_id": {
+          "$ref": "#/$defs/id"
+        },
+        "category": {
+          "enum": ["scientific", "novelty", "data", "evaluation", "fairness", "resource", "implementation", "reproducibility", "scope"]
+        },
+        "description": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "likelihood": {
+          "enum": ["low", "medium", "high", "unknown"]
+        },
+        "impact": {
+          "enum": ["low", "medium", "high", "blocking"]
+        },
+        "mitigation": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "source_refs": {
+          "$ref": "#/$defs/source_refs"
+        }
+      }
+    },
+    "context_mismatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mismatch_id",
+        "severity",
+        "topic",
+        "conflicting_statements",
+        "resolution_status",
+        "selected_resolution",
+        "rationale",
+        "affected_fields",
+        "requires_human_review",
+        "source_refs"
+      ],
+      "properties": {
+        "mismatch_id": {
+          "$ref": "#/$defs/id"
+        },
+        "severity": {
+          "enum": ["warning", "material", "blocking"]
+        },
+        "topic": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "conflicting_statements": {
+          "$ref": "#/$defs/non_empty_string_list"
+        },
+        "resolution_status": {
+          "enum": ["resolved_by_precedence", "needs_review", "blocked"]
+        },
+        "selected_resolution": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "rationale": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "affected_fields": {
+          "$ref": "#/$defs/non_empty_string_list"
+        },
+        "requires_human_review": {
+          "type": "boolean"
+        },
+        "source_refs": {
+          "$ref": "#/$defs/source_refs"
+        }
+      }
+    },
+    "context_reboost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_goal",
+        "research_question",
+        "central_hypothesis",
+        "study_scope",
+        "method_mechanism",
+        "novelty_audit_resolution",
+        "execution_priorities",
+        "risk_register",
+        "known_context_mismatches"
+      ],
+      "properties": {
+        "project_goal": {
+          "$ref": "#/$defs/project_goal"
+        },
+        "research_question": {
+          "$ref": "#/$defs/sourced_statement"
+        },
+        "central_hypothesis": {
+          "$ref": "#/$defs/central_hypothesis"
+        },
+        "study_scope": {
+          "$ref": "#/$defs/study_scope"
+        },
+        "method_mechanism": {
+          "$ref": "#/$defs/method_mechanism"
+        },
+        "novelty_audit_resolution": {
+          "$ref": "#/$defs/novelty_resolution"
+        },
+        "execution_priorities": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["priority", "objective", "rationale", "source_refs"],
+            "properties": {
+              "priority": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "objective": {
+                "$ref": "#/$defs/non_empty_string"
+              },
+              "rationale": {
+                "$ref": "#/$defs/non_empty_string"
+              },
+              "source_refs": {
+                "$ref": "#/$defs/source_refs"
+              }
+            }
+          }
+        },
+        "risk_register": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/risk"
+          }
+        },
+        "known_context_mismatches": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/context_mismatch"
+          }
+        }
+      }
+    },
+    "method_module": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "module_id",
+        "name",
+        "classification",
+        "intended_role",
+        "mechanism",
+        "expected_inputs",
+        "expected_outputs",
+        "depends_on_module_ids",
+        "why_it_may_help",
+        "implementation_constraints",
+        "related_claim_ids",
+        "planned_ablation_ids",
+        "source_refs"
+      ],
+      "properties": {
+        "module_id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "classification": {
+          "enum": ["core", "candidate", "supporting"]
+        },
+        "intended_role": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "mechanism": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "expected_inputs": {
+          "$ref": "#/$defs/non_empty_string_list"
+        },
+        "expected_outputs": {
+          "$ref": "#/$defs/non_empty_string_list"
+        },
+        "depends_on_module_ids": {
+          "$ref": "#/$defs/id_list"
+        },
+        "why_it_may_help": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "implementation_constraints": {
+          "$ref": "#/$defs/string_list"
+        },
+        "related_claim_ids": {
+          "$ref": "#/$defs/id_list"
+        },
+        "planned_ablation_ids": {
+          "$ref": "#/$defs/id_list"
+        },
+        "source_refs": {
+          "$ref": "#/$defs/source_refs"
+        }
+      }
+    },
+    "algorithm_step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["step_id", "order", "description", "module_ids", "inputs", "outputs"],
+      "properties": {
+        "step_id": {
+          "$ref": "#/$defs/id"
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "description": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "module_ids": {
+          "$ref": "#/$defs/id_list"
+        },
+        "inputs": {
+          "$ref": "#/$defs/non_empty_string_list"
+        },
+        "outputs": {
+          "$ref": "#/$defs/non_empty_string_list"
+        }
+      }
+    },
+    "allowed_refinement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["refinement_id", "description", "boundary", "review_requirement"],
+      "properties": {
+        "refinement_id": {
+          "$ref": "#/$defs/id"
+        },
+        "description": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "boundary": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "review_requirement": {
+          "enum": ["none", "reviewer_approval", "human_approval"]
+        }
+      }
+    },
+    "forbidden_change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["change_type", "description", "required_action"],
+      "properties": {
+        "change_type": {
+          "enum": [
+            "replace_core_mechanism",
+            "drop_required_baseline",
+            "change_task_or_benchmark",
+            "change_contribution_type",
+            "weaken_evaluation_fairness",
+            "promote_engineering_trick",
+            "other_scope_change"
+          ]
+        },
+        "description": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "required_action": {
+          "enum": ["reviewer_approval", "human_review", "rerun_novelty", "block_execution"]
+        }
+      }
+    },
+    "ablation_plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ablation_id",
+        "mechanism",
+        "module_ids",
+        "planned_test",
+        "control",
+        "expected_if_supported",
+        "expected_if_not_supported",
+        "related_claim_ids"
+      ],
+      "properties": {
+        "ablation_id": {
+          "$ref": "#/$defs/id"
+        },
+        "mechanism": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "module_ids": {
+          "$ref": "#/$defs/id_list"
+        },
+        "planned_test": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "control": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "expected_if_supported": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "expected_if_not_supported": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "related_claim_ids": {
+          "$ref": "#/$defs/id_list"
+        }
+      }
+    },
+    "framework_sketch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "purpose", "main_message", "candidate_panels", "candidate_nodes", "candidate_edges", "must_not_be_used_directly_by_t8"],
+      "properties": {
+        "status": {
+          "const": "draft_intent_only"
+        },
+        "purpose": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "main_message": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "candidate_panels": {
+          "$ref": "#/$defs/string_list"
+        },
+        "candidate_nodes": {
+          "$ref": "#/$defs/string_list"
+        },
+        "candidate_edges": {
+          "$ref": "#/$defs/string_list"
+        },
+        "must_not_be_used_directly_by_t8": {
+          "const": true
+        }
+      }
+    },
+    "method_intent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "not_final_method_source",
+        "central_mechanism_hypothesis",
+        "candidate_modules",
+        "expected_algorithm_flow",
+        "allowed_refinements",
+        "forbidden_silent_changes",
+        "mechanism_to_ablation_plan",
+        "initial_framework_figure_sketch",
+        "source_refs"
+      ],
+      "properties": {
+        "status": {
+          "const": "draft_intent_only"
+        },
+        "not_final_method_source": {
+          "const": true
+        },
+        "central_mechanism_hypothesis": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "candidate_modules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/method_module"
+          }
+        },
+        "expected_algorithm_flow": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/algorithm_step"
+          }
+        },
+        "allowed_refinements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/allowed_refinement"
+          }
+        },
+        "forbidden_silent_changes": {
+          "type": "array",
+          "minItems": 4,
+          "items": {
+            "$ref": "#/$defs/forbidden_change"
+          }
+        },
+        "mechanism_to_ablation_plan": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ablation_plan"
+          }
+        },
+        "initial_framework_figure_sketch": {
+          "$ref": "#/$defs/framework_sketch"
+        },
+        "source_refs": {
+          "$ref": "#/$defs/source_refs"
+        }
+      }
+    },
+    "fairness_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["same_data_split", "same_metric_definition", "same_tuning_budget", "same_evaluation_protocol", "additional_constraints"],
+      "properties": {
+        "same_data_split": {
+          "type": "boolean"
+        },
+        "same_metric_definition": {
+          "type": "boolean"
+        },
+        "same_tuning_budget": {
+          "type": "boolean"
+        },
+        "same_evaluation_protocol": {
+          "type": "boolean"
+        },
+        "additional_constraints": {
+          "$ref": "#/$defs/string_list"
+        }
+      }
+    },
+    "substitution_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed", "conditions", "approval_required", "candidate_substitutes"],
+      "properties": {
+        "allowed": {
+          "type": "boolean"
+        },
+        "conditions": {
+          "$ref": "#/$defs/string_list"
+        },
+        "approval_required": {
+          "enum": ["none", "reviewer", "human"]
+        },
+        "candidate_substitutes": {
+          "$ref": "#/$defs/string_list"
+        }
+      }
+    },
+    "baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baseline_id",
+        "name",
+        "role",
+        "requirement",
+        "category",
+        "rationale",
+        "availability",
+        "implementation_source",
+        "reproduction_target",
+        "fairness_contract",
+        "substitution_policy",
+        "linked_claim_ids",
+        "source_refs"
+      ],
+      "properties": {
+        "baseline_id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "role": {
+          "enum": ["nearest_work", "canonical", "strong_recent", "component_source", "lower_bound", "upper_bound", "sanity_check"]
+        },
+        "requirement": {
+          "enum": ["required", "conditional", "reference_only"]
+        },
+        "category": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "rationale": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "availability": {
+          "enum": ["verified", "candidate", "unavailable", "unknown"]
+        },
+        "implementation_source": {
+          "type": ["string", "null"]
+        },
+        "reproduction_target": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "fairness_contract": {
+          "$ref": "#/$defs/fairness_contract"
+        },
+        "substitution_policy": {
+          "$ref": "#/$defs/substitution_policy"
+        },
+        "linked_claim_ids": {
+          "$ref": "#/$defs/id_list"
+        },
+        "source_refs": {
+          "$ref": "#/$defs/source_refs"
+        }
+      }
+    },
+    "evidence_requirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["experiment_id", "evidence_type", "dataset_or_setting", "metric_or_observation", "comparison", "acceptance_criterion"],
+      "properties": {
+        "experiment_id": {
+          "$ref": "#/$defs/id"
+        },
+        "evidence_type": {
+          "enum": ["main_result", "ablation", "robustness", "efficiency", "failure_analysis", "diagnostic", "qualitative", "reproducibility"]
+        },
+        "dataset_or_setting": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "metric_or_observation": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "comparison": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "acceptance_criterion": {
+          "$ref": "#/$defs/non_empty_string"
+        }
+      }
+    },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claim_id",
+        "statement",
+        "claim_type",
+        "initial_strength_ceiling",
+        "pre_experiment_status",
+        "related_module_ids",
+        "required_baseline_ids",
+        "evidence_requirements",
+        "support_criteria",
+        "weaken_criteria",
+        "falsification_criteria",
+        "prohibited_interpretations",
+        "source_refs"
+      ],
+      "properties": {
+        "claim_id": {
+          "$ref": "#/$defs/id"
+        },
+        "statement": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "claim_type": {
+          "enum": ["performance", "mechanism", "robustness", "efficiency", "generality", "novelty", "reproducibility", "limitation"]
+        },
+        "initial_strength_ceiling": {
+          "enum": ["strong", "moderate", "weak", "unsupported"]
+        },
+        "pre_experiment_status": {
+          "const": "untested"
+        },
+        "related_module_ids": {
+          "$ref": "#/$defs/id_list"
+        },
+        "required_baseline_ids": {
+          "$ref": "#/$defs/id_list"
+        },
+        "evidence_requirements": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/evidence_requirement"
+          }
+        },
+        "support_criteria": {
+          "$ref": "#/$defs/non_empty_string_list"
+        },
+        "weaken_criteria": {
+          "$ref": "#/$defs/non_empty_string_list"
+        },
+        "falsification_criteria": {
+          "$ref": "#/$defs/non_empty_string_list"
+        },
+        "prohibited_interpretations": {
+          "$ref": "#/$defs/string_list"
+        },
+        "source_refs": {
+          "$ref": "#/$defs/source_refs"
+        }
+      }
+    },
+    "required_experiment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "experiment_id",
+        "run_type",
+        "purpose",
+        "datasets_or_settings",
+        "metrics_or_observations",
+        "baseline_ids",
+        "module_ids",
+        "claim_ids",
+        "seed_policy",
+        "pass_conditions",
+        "failure_interpretation",
+        "required"
+      ],
+      "properties": {
+        "experiment_id": {
+          "$ref": "#/$defs/id"
+        },
+        "run_type": {
+          "enum": ["smoke", "small_scale", "formal", "ablation", "robustness", "diagnostic", "efficiency", "reproduction"]
+        },
+        "purpose": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "datasets_or_settings": {
+          "$ref": "#/$defs/non_empty_string_list"
+        },
+        "metrics_or_observations": {
+          "$ref": "#/$defs/non_empty_string_list"
+        },
+        "baseline_ids": {
+          "$ref": "#/$defs/id_list"
+        },
+        "module_ids": {
+          "$ref": "#/$defs/id_list"
+        },
+        "claim_ids": {
+          "$ref": "#/$defs/id_list"
+        },
+        "seed_policy": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "pass_conditions": {
+          "$ref": "#/$defs/non_empty_string_list"
+        },
+        "failure_interpretation": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "required": {
+          "type": "boolean"
+        }
+      }
+    },
+    "experiment_gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gate_id", "order", "stage", "depends_on_gate_ids", "required_inputs", "required_outputs", "pass_conditions", "on_failure"],
+      "properties": {
+        "gate_id": {
+          "$ref": "#/$defs/id"
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "stage": {
+          "enum": [
+            "context_alignment",
+            "resource_mining",
+            "baseline_reproduction",
+            "claim_evidence_design",
+            "method_refinement",
+            "implementation",
+            "code_protocol_review",
+            "smoke_validation",
+            "formal_run",
+            "result_diagnosis",
+            "module_attribution",
+            "refinement_decision",
+            "realized_method_packaging",
+            "figure_table_packaging",
+            "writer_handoff"
+          ]
+        },
+        "depends_on_gate_ids": {
+          "$ref": "#/$defs/id_list"
+        },
+        "required_inputs": {
+          "$ref": "#/$defs/string_list"
+        },
+        "required_outputs": {
+          "$ref": "#/$defs/non_empty_string_list"
+        },
+        "pass_conditions": {
+          "$ref": "#/$defs/non_empty_string_list"
+        },
+        "on_failure": {
+          "enum": ["repair_and_retry", "diagnose_and_decide", "narrow_claim", "request_review", "block"]
+        }
+      }
+    },
+    "minimum_experiment_loop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required_experiments", "ordered_gates"],
+      "properties": {
+        "required_experiments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/required_experiment"
+          }
+        },
+        "ordered_gates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/experiment_gate"
+          }
+        }
+      }
+    },
+    "stop_condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["condition", "trigger", "required_action"],
+      "properties": {
+        "condition": {
+          "enum": [
+            "budget_exhausted",
+            "improvement_plateau",
+            "required_baseline_unavailable",
+            "audited_target_reached",
+            "implementation_blocked",
+            "claim_must_be_narrowed",
+            "major_contribution_drift",
+            "safety_or_integrity_risk"
+          ]
+        },
+        "trigger": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "required_action": {
+          "enum": ["stop", "human_review", "narrow_claim", "replace_resource_with_approval", "rerun_novelty", "preserve_failure_and_stop"]
+        }
+      }
+    },
+    "iteration_budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_rounds", "max_wall_time_hours", "compute_budget", "plateau_definition", "stop_conditions"],
+      "properties": {
+        "max_rounds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_wall_time_hours": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "compute_budget": {
+          "type": ["string", "null"]
+        },
+        "plateau_definition": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "stop_conditions": {
+          "type": "array",
+          "minItems": 6,
+          "items": {
+            "$ref": "#/$defs/stop_condition"
+          }
+        }
+      }
+    },
+    "conditional_claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claim_id", "maximum_strength", "conditions"],
+      "properties": {
+        "claim_id": {
+          "$ref": "#/$defs/id"
+        },
+        "maximum_strength": {
+          "enum": ["strong", "moderate", "weak", "unsupported"]
+        },
+        "conditions": {
+          "$ref": "#/$defs/non_empty_string_list"
+        }
+      }
+    },
+    "must_not_claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["boundary_id", "statement", "reason", "source_refs"],
+      "properties": {
+        "boundary_id": {
+          "$ref": "#/$defs/id"
+        },
+        "statement": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "reason": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "source_refs": {
+          "$ref": "#/$defs/source_refs"
+        }
+      }
+    },
+    "claim_boundaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["novelty_boundary", "method_vs_engineering_boundary", "conditional_claims", "must_not_claim", "narrowing_triggers"],
+      "properties": {
+        "novelty_boundary": {
+          "$ref": "#/$defs/sourced_statement"
+        },
+        "method_vs_engineering_boundary": {
+          "$ref": "#/$defs/sourced_statement"
+        },
+        "conditional_claims": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/conditional_claim"
+          }
+        },
+        "must_not_claim": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/must_not_claim"
+          }
+        },
+        "narrowing_triggers": {
+          "$ref": "#/$defs/non_empty_string_list"
+        }
+      }
+    },
+    "writer_artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "artifact_type", "description", "source_of_truth", "requires_t7_audit", "required_fields"],
+      "properties": {
+        "artifact_id": {
+          "$ref": "#/$defs/id"
+        },
+        "artifact_type": {
+          "enum": [
+            "realized_method_package",
+            "result_to_claim",
+            "evidence_pack",
+            "result_diagnosis",
+            "module_attribution",
+            "final_framework_figure",
+            "figure_table_inventory",
+            "limitations",
+            "reproducibility_manifest"
+          ]
+        },
+        "description": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "source_of_truth": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "requires_t7_audit": {
+          "type": "boolean"
+        },
+        "required_fields": {
+          "$ref": "#/$defs/non_empty_string_list"
+        }
+      }
+    },
+    "writer_handoff_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required_artifacts", "must_include", "must_not_use_as_final_fact_source"],
+      "properties": {
+        "required_artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/writer_artifact"
+          }
+        },
+        "must_include": {
+          "$ref": "#/$defs/non_empty_string_list"
+        },
+        "must_not_use_as_final_fact_source": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": ["method_intent", "initial_framework_figure_sketch", "unaudited_raw_results", "diagnostic_hint", "unsupported_claim"]
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "authority_rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "authority"],
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "authority": {
+          "enum": ["allowed", "reviewer_approval", "human_approval", "forbidden"]
+        }
+      }
+    },
+    "scope_change_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["silent_changes_forbidden", "request_artifact", "major_change_action", "minor_change_action"],
+      "properties": {
+        "silent_changes_forbidden": {
+          "const": true
+        },
+        "request_artifact": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "major_change_action": {
+          "const": "human_review"
+        },
+        "minor_change_action": {
+          "enum": ["reviewer_approval", "record_and_continue"]
+        }
+      }
+    },
+    "resource_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["public_resources_allowed", "authenticated_resources_allowed", "license_checks_required", "checksum_required", "citation_required"],
+      "properties": {
+        "public_resources_allowed": {
+          "type": "boolean"
+        },
+        "authenticated_resources_allowed": {
+          "type": "boolean"
+        },
+        "license_checks_required": {
+          "type": "boolean"
+        },
+        "checksum_required": {
+          "type": "boolean"
+        },
+        "citation_required": {
+          "type": "boolean"
+        }
+      }
+    },
+    "execution_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allowed_paths",
+        "write_paths",
+        "prohibited_paths",
+        "authority_rules",
+        "scope_change_policy",
+        "resource_policy",
+        "source_conflict_order",
+        "root_skill_path",
+        "expected_outputs_schema_path"
+      ],
+      "properties": {
+        "allowed_paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/relative_path"
+          },
+          "uniqueItems": true
+        },
+        "write_paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/relative_path"
+          },
+          "uniqueItems": true
+        },
+        "prohibited_paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/relative_path"
+          },
+          "uniqueItems": true
+        },
+        "authority_rules": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/authority_rule"
+          }
+        },
+        "scope_change_policy": {
+          "$ref": "#/$defs/scope_change_policy"
+        },
+        "resource_policy": {
+          "$ref": "#/$defs/resource_policy"
+        },
+        "source_conflict_order": {
+          "$ref": "#/$defs/non_empty_string_list"
+        },
+        "root_skill_path": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "expected_outputs_schema_path": {
+          "$ref": "#/$defs/relative_path"
+        }
+      }
+    },
+    "unresolved_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["item_id", "severity", "question", "why_unresolved", "affected_fields", "blocking", "owner", "required_action", "source_refs"],
+      "properties": {
+        "item_id": {
+          "$ref": "#/$defs/id"
+        },
+        "severity": {
+          "enum": ["warning", "material", "blocking"]
+        },
+        "question": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "why_unresolved": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "affected_fields": {
+          "$ref": "#/$defs/non_empty_string_list"
+        },
+        "blocking": {
+          "type": "boolean"
+        },
+        "owner": {
+          "enum": ["t5_reboost", "human", "external_executor", "t7_audit"]
+        },
+        "required_action": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "source_refs": {
+          "$ref": "#/$defs/source_refs"
+        }
+      }
+    },
+    "validation_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["check_id", "status", "message"],
+      "properties": {
+        "check_id": {
+          "$ref": "#/$defs/id"
+        },
+        "status": {
+          "enum": ["pass", "warning", "fail", "not_run"]
+        },
+        "message": {
+          "$ref": "#/$defs/non_empty_string"
+        }
+      }
+    },
+    "validation_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "required_source_coverage", "used_source_count", "inferred_statement_count", "checks"],
+      "properties": {
+        "status": {
+          "enum": ["pass", "needs_review", "blocked", "not_validated"]
+        },
+        "required_source_coverage": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "used_source_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "inferred_statement_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/validation_check"
+          }
+        }
+      }
+    }
+  }
+}

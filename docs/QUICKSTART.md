@@ -44,7 +44,7 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-`requirements.txt` 是唯一的 Python 依赖文件，包含 ResearchOS runtime、LLM 路由、PDF/BibTeX 处理、确定性综述数据图（matplotlib）和单元测试依赖。默认安装不包含 CUDA、PyTorch、WandB 或本地实验训练栈；真实实验由外部执行器或项目自定义环境负责。
+`pyproject.toml` 是 Python 包元数据来源；`requirements.txt` 保持与其 runtime/dev 依赖一致，供本地 pip 与 Docker 在复制源码前缓存安装。两者包含 ResearchOS runtime、LLM 路由、PDF/BibTeX 处理、确定性综述数据图（matplotlib）和单元测试依赖。默认安装不包含 CUDA、PyTorch、WandB 或本地实验训练栈；真实实验由外部执行器或项目自定义环境负责。也可以使用 `conda env create -f environment.yml` 创建等价的本地环境。
 
 `requirements.txt` 不包含 TeX Live。若要在宿主机真实编译 T3.6 综述或 T9 投稿包，安装系统级 TeX：
 
@@ -122,8 +122,23 @@ python -m researchos.cli run-task HELLO --workspace ./workspace/local-test2
 成功后应看到：
 
 - `workspace/local-test2/hello.txt`
+- 终端中的 Stage Start 输入/输出表和 Stage Summary Artifact Manifest
+- `workspace/local-test2/_runtime/events/HELLO_single_<run-id>.jsonl`
 
 `HELLO` 只验证 runtime、工具调用、写文件和 finish_task 的最小闭环，不会进入真实文献检索、阅读或写作流程。
+
+想查看终端过程展示的不同密度：
+
+```bash
+python -m researchos.cli run-task HELLO \
+  --workspace ./workspace/local-test2 \
+  --verbosity detailed \
+  --no-color
+```
+
+`normal` 是默认模式；`concise` 保留输入、结论、Artifact Manifest 和人工操作；`detailed`
+增加受限的 per-query/per-paper/per-candidate 信息。`--json-events` 会把已经写入
+`_runtime/events/` 的同一事件额外镜像到 stdout，适合机器集成，不建议与交互 Gate 混用。详细语义见 [logging.md](./logging.md)。
 
 ### 2.7 跑真实快速联调 `run_smoke`
 
@@ -386,7 +401,7 @@ researchos run-skill paper-outline \
 ```
 
 若文件缺失或格式不对，CLI 只写
-`_runtime/skill_sessions/outline-v1.json` 与 `user_inputs/paper-outline/_intake.md` 并返回等待输入；不会消耗 LLM。独立 workspace 的 `_intake.md` 是上传清单。项目 workspace 会自动发现候选文件，但运行时仍会语义核验；若材料不足，会写 `user_inputs/paper-outline/_followup_request.md`，说明需要补什么及其路径。补齐后：
+`_runtime/skill_sessions/outline-v1.json` 与 `user_inputs/paper-outline/_intake.md` 并返回等待输入；这是非交互模式，不会消耗 LLM。独立 workspace 的 `_intake.md` 是上传清单。项目 workspace 会自动发现候选文件，但运行时仍会语义核验；若材料不足，会写 `user_inputs/paper-outline/_followup_request.md`，说明需要补什么及其路径。补齐后：
 
 ```bash
 researchos run-skill paper-outline \
@@ -397,7 +412,7 @@ researchos run-skill paper-outline \
 researchos skill-status --workspace ./workspace/local-test2
 ```
 
-使用 `--interactive` 可在任务说明缺失时输入多行内容，以单独一行 `END` 提交：
+使用 `--interactive` 可在任务说明缺失时输入多行内容；如果必需材料也缺失，受限 intake Agent 会询问上传或粘贴，并只将人提供的内容整理到 `user_inputs/<skill>/` 后重检。以单独一行 `END` 提交任务说明：
 
 ```bash
 researchos run-skill literature-evidence-scout \
@@ -406,14 +421,22 @@ researchos run-skill literature-evidence-scout \
   --interactive
 ```
 
-常用学术 Skill 的顺序是：`research-scope`（范围）→ `literature-query-plan` 或
-`literature-evidence-scout`（检索）→ `paper-note-review`（回查笔记 section）→
+常用学术 Skill 的顺序是：`research-scope`（范围）→ `paper-identifier-resolver`（DOI/arXiv/标题解析）或
+`pdf-note-card`（单篇 PDF 笔记）→ `paper-comparison` / `literature-evidence-matrix`（比较与证据矩阵）→
+`literature-query-plan` 或 `literature-evidence-scout`（检索）→ `paper-note-review`（回查笔记 section）→
 `idea-fanout-jury` / `hypothesis-compiler`（Idea/假设）→ `experiment-design-review`
 （实验设计审查）→ `paper-outline` / `paper-write`（论证和初稿）→
-`citation-provenance-audit` / `paper-polish` / `paper-revision`（审阅修订）→
+`claim-evidence-map` / `citation-library-curator` / `citation-provenance-audit` / `paper-peer-review` /
+`paper-polish` / `paper-revision`（审阅修订）→
 `paper-compile` / `submission-readiness`（真实 PDF 和投稿核对）。综述可用
-`survey-visuals`：它只生成由 `comparison_table.csv` 支撑的 150 DPI 英文学术图，数据不够
-时写 `skipped` manifest，不生成装饰图。每一步都可单独 `describe-skill <名称>` 查询，不需要猜文件名。
+`survey-visuals`：它最多只生成一张由 `survey_plan.json` 显式 taxonomy 和直接 paper-ID 链接支撑的
+150 DPI vector PDF；不生成跨论文性能、相对提升、T2 筛选分数或安全热图。taxonomy 不足时写 `skipped`
+manifest，不生成装饰图。每一步都可单独 `describe-skill <名称>` 查询，不需要猜文件名。
+
+完整原子能力、输入路径和边界见 [skills.md](skills.md)。例如，单篇 PDF 先放到
+`user_inputs/pdf-note-card/paper.pdf`，DOI/arXiv/标题则一行一个放到
+`user_inputs/paper-identifier-resolver/identifiers.md`；两者均可通过 `--interactive` 让 intake Agent
+整理人工粘贴内容，并在同一 session 中恢复。
 
 `paper-outline` 和 `paper-write` 会生成 `drafts/writing_storyline.md`，再按
 `drafts/writing_style.json` 的 venue profile 组织论文。UTD/IS/INFORMS 强调 rationale、机制、设计知识与有边界的实践含义；NeurIPS/ICML/ICLR/KDD 强调技术瓶颈、core insight、方法和 ablation/analysis/failure evidence。profile 中的章节密度只是内部提示，投稿页数与格式仍以当前官方 CFP/template 为准。

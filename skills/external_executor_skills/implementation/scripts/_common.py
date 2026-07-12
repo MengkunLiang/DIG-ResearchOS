@@ -84,18 +84,25 @@ def parse_allowed_paths(workspace: Path) -> tuple[list[Path], list[Path]]:
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        target = allowed
+        target: list[Path] | None = allowed
         lower = line.lower()
-        for prefix in ("deny:", "forbid:", "!", "-"):
-            if lower.startswith(prefix):
-                target = denied
-                line = line[len(prefix):].strip()
-                break
+        parts = line.split(maxsplit=1)
+        if len(parts) == 2 and parts[0].lower() in {"rw", "write", "allow", "ro", "read", "no", "deny", "forbid"}:
+            mode, line = parts[0].lower(), parts[1].strip()
+            target = allowed if mode in {"rw", "write", "allow"} else denied if mode in {"no", "deny", "forbid"} else None
         else:
-            for prefix in ("allow:", "write:", "+"):
+            for prefix in ("deny:", "forbid:", "!", "-"):
                 if lower.startswith(prefix):
+                    target = denied
                     line = line[len(prefix):].strip()
                     break
+            else:
+                for prefix in ("allow:", "write:", "+"):
+                    if lower.startswith(prefix):
+                        line = line[len(prefix):].strip()
+                        break
+        if target is None:
+            continue
         if not line:
             continue
         if any(ch in line for ch in "*?["):

@@ -18,6 +18,7 @@ from .echo import EchoTool
 from .external_experiment import (
     AuditExperimentIntegrityTool,
     AuditPaperClaimsTool,
+    CompileResearchReboostHandoffTool,
     BuildExperimentEvidencePackTool,
     BuildExperimentHandoffPackTool,
     BuildPostExperimentNoveltyCheckTool,
@@ -43,6 +44,7 @@ from .survey_tools import (
 from .glob_files import GlobFilesTool
 from .grep_search import GrepSearchTool
 from .ideation_tools import AnalyzeIdeaConcentrationTool, ComputeIdeaNoveltySignalTool
+from .ideation_progress import LogT4IdeationProgressTool
 from .latex_compile import LatexCompileTool
 from .literature_synthesis import BuildSynthesisWorkbenchTool
 from .manuscript import (
@@ -170,6 +172,7 @@ def register_builtin_tools(
     registry.register("bind_review_round", lambda ctx: BindReviewRoundTool(ctx.policy))
     registry.register("build_manuscript_revision_patches", lambda ctx: BuildManuscriptRevisionPatchesTool(ctx.policy))
     registry.register("build_experiment_handoff_pack", lambda ctx: BuildExperimentHandoffPackTool(ctx.policy))
+    registry.register("compile_research_reboost_handoff", lambda ctx: CompileResearchReboostHandoffTool(ctx.policy))
     registry.register("select_external_executor", lambda ctx: SelectExternalExecutorTool(ctx.policy))
     registry.register("wait_for_external_executor_result", lambda ctx: WaitForExternalExecutorResultTool(ctx.policy))
     registry.register("mock_external_dry_run", lambda ctx: MockExternalDryRunTool(ctx.policy))
@@ -239,6 +242,10 @@ def register_builtin_tools(
     registry.register("build_domain_map", lambda ctx: BuildDomainMapTool(ctx.policy))
     registry.register("analyze_idea_concentration", lambda ctx: AnalyzeIdeaConcentrationTool(ctx.policy))
     registry.register("compute_idea_novelty_signal", lambda ctx: ComputeIdeaNoveltySignalTool(ctx.policy))
+    registry.register(
+        "log_t4_ideation_progress",
+        lambda ctx: LogT4IdeationProgressTool(ctx.policy.workspace_dir),
+    )
     registry.register("mine_reference_projects", lambda ctx: MineReferenceProjectsTool(ctx.policy))
     # Semantic Scholar 工具（直接 API 调用，不依赖 MCP）
     registry.register("semantic_scholar_search", lambda ctx: SemanticScholarSearchTool())

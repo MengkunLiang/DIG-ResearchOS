@@ -20,8 +20,6 @@ tools:
   - finish_task
 strict_tools: true
 model_tier: heavy
-max_steps: 36
-max_tokens_total: 260000
 temperature: 0.2
 allowed_read_prefixes:
   - user_inputs/paper-write/

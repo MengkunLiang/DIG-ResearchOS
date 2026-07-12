@@ -45,9 +45,14 @@ class SkillIntakeAgent(Agent):
                 name=f"skill_intake_{skill_name}",
                 model_tier="medium",
                 tool_names=["read_file", "write_file", "ask_human", "finish_task"],
-                max_steps=12,
-                max_tokens_total=50_000,
+                # Intake is deliberately multi-turn: it ends only when the
+                # human pauses, the material is staged, or a real runtime
+                # condition interrupts it, never because it consumed a fixed
+                # number of steps or tokens.
+                max_steps=0,
+                max_tokens_total=0,
                 max_wall_seconds=900,
+                unlimited_budget=True,
                 temperature=0.0,
                 allowed_read_prefixes=[
                     f"user_inputs/{skill_name}/",

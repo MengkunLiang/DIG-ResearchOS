@@ -14,6 +14,8 @@ import re
 from typing import Any, Callable
 
 from .run_logger import SEARCH_TOOL_NAMES
+from .observability import StageReporter
+from .observability.reporter import normalize_cli_markdown
 
 
 EmitFn = Callable[[str], None]
@@ -47,6 +49,34 @@ class ToolNarrative:
     output_path: str | None
 
 
+@dataclass(frozen=True)
+class ToolOutcome:
+    """User-facing disposition; separate from the model-facing ToolResult bool."""
+
+    status: str
+    style: str
+    important: bool
+
+
+def classify_tool_outcome(*, ok: bool, data: dict[str, Any] | None, error: str | None = None) -> ToolOutcome:
+    """Classify degraded scholarly-source outcomes without concealing failures.
+
+    ``ok`` remains authoritative for the agent/runtime.  This function only
+    determines how a researcher should read the terminal result.
+    """
+
+    payload = data if isinstance(data, dict) else {}
+    disposition = str(payload.get("display_disposition") or "").casefold()
+    failure_class = str(payload.get("failure_class") or error or "").casefold()
+    if ok:
+        return ToolOutcome("DONE", "green", False)
+    if disposition == "skipped" or payload.get("optional_input") is True:
+        return ToolOutcome("SKIPPED", "yellow", False)
+    if failure_class in {"rate_limited", "network_unavailable", "timeout", "http_5xx", "transient_http"} and payload.get("fallback_available", True):
+        return ToolOutcome("DEGRADED", "yellow", False)
+    return ToolOutcome("FAILED", "bright_red", True)
+
+
 class CliProgressEmitter:
     """Small output gate for human-readable CLI progress."""
 
@@ -57,15 +87,177 @@ class CliProgressEmitter:
         *,
         quiet: bool = False,
         verbose: bool = False,
+        verbosity: str = "normal",
+        no_color: bool = False,
+        json_events: bool = False,
+        workspace: Path | None = None,
+        runtime_dir_name: str = "_runtime",
         emit_fn: EmitFn | None = None,
     ) -> None:
         self.quiet = bool(quiet)
         self.verbose = bool(verbose)
+        self.verbosity = "detailed" if verbose and verbosity == "normal" else verbosity
+        self.no_color = bool(no_color)
+        self.json_events = bool(json_events)
         self._emit_fn = emit_fn or (lambda message: print(message, flush=True))
         self._last_message_kind: str | None = None
         self._active_task_id: str | None = None
         self._t4_input_trace_emitted = False
         self._suppressed_t4_tool_results: dict[str, int] = {}
+        self._workspace = Path(workspace) if workspace is not None else None
+        self._runtime_dir_name = runtime_dir_name
+        self._reporter: StageReporter | None = None
+        self._structured_runs: dict[str, str] = {}
+        # ``StageReporter`` may already have rendered a semantic metric panel
+        # for a tool result.  Keep the ordinary result trace from repeating the
+        # same fact immediately below it.
+        self._structured_tool_result_rendered: dict[tuple[str, str], int] = {}
+        if self._workspace is not None:
+            self.configure_observability(workspace=self._workspace)
+
+    def configure_observability(self, *, workspace: Path) -> None:
+        """Attach the shared StageReporter without changing research behavior."""
+
+        self._workspace = Path(workspace)
+        self._reporter = StageReporter(
+            workspace=self._workspace,
+            runtime_dir_name=self._runtime_dir_name,
+            verbosity=self.verbosity,
+            quiet=self.quiet,
+            no_color=self.no_color,
+            json_events=self.json_events,
+            emit_fn=self._emit_fn,
+        )
+
+    def stage_started(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        inputs: dict[str, Path],
+        outputs: dict[str, Path],
+        required_input_keys: set[str],
+        agent: str,
+        mode: str,
+        is_resume: bool = False,
+    ) -> None:
+        if self._reporter is None:
+            return
+        self._structured_runs[task_id] = run_id
+        self._reporter.stage_started(
+            task_id=task_id,
+            run_id=run_id,
+            inputs=inputs,
+            outputs=outputs,
+            required_input_keys=required_input_keys,
+            agent=agent,
+            mode=mode,
+            is_resume=is_resume,
+        )
+
+    def stage_tool_call(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> None:
+        if self._reporter is not None:
+            self._reporter.observe_tool_call(
+                task_id=task_id,
+                run_id=run_id,
+                tool_name=tool_name,
+                arguments=arguments,
+            )
+
+    def stage_tool_result(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        tool_name: str,
+        ok: bool,
+        data: dict[str, Any] | None,
+        error: str | None,
+    ) -> bool:
+        if self._reporter is None:
+            return False
+        rendered = self._reporter.observe_tool_result(
+            task_id=task_id,
+            run_id=run_id,
+            tool_name=tool_name,
+            ok=ok,
+            data=data,
+            error=error,
+        )
+        if rendered:
+            key = (task_id, tool_name)
+            self._structured_tool_result_rendered[key] = self._structured_tool_result_rendered.get(key, 0) + 1
+        return rendered
+
+    def stage_human_action_required(self, *, task_id: str, gate_id: str, reason: str) -> None:
+        run_id = self._structured_runs.get(task_id)
+        if self._reporter is not None and run_id:
+            self._reporter.human_action_required(task_id=task_id, run_id=run_id, gate_id=gate_id, reason=reason)
+
+    def stage_gate_resolved(self, *, task_id: str, gate_id: str, decision: str) -> None:
+        run_id = self._structured_runs.get(task_id)
+        if self._reporter is not None and run_id:
+            self._reporter.gate_resolved(task_id=task_id, run_id=run_id, gate_id=gate_id, decision=decision)
+
+    def stage_completed(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        outputs: dict[str, Path],
+        ok: bool,
+        summary: str,
+        error: str | None = None,
+    ) -> None:
+        if self._reporter is not None:
+            self._reporter.stage_completed(
+                task_id=task_id,
+                run_id=run_id,
+                outputs=outputs,
+                ok=ok,
+                summary=summary,
+                error=error,
+            )
+        self._structured_runs.pop(task_id, None)
+        for key in [key for key in self._structured_tool_result_rendered if key[0] == task_id]:
+            self._structured_tool_result_rendered.pop(key, None)
+
+    def agent_markdown(
+        self,
+        *,
+        task_id: str,
+        agent: str,
+        content: str,
+        human_action_context: bool,
+        verbose_only: bool,
+    ) -> None:
+        """Render public agent prose as Markdown, never as a raw trace block."""
+
+        if verbose_only and not self.verbose:
+            return
+        if self.quiet and not human_action_context:
+            return
+        cleaned = normalize_cli_markdown(content)
+        if not cleaned:
+            return
+        run_id = self._structured_runs.get(task_id)
+        if self._reporter is not None and run_id:
+            self._reporter.render_agent_markdown(
+                task_id=task_id,
+                run_id=run_id,
+                agent=agent,
+                content=cleaned,
+                human_action_context=human_action_context,
+            )
+            return
+        self.emit(f"[Agent Output]\n{cleaned}", important=human_action_context)
 
     def emit(self, message: str, *, important: bool = False, verbose_only: bool = False) -> None:
         if verbose_only and not self.verbose:
@@ -94,6 +286,8 @@ class CliProgressEmitter:
         self._active_task_id = task_id
         self._t4_input_trace_emitted = False
         self._suppressed_t4_tool_results = {}
+        if task_id in self._structured_runs:
+            return
         if self.quiet:
             self.emit(f"[{agent}] 启动 {task_id}: {_compact_text(objective, 120)}", important=True)
             return
@@ -154,6 +348,8 @@ class CliProgressEmitter:
         anything about hidden model reasoning.
         """
 
+        if task_id in self._structured_runs and not self.verbose and self.verbosity != "detailed":
+            return
         label = task_id.removeprefix("SKILL_") if task_id.startswith("SKILL_") else task_id
         self.emit(
             f"[运行中] {label} · step {step} | 模型请求已提交，正在等待下一组可执行动作。"
@@ -174,6 +370,8 @@ class CliProgressEmitter:
         durable artifact can otherwise take a while to appear.
         """
 
+        if task_id in self._structured_runs and not self.verbose and self.verbosity != "detailed":
+            return
         label = task_id.removeprefix("SKILL_") if task_id.startswith("SKILL_") else task_id
         self.emit(
             f"[运行中] {label} · step {step} | 正在等待模型返回下一组可执行动作；"
@@ -182,6 +380,36 @@ class CliProgressEmitter:
 
     def tool_call(self, *, agent: str, tool_name: str, narrative: ToolNarrative) -> None:
         if self.quiet:
+            return
+        active_task = self._active_task_id
+        structured_run = self._structured_runs.get(active_task or "")
+        if self._reporter is not None and active_task and structured_run:
+            # T4 often reads a large evidence pack.  In normal mode retain one
+            # truthful public milestone instead of printing a read-file storm;
+            # detailed mode still renders each call through StageReporter.
+            if active_task == "T4" and tool_name in {"read_file", "list_files", "glob_files", "grep_search"}:
+                self._suppressed_t4_tool_results[tool_name] = self._suppressed_t4_tool_results.get(tool_name, 0) + 1
+                if not self._t4_input_trace_emitted:
+                    self._t4_input_trace_emitted = True
+                    self.emit("[T4 Trace] 正在核验上游证据、桥接材料与论文笔记 section。")
+                if self.verbosity != "detailed":
+                    return
+            purpose = narrative.purpose
+            gate1_artifact = _t4_gate1_artifact(narrative.output_path) if active_task == "T4" else None
+            if gate1_artifact:
+                index, label = gate1_artifact
+                purpose = f"Gate1 artifact {index}/6 · {label}"
+            self._reporter.render_tool_call(
+                task_id=active_task,
+                run_id=structured_run,
+                agent=agent,
+                tool_name=tool_name,
+                purpose=purpose,
+                input_summary=narrative.input_summary,
+                output_path=narrative.output_path,
+            )
+            return
+        if self._active_task_id in self._structured_runs and self._active_task_id != "T4" and not self.verbose:
             return
         if self._active_task_id == "T4" and tool_name in {"read_file", "list_files", "glob_files", "grep_search"}:
             self._suppressed_t4_tool_results[tool_name] = self._suppressed_t4_tool_results.get(tool_name, 0) + 1
@@ -232,6 +460,7 @@ class CliProgressEmitter:
         output_path: str | None = None,
         next_step: str | None = None,
         duration_ms: int | None = None,
+        data: dict[str, Any] | None = None,
     ) -> None:
         suppressed = self._suppressed_t4_tool_results.get(tool_name, 0)
         if suppressed:
@@ -240,11 +469,46 @@ class CliProgressEmitter:
             else:
                 self._suppressed_t4_tool_results[tool_name] = suppressed - 1
             return
-        important = not ok
+        outcome = classify_tool_outcome(ok=ok, data=data)
+        important = outcome.important
+        active_task = self._active_task_id
+        structured_run = self._structured_runs.get(active_task or "")
+        if self._reporter is not None and active_task and structured_run:
+            semantic_key = (active_task, tool_name)
+            semantic_count = self._structured_tool_result_rendered.get(semantic_key, 0)
+            if semantic_count:
+                if semantic_count == 1:
+                    self._structured_tool_result_rendered.pop(semantic_key, None)
+                else:
+                    self._structured_tool_result_rendered[semantic_key] = semantic_count - 1
+                return
+            summary = result_summary
+            gate1_artifact = _t4_gate1_artifact(output_path) if active_task == "T4" else None
+            if gate1_artifact:
+                index, label = gate1_artifact
+                prefix = f"Gate1 artifact {index}/6 · {label}"
+                summary = f"{prefix}: {'已保存' if ok else '写入失败'}。{result_summary}"
+            self._reporter.render_tool_result(
+                task_id=active_task,
+                run_id=structured_run,
+                tool_name=tool_name,
+                ok=ok,
+                summary=summary,
+                output_path=output_path,
+                data=data,
+            )
+            return
+        if self._active_task_id in self._structured_runs and self._active_task_id != "T4" and ok and not self.verbose:
+            return
         if self.quiet and not important:
             return
-        status = "完成" if ok else "失败"
+        status = "完成" if ok else {"SKIPPED": "跳过", "DEGRADED": "降级继续", "FAILED": "失败"}[outcome.status]
         if self._active_task_id == "T4":
+            if tool_name == "log_t4_ideation_progress" and ok:
+                event = (data or {}).get("event") if isinstance(data, dict) else None
+                if isinstance(event, dict):
+                    self.emit(_format_t4_execution_event(event))
+                    return
             gate1_artifact = _t4_gate1_artifact(output_path)
             if gate1_artifact:
                 index, label = gate1_artifact
@@ -273,7 +537,7 @@ class CliProgressEmitter:
         if duration_ms is not None and self.verbose:
             lines.append(f"耗时：{duration_ms} ms")
         next_step = _useful_next_step(next_step)
-        if next_step and not ok:
+        if next_step and outcome.important:
             lines.append(f"建议：{next_step}")
         self.emit("\n".join(lines), important=important)
 
@@ -303,7 +567,20 @@ class CliProgressEmitter:
         next_step: str | None,
         trace_file: str | None = None,
         error: str | None = None,
+        outputs_expected: dict[str, Path] | None = None,
+        run_id: str | None = None,
     ) -> None:
+        structured_run_id = self._structured_runs.get(task_id)
+        if self._reporter is not None and structured_run_id and outputs_expected is not None:
+            self.stage_completed(
+                task_id=task_id,
+                run_id=run_id or structured_run_id,
+                outputs=outputs_expected,
+                ok=ok,
+                summary=summary,
+                error=error,
+            )
+            return
         important = True
         status = "阶段完成" if ok else "阶段停止"
         lines = [
@@ -393,7 +670,17 @@ class CliProgressEmitter:
         task_id: str,
         reason: str,
         log_path: str | None = None,
+        run_id: str | None = None,
+        outputs: dict[str, Path] | None = None,
     ) -> None:
+        if self._reporter is not None and run_id and outputs is not None:
+            self._reporter.stage_invalidated(
+                task_id=task_id,
+                run_id=run_id,
+                outputs=outputs,
+                reason=reason,
+                log_path=log_path,
+            )
         lines = [
             f"[Validation] {task_id}: runtime artifact 校验未通过",
             f"原因：{_compact_text(reason, 260)}",
@@ -562,6 +849,53 @@ def _t4_artifact_stage(output_path: str | None) -> str | None:
 def _t4_gate1_artifact(output_path: str | None) -> tuple[int, str] | None:
     normalized = str(output_path or "").replace("\\", "/").lstrip("./")
     return _T4_GATE1_ARTIFACTS.get(normalized)
+
+
+def _t4_count_text(arguments: dict[str, Any]) -> str | None:
+    completed = arguments.get("completed")
+    total = arguments.get("total")
+    if completed is None or total is None:
+        return None
+    return f"{completed}/{total}"
+
+
+def _format_t4_execution_event(event: dict[str, Any]) -> str:
+    """Format a persisted public T4 progress event, never model reasoning."""
+
+    phase_labels = {
+        "context_pack": "上下文包",
+        "pass1_mainline": "Pass1 主线",
+        "pass1_supplement": "Pass1 补充通道",
+        "pass2_grounding": "Pass2 接地复核",
+        "scoring": "评分整理",
+        "gate_cards": "Gate1 卡片",
+    }
+    status_labels = {
+        "started": "已开始",
+        "candidate_started": "候选开始",
+        "candidate_completed": "候选完成",
+        "channel_started": "通道开始",
+        "channel_completed": "通道完成",
+        "completed": "已完成",
+    }
+    phase = phase_labels.get(str(event.get("phase") or ""), str(event.get("phase") or "T4"))
+    status = status_labels.get(str(event.get("status") or ""), str(event.get("status") or "更新"))
+    completed = event.get("completed")
+    total = event.get("total")
+    count = f" {completed}/{total}" if completed is not None and total is not None else ""
+    subject = str(event.get("candidate_id") or event.get("channel") or "").strip()
+    title = _compact_text(str(event.get("candidate_title") or ""), 70)
+    tail = f" · {subject}" if subject else ""
+    if title:
+        tail += f" · {title}"
+    recommendation = str(event.get("recommendation") or "").strip()
+    if recommendation:
+        tail += f" · 建议={recommendation}"
+    scores = event.get("score_snapshot") if isinstance(event.get("score_snapshot"), dict) else {}
+    if scores:
+        score_text = ", ".join(f"{key}={value}/5" for key, value in scores.items())
+        tail += f" · 评分={score_text}"
+    return f"[T4 轨迹] {phase}{count} · {status}{tail}"
 
 
 def describe_output_artifact(path: str, *, task_id: str = "") -> str:
@@ -766,6 +1100,17 @@ def summarize_tool_arguments(tool_name: str, arguments: dict[str, Any], *, verbo
             ],
             max_len=max_len,
         )
+    if tool_name == "log_t4_ideation_progress":
+        return _join_fields(
+            [
+                ("phase", arguments.get("phase")),
+                ("status", arguments.get("status")),
+                ("candidate", arguments.get("candidate_id")),
+                ("channel", arguments.get("channel")),
+                ("count", _t4_count_text(arguments)),
+            ],
+            max_len=max_len,
+        )
     if tool_name == "save_paper_note":
         return _join_fields(
             [
@@ -815,6 +1160,18 @@ def summarize_tool_result(
     data = data if isinstance(data, dict) else {}
     metadata = metadata if isinstance(metadata, dict) else {}
     if not ok:
+        outcome = classify_tool_outcome(ok=ok, data=data, error=error)
+        if outcome.status == "SKIPPED":
+            path = _extract_output_path(tool_name, data)
+            label = str(data.get("optional_input_label") or path or "可选输入")
+            return f"可选输入未提供：{label}；系统将继续使用其余已验证材料。", path
+        if outcome.status == "DEGRADED":
+            source = str(data.get("source") or tool_name)
+            attempts = data.get("attempts")
+            attempt_text = f"（已尝试 {attempts} 次）" if attempts else ""
+            if str(data.get("failure_class") or error or "") == "rate_limited":
+                return f"{source} 暂时触发速率限制{attempt_text}；其他可用来源继续。", _extract_output_path(tool_name, data)
+            return f"{source} 暂时不可用{attempt_text}；其他可用来源继续，后续可恢复重试。", _extract_output_path(tool_name, data)
         if tool_name == "save_paper_note" and data:
             progress = str(data.get("progress") or "").strip()
             summary = summarize_reader_note_progress(data, progress=progress)
@@ -873,6 +1230,10 @@ def summarize_tool_result(
         if bullets:
             summary += "：" + "；".join(bullets)
         return summary, "literature/temp/scout_progress.md"
+
+    if tool_name == "log_t4_ideation_progress":
+        event = data.get("event") if isinstance(data.get("event"), dict) else {}
+        return _format_t4_execution_event(event), "ideation/t4_execution_events.jsonl"
 
     if tool_name == "save_paper_note":
         progress = str(data.get("progress") or "").strip()
@@ -996,6 +1357,8 @@ def _tool_purpose(task_id: str, agent: str, tool_name: str) -> str:
         return "把当前阶段的分析结果持久化，供校验和下游阶段使用"
     if tool_name == "log_scout_progress":
         return "把 Scout 的阶段性进展写入进度文件，并同步给正在观察运行的用户"
+    if tool_name == "log_t4_ideation_progress":
+        return "记录 T4 候选/补充通道/接地评分的公开执行里程碑，并同步给正在观察运行的用户"
     if tool_name == "finish_task":
         return "触发 runtime 输出校验，确认声明产物是否已经完整可用"
     if tool_name == "ask_human":
@@ -1030,6 +1393,8 @@ def _tool_expected_output(tool_name: str) -> str:
         return "写入后的 artifact 路径和基本大小信息"
     if tool_name == "log_scout_progress":
         return "新增 progress markdown 条目和简洁进度摘要"
+    if tool_name == "log_t4_ideation_progress":
+        return "一条已持久化的 T4 执行事件及对应候选/通道摘要"
     if tool_name == "finish_task":
         return "校验结果、缺失产物或任务完成状态"
     if tool_name == "ask_human":
@@ -1048,6 +1413,8 @@ def _tool_output_path(tool_name: str, arguments: dict[str, Any], workspace_dir: 
         return "literature/papers_raw.jsonl"
     if tool_name == "log_scout_progress":
         return "literature/temp/scout_progress.md"
+    if tool_name == "log_t4_ideation_progress":
+        return "ideation/t4_execution_events.jsonl"
     if tool_name == "save_paper_note":
         return "literature/paper_notes/"
     if tool_name == "generate_search_log":

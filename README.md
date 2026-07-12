@@ -1,5 +1,7 @@
 # ResearchOS
 
+[English](README.md) | [中文](README.zh-CN.md)
+
 ResearchOS is an artifact-first, multi-agent research runtime. It turns a
 workspace into an auditable research project: literature discovery and reading,
 evidence-grounded ideation, external experiment handoff, paper writing, review,
@@ -25,9 +27,11 @@ Use exactly one writer for a workspace at a time.
 | Native | Development, debugging, direct local use | `auto` prefers local `latexmk`, then local `tectonic`, then the configured Docker TeX image. |
 | Docker Compose | Reproducible CLI environment and deployment | The image contains `latexmk`, pdfLaTeX, XeLaTeX, BibTeX, and Chinese TeX support. It compiles inside the container and never needs Docker-in-Docker. |
 
-`requirements.txt` contains Python dependencies only. TeX Live, `latexmk`, and
-fonts are operating-system dependencies, so they are installed with the OS
-package manager or baked into the Docker image.
+`pyproject.toml` is the package-metadata source; `requirements.txt` is its
+Docker-compatible runtime/dev dependency counterpart. Both contain Python
+dependencies only. TeX Live, `latexmk`, and fonts are operating-system
+dependencies, so they are installed with the OS package manager or baked into
+the Docker image.
 
 ## Native Installation
 
@@ -35,13 +39,13 @@ package manager or baked into the Docker image.
 git clone <repository-url> DIG-ResearchOS
 cd DIG-ResearchOS
 
-conda create -n researchos python=3.11 -y
+conda env create -f environment.yml
 conda activate researchos
-pip install -r requirements.txt
-pip install -e .
 
 cp .env.example .env
 ```
+
+For a pip-only environment, use `pip install -r requirements.txt && pip install -e .`.
 
 For T3.6 survey PDFs and T9 submission PDFs, install the host TeX toolchain.
 This is the recommended Debian/Ubuntu command and includes Chinese support:
@@ -131,6 +135,50 @@ For a minimal runtime smoke check that does not start research work:
 python -m researchos.cli run-task HELLO --workspace ./workspace/project-a
 ```
 
+## Research-Facing CLI Observability
+
+Every `run`, `resume`, and `run-task` uses the same Stage Start -> Stage
+Progress -> Stage Summary protocol. It reports the research activity, not raw
+model reasoning or full tool payloads:
+
+- **Stage Start** shows the goal, research question, planned operations, and a
+  table of declared inputs/expected outputs with meaning, validation state,
+  size/count, and downstream use.
+- **Stage Progress** shows bounded research facts such as T2 query/source
+  coverage, candidate ranking and reading priority; T3 evidence coverage;
+  T3.5 mechanism/tension summaries; T4 origin, supplement, grounding, and
+  candidate governance; T7 run/claim audits; and T8/T9 evidence/compile state.
+- **Stage Summary** shows conclusions, risks/unsupported evidence, actual
+  workspace reads, and an Artifact Manifest with `created`, `updated`,
+  `reused`, `missing`, or `invalid` disposition.
+
+Use the presentation controls below. `concise` still includes declared inputs,
+outputs, and required human action. `--json-events` mirrors bounded event JSON
+to stdout for integration tooling; every run persists the same event stream to
+`<workspace>/_runtime/events/<run_id>.jsonl`, whether or not this flag is set.
+
+```bash
+python -m researchos.cli run --workspace ./workspace/project-a --verbosity detailed
+python -m researchos.cli resume --workspace ./workspace/project-a --verbosity concise --no-color
+python -m researchos.cli run-task T4 --workspace ./workspace/project-a --json-events
+```
+
+The console is deliberately not a chain-of-thought feed. Tool hints,
+retrieval coverage gaps, citation-graph signals, and automatic clusters remain
+labelled as hints or evidence boundaries until source artifacts support a
+stronger conclusion. See [docs/logging.md](docs/logging.md) for the distinction
+between console summaries, logs, traces, and event JSONL.
+
+Interactive terminals use colored Rich panels for stage headers, Agent
+Markdown, Tool start/result traces, warnings, and Artifact manifests. Agent
+Markdown is normalized before rendering, so malformed keycap numbering such as
+`1️⃣` is displayed as ordinary ordered-list syntax rather than terminal-glyph
+fragments. `--no-color` preserves the same information as ANSI-free,
+copyable text. Standalone Skills use this protocol too: `list-skills` groups
+atomic capabilities by research workflow, while `describe-skill`, `run-skill`,
+and `skill-status` show explicit input paths, artifact meanings, session state,
+and recovery commands.
+
 ## Guided Standalone Skills
 
 Skills are not LangChain chains or opaque chat prompts. A discoverable
@@ -156,10 +204,15 @@ python -m researchos.cli run-skill paper-outline \
   --session-id neuri-2026-outline
 ```
 
-If a required file is absent, the command does **not** call an LLM. It writes
+For a noninteractive command, a missing required file writes
 `_runtime/skill_sessions/neuri-2026-outline.json`, prints what to upload and
-where, and returns a resumable waiting state. After adding the file, continue
-with the same session:
+where, and returns a resumable waiting state. In a real terminal,
+`--interactive` starts a restricted multi-turn intake: it asks the human to
+upload or paste material, can organize only the supplied material under the
+declared `user_inputs/<skill>/` path, and asks again when a required fact is
+still absent. It then rechecks before running the actual Skill. Intake cannot
+create paper, experiment, citation, or other final outputs. After adding the
+file or completing intake, continue with the same session:
 
 ```bash
 python -m researchos.cli run-skill paper-outline \
@@ -179,23 +232,53 @@ support the requested output. A focused gap becomes
 and the same `--session-id ... --resume` path. This makes multi-turn work
 traceable without treating a model memory or an existing filename as evidence.
 
+Standalone and project-backed Skills have **no token limit and no step limit**.
+They stop only through an explicit completion, a human-input pause,
+cancellation, provider/runtime failure, or artifact validation outcome. This
+does not promise an unlimited provider context window or bypass provider-side
+rate, availability, and account limits.
+
 `browse-skills` is a line-based card browser: enter a number/name to inspect a
-complete contract, or `run <number>` to begin its guided input session. During
+complete contract, or enter a plain keyword such as `literature`, `文献`,
+`Idea`, or `创新点` for deterministic bilingual alias/fuzzy search. Only
+`run <number>` begins its guided input session. Colored category panels make
+the workflow position, purpose, required/optional input count, outputs, and
+next command explicit. During
 a running Skill, `skill-status` reports the persisted observable phase, step,
 current tool, outputs, and resume command. It does not expose private model
 reasoning.
 
-The public workflow now covers `research-scope` → `literature-query-plan` /
-`literature-evidence-scout` → `paper-note-review` → `idea-fanout-jury` /
-`hypothesis-compiler` → `experiment-design-review` → `paper-outline` /
-`paper-write` → `citation-provenance-audit` / `paper-polish` /
-`paper-revision` → `paper-compile` / `submission-readiness`. `survey-visuals`
-creates only data-derived survey figures; it writes a skipped manifest instead
-of inventing a decorative image when the comparison table is insufficient.
-Every Skill preserves source files, uses workspace-backed evidence/citation
-keys, and writes declared audits beside its outputs. See
-[docs/runtime.md](./docs/runtime.md) for the contract schema and
-[docs/QUICKSTART.md](./docs/QUICKSTART.md) for copyable examples.
+For T2, the console distinguishes a declared optional input that was not
+provided (`SKIPPED`), a retrievable-source rate limit/network condition while
+fallback sources continue (`DEGRADED`), and a blocking `FAILED` condition. A
+T2 source-health summary reports actual source availability and cooldowns.
+Paper cards are optional, provenance-bearing inputs for T4.5, T5, the external
+executor, T7, and T8; they support rationale, baseline, limitation, and
+related-work checks, never empirical performance or experimental claims.
+
+The public workflow now includes atomic literature entry points:
+`research-material-ingest` registers user-supplied PDFs, data, code, and use
+boundaries; `paper-identifier-resolver` turns DOI/arXiv/title lists into
+source-traceable records; and `pdf-note-card` or the narrower
+`paper-section-evidence` read one uploaded PDF. `citation-graph-explorer`,
+`paper-comparison`, `literature-evidence-matrix`, `literature-gap-map`, and
+`citation-library-curator` cover bounded snowballing, comparison, evidence
+tables, opportunity mapping, and bibliographic cleanup before synthesis. The
+writing lane adds `claim-evidence-map`, `venue-fit-review`, and
+non-destructive `paper-peer-review` alongside `paper-outline`, `paper-write`,
+`citation-provenance-audit`, `paper-polish`, and `paper-revision`.
+`survey-visuals` creates at most one factual taxonomy-overview PDF from the
+explicit taxonomy tree and directly linked paper identifiers in `survey_plan.json`.
+Every direct identifier must resolve to a local structured note card; otherwise
+the tool removes any stale canonical PDF and writes an explicit `skipped`
+manifest. This is a source-link audit, not a claim that the linked work has
+stronger empirical evidence.
+It never renders cross-paper performance, relative gains, T2 screening scores,
+or inferred heatmaps; it writes a skipped manifest when the taxonomy itself is
+insufficient. Every Skill preserves source files, uses workspace-backed
+evidence/citation keys, and writes declared audits beside its outputs. See the
+[atomic Skill capability map](./docs/skills.md), [runtime contract](./docs/runtime.md),
+and [copyable examples](./docs/QUICKSTART.md).
 
 ## Venue-Aware Paper Writing
 

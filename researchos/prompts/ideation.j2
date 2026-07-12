@@ -139,6 +139,21 @@ T4 已拆成两个 runtime 阶段：
 
 这条边界是防止 T4 一口气读很久但不落盘的硬约束。每完成一个 Pass 就立刻写对应文件，不能把所有内容攒到最后。
 
+## T4 可观察执行轨迹（Gate1 前半段必做）
+
+用户需要看到真实的阶段、通道和候选进度，但不能看到模型内部推理。因此，在 Gate1 前半段使用
+`log_t4_ideation_progress` 记录**已经开始、已经完成或已经落盘**的公开执行事实：
+
+1. 先记录 `phase=context_pack, status=completed`，说明 compact pack 已可用。
+2. Pass1 开始时记录 `phase=pass1_mainline, status=started, total=<计划候选总数>`；每个主线候选开始和完成分别记录 `candidate_started` / `candidate_completed`，并带稳定 `candidate_id` 和短 `candidate_title`。
+3. 四个补充通道 `mechanism_challenge`、`reverse_operation`、`subgroup_failure`、`missing_area_exploration` 必须逐个记录 `channel_started` 和 `channel_completed`。没有产生候选也是已完成的公开结果，不要伪装成正在运行。
+4. Pass1 全部候选已写入 `_pass1_forward_candidates.json` 后，记录 `phase=pass1_mainline, status=completed, completed=<n>, total=<n>`，再进入 Pass2。
+5. Pass2 对每个候选开始和完成时记录 `phase=pass2_grounding`；完成事件可带已经写入候选记录的 `recommendation`，但不得虚构分数。
+6. `_candidate_directions.json` 已落盘后，逐个记录 `phase=scoring, status=candidate_completed`；仅当文件中已有 `scores` 时才附 `score_snapshot`。
+7. 生成卡片前后记录 `phase=gate_cards, status=started/completed`。这些事件写入 `ideation/t4_execution_events.jsonl`，并由 runtime 同步到 CLI / `ideation/t4_progress.md`。
+
+禁止向此工具传自由文本 reasoning、未验证的论文结论、隐藏草稿或 CoT。它只记录候选 ID、短标题、通道、计数、已落盘评分和 Pass2 建议。
+
 ---
 
 ## 阶段A：发散候选方向 + Gate1（T4-DECIDE-1）
@@ -400,7 +415,9 @@ Bridge 候选的语义是“必须上 Gate1 桌面供用户看见”，不是“
   "candidates": [
     {
       "id": "D1",
-      "title": "方向标题",
+      "display_title": "不超过 32 个中文字符或 80 个英文字符的短标题",
+      "title": "方向的完整描述；允许较长，但绝不能直接用作卡片标题",
+      "one_line_pitch": "一句可比较的核心命题",
       "pitch": "一句话描述",
       "core_claim": "这个方向要证明的核心命题",
       "target_problem": "这个方向解决的具体问题",
@@ -422,6 +439,35 @@ Bridge 候选的语义是“必须上 Gate1 桌面供用户看见”，不是“
       "contribution_type": "invention | improvement | exaptation | routine",
       "contribution_strength": 1-5,
       "contribution_character": "如果成立，领域会怎样不同；为什么不是 routine",
+      "innovation": {
+        "summary": "这项设计到底新在哪里",
+        "type": "mechanism | design_principle | evaluation | theory_transfer | measurement | other",
+        "novelty_delta": "相对最近工作具体改变了什么",
+        "non_incremental_reason": "为什么不是只补一个 gap 或把已有方法换场景"
+      },
+      "candidate_hypotheses": [
+        {
+          "id": "D1-H1",
+          "statement": "可证伪命题，不能只是方法名称",
+          "mechanism": "该命题依赖的因果/技术机制",
+          "observable_prediction": "会观察到什么",
+          "discriminating_test": "如何与最近替代解释区分"
+        },
+        {
+          "id": "D1-H2",
+          "statement": "边界、调节或替代机制命题",
+          "mechanism": "...",
+          "observable_prediction": "...",
+          "discriminating_test": "..."
+        }
+      ],
+      "merge_opportunities": [
+        {
+          "with_candidate": "D3",
+          "combine": "D1-H2 + D3-H1",
+          "rationale": "为什么该组合在机制和实验上可兼容"
+        }
+      ],
       "prior_art": "none | closest_known | uncertain",
       "counterfactual_check": "collapses | survives_weakened | independent | insufficient_evidence",
       "counterfactual_note": "抽掉最依赖论文后为什么仍成立/崩塌；软提示，不是 gate",
@@ -456,6 +502,15 @@ Bridge 候选的语义是“必须上 Gate1 桌面供用户看见”，不是“
         "cost": 4,
         "contribution_strength": 4
       },
+      "score_rationale": {
+        "novelty": "为何是这个分数",
+        "feasibility": "为何是这个分数",
+        "impact": "为何是这个分数",
+        "evaluability": "为何是这个分数",
+        "differentiation": "为何是这个分数",
+        "cost": "为何是这个分数",
+        "contribution_strength": "为何是这个分数"
+      },
       "minimum_experiment": {
         "dataset": "小规模可控任务",
         "baseline": "最接近基线",
@@ -477,7 +532,8 @@ Bridge 候选的语义是“必须上 Gate1 桌面供用户看见”，不是“
 }
 ```
 
-**每个 idea 必须包含 mechanism / prediction / counterfactual / mechanism_family**。
+**每个新生成的 Gate1 idea 必须包含 display_title / innovation / 2-3 条 candidate_hypotheses / mechanism / prediction / counterfactual / mechanism_family / score_rationale。**
+`candidate_hypotheses` 只是 Gate1 候选命题，绝不是最终 `hypotheses.md`；不足两条时写明确的证据缺口和重分析建议，不能编造 H2/H3。
 
 质量检查：
 
@@ -544,10 +600,14 @@ counterfactual: "if it fails, metric does not improve"
 
 `ideation/_gate1_candidate_cards.md` 是 Gate1 默认展示给用户阅读的主文件，不是 JSON 摘要。
 它必须用 Markdown 卡片逐个展示所有候选，方便用户直接判断“选、合并、重构、暂缓或重分析”。
+首行标题后写 `<!-- ResearchOS Gate1 candidate-card schema: v2 -->`，以便 resume 将旧版长标题展示安全刷新为当前卡片格式。
 每个候选卡片必须包含：
 
 - `Rank / 推荐动作`：如 select、revise_before_final、merge_with_Dn、defer、reject、reanalyze_hint。
-- `Idea ID + title + one-line hypothesis`：一句话假设，不要只写方法名。
+- `短标题 + 完整方向描述`：卡片标题只用 `D# · display_title`，不得把长 title/pitch 放进 Markdown heading；完整描述放在正文。
+- `核心创新`：明确写 innovation summary / type / novelty delta / non-incremental reason，不能只把假设当成创新点。
+- `候选假设/机制`：逐项展示 `D1-H1`、`D1-H2`、`D1-H3`（如有），每项有可证伪命题、机制、预测和判别测试；区分它们与后续最终 hypotheses。
+- `可组合关系`：展示可与哪些候选的哪些 hypothesis 合并，及组合后的机制边界；没有可靠组合时明确写无，不要硬凑。
 - `Technical mechanism`：机制、prediction、counterfactual，用用户能看懂的技术语言写清楚。
 - `Practical / managerial / business implication`：如果该 idea 成立，对管理、业务、商业决策、组织治理、产品或现实部署意味着什么。即使是 CCF 技术稿，也要写现实含义，避免只有干涩技术点。
 - `Scores + score rationale`：展示 novelty / feasibility / impact / evaluability / differentiation / cost / contribution_strength，并用 1-2 句解释高低分依据。

@@ -47,9 +47,9 @@ python <skill-dir>/scripts/inventory_sources.py --workspace <workspace> \
   --output external_executor/context_source_inventory.json
 ```
 
-Inspect both outputs. Stop with `blocked` when a required control file is missing or malformed, a major schema version is unsupported, allowed paths cannot be determined, the handoff omits execution-critical structures, or the requested acquisition mode requires authority/capability that cannot be confirmed.
+Inspect both outputs. Stop with `blocked` when a required control file is missing or malformed, a major schema version is unsupported, allowed paths cannot be determined, the handoff omits execution-critical structures after supported reboost/top-level fallbacks, or the requested acquisition mode contradicts declared authority/capability.
 
-Treat preflight warnings as prompts for evidence review, not automatic blockers.
+Treat preflight warnings as prompts for evidence review, not automatic blockers. A scaffold-only `external_executor/expr/`, missing `resources/baseline_candidates.jsonl`, missing `literature/baseline_map.json`, or an empty `novelty/required_baselines.json` is not a Phase A blocker.
 
 ## Build a field-level evidence map
 
@@ -71,7 +71,7 @@ For every confirmed field, record one or more source references. Distinguish:
 - compiled value accepted with a documented non-material assumption;
 - unresolved or materially conflicting value.
 
-Do not fill an unknown execution-critical value from general domain knowledge.
+Use the ResearchOS default resource-acquisition policy when no explicit policy is present: public GitHub access, public dataset download, and baseline reimplementation are allowed within `allowed_paths.txt`, license review, and security review. Do not fill other unknown execution-critical values from general domain knowledge.
 
 ## Read sources progressively
 
@@ -116,7 +116,7 @@ Compare the compiled policy with observed or declared executor capabilities:
 - compute/time budget when declared;
 - supported result/handoff schema major versions.
 
-Absence of optional capability detail may be a warning. Absence of a capability required for the minimum loop is blocking.
+Absence of optional capability detail may be a warning. If `executor_capabilities.json` is absent but `executor_selection.json` names `codex_cli`, `claude_code_window`, or `manual`, treat public network access, GitHub acquisition, dataset download support, and baseline reimplementation support as declared by the T5 gate. Absence of a required capability after this selection fallback is blocking.
 
 ## Produce the alignment report
 
@@ -131,7 +131,7 @@ The confirmed execution scope must contain:
 - benchmark protocol summary;
 - minimum experiment loop;
 - claim boundaries and must-not-claim;
-- resource-acquisition policy;
+- resource-acquisition policy, using the ResearchOS default when the handoff omits it;
 - allowed/forbidden paths;
 - iteration budget and stop conditions;
 - output schema version;
@@ -181,9 +181,9 @@ The recommendation is advisory. `research-execution` owns checkpointing, manifes
 - Separate “missing” from “contradictory,” and “unknown” from “false.”
 - Keep confidence separate from gate status.
 - Preserve all mismatch records, including resolved warnings.
-- Never relax `AGENTS.md`, allowed paths, acquisition policy, privacy, license, or Schema controls.
+- Never relax `AGENTS.md`, allowed paths, acquisition policy, privacy, license, or Schema controls. The ResearchOS default acquisition policy is an explicit T5 policy, not an inference.
 - Never rewrite hypothesis, method intent, novelty boundary, experiment plan, or claim boundary.
-- Never search the web during alignment unless the handoff explicitly requires a current external fact and the root authorizes it; source verification is otherwise a later owning skill's job.
+- Never search the web during alignment unless the handoff explicitly requires a current external fact and the root authorizes it; resource discovery, GitHub acquisition, dataset download, and baseline reimplementation are later Phase B responsibilities.
 
 ## Resource map
 

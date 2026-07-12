@@ -10,9 +10,7 @@ does that work section by section.
 import json
 import hashlib
 import re
-import csv
 import textwrap
-from collections import Counter
 from pathlib import Path
 from typing import Any, Literal
 
@@ -359,15 +357,20 @@ _SURVEY_RUNTIME_PROCESS_RE = re.compile(
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 _LATIN_WORD_RE = re.compile(r"\b[A-Za-z][A-Za-z\-]{2,}\b")
 
+# These are completeness floors, not venue page limits.  A survey uses a
+# compact taxonomy structure but needs a moderately longer evidence narrative
+# than a standard CCF-A research-article section.  Section content must still
+# scale with the actual corpus, taxonomy breadth, evidence boundaries, and
+# target template; padding to reach a number is not acceptable.
 _SURVEY_MIN_PLAIN_CHARS = {
-    "abstract": {"en": 180, "zh": 500},
-    "introduction": {"en": 1400, "zh": 2500},
-    "background": {"en": 1300, "zh": 2200},
-    "taxonomy": {"en": 1700, "zh": 3000},
-    "comparison": {"en": 2600, "zh": 4500},
-    "challenges": {"en": 1300, "zh": 2200},
-    "future": {"en": 1600, "zh": 2800},
-    "conclusion": {"en": 800, "zh": 1500},
+    "abstract": {"en": 200, "zh": 600},
+    "introduction": {"en": 1600, "zh": 2800},
+    "background": {"en": 1500, "zh": 2600},
+    "taxonomy": {"en": 2100, "zh": 3500},
+    "comparison": {"en": 2900, "zh": 4800},
+    "challenges": {"en": 1500, "zh": 2600},
+    "future": {"en": 1900, "zh": 3200},
+    "conclusion": {"en": 850, "zh": 1600},
 }
 
 _SURVEY_SECTION_QUALITY_PATTERNS = {
@@ -436,24 +439,39 @@ class BuildSurveyFiguresParams(BaseModel):
     comparison_table_path: str = Field(default="literature/comparison_table.csv")
     domain_map_path: str = Field(default="literature/domain_map.json")
     survey_plan_path: str = Field(default="drafts/survey/survey_plan.json")
+    paper_notes_dir: str = Field(default="literature/paper_notes")
+    bridge_notes_dir: str = Field(default="literature/paper_notes_bridge")
     output_dir: str = Field(default="drafts/survey/figures")
     manifest_path: str = Field(default="drafts/survey/figures/survey_visual_manifest.json")
     dpi: int = Field(default=150, ge=100, le=300)
-    min_rows_per_figure: int = Field(
-        default=8,
-        ge=4,
-        le=1000,
-        description="Minimum valid rows required by each data-derived figure; sparse corpora produce a skipped manifest.",
+    min_top_level_classes: int = Field(
+        default=2,
+        ge=2,
+        le=20,
+        description="Minimum explicit top-level taxonomy classes required for the one permitted overview figure.",
+    )
+    require_resolved_note_cards: bool = Field(
+        default=True,
+        description="Require every direct paper ID in the taxonomy plan to resolve to a local structured note-card file.",
     )
 
 
 class BuildSurveyFiguresTool(Tool):
-    """Generate evidence-derived survey visuals, never decorative illustrations."""
+    """Generate the one permitted factual survey visual from a taxonomy plan.
+
+    Survey papers often contain incomparable metrics, heterogeneous evaluation
+    protocols, and operational screening signals.  Rendering those as a common
+    performance landscape would imply a comparison that the source corpus does
+    not support.  This tool therefore creates at most one structural taxonomy
+    overview, using only labels and paper identifiers explicitly recorded in
+    ``survey_plan.json``.  It never reads numerical performance values, T2
+    relevance scores, or inferred safety/risk values into a figure.
+    """
 
     name = "build_survey_figures"
     description = (
-        "Create deterministic academic survey figures from the comparison table. "
-        "The tool writes a manifest and generates only figures supported by sufficient tabular data."
+        "Create exactly one deterministic taxonomy-overview PDF when the survey plan contains a sufficient explicit taxonomy. "
+        "Performance comparisons, relative gains, screening scores, heatmaps, and decorative images are forbidden."
     )
     parameters_schema = BuildSurveyFiguresParams
     timeout_seconds = 60.0
@@ -464,16 +482,18 @@ class BuildSurveyFiguresTool(Tool):
     async def execute(self, **kwargs: Any) -> ToolResult:
         params = BuildSurveyFiguresParams(**kwargs)
         try:
-            comparison_path = self.policy.resolve_read(params.comparison_table_path)
+            survey_plan_path = self.policy.resolve_read(params.survey_plan_path)
+            paper_notes_dir = self.policy.resolve_read(params.paper_notes_dir)
+            bridge_notes_dir = self.policy.resolve_read(params.bridge_notes_dir)
             output_dir = self.policy.resolve_write(params.output_dir)
             manifest_path = self.policy.resolve_write(params.manifest_path)
         except ToolAccessDenied as exc:
             return ToolResult(ok=False, content=str(exc), error="access_denied")
-        if not comparison_path.exists() or comparison_path.stat().st_size <= 0:
+        if not survey_plan_path.exists() or survey_plan_path.stat().st_size <= 0:
             return ToolResult(
                 ok=False,
-                content=f"comparison table missing or empty: {params.comparison_table_path}",
-                error="missing_comparison_table",
+                content=f"survey plan missing or empty: {params.survey_plan_path}",
+                error="missing_survey_plan",
             )
         try:
             import matplotlib
@@ -491,10 +511,9 @@ class BuildSurveyFiguresTool(Tool):
             )
 
         try:
-            with comparison_path.open("r", encoding="utf-8", errors="replace", newline="") as handle:
-                rows = [dict(row) for row in csv.DictReader(handle) if isinstance(row, dict)]
-        except (OSError, csv.Error) as exc:
-            return ToolResult(ok=False, content=f"cannot read comparison table: {exc}", error="invalid_comparison_table")
+            survey_plan = _read_json(survey_plan_path)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            return ToolResult(ok=False, content=f"cannot read survey plan: {exc}", error="invalid_survey_plan")
 
         output_dir.mkdir(parents=True, exist_ok=True)
         font_name = _select_survey_figure_font(font_manager)
@@ -514,105 +533,92 @@ class BuildSurveyFiguresTool(Tool):
         )
         generated: list[dict[str, Any]] = []
         skipped: list[dict[str, str]] = []
-        years = _survey_figure_year_counts(rows)
-        year_points = sum(years.values())
-        if len(years) >= 2 and year_points >= params.min_rows_per_figure:
-            figure_path = output_dir / "survey_corpus_landscape.png"
-            _render_survey_year_landscape(
+        taxonomy = _survey_taxonomy_structure(survey_plan)
+        top_level = taxonomy.get("top_level") if isinstance(taxonomy.get("top_level"), list) else []
+        paper_link_audit = _audit_taxonomy_paper_links(
+            taxonomy=taxonomy,
+            workspace=self.policy.workspace_dir,
+            paper_notes_dir=paper_notes_dir,
+            bridge_notes_dir=bridge_notes_dir,
+        )
+        unresolved_ids = paper_link_audit["unresolved_direct_paper_ids"]
+        canonical_figure_path = output_dir / "fig_taxonomy_overview.pdf"
+        if len(top_level) >= params.min_top_level_classes and (not params.require_resolved_note_cards or not unresolved_ids):
+            _render_survey_taxonomy_overview(
                 plt,
-                years,
-                figure_path,
+                top_level,
+                canonical_figure_path,
                 dpi=params.dpi,
-                source_rows=len(rows),
+                taxonomy_dimension=str(taxonomy.get("dimension") or "Survey Taxonomy"),
             )
             generated.append(
                 {
-                    "id": "corpus_landscape",
-                    "path": _workspace_relative(self.policy.workspace_dir, figure_path),
-                    "kind": "publication_year_distribution",
-                    "title": "Evidence Landscape of the Survey Corpus",
-                    "data_points": year_points,
-                    "data_coverage": _survey_figure_coverage(year_points, len(rows)),
-                    "recommended_sections": ["background", "comparison"],
-                    "latex_example": "\\includegraphics[width=\\textwidth]{figures/survey_corpus_landscape.png}",
+                    "id": "taxonomy_overview",
+                    "path": _workspace_relative(self.policy.workspace_dir, canonical_figure_path),
+                    "kind": "explicit_taxonomy_structure",
+                    "title": "Survey Taxonomy Overview",
+                    "data_basis": "taxonomy class labels and direct paper IDs recorded in survey_plan.json after local note-card resolution",
+                    "top_level_classes": len(top_level),
+                    "taxonomy_nodes": int(taxonomy.get("node_count") or 0),
+                    "recommended_sections": ["taxonomy"],
+                    "latex_example": "\\includegraphics[width=\\textwidth]{figures/fig_taxonomy_overview.pdf}",
                 }
             )
         else:
+            if canonical_figure_path.exists():
+                canonical_figure_path.unlink()
+            if len(top_level) < params.min_top_level_classes:
+                reason = (
+                    "requires at least "
+                    f"{params.min_top_level_classes} explicit top-level taxonomy classes; found {len(top_level)}"
+                )
+            else:
+                reason = "direct taxonomy paper IDs have no local structured note card: " + ", ".join(unresolved_ids[:12])
             skipped.append(
                 {
-                    "id": "corpus_landscape",
-                    "reason": (
-                        "requires at least two valid publication years and "
-                        f"{params.min_rows_per_figure} valid rows; found years={len(years)}, rows={year_points}"
-                    ),
-                }
-            )
-        families = _survey_figure_method_counts(rows)
-        family_points = sum(families.values())
-        if len(families) >= 2 and family_points >= params.min_rows_per_figure:
-            figure_path = output_dir / "survey_method_taxonomy.png"
-            _render_survey_method_taxonomy(
-                plt,
-                families,
-                figure_path,
-                dpi=params.dpi,
-                source_rows=len(rows),
-            )
-            generated.append(
-                {
-                    "id": "method_taxonomy",
-                    "path": _workspace_relative(self.policy.workspace_dir, figure_path),
-                    "kind": "method_family_distribution",
-                    "title": "Method-Family Distribution in the Survey Corpus",
-                    "data_points": family_points,
-                    "data_coverage": _survey_figure_coverage(family_points, len(rows)),
-                    "recommended_sections": ["taxonomy", "comparison"],
-                    "latex_example": "\\includegraphics[width=\\textwidth]{figures/survey_method_taxonomy.png}",
-                }
-            )
-        else:
-            skipped.append(
-                {
-                    "id": "method_taxonomy",
-                    "reason": (
-                        "requires at least two non-empty method families and "
-                        f"{params.min_rows_per_figure} classified rows; found families={len(families)}, rows={family_points}"
-                    ),
+                    "id": "taxonomy_overview",
+                    "reason": reason,
                 }
             )
 
-        optional_inputs = {
-            "domain_map": params.domain_map_path,
-            "survey_plan": params.survey_plan_path,
-        }
         manifest = {
             "semantics": "deterministic_survey_data_visual_manifest",
+            "manifest_version": 2,
             "status": "generated" if generated else "skipped",
             "generation_policy": {
                 "decorative_images_forbidden": True,
-                "only_data_derived_figures": True,
+                "only_one_figure": True,
+                "allowed_figure_ids": ["taxonomy_overview"],
+                "only_taxonomy_structure_and_explicit_paper_links": True,
+                "all_direct_paper_ids_must_resolve_to_note_cards": params.require_resolved_note_cards,
+                "performance_comparisons_forbidden": True,
+                "cross_study_relative_gains_forbidden": True,
+                "screening_scores_forbidden": True,
+                "inferred_safety_or_risk_heatmaps_forbidden": True,
                 "dpi": params.dpi,
-                "min_rows_per_figure": params.min_rows_per_figure,
+                "min_top_level_classes": params.min_top_level_classes,
                 "font_requested": ["Times New Roman", "Times", "Nimbus Roman", "DejaVu Serif"],
                 "font_selected": font_name,
                 "language": "English academic labels",
-                "palette": ["#1F5A7A", "#2F7E8D", "#C47B4D", "#8E5A89", "#66717E"],
+                "palette": ["#1F5A7A", "#2F7E8D", "#C47B4D", "#66717E"],
             },
             "source": {
-                "comparison_table": params.comparison_table_path,
-                "row_count": len(rows),
-                "year_coverage": _survey_figure_coverage(year_points, len(rows)),
-                "method_family_coverage": _survey_figure_coverage(family_points, len(rows)),
-                **optional_inputs,
+                "survey_plan": params.survey_plan_path,
+                "taxonomy_dimension": taxonomy.get("dimension") or "",
+                "taxonomy_nodes": int(taxonomy.get("node_count") or 0),
+                "top_level_classes": len(top_level),
+                "paper_link_audit": paper_link_audit,
+                "comparison_table_intentionally_unused": True,
+                "reason": "Comparison-table metrics and T2 screening signals are not comparable survey-wide evidence for a figure.",
             },
             "figures": generated,
             "skipped": skipped,
             "input_fingerprints": _input_fingerprints(
                 self.policy.workspace_dir,
                 {
-                    "comparison_table": params.comparison_table_path,
-                    "domain_map": params.domain_map_path,
                     "survey_plan": params.survey_plan_path,
+                    "paper_notes_dir": params.paper_notes_dir,
+                    "bridge_notes_dir": params.bridge_notes_dir,
                 },
             ),
         }
@@ -634,6 +640,107 @@ class BuildSurveyFiguresTool(Tool):
         )
 
 
+def _survey_taxonomy_structure(survey_plan: dict[str, Any]) -> dict[str, Any]:
+    taxonomy = survey_plan.get("taxonomy") if isinstance(survey_plan.get("taxonomy"), dict) else {}
+    raw_tree = taxonomy.get("tree") if isinstance(taxonomy.get("tree"), list) else []
+    nodes: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for raw in raw_tree:
+        if not isinstance(raw, dict):
+            continue
+        class_id = str(raw.get("class_id") or "").strip()
+        name = " ".join(str(raw.get("name") or "").split())
+        if not class_id or not name or class_id in seen_ids:
+            continue
+        seen_ids.add(class_id)
+        parent_raw = raw.get("parent")
+        parent = str(parent_raw).strip() if parent_raw not in (None, "") else ""
+        paper_ids = raw.get("paper_ids") if isinstance(raw.get("paper_ids"), list) else []
+        nodes.append(
+            {
+                "class_id": class_id,
+                "name": name,
+                "parent": parent,
+                "paper_ids": [str(item).strip() for item in paper_ids if str(item).strip()],
+            }
+        )
+    node_ids = {str(node["class_id"]) for node in nodes}
+    top_level = [node for node in nodes if not node["parent"] or node["parent"] not in node_ids]
+    children_by_parent: dict[str, list[dict[str, Any]]] = {str(node["class_id"]): [] for node in top_level}
+    for node in nodes:
+        parent = str(node["parent"])
+        if parent in children_by_parent:
+            children_by_parent[parent].append(node)
+    for parent in top_level:
+        parent["children"] = sorted(
+            children_by_parent.get(str(parent["class_id"]), []),
+            key=lambda item: (str(item["class_id"]), str(item["name"]).casefold()),
+        )
+    return {
+        "dimension": " ".join(str(taxonomy.get("dimension") or "").split()),
+        "node_count": len(nodes),
+        "nodes": nodes,
+        "top_level": sorted(top_level, key=lambda item: (str(item["class_id"]), str(item["name"]).casefold())),
+    }
+
+
+def _audit_taxonomy_paper_links(
+    *,
+    taxonomy: dict[str, Any],
+    workspace: Path,
+    paper_notes_dir: Path,
+    bridge_notes_dir: Path,
+) -> dict[str, Any]:
+    """Resolve taxonomy paper IDs to existing local note cards.
+
+    The taxonomy is an LLM-authored analytical framework.  This audit does not
+    validate its scientific correctness; it only prevents the figure from
+    displaying an unresolvable identifier as though it were a grounded source.
+    """
+
+    card_paths: dict[str, Path] = {}
+    for directory in (paper_notes_dir, bridge_notes_dir):
+        if not directory.exists() or not directory.is_dir():
+            continue
+        for path in directory.rglob("*.md"):
+            if path.name.startswith("_") or path.stat().st_size <= 0:
+                continue
+            card_paths.setdefault(path.stem, path)
+
+    nodes = taxonomy.get("nodes") if isinstance(taxonomy.get("nodes"), list) else []
+    direct_records: list[dict[str, str]] = []
+    unique_ids: list[str] = []
+    seen_ids: set[str] = set()
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        class_id = str(node.get("class_id") or "").strip()
+        for paper_id in node.get("paper_ids") or []:
+            normalized = str(paper_id).strip()
+            if not normalized:
+                continue
+            if normalized not in seen_ids:
+                seen_ids.add(normalized)
+                unique_ids.append(normalized)
+            path = card_paths.get(normalized)
+            direct_records.append(
+                {
+                    "class_id": class_id,
+                    "paper_id": normalized,
+                    "note_card": _workspace_relative(workspace, path) if path else "",
+                    "status": "resolved_note_card" if path else "unresolved_note_card",
+                }
+            )
+    unresolved = sorted({record["paper_id"] for record in direct_records if record["status"] != "resolved_note_card"})
+    return {
+        "direct_link_records": len(direct_records),
+        "unique_direct_paper_ids": len(unique_ids),
+        "resolved_direct_paper_ids": len(unique_ids) - len(unresolved),
+        "unresolved_direct_paper_ids": unresolved,
+        "note_card_resolution": direct_records,
+    }
+
+
 def _select_survey_figure_font(font_manager: Any) -> str:
     for candidate in ("Times New Roman", "Times", "Nimbus Roman", "DejaVu Serif"):
         try:
@@ -645,127 +752,186 @@ def _select_survey_figure_font(font_manager: Any) -> str:
     return "DejaVu Serif"
 
 
-def _survey_figure_year_counts(rows: list[dict[str, str]]) -> Counter[int]:
-    counts: Counter[int] = Counter()
-    for row in rows:
-        value = str(row.get("year") or "").strip()
-        match = re.search(r"(?:19|20)\d{2}", value)
-        if match:
-            counts[int(match.group(0))] += 1
-    return counts
-
-
-def _survey_figure_method_counts(rows: list[dict[str, str]]) -> Counter[str]:
-    counts: Counter[str] = Counter()
-    for row in rows:
-        family = " ".join(str(row.get("method_family") or "").split())
-        if family:
-            counts[family] += 1
-    return counts
-
-
-def _survey_figure_coverage(valid_rows: int, total_rows: int) -> dict[str, Any]:
-    total = max(0, int(total_rows))
-    valid = max(0, int(valid_rows))
-    return {
-        "valid_rows": valid,
-        "total_rows": total,
-        "share": round(valid / total, 4) if total else 0.0,
-    }
-
-
-def _render_survey_year_landscape(
+def _render_survey_taxonomy_overview(
     plt: Any,
-    counts: Counter[int],
+    top_level: list[dict[str, Any]],
     output_path: Path,
     *,
     dpi: int,
-    source_rows: int,
+    taxonomy_dimension: str,
 ) -> None:
-    palette = ["#1F5A7A", "#2F7E8D", "#C47B4D", "#8E5A89", "#66717E"]
-    years = sorted(counts)
-    values = [counts[year] for year in years]
-    total = sum(values)
-    figure, axis = plt.subplots(figsize=(7.25, 4.1), dpi=dpi)
-    axis.bar(
-        [str(year) for year in years],
-        values,
-        color=[palette[index % len(palette)] for index in range(len(values))],
-        edgecolor="#FFFFFF",
-        linewidth=0.8,
-        width=0.72,
+    """Render a vector taxonomy map without introducing scientific quantities."""
+
+    from matplotlib.patches import FancyBboxPatch
+
+    palette = ["#1F5A7A", "#2F7E8D", "#C47B4D", "#66717E"]
+    column_count = 2 if len(top_level) > 1 else 1
+    rows_per_column = (len(top_level) + column_count - 1) // column_count
+    source_columns: list[list[dict[str, Any]]] = [
+        top_level[index * rows_per_column : (index + 1) * rows_per_column]
+        for index in range(column_count)
+    ]
+
+    heading_wrap = 36 if column_count == 2 else 62
+    child_wrap = 34 if column_count == 2 else 59
+
+    def _lines(value: str, width: int) -> list[str]:
+        return textwrap.wrap(value, width=width, break_long_words=False, break_on_hyphens=False) or [value]
+
+    blocks: list[list[dict[str, Any]]] = []
+    for source_column in source_columns:
+        rendered_column: list[dict[str, Any]] = []
+        for item in source_column:
+            children = item.get("children") if isinstance(item.get("children"), list) else []
+            display_children = children or [{"class_id": "", "name": "No explicit child class recorded", "paper_ids": []}]
+            child_rows = []
+            for child in display_children:
+                label = (f"{child.get('class_id', '')}  {child.get('name', '')}").strip()
+                lines = _lines(label, child_wrap)
+                child_rows.append({"item": child, "lines": lines, "height": max(0.52, 0.23 * len(lines) + 0.28)})
+            heading_lines = _lines(f"{item['class_id']}  {item['name']}", heading_wrap)
+            heading_height = max(0.78, 0.25 * len(heading_lines) + 0.39)
+            block_height = heading_height + sum(row["height"] for row in child_rows) + 0.18 * len(child_rows) + 0.30
+            rendered_column.append(
+                {
+                    "item": item,
+                    "heading_lines": heading_lines,
+                    "heading_height": heading_height,
+                    "children": child_rows,
+                    "explicit_child_count": len(children),
+                    "height": block_height,
+                }
+            )
+        blocks.append(rendered_column)
+    max_block_units = max(
+        (sum(float(item["height"]) + 0.28 for item in column) for column in blocks),
+        default=2.0,
     )
-    for position, value in enumerate(values):
-        axis.text(
-            position,
-            value + max(0.08, max(values) * 0.035),
-            f"{value}\n({value / total:.0%})",
-            ha="center",
-            va="bottom",
-            fontsize=8,
-        )
-    axis.set_title("Evidence Landscape of the Survey Corpus", pad=12)
-    axis.set_xlabel("Publication Year")
-    axis.set_ylabel("Studies")
-    axis.spines[["top", "right"]].set_visible(False)
-    axis.grid(axis="y", color="#D6DCE1", linewidth=0.6, alpha=0.8)
-    axis.set_axisbelow(True)
-    axis.set_ylim(0, max(values) * 1.24)
+    figure, axis = plt.subplots(
+        figsize=(10.5, min(12.5, max(5.8, max_block_units + 1.9))),
+        dpi=dpi,
+    )
+    axis.set_xlim(0, 100)
+    axis.set_ylim(0, max_block_units + 1.9)
+    axis.axis("off")
+    # A plan's taxonomy dimension can be a full paragraph.  It belongs in the
+    # surrounding survey prose, not in an overlong figure title.
+    title = "Survey Taxonomy Overview"
+    axis.text(50, max_block_units + 1.54, title, ha="center", va="center", fontsize=12, fontweight="bold", color="#15212B")
+    axis.text(
+        50,
+        max_block_units + 1.14,
+        "Analytical framework from the survey plan; source-card links only, not evidence strength or performance.",
+        ha="center",
+        va="center",
+        fontsize=8,
+        color="#4B5563",
+    )
+
+    column_width = 44.0 if column_count == 2 else 72.0
+    x_positions = [4.0, 52.0] if column_count == 2 else [14.0]
+    for column_index, column in enumerate(blocks):
+        x = x_positions[column_index]
+        y = max_block_units + 0.72
+        for item_index, block in enumerate(column):
+            item = block["item"]
+            block_height = float(block["height"])
+            heading_height = float(block["heading_height"])
+            y -= block_height
+            color = palette[(column_index * rows_per_column + item_index) % len(palette)]
+            axis.add_patch(
+                FancyBboxPatch(
+                    (x, y + block_height - heading_height),
+                    column_width,
+                    heading_height,
+                    boxstyle="round,pad=0.025,rounding_size=0.06",
+                    linewidth=0.9,
+                    edgecolor=color,
+                    facecolor=color,
+                )
+            )
+            axis.text(
+                x + 0.55,
+                y + block_height - heading_height / 2,
+                "\n".join(block["heading_lines"]),
+                ha="left",
+                va="center",
+                fontsize=7.7,
+                color="white",
+                fontweight="bold",
+            )
+            explicit_child_count = int(block["explicit_child_count"])
+            parent_descriptor = (
+                f"{explicit_child_count} sub-class" + ("es" if explicit_child_count != 1 else "")
+                if explicit_child_count
+                else f"{len(item.get('paper_ids') or [])} direct source card(s)"
+            )
+            axis.text(
+                x + column_width - 0.55,
+                y + block_height - heading_height / 2,
+                parent_descriptor,
+                ha="right",
+                va="center",
+                fontsize=6.9,
+                color="white",
+            )
+            child_top = y + block_height - heading_height - 0.15
+            for child_row in block["children"]:
+                child = child_row["item"]
+                child_height = float(child_row["height"])
+                child_top -= child_height
+                child_y = child_top + child_height / 2
+                child_count_linked = len(child.get("paper_ids") or [])
+                child_descriptor = (
+                    f"{child_count_linked} resolved card" + ("s" if child_count_linked != 1 else "")
+                    if child_count_linked
+                    else "no direct paper ID"
+                )
+                axis.add_patch(
+                    FancyBboxPatch(
+                        (x + 0.35, child_top),
+                        column_width - 0.70,
+                        child_height,
+                        boxstyle="round,pad=0.015,rounding_size=0.035",
+                        linewidth=0.55,
+                        edgecolor="#B7C3CC",
+                        facecolor="#F7F9FA",
+                    )
+                )
+                axis.text(
+                    x + 0.66,
+                    child_y,
+                    "\n".join(child_row["lines"]),
+                    ha="left",
+                    va="center",
+                    fontsize=6.6,
+                    color="#1F2933",
+                )
+                axis.text(
+                    x + column_width - 0.62,
+                    child_y,
+                    child_descriptor,
+                    ha="right",
+                    va="center",
+                    fontsize=6.2,
+                    color="#4B5563",
+                )
+                child_top -= 0.18
+            y -= 0.28
     figure.text(
         0.99,
         0.012,
-        f"Source: ResearchOS comparison table; valid year rows n={total}/{source_rows}.",
+        "Source: survey_plan.json taxonomy tree and resolved local note-card paths. Counts are class-to-card links; no direct paper ID is a taxonomy property, not evidence absence. Not study counts, evidence strength, or research gaps.",
         ha="right",
         va="bottom",
-        fontsize=7,
+        fontsize=6.8,
         color="#4B5563",
     )
-    figure.tight_layout(rect=(0, 0.055, 1, 0.985))
-    figure.savefig(output_path, bbox_inches="tight", facecolor="white")
-    plt.close(figure)
-
-
-def _render_survey_method_taxonomy(
-    plt: Any,
-    counts: Counter[str],
-    output_path: Path,
-    *,
-    dpi: int,
-    source_rows: int,
-) -> None:
-    palette = ["#1F5A7A", "#2F7E8D", "#C47B4D", "#8E5A89", "#66717E"]
-    items = sorted(counts.items(), key=lambda item: (-item[1], item[0].casefold()))[:10]
-    labels = ["\n".join(textwrap.wrap(item[0], width=23)) or item[0] for item in reversed(items)]
-    values = [item[1] for item in reversed(items)]
-    total = sum(values)
-    figure, axis = plt.subplots(figsize=(7.45, max(3.85, 0.48 * len(labels) + 1.7)), dpi=dpi)
-    colors = [palette[index % len(palette)] for index in range(len(labels))]
-    bars = axis.barh(labels, values, color=list(reversed(colors)), edgecolor="#FFFFFF", linewidth=0.8)
-    for bar, value in zip(bars, values):
-        axis.text(
-            value + max(0.08, max(values) * 0.03),
-            bar.get_y() + bar.get_height() / 2,
-            f"{value} ({value / total:.0%})",
-            va="center",
-            fontsize=8,
-        )
-    axis.set_title("Method-Family Distribution in the Survey Corpus", pad=12)
-    axis.set_xlabel("Studies (share of classified corpus)")
-    axis.spines[["top", "right", "left"]].set_visible(False)
-    axis.grid(axis="x", color="#D6DCE1", linewidth=0.6, alpha=0.8)
-    axis.set_axisbelow(True)
-    axis.set_xlim(0, max(values) * 1.2)
-    figure.text(
-        0.99,
-        0.012,
-        f"Source: ResearchOS comparison table; classified rows n={total}/{source_rows}.",
-        ha="right",
-        va="bottom",
-        fontsize=7,
-        color="#4B5563",
-    )
-    figure.tight_layout(rect=(0, 0.055, 1, 0.985))
-    figure.savefig(output_path, bbox_inches="tight", facecolor="white")
+    # The node map has deliberately fixed coordinates; tight_layout can shrink
+    # them unpredictably for long taxonomy labels and emits warnings in headless
+    # batch runs.  Reserve stable margins instead.
+    figure.subplots_adjust(left=0.025, right=0.975, bottom=0.055, top=0.92)
+    figure.savefig(output_path, format="pdf", bbox_inches="tight", facecolor="white")
     plt.close(figure)
 
 
@@ -1187,6 +1353,7 @@ class AuditSurveyCoverageTool(Tool):
         cited = _cited_keys(tex)
         writing_language = _survey_state_writing_language(state, self.policy.workspace_dir)
         section_texts = _survey_section_texts(tex, state)
+        visual_manifest = _read_optional_json(self.policy, "drafts/survey/figures/survey_visual_manifest.json")
         checks = []
         checks.append(_check("has_framework_section", "taxonomy" in section_texts, "Survey should include a taxonomy/framework section."))
         checks.append(_check("has_research_progress_section", "comparison" in section_texts, "Survey should include research-progress/comparative evaluation."))
@@ -1261,6 +1428,15 @@ class AuditSurveyCoverageTool(Tool):
                 "survey_graphics_exist",
                 not missing_graphics,
                 f"Missing local graphics referenced by survey.tex: {missing_graphics}",
+            )
+        )
+        graphics_manifest_issues = _survey_graphics_manifest_issues(tex, visual_manifest)
+        checks.append(
+            _check(
+                "survey_graphics_manifest_alignment",
+                not graphics_manifest_issues,
+                "Survey graphics must match the deterministic taxonomy-only visual manifest: "
+                + "; ".join(graphics_manifest_issues[:8]),
             )
         )
         min_unique_citations = _survey_min_unique_citations(state)
@@ -3319,6 +3495,54 @@ def _missing_survey_graphics(tex: str, tex_dir: Path) -> list[str]:
         if not any(item.exists() and item.is_file() for item in candidates):
             missing.append(candidate)
     return sorted(set(missing))
+
+
+def _survey_graphics_manifest_issues(tex: str, manifest: dict[str, Any]) -> list[str]:
+    """Reject local survey graphics outside the one factual visual contract.
+
+    A TeX file can compile while still embedding an unreviewable or fabricated
+    chart.  This check deliberately applies only to local ``figures/`` paths,
+    leaving template-owned logos and class assets alone.
+    """
+
+    pattern = re.compile(r"\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}")
+    local_graphics = [
+        raw.strip().replace("\\", "/")
+        for raw in pattern.findall(tex)
+        if raw.strip().replace("\\", "/").startswith("figures/")
+    ]
+    if not local_graphics:
+        return []
+
+    expected_path = "drafts/survey/figures/fig_taxonomy_overview.pdf"
+    expected_tex_path = "figures/fig_taxonomy_overview.pdf"
+    issues: list[str] = []
+    if manifest.get("semantics") != "deterministic_survey_data_visual_manifest":
+        return ["survey_visual_manifest.json is missing or has invalid semantics"]
+    policy = manifest.get("generation_policy") if isinstance(manifest.get("generation_policy"), dict) else {}
+    required_policy = {
+        "only_one_figure": True,
+        "performance_comparisons_forbidden": True,
+        "cross_study_relative_gains_forbidden": True,
+        "screening_scores_forbidden": True,
+        "inferred_safety_or_risk_heatmaps_forbidden": True,
+        "only_taxonomy_structure_and_explicit_paper_links": True,
+        "all_direct_paper_ids_must_resolve_to_note_cards": True,
+    }
+    missing_policy = [key for key, value in required_policy.items() if policy.get(key) is not value]
+    if missing_policy:
+        issues.append("manifest lacks taxonomy-only policy: " + ", ".join(missing_policy))
+    figures = manifest.get("figures") if isinstance(manifest.get("figures"), list) else []
+    if manifest.get("status") != "generated" or len(figures) != 1:
+        issues.append("local graphics require one generated taxonomy overview in the manifest")
+        return issues
+    figure = figures[0] if isinstance(figures[0], dict) else {}
+    if figure.get("id") != "taxonomy_overview" or figure.get("path") != expected_path:
+        issues.append("manifest does not authorize fig_taxonomy_overview.pdf")
+    invalid_refs = [item for item in local_graphics if item != expected_tex_path]
+    if invalid_refs:
+        issues.append("unapproved local graphics: " + ", ".join(sorted(set(invalid_refs))))
+    return issues
 
 
 def _survey_citation_diversity_issues(

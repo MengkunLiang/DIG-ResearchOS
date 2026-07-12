@@ -96,7 +96,20 @@ def allowed_patterns(root: Path) -> list[str]:
     patterns = []
     for raw in path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
-        if line and not line.startswith("#"):
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(maxsplit=1)
+        mode = "rw"
+        if len(parts) == 2 and parts[0].lower() in {"rw", "write", "allow", "ro", "read", "no", "deny", "forbid"}:
+            mode, line = parts[0].lower(), parts[1].strip()
+        elif line.lower().startswith(("deny:", "forbid:", "!", "-")):
+            mode = "no"
+        elif line.lower().startswith(("allow:", "write:", "+")):
+            for prefix in ("allow:", "write:", "+"):
+                if line.lower().startswith(prefix):
+                    line = line[len(prefix):].strip()
+                    break
+        if mode == "rw" and line:
             patterns.append(line.lstrip("./"))
     if not patterns:
         raise ValueError("allowed_paths.txt has no usable rules")

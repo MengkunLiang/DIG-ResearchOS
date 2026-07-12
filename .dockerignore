@@ -39,13 +39,12 @@ deploy/workspace/
 deploy/workspaces/
 tmp/
 
-# 文档和运行资源需要进入镜像，保留 README、docs index、
-# agent guidance、runtime skills 和 LaTeX templates。
+# Dockerfile explicitly copies the documentation and Skill contracts that the
+# runtime needs. Keep the source-tree Markdown out of the broad build context,
+# then re-include those declared runtime inputs only.
 *.md
 !README.md
 !README.zh-CN.md
-!AGENTS.md
-!BACKGROUND.md
 !docs/**/*.md
 !config/README.md
 !scripts/README.md

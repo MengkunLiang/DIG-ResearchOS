@@ -8,8 +8,6 @@ tools:
   - finish_task
 strict_tools: true
 model_tier: medium
-max_steps: 12
-max_tokens_total: 80000
 temperature: 0.1
 allowed_read_prefixes:
   - user_inputs/paper-claim-audit/

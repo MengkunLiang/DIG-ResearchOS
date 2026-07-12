@@ -52,9 +52,15 @@ class SkillAgent(Agent):
                 name=f"skill_{skill.name}",
                 model_tier=model_tier,
                 tool_names=translated,
-                max_steps=int(metadata.get("max_steps", 20)),
-                max_tokens_total=int(metadata.get("max_tokens_total", 100_000)),
+                # A guided Skill may need additional evidence checks or several
+                # rounds of human follow-up.  Its lifecycle must never stop
+                # because an arbitrary per-SKILL token/step ceiling was reached.
+                # Provider/context failures, cancellation, human pauses, and
+                # output validation still remain explicit, recoverable stops.
+                max_steps=0,
+                max_tokens_total=0,
                 max_wall_seconds=int(metadata.get("max_wall_seconds", 1800)),
+                unlimited_budget=True,
                 temperature=float(metadata.get("temperature", 0.2)),
                 llm_profile=llm_profile or metadata.get("llm_profile"),
                 prompt_template=None,

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import time
 from typing import Any
 
 import httpx
@@ -14,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from .abstract_utils import abstract_from_openalex_index
 from .base import Tool, ToolResult
+from .http_outcomes import bounded_retry_sleep, provider_cooldown_result, retry_after_hint_seconds, scholarly_http_failure
 from .search_validation import clean_search_query, empty_query_result, filter_usable_papers
 
 
@@ -133,8 +135,12 @@ class OpenAlexSearchTool(Tool):
 
     def __init__(self):
         self.base_url = "https://api.openalex.org"
+        self._cooldown_until = 0.0
 
     async def execute(self, **kwargs) -> ToolResult:
+        remaining = self._cooldown_until - time.monotonic()
+        if remaining > 0:
+            return provider_cooldown_result(source="OpenAlex", retry_after_seconds=remaining)
         query = clean_search_query(kwargs["query"])
         if not query:
             return empty_query_result(self.name, kwargs.get("query"))
@@ -152,63 +158,96 @@ class OpenAlexSearchTool(Tool):
         if filter_params:
             params["filter"] = filter_params
 
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(f"{self.base_url}/works", params=params)
-                response.raise_for_status()
-                data = response.json()
-
-            results = data.get("results", [])
-            meta = data.get("meta", {})
-            total_count = meta.get("count", 0)
-
-            papers = filter_usable_papers([_work_to_paper(work) for work in results])
-
-            # 格式化输出
-            content_lines = [
-                f"找到 {total_count} 篇相关论文（返回前 {len(papers)} 篇）：",
-                ""
-            ]
-
-            for i, paper in enumerate(papers, 1):
-                title = paper["title"]
-                authors = paper["authors"][:3]
-                year = paper["year"]
-                citations = paper["citation_count"]
-                abstract = paper.get("abstract", "") or ""
-                venue = paper.get("venue", "")
-
-                # 摘要截断到 300 字符
-                if len(abstract) > 300:
-                    abstract = abstract[:300] + "..."
-
-                content_lines.append(
-                    f"{i}. {title}\n"
-                    f"   作者: {', '.join(authors)}, 年份: {year if year is not None else 'unknown'}, 发表于: {venue}, 引用: {citations}\n"
-                    f"   摘要: {abstract or '无'}"
+        data: dict[str, Any] | None = None
+        last_error: Exception | None = None
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                    response = await client.get(f"{self.base_url}/works", params=params)
+                    response.raise_for_status()
+                    data = response.json()
+                break
+            except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+                last_error = exc
+                status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+                retriable = isinstance(exc, httpx.RequestError) or status == 429 or (status is not None and status >= 500)
+                retry_after = retry_after_hint_seconds(exc.response if isinstance(exc, httpx.HTTPStatusError) else None)
+                if status == 429 and retry_after is not None and retry_after > 10:
+                    self._cooldown_until = time.monotonic() + retry_after
+                    return scholarly_http_failure(
+                        source="OpenAlex",
+                        exc=exc,
+                        attempts=attempt + 1,
+                        action="搜索",
+                        response=exc.response,
+                    )
+                if retriable and attempt < max_attempts - 1:
+                    await bounded_retry_sleep(exc.response if isinstance(exc, httpx.HTTPStatusError) else None, attempt=attempt)
+                    continue
+                failure = scholarly_http_failure(
+                    source="OpenAlex",
+                    exc=exc,
+                    attempts=attempt + 1,
+                    action="搜索",
+                    response=exc.response if isinstance(exc, httpx.HTTPStatusError) else None,
                 )
-                content_lines.append("")
-
-            return ToolResult(
-                ok=True,
-                content="\n".join(content_lines),
-                data={
-                    "papers": papers,
-                    "total": total_count,
-                    "query": query,
-                    "query_bucket": query_bucket,
-                    "bridge_id": bridge_id,
-                }
+                if status == 429:
+                    cooldown = retry_after if retry_after is not None else 60.0
+                    self._cooldown_until = time.monotonic() + cooldown
+                    failure.data["cooldown_seconds"] = cooldown
+                return failure
+        if data is None:
+            return scholarly_http_failure(
+                source="OpenAlex",
+                exc=last_error or RuntimeError("unknown OpenAlex failure"),
+                attempts=max_attempts,
+                action="搜索",
             )
 
-        except Exception as e:
-            import traceback
-            error_details = traceback.format_exc()
-            return ToolResult(
-                ok=False,
-                content=f"❌ OpenAlex 搜索失败: {e}\n详细错误:\n{error_details}",
-                error="search_failed"
+        results = data.get("results", [])
+        meta = data.get("meta", {})
+        total_count = meta.get("count", 0)
+
+        papers = filter_usable_papers([_work_to_paper(work) for work in results])
+
+        # 格式化输出
+        content_lines = [
+            f"找到 {total_count} 篇相关论文（返回前 {len(papers)} 篇）：",
+            ""
+        ]
+
+        for i, paper in enumerate(papers, 1):
+            title = paper["title"]
+            authors = paper["authors"][:3]
+            year = paper["year"]
+            citations = paper["citation_count"]
+            abstract = paper.get("abstract", "") or ""
+            venue = paper.get("venue", "")
+
+            # 摘要截断到 300 字符
+            if len(abstract) > 300:
+                abstract = abstract[:300] + "..."
+
+            content_lines.append(
+                f"{i}. {title}\n"
+                f"   作者: {', '.join(authors)}, 年份: {year if year is not None else 'unknown'}, 发表于: {venue}, 引用: {citations}\n"
+                f"   摘要: {abstract or '无'}"
             )
+            content_lines.append("")
+
+        return ToolResult(
+            ok=True,
+            content="\n".join(content_lines),
+            data={
+                "papers": papers,
+                "total": total_count,
+                "query": query,
+                "query_bucket": query_bucket,
+                "bridge_id": bridge_id,
+                "source": "openalex",
+            },
+        )
 
 
 class OpenAlexGetWorkTool(Tool):

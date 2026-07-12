@@ -18,6 +18,12 @@
 {{ comparison_table_preview }}
 {% endif %}
 
+### 可定向核验的论文卡
+{{ paper_card_inventory }}
+
+论文卡是文献机制、设计理由、边界条件与基线出处的 section 级证据。它们不是实验性能证据；
+在报告中必须区分 FULL/PARTIAL/ABSTRACT，abstract-only 只能作为补检线索，不能单独确认机制碰撞或新颖性结论。
+
 {% if agent_guidance %}
 {{ agent_guidance }}
 
@@ -36,6 +42,7 @@
 - `ideation/hypotheses.md` - 完整的研究假设文档
 - `literature/synthesis.md` - 完整的文献综述
 - `literature/comparison_table.csv` - 已有方法对比表（如果存在）
+- `literature/paper_notes/`、`literature/paper_notes_bridge/` - 对候选最近工作、机制或基线存在疑问时，读取精确卡片 section；不要盲读全部卡片
 
 理解每个假设的核心内容：
 - 假设的核心方法/技术

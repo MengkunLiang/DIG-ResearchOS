@@ -131,10 +131,11 @@ CLI
 1. `resolve_skill` 并解析 `SKILL.md` 输入/输出契约；
 2. 在**不创建 LLMClient、不做 endpoint selftest**的情况下检查请求和文件；
 3. 把结果写入 `<workspace>/_runtime/skill_sessions/<session-id>.json`，并写 `user_inputs/<skill>/_intake.md`；
-4. 缺输入时展示上传位置并退出 `WAITING_INPUT`；
-5. 输入通过后才构造 runtime、`ToolRegistry`、`LLMClient` 与 `SkillAgent`；
-6. 用 `AgentRunner` 执行，并在同一会话中持久化可观察的 `awaiting_llm`、`tool_running`、`tool_completed` 等进度事件；
-7. 把最终结果、运行统计、trace、输出存在性和恢复命令回写会话。
+4. **非交互**缺输入时展示上传位置并退出 `WAITING_INPUT`，不创建 LLM client；
+5. **交互终端**（`--interactive`）缺输入时，可启动受限 intake Agent：它只读取清单、向人询问、并把人上传或粘贴的材料整理到 `user_inputs/<skill>/...`，随后重新做确定性检查；它不能写论文、实验、引用或最终 Skill 产物；
+6. 输入通过后才构造或复用 runtime、`ToolRegistry`、`LLMClient` 与 `SkillAgent`；
+7. 用 `AgentRunner` 执行，并在同一会话中持久化可观察的 `awaiting_llm`、`tool_running`、`tool_completed` 等进度事件；
+8. 把最终结果、运行统计、trace、输出存在性和恢复命令回写会话。
 
 因此 Skill 不是 runtime 外的旁路，也不是依赖聊天历史的临时 prompt。它使用与
 pipeline agent 相同的工具策略、trace、预算和输出校验；会话文件是多轮继续的事实源。
@@ -149,7 +150,7 @@ pipeline agent 相同的工具策略、trace、预算和输出校验；会话文
 
 - `--session-id NAME`：为并行的稿件或任务设置独立会话名；默认是 Skill 名。
 - `--resume`：沿用同一会话的请求和已验证输入，重新检查后继续。
-- `--interactive`：没有位置参数 request 时，从终端接受多行任务说明，以 `END` 单独成行提交。
+- `--interactive`：没有位置参数 request 时，从终端接受多行任务说明；若必需材料缺失，继续通过受限 intake Agent 询问上传/粘贴并写入声明的 `user_inputs/<skill>/...`。以 `END` 单独成行提交任务说明。
 - `--skip-startup-selftest`：仅在输入已就绪且确实要执行时跳过 provider 启动自检；不能绕过输入检查。
 
 ### 3.5 `list-skills`
@@ -161,9 +162,15 @@ pipeline agent 相同的工具策略、trace、预算和输出校验；会话文
 这三个命令都不执行 Skill，不调用 LLM。它们适合 provider 故障时诊断输入，也让用户
 无需打开 `SKILL.md` 或猜测文件路径。
 
-卡片浏览器支持 `search <关键词>` / `搜索 <关键词>`、`category <分类>` / `分类 <分类>`、
-`all`、`help`、`run <序号或名称>` 与 `q`。搜索覆盖 Skill 名称、中文简介、类别、流程阶段和行动提示；
-筛选后仍保留目录中的稳定编号。
+卡片浏览器支持直接输入关键词，也支持 `search <关键词>` / `搜索 <关键词>`、
+`category <分类>` / `分类 <分类>`、`all`、`help`、`run <序号或名称>` 与 `q`。本地索引覆盖
+Skill 名称、中文简介、类别、流程阶段、行动提示和中英文别名，并提供有限的拼写模糊匹配；例如
+`文献`、`Idea`、`创新点` 和 `citaiton` 都无需调用 LLM 或网络。筛选后仍保留目录中的稳定编号，
+并显示匹配依据。
+
+带色目录将每个工作流分类渲染为独立面板。每项 Skill 明确显示流程位置、运行方式、用途、必需/可选输入
+数量、预期产物数量、适用边界和查看/启动命令；不使用 `in 1+1` 这类内部缩写。`--no-color` 保留
+可复制的稳定文本回退。
 
 ### 3.6 一组真实命令例子
 
@@ -213,6 +220,39 @@ PYTHONPATH=. python -m researchos.cli run-skill paper-outline \
   --resume
 ```
 
+### 3.7 Research-facing observability protocol
+
+`CliProgressEmitter` and `runtime/observability/StageReporter` provide one
+presentation-only protocol for all runner entry points. The protocol is not an
+agent prompt and does not mutate research artifacts, state transitions, or
+schemas.
+
+```text
+AgentRunner / Human Gate
+  -> stage_started
+  -> inputs_loaded / calculation_summary / ranking_generated /
+     decision_made / warning_emitted / unsupported_recorded
+  -> stage_completed or stage_invalidated
+  -> Console panels + _runtime/events/<run_id>.jsonl
+```
+
+The renderer compares declared outputs before/after a stage and reads existing
+Artifacts conservatively. It distinguishes the I/O contract from actual tool
+reads, prevents a source outside the workspace from being presented as an
+upstream Artifact, and uses `created`, `updated`, `reused`, `missing`,
+`optional_missing`, `invalid`, and `invalidated` dispositions.
+
+`stage_invalidated` is important: the Agent may finish its own validation, but
+the outer `CompletePipelineRunner`/`SingleTaskRunner` still runs the formal
+task contract. If that contract fails, the event stream records the invalidation
+and the console makes clear that the result cannot flow downstream.
+
+`--verbosity concise|normal|detailed`, `--no-color`, and `--json-events` are
+runtime UI controls. Event JSONL is always durable at
+`_runtime/events/<run_id>.jsonl`; `--json-events` only mirrors the same bounded
+events to stdout. Full tool arguments/results remain in traces, not in normal
+researcher-facing panels. See [logging.md](./logging.md) for user semantics.
+
 ---
 
 ## 4. Workspace 与目录模型
@@ -234,6 +274,7 @@ workspace 初始化由 [researchos/runtime/workspace.py](../researchos/runtime/w
 - `_runtime/resume`
 - `_runtime/traces`
 - `_runtime/logs`
+- `_runtime/events`
 
 初始化是幂等的：`init-workspace`、`run`、`resume` 和 `run-task` 都会补齐缺失目录和生成式 `_DIR_GUIDE.md`。每个 guide 采用表格格式：目录协议表说明用途、生成阶段、消费者、可编辑范围和校验规则；关键文件表说明该目录下核心文件/子目录是什么、有什么用。已有自定义 guide 会保留。
 
@@ -607,14 +648,15 @@ LLM 不直接执行 shell 和文件操作。
 
 ## 9. Skills Runtime
 
-ResearchOS 的 Skill runtime 复用 `AgentRunner`、工具注册、路径策略、trace、预算和输出
-校验。它不是 LangChain：没有 chain/agent executor 依赖，状态和多轮恢复来自 workspace
-文件，而不是隐藏模型记忆。
+ResearchOS 的 Skill runtime 复用 `AgentRunner`、工具注册、路径策略、trace 和输出校验。它不是
+LangChain：没有 chain/agent executor 依赖，状态和多轮恢复来自 workspace 文件，而不是隐藏模型记忆。
+独立 Skill 与其 intake Agent 不设 token/step 上限；人工暂停、取消、provider/runtime 故障和产物校验
+仍是明确的可恢复结束条件。
 
 ### 9.1 Skill 文件与引导式契约
 
 一个最小 Skill 位于 `skills/<skill-name>/SKILL.md`。基础 frontmatter 包括 `name`、
-`description`、`tools`/`allowed_tools`、`model_tier`、预算、路径策略和
+`description`、`tools`/`allowed_tools`、`model_tier`、路径策略和
 `outputs_expected`。
 
 公共、可交互的 Skill 还必须声明 `interaction`：
@@ -668,9 +710,11 @@ standalone `list-skills` 扫描或在本节的公共 Skill 契约中改写。
 1. `resolve_skill` 并读取 input/output contract；
 2. 在**不创建 LLMClient、不运行 provider selftest**时检查 request 和必需输入；
 3. 写 `<workspace>/_runtime/skill_sessions/<session-id>.json`，状态为 `WAITING_INPUT` 或 `READY`；
-4. 只有 `READY` 才构造 runtime、`ToolRegistry`、`LLMClient`、`SkillAgent` 和 `AgentRunner`；
-5. 把会话文件及已经验证的输入路径注入 `ExecutionContext.extra`；
-6. 将 `RUNNING`、`COMPLETED` 或 `FAILED`、trace 和输出存在性写回同一会话。
+4. 非交互缺输入保持 `WAITING_INPUT`，不访问 provider；交互终端可先运行受限 intake Agent，反复收集人提供的材料并重检；
+5. intake 只能写该 Skill 的 `user_inputs/<skill>/`，不能产生 `drafts/`、`literature/`、`ideation/` 或其他最终输出；
+6. 只有 `READY` 才构造或复用 runtime、`ToolRegistry`、`LLMClient`、`SkillAgent` 和 `AgentRunner`；
+7. 把会话文件及已经验证的输入路径注入 `ExecutionContext.extra`；
+8. 将 `RUNNING`、`COMPLETED` 或 `FAILED`、trace 和输出存在性写回同一会话。
 
 ```bash
 researchos list-skills --workspace ./workspace/project-a
@@ -686,20 +730,30 @@ researchos run-skill paper-polish \
 researchos skill-status --workspace ./workspace/project-a
 ```
 
-第一次命令缺输入时返回 code `2`，但不是模型或 provider 故障。它已经持久化了上传位置和
-恢复信息。`--interactive` 让用户在终端中以多行输入 request；`--session-id` 允许同一
-workspace 内并行处理多个稿件。
+第一次**非交互**命令缺输入时返回 code `2`，但不是模型或 provider 故障；它已经持久化上传位置和
+恢复信息。`--interactive` 除了让用户以多行输入 request，也会在文件缺失时让受限 intake Agent
+询问“上传还是粘贴”，仅整理人提供的内容后重新检查；`--session-id` 允许同一 workspace 内并行处理多个稿件。会话
+记录的 `step` 是可观察进度，不是独立 Skill 的停止阈值。
 
 ### 9.4 当前公共 Skill
 
 | Skill | 作用 | 主要输出 |
 | --- | --- | --- |
 | `research-scope` | 规范主题、边界、证据需求和用户材料 | `ideation/skill_scope_brief.*` |
+| `research-material-ingest` | 导入用户列明的 PDF、数据、代码和使用限制 | `user_seeds/skill_material_*` |
+| `paper-identifier-resolver` | 解析 DOI/arXiv/标题为带来源和状态的论文记录 | `literature/skill_identifier_*` |
+| `pdf-note-card` | 将一篇上传 PDF 整理为 section-aware 独立笔记卡 | `literature/skill_pdf_note_cards/` |
+| `paper-section-evidence` | 从一篇 PDF 的目标 section 提取问题/claim 证据 | `literature/skill_section_evidence.*` |
+| `paper-comparison` | 比较多个已有 note/record 的机制、方法、证据和局限 | `literature/skill_paper_comparison.*` |
+| `citation-graph-explorer` | 从 DOI/OpenAlex 种子做有边界的一跳 citation snowball | `literature/skill_citation_graph.*` 和 domain map |
+| `literature-evidence-matrix` | 将一组 note/record 编译为综述可用证据矩阵 | `literature/skill_evidence_matrix.*` |
+| `citation-library-curator` | 审计 BibTeX 重复、冲突、缺失和可核验状态 | `literature/skill_curated_references.bib` 与 audit |
+| `literature-gap-map` | 用现有文献证据区分未解问题、边界和检索不足 | `literature/skill_gap_map.*` |
 | `literature-query-plan` | 在联网前规划来源、语言和 query portfolio | `literature/skill_query_plan.*` |
 | `literature-evidence-scout` | 检索可核验文献线索并保留来源标识 | `literature/skill_evidence_*` |
 | `literature-resource-scout` | 盘点数据、基线、代码和复现约束 | `literature/skill_resource_*` |
 | `paper-note-review` | 为具体 claim/section 回查精确笔记 section | `literature/skill_note_evidence_report.*` |
-| `survey-visuals` | 从 comparison table 生成或跳过可复现综述数据图 | `drafts/survey/figures/` |
+| `survey-visuals` | 从已解析本地 note card 的 survey taxonomy 生成或跳过唯一允许的事实结构图 | `drafts/survey/figures/` |
 | `idea-fanout-jury` | 完整展示 idea 候选、证据、风险和评分 | `ideation/skill_idea_jury.*` |
 | `hypothesis-compiler` | 把用户选择的方向转成可证伪假设和测试计划 | `ideation/skill_hypotheses.md` |
 | `experiment-design-review` | 审查对照、指标、混杂、风险和停止条件 | `ideation/skill_experiment_design_*` |
@@ -709,6 +763,9 @@ workspace 内并行处理多个稿件。
 | `paper-revision` | 根据审稿意见写修订稿和逐点回应 | `drafts/revised_*` |
 | `paper-claim-audit` | 检查数值和强 claim 的证据边界 | `drafts/paper_claim_audit.*` |
 | `citation-provenance-audit` | 核对 citation key、笔记 provenance 与措辞强度 | `drafts/skill_citation_provenance_audit.*` |
+| `claim-evidence-map` | 将多条待写 claim 映射到精确证据 section 和允许措辞 | `drafts/skill_claim_evidence_map.*` |
+| `paper-peer-review` | 生成不改稿的 venue-aware 同行审阅和修订优先级 | `drafts/skill_peer_review*` |
+| `venue-fit-review` | 用人工提供的 venue 规则审查稿件契合度与修订顺序 | `drafts/skill_venue_fit_review.*` |
 | `paper-compile` | 真实打包和编译 submission PDF | `submission/bundle/main.pdf` |
 | `submission-readiness` | 复核真实编译、匿名化、审计和人工确认项 | `submission/skill_submission_readiness.*` |
 | `reference-project-miner` | 分析用户列明的本地参考项目 | `researchos_reference/` 和 `docs/` |
@@ -869,14 +926,15 @@ trace 记录：
 
 - `_runtime/logs/`
 
-当前分三层：
+当前分四层：
 
+- `_runtime/events/<run_id>.jsonl`：版本化、研究者可读的机器事件。由 `StageReporter` 在每次 task/gate run 写入 `stage_started`、实际输入读取、受限计算/排序摘要、决策、unsupported/warning、Artifact 状态和 `stage_completed` / `stage_invalidated`。它不包含 prompt、完整 Tool payload 或隐藏推理；`--json-events` 只把同一事件镜像到 stdout，不控制文件是否存在。
 - `_runtime/logs/researchos.log`：人类可读运行时间线，由 `RunLogger` 写入。一行一个事件，记录 `RUN_START`、`TASK_START`、`STATE_TRANSITION`、`TOOL_CALL`、`TOOL_RESULT`、`FINISH_REQUESTED`、`VALIDATION_FAILED`、`PAUSED`、`RESUME`、`ERROR` 等摘要，不写完整 prompt/response。
 - `literature/temp/scout_progress.md`：T2 现场进度文件，面向用户随时查看当前 Scout 到哪一步。它现在由 runtime 在搜索工具自动保存 raw、T2 deterministic finalize 开始、保留候选/backlog 切分、完成或失败时自动追加；Scout LLM 主动调用 `log_scout_progress` 只是补充，不再是唯一来源。路径和开关在 `config/agent_params.yaml -> agents.scout.behavior.progress`。
 - `_runtime/logs/researchos-debug.log`：Python logging / structlog 的底层调试输出，受 `runtime.yaml: logging.level/json` 控制。
 - `_runtime/traces/*.jsonl`：机器级完整 trace，包含消息、LLM response、tool result 等细节，用于复盘单次 run。
 
-CLI 默认只显示 task/tool/validation 摘要；`--quiet` 只显示状态跳转、暂停、错误和最终结果；`--verbose` 会额外显示 Agent 文本输出和 step token 摘要。LiteLLM 的 INFO 输出默认被压到 WARNING，正常情况下不会污染控制台或 `researchos.log`。如果 T2 搜索工具返回论文但 raw 没落盘，`researchos.log` 的 `TOOL_RESULT` 会显示 `reported_paper_count`、`persisted_raw_delta`、`merged_raw_count`、`retained_raw_count`、`raw_count_after` 和 `append_status=raw_persistence_mismatch/raw_append_failed`。如果检索式规划为空，会记录 `empty_query_plan`；如果搜索工具实际收到空 query，会记录 `empty_query`，二者都不是普通 0 结果。
+CLI 默认是 `--verbosity normal`：在统一的 Stage Start/Progress/Summary 中显示输入 Artifact 表、主要研究统计、受限 Top-N、关键风险和 Artifact Manifest。`--verbosity concise` 保留目标、输入/输出、关键结论、风险和 human action；`--verbosity detailed` 增加受限的 per-query/per-paper/per-bridge/per-candidate 行；`--quiet` 只显示关键状态、暂停、错误和最终结果；`--verbose` 会额外显示 Agent 文本输出和 step token 摘要。LiteLLM 的 INFO 输出默认被压到 WARNING，正常情况下不会污染控制台或 `researchos.log`。如果 T2 搜索工具返回论文但 raw 没落盘，`researchos.log` 的 `TOOL_RESULT` 会显示 `reported_paper_count`、`persisted_raw_delta`、`merged_raw_count`、`retained_raw_count`、`raw_count_after` 和 `append_status=raw_persistence_mismatch/raw_append_failed`。如果检索式规划为空，会记录 `empty_query_plan`；如果搜索工具实际收到空 query，会记录 `empty_query`，二者都不是普通 0 结果。
 
 T2 finalize 的 `search_log.md` 是人类排障入口：`## 检索式` 表展示 Query、Bucket、Bridge、Tool/Source、Calls、Results、Persisted；`## Bridge Domain Query 覆盖` 展示每个 bridge 的实际 query 与落盘量；`## Bridge Domain Plan 覆盖` 展示正式 bridge plan 中每个 bridge 是 covered、missing 还是 skipped。trace 缺失时，runtime 会从 `papers_raw.jsonl` 的 `source_queries/search_buckets/recalled_by_bridges/source_tools` 重建这些表，但不会把错位的 bridge provenance 硬配给 core query。T2 raw 覆盖足够后还应看到保留候选集统计、OpenAlex 标题兜底补全、OpenAlex DOI/OA 详情补全、多源摘要回填、Crossref DOI 详情补全、OpenAlex citation snowball、Crossref citation snowball 和 snowball 后二次补全统计。保留候选数、finish raw 阈值、bridge/snowball 配额来自 `agents.scout.behavior.t2_finalize`；deep-read queue 目标、上限、bridge/citation hub 配额来自 `agents.reader.modes.read.behavior`。保留候选集详情/摘要补全看 `eligible`、`candidate`、`attempted`、`skipped_by_cap`、`failed`、`remaining_missing_abstract`、`remaining_missing_pdf_hints`；bounded snowball 看 `reference_items_seen`、`non_doi_references_skipped`、`title_references_resolved`、`skipped_by_refs_per_source_cap`、`skipped_by_max_candidates_cap`、`skipped_existing_snowball_records`、`raw_persisted/raw_merged`。这些字段能区分：API 没提供摘要、网络失败、候选被显式 cap、引用没有 DOI/OpenAlex ID、title match 低置信，还是上游搜索工具没有保留 DOI/OpenAlex ID。
 
@@ -891,6 +949,11 @@ T2 finalize 的 `search_log.md` 是人类排障入口：`## 检索式` 表展示
 Compose 模式有意不允许 Docker-in-Docker；若 ResearchOS 已在容器内，必须由该容器自身的
 TeX toolchain 编译。preflight 失败时会把状态写为可 `resume` 的 `PAUSED`，而不是在完成
 LLM 写作后才发现环境缺失。`doctor` 复用同一探测逻辑。完整操作约定见 [docker.md](docker.md)。
+
+`latex_compile` invokes `latexmk` with `-halt-on-error -file-line-error` on both native and Docker backends. A
+malformed TeX source therefore returns an actionable line error instead of quietly continuing until the global timeout.
+On POSIX native runs, compiler descendants share a dedicated process group and are terminated together on timeout.
+When one agent response requests multiple compiles, AgentRunner executes them serially to avoid auxiliary-file races.
 
 ---
 

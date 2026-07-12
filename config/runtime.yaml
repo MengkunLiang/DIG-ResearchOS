@@ -65,6 +65,19 @@ ui:
   # 仍不会显示完整 prompt/response，完整机器 trace 在 _runtime/traces/*.jsonl。
   verbose: false
 
+  # concise: 目标、关键结论、Artifact manifest 与人工操作。
+  # normal: 默认；另含主要统计、Top-N、关键决策和风险。
+  # detailed: 增加受限的 per-query/per-paper/per-bridge 明细，不倾倒原始 payload。
+  verbosity: normal
+
+  # 禁用 ANSI 颜色，适合 CI、日志重定向和不支持颜色的 SSH 终端。
+  no_color: false
+
+  # 每次运行都会持久化经过脱敏和结构化的科研过程事件到
+  # _runtime/events/<run_id>.jsonl。true 仅表示额外把每个 JSON 事件镜像到 stdout，
+  # 适合机器集成；不建议和交互 Gate 混用。
+  json_events: false
+
 # 网页抓取 allowlist
 web_fetch:
   # 允许的协议列表

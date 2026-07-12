@@ -1,91 +1,99 @@
 from __future__ import annotations
 
-"""CLI 启动界面辅助。
-
-这里集中放与命令行视觉表现相关的逻辑，避免把 `cli.py` 变成一大坨
-"参数解析 + 启动检查 + ANSI 控制字符"混杂在一起的代码。
-"""
+"""Small, terminal-safe brand and startup helpers for the ResearchOS CLI."""
 
 from pathlib import Path
+import io
+import shutil
 import sys
 import time
 from typing import TextIO
 
-
-# DIG Lab 品牌标识 - 3D ANSI Shadow 风格
-_DIG_FRAMES = [
-    # Frame 1: 字母 D
-    "\n".join([
-        "                                                       ",
-        "                                                       ",
-        "                 ██████╗                               ",
-        "                 ██╔══██╗                              ",
-        "                 ██║  ██║                              ",
-        "                 ██║  ██║                              ",
-        "                 ██████╔╝                              ",
-        "                 ╚═════╝                               ",
-        "                                                       ",
-        "                                                       ",
-    ]),
-    # Frame 2: D + I
-    "\n".join([
-        "                                                       ",
-        "                                                       ",
-        "                 ██████╗ ██╗                           ",
-        "                 ██╔══██╗██║                           ",
-        "                 ██║  ██║██║                           ",
-        "                 ██║  ██║██║                           ",
-        "                 ██████╔╝██║                           ",
-        "                 ╚═════╝ ╚═╝                           ",
-        "                                                       ",
-        "                                                       ",
-    ]),
-    # Frame 3: DIG 完整
-    "\n".join([
-        "                                                       ",
-        "                                                       ",
-        "                 ██████╗ ██╗ ██████╗                   ",
-        "                 ██╔══██╗██║██╔════╝                   ",
-        "                 ██║  ██║██║██║  ███╗                  ",
-        "                 ██║  ██║██║██║   ██║                  ",
-        "                 ██████╔╝██║╚██████╔╝                  ",
-        "                 ╚═════╝ ╚═╝ ╚═════╝                   ",
-        "                                                       ",
-        "                                                       ",
-    ]),
-    # Frame 4: 带边框的最终版本
-    "\n".join([
-        " ╔════════════════════════════════════════════════════╗",
-        " ║                                                    ║",
-        " ║               ██████╗ ██╗ ██████╗                  ║",
-        " ║               ██╔══██╗██║██╔════╝                  ║",
-        " ║               ██║  ██║██║██║  ███╗                 ║",
-        " ║               ██║  ██║██║██║   ██║                 ║",
-        " ║               ██████╔╝██║╚██████╔╝                 ║",
-        " ║               ╚═════╝ ╚═╝ ╚═════╝                  ║",
-        " ║                                                    ║",
-        " ╚════════════════════════════════════════════════════╝",
-    ]),
-]
+from rich import box
+from rich.align import Align
+from rich.console import Console, Group
+from rich.panel import Panel
+from rich.text import Text
 
 
-def render_final_banner(command_name: str) -> str:
-    """渲染最终展示的 banner 文本。"""
-    lines = [
-        " ╔════════════════════════════════════════════════════╗",
-        " ║                                                    ║",
-        " ║               ██████╗ ██╗ ██████╗                  ║",
-        " ║               ██╔══██╗██║██╔════╝                  ║",
-        " ║               ██║  ██║██║██║  ███╗                 ║",
-        " ║               ██║  ██║██║██║   ██║                 ║",
-        " ║               ██████╔╝██║╚██████╔╝                 ║",
-        " ║               ╚═════╝ ╚═╝ ╚═════╝                  ║",
-        " ║                                                    ║",
-        " ╚════════════════════════════════════════════════════╝",
-        "",
-        f"  DIG Lab - ResearchOS  |  command={command_name}",
-    ]
-    return "\n".join(lines)
+_BRAND_WIDTH = 84
+_DIG_FRAME_MARKS = ("D", "DI", "DIG")
+
+
+def _brand_mark(mark: str) -> Text:
+    """Return the compact DIG mark with stable, restrained lab colors."""
+
+    colors = ("bright_cyan", "spring_green2", "bright_magenta")
+    text = Text()
+    for index, character in enumerate(mark[:3]):
+        text.append(character, style=f"bold {colors[index]}")
+        if index < len(mark[:3]) - 1:
+            text.append(" ")
+    return text
+
+
+def _banner_renderable(command_name: str, *, width: int, frame_mark: str = "DIG") -> Panel:
+    """Build a compact product identity rather than an ASCII-art splash screen."""
+
+    headline = _brand_mark(frame_mark)
+    headline.append("   ResearchOS", style="bold bright_white")
+
+    subline = Text()
+    subline.append("DIG Lab", style="bold bright_cyan")
+    subline.append("  /  Digital Intelligence Group", style="dim")
+    subline.append("\nResearch intelligence operating system", style="italic dim")
+
+    status = Text()
+    status.append("RESEARCH WORKFLOW", style="bold cyan")
+    status.append("  |  ", style="dim")
+    status.append("command: ", style="dim")
+    status.append(command_name, style="bold yellow")
+
+    body = Group(
+        Align.center(headline),
+        Text(""),
+        Align.center(subline),
+        Text(""),
+        Align.center(status),
+    )
+    return Panel(
+        body,
+        title="[bold bright_cyan]DIG LAB[/]",
+        subtitle="[dim]ResearchOS[/]",
+        box=box.ROUNDED,
+        border_style="bright_cyan",
+        padding=(1, 3),
+        width=width,
+    )
+
+
+def _render_banner(command_name: str, *, color: bool, frame_mark: str = "DIG") -> str:
+    """Render a startup frame into a string so all output paths share one design."""
+
+    buffer = io.StringIO()
+    terminal_width = shutil.get_terminal_size(fallback=(_BRAND_WIDTH, 40)).columns
+    width = max(64, min(_BRAND_WIDTH, terminal_width))
+    console = Console(
+        file=buffer,
+        force_terminal=color,
+        color_system="truecolor" if color else None,
+        no_color=not color,
+        width=width,
+        highlight=False,
+        _environ={"COLUMNS": str(width), "LINES": "40"},
+    )
+    console.print(Align.center(_banner_renderable(command_name, width=width, frame_mark=frame_mark)))
+    return buffer.getvalue().rstrip()
+
+
+def render_final_banner(command_name: str, *, color: bool = False) -> str:
+    """Render the final DIG Lab / ResearchOS brand panel.
+
+    ``color=False`` deliberately produces portable output for redirected logs,
+    CI, and shell pipes. Interactive calls opt in to Rich ANSI styling.
+    """
+
+    return _render_banner(command_name, color=color)
 
 
 def show_startup_banner(
@@ -94,14 +102,15 @@ def show_startup_banner(
     stream: TextIO | None = None,
     no_banner: bool = False,
     default_no_banner: bool = False,
-    sleep_seconds: float = 0.06,
+    no_color: bool = False,
+    sleep_seconds: float = 0.055,
 ) -> None:
-    """显示启动动画。
+    """Show a brief DIG-to-ResearchOS introduction without log noise.
 
-    行为约定：
-    - 若 `--no-banner` 或 runtime 配置默认关闭 banner，则完全静默；
-    - 若不是 TTY，则退化为只打印最终静态 banner，避免 CI / pipe 中出现一串动画残影；
-    - 若是 TTY，则按帧覆盖刷新，形成"逐步堆出 DIG" 的启动效果。
+    - ``--no-banner`` and runtime policy suppress all output.
+    - Non-TTY and ``--no-color`` modes print one portable static panel.
+    - TTY mode uses exactly three compact marks (D -> DI -> DIG), then leaves
+      the final ResearchOS panel in the scrollback. It never clears the screen.
     """
 
     if no_banner or default_no_banner:
@@ -109,24 +118,22 @@ def show_startup_banner(
 
     target = stream or sys.stdout
     is_tty = hasattr(target, "isatty") and target.isatty()
-    if not is_tty:
-        target.write(render_final_banner(command_name) + "\n")
+    use_color = bool(is_tty and not no_color)
+    if not is_tty or no_color:
+        target.write(render_final_banner(command_name, color=False) + "\n")
         target.flush()
         return
 
-    # 在交互终端里按帧覆盖刷新。这里不清整屏，只回到 banner 起点重画，
-    # 减少对用户已有滚动内容的破坏。
-    line_count = _DIG_FRAMES[-1].count("\n") + 2
-    for index, frame in enumerate(_DIG_FRAMES):
-        if index > 0:
-            target.write(f"\x1b[{line_count}F")
-        target.write(frame + "\n\n")
+    previous_lines = 0
+    for mark in _DIG_FRAME_MARKS:
+        frame = _render_banner(command_name, color=use_color, frame_mark=mark)
+        if previous_lines:
+            target.write(f"\x1b[{previous_lines}F")
+        target.write(frame + "\n")
         target.flush()
+        previous_lines = frame.count("\n") + 1
         if sleep_seconds > 0:
             time.sleep(sleep_seconds)
-
-    target.write(f"  DIG Lab - ResearchOS  |  command={command_name}\n")
-    target.flush()
 
 
 def format_startup_summary(
@@ -140,7 +147,7 @@ def format_startup_summary(
     mcp_server_count: int = 0,
     mcp_tool_count: int = 0,
 ) -> str:
-    """生成启动摘要，供 CLI 在 banner 后打印。"""
+    """Generate the machine-oriented startup summary that follows the brand panel."""
 
     lines: list[str] = []
     if workspace_dir is not None:
@@ -163,7 +170,5 @@ def format_startup_summary(
             lines.append("[startup] skill_roots_existing=" + ", ".join(str(item) for item in existing))
         if missing:
             lines.append("[startup] skill_roots_missing=" + ", ".join(str(item) for item in missing))
-    lines.append(
-        f"[startup] mcp_servers={mcp_server_count} mcp_tools={mcp_tool_count}"
-    )
+    lines.append(f"[startup] mcp_servers={mcp_server_count} mcp_tools={mcp_tool_count}")
     return "\n".join(lines)

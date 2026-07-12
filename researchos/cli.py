@@ -76,6 +76,8 @@ from .skills.catalog import (
     catalog_entries,
     ordered_skills,
     render_skill_catalog,
+    render_skill_catalog_rich,
+    search_skill_matches,
     search_skills,
     skills_in_category,
 )
@@ -91,9 +93,13 @@ from .skills.session import (
     record_run_result,
     record_run_started,
     render_skill_completion_panel,
+    render_skill_completion_panel_rich,
     render_readiness_panel,
+    render_readiness_panel_rich,
     render_skill_description,
+    render_skill_description_rich,
     render_skill_status_panel,
+    render_skill_status_panel_rich,
 )
 from .tools.builtin import register_builtin_tools
 from .tools.human_gate import (
@@ -269,9 +275,14 @@ def _runtime_settings_for_args(settings: RuntimeSettings, args: argparse.Namespa
 
     quiet = (getattr(args, "quiet", False) is True) or settings.ui.quiet
     verbose = (getattr(args, "verbose", False) is True) or settings.ui.verbose
+    verbosity = getattr(args, "verbosity", None) or settings.ui.verbosity
+    no_color = (getattr(args, "no_color", False) is True) or settings.ui.no_color
+    json_events = (getattr(args, "json_events", False) is True) or settings.ui.json_events
     if quiet and verbose:
         verbose = False
-    if quiet == settings.ui.quiet and verbose == settings.ui.verbose:
+    if verbosity not in {"concise", "normal", "detailed"}:
+        verbosity = "normal"
+    if quiet == settings.ui.quiet and verbose == settings.ui.verbose and verbosity == settings.ui.verbosity and no_color == settings.ui.no_color and json_events == settings.ui.json_events:
         return settings
     return RuntimeSettings(
         workspace=settings.workspace,
@@ -283,10 +294,103 @@ def _runtime_settings_for_args(settings: RuntimeSettings, args: argparse.Namespa
             no_banner=settings.ui.no_banner,
             quiet=quiet,
             verbose=verbose,
+            verbosity=verbosity,
+            no_color=no_color,
+            json_events=json_events,
         ),
         web_fetch=settings.web_fetch,
         latex=settings.latex,
     )
+
+
+def _skill_ui_uses_color(args: argparse.Namespace) -> bool:
+    """Keep Skill screens readable in logs while enabling Rich interactively."""
+
+    return not bool(getattr(args, "_effective_no_color", getattr(args, "no_color", False)))
+
+
+def _render_skill_readiness_for_cli(
+    args: argparse.Namespace,
+    *,
+    skill_name: str,
+    session_id: str,
+    session_file: Path,
+    readiness: Any,
+) -> str:
+    if _skill_ui_uses_color(args):
+        return render_readiness_panel_rich(
+            skill_name=skill_name,
+            session_id=session_id,
+            session_file=session_file,
+            readiness=readiness,
+        )
+    return render_readiness_panel(
+        skill_name=skill_name,
+        session_id=session_id,
+        session_file=session_file,
+        readiness=readiness,
+    )
+
+
+def _render_skill_completion_for_cli(args: argparse.Namespace, *, workspace: Path, session_id: str) -> str:
+    if _skill_ui_uses_color(args):
+        return render_skill_completion_panel_rich(workspace=workspace, session_id=session_id)
+    return render_skill_completion_panel(workspace=workspace, session_id=session_id)
+
+
+def _render_skill_description_for_cli(
+    args: argparse.Namespace,
+    *,
+    skill_name: str,
+    skill_path: Path,
+    description: str,
+    interaction: Any,
+) -> str:
+    if _skill_ui_uses_color(args):
+        return render_skill_description_rich(
+            skill_name=skill_name,
+            skill_path=skill_path,
+            description=description,
+            interaction=interaction,
+        )
+    return render_skill_description(
+        skill_name=skill_name,
+        skill_path=skill_path,
+        description=description,
+        interaction=interaction,
+    )
+
+
+def _render_skill_catalog_for_cli(
+    args: argparse.Namespace,
+    *,
+    skills: Any,
+    workspace: Path,
+    index_by_name: dict[str, int] | None = None,
+    heading: str = "ResearchOS · 独立 Skill 目录",
+    notice: str | None = None,
+) -> str:
+    if _skill_ui_uses_color(args):
+        return render_skill_catalog_rich(
+            skills=skills,
+            workspace=workspace,
+            index_by_name=index_by_name,
+            heading=heading,
+            notice=notice,
+        )
+    return render_skill_catalog(
+        skills=skills,
+        workspace=workspace,
+        index_by_name=index_by_name,
+        heading=heading,
+        notice=notice,
+    )
+
+
+def _render_skill_status_for_cli(args: argparse.Namespace, *, workspace: Path, entries: Any) -> str:
+    if _skill_ui_uses_color(args):
+        return render_skill_status_panel_rich(workspace=workspace, entries=entries)
+    return render_skill_status_panel(workspace=workspace, entries=entries)
 
 
 def _build_human_interface(
@@ -303,7 +407,10 @@ def _build_human_interface(
     backend = runtime_settings.human_interface.backend.lower().strip()
     if backend in {"", "cli"}:
         interpreter = build_t2_parameter_llm_interpreter(llm_client) if llm_client is not None else None
-        return CLIHumanInterface(t2_parameter_interpreter=interpreter)
+        return CLIHumanInterface(
+            t2_parameter_interpreter=interpreter,
+            no_color=runtime_settings.ui.no_color,
+        )
     raise SystemExit(f"Unsupported human_interface.backend: {runtime_settings.human_interface.backend}")
 
 
@@ -528,6 +635,7 @@ def _emit_startup_ui(
             args.command,
             no_banner=getattr(args, "no_banner", False),
             default_no_banner=runtime_settings.ui.no_banner,
+            no_color=runtime_settings.ui.no_color,
         )
     if not show_summary:
         return
@@ -1151,7 +1259,7 @@ async def run_skill_command(args: argparse.Namespace) -> int:
                 if interaction is not None
                 else "请说明希望这个 Skill 完成什么。"
             )
-            request = await CLIHumanInterface().ask_clarification(question=prompt)
+            request = await CLIHumanInterface(no_color=runtime_settings.ui.no_color).ask_clarification(question=prompt)
         readiness = check_skill_readiness(
             skill_name=skill.name,
             metadata=skill.metadata,
@@ -1173,7 +1281,8 @@ async def run_skill_command(args: argparse.Namespace) -> int:
         return 2
 
     print(
-        render_readiness_panel(
+        _render_skill_readiness_for_cli(
+            args,
             skill_name=skill.name,
             session_id=session_id,
             session_file=session_file,
@@ -1240,7 +1349,8 @@ async def run_skill_command(args: argparse.Namespace) -> int:
                 message=intake_message,
             )
             print(
-                render_readiness_panel(
+                _render_skill_readiness_for_cli(
+                    args,
                     skill_name=skill.name,
                     session_id=session_id,
                     session_file=session_file,
@@ -1248,16 +1358,21 @@ async def run_skill_command(args: argparse.Namespace) -> int:
                 )
             )
             if not intake_result.ok or not readiness.ready:
-                print(render_skill_completion_panel(workspace=workspace_dir, session_id=session_id))
+                print(_render_skill_completion_for_cli(args, workspace=workspace_dir, session_id=session_id))
+                await prepared.aclose()
+                prepared = None
                 return 2
         except Exception as exc:
+            if prepared is not None:
+                await prepared.aclose()
+                prepared = None
             record_runtime_pause(workspace=workspace_dir, session_id=session_id, error=exc)
             print(
                 "Skill 交互式材料收集尚未完成，已保留会话；修复运行环境或在同一会话继续补充。\n"
                 f"原因：{exc}",
                 file=sys.stderr,
             )
-            print(render_skill_completion_panel(workspace=workspace_dir, session_id=session_id))
+            print(_render_skill_completion_for_cli(args, workspace=workspace_dir, session_id=session_id))
             return 1
 
     if prepared is None:
@@ -1270,7 +1385,7 @@ async def run_skill_command(args: argparse.Namespace) -> int:
                 f"`--session-id {session_id} --resume` 重试。\n原因：{exc}",
                 file=sys.stderr,
             )
-            print(render_skill_completion_panel(workspace=workspace_dir, session_id=session_id))
+            print(_render_skill_completion_for_cli(args, workspace=workspace_dir, session_id=session_id))
             return 1
     _emit_startup_ui(
         args=args,
@@ -1325,7 +1440,7 @@ async def run_skill_command(args: argparse.Namespace) -> int:
         outputs_expected=outputs_expected,
     )
 
-    print(render_skill_completion_panel(workspace=workspace_dir, session_id=session_id))
+    print(_render_skill_completion_for_cli(args, workspace=workspace_dir, session_id=session_id))
     return 0 if result.ok else 1
 
 
@@ -1755,7 +1870,7 @@ def list_skills_command(args: argparse.Namespace) -> int:
         ))
     else:
         print(f"Found {len(all_skills)} skill(s) / 发现 {len(all_skills)} 个可识别 Skill：\n")
-        print(render_skill_catalog(skills=discovered.values(), workspace=workspace_dir))
+        print(_render_skill_catalog_for_cli(args, skills=discovered.values(), workspace=workspace_dir))
 
     return 0
 
@@ -1778,7 +1893,7 @@ def browse_skills_command(args: argparse.Namespace) -> int:
     if not skills:
         print("没有找到可浏览的 Skill。")
         return 0
-    print(render_skill_catalog(skills=skills, workspace=workspace_dir))
+    print(_render_skill_catalog_for_cli(args, skills=skills, workspace=workspace_dir))
     by_index = {index: skill for index, skill in enumerate(skills, start=1)}
     index_by_name = {skill.name: index for index, skill in by_index.items()}
     print(_skill_browser_help())
@@ -1795,7 +1910,14 @@ def browse_skills_command(args: argparse.Namespace) -> int:
             print(_skill_browser_help())
             continue
         if lowered in {"all", "list", "全部"}:
-            print(render_skill_catalog(skills=skills, workspace=workspace_dir, index_by_name=index_by_name))
+            print(
+                _render_skill_catalog_for_cli(
+                    args,
+                    skills=skills,
+                    workspace=workspace_dir,
+                    index_by_name=index_by_name,
+                )
+            )
             continue
         category_prefixes = ("category ", "分类 ")
         category_prefix = next((prefix for prefix in category_prefixes if lowered.startswith(prefix)), None)
@@ -1806,7 +1928,8 @@ def browse_skills_command(args: argparse.Namespace) -> int:
                 print(f"未找到分类“{category}”。可输入 `all` 查看分类，或使用 `search <关键词>`。")
                 continue
             print(
-                render_skill_catalog(
+                _render_skill_catalog_for_cli(
+                    args,
                     skills=matches,
                     workspace=workspace_dir,
                     index_by_name=index_by_name,
@@ -1819,17 +1942,19 @@ def browse_skills_command(args: argparse.Namespace) -> int:
         search_prefix = next((prefix for prefix in search_prefixes if lowered.startswith(prefix)), None)
         if search_prefix:
             query = command[len(search_prefix):].strip()
-            matches = search_skills(skills, query)
+            ranked_matches = search_skill_matches(skills, query)
+            matches = [skill for skill, _reason in ranked_matches]
             if not matches:
                 print(f"没有匹配“{query}”的 Skill。可尝试 `search 文献`、`search 写作`、`search citation`。")
                 continue
             print(
-                render_skill_catalog(
+                _render_skill_catalog_for_cli(
+                    args,
                     skills=matches,
                     workspace=workspace_dir,
                     index_by_name=index_by_name,
                     heading="ResearchOS · Skill 搜索结果",
-                    notice=f"筛选：关键词“{query}” · {len(matches)}/{len(skills)} 个 Skill；序号保持全目录编号。",
+                    notice=_skill_search_notice(query, ranked_matches, total=len(skills)),
                 )
             )
             continue
@@ -1841,11 +1966,27 @@ def browse_skills_command(args: argparse.Namespace) -> int:
         else:
             skill = discovered.get(target)
         if skill is None:
-            print("未找到该 Skill。请输入目录中的序号或完整名称。")
+            ranked_matches = search_skill_matches(skills, target)
+            matches = [item for item, _reason in ranked_matches]
+            if matches:
+                action = "请选择精确序号后启动" if run_requested else "可输入序号查看详情，或使用 `run <序号>` 启动"
+                print(
+                    _render_skill_catalog_for_cli(
+                        args,
+                        skills=matches,
+                        workspace=workspace_dir,
+                        index_by_name=index_by_name,
+                        heading="ResearchOS · Skill 搜索结果",
+                        notice=_skill_search_notice(target, ranked_matches, total=len(skills)) + f"；{action}。",
+                    )
+                )
+            else:
+                print("未找到该 Skill。可直接输入关键词进行本地模糊搜索，例如 `文献`、`Idea`、`论文写作`。")
             continue
         if not run_requested:
             print(
-                render_skill_description(
+                _render_skill_description_for_cli(
+                    args,
                     skill_name=skill.name,
                     skill_path=skill.skill_dir,
                     description=skill.description,
@@ -1869,9 +2010,15 @@ def browse_skills_command(args: argparse.Namespace) -> int:
 def _skill_browser_help() -> str:
     return (
         "输入序号或 Skill 名称查看详情；`run <序号或名称>` 启动引导式会话。\n"
-        "筛选：`search <关键词>` / `搜索 <关键词>`，`category <分类>` / `分类 <分类>`，`all` 返回全目录。\n"
-        "示例：`search citation`、`搜索 文献`、`分类 论文写作`、`run 10`；输入 `help` 查看本提示，`q` 退出。"
+        "可直接输入关键词进行中英文模糊搜索，也可用 `search <关键词>` / `搜索 <关键词>`；`category <分类>` / `分类 <分类>`，`all` 返回全目录。\n"
+        "示例：`文献`、`Idea`、`search citation`、`分类 论文写作`、`run 10`；输入 `help` 查看本提示，`q` 退出。"
     )
+
+
+def _skill_search_notice(query: str, ranked_matches: list[tuple[Any, str]], *, total: int) -> str:
+    preview = "；".join(f"{skill.name}: {reason}" for skill, reason in ranked_matches[:3])
+    suffix = f"匹配依据：{preview}" if preview else "本地索引未返回可解释匹配依据"
+    return f"筛选：关键词“{query}” · {len(ranked_matches)}/{total} 个 Skill；序号保持全目录编号。{suffix}"
 
 
 def describe_skill_command(args: argparse.Namespace) -> int:
@@ -1881,7 +2028,8 @@ def describe_skill_command(args: argparse.Namespace) -> int:
     try:
         skill = resolve_skill(args.skill_name, _resolve_skill_roots(args, workspace_dir))
         print(
-            render_skill_description(
+            _render_skill_description_for_cli(
+                args,
                 skill_name=skill.name,
                 skill_path=skill.skill_dir,
                 description=skill.description,
@@ -1904,7 +2052,7 @@ def skill_status_command(args: argparse.Namespace) -> int:
     if not entries:
         print("没有找到 Skill 会话。")
         return 0
-    print(render_skill_status_panel(workspace=workspace_dir, entries=entries))
+    print(_render_skill_status_for_cli(args, workspace=workspace_dir, entries=entries))
     return 0
 
 
@@ -1976,6 +2124,24 @@ def _add_shared_cli_options(
         action="store_true",
         default=False if use_defaults else default,
         help="显示更多工具摘要；仍不显示完整 prompt/response",
+    )
+    parser.add_argument(
+        "--verbosity",
+        choices=["concise", "normal", "detailed"],
+        default=runtime_settings.ui.verbosity if use_defaults else default,
+        help="科研过程展示密度；默认 normal。",
+    )
+    parser.add_argument(
+        "--no-color",
+        action="store_true",
+        default=False if use_defaults else default,
+        help="禁用终端颜色和 ANSI 控制字符。",
+    )
+    parser.add_argument(
+        "--json-events",
+        action="store_true",
+        default=False if use_defaults else default,
+        help="除持久化 JSONL 外，同时向 stdout 输出每条结构化科研过程事件；不建议与交互 Gate 混用。",
     )
 
 
@@ -2161,6 +2327,9 @@ def main(argv: list[str] | None = None) -> int:
     _emit_environment_warnings()
     runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
     runtime_settings = _runtime_settings_for_args(runtime_settings, args)
+    # Skill listing/status commands do not otherwise receive RuntimeSettings.
+    # Preserve the same effective `--no-color` policy used by pipeline runs.
+    args._effective_no_color = runtime_settings.ui.no_color
     configure_logging(level=args.log_level, json_logs=runtime_settings.logging.json)
     if args.command == "init-workspace":
         return init_workspace_command(args)

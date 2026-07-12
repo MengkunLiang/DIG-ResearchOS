@@ -1,3 +1,6 @@
+# Docker-compatible dependency mirror for `pyproject.toml` runtime + dev extras.
+# Keep package constraints aligned with the package metadata; do not add TeX here.
+
 # ResearchOS core runtime
 httpx>=0.27,<1
 jinja2>=3.1,<4
@@ -18,6 +21,9 @@ bibtexparser>=1.4,<2
 
 # Deterministic academic figures for survey/comparison artifacts
 matplotlib>=3.8,<4
+
+# Structured terminal panels, bounded tables, and no-color rendering for research observability.
+rich>=13,<14
 
 # Test and development tooling
 pytest>=8.2,<9

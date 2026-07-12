@@ -66,6 +66,11 @@ class SingleTaskRunner:
         self.progress = CliProgressEmitter(
             quiet=self.runtime_settings.ui.quiet,
             verbose=self.runtime_settings.ui.verbose,
+            verbosity=self.runtime_settings.ui.verbosity,
+            no_color=self.runtime_settings.ui.no_color,
+            json_events=self.runtime_settings.ui.json_events,
+            workspace=self.workspace,
+            runtime_dir_name=self.runtime_settings.workspace.runtime_dir,
         )
         register_builtin_task_checkers()
 
@@ -271,7 +276,10 @@ class SingleTaskRunner:
             return 130
 
         self.progress.emit("\n[SingleTask] Agent 执行完成，开始校验输出产物...", important=True)
-        io_spec = get_task_io(self.task_id)
+        try:
+            io_spec = get_task_io(self.task_id)
+        except KeyError:
+            io_spec = {"inputs": {}, "outputs": {}, "required_inputs": []}
         skip_runtime_artifact_validation = (
             result.ok
             and self.task_id == "T4"
@@ -284,6 +292,17 @@ class SingleTaskRunner:
         )
         if not ok:
             error_text = str(errors)
+            if result.ok:
+                self.progress.runtime_validation_failed(
+                    task_id=self.task_id,
+                    reason=(
+                        "Runtime artifact validation failed; task did not produce valid artifacts: "
+                        + error_text
+                    ),
+                    log_path=str(self.workspace / self.runtime_settings.workspace.runtime_dir / "logs" / "researchos.log"),
+                    run_id=ctx.run_id,
+                    outputs=ctx.outputs_expected,
+                )
             self.progress.error_context(
                 stage="输出产物校验",
                 message=error_text,
@@ -317,6 +336,26 @@ class SingleTaskRunner:
             workspace_dir=self.workspace,
         )
         state.dump_yaml(state_path)
+        io_spec = get_task_io(self.task_id)
+        inputs = {key: self.workspace / str(path) for key, path in dict(io_spec.get("inputs") or {}).items()}
+        outputs = {key: self.workspace / str(path) for key, path in dict(io_spec.get("outputs") or {}).items()}
+        gate_run_id = f"{self.task_id}_gate_{uuid.uuid4().hex[:8]}"
+        self.progress.stage_started(
+            task_id=self.task_id,
+            run_id=gate_run_id,
+            inputs=inputs,
+            outputs=outputs,
+            required_input_keys={str(key) for key in (io_spec.get("required_inputs") or [])},
+            agent="human_gate",
+            mode="immediate_human_decision",
+            is_resume=state.status in {"PAUSED", "WAITING_HUMAN"},
+        )
+        self.progress.stage_human_action_required(
+            task_id=self.task_id,
+            gate_id=state.pending_gate.gate_id,
+            reason=str(state.pending_gate.presentation.get("_description") or "需要人工确认关键研究决策。"),
+        )
+        gate_id = state.pending_gate.gate_id
         try:
             gate_result = await self.human.present_gate(
                 gate_id=state.pending_gate.gate_id,
@@ -327,11 +366,31 @@ class SingleTaskRunner:
             state.status = "PAUSED"
             state.last_error = str(exc)
             state.dump_yaml(state_path)
+            self.progress.stage_completed(
+                task_id=self.task_id,
+                run_id=gate_run_id,
+                outputs=outputs,
+                ok=False,
+                summary="Human Gate 等待输入。",
+                error=str(exc),
+            )
             self.progress.emit(f"Task paused: {exc}", important=True)
             return 130
         state = state_machine.resolve_pending_gate(state, gate_result, workspace_dir=self.workspace)
         state.status = "COMPLETED" if state.status == "RUNNING" else state.status
         state.dump_yaml(state_path)
+        self.progress.stage_gate_resolved(
+            task_id=self.task_id,
+            gate_id=gate_id,
+            decision=str(gate_result.get("option_id") or "human_selection"),
+        )
+        self.progress.stage_completed(
+            task_id=self.task_id,
+            run_id=gate_run_id,
+            outputs=outputs,
+            ok=True,
+            summary=f"Human Gate 已记录选择：{gate_result.get('option_id') or 'human_selection'}。",
+        )
         self.progress.emit(f"[Gate] Gate 已处理，下一状态: {state.current_task}", important=True)
         return 0
 

@@ -22,7 +22,7 @@ github_allowed
 github_and_reimplementation
 ```
 
-Missing or contradictory policy means no network, dataset download, replacement, or reimplementation authority. Ask rather than broaden.
+For ResearchOS T5 external execution, missing policy in a legacy handoff resolves to the default policy: public GitHub access, public dataset download, and baseline reimplementation are allowed inside `allowed_paths.txt`, with license/security review. Contradictory policy still blocks; ask rather than broaden beyond the explicit default.
 
 Remote acquisition must pin repository and commit/tag, record source and license, and pass static/security review before execution. An easy-to-run third-party implementation is not automatically an equivalent baseline.
 

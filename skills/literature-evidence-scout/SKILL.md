@@ -12,8 +12,6 @@ tools:
   - finish_task
 strict_tools: true
 model_tier: medium
-max_steps: 22
-max_tokens_total: 170000
 temperature: 0.15
 allowed_read_prefixes:
   - user_inputs/literature-evidence-scout/

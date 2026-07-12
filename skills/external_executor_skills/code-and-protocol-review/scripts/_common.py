@@ -92,6 +92,24 @@ def parse_allowed_entries(root: Path) -> list[str]:
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
+        parts = line.split(maxsplit=1)
+        mode = "rw"
+        if len(parts) == 2 and parts[0].lower() in {"rw", "write", "allow", "ro", "read", "no", "deny", "forbid"}:
+            mode, line = parts[0].lower(), parts[1].strip()
+        elif line.lower().startswith(("deny:", "forbid:", "!", "-")):
+            mode = "no"
+            for prefix in ("deny:", "forbid:", "!", "-"):
+                if line.lower().startswith(prefix):
+                    line = line[len(prefix):].strip()
+                    break
+        elif line.lower().startswith(("allow:", "write:", "+")):
+            mode = "rw"
+            for prefix in ("allow:", "write:", "+"):
+                if line.lower().startswith(prefix):
+                    line = line[len(prefix):].strip()
+                    break
+        if mode != "rw":
+            continue
         static = line
         for marker in ("*", "?", "["):
             static = static.split(marker, 1)[0]

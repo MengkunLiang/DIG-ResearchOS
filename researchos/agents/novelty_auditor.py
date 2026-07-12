@@ -77,6 +77,7 @@ class NoveltyAuditorAgent(Agent):
         hypotheses = read_text_file(ws / "ideation" / "hypotheses.md", default="")
         synthesis = read_text_file(ws / "literature" / "synthesis.md", default="")
         comparison_table = read_text_file(ws / "literature" / "comparison_table.csv", default="")
+        paper_card_inventory = _paper_card_inventory(ws)
 
         # 提取假设anchor
         anchors = re.findall(r"^#+\s*(H\d+)", hypotheses, re.MULTILINE)
@@ -88,6 +89,7 @@ class NoveltyAuditorAgent(Agent):
             hypotheses_preview=hypotheses[:5000],
             synthesis_preview=synthesis[:3000],
             comparison_table_preview=comparison_table[:1000],
+            paper_card_inventory=paper_card_inventory,
             hypothesis_count=len(anchors),
             hypothesis_anchors=anchors,
             recent_year_from=recent_year_from(1),
@@ -100,7 +102,8 @@ class NoveltyAuditorAgent(Agent):
         return prepend_resume_prefix(
             ctx,
             (
-            "请执行 T4.5 新颖性审计。读取 ideation/hypotheses.md 和 literature/synthesis.md，"
+            "请执行 T4.5 新颖性审计。读取 ideation/hypotheses.md 和 literature/synthesis.md；"
+            "当机制、设计理由、最近工作或基线依据需要核验时，按需打开 literature/paper_notes*/ 中对应论文的精确 section，"
             "对每个假设进行新颖性审计，搜索近期相关工作，判断新颖性等级，"
             "产出 ideation/novelty_audit.md；如果发现 High/Medium Overlap，"
             "还必须产出 ideation/collision_cases.md 归档潜在撞车案例。"
@@ -212,6 +215,26 @@ class NoveltyAuditorAgent(Agent):
 
         write_t45_fingerprint_report(ws)
         return True, None
+
+
+def _paper_card_inventory(workspace: Path) -> str:
+    """Describe note-card availability without injecting every card into context."""
+
+    groups = (
+        ("全文/部分全文卡", workspace / "literature" / "paper_notes"),
+        ("跨域卡", workspace / "literature" / "paper_notes_bridge"),
+        ("摘要线索卡", workspace / "literature" / "paper_notes_abstract"),
+    )
+    lines: list[str] = []
+    for label, directory in groups:
+        if not directory.is_dir():
+            continue
+        cards = sorted(path for path in directory.rglob("*.md") if path.is_file())
+        if cards:
+            preview = ", ".join(path.relative_to(workspace).as_posix() for path in cards[:6])
+            suffix = f"，另有 {len(cards) - 6} 项" if len(cards) > 6 else ""
+            lines.append(f"- {label}: {len(cards)} 项；可按需 read_file 定向核验：{preview}{suffix}")
+    return "\n".join(lines) or "- 当前无可用论文卡；不得把摘要或工具提示写成机制结论。"
 
 
 def _audit_mentions_collision_case(audit_text: str) -> bool:

@@ -13,9 +13,11 @@ import asyncio
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import shlex
+import signal
 import subprocess
 import re
 from typing import Any
@@ -30,6 +32,44 @@ from .base import Tool, ToolResult
 from .docker_exec import DockerExecTool, check_docker_environment
 
 _LOG = get_logger("latex_compile")
+
+
+def _new_process_group_kwargs() -> dict[str, bool]:
+    """Create each native compiler in its own process group on POSIX.
+
+    ``latexmk`` can spawn one or more TeX children.  Killing only the parent
+    on timeout leaves those children alive and makes a later CLI resume appear
+    stuck.  A separate session gives the timeout path one group to terminate.
+    """
+
+    return {"start_new_session": True} if os.name == "posix" else {}
+
+
+async def _terminate_process_group(proc: asyncio.subprocess.Process) -> None:
+    """Terminate a compiler and all of its descendants without orphaning TeX."""
+
+    if proc.returncode is not None:
+        return
+    pid = getattr(proc, "pid", None)
+    if os.name == "posix" and isinstance(pid, int) and pid > 0:
+        try:
+            os.killpg(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        except OSError:
+            pass
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5.0)
+            return
+        except asyncio.TimeoutError:
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                pass
+            await proc.wait()
+            return
+    proc.kill()
+    await proc.wait()
 
 
 def latex_backend_preflight(latex_settings: LatexSettings) -> dict[str, Any]:
@@ -272,6 +312,7 @@ class LatexCompileTool(Tool):
                 cwd=tex_dir,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                **_new_process_group_kwargs(),
             )
         except OSError as exc:
             raise ToolRuntimeError(self.name, exc) from exc
@@ -279,8 +320,7 @@ class LatexCompileTool(Tool):
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=self.timeout_seconds)
         except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
+            await _terminate_process_group(proc)
             report = _finalize_compile_report(report_base, success=False, engine="tectonic", exit_code=None, error="timeout")
             _write_compile_report_for_known_target(self.docker.policy.workspace_dir, params.tex_path, report)
             return ToolResult(ok=False, content=f"Tectonic compilation timed out after {self.timeout_seconds}s", error="timeout", data={"compile_report": report})
@@ -322,6 +362,8 @@ class LatexCompileTool(Tool):
             "latexmk",
             f"-{params.engine}",
             "-interaction=nonstopmode",
+            "-halt-on-error",
+            "-file-line-error",
             "-bibtex" if params.bibtex else "-bibtex-",
         ]
 
@@ -344,6 +386,7 @@ class LatexCompileTool(Tool):
                 cwd=tex_dir,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                **_new_process_group_kwargs(),
             )
         except OSError as exc:
             raise ToolRuntimeError(self.name, exc) from exc
@@ -354,8 +397,7 @@ class LatexCompileTool(Tool):
                 timeout=self.timeout_seconds,
             )
         except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
+            await _terminate_process_group(proc)
             report = _finalize_compile_report(report_base, success=False, engine="native", exit_code=None, error="timeout")
             _write_compile_report_for_known_target(self.docker.policy.workspace_dir, params.tex_path, report)
             return ToolResult(
@@ -485,6 +527,8 @@ class LatexCompileTool(Tool):
             "latexmk",
             f"-{params.engine}",
             "-interaction=nonstopmode",
+            "-halt-on-error",
+            "-file-line-error",
             "-bibtex" if params.bibtex else "-bibtex-",
         ]
         if params.output_dir:

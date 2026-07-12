@@ -9,8 +9,6 @@ tools:
   - finish_task
 strict_tools: true
 model_tier: medium
-max_steps: 12
-max_tokens_total: 120000
 temperature: 0.2
 allowed_read_prefixes:
   - user_inputs/reference-project-miner/

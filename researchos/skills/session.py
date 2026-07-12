@@ -3,10 +3,18 @@ from __future__ import annotations
 """Persistent, human-readable session state for guided standalone skills."""
 
 from datetime import datetime, timezone
+import io
 import json
 from pathlib import Path
 import re
+import shutil
 from typing import Any, Iterable
+
+from rich import box
+from rich.console import Console, Group
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
 
 from ..runtime.errors import ConfigurationError
 from .contracts import SkillInteraction, SkillReadiness, readiness_as_dict
@@ -371,12 +379,90 @@ def render_readiness_panel(
         lines.append("下一步：现在可开始运行；完成后使用 skill-status 查看持久化结果与文件路径。")
     else:
         lines.append("下一步：可上传文件到上面的路径后恢复；交互式运行也可粘贴材料，由受限收集流程整理到对应 user_inputs 文件。")
-        lines.append("非交互运行不会调用 LLM，始终保留为可恢复 WAITING_INPUT。")
+        lines.append("非交互模式：尚未调用 LLM，始终保留为可恢复 WAITING_INPUT。")
         lines.append(
             f"恢复示例：researchos run-skill {skill_name} --workspace {readiness.workspace} --session-id {session_id} --resume"
         )
     lines.append("═" * width)
     return "\n".join(lines)
+
+
+def render_readiness_panel_rich(
+    *,
+    skill_name: str,
+    session_id: str,
+    session_file: Path,
+    readiness: SkillReadiness,
+    no_color: bool = False,
+) -> str:
+    """Render the interactive input check with explicit upload destinations."""
+
+    interaction = readiness.interaction
+    mode = "项目 workspace（已检查现有项目材料）" if readiness.workspace_mode == "project" else "独立 workspace（由你提供材料）"
+    state = "INPUT READY · 输入已就绪" if readiness.ready else "WAITING INPUT · 等待补齐输入"
+    accent = "green" if readiness.ready else "yellow"
+    header = [
+        Text(interaction.summary if interaction and interaction.summary else "Skill 输入检查", style="bold"),
+        Text(f"会话：{session_id}  ·  {state}  ·  {mode}", style=f"bold {accent}"),
+        Text(f"会话文件：{session_file.relative_to(readiness.workspace)}", style="dim"),
+    ]
+    if interaction and not readiness.request_ready:
+        header.append(Text(f"仍需任务说明：{interaction.request_prompt}", style="yellow"))
+        if interaction.example_request:
+            header.append(Text(f"示例：{interaction.example_request}", style="dim"))
+    elif readiness.request:
+        header.append(Text(f"任务说明：{readiness.request}", style="dim"))
+
+    body: list[Any] = [Group(*header)]
+    if interaction is None:
+        body.append(Text("这是兼容模式 Skill：未声明可校验输入契约。", style="yellow"))
+    else:
+        states = {item.requirement.key: item for item in readiness.input_statuses}
+        table = Table(title="Input Readiness", box=box.SIMPLE_HEAVY, header_style="bold cyan", expand=True)
+        table.add_column("State", width=13)
+        table.add_column("Input", min_width=16, max_width=25, overflow="fold")
+        table.add_column("Purpose", min_width=24, max_width=46, overflow="fold")
+        table.add_column("Selected / Upload Path", min_width=28, max_width=58, overflow="fold")
+        for requirement in interaction.required_inputs + interaction.optional_inputs:
+            status = states[requirement.key]
+            qualifier = "required" if requirement.required else "optional"
+            if status.is_ready:
+                state_text = Text(f"READY · {qualifier}", style="green")
+                destination = _wrap_skill_path(status.selected_path) if status.selected_path else "已就绪"
+            elif requirement.required:
+                state_text = Text("MISSING · required", style="bold yellow")
+                destination = "Upload:\n" + "\n or\n".join(_wrap_skill_path(path) for path in requirement.paths)
+            else:
+                state_text = Text("OPTIONAL", style="dim")
+                destination = "Optional:\n" + "\n or\n".join(_wrap_skill_path(path) for path in requirement.paths)
+            if requirement.example and not status.is_ready:
+                destination += f"\nExample: {requirement.example}"
+            table.add_row(state_text, requirement.label, requirement.description, destination)
+        body.append(table)
+        if interaction.outputs:
+            outputs = Table(title="Expected Outputs", box=box.SIMPLE_HEAVY, header_style="bold magenta", expand=True)
+            outputs.add_column("Artifact", min_width=22, max_width=38, overflow="fold")
+            outputs.add_column("Meaning", min_width=32, max_width=72, overflow="fold")
+            for output in interaction.outputs:
+                outputs.add_row(f"{output.label}\n{_wrap_skill_path(output.path)}", output.description)
+            body.append(outputs)
+    if readiness.ready:
+        body.append(Text("下一步：将开始执行 Skill；完成后用 skill-status 查看会话、产物和恢复信息。", style="green"))
+    else:
+        body.append(
+            Text(
+                "下一步：可在交互式会话中粘贴材料，或把文件上传到上表路径后以同一 session resume。",
+                style="yellow",
+            )
+        )
+        body.append(Text("状态：尚未调用 LLM；不会开始研究/写作产出。", style="yellow", no_wrap=True))
+        body.append(
+            Text(
+                f"Resume: researchos run-skill {skill_name} --workspace {readiness.workspace} --session-id {session_id} --resume",
+                style="dim",
+            )
+        )
+    return _render_skill_rich(Panel(Group(*body), title=f"SKILL · {skill_name}", border_style=accent, expand=True), no_color=no_color)
 
 
 def render_skill_description(*, skill_name: str, skill_path: Path, description: str, interaction: SkillInteraction | None) -> str:
@@ -418,6 +504,68 @@ def render_skill_description(*, skill_name: str, skill_path: Path, description: 
     lines.append("• 补齐后会在同一命令中重新校验并继续；中断后可添加 `--resume --session-id <同一会话>`。")
     lines.append("═" * width)
     return "\n".join(lines)
+
+
+def render_skill_description_rich(
+    *,
+    skill_name: str,
+    skill_path: Path,
+    description: str,
+    interaction: SkillInteraction | None,
+    no_color: bool = False,
+) -> str:
+    """Render a selected Skill's full, human-actionable contract."""
+
+    if interaction is None:
+        return _render_skill_rich(
+            Panel(
+                Group(
+                    Text(description),
+                    Text(f"Path: {skill_path}", style="dim"),
+                    Text("Compatibility mode: no guided input contract is declared.", style="yellow"),
+                ),
+                title=f"SKILL · {skill_name}",
+                border_style="yellow",
+                expand=True,
+            ),
+            no_color=no_color,
+        )
+    overview = [
+        Text(interaction.summary or description, style="bold"),
+        Text(f"Path: {skill_path}", style="dim"),
+        Text(f"Interaction: {interaction.mode} · {interaction.language}", style="cyan"),
+    ]
+    if description.strip() and interaction.summary and description.strip() != interaction.summary.strip():
+        overview.append(Text(f"Technical scope: {description}", style="dim"))
+    if interaction.example_request:
+        overview.append(Text(f"Example request: {interaction.example_request}", style="dim"))
+    inputs = Table(title="What You Need to Provide", box=box.SIMPLE_HEAVY, header_style="bold cyan", expand=True)
+    inputs.add_column("Required", width=10)
+    inputs.add_column("Input", min_width=18, max_width=28, overflow="fold")
+    inputs.add_column("Why", min_width=26, max_width=48, overflow="fold")
+    inputs.add_column("Accepted Location", min_width=28, max_width=56, overflow="fold")
+    for requirement in interaction.required_inputs + interaction.optional_inputs:
+        inputs.add_row(
+            Text("required" if requirement.required else "optional", style="bold yellow" if requirement.required else "dim"),
+            requirement.label,
+            requirement.description,
+            "\n or\n".join(_wrap_skill_path(path) for path in requirement.paths),
+        )
+    outputs = Table(title="What the Skill Produces", box=box.SIMPLE_HEAVY, header_style="bold magenta", expand=True)
+    outputs.add_column("Output", min_width=26, max_width=42, overflow="fold")
+    outputs.add_column("Meaning", min_width=32, max_width=78, overflow="fold")
+    for output in interaction.outputs:
+        outputs.add_row(f"{output.label}\n{_wrap_skill_path(output.path)}", output.description)
+    recovery = Text(
+        "Interactive mode asks follow-up questions and stores supplied material under user_inputs/<skill>/ before proceeding. "
+        "A project workspace is inspected first; a standalone workspace uses the upload locations above. "
+        "Resume: researchos run-skill " + skill_name + " --session-id <same-session> --resume",
+        style="dim",
+    )
+    return _render_skill_rich(
+        Panel(Group(Group(*overview), inputs, outputs, recovery), title=f"SKILL · {skill_name}", border_style="cyan", expand=True),
+        no_color=no_color,
+    )
 
 
 def render_skill_completion_panel(*, workspace: Path, session_id: str) -> str:
@@ -486,6 +634,78 @@ def render_skill_completion_panel(*, workspace: Path, session_id: str) -> str:
         lines.append("查看会话：researchos skill-status --workspace " + str(workspace))
     lines.append("═" * width)
     return "\n".join(lines)
+
+
+def render_skill_completion_panel_rich(*, workspace: Path, session_id: str, no_color: bool = False) -> str:
+    """Render one durable session outcome with visible artifacts and recovery."""
+
+    session = load_session(workspace, session_id)
+    if session is None:
+        raise ConfigurationError(f"skill session '{session_id}' does not exist")
+    status = str(session.get("status") or "UNKNOWN")
+    result = session.get("last_result") if isinstance(session.get("last_result"), dict) else {}
+    metrics = session.get("metrics") if isinstance(session.get("metrics"), dict) else {}
+    progress = session.get("progress") if isinstance(session.get("progress"), dict) else {}
+    interaction = session.get("interaction") if isinstance(session.get("interaction"), dict) else {}
+    labels = {
+        "COMPLETED": ("COMPLETED", "green"),
+        "FAILED": ("FAILED", "bright_red"),
+        "WAITING_RUNTIME": ("WAITING RUNTIME", "yellow"),
+        "WAITING_INPUT": ("WAITING INPUT", "yellow"),
+        "COLLECTING_INPUT": ("COLLECTING INPUT", "cyan"),
+        "RUNNING": ("RUNNING", "cyan"),
+    }
+    status_label, accent = labels.get(status, (status, "cyan"))
+    header = [
+        Text(f"Session: {session_id}  ·  {status_label}", style=f"bold {accent}"),
+        Text(
+            f"Runtime: steps {metrics.get('steps', 0)} | tokens {metrics.get('tokens', 0)} | "
+            f"elapsed {metrics.get('duration_seconds', 0)}s",
+            style="dim",
+        ),
+    ]
+    message = result.get("message") or progress.get("detail")
+    if message:
+        header.append(Text(f"Result: {message}"))
+    output_descriptions = interaction.get("outputs") if isinstance(interaction.get("outputs"), list) else []
+    output_by_path = {
+        str(item.get("path")): item for item in output_descriptions if isinstance(item, dict) and item.get("path")
+    }
+    body: list[Any] = [Group(*header)]
+    outputs = result.get("outputs") if isinstance(result.get("outputs"), dict) else {}
+    if outputs:
+        table = Table(title="Artifact Check", box=box.SIMPLE_HEAVY, header_style="bold magenta", expand=True)
+        table.add_column("State", width=10)
+        table.add_column("Output", min_width=22, max_width=42, overflow="fold")
+        table.add_column("Meaning", min_width=32, max_width=75, overflow="fold")
+        for name, state in outputs.items():
+            if not isinstance(state, dict):
+                continue
+            path = str(state.get("path") or "")
+            descriptor = output_by_path.get(path, {})
+            exists = bool(state.get("exists"))
+            table.add_row(
+                Text("READY" if exists else "MISSING", style="green" if exists else "red"),
+                f"{descriptor.get('label') or name}\n{_wrap_skill_path(path)}",
+                str(descriptor.get("description") or "Declared Skill output."),
+            )
+        body.append(table)
+    trace_file = result.get("trace_file")
+    if trace_file:
+        body.append(Text(f"Trace: {trace_file}", style="dim"))
+    if status in {"WAITING_RUNTIME", "WAITING_INPUT", "FAILED"}:
+        body.append(
+            Text(
+                f"Resume: researchos run-skill {session.get('skill_name', 'SKILL')} --workspace {workspace} --session-id {session_id} --resume",
+                style="yellow",
+            )
+        )
+    else:
+        body.append(Text(f"Inspect sessions: researchos skill-status --workspace {workspace}", style="dim"))
+    return _render_skill_rich(
+        Panel(Group(*body), title=f"SKILL 执行总结 · {session.get('skill_name', 'unknown')}", border_style=accent, expand=True),
+        no_color=no_color,
+    )
 
 
 def render_skill_status_panel(
@@ -572,6 +792,107 @@ def render_skill_status_panel(
         lines.append("└" + "─" * (width - 2) + "┘")
     lines.append("═" * width)
     return "\n".join(lines)
+
+
+def render_skill_status_panel_rich(
+    *,
+    workspace: Path,
+    entries: Iterable[tuple[Path, dict[str, Any]]],
+    no_color: bool = False,
+) -> str:
+    """Render resumable sessions as a single sortable-looking status table."""
+
+    phase_labels = {
+        "starting": "启动上下文",
+        "preparing_step": "准备下一步",
+        "awaiting_llm": "等待模型动作",
+        "llm_response_received": "校验模型返回",
+        "tool_running": "执行工具",
+        "tool_completed": "工具完成",
+        "tool_failed": "工具失败",
+        "waiting_runtime": "等待运行环境",
+        "completed": "已完成",
+        "stopped": "已停止",
+    }
+    status_styles = {
+        "READY": ("READY", "green"),
+        "RUNNING": ("RUNNING", "cyan"),
+        "WAITING_INPUT": ("WAITING INPUT", "yellow"),
+        "WAITING_RUNTIME": ("WAITING RUNTIME", "yellow"),
+        "COMPLETED": ("COMPLETED", "green"),
+        "FAILED": ("FAILED", "bright_red"),
+    }
+    table = Table(title=f"Skill Sessions · {workspace}", box=box.SIMPLE_HEAVY, header_style="bold cyan", expand=True)
+    table.add_column("Skill / Session", min_width=22, max_width=42, overflow="fold")
+    table.add_column("Status", min_width=15, max_width=19)
+    table.add_column("Progress", min_width=18, max_width=34, overflow="fold")
+    table.add_column("Current Detail", min_width=28, max_width=62, overflow="fold")
+    table.add_column("Action", min_width=28, max_width=56, overflow="fold")
+    count = 0
+    for path, session in entries:
+        count += 1
+        session_id = str(session.get("session_id") or path.stem)
+        skill_name = str(session.get("skill_name") or "unknown")
+        raw_status = str(session.get("status") or "UNKNOWN")
+        label, style = status_styles.get(raw_status, (raw_status, "white"))
+        progress = session.get("progress") if isinstance(session.get("progress"), dict) else {}
+        phase = str(progress.get("phase") or "")
+        step = progress.get("step")
+        step_limit = progress.get("step_limit")
+        progress_label = phase_labels.get(phase, phase or "no progress record")
+        if step is not None and step_limit:
+            progress_label = f"{progress_label} · {step}/{step_limit}"
+        readiness = session.get("readiness") if isinstance(session.get("readiness"), dict) else {}
+        missing = [
+            str(item.get("label") or item.get("id") or "input")
+            for item in readiness.get("inputs", [])
+            if isinstance(item, dict) and item.get("required") and item.get("state") != "ready"
+        ]
+        detail = _status_compact(progress.get("detail") or session.get("request"), 180)
+        if missing:
+            detail = (detail + "\n" if detail else "") + "Missing: " + "、".join(missing)
+        if raw_status in {"WAITING_INPUT", "WAITING_RUNTIME", "FAILED"}:
+            action = f"resume --session-id {session_id}"
+        elif raw_status == "COMPLETED":
+            action = "Inspect declared outputs"
+        else:
+            action = "Run skill-status again for durable progress"
+        table.add_row(
+            f"{skill_name}\n{session_id}",
+            Text(label, style=f"bold {style}"),
+            progress_label,
+            detail or "-",
+            action,
+        )
+    if not count:
+        table.add_row("-", "-", "-", "No Skill session found.", "-")
+    footer = Text(
+        "恢复示例：researchos run-skill <skill> --workspace <workspace> --session-id <session> --resume",
+        style="dim",
+    )
+    return _render_skill_rich(Panel(Group(table, footer), title="ResearchOS · Skill Recovery", border_style="cyan", expand=True), no_color=no_color)
+
+
+def _render_skill_rich(renderable: Any, *, no_color: bool) -> str:
+    width = max(100, min(160, shutil.get_terminal_size(fallback=(120, 40)).columns))
+    buffer = io.StringIO()
+    console = Console(
+        file=buffer,
+        force_terminal=not no_color,
+        color_system=None if no_color else "truecolor",
+        no_color=no_color,
+        width=width,
+        highlight=False,
+        _environ={"COLUMNS": str(width), "LINES": "40"},
+    )
+    console.print(renderable)
+    return buffer.getvalue().rstrip()
+
+
+def _wrap_skill_path(path: object) -> str:
+    """Wrap path-like strings at directory boundaries, never inside a token."""
+
+    return str(path or "").replace("/", "/\n")
 
 
 def _status_compact(value: Any, limit: int) -> str:

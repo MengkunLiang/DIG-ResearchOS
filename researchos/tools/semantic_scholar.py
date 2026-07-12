@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from typing import Any
 
 import httpx
@@ -15,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from .abstract_utils import clean_abstract
 from .base import Tool, ToolResult
+from .http_outcomes import bounded_retry_sleep, provider_cooldown_result, retry_after_hint_seconds, scholarly_http_failure
 from .search_validation import clean_search_query, empty_query_result, filter_usable_papers
 
 
@@ -148,8 +150,12 @@ class SemanticScholarSearchTool(Tool):
     def __init__(self, api_key: str | None = None):
         self.api_key = api_key or os.environ.get("S2_API_KEY")
         self.base_url = "https://api.semanticscholar.org/graph/v1"
+        self._cooldown_until = 0.0
 
     async def execute(self, **kwargs) -> ToolResult:
+        remaining = self._cooldown_until - time.monotonic()
+        if remaining > 0:
+            return provider_cooldown_result(source="Semantic Scholar", retry_after_seconds=remaining)
         query = clean_search_query(kwargs["query"])
         if not query:
             return empty_query_result(self.name, kwargs.get("query"))
@@ -178,14 +184,34 @@ class SemanticScholarSearchTool(Tool):
 
                     # 处理速率限制
                     if response.status_code == 429:
+                        retry_after = retry_after_hint_seconds(response)
+                        if retry_after is not None and retry_after > 10:
+                            self._cooldown_until = time.monotonic() + retry_after
+                            return scholarly_http_failure(
+                                source="Semantic Scholar",
+                                exc=httpx.HTTPStatusError("rate limited", request=response.request, response=response),
+                                attempts=attempt + 1,
+                                action="搜索",
+                                response=response,
+                            )
                         if attempt < max_retries - 1:
-                            wait_time = 2 ** attempt  # 指数退避：1s, 2s, 4s
-                            await asyncio.sleep(wait_time)
+                            await bounded_retry_sleep(response, attempt=attempt)
                             continue
+                        cooldown = retry_after if retry_after is not None else 60.0
+                        self._cooldown_until = time.monotonic() + cooldown
                         return ToolResult(
                             ok=False,
-                            content="❌ API 速率限制，请稍后重试或设置 S2_API_KEY 环境变量",
-                            error="rate_limit"
+                            content="Semantic Scholar 暂时触发速率限制；其他可用来源会继续。",
+                            error="rate_limited",
+                            data={
+                                "source": "semantic_scholar",
+                                "failure_class": "rate_limited",
+                                "retriable": True,
+                                "fallback_available": True,
+                                "attempts": attempt + 1,
+                                "retry_after_seconds": retry_after,
+                                "cooldown_seconds": cooldown,
+                            },
                         )
 
                     response.raise_for_status()
@@ -226,22 +252,23 @@ class SemanticScholarSearchTool(Tool):
 
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 429 and attempt < max_retries - 1:
-                    wait_time = 2 ** attempt
-                    await asyncio.sleep(wait_time)
+                    await bounded_retry_sleep(e.response, attempt=attempt)
                     continue
-                return ToolResult(
-                    ok=False,
-                    content=f"❌ API 请求失败: HTTP {e.response.status_code}",
-                    error=f"http_{e.response.status_code}"
+                return scholarly_http_failure(
+                    source="Semantic Scholar",
+                    exc=e,
+                    attempts=attempt + 1,
+                    action="搜索",
                 )
-            except Exception as e:
+            except httpx.RequestError as e:
                 if attempt < max_retries - 1:
-                    await asyncio.sleep(1)
+                    await bounded_retry_sleep(None, attempt=attempt)
                     continue
-                return ToolResult(
-                    ok=False,
-                    content=f"❌ 搜索失败: {e}",
-                    error="search_failed"
+                return scholarly_http_failure(
+                    source="Semantic Scholar",
+                    exc=e,
+                    attempts=attempt + 1,
+                    action="搜索",
                 )
 
         return ToolResult(

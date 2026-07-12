@@ -13,7 +13,7 @@ Use authority by information domain. A file authoritative for paths is not autom
 | Required baselines/novelty boundary | novelty audit plus compiled handoff | exp plan, literature evidence | Omission or semantic replacement is material |
 | Experiment protocol | exp plan plus compiled handoff | hypotheses, baseline matrix | Differences affecting fairness/claims are material |
 | Central hypothesis | hypotheses plus compiled handoff | scorecard, synthesis | Core-mechanism disagreement blocks |
-| Acquisition authority | compiled acquisition policy and runtime controls | declared capabilities | Missing authority never implies permission |
+| Acquisition authority | compiled acquisition policy, ResearchOS default policy, and runtime controls | declared capabilities | Missing legacy policy uses the ResearchOS default; contradictory policy blocks |
 | Budget/stop conditions | compiled handoff/root state | executor capabilities | Expansion requires root/human authority |
 
 ## Mismatch severity

@@ -8,7 +8,7 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 - `synthesis.md` 的用途：给 T4 idea 生成提供 fuel，组织逻辑是 design_rationale 谱系、cross-paper tensions、adjacent transfers。
 - `survey.tex` 的用途：给读者阅读的专业综述，组织逻辑是 taxonomy、领域演进、系统比较、open challenges 和 future directions。
 - 工具只做机械组织/拼装/审计；taxonomy 选择、领域叙事、章节论证和学术判断由你完成。
-- 默认写成紧凑专业综述：Introduction, Background and Scope, Taxonomy, Comparative Analysis, Open Challenges, Future Directions, Conclusion。
+- 默认采用紧凑的章节结构但不是短篇压缩稿：Introduction, Background and Scope, Taxonomy, Comparative Analysis, Open Challenges, Future Directions, Conclusion。综述应有足够篇幅展开 taxonomy、证据边界、比较和研究议程；CCF-A 研究论文的紧凑技术写法不等于要求把 survey 压短。
   不要默认为每个 taxonomy 类创建独立 theme 章；taxonomy 类应优先写成 Taxonomy/Comparative Analysis 内部的小节或段落。
 - 结构质量必须在 PLAN 阶段先定住，而不是等 REVIEW 才发现问题。PLAN 时就要主动避免章节拆得过细、流水账式 literature summary、弱证据滥用和内部标号泄漏。
 - 综述论文的核心不是“读了很多文献”，而是围绕一个明确问题，把已有研究重新组织成有解释力的知识结构，并指出领域下一步应如何发展。
@@ -93,7 +93,7 @@ T3.6 是 T3.5 之后的可选综述论文支线。你要写的是 taxonomy-drive
 ### Deterministic survey visual manifest
 {{ survey_visual_manifest_preview }}
 
-使用规则：只在 manifest 的 `status=generated` 且图路径存在时，才可在 Taxonomy 或 Comparative Analysis 中引用该图；图必须解释其数据来源和读者问题，不能作为装饰。使用同目录相对路径，例如 `\includegraphics[width=\textwidth]{figures/survey_method_taxonomy.png}`。若 manifest 为 skipped，不得补造图像或强行预留图位。
+使用规则：只在 manifest 的 `status=generated` 且唯一图路径为 `drafts/survey/figures/fig_taxonomy_overview.pdf` 时，才可在 Taxonomy section 引用该图，例如 `\includegraphics[width=\textwidth]{figures/fig_taxonomy_overview.pdf}`。该图只表达 taxonomy 的显式结构与直接 paper-ID 链接，不能被解读为性能、证据强度或研究空白。严禁添加性能/基线/相对提升图、跨研究数值比较、T2 筛选分数图、风险/安全热图或装饰图。若 manifest 为 skipped，不得补造图像或强行预留图位。
 {% endif %}
 
 {% if section_outline_preview %}

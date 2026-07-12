@@ -11,9 +11,10 @@ stage-by-stage contract.
 | Install, configure keys, run a project, or recover it | [../README.md](../README.md) or [../README.zh-CN.md](../README.zh-CN.md) |
 | Get a first local or Compose run working | [QUICKSTART.md](QUICKSTART.md) |
 | Run a standalone literature, idea, drafting, polishing, revision, audit, or compile Skill | [QUICKSTART.md](QUICKSTART.md) and [runtime.md](runtime.md) |
+| Choose an atomic Skill for PDF, DOI, notes, matrices, claims, peer review, or writing | [skills.md](skills.md) |
 | Choose a native/Docker TeX backend or fix a build | [docker.md](docker.md) |
 | Change models, budgets, language, search, runtime settings, or internal venue-aware writing profiles | [config.md](config.md) and [../config/README.md](../config/README.md) |
-| Inspect a pause, provider failure, tool call, or artifact validation error | [logging.md](logging.md) |
+| Inspect a pause, provider failure, stage progress, event JSONL, tool call, or artifact validation error | [logging.md](logging.md) |
 | Understand a repository or workspace path | [project_structure.md](project_structure.md) |
 | Use maintained validation or recovery utilities | [../scripts/README.md](../scripts/README.md) |
 | Understand all research stages and their artifact contracts | [agent_pipeline.md](agent_pipeline.md) |
@@ -27,10 +28,11 @@ stage-by-stage contract.
 | Root README | User installation, configuration, run, resume, guided Skill entry, and first diagnostics | Full stage semantics |
 | `QUICKSTART.md` | Copyable first-run checklist | Configuration reference |
 | `docker.md` | Native versus Compose operation, TeX backends, build troubleshooting | External experiment protocol |
-| `logging.md` | CLI progress, logs, traces, and failure triage | Full runtime implementation |
+| `logging.md` | Stage Start/Progress/Summary, event JSONL, logs, traces, and failure triage | Full runtime implementation |
 | `project_structure.md` | Ownership of repository and workspace directories | Artifact schema details |
 | `agent_pipeline.md` | Canonical state-machine, stage, T4 observability, and artifact reference | Installation instructions |
 | `runtime.md` | Runtime internals, guided Skill contract, session model, and extension points | User walkthrough |
+| `skills.md` | User-facing atomic Skill capability map, boundaries, and examples | Runtime implementation details |
 | `dev.md` | Contributor setup, tests, and change checklist | End-user deployment |
 
 ## Sources Of Truth

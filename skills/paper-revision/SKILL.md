@@ -9,8 +9,6 @@ tools:
   - finish_task
 strict_tools: true
 model_tier: heavy
-max_steps: 28
-max_tokens_total: 220000
 temperature: 0.15
 allowed_read_prefixes:
   - user_inputs/paper-revision/

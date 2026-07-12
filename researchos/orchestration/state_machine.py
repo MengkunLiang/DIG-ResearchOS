@@ -540,6 +540,69 @@ def _t4_basis_summary_for_gate(candidate: dict[str, Any]) -> str:
     return _localize_t4_recovery_text(candidate.get("basis_summary") or "待补充")
 
 
+def _t4_short_display_title(candidate: dict[str, Any], fallback: str) -> str:
+    """Bound Gate headings so a long research description never becomes a title."""
+
+    text = str(
+        candidate.get("display_title")
+        or candidate.get("title_short_zh")
+        or candidate.get("short_title")
+        or fallback
+        or "未命名候选"
+    ).strip()
+    limit = 32 if re.search(r"[\u4e00-\u9fff]", text) else 80
+    return text if len(text) <= limit else text[: max(0, limit - 3)].rstrip() + "..."
+
+
+def _t4_candidate_hypotheses(candidate: dict[str, Any], candidate_id: str, *, value: str, mechanism: str, prediction: str, counterfactual: str) -> list[dict[str, str]]:
+    raw = candidate.get("candidate_hypotheses")
+    result: list[dict[str, str]] = []
+    if isinstance(raw, list):
+        for index, item in enumerate(raw[:3], start=1):
+            if not isinstance(item, dict):
+                continue
+            result.append(
+                {
+                    "id": str(item.get("id") or f"{candidate_id}-H{index}"),
+                    "statement": _localize_t4_recovery_text(item.get("statement") or item.get("hypothesis") or "待补充"),
+                    "mechanism": _localize_t4_recovery_text(item.get("mechanism") or "待补充"),
+                    "prediction": _localize_t4_recovery_text(item.get("observable_prediction") or item.get("prediction") or "待补充"),
+                    "test": _localize_t4_recovery_text(item.get("discriminating_test") or item.get("test") or "待补充"),
+                }
+            )
+    if result:
+        return result
+    return [{"id": f"{candidate_id}-H1", "statement": value, "mechanism": mechanism, "prediction": prediction, "test": counterfactual}]
+
+
+def _t4_candidate_innovation(candidate: dict[str, Any]) -> dict[str, str]:
+    raw = candidate.get("innovation") if isinstance(candidate.get("innovation"), dict) else {}
+    return {
+        "summary": _localize_t4_recovery_text(raw.get("summary") or "未提供明确创新说明；需要在重分析时补写。"),
+        "type": _localize_t4_recovery_text(raw.get("type") or "待界定"),
+        "delta": _localize_t4_recovery_text(raw.get("novelty_delta") or "未提供相对最近工作的明确差异。"),
+        "non_incremental": _localize_t4_recovery_text(raw.get("non_incremental_reason") or "未提供非增量理由；需在 Pass2 / note section 复核。"),
+    }
+
+
+def _t4_merge_opportunities(candidate: dict[str, Any]) -> list[dict[str, str]]:
+    raw = candidate.get("merge_opportunities")
+    if not isinstance(raw, list):
+        return []
+    result: list[dict[str, str]] = []
+    for item in raw[:4]:
+        if not isinstance(item, dict):
+            continue
+        result.append(
+            {
+                "with": str(item.get("with_candidate") or item.get("candidate_id") or "未指定"),
+                "combine": _localize_t4_recovery_text(item.get("combine") or "未提供假设组合"),
+                "rationale": _localize_t4_recovery_text(item.get("rationale") or "未提供组合理由"),
+            }
+        )
+    return result
+
+
 def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
     """Build a complete, Chinese-first, auditable Gate1 candidate deck.
 
@@ -567,7 +630,8 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
         source_title = str(candidate.get("title") or "未命名候选").strip()
         localized = _T4_RECOVERY_UI_TEXT.get(source_title, {})
         localized_fields = _T4_RECOVERY_FIELD_ZH.get(candidate_id, {})
-        title = str(candidate.get("title_zh") or localized.get("title") or source_title)
+        full_title = str(candidate.get("title_zh") or localized.get("title") or source_title)
+        title = _t4_short_display_title(candidate, full_title)
         value = str(candidate.get("pitch_zh") or localized.get("value") or candidate.get("pitch") or candidate.get("core_claim") or "待补充")
         mechanism = str(candidate.get("mechanism_zh") or localized.get("mechanism") or candidate.get("mechanism") or "待补充")
         minimum = candidate.get("minimum_experiment") if isinstance(candidate.get("minimum_experiment"), dict) else {}
@@ -577,6 +641,11 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
         else:
             metrics = _localize_t4_recovery_text(metrics)
         score = candidate.get("scores") if isinstance(candidate.get("scores"), dict) else {}
+        score_rationale = (
+            candidate.get("score_rationale")
+            if isinstance(candidate.get("score_rationale"), dict)
+            else {}
+        )
         support = candidate.get("supporting_papers") if isinstance(candidate.get("supporting_papers"), list) else []
         evidence_levels = {
             str(item.get("evidence_level") or "").upper()
@@ -605,7 +674,8 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
                 "id": candidate_id,
                 "lane": lane,
                 "title": title,
-                "original_title": source_title if title != source_title else "",
+                "full_title": full_title,
+                "original_title": source_title if full_title != source_title else "",
                 "origin": _localize_t4_recovery_text(candidate.get("idea_origin") or "未标注"),
                 "mechanism_family": _localize_t4_recovery_text(candidate.get("mechanism_family") or "未标注"),
                 "target_problem": _localize_t4_recovery_text(candidate.get("target_problem") or "待补充"),
@@ -656,6 +726,20 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
                 ),
                 "novelty_signal": _localize_t4_recovery_text(pass2.get("novelty_signal") or candidate.get("novelty_signal") or "待核验"),
                 "warning": warning,
+                "innovation": _t4_candidate_innovation(candidate),
+                "candidate_hypotheses": _t4_candidate_hypotheses(
+                    candidate,
+                    candidate_id,
+                    value=value,
+                    mechanism=mechanism,
+                    prediction=str(candidate.get("prediction_zh") or localized_fields.get("prediction") or _localize_t4_recovery_text(candidate.get("prediction") or "待补充")),
+                    counterfactual=str(candidate.get("counterfactual_zh") or localized_fields.get("counterfactual") or _localize_t4_recovery_text(candidate.get("counterfactual") or "待补充")),
+                ),
+                "merge_opportunities": _t4_merge_opportunities(candidate),
+                "score_rationale": {
+                    str(key): _localize_t4_recovery_text(reason)
+                    for key, reason in score_rationale.items()
+                },
             }
         )
 

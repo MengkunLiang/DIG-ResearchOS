@@ -31,6 +31,13 @@ htmlcov/
 .ruff_cache/
 tests/manual/
 
+# Local agent context and validation suite. They remain available locally for
+# development and release checks, but are intentionally not part of project
+# source distribution.
+AGENTS.md
+BACKGROUND.md
+tests/
+
 # IDEs
 .vscode/
 .idea/

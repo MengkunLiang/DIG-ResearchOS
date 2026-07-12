@@ -10,8 +10,10 @@ only read/write workspace artifacts and provide a mock dry-run path for tests.
 
 import csv
 import hashlib
+import importlib.util
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any, Literal
 
@@ -20,6 +22,10 @@ from pydantic import BaseModel, Field
 
 from ..runtime.environment import workspace_host_hint
 from ..skills.project_specialization import specialize_project_skills
+from ..skills.project_specialization.policies import (
+    default_executor_capabilities,
+    default_resource_acquisition_policy,
+)
 from .base import Tool, ToolResult
 from .workspace_policy import ToolAccessDenied, WorkspaceAccessPolicy
 
@@ -89,7 +95,48 @@ def _artifact_record(workspace: Path, rel_path: str, *, role: str, kind: str = "
     record: dict[str, Any] = {"path": rel_path, "kind": kind, "role": role, "exists": path.exists()}
     if path.exists() and path.is_file():
         record.update({"sha256": _sha256(path), "bytes": path.stat().st_size})
+    elif path.exists() and path.is_dir():
+        record.update({"kind": "directory", "file_count": sum(1 for item in path.rglob("*") if item.is_file())})
     return record
+
+
+def _paper_card_evidence_index(workspace: Path) -> dict[str, Any]:
+    """Locate literature cards without elevating them into experimental evidence."""
+
+    roots = (
+        ("full_or_partial", workspace / "literature" / "paper_notes"),
+        ("bridge", workspace / "literature" / "paper_notes_bridge"),
+        ("abstract_only", workspace / "literature" / "paper_notes_abstract"),
+    )
+    cards: list[dict[str, Any]] = []
+    for card_type, root in roots:
+        if not root.is_dir():
+            continue
+        for path in sorted(item for item in root.rglob("*.md") if item.is_file()):
+            cards.append(
+                {
+                    "path": path.relative_to(workspace).as_posix(),
+                    "card_type": card_type,
+                    "bytes": path.stat().st_size,
+                }
+            )
+    return {
+        "version": "1.0",
+        "semantics": "paper_card_evidence_index",
+        "purpose": "Locate literature evidence for rationale, baseline provenance, and claim boundaries.",
+        "allowed_uses": [
+            "mechanism and design-rationale context",
+            "baseline identity and reproduction provenance",
+            "known limitation, boundary condition, and related-work traceability",
+        ],
+        "prohibited_uses": [
+            "empirical performance evidence for the proposed method",
+            "replacement for result_pack, raw results, integrity audit, or result-to-claim mapping",
+            "authority to claim novelty beyond ideation/novelty_audit.md",
+        ],
+        "card_count": len(cards),
+        "cards": cards,
+    }
 
 
 def _rel_artifact_record(workspace: Path, path: Path, *, role: str, kind: str = "file") -> dict[str, Any]:
@@ -212,6 +259,10 @@ PRE_T5_SOURCE_FILES = [
     "novelty/novelty_audit.md",
     "resources/baseline_candidates.jsonl",
     "literature/baseline_map.json",
+    "literature/notes_manifest.json",
+    "literature/paper_notes",
+    "literature/paper_notes_bridge",
+    "literature/paper_notes_abstract",
     "user_seeds/seed_external_resources.jsonl",
     "user_seeds/bridge_domains.yaml",
 ]
@@ -258,6 +309,166 @@ SKILL_SUITE = [
     "writer-handoff",
 ]
 
+
+RESEARCH_REBOOST_REQUIRED_SOURCE_PATHS = {
+    "project.yaml",
+    "literature/synthesis.md",
+    "literature/synthesis_workbench.json",
+    "literature/domain_map.json",
+    "literature/comparison_table.csv",
+    "ideation/hypotheses.md",
+    "ideation/exp_plan.yaml",
+    "ideation/idea_scorecard.yaml",
+    "ideation/risks.md",
+    "ideation/novelty_audit.md",
+}
+
+RESEARCH_REBOOST_GATE_STAGES = [
+    "context_alignment",
+    "resource_mining",
+    "baseline_reproduction",
+    "claim_evidence_design",
+    "method_refinement",
+    "implementation",
+    "code_protocol_review",
+    "smoke_validation",
+    "formal_run",
+    "result_diagnosis",
+    "module_attribution",
+    "refinement_decision",
+    "realized_method_packaging",
+    "figure_table_packaging",
+    "writer_handoff",
+]
+
+RESEARCH_REBOOST_WRITER_ARTIFACT_TYPES = [
+    "realized_method_package",
+    "result_to_claim",
+    "evidence_pack",
+    "result_diagnosis",
+    "module_attribution",
+    "final_framework_figure",
+    "figure_table_inventory",
+    "limitations",
+    "reproducibility_manifest",
+]
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _research_reboost_skill_dir() -> Path:
+    return _repo_root() / "skills" / "research-reboost"
+
+
+def research_reboost_skill_prompt_excerpt(*, max_chars: int = 24000) -> str:
+    """Return the current T5 reboost skill contract for injection into the LLM prompt."""
+
+    skill_dir = _research_reboost_skill_dir()
+    parts: list[str] = []
+    for rel in ("SKILL.md", "references/reboost-protocol.md"):
+        path = skill_dir / rel
+        if path.is_file():
+            parts.append(f"## {rel}\n\n{path.read_text(encoding='utf-8', errors='replace')}")
+    text = "\n\n".join(parts)
+    return text[:max_chars]
+
+
+def _load_skill_python_module(module_name: str, path: Path) -> Any:
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load module from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _research_reboost_inventory(workspace: Path) -> dict[str, Any]:
+    module = _load_skill_python_module(
+        "research_reboost_inventory_sources",
+        _research_reboost_skill_dir() / "scripts" / "inventory_sources.py",
+    )
+    inventory = module.build_inventory(workspace.resolve(), include_optional=True)
+    used_for_by_category = {
+        "project": ["project_scope", "research_goal"],
+        "literature_synthesis": ["research_goal", "method_mechanism", "claim_boundary"],
+        "synthesis_workbench": ["method_mechanism", "claim_boundary"],
+        "domain_map": ["project_scope", "method_mechanism"],
+        "comparison_table": ["baseline_selection", "experiment_protocol"],
+        "hypotheses": ["hypothesis", "method_mechanism", "claim_boundary"],
+        "experiment_plan": ["experiment_protocol", "baseline_selection", "writer_contract"],
+        "idea_scorecard": ["risk_analysis", "method_mechanism"],
+        "risks": ["risk_analysis", "claim_boundary"],
+        "novelty_audit": ["novelty_boundary", "baseline_selection", "claim_boundary"],
+    }
+    for entry in inventory.get("sources", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        is_required = entry.get("requirement") == "required"
+        is_available = entry.get("availability") == "available"
+        entry["used"] = bool(is_required and is_available)
+        if entry["used"]:
+            entry["used_for"] = used_for_by_category.get(str(entry.get("category")), [])
+        elif is_required:
+            entry["used_for"] = []
+        else:
+            entry.setdefault("omission_reason", "Optional source discovered but not needed for the initial T5 reboost contract")
+    return inventory
+
+
+def _validate_research_reboost_pack(workspace: Path, pack_path: Path | None = None) -> tuple[bool, str | None, dict[str, Any]]:
+    skill_dir = _research_reboost_skill_dir()
+    pack_path = pack_path or workspace / "external_executor" / "handoff_pack.json"
+    report: dict[str, Any] = {
+        "validator": "skills/research-reboost/scripts/validate_handoff.py",
+        "valid": False,
+        "findings": [],
+    }
+    try:
+        validator = _load_skill_python_module(
+            "research_reboost_validate_handoff",
+            skill_dir / "scripts" / "validate_handoff.py",
+        )
+        pack = json.loads(pack_path.read_text(encoding="utf-8"))
+        schema = json.loads((skill_dir / "references" / "handoff_pack.schema.json").read_text(encoding="utf-8"))
+        structural = validator.SchemaValidator(schema).validate(pack)
+        semantic = [] if structural else validator.SemanticValidator(pack, workspace, True).validate()
+        findings = structural + semantic
+        report["findings"] = [
+            {
+                "severity": finding.severity,
+                "code": finding.code,
+                "path": finding.path,
+                "message": finding.message,
+            }
+            for finding in findings
+        ]
+        errors = [item for item in report["findings"] if item.get("severity") == "error"]
+        report["valid"] = not errors
+        report["error_count"] = len(errors)
+        report["warning_count"] = sum(1 for item in report["findings"] if item.get("severity") == "warning")
+        if errors:
+            first = errors[0]
+            return False, f"{first.get('code')} at {first.get('path')}: {first.get('message')}", report
+        return True, None, report
+    except Exception as exc:
+        report["findings"] = [{"severity": "error", "code": "validator.runtime", "path": "/", "message": str(exc)}]
+        report["error_count"] = 1
+        report["warning_count"] = 0
+        return False, str(exc), report
+
+
+def _is_research_reboost_pack(data: dict[str, Any]) -> bool:
+    return (
+        data.get("schema_version") == "external_executor_handoff.v1"
+        and isinstance(data.get("source_manifest"), list)
+        and isinstance(data.get("method_intent"), dict)
+        and isinstance(data.get("execution_contract"), dict)
+    )
+
+
 def validate_context_reboost_handoff(workspace_dir: Path) -> tuple[bool, str | None]:
     """Validate the LLM-generated context re-boost handoff skeleton."""
 
@@ -270,6 +481,16 @@ def validate_context_reboost_handoff(workspace_dir: Path) -> tuple[bool, str | N
         return False, "external_executor/handoff_pack.json must be a JSON object"
     if data.get("schema_version") != "external_executor_handoff.v1":
         return False, "handoff_pack.schema_version must be external_executor_handoff.v1"
+    if _is_research_reboost_pack(data):
+        if data.get("generation_status") != "completed":
+            return False, "handoff_pack.generation_status 必须是 completed 才能进入外部执行器 gate"
+        ok, err, _report = _validate_research_reboost_pack(workspace_dir, path)
+        if not ok:
+            return False, f"research-reboost validator failed: {err}"
+        method_intent = data.get("method_intent")
+        if method_intent.get("status") != "draft_intent_only" or method_intent.get("not_final_method_source") is not True:
+            return False, "handoff_pack.method_intent 必须标记 draft_intent_only 且不是最终 Method 来源"
+        return True, None
     context = data.get("context_reboost")
     if not isinstance(context, dict):
         return False, "handoff_pack.context_reboost missing"
@@ -429,6 +650,7 @@ def _build_context_reboost(
             ],
         },
         "claim_boundaries": _claim_boundaries_from_context(novelty_audit, risks, required_baselines),
+        "resource_acquisition_policy": default_resource_acquisition_policy(),
         "writer_handoff_contract": [
             "realized_method_package",
             "final_framework_figure",
@@ -865,6 +1087,52 @@ def _extract_exp_plan_seeds(project: dict[str, Any]) -> list[int]:
     return list(dict.fromkeys(seeds)) or [42]
 
 
+def _handoff_metrics_for_execution(handoff: dict[str, Any]) -> list[str]:
+    old_metrics = (handoff.get("experiment_contract") or {}).get("metrics")
+    if isinstance(old_metrics, list) and old_metrics:
+        return [str(item.get("name") if isinstance(item, dict) else item) for item in old_metrics if str(item).strip()]
+    names: list[str] = []
+    for claim in handoff.get("claim_evidence_matrix", []) or []:
+        if not isinstance(claim, dict):
+            continue
+        for req in claim.get("evidence_requirements", []) or []:
+            if isinstance(req, dict) and req.get("metric_or_observation"):
+                names.append(str(req["metric_or_observation"]))
+    return list(dict.fromkeys(name for name in names if name)) or ["task_score"]
+
+
+def _handoff_seeds_for_execution(handoff: dict[str, Any]) -> list[int]:
+    old_seeds = (handoff.get("experiment_contract") or {}).get("seeds")
+    if isinstance(old_seeds, list) and old_seeds:
+        result: list[int] = []
+        for seed in old_seeds:
+            try:
+                result.append(int(seed))
+            except Exception:
+                continue
+        if result:
+            return list(dict.fromkeys(result))
+    return [42]
+
+
+def _handoff_required_baselines_for_execution(handoff: dict[str, Any]) -> list[dict[str, Any]]:
+    old_baselines = (handoff.get("experiment_contract") or {}).get("required_baselines") or handoff.get("required_baselines")
+    if isinstance(old_baselines, list) and old_baselines:
+        return [item for item in old_baselines if isinstance(item, dict)]
+    result: list[dict[str, Any]] = []
+    for item in handoff.get("baseline_matrix", []) or []:
+        if isinstance(item, dict) and item.get("requirement") == "required":
+            result.append(
+                {
+                    "baseline_id": item.get("baseline_id"),
+                    "baseline_name": item.get("name"),
+                    "reason_required": item.get("rationale"),
+                    "source": item.get("implementation_source"),
+                }
+            )
+    return result
+
+
 def _infer_experiment_intent(project: dict[str, Any], hypotheses: str) -> str:
     topic = str(project.get("topic") or project.get("research_direction") or project.get("project_id") or "").strip()
     for line in hypotheses.splitlines():
@@ -932,6 +1200,918 @@ def _extract_required_baselines(workspace: Path) -> list[dict[str, Any]]:
     return items
 
 
+def _safe_schema_id(prefix: str, value: Any, index: int) -> str:
+    raw = str(value or "").strip()
+    slug = re.sub(r"[^A-Za-z0-9_.:-]+", "_", raw)[:60].strip("_.:-")
+    if not slug or not re.match(r"^[A-Za-z]", slug):
+        slug = f"{prefix}{index}"
+    if len(slug) < 2:
+        slug = f"{prefix}{index}"
+    return slug[:120]
+
+
+def _source_ref(source_id: str, locator: str, note: str, support_type: str = "direct") -> dict[str, str]:
+    return {
+        "source_id": source_id,
+        "locator": locator,
+        "note": note,
+        "support_type": support_type,
+    }
+
+
+def _source_available(source_manifest: list[dict[str, Any]], path: str) -> bool:
+    return any(
+        item.get("path") == path and item.get("availability") == "available" and item.get("used") is True
+        for item in source_manifest
+        if isinstance(item, dict)
+    )
+
+
+def _required_source_coverage(source_manifest: list[dict[str, Any]]) -> float:
+    required = [
+        item
+        for item in source_manifest
+        if isinstance(item, dict) and item.get("path") in RESEARCH_REBOOST_REQUIRED_SOURCE_PATHS
+    ]
+    if not required:
+        return 0.0
+    ready = sum(item.get("availability") == "available" and item.get("used") is True for item in required)
+    return ready / len(RESEARCH_REBOOST_REQUIRED_SOURCE_PATHS)
+
+
+def _used_source_count(source_manifest: list[dict[str, Any]]) -> int:
+    return sum(1 for item in source_manifest if isinstance(item, dict) and item.get("used") is True)
+
+
+def _extract_project_goal(project: dict[str, Any], exp_plan: dict[str, Any], hypotheses: str) -> str:
+    for value in (
+        exp_plan.get("goal") if isinstance(exp_plan, dict) else None,
+        project.get("research_question"),
+        project.get("topic"),
+        project.get("research_direction"),
+        _first_non_heading_line(hypotheses),
+    ):
+        text = _compact_text(str(value or ""), limit=700)
+        if text:
+            return text
+    return "Compile the selected ResearchOS hypothesis into an auditable external execution contract."
+
+
+def _extract_research_question(project: dict[str, Any], goal: str) -> str:
+    return _compact_text(str(project.get("research_question") or goal), limit=500)
+
+
+def _extract_assumptions(hypotheses: str) -> list[str]:
+    section = _section_hint(hypotheses, ["核心假设", "assumption", "assumptions"])
+    bullets = _extract_bullets(section or hypotheses, limit=4)
+    if bullets:
+        return bullets
+    return [
+        "The selected mechanism remains within the scope and novelty boundaries declared before T5.",
+        "The external executor can obtain enough data or material evidence to test the planned comparisons.",
+    ]
+
+
+def _extract_datasets(exp_plan: dict[str, Any]) -> list[str]:
+    names: list[str] = []
+    for exp in _experiments_from_plan(exp_plan):
+        for dataset in exp.get("datasets", []) or []:
+            if isinstance(dataset, dict):
+                names.append(str(dataset.get("name") or dataset.get("dataset") or "").strip())
+            elif isinstance(dataset, str):
+                names.append(dataset.strip())
+        for key in ("dataset", "benchmark"):
+            if exp.get(key):
+                names.append(str(exp.get(key)).strip())
+    return list(dict.fromkeys(item for item in names if item)) or ["dataset_or_setting_declared_in_exp_plan"]
+
+
+def _exp_plan_seed_policy(project: dict[str, Any]) -> str:
+    seeds = _extract_exp_plan_seeds(project)
+    return "Use the predeclared ResearchOS seed ensemble: " + ", ".join(str(seed) for seed in seeds)
+
+
+def _exp_baseline_records(exp_plan: dict[str, Any], workspace: Path) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    novelty_required = _extract_required_baselines(workspace)
+    for item in novelty_required:
+        name = _baseline_name(item)
+        if name and name.casefold() not in seen:
+            seen.add(name.casefold())
+            records.append(
+                {
+                    "name": name,
+                    "source": str(item.get("source") or "ideation/novelty_audit.md"),
+                    "why": str(item.get("reason_required") or "Required by novelty audit"),
+                    "requirement": "required",
+                    "role": "nearest_work",
+                }
+            )
+    for exp in _experiments_from_plan(exp_plan):
+        for item in exp.get("baselines", []) or []:
+            if isinstance(item, dict):
+                name = str(item.get("name") or item.get("baseline_name") or "").strip()
+                source = str(item.get("source") or "ideation/exp_plan.yaml")
+                why = str(item.get("why") or item.get("rationale") or "Listed in experiment plan")
+            else:
+                name = str(item or "").strip()
+                source = "ideation/exp_plan.yaml"
+                why = "Listed in experiment plan"
+            if not name or name.casefold() in seen:
+                continue
+            seen.add(name.casefold())
+            lowered = name.casefold()
+            role = "canonical"
+            if "htce" in lowered or "nearest" in lowered:
+                role = "nearest_work"
+            elif "target" in lowered or "lower" in lowered:
+                role = "lower_bound"
+            elif "naive" in lowered or "random" in lowered or "sanity" in lowered:
+                role = "sanity_check"
+            elif "m1-" in lowered:
+                role = "component_source"
+            records.append({"name": name, "source": source, "why": why, "requirement": "required", "role": role})
+    if records:
+        return records
+    return [
+        {
+            "name": "Target-only baseline from the experiment plan",
+            "source": "ideation/exp_plan.yaml",
+            "why": "Fallback lower-bound comparison required before strong transfer claims.",
+            "requirement": "required",
+            "role": "lower_bound",
+        }
+    ]
+
+
+def _build_reboost_baseline_matrix(exp_plan: dict[str, Any], workspace: Path, claim_ids: list[str]) -> list[dict[str, Any]]:
+    records = _exp_baseline_records(exp_plan, workspace)
+    baselines: list[dict[str, Any]] = []
+    for idx, record in enumerate(records, start=1):
+        name = record["name"]
+        source_id = "SRC_NOVELTY" if "novelty" in record.get("source", "") else "SRC_EXP_PLAN"
+        baselines.append(
+            {
+                "baseline_id": f"B{idx}",
+                "name": name,
+                "role": record.get("role") or "canonical",
+                "requirement": record.get("requirement") or "required",
+                "category": "comparative_method",
+                "rationale": _compact_text(record.get("why") or "Required for fair external evaluation", limit=300),
+                "availability": "candidate",
+                "implementation_source": record.get("source") or None,
+                "reproduction_target": "Reproduce or document a faithful comparable implementation before making strong claims.",
+                "fairness_contract": {
+                    "same_data_split": True,
+                    "same_metric_definition": True,
+                    "same_tuning_budget": True,
+                    "same_evaluation_protocol": True,
+                    "additional_constraints": [
+                        "Record configs, logs, seeds, and raw outputs for every baseline run.",
+                        "Do not weaken a novelty-required baseline without human review.",
+                    ],
+                },
+                "substitution_policy": {
+                    "allowed": False,
+                    "conditions": [],
+                    "approval_required": "human",
+                    "candidate_substitutes": [],
+                },
+                "linked_claim_ids": claim_ids,
+                "source_refs": [
+                    _source_ref(source_id, "baseline declarations", f"{name} is required or planned for comparison", "reconciled")
+                ],
+            }
+        )
+    return baselines
+
+
+def _build_reboost_claims(exp_plan: dict[str, Any], metrics: list[str], baseline_ids: list[str], module_ids: list[str]) -> list[dict[str, Any]]:
+    experiments = _experiments_from_plan(exp_plan) or [{"id": "exp_main", "name": str(exp_plan.get("goal") or "Main evaluation")}]
+    claims: list[dict[str, Any]] = []
+    for idx, exp in enumerate(experiments[:4], start=1):
+        claim_id = f"C{idx}"
+        name = str(exp.get("title") or exp.get("name") or exp.get("id") or f"Experiment {idx}")
+        exp_metrics = []
+        for metric in exp.get("metrics", []) or metrics:
+            if isinstance(metric, dict):
+                exp_metrics.append(str(metric.get("name") or metric.get("metric_id") or "task_score"))
+            else:
+                exp_metrics.append(str(metric))
+        metric_text = ", ".join(list(dict.fromkeys(item for item in exp_metrics if item)) or metrics)
+        claims.append(
+            {
+                "claim_id": claim_id,
+                "statement": _compact_text(
+                    str(exp.get("hypothesis_ref") or name)
+                    + ": external execution must test whether the selected method supports this pre-experiment claim.",
+                    limit=500,
+                ),
+                "claim_type": "performance" if idx == 1 else ("mechanism" if idx == 2 else "robustness"),
+                "initial_strength_ceiling": "moderate",
+                "pre_experiment_status": "untested",
+                "related_module_ids": module_ids,
+                "required_baseline_ids": baseline_ids,
+                "evidence_requirements": [
+                    {
+                        "experiment_id": "E_FORMAL",
+                        "evidence_type": "main_result" if idx == 1 else "ablation",
+                        "dataset_or_setting": _compact_text(name, limit=160),
+                        "metric_or_observation": metric_text or "task_score",
+                        "comparison": "Compare against every required baseline under the same split, seed policy, and metric definition.",
+                        "acceptance_criterion": "Support only if raw metrics, configs, logs, and baseline coverage pass T7 audit.",
+                    }
+                ],
+                "support_criteria": [
+                    "Required baselines are reproduced or explicitly audited as unavailable.",
+                    "The formal run beats the relevant baseline under the predeclared metrics or yields a documented negative result.",
+                ],
+                "weaken_criteria": [
+                    "Only one dataset, seed, or baseline is covered.",
+                    "A planned ablation is missing or inconclusive.",
+                ],
+                "falsification_criteria": [
+                    "The method does not outperform the declared lower-bound and nearest-work baselines.",
+                    "A component ablation shows no measurable contribution for the claimed mechanism.",
+                ],
+                "prohibited_interpretations": [
+                    "Do not interpret mock-only or dry-run outputs as empirical evidence.",
+                    "Do not claim novelty beyond the T4.5 novelty boundary.",
+                ],
+                "source_refs": [
+                    _source_ref("SRC_EXP_PLAN", f"experiments[{idx - 1}]", "Experiment plan defines the comparison to be tested"),
+                    _source_ref("SRC_HYPOTHESES", "selected hypotheses", "Hypotheses define the pre-experiment claim boundary"),
+                ],
+            }
+        )
+    return claims
+
+
+def _build_reboost_writer_contract() -> dict[str, Any]:
+    return {
+        "required_artifacts": [
+            {
+                "artifact_id": f"WA{idx}",
+                "artifact_type": artifact_type,
+                "description": f"Audited {artifact_type.replace('_', ' ')} from external execution.",
+                "source_of_truth": "external_executor/result_pack.json after T7 ingest/audit",
+                "requires_t7_audit": True,
+                "required_fields": ["path_or_json_pointer", "provenance", "audit_status"],
+            }
+            for idx, artifact_type in enumerate(RESEARCH_REBOOST_WRITER_ARTIFACT_TYPES, start=1)
+        ],
+        "must_include": [
+            "raw result references, configs, logs, hashes, and run IDs",
+            "baseline coverage status and substitutions, if any",
+            "claim weakening and must-not-claim boundaries",
+            "realized method package rather than draft method intent",
+        ],
+        "must_not_use_as_final_fact_source": [
+            "method_intent",
+            "initial_framework_figure_sketch",
+            "unaudited_raw_results",
+            "diagnostic_hint",
+            "unsupported_claim",
+        ],
+    }
+
+
+def _build_reboost_ordered_gates() -> list[dict[str, Any]]:
+    gates: list[dict[str, Any]] = []
+    for idx, stage in enumerate(RESEARCH_REBOOST_GATE_STAGES, start=1):
+        gate_id = f"G{idx:02d}"
+        gates.append(
+            {
+                "gate_id": gate_id,
+                "order": idx,
+                "stage": stage,
+                "depends_on_gate_ids": [f"G{idx - 1:02d}"] if idx > 1 else [],
+                "required_inputs": ["external_executor/handoff_pack.json"] if idx == 1 else [f"output_of_G{idx - 1:02d}"],
+                "required_outputs": [f"external_executor/{stage}_artifact"],
+                "pass_conditions": [f"{stage} output is present, auditable, and within allowed paths"],
+                "on_failure": "diagnose_and_decide" if stage in {"result_diagnosis", "refinement_decision"} else "repair_and_retry",
+            }
+        )
+    return gates
+
+
+def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    inventory = _research_reboost_inventory(workspace)
+    source_manifest = [item for item in inventory.get("sources", []) if isinstance(item, dict)]
+    project = _read_yaml(workspace / "project.yaml")
+    exp_plan = _read_yaml(workspace / "ideation" / "exp_plan.yaml")
+    hypotheses = _read_text(workspace / "ideation" / "hypotheses.md", max_chars=20000)
+    synthesis = _read_text(workspace / "literature" / "synthesis.md", max_chars=16000)
+    novelty = _read_text(workspace / "ideation" / "novelty_audit.md", max_chars=16000)
+    risks = _read_text(workspace / "ideation" / "risks.md", max_chars=8000)
+    goal = _extract_project_goal(project, exp_plan, hypotheses)
+    research_question = _extract_research_question(project, goal)
+    metrics = _extract_exp_plan_metrics(exp_plan)
+    datasets = _extract_datasets(exp_plan)
+    module_id = "M1"
+    claim_ids = [f"C{idx}" for idx, _exp in enumerate((_experiments_from_plan(exp_plan) or [{}])[:4], start=1)]
+    baselines = _build_reboost_baseline_matrix(exp_plan, workspace, claim_ids)
+    baseline_ids = [item["baseline_id"] for item in baselines]
+    claims = _build_reboost_claims(exp_plan, metrics, baseline_ids, [module_id])
+    claim_ids = [item["claim_id"] for item in claims]
+    for baseline in baselines:
+        baseline["linked_claim_ids"] = claim_ids
+    assumptions = _extract_assumptions(hypotheses)
+    mechanism = _compact_text(
+        _section_hint(hypotheses, ["Mechanism", "技术机制", "机制"]) or _section_hint(synthesis, ["mechanism", "method"]),
+        limit=900,
+    ) or goal
+    novelty_constraints = []
+    if "Final Gate Verdict" in novelty or "must not" in novelty.lower() or "不能" in novelty:
+        novelty_constraints.append("Preserve T4.5 novelty warnings and must-not-claim boundaries during external execution.")
+    if "collision" in novelty.lower() or "碰撞" in novelty:
+        novelty_constraints.append("Treat component-level collision risks as claim ceilings, not as executable method shortcuts.")
+    if not novelty_constraints:
+        novelty_constraints.append("Do not exceed the novelty boundary declared in ideation/novelty_audit.md.")
+    mismatch_records: list[dict[str, Any]] = []
+    if "drop_due_to_collision" in novelty or "true_collision" in novelty:
+        mismatch_records.append(
+            {
+                "mismatch_id": "MM1",
+                "severity": "warning",
+                "topic": "Component novelty constraints",
+                "conflicting_statements": [
+                    "Some component hypotheses are marked as collision risks in novelty audit.",
+                    "The experiment plan still uses those components as part of the executable architecture.",
+                ],
+                "resolution_status": "resolved_by_precedence",
+                "selected_resolution": "Keep the components as implementation constraints but prohibit claiming them as standalone inventions.",
+                "rationale": "The novelty audit controls claim ceilings while the experiment plan controls executable protocol details.",
+                "affected_fields": ["claim_boundaries", "method_intent", "baseline_matrix"],
+                "requires_human_review": False,
+                "source_refs": [
+                    _source_ref("SRC_NOVELTY", "Final Gate Verdict / collision notes", "Novelty audit constrains contribution claims", "direct"),
+                    _source_ref("SRC_EXP_PLAN", "experiments", "Experiment plan keeps component tests as protocol steps", "reconciled"),
+                ],
+            }
+        )
+
+    status = "completed"
+    unresolved_items: list[dict[str, Any]] = []
+    missing_required = [
+        path for path in sorted(RESEARCH_REBOOST_REQUIRED_SOURCE_PATHS) if not _source_available(source_manifest, path)
+    ]
+    if missing_required:
+        status = "blocked"
+        for idx, missing in enumerate(missing_required, start=1):
+            unresolved_items.append(
+                {
+                    "item_id": f"U{idx}",
+                    "severity": "blocking",
+                    "question": f"Required Pre-T5 source is missing: {missing}",
+                    "why_unresolved": "Research reboost cannot mark a completed execution contract without this required source.",
+                    "affected_fields": ["source_manifest", "context_reboost", "validation_summary"],
+                    "blocking": True,
+                    "owner": "human",
+                    "required_action": f"Restore or regenerate {missing}, then rerun T5-REBOOST.",
+                    "source_refs": [_source_ref("SRC_PROJECT", "project root", "Missing source was detected by deterministic inventory")],
+                }
+            )
+
+    pack = {
+        "schema_version": "external_executor_handoff.v1",
+        "pack_id": f"HP_{_safe_schema_id('P', project.get('project_id') or 'project', 1)}",
+        "generated_at": _now_iso(),
+        "generation_status": status,
+        "project": {
+            "project_id": _safe_schema_id("P", project.get("project_id") or project.get("name") or "project", 1),
+            "title": _compact_text(str(project.get("title") or project.get("project_id") or "ResearchOS project"), limit=180),
+            "research_area": _compact_text(str(project.get("research_direction") or project.get("domain") or "research"), limit=500),
+            "task_type": _compact_text(str((project.get("metadata") or {}).get("manuscript_type") or "external_experiment_handoff"), limit=120),
+            "workspace_root": ".",
+        },
+        "source_manifest": source_manifest,
+        "context_reboost": {
+            "project_goal": {
+                "statement": goal,
+                "success_criteria": [
+                    "External executor returns audited result_pack/status/manifest artifacts.",
+                    "Every strong claim remains tied to required baselines, metrics, and T7 audit evidence.",
+                ],
+                "out_of_scope": [
+                    "Writing paper prose during T5",
+                    "Treating method_intent as final Method source",
+                    "Using mock-only outputs as empirical evidence",
+                ],
+                "source_refs": [_source_ref("SRC_PROJECT", "research_question/research_direction", "Project file defines the research scope")],
+            },
+            "research_question": {
+                "statement": research_question,
+                "source_refs": [_source_ref("SRC_PROJECT", "research_question", "Project file states the research question")],
+            },
+            "central_hypothesis": {
+                "hypothesis_id": "H1",
+                "statement": _compact_text(str(exp_plan.get("goal") or _first_non_heading_line(hypotheses) or goal), limit=900),
+                "causal_rationale": _compact_text(mechanism, limit=700),
+                "assumptions": assumptions,
+                "falsification_criteria": [
+                    "Required baselines outperform or match the proposed method under the predeclared metrics.",
+                    "Core component ablations fail to show the claimed mechanism contribution.",
+                    "T7 audit finds provenance, fairness, or scope violations that block the claim.",
+                ],
+                "source_refs": [
+                    _source_ref("SRC_HYPOTHESES", "selected hypothesis / mechanism sections", "Hypotheses define the central claim"),
+                    _source_ref("SRC_EXP_PLAN", "goal and experiments", "Experiment plan operationalizes the hypothesis", "reconciled"),
+                ],
+            },
+            "study_scope": {
+                "target_setting": _compact_text(research_question, limit=500),
+                "tasks": [str(exp_plan.get("task") or "external experimental evaluation")],
+                "datasets": datasets,
+                "metrics": metrics,
+                "constraints": [
+                    _exp_plan_seed_policy(project),
+                    "Keep evaluation protocol and metric definitions fixed across baselines.",
+                ],
+                "exclusions": [
+                    "No paper claims before T7 ingest/audit/result-to-claim.",
+                    "No unapproved scope change to task, benchmark, or contribution type.",
+                ],
+                "source_refs": [_source_ref("SRC_EXP_PLAN", "datasets/metrics/experiments", "Experiment plan defines scope")],
+            },
+            "method_mechanism": {
+                "core_mechanism": mechanism,
+                "contribution_intent": "Test the selected architecture as a bounded, auditable research contribution under novelty-audit claim ceilings.",
+                "mechanism_invariants": [
+                    {
+                        "invariant_id": "I1",
+                        "statement": "The external executor must preserve the central mechanism while implementation details may be refined and audited.",
+                        "rationale": "Silent contribution drift would invalidate the pre-T5 hypothesis and T4.5 novelty boundary.",
+                        "source_refs": [
+                            _source_ref("SRC_HYPOTHESES", "technical mechanism", "Hypotheses define the mechanism to preserve"),
+                            _source_ref("SRC_NOVELTY", "claim boundaries", "Novelty audit constrains contribution drift", "reconciled"),
+                        ],
+                    }
+                ],
+                "must_preserve_module_ids": [module_id],
+                "candidate_module_ids": [],
+                "source_refs": [_source_ref("SRC_HYPOTHESES", "technical mechanism", "Hypotheses define the method mechanism")],
+            },
+            "novelty_audit_resolution": {
+                "status": "mismatch" if mismatch_records else "aligned",
+                "nearest_work": [baseline["name"] for baseline in baselines[:5]],
+                "distinguishing_mechanism": "The executable contribution is limited to the combined system and its audited evidence, not unverified standalone component novelty.",
+                "required_baseline_ids": baseline_ids,
+                "claim_constraints": novelty_constraints,
+                "source_refs": [_source_ref("SRC_NOVELTY", "Final Gate Verdict / Required actions", "Novelty audit sets claim boundaries")],
+            },
+            "execution_priorities": [
+                {
+                    "priority": 1,
+                    "objective": "Align executor scope with the Pre-T5 hypothesis, novelty constraints, and experiment plan.",
+                    "rationale": "Context alignment prevents implementation drift before resource or code work begins.",
+                    "source_refs": [_source_ref("SRC_EXP_PLAN", "experiments", "Experiment plan defines the execution order")],
+                },
+                {
+                    "priority": 2,
+                    "objective": "Reproduce or audit required baselines before strong comparative claims.",
+                    "rationale": "Missing baselines directly lower claim strength and novelty confidence.",
+                    "source_refs": [_source_ref("SRC_NOVELTY", "baseline and claim boundary discussion", "Novelty audit controls baseline requirements")],
+                },
+            ],
+            "risk_register": [
+                {
+                    "risk_id": "R1",
+                    "category": "evaluation",
+                    "description": _compact_text(risks or "Baseline, dataset, and ablation coverage may be insufficient for strong claims.", limit=500),
+                    "likelihood": "medium",
+                    "impact": "high",
+                    "mitigation": "Require baseline reproduction, ablation diagnostics, and conservative claim narrowing in result_pack.",
+                    "source_refs": [_source_ref("SRC_RISKS", "Top risks", "Risk artifact defines execution and scientific risks")],
+                }
+            ],
+            "known_context_mismatches": mismatch_records,
+        },
+        "method_intent": {
+            "status": "draft_intent_only",
+            "not_final_method_source": True,
+            "central_mechanism_hypothesis": _compact_text(mechanism, limit=700),
+            "candidate_modules": [
+                {
+                    "module_id": module_id,
+                    "name": _compact_text(str((_experiments_from_plan(exp_plan)[-1].get("our_method") or {}).get("name") if _experiments_from_plan(exp_plan) and isinstance(_experiments_from_plan(exp_plan)[-1].get("our_method"), dict) else "Selected method"), limit=120),
+                    "classification": "core",
+                    "intended_role": "Implement the selected Pre-T5 method closely enough to test the central hypothesis.",
+                    "mechanism": _compact_text(mechanism, limit=600),
+                    "expected_inputs": ["datasets, treatments, features, baselines, and seed policy from ideation/exp_plan.yaml"],
+                    "expected_outputs": ["audited metrics, ablations, raw artifacts, realized method package, and writer handoff"],
+                    "depends_on_module_ids": [],
+                    "why_it_may_help": "It encodes the mechanism selected by T4 and bounded by T4.5 before external execution.",
+                    "implementation_constraints": [
+                        "Do not replace the core mechanism without human review.",
+                        "Do not drop required baselines or change benchmark scope silently.",
+                    ],
+                    "related_claim_ids": claim_ids,
+                    "planned_ablation_ids": ["A1"],
+                    "source_refs": [_source_ref("SRC_HYPOTHESES", "method mechanism", "Hypotheses define the core module")],
+                }
+            ],
+            "expected_algorithm_flow": [
+                {
+                    "step_id": "S1",
+                    "order": 1,
+                    "description": "Prepare data, resources, baselines, and exact metric protocol.",
+                    "module_ids": [module_id],
+                    "inputs": ["project artifacts", "experiment materials", "baseline specifications"],
+                    "outputs": ["resource inventory", "protocol snapshot", "baseline readiness"],
+                },
+                {
+                    "step_id": "S2",
+                    "order": 2,
+                    "description": "Implement and evaluate the selected method under the fixed protocol.",
+                    "module_ids": [module_id],
+                    "inputs": ["prepared resources", "method constraints", "seed policy"],
+                    "outputs": ["raw results", "configs", "logs", "realized method package"],
+                },
+            ],
+            "allowed_refinements": [
+                {
+                    "refinement_id": "REF1",
+                    "description": "Tune hyperparameters or repair implementation details without changing task, contribution, or required baselines.",
+                    "boundary": "Every refinement must be recorded in result_pack and preserve the central mechanism.",
+                    "review_requirement": "none",
+                }
+            ],
+            "forbidden_silent_changes": [
+                {
+                    "change_type": "replace_core_mechanism",
+                    "description": "Replacing the selected mechanism invalidates the T4/T4.5 contract.",
+                    "required_action": "human_review",
+                },
+                {
+                    "change_type": "drop_required_baseline",
+                    "description": "Dropping a required baseline changes the claim ceiling.",
+                    "required_action": "human_review",
+                },
+                {
+                    "change_type": "change_task_or_benchmark",
+                    "description": "Changing task, dataset, or benchmark scope breaks the experiment contract.",
+                    "required_action": "human_review",
+                },
+                {
+                    "change_type": "change_contribution_type",
+                    "description": "Changing contribution type requires returning to novelty review.",
+                    "required_action": "rerun_novelty",
+                },
+                {
+                    "change_type": "promote_engineering_trick",
+                    "description": "Engineering convenience must not become the paper contribution.",
+                    "required_action": "human_review",
+                },
+            ],
+            "mechanism_to_ablation_plan": [
+                {
+                    "ablation_id": "A1",
+                    "mechanism": "Core mechanism contribution",
+                    "module_ids": [module_id],
+                    "planned_test": "Remove or replace the core mechanism while preserving the same data, metrics, and baseline protocol.",
+                    "control": "A fair baseline or component-removal variant from the experiment plan.",
+                    "expected_if_supported": "The full method beats the ablated/control variant under audited metrics.",
+                    "expected_if_not_supported": "The ablated/control variant matches or beats the full method, forcing claim narrowing.",
+                    "related_claim_ids": claim_ids,
+                }
+            ],
+            "initial_framework_figure_sketch": {
+                "status": "draft_intent_only",
+                "purpose": "Guide external implementation and later audited figure construction.",
+                "main_message": goal,
+                "candidate_panels": ["problem setting", "method modules", "evaluation and evidence"],
+                "candidate_nodes": ["inputs", "core module", "baselines", "audited outputs"],
+                "candidate_edges": ["data flow", "module dependency", "claim evidence linkage"],
+                "must_not_be_used_directly_by_t8": True,
+            },
+            "source_refs": [
+                _source_ref("SRC_HYPOTHESES", "method mechanism", "Method intent is derived from the reconciled hypothesis"),
+                _source_ref("SRC_NOVELTY", "claim boundaries", "Draft intent is not a final Method source", "reconciled"),
+            ],
+        },
+        "baseline_matrix": baselines,
+        "claim_evidence_matrix": claims,
+        "minimum_experiment_loop": {
+            "required_experiments": [
+                {
+                    "experiment_id": "E_REPRO",
+                    "run_type": "reproduction",
+                    "purpose": "Reproduce or audit required baselines before formal claims.",
+                    "datasets_or_settings": datasets,
+                    "metrics_or_observations": metrics,
+                    "baseline_ids": baseline_ids,
+                    "module_ids": [module_id],
+                    "claim_ids": claim_ids,
+                    "seed_policy": _exp_plan_seed_policy(project),
+                    "pass_conditions": ["Every required baseline has raw artifacts or an audited unavailable status."],
+                    "failure_interpretation": "Strong comparative claims must be narrowed or blocked.",
+                    "required": True,
+                },
+                {
+                    "experiment_id": "E_FORMAL",
+                    "run_type": "formal",
+                    "purpose": "Run the proposed method and required comparisons under the fixed protocol.",
+                    "datasets_or_settings": datasets,
+                    "metrics_or_observations": metrics,
+                    "baseline_ids": baseline_ids,
+                    "module_ids": [module_id],
+                    "claim_ids": claim_ids,
+                    "seed_policy": _exp_plan_seed_policy(project),
+                    "pass_conditions": ["Formal metrics, configs, logs, and hashes are complete enough for T7 audit."],
+                    "failure_interpretation": "Report a negative or narrowed result; do not invent support.",
+                    "required": True,
+                },
+            ],
+            "ordered_gates": _build_reboost_ordered_gates(),
+        },
+        "iteration_budget": {
+            "max_rounds": 3,
+            "max_wall_time_hours": None,
+            "compute_budget": str((project.get("constraints") or {}).get("max_budget_usd") or "project budget"),
+            "plateau_definition": "Stop refinement when two consecutive audited rounds fail to improve the primary metric or claim support.",
+            "stop_conditions": [
+                {"condition": "budget_exhausted", "trigger": "Project compute or cost budget is reached.", "required_action": "stop"},
+                {"condition": "improvement_plateau", "trigger": "No audited improvement after bounded refinement.", "required_action": "stop"},
+                {
+                    "condition": "required_baseline_unavailable",
+                    "trigger": "A required baseline cannot be reproduced or substituted under policy.",
+                    "required_action": "human_review",
+                },
+                {
+                    "condition": "audited_target_reached",
+                    "trigger": "Formal run satisfies the predeclared claim support threshold.",
+                    "required_action": "stop",
+                },
+                {
+                    "condition": "implementation_blocked",
+                    "trigger": "The external executor cannot implement the method within allowed paths and materials.",
+                    "required_action": "preserve_failure_and_stop",
+                },
+                {
+                    "condition": "claim_must_be_narrowed",
+                    "trigger": "Evidence supports only a weaker claim than planned.",
+                    "required_action": "narrow_claim",
+                },
+            ],
+        },
+        "claim_boundaries": {
+            "novelty_boundary": {
+                "statement": "Novelty and contribution claims cannot exceed the T4.5 audit result and must credit nearest prior mechanisms.",
+                "source_refs": [_source_ref("SRC_NOVELTY", "Final Gate Verdict / claim boundaries", "Novelty audit sets the maximum claim scope")],
+            },
+            "method_vs_engineering_boundary": {
+                "statement": "Implementation repairs are engineering details unless the audited realized method supports them as research contributions.",
+                "source_refs": [_source_ref("SRC_RISKS", "execution risks", "Risks warn against contribution drift", "reconciled")],
+            },
+            "conditional_claims": [
+                {
+                    "claim_id": claim_id,
+                    "maximum_strength": "moderate",
+                    "conditions": ["T7 audit passes", "required baselines and ablations are covered"],
+                }
+                for claim_id in claim_ids
+            ],
+            "must_not_claim": [
+                {
+                    "boundary_id": "BND1",
+                    "statement": "Do not use method_intent or mock-only outputs as final paper evidence.",
+                    "reason": "T5 reboost is a draft execution contract; final facts require external execution and T7 audit.",
+                    "source_refs": [_source_ref("SRC_NOVELTY", "claim boundaries", "Novelty audit and T5 protocol constrain final claims", "reconciled")],
+                }
+            ],
+            "narrowing_triggers": [
+                "required baseline missing or weaker than expected",
+                "ablation fails to support the claimed mechanism",
+                "T7 integrity audit reports provenance or fairness failure",
+            ],
+        },
+        "writer_handoff_contract": _build_reboost_writer_contract(),
+        "execution_contract": {
+            "allowed_paths": [
+                "external_executor/",
+                "external_executor/workdir/",
+                "external_executor/raw_results/",
+                "external_executor/configs/",
+                "external_executor/logs/",
+                "external_executor/patches/",
+                "external_executor/figures/",
+                "external_executor/tables/",
+                "external_executor/expr/",
+                "resources/",
+                "literature/",
+                "ideation/",
+            ],
+            "write_paths": [
+                "external_executor/workdir/",
+                "external_executor/raw_results/",
+                "external_executor/configs/",
+                "external_executor/logs/",
+                "external_executor/patches/",
+                "external_executor/figures/",
+                "external_executor/tables/",
+                "external_executor/result_pack.json",
+                "external_executor/executor_status.json",
+                "external_executor/run_manifest.json",
+            ],
+            "prohibited_paths": ["researchos/", "config/", "drafts/", "submission/", "_runtime/"],
+            "authority_rules": [
+                {"action": "implement within external_executor/workdir", "authority": "allowed"},
+                {"action": "change task, benchmark, or contribution type", "authority": "human_approval"},
+                {"action": "write paper claims", "authority": "forbidden"},
+            ],
+            "scope_change_policy": {
+                "silent_changes_forbidden": True,
+                "request_artifact": "external_executor/scope_change_request.json",
+                "major_change_action": "human_review",
+                "minor_change_action": "record_and_continue",
+            },
+            "resource_policy": {
+                "public_resources_allowed": True,
+                "authenticated_resources_allowed": False,
+                "license_checks_required": True,
+                "checksum_required": True,
+                "citation_required": True,
+            },
+            "source_conflict_order": [
+                "project.yaml",
+                "ideation/novelty_audit.md",
+                "ideation/exp_plan.yaml",
+                "ideation/hypotheses.md",
+                "literature/synthesis.md",
+            ],
+            "root_skill_path": "external_executor/skills/research-execution/SKILL.md",
+            "expected_outputs_schema_path": "external_executor/expected_outputs_schema.json",
+        },
+        "resource_acquisition_policy": default_resource_acquisition_policy(),
+        "unresolved_items": unresolved_items,
+        "validation_summary": {
+            "status": "pass" if status == "completed" else "blocked",
+            "required_source_coverage": _required_source_coverage(source_manifest),
+            "used_source_count": _used_source_count(source_manifest),
+            "inferred_statement_count": 0,
+            "checks": [
+                {"check_id": "CHK_SCHEMA", "status": "pass" if status == "completed" else "not_run", "message": "research-reboost schema contract assembled"},
+                {"check_id": "CHK_SOURCES", "status": "pass" if not missing_required else "fail", "message": "required source coverage checked"},
+                {"check_id": "CHK_METHOD_INTENT", "status": "pass", "message": "method_intent is draft_intent_only and not a final Method source"},
+            ],
+        },
+    }
+    report = {
+        "version": "1.0",
+        "semantics": "external_executor_context_reboost_report",
+        "skill": "skills/research-reboost/SKILL.md",
+        "skill_sha256": _sha256(_research_reboost_skill_dir() / "SKILL.md"),
+        "handoff_pack": "external_executor/handoff_pack.json",
+        "generation_status": status,
+        "source_files_used": [item.get("path") for item in source_manifest if item.get("used")],
+        "missing_required_sources": missing_required,
+        "missing_optional_sources": [
+            item.get("path")
+            for item in source_manifest
+            if item.get("requirement") == "optional_backtrack" and item.get("availability") != "available"
+        ],
+        "known_context_mismatches": mismatch_records,
+        "validation_report": "external_executor/reboost_validation_report.json",
+    }
+    return pack, report
+
+
+def _allowed_path_rules_for_external_executor() -> list[str]:
+    return [
+        "rw  external_executor/workdir/",
+        "rw  external_executor/workdir/resources/",
+        "rw  external_executor/raw_results/",
+        "rw  external_executor/configs/",
+        "rw  external_executor/logs/",
+        "rw  external_executor/patches/",
+        "rw  external_executor/figures/",
+        "rw  external_executor/tables/",
+        "rw  external_executor/expr/",
+        "rw  external_executor/env/",
+        "rw  external_executor/runs/",
+        "rw  external_executor/method_specs/",
+        "rw  external_executor/evidence_package/",
+        "rw  external_executor/preflight_context.json",
+        "rw  external_executor/context_source_inventory.json",
+        "rw  external_executor/context_alignment_report.json",
+        "rw  external_executor/resource_preflight.json",
+        "rw  external_executor/resource_requirement_matrix.json",
+        "rw  external_executor/resource_local_inventory.json",
+        "rw  external_executor/resource_search_records.json",
+        "rw  external_executor/resource_preparation_report.json",
+        "rw  external_executor/baseline_reproduction_preflight.json",
+        "rw  external_executor/baseline_reproduction_plan.json",
+        "rw  external_executor/baseline_reproduction_report.json",
+        "rw  external_executor/claim_evidence_matrix.json",
+        "rw  external_executor/protocol_snapshot.json",
+        "rw  external_executor/protocol_fingerprint.json",
+        "rw  external_executor/protocol_change_impact.json",
+        "rw  external_executor/experiment_plan.json",
+        "rw  external_executor/experiment_plan_validation.json",
+        "rw  external_executor/experiment_plan_dag_validation.json",
+        "rw  external_executor/experiment_design_preflight.json",
+        "rw  external_executor/experiment_design_report.json",
+        "rw  external_executor/experiment_design_report_validation.json",
+        "rw  external_executor/experiment_design_gate.json",
+        "rw  external_executor/method_intent_contract.json",
+        "rw  external_executor/method_implementation_spec.json",
+        "rw  external_executor/method_implementation_spec_validation.json",
+        "rw  external_executor/method_spec_fingerprint.json",
+        "rw  external_executor/method_delta.json",
+        "rw  external_executor/method_scope_assessment.json",
+        "rw  external_executor/method_refinement_preflight.json",
+        "rw  external_executor/method_refinement_review.json",
+        "rw  external_executor/method_refinement_report.json",
+        "rw  external_executor/method_refinement_report_validation.json",
+        "rw  external_executor/implementation_preflight.json",
+        "rw  external_executor/implementation_change_contract.json",
+        "rw  external_executor/implementation_report.json",
+        "rw  external_executor/module_attribution_preflight.json",
+        "rw  external_executor/module_attribution_snapshot.json",
+        "rw  external_executor/module_attribution_facts.json",
+        "rw  external_executor/module_attribution_report.json",
+        "rw  external_executor/result_diagnosis_preflight.json",
+        "rw  external_executor/diagnosis_evidence_snapshot.json",
+        "rw  external_executor/diagnosis_statistics.json",
+        "rw  external_executor/result_diagnosis_report.json",
+        "rw  external_executor/final_evidence_snapshot.json",
+        "rw  external_executor/final_evidence_snapshot_validation.json",
+        "rw  external_executor/evidence_packaging_preflight.json",
+        "rw  external_executor/evidence_packaging_report.json",
+        "rw  external_executor/evidence_packaging_report_validation.json",
+        "rw  external_executor/evidence_packaging_gate.json",
+        "rw  external_executor/writer_handoff_preflight.json",
+        "rw  external_executor/writer_handoff_snapshot.json",
+        "rw  external_executor/writer_handoff_claim_map.json",
+        "rw  external_executor/writer_handoff_inventory.json",
+        "rw  external_executor/writer_handoff_integrity.json",
+        "rw  external_executor/writer_handoff_t7_index.json",
+        "rw  external_executor/writer_handoff_report.json",
+        "rw  external_executor/input_fingerprint.json",
+        "rw  external_executor/executor_capabilities.json",
+        "rw  external_executor/result_pack.json",
+        "rw  external_executor/executor_status.json",
+        "rw  external_executor/run_manifest.json",
+        "rw  external_executor/job_state.json",
+        "ro  external_executor/handoff_pack.json",
+        "ro  external_executor/expected_outputs_schema.json",
+        "ro  external_executor/executor_selection.json",
+        "ro  external_executor/project_skill_context.yaml",
+        "ro  external_executor/skill_specialization_report.json",
+        "ro  novelty/",
+        "ro  resources/",
+        "ro  literature/",
+        "ro  ideation/",
+        "ro  user_seeds/",
+        "no  researchos/",
+        "no  config/",
+        "no  drafts/",
+        "no  submission/",
+        "no  _runtime/",
+    ]
+
+
+def _guide_view_from_reboost_pack(pack: dict[str, Any], project: dict[str, Any], metrics: list[str]) -> dict[str, Any]:
+    baselines = [
+        {
+            "baseline_id": item.get("baseline_id"),
+            "baseline_name": item.get("name"),
+            "reason_required": item.get("rationale"),
+            "source": item.get("implementation_source"),
+        }
+        for item in pack.get("baseline_matrix", [])
+        if isinstance(item, dict)
+    ]
+    return {
+        "project_id": (pack.get("project") or {}).get("project_id") or project.get("project_id") or "unknown",
+        "project": pack.get("project") or {},
+        "experiment_intent_oneliner": ((pack.get("context_reboost") or {}).get("project_goal") or {}).get("statement"),
+        "context_reboost": pack.get("context_reboost"),
+        "resource_acquisition_policy": pack.get("resource_acquisition_policy") or default_resource_acquisition_policy(),
+        "method_intent": pack.get("method_intent"),
+        "baseline_matrix": pack.get("baseline_matrix"),
+        "claim_evidence_matrix": pack.get("claim_evidence_matrix"),
+        "required_baselines": baselines,
+        "metrics": [{"metric_id": f"metric_{idx}", "name": name, "direction": "unknown", "primary": idx == 1} for idx, name in enumerate(metrics, start=1)],
+        "seeds": _extract_exp_plan_seeds(project),
+        "allowed_paths": _allowed_path_rules_for_external_executor(),
+        "executor_outputs_contract": {
+            "must_write": [
+                "external_executor/result_pack.json",
+                "external_executor/executor_status.json",
+                "external_executor/run_manifest.json",
+                "external_executor/raw_results/",
+                "external_executor/configs/",
+                "external_executor/logs/",
+                "external_executor/figures/",
+                "external_executor/tables/",
+            ],
+        },
+    }
+
+
 def build_executor_selection_payload(
     *,
     selected_executor: str,
@@ -995,9 +2175,17 @@ def patch_external_executor_files_with_selection(workspace: Path, selection: dic
     handoff_path = workspace / "external_executor" / "handoff_pack.json"
     handoff = _read_json(handoff_path)
     if handoff:
-        handoff["executor"] = selected
-        handoff["execution_mode"] = execution_mode
-        _write_json(handoff_path, handoff)
+        if _is_research_reboost_pack(handoff):
+            contract = handoff.get("execution_contract")
+            if isinstance(contract, dict):
+                rules = contract.setdefault("authority_rules", [])
+                if isinstance(rules, list):
+                    rules.append({"action": f"executor selected: {selected}", "authority": "allowed"})
+                _write_json(handoff_path, handoff)
+        else:
+            handoff["executor"] = selected
+            handoff["execution_mode"] = execution_mode
+            _write_json(handoff_path, handoff)
     for rel in (
         "external_executor/AGENTS.md",
         "external_executor/CLAUDE.md",
@@ -1034,6 +2222,10 @@ def patch_external_executor_files_with_selection(workspace: Path, selection: dic
             }
         )
         _write_json(workspace / "external_executor" / "job_state.json", job_state)
+    _write_json(
+        workspace / "external_executor" / "executor_capabilities.json",
+        default_executor_capabilities(selected),
+    )
 
 
 def validate_external_executor_ready(
@@ -1259,6 +2451,8 @@ def _write_external_executor_guides(
     baselines = handoff.get("required_baselines") or []
     baselines_block = _format_required_baselines_block(baselines)
     allowed_paths = "\n".join(f"- {path}" for path in handoff.get("allowed_paths", []))
+    resource_policy = handoff.get("resource_acquisition_policy") or default_resource_acquisition_policy()
+    resource_policy_block = json.dumps(resource_policy, ensure_ascii=False, indent=2)
     required_outputs = "\n".join(f"- `{path}`" for path in (handoff.get("executor_outputs_contract") or {}).get("must_write", []))
     seeds = ", ".join(str(seed) for seed in handoff.get("seeds", []) or [42])
     common_header = (
@@ -1279,14 +2473,24 @@ def _write_external_executor_guides(
         "2. external_executor/expected_outputs_schema.json\n"
         "3. external_executor/allowed_paths.txt\n"
         "4. external_executor/executor_selection.json\n"
-        "5. external_executor/skill_specialization_report.json\n"
-        "6. external_executor/project_skill_context.yaml\n"
-        "7. novelty/required_baselines.json\n"
-        "8. resources/baseline_candidates.jsonl\n"
-        "9. literature/baseline_map.json\n"
-        "10. ideation/novelty_audit.md\n\n"
+        "5. external_executor/executor_capabilities.json, if present\n"
+        "6. external_executor/skill_specialization_report.json\n"
+        "7. external_executor/project_skill_context.yaml\n"
+        "8. novelty/required_baselines.json, if present\n"
+        "9. ideation/novelty_audit.md\n\n"
+        "## Read if present\n"
+        "- resources/baseline_candidates.jsonl\n"
+        "- literature/baseline_map.json\n"
+        "- user_seeds/seed_external_resources.jsonl\n\n"
+        "Missing optional resource or baseline map files are not blockers. Use the handoff, project context, and Phase B acquisition workflow.\n\n"
         "## Human-provided experiment materials\n"
-        "Inspect `external_executor/expr/` before real execution. This directory is the gate where the user places datasets, baseline models, repositories, weights, and material notes.\n\n"
+        "Inspect `external_executor/expr/` before real execution. This directory may contain only README/checklist scaffolding. "
+        "An empty materials gate is not a blocker; acquire public datasets/baselines from authorized sources or reimplement baselines under the policy below.\n\n"
+        "## Resource acquisition policy\n"
+        "Dataset downloads, GitHub access, and baseline reimplementation are allowed within `allowed_paths.txt` and license/security review constraints.\n\n"
+        "```json\n"
+        f"{resource_policy_block}\n"
+        "```\n\n"
         "## Metrics you must report\n"
         f"{metrics_block}\n\n"
         "## Required baselines\n"
@@ -1306,9 +2510,9 @@ def _write_external_executor_guides(
         + "You are used as an external coding executor for ResearchOS via a Claude Code window.\n\n"
         "## Steps\n"
         "1. Read handoff_pack.json, expected_outputs_schema.json, allowed_paths.txt.\n"
-        "2. Read novelty/required_baselines.json and resources/baseline_candidates.jsonl.\n"
+        "2. Read optional baseline/resource maps only if they exist; missing maps are not blockers.\n"
         "3. If mock_only=true, emit schema-valid mock artifacts with mock_only=true and dry_run=true.\n"
-        "4. If real, clone/inspect baseline repos only inside external_executor/workdir.\n"
+        "4. If real, clone/inspect baseline repos only inside external_executor/workdir and acquire/reimplement resources under the policy in AGENTS.md.\n"
         f"5. Run required configs over seeds {seeds}.\n"
         "6. Write all required outputs and stop after result_pack.json.\n\n"
         "## Metrics\n"
@@ -1400,7 +2604,11 @@ def _write_expr_materials_scaffold(policy: WorkspaceAccessPolicy, handoff: dict[
         "version": "1.0",
         "semantics": "external_executor_expr_materials_checklist",
         "created_at": _now_iso(),
-        "purpose": "Place human-provided experimental materials here before selecting a real external executor.",
+        "purpose": (
+            "Optional human-provided materials gate. This directory may contain only "
+            "the generated README/checklist; absence of data, repos, weights, or access "
+            "notes does not block Phase A/B."
+        ),
         "expected_materials": [
             "datasets or dataset access instructions",
             "baseline model repositories or paths",
@@ -1410,7 +2618,12 @@ def _write_expr_materials_scaffold(policy: WorkspaceAccessPolicy, handoff: dict[
         ],
         "required_baselines": handoff.get("required_baselines", []),
         "minimum_experiment_loop": (handoff.get("context_reboost") or {}).get("minimum_experiment_loop", []),
-        "next_step": "After materials are ready, resume ResearchOS and select an external executor.",
+        "resource_acquisition_policy": handoff.get("resource_acquisition_policy") or default_resource_acquisition_policy(),
+        "absence_policy": (
+            "If materials are absent, the external executor should continue by using "
+            "authorized GitHub/public dataset acquisition and baseline reimplementation."
+        ),
+        "next_step": "Proceed with context alignment and Phase B resource acquisition under the policy.",
     }
     checklist_path = expr_dir / "MATERIALS_CHECKLIST.json"
     if not checklist_path.exists():
@@ -1420,8 +2633,10 @@ def _write_expr_materials_scaffold(policy: WorkspaceAccessPolicy, handoff: dict[
         _write_text(
             readme_path,
             "# External Experiment Materials\n\n"
-            "Place baseline models, datasets, repositories, pretrained weights, and material notes here.\n"
-            "Do not commit secrets. After materials are ready, resume ResearchOS and choose Codex CLI, Claude Code, manual, or mock dry-run.\n",
+            "Place optional baseline models, datasets, repositories, pretrained weights, and material notes here.\n"
+            "This directory may remain scaffold-only. If no materials are present, continue with the authorized "
+            "GitHub/public dataset acquisition and baseline reimplementation workflow.\n"
+            "Do not commit secrets or credential-bearing access notes.\n",
         )
 
 
@@ -1928,6 +3143,20 @@ def _format_limitations_from_experiments(result: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+class CompileResearchReboostHandoffParams(BaseModel):
+    output_path: str = Field(default="external_executor/handoff_pack.json")
+    report_path: str = Field(default="external_executor/reboost_report.json")
+    validation_report_path: str = Field(default="external_executor/reboost_validation_report.json")
+    expected_schema_path: str = Field(default="external_executor/expected_outputs_schema.json")
+    allowed_paths_path: str = Field(default="external_executor/allowed_paths.txt")
+    executor_selection_path: str = Field(default="external_executor/executor_selection.json")
+    input_manifest_path: str = Field(default="external_executor/input_manifest.json")
+    prompt_output_path: str = Field(default="external_executor/executor_prompt.md")
+    codex_prompt_path: str = Field(default="external_executor/codex_prompt.md")
+    claude_prompt_path: str = Field(default="external_executor/claude_code_prompt.md")
+    manual_instructions_path: str = Field(default="external_executor/manual_instructions.md")
+
+
 class BuildExperimentHandoffPackParams(BaseModel):
     executor: Literal["UNSET", "mock_dry_run", "codex_cli", "claude_code_window", "manual"] = Field(
         default="UNSET",
@@ -2027,6 +3256,118 @@ class AuditPaperClaimsParams(BaseModel):
     output_path: str = Field(default="drafts/paper_claim_audit.md")
 
 
+class CompileResearchReboostHandoffTool(Tool):
+    name = "compile_research_reboost_handoff"
+    description = (
+        "Apply skills/research-reboost to compile Pre-T5 artifacts into a schema-valid, "
+        "pretty-printed external_executor/handoff_pack.json plus T5 handoff control files."
+    )
+    parameters_schema = CompileResearchReboostHandoffParams
+    timeout_seconds = 30.0
+
+    def __init__(self, policy: WorkspaceAccessPolicy):
+        self.policy = policy
+
+    async def execute(self, **kwargs: Any) -> ToolResult:
+        params = CompileResearchReboostHandoffParams(**kwargs)
+        try:
+            ws = self.policy.workspace_dir
+            project = _read_yaml(ws / "project.yaml")
+            exp_plan = _read_yaml(ws / "ideation" / "exp_plan.yaml")
+            metrics = _extract_exp_plan_metrics(exp_plan)
+            pack, report = _build_reboost_pack(ws)
+            paper_card_index_path = "external_executor/paper_card_evidence_index.json"
+            paper_card_index = _paper_card_evidence_index(ws)
+            _write_json(self.policy.resolve_write(paper_card_index_path), paper_card_index)
+            pack["paper_card_evidence_index"] = paper_card_index_path
+            pack["paper_card_evidence_policy"] = {
+                "allowed_uses": paper_card_index["allowed_uses"],
+                "prohibited_uses": paper_card_index["prohibited_uses"],
+            }
+            _write_json(self.policy.resolve_write(params.output_path), pack)
+            ok, err, validation_report = _validate_research_reboost_pack(
+                ws,
+                self.policy.resolve_read(params.output_path),
+            )
+            _write_json(self.policy.resolve_write(params.validation_report_path), validation_report)
+            report["validation_ok"] = ok
+            report["validation_error"] = err
+            report["validator"] = "skills/research-reboost/scripts/validate_handoff.py"
+            _write_json(self.policy.resolve_write(params.report_path), report)
+            if not ok:
+                return ToolResult(
+                    ok=False,
+                    content=f"research-reboost validation failed: {err}",
+                    error="research_reboost_validation_failed",
+                    data={"report": params.validation_report_path, "handoff_pack": params.output_path},
+                )
+
+            guide_handoff = _guide_view_from_reboost_pack(pack, project, metrics)
+            source_artifacts = [
+                {
+                    "path": item.get("path"),
+                    "role": item.get("category"),
+                    "sha256": item.get("content_sha256"),
+                    "used": item.get("used"),
+                }
+                for item in pack.get("source_manifest", [])
+                if isinstance(item, dict)
+            ]
+            source_artifacts.append(_artifact_record(ws, paper_card_index_path, role="paper_card_evidence_index"))
+            _write_json(self.policy.resolve_write(params.expected_schema_path), _build_expected_outputs_schema())
+            _write_text(self.policy.resolve_write(params.allowed_paths_path), "\n".join(_allowed_path_rules_for_external_executor()) + "\n")
+            placeholder_next_state = "T5-EXECUTOR-GATE"
+            executor_selection = {
+                "version": "1.0",
+                "semantics": "external_executor_selection",
+                "selected_executor": "UNSET",
+                "real_experiment_allowed": False,
+                "requires_user_copy_paste": False,
+                "selected_by": "system_placeholder",
+                "selected_at": None,
+                "next_state": placeholder_next_state,
+                "fallback_order": ["mock_dry_run", "claude_code_window", "manual"],
+                "notes": (
+                    "Execution mode is intentionally UNSET until T5-EXECUTOR-GATE; "
+                    "run researchos specialize-executor-skills before selecting Codex or another executor."
+                ),
+            }
+            _write_json(self.policy.resolve_write(params.executor_selection_path), executor_selection)
+            _write_json(
+                self.policy.resolve_write(params.input_manifest_path),
+                {
+                    "version": "1.0",
+                    "semantics": "external_executor_input_manifest",
+                    "handoff_pack": params.output_path,
+                    "reboost_skill": "skills/research-reboost/SKILL.md",
+                    "source_artifacts": source_artifacts,
+                    "paper_card_evidence_index": paper_card_index_path,
+                    "paper_card_evidence_policy": pack["paper_card_evidence_policy"],
+                    "required_executor_outputs": guide_handoff["executor_outputs_contract"]["must_write"],
+                },
+            )
+            _write_external_executor_guides(self.policy, guide_handoff, selection=executor_selection)
+            _write_expr_materials_scaffold(self.policy, guide_handoff)
+            _write_text(self.policy.resolve_write(params.prompt_output_path), _render_executor_prompt(pack, executor="UNSET"))
+            _write_text(self.policy.resolve_write(params.codex_prompt_path), _render_executor_prompt(pack, executor="codex_cli"))
+            _write_text(self.policy.resolve_write(params.claude_prompt_path), _render_executor_prompt(pack, executor="claude_code_window"))
+            _write_text(self.policy.resolve_write(params.manual_instructions_path), _render_manual_instructions(guide_handoff))
+        except ToolAccessDenied as exc:
+            return ToolResult(ok=False, content=str(exc), error="access_denied")
+        except Exception as exc:
+            return ToolResult(ok=False, content=f"research reboost failed: {exc}", error="research_reboost_failed")
+        return ToolResult(
+            ok=True,
+            content=f"Wrote research-reboost handoff pack to {params.output_path}.",
+            data={
+                "handoff_pack": params.output_path,
+                "reboost_report": params.report_path,
+                "validation_report": params.validation_report_path,
+                "skill": "skills/research-reboost/SKILL.md",
+            },
+        )
+
+
 class BuildExperimentHandoffPackTool(Tool):
     name = "build_experiment_handoff_pack"
     description = "Compile a protocol pack and executor prompt for external experiment execution."
@@ -2053,18 +3394,22 @@ class BuildExperimentHandoffPackTool(Tool):
             metrics = _extract_exp_plan_metrics(exp_plan)
             seeds = _extract_exp_plan_seeds(project)
             required_baselines = _extract_required_baselines(ws)
-            if required_baselines:
-                _write_json(
-                    self.policy.resolve_write("novelty/required_baselines.json"),
-                    {
-                        "version": "1.0",
-                        "semantics": "required_baselines_from_novelty_audit",
-                        "source": "ideation/novelty_audit.md",
-                        "required_baselines": required_baselines,
-                    },
-                )
+            _write_json(
+                self.policy.resolve_write("novelty/required_baselines.json"),
+                {
+                    "version": "1.0",
+                    "semantics": "required_baselines_from_novelty_audit",
+                    "source": "ideation/novelty_audit.md",
+                    "status": "present" if required_baselines else "no_required_baselines_extracted",
+                    "required_baselines": required_baselines,
+                },
+            )
             source_artifacts = _source_artifacts(ws)
             source_artifacts.append(_artifact_record(ws, "novelty/required_baselines.json", role="required_baselines"))
+            paper_card_index_path = "external_executor/paper_card_evidence_index.json"
+            paper_card_index = _paper_card_evidence_index(ws)
+            _write_json(self.policy.resolve_write(paper_card_index_path), paper_card_index)
+            source_artifacts.append(_artifact_record(ws, paper_card_index_path, role="paper_card_evidence_index"))
             context_reboost = _existing_context_reboost_for_handoff(ws) or _build_context_reboost(
                 workspace=ws,
                 project=project,
@@ -2077,6 +3422,7 @@ class BuildExperimentHandoffPackTool(Tool):
                 required_baselines=required_baselines,
                 metrics=metrics,
             )
+            context_reboost["resource_acquisition_policy"] = default_resource_acquisition_policy()
             method_intent = _build_method_intent(
                 hypotheses=hypotheses,
                 exp_plan=exp_plan,
@@ -2105,6 +3451,7 @@ class BuildExperimentHandoffPackTool(Tool):
                 "workspace_relative_prompt": "external_executor/codex_prompt.md",
                 "host_workspace_hint": host_workspace,
                 "host_workdir_hint": host_workdir,
+                "resource_acquisition_policy": default_resource_acquisition_policy(),
                 "context_reboost": context_reboost,
                 "method_intent": method_intent,
                 "baseline_matrix": context_reboost["baseline_matrix"],
@@ -2131,6 +3478,11 @@ class BuildExperimentHandoffPackTool(Tool):
                 "required_baselines": required_baselines,
                 "seeds": seeds,
                 "source_artifacts": source_artifacts,
+                "paper_card_evidence_index": paper_card_index_path,
+                "paper_card_evidence_policy": {
+                    "allowed_uses": paper_card_index["allowed_uses"],
+                    "prohibited_uses": paper_card_index["prohibited_uses"],
+                },
                 "executor_outputs": {
                     "result_pack": "external_executor/result_pack.json",
                     "status": "external_executor/executor_status.json",
@@ -2139,31 +3491,7 @@ class BuildExperimentHandoffPackTool(Tool):
                     "configs": "external_executor/configs/",
                     "logs_dir": "external_executor/logs",
                 },
-                "allowed_paths": [
-                    "rw  external_executor/workdir/",
-                    "rw  external_executor/raw_results/",
-                    "rw  external_executor/configs/",
-                    "rw  external_executor/logs/",
-                    "rw  external_executor/patches/",
-                    "rw  external_executor/figures/",
-                    "rw  external_executor/tables/",
-                    "rw  external_executor/expr/",
-                    "rw  external_executor/result_pack.json",
-                    "rw  external_executor/executor_status.json",
-                    "rw  external_executor/run_manifest.json",
-                    "rw  external_executor/job_state.json",
-                    "ro  external_executor/handoff_pack.json",
-                    "ro  external_executor/expected_outputs_schema.json",
-                    "ro  novelty/required_baselines.json",
-                    "ro  resources/",
-                    "ro  literature/",
-                    "ro  ideation/",
-                    "no  researchos/",
-                    "no  config/",
-                    "no  drafts/",
-                    "no  submission/",
-                    "no  _runtime/",
-                ],
+                "allowed_paths": _allowed_path_rules_for_external_executor(),
                 "executor_outputs_contract": {
                     "must_write": [
                         "external_executor/result_pack.json",
@@ -2187,6 +3515,8 @@ class BuildExperimentHandoffPackTool(Tool):
                 "semantics": "external_executor_input_manifest",
                 "handoff_pack": params.output_path,
                 "source_artifacts": source_artifacts,
+                "paper_card_evidence_index": paper_card_index_path,
+                "paper_card_evidence_policy": handoff["paper_card_evidence_policy"],
                 "required_executor_outputs": handoff["executor_outputs"],
             }
             _write_json(self.policy.resolve_write(params.input_manifest_path), input_manifest)
@@ -2410,7 +3740,9 @@ class MockExternalDryRunTool(Tool):
                 "metrics": [],
             }
             metrics = []
-            for idx, name in enumerate((handoff.get("experiment_contract") or {}).get("metrics", []) or ["task_score"], start=1):
+            handoff_metrics = _handoff_metrics_for_execution(handoff)
+            handoff_seeds = _handoff_seeds_for_execution(handoff)
+            for idx, name in enumerate(handoff_metrics, start=1):
                 metric = (
                     {
                         "metric_id": f"mock_metric_{idx}",
@@ -2420,7 +3752,7 @@ class MockExternalDryRunTool(Tool):
                         "unit": "score",
                         "dataset": "mock_dataset",
                         "dataset_split": "mock_split",
-                        "seed": ((handoff.get("experiment_contract") or {}).get("seeds") or [42])[0],
+                        "seed": handoff_seeds[0],
                         "metric_direction": "higher_is_better",
                         "source_artifact": raw_result_rel,
                         "config": config_rel,
@@ -2436,7 +3768,7 @@ class MockExternalDryRunTool(Tool):
                 "semantics": "mock_external_executor_config",
                 "run_id": "mock_dry_run",
                 "executor": executor_type,
-                "seeds": (handoff.get("experiment_contract") or {}).get("seeds") or [42],
+                "seeds": handoff_seeds,
                 "mock_only": True,
             }
             _write_json(self.policy.resolve_write(config_rel), config)
@@ -2456,7 +3788,7 @@ class MockExternalDryRunTool(Tool):
                 _artifact_record(ws, config_rel, role="mock_config", kind="config"),
                 _artifact_record(ws, log_rel, role="mock_log", kind="log"),
             ]
-            required_baselines = (handoff.get("experiment_contract") or {}).get("required_baselines", []) or handoff.get("required_baselines", []) or []
+            required_baselines = _handoff_required_baselines_for_execution(handoff)
             baseline_coverage = _baseline_coverage_from_metrics(required_baselines, metrics, mock_only=True)
             experiment_runs = [
                 {
@@ -2466,7 +3798,7 @@ class MockExternalDryRunTool(Tool):
                     "dry_run": True,
                     "mock_only": True,
                     "dataset": "mock_dataset",
-                    "seed": ((handoff.get("experiment_contract") or {}).get("seeds") or [42])[0],
+                    "seed": handoff_seeds[0],
                     "metrics": [metric.get("metric_id") for metric in metrics],
                     "raw_result_refs": [raw_result_rel],
                     "config_refs": [config_rel],

@@ -18,7 +18,13 @@
 `{{ mode }}`
 
 {% if mode == "reboost" %}
-读取 Pre-T5 材料，生成 `external_executor/handoff_pack.json#context_reboost` 和 `external_executor/reboost_report.json`；随后调用 `build_experiment_handoff_pack` 且 `specialize_skills=false`，补全 Codex/Claude/manual prompt、expected schema、allowed paths 和 AGENTS/CLAUDE。只做执行语境重排与 handoff 编译，不运行实验、不实现方法、不选择执行器、不生成 `external_executor/skills/`。
+使用仓库根目录的 `skills/research-reboost` 协议执行 T5 reboost。必须把 Method Intent Drafting 放在同一个 reboost 输出中，写出 schema-valid 的 `external_executor/handoff_pack.json` 和 `external_executor/reboost_report.json`。优先调用 `compile_research_reboost_handoff`，它会按 `skills/research-reboost/references/handoff_pack.schema.json` 验证并格式化 JSON，同时补全 Codex/Claude/manual prompt、expected schema、allowed paths 和 AGENTS/CLAUDE。只做执行语境重排与 handoff 编译，不运行实验、不实现方法、不选择执行器、不生成 `external_executor/skills/`。
+
+## Research Reboost Skill Contract
+
+```
+{{ research_reboost_skill }}
+```
 {% elif mode == "handoff" %}
 调用 `build_experiment_handoff_pack`，生成 `external_executor/handoff_pack.json`、`external_executor/executor_prompt.md`、`external_executor/expected_outputs_schema.json` 和 `external_executor/allowed_paths.txt`。只编译外部执行协议，不运行真实实验。
 {% elif mode == "skill_customization" %}

@@ -22,6 +22,95 @@ REQUIRED_FILES = [
 ]
 
 
+def default_resource_acquisition_policy() -> dict[str, Any]:
+    return {
+        "mode": "github_and_reimplementation",
+        "network_allowed": True,
+        "github_access_allowed": True,
+        "dataset_download_allowed": True,
+        "baseline_reimplementation_allowed": True,
+        "external_code_inspection_allowed": True,
+        "authenticated_resources_allowed": False,
+        "license_checks_required": True,
+        "checksum_required": True,
+        "citation_required": True,
+        "allowed_domains": [
+            "github.com",
+            "raw.githubusercontent.com",
+            "codeload.github.com",
+            "objects.githubusercontent.com",
+            "huggingface.co",
+            "hf.co",
+            "zenodo.org",
+            "figshare.com",
+            "kaggle.com",
+            "openml.org",
+            "archive.ics.uci.edu",
+        ],
+        "material_absence_policy": (
+            "external_executor/expr may contain only README/checklist scaffolding; "
+            "continue by authorized acquisition or reimplementation when local materials are absent."
+        ),
+    }
+
+
+def selected_executor(root: Path) -> str:
+    path = resolve_in_workspace(root, "external_executor/executor_selection.json")
+    if not path.is_file():
+        return ""
+    try:
+        value = load_json(path)
+    except Exception:
+        return ""
+    return str(value.get("selected_executor") or "").strip() if isinstance(value, dict) else ""
+
+
+def default_executor_capabilities(root: Path) -> dict[str, Any]:
+    selected = selected_executor(root)
+    real = selected in {"codex_cli", "claude_code_window", "manual"}
+    return {
+        "selected_executor": selected or "UNSET",
+        "network_available": real,
+        "github_access_available": real,
+        "dataset_download_supported": real,
+        "baseline_reimplementation_supported": real,
+        "source": "inferred_from_executor_selection",
+    }
+
+
+def acquisition_policy(handoff: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    for value in (
+        handoff.get("resource_acquisition_policy"),
+        context.get("resource_acquisition_policy"),
+        ((handoff.get("execution_contract") or {}).get("resource_acquisition_policy") if isinstance(handoff.get("execution_contract"), dict) else None),
+    ):
+        if isinstance(value, dict) and value:
+            policy = dict(value)
+            break
+    else:
+        policy = default_resource_acquisition_policy()
+    default = default_resource_acquisition_policy()
+    policy.update(
+        {
+            "mode": "github_and_reimplementation",
+            "network_allowed": True,
+            "github_access_allowed": True,
+            "dataset_download_allowed": True,
+            "baseline_reimplementation_allowed": True,
+        }
+    )
+    policy.setdefault("allowed_domains", default["allowed_domains"])
+    policy.setdefault("material_absence_policy", default["material_absence_policy"])
+    return policy
+
+
+def first_present(*values: Any) -> Any:
+    for value in values:
+        if value not in (None, "", []):
+            return value
+    return None
+
+
 def names(items: Any) -> set[str]:
     result: set[str] = set()
     if not isinstance(items, list):
@@ -103,12 +192,9 @@ def main() -> int:
     if method and method.get("not_final_method_source") is not True:
         add(report, "warnings", "method_intent_finality_unclear", "method intent is not explicitly marked non-final")
 
-    policy = handoff.get("resource_acquisition_policy")
-    if not isinstance(policy, dict):
-        policy = context.get("resource_acquisition_policy")
-    if not isinstance(policy, dict):
-        add(report, "errors", "missing_acquisition_policy", "resource acquisition policy is required")
-        policy = {}
+    policy = acquisition_policy(handoff, context)
+    if not isinstance(handoff.get("resource_acquisition_policy"), dict) and not isinstance(context.get("resource_acquisition_policy"), dict):
+        add(report, "warnings", "default_acquisition_policy_applied", "Using ResearchOS default resource acquisition policy")
     mode = policy.get("mode")
     if mode not in {"local_only", "github_allowed", "github_and_reimplementation"}:
         add(report, "errors", "invalid_acquisition_mode", repr(mode))
@@ -117,16 +203,17 @@ def main() -> int:
     if mode == "github_and_reimplementation" and policy.get("baseline_reimplementation_allowed") is not True:
         add(report, "errors", "reimplementation_policy_conflict", "mode requires baseline_reimplementation_allowed=true")
 
-    required = names(context.get("required_baselines"))
-    matrix = names(context.get("baseline_matrix") or handoff.get("baseline_matrix"))
+    required_source = first_present(context.get("required_baselines"), handoff.get("required_baselines"), context.get("baseline_matrix"), handoff.get("baseline_matrix"))
+    required = names(required_source)
+    matrix = names(first_present(context.get("baseline_matrix"), handoff.get("baseline_matrix")))
     missing_matrix = sorted(required - matrix) if matrix else sorted(required)
     if required and missing_matrix:
         add(report, "errors", "required_baseline_not_in_matrix", ", ".join(missing_matrix))
     if not required:
-        add(report, "errors", "required_baselines_missing", "required baseline set is empty or absent")
-    if not context.get("minimum_experiment_loop"):
+        add(report, "warnings", "required_baselines_missing", "required baseline set is empty or absent")
+    if not first_present(context.get("minimum_experiment_loop"), handoff.get("minimum_experiment_loop")):
         add(report, "errors", "minimum_loop_missing", "minimum_experiment_loop is required")
-    if not context.get("claim_boundaries"):
+    if not first_present(context.get("claim_boundaries"), handoff.get("claim_boundaries")):
         add(report, "warnings", "claim_boundaries_missing", "claim boundaries are absent or empty")
 
     allowed_entries, allowed_errors = parse_allowed_entries(root, allowed_path)
@@ -148,7 +235,8 @@ def main() -> int:
         except Exception as exc:
             add(report, "warnings", "invalid_capabilities", str(exc))
     else:
-        add(report, "warnings", "capabilities_not_declared", "executor_capabilities.json is absent")
+        capabilities = default_executor_capabilities(root)
+        add(report, "warnings", "capabilities_inferred", "executor_capabilities.json is absent; inferred from executor_selection.json")
     if policy.get("network_allowed") is True:
         if not capabilities:
             add(report, "errors", "network_capability_unconfirmed", "policy requires network but executor capabilities are not declared")

@@ -3,9 +3,16 @@ from __future__ import annotations
 """人机交互抽象。"""
 
 from abc import ABC, abstractmethod
+import io
 import json
 import re
+import shutil
+import unicodedata
 from typing import Any, Awaitable, Callable
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
 
 
 _READLINE_CONFIGURED = False
@@ -236,15 +243,58 @@ class CLIHumanInterface(HumanInterface):
         self,
         *,
         t2_parameter_interpreter: Callable[[str], Awaitable[dict[str, str]]] | None = None,
+        no_color: bool = False,
     ) -> None:
         self._t2_parameter_interpreter = t2_parameter_interpreter
+        self._no_color = bool(no_color)
+
+    def _render_panel(self, *, title: str, lines: list[str], border_style: str) -> None:
+        """Render gate context without turning interactive input into a TUI."""
+
+        width = max(88, min(140, shutil.get_terminal_size(fallback=(120, 40)).columns))
+        buffer = io.StringIO()
+        console = Console(
+            file=buffer,
+            force_terminal=not self._no_color,
+            color_system=None if self._no_color else "truecolor",
+            no_color=self._no_color,
+            width=width,
+            highlight=False,
+            _environ={"COLUMNS": str(width), "LINES": "40"},
+        )
+        console.print(Panel(Text("\n".join(line for line in lines if line)), title=title, border_style=border_style, expand=True))
+        rendered = buffer.getvalue().rstrip()
+        if rendered:
+            print("\n" + rendered)
+
+    def _render_section(self, title: str) -> None:
+        if self._no_color:
+            print(f"\n【{title}】")
+            return
+        buffer = io.StringIO()
+        console = Console(
+            file=buffer,
+            force_terminal=True,
+            color_system="truecolor",
+            width=max(88, min(140, shutil.get_terminal_size(fallback=(120, 40)).columns)),
+            highlight=False,
+            _environ={
+                "COLUMNS": str(max(88, min(140, shutil.get_terminal_size(fallback=(120, 40)).columns))),
+                "LINES": "40",
+            },
+        )
+        console.print(Text(f"【{title}】", style="bold magenta"))
+        print("\n" + buffer.getvalue().rstrip())
 
     async def ask_approval(self, *, tool_name: str, arguments: dict) -> bool:
-        print("\n" + "═" * 60)
-        print(f"工具请求批准: {tool_name}")
-        print("原因：该工具可能执行高风险或外部副作用操作，需要用户显式确认。")
-        print(f"输入摘要：{_summarize_arguments(arguments)}")
-        print("═" * 60)
+        self._render_panel(
+            title=f"Approval Required · {tool_name}",
+            border_style="bright_yellow",
+            lines=[
+                "该工具可能执行高风险或外部副作用操作，需要用户显式确认。",
+                f"输入摘要：{_summarize_arguments(arguments)}",
+            ],
+        )
         try:
             answer = _read_cli_line("批准执行? [y/N]: ").strip().lower()
         except EOFError as exc:
@@ -254,15 +304,12 @@ class CLIHumanInterface(HumanInterface):
     async def ask_clarification(
         self, *, question: str, suggestions: list[str] | None = None
     ) -> str:
-        print("\n" + "═" * self.SEPARATOR_WIDTH)
-        print("需要人工输入")
-        print("═" * self.SEPARATOR_WIDTH)
-        print(question)
+        lines = [question]
         if suggestions:
-            print("\n参考选项 / 建议：")
+            lines.append("参考选项 / 建议：")
             for idx, item in enumerate(suggestions, start=1):
-                print(f"- [{idx}] {_compact_text(item, 180)}")
-        print("-" * self.SEPARATOR_WIDTH)
+                lines.append(f"  [{idx}] {_compact_text(item, 180)}")
+        self._render_panel(title="Human Input Required", border_style="bright_yellow", lines=lines)
         for attempt in range(1, self.CLARIFICATION_EMPTY_RETRIES + 1):
             print("请输入回答（输入完成后，在最后输入单独一行 END，或按 Ctrl+D 提交）:")
 
@@ -293,14 +340,15 @@ class CLIHumanInterface(HumanInterface):
     ) -> dict:
         title = presentation.get("_title")
         description = presentation.get("_description")
-        print("\n" + "═" * 60)
-        print(f"GATE {gate_id}")
-        if title:
-            print(title)
-        if description:
-            print(description)
-        print("请选择后继续；ResearchOS 会把选择写入 workspace，并按该选择推进。")
-        print("═" * 60)
+        self._render_panel(
+            title=f"GATE · {gate_id}",
+            border_style="bright_yellow",
+            lines=[
+                str(title or "人工决策"),
+                str(description or ""),
+                "请选择后继续；ResearchOS 会把选择写入 workspace，并按该选择推进。",
+            ],
+        )
         for key, value in presentation.items():
             if key.startswith("_"):
                 continue
@@ -309,7 +357,7 @@ class CLIHumanInterface(HumanInterface):
             rendered = self._format_presentation_value(key, value, gate_id=gate_id)
             if not rendered.strip():
                 continue
-            print(f"\n【{_humanize_presentation_key(key)}】")
+            self._render_section(_humanize_presentation_key(key))
             print(rendered)
         if gate_id == "t4_gate1_selection_gate":
             print("\n输入一行即可选择、合并、重构或提出新想法；无需先选择菜单项。")
@@ -1025,6 +1073,116 @@ def _strip_gate_truncation_marker(text: str) -> str:
     return re.sub(r"\n*\[open .+? for full content; truncated from \d+ chars\]\s*$", "", text).rstrip()
 
 
+def _t4_terminal_columns(value: str) -> int:
+    """Return a conservative terminal-column width for mixed CJK/ASCII text."""
+
+    columns = 0
+    for char in value:
+        if unicodedata.combining(char):
+            continue
+        columns += 2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
+    return columns
+
+
+def _t4_wrap_terminal_text(value: str, *, columns: int) -> list[str]:
+    """Wrap normalized prose by display columns, including double-width CJK glyphs."""
+
+    if columns <= 0:
+        return [value]
+    lines: list[str] = []
+    current = ""
+    current_columns = 0
+    for char in value:
+        char_columns = _t4_terminal_columns(char)
+        if current and current_columns + char_columns > columns:
+            lines.append(current.rstrip())
+            current = "" if char.isspace() else char
+            current_columns = 0 if char.isspace() else char_columns
+            continue
+        if not current and char.isspace():
+            continue
+        current += char
+        current_columns += char_columns
+    if current or not lines:
+        lines.append(current.rstrip())
+    return lines
+
+
+def _t4_wrap_terminal_prose(value: Any, *, indent: int = 0, width: int = 88) -> list[str]:
+    """Wrap a non-field terminal line by display columns."""
+
+    normalized = re.sub(r"\s+", " ", str(value or "")).strip()
+    prefix = " " * indent
+    available = max(1, width - _t4_terminal_columns(prefix))
+    return [prefix + part for part in _t4_wrap_terminal_text(normalized, columns=available)]
+
+
+def _t4_truncate_terminal_title(value: str, *, columns: int) -> str:
+    """Keep candidate headings scannable even when a legacy title is verbose."""
+
+    normalized = re.sub(r"\s+", " ", str(value or "未命名候选")).strip()
+    if _t4_terminal_columns(normalized) <= columns:
+        return normalized
+    retained: list[str] = []
+    used = 0
+    for char in normalized:
+        char_columns = _t4_terminal_columns(char)
+        if used + char_columns > max(1, columns - 3):
+            break
+        retained.append(char)
+        used += char_columns
+    return "".join(retained).rstrip() + "..."
+
+
+def _t4_wrap_terminal_field(label: str, value: Any, *, indent: int = 0, width: int = 88) -> list[str]:
+    """Render one T4 field without hiding CJK content beyond terminal width."""
+
+    normalized = re.sub(r"\s+", " ", str(value or "待补充")).strip()
+    prefix = " " * indent + f"{label}："
+    continuation = " " * (indent + 2)
+    first_columns = max(1, width - _t4_terminal_columns(prefix))
+    continuation_columns = max(1, width - _t4_terminal_columns(continuation))
+    parts = _t4_wrap_terminal_text(normalized, columns=first_columns)
+    if len(parts) <= 1:
+        return [prefix + parts[0]]
+
+    wrapped = [prefix + parts[0]]
+    for part in parts[1:]:
+        wrapped.extend(continuation + fragment for fragment in _t4_wrap_terminal_text(part, columns=continuation_columns))
+    return wrapped
+
+
+def _t4_terminal_lane_guide() -> list[str]:
+    """Return public Gate1 lane semantics for the terminal decision panel."""
+
+    return [
+        "通道说明（候选角色，不是模型内部推理）：",
+        "  D 主线：面向论文主贡献的候选路线；可被选择、合并或重构。",
+        "  Bridge：由已确认的跨领域机制导出；必须回查 bridge 文献笔记 section 后才能形成最终论断。",
+        "  证据不足：保留在面板中以便人工判断，但在补足明确证据前不应作为最终主张。",
+        "  S 补充：用于证伪、失败分析或消融；默认不应单独承担一篇论文的主贡献。",
+        "补充通道：",
+        "  S1 mechanism_challenge：挑战声称机制，检查替代解释或失效边界。",
+        "  S2 reverse_operation：移除、反转或关闭机制成分，形成消融/反事实检验。",
+        "  S3 subgroup_failure：定位子群、状态或数据条件下的失败模式。",
+        "  S4 missing_area_exploration：探索已确认空白；先补证据，再决定是否升级为主线。",
+    ]
+
+
+def _t4_candidate_lane_description(item: dict[str, Any], candidate_id: str) -> str:
+    """Explain the candidate's decision role from persisted fields only."""
+
+    lane = str(item.get("lane") or item.get("constraint_status") or "").strip().lower()
+    origin = str(item.get("origin") or item.get("idea_origin") or "").strip().lower()
+    if "not_supported" in lane or "evidence" in lane and "not" in lane:
+        return "证据不足候选：可讨论，但必须补足对应笔记 section 的机制证据后才可选择为主方向。"
+    if "bridge" in lane or "bridge" in origin:
+        return "桥接候选：来自跨领域机制迁移；选择后必须核验 bridge domain 的对应笔记 section。"
+    if candidate_id.upper().startswith("S") or "supplement" in lane:
+        return "补充候选：服务于机制挑战、反向操作、子群失败或缺口探索，默认作为主线的验证/反证模块。"
+    return "主线候选：面向论文主贡献的可选路线；仍须通过 Gate1 后半段的定向证据回查。"
+
+
 def _format_t4_candidate_overview(value: Any) -> str:
     """Render complete, boxed Gate1 candidate cards from audited fields."""
 
@@ -1033,15 +1191,19 @@ def _format_t4_candidate_overview(value: Any) -> str:
     candidates = value.get("candidates") if isinstance(value.get("candidates"), list) else []
     if not candidates:
         return "候选方向概览暂不可用；请检查 ideation/_candidate_directions.json。"
-    width = 92
+    width = 88
     divider = "=" * width
     lines = [
         divider,
         "T4 Gate1 完整候选方向卡片",
-        "请比较问题、机制、可证伪预测、最小验证、证据基础和风险。D 类可作为主方向；S 类仅作消融补充。",
-        "以下展示的是可审计候选与文献证据，不展示模型内部推理。选择后 T4 后半段必须重新打开列出的论文笔记 section。",
-        divider,
+        *_t4_wrap_terminal_prose("请比较创新、假设/机制、可证伪预测、最小验证、证据基础和风险。", width=width),
+        *_t4_wrap_terminal_prose("以下仅展示可审计候选、评分和文献锚点，不展示模型内部推理。选择后 T4 后半段必须重新打开列出的论文笔记 section。", width=width),
+        "",
     ]
+    for guide_line in _t4_terminal_lane_guide():
+        indent = len(guide_line) - len(guide_line.lstrip())
+        lines.extend(_t4_wrap_terminal_prose(guide_line.strip(), indent=indent, width=width))
+    lines.append(divider)
     score_labels = (
         ("novelty", "新颖性"),
         ("feasibility", "可行性"),
@@ -1056,7 +1218,11 @@ def _format_t4_candidate_overview(value: Any) -> str:
             continue
         candidate_id = str(item.get("id") or "?")
         lane = str(item.get("lane") or "候选方向")
-        title = str(item.get("title") or "未命名候选")
+        title = _t4_truncate_terminal_title(
+            str(item.get("display_title") or item.get("title") or "未命名候选"),
+            columns=width - _t4_terminal_columns(f"| {candidate_id} | {lane} | "),
+        )
+        full_title = str(item.get("full_title") or title)
         original = str(item.get("original_title") or "")
         value_text = str(item.get("value") or "待补充")
         mechanism = str(item.get("mechanism") or "待补充")
@@ -1068,71 +1234,119 @@ def _format_t4_candidate_overview(value: Any) -> str:
         evidence = str(item.get("evidence") or "需回查文献笔记")
         count = item.get("support_count")
         scores = item.get("scores") if isinstance(item.get("scores"), dict) else {}
-        score_text = " | ".join(
-            f"{label} {scores[key]}/5"
-            for key, label in score_labels
-            if scores.get(key) is not None
-        ) or "未评分"
         warning = str(item.get("warning") or "选择后需回查证据。")
+        innovation = item.get("innovation") if isinstance(item.get("innovation"), dict) else {}
+        hypotheses = item.get("candidate_hypotheses") if isinstance(item.get("candidate_hypotheses"), list) else []
+        merges = item.get("merge_opportunities") if isinstance(item.get("merge_opportunities"), list) else []
+        score_rationale = item.get("score_rationale") if isinstance(item.get("score_rationale"), dict) else {}
         lines.extend(
             [
                 "",
-                "+" + "-" * (width - 2) + "+",
+                divider,
                 f"| {candidate_id} | {lane} | {title}",
-                "+" + "-" * (width - 2) + "+",
-                f"研究问题：{item.get('target_problem') or '待补充'}",
-                f"候选来源：{item.get('origin') or '未标注'} | 机制家族：{item.get('mechanism_family') or '未标注'}",
-                f"核心主张：{value_text}",
-                f"技术机制：{mechanism}",
-                f"可检验预测：{item.get('prediction') or '待补充'}",
-                f"反事实 / 证伪条件：{item.get('counterfactual') or '待补充'}",
-                f"实践 / 管理含义：{item.get('practical_implication') or '待补充'}",
-                "最小验证：",
-                f"  数据/任务：{dataset}",
-                f"  对照基线：{baseline}",
-                f"  指标：{metric}",
-                f"  预期信号：{signal}",
-                "评分（1-5）：" + score_text,
-                "证据基础："
-                + evidence
-                + (f"；关联文献笔记 {count} 篇" if count else ""),
-                f"接地摘要：{item.get('basis_summary') or '待补充'}",
-                f"选择建议：{item.get('selection_recommendation') or '未标注'} | 反事实复核：{item.get('counterfactual_check') or '未标注'}",
-                f"最近先例：{item.get('nearest_prior_work') or '待核验'} | 新颖性信号：{item.get('novelty_signal') or '待核验'}",
-                f"风险 / Kill criteria：{warning}",
             ]
         )
+        lines.extend(_t4_wrap_terminal_field("候选定位", _t4_candidate_lane_description(item, candidate_id), indent=2, width=width))
+        lines.extend(_t4_wrap_terminal_field("研究问题", item.get("target_problem"), indent=2, width=width))
+        lines.extend(_t4_wrap_terminal_field("候选来源", item.get("origin") or "未标注", indent=2, width=width))
+        lines.extend(_t4_wrap_terminal_field("机制家族", item.get("mechanism_family") or "未标注", indent=2, width=width))
+        lines.extend(_t4_wrap_terminal_field("核心主张", value_text, indent=2, width=width))
+        lines.extend(_t4_wrap_terminal_field("技术机制", mechanism, indent=2, width=width))
+        lines.extend(_t4_wrap_terminal_field("可检验预测", item.get("prediction"), indent=2, width=width))
+        lines.extend(_t4_wrap_terminal_field("反事实/证伪", item.get("counterfactual"), indent=2, width=width))
+        lines.extend(_t4_wrap_terminal_field("完整方向描述", full_title, indent=2, width=width))
+        lines.extend(_t4_wrap_terminal_field("实践/管理含义", item.get("practical_implication"), indent=2, width=width))
+        lines.append("  核心创新：")
+        lines.extend(_t4_wrap_terminal_field("创新是什么", innovation.get("summary"), indent=4, width=width))
+        lines.extend(_t4_wrap_terminal_field("创新类型", innovation.get("type"), indent=4, width=width))
+        lines.extend(_t4_wrap_terminal_field("相对最近工作的变化", innovation.get("delta") or innovation.get("novelty_delta"), indent=4, width=width))
+        lines.extend(_t4_wrap_terminal_field("为何非普通增量", innovation.get("non_incremental") or innovation.get("non_incremental_reason"), indent=4, width=width))
+        lines.append("  候选假设与机制（Gate1 草案，非最终 hypotheses.md）：")
+        if hypotheses:
+            for hypothesis in hypotheses[:3]:
+                if not isinstance(hypothesis, dict):
+                    continue
+                hypothesis_id = str(hypothesis.get("id") or candidate_id + "-H?")
+                lines.extend(
+                    [
+                        f"    {hypothesis_id}",
+                    ]
+                )
+                lines.extend(_t4_wrap_terminal_field("命题", hypothesis.get("statement"), indent=6, width=width))
+                lines.extend(_t4_wrap_terminal_field("机制", hypothesis.get("mechanism"), indent=6, width=width))
+                lines.extend(_t4_wrap_terminal_field("可观测预测", hypothesis.get("prediction") or hypothesis.get("observable_prediction"), indent=6, width=width))
+                lines.extend(_t4_wrap_terminal_field("判别测试", hypothesis.get("test") or hypothesis.get("discriminating_test"), indent=6, width=width))
+        else:
+            lines.append("    当前未提供候选 H1/H2/H3；不能在展示层补造，需重分析或定向回查。")
+        if len(hypotheses) < 2:
+            lines.append("    注：目前少于两条已落盘假设；H2/H3 需以补充证据为前提。")
+        lines.append("  可组合关系：")
+        if merges:
+            for merge in merges[:4]:
+                if not isinstance(merge, dict):
+                    continue
+                lines.extend(_t4_wrap_terminal_field(
+                    str(merge.get("combine") or "未提供组合") + f"（与 {merge.get('with') or '未指定'}）",
+                    merge.get("rationale") or "未提供组合理由",
+                    indent=4,
+                    width=width,
+                ))
+        else:
+            lines.append("    当前未提供；可输入“合并 D1-H1 + D3-H1”并说明保留哪条机制。")
+        lines.append("  最小验证：")
+        lines.extend(_t4_wrap_terminal_field("数据/任务", dataset, indent=4, width=width))
+        lines.extend(_t4_wrap_terminal_field("对照基线", baseline, indent=4, width=width))
+        lines.extend(_t4_wrap_terminal_field("指标", metric, indent=4, width=width))
+        lines.extend(_t4_wrap_terminal_field("预期信号", signal, indent=4, width=width))
+        lines.append("  评分与依据（1-5）：")
+        if scores:
+            for key, label in score_labels:
+                if scores.get(key) is None:
+                    continue
+                lines.extend(_t4_wrap_terminal_field(f"{label} {scores[key]}/5", score_rationale.get(key) or item.get("basis_summary") or "未提供单维依据；需复核接地材料。", indent=4, width=width))
+        else:
+            lines.append("    当前未评分；不能据此自动排序。")
+        lines.append("  证据与风险：")
+        evidence_text = evidence + (f"；关联文献笔记 {count} 篇" if count else "")
+        lines.extend(_t4_wrap_terminal_field("证据基础", evidence_text, indent=4, width=width))
+        lines.extend(_t4_wrap_terminal_field("接地摘要", item.get("basis_summary"), indent=4, width=width))
+        lines.extend(_t4_wrap_terminal_field("选择建议", item.get("selection_recommendation"), indent=4, width=width))
+        lines.extend(_t4_wrap_terminal_field("反事实复核", item.get("counterfactual_check"), indent=4, width=width))
+        lines.extend(_t4_wrap_terminal_field("最近先例", item.get("nearest_prior_work"), indent=4, width=width))
+        lines.extend(_t4_wrap_terminal_field("新颖性信号", item.get("novelty_signal"), indent=4, width=width))
+        lines.extend(_t4_wrap_terminal_field("风险/Kill criteria", warning, indent=4, width=width))
         if original:
-            lines.append(f"英文原题：{original}")
+            lines.extend(_t4_wrap_terminal_field("英文原题", original, indent=2, width=width))
         support = item.get("supporting_papers") if isinstance(item.get("supporting_papers"), list) else []
-        lines.append("支撑文献与对应笔记 section：")
+        lines.append("  支撑文献与对应笔记 section：")
         if not support:
-            lines.append("  - 当前候选未附带支撑论文；选择前需要补证据。")
+            lines.append("    当前候选未附带支撑论文；选择前需要补证据。")
         for index, paper in enumerate(support, start=1):
             if not isinstance(paper, dict):
                 continue
             lines.extend(
                 [
-                    f"  {index}. {paper.get('title') or '未命名论文'}",
-                    f"     引用：{paper.get('citation') or '未提供'} | 证据等级：{paper.get('evidence_level') or '未标注'}",
-                    f"     笔记路径：{paper.get('note_path') or '未提供'}",
-                    f"     该候选使用的证据（原文摘录）：{paper.get('claim_used') or '未提供'}",
+                    f"    {index}. {paper.get('title') or '未命名论文'}",
                 ]
             )
-        lines.append("+" + "-" * (width - 2) + "+")
+            lines.extend(_t4_wrap_terminal_field("引用", paper.get("citation"), indent=6, width=width))
+            lines.extend(_t4_wrap_terminal_field("证据等级", paper.get("evidence_level"), indent=6, width=width))
+            lines.extend(_t4_wrap_terminal_field("笔记路径", paper.get("note_path") or paper.get("source_file") or paper.get("path"), indent=6, width=width))
+            lines.extend(_t4_wrap_terminal_field("该候选使用的证据", paper.get("claim_used") or paper.get("claim"), indent=6, width=width))
+        lines.append(divider)
     hint = str(value.get("input_hint") or "")
     if hint:
-        lines.extend(["", divider, "如何提交选择", hint])
+        lines.extend(["", divider, "如何提交选择", *_t4_wrap_terminal_prose(hint, width=width)])
     detail_path = str(value.get("detail_path") or "")
     if detail_path:
-        lines.append(f"完整卡片（含原始证据摘录）：{detail_path}")
+        lines.extend(_t4_wrap_terminal_field("完整卡片（含原始证据摘录）", detail_path, width=width))
     navigation = value.get("file_navigation") if isinstance(value.get("file_navigation"), list) else []
     if navigation:
         lines.extend(["", divider, "文件导航（可直接打开核验）"])
         for item in navigation:
             if not isinstance(item, dict):
                 continue
-            lines.append(f"- {item.get('path')}: {item.get('purpose')}")
+            lines.extend(_t4_wrap_terminal_field(f"- {item.get('path')}", item.get("purpose"), width=width))
     lines.append(divider)
     return "\n".join(lines)
 

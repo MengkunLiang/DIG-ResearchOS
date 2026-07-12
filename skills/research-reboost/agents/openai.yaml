@@ -1,0 +1,12 @@
+interface:
+  display_name: Research Reboost
+  short_description: Compile Pre-T5 research into an auditable handoff
+  default_prompt: Use $research-reboost to compile my Pre-T5 artifacts into a validated
+    handoff_pack.json.
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

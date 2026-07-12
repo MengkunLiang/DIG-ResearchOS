@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Callable
 from uuid import uuid4
 
 from ..pydantic_compat import model_dump
+from ..orchestration.task_io_contract import get_task_io
 from .agent import Agent, AgentResult, EffectiveConfig, ExecutionContext, resolve_effective_config
 from .budget import BudgetTracker
 from .config import RuntimeSettings
@@ -103,6 +104,21 @@ T2_CROSS_DOMAIN_QUERY_BUCKET_ALIASES = {
 }
 
 
+def _t4_recap_title(candidate: dict[str, object], *, limit: int = 72) -> str:
+    """Use the declared display label for CLI telemetry, never a long pitch."""
+
+    text = str(
+        candidate.get("display_title")
+        or candidate.get("title_short_zh")
+        or candidate.get("short_title")
+        or candidate.get("title")
+        or "未命名方向"
+    )
+    compact = " ".join(text.split())
+    effective_limit = min(limit, 32) if re.search(r"[\u4e00-\u9fff]", compact) else limit
+    return compact if len(compact) <= effective_limit else compact[: max(0, effective_limit - 3)] + "..."
+
+
 def _normalize_t2_query_bucket(raw: object) -> str:
     value = str(raw or "").strip().casefold()
     if not value:
@@ -149,7 +165,12 @@ class AgentRunner:
         self.progress = CliProgressEmitter(
             quiet=self.runtime_settings.ui.quiet,
             verbose=self.runtime_settings.ui.verbose,
+            verbosity=self.runtime_settings.ui.verbosity,
+            no_color=self.runtime_settings.ui.no_color,
+            json_events=self.runtime_settings.ui.json_events,
+            runtime_dir_name=self.runtime_settings.workspace.runtime_dir,
         )
+        self._t4_durable_recap_keys: set[str] = set()
 
     @staticmethod
     def _default_policy_factory(
@@ -242,6 +263,7 @@ class AgentRunner:
 
     async def run(self, ctx: ExecutionContext) -> AgentResult:
         """执行一次完整 agent run。"""
+        self.progress.configure_observability(workspace=ctx.workspace_dir)
         started = time.time()
         eff = resolve_effective_config(self.agent.spec, ctx)
         max_agent_runtime = int(self.global_timeout.get("max_agent_runtime") or 0)
@@ -289,6 +311,35 @@ class AgentRunner:
         )
 
         self._print_task_start_summary(ctx, eff)
+        try:
+            task_io = get_task_io(ctx.task_id)
+        except KeyError:
+            # Programmatic callers and unit tests may use a lightweight Agent
+            # without a state-machine contract. Keep their established CLI
+            # behaviour instead of inventing a formal research-stage panel.
+            task_io = None
+        # Standalone Skills are not state-machine nodes, but they still have
+        # declared inputs, outputs and durable sessions.  Route them through
+        # the same observable stage protocol so their Markdown and Tool events
+        # receive the Rich rendering instead of falling back to raw `[Tool]`
+        # lines.  Ad-hoc programmatic agents keep the historical lightweight
+        # behaviour below.
+        if task_io is not None or ctx.task_id.startswith("SKILL_"):
+            required_input_keys = {
+                str(key)
+                for key in (task_io.get("required_inputs") or [])
+                if isinstance(key, str)
+            } if task_io is not None else set(ctx.inputs)
+            self.progress.stage_started(
+                task_id=ctx.task_id,
+                run_id=ctx.run_id,
+                inputs=ctx.inputs,
+                outputs=ctx.outputs_expected,
+                required_input_keys=required_input_keys,
+                agent=self.agent.spec.name,
+                mode=str(ctx.mode or ctx.extra.get("phase") or "-"),
+                is_resume=self._is_resume_run(ctx),
+            )
         self.progress.agent_start(
             task_id=ctx.task_id,
             agent=self.agent.spec.name,
@@ -389,16 +440,20 @@ class AgentRunner:
             t35_prepared = False
             if not (deterministic_pre_finalized or t2_pre_finalized or t3_pre_finalized):
                 t35_prepared = await self._maybe_prepare_t35_before_llm(ctx, policy)
-            t36_compile_pre_finalized = False
+            t36_visuals_pre_finalized = False
             if not (deterministic_pre_finalized or t2_pre_finalized or t3_pre_finalized):
+                t36_visuals_pre_finalized = await self._maybe_finalize_t36_visuals_before_llm(ctx)
+            t36_compile_pre_finalized = False
+            if not (deterministic_pre_finalized or t2_pre_finalized or t3_pre_finalized or t36_visuals_pre_finalized):
                 t36_compile_pre_finalized = await self._maybe_finalize_t36_compile_before_llm(ctx)
-            if not (deterministic_pre_finalized or t2_pre_finalized or t3_pre_finalized or t36_compile_pre_finalized):
+            if not (deterministic_pre_finalized or t2_pre_finalized or t3_pre_finalized or t36_visuals_pre_finalized or t36_compile_pre_finalized):
                 t4_pre_finalized = await self._maybe_finalize_t4_before_llm(ctx)
             t4_gate1_pre_finalized = False
             if not (
                 deterministic_pre_finalized
                 or t2_pre_finalized
                 or t3_pre_finalized
+                or t36_visuals_pre_finalized
                 or t36_compile_pre_finalized
                 or t4_pre_finalized
             ):
@@ -408,6 +463,7 @@ class AgentRunner:
                 deterministic_pre_finalized
                 or t2_pre_finalized
                 or t3_pre_finalized
+                or t36_visuals_pre_finalized
                 or t36_compile_pre_finalized
                 or t4_pre_finalized
                 or t4_gate1_pre_finalized
@@ -418,6 +474,7 @@ class AgentRunner:
                 deterministic_pre_finalized
                 or t2_pre_finalized
                 or t3_pre_finalized
+                or t36_visuals_pre_finalized
                 or t36_compile_pre_finalized
                 or t4_pre_finalized
                 or t4_gate1_pre_finalized
@@ -429,6 +486,7 @@ class AgentRunner:
                 deterministic_pre_finalized
                 or t2_pre_finalized
                 or t3_pre_finalized
+                or t36_visuals_pre_finalized
                 or t36_compile_pre_finalized
                 or t4_pre_finalized
                 or t4_gate1_pre_finalized
@@ -442,6 +500,7 @@ class AgentRunner:
                 or
                 t2_pre_finalized
                 or t3_pre_finalized
+                or t36_visuals_pre_finalized
                 or t36_compile_pre_finalized
                 or t4_pre_finalized
                 or t4_gate1_pre_finalized
@@ -459,6 +518,7 @@ class AgentRunner:
                 or
                 t2_pre_finalized
                 or t3_pre_finalized
+                or t36_visuals_pre_finalized
                 or t36_compile_pre_finalized
                 or t4_pre_finalized
                 or t4_gate1_pre_finalized
@@ -471,6 +531,7 @@ class AgentRunner:
             deterministic_pre_finalized = deterministic_pre_finalized or (
                     t2_pre_finalized
                     or t3_pre_finalized
+                    or t36_visuals_pre_finalized
                     or t36_compile_pre_finalized
                     or t4_pre_finalized
                     or t4_gate1_pre_finalized
@@ -634,8 +695,11 @@ class AgentRunner:
                 # 但同一轮如果要 ask_human，正文通常包含用户必须看到的草案、
                 # 候选清单或决策上下文，不能被简洁模式吞掉。
                 if assistant_msg.content and assistant_msg.content.strip():
-                    self._emit(
-                        f"\n[Agent 输出]\n{assistant_msg.content}\n",
+                    self.progress.agent_markdown(
+                        task_id=ctx.task_id,
+                        agent=self.agent.spec.name,
+                        content=assistant_msg.content,
+                        human_action_context=any(tc.name == "ask_human" for tc in assistant_msg.tool_calls),
                         verbose_only=not any(tc.name == "ask_human" for tc in assistant_msg.tool_calls),
                     )
 
@@ -713,6 +777,12 @@ class AgentRunner:
                         )
                     for tc in assistant_msg.tool_calls:
                         run_logger.tool_call(tc.name, tc.arguments, step=budget.steps)
+                        self.progress.stage_tool_call(
+                            task_id=ctx.task_id,
+                            run_id=ctx.run_id,
+                            tool_name=tc.name,
+                            arguments=tc.arguments,
+                        )
                         narrative = build_tool_narrative(
                             task_id=ctx.task_id,
                             agent=self.agent.spec.name,
@@ -800,6 +870,25 @@ class AgentRunner:
                         metadata=tool_msg.metadata if isinstance(tool_msg.metadata, dict) else {},
                         verbose=self.runtime_settings.ui.verbose,
                     )
+                    tool_data = (
+                        tool_msg.metadata.get("data")
+                        if isinstance(tool_msg.metadata, dict)
+                        and isinstance(tool_msg.metadata.get("data"), dict)
+                        else {}
+                    )
+                    tool_error = (
+                        tool_msg.metadata.get("error")
+                        if isinstance(tool_msg.metadata, dict)
+                        else None
+                    )
+                    self.progress.stage_tool_result(
+                        task_id=ctx.task_id,
+                        run_id=ctx.run_id,
+                        tool_name=tool_call.name,
+                        ok=tool_ok,
+                        data=tool_data,
+                        error=str(tool_error) if tool_error else None,
+                    )
                     self.progress.tool_result(
                         agent=self.agent.spec.name,
                         tool_name=tool_call.name,
@@ -808,6 +897,7 @@ class AgentRunner:
                         output_path=safe_relative(output_path, ctx.workspace_dir) or output_path,
                         next_step=next_step_for_task(ctx.task_id, ok=tool_ok) if not tool_ok else None,
                         duration_ms=tool_msg.duration_ms,
+                        data=tool_data,
                     )
                     self._record_skill_progress(
                         ctx,
@@ -819,6 +909,10 @@ class AgentRunner:
                     )
                     if ctx.task_id == "T4" and tool_call.name in {"write_file", "write_structured_file", "append_file"}:
                         self._refresh_t4_gate1_progress(ctx, active_path=output_path if tool_ok else None)
+                        if tool_ok:
+                            self._emit_t4_durable_candidate_recap(ctx, output_path)
+                    if ctx.task_id == "T4" and tool_call.name == "log_t4_ideation_progress" and tool_ok:
+                        self._refresh_t4_gate1_progress(ctx, active_path=None)
                     if tool_call.name == "finish_task" and not tool_msg.metadata.get("is_error"):
                         finish_requested = True
                     if self._is_recoverable_tool_pause(tool_call.name, tool_msg):
@@ -990,6 +1084,8 @@ class AgentRunner:
                 if result.trace_file is not None
                 else None,
                 error=result.error,
+                outputs_expected=ctx.outputs_expected,
+                run_id=ctx.run_id,
             )
             run_logger.event(
                 "TASK_END",
@@ -1054,9 +1150,13 @@ class AgentRunner:
     def _requires_sequential_tool_execution(ctx: ExecutionContext, tool_calls: list[ToolCall]) -> bool:
         """Return whether this response has order-sensitive durable writes."""
 
-        if ctx.task_id != "T4":
-            return False
-        return bool(tool_calls)
+        # Multiple compiler invocations compete for LaTeX auxiliary files and
+        # make a failed child process difficult to diagnose in the CLI.  Keep
+        # them serial even outside T4; other independent tool calls can remain
+        # concurrent.
+        if sum(call.name == "latex_compile" for call in tool_calls) > 1:
+            return True
+        return ctx.task_id == "T4" and bool(tool_calls)
 
     @staticmethod
     def _t4_artifact_write_order_error(ctx: ExecutionContext, tc: ToolCall) -> str | None:
@@ -1133,6 +1233,96 @@ class AgentRunner:
             )
         except Exception as exc:  # pragma: no cover - progress is observational
             self.log.warning("t4_progress_refresh_failed", error=str(exc))
+
+    def _emit_t4_durable_candidate_recap(self, ctx: ExecutionContext, output_path: str | Path | None) -> None:
+        """Backstop candidate-level CLI facts when the model omits progress events.
+
+        The output is parsed only after a durable artifact was reported as
+        written. It therefore describes persisted candidates/reviews/scores,
+        never intermediate reasoning.
+        """
+
+        if ctx.task_id != "T4" or not output_path:
+            return
+        relative = safe_relative(output_path, ctx.workspace_dir) or str(output_path)
+        if relative not in {
+            "ideation/_pass1_forward_candidates.json",
+            "ideation/_pass2_grounding_review.json",
+            "ideation/_candidate_directions.json",
+            "ideation/_gate1_candidate_cards.md",
+        }:
+            return
+        path = ctx.workspace_dir / relative
+        try:
+            stat = path.stat()
+        except OSError:
+            return
+        recap_key = f"{relative}:{stat.st_mtime_ns}:{stat.st_size}"
+        if recap_key in self._t4_durable_recap_keys:
+            return
+        self._t4_durable_recap_keys.add(recap_key)
+        try:
+            if relative.endswith(".json"):
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            else:
+                payload = None
+        except (OSError, json.JSONDecodeError) as exc:
+            self.log.warning("t4_durable_recap_parse_failed", path=relative, error=str(exc))
+            return
+
+        if relative == "ideation/_pass1_forward_candidates.json":
+            candidates = payload.get("candidates") if isinstance(payload, dict) else []
+            candidates = [item for item in candidates if isinstance(item, dict)]
+            mainline = sum(1 for item in candidates if str(item.get("constraint_status") or "") == "mainline")
+            supplements = sum(1 for item in candidates if str(item.get("constraint_status") or "") == "supplement")
+            self.progress.emit(
+                f"[T4 Pass1] 已保存候选池：{len(candidates)} 个方向（主线 {mainline}，补充 {supplements}）。",
+                important=True,
+            )
+            for index, candidate in enumerate(candidates, start=1):
+                candidate_id = str(candidate.get("id") or f"#{index}")
+                title = _t4_recap_title(candidate)
+                origin = str(candidate.get("idea_origin") or candidate.get("origin") or "未标注")
+                lane = str(candidate.get("constraint_status") or "未标注")
+                self.progress.emit(
+                    f"[T4 Pass1] {index}/{len(candidates)} · {candidate_id} · {title} | {lane}/{origin} | 已写入候选记录。",
+                    important=True,
+                )
+            return
+
+        if relative == "ideation/_pass2_grounding_review.json":
+            reviews = payload.get("reviews") if isinstance(payload, dict) else []
+            reviews = [item for item in reviews if isinstance(item, dict)]
+            self.progress.emit(f"[T4 Pass2] 已保存接地复核：{len(reviews)} 个候选。", important=True)
+            for index, review in enumerate(reviews, start=1):
+                candidate_id = str(review.get("idea_id") or review.get("id") or f"#{index}")
+                recommendation = str(review.get("screening_recommendation") or "需复核")
+                novelty = str(review.get("novelty_signal") or "未计算")
+                self.progress.emit(
+                    f"[T4 Pass2] {index}/{len(reviews)} · {candidate_id} | 建议={recommendation} | 新颖性信号={novelty}。",
+                    important=True,
+                )
+            return
+
+        if relative == "ideation/_candidate_directions.json":
+            candidates = payload.get("candidates") if isinstance(payload, dict) else []
+            candidates = [item for item in candidates if isinstance(item, dict)]
+            self.progress.emit(f"[T4 评分] 已保存结构化候选：{len(candidates)} 个方向。", important=True)
+            for index, candidate in enumerate(candidates, start=1):
+                scores = candidate.get("scores") if isinstance(candidate.get("scores"), dict) else {}
+                score_text = ", ".join(f"{key}={value}/5" for key, value in scores.items()) or "未评分"
+                self.progress.emit(
+                    f"[T4 评分] {index}/{len(candidates)} · {candidate.get('id') or '#'} · {_t4_recap_title(candidate)} | {score_text}",
+                    important=True,
+                )
+            return
+
+        if relative == "ideation/_gate1_candidate_cards.md":
+            self.progress.emit(
+                "[T4 Gate1] 完整候选卡片已写入：短标题、创新、候选 H1/H2/H3、可组合关系、评分依据和证据边界均在卡片中展示。",
+                important=True,
+            )
+
 
     async def _await_llm_with_progress(
         self,
@@ -1696,6 +1886,45 @@ class AgentRunner:
                 ],
             },
             action_type="t3_resume_prefinalize",
+        )
+        return True
+
+    async def _maybe_finalize_t36_visuals_before_llm(self, ctx: ExecutionContext) -> bool:
+        """Reuse a valid deterministic taxonomy visual after a recoverable pause.
+
+        T3.6-VISUALS has no scholarly generation step: the restricted tool
+        renders the taxonomy map and the validator checks its factual policy.
+        Once that manifest/PDF pair is valid, an LLM retry would add cost and
+        could not improve the artifact.  Resume should therefore continue from
+        the durable result without asking a provider to repeat the tool call.
+        """
+
+        if ctx.task_id != "T3.6-VISUALS" or not self._is_resume_run(ctx):
+            return False
+        manifest_path = ctx.workspace_dir / "drafts" / "survey" / "figures" / "survey_visual_manifest.json"
+        pdf_path = ctx.workspace_dir / "drafts" / "survey" / "figures" / "fig_taxonomy_overview.pdf"
+        if not manifest_path.exists() or manifest_path.stat().st_size <= 0:
+            return False
+        if not pdf_path.exists() or pdf_path.stat().st_size <= 0:
+            return False
+        ok, err = self.agent.validate_outputs(ctx)
+        if not ok:
+            self.log.info("t36_visuals_resume_prefinalize_skipped", reason=err)
+            return False
+        self.progress.emit(
+            "[Survey Writer Agent] T3.6-VISUALS 检测到已通过 taxonomy-only 契约的 PDF/manifest，跳过重复 LLM 与图生成",
+            important=True,
+        )
+        self._record_runtime_completion(
+            ctx,
+            "t36_visuals_resume_prefinalize",
+            {
+                "outputs": [
+                    "drafts/survey/figures/fig_taxonomy_overview.pdf",
+                    "drafts/survey/figures/survey_visual_manifest.json",
+                ],
+            },
+            action_type="t36_visuals_resume_prefinalize",
         )
         return True
 
@@ -3024,6 +3253,17 @@ class AgentRunner:
             tool_arguments=model_dump(parsed),
             result=result,
         )
+        try:
+            task_io = get_task_io(ctx.task_id)
+        except KeyError:
+            task_io = None
+        self._annotate_optional_input_absence(
+            ctx=ctx,
+            task_io=task_io,
+            tool_name=tc.name,
+            arguments=model_dump(parsed),
+            result=result,
+        )
         if ctx.task_id == "T2" and tc.name in T2_AUTO_PERSIST_SEARCH_TOOLS and not result.ok:
             t2_config = load_t2_finalize_config(ctx.workspace_dir)
             self._log_t2_search_progress(
@@ -3075,6 +3315,40 @@ class AgentRunner:
                 step=step,
             )
         return tool_msg
+
+    @staticmethod
+    def _annotate_optional_input_absence(
+        *,
+        ctx: ExecutionContext,
+        task_io: dict[str, object] | None,
+        tool_name: str,
+        arguments: dict[str, object],
+        result: ToolResult,
+    ) -> None:
+        """Mark only declared optional reads as a non-blocking public skip."""
+
+        if result.ok or tool_name != "read_file" or str(result.error or "") not in {"not_found", "file_not_found"}:
+            return
+        if not isinstance(task_io, dict):
+            return
+        requested = str(arguments.get("path") or "").strip().lstrip("./")
+        inputs = task_io.get("inputs")
+        if not requested or not isinstance(inputs, dict):
+            return
+        required = {str(key) for key in task_io.get("required_inputs") or []}
+        for key, declared in inputs.items():
+            if str(declared).lstrip("./") != requested:
+                continue
+            if str(key) in required:
+                return
+            result.data = {
+                **(result.data if isinstance(result.data, dict) else {}),
+                "optional_input": True,
+                "optional_input_label": str(key),
+                "path": requested,
+                "display_disposition": "skipped",
+            }
+            return
 
     def _emit_tool_progress(self, tool_name: str, result: ToolResult) -> None:
         """Print deterministic progress summaries that users need during long runs."""
@@ -3929,6 +4203,10 @@ class AgentRunner:
             message = "Agent 成功完成（T2 resume 确定性收尾）"
         elif ok and metadata.get("completion_mode") == "t3_resume_prefinalize":
             message = "Agent 成功完成（T3 resume 确定性收尾）"
+        elif ok and metadata.get("completion_mode") == "t36_visuals_resume_prefinalize":
+            message = "Agent 成功完成（T3.6 taxonomy visual 已验证，跳过重复生成）"
+        elif ok and metadata.get("completion_mode") == "t36_compile_resume_prefinalize":
+            message = "Agent 成功完成（T3.6 survey PDF 已验证，跳过重复编译）"
         elif ok and metadata.get("completion_mode") == "t4_resume_prefinalize":
             message = "Agent 成功完成（T4 resume 确定性收尾）"
         elif ok and metadata.get("completion_mode") == "t4_gate1_ready":

@@ -76,7 +76,11 @@ from ..runtime.prompts import render_prompt
 from ..schemas.validator import validate_record
 from ..schemas.validator import validate_task_artifacts
 from ..tools.docker_exec import check_docker_environment, get_default_image, load_project_config
-from ..tools.external_experiment import SKILL_SUITE, validate_context_reboost_handoff
+from ..tools.external_experiment import (
+    SKILL_SUITE,
+    research_reboost_skill_prompt_excerpt,
+    validate_context_reboost_handoff,
+)
 from ._common import (
     generate_findings_summary,
     generate_manifest,
@@ -472,6 +476,19 @@ def _validate_external_handoff(ws: Path, *, require_specialization: bool = True)
     handoff, err = _read_json_artifact(ws, "external_executor/handoff_pack.json")
     if err:
         return False, err
+    if handoff.get("schema_version") == "external_executor_handoff.v1" and isinstance(handoff.get("source_manifest"), list):
+        ok, err = validate_context_reboost_handoff(ws)
+        if not ok:
+            return False, err
+        schema, err = _read_json_artifact(ws, "external_executor/expected_outputs_schema.json")
+        if err:
+            return False, err
+        if schema.get("semantics") != "expected_external_executor_outputs_schema":
+            return False, "expected_outputs_schema.json semantics 不正确"
+        allowed_text = (ws / "external_executor" / "allowed_paths.txt").read_text(encoding="utf-8", errors="replace")
+        if "external_executor/" not in allowed_text:
+            return False, "external_executor/allowed_paths.txt 必须包含 external_executor/ 边界"
+        return True, None
     if handoff.get("semantics") not in {
         "external_experiment_handoff_pack_not_execution_result",
         "external_experiment_handoff_contract",
@@ -1169,6 +1186,7 @@ class ExperimenterAgent(Agent):
             novelty_report_preview=novelty_report,
             novelty_audit_preview=novelty_audit,
             must_add_baselines_preview=must_add_baselines,
+            research_reboost_skill=research_reboost_skill_prompt_excerpt() if mode == "reboost" else "",
             direct_full_mode=direct_full_mode,
             skipped_optional_tasks=list(ctx.extra.get("skipped_optional_tasks", [])),
             budget_hint=budget_hint,
@@ -1184,38 +1202,19 @@ class ExperimenterAgent(Agent):
             return prepend_resume_prefix(
                 ctx,
                 (
-                    "请执行 T5 context re-boost：直接调用当前 LLM 能力读取 Pre-T5 材料，"
-                    "不要要求用户手动拉起 Codex CLI，也不要执行实验、实现代码、选择执行器或写 result_pack。\n\n"
-                    "必须优先读取这些文件：project.yaml、literature/synthesis.md、"
-                    "literature/synthesis_workbench.json、literature/domain_map.json、"
-                    "literature/comparison_table.csv、ideation/hypotheses.md、ideation/exp_plan.yaml、"
-                    "ideation/idea_scorecard.yaml、ideation/risks.md、ideation/novelty_audit.md、"
-                    "novelty/novelty_audit.md。必要时可回查 literature/paper_notes/、"
-                    "literature/paper_notes_abstract/、resources/、user_seeds/seed_external_resources.jsonl "
-                    "和 user_seeds/bridge_domains.yaml。\n\n"
-                    "re-boost 不是摘要，而是把 Pre-T5 研究设计重排成外部执行器需要的执行语境。"
-                    "请回答：研究目标、central hypothesis、方法机制不可偏离点、核心/候选方法模块、"
-                    "required baselines、必须跑和可替代 baseline、最低实验闭环、强/弱 claim 支撑条件、"
-                    "当前不能说的 claim、结果如何反向精炼 method/idea、外部执行器必须交给 Writer 的内容。\n\n"
-                    "写入 external_executor/handoff_pack.json，至少包含 schema_version="
-                    "external_executor_handoff.v1、semantics=external_experiment_handoff_contract、"
-                    "status=context_reboost_completed、context_reboost、顶层 baseline_matrix 和顶层 "
-                    "claim_evidence_matrix。context_reboost 必须包含 project_goal、central_hypothesis、"
-                    "method_mechanism、required_baselines、baseline_matrix、claim_evidence_matrix、"
-                    "minimum_experiment_loop、iteration_budget、claim_boundaries、writer_handoff_contract、"
-                    "source_files_used、known_context_mismatches。claim_evidence_matrix 不能为空；"
-                    "如果证据不足，请写保守 claim/弱 claim/不能 claim 的边界，而不是编造结果。\n\n"
-                    "同时写 external_executor/reboost_report.json，记录 semantics="
-                    "external_executor_context_reboost_report、source_files_used、missing_optional_sources、"
-                    "known_context_mismatches 和 handoff_pack 路径。\n\n"
-                    "写完 re-boost skeleton 后，必须调用 build_experiment_handoff_pack，传入 "
-                    "executor=UNSET、specialize_skills=false。该工具会保留 "
-                    "external_executor/handoff_pack.json#context_reboost，并补全 executor_prompt.md、"
-                    "codex_prompt.md、claude_code_prompt.md、manual_instructions.md、"
-                    "expected_outputs_schema.json、allowed_paths.txt、AGENTS.md、CLAUDE.md、README.md、"
-                    "job_state.json 和 external_executor/expr/。不要在本步骤生成或改写 "
-                    "external_executor/skills/；下一步由用户显式运行 researchos specialize-executor-skills。"
-                    "最后调用 finish_task。"
+                    "请执行 T5-REBOOST：使用系统 prompt 中的 `skills/research-reboost` skill contract，"
+                    "调用当前 LLM API 完成 Pre-T5 → external executor handoff 的语义重编译。"
+                    "不要要求用户手动拉起 Codex CLI，不要执行实验、实现代码、选择执行器或写 result_pack。\n\n"
+                    "第一步请调用 `compile_research_reboost_handoff`。该工具会按 "
+                    "`skills/research-reboost/SKILL.md`、`references/handoff_pack.schema.json` 和 "
+                    "`scripts/validate_handoff.py` 编译、校验并 pretty-print "
+                    "`external_executor/handoff_pack.json`，同时写 `external_executor/reboost_report.json`、"
+                    "`reboost_validation_report.json`、AGENTS/CLAUDE/README、prompt、expected schema、"
+                    "allowed paths、input manifest、job_state 和 expr scaffold。\n\n"
+                    "完成后读取 `external_executor/reboost_report.json`；如果 validation_ok=true，"
+                    "调用 finish_task。不要手写压缩成一行的 JSON；不要生成或改写 "
+                    "`external_executor/skills/`，下一步由用户显式运行 "
+                    "`researchos specialize-executor-skills`。"
                 ),
             )
         if mode == "handoff":

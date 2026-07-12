@@ -8,8 +8,6 @@ tools:
   - finish_task
 strict_tools: true
 model_tier: heavy
-max_steps: 16
-max_tokens_total: 130000
 temperature: 0.15
 allowed_read_prefixes:
   - user_inputs/experiment-design-review/

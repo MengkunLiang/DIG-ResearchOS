@@ -9,8 +9,6 @@ tools:
   - finish_task
 strict_tools: true
 model_tier: medium
-max_steps: 14
-max_tokens_total: 100000
 temperature: 0.1
 allowed_read_prefixes:
   - user_inputs/submission-readiness/

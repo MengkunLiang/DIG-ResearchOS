@@ -1,5 +1,7 @@
 # ResearchOS
 
+[English](README.md) | [中文](README.zh-CN.md)
+
 ResearchOS 是一个以落盘产物为中心的多智能体研究运行时。它把一个 workspace 组织成可审计、可恢复的研究项目：文献检索与阅读、证据约束的 idea 生成、外部实验交接、论文写作与审阅，以及投稿包生成。
 
 系统不依赖模型记住上一次对话。workspace 中的文件才是事实源：每个阶段都有确定的输入/输出、校验、日志、trace 和恢复语义。
@@ -11,7 +13,7 @@ T1 选题 -> T2 文献 -> T3 阅读 -> T3.5 综合
   -> T8 论文写作/审阅 -> T9 投稿包
 ```
 
-English guide: [README.md](README.md)
+本文件是主项目 README 的中文版本；英文说明见 [README.md](README.md)。
 
 ## 选择运行方式
 
@@ -22,7 +24,7 @@ English guide: [README.md](README.md)
 | 本地模式 | 开发、调试、直接在宿主机使用 | `auto` 依次选择本机 `latexmk`、本机 `tectonic`、已配置的 Docker TeX 镜像。 |
 | Docker Compose | 固定 CLI 环境、部署 | 镜像内置 `latexmk`、pdfLaTeX、XeLaTeX、BibTeX 和中文 TeX 支持，在容器内直接编译。 |
 
-`requirements.txt` 管理 Python 包（包括综述数据图所需的 matplotlib）。TeX Live、`latexmk` 与字体是操作系统级依赖，必须由系统包管理器安装，或写入 Docker 镜像；不能也不应放进 `requirements.txt`。
+`pyproject.toml` 是 Python 包元数据来源，`requirements.txt` 是与其对应、可供 Docker 缓存安装的 runtime/dev 依赖清单（包括综述数据图所需的 matplotlib）。TeX Live、`latexmk` 与字体是操作系统级依赖，必须由系统包管理器安装，或写入 Docker 镜像；不能也不应放进 `requirements.txt`。
 
 ## 本地安装
 
@@ -30,13 +32,13 @@ English guide: [README.md](README.md)
 git clone <repository-url> DIG-ResearchOS
 cd DIG-ResearchOS
 
-conda create -n researchos python=3.11 -y
+conda env create -f environment.yml
 conda activate researchos
-pip install -r requirements.txt
-pip install -e .
 
 cp .env.example .env
 ```
+
+若不使用 Conda，可运行 `pip install -r requirements.txt && pip install -e .`。
 
 T3.6 综述和 T9 投稿需要真实 PDF 时，建议在宿主机安装完整 TeX 工具链。Ubuntu/Debian：
 
@@ -113,6 +115,29 @@ python -m researchos.cli run --workspace ./workspace/project-a
 python -m researchos.cli run-task HELLO --workspace ./workspace/project-a
 ```
 
+## 面向研究者的 CLI 过程可观测性
+
+`run`、`resume` 和 `run-task` 使用同一套 **阶段开始 -> 阶段过程 -> 阶段总结** 协议。
+它展示的是可审计的科研活动和阶段判断，不会输出模型私有思维或完整 Tool payload：
+
+- **阶段开始**：显示阶段目标、要回答的研究问题、计划操作，以及输入/预计输出 Artifact 表。每个文件都会注明含义、状态、规模和下游用途。
+- **阶段过程**：只展示有研究价值的受限结果。例如 T2 的 query/source 覆盖、候选排序和阅读优先级；T3 的证据覆盖；T3.5 的机制/张力；T4 的来源、补充通道、接地复核和候选治理；T7 的运行/claim 审计；T8/T9 的证据对齐和真实编译状态。
+- **阶段总结**：显示主要结论、风险与 unsupported、实际读取的 workspace 文件，以及 Artifact Manifest。产物状态会区分 `created`、`updated`、`reused`、`missing`、`invalid`。
+
+可用展示控制如下。即使是 `concise`，也不会省略阶段输入、输出和需要人工操作的内容。
+`--json-events` 只是在 stdout 额外镜像受限 JSON 事件，适合集成工具；**每一次运行**都会把事件持久化到
+`<workspace>/_runtime/events/<run_id>.jsonl`，无需开启该参数。
+
+```bash
+python -m researchos.cli run --workspace ./workspace/project-a --verbosity detailed
+python -m researchos.cli resume --workspace ./workspace/project-a --verbosity concise --no-color
+python -m researchos.cli run-task T4 --workspace ./workspace/project-a --json-events
+```
+
+终端不是 chain-of-thought 输出。检索覆盖缺口、引用图信号、工具聚类和排序都会明确标为提示或证据边界，只有源 Artifact 支撑时才会升级为更强结论。控制台、日志、trace 和事件 JSONL 的区别见 [docs/logging.md](docs/logging.md)。
+
+交互终端会使用带颜色的 Rich 面板展示阶段标题、Agent Markdown、工具起止/结果、警告和 Artifact Manifest。Agent Markdown 在渲染前会归一化，因此 `1️⃣` 这类 keycap 编号会显示为普通有序列表，不会出现终端中的拆散字符。`--no-color` 保留完全相同的信息，但输出无 ANSI、可直接复制。独立 Skill 也使用同一协议：`list-skills` 按科研流程分组原子能力；`describe-skill`、`run-skill` 和 `skill-status` 显示明确的上传路径、产物含义、会话状态和恢复命令。
+
 ## 引导式独立 Skill
 
 Skill 不是 LangChain chain，也不是无法检查的聊天提示词。每个可发现的
@@ -136,9 +161,11 @@ python -m researchos.cli run-skill paper-outline \
   --session-id neuri-2026-outline
 ```
 
-缺少必需文件时，命令**不会调用 LLM**。它会写入
+非交互命令缺少必需文件时，会写入
 `_runtime/skill_sessions/neuri-2026-outline.json`，明确指出需要上传什么、放到哪里，
-并停在可恢复状态。补齐后使用同一会话继续：
+并停在可恢复状态。真实终端可加 `--interactive`：受限 intake Agent 会逐项询问上传或粘贴，
+仅将人工提供的材料整理到该 Skill 的 `user_inputs/<skill>/`；如果材料仍缺少必要事实，
+它会继续提出聚焦问题并重检，通过后才开始真正 Skill。它不会写论文、实验结果或引用。补齐后使用同一会话继续：
 
 ```bash
 python -m researchos.cli run-skill paper-outline \
@@ -152,20 +179,36 @@ python -m researchos.cli skill-status --workspace ./workspace/project-a
 每个 guided 会话还会写入 `user_inputs/<skill>/_intake.md`。独立 workspace 中它是可编辑的上传清单；项目 workspace 中它会记录系统发现的候选文件，但“文件存在”不等于材料足以支撑要写的结论。运行中的 Skill 必须做语义核验；若发现缺少目标 venue、证据、引用、结果或约束，会写
 `user_inputs/<skill>/_followup_request.md`，提出精确问题和建议补充路径，再等待真实人工回答并用同一 `--session-id ... --resume` 继续。这样多轮交互可追溯，而不会把聊天记忆或文件名当作证据。
 
-`browse-skills` 是可在 SSH/普通终端使用的卡片浏览器：输入序号或名称可先看完整契约，输入
-`run <序号>` 才会进入该 Skill 的引导式会话。Skill 运行时，`skill-status` 会展示已经持久化的
+独立运行与项目内运行的 Skill 均**不设 token 上限，也不设 step 上限**。它们只会因明确完成、等待人工输入、人工取消、provider/runtime 故障或产物校验结果而结束/暂停；这不意味着可以突破 provider 的上下文窗口、限流、可用性或账户限制。
+
+`browse-skills` 是可在 SSH/普通终端使用的卡片浏览器：输入序号或名称可先看完整契约，直接输入
+`文献`、`Idea`、`创新点` 等关键词即可做本地中英文/别名/有限模糊搜索，也可使用 `search <关键词>`；
+输入 `run <序号>` 才会进入该 Skill 的引导式会话。带色目录会把每个研究分类框起来，并逐项说明
+流程位置、用途、输入、产物和启动命令。Skill 运行时，`skill-status` 会展示已经持久化的
 步骤、可观察阶段、当前工具、产物和恢复命令；它不会输出或伪装模型内部思维。
 
-推荐的原子工作流是：`research-scope`（范围）→ `literature-query-plan` /
-`literature-evidence-scout`（检索）→ `paper-note-review`（笔记 section 复核）→
+T2 中单个文献来源的限流、连接失败或可选 seed 文件缺失也不会再被一律显示为“阶段失败”：终端会区分
+`SKIPPED`（声明为可选的输入未提供）、`DEGRADED`（来源可重试且其它来源继续）和真正 `FAILED`。
+阶段总结中的来源健康表会说明哪些来源实际返回了候选、哪些在冷却期。论文卡可被 T4.5、T5、外部执行器、
+T7 和 T8 按需使用，但只能用于机制/基线/边界/引用出处，不能当作新方法的实验性能证据。
+
+推荐的原子工作流是：`research-material-ingest`（导入研究者自己的 PDF、数据和代码）→
+`research-scope`（范围）→ `paper-identifier-resolver`（DOI/arXiv/标题解析）或
+`pdf-note-card`（单篇 PDF 笔记）/`paper-section-evidence`（针对一个问题的 PDF section 取证）→
+`citation-graph-explorer`（有边界的一跳引文扩展）→ `paper-comparison` /
+`literature-evidence-matrix` / `literature-gap-map`（比较、证据矩阵与缺口治理）→
+`literature-query-plan` / `literature-evidence-scout`（检索）→ `paper-note-review`（笔记 section 复核）→
 `idea-fanout-jury` / `hypothesis-compiler`（候选与假设）→
 `experiment-design-review`（实验设计审查）→ `paper-outline` / `paper-write`（写作）→
-`citation-provenance-audit` / `paper-polish` / `paper-revision`（审阅修订）→
-`paper-compile` / `submission-readiness`（真实编译与投稿检查）。`survey-visuals` 只基于
-`comparison_table.csv` 生成可复现数据图；数据不足时会写明 `skipped`，绝不编造装饰图。
+`claim-evidence-map` / `citation-library-curator` / `citation-provenance-audit` /
+`venue-fit-review` / `paper-peer-review` / `paper-polish` / `paper-revision`（审阅修订）→
+`paper-compile` / `submission-readiness`（真实编译与投稿检查）。`survey-visuals` 最多只从
+`survey_plan.json` 的显式 taxonomy 和直接关联 paper ID 生成一张可复现 taxonomy PDF；严禁跨论文性能、
+相对提升、T2 筛选分数和推断性热图。taxonomy 不足时会写明 `skipped`，绝不编造装饰图。
+计划中每一个直接 paper ID 还必须解析到本地结构化 note card；任一 ID 无法解析时会移除旧的 canonical PDF 并写 `skipped` manifest。该检查只核验来源链接可追溯，不等价于论文的实证证据更强。
 所有公共 Skill 都保留源文件，只使用 workspace 中可追溯的证据和 citation key，并在输出旁写入
-审计报告。契约详情见 [docs/runtime.md](docs/runtime.md)，更多示例见
-[docs/QUICKSTART.md](docs/QUICKSTART.md)。
+审计报告。完整的原子能力、上传路径和边界见 [docs/skills.md](docs/skills.md)，契约详情见
+[docs/runtime.md](docs/runtime.md)，更多示例见 [docs/QUICKSTART.md](docs/QUICKSTART.md)。
 
 ## Venue-Aware 论文写作
 

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping, Sequence
 
+from .policies import default_resource_acquisition_policy
 from .source_readers import read_allowed_paths, read_json_if_exists, read_text, read_yaml_if_exists
 from .validation import get_by_dotted_path, injected_paths, is_empty_value, resolve_ref, schema_type, set_by_dotted_path
 
@@ -106,10 +107,29 @@ def _apply_handoff(context: MutableMapping[str, Any], handoff: Mapping[str, Any]
     sources = ["external_executor/handoff_pack.json"]
 
     handoff_rules = {
-        "project.goal": _first_resolved(context_reboost.get("project_goal"), handoff.get("experiment_intent_oneliner")),
-        "research.central_hypothesis": context_reboost.get("central_hypothesis"),
-        "research.claim_boundaries": _string_list(context_reboost.get("claim_boundaries")),
-        "research.must_not_claim": _string_list(_first_resolved(context_reboost.get("must_not_claim"), handoff.get("must_not_claim"))),
+        "project.goal": _first_resolved(
+            _get(context_reboost, "project_goal.statement"),
+            context_reboost.get("project_goal"),
+            handoff.get("experiment_intent_oneliner"),
+        ),
+        "research.central_hypothesis": _first_resolved(
+            _get(context_reboost, "central_hypothesis.statement"),
+            context_reboost.get("central_hypothesis"),
+        ),
+        "research.claim_boundaries": _string_list(
+            _first_resolved(
+                context_reboost.get("claim_boundaries"),
+                _get(handoff, "claim_boundaries.novelty_boundary"),
+                _get(handoff, "claim_boundaries.conditional_claims"),
+            )
+        ),
+        "research.must_not_claim": _string_list(
+            _first_resolved(
+                context_reboost.get("must_not_claim"),
+                _get(handoff, "claim_boundaries.must_not_claim"),
+                handoff.get("must_not_claim"),
+            )
+        ),
         "research.core_claims": _claims_from_matrix(_first_resolved(context_reboost.get("claim_evidence_matrix"), handoff.get("claim_evidence_matrix"))),
         "research.reviewer_questions": _reviewer_questions(_first_resolved(context_reboost.get("claim_evidence_matrix"), handoff.get("claim_evidence_matrix"))),
         "method.central_mechanism_hypothesis": _first_resolved(
@@ -126,7 +146,9 @@ def _apply_handoff(context: MutableMapping[str, Any], handoff: Mapping[str, Any]
                 method_intent.get("must_preserve_components"),
             )
         ),
-        "method.candidate_components": _object_list(method_intent.get("candidate_components")),
+        "method.candidate_components": _object_list(
+            _first_resolved(method_intent.get("candidate_components"), method_intent.get("candidate_modules"))
+        ),
         "method.expected_algorithm_flow": _object_list(method_intent.get("expected_algorithm_flow")),
         "method.allowed_refinements": _string_list(method_intent.get("allowed_refinements")),
         "method.forbidden_silent_changes": _string_list(method_intent.get("forbidden_silent_changes")),
@@ -140,9 +162,19 @@ def _apply_handoff(context: MutableMapping[str, Any], handoff: Mapping[str, Any]
         "method.implementation_acceptance": _string_list(method_intent.get("implementation_acceptance")),
         "method.scope_change_triggers": _string_list(method_intent.get("scope_change_triggers")),
         "method.attribution_requirements": _string_list(method_intent.get("attribution_requirements")),
-        "method.initial_framework_figure_intent": _mapping(method_intent.get("initial_framework_figure_intent")),
+        "method.initial_framework_figure_intent": _mapping(
+            _first_resolved(
+                method_intent.get("initial_framework_figure_intent"),
+                method_intent.get("initial_framework_figure_sketch"),
+            )
+        ),
         "baselines.required": _baseline_list(
-            _first_resolved(context_reboost.get("required_baselines"), context_reboost.get("baseline_matrix"), handoff.get("required_baselines"))
+            _first_resolved(
+                context_reboost.get("required_baselines"),
+                context_reboost.get("baseline_matrix"),
+                handoff.get("baseline_matrix"),
+                handoff.get("required_baselines"),
+            )
         ),
         "baselines.optional": _baseline_list(_first_resolved(context_reboost.get("optional_baselines"), handoff.get("optional_baselines"))),
         "baselines.replacement_policy": _mapping(_first_resolved(context_reboost.get("baseline_replacement_policy"), handoff.get("baseline_replacement_policy"))),
@@ -153,15 +185,19 @@ def _apply_handoff(context: MutableMapping[str, Any], handoff: Mapping[str, Any]
         "baselines.forbidden_repairs": _string_list(context_reboost.get("forbidden_repairs")),
         "baselines.reproduction_acceptance": _string_list(context_reboost.get("reproduction_acceptance")),
         "baselines.known_risks": _string_list(context_reboost.get("baseline_known_risks")),
-        "experiment.minimum_experiment_loop": _minimum_loop(context_reboost.get("minimum_experiment_loop")),
+        "experiment.minimum_experiment_loop": _minimum_loop(
+            _first_resolved(context_reboost.get("minimum_experiment_loop"), handoff.get("minimum_experiment_loop"))
+        ),
         "experiment.claim_evidence_matrix": _object_list(_first_resolved(context_reboost.get("claim_evidence_matrix"), handoff.get("claim_evidence_matrix"))),
         "experiment.primary_metrics": _metrics(_first_resolved(handoff.get("metrics"), experiment_contract.get("metrics"))),
         "experiment.seed_policy": _seed_policy(_first_resolved(handoff.get("seeds"), experiment_contract.get("seeds"))),
-        "execution.max_iterations": _max_iterations(context_reboost.get("iteration_budget")),
-        "execution.budget": _mapping(context_reboost.get("iteration_budget")),
+        "execution.max_iterations": _max_iterations(_first_resolved(context_reboost.get("iteration_budget"), handoff.get("iteration_budget"))),
+        "execution.budget": _mapping(_first_resolved(context_reboost.get("iteration_budget"), handoff.get("iteration_budget"))),
         "execution.stop_conditions": _string_list(context_reboost.get("stop_conditions")),
         "execution.human_review_triggers": _string_list(context_reboost.get("human_review_triggers")),
-        "outputs.writer_handoff_requirements": _string_list(context_reboost.get("writer_handoff_contract")),
+        "outputs.writer_handoff_requirements": _string_list(
+            _first_resolved(context_reboost.get("writer_handoff_contract"), handoff.get("writer_handoff_contract"))
+        ),
         "outputs.handoff_readiness_requirements": _string_list(context_reboost.get("handoff_readiness_requirements")),
     }
     for path, value in handoff_rules.items():
@@ -176,6 +212,15 @@ def _apply_handoff(context: MutableMapping[str, Any], handoff: Mapping[str, Any]
             status="confirmed",
             sources=sources,
         )
+    policy = _resource_acquisition_policy(handoff, context_reboost)
+    set_context_field(
+        context,
+        metadata,
+        path="resources.acquisition_policy",
+        value=policy,
+        status="confirmed",
+        sources=sources,
+    )
 
 
 def _apply_project_source(context: MutableMapping[str, Any], project: Mapping[str, Any], handoff: Mapping[str, Any]) -> None:
@@ -349,6 +394,32 @@ def _apply_known_materials(context: MutableMapping[str, Any], workspace: Path) -
         )
 
 
+def _resource_acquisition_policy(handoff: Mapping[str, Any], context_reboost: Mapping[str, Any]) -> dict[str, Any]:
+    for value in (
+        handoff.get("resource_acquisition_policy"),
+        context_reboost.get("resource_acquisition_policy"),
+        _get(handoff, "execution_contract.resource_acquisition_policy"),
+    ):
+        if isinstance(value, Mapping) and value:
+            policy = dict(value)
+            break
+    else:
+        policy = default_resource_acquisition_policy()
+    default = default_resource_acquisition_policy()
+    policy.update(
+        {
+            "mode": "github_and_reimplementation",
+            "network_allowed": True,
+            "github_access_allowed": True,
+            "dataset_download_allowed": True,
+            "baseline_reimplementation_allowed": True,
+        }
+    )
+    policy.setdefault("allowed_domains", default["allowed_domains"])
+    policy.setdefault("material_absence_policy", default["material_absence_policy"])
+    return policy
+
+
 def _set_authoritative(
     context: MutableMapping[str, Any],
     metadata: MutableMapping[str, Any],
@@ -483,6 +554,8 @@ def _string_list(value: Any) -> list[str]:
                     item.get("boundary"),
                     item.get("claim"),
                     item.get("statement"),
+                    item.get("description"),
+                    item.get("artifact_type"),
                     item.get("name"),
                     item.get("value"),
                 )
@@ -553,6 +626,15 @@ def _seed_policy(value: Any) -> dict[str, Any]:
 def _minimum_loop(value: Any) -> list[str]:
     if value is MISSING:
         return []
+    if isinstance(value, Mapping):
+        result: list[str] = []
+        for item in value.get("required_experiments", []) or []:
+            if isinstance(item, Mapping):
+                result.append(str(_first_resolved(item.get("purpose"), item.get("experiment_id"), item.get("run_type"))))
+        for item in value.get("ordered_gates", []) or []:
+            if isinstance(item, Mapping):
+                result.append(str(_first_resolved(item.get("stage"), item.get("gate_id"))))
+        return [item for item in result if item and item != str(MISSING)]
     if isinstance(value, list):
         result: list[str] = []
         for item in value:

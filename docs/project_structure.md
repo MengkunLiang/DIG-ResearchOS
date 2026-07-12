@@ -45,6 +45,7 @@ second deployment or configuration tree. Never create a `deploy/config/` copy.
 | Host OS | Native compilation or first choice for `auto` | `latexmk`, pdfLaTeX, XeLaTeX, BibTeX, and Chinese TeX packages when Chinese output is needed. |
 | `infra/docker/Dockerfile` | Compose-native compilation and native Docker fallback image | The same TeX toolchain is installed in `researchos/system:latest`. |
 | `requirements.txt` | Python runtime, PDF/BibTeX tooling and deterministic survey-figure dependencies | Never add TeX packages here; matplotlib is Python-level, TeX remains system/image-owned. |
+| `environment.yml` | Conda environment definition | Installs the same `requirements.txt` dependency set and the editable local package for a reproducible native developer setup. |
 | Workspace | TeX source and generated evidence | `drafts/survey/` and `submission/bundle/`; PDFs/logs are generated, not source. |
 
 The running Compose service does not receive a Docker socket. It compiles with
@@ -67,7 +68,23 @@ missing directories and writes non-destructive `_DIR_GUIDE.md` files.
 | `drafts/` | Survey/paper sections, audits, templates, deterministic figures, and compile evidence | T3.6/T8/T9. |
 | `user_inputs/` | Standalone Skill uploads, deterministic intake checklist, and focused multi-turn follow-up requests | Guided Skills. |
 | `submission/` | Migrated submission bundle and compile report | T9. |
-| `_runtime/` | Logs, traces, pipeline resume states, guided Skill sessions, and failed-artifact archives | Operations and recovery. |
+| `_runtime/` | Logs, traces, researcher-facing JSONL events, pipeline resume states, guided Skill sessions, and failed-artifact archives | Operations and recovery. |
+
+### Runtime observability data
+
+`_runtime/` contains distinct data with different audiences. Do not treat them
+as interchangeable, and do not delete them while diagnosing a pause:
+
+| Path | Audience | Contents |
+| --- | --- | --- |
+| `_runtime/events/<run_id>.jsonl` | UI, integration tests, future web UI | Bounded Stage Start/Progress/Summary facts, decisions, warnings, actual reads, and Artifact manifests. It never contains hidden reasoning. |
+| `_runtime/logs/researchos.log` | Researcher/operator | Compact chronological runtime timeline and pause/error summary. |
+| `_runtime/logs/researchos-debug.log` | Developer/operator | Python/runtime diagnostics. |
+| `_runtime/traces/<run_id>.jsonl` | Developer/auditor with project access | Tool calls/results and model/tool sequence; potentially larger and more sensitive than events. |
+| `_runtime/resume/` | Runtime recovery | Task-specific reconstruction context. |
+
+The event stream is written for every stage run. `--json-events` only mirrors
+those records to stdout; it does not turn event persistence on or off.
 
 ### Guided Skill uploads and sessions
 
@@ -91,15 +108,24 @@ inputs. A running Skill that finds a semantic gap writes `user_inputs/<skill>/_f
 human; this keeps the question, answer path and later resume visible in project data. These two files are process
 metadata, not paper evidence and not final Skill outputs.
 
+For a missing required file, a noninteractive Skill command remains at `WAITING_INPUT` without constructing an LLM
+client. In a TTY with `--interactive`, the separate intake phase may ask the human to upload or paste material and can
+write only the declared `user_inputs/<skill>/` paths. It is intentionally unable to write project artifacts such as
+`drafts/`, `literature/`, `ideation/`, experiment results, or final Skill outputs. After staging, the normal deterministic
+readiness check runs again.
+
 T8 keeps a venue-aware writing contract in `drafts/writing_style.json` and a visible research-story contract in
 `drafts/writing_storyline.md`. The latter links the problem, rationale or technical root reason, insight, design,
 evidence, alternative explanations, limitations and reviewer questions. `drafts/craft_audit.*` then records internal
 profile diagnostics and section counts; neither file defines official submission requirements.
 
 `drafts/survey/figures/` is generated project data. Its
-`survey_visual_manifest.json` records which comparison-table-derived figures exist, their input fingerprints,
-font/DPI, and explicit skipped reasons. Do not upload arbitrary images there or treat a skipped manifest as a request
-to fabricate a visual.
+`survey_visual_manifest.json` records whether the one permitted taxonomy overview exists, its survey-plan fingerprint,
+font/DPI, and explicit skipped reason. `fig_taxonomy_overview.pdf` is structural: it may show only taxonomy labels and
+direct paper-ID links. The manifest's `source.paper_link_audit` records every direct ID and its resolved local note-card
+path; unresolved direct IDs remove the canonical PDF and force `skipped`. This is provenance resolution, not an
+evidence-strength ranking. Do not upload arbitrary images there or treat a skipped manifest as a request to fabricate a
+performance, relative-gain, screening-score, safety, or decorative visual.
 
 The workspace is durable project data. Do not delete it when rebuilding a
 Docker image. Do not make Native and Docker processes write it concurrently.

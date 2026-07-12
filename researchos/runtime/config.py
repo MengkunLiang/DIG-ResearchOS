@@ -79,6 +79,9 @@ class UISettings:
     no_banner: bool = False
     quiet: bool = False
     verbose: bool = False
+    verbosity: str = "normal"
+    no_color: bool = False
+    json_events: bool = False
 
 
 @dataclass(frozen=True)
@@ -194,6 +197,9 @@ def load_runtime_settings(config_path: Path | None = None) -> RuntimeSettings:
             no_banner=bool(ui_block.get("no_banner", False)),
             quiet=bool(ui_block.get("quiet", False)),
             verbose=bool(ui_block.get("verbose", False)),
+            verbosity=str(ui_block.get("verbosity", "normal")),
+            no_color=bool(ui_block.get("no_color", False)),
+            json_events=bool(ui_block.get("json_events", False)),
         ),
         web_fetch=WebFetchSettings(
             allowed_schemes=_normalize_csv_like_list(

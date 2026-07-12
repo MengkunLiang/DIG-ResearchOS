@@ -4,3 +4,8 @@ channels:
 dependencies:
   - python=3.11
   - pip
+  - pip:
+      # requirements.txt is the Docker-compatible Python dependency lockstep.
+      # The editable install exposes the local `researchos` CLI entry point.
+      - -r requirements.txt
+      - -e .

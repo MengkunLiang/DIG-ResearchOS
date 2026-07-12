@@ -273,14 +273,13 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "project": "project.yaml",
             "survey_plan": "drafts/survey/survey_plan.json",
             "survey_state": "drafts/survey/survey_state.json",
-            "comparison_table": "literature/comparison_table.csv",
-            "domain_map": "literature/domain_map.json",
-            **OPTIONAL_SEED_SURVEY_INPUTS,
+            "paper_notes_dir": "literature/paper_notes",
+            "paper_notes_bridge_dir": "literature/paper_notes_bridge",
         },
         "outputs": {
             "survey_visual_manifest": "drafts/survey/figures/survey_visual_manifest.json",
         },
-        "required_inputs": ["project", "survey_plan", "survey_state", "comparison_table"],
+        "required_inputs": ["project", "survey_plan", "survey_state", "paper_notes_dir"],
         "schemas": {},
     },
     "T3.6-SEC-BACKGROUND": {
@@ -666,6 +665,9 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "synthesis": "literature/synthesis.md",
             "comparison_table": "literature/comparison_table.csv",
             "idea_scorecard": "ideation/idea_scorecard.yaml",
+            "paper_notes_dir": "literature/paper_notes",
+            "paper_notes_bridge_dir": "literature/paper_notes_bridge",
+            "paper_notes_abstract_dir": "literature/paper_notes_abstract",
         },
         "outputs": {
             "novelty_audit": "ideation/novelty_audit.md",
@@ -703,6 +705,10 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "idea_scorecard": "ideation/idea_scorecard.yaml",
             "synthesis": "literature/synthesis.md",
             "comparison_table": "literature/comparison_table.csv",
+            "paper_notes_dir": "literature/paper_notes",
+            "paper_notes_bridge_dir": "literature/paper_notes_bridge",
+            "paper_notes_abstract_dir": "literature/paper_notes_abstract",
+            "notes_manifest": "literature/notes_manifest.json",
         },
         "outputs": {
             "handoff_pack": "external_executor/handoff_pack.json",
@@ -747,6 +753,10 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "synthesis_workbench": "literature/synthesis_workbench.json",
             "domain_map": "literature/domain_map.json",
             "comparison_table": "literature/comparison_table.csv",
+            "paper_notes_dir": "literature/paper_notes",
+            "paper_notes_bridge_dir": "literature/paper_notes_bridge",
+            "paper_notes_abstract_dir": "literature/paper_notes_abstract",
+            "notes_manifest": "literature/notes_manifest.json",
         },
         "outputs": {
             "handoff_pack": "external_executor/handoff_pack.json",
@@ -890,6 +900,8 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "run_records": "experiments/run_records.jsonl",
             "exp_plan": "ideation/exp_plan.yaml",
             "novelty_audit": "ideation/novelty_audit.md",
+            "paper_notes_dir": "literature/paper_notes",
+            "paper_notes_bridge_dir": "literature/paper_notes_bridge",
         },
         "outputs": {
             "integrity_audit": "experiments/integrity_audit.json",
@@ -929,6 +941,8 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "exp_plan": "ideation/exp_plan.yaml",
             "hypotheses": "ideation/hypotheses.md",
             "novelty_audit": "ideation/novelty_audit.md",
+            "paper_notes_dir": "literature/paper_notes",
+            "paper_notes_bridge_dir": "literature/paper_notes_bridge",
         },
         "outputs": {
             "experimental_claims": "experiments/experimental_claims.json",
@@ -1054,6 +1068,9 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "idea_scorecard": "ideation/idea_scorecard.yaml",
             "novelty_audit": "ideation/novelty_audit.md",
             "ablations": "experiments/ablations.csv",
+            "paper_notes_dir": "literature/paper_notes",
+            "paper_notes_bridge_dir": "literature/paper_notes_bridge",
+            "paper_notes_abstract_dir": "literature/paper_notes_abstract",
         },
         "outputs": {
             "writing_style": "drafts/writing_style.json",
@@ -1114,6 +1131,9 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "idea_scorecard": "ideation/idea_scorecard.yaml",
             "comparison_table": "literature/comparison_table.csv",
             "ablations": "experiments/ablations.csv",
+            "paper_notes_dir": "literature/paper_notes",
+            "paper_notes_bridge_dir": "literature/paper_notes_bridge",
+            "paper_notes_abstract_dir": "literature/paper_notes_abstract",
         },
         "outputs": {
             "manuscript_resource_index": "drafts/manuscript_resource_index.json",

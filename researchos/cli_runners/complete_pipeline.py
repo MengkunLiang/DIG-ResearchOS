@@ -7,9 +7,11 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import shutil
+from uuid import uuid4
 
 from ..agents.registry import get_agent_by_id
 from ..orchestration.state_machine import StateMachine, validate_t4_gate1_selection_file
+from ..orchestration.task_io_contract import get_task_io
 from ..runtime.agent import AgentResult
 from ..runtime.config import RuntimeSettings
 from ..runtime.llm_client import LLMClient
@@ -65,6 +67,11 @@ class CompletePipelineRunner:
         self.progress = CliProgressEmitter(
             quiet=self.runtime_settings.ui.quiet,
             verbose=self.runtime_settings.ui.verbose,
+            verbosity=self.runtime_settings.ui.verbosity,
+            no_color=self.runtime_settings.ui.no_color,
+            json_events=self.runtime_settings.ui.json_events,
+            workspace=self.workspace,
+            runtime_dir_name=self.runtime_settings.workspace.runtime_dir,
         )
         register_builtin_task_checkers()
 
@@ -477,6 +484,8 @@ class CompletePipelineRunner:
                 task_id=ctx.task_id,
                 reason=result.error,
                 log_path=str(self.workspace / self.runtime_settings.workspace.runtime_dir / "logs" / "researchos.log"),
+                run_id=ctx.run_id,
+                outputs=ctx.outputs_expected,
             )
 
         before_task = state.current_task
@@ -514,6 +523,31 @@ class CompletePipelineRunner:
         )
         state.dump_yaml(state_path)
         gate_id = state.pending_gate.gate_id
+        gate_run_id = f"{state.current_task}_gate_{uuid4().hex[:8]}"
+        try:
+            io_spec = get_task_io(state.current_task)
+        except KeyError:
+            # Extension projects may define an immediate gate outside the
+            # repository's built-in task catalog. It still receives a durable
+            # human-decision event, simply without declared artifact rows.
+            io_spec = {"inputs": {}, "outputs": {}, "required_inputs": []}
+        inputs = {key: self.workspace / str(path) for key, path in dict(io_spec.get("inputs") or {}).items()}
+        outputs = {key: self.workspace / str(path) for key, path in dict(io_spec.get("outputs") or {}).items()}
+        self.progress.stage_started(
+            task_id=state.current_task,
+            run_id=gate_run_id,
+            inputs=inputs,
+            outputs=outputs,
+            required_input_keys={str(key) for key in (io_spec.get("required_inputs") or [])},
+            agent="human_gate",
+            mode="human_decision",
+            is_resume=state.status in {"PAUSED", "WAITING_HUMAN"},
+        )
+        self.progress.stage_human_action_required(
+            task_id=state.current_task,
+            gate_id=gate_id,
+            reason=str(state.pending_gate.presentation.get("_description") or "需要人工确认关键研究决策。"),
+        )
         self.run_logger.event(
             "HUMAN_GATE",
             task=state.current_task,
@@ -533,6 +567,14 @@ class CompletePipelineRunner:
             state.last_error = str(exc)
             state.dump_yaml(state_path)
             self.run_logger.event("PAUSED", task=state.current_task, gate_id=gate_id, reason=state.last_error)
+            self.progress.stage_completed(
+                task_id=state.current_task,
+                run_id=gate_run_id,
+                outputs=outputs,
+                ok=False,
+                summary="Human Gate 等待输入。",
+                error=state.last_error,
+            )
             return state
 
         before_task = state.current_task
@@ -548,6 +590,18 @@ class CompletePipelineRunner:
             reason=f"gate:{gate_id}",
         )
         self.progress.gate_resolved(from_task=before_task, to_task=state.current_task, gate_id=gate_id)
+        self.progress.stage_gate_resolved(
+            task_id=before_task,
+            gate_id=gate_id,
+            decision=str(gate_result.get("option_id") or "human_selection"),
+        )
+        self.progress.stage_completed(
+            task_id=before_task,
+            run_id=gate_run_id,
+            outputs=outputs,
+            ok=True,
+            summary=f"Human Gate 已记录选择：{gate_result.get('option_id') or 'human_selection'}。",
+        )
         state.dump_yaml(state_path)
         return state
 

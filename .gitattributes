@@ -1,1 +1,10 @@
+* text=auto eol=lf
+
+# Generated and binary research assets must not undergo line-ending conversion.
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.svg binary
 *.eps binary

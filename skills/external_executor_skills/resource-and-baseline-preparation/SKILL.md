@@ -23,7 +23,7 @@ Prepare the minimum experiment loop without confusing resource availability with
    - `<skill-dir>/references/acquisition-policy.md`;
    - `<skill-dir>/references/resource-requirement-contract.md`;
    - `<skill-dir>/references/output-contract.md`.
-4. Stop with `blocked` when context alignment is absent or blocking, the confirmed execution scope is missing, the acquisition policy is absent or internally inconsistent, or the writable resource boundary cannot be determined.
+4. Stop with `blocked` when context alignment is absent or blocking, the confirmed execution scope is missing, the acquisition policy is internally inconsistent, or the writable resource boundary cannot be determined. If the policy is absent in a legacy handoff, use the ResearchOS default policy: public GitHub access, public dataset download, and baseline reimplementation are allowed within `allowed_paths.txt`, license review, and security review.
 
 Write only:
 
@@ -54,7 +54,7 @@ The preflight must confirm:
 - local output and `workdir/resources/` paths are writable under policy;
 - no unsupported major schema is required.
 
-A preflight warning prompts targeted review. A preflight blocker prevents acquisition and reimplementation.
+A preflight warning prompts targeted review. A preflight blocker prevents acquisition and reimplementation. A scaffold-only `external_executor/expr/`, missing `resources/baseline_candidates.jsonl`, or missing `literature/baseline_map.json` is not a blocker; this skill owns discovering/acquiring/reimplementing missing resources.
 
 ## Build the resource requirement matrix
 
@@ -98,6 +98,8 @@ user_seeds/
 external_executor/workdir/resources/  # only verifiable prior material
 ```
 
+It is valid for `external_executor/expr/` to contain only the generated README and checklist. Record that as an inventory fact and continue to authorized remote acquisition or reimplementation for unsatisfied requirements.
+
 Use `references/resource-review-checklist.md` to map candidates to requirements. Inspect provenance, fixed version, license, README, configuration, entry points, dependency manifests, dataset split, preprocessing, metric implementation, benchmark protocol, checkpoints, symlinks, submodules, and minimum-loop coverage. Do not execute third-party setup, download, shell, notebook, training, or evaluation code during inventory.
 
 When a local candidate is accepted for controlled work, copy it without mutating the source:
@@ -129,6 +131,8 @@ Use remote search only for requirements still unsatisfied after local review and
 - the domain is explicitly allowed;
 - dataset download is separately authorized when the resource contains data;
 - the query does not expose private manuscript text, unpublished results, secrets, or private paths.
+
+For ResearchOS T5 external execution, public GitHub search/acquisition and public dataset download are allowed by default unless a narrower handoff policy explicitly forbids them.
 
 Prefer, in order:
 
@@ -171,6 +175,8 @@ Reimplementation is permitted only when:
 - core algorithm, objective, dataset/split, metric, and benchmark protocol are recoverable;
 - license or access restrictions do not prohibit the work;
 - the requirement does not demand an official implementation specifically.
+
+For ResearchOS T5 external execution, baseline reimplementation is allowed by default after local and authorized remote searches are exhausted and recorded.
 
 Create a provenance-first package:
 

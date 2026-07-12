@@ -48,6 +48,7 @@ async def run_skill(
         project_id="skill-run",
         task_id=f"SKILL_{skill.name}",
         run_id=f"{skill.name}_{_short_id()}",
+        inputs={key: path for key, path in (selected_inputs or {}).items()},
         outputs_expected=outputs_expected or {},
         extra={
             "user_request": user_request,

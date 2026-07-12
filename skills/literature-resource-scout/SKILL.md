@@ -13,8 +13,6 @@ tools:
   - finish_task
 strict_tools: true
 model_tier: medium
-max_steps: 18
-max_tokens_total: 140000
 temperature: 0.3
 allowed_read_prefixes:
   - user_inputs/literature-resource-scout/

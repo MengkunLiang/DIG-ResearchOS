@@ -31,19 +31,19 @@ Useful source locations:
 | `researchos/orchestration/` | State transition, gates, task I/O contracts, recovery. |
 | `researchos/agents/` | Task-specific behavior and output validation. |
 | `researchos/tools/` | Workspace-bounded deterministic capabilities. |
-| `researchos/runtime/` | LLM client, progress, logs, trace, config, workspace initialization. |
+| `researchos/runtime/` | LLM client, progress, logs, trace, observability, config, workspace initialization. |
 | `config/system_config/` | State-machine/gate contracts. |
 | `tests/unit/`, `tests/real/` | Deterministic and capability-dependent regression coverage. |
 
 ## 2. Local Environment
 
 ```bash
-conda create -n researchos python=3.11 -y
+conda env create -f environment.yml
 conda activate researchos
-pip install -r requirements.txt
-pip install -e .
 cp .env.example .env
 ```
+
+For a pip-only environment, use `pip install -r requirements.txt && pip install -e .`.
 
 Run the baseline checks before changing code:
 
@@ -157,7 +157,11 @@ researchos skill-status --workspace ./workspace/dev-smoke
 ```
 
 The third command must produce `WAITING_INPUT` without provider access when a
-required input is missing. Add the file, then use `--session-id ... --resume`.
+required input is missing in noninteractive mode. In a TTY run with
+`--interactive`, separately test the constrained intake path: it may call the
+provider to organize only human-provided material under `user_inputs/<skill>/`,
+then must re-run deterministic readiness before normal Skill execution. Add the
+file or complete intake, then use `--session-id ... --resume`.
 During a real run, assert that the session stores only observable runtime events
 (`awaiting_llm`, `tool_running`, `tool_completed`), never a hidden-reasoning transcript.
 For a real success path, use `MockLLMClient` at unit scope and a narrowly
@@ -177,6 +181,37 @@ python -m compileall -q researchos
 git diff --check
 ```
 
+### Observability changes
+
+Do not add one-off `print()` statements to agents for researcher-facing status.
+Use `CliProgressEmitter` and the presentation-only package at
+`researchos/runtime/observability/` instead:
+
+- `stage_catalog.py` owns stable Chinese-first stage and Artifact semantics;
+- `artifacts.py` performs read-only size/count/fingerprint inspection;
+- `extractors.py` derives bounded, conservative research summaries from
+  persisted Artifacts;
+- `events.py` writes versioned `_runtime/events/<run_id>.jsonl` records;
+- `reporter.py` renders the shared Stage Start/Progress/Summary panels.
+
+An observability change must not alter agent prompts, task Artifact schema,
+validator behavior, state transitions, or evidence strength. Add/adjust tests
+for all changed parts of the contract:
+
+```bash
+pytest -q tests/unit/test_observability_artifacts.py \
+  tests/unit/test_observability_reporter.py \
+  tests/unit/test_observability_extractors.py \
+  tests/unit/test_cli_observability_snapshot.py
+```
+
+At minimum assert: declared versus actual reads; created/updated/reused and
+outer-validator invalidation; no ANSI with `--no-color`; bounded detailed
+output; durable event schema; resume without replaying old per-tool progress;
+and no raw prompt/tool payload in a CLI snapshot. When adding a stage, update
+the stage profile, Artifact meanings/consumers, extractor, and canonical
+pipeline documentation together.
+
 For a LaTeX/runtime change, also run:
 
 ```bash
@@ -187,10 +222,11 @@ python -m researchos.cli doctor --workspace ./workspace/agentic
 
 The real Docker test compiles a Chinese XeLaTeX document and an English
 pdflatex/BibTeX document, checks `%PDF`, and verifies compile reports.
-`test_survey_visuals.py` performs real matplotlib generation, checks PNG bytes,
-embeds the generated visual into a real PDF, and verifies the safe wide-table
-resizebox report. Run an equivalent Compose-native smoke command after changing
-the Dockerfile or Python graphics requirements.
+`test_survey_visuals.py` performs real Matplotlib vector-PDF generation from a taxonomy tree, verifies that every
+direct taxonomy ID resolves to a local note card (and that an unresolved ID deletes a stale canonical PDF), verifies
+that the manifest permits exactly that one structural graphic and forbids performance/screening-score figures, embeds the PDF
+into a real LaTeX document, and verifies the safe wide-table resizebox report. Run an equivalent Compose-native smoke
+command after changing the Dockerfile or Python graphics requirements.
 
 Test classification:
 

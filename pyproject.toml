@@ -21,6 +21,14 @@ dependencies = [
   "PyMuPDF>=1.23,<2",
   "PyPDF2>=3,<4",
   "bibtexparser>=1.4,<2",
+  "matplotlib>=3.8,<4",
+  "rich>=13,<14",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2,<9",
+  "pytest-asyncio>=0.23,<1",
 ]
 
 [project.scripts]

@@ -9,8 +9,6 @@ tools:
   - finish_task
 strict_tools: true
 model_tier: heavy
-max_steps: 18
-max_tokens_total: 150000
 temperature: 0.25
 allowed_read_prefixes:
   - user_inputs/hypothesis-compiler/

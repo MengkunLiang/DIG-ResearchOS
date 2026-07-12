@@ -82,6 +82,14 @@ class SurveyWriterAgent(Agent):
             )
         )
         self._mode = mode
+        if mode == "survey_visuals":
+            # This phase is deliberately non-generative with respect to visual
+            # content.  A survey taxonomy map is the only permitted graphic;
+            # generic file writes or LaTeX calls could otherwise fabricate
+            # cross-paper performance comparisons.
+            self.spec.tool_names = ["read_file", "build_survey_figures", "finish_task"]
+            self.spec.allowed_read_prefixes = ["literature/", "drafts/survey/"]
+            self.spec.allowed_write_prefixes = ["drafts/survey/figures/"]
 
     def _phase(self, ctx: ExecutionContext) -> str:
         return ctx.mode or str(ctx.extra.get("phase") or self._mode or "survey_plan")
@@ -95,23 +103,31 @@ class SurveyWriterAgent(Agent):
         project = load_project(ctx)
         phase = self._phase(ctx)
         section_id = self._section_id(ctx)
+        visual_only = phase == "survey_visuals"
         section_outline = (
             read_text_file(ws / "drafts" / "survey" / "section_outlines" / f"{section_id}.md", default="")
             if section_id
             else ""
         )
-        seed_outline_profile = read_text_file(ws / "user_seeds" / "seed_outline_profile.json", default="")
-        seed_ideas = read_text_file(ws / "user_seeds" / "seed_ideas.md", default="")
-        seed_constraints = read_text_file(ws / "user_seeds" / "seed_constraints.md", default="")
-        if is_placeholder_text(seed_ideas):
+        if visual_only:
+            seed_outline_profile = ""
             seed_ideas = ""
-        if is_placeholder_text(seed_constraints):
             seed_constraints = ""
-        seed_papers = load_jsonl(ws / "user_seeds" / "seed_papers.jsonl")
-        external_resources = load_jsonl(ws / "user_seeds" / "seed_external_resources.jsonl")
+            seed_papers: list[dict[str, object]] = []
+            external_resources: list[dict[str, object]] = []
+        else:
+            seed_outline_profile = read_text_file(ws / "user_seeds" / "seed_outline_profile.json", default="")
+            seed_ideas = read_text_file(ws / "user_seeds" / "seed_ideas.md", default="")
+            seed_constraints = read_text_file(ws / "user_seeds" / "seed_constraints.md", default="")
+            if is_placeholder_text(seed_ideas):
+                seed_ideas = ""
+            if is_placeholder_text(seed_constraints):
+                seed_constraints = ""
+            seed_papers = load_jsonl(ws / "user_seeds" / "seed_papers.jsonl")
+            external_resources = load_jsonl(ws / "user_seeds" / "seed_external_resources.jsonl")
         related_work_bib_path = ws / "literature" / "related_work.bib"
-        related_work_keys = _extract_bib_keys(related_work_bib_path)
-        citation_pool_preview = _citation_pool_preview(ws, related_work_keys)
+        related_work_keys = [] if visual_only else _extract_bib_keys(related_work_bib_path)
+        citation_pool_preview = [] if visual_only else _citation_pool_preview(ws, related_work_keys)
         return render_prompt(
             self.spec.prompt_template,
             ctx,
@@ -119,34 +135,36 @@ class SurveyWriterAgent(Agent):
             phase=phase,
             section_id=section_id,
             section_title=SURVEY_SECTION_TITLES.get(section_id, section_id.replace("_", " ").title()),
-            synthesis_preview=read_text_file(ws / "literature" / "synthesis.md", default="")[:6000],
-            synthesis_workbench_preview=read_text_file(ws / "literature" / "synthesis_workbench.json", default="")[:6000],
-            domain_map_preview=read_text_file(ws / "literature" / "domain_map.json", default="")[:5000],
-            comparison_table_preview=read_text_file(ws / "literature" / "comparison_table.csv", default="")[:4000],
+            synthesis_preview="" if visual_only else read_text_file(ws / "literature" / "synthesis.md", default="")[:6000],
+            synthesis_workbench_preview="" if visual_only else read_text_file(ws / "literature" / "synthesis_workbench.json", default="")[:6000],
+            domain_map_preview="" if visual_only else read_text_file(ws / "literature" / "domain_map.json", default="")[:5000],
+            comparison_table_preview="" if visual_only else read_text_file(ws / "literature" / "comparison_table.csv", default="")[:4000],
             survey_plan_preview=read_text_file(ws / "drafts" / "survey" / "survey_plan.json", default="")[:7000],
-            writing_template_preview=read_text_file(ws / "drafts" / "survey" / "writing_template.json", default="")[:2000],
-            survey_state_preview=read_text_file(ws / "drafts" / "survey" / "survey_state.json", default="")[:7000],
-            corpus_decision_preview=read_text_file(ws / "drafts" / "survey" / "corpus_decision.json", default="")[:2000],
-            survey_audit_preview=read_text_file(ws / "drafts" / "survey" / "survey_audit.md", default="")[:3000],
+            writing_template_preview="" if visual_only else read_text_file(ws / "drafts" / "survey" / "writing_template.json", default="")[:2000],
+            survey_state_preview="" if visual_only else read_text_file(ws / "drafts" / "survey" / "survey_state.json", default="")[:7000],
+            corpus_decision_preview="" if visual_only else read_text_file(ws / "drafts" / "survey" / "corpus_decision.json", default="")[:2000],
+            survey_audit_preview="" if visual_only else read_text_file(ws / "drafts" / "survey" / "survey_audit.md", default="")[:3000],
             survey_visual_manifest_preview=read_text_file(
                 ws / "drafts" / "survey" / "figures" / "survey_visual_manifest.json", default=""
-            )[:4000],
-            section_outline_preview=section_outline[:5000],
-            related_work_preview=read_text_file(related_work_bib_path, default="")[:3000],
-            related_work_keys=related_work_keys,
-            related_work_key_count=len(related_work_keys),
-            citation_pool_preview=citation_pool_preview,
-            seed_outline_profile_preview=seed_outline_profile[:7000],
-            has_seed_outline_profile=bool(seed_outline_profile.strip()),
-            seed_ideas_preview=seed_ideas[:3000],
-            has_seed_ideas=bool(seed_ideas.strip()),
-            seed_constraints_preview=seed_constraints[:2000],
-            has_seed_constraints=bool(seed_constraints.strip()),
-            seed_papers_preview=seed_papers[:10],
-            seed_paper_count=len(seed_papers),
-            external_resources_preview=external_resources[:12],
-            external_resource_count=len(external_resources),
-            has_external_resources=bool(external_resources),
+            )[:4000]
+            if not visual_only
+            else "",
+            section_outline_preview="" if visual_only else section_outline[:5000],
+            related_work_preview="" if visual_only else read_text_file(related_work_bib_path, default="")[:3000],
+            related_work_keys=[] if visual_only else related_work_keys,
+            related_work_key_count=0 if visual_only else len(related_work_keys),
+            citation_pool_preview=[] if visual_only else citation_pool_preview,
+            seed_outline_profile_preview="" if visual_only else seed_outline_profile[:7000],
+            has_seed_outline_profile=False if visual_only else bool(seed_outline_profile.strip()),
+            seed_ideas_preview="" if visual_only else seed_ideas[:3000],
+            has_seed_ideas=False if visual_only else bool(seed_ideas.strip()),
+            seed_constraints_preview="" if visual_only else seed_constraints[:2000],
+            has_seed_constraints=False if visual_only else bool(seed_constraints.strip()),
+            seed_papers_preview=[] if visual_only else seed_papers[:10],
+            seed_paper_count=0 if visual_only else len(seed_papers),
+            external_resources_preview=[] if visual_only else external_resources[:12],
+            external_resource_count=0 if visual_only else len(external_resources),
+            has_external_resources=False if visual_only else bool(external_resources),
         )
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
@@ -191,9 +209,10 @@ class SurveyWriterAgent(Agent):
             )
         elif phase == "survey_visuals":
             message = (
-                "请执行 T3.6-VISUALS：调用 build_survey_figures，从 comparison_table.csv 生成可复现、"
-                "数据驱动的综述图及 manifest。若数据不够，manifest 必须记录 skipped，不能编造装饰图。"
-                "写完 manifest 后 finish_task；不要在本阶段改写正文。"
+                "请执行 T3.6-VISUALS：调用 build_survey_figures。该确定性工具最多生成一张 "
+                "fig_taxonomy_overview.pdf，只使用 survey_plan.json 中显式 taxonomy 类与直接关联的 paper IDs。"
+                "严禁生成性能/基线/相对提升图、跨研究指标比较、T2 筛选分数图、风险或安全热图，以及装饰图。"
+                "taxonomy 信息不足时，manifest 必须记录 skipped。写完 manifest 后 finish_task；不要在本阶段改写正文或调用 LaTeX。"
             )
         elif phase == "survey_section":
             section_id = self._section_id(ctx)
@@ -289,12 +308,42 @@ class SurveyWriterAgent(Agent):
             status = manifest.get("status")
             if status not in {"generated", "skipped"}:
                 return False, "survey_visual_manifest.json status 必须为 generated/skipped"
-            for item in manifest.get("figures") or []:
-                if not isinstance(item, dict) or not str(item.get("path") or "").strip():
-                    return False, "survey visual manifest figure 条目缺少 path"
-                figure_path = ws / str(item["path"])
-                if not figure_path.exists() or figure_path.stat().st_size <= 0:
-                    return False, f"survey visual manifest 指向缺失图像: {item['path']}"
+            policy = manifest.get("generation_policy") if isinstance(manifest.get("generation_policy"), dict) else {}
+            forbidden_policy = {
+                "only_one_figure": True,
+                "performance_comparisons_forbidden": True,
+                "cross_study_relative_gains_forbidden": True,
+                "screening_scores_forbidden": True,
+                "inferred_safety_or_risk_heatmaps_forbidden": True,
+                "only_taxonomy_structure_and_explicit_paper_links": True,
+                "all_direct_paper_ids_must_resolve_to_note_cards": True,
+            }
+            missing_policy = [key for key, expected in forbidden_policy.items() if policy.get(key) is not expected]
+            if missing_policy:
+                return False, "survey visual manifest 缺少强制事实图政策: " + ", ".join(missing_policy)
+            source = manifest.get("source") if isinstance(manifest.get("source"), dict) else {}
+            link_audit = source.get("paper_link_audit") if isinstance(source.get("paper_link_audit"), dict) else {}
+            unresolved = link_audit.get("unresolved_direct_paper_ids") if isinstance(link_audit.get("unresolved_direct_paper_ids"), list) else []
+            if unresolved:
+                return False, "survey visual manifest 包含未解析到本地笔记卡的 paper ID: " + ", ".join(str(item) for item in unresolved[:8])
+            figures = manifest.get("figures") if isinstance(manifest.get("figures"), list) else []
+            if status == "skipped":
+                if figures:
+                    return False, "survey visual manifest 为 skipped 时不得包含图像"
+                return True, None
+            if len(figures) != 1:
+                return False, "survey visual manifest 只能包含一张 taxonomy overview 图"
+            item = figures[0] if isinstance(figures[0], dict) else {}
+            expected_path = "drafts/survey/figures/fig_taxonomy_overview.pdf"
+            if item.get("id") != "taxonomy_overview" or item.get("path") != expected_path:
+                return False, "survey visual manifest 只能指向 fig_taxonomy_overview.pdf"
+            if item.get("kind") != "explicit_taxonomy_structure":
+                return False, "survey visual manifest 图类型必须为 explicit_taxonomy_structure"
+            figure_path = ws / expected_path
+            if not figure_path.exists() or figure_path.stat().st_size <= 0:
+                return False, f"survey visual manifest 指向缺失图像: {expected_path}"
+            if not figure_path.read_bytes().startswith(b"%PDF"):
+                return False, "fig_taxonomy_overview.pdf 不是有效 PDF 文件"
             return True, None
         if phase == "survey_section":
             return _validate_survey_section(ws, self._section_id(ctx))
@@ -330,6 +379,7 @@ class SurveyWriterAgent(Agent):
                 "citation_claim_alignment",
                 "no_runtime_process_prose",
                 "bibliography_quality",
+                "survey_graphics_manifest_alignment",
             }
             present_checks = {
                 str(item.get("name") or "")

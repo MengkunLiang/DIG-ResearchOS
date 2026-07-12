@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This policy governs how Phase B obtains experiment resources. It never grants authority; authority must already exist in `handoff_pack.json`, `context_alignment.confirmed_execution_scope`, `AGENTS.md`, and `allowed_paths.txt`.
+This policy governs how Phase B obtains experiment resources. Authority comes from `handoff_pack.json`, `context_alignment.confirmed_execution_scope`, `AGENTS.md`, `executor_selection.json`, and `allowed_paths.txt`. For ResearchOS T5 external execution, the default authority allows public GitHub access, public dataset download, and baseline reimplementation inside allowed paths, subject to license and security review.
 
 ## Modes
 
@@ -13,6 +13,8 @@ This policy governs how Phase B obtains experiment resources. It never grants au
 | `github_and_reimplementation` | allowed | same as `github_allowed` | same as `github_allowed` | allowed only when `baseline_reimplementation_allowed=true` and all preconditions pass |
 
 A boolean flag cannot broaden a stricter mode. A mode cannot override `AGENTS.md`, path policy, restricted-data terms, or license restrictions.
+
+When a legacy handoff omits the acquisition policy, use the ResearchOS default mode `github_and_reimplementation` with `network_allowed=true`, `dataset_download_allowed=true`, and `baseline_reimplementation_allowed=true`. Do not treat a scaffold-only `external_executor/expr/` as a missing-material blocker.
 
 ## Ordered acquisition path
 

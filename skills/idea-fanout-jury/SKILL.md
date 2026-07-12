@@ -10,8 +10,6 @@ tools:
   - finish_task
 strict_tools: true
 model_tier: heavy
-max_steps: 18
-max_tokens_total: 160000
 temperature: 0.4
 allowed_read_prefixes:
   - user_inputs/idea-fanout-jury/
