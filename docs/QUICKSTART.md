@@ -25,7 +25,7 @@ python -m researchos.cli init-workspace \
 python -m researchos.cli run --workspace ./workspace/project-a
 ```
 
-The terminal first shows the DIG Lab · BUAA / ResearchOS panel, then a Stage
+The terminal first shows the DIG · BUAA / ResearchOS panel, then a Stage
 Start panel. At each gate, read the inputs, decision table, artifact paths, and
 risk/unsupported notes before answering. `--no-banner` is only for scripts;
 `--no-color` is for ANSI-free output.
@@ -45,8 +45,12 @@ state the inclusion policy when that matters.
 
 ## 4. Survey Branch
 
-T3.6 is optional. If selected, the sequence is taxonomy plan -> outline/corpus
-gate -> survey state -> one deterministic taxonomy figure -> sections ->
+T3.6 is optional. The gate after T3.5 first asks whether to skip Survey, write
+with the current corpus, or request one targeted supplement before Survey
+planning. The preference is persisted in `drafts/survey/decision.json`; it is
+not a claim that newly retrieved records are ready for prose. If selected, the
+sequence is taxonomy plan -> outline/corpus gate -> optional targeted expansion
+plan -> survey state -> one deterministic taxonomy figure -> sections ->
 assembly/review -> real TeX compilation.
 
 The only permitted survey figure is:
@@ -121,6 +125,22 @@ python -m researchos.cli run-skill pdf-note-card \
 
 In non-interactive mode, absent material produces `WAITING_INPUT` and no LLM
 provider is initialized. See [skills.md](skills.md).
+
+For a complete field or review workflow, use an integrated Skill. It asks first
+whether it may search for missing literature, records visible subphases in the
+same session, and asks again before entering Survey preparation or hypothesis
+selection:
+
+```bash
+python -m researchos.cli run-skill domain-synthesis-studio \
+  "综合此领域；先检查语料，不足时询问是否定向检索，再决定是否准备 Survey" \
+  --workspace ./workspace/project-a --session-id field-review
+
+python -m researchos.cli skill-status --workspace ./workspace/project-a
+```
+
+The `skill-status` panel shows the active integrated phase, completed artifacts,
+evidence boundary, and the exact same-session resume command.
 
 ## 8. Reuse Another Project Carefully
 

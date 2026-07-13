@@ -199,7 +199,9 @@ class SurveyWriterAgent(Agent):
             message = (
                 "请执行 T3.6-PLAN：基于 literature/synthesis.md、synthesis_workbench.json、"
                 "domain_map.json、comparison_table.csv 和 paper_notes 规划 taxonomy-driven survey。"
-                "写 drafts/survey/survey_plan.json；不要写正文。"
+                "还必须读取 drafts/survey/decision.json 的 survey_retrieval_preference；若其为 "
+                "targeted_supplement_before_writing，在 plan 中明确薄弱 taxonomy 类与需要的补检类型，"
+                "但不要把检索线索写成正文证据。写 drafts/survey/survey_plan.json；不要写正文。"
             )
         elif phase == "outline_gate":
             message = (
@@ -209,7 +211,9 @@ class SurveyWriterAgent(Agent):
         elif phase == "corpus_gate":
             message = (
                 "请执行 T3.6 Gate-3：询问用户选择 conservative 或 complete 素材范围，"
-                "写 drafts/survey/corpus_decision.json。"
+                "先读取 drafts/survey/decision.json；若 survey_retrieval_preference 为 "
+                "targeted_supplement_before_writing，清楚说明 complete 会生成一次性定向补检计划，"
+                "而新检索线索仍需阅读/证据分级后才能支撑正文。写 drafts/survey/corpus_decision.json。"
             )
         elif phase == "survey_expand":
             message = (

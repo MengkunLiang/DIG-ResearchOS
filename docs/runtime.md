@@ -11,7 +11,7 @@ CLI
   -> ToolRegistry + Skills + optional MCP adapters
   -> StateMachine / runner
   -> ExecutionContext
-  -> AgentRunner -> Agent or SkillAgent -> policy-bounded tools
+  -> AgentRunner -> Agent, SkillAgent, or integrated SkillAgent -> policy-bounded tools
   -> workspace artifacts + validators + events/logs/traces
 ```
 
@@ -80,6 +80,38 @@ research artifacts.
 
 Skills do not impose artificial internal token/step limits. Provider constraints
 and real runtime conditions still apply.
+
+### Integrated Skill Workflows
+
+An integrated public Skill adds a declarative `workflow` section to `SKILL.md`.
+The loader validates phase ids, labels, objectives, operations, and gate flags
+at discovery. `record_readiness` copies that contract into the normal session
+file without resetting completed phase records on resume. The bounded
+`update_skill_workflow` tool can update only the active standalone Skill
+session and records:
+
+```text
+phase id / visible status / summary / artifact paths / evidence boundary / next action
+```
+
+This is not nested `run-skill` execution. The current runtime executes one
+SkillAgent and one policy-bounded ToolRegistry at a time; composed Skills reuse
+real tools and artifact contracts inside a named phase sequence. That avoids
+hidden child sessions, path-policy drift, and unclear recovery ownership.
+
+### Provider-Context Abstract Batching
+
+T3 full-text reading remains paper-specific. Its abstract sweep may call the
+Reader in batches when a provider binding reports `max_context`. The orchestrator
+uses the selected binding's `count_tokens()` and context window to pack abstract
+records; it does not configure a fixed paper-count batch limit. Response room is
+reserved per abstract, then every returned JSON note is normalized and written
+as a separate `paper_notes_abstract/<paper>.md` artifact.
+
+Batch output remains `ABSTRACT_ONLY` / `abstract_claim_hint`. A malformed or
+partial batch falls back only for missing papers, while metadata-only records
+remain in their existing batch triage path. Batch count, per-paper fallback,
+and provider context are emitted as bounded progress and access-audit facts.
 
 ## T3.6 Survey Runtime
 

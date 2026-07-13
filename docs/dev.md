@@ -24,6 +24,9 @@ commands from the repository root; before editable installation use
    metrics/datasets/baselines/seeds need source-bound current-project evidence.
 5. Update the user-facing README and the affected document in `docs/` with any
    CLI, environment, artifact, recovery, or behavior change.
+6. For a public integrated Skill, declare a validated `workflow` in `SKILL.md`,
+   call `update_skill_workflow` at phase boundaries, and keep every suggested
+   artifact inside the declared workspace policy.
 
 ## Validation
 
@@ -39,6 +42,10 @@ Add focused tests for changed logic. At minimum, behavior changes should cover
 their validator/tool/CLI path and one real or snapshot-style integration path
 where the blast radius reaches user-visible runtime behavior.
 
+For context-adaptive batching, test both a multi-paper provider-context batch
+and a malformed/partial batch fallback. Assert separate note artifacts and
+`ABSTRACT_ONLY` boundaries; never test only the provider call count.
+
 The local `tests/` directory is ignored in this checkout by repository policy;
 run it locally but do not accidentally stage ignored fixtures merely to make a
 change appear tested.
@@ -49,6 +56,7 @@ change appear tested.
 python -m researchos.cli doctor --workspace /tmp/researchos-dev
 python -m researchos.cli run-task HELLO --workspace /tmp/researchos-dev
 python -m researchos.cli list-skills --workspace /tmp/researchos-dev
+python -m researchos.cli describe-skill domain-synthesis-studio --workspace /tmp/researchos-dev
 python -m researchos.cli validate --task T3.6-SEC-INTRO --workspace ./workspace/project-a
 ```
 

@@ -426,6 +426,7 @@ class AgentRunner:
             llm_model=primary_binding.model,
             llm_tier=eff.llm_tier,
             llm_max_context=primary_binding.max_context,
+            skill_session_id=str(ctx.extra.get("skill_session_id") or "") or None,
         )
         tool_map = self.tool_registry.build(eff.tool_names, build_ctx)
         tool_schemas = self.tool_registry.to_openai_schemas(tool_map)
@@ -1752,18 +1753,29 @@ class AgentRunner:
                     )
                 return
 
+            abstract_reader_binding = self.llm.resolve(
+                profile=eff.llm_profile,
+                tier=eff.llm_tier,
+                model_override=eff.llm_model_override,
+                endpoint_override=eff.llm_endpoint_override,
+                max_context_override=eff.llm_max_context_override,
+            )[0][0]
+
+            def _abstract_reader_messages(prompt: str) -> list[dict[str, str]]:
+                return [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are ResearchOS Reader. Produce cautious abstract-only "
+                            "paper notes in the exact requested Markdown or JSON structure."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ]
+
             async def _reader_llm(_paper: dict[str, object], prompt: str) -> str:
                 llm_resp = await self.llm.chat(
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are ResearchOS Reader. Produce cautious abstract-only "
-                                "paper notes in the exact requested Markdown structure."
-                            ),
-                        },
-                        {"role": "user", "content": prompt},
-                    ],
+                    messages=_abstract_reader_messages(prompt),
                     tools=None,
                     temperature=0.2,
                     tier=eff.llm_tier,
@@ -1777,6 +1789,26 @@ class AgentRunner:
                 )
                 choice = llm_resp.raw.choices[0].message
                 return str(getattr(choice, "content", "") or "")
+
+            async def _abstract_batch_llm(_papers: list[dict[str, object]], prompt: str) -> str:
+                llm_resp = await self.llm.chat(
+                    messages=_abstract_reader_messages(prompt),
+                    tools=None,
+                    temperature=0.15,
+                    tier=eff.llm_tier,
+                    profile=eff.llm_profile,
+                    model_override=eff.llm_model_override,
+                    endpoint_override=eff.llm_endpoint_override,
+                    max_context_override=eff.llm_max_context_override,
+                    timeout=int(self.global_timeout.get("llm_call") or 120),
+                    max_retries_per_model=max(1, int(self.retry_policy.get("llm_retries") or 2)),
+                    retry_base_delay=float(self.retry_policy.get("llm_retry_delay") or 2),
+                )
+                choice = llm_resp.raw.choices[0].message
+                return str(getattr(choice, "content", "") or "")
+
+            def _count_abstract_batch_prompt(prompt: str) -> int:
+                return self.llm.count_tokens(_abstract_reader_messages(prompt), abstract_reader_binding)
 
             async def _metadata_triage_llm(_papers: list[dict[str, object]], prompt: str) -> str:
                 llm_resp = await self.llm.chat(
@@ -1808,7 +1840,10 @@ class AgentRunner:
                 ctx.workspace_dir,
                 sweep_config,
                 abstract_reader=_reader_llm,
+                abstract_batch_reader=_abstract_batch_llm,
                 metadata_triage_reader=_metadata_triage_llm,
+                provider_context_window=abstract_reader_binding.max_context,
+                prompt_token_counter=_count_abstract_batch_prompt,
             )
             ctx.extra["abstract_sweep"] = result
 
@@ -1817,6 +1852,7 @@ class AgentRunner:
                     f"[Reader Agent] Abstract sweep 完成：筛选 {result['candidates_found']} 篇候选，"
                     f"生成 {result['notes_generated']} 篇 abstract note "
                     f"（LLM {result.get('llm_notes_generated', 0)}，fallback {result.get('fallback_notes_generated', 0)}），"
+                    f"provider-context 批次 {result.get('llm_batch_calls', 0)}，"
                     f"metadata-only 批量 triage {result.get('metadata_triage_count', 0)} 篇",
                     important=True,
                 )

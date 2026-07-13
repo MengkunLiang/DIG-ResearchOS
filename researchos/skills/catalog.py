@@ -70,6 +70,15 @@ _SEARCH_ALIASES: dict[str, tuple[str, ...]] = {
     "venue-fit-review": ("会议", "期刊", "venue", "fit", "投稿"),
     "paper-compile": ("latex", "编译", "pdf", "compile", "投稿"),
     "submission-readiness": ("投稿", "提交", "submission", "ready"),
+    "domain-synthesis-studio": ("领域综合", "领域", "综述", "synthesis", "taxonomy", "文献综合"),
+    "literature-comparison-studio": ("文献比较", "论文比较", "对比", "doi", "comparison"),
+    "cross-domain-idea-studio": ("跨域", "cross-domain", "idea", "创新", "桥接", "迁移"),
+    "literature-review-studio": ("文献综述", "综述", "survey", "literature review", "检索"),
+    "survey-evidence-package": ("综述", "survey", "taxonomy", "语料", "综述写作"),
+    "related-work-builder": ("related work", "相关工作", "文献综述", "写作", "citation"),
+    "paper-reading-workbench": ("论文阅读", "读论文", "pdf", "doi", "笔记卡", "paper reading"),
+    "research-landscape-report": ("领域地图", "领域综合", "research landscape", "机会", "文献"),
+    "draft-evidence-repair": ("证据修复", "claim", "引用", "草稿", "审计", "revision"),
 }
 
 
@@ -107,6 +116,15 @@ _PROFILES: dict[str, SkillCatalogProfile] = {
     "method-builder": SkillCatalogProfile("外部执行器", "兼容指导", "外部执行器的历史兼容入口"),
     "context-re-boosting": SkillCatalogProfile("外部执行器", "交接重整", "外部实验前的历史兼容交接入口"),
     "research-reboost": SkillCatalogProfile("外部执行器", "交接重整", "外部实验 handoff 的兼容 Skill"),
+    "domain-synthesis-studio": SkillCatalogProfile("文献与知识", "领域综合", "从范围、补检到证据约束的领域综合与后续路径选择"),
+    "literature-comparison-studio": SkillCatalogProfile("文献与知识", "集成文献对比", "从 DOI/PDF/卡片开始建立可追溯比较与决策"),
+    "cross-domain-idea-studio": SkillCatalogProfile("Idea 与假设", "跨域候选治理", "用桥接证据、迁移风险和人工选择构建跨域 Idea"),
+    "literature-review-studio": SkillCatalogProfile("专业综述", "综述工作台", "从综述问题到可审计语料、taxonomy 与 Survey handoff"),
+    "survey-evidence-package": SkillCatalogProfile("专业综述", "Survey 证据准备", "在写作前审计 taxonomy、语料充分性和补检路径"),
+    "related-work-builder": SkillCatalogProfile("论文写作", "Related Work", "用可回查的文献卡和引用库构建章节"),
+    "paper-reading-workbench": SkillCatalogProfile("论文导入与阅读", "阅读工作台", "从 PDF/DOI 到多篇阅读卡和跨论文学习"),
+    "research-landscape-report": SkillCatalogProfile("文献与知识", "领域地图", "展示事实性结构、覆盖、张力和证据约束机会"),
+    "draft-evidence-repair": SkillCatalogProfile("审阅与修订", "证据修复", "定位草稿 claim、引用和证据缺口并制定修复计划"),
 }
 
 _CATEGORY_ORDER = (

@@ -30,6 +30,7 @@ class ToolBuildContext:
     llm_model: str | None = None
     llm_tier: str | None = None
     llm_max_context: int | None = None
+    skill_session_id: str | None = None
 
 
 class ToolRegistry:

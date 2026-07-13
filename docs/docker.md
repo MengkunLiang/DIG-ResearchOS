@@ -3,6 +3,10 @@
 ResearchOS has one runtime contract. Native and Docker Compose execute the same
 CLI, artifacts, validators, human gates, and state machine.
 
+They also execute the same public Skill contracts, integrated workflow sessions,
+provider-context abstract batching, and Survey evidence gates. Do not use native
+and containerized commands as concurrent writers for one workspace.
+
 | Mode | Workspace path | TeX location | Use when |
 | --- | --- | --- | --- |
 | Native | Host path, for example `workspace/project-a` | Host TeX, then allowed Docker fallback | Development and direct local use |

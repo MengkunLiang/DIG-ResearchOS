@@ -1433,7 +1433,7 @@ def _format_t36_synthesis_preview(value: Any) -> str:
 
     lines = [
         f"文件: {path}",
-        "T3.5 已完成 literature synthesis。它会继续作为 T4 idea fuel；是否写综述论文是额外分支选择。",
+        "T3.5 已完成 literature synthesis。它会继续作为 T4 idea fuel；Survey 是额外分支。请选择使用当前语料，或先针对薄弱 taxonomy 类做一次定向补检。",
     ]
     if size is not None:
         lines.append(f"规模: 约 {size} 字符")
@@ -1454,7 +1454,7 @@ def _format_t36_synthesis_preview(value: Any) -> str:
         lines.append("关键摘录:")
         for item in bullets:
             lines.append(f"- {_compact_text(item.lstrip('- ').strip(), 160)}")
-    lines.append("现在只需判断：是否额外撰写 taxonomy-driven survey。选择“不写综述”会直接进入 T4，不会丢弃 synthesis。")
+    lines.append("现在请判断：不写 Survey；使用当前语料进入 Survey 规划；或先定向补检再进入规划。选择“不写综述”会直接进入 T4，不会丢弃 synthesis。")
     return "\n".join(lines)
 
 

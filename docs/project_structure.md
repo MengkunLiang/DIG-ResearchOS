@@ -13,7 +13,7 @@ DIG-ResearchOS/
 │   ├── runtime.yaml            Workspace, UI, logging, TeX defaults
 │   ├── user_settings.yaml      User overlays for models/budgets/timeouts
 │   └── system_config/          State machine, gates, venue profiles, schemas
-├── skills/                     Discoverable public Skills
+├── skills/                     Discoverable atomic and integrated public Skills
 │   └── external_executor_skills/  External executor assets; separate ownership
 ├── prompts/                    Agent prompt templates
 ├── docs/                       Maintained usage and developer documentation
@@ -43,7 +43,7 @@ workspace/<project>/
 ├── external_executor/          T5 handoff and executor return contract
 ├── experiments/                Ingested run evidence and claim mappings
 ├── submission/                 Final bundle, compile report, fingerprints
-└── _runtime/                   Logs, traces, event JSONL, Skill sessions
+└── _runtime/                   Logs, traces, event JSONL, Skill sessions/workflow state
 ```
 
 ### Ownership Rules

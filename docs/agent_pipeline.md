@@ -25,7 +25,7 @@ an external-executor handoff and later ingests/audits observed results.
 | T1 | What is in scope and what constraints/seed materials govern it? | `project.yaml`, scope/bridge artifacts | Scope and bridge gates |
 | T2 | Which source-backed papers form the credible candidate pool? | verified papers, domain map, queues, backlog, search log | Coverage/language parameter gate |
 | T3 | What does each retained work actually support? | paper notes/cards, comparison table, reading audit | Access/evidence pauses |
-| T3.5 | What mechanisms, tensions, contribution spaces, and transfers emerge? | synthesis/workbench, missing-area audit | Optional survey decision |
+| T3.5 | What mechanisms, tensions, contribution spaces, and transfers emerge? | synthesis/workbench, missing-area audit | Optional Survey decision and current-corpus vs targeted-retrieval preference |
 | T3.6 | Is a taxonomy-driven survey warranted and sufficiently evidenced? | survey plan/state/sections/audit/real PDF | Survey, outline, corpus, compile recovery gates |
 | T4 | Which evidence-grounded contribution direction should be pursued? | Pass1/Pass2 pool, candidate cards, selected brief, hypotheses | Gate1 selection/merge/reanalysis |
 | T4.5 | Is the selected contribution differentiated from nearest work? | novelty/collision audit, baseline/claim constraints | Novelty human review |
@@ -47,11 +47,24 @@ status, mechanism evidence, design rationale, boundaries, tensions, bridge
 points, and unsupported fields. Full text, partial text, abstract-only, and
 metadata-only evidence remain visibly distinct.
 
+After deep reading, eligible shallow records may be abstract-read in
+provider-context-adaptive batches. The batch plan uses the active model binding
+and tokenizer rather than a fixed papers-per-call number. Each paper still
+receives a separate note and never becomes full-text evidence merely because it
+shared an LLM call with other abstracts.
+
 ## T3.6 Survey Branch
 
 T3.6 is a survey paper branch, not a synthesis-to-TeX conversion. Its compact
 default structure is Introduction, Background/Scope, Taxonomy, Comparative
 Analysis, Challenges, Future Directions, Conclusion, and Abstract.
+
+The T3.5 Survey gate first asks whether to skip Survey, write with the current
+corpus, or request one targeted supplement before writing. The preference is
+persisted in `drafts/survey/decision.json`, made visible during taxonomy/corpus
+planning, and does not turn search leads into Survey evidence. Use
+`survey-evidence-package` when the researcher wants a standalone, guided
+pre-writing sufficiency/taxonomy workflow.
 
 - `build_survey_state` produces section writing contracts and preserves valid
   completed sections when it is reissued under the same plan.

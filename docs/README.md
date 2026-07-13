@@ -29,7 +29,7 @@ here.
 3. Concrete experimental details are allowed only when their current-project
    provenance is explicit. A metric such as AUUC or Qini is valid when sourced;
    it is invalid when guessed from the topic.
-4. Every CLI command shows the DIG Lab · BUAA / ResearchOS entry panel once
+4. Every CLI command shows the DIG · BUAA / ResearchOS entry panel once
    unless `--no-banner` or `--quiet` suppresses it.
 5. `T3.6` and `T9` validate real TeX compilation. Use `doctor` before a long
    run and repair the named backend before `resume`.

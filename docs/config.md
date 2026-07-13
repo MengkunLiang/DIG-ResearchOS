@@ -51,6 +51,12 @@ Skills intentionally have no internal token or step limit. Provider context,
 rate, availability, credentials, runtime failures, explicit completion, and
 human input still bound execution.
 
+The same rule applies to T3 abstract batching: ResearchOS does not configure a
+fixed paper-count batch size. The active model binding's `max_context` and
+tokenizer determine how many independent abstracts fit in one call. Keep model
+context values accurate in the selected profile; an incorrect value can force
+unnecessary singleton calls or provider-side context rejection.
+
 ## Runtime Settings
 
 `config/runtime.yaml` controls the shared environment:
@@ -90,6 +96,11 @@ cat ./workspace/project-a/literature/literature_params.json
 It records active-pool size, deep-read min/target/max, abstract sweep,
 require-target behavior, manuscript language, and Chinese-literature policy.
 Language and literature inclusion are separate decisions.
+
+After T3.5, `drafts/survey/decision.json` separately records whether Survey is
+skipped, based on the current corpus, or requested after a targeted supplement.
+It is a user decision artifact, not a replacement for the later taxonomy/corpus
+evidence audit.
 
 ## Experimental Protocols
 

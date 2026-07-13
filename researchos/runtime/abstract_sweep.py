@@ -11,6 +11,7 @@ from __future__ import annotations
 import csv
 import io
 import inspect
+import json
 import re
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -54,7 +55,9 @@ _DEFAULT_CONFIG = {
 
 
 AbstractReader = Callable[[dict[str, Any], str], str | Awaitable[str]]
+AbstractBatchReader = Callable[[list[dict[str, Any]], str], Any | Awaitable[Any]]
 MetadataTriageReader = Callable[[list[dict[str, Any]], str], str | Awaitable[str]]
+PromptTokenCounter = Callable[[str], int]
 
 ABSTRACT_CORE_HEADING = "## A. Core Approach / Perspective"
 ABSTRACT_BRIDGE_HEADING = "## B. Bridge Point"
@@ -679,6 +682,142 @@ def build_abstract_reader_prompt(paper: dict[str, Any]) -> str:
     )
 
 
+def build_abstract_batch_reader_prompt(papers: list[dict[str, Any]]) -> str:
+    """Build one structured prompt for a provider-context-sized abstract batch.
+
+    The records retain separate ids and notes so batching only saves provider calls;
+    it never combines the evidence status of separate papers.
+    """
+
+    records = []
+    for paper in papers:
+        records.append(
+            {
+                "id": _normalize_id(paper),
+                "title": str(paper.get("title") or "Unknown").strip(),
+                "authors": ", ".join(_normalize_author_names(paper.get("authors", []), limit=8)) or "Unknown",
+                "year": _extract_year(paper),
+                "venue": str(paper.get("venue") or "").strip(),
+                "doi_or_arxiv": str(paper.get("doi") or paper.get("arxiv_id") or paper.get("id") or "").strip(),
+                "why_relevant": str(paper.get("why_relevant") or "").strip(),
+                "abstract": str(paper.get("abstract") or "").strip(),
+            }
+        )
+    return (
+        "You are ResearchOS Reader. Produce separate cautious ABSTRACT-ONLY paper notes for the records below. "
+        "You have not read full text. Do not invent datasets, metrics, baseline details, numerical results, causal mechanisms, or citations. "
+        "For every record return a complete Markdown note with its own id/title and these exact headings: "
+        "`## 1. Problem & Motivation`, `## 2. Method Summary`, `## A. Core Approach / Perspective`, "
+        "`## B. Bridge Point`, `## 3. Key Claimed Results`, `## Raw Abstract`, `## 13. Mechanism Claim`, and `## Source`. "
+        "The mechanism section must contain `- **Evidence type**: abstract_claim_hint`. "
+        "When unavailable from the abstract, write `not available from abstract`.\n\n"
+        "Return JSON only, using this schema: "
+        '{"notes":[{"paper_id":"exact input id","note_markdown":"complete Markdown note"}]}. '
+        "Do not omit a record; return an empty note_markdown only when the input abstract is missing.\n\n"
+        "Records:\n"
+        + json.dumps(records, ensure_ascii=False)
+    )
+
+
+def plan_abstract_reader_batches(
+    papers: list[dict[str, Any]],
+    *,
+    provider_context_window: int | None,
+    prompt_token_counter: PromptTokenCounter | None = None,
+) -> list[list[dict[str, Any]]]:
+    """Pack abstracts against the active provider's declared context window.
+
+    This intentionally has no fixed paper-count knob.  The model binding supplies
+    the window; ResearchOS only reserves enough room for structured per-paper notes
+    and uses the same binding's token counter when the caller provides one.
+    """
+
+    if not papers:
+        return []
+    if provider_context_window is None or provider_context_window <= 0:
+        return [[paper] for paper in papers]
+
+    def count(text: str) -> int:
+        if prompt_token_counter is not None:
+            try:
+                value = int(prompt_token_counter(text))
+                if value > 0:
+                    return value
+            except Exception:
+                pass
+        # Only used outside a live provider tokenizer, such as unit tests.
+        return max(1, len(text) // 4)
+
+    # The provider's window is authoritative.  Reserve response room based on
+    # each source abstract rather than an arbitrary record cap; the remaining
+    # slack protects JSON/Markdown serialization overhead.
+    fixed_prompt_tokens = count(build_abstract_batch_reader_prompt([]))
+    safety_reserve = max(512, int(provider_context_window * 0.08))
+    batches: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    current_cost = fixed_prompt_tokens + safety_reserve
+    for paper in papers:
+        abstract_tokens = count(str(paper.get("abstract") or ""))
+        expected_note_tokens = max(280, min(1200, int(abstract_tokens * 1.25) + 180))
+        candidate_cost = count(json.dumps(
+            {
+                "id": _normalize_id(paper),
+                "title": str(paper.get("title") or ""),
+                "abstract": str(paper.get("abstract") or ""),
+            },
+            ensure_ascii=False,
+        )) + expected_note_tokens
+        if current and current_cost + candidate_cost > provider_context_window:
+            batches.append(current)
+            current = []
+            current_cost = fixed_prompt_tokens + safety_reserve
+        current.append(paper)
+        current_cost += candidate_cost
+    if current:
+        batches.append(current)
+    return batches
+
+
+def parse_abstract_batch_reader_output(value: Any, papers: list[dict[str, Any]]) -> dict[str, str]:
+    """Return a safe id->note mapping from a batch reader response."""
+
+    allowed_ids = {_normalize_id(paper) for paper in papers if _normalize_id(paper)}
+    payload: Any = value
+    if isinstance(payload, str):
+        text = payload.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+            text = re.sub(r"\s*```$", "", text)
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            decoder = json.JSONDecoder()
+            payload = None
+            for position, char in enumerate(text):
+                if char != "{":
+                    continue
+                try:
+                    payload, _ = decoder.raw_decode(text[position:])
+                    break
+                except json.JSONDecodeError:
+                    continue
+    if isinstance(payload, dict):
+        entries = payload.get("notes") or payload.get("records") or []
+    elif isinstance(payload, list):
+        entries = payload
+    else:
+        entries = []
+    notes: dict[str, str] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        paper_id = str(entry.get("paper_id") or entry.get("id") or "").strip()
+        note = str(entry.get("note_markdown") or entry.get("note") or entry.get("markdown") or "").strip()
+        if paper_id in allowed_ids and note:
+            notes[paper_id] = note
+    return notes
+
+
 def build_metadata_triage_prompt(papers: list[dict[str, Any]]) -> str:
     """Build a batch LLM prompt for metadata-only candidates."""
 
@@ -1061,7 +1200,10 @@ async def run_abstract_sweep_with_reader(
     config: dict[str, Any] | None = None,
     *,
     abstract_reader: AbstractReader | None = None,
+    abstract_batch_reader: AbstractBatchReader | None = None,
     metadata_triage_reader: MetadataTriageReader | None = None,
+    provider_context_window: int | None = None,
+    prompt_token_counter: PromptTokenCounter | None = None,
 ) -> dict:
     """执行 abstract sweep，可注入 Reader LLM callback。"""
 
@@ -1069,7 +1211,10 @@ async def run_abstract_sweep_with_reader(
         workspace,
         config,
         abstract_reader=abstract_reader,
+        abstract_batch_reader=abstract_batch_reader,
         metadata_triage_reader=metadata_triage_reader,
+        provider_context_window=provider_context_window,
+        prompt_token_counter=prompt_token_counter,
     )
 
 
@@ -1174,7 +1319,10 @@ async def _run_abstract_sweep_async(
     config: dict[str, Any] | None = None,
     *,
     abstract_reader: AbstractReader | None = None,
+    abstract_batch_reader: AbstractBatchReader | None = None,
     metadata_triage_reader: MetadataTriageReader | None = None,
+    provider_context_window: int | None = None,
+    prompt_token_counter: PromptTokenCounter | None = None,
 ) -> dict:
     cfg = _resolve_config(config)
     if not cfg.get("enabled", False):
@@ -1198,6 +1346,8 @@ async def _run_abstract_sweep_async(
     metadata_triage_count = 0
     metadata_triage_llm = 0
     reader_errors: list[dict[str, str]] = []
+    llm_batch_calls = 0
+    batch_fallback_count = 0
     rows_to_append: list[str] = []
     bib_entries: list[str] = []
     metadata_only_papers: list[dict[str, Any]] = []
@@ -1222,49 +1372,91 @@ async def _run_abstract_sweep_async(
             flush=True,
         )
 
-    for candidate_index, paper in enumerate(candidates, start=1):
-        paper_id = _normalize_id(paper)
-        if not paper_id:
+    readable_papers: list[dict[str, Any]] = []
+    for paper in candidates:
+        if not _normalize_id(paper):
             continue
-
-        note_source = "deterministic_fallback"
-        has_abstract = bool(str(paper.get("abstract") or "").strip())
-        if not has_abstract:
+        if str(paper.get("abstract") or "").strip():
+            readable_papers.append(paper)
+        else:
             metadata_only_papers.append(paper)
             metadata_triage_count += 1
-            if progress_enabled and (candidate_index % progress_every == 0 or candidate_index == len(candidates)):
-                print(
-                    f"[Agent] Abstract sweep progress: {candidate_index}/{len(candidates)} candidates, "
-                    f"notes={notes_generated}, metadata_only={metadata_triage_count}",
-                    flush=True,
-                )
-            continue
-        if abstract_reader is not None:
-            prompt = build_abstract_reader_prompt(paper)
+
+    batch_plan: list[list[dict[str, Any]]] = []
+    if abstract_batch_reader is not None and len(readable_papers) > 1:
+        batch_plan = plan_abstract_reader_batches(
+            readable_papers,
+            provider_context_window=provider_context_window,
+            prompt_token_counter=prompt_token_counter,
+        )
+    if not batch_plan:
+        batch_plan = [[paper] for paper in readable_papers]
+
+    if progress_enabled and readable_papers:
+        print(
+            format_cli_message(
+                "[Reader Agent] Abstract sweep batching: "
+                f"provider_context={provider_context_window or 'unavailable'}; "
+                f"papers={len(readable_papers)}; batches={len(batch_plan)}; "
+                "batch size is derived from provider context, not a fixed paper cap."
+            ),
+            flush=True,
+        )
+
+    processed_readable = 0
+    for batch_index, batch in enumerate(batch_plan, start=1):
+        batch_notes: dict[str, str] = {}
+        used_batch_reader = abstract_batch_reader is not None and len(batch) > 1
+        if used_batch_reader:
             try:
-                note_raw = await _call_abstract_reader(abstract_reader, paper, prompt)
-                note = normalize_abstract_reader_note(note_raw, paper)
-                note_source = "reader_llm"
-                llm_notes_generated += 1
+                raw = await _call_abstract_batch_reader(
+                    abstract_batch_reader,
+                    batch,
+                    build_abstract_batch_reader_prompt(batch),
+                )
+                batch_notes = parse_abstract_batch_reader_output(raw, batch)
+                llm_batch_calls += 1
             except Exception as exc:  # pragma: no cover - defensive fallback
+                reader_errors.append({"paper_id": "batch:" + str(batch_index), "error": repr(exc)[:300]})
+
+        for paper in batch:
+            paper_id = _normalize_id(paper)
+            note_source = "deterministic_fallback"
+            note_raw = batch_notes.get(paper_id, "")
+            if note_raw:
+                note = normalize_abstract_reader_note(note_raw, paper)
+                note_source = "reader_llm_batch"
+                llm_notes_generated += 1
+            elif abstract_reader is not None:
+                try:
+                    note_raw = await _call_abstract_reader(abstract_reader, paper, build_abstract_reader_prompt(paper))
+                    note = normalize_abstract_reader_note(note_raw, paper)
+                    note_source = "reader_llm"
+                    llm_notes_generated += 1
+                    if used_batch_reader:
+                        batch_fallback_count += 1
+                except Exception as exc:  # pragma: no cover - defensive fallback
+                    note = generate_abstract_note(paper)
+                    reader_errors.append({"paper_id": paper_id, "error": repr(exc)[:300]})
+                    fallback_notes_generated += 1
+            else:
                 note = generate_abstract_note(paper)
-                reader_errors.append({"paper_id": paper_id, "error": repr(exc)[:300]})
                 fallback_notes_generated += 1
-        else:
-            note = generate_abstract_note(paper)
-            fallback_notes_generated += 1
 
-        note += f"\n<!-- abstract_sweep_note_source: {note_source} -->\n"
-        note_path = abstract_dir / f"{paper_id}.md"
-        note_path.write_text(note, encoding="utf-8")
-
-        rows_to_append.append(generate_comparison_row(paper))
-        bib_entries.append(generate_bib_entry(paper))
-        notes_generated += 1
-        if progress_enabled and (candidate_index % progress_every == 0 or candidate_index == len(candidates)):
+            note += f"\n<!-- abstract_sweep_note_source: {note_source} -->\n"
+            (abstract_dir / f"{paper_id}.md").write_text(note, encoding="utf-8")
+            rows_to_append.append(generate_comparison_row(paper))
+            bib_entries.append(generate_bib_entry(paper))
+            notes_generated += 1
+            processed_readable += 1
+        if progress_enabled:
             print(
-                f"[Agent] Abstract sweep progress: {candidate_index}/{len(candidates)} candidates, "
-                f"notes={notes_generated}, metadata_only={metadata_triage_count}",
+                format_cli_message(
+                    "[Reader Agent] Abstract sweep batch progress: "
+                    f"batch {batch_index}/{len(batch_plan)}; papers={processed_readable}/{len(readable_papers)}; "
+                    f"notes={notes_generated}; metadata_only={metadata_triage_count}; "
+                    f"batch_fallbacks={batch_fallback_count}"
+                ),
                 flush=True,
             )
 
@@ -1303,6 +1495,8 @@ async def _run_abstract_sweep_async(
             "metadata_triage_count": metadata_triage_count,
             "metadata_triage_llm": metadata_triage_llm,
             "reader_errors": len(reader_errors),
+            "llm_batch_calls": llm_batch_calls,
+            "batch_fallback_count": batch_fallback_count,
         },
     )
 
@@ -1313,6 +1507,7 @@ async def _run_abstract_sweep_async(
             metadata_triage_reader=metadata_triage_reader,
             llm_notes_generated=llm_notes_generated,
             metadata_triage_llm=metadata_triage_llm,
+            llm_batch_calls=llm_batch_calls,
         ),
         "candidates_found": len(candidates),
         "sweep_plan": plan_summary,
@@ -1323,6 +1518,14 @@ async def _run_abstract_sweep_async(
         "metadata_triage_llm": metadata_triage_llm,
         "metadata_triage_report": metadata_report_path,
         "reader_errors": reader_errors[:10],
+        "llm_batch_calls": llm_batch_calls,
+        "batch_fallback_count": batch_fallback_count,
+        "batching": {
+            "provider_context_window": provider_context_window,
+            "batch_count": len(batch_plan),
+            "readable_paper_count": len(readable_papers),
+            "mode": "provider_context_adaptive" if abstract_batch_reader is not None else "per_paper_reader",
+        },
         "output_dir": str(abstract_dir.relative_to(workspace)),
     }
 
@@ -1343,6 +1546,24 @@ async def _call_abstract_reader(
     if inspect.isawaitable(value):
         value = await value
     return str(value or "")
+
+
+async def _call_abstract_batch_reader(
+    abstract_batch_reader: AbstractBatchReader,
+    papers: list[dict[str, Any]],
+    prompt: str,
+) -> Any:
+    try:
+        signature = inspect.signature(abstract_batch_reader)
+        if len(signature.parameters) <= 1:
+            value = abstract_batch_reader(papers)  # type: ignore[misc]
+        else:
+            value = abstract_batch_reader(papers, prompt)
+    except (TypeError, ValueError):
+        value = abstract_batch_reader(papers, prompt)
+    if inspect.isawaitable(value):
+        value = await value
+    return value
 
 
 async def _call_metadata_triage_reader(
@@ -1374,6 +1595,8 @@ def _append_access_audit_summary(workspace: Path, summary: dict[str, Any]) -> No
         f"- metadata-only triage candidates: {summary.get('metadata_triage_count', 0)}\n"
         f"- metadata-only triage LLM batches: {summary.get('metadata_triage_llm', 0)}\n"
         f"- Reader errors: {summary.get('reader_errors', 0)}\n"
+        f"- Provider-context abstract batches: {summary.get('llm_batch_calls', 0)}\n"
+        f"- Per-paper fallback after batch: {summary.get('batch_fallback_count', 0)}\n"
         "- evidence level: ABSTRACT_ONLY / abstract_claim_hint; not full-text evidence\n"
     )
     with path.open("a", encoding="utf-8") as handle:
@@ -1386,7 +1609,12 @@ def _reader_mode(
     metadata_triage_reader: MetadataTriageReader | None,
     llm_notes_generated: int,
     metadata_triage_llm: int,
+    llm_batch_calls: int = 0,
 ) -> str:
+    if llm_batch_calls > 0 and metadata_triage_llm > 0:
+        return "reader_llm_batched+metadata_triage_llm"
+    if llm_batch_calls > 0:
+        return "reader_llm_batched"
     if llm_notes_generated > 0 and metadata_triage_llm > 0:
         return "reader_llm+metadata_triage_llm"
     if llm_notes_generated > 0:

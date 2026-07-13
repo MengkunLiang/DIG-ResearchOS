@@ -72,6 +72,7 @@ from .skills.contracts import (
     parse_skill_interaction,
     prepare_skill_intake_packet,
 )
+from .skills.workflow import parse_skill_workflow
 from .skills.catalog import (
     catalog_entries,
     ordered_skills,
@@ -347,6 +348,7 @@ def _render_skill_description_for_cli(
     skill_path: Path,
     description: str,
     interaction: Any,
+    workflow: Any = None,
 ) -> str:
     if _skill_ui_uses_color(args):
         return render_skill_description_rich(
@@ -354,12 +356,14 @@ def _render_skill_description_for_cli(
             skill_path=skill_path,
             description=description,
             interaction=interaction,
+            workflow=workflow,
         )
     return render_skill_description(
         skill_name=skill_name,
         skill_path=skill_path,
         description=description,
         interaction=interaction,
+        workflow=workflow,
     )
 
 
@@ -1278,6 +1282,7 @@ async def run_skill_command(args: argparse.Namespace) -> int:
     try:
         skill = resolve_skill(args.skill_name, skill_roots)
         interaction = parse_skill_interaction(skill.metadata)
+        workflow = parse_skill_workflow(skill.metadata)
         session_id = args.session_id or skill.name
         previous = load_session(workspace_dir, session_id)
         request = " ".join(args.request).strip()
@@ -1305,6 +1310,7 @@ async def run_skill_command(args: argparse.Namespace) -> int:
             readiness=readiness,
             resume=bool(args.resume),
             intake_packet_path=intake_packet,
+            workflow=workflow,
         )
     except Exception as exc:
         print(f"Skill 启动前检查失败: {exc}", file=sys.stderr)
@@ -1370,6 +1376,7 @@ async def run_skill_command(args: argparse.Namespace) -> int:
                     readiness=readiness,
                     resume=True,
                     intake_packet_path=intake_packet,
+                    workflow=workflow,
                 )
                 intake_message = (
                     f"第 {intake_round} 轮材料收集完成，已通过确定性输入检查；等待人工确认是否执行 Skill。"
@@ -2091,6 +2098,7 @@ def browse_skills_command(args: argparse.Namespace) -> int:
                     skill_path=skill.skill_dir,
                     description=skill.description,
                     interaction=parse_skill_interaction(skill.metadata),
+                    workflow=parse_skill_workflow(skill.metadata),
                 )
             )
             print(f"启动：run {next(index for index, item in by_index.items() if item.name == skill.name)}")
@@ -2134,6 +2142,7 @@ def describe_skill_command(args: argparse.Namespace) -> int:
                 skill_path=skill.skill_dir,
                 description=skill.description,
                 interaction=parse_skill_interaction(skill.metadata),
+                workflow=parse_skill_workflow(skill.metadata),
             )
         )
     except Exception as exc:

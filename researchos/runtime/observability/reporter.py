@@ -671,6 +671,8 @@ def _tool_style(tool_name: str, ok: bool | None, disposition: str | None = None)
     normalized = str(tool_name or "").casefold()
     if normalized in {"ask_human", "human_gate", "finish_task"} or "gate" in normalized:
         return "bright_yellow"
+    if normalized == "update_skill_workflow":
+        return "bright_green"
     if "latex" in normalized or normalized in {"build_survey_figures", "build_domain_map"}:
         return "yellow"
     if any(token in normalized for token in ("search", "retrieve", "query", "citation", "fetch")):
@@ -722,6 +724,13 @@ def _tool_calculation_summary(task_id: str, tool_name: str, data: dict[str, Any]
             if event.get(key) not in (None, ""):
                 rows.append((label, event[key]))
         return {"title": "T4 · Candidate Governance Progress", "rows": rows} if rows else None
+    if tool_name == "update_skill_workflow":
+        phase = data.get("phase") if isinstance(data.get("phase"), dict) else {}
+        rows = []
+        for key, label in (("id", "子阶段"), ("status", "状态"), ("label", "名称"), ("summary", "当前结论")):
+            if phase.get(key) not in (None, ""):
+                rows.append((label, phase[key]))
+        return {"title": f"{task_id} · Integrated Skill Workflow", "rows": rows} if rows else None
     if tool_name in {"build_synthesis_workbench", "build_survey_state", "build_survey_figures", "assemble_survey", "audit_survey_coverage"}:
         rows = [(key, value) for key, value in data.items() if isinstance(value, (int, float, str, bool))][:10]
         return {"title": f"{task_id} · {_tool_label(tool_name)}", "rows": rows} if rows else None
@@ -761,6 +770,7 @@ def _tool_label(tool_name: str) -> str:
         "audit_writing_craft": "写作质量审计",
         "prepare_submission_bundle": "投稿 Bundle",
         "latex_compile": "真实 LaTeX 编译",
+        "update_skill_workflow": "Skill 工作流阶段",
     }.get(tool_name, tool_name)
 
 

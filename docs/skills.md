@@ -1,8 +1,10 @@
 # Skills
 
-Skills are discoverable, atomic workflows stored as `skills/<name>/SKILL.md`.
-They run through the same workspace policy, ToolRegistry, trace, event, output
-validation, and recovery model as pipeline agents. The protected
+Skills are discoverable workflows stored as `skills/<name>/SKILL.md`. They may
+be atomic or integrated: an integrated Skill declares durable research phases,
+evidence boundaries, and human decision points while reusing the same workspace
+policy, ToolRegistry, trace, event, output validation, and recovery model as
+pipeline agents. The protected
 `skills/external_executor_skills/` directory has separate ownership and is not
 part of the public-Skill rewrite path.
 
@@ -75,6 +77,54 @@ python -m researchos.cli run-skill pdf-note-card \
 | Writing | paper outline, paper write, claim-evidence map | Draft structure and evidence-aligned prose |
 | Review and revision | venue fit, peer review, polish, revision | Auditable review findings and patches |
 | Finalization | paper compile, submission readiness | Real compile/status checks and submission artifacts |
+
+## Integrated Research Workflows
+
+The following public Skills are composed workflows, not aliases for a single
+LLM prompt. They all begin with a guided contract, write an artifact manifest,
+persist phase status in `_runtime/skill_sessions/<id>.json`, and use explicit
+human gates before scope expansion, costly reading, candidate selection, or
+Survey handoff.
+
+| Skill | Main phases | Key outputs | Gate behavior |
+| --- | --- | --- | --- |
+| `domain-synthesis-studio` | inventory -> retrieval decision -> source supplement -> synthesis -> next-path decision | domain report, method family map, tension map, evidence register | Asks whether to synthesize current material, authorize scoped retrieval, or upload sources; then offers Survey/Idea/reading routes. |
+| `literature-comparison-studio` | comparison contract -> source readiness -> section evidence -> comparison audit | comparison report/CSV/JSON, claim boundary | DOI/title/PDF failures become a focused upload/clarification request; unknown cells remain unknown. |
+| `literature-review-studio` | review scope -> query/retrieval -> reading coverage -> synthesis/taxonomy -> Survey handoff | corpus inventory, query portfolio, matrix, synthesis, readiness report | Requires retrieval authorization and later asks whether to prepare Survey, supplement reading, or stop at a field synthesis. |
+| `survey-evidence-package` | intent -> sufficiency -> supplement decision -> handoff | corpus sufficiency, taxonomy candidates, storyline, evidence package | Does not write a survey manuscript. It makes the Survey evidence decision visible first. |
+| `cross-domain-idea-studio` | target contract -> bridge retrieval -> transfer audit -> candidate jury | bridge plan, transfer cards, risk register, candidate pool | A bridge analogy is not proof. Candidates require a human selection before hypothesis compilation. |
+| `paper-reading-workbench` | source contract -> access -> evidence reading -> cross-paper learning | reading index, cards, answers, cross-paper summary | Reads PDFs/sections by question and preserves full/partial/abstract/metadata status. |
+| `research-landscape-report` | scope -> mapping/coverage -> opportunity decision | landscape report/data, coverage, opportunity register | Retrieval gaps and graph signals are reported separately from research opportunities. |
+| `related-work-builder` | positioning -> evidence binding -> section draft | TeX section, evidence map, citation/claim audits | Does not create citations or direct-baseline claims without sources. |
+| `draft-evidence-repair` | manuscript contract -> evidence inventory -> repair decision -> package | repair report/JSON, patch plan, claim boundary | Missing evidence leads to a human choice: supplement, weaken, delete, or pause. |
+
+Use the new workflows through the ordinary CLI; no special runner is required:
+
+```bash
+python -m researchos.cli run-skill domain-synthesis-studio \
+  "综合该领域，先判断是否需要定向检索，再决定是否准备 Survey" \
+  --workspace ./workspace/project-a --session-id field-review
+
+python -m researchos.cli run-skill cross-domain-idea-studio \
+  "用已审计桥接证据生成跨域候选，不要未验证实验配置" \
+  --workspace ./workspace/project-a --session-id bridge-ideas
+```
+
+An integrated session presents a phase table in readiness, completion, and
+`skill-status` views. Valid states are `pending`, `running`, `completed`,
+`waiting_input`, `waiting_evidence`, and `skipped`. The Skill calls the bounded
+`update_skill_workflow` tool at phase boundaries; this records only user-facing
+research progress, not model reasoning or raw prompts.
+
+### Automatic Supplementation
+
+When an integrated Skill has a source-returning search tool and the researcher
+authorizes retrieval, it can try to supplement missing literature itself. The
+result is a lead/provenance record, not automatic strong evidence. A source must
+be read at the required granularity before it can support a mechanism, causal
+claim, taxonomy core, baseline comparison, or paper positioning. The workflow
+asks for upload, narrowing, or a separate reading Skill when automated search
+cannot close that evidence gap.
 
 Use the live catalog rather than this table for exact names: the catalog is the
 installed capability source of truth.

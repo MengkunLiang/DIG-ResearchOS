@@ -2,12 +2,15 @@ from __future__ import annotations
 
 """把外部 skill 包装成 ResearchOS Agent。"""
 
+import json
+
 from jinja2 import StrictUndefined, Template
 
 from ..runtime.errors import ConfigurationError
 from ..runtime.agent import Agent, AgentSpec, ExecutionContext
 from .loader import Skill
 from .tool_aliases import translate_tool_names
+from .workflow import parse_skill_workflow, workflow_prompt_block
 
 
 class SkillAgent(Agent):
@@ -37,11 +40,14 @@ class SkillAgent(Agent):
         metadata = skill.metadata
         interaction = metadata.get("interaction") if isinstance(metadata.get("interaction"), dict) else {}
         guided = str(interaction.get("mode") or "guided") == "guided"
+        workflow = parse_skill_workflow(metadata)
         model_tier = str(metadata.get("model_tier") or metadata.get("tier") or "medium")
         if guided and "ask_human" in available_tools and "ask_human" not in translated:
             # Guided Skills need one safe channel for a semantic evidence gap
             # discovered after deterministic file checks have passed.
             translated.append("ask_human")
+        if workflow and "update_skill_workflow" in available_tools and "update_skill_workflow" not in translated:
+            translated.append("update_skill_workflow")
         allowed_write_prefixes = list(metadata.get("allowed_write_prefixes", [""]))
         if guided:
             intake_prefix = f"user_inputs/{skill.name}/"
@@ -71,6 +77,7 @@ class SkillAgent(Agent):
         self.skill = skill
         self.use_jinja = bool(metadata.get("use-jinja", False))
         self.translation_warnings = warnings
+        self.workflow = workflow
 
     def system_prompt(self, ctx: ExecutionContext) -> str:
         body = self.skill.body
@@ -139,7 +146,8 @@ class SkillAgent(Agent):
             "- If the user asks for a plan but the detail is not yet sourced, label it `proposed_not_verified` or `unknown`; state what material would resolve it. Do not turn a plausible convention into an existing protocol.\n"
             "- Never infer experimental details from the project topic, a method name, an adjacent paper, a generic benchmark convention, or an earlier example. Missing protocol inputs require a focused human question, not a fabricated default.\n\n"
         )
-        return header + warning_block + body
+        workflow_block = workflow_prompt_block(self.workflow) if self.workflow else ""
+        return header + workflow_block + warning_block + body
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
         # CLI run-skill 时，用户请求会放在 ctx.extra["user_request"]。
@@ -147,3 +155,55 @@ class SkillAgent(Agent):
         if user_request:
             return str(user_request)
         return f"Execute the '{self.skill.name}' skill per your instructions."
+
+    def validate_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:
+        """Require a durable evidence-aware manifest from integrated Skills."""
+
+        ok, error = super().validate_outputs(ctx)
+        if not ok or self.workflow is None:
+            return ok, error
+        interaction = self.skill.metadata.get("interaction")
+        outputs = interaction.get("outputs") if isinstance(interaction, dict) else []
+        manifest_path = ""
+        for output in outputs if isinstance(outputs, list) else []:
+            if not isinstance(output, dict):
+                continue
+            output_id = str(output.get("id") or "")
+            path = str(output.get("path") or "")
+            if output_id == "workflow_manifest" or path.endswith("_manifest.json"):
+                manifest_path = path
+                break
+        if not manifest_path:
+            return False, "integrated Skill must declare a JSON workflow_manifest output"
+        path = ctx.workspace_dir / manifest_path
+        try:
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return False, f"workflow manifest is not readable JSON: {manifest_path}: {exc}"
+        if not isinstance(manifest, dict):
+            return False, f"workflow manifest must be a JSON object: {manifest_path}"
+        phases = manifest.get("phases")
+        if not isinstance(phases, list):
+            return False, f"workflow manifest must include a phases list: {manifest_path}"
+        by_id = {
+            str(item.get("id")): item
+            for item in phases
+            if isinstance(item, dict) and str(item.get("id") or "")
+        }
+        missing = [phase.phase_id for phase in self.workflow.phases if phase.phase_id not in by_id]
+        if missing:
+            return False, "workflow manifest is missing declared phases: " + ", ".join(missing)
+        unresolved: list[str] = []
+        for phase in self.workflow.phases:
+            item = by_id[phase.phase_id]
+            status = str(item.get("status") or "").strip()
+            if status not in {"completed", "skipped"}:
+                unresolved.append(f"{phase.phase_id}={status or 'missing'}")
+                continue
+            if not str(item.get("summary") or "").strip():
+                unresolved.append(f"{phase.phase_id}=missing_summary")
+            if "evidence_boundary" not in item:
+                unresolved.append(f"{phase.phase_id}=missing_evidence_boundary")
+        if unresolved:
+            return False, "workflow manifest has unresolved phases: " + ", ".join(unresolved)
+        return True, None

@@ -18,6 +18,7 @@ from rich.text import Text
 
 from ..runtime.errors import ConfigurationError
 from .contracts import SkillInteraction, SkillReadiness, readiness_as_dict
+from .workflow import SkillWorkflow, workflow_as_session_payload
 
 
 SESSION_DIR = Path("_runtime/skill_sessions")
@@ -92,6 +93,7 @@ def record_readiness(
     readiness: SkillReadiness,
     resume: bool,
     intake_packet_path: Path | None = None,
+    workflow: SkillWorkflow | None = None,
 ) -> tuple[Path, dict[str, Any]]:
     """Create or update a session after a deterministic readiness check."""
 
@@ -142,8 +144,97 @@ def record_readiness(
                 for output in interaction.outputs
             ],
         }
+    if workflow is not None:
+        _merge_workflow_session_payload(session, workflow)
     path = write_session(workspace, session_id, session)
     return path, session
+
+
+def _merge_workflow_session_payload(session: dict[str, Any], workflow: SkillWorkflow) -> None:
+    """Refresh workflow labels without erasing durable phase progress on resume."""
+
+    previous = session.get("workflow") if isinstance(session.get("workflow"), dict) else {}
+    previous_phases = {
+        str(item.get("id")): item
+        for item in previous.get("phases", [])
+        if isinstance(item, dict) and item.get("id")
+    }
+    payload = workflow_as_session_payload(workflow)
+    phases = payload["phases"]
+    for phase in phases:
+        old = previous_phases.get(str(phase["id"]))
+        if not old:
+            continue
+        for key in ("status", "summary", "artifacts", "evidence_boundary", "next_action", "updated_at"):
+            if key in old:
+                phase[key] = old[key]
+    current = str(previous.get("current_phase") or "")
+    phase_ids = {str(phase["id"]) for phase in phases}
+    if current in phase_ids:
+        payload["current_phase"] = current
+    session["workflow"] = payload
+
+
+def record_workflow_progress(
+    *,
+    workspace: Path,
+    session_id: str,
+    phase_id: str,
+    status: str,
+    summary: str,
+    artifacts: list[str],
+    evidence_boundary: str,
+    next_action: str,
+) -> tuple[Path, dict[str, Any]]:
+    """Persist one user-visible integrated-Skill phase transition."""
+
+    session = load_session(workspace, session_id)
+    if session is None:
+        raise ConfigurationError(f"skill session '{session_id}' does not exist")
+    workflow = session.get("workflow") if isinstance(session.get("workflow"), dict) else None
+    if workflow is None:
+        raise ConfigurationError("this Skill session does not declare an integrated workflow")
+    phases = workflow.get("phases") if isinstance(workflow.get("phases"), list) else []
+    phase = next(
+        (item for item in phases if isinstance(item, dict) and str(item.get("id")) == phase_id),
+        None,
+    )
+    if phase is None:
+        known = ", ".join(str(item.get("id")) for item in phases if isinstance(item, dict))
+        raise ConfigurationError(f"unknown workflow phase '{phase_id}'; expected one of: {known}")
+    if status not in {"running", "completed", "waiting_input", "waiting_evidence", "skipped"}:
+        raise ConfigurationError(f"unsupported workflow phase status: {status}")
+    clean_artifacts = [str(item).strip() for item in artifacts if str(item).strip()]
+    phase.update(
+        {
+            "status": status,
+            "summary": str(summary).strip(),
+            "artifacts": clean_artifacts,
+            "evidence_boundary": str(evidence_boundary).strip(),
+            "next_action": str(next_action).strip(),
+            "updated_at": _now(),
+        }
+    )
+    workflow["current_phase"] = phase_id
+    session["workflow"] = workflow
+    session["progress"] = {
+        "step": None,
+        "step_limit": None,
+        "phase": f"workflow:{phase_id}",
+        "tool_name": "update_skill_workflow",
+        "detail": str(summary).strip(),
+        "updated_at": _now(),
+    }
+    _append_turn(
+        session,
+        {
+            "event": "workflow_phase_updated",
+            "phase_id": phase_id,
+            "status": status,
+            "detail": str(summary).strip()[:500],
+        },
+    )
+    return write_session(workspace, session_id, session), dict(phase)
 
 
 def record_run_started(workspace: Path, session_id: str) -> Path:
@@ -402,6 +493,9 @@ def render_readiness_panel(
             for output in interaction.outputs:
                 lines.append(f"• {output.label}：{output.path}")
                 lines.append(f"  含义：{output.description}")
+    workflow = _session_workflow_from_file(session_file)
+    if workflow:
+        lines.extend(_workflow_plain_lines(workflow, width=width))
     else:
         lines.append("这是兼容模式 Skill：未声明可校验的输入契约；将按原有提示词运行。")
     lines.append("─" * width)
@@ -476,6 +570,9 @@ def render_readiness_panel_rich(
             for output in interaction.outputs:
                 outputs.add_row(f"{output.label}\n{_wrap_skill_path(output.path)}", output.description)
             body.append(outputs)
+    workflow = _session_workflow_from_file(session_file)
+    if workflow:
+        body.append(_workflow_rich_table(workflow))
     if readiness.ready:
         body.append(Text("下一步：将开始执行 Skill；完成后用 skill-status 查看会话、产物和恢复信息。", style="green"))
     else:
@@ -495,7 +592,14 @@ def render_readiness_panel_rich(
     return _render_skill_rich(Panel(Group(*body), title=f"SKILL · {skill_name}", border_style=accent, expand=True), no_color=no_color)
 
 
-def render_skill_description(*, skill_name: str, skill_path: Path, description: str, interaction: SkillInteraction | None) -> str:
+def render_skill_description(
+    *,
+    skill_name: str,
+    skill_path: Path,
+    description: str,
+    interaction: SkillInteraction | None,
+    workflow: SkillWorkflow | None = None,
+) -> str:
     """Render the deterministic, copyable user contract for ``describe-skill``."""
 
     width = 76
@@ -528,6 +632,8 @@ def render_skill_description(*, skill_name: str, skill_path: Path, description: 
     lines.append("输出文件")
     for output in interaction.outputs:
         lines.append(f"• {output.path} — {output.description}")
+    if workflow is not None:
+        lines.extend(_workflow_plain_lines(workflow_as_session_payload(workflow), width=width))
     lines.append("会话与恢复")
     lines.append("• 非交互运行会先校验输入；缺文件时只写 `_runtime/skill_sessions/<session>.json`，不调用 LLM。")
     lines.append("• TTY 终端默认进入多轮材料收集；可上传文件或粘贴材料。受限 intake Agent 只整理人工提供的内容到 `user_inputs/<skill>/`，不产生论文/实验产物。")
@@ -542,6 +648,7 @@ def render_skill_description_rich(
     skill_path: Path,
     description: str,
     interaction: SkillInteraction | None,
+    workflow: SkillWorkflow | None = None,
     no_color: bool = False,
 ) -> str:
     """Render a selected Skill's full, human-actionable contract."""
@@ -592,8 +699,13 @@ def render_skill_description_rich(
         "Resume: researchos run-skill " + skill_name + " --session-id <same-session> --resume",
         style="dim",
     )
+    workflow_table = _workflow_rich_table(workflow_as_session_payload(workflow)) if workflow is not None else None
+    renderables: list[Any] = [Group(*overview), inputs, outputs]
+    if workflow_table is not None:
+        renderables.append(workflow_table)
+    renderables.append(recovery)
     return _render_skill_rich(
-        Panel(Group(Group(*overview), inputs, outputs, recovery), title=f"SKILL · {skill_name}", border_style="cyan", expand=True),
+        Panel(Group(*renderables), title=f"SKILL · {skill_name}", border_style="cyan", expand=True),
         no_color=no_color,
     )
 
@@ -651,6 +763,9 @@ def render_skill_completion_panel(*, workspace: Path, session_id: str) -> str:
             lines.append(f"{marker} {label}：{path}")
             if descriptor.get("description"):
                 lines.append(f"  含义：{descriptor['description']}")
+    workflow = session.get("workflow") if isinstance(session.get("workflow"), dict) else {}
+    if workflow:
+        lines.extend(_workflow_plain_lines(workflow, width=width))
     trace_file = result.get("trace_file")
     if trace_file:
         lines.append(f"运行轨迹：{trace_file}")
@@ -722,6 +837,9 @@ def render_skill_completion_panel_rich(*, workspace: Path, session_id: str, no_c
                 str(descriptor.get("description") or "Declared Skill output."),
             )
         body.append(table)
+    workflow = session.get("workflow") if isinstance(session.get("workflow"), dict) else {}
+    if workflow:
+        body.append(_workflow_rich_table(workflow))
     trace_file = result.get("trace_file")
     if trace_file:
         body.append(Text(f"Trace: {trace_file}", style="dim"))
@@ -804,6 +922,11 @@ def render_skill_status_panel(
             detail = _status_compact(progress.get("detail"), 220)
             if detail:
                 lines.append(f"│ 说明：{detail}")
+        workflow = session.get("workflow") if isinstance(session.get("workflow"), dict) else {}
+        if workflow:
+            phase = _workflow_current_phase(workflow)
+            if phase:
+                lines.append(f"│ 工作流：{phase.get('label', phase.get('id'))} · {_workflow_status_label(phase.get('status'))}")
         result = session.get("last_result") if isinstance(session.get("last_result"), dict) else {}
         outputs = result.get("outputs") if isinstance(result.get("outputs"), dict) else {}
         if outputs:
@@ -883,6 +1006,14 @@ def render_skill_status_panel_rich(
             if isinstance(item, dict) and item.get("required") and item.get("state") != "ready"
         ]
         detail = _status_compact(progress.get("detail") or session.get("request"), 180)
+        workflow = session.get("workflow") if isinstance(session.get("workflow"), dict) else {}
+        workflow_phase = _workflow_current_phase(workflow) if workflow else None
+        if workflow_phase:
+            phase_line = (
+                f"Workflow: {workflow_phase.get('label', workflow_phase.get('id'))} "
+                f"({ _workflow_status_label(workflow_phase.get('status')) })"
+            )
+            detail = (phase_line + "\n" + detail) if detail else phase_line
         if missing:
             detail = (detail + "\n" if detail else "") + "Missing: " + "、".join(missing)
         if raw_status in {"WAITING_INPUT", "WAITING_CONFIRMATION", "WAITING_RUNTIME", "FAILED"}:
@@ -934,6 +1065,86 @@ def _status_compact(value: Any, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[: max(1, limit - 3)] + "..."
+
+
+def _session_workflow_from_file(session_file: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(session_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data.get("workflow") if isinstance(data, dict) and isinstance(data.get("workflow"), dict) else {}
+
+
+def _workflow_current_phase(workflow: dict[str, Any]) -> dict[str, Any] | None:
+    current = str(workflow.get("current_phase") or "")
+    phases = workflow.get("phases") if isinstance(workflow.get("phases"), list) else []
+    for phase in phases:
+        if isinstance(phase, dict) and str(phase.get("id") or "") == current:
+            return phase
+    return next((phase for phase in phases if isinstance(phase, dict)), None)
+
+
+def _workflow_status_label(value: object) -> str:
+    return {
+        "pending": "待执行",
+        "running": "进行中",
+        "completed": "完成",
+        "waiting_input": "等待补料",
+        "waiting_evidence": "等待证据",
+        "skipped": "已跳过",
+    }.get(str(value or "pending"), str(value or "待执行"))
+
+
+def _workflow_plain_lines(workflow: dict[str, Any], *, width: int) -> list[str]:
+    phases = workflow.get("phases") if isinstance(workflow.get("phases"), list) else []
+    if not phases:
+        return []
+    lines = ["─" * width, "集成工作流"]
+    summary = str(workflow.get("summary") or "").strip()
+    if summary:
+        lines.append(f"目标：{summary}")
+    for index, phase in enumerate(phases, start=1):
+        if not isinstance(phase, dict):
+            continue
+        marker = "●" if phase.get("id") == workflow.get("current_phase") else "○"
+        gate = " · 人工决策" if phase.get("human_gate") else ""
+        lines.append(
+            f"{marker} {index}. {phase.get('label', phase.get('id'))} · "
+            f"{_workflow_status_label(phase.get('status'))}{gate}"
+        )
+        if phase.get("summary"):
+            lines.append(f"  结果：{_status_compact(phase.get('summary'), 180)}")
+        if phase.get("evidence_boundary"):
+            lines.append(f"  边界：{_status_compact(phase.get('evidence_boundary'), 180)}")
+    return lines
+
+
+def _workflow_rich_table(workflow: dict[str, Any]) -> Table:
+    table = Table(title="Integrated Workflow", box=box.SIMPLE_HEAVY, header_style="bold green", expand=True)
+    table.add_column("State", width=14)
+    table.add_column("Phase", min_width=20, max_width=34, overflow="fold")
+    table.add_column("Objective / Current Result", min_width=34, max_width=76, overflow="fold")
+    for phase in workflow.get("phases", []):
+        if not isinstance(phase, dict):
+            continue
+        current = phase.get("id") == workflow.get("current_phase")
+        raw_status = str(phase.get("status") or "pending")
+        style = {
+            "completed": "green",
+            "running": "cyan",
+            "waiting_input": "yellow",
+            "waiting_evidence": "yellow",
+            "skipped": "dim",
+        }.get(raw_status, "dim")
+        state = Text(("CURRENT · " if current else "") + _workflow_status_label(raw_status), style=style)
+        phase_name = str(phase.get("label") or phase.get("id") or "-")
+        if phase.get("human_gate"):
+            phase_name += "\nHuman Gate"
+        detail = str(phase.get("summary") or phase.get("objective") or "-")
+        if phase.get("evidence_boundary"):
+            detail += "\nBoundary: " + str(phase["evidence_boundary"])
+        table.add_row(state, phase_name, detail)
+    return table
 
 
 def iter_sessions(workspace: Path) -> Iterable[tuple[Path, dict[str, Any]]]:

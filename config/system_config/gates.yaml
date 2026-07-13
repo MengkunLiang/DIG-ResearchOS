@@ -152,7 +152,7 @@ gates:
   # 只有用户明确选择 yes 时，才启动 taxonomy-driven survey 分支。
   t36_survey_gate:
     title: "T3.6 是否撰写综述论文"
-    description: "T3.5 的 synthesis.md 已完成，它主要服务于后续 idea 生成。这里询问是否额外撰写一篇 taxonomy-driven professional survey paper；这不是把 synthesis.md 转成 TeX。"
+    description: "T3.5 的 synthesis.md 已完成，它主要服务于后续 idea 生成。这里先确认是否额外撰写 taxonomy-driven professional survey，并选择使用当前语料还是先做一次定向文献补检；这不是把 synthesis.md 直接转成 TeX。"
     presentation:
       synthesis_preview:
         from_file: literature/synthesis.md
@@ -167,8 +167,17 @@ gates:
         label: "不写综述，进入 T4"
         next: T4
       - id: "yes"
-        label: "撰写综述论文"
+        label: "使用当前语料撰写综述"
+        description: "继续进入 taxonomy/模板确认；后续仍会审计语料充分性和弱证据。"
         next: T3.6-TEMPLATE-GATE
+        captured_defaults:
+          survey_retrieval_preference: current_corpus_only
+      - id: "yes_targeted_retrieval"
+        label: "先定向补检，再撰写综述"
+        description: "先进入 taxonomy 规划；随后 corpus Gate 将以一次性定向补检为优先路径。检索线索必须经阅读/证据分级后才能写入正文。"
+        next: T3.6-TEMPLATE-GATE
+        captured_defaults:
+          survey_retrieval_preference: targeted_supplement_before_writing
 
   # T3.6 综述写作语言与 LaTeX 模板确认：
   # 这是 runtime 级确定 gate，选完后写 drafts/survey/writing_template.json。

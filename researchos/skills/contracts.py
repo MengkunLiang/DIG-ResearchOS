@@ -15,6 +15,7 @@ import re
 from typing import Any, Mapping
 
 from ..runtime.errors import ConfigurationError
+from .workflow import parse_skill_workflow
 
 
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
@@ -287,6 +288,10 @@ def validate_skill_metadata(metadata: Mapping[str, Any], *, source: Path) -> Non
     """Reject malformed public contracts at discovery time, before an LLM run."""
 
     interaction = parse_skill_interaction(metadata)
+    # Parse the optional integrated-workflow declaration during discovery so a
+    # malformed phase list cannot become a late runtime failure after an LLM
+    # session has already started.
+    workflow = parse_skill_workflow(metadata)
     read_prefixes = _permission_prefixes(metadata, field="allowed_read_prefixes", source=source)
     write_prefixes = _permission_prefixes(metadata, field="allowed_write_prefixes", source=source)
     outputs_expected = metadata.get("outputs_expected", {})
@@ -298,6 +303,8 @@ def validate_skill_metadata(metadata: Mapping[str, Any], *, source: Path) -> Non
         _as_string(key, label=f"outputs_expected key in {source}")
         _safe_relative_path(value, label=f"outputs_expected.{key} in {source}")
     if interaction is None:
+        if workflow is not None:
+            raise ConfigurationError(f"integrated workflow requires an interaction contract: {source}")
         return
     declared_paths = {
         _safe_relative_path(value, label=f"outputs_expected.{key} in {source}")
@@ -333,6 +340,18 @@ def validate_skill_metadata(metadata: Mapping[str, Any], *, source: Path) -> Non
             + ", ".join(sorted(set(inaccessible_outputs)))
             + f" ({source})"
         )
+    if workflow is not None:
+        manifest_outputs = [
+            output
+            for output in interaction.outputs
+            if output.key == "workflow_manifest" or output.path.endswith("_manifest.json")
+        ]
+        if len(manifest_outputs) != 1:
+            raise ConfigurationError(
+                f"integrated workflow must declare exactly one JSON workflow_manifest output: {source}"
+            )
+        if not manifest_outputs[0].path.endswith(".json"):
+            raise ConfigurationError(f"workflow_manifest must be JSON: {source}")
 
 
 def expected_outputs_from_metadata(metadata: Mapping[str, Any], workspace: Path) -> dict[str, Path]:

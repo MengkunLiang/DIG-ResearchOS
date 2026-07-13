@@ -53,7 +53,7 @@ debug:
 # CLI 展示配置
 ui:
   # 是否默认禁用启动横幅
-  # true: 不显示 DIG Lab 启动动画
+  # true: 不显示 DIG 启动动画
   # false: 正常显示（可用 CLI `--no-banner` 临时覆盖）
   no_banner: false
 

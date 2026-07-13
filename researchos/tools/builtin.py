@@ -41,6 +41,7 @@ from .survey_tools import (
     ExportSurveyForIdeationTool,
     UpdateSurveySectionStateTool,
 )
+from .skill_workflow import UpdateSkillWorkflowTool
 from .glob_files import GlobFilesTool
 from .grep_search import GrepSearchTool
 from .ideation_tools import AnalyzeIdeaConcentrationTool, ComputeIdeaNoveltySignalTool
@@ -129,6 +130,14 @@ def register_builtin_tools(
     registry.register("inspect_user_seeds", lambda ctx: InspectUserSeedsTool(ctx.policy))
     registry.register("normalize_seed_outline", lambda ctx: NormalizeSeedOutlineTool(ctx.policy))
     registry.register("finish_task", lambda ctx: FinishTaskTool())
+    registry.register(
+        "update_skill_workflow",
+        lambda ctx: UpdateSkillWorkflowTool(
+            workspace=ctx.policy.workspace_dir,
+            session_id=ctx.skill_session_id,
+            task_id=ctx.task_id,
+        ),
+    )
     registry.register(
         "ask_human",
         lambda ctx: AskHumanTool(

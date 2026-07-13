@@ -110,6 +110,12 @@ python -m researchos.cli run --workspace ./workspace/project-a
 
 确认后的参数会在真正检索前写入 `literature/literature_params.json`。
 
+T3 的全文精读仍逐篇处理，因为页码覆盖、section 证据和阅读状态必须逐篇可审计。其后的
+abstract sweep 则会在 provider 返回可用上下文窗口时，把多篇相互独立的摘要动态装入一次调用，
+再分别写出一张 `ABSTRACT-ONLY` 笔记。系统不设置“每批固定几篇”的上限；分组由当前模型
+binding 的 context window 与同一模型 tokenizer 决定。批次输出损坏时，只回退受影响的论文，
+不会混淆为全文证据。
+
 ## 日常命令
 
 | 目标 | 命令 |
@@ -131,20 +137,45 @@ python -m researchos.cli run --workspace ./workspace/project-a
 
 ## 引导式 Skill
 
-系统提供可恢复的原子 Skill：PDF/DOI 导入、文献卡、证据矩阵、Idea、论文撰写、审稿、润色、编译
-和投稿检查。
+系统同时提供原子 Skill 与集成式、可恢复的研究工作流。原子 Skill 覆盖 PDF/DOI 导入、文献卡、
+证据矩阵、Idea、论文撰写、审稿、润色、编译和投稿检查；集成 Skill 为多阶段任务增加阶段状态、
+证据 Gate、产物清单和恢复点：
+
+| 需求 | 集成 Skill | 工作内容 |
+| --- | --- | --- |
+| 一键领域综合 | `domain-synthesis-studio` | 范围 -> 可选补检 -> 方法/机制/张力综合 -> Survey 或 Idea 决策 |
+| 一键文献比较 | `literature-comparison-studio` | DOI/PDF 解析 -> section 取证 -> 比较矩阵与可主张边界 |
+| 一键文献综述工作台 | `literature-review-studio` | 综述范围 -> 检索 -> 阅读覆盖 -> taxonomy 就绪 -> Survey handoff |
+| Survey 写作前准备 | `survey-evidence-package` | 语料充分性 -> taxonomy/故事线 -> 补检决策 -> T3.6 handoff |
+| 一键跨域 Idea | `cross-domain-idea-studio` | Bridge 证据 -> 迁移风险审计 -> 候选治理 -> 人工选择 |
+| 多篇论文阅读 | `paper-reading-workbench` | DOI/PDF 导入 -> 优先队列/文献卡 -> 定向问答 -> 跨论文学习 |
+| 写作证据构建/修复 | `related-work-builder`、`draft-evidence-repair` | Related Work 或草稿 claim/citation 修复包 |
 
 ```bash
 python -m researchos.cli list-skills --workspace ./workspace/project-a
 python -m researchos.cli browse-skills --workspace ./workspace/project-a
 python -m researchos.cli describe-skill pdf-note-card --workspace ./workspace/project-a
 python -m researchos.cli run-skill pdf-note-card --workspace ./workspace/project-a
+
+python -m researchos.cli run-skill domain-synthesis-studio \
+  "综合该领域并判断是否适合撰写 Survey" \
+  --workspace ./workspace/project-a --session-id field-review
+
+python -m researchos.cli run-skill literature-review-studio \
+  "准备关于可信 LLM agent memory 方法的英文综述" \
+  --workspace ./workspace/project-a --session-id agent-memory-survey
 ```
 
 TTY 终端中的 `run-skill` 会对缺失材料进行多轮收集，只把人工输入或上传内容暂存到
 `user_inputs/<skill>/`；重新检查材料后，必须明确输入“执行”或“暂停”才开始 Skill。缺少输入时
-不会启动 provider，也不会写论文、实验或引用最终产物。自动化/管道运行请显式加
-`--non-interactive`，它会保留 `WAITING_INPUT` 可恢复会话。
+不会写论文、实验或引用最终产物。受限 intake Agent 可以调用 provider 逐项提问，并只把人工提供的
+内容整理到声明的输入文件。自动化/管道运行请显式加 `--non-interactive`，它会保留
+`WAITING_INPUT` 可恢复会话，且不会创建 provider client。
+
+集成 Skill 会在同一 session 文件中保存每个研究阶段的 `pending`、`running`、`completed`、
+`waiting_input`、`waiting_evidence` 或 `skipped` 状态。研究者授权后，系统可以用带来源的
+检索工具尝试补齐文献；但检索线索、metadata 和摘要仍会显式保留为弱证据，不能因为“找到了更多
+记录”就升级为机制或强学术主张。
 
 目录中展示的每个输入/输出路径都会在 Skill 发现阶段与该 Skill 的读写权限交叉校验，因此不会出现
 “界面提示可以使用某文件、运行后却 `access_denied`”的契约漂移。
@@ -167,7 +198,7 @@ python -m researchos.cli run-skill pdf-note-card \
 
 ## CLI 展示与调试
 
-每个实际 CLI 命令默认都会显示一次 `DIG Lab · BUAA` / ResearchOS 启动页。交互终端显示彩色的
+每个实际 CLI 命令默认都会显示一次 `DIG · BUAA` / ResearchOS 启动页。交互终端显示彩色的
 `D -> DI -> DIG` 动画；非 TTY 会显示可复制的静态面板。
 
 - `--no-banner`：脚本或 CI 中关闭启动页。

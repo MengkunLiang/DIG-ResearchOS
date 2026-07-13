@@ -7,7 +7,7 @@ reasoning or raw prompt payloads.
 
 ## Console
 
-Every CLI command starts with the DIG Lab · BUAA / ResearchOS panel unless
+Every CLI command starts with the DIG · BUAA / ResearchOS panel unless
 `--no-banner` or `--quiet` is supplied. Interactive terminals use color and the
 three-frame `D -> DI -> DIG` mark; non-TTY output is a single portable panel.
 
@@ -47,6 +47,12 @@ stdout and should not be mixed with a human gate session.
 Events are written even without `--json-events`. `trace` is sensitive
 operational data and should not be posted publicly without review.
 
+Integrated Skill sessions add a `workflow` object in the same session file. It
+contains phase labels, current phase, visible status, summary, artifact paths,
+evidence boundary, and next action. It intentionally excludes prompts, private
+reasoning, and full tool payloads. `skill-status` renders this phase state;
+inspect the session JSON only when a recovery diagnosis needs the durable detail.
+
 ## First Debugging Commands
 
 ```bash
@@ -65,6 +71,7 @@ tail -n 120 ./workspace/project-a/_runtime/logs/researchos.log
 | `WAITING_ENVIRONMENT` | TeX, Python package, Docker, or provider prerequisite is absent | Run `doctor`/preflight; repair the named environment item; resume. |
 | `DEGRADED` | A non-blocking source/tool failed while alternatives continue | Read the stage summary and source-health table; do not assume zero coverage. |
 | `unsupported` | Evidence cannot support the requested conclusion | Add the named evidence, weaken the claim, or choose another direction. |
+| `waiting_evidence` (Skill phase) | An integrated workflow has a known evidence gap after preflight | Authorize scoped retrieval, upload the named source, or choose a narrower/weakly worded output. |
 | Validation failure | Artifact exists but breaks its declared contract | Run `validate --task`, repair the named file/state, then resume. |
 
 ## T3.6 Example: Section Validation

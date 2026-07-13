@@ -2318,13 +2318,25 @@ class StateMachine:
             return
         if node.task_id == "T3.6-GATE-SURVEY":
             option_id = str(gate_result.get("option_id") or gate_result.get("key") or "")
-            write_survey = option_id in {"yes", "write_survey", "survey", "撰写综述"}
+            write_survey = option_id in {
+                "yes",
+                "yes_targeted_retrieval",
+                "write_survey",
+                "survey",
+                "撰写综述",
+            }
+            captured = gate_result.get("captured") if isinstance(gate_result.get("captured"), dict) else {}
+            retrieval_preference = str(captured.get("survey_retrieval_preference") or "").strip()
             payload = {
                 "write_survey": write_survey,
                 "user_answer": option_id,
                 "selected_option": option_id,
+                "survey_retrieval_preference": retrieval_preference or (
+                    "targeted_supplement_before_writing" if option_id == "yes_targeted_retrieval" else "current_corpus_only"
+                ),
                 "note": (
-                    "taxonomy-driven survey, not synthesis-to-tex"
+                    "taxonomy-driven survey, not synthesis-to-tex; "
+                    f"retrieval_preference={retrieval_preference or ('targeted_supplement_before_writing' if option_id == 'yes_targeted_retrieval' else 'current_corpus_only')}"
                     if write_survey
                     else "skip survey branch and continue T4"
                 ),
@@ -2676,7 +2688,16 @@ class StateMachine:
                 return "T3.6-GATE-SURVEY" if "T3.6-GATE-SURVEY" in self.nodes else "failed"
         decision = data.get("write_survey")
         if isinstance(decision, str):
-            decision = decision.strip().lower() in {"yes", "true", "1", "write", "survey", "撰写", "是"}
+            decision = decision.strip().lower() in {
+                "yes",
+                "yes_targeted_retrieval",
+                "true",
+                "1",
+                "write",
+                "survey",
+                "撰写",
+                "是",
+            }
         if decision:
             if "T3.6-TEMPLATE-GATE" in self.nodes:
                 template_path = workspace_dir / "drafts" / "survey" / "writing_template.json"
