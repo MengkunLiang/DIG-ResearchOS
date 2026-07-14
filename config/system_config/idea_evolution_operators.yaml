@@ -1,0 +1,23 @@
+schema_version: "1.0.0"
+operators:
+  deepen_mechanism:
+    primary_bottlenecks: [mechanism_gap, ambiguous_mechanism]
+  reframe_problem:
+    primary_bottlenecks: [weak_opportunity, unclear_problem]
+  challenge_assumption:
+    primary_bottlenecks: [unexamined_assumption]
+  tighten_contribution:
+    primary_bottlenecks: [routine_contribution, diffuse_contribution]
+  repair_validation:
+    primary_bottlenecks: [weak_discriminating_test, infeasible_validation]
+  narrow_boundary:
+    primary_bottlenecks: [overbroad_claim, missing_boundary]
+  evidence_upgrade:
+    primary_bottlenecks: [abstract_dependency, missing_anchor]
+crossover:
+  require_semantic_compatibility: true
+  reject_module_stacking: true
+  reject_assumption_conflict: true
+  reject_multiple_irreconcilable_mechanisms: true
+  reject_evidence_elevation: true
+  reject_unacceptable_complexity: true

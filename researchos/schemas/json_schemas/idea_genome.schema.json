@@ -1,0 +1,16 @@
+{
+  "$id": "https://researchos.dev/schemas/idea_genome.schema.json",
+  "type": "object",
+  "properties": {
+    "schema_version": {"type": "string"},
+    "candidate_id": {"type": "string", "minLength": 1},
+    "version": {"type": "integer", "minimum": 1},
+    "generation_created": {"type": "integer", "minimum": 0},
+    "maturity": {"enum": ["seed", "evolved", "selected", "archived", "legacy_partial"]},
+    "route": {"type": "string", "minLength": 1},
+    "parents": {"type": "array", "items": {"type": "string"}},
+    "migration_quality": {"enum": ["native", "legacy_partial"]}
+  },
+  "required": ["candidate_id", "route", "problem", "opportunity", "challenged_assumption", "core_thesis", "mechanism", "design_or_artifact", "contribution_package", "hypothesis_bundle", "validation_logic", "boundary_conditions", "risks"],
+  "additionalProperties": true
+}

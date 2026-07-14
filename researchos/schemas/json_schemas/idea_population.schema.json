@@ -1,0 +1,17 @@
+{
+  "$id": "https://researchos.dev/schemas/idea_population.schema.json",
+  "type": "object",
+  "properties": {
+    "schema_version": {"type": "string"},
+    "population_id": {"type": "string", "minLength": 1},
+    "generation": {"type": "integer", "minimum": 0},
+    "input_fingerprint": {"type": "string", "minLength": 16},
+    "run_config_fingerprint": {"type": "string", "minLength": 16},
+    "active_candidate_ids": {"type": "array", "items": {"type": "string"}},
+    "family_ids": {"type": "array", "items": {"type": "string"}},
+    "elite_candidate_ids": {"type": "array", "items": {"type": "string"}},
+    "archived_candidate_ids": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["population_id", "generation", "input_fingerprint", "run_config_fingerprint", "active_candidate_ids"],
+  "additionalProperties": true
+}

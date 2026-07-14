@@ -1,0 +1,16 @@
+{
+  "$id": "https://researchos.dev/schemas/idea_human_directive.schema.json",
+  "type": "object",
+  "properties": {
+    "schema_version": {"type": "string"},
+    "directive_id": {"type": "string", "minLength": 1},
+    "action": {"type": "string", "minLength": 1},
+    "target_candidate_ids": {"type": "array", "items": {"type": "string"}},
+    "target_family_ids": {"type": "array", "items": {"type": "string"}},
+    "component_refs": {"type": "array", "items": {"type": "string"}},
+    "raw_user_input": {"type": "string", "minLength": 1},
+    "confirmation_required": {"type": "boolean"}
+  },
+  "required": ["directive_id", "action", "raw_user_input", "confirmation_required"],
+  "additionalProperties": true
+}

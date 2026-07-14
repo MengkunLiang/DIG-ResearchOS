@@ -1,0 +1,29 @@
+schema_version: "1.0.0"
+agent_role: IdeaScoringAgent
+blind_scoring: true
+dimensions:
+  research_value:
+    range: [1, 5]
+    meaning: Scientific importance of the problem and opportunity.
+  mechanism_integrity:
+    range: [1, 5]
+    meaning: Coherence and falsifiability of the proposed mechanism chain.
+  contribution_distinctiveness:
+    range: [1, 5]
+    meaning: Internal-corpus contribution readiness, not proof of external novelty.
+  evidence_calibration:
+    range: [1, 5]
+    meaning: Honesty and traceability of evidence permissions, not evidence volume.
+  validation_tractability:
+    range: [1, 5]
+    meaning: Feasibility of discriminating validation under project constraints.
+overall_readiness:
+  range: [1, 5]
+  meaning: Calibrated synthesis of the five dimensions; it cannot override an evidence hard failure.
+required_output_fields:
+  - rationales
+  - dominant_strength
+  - dominant_bottleneck
+  - preserve_genes
+  - modify_genes
+  - recommended_operators

@@ -1,0 +1,22 @@
+# Deterministic Evidence Permission policy for T4.  The controller derives
+# allowed and forbidden uses from reading level; LLMs cannot elevate them.
+schema_version: "1.0.0"
+levels:
+  full_text:
+    allowed: [recall, problem_anchor, mechanism_support, support, inspiration, final_claim]
+    forbidden: []
+  partial_text:
+    allowed: [recall, problem_anchor, mechanism_support, support, inspiration, conditional_final_claim]
+    forbidden: [final_claim]
+  abstract_only:
+    allowed: [recall, problem_anchor, inspiration]
+    forbidden: [mechanism_support, support, conditional_final_claim, final_claim]
+  metadata_only:
+    allowed: [resource_lead]
+    forbidden: [problem_anchor, mechanism_support, support, conditional_final_claim, final_claim]
+  synthesis_inference:
+    allowed: [recall, inspiration]
+    forbidden: [mechanism_support, support, conditional_final_claim, final_claim]
+  brainstorm:
+    allowed: [inspiration]
+    forbidden: [problem_anchor, mechanism_support, support, conditional_final_claim, final_claim]

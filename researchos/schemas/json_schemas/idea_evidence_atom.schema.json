@@ -1,0 +1,20 @@
+{
+  "$id": "https://researchos.dev/schemas/idea_evidence_atom.schema.json",
+  "type": "object",
+  "properties": {
+    "schema_version": {"type": "string"},
+    "atom_id": {"type": "string", "minLength": 1},
+    "paper_id": {"type": "string"},
+    "source_path": {"type": "string", "minLength": 1},
+    "section_key": {"type": "string", "minLength": 1},
+    "section_title": {"type": "string"},
+    "content": {"type": "string", "minLength": 1},
+    "domain_role": {"enum": ["core", "bridge", "adjacent"]},
+    "reading_level": {"enum": ["full_text", "partial_text", "abstract_only", "metadata_only", "synthesis_inference", "brainstorm"]},
+    "evidence_status": {"enum": ["direct_support", "limited_support", "abstract_hint", "llm_inference", "conjecture"]},
+    "allowed_uses": {"type": "array", "items": {"type": "string"}},
+    "forbidden_uses": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["atom_id", "source_path", "section_key", "content", "reading_level", "evidence_status", "allowed_uses", "forbidden_uses"],
+  "additionalProperties": true
+}

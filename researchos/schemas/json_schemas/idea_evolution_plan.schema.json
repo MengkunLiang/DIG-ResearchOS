@@ -1,0 +1,16 @@
+{
+  "$id": "https://researchos.dev/schemas/idea_evolution_plan.schema.json",
+  "type": "object",
+  "properties": {
+    "schema_version": {"type": "string"},
+    "plan_id": {"type": "string", "minLength": 1},
+    "plan_fingerprint": {"type": "string", "minLength": 16},
+    "round": {"type": "integer", "minimum": 1},
+    "child_type": {"enum": ["mutation", "crossover"]},
+    "parent_ids": {"type": "array", "minItems": 1, "maxItems": 2, "items": {"type": "string"}},
+    "operator": {"type": "string"},
+    "gene_donor_map": {"type": ["object", "null"]}
+  },
+  "required": ["plan_id", "plan_fingerprint", "round", "child_type", "parent_ids", "operator"],
+  "additionalProperties": true
+}

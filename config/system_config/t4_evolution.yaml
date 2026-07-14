@@ -1,0 +1,60 @@
+# System-maintained T4 evolutionary defaults.  Project research content never
+# belongs here; researchers adjust T4 mode through the Pre-run Gate instead.
+schema_version: "1.0.0"
+route_quotas:
+  - route: evidence_routed_literature
+    minimum: 3
+    maximum: 3
+    required: true
+    may_be_unsupported: false
+  - route: informed_brainstorm
+    minimum: 2
+    maximum: 3
+    required: true
+    may_be_unsupported: false
+  - route: mechanism_challenge
+    minimum: 1
+    maximum: 1
+    required: false
+    may_be_unsupported: true
+  - route: reverse_operation
+    minimum: 1
+    maximum: 1
+    required: false
+    may_be_unsupported: true
+  - route: subgroup_failure
+    minimum: 1
+    maximum: 1
+    required: false
+    may_be_unsupported: true
+  - route: gap_exploration
+    minimum: 1
+    maximum: 1
+    required: false
+    may_be_unsupported: true
+  - route: cross_domain_bridge
+    minimum: 1
+    maximum: 2
+    required: false
+    may_be_unsupported: true
+population:
+  max_initial_population: 14
+  active_population_target: 7
+  active_population_minimum: 6
+  active_population_maximum: 8
+  portfolio_minimum: 1
+  portfolio_maximum: 3
+offspring:
+  mutation_minimum: 2
+  mutation_maximum: 4
+  crossover_minimum: 0
+  crossover_maximum: 2
+  max_total: 6
+opportunity_minimum: 3
+opportunity_maximum: 6
+maximum_rounds: 3
+one_repair_attempt_per_route: true
+bridge_policy_default: allow_abstract_with_upgrade
+scoring_rubric_path: config/system_config/idea_scoring_rubric.yaml
+evidence_permissions_path: config/system_config/idea_evidence_permissions.yaml
+evolution_operators_path: config/system_config/idea_evolution_operators.yaml

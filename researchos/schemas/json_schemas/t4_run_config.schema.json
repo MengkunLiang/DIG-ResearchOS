@@ -1,0 +1,22 @@
+{
+  "$id": "https://researchos.dev/schemas/t4_run_config.schema.json",
+  "type": "object",
+  "properties": {
+    "schema_version": {"type": "string"},
+    "mode": {"enum": ["quick", "standard", "deep", "auto"]},
+    "rounds": {"type": "integer", "minimum": 0, "maximum": 3},
+    "allow_crossover": {"type": "boolean"},
+    "final_top_k": {"type": "integer", "minimum": 1, "maximum": 3},
+    "max_initial_population": {"type": "integer", "minimum": 6},
+    "active_population_size": {"type": "integer", "minimum": 1},
+    "max_offspring_per_round": {"type": "integer", "minimum": 0},
+    "max_crossover_children": {"type": "integer", "minimum": 0},
+    "bridge_policy": {"enum": ["allow_abstract_with_upgrade", "full_text_only", "exclude_bridge"]},
+    "ui_verbosity": {"enum": ["concise", "normal", "debug"]},
+    "route_quotas": {"type": "object"},
+    "user_preferences": {"type": "object"},
+    "raw_user_input": {"type": "string"}
+  },
+  "required": ["mode", "rounds", "allow_crossover", "final_top_k"],
+  "additionalProperties": false
+}

@@ -1,0 +1,18 @@
+{
+  "$id": "https://researchos.dev/schemas/idea_score.schema.json",
+  "type": "object",
+  "properties": {
+    "schema_version": {"type": "string"},
+    "candidate_id": {"type": "string", "minLength": 1},
+    "scoring_batch_id": {"type": "string", "minLength": 1},
+    "blind": {"type": "boolean"},
+    "scores": {"type": "object"},
+    "overall_readiness": {"type": "number", "minimum": 1, "maximum": 5},
+    "score_uncertainty": {"type": "number", "minimum": 0},
+    "rationales": {"type": "object"},
+    "dominant_strength": {"type": "string", "minLength": 1},
+    "dominant_bottleneck": {"type": "string", "minLength": 1}
+  },
+  "required": ["candidate_id", "scoring_batch_id", "blind", "scores", "overall_readiness", "score_uncertainty", "rationales", "dominant_strength", "dominant_bottleneck"],
+  "additionalProperties": true
+}
