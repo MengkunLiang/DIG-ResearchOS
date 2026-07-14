@@ -569,6 +569,62 @@ class RoundArtifact(_StrictModel):
     _population_ids = field_validator("input_population_id", "output_population_id")(_validate_identifier)
 
 
+class GeneDelta(_StrictModel):
+    child_id: str
+    parent_ids: list[str] = Field(min_length=1)
+    classification: Literal["substantive", "clarification_only", "cosmetic", "regressive"]
+    changed_genes: list[str] = Field(default_factory=list)
+    preserved_genes: list[str] = Field(default_factory=list)
+    violated_preserve_constraints: list[str] = Field(default_factory=list)
+    word_count_growth_ratio: float = Field(ge=0)
+
+    _id = field_validator("child_id")(_validate_identifier)
+
+
+class ComplexityReport(_StrictModel):
+    candidate_id: str
+    complexity_growth: Literal["low", "medium", "high"]
+    new_components: list[str] = Field(default_factory=list)
+    new_data_requirements: list[str] = Field(default_factory=list)
+    new_experiment_stages: list[str] = Field(default_factory=list)
+    expected_gain: str = ""
+    decision_hint: Literal["acceptable", "reject_inflation"] = "acceptable"
+
+    _id = field_validator("candidate_id")(_validate_identifier)
+
+
+class IdeaContractResult(_StrictModel):
+    candidate_id: str
+    status: Literal["pass", "fail", "pass_with_warning"]
+    contracts: dict[str, Literal["pass", "fail", "warning"]]
+    hard_failures: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+    _id = field_validator("candidate_id")(_validate_identifier)
+
+
+class CrossoverCompatibilityDecision(_StrictModel):
+    pair_id: str
+    parent_ids: list[str] = Field(min_length=2, max_length=2)
+    decision: Literal["approved", "rejected", "uncertain"]
+    problem_compatibility: str = Field(min_length=1)
+    bottleneck_complementarity: str = Field(min_length=1)
+    mechanism_coherence: str = Field(min_length=1)
+    conflicts: list[str] = Field(default_factory=list)
+    proposed_gene_donor_map: GeneDonorMap | None = None
+    complexity_risk: Literal["low", "medium", "high"] = "medium"
+
+
+class PortfolioSelection(_StrictModel):
+    population_id: str
+    lead_id: str | None = None
+    alternative_ids: list[str] = Field(default_factory=list)
+    high_upside_ids: list[str] = Field(default_factory=list)
+    reasons: dict[str, str] = Field(default_factory=dict)
+
+    _id = field_validator("population_id")(_validate_identifier)
+
+
 class T4RunConfig(_StrictModel):
     schema_version: str = SCHEMA_VERSION
     mode: Literal["quick", "standard", "deep", "auto"] = "standard"
