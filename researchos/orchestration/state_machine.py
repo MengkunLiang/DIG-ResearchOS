@@ -42,6 +42,9 @@ from ..tools.external_experiment import (
     patch_external_executor_files_with_selection,
     validate_external_executor_ready,
 )
+from ..ideation.config import load_t4_evolution_settings
+from ..ideation.prerun import default_run_config, inspect_t4_inputs, parse_t4_prerun_intent
+from ..ideation.state import T4ArtifactStore, run_config_fingerprint
 
 
 def _now_iso() -> str:
@@ -1697,7 +1700,9 @@ class StateMachine:
         """Return true when the current node is a gate-only node that should not run an LLM."""
 
         if state.current_task == "T4" and "T4-GATE1" in self.nodes and workspace_dir is not None:
-            return self._t4_gate1_ready_without_selection(workspace_dir)
+            if self._t4_gate1_ready_without_selection(workspace_dir):
+                return True
+            return self._t4_prerun_confirmation_required(workspace_dir)
         node = self.nodes[state.current_task]
         return bool(node.gate and (node.extra or {}).get("immediate_gate"))
 
@@ -1709,8 +1714,11 @@ class StateMachine:
     ) -> StateYaml:
         """Present a gate-only node directly and pause without starting an agent run."""
 
-        if state.current_task == "T4" and workspace_dir is not None and self._t4_gate1_ready_without_selection(workspace_dir):
-            state.current_task = "T4-GATE1"
+        if state.current_task == "T4" and workspace_dir is not None:
+            if self._t4_gate1_ready_without_selection(workspace_dir):
+                state.current_task = "T4-GATE1"
+            elif self._t4_prerun_confirmation_required(workspace_dir):
+                return self._pause_for_t4_prerun_gate(state, workspace_dir)
         node = self.nodes[state.current_task]
         if not node.gate:
             raise ValueError(f"{state.current_task} has no gate")
@@ -1733,6 +1741,34 @@ class StateMachine:
             presented_at=_now_iso(),
             presentation=presentation,
             options=options,
+        )
+        state.status = "WAITING_HUMAN"
+        state.paused_at = _now_iso()
+        return state
+
+    def _pause_for_t4_prerun_gate(self, state: StateYaml, workspace_dir: Path) -> StateYaml:
+        """Pause inside T4 for configuration without adding an external FSM node."""
+
+        inspection = inspect_t4_inputs(workspace_dir)
+        store = T4ArtifactStore(workspace_dir)
+        try:
+            config = store.read_run_config()
+        except ValueError:
+            config = default_run_config(load_t4_evolution_settings())
+        gate_spec = self._find_gate("t4_prerun_gate")
+        presentation = {
+            "_title": str(gate_spec.get("title") or "T4 run confirmation"),
+            "_description": str(gate_spec.get("description") or "Confirm how T4 should form and evolve research ideas."),
+            "t4_prerun": {
+                "inspection": model_dump(inspection, mode="json"),
+                "run_config": model_dump(config, mode="json"),
+            },
+        }
+        state.pending_gate = GateState(
+            gate_id="t4_prerun_gate",
+            presented_at=_now_iso(),
+            presentation=presentation,
+            options=list(gate_spec.get("options", [])),
         )
         state.status = "WAITING_HUMAN"
         state.paused_at = _now_iso()
@@ -1768,6 +1804,8 @@ class StateMachine:
             presentation["_title"] = gate_spec["title"]
         if gate_spec.get("description"):
             presentation["_description"] = gate_spec["description"]
+        if state.pending_gate.gate_id == "t4_prerun_gate" and workspace_dir is not None:
+            return self._pause_for_t4_prerun_gate(state, workspace_dir)
         if node.task_id == "T2-PARAM-GATE":
             presentation["current_parameter_preview"] = build_literature_param_gate_preview(workspace_dir)
             options = enrich_literature_param_gate_options(options, workspace_dir)
@@ -1791,6 +1829,33 @@ class StateMachine:
             return bool(ok)
         except Exception:
             return False
+
+    @staticmethod
+    def _t4_prerun_confirmation_required(workspace_dir: Path) -> bool:
+        """Return whether the current scientific inputs require a T4 confirmation.
+
+        A valid confirmed configuration is reusable across resume. Any upstream
+        scientific input change invalidates only the pre-run confirmation; it
+        never deletes prior populations or candidate artifacts.
+        """
+
+        workspace_dir = Path(workspace_dir)
+        inspection = inspect_t4_inputs(workspace_dir)
+        if inspection.status == "blocked":
+            return True
+        store = T4ArtifactStore(workspace_dir)
+        receipt_path = workspace_dir / "ideation" / "evolution" / "pre_run_confirmation.json"
+        try:
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            config = store.read_run_config()
+        except (OSError, ValueError, json.JSONDecodeError):
+            return True
+        return not (
+            isinstance(receipt, dict)
+            and receipt.get("semantics") == "t4_pre_run_confirmation"
+            and receipt.get("input_fingerprint") == inspection.input_fingerprint
+            and receipt.get("run_config_fingerprint") == run_config_fingerprint(config)
+        )
 
     def start_task(self, state: StateYaml, run_id: str, *, workspace_dir: Path | None = None) -> StateYaml:
         """task 开始执行前，先写入一条 RUNNING history。"""
@@ -1943,6 +2008,10 @@ class StateMachine:
         """处理一个已挂起 gate 的用户选择。"""
         if state.pending_gate is None:
             raise ValueError("No pending gate to resolve")
+        if state.pending_gate.gate_id == "t4_prerun_gate":
+            if workspace_dir is None:
+                raise ValueError("T4 pre-run gate requires a workspace")
+            return self._resolve_t4_prerun_gate(state, gate_result, workspace_dir)
         node = self.nodes[state.current_task]
         if (
             node.task_id == "T4-GATE1"
@@ -2004,6 +2073,73 @@ class StateMachine:
                 return state
         state.pending_gate = None
         return self._transition_to_next(state, next_task, workspace_dir=workspace_dir)
+
+    def _resolve_t4_prerun_gate(
+        self,
+        state: StateYaml,
+        gate_result: dict[str, Any],
+        workspace_dir: Path,
+    ) -> StateYaml:
+        """Persist a T4 configuration or pause after a read-only preflight action."""
+
+        option_id = str(gate_result.get("option_id") or gate_result.get("key") or "").strip()
+        captured = gate_result.get("captured") if isinstance(gate_result.get("captured"), dict) else {}
+        if option_id in {"pause", "inspect_materials"}:
+            state.pending_gate = None
+            state.status = "PAUSED"
+            state.paused_at = _now_iso()
+            state.last_error = (
+                "T4 input materials were inspected; resume returns to the T4 run confirmation."
+                if option_id == "inspect_materials"
+                else "T4 is paused before any model call; resume returns to the T4 run confirmation."
+            )
+            return state
+
+        mode_by_option = {
+            "start_standard": "standard",
+            "start_quick": "quick",
+            "start_deep": "deep",
+            "start_auto": "auto",
+        }
+        if option_id == "adjust":
+            directive = parse_t4_prerun_intent(str(captured.get("settings") or ""))
+            if directive.action != "start":
+                state.pending_gate = None
+                state.status = "PAUSED"
+                state.paused_at = _now_iso()
+                state.last_error = "T4 configuration needs a start mode before the run can begin."
+                return state
+        elif option_id in mode_by_option:
+            directive = parse_t4_prerun_intent(mode_by_option[option_id])
+        else:
+            raise KeyError(f"Unsupported T4 pre-run option: {option_id}")
+
+        inspection = inspect_t4_inputs(workspace_dir)
+        if inspection.status == "blocked":
+            return self._pause_for_t4_prerun_gate(state, workspace_dir)
+        config = default_run_config(load_t4_evolution_settings(), directive)
+        store = T4ArtifactStore(workspace_dir)
+        store.write_run_config(config)
+        store.write_json(
+            "ideation/evolution/pre_run_confirmation.json",
+            {
+                "schema_version": "1.0.0",
+                "semantics": "t4_pre_run_confirmation",
+                "input_fingerprint": inspection.input_fingerprint,
+                "run_config_fingerprint": run_config_fingerprint(config),
+                "selected_option": option_id,
+                "captured": captured,
+                "inspection_status": inspection.status,
+                "confirmed_at": _now_iso(),
+            },
+        )
+        state.task_context["t4_run_config_path"] = "ideation/t4_run_config.json"
+        state.task_context["t4_input_fingerprint"] = inspection.input_fingerprint
+        state.pending_gate = None
+        state.status = "RUNNING"
+        state.paused_at = None
+        state.last_error = None
+        return state
 
     def _transition_to_next(
         self,

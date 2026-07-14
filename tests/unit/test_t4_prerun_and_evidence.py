@@ -4,11 +4,13 @@ import io
 
 from rich.console import Console
 
+from researchos.orchestration.state_machine import StateMachine
 from researchos.ideation.config import load_t4_evolution_settings
 from researchos.ideation.evidence import build_idea_evidence_index
 from researchos.ideation.prerun import default_run_config, inspect_t4_inputs, parse_t4_prerun_intent
 from researchos.ideation.models import EvidencePermission, ReadingLevel
 from researchos.ui.idea_prerun_renderer import render_t4_prerun
+from researchos.runtime.system_config import system_config_path
 
 
 def _write_required_inputs(workspace):
@@ -75,3 +77,29 @@ def test_evidence_index_includes_shallow_recall_without_elevating_permission(tmp
     assert EvidencePermission.FINAL_CLAIM in abstract_atoms[0].forbidden_uses
     assert (tmp_path / "ideation" / "evidence" / "evidence_index.jsonl").exists()
     assert result["summary"]["counts_by_reading_level"]["full_text"] >= 1
+
+
+def test_t4_prerun_gate_stays_inside_t4_and_rechecks_changed_inputs(tmp_path):
+    _write_required_inputs(tmp_path)
+    machine = StateMachine(system_config_path("state_machine.yaml"), system_config_path("gates.yaml"))
+    state = machine.create_initial_state("test")
+    state.current_task = "T4"
+    assert machine.should_pause_for_immediate_gate(state, workspace_dir=tmp_path)
+    state = machine.pause_for_immediate_gate(state, workspace_dir=tmp_path)
+    assert state.current_task == "T4"
+    assert state.pending_gate is not None
+    assert state.pending_gate.gate_id == "t4_prerun_gate"
+    assert "t4_prerun" in state.pending_gate.presentation
+
+    state = machine.resolve_pending_gate(
+        state,
+        {"option_id": "start_standard", "captured": {}},
+        workspace_dir=tmp_path,
+    )
+    assert state.current_task == "T4"
+    assert state.status == "RUNNING"
+    assert (tmp_path / "ideation" / "t4_run_config.json").exists()
+    assert not machine.should_pause_for_immediate_gate(state, workspace_dir=tmp_path)
+
+    (tmp_path / "literature" / "synthesis.md").write_text("changed synthesis\n", encoding="utf-8")
+    assert machine.should_pause_for_immediate_gate(state, workspace_dir=tmp_path)

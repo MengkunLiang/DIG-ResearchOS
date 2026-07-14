@@ -356,6 +356,9 @@ class CLIHumanInterface(HumanInterface):
                 self._render_section(_humanize_presentation_key(key))
                 self._render_t4_candidate_overview(value)
                 continue
+            if gate_id == "t4_prerun_gate" and key == "t4_prerun":
+                self._render_t4_prerun_overview(value)
+                continue
             rendered = self._format_presentation_value(key, value, gate_id=gate_id)
             if not rendered.strip():
                 continue
@@ -449,6 +452,38 @@ class CLIHumanInterface(HumanInterface):
         result = {"option_id": option_id, "captured": captured}
         print(self._format_gate_selection_confirmation(gate_id, result, options))
         return result
+
+    def _render_t4_prerun_overview(self, value: Any) -> None:
+        """Render the T4 confirmation from a typed ViewModel, never raw JSON."""
+
+        if not isinstance(value, dict):
+            print("T4 input readiness is unavailable. Resume after checking the workspace artifacts.")
+            return
+        try:
+            from ..ideation.models import T4RunConfig
+            from ..ideation.prerun import T4InputInspection
+            from ..ui.idea_prerun_renderer import render_t4_prerun
+
+            inspection = T4InputInspection.model_validate(value.get("inspection") or {})
+            config = T4RunConfig.model_validate(value.get("run_config") or {})
+        except Exception:
+            print("T4 input readiness is unavailable. Resume after checking the workspace artifacts.")
+            return
+        width = max(100, min(160, shutil.get_terminal_size(fallback=(120, 40)).columns))
+        buffer = io.StringIO()
+        console = Console(
+            file=buffer,
+            force_terminal=not self._no_color,
+            color_system=None if self._no_color else "truecolor",
+            no_color=self._no_color,
+            width=width,
+            highlight=False,
+            _environ={"COLUMNS": str(width), "LINES": "48"},
+        )
+        render_t4_prerun(inspection, config, console=console)
+        rendered = buffer.getvalue().rstrip()
+        if rendered:
+            print(rendered)
 
     def _render_t4_candidate_overview(self, value: Any) -> None:
         """Render Gate1 as a complete Rich decision deck, never a wrapped dump.

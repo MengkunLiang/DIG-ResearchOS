@@ -30,6 +30,34 @@
 # 当前配置：空（无 Gate 限制）
 # 如需启用 Gate，请参考上述示例添加配置
 gates:
+  t4_prerun_gate:
+    title: "T4 · Research Idea Formation & Evolution"
+    description: "Review the available evidence and choose how T4 should form and evolve the candidate population. No model call starts until you confirm."
+    options:
+      - id: start_standard
+        label: "Start Standard (recommended)"
+        description: "One complete P0 -> P1 Evolution Round. All Parents, Children, and generations are saved for resume and rollback."
+        is_default: true
+      - id: start_quick
+        label: "Run Quick"
+        description: "Build and score the initial population without generating Children. Suitable for inspecting the search space first."
+      - id: start_deep
+        label: "Run Deep"
+        description: "Run two Evolution Rounds. This takes longer and keeps every intermediate generation."
+      - id: start_auto
+        label: "Use Auto"
+        description: "Let the controller decide whether another round is useful, up to its configured limit."
+      - id: adjust
+        label: "Adjust settings"
+        description: "Describe a different mode, crossover preference, or visible portfolio size. Material changes are validated before execution."
+        collect_input:
+          - settings
+      - id: inspect_materials
+        label: "Inspect materials and pause"
+        description: "Keep this preflight view only. No model call or population change occurs; resume returns to this confirmation."
+      - id: pause
+        label: "Pause"
+        description: "Save the current preflight state without starting T4. Resume returns to this confirmation."
   # 预算门控：限制单次运行的最大成本
   # 典型场景：不希望某次真实 API 调试失控烧钱。
   budget_gate:
