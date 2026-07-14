@@ -112,6 +112,34 @@ class T4ArtifactStore:
                 temporary_path.unlink()
         return ArtifactWriteResult(path=Path(relative_path).as_posix(), changed=True, sha256=digest)
 
+    def write_jsonl(self, relative_path: str | Path, records: list[dict[str, Any]]) -> ArtifactWriteResult:
+        """Atomically write a JSONL artifact and reuse identical content."""
+
+        content = "".join(
+            json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+            for record in records
+        )
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        destination = self.path(relative_path)
+        try:
+            if destination.is_file() and destination.read_bytes() == content.encode("utf-8"):
+                return ArtifactWriteResult(path=Path(relative_path).as_posix(), changed=False, sha256=digest)
+        except OSError:
+            pass
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, destination)
+        finally:
+            temporary_path = Path(temporary)
+            if temporary_path.exists():
+                temporary_path.unlink()
+        return ArtifactWriteResult(path=Path(relative_path).as_posix(), changed=True, sha256=digest)
+
     def read_model(self, relative_path: str | Path, model_type: type[_ModelT]) -> _ModelT:
         path = self.path(relative_path)
         try:
