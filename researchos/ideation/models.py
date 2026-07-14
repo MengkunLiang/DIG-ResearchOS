@@ -476,6 +476,55 @@ class ScoreDimensions(_StrictModel):
     validation_tractability: float = Field(ge=1, le=5)
 
 
+class ProfileFitAssessment(_StrictModel):
+    """Independent fit assessment for the selected publication orientation.
+
+    This is intentionally separate from ``ScoreDimensions``.  It can change
+    when a researcher changes the intended contribution narrative, while the
+    core scientific score and Evidence Permission remain the same.
+    """
+
+    profile_type: Literal["management_is", "technical_cs", "hybrid", "custom"] = "hybrid"
+    overall_fit: float = Field(default=3.0, ge=1, le=5)
+    dimensions: dict[str, float] = Field(default_factory=dict)
+    rationale: str = "Profile Fit was not separately assessed."
+    cautions: list[str] = Field(default_factory=list)
+
+
+class TargetProfile(_StrictModel):
+    """User-confirmed publication orientation for one T4 run.
+
+    The profile governs task emphasis and presentation, never source truth,
+    Evidence Permission, citations, or immutable candidate lineage.
+    """
+
+    profile_type: Literal["management_is", "technical_cs", "hybrid", "custom"] = "hybrid"
+    target_venues: list[str] = Field(default_factory=list)
+    primary_orientation: Literal["theory_and_phenomenon", "technical_and_computational", "balanced"] = "balanced"
+    priority_dimensions: list[str] = Field(default_factory=list)
+    secondary_dimensions: list[str] = Field(default_factory=list)
+    storytelling_emphasis: list[str] = Field(default_factory=list)
+    scoring_profile: str = "hybrid"
+    portfolio_profile_weight: float = Field(default=0.2, ge=0, le=0.5)
+    user_instruction: str = ""
+    inferred_from: list[str] = Field(default_factory=list)
+    confirmed_by_user: bool = False
+    confidence: Literal["high", "medium", "low"] = "low"
+
+    @field_validator("target_venues", "priority_dimensions", "secondary_dimensions", "storytelling_emphasis", "inferred_from")
+    @classmethod
+    def unique_nonempty_strings(cls, value: list[str]) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            cleaned = str(item).strip()
+            key = cleaned.casefold()
+            if cleaned and key not in seen:
+                result.append(cleaned)
+                seen.add(key)
+        return result
+
+
 class ScoreReport(_StrictModel):
     schema_version: str = SCHEMA_VERSION
     candidate_id: str
@@ -495,6 +544,7 @@ class ScoreReport(_StrictModel):
     uncertain: bool = False
     compatibility_scores: dict[str, int] = Field(default_factory=dict)
     compatibility_rationales: dict[str, str] = Field(default_factory=dict)
+    profile_fit: ProfileFitAssessment = Field(default_factory=ProfileFitAssessment)
 
     _id = field_validator("candidate_id", "scoring_batch_id")(_validate_identifier)
 
@@ -607,6 +657,36 @@ class CandidateDossier(_StrictModel):
             if not 2 <= len(self.hypotheses) <= 4:
                 raise ValueError("an evolved candidate requires 2-4 provisional hypotheses")
         return self
+
+
+class ImpactImplication(_StrictModel):
+    implication_type: Literal["scientific", "engineering", "managerial", "business", "deployment"]
+    statement: str = Field(min_length=1)
+    evidence_status: EvidenceStatus
+    conditions: list[str] = Field(default_factory=list)
+
+
+class FinalIdeaCardTranslation(_StrictModel):
+    """A non-mutating, profile-aware presentation of a portfolio Candidate."""
+
+    candidate_id: str
+    profile_type: Literal["management_is", "technical_cs", "hybrid", "custom"]
+    core_thesis: str = Field(min_length=1)
+    contribution_ids: list[str] = Field(default_factory=list)
+    hypothesis_ids: list[str] = Field(default_factory=list)
+    plain_language_summary: str = Field(min_length=1)
+    why_it_matters: str = Field(min_length=1)
+    affected_stakeholders_or_processes: list[str] = Field(default_factory=list)
+    representative_scenario: str = Field(min_length=1)
+    current_failure: str = Field(min_length=1)
+    scientific_technical_core: str = Field(min_length=1)
+    implications: list[ImpactImplication] = Field(default_factory=list)
+    conditions_for_impact: list[str] = Field(default_factory=list)
+    claims_not_to_make: list[str] = Field(min_length=1)
+    risks_and_boundaries: list[str] = Field(min_length=1)
+    evidence_status_summary: str = Field(min_length=1)
+
+    _id = field_validator("candidate_id")(_validate_identifier)
 
 
 class PopulationSnapshot(_StrictModel):
@@ -755,6 +835,7 @@ class T4RunConfig(_StrictModel):
     bridge_policy: Literal["allow_abstract_with_upgrade", "full_text_only", "exclude_bridge"] = "allow_abstract_with_upgrade"
     ui_verbosity: Literal["concise", "normal", "debug"] = "normal"
     route_quotas: dict[str, int] = Field(default_factory=dict)
+    target_profile: TargetProfile = Field(default_factory=TargetProfile)
     user_preferences: dict[str, Any] = Field(default_factory=dict)
     raw_user_input: str = ""
 
@@ -819,6 +900,7 @@ class IdeaDirective(_StrictModel):
         "inspect_contributions",
         "inspect_genome",
         "regenerate_route",
+        "change_target_profile",
         "rollback",
         "pause",
         "cancel",

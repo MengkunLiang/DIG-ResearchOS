@@ -111,6 +111,7 @@ def select_evolution_parents(
     families: list[IdeaFamily],
     *,
     maximum: int,
+    profile_weight: float = 0.0,
 ) -> tuple[list[str], dict[str, str]]:
     """Choose family-covered elite/repairable/high-upside parents, never top-K only."""
 
@@ -121,7 +122,7 @@ def select_evolution_parents(
     for family in families:
         ranked = sorted(
             (candidate_id for candidate_id in family.member_ids if candidate_id in score_by_id and candidate_id in dossier_by_id),
-            key=lambda candidate_id: _parent_priority(score_by_id[candidate_id]),
+            key=lambda candidate_id: _parent_priority(score_by_id[candidate_id], profile_weight=profile_weight),
             reverse=True,
         )
         if not ranked or len(selected) >= maximum:
@@ -130,7 +131,11 @@ def select_evolution_parents(
         selected.append(choice)
         score = score_by_id[choice]
         reasons[choice] = "high_upside" if score.high_upside else "family_representative"
-    for candidate_id, report in sorted(score_by_id.items(), key=lambda item: _parent_priority(item[1]), reverse=True):
+    for candidate_id, report in sorted(
+        score_by_id.items(),
+        key=lambda item: _parent_priority(item[1], profile_weight=profile_weight),
+        reverse=True,
+    ):
         if len(selected) >= maximum:
             break
         if candidate_id in selected or candidate_id not in dossier_by_id:
@@ -356,10 +361,16 @@ def select_portfolio(
     families: list[IdeaFamily],
     *,
     maximum: int,
+    profile_weight: float = 0.0,
 ) -> PortfolioSelection:
     score_by_id = {item.candidate_id: item for item in scores}
     candidate_families = {candidate_id: family.family_id for family in families for candidate_id in family.member_ids}
-    ranked = sorted(population.active_candidate_ids, key=lambda candidate_id: score_by_id[candidate_id].overall_readiness, reverse=True)
+    weight = min(0.5, max(0.0, float(profile_weight)))
+    ranked = sorted(
+        population.active_candidate_ids,
+        key=lambda candidate_id: _portfolio_priority(score_by_id[candidate_id], profile_weight=weight),
+        reverse=True,
+    )
     chosen: list[str] = []
     families_seen: set[str] = set()
     for candidate_id in ranked:
@@ -379,12 +390,24 @@ def select_portfolio(
         lead_id=lead,
         alternative_ids=[item for item in chosen[1:] if item not in high_upside],
         high_upside_ids=high_upside,
-        reasons={item: "quality-diversity portfolio selection" for item in chosen},
+        reasons={
+            item: (
+                "quality-diversity portfolio selection; Profile Fit used as a secondary tie-breaker"
+                if weight
+                else "quality-diversity portfolio selection"
+            )
+            for item in chosen
+        },
     )
 
 
-def _parent_priority(report: ScoreReport) -> tuple[float, int, float]:
-    return (report.overall_readiness, int(report.high_upside), -report.score_uncertainty)
+def _parent_priority(report: ScoreReport, *, profile_weight: float = 0.0) -> tuple[float, int, float]:
+    return (_portfolio_priority(report, profile_weight=profile_weight), int(report.high_upside), -report.score_uncertainty)
+
+
+def _portfolio_priority(report: ScoreReport, *, profile_weight: float) -> float:
+    weight = min(0.5, max(0.0, float(profile_weight)))
+    return round(report.overall_readiness * (1 - weight) + report.profile_fit.overall_fit * weight, 6)
 
 
 def _tokens(value: str) -> set[str]:

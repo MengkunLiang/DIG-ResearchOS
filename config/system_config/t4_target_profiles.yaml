@@ -1,0 +1,57 @@
+# System-maintained T4 publication-orientation defaults. These are research
+# emphasis profiles, not a claim about any venue's current review policy.
+schema_version: "1.0.0"
+profiles:
+  management_is:
+    primary_orientation: theory_and_phenomenon
+    priority_dimensions:
+      - phenomenon relevance
+      - theoretical mechanism
+      - stakeholder and decision context
+      - identification credibility
+      - managerial or organizational implication
+    secondary_dimensions:
+      - technical artifact coherence
+      - deployment feasibility
+    storytelling_emphasis:
+      - real-world phenomenon
+      - affected stakeholder or process
+      - theory and management implication
+      - boundary conditions
+    scoring_profile: management_is
+    portfolio_profile_weight: 0.25
+  technical_cs:
+    primary_orientation: technical_and_computational
+    priority_dimensions:
+      - computational bottleneck
+      - algorithmic or system mechanism
+      - technical contribution
+      - evaluation rigor
+      - efficiency scalability or robustness
+    secondary_dimensions:
+      - deployment consequence
+      - practical relevance
+    storytelling_emphasis:
+      - computational problem
+      - why existing methods fail
+      - technical mechanism
+      - engineering and deployment implication
+    scoring_profile: technical_cs
+    portfolio_profile_weight: 0.25
+  hybrid:
+    primary_orientation: balanced
+    priority_dimensions:
+      - real-world to technical mechanism alignment
+      - dual contribution coherence
+      - testability across technical and empirical evidence
+      - stakeholder or deployment relevance
+    secondary_dimensions:
+      - theory or algorithmic depth
+      - boundary clarity
+    storytelling_emphasis:
+      - real-world problem
+      - technical bottleneck
+      - unified mechanism
+      - technical and stakeholder consequence
+    scoring_profile: hybrid
+    portfolio_profile_weight: 0.2

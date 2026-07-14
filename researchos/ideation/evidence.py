@@ -21,10 +21,11 @@ from .models import DomainRole, EvidenceAtom, EvidencePermission, EvidenceStatus
 from .state import T4ArtifactStore
 
 
+# These are the only note roots in the live T4 evidence chain.  Historic
+# ``paper_notes*`` workspaces are upgraded by ``migrate_workspace_note_directories``
+# before a run; scanning both layouts would duplicate papers and destabilize
+# Evidence Permission and resume fingerprints.
 _NOTE_ROOTS: tuple[tuple[str, DomainRole], ...] = (
-    ("literature/paper_notes", DomainRole.CORE),
-    ("literature/paper_notes_abstract", DomainRole.CORE),
-    ("literature/paper_notes_bridge", DomainRole.BRIDGE),
     ("literature/deep_read_notes", DomainRole.CORE),
     ("literature/shallow_read_notes", DomainRole.CORE),
     ("literature/bridge_notes", DomainRole.BRIDGE),

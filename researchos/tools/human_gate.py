@@ -839,6 +839,15 @@ class CLIHumanInterface(HumanInterface):
                 if dimensions.get(key) is not None:
                     evolution_table.add_row(label, f"{dimensions[key]}/5", text(evolution_rationales.get(key)))
             components.extend([Text("Independent assessment", style="bold blue"), evolution_table])
+        profile_fit = evolution_score.get("profile_fit") if isinstance(evolution_score.get("profile_fit"), dict) else {}
+        if profile_fit:
+            profile_table = Table.grid(expand=True, padding=(0, 1))
+            profile_table.add_column(style="bold magenta", width=18, no_wrap=True)
+            profile_table.add_column(ratio=1, overflow="fold")
+            profile_table.add_row("Profile", text(profile_fit.get("profile_type")))
+            profile_table.add_row("Profile Fit", text(f"{profile_fit.get('overall_fit', '-')}/5"))
+            profile_table.add_row("Rationale", text(profile_fit.get("rationale")))
+            components.extend([Text("Target Profile Fit", style="bold magenta"), profile_table])
         innovation = item.get("innovation") if isinstance(item.get("innovation"), dict) else {}
         innovation_table = Table.grid(expand=True, padding=(0, 1))
         innovation_table.add_column(style="bold magenta", width=12, no_wrap=True)
@@ -927,6 +936,24 @@ class CLIHumanInterface(HumanInterface):
                 if scores.get(key) is not None:
                     score_table.add_row(label, f"{scores[key]}/5", text(rationales.get(key)))
             components.extend([Text("评分", style="bold blue"), score_table])
+
+        final_card = item.get("final_idea_card") if isinstance(item.get("final_idea_card"), dict) else {}
+        if final_card:
+            impact_table = Table.grid(expand=True, padding=(0, 1))
+            impact_table.add_column(style="bold bright_cyan", width=16, no_wrap=True)
+            impact_table.add_column(ratio=1, overflow="fold")
+            impact_table.add_row("Why It Matters", text(final_card.get("why_it_matters")))
+            impact_table.add_row("Scenario", text(final_card.get("representative_scenario")))
+            impact_table.add_row("Current failure", text(final_card.get("current_failure")))
+            impact_table.add_row("Scientific / Technical", text(final_card.get("scientific_technical_core")))
+            implications = final_card.get("implications") if isinstance(final_card.get("implications"), list) else []
+            for implication in implications:
+                if isinstance(implication, dict):
+                    impact_table.add_row(
+                        f"{implication.get('implication_type', 'Implication')} [{implication.get('evidence_status', 'unknown')}]",
+                        text(implication.get("statement")),
+                    )
+            components.extend([Text("Why It Matters", style="bold bright_cyan"), impact_table])
 
         risk_table = Table.grid(expand=True, padding=(0, 1))
         risk_table.add_column(style="bold red", width=12, no_wrap=True)

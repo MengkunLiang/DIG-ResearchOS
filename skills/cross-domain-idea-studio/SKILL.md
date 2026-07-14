@@ -130,6 +130,13 @@ paper may inspire a candidate but does not prove target-domain validity. For eac
 transfer card, state the source mechanism, source anchor, target mapping, mismatch,
 evidence level, alternative explanation, and minimum discriminating observation.
 
+Use only the canonical Paper Note roots when existing ResearchOS notes are relevant:
+`literature/deep_read_notes/` for mainline full/partial reading, `literature/bridge_notes/`
+for bridge full/partial reading, and `literature/shallow_read_notes/` for abstract-level
+recall. Do not read or create retired `paper_notes*` directories. Shallow notes may
+surface a Bridge lead or required reading upgrade, but cannot establish a transfer
+mechanism or target-domain validity.
+
 Generate candidates only after the transfer audit. When target or bridge evidence is
 missing, output `preliminary`, `needs_retrieval`, or `unsupported` rather than a scored
 novelty claim. Never fabricate a current-project dataset, baseline, metric, command,

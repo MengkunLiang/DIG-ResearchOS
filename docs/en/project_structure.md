@@ -60,4 +60,8 @@ workspace/<project>/
 
 After a complete Candidate is selected, `hypothesis_brief.yaml`, `selected/hypothesis_lineage.json`, `selected/t45_search_targets.json`, and `selected/pre_novelty_brief.md` describe a Pre-Novelty research direction. They preserve lineage and define a targeted T4.5 audit scope, but do not authorize T5. Only a passing T4.5 audit may create or update formal `hypotheses.md`, `exp_plan.yaml`, `contribution_hypothesis_map.yaml`, `validation_map.yaml`, `kill_criteria.yaml`, and `post_novelty_formalization.json`.
 
+`literature/deep_read_notes/`, `literature/shallow_read_notes/`, and `literature/bridge_notes/` are the only live Paper Note roots. Deep and Bridge notes can provide bounded full/partial-reading evidence; shallow notes are abstract-level recall only. Old `paper_notes*` directories are handled only by the explicit workspace migration layer, which records a migration report and never makes legacy paths a second live source. A conflicting legacy note is preserved under `literature/note_migration_conflicts/` for review instead of being silently duplicated in an evidence root.
+
+`ideation/t4_target_profile.json` records the researcher-confirmed Publication Orientation. `ideation/final_cards/portfolio_cards.json` contains non-mutating, profile-aware Impact Translations only for the final Portfolio Candidates. The Candidate Dossiers and Population snapshots remain the scientific source of truth; the final cards must echo their thesis, contribution IDs, and hypothesis IDs exactly.
+
 Use workspace-relative paths in prompts, artifacts, and Skill contracts. Do not copy an artifact between projects without recording its source and validating it under the target project's constraints.

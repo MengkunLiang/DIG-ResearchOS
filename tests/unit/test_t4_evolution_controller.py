@@ -21,13 +21,15 @@ from researchos.ideation.models import (
     OpportunityQuery,
     ProvisionalHypothesis,
     ScoreDimensions,
+    ProfileFitAssessment,
     ScoreReport,
     T4RunConfig,
+    TargetProfile,
 )
 
 
 def _write_inputs(workspace):
-    (workspace / "literature" / "paper_notes").mkdir(parents=True)
+    (workspace / "literature" / "deep_read_notes").mkdir(parents=True)
     (workspace / "user_seeds").mkdir()
     (workspace / "project.yaml").write_text("project_id: test\n", encoding="utf-8")
     (workspace / "literature" / "synthesis.md").write_text("synthesis\n", encoding="utf-8")
@@ -36,7 +38,7 @@ def _write_inputs(workspace):
     (workspace / "literature" / "comparison_table.csv").write_text("id,title\n", encoding="utf-8")
     (workspace / "user_seeds" / "seed_ideas.md").write_text("\n", encoding="utf-8")
     (workspace / "user_seeds" / "seed_constraints.md").write_text("\n", encoding="utf-8")
-    (workspace / "literature" / "paper_notes" / "p1.md").write_text(
+    (workspace / "literature" / "deep_read_notes" / "p1.md").write_text(
         "# Note\n\n## Mechanism\n\nBounded evidence for a fixture mechanism.\n", encoding="utf-8"
     )
 
@@ -205,6 +207,30 @@ class FakeScorer:
 
     async def review_crossover_pairs(self, *, candidates, pairs):
         return []
+
+
+class ProfileAwareFakeScorer(FakeScorer):
+    profile_type = "hybrid"
+
+    async def score_population(self, *, candidates, scoring_batch_id, blind):
+        reports = await super().score_population(
+            candidates=candidates,
+            scoring_batch_id=scoring_batch_id,
+            blind=blind,
+        )
+        return [
+            report.model_copy(
+                update={
+                    "profile_fit": ProfileFitAssessment(
+                        profile_type=self.profile_type,
+                        overall_fit=4.4,
+                        dimensions={"fit": 4.4},
+                        rationale=f"Independent fit assessment for {self.profile_type}.",
+                    )
+                }
+            )
+            for report in reports
+        ]
 
 
 class FakeEvolver:
@@ -406,6 +432,57 @@ async def test_continue_from_active_population_adds_one_generation_without_inval
     assert (tmp_path / "ideation" / "populations" / "P2.json").exists()
     assert continued.state.completed_rounds == 2
     assert continued.state.configured_rounds == 2
+
+
+@pytest.mark.asyncio
+async def test_profile_revision_preserves_core_score_and_creates_a_new_population_snapshot(tmp_path):
+    _write_inputs(tmp_path)
+    scorer = ProfileAwareFakeScorer()
+    controller = IdeaEvolutionController(
+        workspace_dir=tmp_path,
+        settings=_settings(),
+        generator=FakeGenerator(),
+        scorer=scorer,
+        evolver=FakeEvolver(),
+    )
+    config = T4RunConfig(
+        mode="standard",
+        rounds=1,
+        allow_crossover=False,
+        final_top_k=2,
+        max_initial_population=6,
+        active_population_size=3,
+        max_offspring_per_round=1,
+        max_crossover_children=0,
+        route_quotas={"evidence_routed_literature": 1, "informed_brainstorm": 1},
+        target_profile=TargetProfile(profile_type="hybrid", confirmed_by_user=True),
+    )
+    first = await controller.run(config)
+    old_scores = json.loads((tmp_path / "ideation" / "scoring" / "U1.json").read_text(encoding="utf-8"))["scores"]
+
+    scorer.profile_type = "technical_cs"
+    revised = config.model_copy(
+        update={
+            "target_profile": TargetProfile(
+                profile_type="technical_cs",
+                primary_orientation="technical_and_computational",
+                confirmed_by_user=True,
+            )
+        }
+    )
+    T4ArtifactStore(tmp_path).write_run_config(revised)
+    result = await controller.reprofile_active_population(revised)
+    new_scores = json.loads((tmp_path / "ideation" / "scoring" / "P2.json").read_text(encoding="utf-8"))["scores"]
+
+    assert first.population.population_id == "P1"
+    assert result.population.population_id == "P2"
+    assert (tmp_path / "ideation" / "populations" / "P1.json").exists()
+    assert (tmp_path / "ideation" / "evolution" / "profile_revisions" / "2.json").exists()
+    old_by_id = {item["candidate_id"]: item["scores"] for item in old_scores}
+    assert {item["candidate_id"]: item["scores"] for item in new_scores} == {
+        item["candidate_id"]: old_by_id[item["candidate_id"]] for item in new_scores
+    }
+    assert {item["profile_fit"]["profile_type"] for item in new_scores} == {"technical_cs"}
 
 
 @pytest.mark.asyncio

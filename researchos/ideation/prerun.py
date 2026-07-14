@@ -10,7 +10,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from .config import T4EvolutionSettings
-from .models import T4RunConfig
+from .models import T4RunConfig, TargetProfile
 from .state import T4ArtifactStore, run_config_fingerprint, t4_input_fingerprint
 
 
@@ -38,12 +38,9 @@ class T4PreRunDirective(_Model):
 
 
 _NOTE_ROOTS = (
-    ("core_deep_cards", "literature/paper_notes", "core"),
-    ("core_abstract_cards", "literature/paper_notes_abstract", "core"),
-    ("bridge_cards", "literature/paper_notes_bridge", "bridge"),
-    ("legacy_deep_cards", "literature/deep_read_notes", "core"),
-    ("legacy_abstract_cards", "literature/shallow_read_notes", "core"),
-    ("legacy_bridge_cards", "literature/bridge_notes", "bridge"),
+    ("core_deep_cards", "literature/deep_read_notes", "core"),
+    ("core_abstract_cards", "literature/shallow_read_notes", "core"),
+    ("bridge_cards", "literature/bridge_notes", "bridge"),
 )
 
 
@@ -112,7 +109,12 @@ def inspect_t4_inputs(workspace_dir: Path) -> T4InputInspection:
     )
 
 
-def default_run_config(settings: T4EvolutionSettings, directive: T4PreRunDirective | None = None) -> T4RunConfig:
+def default_run_config(
+    settings: T4EvolutionSettings,
+    directive: T4PreRunDirective | None = None,
+    *,
+    target_profile: TargetProfile | None = None,
+) -> T4RunConfig:
     """Build a validated run config from settings and a parsed user directive."""
 
     directive = directive or T4PreRunDirective(action="start")
@@ -129,6 +131,7 @@ def default_run_config(settings: T4EvolutionSettings, directive: T4PreRunDirecti
         max_crossover_children=settings.offspring.crossover_maximum if directive.allow_crossover else 0,
         bridge_policy=settings.bridge_policy_default,
         route_quotas={item.route: item.maximum for item in settings.route_quotas},
+        target_profile=target_profile or TargetProfile(),
         raw_user_input=directive.raw_user_input,
     )
 
@@ -152,6 +155,7 @@ def has_current_t4_prerun_confirmation(workspace_dir: Path) -> bool:
         and receipt.get("semantics") == "t4_pre_run_confirmation"
         and receipt.get("input_fingerprint") == inspection.input_fingerprint
         and receipt.get("run_config_fingerprint") == run_config_fingerprint(config)
+        and config.target_profile.confirmed_by_user
     )
 
 

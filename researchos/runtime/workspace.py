@@ -187,7 +187,11 @@ def migrate_workspace_note_directories(
         if not legacy.exists():
             continue
         if canonical.exists():
-            conflicts.append({"legacy": legacy_rel, "canonical": canonical_rel})
+            if not legacy.is_dir() or not canonical.is_dir():
+                conflicts.append({"legacy": legacy_rel, "canonical": canonical_rel, "reason": "path_type_conflict"})
+                continue
+            moved.extend(_merge_legacy_note_directory(workspace_dir, legacy, canonical, legacy_rel, canonical_rel, conflicts))
+            _remove_empty_directories(legacy)
             continue
         canonical.parent.mkdir(parents=True, exist_ok=True)
         legacy.rename(canonical)
@@ -206,8 +210,11 @@ def migrate_workspace_note_directories(
             continue
         if relative.parts and relative.parts[0] == runtime_dir_name:
             # Resume snapshots are active inputs and must follow moved paths;
-            # events, traces, and logs are immutable historical audit records.
-            if len(relative.parts) > 1 and relative.parts[1] in {"events", "traces", "logs"}:
+            # events, traces, logs, and migration reports are immutable audit
+            # records. Rewriting a prior migration report during a later
+            # workspace initialization would erase the original moved/conflict
+            # facts from its next generated report.
+            if len(relative.parts) > 1 and relative.parts[1] in {"events", "traces", "logs", "migrations"}:
                 continue
         try:
             original = path.read_text(encoding="utf-8")
@@ -233,13 +240,79 @@ def migrate_workspace_note_directories(
             "moved": moved,
             "conflicts": conflicts,
             "updated_artifacts": changed_files,
-            "legacy_trace_policy": "runtime traces, events, and logs are preserved unchanged",
+            "legacy_trace_policy": "runtime events, traces, logs, and migration reports are preserved unchanged",
         }
         (record_dir / "note_directory_migration.json").write_text(
             json.dumps(record, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
     return {"moved": moved, "conflicts": conflicts, "updated_artifacts": changed_files}
+
+
+def _merge_legacy_note_directory(
+    workspace_dir: Path,
+    legacy: Path,
+    canonical: Path,
+    legacy_rel: str,
+    canonical_rel: str,
+    conflicts: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """Merge an old note root without making it a live evidence root.
+
+    Identical files collapse into the canonical copy.  A same-name file with
+    different content is preserved outside the three official note roots for a
+    human to resolve; silently renaming it inside a live root would make one
+    paper appear twice in T3/T4.
+    """
+
+    moved: list[dict[str, str]] = []
+    conflict_root = workspace_dir / "literature" / "note_migration_conflicts" / Path(legacy_rel).name
+    for source in sorted((path for path in legacy.rglob("*") if path.is_file()), key=lambda path: path.as_posix()):
+        relative = source.relative_to(legacy)
+        destination = canonical / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if not destination.exists():
+            source.rename(destination)
+            moved.append({"from": f"{legacy_rel}/{relative.as_posix()}", "to": f"{canonical_rel}/{relative.as_posix()}"})
+            continue
+        try:
+            identical = source.read_bytes() == destination.read_bytes()
+        except OSError:
+            identical = False
+        if identical:
+            source.unlink()
+            moved.append({"from": f"{legacy_rel}/{relative.as_posix()}", "to": f"{canonical_rel}/{relative.as_posix()}", "status": "deduplicated"})
+            continue
+        preserved = conflict_root / relative
+        preserved.parent.mkdir(parents=True, exist_ok=True)
+        suffix = 1
+        while preserved.exists():
+            preserved = conflict_root / relative.with_name(f"{relative.stem}.legacy-{suffix}{relative.suffix}")
+            suffix += 1
+        source.rename(preserved)
+        conflicts.append(
+            {
+                "legacy": f"{legacy_rel}/{relative.as_posix()}",
+                "canonical": f"{canonical_rel}/{relative.as_posix()}",
+                "preserved_at": preserved.relative_to(workspace_dir).as_posix(),
+                "reason": "different_file_content",
+            }
+        )
+    return moved
+
+
+def _remove_empty_directories(root: Path) -> None:
+    """Remove an emptied legacy tree from leaves upward without touching files."""
+
+    for directory in sorted((path for path in root.rglob("*") if path.is_dir()), key=lambda path: len(path.parts), reverse=True):
+        try:
+            directory.rmdir()
+        except OSError:
+            pass
+    try:
+        root.rmdir()
+    except OSError:
+        pass
 
 
 def write_project_stub(

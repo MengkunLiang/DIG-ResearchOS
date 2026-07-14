@@ -10,6 +10,7 @@ from researchos.ideation.config import load_t4_evolution_settings
 from researchos.ideation.legacy_projection import project_gate1_population
 from researchos.ideation.prerun import default_run_config, inspect_t4_inputs
 from researchos.ideation.state import T4ArtifactStore, run_config_fingerprint
+from researchos.ideation.models import TargetProfile
 from researchos.orchestration.state_machine import StateMachine
 from researchos.runtime.agent import ExecutionContext
 from researchos.runtime.orchestrator import AgentRunner
@@ -20,7 +21,7 @@ from tests.unit.test_t4_legacy_projection import _ready_projection_inputs
 
 
 def _write_workspace(workspace):
-    (workspace / "literature" / "paper_notes").mkdir(parents=True)
+    (workspace / "literature" / "deep_read_notes").mkdir(parents=True)
     (workspace / "user_seeds").mkdir()
     (workspace / "project.yaml").write_text("project_id: runtime-test\n", encoding="utf-8")
     (workspace / "literature" / "synthesis.md").write_text("A research synthesis with bounded evidence.\n", encoding="utf-8")
@@ -29,12 +30,15 @@ def _write_workspace(workspace):
     (workspace / "literature" / "comparison_table.csv").write_text("id,title\n", encoding="utf-8")
     (workspace / "user_seeds" / "seed_ideas.md").write_text("\n", encoding="utf-8")
     (workspace / "user_seeds" / "seed_constraints.md").write_text("\n", encoding="utf-8")
-    (workspace / "literature" / "paper_notes" / "p1.md").write_text(
+    (workspace / "literature" / "deep_read_notes" / "p1.md").write_text(
         "# Paper note\n\n## Mechanism\n\nA bounded observation supports a testable mechanism question.\n",
         encoding="utf-8",
     )
     store = T4ArtifactStore(workspace)
-    config = default_run_config(load_t4_evolution_settings())
+    config = default_run_config(
+        load_t4_evolution_settings(),
+        target_profile=TargetProfile(confirmed_by_user=True),
+    )
     store.write_run_config(config)
     inspection = inspect_t4_inputs(workspace)
     store.write_json(
@@ -139,6 +143,13 @@ def _score(candidate_id: str, batch_id: str):
         "recommended_operators": ["repair_validation"],
         "compatibility_scores": {key: 4 for key in score_keys},
         "compatibility_rationales": {key: f"The {key} score for {candidate_id} follows a distinct mechanism, evidence boundary, and validation design." for key in score_keys},
+        "profile_fit": {
+            "profile_type": "hybrid",
+            "overall_fit": 4.0,
+            "dimensions": {"dual_contribution_coherence": 4.0},
+            "rationale": "The candidate connects a bounded technical mechanism to a clearly stated research consequence.",
+            "cautions": [],
+        },
     }
 
 
@@ -183,6 +194,37 @@ async def test_confirmed_standard_t4_runs_p0_to_p1_and_preserves_gate1_transitio
             for index, plan in enumerate(payload["plans"], start=1):
                 children.append(_candidate(f"M{index}", "evidence_routed_literature", parent_ids=plan["parent_ids"]))
             return json.dumps({"children": children})
+        if "Final Idea Card Compiler" in system_contract:
+            cards = []
+            for candidate in payload["candidates"]:
+                cards.append(
+                    {
+                        "candidate_id": candidate["candidate_id"],
+                        "profile_type": "hybrid",
+                        "core_thesis": candidate["genome"]["core_thesis"]["value"],
+                        "contribution_ids": [item["contribution_id"] for item in candidate["contributions"]],
+                        "hypothesis_ids": [item["hypothesis_id"] for item in candidate["hypotheses"]],
+                        "plain_language_summary": "A bounded candidate tests its stated mechanism before any strong conclusion is made.",
+                        "why_it_matters": "The design separates the proposed mechanism from an alternative explanation.",
+                        "affected_stakeholders_or_processes": ["research workflow"],
+                        "representative_scenario": "A researcher must decide whether a mechanism is genuine before adopting the design.",
+                        "current_failure": "Existing comparison does not distinguish the mechanism from a broad alternative.",
+                        "scientific_technical_core": "A discriminating control tests the bounded mechanism.",
+                        "implications": [
+                            {
+                                "implication_type": "scientific",
+                                "statement": "A passing validation would narrow the explanation that later work may use.",
+                                "evidence_status": "llm_inference",
+                                "conditions": ["The proposed validation passes."],
+                            }
+                        ],
+                        "conditions_for_impact": ["The planned control must rule out the competing explanation."],
+                        "claims_not_to_make": ["Do not claim an established effect before the proposed validation."],
+                        "risks_and_boundaries": ["The candidate remains bounded by its stated condition."],
+                        "evidence_status_summary": "This is a proposed candidate rather than a verified result.",
+                    }
+                )
+            return json.dumps({"cards": cards})
         raise AssertionError(system_contract)
 
     monkeypatch.setattr(runner, "_call_t4_evolution_role", fake_role_call)
@@ -194,6 +236,7 @@ async def test_confirmed_standard_t4_runs_p0_to_p1_and_preserves_gate1_transitio
     assert (tmp_workspace / "ideation/populations/P0.json").exists()
     assert (tmp_workspace / "ideation/populations/P1.json").exists()
     assert (tmp_workspace / "ideation/portfolio.json").exists()
+    assert (tmp_workspace / "ideation/final_cards/portfolio_cards.json").exists()
     assert validate_t4_gate1_ready(tmp_workspace)[0]
     rendered = capsys.readouterr().out
     assert "Evidence Routing" in rendered

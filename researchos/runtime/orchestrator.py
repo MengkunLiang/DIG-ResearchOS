@@ -60,7 +60,7 @@ from ..ideation.config import load_t4_evolution_settings
 from ..ideation.directives import current_population_context
 from ..ideation.evolution_controller import IdeaEvolutionController
 from ..ideation.legacy_projection import project_gate1_population
-from ..ideation.llm_roles import LLMJsonRoleInvoker, LLMIdeaEvolver, LLMIdeaGenerator, LLMIdeaScorer, T4RoleCallConfig
+from ..ideation.llm_roles import LLMFinalIdeaCardCompiler, LLMJsonRoleInvoker, LLMIdeaEvolver, LLMIdeaGenerator, LLMIdeaScorer, T4RoleCallConfig
 from ..ideation.models import EvolutionPhase, HumanCompositionCompatibility
 from ..ideation.prerun import has_current_t4_prerun_confirmation
 from ..ideation.selected_compilation import ensure_t45_pre_novelty_brief, validate_legacy_t45_brief_source
@@ -2739,12 +2739,14 @@ class AgentRunner:
                 timeout=int(self.global_timeout.get("llm_call") or 120),
                 max_retries_per_model=int(self.retry_policy.get("llm_retries") or 2),
                 retry_base_delay=float(self.retry_policy.get("llm_retry_delay") or 2),
+                target_profile=run_config.target_profile,
             ),
             call=role_call,
         )
         generator = LLMIdeaGenerator(invoker)
         scorer = LLMIdeaScorer(invoker)
         evolver = LLMIdeaEvolver(invoker)
+        final_card_compiler = LLMFinalIdeaCardCompiler(invoker)
         controller = IdeaEvolutionController(
             workspace_dir=ctx.workspace_dir,
             settings=load_t4_evolution_settings(),
@@ -2853,13 +2855,40 @@ class AgentRunner:
                         action_type="t4_route_regeneration_no_candidate",
                     )
                     return True
+            elif operation_action == "change_target_profile":
+                result = await controller.reprofile_active_population(run_config)
             elif operation_action:
                 raise RecoverableRuntimePause(
-                    "This T4 directive was recorded safely, but its model-backed operation is not available in this runtime build yet. "
-                    "The current Population was not changed; return to Gate1 to choose another action."
+                    "This saved T4 request is not supported by the current workflow. The Candidate Population was not changed. "
+                    "Resume to return to the Idea decision panel and choose an available action."
                 )
             else:
                 result = await controller.run(run_config)
+            portfolio_ids = [
+                candidate_id
+                for candidate_id in (
+                    [result.portfolio.lead_id, *result.portfolio.alternative_ids, *result.portfolio.high_upside_ids]
+                )
+                if candidate_id
+            ]
+            dossier_by_id = {candidate.candidate_id: candidate for candidate in result.active_dossiers}
+            portfolio_dossiers = [dossier_by_id[candidate_id] for candidate_id in portfolio_ids if candidate_id in dossier_by_id]
+            if len(portfolio_dossiers) != len(portfolio_ids):
+                raise ValueError("T4 Portfolio references a Candidate outside the active Population")
+            final_cards = await final_card_compiler.compile(
+                candidates=portfolio_dossiers,
+                target_profile=run_config.target_profile,
+            )
+            store.write_json(
+                "ideation/final_cards/portfolio_cards.json",
+                {
+                    "schema_version": "1.0.0",
+                    "semantics": "t4_final_idea_card_translations",
+                    "population_id": result.population.population_id,
+                    "target_profile": model_dump(run_config.target_profile, mode="json"),
+                    "cards": [model_dump(card, mode="json") for card in final_cards],
+                },
+            )
             projection = project_gate1_population(
                 ctx.workspace_dir,
                 population=result.population,

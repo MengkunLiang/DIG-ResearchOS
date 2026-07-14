@@ -2663,7 +2663,36 @@ def status_command(args: argparse.Namespace) -> int:
     """Render a compact workspace status; raw state is opt-in for debugging."""
 
     workspace = Path(args.workspace).resolve()
-    state = StateYaml.load_yaml(workspace / "state.yaml")
+    state_path = workspace / "state.yaml"
+    if not state_path.exists():
+        _render_workspace_entry_panel(
+            args,
+            title="Workspace 已准备",
+            message="尚未启动 pipeline，因此没有可显示的执行状态。运行新项目后，status 会显示当前步骤和下一步。",
+            workspace=workspace,
+            border_style="cyan",
+        )
+        return 0
+    if not state_path.is_file():
+        _render_workspace_entry_panel(
+            args,
+            title="项目状态无效",
+            message="state.yaml 不是普通文件，无法安全读取项目状态。",
+            workspace=workspace,
+            border_style="bright_red",
+        )
+        return 2
+    try:
+        state = StateYaml.load_yaml(state_path)
+    except Exception as exc:
+        _render_workspace_entry_panel(
+            args,
+            title="项目状态无法读取",
+            message=f"state.yaml 无法解析：{exc}",
+            workspace=workspace,
+            border_style="bright_red",
+        )
+        return 2
     if bool(getattr(args, "detail", False)):
         print(yaml.safe_dump(model_dump(state, mode="json"), allow_unicode=True, sort_keys=False))
         return 0

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ..pydantic_compat import model_dump
-from .models import BridgeCoverageEntry, CandidateDossier, PopulationSnapshot, ScoreReport
+from .models import BridgeCoverageEntry, CandidateDossier, FinalIdeaCardTranslation, PopulationSnapshot, ScoreReport
 from .state import T4ArtifactStore
 
 
@@ -32,10 +32,15 @@ def project_gate1_population(
     store = T4ArtifactStore(workspace_dir)
     score_by_id = {item.candidate_id: item for item in scores}
     dossier_by_id = {item.candidate_id: item for item in dossiers}
+    final_cards = _load_final_cards(store)
     active = [dossier_by_id[candidate_id] for candidate_id in population.active_candidate_ids if candidate_id in dossier_by_id]
     if len(active) < 4:
         raise ValueError("Gate1 projection requires at least four active candidates")
-    candidates = [_legacy_candidate(item, score_by_id[item.candidate_id]) for item in active if item.candidate_id in score_by_id]
+    candidates = [
+        _legacy_candidate(item, score_by_id[item.candidate_id], final_cards.get(item.candidate_id))
+        for item in active
+        if item.candidate_id in score_by_id
+    ]
     if len(candidates) != len(active):
         raise ValueError("Gate1 projection requires an independent score for every active candidate")
     pass2 = [_pass2_review(candidate) for candidate in candidates]
@@ -49,7 +54,11 @@ def project_gate1_population(
     return {"candidate_count": len(candidates), "candidate_ids": [item["id"] for item in candidates]}
 
 
-def _legacy_candidate(dossier: CandidateDossier, score: ScoreReport) -> dict[str, Any]:
+def _legacy_candidate(
+    dossier: CandidateDossier,
+    score: ScoreReport,
+    final_card: FinalIdeaCardTranslation | None = None,
+) -> dict[str, Any]:
     presentation = dossier.presentation
     if presentation is None:
         raise ValueError(f"Candidate {dossier.candidate_id} lacks LLM-authored Gate1 presentation")
@@ -147,7 +156,9 @@ def _legacy_candidate(dossier: CandidateDossier, score: ScoreReport) -> dict[str
             "rationales": score.rationales,
             "dominant_strength": score.dominant_strength,
             "dominant_bottleneck": score.dominant_bottleneck,
+            "profile_fit": model_dump(score.profile_fit, mode="json"),
         },
+        "final_idea_card": model_dump(final_card, mode="json") if final_card is not None else None,
         "evidence_composition": dossier.evidence_composition,
         "artifact_paths": dossier.artifact_paths,
         "gate1_card": presentation.gate1_card,
@@ -216,6 +227,15 @@ def _write_gate_cards(store: T4ArtifactStore, candidates: list[dict[str, Any]]) 
         for key, value in evolution_score["dimensions"].items():
             lines.append(f"- **{key} ({value}/5):** {evolution_score['rationales'][key]}")
         lines.extend(["", f"**Dominant strength:** {evolution_score['dominant_strength']}", f"**Primary bottleneck:** {evolution_score['dominant_bottleneck']}", ""])
+        profile_fit = evolution_score.get("profile_fit") if isinstance(evolution_score.get("profile_fit"), dict) else {}
+        if profile_fit:
+            lines.extend(
+                [
+                    f"**Target Profile Fit:** {profile_fit.get('overall_fit', '-')}/5 ({profile_fit.get('profile_type', 'unknown')})",
+                    str(profile_fit.get("rationale") or ""),
+                    "",
+                ]
+            )
         for key, value in candidate["scores"].items():
             lines.append(f"- **{key} ({value}/5):** {candidate['score_rationale'][key]}")
         lines.extend(["", "### Core paper dependencies"])
@@ -232,6 +252,43 @@ def _write_gate_cards(store: T4ArtifactStore, candidates: list[dict[str, Any]]) 
         )
         for hypothesis in candidate["candidate_hypotheses"]:
             lines.append(f"- **{hypothesis['id']}:** {hypothesis['statement']}")
+        final_card = candidate.get("final_idea_card") if isinstance(candidate.get("final_idea_card"), dict) else None
+        if final_card:
+            lines.extend(
+                [
+                    "",
+                    "### Why It Matters",
+                    str(final_card.get("why_it_matters") or ""),
+                    "",
+                    "### Representative Scenario",
+                    str(final_card.get("representative_scenario") or ""),
+                    "",
+                    "### Scientific / Technical Core",
+                    str(final_card.get("scientific_technical_core") or ""),
+                    "",
+                    "### Implications",
+                ]
+            )
+            implications = final_card.get("implications") if isinstance(final_card.get("implications"), list) else []
+            for implication in implications:
+                if not isinstance(implication, dict):
+                    continue
+                conditions = "; ".join(str(item) for item in implication.get("conditions", []) if str(item).strip())
+                suffix = f" Conditions: {conditions}" if conditions else ""
+                lines.append(
+                    f"- **{implication.get('implication_type', 'implication')} ({implication.get('evidence_status', 'unknown')}):** "
+                    f"{implication.get('statement', '')}{suffix}"
+                )
+            lines.extend(
+                [
+                    "",
+                    "### Risks and Boundaries",
+                    *[f"- {item}" for item in final_card.get("risks_and_boundaries", [])],
+                    "",
+                    "### Claims Not to Make",
+                    *[f"- {item}" for item in final_card.get("claims_not_to_make", [])],
+                ]
+            )
         lines.extend(
             [
                 "",
@@ -242,6 +299,23 @@ def _write_gate_cards(store: T4ArtifactStore, candidates: list[dict[str, Any]]) 
             ]
         )
     store.path("ideation/_gate1_candidate_cards.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def _load_final_cards(store: T4ArtifactStore) -> dict[str, FinalIdeaCardTranslation]:
+    """Load optional portfolio-only translations without making Gate1 depend on legacy workspaces."""
+
+    try:
+        payload = json.loads(store.path("ideation/final_cards/portfolio_cards.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+    raw_cards = payload.get("cards") if isinstance(payload, dict) and isinstance(payload.get("cards"), list) else []
+    cards: dict[str, FinalIdeaCardTranslation] = {}
+    for item in raw_cards:
+        if not isinstance(item, dict):
+            continue
+        card = FinalIdeaCardTranslation.model_validate(item)
+        cards[card.candidate_id] = card
+    return cards
 
 
 def _write_gate_brief(store: T4ArtifactStore, candidates: list[dict[str, Any]], population: PopulationSnapshot) -> None:

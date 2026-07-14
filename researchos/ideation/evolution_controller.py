@@ -151,10 +151,16 @@ class IdeaEvolutionController:
         p0, p0_dossiers, route_results = await self._ensure_p0(run_config, input_fp, config_fp)
         if run_config.rounds == 0:
             await self._report(EvolutionPhase.SCORING, "started", {"population_id": p0.population_id, "candidate_count": len(p0_dossiers)})
-            scores = await self._score(p0_dossiers, "SB-P0")
+            scores = await self._score(p0_dossiers, "SB-P0", run_config=run_config)
             self._write_scores("P0", scores)
             families = self._load_or_build_families(p0_dossiers, generation=0)
-            portfolio = select_portfolio(p0, scores, families, maximum=run_config.final_top_k)
+            portfolio = select_portfolio(
+                p0,
+                scores,
+                families,
+                maximum=run_config.final_top_k,
+                profile_weight=run_config.target_profile.portfolio_profile_weight,
+            )
             self.store.write_json("ideation/portfolio.json", model_dump(portfolio, mode="json"))
             state = self._set_waiting_state(p0, run_config, display_ids=_portfolio_ids(portfolio), completed_rounds=0)
             active_scores = _select_scores(scores, p0.active_candidate_ids)
@@ -415,6 +421,119 @@ class IdeaEvolutionController:
             allow_seed_children=True,
         )
 
+    async def reprofile_active_population(self, run_config: T4RunConfig) -> EvolutionRunResult:
+        """Reassess Profile Fit without rewriting evidence or Core Scientific Score.
+
+        A publication-orientation change is a new decision context, not a new
+        scientific input.  The old Population remains immutable.  This method
+        creates a snapshot with the same Candidates and fresh independent
+        Profile Fit assessments, while copying the original five-dimension
+        Core Scientific Score verbatim.
+        """
+
+        state = self.store.read_state()
+        if state.input_fingerprint != t4_input_fingerprint(self.store.workspace_dir):
+            raise ValueError("T4 Profile revision cannot use a stale Population")
+        population = self.store.read_population(state.current_population_id)
+        if population.input_fingerprint != state.input_fingerprint:
+            raise ValueError("T4 Profile revision Population has inconsistent input fingerprints")
+        dossiers = self._load_dossiers(population.active_candidate_ids)
+        old_scores = self._load_active_scores(population)
+        revision_generation = self._next_available_generation()
+        await self._report(
+            EvolutionPhase.SCORING,
+            "started",
+            {"round_number": revision_generation, "population_id": population.population_id, "candidate_count": len(dossiers)},
+        )
+        refreshed = await self._score(dossiers, f"SB-PROFILE-{revision_generation}", run_config=run_config)
+        refreshed_by_id = {item.candidate_id: item for item in refreshed}
+        preserved_core_scores = [
+            old.model_copy(
+                update={
+                    "scoring_batch_id": f"SB-PROFILE-{revision_generation}",
+                    "profile_fit": refreshed_by_id[old.candidate_id].profile_fit,
+                }
+            )
+            for old in old_scores
+        ]
+        config_fp = run_config_fingerprint(run_config)
+        output_population = PopulationSnapshot(
+            population_id=f"P{revision_generation}",
+            generation=revision_generation,
+            input_fingerprint=population.input_fingerprint,
+            run_config_fingerprint=config_fp,
+            active_candidate_ids=list(population.active_candidate_ids),
+            family_ids=[],
+            elite_candidate_ids=list(population.elite_candidate_ids),
+            archived_candidate_ids=[],
+            created_from_round=None,
+        )
+        families = self._load_or_build_families(dossiers, generation=revision_generation)
+        output_population = output_population.model_copy(update={"family_ids": [item.family_id for item in families]})
+        self.store.write_population(output_population)
+        self._write_scores(output_population.population_id, preserved_core_scores)
+        portfolio = select_portfolio(
+            output_population,
+            preserved_core_scores,
+            families,
+            maximum=run_config.final_top_k,
+            profile_weight=run_config.target_profile.portfolio_profile_weight,
+        )
+        self.store.write_json("ideation/portfolio.json", model_dump(portfolio, mode="json"))
+        self.store.write_json(
+            f"ideation/evolution/profile_revisions/{revision_generation}.json",
+            {
+                "schema_version": "1.0.0",
+                "semantics": "t4_profile_revision",
+                "source_population_id": population.population_id,
+                "output_population_id": output_population.population_id,
+                "input_fingerprint": output_population.input_fingerprint,
+                "previous_run_config_fingerprint": population.run_config_fingerprint,
+                "run_config_fingerprint": config_fp,
+                "core_scientific_score_policy": "preserved_from_source_population",
+                "profile_fit_policy": "independently_reassessed",
+            },
+        )
+        updated_state = state.model_copy(
+            update={
+                "phase": EvolutionPhase.WAITING_HUMAN,
+                "generation": revision_generation,
+                "current_population_id": output_population.population_id,
+                "display_candidate_ids": _portfolio_ids(portfolio),
+                "run_config_fingerprint": config_fp,
+                "last_completed_artifact": f"ideation/populations/{output_population.population_id}.json",
+                "generation_history": list(dict.fromkeys([*state.generation_history, output_population.population_id])),
+                "archived_population_ids": list(dict.fromkeys([*state.archived_population_ids, population.population_id])),
+            }
+        )
+        self.store.write_state(updated_state)
+        await self._report(
+            EvolutionPhase.SCORING,
+            "completed",
+            {"round_number": revision_generation, "population_id": output_population.population_id, "candidate_count": len(preserved_core_scores)},
+        )
+        await self._report(
+            EvolutionPhase.SURVIVAL,
+            "completed",
+            {
+                "round_number": revision_generation,
+                "population_id": output_population.population_id,
+                "input_count": len(dossiers),
+                "offspring_count": 0,
+                "active_count": len(dossiers),
+                "archived_count": 0,
+                "portfolio_count": len(_portfolio_ids(portfolio)),
+            },
+        )
+        return EvolutionRunResult(
+            population=output_population,
+            portfolio=portfolio,
+            state=updated_state,
+            route_results=self._load_route_results(),
+            active_dossiers=dossiers,
+            active_scores=preserved_core_scores,
+        )
+
     async def _ensure_p0(
         self,
         run_config: T4RunConfig,
@@ -615,7 +734,7 @@ class IdeaEvolutionController:
             "started",
             {"round_number": round_number, "population_id": population.population_id, "candidate_count": len(dossiers)},
         )
-        scores_current = await self._score(dossiers, score_batch)
+        scores_current = await self._score(dossiers, score_batch, run_config=run_config)
         self._write_scores(population.population_id, scores_current)
         families_current = self._load_or_build_families(dossiers, generation=population.generation)
         await self._report(
@@ -630,7 +749,11 @@ class IdeaEvolutionController:
         )
         if requested_parent_ids is None:
             parent_ids, parent_reasons = select_evolution_parents(
-                dossiers, scores_current, families_current, maximum=self.settings.offspring.mutation_maximum
+                dossiers,
+                scores_current,
+                families_current,
+                maximum=self.settings.offspring.mutation_maximum,
+                profile_weight=run_config.target_profile.portfolio_profile_weight,
             )
         else:
             known_ids = {item.candidate_id for item in dossiers}
@@ -714,7 +837,7 @@ class IdeaEvolutionController:
             "rescoring",
             {"round_number": round_number, "offspring_count": len(children), "union_count": len(union)},
         )
-        union_scores = await self._score(union, f"SB-U{round_number}")
+        union_scores = await self._score(union, f"SB-U{round_number}", run_config=run_config)
         self._write_scores(f"U{round_number}", union_scores)
         contracts = [validate_idea_contract(item) for item in union]
         deltas = []
@@ -786,7 +909,13 @@ class IdeaEvolutionController:
                 "survival": survival,
             },
         )
-        portfolio = select_portfolio(output_population, union_scores, output_families, maximum=run_config.final_top_k)
+        portfolio = select_portfolio(
+            output_population,
+            union_scores,
+            output_families,
+            maximum=run_config.final_top_k,
+            profile_weight=run_config.target_profile.portfolio_profile_weight,
+        )
         self.store.write_json("ideation/portfolio.json", model_dump(portfolio, mode="json"))
         state = self._set_waiting_state(
             output_population,
@@ -830,7 +959,13 @@ class IdeaEvolutionController:
             active_scores=active_scores,
         )
 
-    async def _score(self, candidates: list[CandidateDossier], batch_id: str) -> list[ScoreReport]:
+    async def _score(
+        self,
+        candidates: list[CandidateDossier],
+        batch_id: str,
+        *,
+        run_config: T4RunConfig,
+    ) -> list[ScoreReport]:
         reports = await self.scorer.score_population(candidates=_copies(candidates), scoring_batch_id=batch_id, blind=True)
         expected = {item.candidate_id for item in candidates}
         actual = {item.candidate_id for item in reports}
@@ -838,6 +973,16 @@ class IdeaEvolutionController:
             raise ValueError(f"independent scoring must cover exactly the population; missing={sorted(expected - actual)}, extra={sorted(actual - expected)}")
         if any(not report.blind for report in reports):
             raise ValueError("independent population scores must be blind")
+        mismatched_profile_fit = [
+            report.candidate_id
+            for report in reports
+            if report.profile_fit.profile_type != run_config.target_profile.profile_type
+        ]
+        if mismatched_profile_fit:
+            raise ValueError(
+                "independent scoring returned Profile Fit for a different Target Profile: "
+                + ", ".join(mismatched_profile_fit)
+            )
         return reports
 
     def _write_scores(self, population_id: str, reports: list[ScoreReport]) -> None:
@@ -859,6 +1004,17 @@ class IdeaEvolutionController:
         if missing:
             raise ValueError(f"score artifact {population_id} is missing active candidates: {missing}")
         return [by_id[candidate_id] for candidate_id in candidate_ids]
+
+    def _load_active_scores(self, population: PopulationSnapshot) -> list[ScoreReport]:
+        """Read the score batch that produced an active Population snapshot."""
+
+        candidates = [f"U{population.generation}", population.population_id] if population.generation else ["P0"]
+        for score_id in candidates:
+            try:
+                return self._load_scores(score_id, population.active_candidate_ids)
+            except ValueError:
+                continue
+        raise ValueError(f"active Population {population.population_id} has no complete score batch")
 
     def _load_portfolio(self) -> PortfolioSelection:
         return self.store.read_model("ideation/portfolio.json", PortfolioSelection)

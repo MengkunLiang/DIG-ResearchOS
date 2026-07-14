@@ -38,6 +38,7 @@ _DIRECTIVE_ACTIONS = {
     "inspect_contributions",
     "inspect_genome",
     "regenerate_route",
+    "change_target_profile",
     "rollback",
     "pause",
     "cancel",
@@ -112,6 +113,7 @@ def parse_idea_directive(
         "merge_candidates",
         "refine_candidate",
         "regenerate_route",
+        "change_target_profile",
         "rollback",
     }
     directive = IdeaDirective(
@@ -319,6 +321,8 @@ def _normalized_action(*, option_id: str, raw: str, proposed_action: str, target
         "show_archive": "show_archive",
         "inspect": "inspect_score",
         "regenerate_route": "regenerate_route",
+        "change_orientation": "change_target_profile",
+        "change_target_profile": "change_target_profile",
         "pause": "pause",
         "rollback": "rollback",
     }
@@ -329,6 +333,8 @@ def _normalized_action(*, option_id: str, raw: str, proposed_action: str, target
         return "pause"
     if any(token in lowered for token in ("回滚", "rollback", "回到 p")):
         return "rollback"
+    if any(token in lowered for token in ("研究取向", "publication orientation", "target profile", "改成更偏 utd", "改成 ccf", "改成 hybrid")):
+        return "change_target_profile"
     if any(token in lowered for token in ("再进化", "下一代", "continue evolution", "another generation")):
         return "continue_evolution"
     if any(token in lowered for token in ("剩余候选", "剩余 population", "show population", "remaining population", "查看 population")):

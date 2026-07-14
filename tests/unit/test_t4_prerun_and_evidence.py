@@ -14,9 +14,9 @@ from researchos.runtime.system_config import system_config_path
 
 
 def _write_required_inputs(workspace):
-    (workspace / "literature" / "paper_notes").mkdir(parents=True)
-    (workspace / "literature" / "paper_notes_abstract").mkdir()
-    (workspace / "literature" / "paper_notes_bridge").mkdir()
+    (workspace / "literature" / "deep_read_notes").mkdir(parents=True)
+    (workspace / "literature" / "shallow_read_notes").mkdir()
+    (workspace / "literature" / "bridge_notes").mkdir()
     (workspace / "user_seeds").mkdir()
     (workspace / "project.yaml").write_text("project_id: test\n", encoding="utf-8")
     (workspace / "literature" / "synthesis.md").write_text("synthesis\n", encoding="utf-8")
@@ -29,9 +29,9 @@ def _write_required_inputs(workspace):
 
 def test_preflight_uses_actual_materials_and_marks_abstract_bridge_warning(tmp_path):
     _write_required_inputs(tmp_path)
-    (tmp_path / "literature" / "paper_notes" / "p1.md").write_text("# Paper\n\n## Mechanism\n\nfull evidence\n", encoding="utf-8")
-    (tmp_path / "literature" / "paper_notes_abstract" / "p2.md").write_text("# Paper [ABSTRACT]\n\n## Core\n\nabstract evidence\n", encoding="utf-8")
-    (tmp_path / "literature" / "paper_notes_bridge" / "b1.md").write_text("# Bridge [ABSTRACT]\n\n## Transfer\n\nbridge hint\n", encoding="utf-8")
+    (tmp_path / "literature" / "deep_read_notes" / "p1.md").write_text("# Paper\n\n## Mechanism\n\nfull evidence\n", encoding="utf-8")
+    (tmp_path / "literature" / "shallow_read_notes" / "p2.md").write_text("# Paper [ABSTRACT]\n\n## Core\n\nabstract evidence\n", encoding="utf-8")
+    (tmp_path / "literature" / "bridge_notes" / "b1.md").write_text("# Bridge [ABSTRACT]\n\n## Transfer\n\nbridge hint\n", encoding="utf-8")
     inspection = inspect_t4_inputs(tmp_path)
     assert inspection.status == "ready_with_warnings"
     assert inspection.materials["core_deep_cards"] == 1
@@ -60,11 +60,11 @@ def test_prerun_parser_and_renderer_have_user_facing_consequences(tmp_path):
 
 def test_evidence_index_includes_shallow_recall_without_elevating_permission(tmp_path):
     _write_required_inputs(tmp_path)
-    (tmp_path / "literature" / "paper_notes" / "p1.md").write_text(
+    (tmp_path / "literature" / "deep_read_notes" / "p1.md").write_text(
         "# Full Note\n\n## Mechanism Claim\n\nA bounded mechanism statement.\n",
         encoding="utf-8",
     )
-    (tmp_path / "literature" / "paper_notes_abstract" / "p2.md").write_text(
+    (tmp_path / "literature" / "shallow_read_notes" / "p2.md").write_text(
         "# Abstract Note [ABSTRACT]\n\n## Core Approach\n\nA shallow inspiration.\n",
         encoding="utf-8",
     )
@@ -77,6 +77,19 @@ def test_evidence_index_includes_shallow_recall_without_elevating_permission(tmp
     assert EvidencePermission.FINAL_CLAIM in abstract_atoms[0].forbidden_uses
     assert (tmp_path / "ideation" / "evidence" / "evidence_index.jsonl").exists()
     assert result["summary"]["counts_by_reading_level"]["full_text"] >= 1
+
+
+def test_t4_default_note_chain_ignores_unmigrated_legacy_roots(tmp_path):
+    _write_required_inputs(tmp_path)
+    legacy = tmp_path / "literature" / "paper_notes"
+    legacy.mkdir()
+    (legacy / "legacy.md").write_text("# Legacy\n\n## Mechanism\n\nmust not be indexed\n", encoding="utf-8")
+
+    inspection = inspect_t4_inputs(tmp_path)
+    result = build_idea_evidence_index(tmp_path)
+
+    assert inspection.materials["core_deep_cards"] == 0
+    assert result["atoms"] == []
 
 
 def test_t4_prerun_gate_stays_inside_t4_and_rechecks_changed_inputs(tmp_path):

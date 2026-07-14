@@ -18,7 +18,8 @@ from ..pydantic_compat import model_dump, model_validate
 from ..runtime.llm_client import LLMClient
 from ..runtime.prompts import get_prompt_env
 from .evolution_controller import IdeaEvolverPort, IdeaGeneratorPort, IdeaScoringPort, RouteGenerationPayload
-from .models import CandidateDossier, CrossoverCompatibilityDecision, EvolutionPlan, HumanCompositionCompatibility, OpportunityQuery, RouteGenerationResult, ScoreReport, T4RunConfig
+from .models import CandidateDossier, CrossoverCompatibilityDecision, EvolutionPlan, FinalIdeaCardTranslation, HumanCompositionCompatibility, OpportunityQuery, RouteGenerationResult, ScoreReport, T4RunConfig, TargetProfile
+from .prompt_composer import compose_t4_role_prompt
 
 
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
@@ -35,6 +36,7 @@ class T4RoleCallConfig:
     timeout: int = 120
     max_retries_per_model: int = 2
     retry_base_delay: float = 2.0
+    target_profile: TargetProfile | None = None
 
 
 class LLMJsonRoleInvoker:
@@ -48,7 +50,14 @@ class LLMJsonRoleInvoker:
         self._call = call
 
     async def invoke(self, *, prompt_name: str, system_contract: str, payload: dict[str, Any]) -> dict[str, Any]:
-        user = get_prompt_env().get_template(prompt_name).render(payload_json=json.dumps(payload, ensure_ascii=False, indent=2))
+        rendered_task = get_prompt_env().get_template(prompt_name).render(payload_json=json.dumps(payload, ensure_ascii=False, indent=2))
+        system_contract, user = compose_t4_role_prompt(
+            prompt_name=prompt_name,
+            role_contract=system_contract,
+            rendered_task=rendered_task,
+            payload=payload,
+            target_profile=self.config.target_profile,
+        )
         if self._call is not None:
             content = await self._call(system_contract, user)
         else:
@@ -77,7 +86,11 @@ class LLMIdeaGenerator(IdeaGeneratorPort):
         self.invoker = invoker
 
     async def plan_opportunities(self, *, evidence_summary: dict[str, Any], run_config: T4RunConfig) -> list[OpportunityQuery]:
-        payload = {"prompt_version": "1.0.0", "evidence_summary": evidence_summary, "run_config": model_dump(run_config, mode="json")}
+        payload = {
+            "prompt_version": "1.1.0",
+            "evidence_summary": evidence_summary,
+            "run_config": model_dump(run_config, mode="json", exclude={"target_profile"}),
+        }
         data = await self.invoker.invoke(
             prompt_name="idea_opportunity_planner.j2",
             system_contract=(
@@ -169,6 +182,7 @@ class LLMIdeaScorer(IdeaScoringPort):
         scores = [model_validate(ScoreReport, item) for item in raw if isinstance(item, dict)]
         for score in scores:
             _require_gate1_compatibility_scores(score)
+            _require_profile_fit(score, self.invoker.config.target_profile)
         return scores
 
     async def review_crossover_pairs(self, *, candidates: list[CandidateDossier], pairs: list[tuple[str, str]]) -> list[CrossoverCompatibilityDecision]:
@@ -300,6 +314,51 @@ class LLMIdeaEvolver(IdeaEvolverPort):
         return candidate
 
 
+class LLMFinalIdeaCardCompiler:
+    """Compile portfolio-only Impact Translation without changing Candidates."""
+
+    def __init__(self, invoker: LLMJsonRoleInvoker) -> None:
+        self.invoker = invoker
+
+    async def compile(
+        self,
+        *,
+        candidates: list[CandidateDossier],
+        target_profile: TargetProfile,
+    ) -> list[FinalIdeaCardTranslation]:
+        payload = {
+            "prompt_version": "1.1.0",
+            "candidates": [model_dump(candidate, mode="json") for candidate in candidates],
+        }
+        data = await self.invoker.invoke(
+            prompt_name="idea_final_card_compiler.j2",
+            system_contract=(
+                "You are the Final Idea Card Compiler. Return only JSON with a `cards` array. You translate only the "
+                "selected Portfolio Candidates into readable impact cards; you do not generate, score, select, or modify a Candidate. "
+                "Preserve scientific content exactly and label implications by their actual Evidence Status."
+            ),
+            payload=payload,
+        )
+        raw = data.get("cards") if isinstance(data.get("cards"), list) else []
+        cards = [model_validate(FinalIdeaCardTranslation, item) for item in raw if isinstance(item, dict)]
+        expected = {candidate.candidate_id for candidate in candidates}
+        actual = {card.candidate_id for card in cards}
+        if actual != expected:
+            raise ValueError(f"Final Idea Card Compiler must cover exactly the Portfolio; missing={sorted(expected - actual)}, extra={sorted(actual - expected)}")
+        by_id = {candidate.candidate_id: candidate for candidate in candidates}
+        for card in cards:
+            candidate = by_id[card.candidate_id]
+            if card.profile_type != target_profile.profile_type:
+                raise ValueError(f"Final Idea Card profile mismatch for {card.candidate_id}")
+            if card.core_thesis != str(candidate.genome.core_thesis.value):
+                raise ValueError(f"Final Idea Card changed the core thesis for {card.candidate_id}")
+            if card.contribution_ids != [item.contribution_id for item in candidate.contributions]:
+                raise ValueError(f"Final Idea Card changed contribution membership for {card.candidate_id}")
+            if card.hypothesis_ids != [item.hypothesis_id for item in candidate.hypotheses]:
+                raise ValueError(f"Final Idea Card changed hypothesis membership for {card.candidate_id}")
+        return cards
+
+
 def _blind_candidate(candidate: CandidateDossier) -> dict[str, Any]:
     """Remove signals that bias independent scoring while retaining candidate identity."""
 
@@ -375,6 +434,20 @@ def _require_gate1_compatibility_scores(score: ScoreReport) -> None:
         raise ValueError(
             f"T4 Scoring Agent returned incomplete Gate1 compatibility rationales for {score.candidate_id}: {', '.join(weak)}"
         )
+
+
+def _require_profile_fit(score: ScoreReport, target_profile: TargetProfile | None) -> None:
+    """Require a profile-specific assessment only for a configured live run."""
+
+    if target_profile is None:
+        return
+    fit = score.profile_fit
+    if fit.profile_type != target_profile.profile_type:
+        raise ValueError(
+            f"T4 Scoring Agent returned Profile Fit for {fit.profile_type}, expected {target_profile.profile_type}"
+        )
+    if len(" ".join(fit.rationale.split())) < 18:
+        raise ValueError(f"T4 Scoring Agent returned an incomplete Profile Fit rationale for {score.candidate_id}")
 
 
 def _parse_json_object(content: str) -> dict[str, Any]:

@@ -14,6 +14,24 @@
     "bridge_policy": {"enum": ["allow_abstract_with_upgrade", "full_text_only", "exclude_bridge"]},
     "ui_verbosity": {"enum": ["concise", "normal", "debug"]},
     "route_quotas": {"type": "object"},
+    "target_profile": {
+      "type": "object",
+      "properties": {
+        "profile_type": {"enum": ["management_is", "technical_cs", "hybrid", "custom"]},
+        "target_venues": {"type": "array", "items": {"type": "string"}},
+        "primary_orientation": {"enum": ["theory_and_phenomenon", "technical_and_computational", "balanced"]},
+        "priority_dimensions": {"type": "array", "items": {"type": "string"}},
+        "secondary_dimensions": {"type": "array", "items": {"type": "string"}},
+        "storytelling_emphasis": {"type": "array", "items": {"type": "string"}},
+        "scoring_profile": {"type": "string"},
+        "portfolio_profile_weight": {"type": "number", "minimum": 0, "maximum": 0.5},
+        "user_instruction": {"type": "string"},
+        "inferred_from": {"type": "array", "items": {"type": "string"}},
+        "confirmed_by_user": {"type": "boolean"},
+        "confidence": {"enum": ["high", "medium", "low"]}
+      },
+      "additionalProperties": false
+    },
     "user_preferences": {"type": "object"},
     "raw_user_input": {"type": "string"}
   },

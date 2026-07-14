@@ -189,6 +189,7 @@
 - **Citations**: {citation_count}
 - **Verification**: {verification_status} (confidence: {verification_confidence})
 - **Status**: [FULL-TEXT] / [PARTIAL-TEXT] / [ABSTRACT-ONLY]
+- **Note schema version**: 2
 - **Citation Quality Score**: {0.00-1.00；综合来源权威性、全文/摘要证据强度、方法/理论贡献、与本项目关系、可引用可靠性}
 - **Citation Use**: {core_evidence | supporting_context | background_only | do_not_cite}
 - **Citation Quality Rationale**: {1-2句说明分数；中文论文用于英文稿时需说明 citation 边界}
@@ -292,6 +293,27 @@
 - **Tension**: {本篇与已读笔记/领域常见设计论证的冲突点；≥3篇已读后至少写1条}
 - **Competing rationale**: {冲突双方分别认为为什么这样设计}
 - **Idea fuel**: {这个 tension 如何启发问题重构或新 design rationale；如果没有张力，说明原因}
+
+## 20. Implications & Field-level Provenance
+- **Scientific implication**: {若成立，对理论、测量、方法或科学理解意味着什么；不适用时写 not applicable}
+- **Scientific basis**: {author_stated | system_inference | weak_inference | not_applicable}
+- **Scientific evidence**: {论文页码/章节、明确推导链或 none}
+- **Engineering / deployment implication**: {对系统能力、可靠性、效率、可复现性或部署的含义；不适用时写 not applicable}
+- **Engineering basis**: {author_stated | system_inference | weak_inference | not_applicable}
+- **Engineering evidence**: {论文页码/章节、明确推导链或 none}
+- **Practical / managerial / business implication**: {仅在论文内容或项目语境可合理推导时填写；否则写 not applicable。不得编造市场规模、成本收益、用户规模或商业效果。}
+- **Practical basis**: {author_stated | system_inference | weak_inference | not_applicable}
+- **Practical evidence**: {论文页码/章节、明确推导链或 none}
+- **Field-level provenance**:
+| Field group | Provenance | Evidence location |
+|-------------|------------|-------------------|
+| Problem | author_stated / system_inference | {section/page} |
+| Claim / Finding | author_stated | {section/page} |
+| Mechanism | author_stated / system_inference | {section/page} |
+| Design rationale | author_stated / system_inference | {section/page} |
+| Boundary / limitation | author_stated / system_inference | {section/page} |
+
+对于理论论文可以只写 Scientific implication；技术论文可重点写 Engineering / deployment implication；管理研究可重点写 Practical / managerial implication。`system_inference` 和 `weak_inference` 必须保留其不确定性，不能写成论文已验证的结论。
 ```
 
 ## comparison_table.csv 结构

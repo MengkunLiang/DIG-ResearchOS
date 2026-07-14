@@ -50,6 +50,7 @@ from ..ideation.prerun import (
     inspect_t4_inputs,
     parse_t4_prerun_intent,
 )
+from ..ideation.target_profile import parse_target_profile_instruction, suggest_target_profile
 from ..ideation.selected_compilation import (
     compile_pre_novelty_hypothesis_brief,
     selected_candidate_id_from_gate_input,
@@ -136,6 +137,13 @@ def _native_t4_action_description(directive: IdeaDirective) -> dict[str, str]:
             "estimated_time": "A model-backed generation and independent scoring operation.",
             "version_policy": "Existing route output and all Candidates remain recoverable.",
             "next_stage": "Return to Gate1 with a new Population snapshot.",
+        },
+        "change_target_profile": {
+            "title": "Change Publication Orientation",
+            "what_happens": "ResearchOS preserves the active Candidate Population and five-dimension Core Scientific Score, independently reassesses Profile Fit, and writes a new profile-revision Population snapshot.",
+            "estimated_time": "One model-backed Profile Fit assessment across the active Population.",
+            "version_policy": "The previous Population, score batch, Candidates, and lineage remain preserved and can be inspected or restored.",
+            "next_stage": "Return to Gate1 with a Portfolio ordered for the new orientation.",
         },
         "rollback": {
             "title": "Rollback",
@@ -832,7 +840,9 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
                     "rationales": evolution_score.get("rationales") if isinstance(evolution_score.get("rationales"), dict) else {},
                     "dominant_strength": str(evolution_score.get("dominant_strength") or "").strip(),
                     "dominant_bottleneck": str(evolution_score.get("dominant_bottleneck") or "").strip(),
+                    "profile_fit": evolution_score.get("profile_fit") if isinstance(evolution_score.get("profile_fit"), dict) else {},
                 },
+                "final_idea_card": candidate.get("final_idea_card") if isinstance(candidate.get("final_idea_card"), dict) else {},
                 "maturity": str(candidate.get("maturity") or "").strip(),
                 "evidence_composition": candidate.get("evidence_composition") if isinstance(candidate.get("evidence_composition"), dict) else {},
                 "artifact_paths": [str(path).strip() for path in candidate.get("artifact_paths", []) if str(path).strip()] if isinstance(candidate.get("artifact_paths"), list) else [],
@@ -2020,7 +2030,15 @@ class StateMachine:
         try:
             config = store.read_run_config()
         except ValueError:
-            config = default_run_config(load_t4_evolution_settings())
+            config = default_run_config(
+                load_t4_evolution_settings(),
+                target_profile=suggest_target_profile(workspace_dir),
+            )
+        if not config.target_profile.confirmed_by_user:
+            config = default_run_config(
+                load_t4_evolution_settings(),
+                target_profile=suggest_target_profile(workspace_dir),
+            )
         gate_spec = self._find_gate("t4_prerun_gate")
         presentation = {
             "_title": str(gate_spec.get("title") or "T4 run confirmation"),
@@ -2603,6 +2621,8 @@ class StateMachine:
             return self._select_native_t4_candidate(state, workspace_dir, directive, directive_path)
         if directive.action == "keep_parallel":
             return self._stage_native_t4_parallel_selection(state, workspace_dir, directive, directive_path)
+        if directive.action == "change_target_profile":
+            return self._stage_native_t4_profile_revision(state, workspace_dir, directive, directive_path)
         if directive.action in {"continue_evolution", "focus_candidate", "merge_candidates", "compose_from_components", "regenerate_route", "refine_candidate"}:
             operation = {
                 "schema_version": "1.0.0",
@@ -2636,6 +2656,65 @@ class StateMachine:
             workspace_dir,
             result={"title": "Operation is not available", "summary": f"The requested action '{directive.action}' is not available for this Population.", "kind": "unsupported"},
         )
+
+    def _stage_native_t4_profile_revision(
+        self,
+        state: StateYaml,
+        workspace_dir: Path,
+        directive: IdeaDirective,
+        directive_path: str,
+    ) -> StateYaml:
+        """Persist a confirmed orientation change before the reprofile operation."""
+
+        store = T4ArtifactStore(workspace_dir)
+        current_config = store.read_run_config()
+        target_profile = parse_target_profile_instruction(
+            directive.raw_user_input,
+            suggested=current_config.target_profile,
+        )
+        revised_config = current_config.model_copy(update={"target_profile": target_profile})
+        store.write_run_config(revised_config)
+        store.write_json(
+            "ideation/t4_target_profile.json",
+            {"schema_version": "1.0.0", "semantics": "t4_target_profile", **model_dump(target_profile, mode="json")},
+        )
+        inspection = inspect_t4_inputs(workspace_dir)
+        store.write_json(
+            "ideation/evolution/pre_run_confirmation.json",
+            {
+                "schema_version": "1.0.0",
+                "semantics": "t4_pre_run_confirmation",
+                "input_fingerprint": inspection.input_fingerprint,
+                "run_config_fingerprint": run_config_fingerprint(revised_config),
+                "selected_option": "profile_revision",
+                "captured": {"publication_orientation": directive.raw_user_input},
+                "target_profile": model_dump(target_profile, mode="json"),
+                "inspection_status": inspection.status,
+                "confirmed_at": _now_iso(),
+            },
+        )
+        population, _dossiers = current_population_context(workspace_dir)
+        operation = {
+            "schema_version": "1.0.0",
+            "semantics": "t4_native_operation_request",
+            "action": "change_target_profile",
+            "directive_path": directive_path,
+            "directive": model_dump(directive, mode="json"),
+            "requested_from_population": population.population_id,
+            "target_profile": model_dump(target_profile, mode="json"),
+            "queued_at": _now_iso(),
+        }
+        operation_path = f"ideation/evolution/operations/{directive.directive_id}.json"
+        store.write_json(operation_path, operation)
+        state.task_context["t4_operation_request"] = {**operation, "path": operation_path}
+        state.task_context["t4_target_profile_path"] = "ideation/t4_target_profile.json"
+        state.iteration_count["T4"] = state.iteration_count.get("T4", 0) + 1
+        state.pending_gate = None
+        state.current_task = "T4"
+        state.status = "RUNNING"
+        state.paused_at = None
+        state.last_error = None
+        return state
 
     def _select_native_t4_candidate(
         self,
@@ -2759,7 +2838,14 @@ class StateMachine:
             generation=target.generation,
             similarity_threshold=load_t4_evolution_settings().family_similarity_threshold,
         )
-        portfolio = select_portfolio(target, scores, families, maximum=store.read_run_config().final_top_k)
+        run_config = store.read_run_config()
+        portfolio = select_portfolio(
+            target,
+            scores,
+            families,
+            maximum=run_config.final_top_k,
+            profile_weight=run_config.target_profile.portfolio_profile_weight,
+        )
         store.write_json("ideation/portfolio.json", model_dump(portfolio, mode="json"))
         route_results = self._native_route_results(store)
         project_gate1_population(
@@ -3000,9 +3086,24 @@ class StateMachine:
         inspection = inspect_t4_inputs(workspace_dir)
         if inspection.status == "blocked":
             return self._pause_for_t4_prerun_gate(state, workspace_dir)
-        config = default_run_config(load_t4_evolution_settings(), directive)
+        suggested_profile = suggest_target_profile(workspace_dir)
+        profile_instruction = str(captured.get("publication_orientation") or "")
+        target_profile = parse_target_profile_instruction(profile_instruction, suggested=suggested_profile)
+        config = default_run_config(
+            load_t4_evolution_settings(),
+            directive,
+            target_profile=target_profile,
+        )
         store = T4ArtifactStore(workspace_dir)
         store.write_run_config(config)
+        store.write_json(
+            "ideation/t4_target_profile.json",
+            {
+                "schema_version": "1.0.0",
+                "semantics": "t4_target_profile",
+                **model_dump(target_profile, mode="json"),
+            },
+        )
         store.write_json(
             "ideation/evolution/pre_run_confirmation.json",
             {
@@ -3012,11 +3113,13 @@ class StateMachine:
                 "run_config_fingerprint": run_config_fingerprint(config),
                 "selected_option": option_id,
                 "captured": captured,
+                "target_profile": model_dump(target_profile, mode="json"),
                 "inspection_status": inspection.status,
                 "confirmed_at": _now_iso(),
             },
         )
         state.task_context["t4_run_config_path"] = "ideation/t4_run_config.json"
+        state.task_context["t4_target_profile_path"] = "ideation/t4_target_profile.json"
         state.task_context["t4_input_fingerprint"] = inspection.input_fingerprint
         state.pending_gate = None
         state.status = "RUNNING"

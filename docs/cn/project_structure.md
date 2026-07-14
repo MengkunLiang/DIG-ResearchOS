@@ -60,4 +60,8 @@ workspace/<project>/
 
 当用户选择完整 Candidate 后，`hypothesis_brief.yaml`、`selected/hypothesis_lineage.json`、`selected/t45_search_targets.json` 和 `selected/pre_novelty_brief.md` 描述的是 Pre-Novelty 研究方案。它们保存谱系并限定 T4.5 的定向审计范围，但不授权 T5 执行。只有 T4.5 audit 明确通过后，系统才会创建或更新正式的 `hypotheses.md`、`exp_plan.yaml`、`contribution_hypothesis_map.yaml`、`validation_map.yaml`、`kill_criteria.yaml` 与 `post_novelty_formalization.json`。
 
+`literature/deep_read_notes/`、`literature/shallow_read_notes/` 和 `literature/bridge_notes/` 是唯一的 live Paper Note 根目录。deep 与 Bridge note 可以提供受已读范围约束的 full/partial-reading evidence；shallow note 只能用于 abstract-level recall。旧 `paper_notes*` 目录只由显式的 workspace migration layer 处理：迁移会记录报告，绝不把旧路径当作第二套 live source。发生同名内容冲突的旧 note 会保留在 `literature/note_migration_conflicts/` 供人工复核，而不是悄悄复制到证据根目录中造成重复。
+
+`ideation/t4_target_profile.json` 记录研究者确认的 Publication Orientation。`ideation/final_cards/portfolio_cards.json` 只为最终 Portfolio Candidate 保存不改变科学内容、且与 profile 对齐的 Impact Translation。Candidate Dossier 与 Population snapshot 仍是科学事实来源；final card 必须原样回显其中的 thesis、contribution IDs 与 hypothesis IDs。
+
 在提示、构件和 Skill 契约中使用相对于工作区的路径。在未记录其来源并在目标项目约束下验证之前，请勿在不同项目间复制构件。

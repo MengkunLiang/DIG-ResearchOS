@@ -54,7 +54,7 @@ def test_evidence_atom_rejects_abstract_mechanism_support():
     with pytest.raises(ValidationError, match="reading level cannot grant"):
         EvidenceAtom(
             atom_id="EA1",
-            source_path="literature/paper_notes_abstract/p1.md",
+            source_path="literature/shallow_read_notes/p1.md",
             section_key="core_approach",
             content="abstract evidence",
             reading_level=ReadingLevel.ABSTRACT_ONLY,
@@ -66,14 +66,14 @@ def test_evidence_atom_rejects_abstract_mechanism_support():
 def test_evidence_atom_accepts_full_text_mechanism_support():
     atom = EvidenceAtom(
         atom_id="EA1",
-        source_path="literature/paper_notes/p1.md",
+        source_path="literature/deep_read_notes/p1.md",
         section_key="mechanism",
         content="bounded evidence",
         reading_level=ReadingLevel.FULL_TEXT,
         evidence_status=EvidenceStatus.DIRECT_SUPPORT,
         allowed_uses={EvidencePermission.MECHANISM_SUPPORT},
     )
-    assert atom.source_path == "literature/paper_notes/p1.md"
+    assert atom.source_path == "literature/deep_read_notes/p1.md"
 
 
 def test_genome_round_trip_and_population_integrity():
@@ -175,7 +175,7 @@ def test_legacy_candidate_pool_migrates_to_traceable_p0(tmp_path):
                         "counterfactual": "falsifying outcome",
                         "supporting_papers": [
                             {
-                                "source_file": "literature/paper_notes/p1.md",
+                                "source_file": "literature/deep_read_notes/p1.md",
                                 "evidence_level": "FULL_TEXT",
                                 "ref": "p1",
                             }

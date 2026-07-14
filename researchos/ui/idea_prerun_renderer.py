@@ -56,6 +56,29 @@ def render_t4_prerun(
     ):
         table.add_row(label, str(materials.get(key, "unavailable")))
     output.print(table)
+    profile = config.target_profile
+    profile_label = {
+        "management_is": "UTD / Management & IS",
+        "technical_cs": "CCF A / Technical",
+        "hybrid": "Hybrid / Cross-disciplinary",
+        "custom": "Custom",
+    }[profile.profile_type]
+    profile_source = ", ".join(profile.inferred_from) if profile.inferred_from else "system default"
+    output.print(
+        Panel(
+            Text(
+                f"Suggested orientation: {profile_label}\n"
+                f"T4 will emphasize: {', '.join(profile.priority_dimensions[:4]) or 'balanced scientific contribution'}\n"
+                f"Source: {profile_source}\n"
+                "After choosing a run mode, press Enter to use this suggestion or describe another target in one sentence. "
+                "This changes Prompt emphasis, Profile Fit, and final-card ordering only; it never changes evidence facts or citations.",
+                overflow="fold",
+            ),
+            title="Publication Orientation",
+            border_style="magenta",
+            expand=True,
+        )
+    )
     if inspection.status == "blocked":
         for issue in inspection.blocking_issues:
             output.print(

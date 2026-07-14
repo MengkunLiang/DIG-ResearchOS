@@ -775,7 +775,11 @@ def _bib_key_note_ref_map(literature_dir: Path) -> dict[str, str]:
     return mapping
 
 
-def _validate_note_structure(note_path: Path) -> tuple[bool, str | None]:
+def _validate_note_structure(
+    note_path: Path,
+    *,
+    require_current_schema: bool = False,
+) -> tuple[bool, str | None]:
     """校验单篇 note 的最小结构，防止 T3 只产出空壳摘要。"""
 
     content = note_path.read_text(encoding="utf-8")
@@ -831,6 +835,48 @@ def _validate_note_structure(note_path: Path) -> tuple[bool, str | None]:
     if not ok:
         return False, err
 
+    if require_current_schema:
+        ok, err = _validate_current_note_extensions(note_path, content)
+        if not ok:
+            return False, err
+
+    return True, None
+
+
+def _validate_current_note_extensions(note_path: Path, content: str) -> tuple[bool, str | None]:
+    """Validate fields introduced for newly written version-2 paper notes.
+
+    Existing version-1 notes remain readable and resumable.  Fresh notes are
+    validated at the save boundary so the detailed record carries calibrated
+    implications and per-field provenance rather than only a long narrative.
+    """
+
+    if "- **Note schema version**: 2" not in content:
+        return False, f"{note_path.name} 新论文阅读笔记必须标注 Note schema version: 2"
+    section_match = re.search(
+        r"(?ms)^##\s+20\. Implications & Field-level Provenance\s*(?P<section>.*?)(?=^##\s+\d+\.|\Z)",
+        content,
+    )
+    if section_match is None:
+        return False, f"{note_path.name} 缺少 ## 20. Implications & Field-level Provenance"
+    section = section_match.group("section")
+    required_fields = (
+        "Scientific implication",
+        "Scientific basis",
+        "Scientific evidence",
+        "Engineering / deployment implication",
+        "Engineering basis",
+        "Engineering evidence",
+        "Practical / managerial / business implication",
+        "Practical basis",
+        "Practical evidence",
+    )
+    for field in required_fields:
+        value = _extract_markdown_field(section, field)
+        if not value:
+            return False, f"{note_path.name} §20 的 {field} 不能为空；不适用时请写 not applicable"
+    if "| Field group | Provenance | Evidence location |" not in section:
+        return False, f"{note_path.name} §20 缺少 Field-level provenance 表"
     return True, None
 
 

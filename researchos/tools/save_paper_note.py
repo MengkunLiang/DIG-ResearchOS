@@ -83,6 +83,7 @@ class SavePaperNoteTool(Tool):
             return ToolResult(ok=False, content=str(exc), error="access_denied")
 
         existing_complete = False
+        is_new_note = not abs_path.exists()
         if abs_path.exists() and not params.allow_overwrite_complete:
             existing_complete, existing_err = _validate_note(abs_path)
             if existing_complete:
@@ -127,7 +128,7 @@ class SavePaperNoteTool(Tool):
         except OSError as exc:
             raise ToolRuntimeError("save_paper_note", exc) from exc
 
-        ok, err = _validate_note(abs_path)
+        ok, err = _validate_note(abs_path, require_current_schema=is_new_note)
         manifest = _build_manifest_for_source_queue(self.policy.workspace_dir, source_queue)
         citation_maps = refresh_literature_citation_maps(self.policy.workspace_dir, write=True)
         entry = _find_manifest_entry(manifest, rel_path, params.queue_rank)
@@ -171,11 +172,11 @@ class SavePaperNoteTool(Tool):
         )
 
 
-def _validate_note(path: Path) -> tuple[bool, str | None]:
+def _validate_note(path: Path, *, require_current_schema: bool = False) -> tuple[bool, str | None]:
     try:
         from ..agents.reader import _validate_note_structure
 
-        return _validate_note_structure(path)
+        return _validate_note_structure(path, require_current_schema=require_current_schema)
     except Exception as exc:  # pragma: no cover - defensive fallback
         return False, f"{path.name} note validation crashed: {exc}"
 

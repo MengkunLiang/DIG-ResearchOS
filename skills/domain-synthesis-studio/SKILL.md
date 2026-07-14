@@ -146,6 +146,13 @@ evidence-supported opportunity, untested boundary, missing comparison, retrieval
 deficiency, or unsupported speculation. State plainly that retrieval coverage is not a
 research gap.
 
+For workspace-backed notes, read the canonical roots only: `literature/deep_read_notes/`,
+`literature/shallow_read_notes/`, and `literature/bridge_notes/`. Keep their Evidence
+Permission distinct in the synthesis: deep/bridge notes can support bounded mechanism
+or design-rationale discussion; shallow notes extend coverage and comparison but cannot
+by themselves establish a mechanism, causal finding, or implementation detail. Old
+`paper_notes*` directory names are migration inputs, never a second live corpus.
+
 At `next_path_gate`, present corpus sufficiency, unsupported areas, and the precise
 handoff options. If the human selects Survey preparation, write that explicit decision
 and an evidence package pointer into `domain_synthesis_manifest.json`; do not write a

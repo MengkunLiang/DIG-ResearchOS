@@ -13,6 +13,7 @@ from researchos.ideation.state import T4ArtifactStore
 from researchos.orchestration.state_machine import StateMachine, _t4_gate1_candidate_pool_fingerprints
 from researchos.runtime.agent import AgentResult, ExecutionContext
 from researchos.runtime.orchestrator import AgentRunner
+from researchos.runtime.system_config import system_config_path
 from researchos.schemas.state import GateState
 from researchos.testing.mocks import MockHumanInterface, MockLLMClient
 from researchos.tools.registry import ToolRegistry
@@ -48,8 +49,7 @@ async def _native_population(workspace: Path):
 
 
 def _machine() -> StateMachine:
-    root = Path("/mnt/data/DIG-ResearchOS")
-    return StateMachine(root / "config/system_config/state_machine.yaml", root / "config/system_config/gates.yaml")
+    return StateMachine(system_config_path("state_machine.yaml"), system_config_path("gates.yaml"))
 
 
 def _waiting_gate(machine: StateMachine, workspace: Path):
@@ -98,6 +98,44 @@ async def test_native_gate_another_generation_is_confirmed_then_queues_a_real_t4
     assert confirmations
     assert json.loads(confirmations[0].read_text(encoding="utf-8"))["accepted"] is True
     assert machine.should_pause_for_immediate_gate(queued, workspace_dir=tmp_path) is False
+
+
+@pytest.mark.asyncio
+async def test_native_gate_profile_revision_is_confirmed_and_stays_inside_t4(tmp_path):
+    population_result = await _native_population(tmp_path)
+    machine = _machine()
+    state = _waiting_gate(machine, tmp_path)
+
+    confirmation = machine.resolve_pending_gate(
+        state,
+        {
+            "option_id": "change_orientation",
+            "captured": {"directive": "Change Publication Orientation to CCF A with a technical emphasis."},
+        },
+        workspace_dir=tmp_path,
+    )
+
+    assert confirmation.current_task == "T4-GATE1"
+    assert confirmation.status == "WAITING_HUMAN"
+    assert confirmation.pending_gate is not None
+    assert confirmation.pending_gate.options[0]["id"] == "confirm"
+    assert confirmation.pending_gate.presentation["t4_directive_confirmation"]["action"] == "Change Publication Orientation"
+
+    queued = machine.resolve_pending_gate(
+        confirmation,
+        {"option_id": "confirm", "captured": {}},
+        workspace_dir=tmp_path,
+    )
+
+    operation = queued.task_context["t4_operation_request"]
+    persisted_config = T4ArtifactStore(tmp_path).read_run_config()
+    assert queued.current_task == "T4"
+    assert queued.status == "RUNNING"
+    assert operation["action"] == "change_target_profile"
+    assert operation["requested_from_population"] == population_result.population.population_id
+    assert persisted_config.target_profile.profile_type == "technical_cs"
+    assert (tmp_path / "ideation" / "populations" / population_result.population.population_id).with_suffix(".json").exists()
+    assert not queued.current_task.startswith(("T2", "T3"))
 
 
 @pytest.mark.asyncio
