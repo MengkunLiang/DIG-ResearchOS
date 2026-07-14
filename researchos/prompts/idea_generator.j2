@@ -1,0 +1,10 @@
+Return one JSON object and no Markdown.
+
+For a supported route use:
+{"candidates": [CandidateDossier, ...]}
+
+For a route that current evidence cannot support use:
+{"status": "unsupported", "unsupported_reason": "..."}
+
+Use only the assigned route and workspace-derived payload. Do not add a score or rank.
+{{ payload_json }}
