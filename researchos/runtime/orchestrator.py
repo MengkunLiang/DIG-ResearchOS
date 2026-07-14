@@ -63,6 +63,7 @@ from ..ideation.legacy_projection import project_gate1_population
 from ..ideation.llm_roles import LLMJsonRoleInvoker, LLMIdeaEvolver, LLMIdeaGenerator, LLMIdeaScorer, T4RoleCallConfig
 from ..ideation.models import EvolutionPhase, HumanCompositionCompatibility
 from ..ideation.prerun import has_current_t4_prerun_confirmation
+from ..ideation.selected_compilation import ensure_t45_pre_novelty_brief
 from ..ideation.state import T4ArtifactStore
 from ..ui.idea_evolution_renderer import render_t4_evolution_phase
 from .trace import NullTraceWriter, TraceWriter
@@ -729,6 +730,17 @@ class AgentRunner:
                 or t36_compile_pre_finalized
             ):
                 t4_pre_finalized = await self._maybe_finalize_t4_before_llm(ctx)
+            t4_pre_novelty_selected = False
+            if not (
+                deterministic_pre_finalized
+                or t2_pre_finalized
+                or t3_pre_finalized
+                or t36_section_pre_finalized
+                or t36_visuals_pre_finalized
+                or t36_compile_pre_finalized
+                or t4_pre_finalized
+            ):
+                t4_pre_novelty_selected = await self._maybe_advance_t4_pre_novelty_selection(ctx)
             t4_gate1_pre_finalized = False
             if not (
                 deterministic_pre_finalized
@@ -738,6 +750,7 @@ class AgentRunner:
                 or t36_visuals_pre_finalized
                 or t36_compile_pre_finalized
                 or t4_pre_finalized
+                or t4_pre_novelty_selected
             ):
                 t4_gate1_pre_finalized = await self._maybe_finalize_t4_gate1_before_llm(ctx)
             t4_evolution_pre_finalized = False
@@ -749,6 +762,7 @@ class AgentRunner:
                 or t36_visuals_pre_finalized
                 or t36_compile_pre_finalized
                 or t4_pre_finalized
+                or t4_pre_novelty_selected
                 or t4_gate1_pre_finalized
             ):
                 t4_evolution_pre_finalized = await self._maybe_run_t4_evolution_before_llm(
@@ -757,6 +771,8 @@ class AgentRunner:
                     budget=budget,
                 )
             if t4_evolution_pre_finalized:
+                deterministic_pre_finalized = True
+            if t4_pre_novelty_selected:
                 deterministic_pre_finalized = True
             t45_pre_finalized = False
             if not (
@@ -769,6 +785,8 @@ class AgentRunner:
                 or t4_pre_finalized
                 or t4_gate1_pre_finalized
             ):
+                if ctx.task_id == "T4.5":
+                    ensure_t45_pre_novelty_brief(ctx.workspace_dir)
                 t45_pre_finalized = await self._maybe_finalize_t45_before_llm(ctx)
             external_wait_pre_finalized = False
             if not (
@@ -3143,6 +3161,16 @@ class AgentRunner:
         if ctx.task_id != "T4":
             return False
 
+        # A complete Gate1 selection now advances through the Pre-Novelty
+        # handoff below.  Reusing legacy formal artifacts here would place
+        # final hypotheses and an experiment plan before T4.5 has audited the
+        # selected Candidate.
+        if self._t4_gate1_user_selection_exists(ctx):
+            brief = ctx.workspace_dir / "ideation" / "hypothesis_brief.yaml"
+            selected = ctx.workspace_dir / "ideation" / "selected" / "selected_candidate.json"
+            if brief.exists() and brief.stat().st_size > 0 and selected.exists() and selected.stat().st_size > 0:
+                return False
+
         expected_paths = [
             ctx.workspace_dir / "ideation" / "hypotheses.md",
             ctx.workspace_dir / "ideation" / "exp_plan.yaml",
@@ -3186,6 +3214,37 @@ class AgentRunner:
                 ],
             },
             action_type="t4_resume_prefinalize",
+        )
+        return True
+
+    async def _maybe_advance_t4_pre_novelty_selection(self, ctx: ExecutionContext) -> bool:
+        """Advance a confirmed complete Candidate to T4.5 without re-running T4.
+
+        Gate1 already produced the LLM-authored Candidate and the deterministic
+        Pre-Novelty compiler organized its draft hypotheses and provenance.  A
+        second legacy T4 pass must not replace that bundle with formal
+        hypotheses before novelty/collision review.
+        """
+
+        if ctx.task_id != "T4" or not self._t4_gate1_user_selection_exists(ctx):
+            return False
+        required = [
+            ctx.workspace_dir / "ideation" / "hypothesis_brief.yaml",
+            ctx.workspace_dir / "ideation" / "selected" / "selected_candidate.json",
+            ctx.workspace_dir / "ideation" / "selected" / "hypothesis_lineage.json",
+            ctx.workspace_dir / "ideation" / "selected" / "t45_search_targets.json",
+        ]
+        if any(not path.exists() or path.stat().st_size <= 0 for path in required):
+            return False
+        self.progress.emit(
+            "Selected Candidate 已整理为 Pre-Novelty brief。ResearchOS 将保留当前 Population，并把 novelty/collision audit 交给 T4.5；正式 Hypothesis Bundle 和 Experiment Plan 只会在 T4.5 明确通过后生成。",
+            important=True,
+        )
+        self._record_runtime_completion(
+            ctx,
+            "t4_pre_novelty_ready",
+            {"outputs": [str(path.relative_to(ctx.workspace_dir)) for path in required]},
+            action_type="t4_pre_novelty_handoff",
         )
         return True
 
@@ -3406,12 +3465,24 @@ class AgentRunner:
         collision_path = ctx.workspace_dir / "ideation" / "collision_cases.md"
         if collision_path.exists():
             paths.append(collision_path)
+        for rel in (
+            "ideation/hypotheses.md",
+            "ideation/exp_plan.yaml",
+            "ideation/contribution_hypothesis_map.yaml",
+            "ideation/validation_map.yaml",
+            "ideation/kill_criteria.yaml",
+            "ideation/post_novelty_formalization.json",
+        ):
+            path = ctx.workspace_dir / rel
+            if path.exists():
+                paths.append(path)
         return paths
 
     def _t45_upstream_input_paths(self, ctx: ExecutionContext) -> list[Path]:
         return [
-            ctx.workspace_dir / "ideation" / "hypotheses.md",
-            ctx.workspace_dir / "ideation" / "exp_plan.yaml",
+            ctx.workspace_dir / "ideation" / "hypothesis_brief.yaml",
+            ctx.workspace_dir / "ideation" / "selected" / "selected_candidate.json",
+            ctx.workspace_dir / "ideation" / "selected" / "t45_search_targets.json",
             ctx.workspace_dir / "ideation" / "idea_scorecard.yaml",
             ctx.workspace_dir / "ideation" / "idea_rationales.json",
             ctx.workspace_dir / "ideation" / "gate_decisions.json",
@@ -5500,6 +5571,8 @@ class AgentRunner:
             message = "Agent 成功完成（T4 resume 确定性收尾）"
         elif ok and metadata.get("completion_mode") == "t4_gate1_ready":
             message = "Agent 成功完成（T4 Gate1 候选池已就绪）"
+        elif ok and metadata.get("completion_mode") == "t4_pre_novelty_ready":
+            message = "Agent 成功完成（已生成 Pre-Novelty brief，进入 T4.5）"
         elif ok and metadata.get("completion_mode") == "t45_resume_prefinalize":
             message = "Agent 成功完成（T4.5 resume 确定性收尾）"
         elif ok and metadata.get("completion_mode") == "t8_section_plan_prefinalize":

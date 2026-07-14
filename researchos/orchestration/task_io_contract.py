@@ -664,7 +664,9 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
     "T4.5": {
         "inputs": {
             "project": "project.yaml",
-            "hypotheses": "ideation/hypotheses.md",
+            "hypothesis_brief": "ideation/hypothesis_brief.yaml",
+            "selected_candidate": "ideation/selected/selected_candidate.json",
+            "t45_search_targets": "ideation/selected/t45_search_targets.json",
             "synthesis": "literature/synthesis.md",
             "comparison_table": "literature/comparison_table.csv",
             "idea_scorecard": "ideation/idea_scorecard.yaml",
@@ -677,15 +679,29 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "mechanism_tuples_dir": "ideation/_mechanism_tuples",
             "design_rationale_tuples_dir": "ideation/_design_rationale_tuples",
             "collision_cases": "ideation/collision_cases.md",
+            "hypotheses": "ideation/hypotheses.md",
+            "exp_plan": "ideation/exp_plan.yaml",
+            "contribution_hypothesis_map": "ideation/contribution_hypothesis_map.yaml",
+            "validation_map": "ideation/validation_map.yaml",
+            "kill_criteria": "ideation/kill_criteria.yaml",
+            "formalization_manifest": "ideation/post_novelty_formalization.json",
         },
-        "optional_outputs": ["collision_cases"],
-        "required_inputs": ["project", "hypotheses", "synthesis"],
+        "optional_outputs": [
+            "collision_cases",
+            "hypotheses",
+            "exp_plan",
+            "contribution_hypothesis_map",
+            "validation_map",
+            "kill_criteria",
+            "formalization_manifest",
+        ],
+        "required_inputs": ["project", "hypothesis_brief", "synthesis"],
         "schemas": {},
     },
     "T4.5-HUMAN-REVIEW": {
         "inputs": {
             "project": "project.yaml",
-            "hypotheses": "ideation/hypotheses.md",
+            "hypothesis_brief": "ideation/hypothesis_brief.yaml",
             "novelty_audit": "ideation/novelty_audit.md",
             "idea_scorecard": "ideation/idea_scorecard.yaml",
             "selected_idea_brief": "ideation/selected_idea_brief.md",
@@ -695,7 +711,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
         "outputs": {
             "novelty_human_review": "ideation/novelty_human_review.json",
         },
-        "required_inputs": ["project", "hypotheses", "novelty_audit", "idea_scorecard"],
+        "required_inputs": ["project", "hypothesis_brief", "novelty_audit", "idea_scorecard"],
         "schemas": {},
     },
     "T5-HANDOFF": {

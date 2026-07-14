@@ -115,6 +115,74 @@ def selected_candidate_id_from_gate_input(workspace_dir: Path, captured: dict[st
     return found[0] if len(found) == 1 else None
 
 
+def ensure_t45_pre_novelty_brief(workspace_dir: Path) -> dict[str, str]:
+    """Provide a Pre-Novelty input for legacy workspaces without deleting files.
+
+    Native T4 always produces ``hypothesis_brief.yaml`` at Gate1.  Older
+    workspaces may only contain a previously compiled ``hypotheses.md``.  This
+    migration copies its declared hypotheses into a clearly marked
+    ``legacy_migrated`` brief so T4.5 can use the same input contract.  It does
+    not reinterpret, improve, or overwrite the legacy formal artifacts.
+    """
+
+    workspace = Path(workspace_dir)
+    brief_path = workspace / "ideation" / "hypothesis_brief.yaml"
+    if brief_path.exists() and brief_path.stat().st_size > 0:
+        return {"hypothesis_brief": "ideation/hypothesis_brief.yaml", "mode": "native_or_existing"}
+    hypotheses_path = workspace / "ideation" / "hypotheses.md"
+    if not hypotheses_path.exists() or hypotheses_path.stat().st_size <= 0:
+        raise ValueError("T4.5 requires ideation/hypothesis_brief.yaml; no legacy hypotheses.md is available for migration")
+    text = hypotheses_path.read_text(encoding="utf-8", errors="replace")
+    hypotheses = _legacy_hypotheses(text)
+    if not hypotheses:
+        raise ValueError("legacy hypotheses.md contains no identifiable H1–Hk headings for T4.5 migration")
+    store = T4ArtifactStore(workspace)
+    legacy_fingerprint = stable_fingerprint({"hypotheses": text})
+    brief = {
+        "schema_version": "1.0.0",
+        "semantics": "t4_pre_novelty_hypothesis_brief",
+        "selection_fingerprint": legacy_fingerprint,
+        "candidate_id": "legacy_migrated",
+        "status": "legacy_migrated_for_novelty_review",
+        "core_thesis": "",
+        "mechanism": "",
+        "contributions": [],
+        "draft_hypotheses": hypotheses,
+        "minimum_validation": {},
+        "evidence_boundary": {"basis_summary": "Migrated from an existing workspace; audit original sources before treating a claim as supported.", "basis_sources": [], "supporting_papers": []},
+        "formalization_rule": "This migration preserves prior hypotheses for novelty review. Any new formalization must occur only after T4.5 accepts the audit.",
+        "migration_source": "ideation/hypotheses.md",
+    }
+    _write_yaml(brief_path, brief)
+    selected_path = workspace / "ideation" / "selected" / "selected_candidate.json"
+    if not selected_path.exists():
+        store.write_json(
+            "ideation/selected/selected_candidate.json",
+            {
+                "schema_version": "1.0.0",
+                "semantics": "t4_selected_research_idea_pre_novelty",
+                "selection_fingerprint": legacy_fingerprint,
+                "candidate_id": "legacy_migrated",
+                "candidate": {"source": "ideation/hypotheses.md"},
+                "candidate_fingerprint": legacy_fingerprint,
+            },
+        )
+    targets_path = workspace / "ideation" / "selected" / "t45_search_targets.json"
+    if not targets_path.exists():
+        store.write_json(
+            "ideation/selected/t45_search_targets.json",
+            {
+                "schema_version": "1.0.0",
+                "semantics": "t4_pre_novelty_search_targets",
+                "selection_fingerprint": legacy_fingerprint,
+                "candidate_id": "legacy_migrated",
+                "targets": [{"kind": "legacy_hypothesis", "text": item["statement"]} for item in hypotheses],
+                "source_paths": ["ideation/hypotheses.md"],
+            },
+        )
+    return {"hypothesis_brief": "ideation/hypothesis_brief.yaml", "mode": "legacy_migrated"}
+
+
 def _load_candidate(workspace_dir: Path, candidate_id: str) -> dict[str, Any]:
     path = Path(workspace_dir) / "ideation/_candidate_directions.json"
     try:
@@ -157,3 +225,26 @@ def _render_pre_novelty_brief(candidate: dict[str, Any], hypotheses: list[dict[s
         lines.extend([f"### {item.get('id') or 'Draft hypothesis'}", str(item.get("statement") or ""), "", f"Mechanism: {item.get('mechanism') or ''}", f"Prediction: {item.get('observable_prediction') or item.get('prediction') or ''}", f"Discriminating test: {item.get('discriminating_test') or item.get('test') or ''}", ""])
     lines.extend(["## Evidence Boundary", str(candidate.get("basis_summary") or ""), "", "## Files", *[f"- `{path}`" for path in source_paths], ""])
     return "\n".join(lines)
+
+
+def _legacy_hypotheses(text: str) -> list[dict[str, str]]:
+    """Extract declared H headings conservatively from a legacy markdown file."""
+
+    matches = list(re.finditer(r"(?im)^#+\s*(H\d+)\b[^\n]*", text))
+    hypotheses: list[dict[str, str]] = []
+    for index, match in enumerate(matches):
+        body = text[match.end() : matches[index + 1].start() if index + 1 < len(matches) else len(text)]
+        statement = " ".join(body.split())
+        if not statement:
+            statement = match.group(0).strip("# ")
+        hypotheses.append(
+            {
+                "id": match.group(1),
+                "statement": statement,
+                "mechanism": "legacy_not_reparsed",
+                "observable_prediction": "legacy_not_reparsed",
+                "discriminating_test": "legacy_not_reparsed",
+                "evidence_status": "legacy_migrated_requires_review",
+            }
+        )
+    return hypotheses

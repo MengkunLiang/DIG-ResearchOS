@@ -20,7 +20,10 @@
 from __future__ import annotations
 
 import re
+import json
 from pathlib import Path
+
+import yaml
 
 from ..time_utils import recent_year_from
 from ..runtime.agent import Agent, ExecutionContext
@@ -74,24 +77,22 @@ class NoveltyAuditorAgent(Agent):
         project = load_project(ctx)
         ws = ctx.workspace_dir
 
-        hypotheses = read_text_file(ws / "ideation" / "hypotheses.md", default="")
+        brief, brief_text, anchors = _load_pre_novelty_brief(ws)
         synthesis = read_text_file(ws / "literature" / "synthesis.md", default="")
         comparison_table = read_text_file(ws / "literature" / "comparison_table.csv", default="")
         paper_card_inventory = _paper_card_inventory(ws)
-
-        # 提取假设anchor
-        anchors = re.findall(r"^#+\s*(H\d+)", hypotheses, re.MULTILINE)
 
         return render_prompt(
             self.spec.prompt_template,
             ctx,
             project=project,
-            hypotheses_preview=hypotheses[:5000],
+            hypotheses_preview=brief_text[:5000],
             synthesis_preview=synthesis[:3000],
             comparison_table_preview=comparison_table[:1000],
             paper_card_inventory=paper_card_inventory,
             hypothesis_count=len(anchors),
             hypothesis_anchors=anchors,
+            pre_novelty_mode=str(brief.get("status") or "draft_for_novelty_review"),
             recent_year_from=recent_year_from(1),
             temperature=self.spec.temperature,
             agent_guidance=load_agent_guidance("novelty-audit"),
@@ -102,12 +103,15 @@ class NoveltyAuditorAgent(Agent):
         return prepend_resume_prefix(
             ctx,
             (
-            "请执行 T4.5 新颖性审计。读取 ideation/hypotheses.md 和 literature/synthesis.md；"
+            "请执行 T4.5 新颖性审计。先读取 ideation/hypothesis_brief.yaml、ideation/selected/t45_search_targets.json 和 literature/synthesis.md；"
             "当机制、设计理由、最近工作或基线依据需要核验时，按需打开 deep_read_notes、bridge_notes 或 shallow_read_notes 中对应论文的精确 section；"
             "摘要阅读笔记只能补充近期覆盖、趋势或反例线索，核心机制和设计依据仍须由全文/部分全文笔记确认。"
             "对每个假设进行新颖性审计，搜索近期相关工作，判断新颖性等级，"
-            "产出 ideation/novelty_audit.md；如果发现 High/Medium Overlap，"
+            "先产出 ideation/novelty_audit.md；如果发现 High/Medium Overlap，"
             "还必须产出 ideation/collision_cases.md 归档潜在撞车案例。"
+            "只有在 audit 明确给出可通过的 Final Gate Verdict 后，才能基于 Pre-Novelty brief 编译正式 "
+            "ideation/hypotheses.md、exp_plan.yaml、contribution_hypothesis_map.yaml、validation_map.yaml、kill_criteria.yaml "
+            "和 post_novelty_formalization.json。若 verdict 要求 reframe/drop/review，不得生成或更新这些正式执行产物。"
             ),
         )
 
@@ -134,9 +138,10 @@ class NoveltyAuditorAgent(Agent):
         if not has_level:
             return False, "novelty_audit.md 必须包含新颖性等级（Level 0-3）"
 
-        # 检查是否审计了所有假设
-        hypotheses = read_text_file(ws / "ideation" / "hypotheses.md", default="")
-        anchors = re.findall(r"^#+\s*(H\d+)", hypotheses, re.MULTILINE)
+        # T4.5 audits the selected Pre-Novelty brief, not a prematurely
+        # compiled experiment authority.  Legacy workspaces are migrated into
+        # the same brief before this Agent starts.
+        brief, _brief_text, anchors = _load_pre_novelty_brief(ws)
 
         for anchor in anchors:
             if anchor not in audit_text:
@@ -214,8 +219,85 @@ class NoveltyAuditorAgent(Agent):
             if not any(signal in collision_text for signal in collision_signals):
                 return False, "novelty_audit.md 提到 High/Medium Overlap，但 collision_cases.md 未归档对应案例"
 
+        if _t45_verdict_is_pass(audit_text) and str(brief.get("status") or "") != "legacy_direct_existing_formal":
+            formal_ok, formal_error = _validate_post_novelty_formalization(ws, audit_path)
+            if not formal_ok:
+                return False, formal_error
+
         write_t45_fingerprint_report(ws)
         return True, None
+
+
+def _load_pre_novelty_brief(workspace: Path) -> tuple[dict, str, list[str]]:
+    path = workspace / "ideation" / "hypothesis_brief.yaml"
+    if not path.exists():
+        legacy_path = workspace / "ideation" / "hypotheses.md"
+        legacy_text = read_text_file(legacy_path, default="")
+        legacy_ids = re.findall(r"(?im)^#+\s*(H\d+)\b", legacy_text)
+        if legacy_ids:
+            return (
+                {
+                    "status": "legacy_direct_existing_formal",
+                    "draft_hypotheses": [{"id": item, "statement": "legacy existing hypothesis"} for item in legacy_ids],
+                },
+                legacy_text,
+                legacy_ids,
+            )
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        raise ValueError(f"cannot read ideation/hypothesis_brief.yaml: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError("ideation/hypothesis_brief.yaml must be a mapping")
+    hypotheses = data.get("draft_hypotheses") if isinstance(data.get("draft_hypotheses"), list) else []
+    anchors = [
+        str(item.get("id") or item.get("hypothesis_id") or "").strip()
+        for item in hypotheses
+        if isinstance(item, dict) and str(item.get("id") or item.get("hypothesis_id") or "").strip()
+    ]
+    if not anchors:
+        raise ValueError("hypothesis_brief.yaml contains no draft hypothesis IDs")
+    text = yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+    return data, text, anchors
+
+
+def _t45_verdict_is_pass(text: str) -> bool:
+    match = re.search(
+        r"(?im)^\s*(?:#+\s*)?(?:\*\*)?\s*Final\s+Gate\s+Verdict\s*(?:\*\*)?\s*[:：]\s*(.+?)\s*$",
+        text,
+    )
+    verdict = match.group(1).strip().casefold().replace("-", "_").replace(" ", "_") if match else ""
+    token = re.split(r"[^a-z0-9_]+", verdict, maxsplit=1)[0]
+    return token in {"pass", "passed", "pass_to_experiment", "pass_with_required_baselines", "go_t7", "continue_to_t7", "continue_to_experiment"}
+
+
+def _validate_post_novelty_formalization(workspace: Path, audit_path: Path) -> tuple[bool, str | None]:
+    manifest_path = workspace / "ideation" / "post_novelty_formalization.json"
+    required = {
+        "hypotheses": workspace / "ideation" / "hypotheses.md",
+        "exp_plan": workspace / "ideation" / "exp_plan.yaml",
+        "contribution_hypothesis_map": workspace / "ideation" / "contribution_hypothesis_map.yaml",
+        "validation_map": workspace / "ideation" / "validation_map.yaml",
+        "kill_criteria": workspace / "ideation" / "kill_criteria.yaml",
+    }
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return False, f"T4.5 pass verdict requires post_novelty_formalization.json: {exc}"
+    if not isinstance(manifest, dict) or manifest.get("semantics") != "t45_post_novelty_formalization":
+        return False, "post_novelty_formalization.json semantics is invalid"
+    if manifest.get("status") != "formalized_after_novelty_pass":
+        return False, "post_novelty_formalization.json must state formalized_after_novelty_pass"
+    for name, path in required.items():
+        if not path.exists() or path.stat().st_size <= 0:
+            return False, f"T4.5 pass verdict requires {path.relative_to(workspace)}"
+        if path.stat().st_mtime < audit_path.stat().st_mtime:
+            return False, f"{path.relative_to(workspace)} must be written after novelty_audit.md"
+    artifacts = manifest.get("artifacts") if isinstance(manifest.get("artifacts"), dict) else {}
+    for name, path in required.items():
+        if artifacts.get(name) != path.relative_to(workspace).as_posix():
+            return False, f"post_novelty_formalization.json must list {name}"
+    return True, None
 
 
 def _paper_card_inventory(workspace: Path) -> str:

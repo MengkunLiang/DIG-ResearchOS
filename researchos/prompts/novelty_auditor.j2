@@ -13,7 +13,7 @@
 
 ## 输入材料
 
-### 研究假设（hypotheses.md前5000字符）
+### Selected Pre-Novelty Hypothesis Brief（前5000字符）
 {{ hypotheses_preview }}
 
 ### 文献综述（synthesis.md前3000字符）
@@ -37,7 +37,7 @@
 
 ## 你的任务：新颖性审计
 
-你需要对 ideation/hypotheses.md 中的每个假设（{{ hypothesis_count }}个假设：{{ hypothesis_anchors | join(', ') }}）进行新颖性审计，判断是否与已有工作重复，产出审计报告。
+你需要对 `ideation/hypothesis_brief.yaml` 中的 Draft Hypotheses（{{ hypothesis_count }} 个：{{ hypothesis_anchors | join(', ') }}）进行新颖性审计，判断是否与已有工作重复，产出审计报告。当前 brief 状态为 `{{ pre_novelty_mode }}`；它是被选 Candidate 的可查新草案，不是已确认的新颖性结论，也不是实验执行授权。
 
 ---
 
@@ -45,7 +45,8 @@
 
 ### Step 1: 读取完整输入
 用 `read_file` 读取：
-- `ideation/hypotheses.md` - 完整的研究假设文档
+- `ideation/hypothesis_brief.yaml` - 选中 Candidate 的 Draft Hypotheses、证据边界与来源谱系
+- `ideation/selected/t45_search_targets.json` - 本轮 novelty/collision 检索目标
 - `literature/synthesis.md` - 完整的文献综述
 - `literature/comparison_table.csv` - 已有方法对比表（如果存在）
 - `literature/deep_read_notes/`、`literature/bridge_notes/`、`literature/shallow_read_notes/` - 对候选最近工作、机制或基线存在疑问时，读取精确论文阅读笔记 section；摘要阅读笔记可扩展覆盖和反例线索，但不能单独确认核心机制或基线细节；不要盲读全部笔记
@@ -58,7 +59,7 @@
 
 ### Step 2: 对每个假设执行新颖性审计
 
-对每个假设（H1, H2, ...），执行以下审计流程：
+对每个 Draft Hypothesis（{{ hypothesis_anchors | join(', ') }}），执行以下审计流程：
 
 #### 2.1 提取核心概念
 从假设中提取：
@@ -415,6 +416,35 @@ search_papers(
 - 其中 [M] 个为高风险（High Overlap）
 - 建议优先处理高风险案例，重新设计相关假设
 ```
+
+### Step 3.5: Post-Novelty Formal Compilation（仅在通过时）
+
+先完成并落盘 `ideation/novelty_audit.md`，并在其中写出明确的 `Final Gate Verdict`。只有 verdict 为 `pass`、`pass_to_experiment`、`pass_with_required_baselines`、`go_t7`、`continue_to_t7` 或 `continue_to_experiment` 时，才执行本步骤。
+
+通过时，基于 `hypothesis_brief.yaml` 中已选 Candidate 的 Draft Hypotheses、T4.5 检索结果和审计限制，依次写入：
+
+- `ideation/hypotheses.md`：正式 H1–Hk；仅重构已审计的 Draft Hypotheses，不得凭空增加研究主张；
+- `ideation/contribution_hypothesis_map.yaml`：每条 Contribution 对应哪些 H；
+- `ideation/validation_map.yaml`：每条 H 的判别测试、对照、证据边界与 Required Baselines；
+- `ideation/kill_criteria.yaml`：每条 H 的失败信号和停止条件；
+- `ideation/exp_plan.yaml`：完整 Experiment Plan，只使用可追溯的项目约束；未知数据、预算、baseline 或指标必须标记为 `unknown` / `proposed_not_verified`；
+- `ideation/post_novelty_formalization.json`：
+
+```json
+{
+  "semantics": "t45_post_novelty_formalization",
+  "status": "formalized_after_novelty_pass",
+  "artifacts": {
+    "hypotheses": "ideation/hypotheses.md",
+    "exp_plan": "ideation/exp_plan.yaml",
+    "contribution_hypothesis_map": "ideation/contribution_hypothesis_map.yaml",
+    "validation_map": "ideation/validation_map.yaml",
+    "kill_criteria": "ideation/kill_criteria.yaml"
+  }
+}
+```
+
+若 verdict 为 reframe、drop、collision、reject 或需要 Human review：不得生成或更新上述正式执行产物；在 audit 中说明回到 T4 所需的具体调整。`hypothesis_brief.yaml` 会保留，方便后续重构和查新。
 
 ### Step 4: 完成任务
 

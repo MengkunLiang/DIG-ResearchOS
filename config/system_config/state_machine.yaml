@@ -844,7 +844,9 @@ states:
     agent: novelty_auditor
     inputs:
       project: project.yaml                             # 输入：项目配置
-      hypotheses: ideation/hypotheses.md                # 输入：研究假设
+      hypothesis_brief: ideation/hypothesis_brief.yaml  # T4 Gate1 选择后的 Pre-Novelty draft bundle
+      selected_candidate: ideation/selected/selected_candidate.json
+      t45_search_targets: ideation/selected/t45_search_targets.json
       synthesis: literature/synthesis.md                # 输入：文献综述
       comparison_table: literature/comparison_table.csv # 输入：对比表
       idea_scorecard: ideation/idea_scorecard.yaml      # 输入：idea scorecard（含 mechanism 字段）
@@ -857,6 +859,12 @@ states:
       design_rationale_tuples_dir: ideation/_design_rationale_tuples # CDR design-rationale tuple 中间产物
     optional_outputs:
       collision_cases: ideation/collision_cases.md       # 条件输出：High/Medium Overlap 时必须存在
+      hypotheses: ideation/hypotheses.md                 # 仅 Final Gate Verdict 通过后由 T4.5 正式编译
+      exp_plan: ideation/exp_plan.yaml
+      contribution_hypothesis_map: ideation/contribution_hypothesis_map.yaml
+      validation_map: ideation/validation_map.yaml
+      kill_criteria: ideation/kill_criteria.yaml
+      formalization_manifest: ideation/post_novelty_formalization.json
     # 当前主链默认跳过 legacy T5 pilot 与 legacy T6 novelty-final，但必须尊重 T4.5 Final Gate Verdict。
     # pass* 进入 T5-REBOOST-GATE 外部实验协议链；return/drop/reject/collision 进入人工审阅 gate，
     # 由用户决定外部实验链/T4/stop。
@@ -872,7 +880,7 @@ states:
       immediate_gate: true
     inputs:
       project: project.yaml
-      hypotheses: ideation/hypotheses.md
+      hypothesis_brief: ideation/hypothesis_brief.yaml
       novelty_audit: ideation/novelty_audit.md
       idea_scorecard: ideation/idea_scorecard.yaml
       selected_idea_brief: ideation/selected_idea_brief.md

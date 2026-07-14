@@ -11,7 +11,9 @@ from typing import Any
 
 T45_INPUT_FINGERPRINT_PATHS = {
     "project": "project.yaml",
-    "hypotheses": "ideation/hypotheses.md",
+    "hypothesis_brief": "ideation/hypothesis_brief.yaml",
+    "selected_candidate": "ideation/selected/selected_candidate.json",
+    "t45_search_targets": "ideation/selected/t45_search_targets.json",
     "idea_scorecard": "ideation/idea_scorecard.yaml",
     "idea_rationales": "ideation/idea_rationales.json",
     "gate_decisions": "ideation/gate_decisions.json",

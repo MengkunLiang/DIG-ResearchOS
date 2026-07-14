@@ -1679,6 +1679,48 @@ def _extract_t45_final_gate_verdict(text: str) -> str:
     return ""
 
 
+def _validate_t45_post_novelty_formalization(workspace_dir: Path, audit_path: Path) -> tuple[bool, str | None]:
+    """Require formal T4 artifacts only after an accepted T4.5 verdict.
+
+    The manifest makes the lifecycle explicit for downstream consumers: a
+    Pre-Novelty brief is sufficient for T4.5, while T5 may only receive the
+    formal bundle that was compiled against a completed audit.
+    """
+
+    manifest_path = workspace_dir / "ideation" / "post_novelty_formalization.json"
+    required = {
+        "hypotheses": workspace_dir / "ideation" / "hypotheses.md",
+        "exp_plan": workspace_dir / "ideation" / "exp_plan.yaml",
+        "contribution_hypothesis_map": workspace_dir / "ideation" / "contribution_hypothesis_map.yaml",
+        "validation_map": workspace_dir / "ideation" / "validation_map.yaml",
+        "kill_criteria": workspace_dir / "ideation" / "kill_criteria.yaml",
+    }
+    if not manifest_path.exists() or manifest_path.stat().st_size <= 0:
+        return False, "missing post-novelty formalization manifest"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return False, f"post-novelty formalization manifest cannot be read: {exc}"
+    if not isinstance(manifest, dict) or manifest.get("semantics") != "t45_post_novelty_formalization":
+        return False, "post-novelty formalization manifest semantics is invalid"
+    if manifest.get("status") != "formalized_after_novelty_pass":
+        return False, "post-novelty formalization is not marked as an accepted audit result"
+    missing = [name for name, path in required.items() if not path.exists() or path.stat().st_size <= 0]
+    if missing:
+        return False, "post-novelty formalization is missing: " + ", ".join(missing)
+    too_early = [
+        name
+        for name, path in required.items()
+        if path.stat().st_mtime < audit_path.stat().st_mtime
+    ]
+    if too_early:
+        return False, "formal artifacts predate the novelty audit: " + ", ".join(too_early)
+    listed = manifest.get("artifacts") if isinstance(manifest.get("artifacts"), dict) else {}
+    if any(str(listed.get(name) or "") != path.relative_to(workspace_dir).as_posix() for name, path in required.items()):
+        return False, "post-novelty formalization manifest does not list the required artifact paths"
+    return True, None
+
+
 @dataclass
 class TaskNode:
     """一个 FSM 节点的运行期表示。"""
@@ -2178,6 +2220,13 @@ class StateMachine:
         ):
             state.task_context.pop("t4_operation_request", None)
             return self._transition_to_next(state, "T4-GATE1", workspace_dir=workspace_dir)
+
+        if (
+            state.current_task == "T4"
+            and (result.metadata or {}).get("completion_mode") == "t4_pre_novelty_ready"
+            and "T4.5" in self.nodes
+        ):
+            return self._transition_to_next(state, "T4.5", workspace_dir=workspace_dir)
 
         human_directive = state.task_context.get("human_iteration_directive")
         if isinstance(human_directive, dict) and human_directive.get("target_task") == state.current_task:
@@ -3495,7 +3544,9 @@ class StateMachine:
         if not _file_newer_than_existing_inputs(
             audit_path,
             [
-                workspace_dir / "ideation" / "hypotheses.md",
+                workspace_dir / "ideation" / "hypothesis_brief.yaml",
+                workspace_dir / "ideation" / "selected" / "selected_candidate.json",
+                workspace_dir / "ideation" / "selected" / "t45_search_targets.json",
                 workspace_dir / "ideation" / "idea_scorecard.yaml",
                 workspace_dir / "ideation" / "gate_decisions.json",
                 workspace_dir / "literature" / "synthesis.md",
@@ -3529,6 +3580,9 @@ class StateMachine:
             "continue_to_experiment",
         }
         if verdict_token in pass_tokens:
+            formal_ok, _formal_error = _validate_t45_post_novelty_formalization(workspace_dir, audit_path)
+            if not formal_ok:
+                return human_review
             if "T5-REBOOST-GATE" in self.nodes:
                 return "T5-REBOOST-GATE"
             if "T5-HANDOFF" in self.nodes:

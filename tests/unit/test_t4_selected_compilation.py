@@ -5,6 +5,7 @@ import yaml
 from researchos.ideation.legacy_projection import project_gate1_population
 from researchos.ideation.selected_compilation import (
     compile_pre_novelty_hypothesis_brief,
+    ensure_t45_pre_novelty_brief,
     selected_candidate_id_from_gate_input,
 )
 from tests.unit.test_t4_legacy_projection import _ready_projection_inputs
@@ -28,3 +29,17 @@ def test_selected_candidate_compiles_pre_novelty_artifacts_without_finalizing_cl
     assert brief["candidate_id"] == "I1"
     assert len(brief["draft_hypotheses"]) == 2
     assert not (tmp_path / "ideation/exp_plan.yaml").exists()
+
+
+def test_legacy_t45_migration_creates_a_pre_novelty_brief_without_overwriting_formal_hypotheses(tmp_path):
+    hypotheses = tmp_path / "ideation" / "hypotheses.md"
+    hypotheses.parent.mkdir(parents=True)
+    source = "# Hypotheses\n\n## H1: A bounded claim\n\nThe first declared hypothesis.\n\n## H2: A boundary claim\n\nThe second declared hypothesis.\n"
+    hypotheses.write_text(source, encoding="utf-8")
+
+    result = ensure_t45_pre_novelty_brief(tmp_path)
+
+    assert result["mode"] == "legacy_migrated"
+    assert (tmp_path / "ideation" / "hypothesis_brief.yaml").exists()
+    assert hypotheses.read_text(encoding="utf-8") == source
+    assert (tmp_path / "ideation" / "selected" / "t45_search_targets.json").exists()

@@ -7,6 +7,7 @@ import pytest
 
 from researchos.agents.ideation import IdeationAgent, validate_t4_gate1_ready
 from researchos.ideation.config import load_t4_evolution_settings
+from researchos.ideation.legacy_projection import project_gate1_population
 from researchos.ideation.prerun import default_run_config, inspect_t4_inputs
 from researchos.ideation.state import T4ArtifactStore, run_config_fingerprint
 from researchos.orchestration.state_machine import StateMachine
@@ -15,6 +16,7 @@ from researchos.runtime.orchestrator import AgentRunner
 from researchos.testing.mocks import MockHumanInterface, MockLLMClient
 from researchos.tools.builtin import register_builtin_tools
 from researchos.tools.registry import ToolRegistry
+from tests.unit.test_t4_legacy_projection import _ready_projection_inputs
 
 
 def _write_workspace(workspace):
@@ -206,3 +208,39 @@ async def test_confirmed_standard_t4_runs_p0_to_p1_and_preserves_gate1_transitio
     state = machine.start_task(state, "t4-runtime", workspace_dir=tmp_workspace)
     advanced = machine.advance(state, result, workspace_dir=tmp_workspace)
     assert advanced.current_task == "T4-GATE1"
+
+
+@pytest.mark.asyncio
+async def test_selected_candidate_advances_to_t45_from_pre_novelty_artifacts_without_legacy_t4_rewrite(tmp_workspace):
+    (tmp_workspace / "project.yaml").write_text("project_id: selected-runtime\n", encoding="utf-8")
+    dossiers, scores, population = _ready_projection_inputs()
+    project_gate1_population(tmp_workspace, population=population, dossiers=dossiers, scores=scores)
+    machine = StateMachine(
+        Path("/mnt/data/DIG-ResearchOS/config/system_config/state_machine.yaml"),
+        Path("/mnt/data/DIG-ResearchOS/config/system_config/gates.yaml"),
+    )
+    gate_node = machine.nodes["T4-GATE1"]
+    machine._persist_immediate_gate_result(
+        gate_node,
+        {"option_id": "select_or_reframe", "captured": {"selection": "Use I1"}},
+        "T4",
+        tmp_workspace,
+    )
+    assert (tmp_workspace / "ideation" / "hypothesis_brief.yaml").exists()
+    assert not (tmp_workspace / "ideation" / "hypotheses.md").exists()
+
+    registry = ToolRegistry()
+    register_builtin_tools(registry)
+    runner = AgentRunner(IdeationAgent(), registry, MockLLMClient([]), MockHumanInterface())
+    result = await runner.run(
+        ExecutionContext(workspace_dir=tmp_workspace, project_id="selected-runtime", task_id="T4", run_id="selected-t4")
+    )
+
+    assert result.ok
+    assert result.metadata["completion_mode"] == "t4_pre_novelty_ready"
+    assert not (tmp_workspace / "ideation" / "hypotheses.md").exists()
+    state = machine.create_initial_state("selected-runtime")
+    state.current_task = "T4"
+    state = machine.start_task(state, "selected-t4", workspace_dir=tmp_workspace)
+    advanced = machine.advance(state, result, workspace_dir=tmp_workspace)
+    assert advanced.current_task == "T4.5"
