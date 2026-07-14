@@ -103,7 +103,8 @@ class NoveltyAuditorAgent(Agent):
             ctx,
             (
             "请执行 T4.5 新颖性审计。读取 ideation/hypotheses.md 和 literature/synthesis.md；"
-            "当机制、设计理由、最近工作或基线依据需要核验时，按需打开 literature/paper_notes*/ 中对应论文的精确 section，"
+            "当机制、设计理由、最近工作或基线依据需要核验时，按需打开 deep_read_notes、bridge_notes 或 shallow_read_notes 中对应论文的精确 section；"
+            "摘要阅读笔记只能补充近期覆盖、趋势或反例线索，核心机制和设计依据仍须由全文/部分全文笔记确认。"
             "对每个假设进行新颖性审计，搜索近期相关工作，判断新颖性等级，"
             "产出 ideation/novelty_audit.md；如果发现 High/Medium Overlap，"
             "还必须产出 ideation/collision_cases.md 归档潜在撞车案例。"
@@ -221,9 +222,9 @@ def _paper_card_inventory(workspace: Path) -> str:
     """Describe note-card availability without injecting every card into context."""
 
     groups = (
-        ("全文/部分全文卡", workspace / "literature" / "paper_notes"),
-        ("跨域卡", workspace / "literature" / "paper_notes_bridge"),
-        ("摘要线索卡", workspace / "literature" / "paper_notes_abstract"),
+        ("全文/部分全文卡", workspace / "literature" / "deep_read_notes"),
+        ("跨域卡", workspace / "literature" / "bridge_notes"),
+        ("摘要线索卡", workspace / "literature" / "shallow_read_notes"),
     )
     lines: list[str] = []
     for label, directory in groups:

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .base import Tool, ToolResult
 from .seed_outline import looks_like_seed_outline
@@ -23,6 +23,18 @@ READ_FILE_RESERVED_CONTEXT_FRACTION = 0.15
 READ_FILE_RESERVED_CONTEXT_MIN_TOKENS = 8_000
 READ_FILE_RESERVED_CONTEXT_MAX_TOKENS = 64_000
 READ_FILE_TOOL_OUTPUT_CONTEXT_SHARE = 0.70
+READ_FILE_FULL_READ_CONTEXT_SHARE = 0.50
+READ_FILE_MIN_FULL_READ_TOKENS = 8_000
+# ``papers_raw.jsonl`` is intentionally readable by T2: it is the durable,
+# auditable evidence pool from which Scout performs semantic screening. A page
+# must nevertheless leave room for the current query plan and the runtime
+# checkpoint; otherwise history truncation can make the model restart search.
+READ_FILE_T2_RAW_PAGE_CONTEXT_SHARE = 0.35
+READ_FILE_T2_RAW_MIN_PAGE_TOKENS = 2_000
+# T2 must keep an auditable checkpoint, the query plan, and screening history
+# in the same model turn. Even providers with a million-token context become
+# slow and less reliable when one raw JSONL page consumes most of that window.
+READ_FILE_T2_RAW_MAX_PAGE_TOKENS = 32_000
 STRUCTURED_ONLY_WRITE_PATHS = {
     "bridge_domain_plan.json": "bridge_domain_plan",
     "literature/bridge_domain_plan.json": "bridge_domain_plan",
@@ -36,19 +48,15 @@ STRUCTURED_ONLY_WRITE_PATHS = {
 
 
 class ReadFileParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     path: str = Field(..., description="相对 workspace 的路径")
     offset: int = Field(
         default=0,
         ge=0,
-        description="从第几个字符开始读取；用于分页读取大文件",
-    )
-    max_chars: int | None = Field(
-        default=None,
-        ge=1,
-        le=READ_FILE_TRANSPORT_SAFETY_CAP,
         description=(
-            "最多返回多少字符；不传时 ResearchOS 会根据当前模型上下文窗口动态选择，"
-            "防止大文件挤爆模型上下文"
+            "从第几个字符开始读取；用于在 grep_search 已定位内容后的分页。"
+            "单次返回长度始终由当前模型实际上下文窗口动态决定，不能手动指定。"
         ),
     )
 
@@ -59,9 +67,16 @@ class ReadFileTool(Tool):
     parameters_schema = ReadFileParams
     timeout_seconds = 10.0
 
-    def __init__(self, policy: WorkspaceAccessPolicy, *, llm_max_context: int | None = None):
+    def __init__(
+        self,
+        policy: WorkspaceAccessPolicy,
+        *,
+        llm_max_context: int | None = None,
+        llm_context_source: str | None = None,
+    ):
         self.policy = policy
         self.llm_max_context = llm_max_context
+        self.llm_context_source = llm_context_source or "configured_fallback"
 
     def _usable_context_tokens(self) -> int | None:
         if self.llm_max_context is None or self.llm_max_context <= 0:
@@ -96,7 +111,12 @@ class ReadFileTool(Tool):
         non_cjk_chars = len(content) - cjk_chars
         return max(1, int(cjk_chars * 1.1 + non_cjk_chars / 4.0))
 
-    def _default_max_chars(self, content: str) -> tuple[int, str, int | None, int | None]:
+    def _default_max_chars(
+        self,
+        content: str,
+        *,
+        relative_path: str,
+    ) -> tuple[int, str, int | None, int | None]:
         """Return a read budget and debug labels based on current model capacity."""
         usable_tokens = self._usable_context_tokens()
         if usable_tokens is None:
@@ -104,7 +124,29 @@ class ReadFileTool(Tool):
 
         size = len(content)
         estimated_tokens = self._estimate_text_tokens(content)
-        if estimated_tokens <= usable_tokens and size <= READ_FILE_TRANSPORT_SAFETY_CAP:
+        is_t2_raw_pool = (
+            self.policy.task_id == "T2"
+            and relative_path.replace("\\", "/") == "literature/papers_raw.jsonl"
+        )
+        full_read_tokens = max(
+            READ_FILE_MIN_FULL_READ_TOKENS,
+            int(usable_tokens * READ_FILE_FULL_READ_CONTEXT_SHARE),
+        )
+        if is_t2_raw_pool:
+            context_based_page_tokens = max(
+                READ_FILE_T2_RAW_MIN_PAGE_TOKENS,
+                int(usable_tokens * READ_FILE_T2_RAW_PAGE_CONTEXT_SHARE),
+            )
+            page_tokens = min(READ_FILE_T2_RAW_MAX_PAGE_TOKENS, context_based_page_tokens)
+            if estimated_tokens <= page_tokens:
+                return size, "t2_raw_jsonl_full_page", estimated_tokens, usable_tokens
+            avg_chars_per_token = max(1.0, size / max(estimated_tokens, 1))
+            max_chars = max(
+                READ_FILE_MIN_DYNAMIC_MAX_CHARS,
+                min(READ_FILE_TRANSPORT_SAFETY_CAP, int(page_tokens * avg_chars_per_token), size),
+            )
+            return max_chars, "t2_raw_jsonl_checkpointed_page", estimated_tokens, usable_tokens
+        if estimated_tokens <= full_read_tokens and size <= READ_FILE_TRANSPORT_SAFETY_CAP:
             return size, "model_context_full", estimated_tokens, usable_tokens
 
         avg_chars_per_token = max(1.0, size / max(estimated_tokens, 1))
@@ -118,29 +160,30 @@ class ReadFileTool(Tool):
     async def execute(self, **kwargs) -> ToolResult:
         path = kwargs["path"]
         offset = int(kwargs.get("offset") or 0)
-        requested_max_chars = kwargs.get("max_chars")
         try:
             abs_path = self.policy.resolve_read(path)
             full_content = abs_path.read_text(encoding="utf-8")
             size = len(full_content)
-            if requested_max_chars is None:
-                max_chars, max_chars_source, estimated_tokens, usable_context_tokens = (
-                    self._default_max_chars(full_content)
-                )
-            else:
-                max_chars = int(requested_max_chars)
-                max_chars_source = "explicit"
-                estimated_tokens = self._estimate_text_tokens(full_content)
-                usable_context_tokens = self._usable_context_tokens()
-            content = full_content[offset : offset + max_chars]
-            truncated = offset > 0 or offset + max_chars < size
+            relative_path = abs_path.relative_to(self.policy.workspace_dir).as_posix()
+            max_chars, max_chars_source, estimated_tokens, usable_context_tokens = (
+                self._default_max_chars(full_content, relative_path=relative_path)
+            )
+            page_end = min(offset + max_chars, size)
+            # JSONL pages preserve record boundaries. The returned next_offset
+            # is authoritative, so a caller never has to infer a resume point
+            # from the rendered content.
+            if (
+                relative_path.endswith(".jsonl")
+                and offset < page_end < size
+                and (boundary := full_content.rfind("\n", offset + 1, page_end)) >= offset
+            ):
+                page_end = boundary + 1
+            content = full_content[offset:page_end]
+            truncated = offset > 0 or page_end < size
             if truncated:
                 content = (
-                    f"[Runtime] 文件较大或请求了分页读取；当前 read_file 按"
-                    f"{'模型上下文容量估算' if max_chars_source.startswith('model_context') else '本次读取预算'}"
-                    f"返回字符区间 "
-                    f"{offset}:{min(offset + max_chars, size)} / {size}。"
-                    "如需继续读取，请再次调用 read_file 并设置 offset。\n\n"
+                    f"[Runtime] 已读取 {offset}:{page_end} / {size} 字符；"
+                    f"下一页 offset={page_end}。\n\n"
                     + content
                 )
             return ToolResult(
@@ -151,8 +194,15 @@ class ReadFileTool(Tool):
                     "size": size,
                     "offset": offset,
                     "max_chars": max_chars,
+                    "next_offset": page_end,
                     "max_chars_source": max_chars_source,
+                    "budget_policy": (
+                        "t2_raw_jsonl_checkpointed_paging"
+                        if max_chars_source == "t2_raw_jsonl_checkpointed_page"
+                        else "dynamic_model_context"
+                    ),
                     "llm_max_context": self.llm_max_context,
+                    "llm_context_source": self.llm_context_source,
                     "estimated_text_tokens": estimated_tokens,
                     "usable_context_tokens": usable_context_tokens,
                     "returned_chars": len(content),
@@ -200,6 +250,43 @@ class WriteFileTool(Tool):
         path = kwargs["path"]
         content = kwargs["content"]
         normalized_path = path.strip().lstrip("./")
+        # ``survey.tex`` is a derived artifact.  A review agent may revise
+        # source sections and then call ``assemble_survey``, but allowing a
+        # free-form full-document write here means a context-limited model can
+        # silently replace a complete survey with the prefix it happened to
+        # read.  Keep assembly as the only way T3.6 review regenerates it.
+        if (
+            self.policy.task_id == "T3.6-REVIEW"
+            and normalized_path == "drafts/survey/survey.tex"
+        ):
+            return ToolResult(
+                ok=False,
+                content=(
+                    "T3.6-REVIEW 不能用 write_file 直接改写 drafts/survey/survey.tex。"
+                    "请只修改对应的 drafts/survey/sections/<section>.tex，随后调用 "
+                    "assemble_survey 重新生成整篇文档并运行 audit_survey_coverage。"
+                ),
+                data={"path": path, "required_tool": "assemble_survey"},
+                error="survey_review_assembly_required",
+            )
+        # T5 reboost owns its handoff through one deterministic compiler.  A
+        # free-form replacement is both redundant and dangerous: an Agent can
+        # overwrite the compiler's schema-valid contract with a shortened
+        # fragment after merely reading a prefix of the existing JSON.
+        if (
+            self.policy.task_id == "T5-REBOOST-GATE"
+            and normalized_path == "external_executor/handoff_pack.json"
+        ):
+            return ToolResult(
+                ok=False,
+                content=(
+                    "T5-REBOOST-GATE 不能用 write_file 改写 external_executor/handoff_pack.json。"
+                    "请调用 compile_research_reboost_handoff；该工具是 handoff pack、"
+                    "schema 校验报告和外部执行器控制文件的唯一写入者。"
+                ),
+                data={"path": path, "required_tool": "compile_research_reboost_handoff"},
+                error="research_reboost_compiler_required",
+            )
         if normalized_path in STRUCTURED_ONLY_WRITE_PATHS:
             schema_name = STRUCTURED_ONLY_WRITE_PATHS[normalized_path]
             correct_path = (
@@ -465,7 +552,7 @@ class ListFilesTool(Tool):
                 for p in abs_path.glob(pattern)
                 if p != abs_path
             )
-            data: dict[str, Any] = {"items": items}
+            data: dict[str, Any] = {"path": rel_path or ".", "items": items, "count": len(items)}
             content = "\n".join(items)
             if rel_path.rstrip("/") in {"user_seeds", "user_seeds/pdfs"}:
                 seed_summary = _inspect_user_seed_dir(self.policy.workspace_dir, rel_path.rstrip("/"))

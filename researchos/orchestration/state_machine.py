@@ -36,7 +36,7 @@ from ..runtime.artifact_fingerprints import (
 from ..writing_profiles import resolve_venue_writing_profile
 from ..schemas.state import BudgetCumulative, GateState, StateYaml, TaskHistoryEntry
 from .gate_presenter import build_presentation
-from .task_io_contract import get_task_io
+from .task_io_contract import get_task_io, task_io_contract_source
 from ..tools.external_experiment import (
     build_executor_selection_payload,
     patch_external_executor_files_with_selection,
@@ -81,8 +81,8 @@ _T36_CORPUS_GATE_INPUT_PATHS = {
     "synthesis_workbench": "literature/synthesis_workbench.json",
     "domain_map": "literature/domain_map.json",
     "comparison_table": "literature/comparison_table.csv",
-    "paper_notes": "literature/paper_notes",
-    "paper_notes_abstract": "literature/paper_notes_abstract",
+    "deep_read_notes": "literature/deep_read_notes",
+    "shallow_read_notes": "literature/shallow_read_notes",
     "metadata_triage": "literature/metadata_triage.md",
     "related_work_bib": "literature/related_work.bib",
 }
@@ -152,6 +152,7 @@ _T2_LITERATURE_PARAM_CONFIRM_GATE_INPUT_PATHS = {
 }
 
 _T2_COVERAGE_GATE_INPUT_PATHS = {
+    "papers_raw": "literature/papers_raw.jsonl",
     "search_log": "literature/search_log.md",
     "missing_areas": "literature/missing_areas.md",
     "domain_map": "literature/domain_map.json",
@@ -265,8 +266,8 @@ def _literature_param_summary_from_payload(payload: dict[str, Any]) -> dict[str,
         "abstract_sweep_target": abstract_sweep.get("lite_paper_num"),
         "abstract_sweep_sources": abstract_sweep.get("sources"),
         "metadata_replacement_policy": abstract_sweep.get("metadata_replacement_policy"),
-        "manuscript_language": literature_quality.get("manuscript_language", "auto"),
-        "include_chinese_literature": literature_quality.get("include_chinese_literature", "auto"),
+        "manuscript_language": literature_quality.get("manuscript_language", "en"),
+        "include_chinese_literature": literature_quality.get("include_chinese_literature", "false"),
         "chinese_literature_policy": literature_quality.get("chinese_literature_policy", "review_flag_only"),
     }
 
@@ -428,116 +429,14 @@ def _t4_gate1_candidate_pool_fingerprints(workspace_dir: Path) -> dict[str, dict
     return fingerprints
 
 
-_T4_RECOVERY_UI_TEXT: dict[str, dict[str, str]] = {
-    "Context-contamination controls for agent-targeted uplift": {
-        "title": "智能体增益的上下文污染控制",
-        "value": "先区分真实干预效应与提示重复、上下文残留造成的表观增益，再估计智能体 uplift。",
-        "mechanism": "用负向对照提示、重复基线和仅上下文对照，识别响应变化究竟来自商业干预还是提示/上下文污染。",
-    },
-    "State-dependent uplift model for agent saturation and carryover": {
-        "title": "面向饱和与残留效应的状态依赖 uplift 模型",
-        "value": "把会话状态、既往暴露和饱和度纳入 uplift，而不是假设智能体对干预的反应恒定。",
-        "mechanism": "以状态变量调节处理效应，检验静态 uplift 模型遗漏的异质响应是否可被解释。",
-    },
-    "Source-provenance uplift for commercial LLM agents": {
-        "title": "商业 LLM 智能体的来源可信度 uplift",
-        "value": "把内容来源标记视为可操纵的干预维度，检验相同内容在不同来源下是否改变智能体响应。",
-        "mechanism": "在内容不变时随机改变平台、专家、同伴和中性来源标记，测量来源可信度先验带来的响应差异。",
-    },
-    "Bridge synthesis from LLM Agent Decision Psychology to agent uplift": {
-        "title": "从 LLM 智能体决策心理学到 uplift 的桥接综合",
-        "value": "将已确认桥接领域中的行为或策略机制转为智能体 uplift 的可检验调节变量。",
-        "mechanism": "比较桥接机制与人类 uplift 假设，判断它能否解释不同的智能体子群响应与失败模式。",
-    },
-    "Reverse-operation ablation for agent uplift mechanisms": {
-        "title": "智能体 uplift 机制的反向操作消融",
-        "value": "逐一移除或反转声称有效的组成部分，检验所选主机制是否真正必要。",
-        "mechanism": "把来源、状态或上下文成分逐项关闭，观察解释力与处理响应分离是否消失。",
-    },
-}
-
-
-_T4_RECOVERY_COMMON_ZH = {
-    "calibration": "校准度",
-    "task-completion or choice-rate delta": "任务完成率或选择率差异",
-    "candidate-specific treatment-response separation beyond baseline prompt sensitivity": "相对项目已声明对照出现候选特定的处理响应差异",
-    "context artifact diagnostics": "上下文伪效应诊断",
-    "state-dependent treatment effects": "状态依赖处理效应",
-    "behavioral credibility transfer": "行为可信度迁移",
-    "adjacent bridge synthesis": "相邻领域桥接综合",
-    "ablation and falsification": "消融与证伪",
-    "problem_reframing": "问题重构",
-    "design_rationale_derivation": "设计理据推导",
-    "cross_domain_analogy": "跨领域类比",
-    "bridge_synthesis": "桥接综合",
-    "reverse_operation": "反向操作",
-    "revise_before_selection": "选择前需要重构/补证据",
-    "defer_recommended": "建议暂缓，作为补充模块",
-    "survives_weakened": "弱化表述后仍可进入复核",
-    "independent": "可独立作为证伪检查",
-    "adjacent_zone": "相邻创新区",
-    "marginal_zone": "边际创新区",
-    "no_nearby_cluster": "未发现近邻聚类",
-    "Bridge candidate is visible because T1 confirmed bridge domains; select only if mechanism evidence is strong enough after note-section verification.": "桥接候选因 T1 已确认 bridge domain 而展示；只有在文献笔记 section 核验机制证据后才可作为主方向选择。",
-    "Runtime-generated Gate1 candidate after provider failure; select only after T4后半段 re-checks exact note sections.": "恢复候选：进入最终假设前必须回查对应文献笔记 section。",
-}
-
-
-_T4_RECOVERY_FIELD_ZH: dict[str, dict[str, str]] = {
-    "D1": {
-        "prediction": "对于主要由提示重复或来源/上下文敏感性造成表观提升的干预，在加入控制后，智能体 uplift 估计将缩小或改变方向。",
-        "counterfactual": "若干预具有真实处理效应，关闭重复/上下文控制不应完全解释观察到的响应差异。",
-        "practical_implication": "部署前先排除提示和上下文伪效应，避免把模型状态噪声误当成可运营的商业干预效果。",
-    },
-    "D2": {
-        "prediction": "状态条件化估计器将解释静态 uplift 树或双模型基线遗漏的异质智能体响应变化。",
-        "counterfactual": "若智能体响应函数是稳定的，加入状态与饱和变量不应改善项目预先声明且可追溯的评估指标。",
-        "practical_implication": "将干预触达时机、既往暴露和饱和度纳入目标策略，避免对同一智能体重复投放无效干预。",
-    },
-    "D3": {
-        "prediction": "智能体的购买或推荐跟随行为会随平台、专家、同伴和中性来源标签而系统性变化。",
-        "counterfactual": "若智能体忽略来源信息，在内容相同的情况下改变来源标签不应产生可测量的 uplift 差异。",
-        "practical_implication": "把来源标记作为可审计的干预因素，帮助平台区分内容效应与来源可信度效应。",
-    },
-    "D4": {
-        "prediction": "桥接领域特有的调节变量将识别出处理响应不同于人类 uplift 基线和智能体无差别 LLM 基线的智能体子群。",
-        "counterfactual": "若桥接机制无关，加入该调节变量不应改变 uplift 排序、校准度或失败模式检测。",
-        "practical_implication": "把跨领域机制转为可检验调节变量，明确哪些行为假设可迁移、哪些不能迁移到智能体决策。",
-    },
-    "S1": {
-        "prediction": "当移除某一机制对应的组成部分时，成立的机制应失去解释力或处理响应分离能力。",
-        "counterfactual": "若移除后估计不变，该机制应被弱化、否定或重构为非必要设计选择。",
-        "practical_implication": "把它用作主方向的证伪与消融模块，降低将不可验证机制直接写成论文贡献的风险。",
-    },
-}
-
-
-def _localize_t4_recovery_text(value: Any) -> str:
-    text = str(value or "")
-    if not text:
-        return ""
-    for source, translated in _T4_RECOVERY_COMMON_ZH.items():
-        text = text.replace(source, translated)
-    return text
-
-
 def _t4_basis_summary_for_gate(candidate: dict[str, Any]) -> str:
-    """Translate recovery metadata into a concise, auditable Chinese basis."""
+    """Return the model-authored evidence synthesis without runtime rewriting."""
 
-    explicit = candidate.get("basis_summary_zh")
-    if explicit:
-        return str(explicit)
-    if str(candidate.get("generation_stage") or "").startswith("deterministic_recovery"):
-        support = candidate.get("supporting_papers") if isinstance(candidate.get("supporting_papers"), list) else []
-        return (
-            "该候选由论文笔记的机制主张、边界条件、设计理据或缺口字段恢复生成；"
-            f"当前关联 {len(support)} 篇文献笔记。它仅适合 Gate1 比较，最终假设前必须回查下列具体 section。"
-        )
-    return _localize_t4_recovery_text(candidate.get("basis_summary") or "待补充")
+    return str(candidate.get("basis_summary_zh") or candidate.get("basis_summary") or "").strip()
 
 
 def _t4_short_display_title(candidate: dict[str, Any], fallback: str) -> str:
-    """Bound Gate headings so a long research description never becomes a title."""
+    """Use an authored short title when available without eliding the content."""
 
     text = str(
         candidate.get("display_title")
@@ -546,11 +445,12 @@ def _t4_short_display_title(candidate: dict[str, Any], fallback: str) -> str:
         or fallback
         or "未命名候选"
     ).strip()
-    limit = 32 if re.search(r"[\u4e00-\u9fff]", text) else 80
-    return text if len(text) <= limit else text[: max(0, limit - 3)].rstrip() + "..."
+    return text
 
 
-def _t4_candidate_hypotheses(candidate: dict[str, Any], candidate_id: str, *, value: str, mechanism: str, prediction: str, counterfactual: str) -> list[dict[str, str]]:
+def _t4_candidate_hypotheses(candidate: dict[str, Any], candidate_id: str) -> list[dict[str, str]]:
+    """Project authored hypotheses only; never synthesize H1/H2/H3 in the UI."""
+
     raw = candidate.get("candidate_hypotheses")
     result: list[dict[str, str]] = []
     if isinstance(raw, list):
@@ -560,24 +460,23 @@ def _t4_candidate_hypotheses(candidate: dict[str, Any], candidate_id: str, *, va
             result.append(
                 {
                     "id": str(item.get("id") or f"{candidate_id}-H{index}"),
-                    "statement": _localize_t4_recovery_text(item.get("statement") or item.get("hypothesis") or "待补充"),
-                    "mechanism": _localize_t4_recovery_text(item.get("mechanism") or "待补充"),
-                    "prediction": _localize_t4_recovery_text(item.get("observable_prediction") or item.get("prediction") or "待补充"),
-                    "test": _localize_t4_recovery_text(item.get("discriminating_test") or item.get("test") or "待补充"),
+                    "statement": str(item.get("statement") or item.get("hypothesis") or "").strip(),
+                    "mechanism": str(item.get("mechanism") or "").strip(),
+                    "prediction": str(item.get("observable_prediction") or item.get("prediction") or "").strip(),
+                    "test": str(item.get("discriminating_test") or item.get("test") or "").strip(),
+                    "evidence_status": str(item.get("evidence_status") or "").strip(),
                 }
             )
-    if result:
-        return result
-    return [{"id": f"{candidate_id}-H1", "statement": value, "mechanism": mechanism, "prediction": prediction, "test": counterfactual}]
+    return result[:3]
 
 
 def _t4_candidate_innovation(candidate: dict[str, Any]) -> dict[str, str]:
     raw = candidate.get("innovation") if isinstance(candidate.get("innovation"), dict) else {}
     return {
-        "summary": _localize_t4_recovery_text(raw.get("summary") or "未提供明确创新说明；需要在重分析时补写。"),
-        "type": _localize_t4_recovery_text(raw.get("type") or "待界定"),
-        "delta": _localize_t4_recovery_text(raw.get("novelty_delta") or "未提供相对最近工作的明确差异。"),
-        "non_incremental": _localize_t4_recovery_text(raw.get("non_incremental_reason") or "未提供非增量理由；需在 Pass2 / note section 复核。"),
+        "summary": str(raw.get("summary") or "").strip(),
+        "type": str(raw.get("type") or "").strip(),
+        "delta": str(raw.get("novelty_delta") or "").strip(),
+        "non_incremental": str(raw.get("non_incremental_reason") or "").strip(),
     }
 
 
@@ -592,8 +491,8 @@ def _t4_merge_opportunities(candidate: dict[str, Any]) -> list[dict[str, str]]:
         result.append(
             {
                 "with": str(item.get("with_candidate") or item.get("candidate_id") or "未指定"),
-                "combine": _localize_t4_recovery_text(item.get("combine") or "未提供假设组合"),
-                "rationale": _localize_t4_recovery_text(item.get("rationale") or "未提供组合理由"),
+                "combine": str(item.get("combine") or "").strip(),
+                "rationale": str(item.get("rationale") or "").strip(),
             }
         )
     return result
@@ -623,38 +522,28 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
         candidate_id = str(candidate.get("id") or candidate.get("idea_id") or "").strip()
         if not candidate_id:
             continue
-        source_title = str(candidate.get("title") or "未命名候选").strip()
-        localized = _T4_RECOVERY_UI_TEXT.get(source_title, {})
-        localized_fields = _T4_RECOVERY_FIELD_ZH.get(candidate_id, {})
-        full_title = str(candidate.get("title_zh") or localized.get("title") or source_title)
+        source_title = str(candidate.get("title") or "").strip()
+        full_title = str(candidate.get("title_zh") or source_title).strip()
         title = _t4_short_display_title(candidate, full_title)
-        value = str(candidate.get("pitch_zh") or localized.get("value") or candidate.get("pitch") or candidate.get("core_claim") or "待补充")
-        mechanism = str(candidate.get("mechanism_zh") or localized.get("mechanism") or candidate.get("mechanism") or "待补充")
+        gate1_card = candidate.get("gate1_card") if isinstance(candidate.get("gate1_card"), dict) else {}
+        value = str(candidate.get("pitch_zh") or candidate.get("pitch") or candidate.get("core_claim") or "").strip()
+        mechanism = str(candidate.get("mechanism_zh") or candidate.get("mechanism") or "").strip()
         minimum = candidate.get("minimum_experiment") if isinstance(candidate.get("minimum_experiment"), dict) else {}
-        protocol_status = str(minimum.get("evidence_status") or "legacy_unverified").strip().lower()
-        legacy_protocol = protocol_status == "legacy_unverified"
-        metrics = minimum.get("metric") or minimum.get("metrics") or "待确定"
+        metrics = minimum.get("metric") or minimum.get("metrics") or ""
         if isinstance(metrics, list):
-            metrics = "、".join(_localize_t4_recovery_text(item) for item in metrics[:3])
+            metrics = "、".join(str(item).strip() for item in metrics[:3] if str(item).strip())
         else:
-            metrics = _localize_t4_recovery_text(metrics)
-        prediction = str(candidate.get("prediction_zh") or localized_fields.get("prediction") or _localize_t4_recovery_text(candidate.get("prediction") or "待补充"))
-        counterfactual = str(candidate.get("counterfactual_zh") or localized_fields.get("counterfactual") or _localize_t4_recovery_text(candidate.get("counterfactual") or "待补充"))
-        if legacy_protocol:
-            # A historical candidate may contain plausible metrics, benchmark
-            # names, and evaluation claims without any source boundary. Keep
-            # its conceptual pitch visible, but never present those protocol
-            # details as an executable or falsifiable project claim.
-            prediction = "未验证；需由已确认项目材料和文献证据编译为可检验预测。"
-            counterfactual = "未验证；需在 T4 后半段依据可追溯证据定义反事实检验。"
+            metrics = str(metrics).strip()
+        prediction = str(candidate.get("prediction_zh") or candidate.get("prediction") or "").strip()
+        counterfactual = str(candidate.get("counterfactual_zh") or candidate.get("counterfactual") or "").strip()
         score = candidate.get("scores") if isinstance(candidate.get("scores"), dict) else {}
         score_rationale = (
             candidate.get("score_rationale")
             if isinstance(candidate.get("score_rationale"), dict)
             else {}
         )
-        legacy_evidence_note = "遗留候选缺少可追溯协议来源；需在 Pass2/T4 后半段重审计，不能据此确定具体实验配置。"
         support = candidate.get("supporting_papers") if isinstance(candidate.get("supporting_papers"), list) else []
+        basis_sources = candidate.get("basis_sources") if isinstance(candidate.get("basis_sources"), list) else []
         evidence_levels = {
             str(item.get("evidence_level") or "").upper()
             for item in support
@@ -662,15 +551,9 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
         }
         evidence = "；".join(sorted(evidence_levels)) if evidence_levels else "需回查对应文献笔记 section"
         pass2 = candidate.get("pass2_screening") if isinstance(candidate.get("pass2_screening"), dict) else {}
-        warning = _localize_t4_recovery_text(
-            pass2.get("selection_warning")
-            or candidate.get("selection_warning")
-            or "选择后需在 T4 后半段回查对应文献笔记 section。"
-        )
-        if "Runtime-generated" in warning or "Runtime recovery" in warning:
-            warning = "恢复候选：进入最终假设前必须回查对应文献笔记 section。"
-        if candidate_id.startswith("S") or str(candidate.get("constraint_status") or "").lower() == "supplement":
-            warning = "建议作为所选主方向的消融/证伪模块，不建议单独作为论文主贡献。"
+        warning = str(pass2.get("selection_warning") or candidate.get("selection_warning") or "").strip()
+        generated_by = str(candidate.get("generated_by") or candidate.get("generation_stage") or "").strip()
+        is_recovery_candidate = generated_by.startswith("deterministic_recovery") or "deterministic_t4_gate1_recovery" in generated_by
         lane = {
             "mainline": "主方向",
             "bridge": "桥接方向",
@@ -684,25 +567,20 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
                 "title": title,
                 "full_title": full_title,
                 "original_title": source_title if full_title != source_title else "",
-                "origin": _localize_t4_recovery_text(candidate.get("idea_origin") or "未标注"),
-                "mechanism_family": _localize_t4_recovery_text(candidate.get("mechanism_family") or "未标注"),
-                "target_problem": _localize_t4_recovery_text(candidate.get("target_problem") or "待补充"),
+                "origin": str(candidate.get("idea_origin") or "").strip(),
+                "mechanism_family": str(candidate.get("mechanism_family") or "").strip(),
+                "target_problem": str(candidate.get("target_problem") or "").strip(),
                 "value": value,
                 "mechanism": mechanism,
                 "prediction": prediction,
                 "counterfactual": counterfactual,
-                "practical_implication": str(candidate.get("practical_implication_zh") or candidate.get("practical_implication") or localized_fields.get("practical_implication") or "待 T4 后半段在回查文献笔记 section 后收敛。"),
+                "practical_implication": str(candidate.get("practical_implication_zh") or candidate.get("practical_implication") or "").strip(),
                 "minimum_validation": {
-                    "dataset": _localize_t4_recovery_text(minimum.get("dataset") or "待确定"),
-                    "baseline": _localize_t4_recovery_text(minimum.get("baseline") or "待确定"),
+                    "dataset": str(minimum.get("dataset") or "").strip(),
+                    "baseline": str(minimum.get("baseline") or "").strip(),
                     "metric": str(metrics),
-                    "expected_signal": _localize_t4_recovery_text(minimum.get("expected_signal") or "待确定"),
-                    # Preserve the candidate's protocol boundary in the human
-                    # decision surface. Omitting these fields makes a sourced
-                    # proposal look legacy/unverified, while an old candidate
-                    # could make unsourced protocol text appear more settled
-                    # than it is.
-                    "evidence_status": str(minimum.get("evidence_status") or "legacy_unverified"),
+                    "expected_signal": str(minimum.get("expected_signal") or "").strip(),
+                    "evidence_status": str(minimum.get("evidence_status") or "unknown"),
                     "source_refs": [
                         str(reference).strip()
                         for reference in minimum.get("source_refs", [])
@@ -713,14 +591,24 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
                 },
                 "evidence": evidence,
                 "support_count": len(support),
-                "basis_summary": legacy_evidence_note if legacy_protocol else _t4_basis_summary_for_gate(candidate),
+                "basis_summary": _t4_basis_summary_for_gate(candidate),
+                "evidence_chain": [
+                    {
+                        "ref": str(item.get("ref") or item.get("source_file") or item.get("type") or "").strip(),
+                        "observation": str(item.get("claim") or item.get("observation") or "").strip(),
+                        "implication": str(item.get("implication") or "").strip(),
+                        "evidence_level": str(item.get("evidence_level") or "").strip(),
+                    }
+                    for item in basis_sources
+                    if isinstance(item, dict)
+                ],
                 "supporting_papers": [
                     {
                         "title": str(item.get("title") or "未命名论文"),
                         "citation": str(item.get("ref") or "未提供引用键"),
                         "note_path": str(item.get("source_file") or "未提供笔记路径"),
                         "evidence_level": str(item.get("evidence_level") or "未标注"),
-                        "claim_used": _localize_t4_recovery_text(item.get("claim_used") or "未提供证据摘录"),
+                        "claim_used": str(item.get("claim_used") or item.get("claim") or "").strip(),
                     }
                     for item in support
                     if isinstance(item, dict)
@@ -738,49 +626,34 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
                     )
                     if score.get(key) is not None
                 },
-                "selection_recommendation": _localize_t4_recovery_text(pass2.get("screening_recommendation") or "未标注"),
-                "counterfactual_check": _localize_t4_recovery_text(pass2.get("counterfactual_check") or "未标注"),
-                "nearest_prior_work": legacy_evidence_note if legacy_protocol else _localize_t4_recovery_text(
+                "selection_recommendation": str(pass2.get("screening_recommendation") or "").strip(),
+                "counterfactual_check": str(pass2.get("counterfactual_check") or "").strip(),
+                "nearest_prior_work": str(
                     (pass2.get("nearest_prior_work") or candidate.get("nearest_prior_work") or {}).get("work")
                     if isinstance(pass2.get("nearest_prior_work") or candidate.get("nearest_prior_work"), dict)
-                    else "待核验"
-                ),
-                "novelty_signal": _localize_t4_recovery_text(pass2.get("novelty_signal") or candidate.get("novelty_signal") or "待核验"),
+                    else ""
+                ).strip(),
+                "novelty_signal": str(pass2.get("novelty_signal") or candidate.get("novelty_signal") or "").strip(),
                 "warning": warning,
-                "innovation": (
-                    {
-                        "summary": legacy_evidence_note,
-                        "type": "待在 Pass2/T4 后半段基于可追溯先例界定",
-                        "delta": legacy_evidence_note,
-                        "non_incremental": legacy_evidence_note,
-                    }
-                    if legacy_protocol
-                    else _t4_candidate_innovation(candidate)
-                ),
-                "candidate_hypotheses": _t4_candidate_hypotheses(
-                    candidate if not legacy_protocol else {**candidate, "candidate_hypotheses": []},
-                    candidate_id,
-                    value=value,
-                    mechanism=mechanism,
-                    prediction=prediction,
-                    counterfactual=counterfactual,
-                ),
+                "presentation_status": "legacy_recovery_requires_llm_reanalysis" if is_recovery_candidate else "llm_authored_candidate",
+                "gate1_card": {
+                    "role_summary": str(gate1_card.get("role_summary") or "").strip(),
+                    "evidence_interpretation": str(gate1_card.get("evidence_interpretation") or "").strip(),
+                    "selection_advice": str(gate1_card.get("selection_advice") or "").strip(),
+                    "risk_summary": str(gate1_card.get("risk_summary") or "").strip(),
+                    "user_edit_hint": str(gate1_card.get("user_edit_hint") or "").strip(),
+                },
+                "innovation": _t4_candidate_innovation(candidate),
+                "candidate_hypotheses": _t4_candidate_hypotheses(candidate, candidate_id),
                 "merge_opportunities": _t4_merge_opportunities(candidate),
-                "score_rationale": (
-                    {str(key): legacy_evidence_note for key in score}
-                    if legacy_protocol
-                    else {
-                        str(key): _localize_t4_recovery_text(reason)
-                        for key, reason in score_rationale.items()
-                    }
-                ),
+                "score_rationale": {str(key): str(reason).strip() for key, reason in score_rationale.items()},
             }
         )
 
     return {
         "language": "zh",
         "candidates": candidates,
-        "input_hint": "直接输入一行即可：选 D1，强调上下文控制；合并 D1+D3，把 D3 作为来源机制；新想法：……；重新分析：希望补足状态变量证据。",
+        "input_hint": "选择：选 D1（说明保留的机制）；合并 D1+D3；新想法：写下研究想法；重新分析：说明要补足的材料。",
         "detail_path": "ideation/_gate1_candidate_cards.md",
         "file_navigation": [
             {"path": "ideation/_gate1_candidate_cards.md", "purpose": "人工阅读版完整候选卡片，适合逐项比较。"},
@@ -1061,7 +934,7 @@ def _apply_literature_quality_overrides(
         or captured.get("writing_language")
         or literature_quality.get("manuscript_language")
         or inferred_language
-        or "auto"
+        or "en"
     ).strip().lower()
     manuscript_language = {
         "english": "en",
@@ -1074,7 +947,7 @@ def _apply_literature_quality_overrides(
         "zh_en": "mixed",
     }.get(manuscript_language, manuscript_language)
     if manuscript_language not in {"auto", "en", "zh", "mixed"}:
-        manuscript_language = inferred_language or "auto"
+        manuscript_language = inferred_language or "en"
 
     include_raw = captured.get("include_chinese_literature")
     if include_raw in (None, ""):
@@ -1127,13 +1000,13 @@ def _normalize_include_chinese_value(value: Any) -> str:
 
 def _infer_gate_manuscript_language(workspace_dir: Path | None) -> str:
     if workspace_dir is None:
-        return "auto"
+        return "en"
     try:
         from ..runtime.literature_quality import infer_manuscript_language
 
         return infer_manuscript_language(workspace_dir, "auto")
     except Exception:
-        return "auto"
+        return "en"
 
 
 def _normalize_literature_param_option(option: str) -> str:
@@ -1912,9 +1785,8 @@ class StateMachine:
         if validate_t4_gate1_selection_file(workspace_dir)[0]:
             return False
         try:
-            from ..agents.ideation import ensure_t4_gate1_candidate_cards, validate_t4_gate1_ready
+            from ..agents.ideation import validate_t4_gate1_ready
 
-            ensure_t4_gate1_candidate_cards(workspace_dir)
             ok, _err = validate_t4_gate1_ready(workspace_dir)
             return bool(ok)
         except Exception:
@@ -1925,6 +1797,9 @@ class StateMachine:
         state.status = "RUNNING"
         state.pending_gate = None
         state.paused_at = None
+        # A previous recoverable pause is preserved in history and events.  It
+        # must not remain as the current error after a new task actually starts.
+        state.last_error = None
         state.history.append(
             TaskHistoryEntry(
                 task=state.current_task,
@@ -2017,6 +1892,20 @@ class StateMachine:
             and "T4-GATE1" in self.nodes
         ):
             return self._transition_to_next(state, "T4-GATE1", workspace_dir=workspace_dir)
+
+        human_directive = state.task_context.get("human_iteration_directive")
+        if isinstance(human_directive, dict) and human_directive.get("target_task") == state.current_task:
+            # A human-directed return applies to exactly one successful run.
+            # Leaving it behind would make later resumes look like fresh user
+            # decisions and defeat normal idempotent recovery.
+            state.task_context.pop("human_iteration_directive", None)
+
+        if state.current_task == "T2" and bool(state.task_context.get("t2_user_requested_expansion")):
+            # This gate flag is a one-round instruction.  Retaining it after a
+            # successful supplement would make later resumes look like another
+            # expansion and suppress the normal existing-output fast path.
+            state.task_context.pop("t2_user_requested_expansion", None)
+            state.task_context.pop("allow_t2_failure_recovery", None)
 
         if node.gate:
             gate_id = self._gate_id_for_node(node)
@@ -2194,13 +2083,29 @@ class StateMachine:
             workspace_dir=workspace_dir,
         )
 
-        # 如果 next_state 指向一个之前成功跑过的 task，则记为一次“正常迭代”。
-        if next_state in self.nodes and self._is_iteration(next_state, state):
+        # Returning to a previously completed task from a human gate is a new,
+        # auditable decision, not an autonomous same-parameter loop.  The
+        # directive is consumed after that target task completes successfully;
+        # interrupted resumes retain it and remain protected by the deadlock
+        # guard for that same decision.
+        human_directed_iteration = next_state in self.nodes and self._is_iteration(next_state, state)
+        if human_directed_iteration:
+            state.task_context["human_iteration_directive"] = {
+                "decision_id": uuid.uuid4().hex,
+                "gate_id": self._gate_id_for_node(node),
+                "source_task": node.task_id,
+                "target_task": next_state,
+                "option_id": str(option_id or ""),
+            }
             state.iteration_count[next_state] = state.iteration_count.get(next_state, 0) + 1
 
         if next_state in self.nodes:
             limit = self.nodes[next_state].max_iterations
-            if limit is not None and state.iteration_count.get(next_state, 0) >= limit:
+            if (
+                not human_directed_iteration
+                and limit is not None
+                and state.iteration_count.get(next_state, 0) >= limit
+            ):
                 if "ITER_LIMIT_GATE" in self.nodes:
                     return "ITER_LIMIT_GATE"
         return next_state
@@ -2967,17 +2872,56 @@ class StateMachine:
         declared_outputs.update(dict(node.optional_outputs or {}))
         contract_inputs = dict(contract.get("inputs", {}))
         contract_outputs = dict(contract.get("outputs", {}))
+        source_hint = (
+            f" [state_machine={self.config_path.resolve()}; "
+            f"task_io_contract={task_io_contract_source()}]. "
+            "This often means the YAML and Python contract came from different versions; "
+            "run `python -m researchos.cli validate-config` from the intended checkout."
+        )
 
         if declared_inputs != contract_inputs:
-            errors.append(
-                f"{task_id}: node.inputs does not match task_io_contract "
-                f"(declared={declared_inputs}, contract={contract_inputs})"
-            )
+            errors.append(self._format_contract_mismatch(
+                task_id, "inputs", declared_inputs, contract_inputs, source_hint
+            ))
         if declared_outputs != contract_outputs:
-            errors.append(
-                f"{task_id}: node.outputs does not match task_io_contract "
-                f"(declared={declared_outputs}, contract={contract_outputs})"
-            )
+            errors.append(self._format_contract_mismatch(
+                task_id, "outputs", declared_outputs, contract_outputs, source_hint
+            ))
+
+    @staticmethod
+    def _format_contract_mismatch(
+        task_id: str,
+        field_name: str,
+        declared: dict[str, Any],
+        contract: dict[str, Any],
+        source_hint: str,
+    ) -> str:
+        """Describe a contract drift without dumping full configuration maps."""
+
+        missing = [
+            f"{name} -> {contract[name]}"
+            for name in sorted(set(contract) - set(declared))
+        ]
+        unexpected = sorted(set(declared) - set(contract))
+        changed = [
+            f"{name}: {declared[name]} -> {contract[name]}"
+            for name in sorted(set(contract) & set(declared))
+            if declared[name] != contract[name]
+        ]
+        def compact(items: list[str], *, limit: int = 6) -> str:
+            if len(items) <= limit:
+                return ", ".join(items)
+            return ", ".join(items[:limit]) + f", +{len(items) - limit} more"
+
+        details: list[str] = []
+        if missing:
+            details.append("missing " + compact(missing))
+        if unexpected:
+            details.append("unexpected " + compact(unexpected))
+        if changed:
+            details.append("path changed " + compact(changed))
+        summary = "; ".join(details) or "mapping order or value type differs"
+        return f"{task_id}: node.{field_name} does not match task_io_contract ({summary}){source_hint}"
 
     def _check_budget_drift(self, state: StateYaml, workspace_dir: Path) -> None:
         """检查预算漂移并发出警告（§7.1）。
@@ -3116,6 +3060,16 @@ class StateMachine:
         if node.extra:
             params["extra"] = dict(node.extra)
 
+        if state is not None:
+            directive = state.task_context.get("human_iteration_directive")
+            if isinstance(directive, dict) and str(directive.get("target_task") or "") == node.task_id:
+                params["human_iteration_directive"] = {
+                    "decision_id": str(directive.get("decision_id") or ""),
+                    "gate_id": str(directive.get("gate_id") or ""),
+                    "source_task": str(directive.get("source_task") or ""),
+                    "option_id": str(directive.get("option_id") or ""),
+                }
+
         if node.task_id == "T4" and state is not None:
             selection_fingerprint = ""
             if workspace_dir is not None:
@@ -3130,6 +3084,32 @@ class StateMachine:
             params["t4_gate_phase"] = "post_gate1" if selection_fingerprint else "pre_gate1"
             if selection_fingerprint:
                 params["gate1_selection_fingerprint"] = selection_fingerprint
+
+        if node.task_id == "T2" and state is not None and bool(
+            state.task_context.get("t2_user_requested_expansion")
+        ):
+            # Returning from T2-COVERAGE-GATE is a human-directed new search
+            # round, not an autonomous retry.  The coverage decision is
+            # persisted before the next context is built and contains a fresh
+            # timestamp plus input fingerprints for this specific request.
+            # Include its file fingerprint so the deadlock guard still catches
+            # automatic same-parameter loops, while allowing the user to ask
+            # for a documented targeted expansion more than once.
+            decision_path = (
+                workspace_dir / "literature" / "coverage_decision.json"
+                if workspace_dir is not None
+                else None
+            )
+            decision_fingerprint = "missing_expansion_decision"
+            if decision_path is not None and decision_path.is_file():
+                try:
+                    decision = json.loads(decision_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    decision = {}
+                if isinstance(decision, dict) and str(decision.get("selected_option") or "") == "rerun_t2_expand":
+                    decision_fingerprint = _sha256_file(decision_path)
+            params["t2_run_mode"] = "user_requested_expansion"
+            params["t2_expansion_decision_fingerprint"] = decision_fingerprint
 
         return params
 

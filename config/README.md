@@ -1,72 +1,63 @@
-# ResearchOS Config Directory
+# ResearchOS Configuration
 
-This directory contains the checked-in configuration tree used by both Native
-Mode and Docker Mode. It is a directory map, not the full configuration manual.
-For precedence rules, examples, and field-level guidance, read
-[docs/config.md](../docs/config.md).
+普通用户只需要认识两个文件：`model_settings.yaml` 用于模型连接，`mcp.yaml` 用于可选 MCP Tool server。`model_settings.yaml` 在首次配置前不存在是正常的，因为它可能保存 API key 并被 Git 忽略；它不是被删除，也不是修改 `model_settings.example.yaml` 才会生效。
 
-## Files
-
-| Path | Role | Edit In Daily Use |
-| --- | --- | --- |
-| `user_settings.yaml` | User-facing model, budget, timeout, and retry preferences. | Yes |
-| `runtime.yaml` | Workspace root, runtime directory, logging, UI, web fetch, LaTeX backend/Docker image, and environment defaults. | Occasionally |
-| `model_routing.yaml` | Endpoint, provider, profile, tier, fallback, and context truncation routing. | Only when changing providers or models |
-| `agent_params.yaml` | Agent capability registry, tool permissions, prompts, modes, and mechanical behavior thresholds. | Only when changing agent behavior |
-| `mcp.example.yaml` | Example MCP server configuration. | Copy when needed |
-| `mcp.yaml` | Optional local MCP server configuration. | Local only when used |
-| `system_config/state_machine.yaml` | Workflow topology, task contracts, transitions, and stage metadata. | System contract |
-| `system_config/gates.yaml` | Human gate presentation and option metadata. | System contract |
-| `system_config/cdr_schema.yaml` | CDR schema used by reading, ideation, and writing prompts. | System contract |
-| `system_config/venue_style_map.yaml` | Venue/style defaults for IS, UTD, CCF-A, and related writing paths. | System contract |
-| `system_config/venue_writing_profiles.yaml` | Internal venue-aware argument, evidence, and section-budget profiles. They are not official venue limits. | System contract |
-
-## Single Source Rules
-
-- Secrets live in the repository root `.env`, created from `.env.example`.
-- Non-secret ResearchOS settings live in this root `config/` directory.
-- Docker Mode bind-mounts this same `config/` directory read-only into
-  `/app/config`; there is no `deploy/config/` copy.
-- Workspace data lives under the top-level `workspace/` directory by default.
-- Generated logs, traces, PDFs, and experiment artifacts do not belong here.
-
-## Configuration Precedence
-
-ResearchOS resolves user-facing settings in this order:
-
-```text
-CLI arguments
-> environment variables
-> config/user_settings.yaml
-> config/runtime.yaml and other checked-in defaults
-```
-
-State-machine contracts and validator expectations remain in
-`config/system_config/`. Do not use local `.env` or workspace artifacts to
-silently change those contracts.
-
-## Quick Checks
-
-From the repository root:
+首次配置执行：
 
 ```bash
+python -m researchos.cli configure-llm
+```
+
+它会创建 **`config/model_settings.yaml`**。这是日常唯一需要修改的模型文件，包含 `provider`、`api_base`、`api_key`、`model` 和 `fallback`。也可将 `model_settings.example.yaml` 复制为这个准确文件名；不要把真实 key 写进受版本控制的 example 文件。
+
+顶层保持精简是为了区分用户设置与系统契约：`system_config/` 中的内容没有丢失，它们仍由 runtime 加载，只是不应成为日常模型配置入口。
+
+| 路径 | 修改者 | 用途 |
+| --- | --- | --- |
+| `model_settings.yaml` | 研究者 | 实际生效的 provider、API URL、API key、model 和同模型 retry 策略；由 `configure-llm` 创建，Git 忽略。 |
+| `model_settings.example.yaml` | 参考模板 | 安全的本地模型配置模板。 |
+| `mcp.yaml` | 研究者，可选 | 可选 MCP server；包含默认关闭、可直接启用的 preset。 |
+| `system_config/` | 系统维护者 | Runtime 默认值、Agent capability、状态机、Gate、schema 和写作 profile。 |
+
+## 首次配置
+
+```bash
+python -m researchos.cli configure-llm
+```
+
+交互式配置会询问 `provider`、`api_base`、`api_key` 和 `model`，然后让你选择将 key 存在本地 `model_settings.yaml`，或存入 `.env` 并在配置中写入 `${PROVIDER_API_KEY}`。已知 provider 有官方 API URL preset；`openai_compatible` 必须填写 URL。`ollama`、`lm_studio`、`vllm` 等本地 preset 通常不需要 key。保存后会立刻进行一次最小连接检查。
+
+所有 Agent 和 Skill 共享这一对 provider/model。`model_settings.yaml` 中的 `fallback` 仅控制 provider 临时故障后的同连接 retry；不会暗中引入 heavy/medium/light profile 或第二条模型链。
+
+## MCP Tool
+
+`config/mcp.yaml` 仍然生效，也是唯一的 MCP 配置文件；原先的 example 已合并为默认关闭的 preset。把某个条目的 `enabled` 改为 `true` 后，ResearchOS 会启动其中的 stdio server、发现 Tool schema、在整个 run 内保持连接，并默认向所有 Agent/Skill 提供这些 Tool。通过 `allowed_agents` 可缩小范围。`--mcp-connector` 只用于非 stdio 的自定义 transport。论文检索、OpenAlex/Semantic Scholar 查询和 PDF 获取是内置能力，不依赖 MCP。
+
+## 配置结构
+
+```text
+config/
+├── model_settings.example.yaml
+├── mcp.yaml
+└── system_config/
+    ├── llm_runtime.yaml
+    ├── runtime.yaml
+    ├── agent_params.yaml
+    ├── state_machine.yaml
+    ├── gates.yaml
+    ├── cdr_schema.yaml
+    └── venue_writing_profiles.yaml
+```
+
+`model_settings.yaml` appears beside the example only after setup. It is intentionally excluded from version control because it can hold an API key. The `.env` file is also supported and is loaded without overriding keys already present in the shell or Docker environment.
+
+## 检查
+
+```bash
+python -m researchos.cli configure-llm
+python -m researchos.cli selftest
 python -m researchos.cli validate-config
 python -m researchos.cli doctor
 ```
 
-For Docker Mode:
-
-```bash
-docker compose -f deploy/compose.yaml config --quiet
-docker compose -f deploy/compose.yaml run --rm researchos doctor
-```
-
-`runtime.yaml: latex` is a runtime backend policy, not a replacement for system
-packages. `auto` prefers current-environment `latexmk`, then `tectonic`, then
-the configured Docker TeX image when fallback is enabled. The Compose image
-must contain TeX itself because it intentionally has no Docker socket. See
-[docs/docker.md](../docs/docker.md) for the complete contract.
-
-Use `docker compose ... config --quiet` for path validation. The non-quiet form
-can print resolved environment values, so avoid pasting it when `.env` contains
-API keys.
+`selftest` 检查已配置的 provider connection 和本地依赖；`validate-config` 只验证配置结构，不显示 secret。Docker 会以只读方式挂载同一份 `config/`，因此应在 host 上执行 `configure-llm`，再启动 Docker Mode。

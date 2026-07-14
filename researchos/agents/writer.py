@@ -11,13 +11,14 @@ import json
 import re
 from pathlib import Path
 
-import yaml
-
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec
 from ..runtime.prompts import render_prompt
-from ..runtime.system_config import system_config_path
-from ..writing_profiles import resolve_venue_writing_profile
+from ..writing_profiles import (
+    resolve_venue_writing_profile,
+    suggest_template_selection,
+    suggest_venue_style,
+)
 from ..tools.manuscript import (
     CORE_SECTIONS,
     SECTION_TITLES,
@@ -1179,42 +1180,8 @@ def _validate_style_variants(ws: Path) -> tuple[bool, str | None]:
 
 
 def _suggest_venue_style(target_venue: object) -> str:
-    venue = str(target_venue or "").lower()
-    config_path = system_config_path("venue_style_map.yaml")
-    try:
-        data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    except Exception:
-        data = {}
-    is_patterns = data.get("is", []) if isinstance(data, dict) else []
-    if any(str(pattern).lower() in venue for pattern in is_patterns):
-        return "is"
-    if isinstance(data, dict) and data.get("ccf_a_default", True):
-        return "ccf_a"
-    return "ccf_a"
+    return suggest_venue_style(target_venue)
 
 
 def _suggest_template_selection(target_venue: object) -> dict[str, str]:
-    venue = str(target_venue or "").casefold()
-    if any(token in venue for token in (
-        "misq",
-        "management science",
-        "information systems research",
-        "isr",
-        "utd",
-        "informs",
-        "cds",
-        "commerce data science",
-        "informs journal on data science",
-    )):
-        return {"template_family": "utd", "template_id": "informs", "writing_language": "en"}
-    if any(token in venue for token in ("中文", "管理世界", "管理科学学报", "系统工程理论与实践", "cssci", "cscd")):
-        return {"template_family": "basic_zh", "template_id": "basic_zh", "writing_language": "zh"}
-    if "kdd" in venue or "sigkdd" in venue:
-        return {"template_family": "ccf", "template_id": "kdd", "writing_language": "en"}
-    if "icml" in venue:
-        return {"template_family": "ccf", "template_id": "icml", "writing_language": "en"}
-    if "iclr" in venue:
-        return {"template_family": "ccf", "template_id": "iclr", "writing_language": "en"}
-    if any(token in venue for token in ("neurips", "nips", "sigir", "aaai", "ijcai", "ccf")):
-        return {"template_family": "ccf", "template_id": "neurips", "writing_language": "en"}
-    return {"template_family": "basic_en", "template_id": "basic_en", "writing_language": "en"}
+    return suggest_template_selection(target_venue)

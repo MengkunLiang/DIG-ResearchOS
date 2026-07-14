@@ -118,7 +118,7 @@ def citation_entry_for_id(
 
 def _collect_note_entries(literature_dir: Path) -> list[dict[str, Any]]:
     paths: list[Path] = []
-    for rel in ("paper_notes", "paper_notes_bridge", "paper_notes_abstract"):
+    for rel in ("deep_read_notes", "bridge_notes", "shallow_read_notes"):
         root = literature_dir / rel
         if not root.exists():
             continue
@@ -340,7 +340,7 @@ def _extract_openalex_id(value: str) -> str:
 
 def _evidence_level(status: str, path: Path) -> str:
     raw = str(status or "").upper()
-    if "ABSTRACT" in raw or "paper_notes_abstract" in str(path):
+    if "ABSTRACT" in raw or "shallow_read_notes" in str(path):
         return "ABSTRACT_ONLY"
     if "PARTIAL" in raw:
         return "PARTIAL_TEXT"

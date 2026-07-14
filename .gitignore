@@ -52,6 +52,7 @@ tests/
 .env
 .env.*
 !.env.example
+config/model_settings.yaml
 deploy/.env
 deploy/.env.example
 deploy/config/

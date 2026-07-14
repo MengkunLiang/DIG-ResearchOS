@@ -9,7 +9,7 @@ dependencies. `basic_zh` and Chinese survey/paper output require XeLaTeX plus
 Chinese TeX packages. ResearchOS supports either a host TeX Live installation
 or the built-in `researchos/system:latest` Compose image, both with `latexmk`,
 pdfLaTeX, XeLaTeX, BibTeX, and Chinese TeX support. See
-[../docs/docker.md](../docs/docker.md) for backend selection and recovery.
+[Docker and TeX](../docs/en/docker.md) for backend selection and recovery.
 
 - `normal/basic_en.tex`: minimal English article fallback.
 - `normal/basic_zh.tex`: minimal Chinese article fallback for XeLaTeX/CJK-capable environments.

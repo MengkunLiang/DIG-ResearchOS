@@ -14,6 +14,7 @@ import yaml
 from ..runtime.errors import ConfigurationError
 from ..tools.base import Tool
 from ..tools.registry import ToolRegistry
+from .capabilities import expand_skill_tools, resolve_capability_profiles
 from .contracts import validate_skill_metadata
 
 
@@ -27,6 +28,7 @@ class Skill:
     allowed_tools: list[str]
     skill_dir: Path
     metadata: dict[str, Any] = field(default_factory=dict)
+    capability_profiles: tuple[str, ...] = ()
 
 
 def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
@@ -64,13 +66,17 @@ def load_skill(skill_dir: Path) -> Skill:
     if not isinstance(tools, list):
         raise ConfigurationError(f"Skill tools must be a list: {skill_md}")
     validate_skill_metadata(meta, source=skill_md)
+    profiles = resolve_capability_profiles(str(name), meta)
+    resolved_metadata = dict(meta)
+    resolved_metadata["resolved_capability_profiles"] = list(profiles)
     return Skill(
         name=name,
         description=meta.get("description", ""),
         body=body.strip(),
-        allowed_tools=[str(item) for item in tools],
+        allowed_tools=expand_skill_tools([str(item) for item in tools], profiles),
         skill_dir=skill_dir,
-        metadata=meta,
+        metadata=resolved_metadata,
+        capability_profiles=profiles,
     )
 
 

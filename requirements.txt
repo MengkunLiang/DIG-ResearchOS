@@ -13,6 +13,9 @@ python-dotenv>=1.0,<2
 # LLM routing and provider adapters
 litellm>=1.65,<2
 
+# Optional external Tool servers configured through config/mcp.yaml.
+mcp>=1.13,<2
+
 # Literature, PDF, and bibliography processing
 pdfplumber>=0.10,<1
 PyMuPDF>=1.23,<2

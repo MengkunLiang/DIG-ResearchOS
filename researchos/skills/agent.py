@@ -41,7 +41,9 @@ class SkillAgent(Agent):
         interaction = metadata.get("interaction") if isinstance(metadata.get("interaction"), dict) else {}
         guided = str(interaction.get("mode") or "guided") == "guided"
         workflow = parse_skill_workflow(metadata)
-        model_tier = str(metadata.get("model_tier") or metadata.get("tier") or "medium")
+        # Public Skills share the workspace's single LLM connection. Metadata
+        # tiers are accepted only as legacy input and no longer select a model.
+        model_tier = "standard"
         if guided and "ask_human" in available_tools and "ask_human" not in translated:
             # Guided Skills need one safe channel for a semantic evidence gap
             # discovered after deterministic file checks have passed.
@@ -68,7 +70,7 @@ class SkillAgent(Agent):
                 max_wall_seconds=int(metadata.get("max_wall_seconds", 1800)),
                 unlimited_budget=True,
                 temperature=float(metadata.get("temperature", 0.2)),
-                llm_profile=llm_profile or metadata.get("llm_profile"),
+                llm_profile=None,
                 prompt_template=None,
                 allowed_read_prefixes=list(metadata.get("allowed_read_prefixes", [""])),
                 allowed_write_prefixes=allowed_write_prefixes,
@@ -110,6 +112,8 @@ class SkillAgent(Agent):
             "# Workspace Capability Boundary\n"
             f"- Read only these declared workspace areas: {readable}\n"
             f"- Write only these declared workspace areas: {writable}\n"
+            f"- Enabled capability profiles: {', '.join(self.skill.capability_profiles) or 'workspace_navigation'}\n"
+            f"- Available tools for this session: {', '.join(self.spec.tool_names)}\n"
             "- Start with the verified inputs listed below. Do not probe unrelated workspace paths just because they are conventional names. "
             "When a needed material is absent, request it through the guided follow-up protocol instead of attempting an unauthorized read.\n\n"
         )
@@ -143,8 +147,21 @@ class SkillAgent(Agent):
             "# Experimental-Detail Integrity\n"
             "- A concrete dataset, benchmark, split, baseline, metric, seed, compute budget, implementation command, or performance number may be used only when an allowed input or audited workspace artifact explicitly identifies it. Record the source path and section/field whenever that detail affects a plan or claim.\n"
             "- This is a provenance rule, not a metric ban: AUUC, Qini, accuracy, F1, and any other metric are valid when the current project's allowed inputs or audited artifacts explicitly declare them.\n"
-            "- If the user asks for a plan but the detail is not yet sourced, label it `proposed_not_verified` or `unknown`; state what material would resolve it. Do not turn a plausible convention into an existing protocol.\n"
+            "- If the user asks for a plan but the detail is not yet sourced, describe it to the user as “待验证提议” or “暂未确定”; reserve raw values such as `proposed_not_verified` and `unknown` for structured files. State what material would resolve it. Do not turn a plausible convention into an existing protocol.\n"
             "- Never infer experimental details from the project topic, a method name, an adjacent paper, a generic benchmark convention, or an earlier example. Missing protocol inputs require a focused human question, not a fabricated default.\n\n"
+        )
+        header += (
+            "# 面向用户的沟通规则\n"
+            "- 默认使用清楚、自然的中文。先说明已经检查了什么、当前能做什么、还需要什么，再给出下一步。\n"
+            "- 不把 `schema`、`artifact`、`stage`、`section`、内部 Agent 名称或工具限制直接当作解释；只有文件路径、证据边界或用户需要采取的动作确有必要时才提及。\n"
+            "- 用“材料准备”而不是 intake，用“论文阅读笔记”而不是 evidence card/note card，用“论文中的相关位置或段落”而不是 section anchor，用“输出文件”而不是 artifact。专业的学术术语（例如 taxonomy、baseline、ablation、claim、Related Work）可以保留英文。\n"
+            "- 首次处理前先读材料清单和已验证输入。若材料不完整，准确指出缺少的内容以及可上传、粘贴或提供的标识符，不要泛泛地说“材料不足”。\n"
+            "- 保留完整用户可读信息，不使用 `...` 截断字段，不用连续空行制造视觉间隔；长文本由终端按当前宽度自然换行。\n\n"
+            "# Interaction And Output Style\n"
+            "- Produce a compact, readable research interaction: state the decision, the evidence boundary, and the next action. Use a short paragraph, a table, or a flat list when it improves scanning; do not simulate a human-input panel in prose.\n"
+            "- Ask a real question only through ask_human. If that tool is unavailable, persist the named blocker and finish or pause according to the Skill contract; never emit a faux question that the runtime must guess how to handle.\n"
+            "- Keep Markdown structurally clean. Use one blank line between real blocks, no repeated empty spacer lines, no decorative separator walls, no character-level truncation, and no copy-pasted feature narration.\n"
+            "- For candidate comparisons, use concise tables or labeled sections with complete values. Preserve source paths, uncertainty, and next actions; do not hide material text behind ellipses.\n\n"
         )
         workflow_block = workflow_prompt_block(self.workflow) if self.workflow else ""
         return header + workflow_block + warning_block + body

@@ -121,7 +121,11 @@ def register_builtin_tools(
     runtime_settings = runtime_settings or RuntimeSettings()
     registry.register(
         "read_file",
-        lambda ctx: ReadFileTool(ctx.policy, llm_max_context=ctx.llm_max_context),
+        lambda ctx: ReadFileTool(
+            ctx.policy,
+            llm_max_context=ctx.llm_max_context,
+            llm_context_source=ctx.llm_context_source,
+        ),
     )
     registry.register("write_file", lambda ctx: WriteFileTool(ctx.policy))
     registry.register("write_structured_file", lambda ctx: WriteStructuredFileTool(ctx.policy))

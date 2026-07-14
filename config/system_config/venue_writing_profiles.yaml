@@ -6,6 +6,29 @@
 # current official template, anonymity policy, page budget, and checklist.
 version: 1
 default_profile: ccf_generic_concise
+# One source of truth for venue-aware drafting. These aliases are only a
+# suggestion for ResearchOS's internal manuscript plan, not official venue
+# requirements. Profile-specific aliases below choose the complete profile;
+# these aliases preserve the broad IS/management style recommendation when a
+# target venue does not map to a dedicated profile.
+style_detection:
+  default_style: ccf_a
+  is_aliases:
+    - misq
+    - mis quarterly
+    - management science
+    - information systems research
+    - isr
+    - jmis
+    - ejis
+    - isj
+    - aisel
+    - informs
+    - utd
+    - cds
+    - commerce data science
+    - informs journal on data science
+    - informs journal on data science and analytics
 
 profiles:
   informs_story:
@@ -22,6 +45,8 @@ profiles:
       - utd
       - cds
       - commerce data science
+      - informs journal on data science
+      - informs journal on data science and analytics
     venue_style: is
     template_family: utd
     template_ids: [informs]
@@ -217,7 +242,7 @@ profiles:
       conclusion: [300, 550]
 
   ccf_generic_concise:
-    aliases: [ccf, conference, ai, machine learning]
+    aliases: [ccf, conference, ai, machine learning, sigir, aaai, ijcai]
     venue_style: ccf_a
     template_family: ccf
     template_ids: [neurips, icml, iclr, kdd]
@@ -293,7 +318,7 @@ profiles:
       conclusion: [350, 650]
 
   basic_zh_research:
-    aliases: [basic_zh, chinese, zh, 中文]
+    aliases: [basic_zh, chinese, zh, 中文, 管理世界, 管理科学学报, 系统工程理论与实践, cssci, cscd]
     venue_style: is
     template_family: basic_zh
     template_ids: [basic_zh]

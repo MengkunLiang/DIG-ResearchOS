@@ -1,6 +1,6 @@
 # ResearchOS Agent Capability Registry
 #
-# 模型、预算、timeout 等日常运行参数不要改这里，请改 config/user_settings.yaml。
+# 模型连接与同一 provider 的重试策略请改 config/model_settings.yaml。
 # T2/T3 文献流程机械阈值、工具权限、prompt/schema 能力声明在这里维护。
 #
 # 本文件只保留 agent 能力声明：
@@ -9,8 +9,8 @@
 # - behavior: 与 agent 绑定的机械行为开关
 # - modes: 阶段说明与 mode 专属 prompt/behavior/tools
 #
-# LLM profile/tier/model/temperature/max_context、预算、timeout、retry、budget escalation
-# 的日常配置统一由 config/user_settings.yaml 提供，并在运行时 overlay 到这里。
+# 这里不承担日常模型路由、预算或 provider 配置；所有 Agent 都使用
+# config/model_settings.yaml 中的同一连接。工具、prompt 和机械行为仍是系统契约。
 
 agents:
   hello:
@@ -182,10 +182,10 @@ agents:
         # T2 候选池的语言/来源质量底线策略。这里只做机械准入和打标，
         # 不替代 Scout/Reader 对相关性和机制价值的 LLM 判断。
         enabled: true
-        # auto 会从 project.yaml / seed_outline_profile 推断 en、zh 或 mixed。
-        manuscript_language: auto
-        # auto 表示英文稿默认不引入中文非 seed 文献；中文/双语综述允许中文候选。
-        include_chinese_literature: auto
+        # 默认英文稿；用户可在 T2 参数确认页改为中文或双语。
+        manuscript_language: en
+        # 英文稿默认不引入中文非 seed 文献；中文/双语设置会重新启用对应策略。
+        include_chinese_literature: false
         # 英文稿的中文候选处理策略：非用户 seed 的中文论文不进入 active pool。
         english_manuscript_policy: exclude_non_seed_chinese
         # 中文候选不再因为缺少权威标签被硬过滤；只打 authority_review_needed，
@@ -262,7 +262,7 @@ agents:
       read:
         prompt:
           expected_outputs:
-            paper_notes_min: 10
+            deep_read_notes_min: 10
             comparison_table_required: true
             related_work_bib_required: true
         behavior:
@@ -282,7 +282,7 @@ agents:
             sources:
             - papers_verified
             - papers_dedup
-            # 跳过 paper_notes/、paper_notes_bridge/、paper_notes_abstract/ 已覆盖论文。
+            # 跳过 deep_read_notes/、bridge_notes/、shallow_read_notes/ 已覆盖论文。
             exclude_already_read: true
             # true 表示无 abstract 但有标题的候选也会进入批量 triage report；
             # false 则完全跳过这类 metadata-only 候选。
@@ -364,6 +364,7 @@ agents:
       - write_structured_file
       - list_files
       - grep_search
+      - lookup_paper_record
       - log_t4_ideation_progress
       - ask_human
       - finish_task
@@ -477,7 +478,6 @@ agents:
         tools:
           tool_names:
           - read_file
-          - write_file
           - list_files
           - compile_research_reboost_handoff
           - finish_task
@@ -728,8 +728,8 @@ agents:
           - finish_task
           allowed_read_prefixes:
           - literature/
-          - literature/paper_notes/
-          - literature/paper_notes_bridge/
+          - literature/deep_read_notes/
+          - literature/bridge_notes/
           - drafts/survey/
           allowed_write_prefixes:
           - drafts/survey/figures/

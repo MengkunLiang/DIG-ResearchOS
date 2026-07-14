@@ -8,6 +8,7 @@ does that work section by section.
 """
 
 import json
+import math
 import hashlib
 import re
 import textwrap
@@ -443,8 +444,8 @@ class BuildSurveyFiguresParams(BaseModel):
     comparison_table_path: str = Field(default="literature/comparison_table.csv")
     domain_map_path: str = Field(default="literature/domain_map.json")
     survey_plan_path: str = Field(default="drafts/survey/survey_plan.json")
-    paper_notes_dir: str = Field(default="literature/paper_notes")
-    bridge_notes_dir: str = Field(default="literature/paper_notes_bridge")
+    deep_read_notes_dir: str = Field(default="literature/deep_read_notes")
+    bridge_notes_dir: str = Field(default="literature/bridge_notes")
     output_dir: str = Field(default="drafts/survey/figures")
     manifest_path: str = Field(default="drafts/survey/figures/survey_visual_manifest.json")
     dpi: int = Field(default=150, ge=100, le=300)
@@ -487,7 +488,7 @@ class BuildSurveyFiguresTool(Tool):
         params = BuildSurveyFiguresParams(**kwargs)
         try:
             survey_plan_path = self.policy.resolve_read(params.survey_plan_path)
-            paper_notes_dir = self.policy.resolve_read(params.paper_notes_dir)
+            deep_read_notes_dir = self.policy.resolve_read(params.deep_read_notes_dir)
             bridge_notes_dir = self.policy.resolve_read(params.bridge_notes_dir)
             output_dir = self.policy.resolve_write(params.output_dir)
             manifest_path = self.policy.resolve_write(params.manifest_path)
@@ -540,15 +541,23 @@ class BuildSurveyFiguresTool(Tool):
         skipped: list[dict[str, str]] = []
         taxonomy = _survey_taxonomy_structure(survey_plan)
         top_level = taxonomy.get("top_level") if isinstance(taxonomy.get("top_level"), list) else []
+        visual_plan = survey_plan.get("visual_plan") if isinstance(survey_plan.get("visual_plan"), dict) else {}
+        visual_decision = str(visual_plan.get("decision") or "legacy_include").strip().lower()
+        visual_reason = " ".join(str(visual_plan.get("reader_value") or visual_plan.get("rationale") or "").split())
         paper_link_audit = _audit_taxonomy_paper_links(
             taxonomy=taxonomy,
             workspace=self.policy.workspace_dir,
-            paper_notes_dir=paper_notes_dir,
+            deep_read_notes_dir=deep_read_notes_dir,
+            shallow_read_notes_dir=deep_read_notes_dir.parent / "shallow_read_notes",
             bridge_notes_dir=bridge_notes_dir,
         )
         unresolved_ids = paper_link_audit["unresolved_direct_paper_ids"]
         canonical_figure_path = output_dir / "fig_taxonomy_overview.pdf"
-        if len(top_level) >= params.min_top_level_classes and (not params.require_resolved_note_cards or not unresolved_ids):
+        if visual_decision in {"omit", "none", "skip"}:
+            if canonical_figure_path.exists():
+                canonical_figure_path.unlink()
+            skipped.append({"id": "taxonomy_overview", "reason": visual_reason or "The survey plan judges that a figure would not add analytical value."})
+        elif len(top_level) >= params.min_top_level_classes and (not params.require_resolved_note_cards or not unresolved_ids):
             _render_survey_taxonomy_overview(
                 plt,
                 top_level,
@@ -561,12 +570,12 @@ class BuildSurveyFiguresTool(Tool):
                     "id": "taxonomy_overview",
                     "path": _workspace_relative(self.policy.workspace_dir, canonical_figure_path),
                     "kind": "explicit_taxonomy_structure",
-                    "title": "Survey Taxonomy Overview",
-                    "data_basis": "taxonomy class labels and direct paper IDs recorded in survey_plan.json after local note-card resolution",
+                    "title": "Analytical Route Through the Survey Taxonomy",
+                    "data_basis": "explicit taxonomy labels, classification rule, comparison strategy, and direct paper IDs recorded in survey_plan.json",
                     "top_level_classes": len(top_level),
                     "taxonomy_nodes": int(taxonomy.get("node_count") or 0),
                     "recommended_sections": ["taxonomy"],
-                    "latex_example": "\\includegraphics[width=\\textwidth]{figures/fig_taxonomy_overview.pdf}",
+                    "latex_example": "\\begin{figure*}[t]\\centering\\includegraphics[width=\\textwidth]{figures/fig_taxonomy_overview.pdf}\\caption{Analytical route from the classification rule to method-family comparison and the research agenda.}\\end{figure*}",
                 }
             )
         else:
@@ -625,6 +634,8 @@ class BuildSurveyFiguresTool(Tool):
                 "paper_link_audit": paper_link_audit,
                 "comparison_table_intentionally_unused": True,
                 "reason": "Comparison-table metrics and T2 screening signals are not comparable survey-wide evidence for a figure.",
+                "visual_decision": visual_decision,
+                "reader_value": visual_reason,
             },
             "figures": generated,
             "skipped": skipped,
@@ -632,7 +643,7 @@ class BuildSurveyFiguresTool(Tool):
                 self.policy.workspace_dir,
                 {
                     "survey_plan": params.survey_plan_path,
-                    "paper_notes_dir": params.paper_notes_dir,
+                    "deep_read_notes_dir": params.deep_read_notes_dir,
                     "bridge_notes_dir": params.bridge_notes_dir,
                 },
             ),
@@ -703,24 +714,32 @@ def _audit_taxonomy_paper_links(
     *,
     taxonomy: dict[str, Any],
     workspace: Path,
-    paper_notes_dir: Path,
+    deep_read_notes_dir: Path,
+    shallow_read_notes_dir: Path,
     bridge_notes_dir: Path,
 ) -> dict[str, Any]:
     """Resolve taxonomy paper IDs to existing local note cards.
 
-    The taxonomy is an LLM-authored analytical framework.  This audit does not
+    The taxonomy is an LLM-authored analytical framework. This audit does not
     validate its scientific correctness; it only prevents the figure from
     displaying an unresolvable identifier as though it were a grounded source.
+    Abstract-reading notes resolve an identifier for taxonomy coverage, but
+    remain labelled ``ABSTRACT_ONLY`` in the manifest rather than becoming
+    full-text mechanism evidence.
     """
 
-    card_paths: dict[str, Path] = {}
-    for directory in (paper_notes_dir, bridge_notes_dir):
+    card_paths: dict[str, tuple[Path, str]] = {}
+    for directory, evidence_level in (
+        (deep_read_notes_dir, "FULL_OR_PARTIAL_TEXT"),
+        (bridge_notes_dir, "FULL_OR_PARTIAL_TEXT"),
+        (shallow_read_notes_dir, "ABSTRACT_ONLY"),
+    ):
         if not directory.exists() or not directory.is_dir():
             continue
         for path in directory.rglob("*.md"):
             if path.name.startswith("_") or path.stat().st_size <= 0:
                 continue
-            card_paths.setdefault(path.stem, path)
+            card_paths.setdefault(path.stem, (path, evidence_level))
 
     nodes = taxonomy.get("nodes") if isinstance(taxonomy.get("nodes"), list) else []
     direct_records: list[dict[str, str]] = []
@@ -737,13 +756,15 @@ def _audit_taxonomy_paper_links(
             if normalized not in seen_ids:
                 seen_ids.add(normalized)
                 unique_ids.append(normalized)
-            path = card_paths.get(normalized)
+            resolved = card_paths.get(normalized)
+            path = resolved[0] if resolved else None
             direct_records.append(
                 {
                     "class_id": class_id,
                     "paper_id": normalized,
                     "note_card": _workspace_relative(workspace, path) if path else "",
                     "status": "resolved_note_card" if path else "unresolved_note_card",
+                    "evidence_level": resolved[1] if resolved else "UNKNOWN",
                 }
             )
     unresolved = sorted({record["paper_id"] for record in direct_records if record["status"] != "resolved_note_card"})
@@ -813,12 +834,14 @@ def _render_survey_taxonomy_overview(
             if children:
                 required_height = max(required_height, 18.0 + min(3, len(children)) * 3.2)
         row_heights.append(required_height)
-    figure_height = max(4.25, 2.0 + sum(row_heights) * 0.06 + (row_count - 1) * 0.16)
+    # Keep compact taxonomies publication-dense. Earlier sizing reserved a
+    # large blank lower band for two-row layouts, which made a five-family
+    # taxonomy read like a sparse slide rather than an academic figure.
+    figure_height = max(3.55, 1.65 + sum(row_heights) * 0.05 + (row_count - 1) * 0.12)
     figure, axis = plt.subplots(figsize=(11.8, figure_height), dpi=dpi)
     figure.patch.set_facecolor("#FFFFFF")
     axis.set_facecolor("#FFFFFF")
     axis.set_xlim(0, 100)
-    axis.set_ylim(20, 100)
     axis.axis("off")
 
     def _lines(value: str, width: int) -> list[str]:
@@ -827,7 +850,7 @@ def _render_survey_taxonomy_overview(
     axis.text(
         5.5,
         94.0,
-        "Survey Taxonomy of Method Families",
+        "Analytical Route Through the Survey Taxonomy",
         ha="left",
         va="center",
         fontsize=15.5,
@@ -837,16 +860,21 @@ def _render_survey_taxonomy_overview(
     axis.text(
         5.5,
         89.0,
-        "Top-level classes declared in the survey plan; badges report resolved direct local note-card links.",
+        "Classification rule -> method families -> comparative assessment -> research agenda.",
         ha="left",
         va="center",
         fontsize=9.1,
         color="#52616F",
     )
-    axis.plot([5.5, 94.5], [84.5, 84.5], color="#B8C3CB", linewidth=0.75)
+    route = [(7.0, "Classification\nrule"), (31.0, "Method\nfamilies"), (55.0, "Comparative\nassessment"), (79.0, "Research\nagenda")]
+    for index, (x, label) in enumerate(route):
+        axis.text(x, 80.0, label, ha="center", va="center", fontsize=7.8, fontweight="bold", color="#334854")
+        if index < len(route) - 1:
+            axis.annotate("", xy=(route[index + 1][0] - 5.0, 80.0), xytext=(x + 5.0, 80.0), arrowprops={"arrowstyle": "->", "lw": 0.85, "color": "#81909A"})
+    axis.plot([5.5, 94.5], [74.5, 74.5], color="#B8C3CB", linewidth=0.75)
     axis.text(
         5.5,
-        80.7,
+        70.7,
         "METHOD FAMILIES",
         ha="left",
         va="center",
@@ -858,7 +886,7 @@ def _render_survey_taxonomy_overview(
     outer_margin = 5.5
     column_gap = 3.4
     row_gap = 4.0
-    grid_top = 76.0
+    grid_top = 66.0
     card_width = (100 - 2 * outer_margin - (column_count - 1) * column_gap) / column_count
     name_width = 25 if column_count == 3 else 39
 
@@ -868,6 +896,10 @@ def _render_survey_taxonomy_overview(
         cursor -= row_height
         row_y_positions.append(cursor)
         cursor -= row_gap
+    # The source note is rendered in figure coordinates below the axes. Set
+    # the axes floor just below the final card row so the figure uses its page
+    # area for readable taxonomy content instead of an empty lower third.
+    axis.set_ylim(max(12.0, min(row_y_positions) - 6.0), 100)
 
     for index, item in enumerate(top_level):
         row_index = index // column_count
@@ -1135,6 +1167,7 @@ class BuildSurveyStateTool(Tool):
                 "writing_language": writing_language,
                 "template_selection": template_selection,
                 "central_question": str(plan.get("central_question") or plan.get("review_question") or ""),
+                "survey_title": str(plan.get("survey_title") or plan.get("title") or "").strip(),
                 "review_contribution": str(plan.get("review_contribution") or ""),
                 "quality_dimensions": list(SURVEY_QUALITY_DIMENSIONS),
                 "max_theme_sections": max_theme_sections,
@@ -1344,6 +1377,25 @@ class AssembleSurveyTool(Tool):
                 error="invalid_bibliography",
             )
         title = params.title.strip() or _infer_title(state)
+        if params.title.strip():
+            # A reviewed title is a durable survey-state fact, not a one-off
+            # TeX patch. Later assembly after a section repair must not fall
+            # back to an internal taxonomy descriptor.
+            shared_facts = state.setdefault("shared_facts", {})
+            if isinstance(shared_facts, dict):
+                shared_facts["survey_title"] = title
+                try:
+                    state_write_path = self.policy.resolve_write(params.state_path)
+                    state_write_path.write_text(
+                        json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+                        encoding="utf-8",
+                    )
+                except (ToolAccessDenied, OSError) as exc:
+                    return ToolResult(
+                        ok=False,
+                        content=f"Unable to persist reviewed survey title: {exc}",
+                        error="survey_title_persist_failed",
+                    )
         writing_language = _survey_state_writing_language(state, self.policy.workspace_dir)
         template_selection = _survey_template_selection(state)
         included: list[str] = []
@@ -1564,6 +1616,18 @@ class AuditSurveyCoverageTool(Tool):
                 + "; ".join(graphics_manifest_issues[:8]),
             )
         )
+        graphics_layout_issues = _survey_graphics_layout_issues(
+            tex,
+            _survey_template_selection(state),
+        )
+        checks.append(
+            _check(
+                "survey_graphics_layout",
+                not graphics_layout_issues,
+                "Survey graphics must fit the selected LaTeX column layout: "
+                + "; ".join(graphics_layout_issues[:8]),
+            )
+        )
         min_unique_citations = _survey_min_unique_citations(state)
         checks.append(
             _check(
@@ -1664,9 +1728,9 @@ class AuditSurveyCoverageTool(Tool):
                     "survey_tex": params.survey_tex_path,
                     "related_work_bib": params.related_work_bib_path,
                     "citation_map": "literature/citation_map.json",
-                    "paper_notes_dir": "literature/paper_notes",
-                    "abstract_notes_dir": "literature/paper_notes_abstract",
-                    "bridge_notes_dir": "literature/paper_notes_bridge",
+                    "deep_read_notes_dir": "literature/deep_read_notes",
+                    "shallow_read_notes_dir": "literature/shallow_read_notes",
+                    "bridge_notes_dir": "literature/bridge_notes",
                     "survey_assembly_manifest": "drafts/survey/survey_assembly_manifest.json",
                     "survey_visual_manifest": "drafts/survey/figures/survey_visual_manifest.json",
                 },
@@ -1688,11 +1752,29 @@ class AuditSurveyCoverageTool(Tool):
                 ),
             },
         }
+        failed_checks = [
+            item for item in checks
+            if item.get("level") == "FAIL" and item.get("passed") is False
+        ]
+        audit["repair_signature"] = [
+            {"name": item["name"], "detail": item["detail"]}
+            for item in failed_checks
+        ]
         output_json.write_text(json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         output_md.write_text(_audit_markdown(audit), encoding="utf-8")
+        failure_summary = "; ".join(
+            f"{item['name']}: {item['detail']}" for item in failed_checks[:4]
+        )
         return ToolResult(
             ok=passed,
-            content=f"Survey audit {'passed' if passed else 'failed'} with {len(checks)} checks.",
+            content=(
+                f"Survey audit passed with {len(checks)} checks."
+                if passed
+                else (
+                    f"Survey audit failed: {failure_summary}. Read drafts/survey/survey_audit.md; "
+                    "change only the source artifact implicated by this failure before reassembling."
+                )
+            ),
             data=audit,
             error=None if passed else "survey_audit_failed",
         )
@@ -2971,10 +3053,34 @@ def _normalize_section_id(raw: str) -> str:
 
 
 def _infer_title(state: dict[str, Any]) -> str:
-    dimension = ((state.get("shared_facts") or {}).get("taxonomy_dimension") or "").strip()
-    if dimension:
+    shared_facts = state.get("shared_facts") or {}
+    explicit_title = str(shared_facts.get("survey_title") or "").strip()
+    if _is_publication_ready_title(explicit_title):
+        return explicit_title
+    dimension = str(shared_facts.get("taxonomy_dimension") or "").strip()
+    if _is_publication_ready_title(dimension):
         return f"A Taxonomy-Driven Survey of {dimension}"
     return "A Taxonomy-Driven Survey"
+
+
+def _is_publication_ready_title(value: str) -> bool:
+    """Reject taxonomy instructions accidentally used as a publication title."""
+
+    normalized = " ".join(value.split())
+    if not (8 <= len(normalized) <= 150):
+        return False
+    lowered = normalized.casefold()
+    internal_markers = (
+        "how each method",
+        "combined into",
+        "same treatments",
+        "known mapping",
+        "graded similarity",
+        "or unaddressed",
+        "(1)",
+        "(2)",
+    )
+    return not any(marker in lowered for marker in internal_markers)
 
 
 def _escape_latex_title(title: str) -> str:
@@ -3670,6 +3776,73 @@ def _survey_graphics_manifest_issues(tex: str, manifest: dict[str, Any]) -> list
     return issues
 
 
+def _survey_graphics_layout_issues(tex: str, template_selection: dict[str, str]) -> list[str]:
+    """Detect graphics that compile but overrun a two-column Survey layout.
+
+    The taxonomy overview is intentionally a full-text-width visual.  In ICML,
+    NeurIPS, ICLR, and KDD templates that image must sit in ``figure*``; placing
+    it in a normal ``figure`` silently paints through the adjacent column.  The
+    check is intentionally limited to known double-column CCF templates so a
+    single-column venue is not constrained by an unrelated presentation rule.
+    """
+
+    if not _survey_uses_two_column_layout(template_selection):
+        return []
+
+    issues: list[str] = []
+    figure_pattern = re.compile(
+        r"\\begin\{figure\}(?:\[[^\]]*\])?(?P<body>.*?)\\end\{figure\}",
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    graphic_pattern = re.compile(
+        r"\\includegraphics\s*\[(?P<options>[^\]]*)\]\s*\{(?P<path>[^}]+)\}",
+        flags=re.IGNORECASE,
+    )
+    for figure_index, figure_match in enumerate(figure_pattern.finditer(tex), start=1):
+        for graphic_match in graphic_pattern.finditer(figure_match.group("body")):
+            options = graphic_match.group("options")
+            path = graphic_match.group("path").strip()
+            width_match = re.search(r"(?:^|,)\s*width\s*=\s*([^,]+)", options, flags=re.IGNORECASE)
+            if not width_match:
+                continue
+            width = re.sub(r"\s+", "", width_match.group(1))
+            if not _ordinary_figure_width_overflows_column(width):
+                continue
+            issues.append(
+                f"ordinary figure #{figure_index} uses width={width} for {path}; "
+                "use figure* for a textwidth image in a two-column template, "
+                "or keep ordinary figure width <= \\columnwidth/\\linewidth"
+            )
+    return issues
+
+
+def _survey_uses_two_column_layout(template_selection: dict[str, str]) -> bool:
+    """Return whether the selected built-in Survey template is double-column."""
+
+    family = str(template_selection.get("template_family") or "").strip().lower()
+    template_id = str(template_selection.get("template_id") or "").strip().lower()
+    return family == "ccf" and template_id in {"neurips", "icml", "iclr", "kdd"}
+
+
+def _ordinary_figure_width_overflows_column(width: str) -> bool:
+    """Return whether a normal figure width is unsafe in a double-column page."""
+
+    normalized = (width or "").replace(" ", "")
+    if "\\textwidth" not in normalized:
+        return False
+    match = re.fullmatch(r"(?:(0(?:\.\d+)?|1(?:\.0+)?)(?:\*)?)?\\textwidth", normalized)
+    if not match:
+        # Expressions such as ``calc(.75\\textwidth)`` are not reliably
+        # bounded to one column. Require the author to state columnwidth.
+        return True
+    scale_text = match.group(1)
+    scale = float(scale_text) if scale_text else 1.0
+    # A two-column text block normally has a small inter-column gap. Half the
+    # text width can already invade that gap, so only strictly smaller values
+    # may remain in a normal figure environment.
+    return scale >= 0.5
+
+
 def _survey_citation_diversity_issues(
     tex: str,
     cited: set[str],
@@ -3685,14 +3858,24 @@ def _survey_citation_diversity_issues(
         return issues
     counts = {key: uses.count(key) for key in set(uses)}
     total = len(uses)
+    # A fixed cap incorrectly penalizes a long survey that uses a foundational
+    # paper across several legitimate sections. Keep the small-corpus floor,
+    # but scale the repeated-use limit with the actual citation-use count.
+    # Example: 13 uses in 104 citation occurrences is 12.5%, below the 16%
+    # concentration boundary, and must not block assembly merely because 13>10.
+    repeat_limit = max(
+        _SURVEY_CITATION_REPEAT_LIMIT,
+        math.ceil(total * _SURVEY_CITATION_CONCENTRATION_LIMIT),
+    )
     concentrated = [
         (key, count)
         for key, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
-        if count > _SURVEY_CITATION_REPEAT_LIMIT or (total >= 20 and count / total > _SURVEY_CITATION_CONCENTRATION_LIMIT)
+        if count > repeat_limit
     ]
     if concentrated:
         issues.append(
-            "over-repeated citation keys: "
+            "over-repeated citation keys "
+            f"(limit={repeat_limit}, total={total}, ratio_limit={_SURVEY_CITATION_CONCENTRATION_LIMIT:.0%}): "
             + ", ".join(f"{key}={count}/{total}" for key, count in concentrated[:6])
         )
     return issues

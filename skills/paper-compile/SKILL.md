@@ -9,7 +9,7 @@ tools:
   - latex_compile
   - finish_task
 strict_tools: true
-model_tier: medium
+model_tier: standard
 temperature: 0.1
 allowed_read_prefixes:
   - user_inputs/paper-compile/

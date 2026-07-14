@@ -34,10 +34,10 @@ cp .env.example .env
 mkdir -p workspace
 ```
 
-Fill API keys in `.env`. Do not commit that file.
+Run `python -m researchos.cli configure-llm` on the host before Docker Mode. It can store the API key in local `.env` or ignored `config/model_settings.yaml`; do not commit either file.
 
 Edit non-secret runtime preferences in the root `config/` directory. Day-to-day
-settings normally belong in `config/user_settings.yaml`; workflow contracts stay
+settings normally belong in `config/model_settings.yaml`; all runtime contracts stay
 under `config/system_config/`. Docker Mode and Native Mode use the same files.
 
 On Linux, the wrapper scripts set `${RESEARCHOS_UID}:${RESEARCHOS_GID}` to the
@@ -224,4 +224,4 @@ docker compose -f deploy/compose.yaml run --rm researchos \
 If a custom image is substituted through `RESEARCHOS_IMAGE`, it must retain
 `latexmk`, pdfLaTeX, XeLaTeX, and BibTeX. Otherwise T3.6-COMPILE and T9 pause
 before invoking an LLM with an actionable environment reason. See
-[../docs/docker.md](../docs/docker.md) for the backend order and repair table.
+[Docker and TeX](../docs/en/docker.md) for the backend order and repair table.

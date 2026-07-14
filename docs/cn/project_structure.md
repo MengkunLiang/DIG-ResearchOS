@@ -1,0 +1,57 @@
+# 仓库、Workspace 与所有权边界
+
+> [中文](../cn/project_structure.md) | [English](../en/project_structure.md)
+
+ResearchOS 将受版本控制的系统代码与用户拥有的工作区分开。切勿将仓库固定装置、其他项目的工作区或模型示例视为当前项目的输入证据。
+
+## 仓库
+
+```text
+DIG-ResearchOS/
+├── researchos/                 Python runtime, agents, tools, schemas, CLI
+├── config/                     Runtime and system contracts
+│   ├── model_settings.yaml     本地 provider/model 设置，由 configure-llm 创建
+│   ├── mcp.yaml                可选 MCP server 列表
+│   └── system_config/          Runtime 默认值、Agent 契约、state machine、gate、schema
+├── skills/                     Discoverable atomic and integrated public Skills
+│   └── external_executor_skills/  External executor assets; separate ownership
+├── prompts/                    Agent prompt templates
+├── docs/                       Maintained usage and developer documentation
+├── deploy/                     Docker Compose definition
+├── infra/docker/               ResearchOS image and TeX environment
+├── scripts/                    Maintained repository utilities
+├── requirements.txt            Python dependencies
+├── pyproject.toml              Package metadata and tool configuration
+└── environment.yml             Conda environment definition
+```
+
+在此检出中，仓库策略忽略 `AGENTS.md`、`BACKGROUND.md`、本地 `.env`、`workspace/` 和 `tests/`。它们在本地可用（如果适用），但不是发布构件。
+
+## 工作区
+
+```text
+workspace/<project>/
+├── project.yaml                Research scope and user constraints
+├── state.yaml                  Current state-machine position and gates
+├── user_inputs/                Human-provided Skill intake and follow-ups
+├── user_seeds/                 Optional user seed materials
+├── literature/                 Retrieval, paper cards, queues, synthesis
+├── ideation/                   T4 candidates, selection, hypotheses, audits
+├── drafts/                     Survey/manuscript sections, claims, reviews
+├── external_executor/          T5 handoff and executor return contract
+├── experiments/                Ingested run evidence and claim mappings
+├── submission/                 Final bundle, compile report, fingerprints
+└── _runtime/                   Logs, traces, event JSONL, Skill sessions/workflow state
+```
+
+### 所有权规则
+
+| 路径 | 写入者 | 用途 |
+| --- | --- | --- |
+| `project.yaml`、`user_seeds/`、`user_inputs/` | 人工引导式输入 | 范围、约束、提供的材料 |
+| `literature/`、`ideation/`、`drafts/` | 验证后的 ResearchOS | 可审计的研究构件 |
+| `external_executor/` | ResearchOS + 选定的外部执行器 | 交接和协议约束的返回文件 |
+| `experiments/` | 结果摄取和审计工具 | 观察到的结果，而非模型猜测 |
+| `_runtime/` | 仅运行时 | 操作状态；请勿编辑以更改研究结论 |
+
+在提示、构件和 Skill 契约中使用相对于工作区的路径。在未记录其来源并在目标项目约束下验证之前，请勿在不同项目间复制构件。

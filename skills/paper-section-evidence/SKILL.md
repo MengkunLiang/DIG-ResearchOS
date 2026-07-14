@@ -9,7 +9,7 @@ tools:
   - extract_pdf_text
   - finish_task
 strict_tools: true
-model_tier: medium
+model_tier: standard
 temperature: 0.1
 allowed_read_prefixes:
   - user_inputs/paper-section-evidence/
@@ -25,14 +25,14 @@ outputs_expected:
 interaction:
   mode: guided
   language: zh-CN
-  summary: 上传一篇 PDF 并提出具体问题，从相关 section 提取带锚点的证据、允许措辞和不确定项，而非泛泛总结整篇论文。
+  summary: 上传一篇 PDF 并提出具体问题，从论文中的相关内容提取并标注位置的证据、可采用的谨慎表述和不确定项，而非泛泛总结整篇论文。
   request_required: true
   request_prompt: 请明确要核验的问题，例如方法机制、数据集、实验设置、报告数字、局限，或某个待写 claim 是否得到支持。
   example_request: 从该论文的 Method、Experiments 和 Limitations 核验其异质 treatment 机制、实验数据和可用于 Related Work 的保守表述。
   required_inputs:
     - id: paper_pdf
       label: 单篇研究论文 PDF
-      description: 上传真实可读 PDF；Skill 只对实际可提取 section 作出结论。
+      description: 上传真实可读 PDF；Skill 只对实际读取到的论文内容作出结论。
       paths:
         - user_inputs/paper-section-evidence/paper.pdf
       extensions: [.pdf]
@@ -41,7 +41,7 @@ interaction:
   optional_inputs:
     - id: known_identifier
       label: 已知 DOI、arXiv ID 或题名
-      description: 可选；用于标注来源，不会替代对 PDF section 的实际读取。
+      description: 可选；用于标注来源，不会替代对 PDF 内容的实际读取。
       paths:
         - user_inputs/paper-section-evidence/context.md
       extensions: [.md]
@@ -49,13 +49,13 @@ interaction:
       example: user_inputs/paper-section-evidence/context.md
   outputs:
     - id: evidence_report
-      label: Section 证据报告
+      label: 论文内容核验报告
       path: literature/skill_section_evidence.md
-      description: 对每个问题列出查阅 section、直接证据、允许表述、禁止延伸和需要补读的位置。
+      description: 对每个问题列出查阅的论文内容、直接证据、可采用表述、不能延伸的结论和需要补读的位置。
     - id: evidence_record
-      label: Section 证据结构记录
+      label: 论文内容核验结构记录
       path: literature/skill_section_evidence.json
-      description: 机器可读的问题、读取范围、section/page 锚点、证据等级、结论和不确定性。
+      description: 机器可读的问题、读取范围、论文位置与页码、证据等级、结论和不确定性。
 ---
 
 # Paper Section Evidence

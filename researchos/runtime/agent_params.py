@@ -1,6 +1,6 @@
 """Agent 参数配置加载器。
 
-从 config/agent_params.yaml 加载 Agent 参数，供运行时使用。
+从 config/system_config/agent_params.yaml 加载 Agent 参数，供运行时使用。
 """
 
 from __future__ import annotations
@@ -18,10 +18,10 @@ from .user_settings import (
     load_user_settings,
     should_apply_default_user_settings,
 )
-from .system_config import config_file_path
+from .system_config import config_file_path, system_config_path
 
 
-DEFAULT_CONFIG_PATH = config_file_path("agent_params.yaml", env_var="RESEARCHOS_AGENT_PARAMS")
+DEFAULT_CONFIG_PATH = system_config_path("agent_params.yaml")
 
 _config_cache: dict[str, Any] | None = None
 
@@ -32,7 +32,7 @@ def _get_config_path() -> Path:
     env_path = os.environ.get("RESEARCHOS_AGENT_PARAMS")
     if env_path:
         return Path(env_path)
-    return config_file_path("agent_params.yaml")
+    return system_config_path("agent_params.yaml")
 
 
 def load_agent_params() -> dict[str, Any]:
@@ -182,7 +182,10 @@ def _is_unlimited_budget(params: dict[str, Any], defaults: dict[str, Any]) -> bo
     tags = _tag_set(params.get("tags")) | _tag_set(params.get("budget_tags"))
     if {"unlimited_budget", "unlimited"} & tags:
         return True
-    return _as_bool(defaults.get("unlimited_budget", False))
+    # Research work should not stop because of an arbitrary token, step, or
+    # wall-clock quota. Limits remain observable and can be enabled only by an
+    # explicit legacy/system override.
+    return _as_bool(defaults.get("unlimited_budget", True))
 
 
 def build_agent_spec(

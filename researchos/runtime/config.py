@@ -3,7 +3,7 @@ from __future__ import annotations
 """ResearchOS runtime 共享配置。
 
 这个模块的目标很明确：
-- 让 `config/runtime.yaml` 不再只是 README 里的摆设；
+- 让 `config/system_config/runtime.yaml` 不再只是 README 里的摆设；
 - 把 workspace 运行目录、日志格式、人机接口后端等配置集中在一处解析；
 - 给 CLI、runner、workspace helper 提供同一套路径与默认值来源。
 
@@ -27,6 +27,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+from .system_config import system_config_path
 
 
 @dataclass(frozen=True)
@@ -144,11 +146,13 @@ def resolve_runtime_config_path(config_path: Path | None = None) -> Path:
     configured = os.getenv("RESEARCHOS_RUNTIME_CONFIG", "").strip()
     if configured:
         return Path(configured)
-    return config_path or Path("config/runtime.yaml")
+    if config_path and config_path.exists():
+        return config_path
+    return system_config_path("runtime.yaml")
 
 
 def load_runtime_settings(config_path: Path | None = None) -> RuntimeSettings:
-    """从 `config/runtime.yaml` 读取共享配置。
+    """从 `config/system_config/runtime.yaml` 读取共享配置。
 
     约束：
     - 配置文件缺失时回退到安全默认值；
@@ -251,27 +255,36 @@ def validate_runtime_config(settings: RuntimeSettings, config_dir: Path) -> list
     """
     errors = []
 
-    # 检查model_routing.yaml存在
-    model_routing = config_dir / "model_routing.yaml"
-    if not model_routing.exists():
-        errors.append(f"缺少必需配置: {model_routing}")
-    else:
-        # 验证model_routing结构
+    # ``model_settings.yaml`` is local and intentionally may not exist before
+    # the first interactive setup. Validate its shape when present, but let the
+    # runtime guide the user through missing provider credentials.
+    model_settings = config_dir / "model_settings.yaml"
+    if model_settings.exists():
         try:
-            routing = yaml.safe_load(model_routing.read_text(encoding="utf-8"))
-            if not routing:
-                errors.append("model_routing.yaml: 文件为空")
-            elif not isinstance(routing, dict):
-                errors.append("model_routing.yaml: 根节点必须是字典")
-            else:
-                if not routing.get("endpoints"):
-                    errors.append("model_routing.yaml: 缺少'endpoints'部分")
-                if not routing.get("profiles"):
-                    errors.append("model_routing.yaml: 缺少'profiles'部分")
-                if not routing.get("truncation"):
-                    errors.append("model_routing.yaml: 缺少'truncation'部分（上下文截断所需）")
-        except Exception as e:
-            errors.append(f"model_routing.yaml: 解析错误: {e}")
+            configured = yaml.safe_load(model_settings.read_text(encoding="utf-8")) or {}
+            if not isinstance(configured, dict):
+                errors.append("model_settings.yaml: 根节点必须是字典")
+            elif any(key in configured for key in ("endpoints", "profiles")):
+                errors.append("model_settings.yaml: 不支持 legacy endpoint/profile 路由；请保留 provider、api_base、api_key、model 和 fallback")
+        except Exception as exc:
+            errors.append(f"model_settings.yaml: 解析错误: {exc}")
+
+    # System defaults are versioned with the workflow contracts, not copied
+    # into the user-facing model settings file.
+    from .system_config import system_config_path_for
+
+    llm_runtime = system_config_path_for(config_dir, "llm_runtime.yaml")
+    if not llm_runtime.exists():
+        errors.append(f"缺少系统 LLM 默认配置: {llm_runtime}")
+    else:
+        try:
+            runtime_defaults = yaml.safe_load(llm_runtime.read_text(encoding="utf-8")) or {}
+            if not isinstance(runtime_defaults, dict):
+                errors.append("llm_runtime.yaml: 根节点必须是字典")
+            elif not isinstance(runtime_defaults.get("truncation"), dict):
+                errors.append("llm_runtime.yaml: 缺少 truncation")
+        except Exception as exc:
+            errors.append(f"llm_runtime.yaml: 解析错误: {exc}")
 
     # 检查runtime.yaml值
     if settings.agent_behavior.max_empty_reply < 1:

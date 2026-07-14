@@ -18,6 +18,7 @@ from rich.text import Text
 
 from ..runtime.errors import ConfigurationError
 from .contracts import SkillInteraction, SkillReadiness, readiness_as_dict
+from .presentation import brief_skill_copy, humanize_skill_copy, summarize_tool_capabilities
 from .workflow import SkillWorkflow, workflow_as_session_payload
 
 
@@ -264,7 +265,7 @@ def record_input_collection_started(workspace: Path, session_id: str) -> Path:
     session["progress"] = {
         "phase": "collecting_input",
         "tool_name": None,
-        "detail": "正在通过受限材料收集流程确认上传或整理人工提供的内容。",
+        "detail": "正在检查并整理你提供的材料。",
         "updated_at": _now(),
     }
     _append_turn(session, {"event": "input_collection_started"})
@@ -336,7 +337,7 @@ def record_runtime_pause(*, workspace: Path, session_id: str, error: Exception |
     session["progress"] = {
         "phase": "waiting_runtime",
         "tool_name": None,
-        "detail": message,
+        "detail": "运行环境暂时不可用，当前进度已保存。",
         "updated_at": _now(),
     }
     _append_turn(session, {"event": "runtime_preparation_failed", "error": message})
@@ -442,16 +443,15 @@ def _requirement_lines(interaction: SkillInteraction, readiness: SkillReadiness)
         status = by_key[requirement.key]
         marker = "✓" if status.is_ready else ("○" if not requirement.required else "✗")
         qualifier = "必需" if requirement.required else "可选"
-        lines.append(f"{marker} [{qualifier}] {requirement.label}")
-        lines.append(f"  作用：{requirement.description}")
+        lines.append(f"{marker} [{qualifier}] {requirement.label}：{requirement.description}")
         if status.selected_path:
-            lines.append(f"  已使用：{status.selected_path}")
+            lines.append(f"  已使用 `{status.selected_path}`。")
         else:
-            lines.append(f"  请上传其一：{'  或  '.join(requirement.paths)}")
+            lines.append(f"  可放到：{' 或 '.join(f'`{path}`' for path in requirement.paths)}。")
             if status.detail:
-                lines.append(f"  检查结果：{status.detail}")
+                lines.append(f"  当前检查：{status.detail}。")
         if requirement.example:
-            lines.append(f"  示例：{requirement.example}")
+            lines.append(f"  示例：`{requirement.example}`。")
     return lines
 
 
@@ -466,15 +466,23 @@ def render_readiness_panel(
 
     interaction = readiness.interaction
     width = 76
-    lines = ["", "═" * width, f"SKILL 会话 · {skill_name}", "═" * width]
-    lines.append(f"会话：{session_id}")
+    lines = ["═" * width, f"Skill 准备 · {skill_name}", "═" * width]
+    lines.append(f"恢复标识：{session_id}")
     lines.append(f"状态：{'输入已就绪，可以开始' if readiness.ready else '等待补齐输入'}")
     mode_label = "项目 workspace（自动发现候选材料）" if readiness.workspace_mode == "project" else "独立 workspace（由用户提供材料）"
     lines.append(f"运行模式：{mode_label}")
-    lines.append(f"会话文件：{session_file.relative_to(readiness.workspace)}")
+    lines.append(f"会话记录：{session_file.relative_to(readiness.workspace)}")
     intake_packet = readiness.workspace / "user_inputs" / skill_name / "_intake.md"
     if intake_packet.exists():
         lines.append(f"材料清单：{intake_packet.relative_to(readiness.workspace)}")
+    if readiness.scanned_roots:
+        lines.append("已扫描：" + "、".join(readiness.scanned_roots))
+    if readiness.discovered_files:
+        lines.append("发现文件：" + "；".join(
+            f"{item.relative_path}（{_format_file_size(item.size_bytes)}）" for item in readiness.discovered_files
+        ))
+    else:
+        lines.append("发现文件：没有符合声明输入类型的文件。")
     if interaction:
         if interaction.summary:
             lines.append(f"用途：{interaction.summary}")
@@ -485,25 +493,25 @@ def render_readiness_panel(
         elif readiness.request:
             lines.append(f"任务说明：{readiness.request}")
         lines.append("─" * width)
-        lines.append("输入检查")
+        lines.append("输入检查：")
         lines.extend(_requirement_lines(interaction, readiness))
         if interaction.outputs:
             lines.append("─" * width)
-            lines.append("本次完成后应得到")
+            lines.append("完成后会得到：")
             for output in interaction.outputs:
                 lines.append(f"• {output.label}：{output.path}")
                 lines.append(f"  含义：{output.description}")
+    else:
+        lines.append("这个 Skill 尚未声明可自动检查的材料要求；将按已有说明运行。")
     workflow = _session_workflow_from_file(session_file)
     if workflow:
         lines.extend(_workflow_plain_lines(workflow, width=width))
-    else:
-        lines.append("这是兼容模式 Skill：未声明可校验的输入契约；将按原有提示词运行。")
     lines.append("─" * width)
     if readiness.ready:
         lines.append("下一步：现在可开始运行；完成后使用 skill-status 查看持久化结果与文件路径。")
     else:
-        lines.append("下一步：TTY 终端默认进入定向材料收集。你可上传文件、粘贴内容，或让系统逐项询问并整理到对应 user_inputs 文件。")
-        lines.append("使用 --non-interactive 或管道运行时，系统不调用 LLM，只保留可恢复 WAITING_INPUT。")
+        lines.append("下一步：先说明希望完成什么；随后系统只询问缺少的材料。你可以上传文件或粘贴内容。")
+        lines.append("在非交互终端中，系统会保留当前准备状态，等待你补充后恢复。")
         lines.append(
             f"恢复示例：researchos run-skill {skill_name} --workspace {readiness.workspace} --session-id {session_id} --resume"
         )
@@ -522,74 +530,99 @@ def render_readiness_panel_rich(
     """Render the interactive input check with explicit upload destinations."""
 
     interaction = readiness.interaction
-    mode = "项目 workspace（已检查现有项目材料）" if readiness.workspace_mode == "project" else "独立 workspace（由你提供材料）"
-    state = "INPUT READY · 输入已就绪" if readiness.ready else "WAITING INPUT · 等待补齐输入"
+    mode = "项目中的现有材料" if readiness.workspace_mode == "project" else "本次提供的材料"
+    state = "材料已齐全" if readiness.ready else "需要补充材料"
     accent = "green" if readiness.ready else "yellow"
     header = [
-        Text(interaction.summary if interaction and interaction.summary else "Skill 输入检查", style="bold"),
-        Text(f"会话：{session_id}  ·  {state}  ·  {mode}", style=f"bold {accent}"),
-        Text(f"会话文件：{session_file.relative_to(readiness.workspace)}", style="dim"),
+        Text(brief_skill_copy(interaction.summary) if interaction and interaction.summary else "Skill 准备", style="bold"),
+        Text(f"恢复标识：{session_id}  ·  {state}  ·  材料范围：{mode}", style=f"bold {accent}"),
+        Text(f"会话记录：{session_file.relative_to(readiness.workspace)}", style="dim"),
     ]
     if interaction and not readiness.request_ready:
-        header.append(Text(f"仍需任务说明：{interaction.request_prompt}", style="yellow"))
+        header.append(Text(f"还需要你说明任务：{humanize_skill_copy(interaction.request_prompt)}", style="yellow"))
         if interaction.example_request:
-            header.append(Text(f"示例：{interaction.example_request}", style="dim"))
+            header.append(Text(f"示例：{humanize_skill_copy(interaction.example_request)}", style="dim"))
     elif readiness.request:
         header.append(Text(f"任务说明：{readiness.request}", style="dim"))
 
     body: list[Any] = [Group(*header)]
     if interaction is None:
-        body.append(Text("这是兼容模式 Skill：未声明可校验输入契约。", style="yellow"))
+        body.append(Text("这个 Skill 尚未声明可自动检查的材料要求。", style="yellow"))
     else:
         states = {item.requirement.key: item for item in readiness.input_statuses}
-        table = Table(title="Input Readiness", box=box.SIMPLE_HEAVY, header_style="bold cyan", expand=True)
-        table.add_column("State", width=13)
-        table.add_column("Input", min_width=16, max_width=25, overflow="fold")
-        table.add_column("Purpose", min_width=24, max_width=46, overflow="fold")
-        table.add_column("Selected / Upload Path", min_width=28, max_width=58, overflow="fold")
+        requirement_labels = {
+            requirement.key: requirement.label
+            for requirement in interaction.required_inputs + interaction.optional_inputs
+        }
+        if readiness.scanned_roots:
+            body.append(Text("已扫描：" + "、".join(f"`{path}`" for path in readiness.scanned_roots), style="dim"))
+        if readiness.discovered_files:
+            discoveries = Table(title="发现的候选文件", box=box.SIMPLE_HEAVY, header_style="bold blue", expand=True)
+            discoveries.add_column("文件", min_width=24, max_width=72, overflow="fold")
+            discoveries.add_column("大小", width=12, justify="right")
+            discoveries.add_column("是否会使用", min_width=20, max_width=42, overflow="fold")
+            for item in readiness.discovered_files:
+                matched_labels = [requirement_labels.get(key, key) for key in item.matching_input_ids]
+                relation = "可作为：" + "、".join(matched_labels) if matched_labels else "暂不使用；不属于本 Skill 所需材料"
+                discoveries.add_row(item.relative_path, _format_file_size(item.size_bytes), relation)
+            body.append(discoveries)
+        else:
+            body.append(Text("已检查的目录中没有发现可直接使用的材料。", style="yellow"))
+        table = Table(title="需要的材料", box=box.SIMPLE_HEAVY, header_style="bold cyan", expand=True)
+        table.add_column("状态", width=14)
+        table.add_column("材料", min_width=16, max_width=28, overflow="fold")
+        table.add_column("用途", min_width=24, max_width=46, overflow="fold")
+        table.add_column("已选文件或放置位置", min_width=28, max_width=58, overflow="fold")
         for requirement in interaction.required_inputs + interaction.optional_inputs:
             status = states[requirement.key]
-            qualifier = "required" if requirement.required else "optional"
             if status.is_ready:
-                state_text = Text(f"READY · {qualifier}", style="green")
+                state_text = Text(f"已就绪 · {'必需' if requirement.required else '可选'}", style="green")
                 destination = _wrap_skill_path(status.selected_path) if status.selected_path else "已就绪"
             elif requirement.required:
-                state_text = Text("MISSING · required", style="bold yellow")
-                destination = "Upload:\n" + "\n or\n".join(_wrap_skill_path(path) for path in requirement.paths)
+                state_text = Text("待补充 · 必需", style="bold yellow")
+                destination = "可放到：" + " 或 ".join(_wrap_skill_path(path) for path in requirement.paths)
             else:
-                state_text = Text("OPTIONAL", style="dim")
-                destination = "Optional:\n" + "\n or\n".join(_wrap_skill_path(path) for path in requirement.paths)
+                state_text = Text("可选", style="dim")
+                destination = "可放到：" + " 或 ".join(_wrap_skill_path(path) for path in requirement.paths)
             if requirement.example and not status.is_ready:
-                destination += f"\nExample: {requirement.example}"
-            table.add_row(state_text, requirement.label, requirement.description, destination)
+                destination += f"；示例：{requirement.example}"
+            table.add_row(
+                state_text,
+                humanize_skill_copy(requirement.label),
+                brief_skill_copy(requirement.description),
+                destination,
+            )
         body.append(table)
         if interaction.outputs:
-            outputs = Table(title="Expected Outputs", box=box.SIMPLE_HEAVY, header_style="bold magenta", expand=True)
-            outputs.add_column("Artifact", min_width=22, max_width=38, overflow="fold")
-            outputs.add_column("Meaning", min_width=32, max_width=72, overflow="fold")
+            outputs = Table(title="完成后会得到", box=box.SIMPLE_HEAVY, header_style="bold magenta", expand=True)
+            outputs.add_column("产物", min_width=22, max_width=38, overflow="fold")
+            outputs.add_column("用途", min_width=32, max_width=72, overflow="fold")
             for output in interaction.outputs:
-                outputs.add_row(f"{output.label}\n{_wrap_skill_path(output.path)}", output.description)
+                outputs.add_row(
+                    f"{humanize_skill_copy(output.label)} · {_wrap_skill_path(output.path)}",
+                    brief_skill_copy(output.description),
+                )
             body.append(outputs)
     workflow = _session_workflow_from_file(session_file)
     if workflow:
         body.append(_workflow_rich_table(workflow))
     if readiness.ready:
-        body.append(Text("下一步：将开始执行 Skill；完成后用 skill-status 查看会话、产物和恢复信息。", style="green"))
+        body.append(Text("下一步：材料已经齐全。确认执行后，Skill 才会开始处理。", style="green"))
     else:
         body.append(
             Text(
-                "下一步：TTY 终端会默认进入定向材料收集。你可粘贴材料，或上传到上表路径后以同一 session resume。",
+                "下一步：请先说明希望完成什么；随后系统只询问缺少的材料。你可粘贴内容，或把文件放到上表路径。",
                 style="yellow",
             )
         )
-        body.append(Text("使用 --non-interactive 或管道运行时：尚未调用 LLM；不会开始研究/写作产出。", style="yellow", no_wrap=True))
+        body.append(Text("在非交互终端中，系统会保留当前准备状态；补充材料后可用同一恢复标识继续。", style="yellow"))
         body.append(
             Text(
-                f"Resume: researchos run-skill {skill_name} --workspace {readiness.workspace} --session-id {session_id} --resume",
+                f"恢复命令：researchos run-skill {skill_name} --workspace {readiness.workspace} --session-id {session_id} --resume",
                 style="dim",
             )
         )
-    return _render_skill_rich(Panel(Group(*body), title=f"SKILL · {skill_name}", border_style=accent, expand=True), no_color=no_color)
+    return _render_skill_rich(Panel(Group(*body), title=f"Skill 准备 · {skill_name}", border_style=accent, expand=True), no_color=no_color)
 
 
 def render_skill_description(
@@ -599,15 +632,21 @@ def render_skill_description(
     description: str,
     interaction: SkillInteraction | None,
     workflow: SkillWorkflow | None = None,
+    capability_profiles: tuple[str, ...] = (),
+    tools: list[str] | None = None,
 ) -> str:
     """Render the deterministic, copyable user contract for ``describe-skill``."""
 
     width = 76
-    lines = ["", "═" * width, f"SKILL · {skill_name}", "═" * width]
+    lines = ["═" * width, f"Skill · {skill_name}", "═" * width]
     lines.append(f"路径：{skill_path}")
+    if capability_profiles:
+        lines.append("能力档位：" + ", ".join(capability_profiles))
+    if tools:
+        lines.append("可用工具：" + ", ".join(tools))
     if interaction is None:
         lines.append(f"用途：{description}")
-        lines.append("交互：兼容模式（没有声明输入契约；建议先迁移为 guided Skill）。")
+        lines.append("交互：兼容模式（尚未声明可检查的输入要求；建议补充引导式交互说明）。")
         lines.append("═" * width)
         return "\n".join(lines)
     if interaction.summary:
@@ -616,7 +655,7 @@ def render_skill_description(
             lines.append(f"技术范围：{description}")
     else:
         lines.append(f"用途：{description}")
-    lines.append(f"交互：{interaction.mode} / {interaction.language}")
+    lines.append(f"交互方式：{'引导式' if interaction.mode == 'guided' else '兼容模式'}；界面语言：{interaction.language}")
     lines.append("─" * width)
     lines.append("如何开始")
     if interaction.example_request:
@@ -629,15 +668,15 @@ def render_skill_description(
         lines.append(f"• [{qualifier}] {requirement.label}：{requirement.description}")
         for path in requirement.paths:
             lines.append(f"  - {path}")
-    lines.append("输出文件")
+    lines.append("完成后会得到")
     for output in interaction.outputs:
         lines.append(f"• {output.path} — {output.description}")
     if workflow is not None:
         lines.extend(_workflow_plain_lines(workflow_as_session_payload(workflow), width=width))
     lines.append("会话与恢复")
-    lines.append("• 非交互运行会先校验输入；缺文件时只写 `_runtime/skill_sessions/<session>.json`，不调用 LLM。")
-    lines.append("• TTY 终端默认进入多轮材料收集；可上传文件或粘贴材料。受限 intake Agent 只整理人工提供的内容到 `user_inputs/<skill>/`，不产生论文/实验产物。")
-    lines.append("• 初始材料通过检查后，系统会再次询问“执行/暂停”；只有明确执行授权才会启动 Skill。中断后可添加 `--resume --session-id <同一会话>`。")
+    lines.append("• 非交互运行会先检查输入；缺文件时只保存会话状态，不会启动模型。")
+    lines.append("• 交互终端可上传文件或粘贴材料；材料收集只整理到 `user_inputs/<skill>/`，不会提前生成研究、实验或论文结果。")
+    lines.append("• 初始材料通过检查后，系统会再次询问“执行/暂停”；只有明确执行授权才会启动。中断后可添加 `--resume --session-id <同一会话>`。")
     lines.append("═" * width)
     return "\n".join(lines)
 
@@ -649,7 +688,10 @@ def render_skill_description_rich(
     description: str,
     interaction: SkillInteraction | None,
     workflow: SkillWorkflow | None = None,
+    capability_profiles: tuple[str, ...] = (),
+    tools: list[str] | None = None,
     no_color: bool = False,
+    verbose: bool = False,
 ) -> str:
     """Render a selected Skill's full, human-actionable contract."""
 
@@ -657,9 +699,9 @@ def render_skill_description_rich(
         return _render_skill_rich(
             Panel(
                 Group(
-                    Text(description),
-                    Text(f"Path: {skill_path}", style="dim"),
-                    Text("Compatibility mode: no guided input contract is declared.", style="yellow"),
+                    Text(brief_skill_copy(description)),
+                    Text(f"位置：{skill_path}", style="dim"),
+                    Text("此 Skill 尚未声明可自动检查的材料要求；请先查看它的使用说明。", style="yellow"),
                 ),
                 title=f"SKILL · {skill_name}",
                 border_style="yellow",
@@ -668,35 +710,43 @@ def render_skill_description_rich(
             no_color=no_color,
         )
     overview = [
-        Text(interaction.summary or description, style="bold"),
-        Text(f"Path: {skill_path}", style="dim"),
-        Text(f"Interaction: {interaction.mode} · {interaction.language}", style="cyan"),
+        Text(brief_skill_copy(interaction.summary or description), style="bold"),
+        Text(f"位置：{skill_path}", style="dim"),
+        Text(f"交互方式：{'引导式' if interaction.mode == 'guided' else '兼容模式'} · {interaction.language}", style="cyan"),
     ]
-    if description.strip() and interaction.summary and description.strip() != interaction.summary.strip():
-        overview.append(Text(f"Technical scope: {description}", style="dim"))
+    if capability_profiles:
+        overview.append(Text("能力范围：" + "、".join(capability_profiles), style="green"))
+    if tools:
+        overview.append(Text("可用能力：" + summarize_tool_capabilities(tools), style="dim"))
+        if verbose:
+            overview.append(Text("Tool 明细：" + "、".join(tools), style="dim"))
+    if verbose and description.strip() and interaction.summary and description.strip() != interaction.summary.strip():
+        overview.append(Text(f"技术说明：{humanize_skill_copy(description)}", style="dim"))
     if interaction.example_request:
-        overview.append(Text(f"Example request: {interaction.example_request}", style="dim"))
-    inputs = Table(title="What You Need to Provide", box=box.SIMPLE_HEAVY, header_style="bold cyan", expand=True)
-    inputs.add_column("Required", width=10)
-    inputs.add_column("Input", min_width=18, max_width=28, overflow="fold")
-    inputs.add_column("Why", min_width=26, max_width=48, overflow="fold")
-    inputs.add_column("Accepted Location", min_width=28, max_width=56, overflow="fold")
+        overview.append(Text(f"示例请求：{humanize_skill_copy(interaction.example_request)}", style="dim"))
+    inputs = Table(title="开始前需要提供", box=box.SIMPLE_HEAVY, header_style="bold cyan", expand=True)
+    inputs.add_column("是否必需", width=10)
+    inputs.add_column("材料", min_width=18, max_width=28, overflow="fold")
+    inputs.add_column("用途", min_width=26, max_width=48, overflow="fold")
+    inputs.add_column("可放位置", min_width=28, max_width=56, overflow="fold")
     for requirement in interaction.required_inputs + interaction.optional_inputs:
         inputs.add_row(
-            Text("required" if requirement.required else "optional", style="bold yellow" if requirement.required else "dim"),
-            requirement.label,
-            requirement.description,
-            "\n or\n".join(_wrap_skill_path(path) for path in requirement.paths),
+            Text("必需" if requirement.required else "可选", style="bold yellow" if requirement.required else "dim"),
+            humanize_skill_copy(requirement.label),
+            brief_skill_copy(requirement.description),
+            " 或 ".join(_wrap_skill_path(path) for path in requirement.paths),
         )
-    outputs = Table(title="What the Skill Produces", box=box.SIMPLE_HEAVY, header_style="bold magenta", expand=True)
-    outputs.add_column("Output", min_width=26, max_width=42, overflow="fold")
-    outputs.add_column("Meaning", min_width=32, max_width=78, overflow="fold")
+    outputs = Table(title="完成后会得到", box=box.SIMPLE_HEAVY, header_style="bold magenta", expand=True)
+    outputs.add_column("产物", min_width=26, max_width=42, overflow="fold")
+    outputs.add_column("用途", min_width=32, max_width=78, overflow="fold")
     for output in interaction.outputs:
-        outputs.add_row(f"{output.label}\n{_wrap_skill_path(output.path)}", output.description)
+        outputs.add_row(
+            f"{humanize_skill_copy(output.label)} · {_wrap_skill_path(output.path)}",
+            brief_skill_copy(output.description),
+        )
     recovery = Text(
-        "Interactive mode asks follow-up questions and stores supplied material under user_inputs/<skill>/ before proceeding. "
-        "A project workspace is inspected first; a standalone workspace uses the upload locations above. "
-        "Resume: researchos run-skill " + skill_name + " --session-id <same-session> --resume",
+        "启动时会先查看列出的材料位置，再只询问缺少的材料。已有项目文件也会先被阅读，不会因文件存在就自动当作证据充分。"
+        "中断后可恢复：researchos run-skill " + skill_name + " --session-id <同一会话> --resume",
         style="dim",
     )
     workflow_table = _workflow_rich_table(workflow_as_session_payload(workflow)) if workflow is not None else None
@@ -705,7 +755,7 @@ def render_skill_description_rich(
         renderables.append(workflow_table)
     renderables.append(recovery)
     return _render_skill_rich(
-        Panel(Group(*renderables), title=f"SKILL · {skill_name}", border_style="cyan", expand=True),
+        Panel(Group(*renderables), title=f"Skill · {skill_name}", border_style="cyan", expand=True),
         no_color=no_color,
     )
 
@@ -738,7 +788,7 @@ def render_skill_completion_panel(*, workspace: Path, session_id: str) -> str:
         "COLLECTING_INPUT": "正在收集输入",
         "RUNNING": "仍在运行",
     }.get(status, status)
-    lines = ["", "═" * width, f"SKILL 执行总结 · {session.get('skill_name', 'unknown')}", "═" * width]
+    lines = ["═" * width, f"Skill 执行总结 · {session.get('skill_name', 'unknown')}", "═" * width]
     lines.append(f"会话：{session_id}  |  状态：{state_text}")
     if metrics:
         lines.append(
@@ -794,26 +844,26 @@ def render_skill_completion_panel_rich(*, workspace: Path, session_id: str, no_c
     progress = session.get("progress") if isinstance(session.get("progress"), dict) else {}
     interaction = session.get("interaction") if isinstance(session.get("interaction"), dict) else {}
     labels = {
-        "COMPLETED": ("COMPLETED", "green"),
-        "FAILED": ("FAILED", "bright_red"),
-        "WAITING_RUNTIME": ("WAITING RUNTIME", "yellow"),
-        "WAITING_INPUT": ("WAITING INPUT", "yellow"),
-        "WAITING_CONFIRMATION": ("WAITING CONFIRMATION", "bright_yellow"),
-        "COLLECTING_INPUT": ("COLLECTING INPUT", "cyan"),
-        "RUNNING": ("RUNNING", "cyan"),
+        "COMPLETED": ("已完成", "green"),
+        "FAILED": ("执行失败", "bright_red"),
+        "WAITING_RUNTIME": ("等待运行环境", "yellow"),
+        "WAITING_INPUT": ("等待补齐材料", "yellow"),
+        "WAITING_CONFIRMATION": ("等待执行确认", "bright_yellow"),
+        "COLLECTING_INPUT": ("正在收集材料", "cyan"),
+        "RUNNING": ("正在运行", "cyan"),
     }
     status_label, accent = labels.get(status, (status, "cyan"))
     header = [
-        Text(f"Session: {session_id}  ·  {status_label}", style=f"bold {accent}"),
+        Text(f"会话：{session_id}  ·  {status_label}", style=f"bold {accent}"),
         Text(
-            f"Runtime: steps {metrics.get('steps', 0)} | tokens {metrics.get('tokens', 0)} | "
-            f"elapsed {metrics.get('duration_seconds', 0)}s",
+            f"运行：步骤 {metrics.get('steps', 0)} | 模型用量 {metrics.get('tokens', 0)} | "
+            f"耗时 {metrics.get('duration_seconds', 0)} 秒",
             style="dim",
         ),
     ]
     message = result.get("message") or progress.get("detail")
     if message:
-        header.append(Text(f"Result: {message}"))
+        header.append(Text(f"当前结果：{message}"))
     output_descriptions = interaction.get("outputs") if isinstance(interaction.get("outputs"), list) else []
     output_by_path = {
         str(item.get("path")): item for item in output_descriptions if isinstance(item, dict) and item.get("path")
@@ -821,10 +871,10 @@ def render_skill_completion_panel_rich(*, workspace: Path, session_id: str, no_c
     body: list[Any] = [Group(*header)]
     outputs = result.get("outputs") if isinstance(result.get("outputs"), dict) else {}
     if outputs:
-        table = Table(title="Artifact Check", box=box.SIMPLE_HEAVY, header_style="bold magenta", expand=True)
-        table.add_column("State", width=10)
-        table.add_column("Output", min_width=22, max_width=42, overflow="fold")
-        table.add_column("Meaning", min_width=32, max_width=75, overflow="fold")
+        table = Table(title="完成文件检查", box=box.SIMPLE_HEAVY, header_style="bold magenta", expand=True)
+        table.add_column("状态", width=10)
+        table.add_column("产物", min_width=22, max_width=42, overflow="fold")
+        table.add_column("用途", min_width=32, max_width=75, overflow="fold")
         for name, state in outputs.items():
             if not isinstance(state, dict):
                 continue
@@ -832,9 +882,9 @@ def render_skill_completion_panel_rich(*, workspace: Path, session_id: str, no_c
             descriptor = output_by_path.get(path, {})
             exists = bool(state.get("exists"))
             table.add_row(
-                Text("READY" if exists else "MISSING", style="green" if exists else "red"),
-                f"{descriptor.get('label') or name}\n{_wrap_skill_path(path)}",
-                str(descriptor.get("description") or "Declared Skill output."),
+                Text("已生成" if exists else "未生成", style="green" if exists else "red"),
+                f"{humanize_skill_copy(descriptor.get('label') or name)} · {_wrap_skill_path(path)}",
+                brief_skill_copy(descriptor.get("description") or "该 Skill 生成的输出文件。"),
             )
         body.append(table)
     workflow = session.get("workflow") if isinstance(session.get("workflow"), dict) else {}
@@ -842,18 +892,18 @@ def render_skill_completion_panel_rich(*, workspace: Path, session_id: str, no_c
         body.append(_workflow_rich_table(workflow))
     trace_file = result.get("trace_file")
     if trace_file:
-        body.append(Text(f"Trace: {trace_file}", style="dim"))
+        body.append(Text(f"运行轨迹：{trace_file}", style="dim"))
     if status in {"WAITING_RUNTIME", "WAITING_INPUT", "WAITING_CONFIRMATION", "FAILED"}:
         body.append(
             Text(
-                f"Resume: researchos run-skill {session.get('skill_name', 'SKILL')} --workspace {workspace} --session-id {session_id} --resume",
+                f"恢复：researchos run-skill {session.get('skill_name', 'SKILL')} --workspace {workspace} --session-id {session_id} --resume",
                 style="yellow",
             )
         )
     else:
-        body.append(Text(f"Inspect sessions: researchos skill-status --workspace {workspace}", style="dim"))
+        body.append(Text(f"查看会话：researchos skill-status --workspace {workspace}", style="dim"))
     return _render_skill_rich(
-        Panel(Group(*body), title=f"SKILL 执行总结 · {session.get('skill_name', 'unknown')}", border_style=accent, expand=True),
+        Panel(Group(*body), title=f"Skill 运行结果 · {session.get('skill_name', '未知')}", border_style=accent, expand=True),
         no_color=no_color,
     )
 
@@ -867,7 +917,7 @@ def render_skill_status_panel(
 
     width = 84
     cards = list(entries)
-    lines = ["", "═" * width, f"SKILL 会话状态 · {workspace}", "═" * width]
+    lines = ["═" * width, f"Skill 会话状态 · {workspace}", "═" * width]
     state_labels = {
         "READY": "输入已就绪",
         "RUNNING": "运行中",
@@ -971,20 +1021,20 @@ def render_skill_status_panel_rich(
         "stopped": "已停止",
     }
     status_styles = {
-        "READY": ("READY", "green"),
-        "RUNNING": ("RUNNING", "cyan"),
-        "WAITING_INPUT": ("WAITING INPUT", "yellow"),
-        "WAITING_CONFIRMATION": ("WAITING CONFIRMATION", "bright_yellow"),
-        "WAITING_RUNTIME": ("WAITING RUNTIME", "yellow"),
-        "COMPLETED": ("COMPLETED", "green"),
-        "FAILED": ("FAILED", "bright_red"),
+        "READY": ("输入已就绪", "green"),
+        "RUNNING": ("正在运行", "cyan"),
+        "WAITING_INPUT": ("等待补齐材料", "yellow"),
+        "WAITING_CONFIRMATION": ("等待执行确认", "bright_yellow"),
+        "WAITING_RUNTIME": ("等待运行环境", "yellow"),
+        "COMPLETED": ("已完成", "green"),
+        "FAILED": ("执行失败", "bright_red"),
     }
-    table = Table(title=f"Skill Sessions · {workspace}", box=box.SIMPLE_HEAVY, header_style="bold cyan", expand=True)
-    table.add_column("Skill / Session", min_width=22, max_width=42, overflow="fold")
-    table.add_column("Status", min_width=15, max_width=19)
-    table.add_column("Progress", min_width=18, max_width=34, overflow="fold")
-    table.add_column("Current Detail", min_width=28, max_width=62, overflow="fold")
-    table.add_column("Action", min_width=28, max_width=56, overflow="fold")
+    table = Table(title=f"Skill 会话状态 · {workspace}", box=box.SIMPLE_HEAVY, header_style="bold cyan", expand=True)
+    table.add_column("能力 / 会话", min_width=22, max_width=42, overflow="fold")
+    table.add_column("状态", min_width=15, max_width=19)
+    table.add_column("进度", min_width=18, max_width=34, overflow="fold")
+    table.add_column("当前说明", min_width=28, max_width=62, overflow="fold")
+    table.add_column("下一步", min_width=28, max_width=56, overflow="fold")
     count = 0
     for path, session in entries:
         count += 1
@@ -996,7 +1046,7 @@ def render_skill_status_panel_rich(
         phase = str(progress.get("phase") or "")
         step = progress.get("step")
         step_limit = progress.get("step_limit")
-        progress_label = phase_labels.get(phase, phase or "no progress record")
+        progress_label = phase_labels.get(phase, phase or "暂未记录进度")
         if step is not None and step_limit:
             progress_label = f"{progress_label} · {step}/{step_limit}"
         readiness = session.get("readiness") if isinstance(session.get("readiness"), dict) else {}
@@ -1005,37 +1055,37 @@ def render_skill_status_panel_rich(
             for item in readiness.get("inputs", [])
             if isinstance(item, dict) and item.get("required") and item.get("state") != "ready"
         ]
-        detail = _status_compact(progress.get("detail") or session.get("request"), 180)
+        detail = humanize_skill_copy(_status_compact(progress.get("detail") or session.get("request"), 180))
         workflow = session.get("workflow") if isinstance(session.get("workflow"), dict) else {}
         workflow_phase = _workflow_current_phase(workflow) if workflow else None
         if workflow_phase:
             phase_line = (
-                f"Workflow: {workflow_phase.get('label', workflow_phase.get('id'))} "
+                f"流程：{workflow_phase.get('label', workflow_phase.get('id'))} "
                 f"({ _workflow_status_label(workflow_phase.get('status')) })"
             )
             detail = (phase_line + "\n" + detail) if detail else phase_line
         if missing:
-            detail = (detail + "\n" if detail else "") + "Missing: " + "、".join(missing)
+            detail = (detail + "\n" if detail else "") + "待补充：" + "、".join(missing)
         if raw_status in {"WAITING_INPUT", "WAITING_CONFIRMATION", "WAITING_RUNTIME", "FAILED"}:
-            action = f"resume --session-id {session_id}"
+            action = f"恢复：--session-id {session_id} --resume"
         elif raw_status == "COMPLETED":
-            action = "Inspect declared outputs"
+            action = "查看已声明的产物"
         else:
-            action = "Run skill-status again for durable progress"
+            action = "稍后再次运行 skill-status 查看进度"
         table.add_row(
-            f"{skill_name}\n{session_id}",
+            f"{skill_name} · {session_id}",
             Text(label, style=f"bold {style}"),
             progress_label,
             detail or "-",
             action,
         )
     if not count:
-        table.add_row("-", "-", "-", "No Skill session found.", "-")
+        table.add_row("-", "-", "-", "没有找到 Skill 会话。", "-")
     footer = Text(
         "恢复示例：researchos run-skill <skill> --workspace <workspace> --session-id <session> --resume",
         style="dim",
     )
-    return _render_skill_rich(Panel(Group(table, footer), title="ResearchOS · Skill Recovery", border_style="cyan", expand=True), no_color=no_color)
+    return _render_skill_rich(Panel(Group(table, footer), title="ResearchOS · Skill 会话恢复", border_style="cyan", expand=True), no_color=no_color)
 
 
 def _render_skill_rich(renderable: Any, *, no_color: bool) -> str:
@@ -1055,16 +1105,26 @@ def _render_skill_rich(renderable: Any, *, no_color: bool) -> str:
 
 
 def _wrap_skill_path(path: object) -> str:
-    """Wrap path-like strings at directory boundaries, never inside a token."""
+    """Return a path verbatim; Rich handles viewport-dependent wrapping."""
 
-    return str(path or "").replace("/", "/\n")
+    return str(path or "")
+
+
+def _format_file_size(size_bytes: int) -> str:
+    """Format a scanned file size for people rather than implementation logs."""
+
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    if size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    return f"{size_bytes / (1024 * 1024):.1f} MB"
 
 
 def _status_compact(value: Any, limit: int) -> str:
-    text = " ".join(str(value or "").split())
-    if len(text) <= limit:
-        return text
-    return text[: max(1, limit - 3)] + "..."
+    """Normalize session text without discarding user-visible information."""
+
+    del limit
+    return " ".join(str(value or "").split())
 
 
 def _session_workflow_from_file(session_file: Path) -> dict[str, Any]:
@@ -1120,10 +1180,10 @@ def _workflow_plain_lines(workflow: dict[str, Any], *, width: int) -> list[str]:
 
 
 def _workflow_rich_table(workflow: dict[str, Any]) -> Table:
-    table = Table(title="Integrated Workflow", box=box.SIMPLE_HEAVY, header_style="bold green", expand=True)
-    table.add_column("State", width=14)
-    table.add_column("Phase", min_width=20, max_width=34, overflow="fold")
-    table.add_column("Objective / Current Result", min_width=34, max_width=76, overflow="fold")
+    table = Table(title="执行路径", box=box.SIMPLE_HEAVY, header_style="bold green", expand=True)
+    table.add_column("状态", width=14)
+    table.add_column("步骤", min_width=20, max_width=34, overflow="fold")
+    table.add_column("目标与当前结果", min_width=34, max_width=76, overflow="fold")
     for phase in workflow.get("phases", []):
         if not isinstance(phase, dict):
             continue
@@ -1136,13 +1196,13 @@ def _workflow_rich_table(workflow: dict[str, Any]) -> Table:
             "waiting_evidence": "yellow",
             "skipped": "dim",
         }.get(raw_status, "dim")
-        state = Text(("CURRENT · " if current else "") + _workflow_status_label(raw_status), style=style)
+        state = Text(("当前 · " if current else "") + _workflow_status_label(raw_status), style=style)
         phase_name = str(phase.get("label") or phase.get("id") or "-")
         if phase.get("human_gate"):
-            phase_name += "\nHuman Gate"
+            phase_name += "\n需要人工确认"
         detail = str(phase.get("summary") or phase.get("objective") or "-")
         if phase.get("evidence_boundary"):
-            detail += "\nBoundary: " + str(phase["evidence_boundary"])
+            detail += "\n证据边界：" + str(phase["evidence_boundary"])
         table.add_row(state, phase_name, detail)
     return table
 

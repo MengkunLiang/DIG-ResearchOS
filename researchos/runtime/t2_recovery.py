@@ -85,8 +85,8 @@ T2_FINALIZE_INPUT_PATHS = {
     "seed_outline_profile": "user_seeds/seed_outline_profile.json",
     "seed_external_resources": "user_seeds/seed_external_resources.jsonl",
     "literature_pdfs": "literature/pdfs",
-    "agent_params_config": "config/agent_params.yaml",
-    "user_settings_config": "config/user_settings.yaml",
+    "agent_params_config": "config/system_config/agent_params.yaml",
+    "model_settings_config": "config/model_settings.yaml",
 }
 
 _DEFAULT_T2_FINALIZE_CONFIG = T2FinalizeConfig()
@@ -3334,7 +3334,7 @@ async def finalize_t2_outputs(
     )
     search_log += (
         "- T2/T3 阈值配置来源: "
-        "`config/agent_params.yaml` 中 `agents.scout.behavior.t2_finalize` "
+        "`config/system_config/agent_params.yaml` 中 `agents.scout.behavior.t2_finalize` "
         "和 `agents.reader.modes.read.behavior`；"
         f"finish_finalize_min_raw={t2_config.finish_finalize_min_raw}, "
         f"active_pool_max={t2_config.active_pool_max}, "

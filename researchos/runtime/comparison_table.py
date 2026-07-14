@@ -69,10 +69,10 @@ def repair_comparison_table_evidence_levels(workspace: Path) -> dict[str, Any]:
 def _build_evidence_index(workspace: Path) -> dict[str, str]:
     index: dict[str, str] = {}
     literature = workspace / "literature"
-    for root in (literature / "paper_notes", literature / "paper_notes_bridge"):
+    for root in (literature / "deep_read_notes", literature / "bridge_notes"):
         if not root.exists():
             continue
-        pattern = "**/*.md" if root.name == "paper_notes_bridge" else "*.md"
+        pattern = "**/*.md" if root.name == "bridge_notes" else "*.md"
         for note_path in sorted(root.glob(pattern)):
             if not is_paper_note_file(note_path):
                 continue

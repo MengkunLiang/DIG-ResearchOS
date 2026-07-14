@@ -8,7 +8,7 @@ tools:
   - write_file
   - finish_task
 strict_tools: true
-model_tier: medium
+model_tier: standard
 temperature: 0.15
 allowed_read_prefixes:
   - user_inputs/literature-gap-map/

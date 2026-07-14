@@ -1,11 +1,10 @@
 # Native, Docker, And LaTeX
 
-ResearchOS has one runtime contract. Native and Docker Compose execute the same
-CLI, artifacts, validators, human gates, and state machine.
+> [English](../en/docker.md) | [中文](../cn/docker.md)
 
-They also execute the same public Skill contracts, integrated workflow sessions,
-provider-context abstract batching, and Survey evidence gates. Do not use native
-and containerized commands as concurrent writers for one workspace.
+ResearchOS has one runtime contract. Native and Docker Compose execute the same CLI, artifacts, validators, human gates, and state machine.
+
+They also execute the same public Skill contracts, integrated workflow sessions, provider-context abstract batching, and Survey evidence gates. Do not use native and containerized commands as concurrent writers for one workspace.
 
 | Mode | Workspace path | TeX location | Use when |
 | --- | --- | --- | --- |
@@ -35,8 +34,7 @@ sudo apt-get install -y \
   texlive-fonts-recommended texlive-xetex texlive-lang-chinese
 ```
 
-macOS requires MacTeX or BasicTeX plus `latexmk`. Windows requires MiKTeX or
-TeX Live with `latexmk`, `pdflatex`, `xelatex`, and `bibtex` on `PATH`.
+macOS requires MacTeX or BasicTeX plus `latexmk`. Windows requires MiKTeX or TeX Live with `latexmk`, `pdflatex`, `xelatex`, and `bibtex` on `PATH`.
 
 ## Compose
 
@@ -55,17 +53,11 @@ docker compose -f deploy/compose.yaml run --rm researchos \
   resume --workspace /app/workspace/project-a
 ```
 
-The Compose service does not mount the Docker socket and does not use
-Docker-in-Docker. The image must contain TeX itself. On Linux, set
-`RESEARCHOS_UID=$(id -u)` and `RESEARCHOS_GID=$(id -g)` in `.env` when needed
-for host-writable outputs.
+The Compose service does not mount the Docker socket and does not use Docker-in-Docker. The image must contain TeX itself. On Linux, set `RESEARCHOS_UID=$(id -u)` and `RESEARCHOS_GID=$(id -g)` in `.env` when needed for host-writable outputs.
 
 ## Why TeX Is Not In requirements.txt
 
-`requirements.txt` installs Python packages, including matplotlib for the one
-deterministic Survey taxonomy figure. TeX Live, `latexmk`, and fonts are system
-dependencies; install them through the host package manager or bake them into
-`infra/docker/Dockerfile`.
+`requirements.txt` installs Python packages, including matplotlib for the one deterministic Survey taxonomy figure. TeX Live, `latexmk`, and fonts are system dependencies; install them through the host package manager or bake them into `infra/docker/Dockerfile`.
 
 ## Repair And Resume
 
@@ -77,5 +69,4 @@ dependencies; install them through the host package manager or bake them into
 | Image lacks TeX commands | Rebuild `researchos/system:latest` from `infra/docker/Dockerfile`. |
 | Compile error in a `.tex` file | Read the compile report/log, repair the named source or asset, then `resume`. |
 
-Never solve a TeX preflight failure by increasing LLM retries. The runtime
-pauses before writing more prose so the environment can be repaired first.
+Never solve a TeX preflight failure by increasing LLM retries. The runtime pauses before writing more prose so the environment can be repaired first.

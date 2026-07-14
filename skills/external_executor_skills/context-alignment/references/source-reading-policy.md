@@ -29,8 +29,8 @@ Read only for a targeted gap:
 - `literature/synthesis_workbench.json`: mechanism or claim derivation is unclear;
 - `literature/domain_map.json`: bridge-domain meaning is disputed;
 - `literature/comparison_table.csv`: baseline identity or comparison family is unclear;
-- `literature/paper_notes/`: a specific full-text mechanism claim needs verification;
-- `literature/paper_notes_abstract/`: only when noting weak abstract-level support;
+- `literature/deep_read_notes/`: a specific full-text mechanism claim needs verification;
+- `literature/shallow_read_notes/`: only when noting weak abstract-level support;
 - `resources/`: an already supplied resource changes capability or baseline interpretation;
 - `user_seeds/seed_external_resources.jsonl`: resource hint provenance;
 - `user_seeds/bridge_domains.yaml`: bridge-domain search prior only.

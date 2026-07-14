@@ -176,7 +176,7 @@
                   "type": "string",
                   "minLength": 1
                 },
-                "description": "Optional bridge_id list when this idea was inspired by bridge_transfer_drafts, domain_map.theory_bridge, paper_notes_bridge, or the confirmed bridge-domain plan."
+                "description": "Optional bridge_id list when this idea was inspired by bridge_transfer_drafts, domain_map.theory_bridge, bridge_notes, or the confirmed bridge-domain plan."
               },
               "cross_domain_relation": {
                 "type": ["string", "null"],

@@ -104,12 +104,12 @@ def build_sweep_candidates(
 
     completed_keys: set[str] = set()
     if exclude_read:
-        notes_dir = workspace / "literature" / "paper_notes"
+        notes_dir = workspace / "literature" / "deep_read_notes"
         if notes_dir.exists():
             for note_path in notes_dir.glob("*.md"):
                 if is_paper_note_file(note_path):
                     completed_keys.update(paper_note_match_keys(note_path))
-        bridge_notes_dir = workspace / "literature" / "paper_notes_bridge"
+        bridge_notes_dir = workspace / "literature" / "bridge_notes"
         if bridge_notes_dir.exists():
             for note_path in bridge_notes_dir.glob("**/*.md"):
                 if is_paper_note_file(note_path):
@@ -117,7 +117,7 @@ def build_sweep_candidates(
 
     # 已有 abstract note 的 paper ID（避免重复 sweep）
     existing_abstract_note_count = 0
-    abstract_dir = workspace / "literature" / "paper_notes_abstract"
+    abstract_dir = workspace / "literature" / "shallow_read_notes"
     if abstract_dir.exists():
         for note_path in abstract_dir.glob("*.md"):
             if is_paper_note_file(note_path):
@@ -318,7 +318,7 @@ def _abstract_sweep_plan_summary(workspace: Path, config: dict[str, Any], candid
         source_roles[role] = source_roles.get(role, 0) + 1
     return {
         "target_total": target_total,
-        "existing_abstract_notes": existing_notes,
+        "existing_shallow_read_notes": existing_notes,
         "remaining_target": remaining_target,
         "selected_for_this_run": len(candidates),
         "candidate_queue_dispositions": queue_counts,
@@ -327,7 +327,7 @@ def _abstract_sweep_plan_summary(workspace: Path, config: dict[str, Any], candid
 
 
 def _existing_abstract_note_count(workspace: Path) -> int:
-    abstract_dir = workspace / "literature" / "paper_notes_abstract"
+    abstract_dir = workspace / "literature" / "shallow_read_notes"
     if not abstract_dir.exists():
         return 0
     return sum(1 for note_path in abstract_dir.glob("*.md") if is_paper_note_file(note_path))
@@ -983,7 +983,7 @@ def repair_abstract_sweep_notes(workspace: Path) -> dict[str, Any]:
     and §13 fields. It does not rewrite claims or upgrade evidence strength.
     """
 
-    abstract_dir = workspace / "literature" / "paper_notes_abstract"
+    abstract_dir = workspace / "literature" / "shallow_read_notes"
     if not abstract_dir.exists():
         return {"checked": 0, "repaired": 0}
 
@@ -1131,6 +1131,44 @@ def _csv_escape(value: str) -> str:
 # BibTeX entry generation
 # ---------------------------------------------------------------------------
 
+
+_JOURNAL_VENUE_MARKERS = (
+    "journal",
+    "jmlr",
+    "tacl",
+    "nature",
+    "science",
+    "quarterly",
+    "transactions",
+    "information systems research",
+    "management science",
+    "marketing science",
+    "organization science",
+    "operations research",
+    "production and operations management",
+    "manufacturing & service operations management",
+    "mis quarterly",
+)
+
+
+def _is_journal_record(paper: dict, venue_lower: str) -> bool:
+    """Prefer explicit metadata, then recognize durable journal venue names.
+
+    Crossref/INFORMS records frequently expose a journal title without the word
+    ``journal``. Treating every non-empty venue as a conference produced an
+    invalid ``@inproceedings`` entry for Information Systems Research and made
+    downstream Survey validation fail after otherwise successful reading.
+    """
+
+    type_values = " ".join(
+        str(paper.get(key) or "")
+        for key in ("publication_type", "paper_type", "source_type", "type", "work_type")
+    ).casefold()
+    if any(marker in type_values for marker in ("journal-article", "journal article", "journal")):
+        return True
+    return any(marker in venue_lower for marker in _JOURNAL_VENUE_MARKERS)
+
+
 def generate_bib_entry(paper: dict) -> str:
     """从 paper record 生成 BibTeX 条目。"""
 
@@ -1149,7 +1187,7 @@ def generate_bib_entry(paper: dict) -> str:
 
     # 判断 entry type
     venue_lower = str(paper.get("venue", "")).lower()
-    if any(j in venue_lower for j in ["journal", "jmlr", "tacl", "nature", "science", "quarterly", "transactions"]):
+    if _is_journal_record(paper, venue_lower):
         entry_type = "article"
     elif venue:
         entry_type = "inproceedings"
@@ -1237,7 +1275,7 @@ def _run_abstract_sweep_sync(
     plan_summary = _abstract_sweep_plan_summary(workspace, cfg, candidates)
 
     # 确保输出目录存在
-    abstract_dir = workspace / "literature" / "paper_notes_abstract"
+    abstract_dir = workspace / "literature" / "shallow_read_notes"
     abstract_dir.mkdir(parents=True, exist_ok=True)
 
     comparison_path = workspace / "literature" / "comparison_table.csv"
@@ -1334,7 +1372,7 @@ async def _run_abstract_sweep_async(
         return {"enabled": True, "candidates_found": 0, "notes_generated": 0, "sweep_plan": plan_summary}
     plan_summary = _abstract_sweep_plan_summary(workspace, cfg, candidates)
 
-    abstract_dir = workspace / "literature" / "paper_notes_abstract"
+    abstract_dir = workspace / "literature" / "shallow_read_notes"
     abstract_dir.mkdir(parents=True, exist_ok=True)
 
     comparison_path = workspace / "literature" / "comparison_table.csv"
@@ -1360,7 +1398,7 @@ async def _run_abstract_sweep_async(
     if progress_enabled:
         target_text = plan_summary.get("target_total")
         if isinstance(target_text, int):
-            target_text = f"累计目标 {target_text}，已有 {plan_summary.get('existing_abstract_notes', 0)}，本轮剩余 {len(candidates)}"
+            target_text = f"累计目标 {target_text}，已有 {plan_summary.get('existing_shallow_read_notes', 0)}，本轮剩余 {len(candidates)}"
         else:
             target_text = f"目标 {target_text}，本轮 retained/shallow 候选 {len(candidates)}"
         print(

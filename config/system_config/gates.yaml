@@ -284,11 +284,11 @@ gates:
         from_file: drafts/survey/survey_plan.json
         max_chars: 5000
       current_notes:
-        from_dir: literature/paper_notes
+        from_dir: literature/deep_read_notes
         glob: "*.md"
         max_items: 20
-      abstract_notes:
-        from_dir: literature/paper_notes_abstract
+      shallow_read_notes:
+        from_dir: literature/shallow_read_notes
         glob: "*.md"
         max_items: 20
     options:
@@ -332,11 +332,11 @@ gates:
         aliases: ["结束", "完成", "stop", "done", "finish"]
         next: done
 
-  # T4 Gate1 候选方向选择：
-  # 候选池已经写入 artifact，runtime 在这里暂停，让用户选择、合并、重构或要求重分析。
+  # T4 候选方向选择：
+  # 候选池已经写入结果文件，系统在这里暂停，让用户选择、合并、重构或要求重分析。
   t4_gate1_selection_gate:
-    title: "T4 Gate1 候选方向选择"
-    description: "候选池已就绪。中文决策面板会完整展示问题、机制、预测、反事实、实验、评分、证据和文件导航；请直接选择、合并、重构或要求重新分析。"
+    title: "T4 研究方向选择"
+    description: "候选研究方向已准备好。面板会展示研究问题、机制、预测、反事实、最小验证、评分依据、论文阅读笔记和相关文件；你可以选择、合并、调整或要求重新分析。"
     presentation:
       gate1_candidate_cards:
         from_file: ideation/_gate1_candidate_cards.md
@@ -352,9 +352,9 @@ gates:
           - 直接输入 `D1`：选择某个候选并允许后半段按你的文字重构。
           - 直接输入 `D1+D3` 或 `merge D1+D3`：合并多个候选。
           - 可精确到候选假设，例如 `merge D1-H2 + D3-H1`，并说明保留的机制与验证方式。
-          - 输入 `new: ...`：补充一个新想法。
-          - 输入 `reanalyze: ...`：要求重新生成候选池。
-          终端会完整展示短标题、创新、候选 H1/H2/H3、合并关系、评分和证据；详细卡片请打开 ideation/_gate1_candidate_cards.md；简报请打开 ideation/_gate1_selection_brief.md。
+          - 输入 `new: <你的想法>`：补充一个新想法。
+          - 输入 `reanalyze: <需要补足的依据>`：要求重新生成候选池。
+          终端会完整展示短标题、创新、候选 H1/H2/H3、合并关系、评分和论文阅读笔记；详细卡片请打开 ideation/_gate1_candidate_cards.md；简报请打开 ideation/_gate1_selection_brief.md。
       machine_readable_artifacts:
         literal: |
           机器可读附录路径（一般不需要直接阅读）：
@@ -693,7 +693,6 @@ gates:
           2. 对 Codex 说：请读取 external_executor/AGENTS.md，并执行 external_executor/skills/research-execution/SKILL.md。
           3. Codex 完成后必须写出 external_executor/result_pack.json、external_executor/executor_status.json 和 external_executor/run_manifest.json。
           4. 回到 ResearchOS，运行 python -m researchos.cli resume --workspace <workspace>。
-          如果上方 skill_specialization_report 显示 file not found，请先运行 researchos specialize-executor-skills --workspace <workspace>，再回到本 gate。
     options:
       - id: codex_cli
         label: "Codex CLI 真实执行"

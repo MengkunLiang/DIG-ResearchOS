@@ -8,7 +8,7 @@ tools:
   - grep_search
   - finish_task
 strict_tools: true
-model_tier: heavy
+model_tier: standard
 temperature: 0.25
 allowed_read_prefixes:
   - user_inputs/hypothesis-compiler/

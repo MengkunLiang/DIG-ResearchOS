@@ -30,7 +30,7 @@ class AgentSpec:
     max_steps: int = 30
     max_tokens_total: int = 200_000
     max_wall_seconds: int = 1800
-    unlimited_budget: bool = False
+    unlimited_budget: bool = True
     temperature: float = 0.7
     model_override: str | None = None
     llm_profile: str | None = None

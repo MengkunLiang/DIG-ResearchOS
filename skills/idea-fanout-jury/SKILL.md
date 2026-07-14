@@ -9,7 +9,7 @@ tools:
   - compute_idea_novelty_signal
   - finish_task
 strict_tools: true
-model_tier: heavy
+model_tier: standard
 temperature: 0.4
 allowed_read_prefixes:
   - project.yaml
@@ -30,7 +30,7 @@ interaction:
   summary: 从问题、文献综合和已有 idea 中生成候选研究方向，并把依据、风险和评分完整展示给人选择。
   request_required: true
   request_prompt: 请说明研究问题、希望保留或避免的方向，以及本次要探索还是要做可执行选择。
-  example_request: 围绕 LLM agent uplift 的因果机制生成 6 个可测试方向，优先可用公开日志验证的思路。
+  example_request: 围绕当前研究问题的因果机制生成 6 个可测试方向，优先可用公开数据或日志验证的思路。
   required_inputs:
     - id: problem_brief
       label: 研究问题与约束

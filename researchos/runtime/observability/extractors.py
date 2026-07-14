@@ -114,8 +114,8 @@ def _t2_insights(workspace: Path, *, detailed: bool) -> list[dict[str, Any]]:
 
 
 def _t3_insights(workspace: Path, *, detailed: bool) -> list[dict[str, Any]]:
-    notes = sorted((workspace / "literature" / "paper_notes").glob("*.md")) if (workspace / "literature" / "paper_notes").is_dir() else []
-    abstract_notes = sorted((workspace / "literature" / "paper_notes_abstract").glob("*.md")) if (workspace / "literature" / "paper_notes_abstract").is_dir() else []
+    notes = sorted((workspace / "literature" / "deep_read_notes").glob("*.md")) if (workspace / "literature" / "deep_read_notes").is_dir() else []
+    shallow_read_notes = sorted((workspace / "literature" / "shallow_read_notes").glob("*.md")) if (workspace / "literature" / "shallow_read_notes").is_dir() else []
     manifest = _load_json(workspace / "literature" / "notes_manifest.json")
     evidence = Counter()
     mechanism_evidence = Counter()
@@ -146,11 +146,11 @@ def _t3_insights(workspace: Path, *, detailed: bool) -> list[dict[str, Any]]:
                 f"机制证据: {mechanism_type or '未标注'}"
             )
             previews.append((path.stem, preview))
-    if not notes and not abstract_notes:
+    if not notes and not shallow_read_notes:
         return []
     rows = [(level, str(count)) for level, count in evidence.most_common()]
     rows.extend([
-        ("Abstract-only notes", str(len(abstract_notes))),
+        ("Abstract-only notes", str(len(shallow_read_notes))),
         ("页码覆盖", f"{pages_read_total}/{pages_total}" if pages_total else "未在 note 中解析到完整页码"),
         ("Extraction calls", str(extraction_calls)),
         ("Truncation resolved", str(truncation_resolved)),

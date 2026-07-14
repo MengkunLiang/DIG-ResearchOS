@@ -19,8 +19,8 @@ T45_INPUT_FINGERPRINT_PATHS = {
     "synthesis_workbench": "literature/synthesis_workbench.json",
     "comparison_table": "literature/comparison_table.csv",
     "bridge_domain_plan": "literature/bridge_domain_plan.json",
-    "agent_params_config": "config/agent_params.yaml",
-    "user_settings_config": "config/user_settings.yaml",
+    "agent_params_config": "config/system_config/agent_params.yaml",
+    "model_settings_config": "config/model_settings.yaml",
 }
 
 T45_FINGERPRINT_REPORT_REL_PATH = "ideation/novelty_audit_fingerprints.json"

@@ -12,9 +12,12 @@ from __future__ import annotations
 """
 
 from collections.abc import Mapping, Sequence
+from contextlib import AsyncExitStack
 import os
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+import re
+import tempfile
+from typing import Any, Protocol, TextIO, runtime_checkable
 
 from pydantic import BaseModel, Field, create_model
 import yaml
@@ -22,6 +25,9 @@ import yaml
 from ..runtime.errors import ToolRuntimeError
 from .base import Tool, ToolResult
 from .registry import ToolRegistry
+
+
+_MCP_ENV_PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 @runtime_checkable
@@ -45,6 +51,115 @@ class MCPDiscoveryClientProtocol(MCPClientProtocol, Protocol):
 
     async def list_tools(self) -> Sequence[Any]:
         """列出远端 MCP server 暴露的所有 tool。"""
+
+
+class StdioMCPClient:
+    """A live MCP stdio client kept open for the whole ResearchOS run.
+
+    ``mcp`` uses async context managers for both the spawned server process and
+    its session. Keeping their ``AsyncExitStack`` on this object is essential:
+    tool discovery at startup is not useful if the process is closed before an
+    Agent invokes the discovered tool later in the same run.
+    """
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        session: Any,
+        stack: AsyncExitStack,
+        stderr_buffer: TextIO,
+    ) -> None:
+        self.name = name
+        self._session = session
+        self._stack = stack
+        self._stderr_buffer = stderr_buffer
+
+    @classmethod
+    async def connect(cls, server_config: Mapping[str, Any]) -> "StdioMCPClient":
+        """Connect one configured stdio MCP server using the official SDK."""
+
+        transport = str(server_config.get("transport") or "stdio").strip().casefold()
+        if transport != "stdio":
+            raise ValueError(
+                f"MCP server {server_config.get('name') or '(unnamed)'} uses transport={transport!r}; "
+                "this release supports stdio servers configured with command and args."
+            )
+        command = str(server_config.get("command") or "").strip()
+        if not command:
+            raise ValueError("MCP stdio server requires a non-empty command")
+        name = str(server_config.get("name") or Path(command).name or "mcp_server").strip()
+        args = server_config.get("args") or []
+        if not isinstance(args, list):
+            raise ValueError(f"MCP server {name} field args must be a list")
+        env = server_config.get("env")
+        if env is not None and not isinstance(env, Mapping):
+            raise ValueError(f"MCP server {name} field env must be a mapping")
+        try:
+            from mcp import ClientSession, StdioServerParameters
+            from mcp.client.stdio import stdio_client
+        except ImportError as exc:  # pragma: no cover - dependency is declared, guard aids old installs
+            raise RuntimeError(
+                "MCP support is not installed. Run `pip install -r requirements.txt` to install the `mcp` package."
+            ) from exc
+
+        params = StdioServerParameters(
+            command=command,
+            args=[str(item) for item in args],
+            env={str(key): str(value) for key, value in dict(env or {}).items()} or None,
+            cwd=str(server_config.get("cwd") or "") or None,
+        )
+        stack = AsyncExitStack()
+        # The MCP SDK passes this object to subprocess.Popen, so it must have
+        # a real file descriptor. Keep server stderr out of the Rich terminal
+        # while preserving a bounded diagnostic trail on the live client.
+        stderr_buffer = tempfile.TemporaryFile(mode="w+t", encoding="utf-8")
+        try:
+            # MCP servers may write their own debug logs to stderr. They should
+            # not corrupt the ResearchOS Rich CLI; retain the text on the live
+            # client for diagnostics instead.
+            read_stream, write_stream = await stack.enter_async_context(
+                stdio_client(params, errlog=stderr_buffer)
+            )
+            session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
+            await session.initialize()
+        except BaseException as exc:
+            # Preserve useful startup diagnostics without letting a failed
+            # connection leak the temporary stderr handle or child process.
+            await stack.aclose()
+            diagnostic = _compact_mcp_stderr(stderr_buffer)
+            stderr_buffer.close()
+            message = f"MCP server {name!r} could not start or initialize: {exc}"
+            if diagnostic:
+                message += f". Server diagnostic: {diagnostic}"
+            raise RuntimeError(message) from exc
+        return cls(name=name, session=session, stack=stack, stderr_buffer=stderr_buffer)
+
+    async def list_tools(self) -> Sequence[Any]:
+        result = await self._session.list_tools()
+        return list(getattr(result, "tools", []) or [])
+
+    async def call_tool(self, tool_name: str, arguments: Mapping[str, Any]) -> Any:
+        return await self._session.call_tool(tool_name, arguments=dict(arguments))
+
+    async def aclose(self) -> None:
+        try:
+            await self._stack.aclose()
+        finally:
+            self._stderr_buffer.close()
+
+    def diagnostic_stderr(self) -> str:
+        """Return bounded server stderr for an error report, never normal CLI output."""
+
+        try:
+            self._stderr_buffer.flush()
+            position = self._stderr_buffer.tell()
+            self._stderr_buffer.seek(0)
+            text = self._stderr_buffer.read()
+            self._stderr_buffer.seek(position)
+            return text[-4_000:]
+        except (OSError, ValueError):
+            return ""
 
 
 class MCPTool(Tool):
@@ -302,32 +417,79 @@ class MCPTool(Tool):
 
 
 def load_mcp_server_configs(config_path: str | os.PathLike[str]) -> list[dict[str, Any]]:
-    """从 YAML 读取 MCP server 配置，并展开 `${ENV_VAR}` 占位符。
-
-    这里故意只负责“加载配置”和“展开环境变量”，不负责真实连接：
-    - runtime 可以先稳定地拥有配置格式与注册逻辑；
-    - 具体使用哪一个 MCP Python SDK，可以由上层在 `connector` 中决定；
-    - 单元测试也因此不需要拉起真实 MCP 进程。
-    """
+    """Load enabled MCP server configuration and expand ``${ENV_VAR}`` values."""
 
     path = os.fspath(config_path)
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     servers = raw.get("servers", [])
     if not isinstance(servers, list):
         raise ValueError("MCP config 的 servers 字段必须是列表")
-    return [_expand_env_placeholders(item) for item in servers]
+    configured: list[dict[str, Any]] = []
+    for index, item in enumerate(servers, start=1):
+        if not isinstance(item, Mapping):
+            raise ValueError(f"MCP config servers[{index}] 必须是对象")
+        # Disabled presets intentionally remain in the normal user-facing
+        # mcp.yaml. Do not require their optional credentials or paths until
+        # the user actually enables the server.
+        if item.get("enabled", True) is False:
+            continue
+        expanded = _expand_env_placeholders(item)
+        configured.append(expanded)
+    return configured
+
+
+async def connect_stdio_mcp_server(server_config: Mapping[str, Any]) -> StdioMCPClient:
+    """Public built-in connector used by the CLI when no custom connector is supplied."""
+
+    return await StdioMCPClient.connect(server_config)
 
 
 def _expand_env_placeholders(value: Any) -> Any:
-    """递归展开配置里的环境变量占位符。"""
+    """Recursively expand required ``${ENV_VAR}`` values in MCP configuration."""
 
     if isinstance(value, str):
-        return os.path.expandvars(value)
+        missing: set[str] = set()
+
+        def replace(match: re.Match[str]) -> str:
+            name = match.group(1)
+            resolved = os.getenv(name)
+            if resolved is None:
+                missing.add(name)
+                return ""
+            return resolved
+
+        expanded = _MCP_ENV_PLACEHOLDER.sub(replace, value)
+        if missing:
+            raise ValueError(
+                "MCP 配置缺少环境变量：" + ", ".join(sorted(missing))
+                + "。请在 shell 或 .env 中设置后再启用该 server。"
+            )
+        return expanded
     if isinstance(value, list):
         return [_expand_env_placeholders(item) for item in value]
     if isinstance(value, Mapping):
         return {str(key): _expand_env_placeholders(item) for key, item in value.items()}
     return value
+
+
+def _compact_mcp_stderr(buffer: TextIO) -> str:
+    """Return a single-line, bounded startup diagnostic without secret-like values."""
+
+    try:
+        buffer.flush()
+        buffer.seek(0)
+        text = buffer.read()[-2_000:]
+    except (OSError, ValueError):
+        return ""
+    compact = " ".join(text.split())
+    # A server should never print a credential, but redact common assignment
+    # forms before surfacing its own stderr in a CLI configuration error.
+    compact = re.sub(
+        r"(?i)\b(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+",
+        r"\1=<redacted>",
+        compact,
+    )
+    return compact[-1_500:]
 
 
 def _tool_info_to_factory(
@@ -413,8 +575,15 @@ async def register_mcp_servers(
     """
 
     clients: list[MCPDiscoveryClientProtocol] = []
-    for server_cfg in mcp_servers:
-        client = await connector(server_cfg)
-        clients.append(client)
-        await register_mcp_client(registry, client)
+    try:
+        for server_cfg in mcp_servers:
+            client = await connector(server_cfg)
+            clients.append(client)
+            await register_mcp_client(registry, client)
+    except BaseException:
+        for client in reversed(clients):
+            close = getattr(client, "aclose", None)
+            if callable(close):
+                await close()
+        raise
     return clients

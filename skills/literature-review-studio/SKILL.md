@@ -28,7 +28,7 @@ tools:
   - update_skill_workflow
   - finish_task
 strict_tools: true
-model_tier: heavy
+model_tier: standard
 temperature: 0.2
 allowed_read_prefixes:
   - project.yaml

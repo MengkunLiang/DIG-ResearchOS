@@ -8,7 +8,7 @@ tools:
   - write_file
   - finish_task
 strict_tools: true
-model_tier: medium
+model_tier: standard
 temperature: 0.1
 allowed_read_prefixes:
   - user_inputs/literature-evidence-matrix/
@@ -23,10 +23,10 @@ outputs_expected:
 interaction:
   mode: guided
   language: zh-CN
-  summary: 将一组已有论文笔记或记录整理为带来源锚点、证据等级和空白项的比较矩阵，供综述与 idea 使用。
+  summary: 将一组已有论文阅读笔记或记录整理为带可回查来源位置、证据等级和空白项的比较矩阵，供综述与 idea 使用。
   request_required: true
   request_prompt: 请说明矩阵要服务的主题、比较字段，以及是否优先方法 taxonomy、实验设计、机制或局限。
-  example_request: 为 agent uplift 综述生成方法/数据/处理/指标/机制/局限矩阵，并标注哪些行只允许作为背景。
+  example_request: 为当前研究主题的综述生成方法/数据/任务/指标/机制/局限矩阵，并标注哪些行只允许作为背景。
   required_inputs:
     - id: source_list
       label: 文献来源路径清单

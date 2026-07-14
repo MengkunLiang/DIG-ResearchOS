@@ -9,7 +9,7 @@ tools:
   - build_section_evidence_supplement
   - finish_task
 strict_tools: true
-model_tier: medium
+model_tier: standard
 temperature: 0.1
 allowed_read_prefixes:
   - user_inputs/paper-note-review/
@@ -25,7 +25,7 @@ outputs_expected:
 interaction:
   mode: guided
   language: zh-CN
-  summary: 为一个论文 section 或具体 claim 回查已有笔记卡的精确 section，并给出可引用、仅背景或无法支持的明确结论。
+  summary: 围绕论文中的一个具体位置或 claim 回查已有论文阅读笔记，并给出可引用、仅作背景或无法支持的明确结论。
   request_required: true
   request_prompt: 请说明要写/审查的 section 或 claim、语言，以及需要支持、质疑还是限定该主张。
   example_request: 为英文 Introduction 中“agent memory 会造成跨任务 carryover”的机制表述回查现有笔记，列出可用 citation、边界和不足证据。

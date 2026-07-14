@@ -12,31 +12,18 @@ from typing import Any
 
 import yaml
 
-from .user_settings import (
-    active_user_settings_summary,
-    apply_agent_param_overrides,
-    apply_model_routing_overrides,
-    load_user_settings,
-)
+from .model_settings import load_llm_runtime_defaults, load_model_settings
 from .system_config import system_config_path_for
 
 
 def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
     config_dir = config_dir.resolve()
-    settings_path = config_dir / "user_settings.yaml"
-    user_settings = load_user_settings(settings_path)
-    agent_params = apply_agent_param_overrides(
-        _load_yaml(config_dir / "agent_params.yaml"),
-        user_settings,
-    )
-    model_routing = apply_model_routing_overrides(
-        _load_yaml(config_dir / "model_routing.yaml"),
-        user_settings,
-    )
+    settings_path = config_dir / "model_settings.yaml"
+    model_settings = load_model_settings(settings_path)
+    agent_params = _load_yaml(system_config_path_for(config_dir, "agent_params.yaml"))
     state_machine_path = system_config_path_for(config_dir, "state_machine.yaml")
     gates_path = system_config_path_for(config_dir, "gates.yaml")
     cdr_schema_path = system_config_path_for(config_dir, "cdr_schema.yaml")
-    venue_style_path = system_config_path_for(config_dir, "venue_style_map.yaml")
     venue_writing_profiles_path = system_config_path_for(config_dir, "venue_writing_profiles.yaml")
     state_machine = _load_yaml(state_machine_path)
 
@@ -45,28 +32,20 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
             "state_machine_yaml": str(state_machine_path),
             "gates_yaml": str(gates_path),
             "cdr_schema_yaml": str(cdr_schema_path),
-            "venue_style_map_yaml": str(venue_style_path),
             "venue_writing_profiles_yaml": str(venue_writing_profiles_path),
+            "llm_runtime_yaml": str(system_config_path_for(config_dir, "llm_runtime.yaml")),
             "purpose": (
-                "系统契约配置：状态机拓扑、human gate 展示、CDR schema、venue style 建议和内部 writing profile；"
+                "系统契约配置：状态机拓扑、human gate 展示、CDR schema，以及统一的 venue writing profiles；"
                 "普通用户日常不需要修改。"
             ),
         },
         "active_global_controls": {
-            "user_settings_yaml": [
-                "llm.default_profile",
-                "llm.endpoints.*",
-                "llm.profiles.*",
-                "llm.defaults.profile/tier/model/endpoint/max_context/temperature",
-                "llm.agents.<agent>.profile/tier/model/endpoint/max_context/temperature",
-                "llm.agents.<agent>.modes.<mode>.*",
-                "budget.defaults.max_steps/max_tokens_total/max_wall_seconds/max_validation_retries/unlimited_budget",
-                "budget.agents.<agent>.max_steps/max_tokens_total/max_wall_seconds/max_validation_retries/unlimited_budget",
-                "budget.agents.<agent>.modes.<mode>.*",
-                "runtime.global_budget.*",
-                "runtime.timeouts.*",
-                "runtime.retry_policy.*",
-                "runtime.budget_escalation.*",
+            "model_settings_yaml": [
+                "provider",
+                "api_base",
+                "api_key",
+                "model",
+                "fallback.max_attempts/initial_wait_seconds/max_wait_seconds/retry_after_timeout",
             ],
             "runtime_yaml": [
                 "workspace.default_root",
@@ -87,11 +66,9 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
                 "agents.<agent>.behavior.*",
                 "agents.<agent>.modes.<mode>.description/prompt/behavior/tools",
             ],
-            "model_routing_yaml": [
-                "profiles.<name>.<tier>.primary/fallback",
-                "endpoints.<name>.*",
+            "llm_runtime_yaml": [
+                "context_window_fallback",
                 "truncation.trigger_ratio/target_ratio",
-                "endpoints.<name>.rate_limit",
             ],
             "state_machine_yaml": [
                 "states.<task>.agent/mode",
@@ -102,28 +79,35 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
             ],
         },
         "configuration_layers": [
-            "模型/预算/timeout/retry 日常只改 config/user_settings.yaml：llm.* 管模型，budget.* 管预算，runtime.* 管 timeout/retry/budget escalation。",
-            "T2/T3 文献流程机械阈值默认来自 config/agent_params.yaml 的 scout.behavior.t2_finalize/progress/literature_quality 和 reader.modes.read.behavior；完整 run 会先经 T2-PARAM-GATE 写 workspace-local literature/literature_params.json，覆盖保留候选数、精读目标、摘要轻读目标和写作语言/中文文献策略。",
-            "状态机、gate、CDR schema、venue style map 和 venue writing profiles 属于 config/system_config/ 系统契约；CLI 默认读取新路径，并保留 config/*.yaml 旧路径 fallback。",
-            "config/user_settings.yaml 会覆盖默认 agent_params.yaml 与 model_routing.yaml，但不改变状态机拓扑。",
+            "日常只改 config/model_settings.yaml 中的 provider、api_base、api_key、model 和 fallback，或运行 `researchos configure-llm`；所有 Agent 使用同一模型。",
+            "T2/T3 文献流程机械阈值默认来自 config/system_config/agent_params.yaml 的 scout.behavior.t2_finalize/progress/literature_quality 和 reader.modes.read.behavior；完整 run 会先经 T2-PARAM-GATE 写 workspace-local literature/literature_params.json，覆盖保留候选数、精读目标、摘要轻读目标和写作语言/中文文献策略。",
+            "状态机、gate、CDR schema 和 venue writing profiles 属于 config/system_config/ 系统契约；CLI 默认读取新路径，并保留 config/*.yaml 旧路径 fallback。",
             "state_machine.yaml 只定义拓扑、IO、gate 和少数 extra；默认配置不应写 llm/budget 强覆盖。",
             "agent_params.yaml 是 agent capability registry；T2/T3 文献流程阈值属于 behavior，不属于普通 LLM/budget 参数。",
             "literature/literature_params.json 是单个 workspace 的运行决策文件，优先于全局 yaml；要改本次运行覆盖规模，优先看这个文件。",
-            "model_routing.yaml 是 endpoint/profile/fallback 候选定义；不要在这里做日常默认 profile 切换。",
+            "config/system_config/llm_runtime.yaml 保存 context fallback 与 truncation 默认值；它不是日常用户配置。旧 endpoint/profile 文件仅为历史部署保留兼容读取。",
         ],
-        "user_settings": active_user_settings_summary(settings_path),
+        "model_settings": {
+            "path": str(settings_path),
+            "configured": bool(settings_path.exists()),
+            "provider": model_settings.get("provider"),
+            "api_base": model_settings.get("api_base"),
+            "model": model_settings.get("model"),
+            "api_key_configured": bool(model_settings.get("api_key")),
+            "fallback": model_settings.get("fallback"),
+        },
         "effective_runtime": {
             "global_budget": agent_params.get("global_budget") or {},
             "global_timeout": agent_params.get("global_timeout") or {},
             "retry_policy": agent_params.get("retry_policy") or {},
             "budget_escalation": agent_params.get("budget_escalation") or {},
         },
-        "effective_model_routing": {
-            "default_profile": model_routing.get("default_profile"),
-            "profiles": sorted((model_routing.get("profiles") or {}).keys()),
-            "endpoints": sorted((model_routing.get("endpoints") or {}).keys()),
-        },
-        "effective_agent_llm": _summarize_agent_llm(agent_params),
+        "effective_llm_runtime": load_llm_runtime_defaults(),
+        # Retained as a migration audit. These historical fields no longer
+        # route a new run away from model_settings.yaml, but a maintainer can
+        # still locate stale direct model declarations before removing them.
+        "legacy_agent_model_overrides": _scan_direct_llm_bindings(agent_params),
+        "agents_disabling_profile_fallback": _scan_direct_llm_bindings(agent_params),
         "state_machine_llm_overrides": _scan_state_machine_llm_overrides(state_machine),
         "partially_or_not_wired": {
             "runtime_yaml": [
@@ -137,11 +121,9 @@ def build_config_audit_summary(config_dir: Path) -> dict[str, Any]:
                 "gates.<id>.config.*",
             ],
         },
-        "agents_disabling_profile_fallback": _scan_direct_llm_bindings(agent_params),
         "notes": [
-            "最终 LLM 选择顺序：CLI/run-task override > state_machine task llm 强覆盖 > user_settings llm.agents/llm.defaults overlay > Python fallback；profile 名称再映射到 model_routing 候选链。",
-            "若 Agent 同时配置 llm.model + llm.endpoint，则会绕过 profile fallback，只走单一候选模型。",
-            "如果 user_settings 修改了 profile 但运行仍不生效，先看 state_machine_llm_overrides 是否列出了当前 task 的 profile/model/endpoint 强覆盖。",
+            "新默认配置只使用一个模型连接；历史 workspace 中保留的 profile/tier 记录仅用于审计，不会让新运行切换模型。",
+            "`configure-llm` 保存设置后会立即做最小连通性检查；运行命令发现缺失配置时也会先提示配置。",
             "gates.yaml 当前主要用于展示与分支跳转；type/config 阈值本身没有统一执行器。",
             "tool 级 timeout 大多仍定义在各工具类里；global_timeout.max_tool_call 现在作为全局上限生效。",
         ],

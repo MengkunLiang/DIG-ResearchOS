@@ -11,6 +11,9 @@ tools:
   - openalex_search
   - crossref_search
   - semantic_scholar_search
+  - arxiv_search
+  - search_papers
+  - multi_source_search
   - fetch_paper_pdf
   - extract_pdf_text
   - extract_paper_sections
@@ -19,7 +22,7 @@ tools:
   - update_skill_workflow
   - finish_task
 strict_tools: true
-model_tier: heavy
+model_tier: standard
 temperature: 0.15
 allowed_read_prefixes:
   - user_inputs/literature-comparison-studio/
@@ -29,6 +32,15 @@ allowed_read_prefixes:
 allowed_write_prefixes:
   - user_inputs/literature-comparison-studio/
   - literature/
+intake_tools:
+  - fetch_paper_pdf
+  - fetch_paper_metadata
+  - openalex_search
+  - crossref_search
+  - semantic_scholar_search
+  - arxiv_search
+  - search_papers
+  - multi_source_search
 outputs_expected:
   comparison_report: literature/comparison_studio.md
   comparison_csv: literature/comparison_studio.csv
@@ -38,14 +50,14 @@ outputs_expected:
 interaction:
   mode: guided
   language: zh-CN
-  summary: 输入比较目的与 DOI、标题、PDF 或笔记卡；系统会补齐可读来源、建立证据锚点，并输出可用于综述、baseline 选择或机制定位的对比结论。
+  summary: 输入比较目的与 DOI、标题、PDF 或论文阅读笔记，或只给明确主题和目标篇数；系统会检索、解析和尽量补齐可读来源，标注可回查的证据位置，并输出可用于综述、baseline 选择或机制定位的对比结论。
   request_required: true
   request_prompt: 请说明要比较什么、为何比较、希望得到什么决策，以及采用两篇、指定语料还是方法家族模式。
-  example_request: 比较这些 DOI 对 treatment heterogeneity 的处理，判断哪些可作为 baseline，哪些机制不能直接合并。
+  example_request: 检索并比较 treatment heterogeneity 主题的 4 篇近年论文，优先获取可读全文，判断哪些可作为 baseline，哪些机制不能直接合并。
   required_inputs:
     - id: comparison_request
       label: 比较问题与决策目标
-      description: 说明比较对象或其标识、比较目的、需要的轴和禁止推断的内容；也可以只给 DOI/标题列表。
+      description: 说明比较对象或其标识、比较目的、需要的轴和禁止推断的内容；可给 DOI/标题列表，也可明确主题、目标篇数、时间范围和来源偏好。
       paths:
         - user_inputs/literature-comparison-studio/request.md
       extensions: [.md]
@@ -54,7 +66,7 @@ interaction:
   optional_inputs:
     - id: source_manifest
       label: 来源文件或标识清单
-      description: 可选；一行一个 DOI、标题、PDF、paper note 或 record 路径。缺失项会进入定向补料/解析而不是被模型记忆替代。
+      description: 可选；一行一个 DOI、arXiv/OpenAlex ID、标题、PDF URL、workspace PDF、paper note 或 record 路径。缺失项会进入定向检索/解析或精确补料，而不是被模型记忆替代。
       paths:
         - user_inputs/literature-comparison-studio/sources.md
       extensions: [.md]
@@ -91,7 +103,7 @@ workflow:
       operations: [read request, parse identifiers, validate source roles]
     - id: source_readiness
       label: 来源解析与补料
-      objective: 尝试解析 DOI/标题/PDF/笔记卡；无法解析或无全文时向用户发出精确补料请求。
+      objective: 尝试解析 DOI/标题/PDF/笔记卡，或按已授权主题和篇数检索候选；无法解析或无全文时保留访问状态并向用户发出精确补料请求。
       operations: [metadata lookup, source retrieval, ask human]
       human_gate: true
     - id: evidence_extraction
@@ -106,8 +118,10 @@ workflow:
 
 # Literature Comparison Studio
 
-Use the source manifest only as a starting point. A DOI/title result is metadata
-evidence; a PDF is not evidence until the relevant text/section has been read. Create
+Use the source manifest or an explicitly scoped topic-plus-count request only as a
+starting point. For topic retrieval, persist the query, requested count, candidate list,
+selection rule, and access results before extracting evidence. A DOI/title result is
+metadata evidence; a PDF is not evidence until the relevant text/section has been read. Create
 or reuse lightweight paper cards only within the declared workspace paths. If a
 decision-critical comparison axis cannot be sourced, leave it `unknown`, place it in
 the missing-evidence ledger, and ask the human for an upload or a narrower question.

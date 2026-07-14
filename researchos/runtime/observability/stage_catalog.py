@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 
 
 @dataclass(frozen=True)
@@ -16,42 +17,42 @@ class StageProfile:
 
 
 _PROFILES: dict[str, StageProfile] = {
-    "T1": StageProfile("T1 · Research Scope Initialization", "建立可审计研究范围与桥接检索边界", "研究问题、约束和跨域方向是否被明确且可执行？", ("规范项目范围", "归一化 seed", "生成 bridge 计划")),
-    "T2": StageProfile("T2 · Literature Discovery & Domain Mapping", "构建可信文献池、引用结构和阅读队列", "哪些论文、领域关系和阅读优先级足以支撑后续综合？", ("Query portfolio", "检索与去重", "metadata 验证", "citation expansion", "阅读队列"), "结束后进入覆盖确认 Gate。"),
-    "T3": StageProfile("T3 · Evidence-Grounded Literature Reading", "把候选论文转为可追溯的 section 级证据", "每篇论文实际支持什么，哪些内容仍不被支持？", ("访问级别判断", "PDF section 阅读", "证据卡", "比较表")),
-    "T3.5": StageProfile("T3.5 · Literature Synthesis", "组织跨论文机制、贡献和张力", "领域的共同机制、边界、冲突和待补证据分别是什么？", ("method family", "contribution space", "mechanism clusters", "tension/transfer")),
-    "T3.6-GATE-SURVEY": StageProfile("T3.6 · Survey Decision", "判断当前语料是否足以单独写成综述", "taxonomy 覆盖与语料充分性是否达到可审计 survey 的门槛？", ("corpus sufficiency", "taxonomy coverage", "human decision"), "Survey 是可选分支；无论是否选择，T3.5 synthesis 仍供 T4 使用。"),
-    "T3.6-PLAN": StageProfile("T3.6 · Survey Taxonomy Plan", "把综合语料编译为 survey taxonomy 与章节计划", "现有方法家族、机制和证据能否形成可解释的分类结构？", ("corpus inventory", "taxonomy plan", "coverage gaps"), "不把检索覆盖缺口直接称作研究缺口。"),
-    "T3.6-STATE": StageProfile("T3.6 · Survey Section State", "为 survey 的各章节绑定可用证据", "每个 taxonomy 分支是否拥有足够的具体论文和证据类型？", ("section state", "evidence binding", "citation plan")),
-    "T3.6-VISUALS": StageProfile("T3.6 · Survey Taxonomy Visual", "生成唯一允许的事实性 taxonomy overview", "survey taxonomy 是否有足够明确的结构可被忠实可视化？", ("taxonomy structure", "explicit paper links", "visual manifest"), "默认最多一图；性能、相对提升、筛选分数和推断性热图一律禁止。"),
-    "T3.6-ASSEMBLE": StageProfile("T3.6 · Survey Assembly", "拼装 survey 并执行引用、覆盖和编译审计", "当前综述是否覆盖 taxonomy、证据边界和模板编译要求？", ("assemble", "coverage audit", "citation audit", "LaTeX compile")),
-    "T3.6-COMPILE": StageProfile("T3.6 · Survey Real Compilation", "以本地或 Docker TeX 后端真实编译 survey", "当前 TeX 源、图表与引用是否能生成可核验 PDF？", ("LaTeX preflight", "compile", "log/fingerprint audit")),
-    "T4": StageProfile("T4 · Idea Generation & Candidate Governance", "从证据综合形成可选择、可反驳的研究方向", "哪些新方向由主线证据支持，哪些仍需要重构或补检？", ("主线前向发散", "bridge synthesis", "coverage supplements", "Pass 1", "Pass 2", "候选治理"), "Coverage supplements do not replace mainline reasoning."),
-    "T4.5": StageProfile("T4.5 · Novelty & Collision Audit", "审计新颖性、机制差异与必须基线", "候选是否只是已有工作的常规组合，最低证据门槛是什么？", ("collision review", "mechanism tuple", "design-rationale tuple", "baseline requirements")),
-    "T5-REBOOST-GATE": StageProfile("T5 · Research-to-Execution Reboost", "把研究意图重新编译为外部执行约束", "实验执行必须保留什么机制、基线和 claim 边界？", ("Pre-T5 inventory", "context reboost", "claim boundaries")),
-    "T5-HANDOFF": StageProfile("T5 · External Experiment Handoff", "生成可审计的执行 handoff 与项目专属 Skill", "外部执行器应如何实现、验证并回传结果？", ("handoff pack", "project skill specialization", "execution contract")),
-    "T5-SKILL-CUSTOMIZATION-GATE": StageProfile("T5 · Project Skill Review", "由人工确认项目专属执行 Skill 与职责", "生成的 root Skill 和 sub-skills 是否覆盖资源、基线、运行和回传边界？", ("skill inventory", "responsibility review", "human decision")),
-    "T5-EXPR-MATERIAL-GATE": StageProfile("T5 · External Material Intake", "确认数据、仓库、权重和 baseline 材料是否就绪", "外部执行器是否已有真实运行所需的项目材料？", ("material inventory", "missing material notice", "human decision")),
-    "T5-EXECUTOR-GATE": StageProfile("T5 · Executor Selection", "选择外部实验执行方式", "哪种执行器能够在既定资源、权限和审计契约下完成实验？", ("executor options", "side-effect confirmation", "human decision")),
-    "T5-DRY-RUN": StageProfile("T5 · Executor Protocol Dry Run", "验证外部执行器文件协议", "在不做真实实验时，handoff、状态与 result pack 契约能否联通？", ("mock handoff", "protocol validation", "result-pack schema")),
-    "T5-EXTERNAL-WAIT": StageProfile("T5 · External Executor Wait", "等待并验证外部执行器回传", "result pack 是否包含可审计的 run、config、log 和原始结果？", ("executor status", "result-pack readiness", "human/external wait")),
-    "T7-INGEST": StageProfile("T7 · External Result Ingestion", "摄取外部实验的原始运行、配置和日志", "哪些运行是可被审计的实验事实？", ("result pack ingest", "run inventory", "evidence index")),
-    "T7-AUDIT": StageProfile("T7 · Experiment Integrity Audit", "核验结果 provenance、公平性和基线覆盖", "哪些结果可以进入论文证据，哪些必须降级或拒绝？", ("integrity", "baseline coverage", "metric provenance", "fairness")),
-    "T7-POST-NOVELTY": StageProfile("T7 · Post-Experiment Novelty Review", "以已实现方法和结果重审贡献边界", "计划贡献是否被实现和证据支持？", ("implemented-vs-planned", "collision update", "claim boundary")),
-    "T7-CLAIMS": StageProfile("T7 · Result-to-Claim Compilation", "把审计结果转换为保守论文 claim", "每条 claim 的支持等级、限制与禁止表述是什么？", ("claim mapping", "evidence pack", "must-not-claim", "figure/table evidence")),
-    "T7.5": StageProfile("T7.5 · PI Evidence Decision", "由人工确认下一步研究决策", "现有证据足以写作，还是应补实验、回到 Idea 或停止？", ("evidence sufficiency", "human decision")),
-    "T8-RESOURCE": StageProfile("T8 · Manuscript Resource Index", "索引写作证据并建立章节对齐关系", "每个论点、章节、图表应使用哪些可追溯材料？", ("resource index", "evidence plan", "alignment matrix", "claim ledger")),
-    "T8-STYLE-GATE": StageProfile("T8 · Venue and Writing Style", "确认稿件语言、venue 与叙事风格", "篇幅、论证方式和模板应如何匹配 UTD/期刊或 CCF-A 会议目标？", ("venue profile", "language policy", "human decision")),
-    "T8-WRITE": StageProfile("T8 · Paper Storyline & Outline", "建立 venue-aware 研究叙事与章节结构", "研究动机、技术贡献和证据链如何组成一个可验证故事？", ("outline", "storyline", "contribution/evidence alignment")),
-    "T8-SECTION-PLAN": StageProfile("T8 · Section Writing Plan", "初始化逐章节写作状态", "每个章节应承担何种论证职责并使用哪些证据？", ("paper state", "section outlines")),
-    "T8-DRAFT": StageProfile("T8 · Manuscript Assembly", "拼装完整论文并进行写作审计", "当前草稿是否可追溯、连贯且符合证据边界？", ("assemble manuscript", "craft audit", "claim audit")),
-    "T8-SELF-CHECK": StageProfile("T8 · Author Self-check", "在外部审稿前检查论证、引用和 claim 边界", "当前论文是否存在显著的证据错配、叙事断裂或格式问题？", ("self review", "claim/citation audit", "patch plan")),
-    "T8-REVIEW-1": StageProfile("T8 · Review Round 1", "进行第一轮结构化论文审阅", "研究动机、技术贡献、实验和写作证据链有哪些高优先级问题？", ("review findings", "severity ranking", "patch list")),
-    "T8-REVIEW-2": StageProfile("T8 · Review Round 2", "对修订后的论文做独立复审", "第一轮修订是否真正消除了问题，尚有哪些投稿阻塞项？", ("independent review", "remaining risks", "patch list")),
-    "T8-REVISE-1": StageProfile("T8 · Revision Round 1", "按第一轮审稿问题修订并重审证据绑定", "每个 patch 是否可追溯到对应的证据、章节和审稿发现？", ("apply patches", "update state", "claim audit")),
-    "T8-REVISE-2": StageProfile("T8 · Revision Round 2", "按第二轮审稿问题完成最终修订", "最终版本是否保持证据边界并消除剩余阻塞项？", ("apply patches", "final consistency", "claim audit")),
-    "T8-PAPER-CLAIM-AUDIT": StageProfile("T8 · Final Claim Audit", "在提交前核验论文所有实质主张", "每个强 claim 是否仍与当前实验、引用和 source 版本一致？", ("claim ledger", "evidence match", "must-not-claim")),
-    "T9": StageProfile("T9 · Submission Bundle & Real Compilation", "生成可提交 bundle 并证明真实编译", "当前提交版本的 PDF、依赖、引用和 claim audit 是否一致？", ("venue migration", "bundle manifest", "LaTeX compile", "fingerprint validation")),
+    "T1": StageProfile("T1 · 研究范围初始化", "建立可审计研究范围与跨领域检索边界", "研究问题、约束和跨领域方向是否已经明确且可执行？", ("明确项目范围", "整理种子论文", "生成跨领域检索计划")),
+    "T2": StageProfile("T2 · 文献检索与领域映射", "构建可信文献池、引用关系和阅读队列", "哪些论文、领域关系和阅读优先级足以支撑后续综合？", ("设计检索组合", "检索与去重", "核验论文信息", "扩展参考文献", "建立阅读队列"), "完成后会请你确认文献覆盖是否足够。"),
+    "T3": StageProfile("T3 · 基于原文的文献阅读", "把候选论文整理为可追溯的论文阅读笔记", "每篇论文实际支持什么，哪些内容仍没有足够依据？", ("判断原文可读性", "阅读 PDF", "整理论文阅读笔记", "更新比较表")),
+    "T3.5": StageProfile("T3.5 · 文献综合", "组织跨论文的机制、贡献和分歧", "领域的共同机制、适用边界、冲突和待补证据分别是什么？", ("归纳方法类别", "梳理贡献空间", "聚类机制", "识别冲突与迁移关系")),
+    "T3.6-GATE-SURVEY": StageProfile("T3.6 · 是否撰写综述", "判断当前文献是否足以单独写成综述", "分类框架覆盖度和材料充分性是否达到可核验综述的要求？", ("检查材料充分性", "检查分类覆盖度", "等待你的决定"), "综述是可选分支；无论是否选择，T3.5 的文献综合仍会供 T4 使用。"),
+    "T3.6-PLAN": StageProfile("T3.6 · 综述分类框架规划", "把综合材料整理为综述分类框架和章节计划", "现有方法类别、机制和证据能否形成易理解的分类结构？", ("盘点文献材料", "规划分类框架", "识别覆盖不足"), "检索覆盖不足不等同于研究领域的真实空白。"),
+    "T3.6-STATE": StageProfile("T3.6 · 综述章节依据整理", "为综述各章节绑定可用依据", "每个分类分支是否拥有足够的具体论文和证据类型？", ("整理章节状态", "绑定论文依据", "规划引用")),
+    "T3.6-VISUALS": StageProfile("T3.6 · 综述分类图", "生成忠实反映分类框架的概览图", "分类框架是否足够明确，能够被忠实画成一张图？", ("梳理分类结构", "关联具体论文", "生成图表说明"), "默认最多生成一张图；不会制作性能比较、相对提升、筛选分数或推断性热图。"),
+    "T3.6-ASSEMBLE": StageProfile("T3.6 · 综述拼装与审计", "拼装综述并检查引用、覆盖和编译情况", "当前综述是否覆盖分类框架、依据边界和模板编译要求？", ("拼装综述", "检查覆盖情况", "检查引用", "编译 LaTeX")),
+    "T3.6-COMPILE": StageProfile("T3.6 · 综述真实编译", "使用本地或 Docker TeX 环境真实编译综述", "当前 TeX 源文件、图表与引用是否能生成可核验 PDF？", ("编译前检查", "编译", "检查日志与版本指纹")),
+    "T4": StageProfile("T4 · 研究方向生成与比较", "从文献综合形成可选择、可反驳的研究方向", "哪些新方向由主线证据支持，哪些仍需要重构或补充检索？", ("从主线证据发散", "综合跨领域材料", "整理补充方向", "第一轮生成", "第二轮核验", "生成候选比较卡"), "补充方向用于检验和扩展主线，不会替代主线依据。"),
+    "T4.5": StageProfile("T4.5 · 新颖性与相似工作审计", "审计新颖性、机制差异和必需基线", "候选是否只是已有工作的常规组合，最低依据门槛是什么？", ("检查相似工作", "核验机制差异", "核验设计理由", "确认必需基线")),
+    "T5-REBOOST-GATE": StageProfile("T5 · 研究意图整理为实验约束", "把研究意图整理为外部执行时必须遵守的约束", "实验执行必须保留哪些机制、基线和论文主张边界？", ("盘点已有材料", "重整研究上下文", "明确主张边界")),
+    "T5-HANDOFF": StageProfile("T5 · 外部实验交接", "生成可审计的执行说明和项目专属 Skill", "外部执行器应如何实现、验证并回传结果？", ("生成交接说明", "生成项目专属 Skill", "明确执行约定")),
+    "T5-SKILL-CUSTOMIZATION-GATE": StageProfile("T5 · 项目专属 Skill 审查", "由你确认项目专属执行 Skill 与职责", "生成的主 Skill 和子 Skill 是否覆盖材料、基线、运行和回传边界？", ("查看 Skill 清单", "检查职责划分", "等待你的决定")),
+    "T5-EXPR-MATERIAL-GATE": StageProfile("T5 · 外部实验材料准备", "确认数据、代码仓库、模型权重和基线材料是否就绪", "外部执行器是否已有真实运行所需的项目材料？", ("盘点材料", "说明缺少材料", "等待你的决定")),
+    "T5-EXECUTOR-GATE": StageProfile("T5 · 选择外部实验执行方式", "选择外部实验的执行方式", "哪种执行方式能够在既定资源、权限和审计约定下完成实验？", ("展示执行方式", "确认可能的副作用", "等待你的决定")),
+    "T5-DRY-RUN": StageProfile("T5 · 外部执行协议演练", "验证外部执行器之间的文件交接是否正常", "在不做真实实验时，交接说明、状态和结果文件能否正常衔接？", ("模拟交接", "检查文件协议", "检查结果文件格式")),
+    "T5-EXTERNAL-WAIT": StageProfile("T5 · 等待外部执行器回传", "等待并验证外部执行器回传的结果", "结果文件是否包含可审计的运行记录、配置、日志和原始结果？", ("检查执行状态", "检查结果文件是否就绪", "等待外部执行完成")),
+    "T7-INGEST": StageProfile("T7 · 接收外部实验结果", "接收外部实验的原始运行记录、配置和日志", "哪些运行可以作为可核验的实验事实？", ("读取结果文件", "盘点运行记录", "建立证据索引")),
+    "T7-AUDIT": StageProfile("T7 · 实验完整性审计", "核验结果来源、公平性和基线覆盖", "哪些结果可以进入论文依据，哪些必须降级或拒绝？", ("检查完整性", "检查基线覆盖", "核验指标来源", "检查公平性")),
+    "T7-POST-NOVELTY": StageProfile("T7 · 实验后的新颖性复核", "以已经实现的方法和结果重新审查贡献边界", "计划贡献是否已经实现，并获得结果支持？", ("比较计划与实现", "更新相似工作风险", "明确主张边界")),
+    "T7-CLAIMS": StageProfile("T7 · 整理结果与论文主张", "把审计结果转换为谨慎的论文主张", "每条主张的支持强度、限制和禁止表述分别是什么？", ("对应主张与证据", "整理证据包", "标注禁止表述", "关联图表依据")),
+    "T7.5": StageProfile("T7.5 · 确认研究证据是否充足", "由你确认下一步研究决策", "现有证据足以进入写作，还是应补实验、回到研究方向或停止？", ("评估证据是否充足", "等待你的决定")),
+    "T8-RESOURCE": StageProfile("T8 · 论文写作资料索引", "索引写作依据并建立章节对齐关系", "每个论点、章节和图表应使用哪些可追溯材料？", ("整理资料索引", "规划证据使用", "建立章节对齐表", "维护主张清单")),
+    "T8-STYLE-GATE": StageProfile("T8 · 确认投稿目标与写作风格", "确认稿件语言、投稿目标和叙事风格", "篇幅、论证方式和模板如何匹配目标期刊或会议？", ("查看投稿目标", "确认语言策略", "等待你的决定")),
+    "T8-WRITE": StageProfile("T8 · 论文叙事与大纲", "建立与投稿目标匹配的研究叙事和章节结构", "研究动机、技术贡献和证据链如何组成可验证的故事？", ("撰写大纲", "组织叙事", "对齐贡献与证据")),
+    "T8-SECTION-PLAN": StageProfile("T8 · 章节写作计划", "初始化逐章节写作状态", "每个章节应承担什么论证职责，并使用哪些依据？", ("建立论文状态", "规划章节大纲")),
+    "T8-DRAFT": StageProfile("T8 · 论文拼装", "拼装完整论文并进行写作审计", "当前草稿是否可追溯、连贯且符合证据边界？", ("拼装论文", "检查写作质量", "检查论文主张")),
+    "T8-SELF-CHECK": StageProfile("T8 · 作者自检", "在外部审稿前检查论证、引用和主张边界", "当前论文是否存在明显的证据错配、叙事断裂或格式问题？", ("作者自检", "检查主张与引用", "制定修改计划")),
+    "T8-REVIEW-1": StageProfile("T8 · 第一轮论文审阅", "进行第一轮结构化论文审阅", "研究动机、技术贡献、实验和写作证据链有哪些高优先级问题？", ("整理审阅发现", "按严重程度排序", "制定修改清单")),
+    "T8-REVIEW-2": StageProfile("T8 · 第二轮论文审阅", "对修订后的论文进行独立复审", "第一轮修订是否真正解决了问题，尚有哪些投稿阻塞项？", ("独立复审", "识别剩余风险", "制定修改清单")),
+    "T8-REVISE-1": StageProfile("T8 · 第一轮修订", "按第一轮审阅问题修订并重新检查证据绑定", "每项修改是否可以追溯到对应的依据、章节和审阅意见？", ("应用修改", "更新状态", "检查论文主张")),
+    "T8-REVISE-2": StageProfile("T8 · 第二轮修订", "按第二轮审阅问题完成最终修订", "最终版本是否保持证据边界并消除剩余阻塞项？", ("应用修改", "检查最终一致性", "检查论文主张")),
+    "T8-PAPER-CLAIM-AUDIT": StageProfile("T8 · 最终论文主张审计", "在提交前核验论文所有实质主张", "每个强主张是否仍与当前实验、引用和原始材料一致？", ("维护主张清单", "核验证据匹配", "标注禁止表述")),
+    "T9": StageProfile("T9 · 投稿包与真实编译", "生成可提交的投稿包并证明真实编译成功", "当前投稿版本的 PDF、依赖、引用和主张审计是否一致？", ("迁移投稿模板", "生成投稿清单", "编译 LaTeX", "核验版本指纹")),
 }
 
 
@@ -59,15 +60,15 @@ def stage_profile(task_id: str) -> StageProfile:
     if task_id in _PROFILES:
         return _PROFILES[task_id]
     if task_id.startswith("T2-"):
-        return StageProfile(f"{task_id} · Literature Decision Gate", "确认文献覆盖或语言/阅读参数", "当前覆盖计划是否适合研究目标？", ("读取阶段材料", "展示决策影响", "等待人工选择"))
+        return StageProfile(f"{task_id} · 文献方案确认", "确认文献覆盖或语言与阅读参数", "当前覆盖计划是否适合研究目标？", ("读取已有材料", "说明不同选择的影响", "等待你的决定"))
     if task_id.startswith("T3.6-"):
-        return StageProfile(f"{task_id} · Survey Branch", "构建、审查或编译 taxonomy-driven survey", "综述语料、taxonomy 与章节是否足以形成独立 survey？", ("taxonomy/corpus", "section state", "coverage/review", "compile"), "这是可选 Survey 分支，不替代主线 T4。")
+        return StageProfile(f"{task_id} · 综述分支", "构建、审查或编译基于分类框架的综述", "综述文献、分类框架和章节是否足以形成独立综述？", ("检查分类与文献", "整理章节依据", "检查覆盖与审阅", "编译"), "这是可选的综述分支，不替代主线 T4。")
     if task_id.startswith("T5-"):
-        return StageProfile(f"{task_id} · External Execution Preparation", "准备外部实验或等待执行器回传", "当前实验材料、执行器与回传契约是否就绪？", ("artifact inventory", "handoff/executor status", "human decision if needed"))
+        return StageProfile(f"{task_id} · 外部执行准备", "准备外部实验或等待外部执行器回传", "当前实验材料、执行方式与回传要求是否就绪？", ("盘点文件", "检查交接与执行状态", "必要时等待你的决定"))
     if task_id.startswith("T8-SEC-"):
-        return StageProfile(f"{task_id} · Manuscript Section Draft", "写作一个有证据边界的论文章节", "本节是否只使用允许的主张、引用和实验事实？", ("section evidence", "draft", "state update"))
+        return StageProfile(f"{task_id} · 论文章节起草", "写作一个遵守证据边界的论文章节", "本节是否只使用允许的主张、引用和实验事实？", ("读取章节依据", "起草章节", "更新状态"))
     if task_id.startswith("T8-REVIEW") or task_id.startswith("T8-REVISE") or task_id == "T8-SELF-CHECK":
-        return StageProfile(f"{task_id} · Manuscript Review & Revision", "审查或修订当前论文版本", "发现的问题是否被追溯到证据、章节和具体 patch？", ("review findings", "patches", "audit"))
+        return StageProfile(f"{task_id} · 论文审阅与修订", "审查或修订当前论文版本", "发现的问题是否已经追溯到依据、章节和具体修改？", ("整理审阅发现", "执行修改", "重新审计"))
     if task_id.startswith("SKILL_INTAKE_"):
         skill_name = task_id.removeprefix("SKILL_INTAKE_")
         return StageProfile(
@@ -86,7 +87,14 @@ def stage_profile(task_id: str) -> StageProfile:
             ("读取已验证材料", "执行专属分析", "记录风险/未支持项", "写入可恢复产物"),
             "工具调用、输入边界和产物路径会单独记录；不把工具提示当作学术结论。",
         )
-    return StageProfile(f"{task_id} · ResearchOS Stage", "推进当前研究工作流节点", "该节点的输入、判断和输出是否满足下游需要？", ("读取 Artifact", "执行阶段判断", "写入可审计结果"))
+    return StageProfile(f"{task_id} · ResearchOS 当前步骤", "推进当前研究工作流步骤", "本步骤的输入、判断和输出是否满足后续需要？", ("读取已有文件", "完成本步判断", "写入可核验结果"))
+
+
+def stage_display_name(task_id: str) -> str:
+    """Return a user-facing stage name without exposing internal task codes."""
+
+    title = stage_profile(task_id).title
+    return re.sub(r"^T\d+(?:\.\d+)?(?:-[A-Z0-9-]+)?\s*·\s*", "", title).strip() or "ResearchOS"
 
 
 _ARTIFACT_MEANINGS: tuple[tuple[str, str], ...] = (
@@ -99,11 +107,11 @@ _ARTIFACT_MEANINGS: tuple[tuple[str, str], ...] = (
     ("papers_backlog.jsonl", "暂未进入 active pool 的候选及其保留原因"),
     ("deep_read_queue.jsonl", "T3 的优先精读队列与保护 slot"),
     ("domain_map.json", "引用/领域结构提示，不是质量或新颖性结论"),
-    ("paper_notes", "section 级论文阅读证据卡"),
+    ("deep_read_notes", "论文阅读笔记"),
     ("comparison_table.csv", "跨论文方法、证据和局限比较表"),
     ("synthesis_workbench.json", "综合阶段的机制、贡献和张力工作台"),
     ("synthesis.md", "面向人类的文献综合结论"),
-    ("_candidate_directions.json", "T4 Gate1 的结构化候选池"),
+    ("_candidate_directions.json", "T4 供人工选择的结构化候选池"),
     ("idea_scorecard.yaml", "选定方向的证据、风险和评分链"),
     ("hypotheses.md", "可证伪假设与观察预测"),
     ("exp_plan.yaml", "实验计划、基线、指标与停止条件"),
@@ -136,12 +144,12 @@ def artifact_meaning(path: str) -> str:
         return "LaTeX 章节或论文源文件"
     if normalized.endswith(".md"):
         return "面向人工的阶段结论、审计或阅读材料"
-    return "阶段 Artifact"
+    return "当前步骤的文件"
 
 
 def artifact_consumers(task_id: str, path: str) -> str:
     prefix = Path(path).as_posix()
-    if prefix.startswith("literature/paper_notes") or prefix.startswith("literature/notes_manifest"):
+    if prefix.startswith("literature/deep_read_notes") or prefix.startswith("literature/notes_manifest"):
         return "T3.5 / T4 / T4.5 / T5 / 外部执行器 / T7 / T8"
     if prefix.startswith("literature/"):
         return "T3 / T3.5 / T4 / T4.5 / T5 / T7 / T8"
@@ -155,4 +163,4 @@ def artifact_consumers(task_id: str, path: str) -> str:
         return "T8 / T9"
     if prefix.startswith("submission/"):
         return "投稿人工检查"
-    return "后续状态机节点"
+    return "后续步骤"

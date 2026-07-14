@@ -43,8 +43,8 @@ T3_INPUT_FINGERPRINT_PATHS = {
     "seed_constraints": "user_seeds/seed_constraints.md",
     "legacy_seed_constraints": "seeds/T2_scout/constraints.md",
     "seed_external_resources": "user_seeds/seed_external_resources.jsonl",
-    "agent_params_config": "config/agent_params.yaml",
-    "user_settings_config": "config/user_settings.yaml",
+    "agent_params_config": "config/system_config/agent_params.yaml",
+    "model_settings_config": "config/model_settings.yaml",
 }
 
 
@@ -364,14 +364,14 @@ def _resolve_fingerprint_path(workspace_dir: Path, rel_path: str) -> Path:
 
 def _collect_note_infos(workspace_dir: Path, literature_dir: Path) -> list[dict[str, Any]]:
     note_roots = [
-        literature_dir / "paper_notes",
-        literature_dir / "paper_notes_bridge",
+        literature_dir / "deep_read_notes",
+        literature_dir / "bridge_notes",
     ]
     infos: list[dict[str, Any]] = []
     for root in note_roots:
         if not root.exists():
             continue
-        pattern = "**/*.md" if root.name == "paper_notes_bridge" else "*.md"
+        pattern = "**/*.md" if root.name == "bridge_notes" else "*.md"
         for note_path in sorted(root.glob(pattern)):
             if not is_paper_note_file(note_path):
                 continue

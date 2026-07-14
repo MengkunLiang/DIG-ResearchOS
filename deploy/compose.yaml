@@ -9,7 +9,7 @@ services:
       - path: ../.env
         required: false
     environment:
-      RESEARCHOS_CONFIG: /app/config/user_settings.yaml
+      RESEARCHOS_MODEL_SETTINGS: /app/config/model_settings.yaml
       RESEARCHOS_WORKSPACE_ROOT: /app/workspace
       RESEARCHOS_HOST_WORKSPACE_ROOT: ${RESEARCHOS_HOST_WORKSPACE_ROOT:-./workspace}
       RESEARCHOS_IMAGE: ${RESEARCHOS_IMAGE:-researchos/system:latest}

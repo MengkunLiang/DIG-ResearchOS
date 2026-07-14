@@ -20,6 +20,22 @@ from .workflow import parse_skill_workflow
 
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
+# Guided intake is deliberately narrower than a running Skill. These tools can
+# resolve a source a researcher explicitly names, but cannot mutate research
+# outputs, execute a shell, or inspect unrelated workspace material.
+_SAFE_GUIDED_INTAKE_TOOLS = frozenset(
+    {
+        "fetch_paper_pdf",
+        "fetch_paper_metadata",
+        "openalex_search",
+        "crossref_search",
+        "semantic_scholar_search",
+        "arxiv_search",
+        "search_papers",
+        "multi_source_search",
+    }
+)
+
 
 def _as_mapping(value: Any, *, label: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
@@ -124,6 +140,7 @@ class SkillInteraction:
     required_inputs: tuple[SkillInputRequirement, ...]
     optional_inputs: tuple[SkillInputRequirement, ...]
     outputs: tuple[SkillOutputDescriptor, ...]
+    intake_tools: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -139,6 +156,15 @@ class SkillInputStatus:
 
 
 @dataclass(frozen=True)
+class SkillDiscoveredFile:
+    """One bounded file-system fact shown before a guided Skill starts."""
+
+    relative_path: str
+    size_bytes: int
+    matching_input_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class SkillReadiness:
     """Input-check result that can be persisted and rendered without an LLM."""
 
@@ -149,6 +175,8 @@ class SkillReadiness:
     input_statuses: tuple[SkillInputStatus, ...]
     request_ready: bool
     workspace_mode: str = "standalone"
+    scanned_roots: tuple[str, ...] = ()
+    discovered_files: tuple[SkillDiscoveredFile, ...] = ()
 
     @property
     def ready(self) -> bool:
@@ -220,6 +248,42 @@ def _parse_output(raw: Any, *, label: str) -> SkillOutputDescriptor:
     )
 
 
+def _parse_intake_tools(metadata: Mapping[str, Any]) -> tuple[str, ...]:
+    """Parse the deliberately small remote-source capability set for intake.
+
+    A guided intake can download a paper that a researcher identifies or look
+    up an explicitly requested topic. It must not inherit the running Skill's
+    complete tool surface, because intake happens before normal evidence and
+    output guards are in force.
+    """
+
+    raw = metadata.get("intake_tools", [])
+    if raw is None:
+        raw = []
+    if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
+        raise ConfigurationError("intake_tools must be a list of tool names")
+    declared = metadata.get("tools", [])
+    if not isinstance(declared, list) or not all(isinstance(item, str) for item in declared):
+        raise ConfigurationError("tools must be a list of tool names when intake_tools is declared")
+    normalized: list[str] = []
+    for item in raw:
+        tool_name = item.strip()
+        if not tool_name:
+            raise ConfigurationError("intake_tools must not contain an empty tool name")
+        if tool_name not in _SAFE_GUIDED_INTAKE_TOOLS:
+            raise ConfigurationError(
+                "intake_tools may only declare safe source-resolution tools; "
+                f"received {tool_name!r}"
+            )
+        if tool_name not in declared:
+            raise ConfigurationError(
+                f"intake_tools tool {tool_name!r} must also be declared in tools"
+            )
+        if tool_name not in normalized:
+            normalized.append(tool_name)
+    return tuple(normalized)
+
+
 def parse_skill_interaction(metadata: Mapping[str, Any]) -> SkillInteraction | None:
     """Parse an optional guided interaction contract from skill frontmatter.
 
@@ -281,12 +345,18 @@ def parse_skill_interaction(metadata: Mapping[str, Any]) -> SkillInteraction | N
         required_inputs=required_inputs,
         optional_inputs=optional_inputs,
         outputs=outputs,
+        intake_tools=_parse_intake_tools(metadata),
     )
 
 
 def validate_skill_metadata(metadata: Mapping[str, Any], *, source: Path) -> None:
     """Reject malformed public contracts at discovery time, before an LLM run."""
 
+    # Validate the profile declaration at discovery time, alongside ordinary
+    # input/output contracts.  Import lazily to avoid a loader/contracts cycle.
+    from .capabilities import resolve_capability_profiles
+
+    resolve_capability_profiles(str(metadata.get("name") or source.parent.name), metadata)
     interaction = parse_skill_interaction(metadata)
     # Parse the optional integrated-workflow declaration during discovery so a
     # malformed phase list cannot become a late runtime failure after an LLM
@@ -303,6 +373,8 @@ def validate_skill_metadata(metadata: Mapping[str, Any], *, source: Path) -> Non
         _as_string(key, label=f"outputs_expected key in {source}")
         _safe_relative_path(value, label=f"outputs_expected.{key} in {source}")
     if interaction is None:
+        if "intake_tools" in metadata:
+            raise ConfigurationError(f"intake_tools requires a guided interaction contract: {source}")
         if workflow is not None:
             raise ConfigurationError(f"integrated workflow requires an interaction contract: {source}")
         return
@@ -400,6 +472,76 @@ def _check_requirement(workspace: Path, requirement: SkillInputRequirement) -> S
     return SkillInputStatus(requirement=requirement, state="missing", detail=detail)
 
 
+def _discover_skill_input_files(
+    *,
+    workspace: Path,
+    skill_name: str,
+    interaction: SkillInteraction,
+) -> tuple[tuple[str, ...], tuple[SkillDiscoveredFile, ...]]:
+    """Inspect only declared intake areas before any model call.
+
+    The scan is intentionally bounded and non-semantic: it tells a researcher
+    what is present without treating an arbitrary file as a valid input. This
+    makes the first screen useful while preserving the explicit path contract.
+    """
+
+    requirements = interaction.required_inputs + interaction.optional_inputs
+    declared_paths = {
+        Path(path).as_posix(): requirement.key
+        for requirement in requirements
+        for path in requirement.paths
+    }
+    allowed_extensions = {
+        extension
+        for requirement in requirements
+        for extension in requirement.extensions
+    }
+    root_paths = {Path(f"user_inputs/{skill_name}")}
+    root_paths.update(Path(path).parent for path in declared_paths)
+    scanned_roots: list[str] = []
+    discovered: dict[str, SkillDiscoveredFile] = {}
+    for root in sorted(root_paths, key=lambda value: value.as_posix()):
+        absolute_root = workspace / root
+        if not absolute_root.exists() or not absolute_root.is_dir():
+            continue
+        scanned_roots.append(root.as_posix())
+        pending = [(absolute_root, 0)]
+        while pending and len(discovered) < 32:
+            directory, depth = pending.pop(0)
+            try:
+                children = sorted(directory.iterdir(), key=lambda item: item.name.casefold())
+            except OSError:
+                continue
+            for child in children:
+                if child.name.startswith("_") or child.name in {"README.md", "_DIR_GUIDE.md"}:
+                    continue
+                if child.is_dir() and depth < 1:
+                    pending.append((child, depth + 1))
+                    continue
+                if not child.is_file():
+                    continue
+                if allowed_extensions and child.suffix.lower() not in allowed_extensions:
+                    continue
+                try:
+                    relative = child.relative_to(workspace).as_posix()
+                    size_bytes = child.stat().st_size
+                except OSError:
+                    continue
+                matched = tuple(
+                    requirement.key
+                    for requirement in requirements
+                    if relative in requirement.paths
+                )
+                discovered[relative] = SkillDiscoveredFile(
+                    relative_path=relative,
+                    size_bytes=size_bytes,
+                    matching_input_ids=matched,
+                )
+                if len(discovered) >= 32:
+                    break
+    return tuple(scanned_roots), tuple(discovered.values())
+
+
 def check_skill_readiness(*, skill_name: str, metadata: Mapping[str, Any], workspace: Path, request: str) -> SkillReadiness:
     """Check a Skill's request and declared input files without calling an LLM."""
 
@@ -418,6 +560,11 @@ def check_skill_readiness(*, skill_name: str, metadata: Mapping[str, Any], works
         _check_requirement(workspace, requirement)
         for requirement in interaction.required_inputs + interaction.optional_inputs
     )
+    scanned_roots, discovered_files = _discover_skill_input_files(
+        workspace=workspace,
+        skill_name=skill_name,
+        interaction=interaction,
+    )
     return SkillReadiness(
         skill_name=skill_name,
         workspace=workspace,
@@ -426,6 +573,8 @@ def check_skill_readiness(*, skill_name: str, metadata: Mapping[str, Any], works
         input_statuses=statuses,
         request_ready=not interaction.request_required or bool(request.strip()),
         workspace_mode=detect_skill_workspace_mode(workspace),
+        scanned_roots=scanned_roots,
+        discovered_files=discovered_files,
     )
 
 
@@ -458,49 +607,55 @@ def prepare_skill_intake_packet(readiness: SkillReadiness) -> Path | None:
     packet_path = readiness.workspace / "user_inputs" / readiness.skill_name / "_intake.md"
     packet_path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
-        f"# Skill Intake · {readiness.skill_name}",
-        "",
-        f"- Workspace mode: `{readiness.workspace_mode}`",
-        f"- Request: {readiness.request or '未提供；请在命令行或下一轮说明任务。'}",
-        "- This file is a material checklist, not evidence and not a final output.",
-        "",
-        "## How This Run Will Use Materials",
+        f"# {readiness.skill_name} 材料检查",
+        f"当前任务：{readiness.request or '尚未说明；请先告诉系统希望完成什么。'}",
+        f"工作区类型：{'已有项目材料' if readiness.workspace_mode == 'project' else '独立材料收集'}。",
+        "本文件只记录文件检查结果，不代表任何论文、数据或结论已经得到验证。",
+        "## 启动扫描",
     ]
+    if readiness.scanned_roots:
+        lines.append("已扫描：" + "、".join(f"`{path}`" for path in readiness.scanned_roots) + "。")
+    else:
+        lines.append("尚未发现可扫描的声明输入目录。")
+    if readiness.discovered_files:
+        lines.append("发现的候选文件：")
+        for item in readiness.discovered_files:
+            matching = "；匹配 " + "、".join(item.matching_input_ids) if item.matching_input_ids else "；尚未匹配声明输入"
+            lines.append(f"- `{item.relative_path}`（{item.size_bytes} bytes{matching}）")
+    else:
+        lines.append("未发现符合此 Skill 输入类型的文件。")
+    lines.append("## 输入检查")
     if readiness.workspace_mode == "project":
         lines.extend(
             [
-                "The workspace contains project artifacts. Existing files are candidate inputs, not automatic proof that a claim is supported.",
-                "The Skill must inspect selected artifacts before substantive output. If they are semantically insufficient, it writes `_followup_request.md` in this directory and asks for a focused human response.",
+                "已有项目文件只能作为候选材料；Skill 会先阅读被选中的文件，不能把文件存在当作证据充分。",
+                "若材料缺少关键事实，Skill 会在本目录写 `_followup_request.md`，说明缺什么、为什么需要和应如何补充。",
             ]
         )
     else:
         lines.extend(
             [
-                "This is a standalone workspace. Put requested materials under the listed `user_inputs/` paths, then resume the same session. In an interactive terminal, the constrained intake agent can also organize material pasted by the human into those paths.",
-                "The Skill must not invent missing evidence, bibliographic entries, results, or venue rules.",
+                "请把材料放到下面列出的路径；交互终端中也可以粘贴文本，由受限 intake 只整理到该 Skill 的输入目录。",
+                "系统不会补造缺失证据、引用、实验结果或投稿规则。",
             ]
         )
-    lines.extend(["", "## Input Checklist"])
     for status in readiness.input_statuses:
         requirement = status.requirement
-        state = "ready" if status.is_ready else "missing"
-        lines.append("")
-        lines.append(f"### [{state}] {requirement.label} ({'required' if requirement.required else 'optional'})")
-        lines.append(requirement.description)
+        state = "已就绪" if status.is_ready else "待补充"
+        qualifier = "必需" if requirement.required else "可选"
+        lines.append(f"- [{state}] {requirement.label}（{qualifier}）：{requirement.description}")
         if status.selected_path:
-            lines.append(f"- Selected file: `{status.selected_path}`")
+            lines.append(f"  已使用：`{status.selected_path}`")
         else:
-            lines.append("- Put one usable file at:")
-            lines.extend(f"  - `{path}`" for path in requirement.paths)
+            lines.append("  可放到：" + " 或 ".join(f"`{path}`" for path in requirement.paths))
             if requirement.example:
-                lines.append(f"- Example: `{requirement.example}`")
+                lines.append(f"  示例：`{requirement.example}`")
         if status.detail:
-            lines.append(f"- Deterministic check: {status.detail}")
+            lines.append(f"  检查：{status.detail}")
     lines.extend(
         [
-            "",
-            "## Follow-up Protocol",
-            "If the selected files exist but lack a necessary fact, source, result, citation, venue choice, or constraint, the running Skill writes `user_inputs/<skill>/_followup_request.md` with the exact gap, why it matters, and the preferred answer/file path. Do not replace missing information with assumptions.",
+            "## 下一步",
+            "补齐必需项后用同一 session 恢复。若文件存在但内容仍不足，Skill 会明确说明要补的事实或文件，不能以假设替代。",
         ]
     )
     packet_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -515,6 +670,15 @@ def readiness_as_dict(readiness: SkillReadiness) -> dict[str, Any]:
         "request_ready": readiness.request_ready,
         "request": readiness.request,
         "workspace_mode": readiness.workspace_mode,
+        "scanned_roots": list(readiness.scanned_roots),
+        "discovered_files": [
+            {
+                "path": item.relative_path,
+                "size_bytes": item.size_bytes,
+                "matching_input_ids": list(item.matching_input_ids),
+            }
+            for item in readiness.discovered_files
+        ],
         "inputs": [
             {
                 "id": status.requirement.key,

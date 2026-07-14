@@ -12,7 +12,7 @@ tools:
   - crossref_search
   - finish_task
 strict_tools: true
-model_tier: medium
+model_tier: standard
 temperature: 0.3
 allowed_read_prefixes:
   - user_inputs/literature-resource-scout/
@@ -30,7 +30,7 @@ interaction:
   summary: 为一个研究问题盘点真实可访问的基准、数据、基线、代码和复现风险；所有条目必须带来源和访问状态。
   request_required: true
   request_prompt: 请说明方法或任务、希望寻找的数据/基线、可用算力与许可证限制。
-  example_request: 为 agent uplift 研究寻找公开日志数据集、可复现 benchmark 和强基线，优先 Apache/MIT 许可证。
+  example_request: 为当前研究问题寻找公开数据集、可复现 benchmark 和强基线，优先 Apache/MIT 许可证。
   required_inputs:
     - id: research_brief
       label: 资源搜索问题

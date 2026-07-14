@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from getpass import getpass
 import importlib
 import importlib.util
 import json
@@ -23,30 +24,20 @@ import signal
 import sys
 
 import yaml
-
-# 加载 .env 文件（如果存在）
-try:
-    from dotenv import load_dotenv
-    # 尝试从多个位置加载 .env
-    for env_path in [
-        Path.cwd() / ".env",
-        Path(__file__).parent.parent / ".env",
-        Path.home() / ".env",
-    ]:
-        if env_path.exists():
-            load_dotenv(env_path, override=False)
-            break
-except ImportError:
-    pass  # python-dotenv 未安装，跳过
+from rich import box
+from rich.console import Console, Group
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
 
 from .agents.registry import AGENT_REGISTRY
 from .cli_runners import CompletePipelineRunner, SingleTaskRunner
-from .orchestration.task_io_contract import get_task_io
+from .orchestration.task_io_contract import get_task_io, task_io_contract_source
 from .orchestration.state_machine import StateMachine
 from .pydantic_compat import model_dump
 from .runtime.agent import AgentResult
 from .runtime.config_audit import build_config_audit_summary
-from .runtime.cli_ui import format_startup_summary, show_startup_banner
+from .runtime.cli_ui import render_startup_summary, show_startup_banner
 from .runtime.config import LatexSettings, RuntimeSettings, UISettings, load_runtime_settings, resolve_runtime_config_path
 from .runtime.environment import (
     collect_runtime_environment,
@@ -55,6 +46,18 @@ from .runtime.environment import (
 )
 from .runtime.llm_client import LLMClient
 from .runtime.logger import configure_file_logging, configure_logging
+from .runtime.model_settings import (
+    load_dotenv_for_model_settings,
+    load_model_settings,
+    normalize_provider,
+    provider_default_api_base,
+    provider_requires_api_key,
+    provider_requires_api_base,
+    resolve_model_settings_path,
+    supported_provider_names,
+    write_api_key_to_dotenv,
+    write_model_settings,
+)
 from .runtime.system_config import system_config_path
 from .runtime.trace import render_trace_for_humans
 from .runtime.workspace import WorkspaceInitResult, initialize_workspace
@@ -73,6 +76,8 @@ from .skills.contracts import (
     prepare_skill_intake_packet,
 )
 from .skills.workflow import parse_skill_workflow
+from .tools.survey_tools import AuditSurveyCoverageTool
+from .tools.workspace_policy import WorkspaceAccessPolicy
 from .skills.catalog import (
     catalog_entries,
     ordered_skills,
@@ -111,7 +116,12 @@ from .tools.human_gate import (
     build_t2_parameter_llm_interpreter,
 )
 from .tools.latex_compile import latex_backend_preflight
-from .tools.mcp_adapter import load_mcp_server_configs, register_mcp_servers
+from .tools.mcp_adapter import connect_stdio_mcp_server, load_mcp_server_configs, register_mcp_servers
+
+
+# Keep .env support explicit and shared with the model-settings loader. The
+# function never overrides values that a shell or container already supplied.
+load_dotenv_for_model_settings()
 from .tools.registry import ToolRegistry
 
 
@@ -320,25 +330,21 @@ def _render_skill_readiness_for_cli(
     session_file: Path,
     readiness: Any,
 ) -> str:
-    if _skill_ui_uses_color(args):
-        return render_readiness_panel_rich(
-            skill_name=skill_name,
-            session_id=session_id,
-            session_file=session_file,
-            readiness=readiness,
-        )
-    return render_readiness_panel(
+    return render_readiness_panel_rich(
         skill_name=skill_name,
         session_id=session_id,
         session_file=session_file,
         readiness=readiness,
+        no_color=not _skill_ui_uses_color(args),
     )
 
 
 def _render_skill_completion_for_cli(args: argparse.Namespace, *, workspace: Path, session_id: str) -> str:
-    if _skill_ui_uses_color(args):
-        return render_skill_completion_panel_rich(workspace=workspace, session_id=session_id)
-    return render_skill_completion_panel(workspace=workspace, session_id=session_id)
+    return render_skill_completion_panel_rich(
+        workspace=workspace,
+        session_id=session_id,
+        no_color=not _skill_ui_uses_color(args),
+    )
 
 
 def _render_skill_description_for_cli(
@@ -349,21 +355,19 @@ def _render_skill_description_for_cli(
     description: str,
     interaction: Any,
     workflow: Any = None,
+    capability_profiles: tuple[str, ...] = (),
+    tools: list[str] | None = None,
 ) -> str:
-    if _skill_ui_uses_color(args):
-        return render_skill_description_rich(
-            skill_name=skill_name,
-            skill_path=skill_path,
-            description=description,
-            interaction=interaction,
-            workflow=workflow,
-        )
-    return render_skill_description(
+    return render_skill_description_rich(
         skill_name=skill_name,
         skill_path=skill_path,
         description=description,
         interaction=interaction,
         workflow=workflow,
+        capability_profiles=capability_profiles,
+        tools=tools,
+        no_color=not _skill_ui_uses_color(args),
+        verbose=bool(getattr(args, "verbose", False)),
     )
 
 
@@ -376,27 +380,22 @@ def _render_skill_catalog_for_cli(
     heading: str = "ResearchOS · 独立 Skill 目录",
     notice: str | None = None,
 ) -> str:
-    if _skill_ui_uses_color(args):
-        return render_skill_catalog_rich(
-            skills=skills,
-            workspace=workspace,
-            index_by_name=index_by_name,
-            heading=heading,
-            notice=notice,
-        )
-    return render_skill_catalog(
+    return render_skill_catalog_rich(
         skills=skills,
         workspace=workspace,
         index_by_name=index_by_name,
         heading=heading,
         notice=notice,
+        no_color=not _skill_ui_uses_color(args),
     )
 
 
 def _render_skill_status_for_cli(args: argparse.Namespace, *, workspace: Path, entries: Any) -> str:
-    if _skill_ui_uses_color(args):
-        return render_skill_status_panel_rich(workspace=workspace, entries=entries)
-    return render_skill_status_panel(workspace=workspace, entries=entries)
+    return render_skill_status_panel_rich(
+        workspace=workspace,
+        entries=entries,
+        no_color=not _skill_ui_uses_color(args),
+    )
 
 
 def _build_human_interface(
@@ -430,14 +429,23 @@ class PreparedRuntime:
     skill_count: int = 0
     mcp_server_count: int = 0
     mcp_tool_count: int = 0
+    mcp_clients: list[object] = field(default_factory=list)
 
     async def aclose(self) -> None:
         close = getattr(self.llm_client, "aclose", None)
-        if not callable(close):
-            return
-        result = close()
-        if hasattr(result, "__await__"):
-            await result
+        try:
+            if callable(close):
+                result = close()
+                if hasattr(result, "__await__"):
+                    await result
+        finally:
+            for client in reversed(self.mcp_clients):
+                client_close = getattr(client, "aclose", None)
+                if not callable(client_close):
+                    continue
+                result = client_close()
+                if hasattr(result, "__await__"):
+                    await result
 
 
 def install_signal_handlers() -> None:
@@ -512,28 +520,43 @@ def _load_object(spec: str):
     return getattr(module, attr_name)
 
 
-async def _maybe_register_mcp_tools(args: argparse.Namespace, registry: ToolRegistry) -> tuple[int, int]:
+async def _maybe_register_mcp_tools(
+    args: argparse.Namespace,
+    registry: ToolRegistry,
+) -> tuple[int, int, list[object]]:
     """按需从 MCP 配置中注册远端工具。
 
-    当前仓库不强绑具体 MCP SDK，因此 CLI 只负责：
-    1. 读 `config/mcp.yaml`；
-    2. 若用户通过 `--mcp-connector` 提供了连接函数，就调用它完成注册；
-    3. 若只给了配置没给 connector，则静默跳过并在启动摘要里表现为 0 个 MCP server/tool。
+    默认使用官方 MCP Python SDK 的 stdio connector；用户只有在接入自定义
+    transport 时才需要传入 ``--mcp-connector``。发现到的工具会依照每个
+    server 的 ``allowed_agents`` 配置注入 Agent/Skill 的可用工具集合。
     """
 
     config_path = Path(args.mcp_config).resolve()
     if not config_path.exists():
-        return 0, 0
+        return 0, 0, []
 
     server_configs = load_mcp_server_configs(config_path)
-    if not server_configs or not args.mcp_connector:
-        return len(server_configs), 0
+    if not server_configs:
+        return 0, 0, []
 
-    connector = _load_object(args.mcp_connector)
+    connector = _load_object(args.mcp_connector) if args.mcp_connector else connect_stdio_mcp_server
     before = set(registry.available_names())
-    await register_mcp_servers(registry, server_configs, connector)
+    clients = await register_mcp_servers(registry, server_configs, connector)
     after = set(registry.available_names())
-    return len(server_configs), len(after - before)
+    registered = sorted(after - before)
+    for server_config, client in zip(server_configs, clients, strict=True):
+        prefix = "mcp_" + "".join(
+            char.lower() if char.isalnum() else "_"
+            for char in str(getattr(client, "name", server_config.get("name") or "server"))
+        ).strip("_") + "_"
+        server_tools = [name for name in registered if name.startswith(prefix)]
+        allowed_agents = server_config.get("allowed_agents")
+        if allowed_agents is not None and not isinstance(allowed_agents, list):
+            raise ValueError(
+                f"MCP server {server_config.get('name') or '(unnamed)'} field allowed_agents must be a list"
+            )
+        registry.grant_dynamic_tools(server_tools, allowed_agents=allowed_agents)
+    return len(server_configs), len(registered), list(clients)
 
 
 def _validate_agent_tools(registry: ToolRegistry) -> None:
@@ -556,6 +579,186 @@ def _is_quiet_args(args: argparse.Namespace, runtime_settings: RuntimeSettings |
     return bool(runtime_settings and runtime_settings.ui.quiet)
 
 
+def _cli_console(args: argparse.Namespace | None = None) -> Console:
+    """Create one Rich console for interactive setup and command guidance."""
+
+    no_color = bool(
+        getattr(args, "_effective_no_color", getattr(args, "no_color", False))
+        if args is not None
+        else False
+    )
+    return Console(
+        force_terminal=not no_color,
+        color_system=None if no_color else "truecolor",
+        no_color=no_color,
+        highlight=False,
+        width=max(80, min(140, shutil.get_terminal_size(fallback=(120, 40)).columns)),
+    )
+
+
+def _masked_secret_confirmation(value: object) -> str:
+    """Confirm API-key capture without printing the credential itself."""
+
+    secret = str(value or "").strip()
+    if not secret:
+        return "未设置"
+    suffix = secret[-4:] if len(secret) >= 4 else "*" * len(secret)
+    return f"已设置，长度 {len(secret)}，末尾 …{suffix}"
+
+
+def _render_workspace_entry_panel(
+    args: argparse.Namespace,
+    *,
+    title: str,
+    message: str,
+    workspace: Path,
+    state: StateYaml | None = None,
+    border_style: str = "yellow",
+) -> None:
+    """Explain run/resume command semantics before any model or Tool is started."""
+
+    details = Table(box=box.SIMPLE_HEAVY, show_header=False, expand=True)
+    details.add_column(style="bold cyan", no_wrap=True)
+    details.add_column(overflow="fold")
+    details.add_row("Workspace", str(workspace))
+    if state is not None:
+        details.add_row("项目", state.project_id)
+        details.add_row("当前步骤", state.current_task)
+        details.add_row("状态", state.status)
+    actions = Text()
+    if state is None:
+        actions.append("新项目：", style="bold")
+        actions.append(f"python -m researchos.cli run --workspace {workspace}\n")
+        actions.append("从其他项目指定阶段开始：", style="bold")
+        actions.append(
+            f"python -m researchos.cli run --workspace {workspace} --from <source-workspace> --start-task <task>"
+        )
+    else:
+        actions.append("继续当前项目：", style="bold")
+        actions.append(f"python -m researchos.cli resume --workspace {workspace}")
+        if state.status in {"PAUSED", "WAITING_HUMAN", "FAILED"}:
+            actions.append("\n从指定阶段重新进入：", style="bold")
+            actions.append(f"python -m researchos.cli resume --workspace {workspace} --from-task <task>")
+    _cli_console(args).print(
+        Panel(
+            Group(Text(message), details, actions),
+            title=title,
+            border_style=border_style,
+            expand=True,
+        )
+    )
+
+
+def _validate_pipeline_workspace_entry(args: argparse.Namespace, workspace_dir: Path) -> int | None:
+    """Enforce unambiguous `run` versus `resume` workspace semantics."""
+
+    state_path = workspace_dir / "state.yaml"
+    resume = bool(getattr(args, "resume", False))
+    if not state_path.exists():
+        if resume:
+            _render_workspace_entry_panel(
+                args,
+                title="无法恢复项目",
+                message="该目录没有可恢复的 state.yaml，因此 `resume` 不会创建新项目。",
+                workspace=workspace_dir,
+                border_style="bright_red",
+            )
+            return 2
+        return None
+    if not state_path.is_file():
+        _render_workspace_entry_panel(
+            args,
+            title="项目状态无效",
+            message="state.yaml 不是普通文件，无法安全判断该 workspace 的执行状态。",
+            workspace=workspace_dir,
+            border_style="bright_red",
+        )
+        return 2
+    try:
+        state = StateYaml.load_yaml(state_path)
+    except Exception as exc:
+        _render_workspace_entry_panel(
+            args,
+            title="项目状态无法读取",
+            message=f"state.yaml 无法解析：{exc}",
+            workspace=workspace_dir,
+            border_style="bright_red",
+        )
+        return 2
+    if not resume:
+        _render_workspace_entry_panel(
+            args,
+            title="检测到已有项目",
+            message="目标 workspace 已存在 state.yaml；`run` 只用于新项目，不能隐式继续或覆盖已有状态。",
+            workspace=workspace_dir,
+            state=state,
+        )
+        return 2
+    if state.status == "COMPLETED":
+        _render_workspace_entry_panel(
+            args,
+            title="项目已经完成",
+            message="该项目状态为 COMPLETED，不能通过 `resume` 重启。请新建 workspace，或显式从其他项目复制前置产物开始。",
+            workspace=workspace_dir,
+            state=state,
+        )
+        return 2
+    return None
+
+
+def _render_state_machine_definition_error(
+    args: argparse.Namespace,
+    state_machine: StateMachine,
+    errors: list[str],
+) -> None:
+    """Show a configuration mismatch as an actionable Rich panel."""
+
+    sources = Table(box=box.SIMPLE_HEAVY, show_header=False, expand=True)
+    sources.add_column(style="bold cyan", no_wrap=True)
+    sources.add_column(overflow="fold")
+    sources.add_row("State machine", str(state_machine.config_path.resolve()))
+    sources.add_row("I/O contract", str(task_io_contract_source()))
+    sources.add_row("下一步", "python -m researchos.cli validate-config")
+
+    issues = Text()
+    for error in errors[:8]:
+        issues.append("- ", style="bold red")
+        issues.append(error)
+        issues.append("\n")
+    if len(errors) > 8:
+        issues.append(f"另有 {len(errors) - 8} 项配置问题；请运行 validate-config 查看完整列表。")
+
+    _cli_console(args).print(
+        Panel(
+            Group(
+                Text("当前加载的 workflow 配置与运行时 I/O contract 不一致，尚未启动任何 Agent。", style="bold"),
+                sources,
+                issues,
+            ),
+            title="[配置检查] 无法启动工作流",
+            border_style="bright_red",
+            expand=True,
+        )
+    )
+
+
+def _render_runtime_unavailable(
+    args: argparse.Namespace,
+    *,
+    message: str,
+    error: Exception | str | None = None,
+) -> None:
+    """Explain a recoverable runtime failure without dumping provider internals."""
+
+    body: list[object] = [Text(message)]
+    body.append(Text("当前工作区未被推进；修复后可使用原命令或 resume 继续。", style="yellow"))
+    if bool(getattr(args, "verbose", False)) and error:
+        body.append(Text(f"诊断：{error}", style="dim"))
+    _cli_console(args).print(
+        Panel(Group(*body), title="运行环境暂时不可用", border_style="bright_yellow", expand=True)
+    )
+
+
 def _startup_banner_enabled(args: argparse.Namespace, runtime_settings: RuntimeSettings) -> bool:
     return not (
         _is_quiet_args(args, runtime_settings)
@@ -566,6 +769,14 @@ def _startup_banner_enabled(args: argparse.Namespace, runtime_settings: RuntimeS
 
 async def _maybe_run_selftest(args: argparse.Namespace, llm_client: LLMClient) -> None:
     """按需执行 endpoint 自检。"""
+
+    status = llm_client.configuration_status()
+    if not status.get("ready", False):
+        missing = ", ".join(status.get("missing") or ["LLM configuration"])
+        raise SystemExit(
+            "[需要配置模型] 缺少 "
+            f"{missing}。运行 `python -m researchos.cli configure-llm` 配置并测试唯一的模型连接。"
+        )
 
     if getattr(args, "skip_startup_selftest", False):
         return
@@ -579,26 +790,318 @@ async def _maybe_run_selftest(args: argparse.Namespace, llm_client: LLMClient) -
     llm_results = await llm_client.selftest()
     dependency_results = _dependency_selftest()
     failed = {name: item for name, item in llm_results.items() if not item.get("ok")}
-    print(
-        yaml.safe_dump(
-            {
-                "startup_selftest": {
-                    "llm": llm_results,
-                    "dependencies": dependency_results,
-                }
-            },
-            allow_unicode=True,
-            sort_keys=False,
-        )
-    )
-    if any(not item.get("ok") for item in dependency_results.values()):
-        print(
-            "[startup-warning] PDF/文献处理依赖不完整；T3/T9 可能在运行中失败。"
-            " 建议先执行 `researchos selftest` 检查并补齐依赖。",
-            file=sys.stderr,
+    if not bool(getattr(args, "quiet", False)):
+        _render_selftest_summary(
+            args,
+            llm_results=llm_results,
+            dependency_results=dependency_results,
+            title="启动检查",
         )
     if failed:
-        raise SystemExit("LLM startup selftest failed")
+        raise SystemExit(1)
+
+
+def _render_llm_setup_required(status: dict[str, Any]) -> None:
+    _render_llm_setup_required_rich(status)
+
+
+def _render_llm_setup_required_rich(
+    status: dict[str, Any],
+    *,
+    args: argparse.Namespace | None = None,
+) -> None:
+    missing = ", ".join(status.get("missing") or ["LLM configuration"])
+    details = Table(box=box.SIMPLE_HEAVY, show_header=False, expand=True)
+    details.add_column(style="bold cyan", no_wrap=True)
+    details.add_column(overflow="fold")
+    details.add_row("缺少", missing)
+    details.add_row("配置文件", str(status.get("settings_path") or "config/model_settings.yaml"))
+    details.add_row("连接模式", "所有 Agent 和 Skill 共用一个 provider 与一个 model")
+    details.add_row("下一步", "选择“现在配置”后按 provider、API URL、API key、model 逐项填写")
+    _cli_console(args).print(
+        Panel(
+            Group(
+                Text("尚未找到完整的模型连接配置。ResearchOS 不会在没有 model 的情况下启动任务。"),
+                details,
+            ),
+            title="需要配置模型",
+            border_style="bright_yellow",
+            expand=True,
+        )
+    )
+
+
+def _render_llm_configuration_step(
+    args: argparse.Namespace,
+    *,
+    step: str,
+    title: str,
+    description: str,
+    current: str,
+) -> None:
+    table = Table(box=box.SIMPLE_HEAVY, show_header=False, expand=True)
+    table.add_column(style="bold cyan", no_wrap=True)
+    table.add_column(overflow="fold")
+    table.add_row("当前值", current or "未设置")
+    _cli_console(args).print(
+        Panel(Group(Text(description), table), title=f"模型配置 {step} · {title}", border_style="cyan", expand=True)
+    )
+
+
+def _render_llm_configuration_saved(
+    args: argparse.Namespace,
+    *,
+    provider: str,
+    api_base: str,
+    api_key: str,
+    model: str,
+    settings_path: Path,
+    secret_location: str,
+) -> None:
+    table = Table(box=box.SIMPLE_HEAVY, show_header=False, expand=True)
+    table.add_column(style="bold cyan", no_wrap=True)
+    table.add_column(overflow="fold")
+    table.add_row("Provider", provider)
+    table.add_row("API URL", api_base or "使用 provider 默认 URL")
+    table.add_row("API key", _masked_secret_confirmation(api_key))
+    table.add_row("Model", model)
+    table.add_row("设置文件", str(settings_path))
+    table.add_row("Key 保存位置", secret_location)
+    _cli_console(args).print(Panel(table, title="模型配置已保存", border_style="green", expand=True))
+
+
+async def _ensure_llm_is_ready(args: argparse.Namespace, client: LLMClient) -> LLMClient:
+    """Guide an interactive user through the one-time LLM setup before a run."""
+
+    status = client.configuration_status()
+    if status.get("ready", False):
+        return client
+    _render_llm_setup_required_rich(status, args=args)
+    if not sys.stdin.isatty():
+        await client.aclose()
+        raise SystemExit(2)
+
+    _cli_console(args).print(
+        Panel(
+            Text("[1] 现在配置  [2] 手动编辑 model_settings.yaml  [3] 退出"),
+            title="选择配置方式",
+            border_style="cyan",
+            expand=True,
+        )
+    )
+    choice = input("请选择 [1/2/3]: ").strip()
+    if choice in {"2", "edit", "e"}:
+        _cli_console(args).print(
+            Panel(
+                Text(f"编辑 {status.get('settings_path') or 'config/model_settings.yaml'} 后，按 Enter 重新读取并检查配置。"),
+                title="等待配置文件更新",
+                border_style="cyan",
+                expand=True,
+            )
+        )
+        input()
+    elif choice not in {"1", "configure", "c"}:
+        await client.aclose()
+        raise SystemExit(2)
+    await client.aclose()
+    if choice in {"1", "configure", "c"}:
+        exit_code = await configure_llm_command(argparse.Namespace(
+            provider=None,
+            api_base=None,
+            api_key=None,
+            model=None,
+            key_storage=None,
+            check=True,
+            no_banner=getattr(args, "no_banner", False),
+            no_color=getattr(args, "no_color", False),
+            quiet=getattr(args, "quiet", False),
+            model_settings=getattr(args, "model_settings", "config/model_settings.yaml"),
+        ))
+        if exit_code != 0:
+            raise SystemExit(exit_code)
+    refreshed = LLMClient(Path(getattr(args, "model_settings", "config/model_settings.yaml")).resolve())
+    refreshed_status = refreshed.configuration_status()
+    if not refreshed_status.get("ready", False):
+        await refreshed.aclose()
+        _render_llm_setup_required_rich(refreshed_status, args=args)
+        raise SystemExit(2)
+    return refreshed
+
+
+async def configure_llm_command(args: argparse.Namespace) -> int:
+    """Write and optionally test the public single-model LLM configuration."""
+
+    settings_path = resolve_model_settings_path(Path(getattr(args, "model_settings", "config/model_settings.yaml")))
+    current = load_model_settings(settings_path)
+    interactive = sys.stdin.isatty()
+    requested_provider = getattr(args, "provider", None)
+    try:
+        provider = normalize_provider(requested_provider or current["provider"])
+    except ValueError as exc:
+        _render_llm_setup_required_rich({"missing": [str(exc)], "settings_path": str(settings_path)}, args=args)
+        return 2
+    api_base = str(getattr(args, "api_base", None) or current["api_base"]).strip()
+    if requested_provider and not getattr(args, "api_base", None):
+        api_base = provider_default_api_base(provider)
+    api_key = str(getattr(args, "api_key", None) or current["api_key"]).strip()
+    model = str(getattr(args, "model", None) or current["model"]).strip()
+
+    if interactive and (
+        not getattr(args, "provider", None)
+        or not getattr(args, "api_base", None)
+        or not getattr(args, "api_key", None)
+        or not getattr(args, "model", None)
+    ):
+        _cli_console(args).print(
+            Panel(
+                Text("所有 ResearchOS 阶段共用一个 provider 和一个 model。每项会逐步确认；API key 采用隐藏输入，保存后显示掩码确认。"),
+                title="模型配置向导",
+                border_style="cyan",
+                expand=True,
+            )
+        )
+        _render_llm_configuration_step(
+            args,
+            step="1/4",
+            title="Provider",
+            description="选择 API provider。未列出的 OpenAI-compatible 服务请选择 openai_compatible。",
+            current=provider,
+        )
+        raw_provider = input(
+            "Provider "
+            f"[{', '.join(supported_provider_names())}] "
+            f"[{provider}]: "
+        ).strip() or provider
+        previous_provider = provider
+        try:
+            provider = normalize_provider(raw_provider)
+        except ValueError as exc:
+            _render_llm_setup_required_rich({"missing": [str(exc)], "settings_path": str(settings_path)}, args=args)
+            return 2
+        if provider != previous_provider and not getattr(args, "api_base", None):
+            api_base = provider_default_api_base(provider)
+        _render_llm_configuration_step(
+            args,
+            step="2/4",
+            title="API URL",
+            description="已知 provider 可直接使用默认 URL；自建 gateway 或 openai_compatible 请填写完整 URL。",
+            current=api_base or provider_default_api_base(provider),
+        )
+        api_base = input(f"API base URL [{api_base or provider_default_api_base(provider) or '无需填写'}]: ").strip() or api_base or provider_default_api_base(provider)
+        key_hint = "本地 provider 通常不需要；直接 Enter 跳过" if not provider_requires_api_key(provider) else "直接 Enter 保留现有值"
+        _render_llm_configuration_step(
+            args,
+            step="3/4",
+            title="API key",
+            description="输入会被终端隐藏，避免写入 shell history 或录屏；保存后会显示长度和末尾校验位，确认已接收。",
+            current=_masked_secret_confirmation(api_key),
+        )
+        entered_key = getpass(f"API key [{key_hint}]: ").strip()
+        api_key = entered_key or api_key
+        _cli_console(args).print(
+            Panel(
+                Text(f"API key 已接收：{_masked_secret_confirmation(api_key)}"),
+                title="API key 已确认",
+                border_style="green" if api_key else "yellow",
+                expand=True,
+            )
+        )
+        _render_llm_configuration_step(
+            args,
+            step="4/4",
+            title="Model",
+            description="填写 provider 可用的精确 model 名称。所有 Agent 和 Skill 将使用此 model。",
+            current=model,
+        )
+        model = input(f"Model 名称 [{model or '需要填写'}]: ").strip() or model
+
+    required_fields = [("provider", provider), ("model", model)]
+    if provider_requires_api_key(provider):
+        required_fields.insert(1, ("api_key", api_key))
+    if provider_requires_api_base(provider):
+        required_fields.insert(1, ("api_base", api_base))
+    missing = [name for name, value in required_fields if not value]
+    if missing:
+        _render_llm_setup_required_rich(
+            {"missing": missing, "settings_path": str(settings_path)},
+            args=args,
+        )
+        _cli_console(args).print(
+            Panel(
+                Text("运行 configure-llm 逐项配置，或通过 --provider、--api-key、--model（openai_compatible 还需 --api-base）传入参数。"),
+                title="配置未完成",
+                border_style="bright_yellow",
+                expand=True,
+            )
+        )
+        return 2
+
+    key_storage = str(getattr(args, "key_storage", None) or "").strip().lower()
+    if interactive and not key_storage:
+        choice = input("API key 保存到 [1] model_settings.yaml 或 [2] .env？[2]: ").strip()
+        key_storage = {"1": "config", "2": "env", "config": "config", "env": "env"}.get(choice, "env")
+    if key_storage not in {"config", "env"}:
+        key_storage = "config"
+    stored_key = api_key
+    secret_location = str(settings_path)
+    if key_storage == "env" and api_key:
+        env_path, env_name = write_api_key_to_dotenv(provider=provider, api_key=api_key, settings_path=settings_path)
+        stored_key = "${" + env_name + "}"
+        secret_location = str(env_path)
+
+    written = write_model_settings(
+        provider=provider,
+        api_base=api_base,
+        api_key=stored_key,
+        model=model,
+        fallback=current.get("fallback") if isinstance(current.get("fallback"), dict) else None,
+        path=settings_path,
+    )
+    _render_llm_configuration_saved(
+        args,
+        provider=provider,
+        api_base=api_base,
+        api_key=api_key,
+        model=model,
+        settings_path=written,
+        secret_location=secret_location,
+    )
+    if not bool(getattr(args, "check", True)):
+        return 0
+
+    client = LLMClient(written)
+    try:
+        status = client.configuration_status()
+        if not status.get("ready", False):
+            _render_llm_setup_required_rich(status, args=args)
+            return 2
+        result = await client.selftest()
+    finally:
+        await client.aclose()
+    check = next(iter(result.values()), {"ok": False, "error": "no configured endpoint"})
+    if check.get("ok"):
+        _cli_console(args).print(
+            Panel(
+                Text(f"连接检查通过（{check.get('latency_ms', 0)} ms）。"),
+                title="模型连接可用",
+                border_style="green",
+                expand=True,
+            )
+        )
+        return 0
+    _cli_console(args).print(
+        Panel(
+            Text(
+                "连接检查失败："
+                f"{check.get('error') or '未知 provider 错误'}\n"
+                "配置已保留。修正后重新运行 configure-llm 即可再次检查。"
+            ),
+            title="模型连接未通过",
+            border_style="bright_red",
+            expand=True,
+        )
+    )
+    return 1
 
 
 def _dependency_selftest() -> dict[str, dict[str, Any]]:
@@ -620,6 +1123,77 @@ def _dependency_selftest() -> dict[str, dict[str, Any]]:
             "hint": "pip install -r requirements.txt",
         }
     }
+
+
+def _selftest_compact_error(value: object, *, limit: int = 220) -> str:
+    text = " ".join(str(value or "").split())
+    if not text:
+        return "未返回具体原因"
+    if len(text) <= limit:
+        return text
+    boundaries = [match.end() for match in re.finditer(r"[。！？；;](?:\s|$)|\.\s", text) if match.end() <= limit]
+    if boundaries:
+        return text[: boundaries[-1]].strip()
+    return "请使用 configure-llm 检查模型设置，或添加 --verbose 查看完整诊断。"
+
+
+def _render_selftest_summary(
+    args: argparse.Namespace,
+    *,
+    llm_results: dict[str, dict[str, Any]],
+    dependency_results: dict[str, dict[str, Any]],
+    title: str,
+) -> None:
+    """Render connection and local prerequisites without raw YAML diagnostics."""
+
+    table = Table(box=box.SIMPLE_HEAVY, header_style="bold cyan", expand=True)
+    table.add_column("状态", width=10)
+    table.add_column("检查项", min_width=20, max_width=34, overflow="fold")
+    table.add_column("结果", min_width=34, max_width=88, overflow="fold")
+    all_ok = True
+    for name, item in llm_results.items():
+        ok = bool(item.get("ok"))
+        all_ok = all_ok and ok
+        if ok:
+            latency = item.get("latency_ms")
+            detail = "连接可用" + (f" · {latency} ms" if latency is not None else "")
+        else:
+            detail = "连接失败：" + _selftest_compact_error(item.get("error"))
+        table.add_row(
+            Text("通过" if ok else "未通过", style="green" if ok else "bold red"),
+            "模型连接" if name == "default" else f"模型连接 · {name}",
+            detail,
+        )
+    dependency_labels = {
+        "pdf_processing": "PDF 文本处理",
+    }
+    for name, item in dependency_results.items():
+        ok = bool(item.get("ok"))
+        all_ok = all_ok and ok
+        module = str(item.get("module") or name)
+        if ok:
+            detail = f"{module} 已可用"
+        else:
+            hint = str(item.get("hint") or "请检查本地依赖")
+            detail = f"{module} 不可用；{hint}"
+        table.add_row(
+            Text("通过" if ok else "未通过", style="green" if ok else "bold red"),
+            dependency_labels.get(name, name),
+            detail,
+        )
+    message = (
+        "环境已就绪，可以开始本次研究流程。"
+        if all_ok
+        else "部分检查未通过。请先修复上方项目，再重新运行；当前 workspace 不会被推进。"
+    )
+    _cli_console(args).print(
+        Panel(
+            Group(table, Text(message, style="green" if all_ok else "yellow")),
+            title=title,
+            border_style="green" if all_ok else "bright_yellow",
+            expand=True,
+        )
+    )
 
 
 def _emit_startup_ui(
@@ -649,15 +1223,17 @@ def _emit_startup_ui(
         args._startup_banner_emitted = True
     if not show_summary:
         return
-    summary = format_startup_summary(
+    summary = render_startup_summary(
         workspace_dir=workspace_dir,
         state_machine=Path(args.state_machine).resolve() if hasattr(args, "state_machine") else None,
         gates=Path(args.gates).resolve() if hasattr(args, "gates") and args.gates else None,
-        model_routing=Path(args.model_routing).resolve() if hasattr(args, "model_routing") else None,
+        model_settings=Path(args.model_settings).resolve() if hasattr(args, "model_settings") else None,
         skill_roots=skill_roots,
         skill_count=skill_count,
         mcp_server_count=mcp_server_count,
         mcp_tool_count=mcp_tool_count,
+        verbose=bool(getattr(args, "verbose", False) or runtime_settings.ui.verbose),
+        no_color=runtime_settings.ui.no_color,
     )
     if summary and not _is_quiet_args(args, runtime_settings):
         print(summary)
@@ -672,15 +1248,27 @@ async def _prepare_runtime(args: argparse.Namespace, workspace_dir: Path) -> Pre
     - 构造 LLMClient 并按需跑 endpoint selftest。
     """
 
+    # MCP server configuration can reference credentials from the same .env
+    # file as model_settings.yaml. Load it before MCP discovery, rather than
+    # only when LLMClient is constructed later in this function.
+    load_dotenv_for_model_settings(Path(args.model_settings).resolve())
     register_builtin_task_checkers()
     skill_roots = _resolve_skill_roots(args, workspace_dir)
-    runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
+    runtime_settings = load_runtime_settings(system_config_path("runtime.yaml"))
     runtime_settings = _runtime_settings_for_args(runtime_settings, args)
     discovered_skills = discover_skills_from_roots(skill_roots)
     registry = _build_tool_registry(skill_roots, runtime_settings, discovered_skills=discovered_skills)
-    mcp_server_count, mcp_tool_count = await _maybe_register_mcp_tools(args, registry)
+    mcp_server_count, mcp_tool_count, mcp_clients = await _maybe_register_mcp_tools(args, registry)
     _validate_agent_tools(registry)
-    llm_client = LLMClient(Path(args.model_routing).resolve())
+    try:
+        llm_client = LLMClient(Path(args.model_settings).resolve())
+        llm_client = await _ensure_llm_is_ready(args, llm_client)
+    except BaseException:
+        for client in reversed(mcp_clients):
+            close = getattr(client, "aclose", None)
+            if callable(close):
+                await close()
+        raise
     try:
         await _maybe_run_selftest(args, llm_client)
     except BaseException:
@@ -690,6 +1278,10 @@ async def _prepare_runtime(args: argparse.Namespace, workspace_dir: Path) -> Pre
         close = getattr(llm_client, "aclose", None)
         if callable(close):
             await close()
+        for mcp_client in reversed(mcp_clients):
+            close_mcp = getattr(mcp_client, "aclose", None)
+            if callable(close_mcp):
+                await close_mcp()
         raise
     return PreparedRuntime(
         skill_roots=skill_roots,
@@ -698,15 +1290,19 @@ async def _prepare_runtime(args: argparse.Namespace, workspace_dir: Path) -> Pre
         llm_client=llm_client,
         mcp_server_count=mcp_server_count,
         mcp_tool_count=mcp_tool_count,
+        mcp_clients=mcp_clients,
     )
 
 
 async def run_command(args: argparse.Namespace) -> int:
     """完整 pipeline 模式入口。"""
 
-    runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
+    runtime_settings = load_runtime_settings(system_config_path("runtime.yaml"))
     runtime_settings = _runtime_settings_for_args(runtime_settings, args)
     workspace_dir = Path(args.workspace).resolve()
+    entry_error = _validate_pipeline_workspace_entry(args, workspace_dir)
+    if entry_error is not None:
+        return entry_error
     ensure_workspace_layout(workspace_dir, runtime_settings)
     _configure_workspace_logging(args, workspace_dir, runtime_settings)
     _emit_startup_ui(
@@ -722,9 +1318,8 @@ async def run_command(args: argparse.Namespace) -> int:
     )
     definition_errors = state_machine.validate_definition()
     if definition_errors:
-        raise SystemExit(
-            "State machine definition is invalid:\n" + "\n".join(f"- {item}" for item in definition_errors)
-        )
+        _render_state_machine_definition_error(args, state_machine, definition_errors)
+        return 2
 
     start_task = _resolve_pipeline_start_task(args)
     if start_task:
@@ -739,13 +1334,24 @@ async def run_command(args: argparse.Namespace) -> int:
         if prepare_code != 0:
             return prepare_code
 
+    resume_from_task = str(getattr(args, "from_task", "") or "").strip()
+    if resume_from_task:
+        reentry_code = _prepare_resume_from_task(
+            workspace_dir=workspace_dir,
+            state_machine=state_machine,
+            start_task=resume_from_task,
+            quiet=_is_quiet_args(args, runtime_settings),
+        )
+        if reentry_code != 0:
+            return reentry_code
+
     try:
         prepared = await _prepare_runtime(args, workspace_dir)
     except Exception as exc:
-        print(
-            "运行环境尚未就绪；修复 provider、配置或依赖后重新运行或 resume。\n"
-            f"原因：{exc}",
-            file=sys.stderr,
+        _render_runtime_unavailable(
+            args,
+            message="模型连接或本地依赖暂时不可用。检查模型设置和依赖后重新运行或使用 resume。",
+            error=exc,
         )
         return 1
     _emit_startup_ui(
@@ -774,9 +1380,9 @@ async def run_command(args: argparse.Namespace) -> int:
 
 
 async def run_smoke_command(args: argparse.Namespace) -> int:
-    """真实 pipeline smoke 模式：小规模覆盖 + medium LLM tier。"""
+    """真实 pipeline smoke 模式：小规模覆盖 + 当前全局 LLM。"""
 
-    runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
+    runtime_settings = load_runtime_settings(system_config_path("runtime.yaml"))
     runtime_settings = _runtime_settings_for_args(runtime_settings, args)
     workspace_dir = Path(args.workspace).resolve()
     ensure_workspace_layout(workspace_dir, runtime_settings)
@@ -795,9 +1401,8 @@ async def run_smoke_command(args: argparse.Namespace) -> int:
     _apply_smoke_llm_overrides(state_machine, tier=args.tier, profile=args.profile)
     definition_errors = state_machine.validate_definition()
     if definition_errors:
-        raise SystemExit(
-            "State machine definition is invalid:\n" + "\n".join(f"- {item}" for item in definition_errors)
-        )
+        _render_state_machine_definition_error(args, state_machine, definition_errors)
+        return 2
 
     _write_smoke_literature_params(
         workspace_dir,
@@ -825,10 +1430,10 @@ async def run_smoke_command(args: argparse.Namespace) -> int:
     try:
         prepared = await _prepare_runtime(args, workspace_dir)
     except Exception as exc:
-        print(
-            "运行环境尚未就绪；修复 provider、配置或依赖后重新运行或 resume。\n"
-            f"原因：{exc}",
-            file=sys.stderr,
+        _render_runtime_unavailable(
+            args,
+            message="模型连接或本地依赖暂时不可用。检查模型设置和依赖后重新运行或使用 resume。",
+            error=exc,
         )
         return 1
     _emit_startup_ui(
@@ -842,11 +1447,11 @@ async def run_smoke_command(args: argparse.Namespace) -> int:
         mcp_tool_count=prepared.mcp_tool_count,
     )
     if _is_quiet_args(args, runtime_settings):
-        print(f"[Smoke] start_task={start_task}, tier={args.tier}", flush=True)
+        print(f"[Smoke] start_task={start_task}, llm=global", flush=True)
     else:
         print(
             "[Smoke] 已启动真实快速联调："
-            f"start_task={start_task}, tier={args.tier}, active_pool_max={args.active_pool_max}, "
+            f"start_task={start_task}, llm=global, active_pool_max={args.active_pool_max}, "
             f"deep_read_target={args.deep_read_target}, abstract_sweep={args.abstract_sweep}",
             flush=True,
         )
@@ -866,7 +1471,7 @@ async def run_smoke_command(args: argparse.Namespace) -> int:
 
 
 def _apply_smoke_llm_overrides(state_machine: StateMachine, *, tier: str, profile: str | None = None) -> None:
-    """Temporarily lower all agent nodes to the smoke LLM tier."""
+    """Keep legacy smoke overrides readable; the default runtime uses one model."""
 
     for node in state_machine.nodes.values():
         if node.terminal or (node.agent is None and node.skill is None):
@@ -936,7 +1541,10 @@ def _write_smoke_literature_params(
 
     deep_min = max(1, min(int(deep_read_target), 3))
     deep_max = max(int(deep_read_target), int(deep_read_target) + 1)
-    active_pool = max(10, int(active_pool_max))
+    # Smoke is also used to exercise recovery and output contracts with a
+    # deliberately tiny real pool.  Do not silently replace the user's
+    # requested cap with the formal-run minimum.
+    active_pool = max(1, int(active_pool_max))
     abstract_num = max(0, int(abstract_sweep))
     payload = {
         "semantics": "workspace_literature_coverage_parameters_for_t2_t3",
@@ -1124,6 +1732,65 @@ def _prepare_pipeline_start_workspace(
     return 0
 
 
+def _prepare_resume_from_task(
+    *,
+    workspace_dir: Path,
+    state_machine: StateMachine,
+    start_task: str,
+    quiet: bool = False,
+) -> int:
+    """Safely re-enter an existing workspace at a declared state-machine task.
+
+    This is intentionally separate from ``run --start-task``.  The latter
+    initializes a new workspace (optionally copying inputs from another
+    workspace); this helper preserves the current workspace and its history,
+    validates the target task's real prerequisites, and records why a pending
+    gate was deliberately bypassed.
+    """
+
+    if start_task not in state_machine.nodes:
+        print(f"Unknown --from-task: {start_task}")
+        return 2
+    if state_machine.nodes[start_task].terminal:
+        print(f"--from-task cannot target a terminal state: {start_task}")
+        return 2
+    state_path = workspace_dir / "state.yaml"
+    if not state_path.exists():
+        print("--from-task requires an existing workspace state.yaml; use run --start-task for a new workspace.")
+        return 2
+    ok, err = validate_prerequisites(workspace_dir, start_task)
+    if not ok:
+        print(f"Prerequisites not met for --from-task {start_task}: {err}")
+        return 3
+    try:
+        state = StateYaml.load_yaml(state_path)
+    except Exception as exc:
+        print(f"Unable to load existing state.yaml for --from-task: {exc}")
+        return 2
+
+    prior_task = state.current_task
+    reentry = {
+        "from_task": prior_task,
+        "to_task": start_task,
+        "requested_at": datetime.now(timezone.utc).isoformat(),
+        "reason": "explicit_cli_resume_from_task",
+        "cleared_pending_gate": state.pending_gate.gate_id if state.pending_gate else None,
+    }
+    history = state.task_context.get("manual_reentries")
+    records = list(history) if isinstance(history, list) else []
+    records.append(reentry)
+    state.task_context["manual_reentries"] = records[-20:]
+    state.current_task = start_task
+    state.status = "PAUSED"
+    state.pending_gate = None
+    state.paused_at = datetime.now(timezone.utc).isoformat()
+    state.last_error = None
+    state.dump_yaml(state_path)
+    message = f"[进度] 已受校验地从 {prior_task} 重入 {start_task}；下一步将按该节点正常执行。"
+    print(f"[Pipeline] resume_from_task={start_task}" if quiet else message, flush=True)
+    return 0
+
+
 def _copy_task_inputs_from_workspace(
     *,
     task_id: str,
@@ -1182,7 +1849,7 @@ def _build_start_task_state(
 async def run_task_command(args: argparse.Namespace) -> int:
     """单 task 模式入口。"""
 
-    runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
+    runtime_settings = load_runtime_settings(system_config_path("runtime.yaml"))
     runtime_settings = _runtime_settings_for_args(runtime_settings, args)
     workspace_dir = Path(args.workspace).resolve()
     ensure_workspace_layout(workspace_dir, runtime_settings)
@@ -1197,10 +1864,10 @@ async def run_task_command(args: argparse.Namespace) -> int:
     try:
         prepared = await _prepare_runtime(args, workspace_dir)
     except Exception as exc:
-        print(
-            "运行环境尚未就绪；修复 provider、配置或依赖后重新运行此任务。\n"
-            f"原因：{exc}",
-            file=sys.stderr,
+        _render_runtime_unavailable(
+            args,
+            message="模型连接或本地依赖暂时不可用。检查模型设置和依赖后重新运行此任务。",
+            error=exc,
         )
         return 1
     _emit_startup_ui(
@@ -1237,6 +1904,15 @@ async def run_task_command(args: argparse.Namespace) -> int:
 
 _SKILL_EXECUTE_ANSWERS = {"执行", "开始", "运行", "确认执行", "yes", "y", "run", "execute", "start"}
 _SKILL_PAUSE_ANSWERS = {"暂停", "稍后", "退出", "取消", "不执行", "no", "n", "pause", "cancel", "stop"}
+_SKILL_INTAKE_CONTINUE_ANSWERS = {"1", "继续", "继续收集缺失材料", "continue", "resume"}
+_SKILL_INTAKE_PAUSE_ANSWERS = _SKILL_PAUSE_ANSWERS | {
+    "2",
+    "暂停并保留会话",
+    "pause and keep session",
+    "keep session",
+    "exit",
+    "q",
+}
 
 
 def _normalized_skill_answer(value: str) -> str:
@@ -1251,10 +1927,21 @@ def _skill_user_paused(value: str) -> bool:
     return _normalized_skill_answer(value) in _SKILL_PAUSE_ANSWERS
 
 
+def _parse_skill_intake_followup_action(value: str) -> str | None:
+    """Parse the numbered continue/pause control without leaking it into other gates."""
+
+    normalized = _normalized_skill_answer(value)
+    if normalized in _SKILL_INTAKE_CONTINUE_ANSWERS:
+        return "continue"
+    if normalized in _SKILL_INTAKE_PAUSE_ANSWERS:
+        return "pause"
+    return None
+
+
 async def run_skill_command(args: argparse.Namespace) -> int:
     """Run a Skill through guided intake, explicit confirmation, then execution."""
 
-    runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
+    runtime_settings = load_runtime_settings(system_config_path("runtime.yaml"))
     runtime_settings = _runtime_settings_for_args(runtime_settings, args)
     workspace_dir = Path(args.workspace).resolve()
     ensure_workspace_layout(workspace_dir, runtime_settings)
@@ -1289,12 +1976,52 @@ async def run_skill_command(args: argparse.Namespace) -> int:
         if args.resume and not request and previous:
             request = str(previous.get("request", "")).strip()
         if interactive_session and not request:
+            # First show a deterministic, Skill-specific material scan. Asking
+            # for a task before that screen made a fresh guided session feel
+            # like an unexplained free-form chat prompt.
+            initial_readiness = check_skill_readiness(
+                skill_name=skill.name,
+                metadata=skill.metadata,
+                workspace=workspace_dir,
+                request="",
+            )
+            initial_packet = prepare_skill_intake_packet(initial_readiness)
+            initial_session_file, _initial_session = record_readiness(
+                workspace=workspace_dir,
+                session_id=session_id,
+                skill_name=skill.name,
+                skill_path=skill.skill_dir,
+                readiness=initial_readiness,
+                resume=bool(args.resume),
+                intake_packet_path=initial_packet,
+                workflow=workflow,
+            )
+            print(
+                _render_skill_readiness_for_cli(
+                    args,
+                    skill_name=skill.name,
+                    session_id=session_id,
+                    session_file=initial_session_file,
+                    readiness=initial_readiness,
+                )
+            )
             prompt = (
                 interaction.request_prompt
                 if interaction is not None
                 else "请说明希望这个 Skill 完成什么。"
             )
-            request = await _build_human_interface(runtime_settings).ask_clarification(question=prompt)
+            request = await _build_human_interface(runtime_settings).ask_clarification(
+                question=f"{prompt} 输入“暂停”会保留本次启动检查，稍后可用同一 session 继续。"
+            )
+            if _skill_user_paused(request):
+                record_skill_execution_confirmation_pending(
+                    workspace=workspace_dir,
+                    session_id=session_id,
+                    message="用户在说明任务前暂停；启动检查和材料清单已保留。",
+                    input_ready=False,
+                )
+                print(_render_skill_completion_for_cli(args, workspace=workspace_dir, session_id=session_id))
+                return 0
         readiness = check_skill_readiness(
             skill_name=skill.name,
             metadata=skill.metadata,
@@ -1332,12 +2059,11 @@ async def run_skill_command(args: argparse.Namespace) -> int:
             return 2
         if not sys.stdin.isatty():
             print(
-                "当前没有可交互终端；已保留 WAITING_INPUT 会话。请上传文件后以同一会话恢复，"
-                "或在可交互终端恢复该会话以启动材料收集。"
+                "当前终端无法接收回答；已保存准备状态。补充材料后，请在可交互终端用同一恢复标识继续。"
             )
             return 2
         if interaction is None or interaction.mode != "guided":
-            print("当前 Skill 没有 guided 输入契约，无法启动受限材料收集。", file=sys.stderr)
+            print("当前 Skill 尚未声明可自动检查的材料要求，无法开始引导式材料准备。", file=sys.stderr)
             return 2
         try:
             prepared = await _prepare_runtime(args, workspace_dir)
@@ -1379,9 +2105,9 @@ async def run_skill_command(args: argparse.Namespace) -> int:
                     workflow=workflow,
                 )
                 intake_message = (
-                    f"第 {intake_round} 轮材料收集完成，已通过确定性输入检查；等待人工确认是否执行 Skill。"
+                    f"第 {intake_round} 轮材料准备完成，所需材料已齐全；等待确认是否执行 Skill。"
                     if readiness.ready
-                    else f"第 {intake_round} 轮材料收集后仍有缺口；将继续由 intake Agent 逐项询问，或由人工暂停。"
+                    else f"第 {intake_round} 轮材料准备后仍缺少内容；系统会继续逐项询问，或等待你暂停。"
                 )
                 record_input_collection_finished(
                     workspace=workspace_dir,
@@ -1405,14 +2131,19 @@ async def run_skill_command(args: argparse.Namespace) -> int:
                     return 2
                 if readiness.ready:
                     break
-                action = await human.ask_clarification(
-                    question=(
-                        "当前材料仍不足以启动该 Skill。输入“继续”让系统开始下一轮定向材料收集；"
-                        "输入“暂停”保留当前会话，稍后再继续。"
-                    ),
-                    suggestions=["继续收集缺失材料", "暂停并保留会话"],
-                )
-                if _skill_user_paused(action):
+                intake_action: str | None = None
+                while intake_action is None:
+                    action = await human.ask_clarification(
+                        question=(
+                            "当前材料还不足以开始。输入“继续”让系统继续准备缺少的材料；"
+                            "输入“暂停”保留当前会话，稍后再继续。"
+                        ),
+                        suggestions=["继续准备材料", "暂停并保留会话"],
+                    )
+                    intake_action = _parse_skill_intake_followup_action(action)
+                    if intake_action is None:
+                        print("请选择“继续”或“暂停”；系统不会在未确认时自动继续。")
+                if intake_action == "pause":
                     record_skill_execution_confirmation_pending(
                         workspace=workspace_dir,
                         session_id=session_id,
@@ -1430,8 +2161,7 @@ async def run_skill_command(args: argparse.Namespace) -> int:
                 prepared = None
             record_runtime_pause(workspace=workspace_dir, session_id=session_id, error=exc)
             print(
-                "Skill 交互式材料收集尚未完成，已保留会话；修复运行环境或在同一会话继续补充。\n"
-                f"原因：{exc}",
+                "Skill 的材料准备暂时中断，当前进度已保存。修复运行环境或补充材料后，可用同一恢复标识继续。",
                 file=sys.stderr,
             )
             print(_render_skill_completion_for_cli(args, workspace=workspace_dir, session_id=session_id))
@@ -1487,11 +2217,13 @@ async def run_skill_command(args: argparse.Namespace) -> int:
             prepared = await _prepare_runtime(args, workspace_dir)
         except Exception as exc:
             record_runtime_pause(workspace=workspace_dir, session_id=session_id, error=exc)
-            print(
-                "Skill 运行环境尚未就绪，已保留会话；修复 provider、配置或依赖后使用同一 "
-                f"`--session-id {session_id} --resume` 重试。\n原因：{exc}",
-                file=sys.stderr,
+            message = (
+                "运行环境暂时不可用，当前进度已保存。检查模型设置或本地依赖后，使用同一 "
+                f"`--session-id {session_id} --resume` 继续。"
             )
+            if getattr(args, "verbose", False):
+                message += f"\n诊断：{exc}"
+            print(message, file=sys.stderr)
             print(_render_skill_completion_for_cli(args, workspace=workspace_dir, session_id=session_id))
             return 1
     _emit_startup_ui(
@@ -1554,7 +2286,7 @@ async def run_skill_command(args: argparse.Namespace) -> int:
 async def selftest_command(args: argparse.Namespace) -> int:
     """LLM endpoint 自检。"""
 
-    runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
+    runtime_settings = load_runtime_settings(system_config_path("runtime.yaml"))
     runtime_settings = _runtime_settings_for_args(runtime_settings, args)
     _emit_startup_ui(
         args=args,
@@ -1562,21 +2294,21 @@ async def selftest_command(args: argparse.Namespace) -> int:
         workspace_dir=None,
         show_summary=False,
     )
-    client = LLMClient(Path(args.model_routing).resolve())
+    client = LLMClient(Path(args.model_settings).resolve())
     try:
+        status = client.configuration_status()
+        if not status.get("ready", False):
+            _render_llm_setup_required(status)
+            return 2
         llm_results = await client.selftest(args.profile or None)
     finally:
         await client.aclose()
     dependency_results = _dependency_selftest()
-    print(
-        yaml.safe_dump(
-            {
-                "llm": llm_results,
-                "dependencies": dependency_results,
-            },
-            allow_unicode=True,
-            sort_keys=False,
-        )
+    _render_selftest_summary(
+        args,
+        llm_results=llm_results,
+        dependency_results=dependency_results,
+        title="系统检查",
     )
     llm_ok = all(item.get("ok") for item in llm_results.values())
     deps_ok = all(item.get("ok") for item in dependency_results.values())
@@ -1586,7 +2318,7 @@ async def selftest_command(args: argparse.Namespace) -> int:
 def init_workspace_command(args: argparse.Namespace) -> int:
     """初始化一个标准 workspace。"""
 
-    runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
+    runtime_settings = load_runtime_settings(system_config_path("runtime.yaml"))
     runtime_settings = _runtime_settings_for_args(runtime_settings, args)
     workspace_dir = Path(args.workspace).resolve()
     ensure_workspace_layout(workspace_dir, runtime_settings)
@@ -1623,7 +2355,7 @@ def init_workspace_command(args: argparse.Namespace) -> int:
 def doctor_command(args: argparse.Namespace) -> int:
     """Deterministic local environment check for Native and Docker mode."""
 
-    runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
+    runtime_settings = load_runtime_settings(system_config_path("runtime.yaml"))
     runtime_settings = _runtime_settings_for_args(runtime_settings, args)
     workspace_dir = Path(args.workspace).expanduser().resolve()
 
@@ -1640,7 +2372,7 @@ def doctor_command(args: argparse.Namespace) -> int:
         add("ERROR", "package", f"failed to import researchos: {exc}")
 
     try:
-        runtime_path = resolve_runtime_config_path(Path("config/runtime.yaml"))
+        runtime_path = resolve_runtime_config_path(system_config_path("runtime.yaml"))
         if runtime_path.exists():
             add("OK", "runtime config", str(runtime_path.resolve()))
         else:
@@ -1657,11 +2389,11 @@ def doctor_command(args: argparse.Namespace) -> int:
     except Exception as exc:
         add("ERROR", "state machine", str(exc))
 
-    user_config = os.getenv("RESEARCHOS_CONFIG") or os.getenv("RESEARCHOS_USER_SETTINGS") or "config/user_settings.yaml"
+    user_config = os.getenv("RESEARCHOS_MODEL_SETTINGS") or os.getenv("RESEARCHOS_CONFIG") or os.getenv("RESEARCHOS_USER_SETTINGS") or "config/model_settings.yaml"
     if Path(user_config).exists():
-        add("OK", "user settings", str(Path(user_config).resolve()))
+        add("OK", "model settings", str(Path(user_config).resolve()))
     else:
-        add("WARN", "user settings", f"{user_config} not found; checked-in defaults remain active")
+        add("WARN", "model settings", f"{user_config} not found; run `configure-llm` before starting a project")
 
     try:
         workspace_dir.mkdir(parents=True, exist_ok=True)
@@ -1785,10 +2517,48 @@ def validate_command(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def audit_survey_command(args: argparse.Namespace) -> int:
+    """Re-run the deterministic T3.6 audit without starting an LLM Agent.
+
+    This is intentionally distinct from ``validate --task T3.6-ASSEMBLE``:
+    validation checks the stored artifact, while this command regenerates the
+    audit after a concrete TeX/BibTeX/state repair and reports exact failures.
+    """
+
+    workspace = Path(args.workspace).resolve()
+    policy = WorkspaceAccessPolicy(
+        workspace_dir=workspace,
+        allowed_read_prefixes=["drafts/survey/", "literature/", "user_seeds/", "ideation/"],
+        allowed_write_prefixes=["drafts/survey/"],
+    )
+    result = asyncio.run(AuditSurveyCoverageTool(policy).execute())
+    audit = result.data if isinstance(result.data, dict) else {}
+    failures = [
+        {"name": item.get("name"), "detail": item.get("detail")}
+        for item in audit.get("checks", [])
+        if isinstance(item, dict) and item.get("level") == "FAIL" and item.get("passed") is False
+    ]
+    print(
+        yaml.safe_dump(
+            {
+                "ok": result.ok,
+                "workspace": str(workspace),
+                "audit_path": "drafts/survey/survey_audit.json",
+                "failure_count": len(failures),
+                "failures": failures,
+                "message": result.content,
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        )
+    )
+    return 0 if result.ok else 1
+
+
 def validate_config_command(args: argparse.Namespace) -> int:
     """校验 workflow/gate/runtime 配置的一致性。"""
 
-    runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
+    runtime_settings = load_runtime_settings(system_config_path("runtime.yaml"))
     runtime_settings = _runtime_settings_for_args(runtime_settings, args)
     config_dir = Path("config").resolve()
     state_machine = StateMachine(
@@ -1800,8 +2570,9 @@ def validate_config_command(args: argparse.Namespace) -> int:
         "ok": not errors,
         "state_machine": str(Path(args.state_machine).resolve()),
         "gates": str(Path(args.gates).resolve()) if args.gates else None,
+        "contract_source": str(task_io_contract_source()),
         "runtime": {
-            "config_path": str(resolve_runtime_config_path(Path("config/runtime.yaml")).resolve()),
+            "config_path": str(resolve_runtime_config_path(system_config_path("runtime.yaml")).resolve()),
             "workspace_default_root": runtime_settings.workspace.default_root,
             "runtime_dir": runtime_settings.workspace.runtime_dir,
             "log_level": runtime_settings.logging.level,
@@ -1821,6 +2592,7 @@ def validate_config_command(args: argparse.Namespace) -> int:
                 {
                     "ok": payload["ok"],
                     "state_machine": payload["state_machine"],
+                    "contract_source": payload["contract_source"],
                     "errors": errors,
                 },
                 allow_unicode=True,
@@ -1840,20 +2612,20 @@ async def specialize_executor_skills_command(args: argparse.Namespace) -> int:
     workspace = Path(args.workspace).resolve()
     dry_run = bool(getattr(args, "dry_run", False))
     validate_only = bool(getattr(args, "validate_only", False))
-    if dry_run:
+    deterministic = bool(getattr(args, "deterministic", False))
+    if dry_run or deterministic:
         result = specialize_project_skills(
             workspace=workspace,
             dry_run=dry_run,
             validate_only=False,
         )
     elif validate_only:
-        result = await specialize_project_skills_with_llm(
+        result = specialize_project_skills(
             workspace=workspace,
-            llm_client=None,
             validate_only=True,
         )
     else:
-        llm_client = LLMClient(Path(args.model_routing).resolve())
+        llm_client = LLMClient(Path(args.model_settings).resolve())
         try:
             result = await specialize_project_skills_with_llm(
                 workspace=workspace,
@@ -1868,7 +2640,7 @@ async def specialize_executor_skills_command(args: argparse.Namespace) -> int:
     method = report.get("specialization_method") or ("dry_run" if dry_run else "deterministic_validation")
     print(f"Method: {method}")
     llm_info = report.get("llm_specialization") if isinstance(report.get("llm_specialization"), dict) else {}
-    if llm_info:
+    if llm_info.get("enabled") is True:
         print(
             "LLM: "
             f"{llm_info.get('model', 'n/a')} via {llm_info.get('endpoint', 'n/a')} "
@@ -1885,17 +2657,294 @@ async def specialize_executor_skills_command(args: argparse.Namespace) -> int:
 
 
 def status_command(args: argparse.Namespace) -> int:
-    """输出 workspace 当前的 state.yaml。"""
+    """Render a compact workspace status; raw state is opt-in for debugging."""
 
-    state = StateYaml.load_yaml((Path(args.workspace) / "state.yaml").resolve())
-    print(yaml.safe_dump(model_dump(state, mode="json"), allow_unicode=True, sort_keys=False))
+    workspace = Path(args.workspace).resolve()
+    state = StateYaml.load_yaml(workspace / "state.yaml")
+    if bool(getattr(args, "detail", False)):
+        print(yaml.safe_dump(model_dump(state, mode="json"), allow_unicode=True, sort_keys=False))
+        return 0
+
+    rows = [
+        ("项目", state.project_id or workspace.name),
+        ("当前步骤", state.current_task or "未开始"),
+        ("状态", state.status or "未知"),
+    ]
+    gate = state.pending_gate
+    if gate is not None:
+        presentation = gate.presentation if isinstance(gate.presentation, dict) else {}
+        title = str(presentation.get("_title") or gate.gate_id or "需要确认")
+        description = " ".join(str(presentation.get("_description") or "").split())
+        rows.append(("等待确认", title))
+        if description:
+            rows.append(("说明", description[:220]))
+    if state.last_error:
+        rows.append(("最近提示", " ".join(str(state.last_error).split())[:220]))
+
+    if state.status in {"PAUSED", "WAITING_HUMAN"}:
+        next_step = f"python -m researchos.cli resume --workspace {workspace}"
+    elif state.status == "COMPLETED":
+        next_step = "项目已完成。可用 workspace-status 查看其他项目。"
+    else:
+        next_step = f"python -m researchos.cli run --workspace {workspace}"
+    rows.append(("下一步", next_step))
+
+    table = Table(title="ResearchOS · 当前项目", box=box.SIMPLE_HEAVY, show_header=False, expand=False)
+    table.add_column(style="bold cyan", no_wrap=True)
+    table.add_column(max_width=100, overflow="fold")
+    for label, value in rows:
+        table.add_row(label, value)
+    console = Console(no_color=bool(getattr(args, "_effective_no_color", getattr(args, "no_color", False))))
+    console.print(table)
+    print("提示：使用 `status --detail` 查看原始 state.yaml。")
+    return 0
+
+
+def _researchos_workspace_processes() -> dict[Path, list[dict[str, str]]]:
+    """Best-effort map of local ResearchOS CLI processes to workspace paths.
+
+    This is deliberately advisory: state.yaml and event files remain the
+    durable truth. Process inspection is only used to make the workspace
+    overview actionable when the command runs on the same Linux host.
+    """
+
+    proc_root = Path("/proc")
+    if not proc_root.is_dir():
+        return {}
+    matches: dict[Path, list[dict[str, str]]] = {}
+    for proc_dir in proc_root.iterdir():
+        if not proc_dir.name.isdigit():
+            continue
+        try:
+            argv = (proc_dir / "cmdline").read_bytes().decode("utf-8", errors="replace").split("\0")
+            cwd = Path(os.readlink(proc_dir / "cwd"))
+            stat_tail = (proc_dir / "stat").read_text(encoding="utf-8", errors="replace").rsplit(")", 1)[1].split()
+            process_state = stat_tail[0] if stat_tail else "?"
+        except OSError:
+            continue
+        if "researchos.cli" not in argv:
+            continue
+        workspace_value = ""
+        for index, value in enumerate(argv):
+            if value == "--workspace" and index + 1 < len(argv):
+                workspace_value = argv[index + 1]
+                break
+            if value.startswith("--workspace="):
+                workspace_value = value.split("=", 1)[1]
+                break
+        if not workspace_value:
+            continue
+        workspace = Path(workspace_value)
+        if not workspace.is_absolute():
+            workspace = cwd / workspace
+        try:
+            workspace = workspace.resolve()
+        except OSError:
+            continue
+        command = next((value for value in argv if value in {"run", "resume", "run-task", "run-skill"}), "researchos")
+        matches.setdefault(workspace, []).append(
+            {"pid": proc_dir.name, "command": command, "state": process_state}
+        )
+    return matches
+
+
+def _recent_workspace_event(workspace: Path) -> tuple[float | None, str | None]:
+    events_dir = workspace / "_runtime" / "events"
+    try:
+        newest = max(events_dir.glob("*.jsonl"), key=lambda item: item.stat().st_mtime)
+        return newest.stat().st_mtime, newest.name
+    except (OSError, ValueError):
+        return None, None
+
+
+def _age_label(timestamp: float | None, *, now: float) -> str:
+    if timestamp is None:
+        return "无事件"
+    seconds = max(0, int(now - timestamp))
+    if seconds < 60:
+        return f"{seconds}s 前"
+    if seconds < 3600:
+        return f"{seconds // 60}m 前"
+    if seconds < 86400:
+        return f"{seconds // 3600}h 前"
+    return f"{seconds // 86400}d 前"
+
+
+def _collect_workspace_status(workspace_root: Path) -> list[dict[str, str]]:
+    """Collect durable state plus advisory local activity for every workspace."""
+
+    root = Path(workspace_root).resolve()
+    now = datetime.now(timezone.utc).timestamp()
+    process_map = _researchos_workspace_processes()
+    rows: list[dict[str, str]] = []
+    if not root.is_dir():
+        return rows
+    workspaces = {item.resolve() for item in root.iterdir() if item.is_dir()}
+    for process_workspace in process_map:
+        try:
+            relative = process_workspace.relative_to(root)
+        except ValueError:
+            continue
+        if len(relative.parts) == 1:
+            workspaces.add(process_workspace)
+    for workspace in sorted(workspaces, key=lambda item: item.name.casefold()):
+        state_path = workspace / "state.yaml"
+        processes = process_map.get(workspace.resolve(), [])
+        event_time, event_name = _recent_workspace_event(workspace)
+        if not state_path.is_file():
+            if processes:
+                process_text = ", ".join(
+                    f"{item['command']}#{item['pid']}[{item.get('state', '?')}]" for item in processes[:3]
+                )
+                active_count = sum(1 for item in processes if item.get("state") not in {"T", "t", "Z", "X"})
+                rows.append(
+                    {
+                        "workspace": workspace.name,
+                        "project_id": "-",
+                        "task": "-",
+                        "state": "NO_STATE",
+                        "activity": f"孤儿进程：执行中 {active_count}，停止/挂起 {len(processes) - active_count}",
+                        "last_event": _age_label(event_time, now=now),
+                        "gate": "-",
+                        "detail": (
+                            "不要直接 resume；先核查该目录是否被移动、清理或指向错误 workspace。"
+                            f" 进程：{process_text}"
+                        ),
+                    }
+                )
+            continue
+        try:
+            state = StateYaml.load_yaml(state_path)
+        except Exception as exc:
+            rows.append(
+                {
+                    "workspace": workspace.name,
+                    "project_id": "-",
+                    "task": "-",
+                    "state": "INVALID",
+                    "activity": "state.yaml 无法解析",
+                    "last_event": _age_label(event_time, now=now),
+                    "gate": "-",
+                    "detail": str(exc).replace("\n", " ")[:160],
+                }
+            )
+            continue
+        if processes:
+            process_text = ", ".join(
+                f"{item['command']}#{item['pid']}[{item.get('state', '?')}]" for item in processes[:3]
+            )
+            active_processes = [item for item in processes if item.get("state") not in {"T", "t", "Z", "X"}]
+            activity = f"本机执行：{process_text}" if active_processes else f"本机进程已停止/挂起（{len(processes)}）"
+            process_detail = f"进程：{process_text}"
+        elif state.status == "RUNNING" and event_time is not None and now - event_time <= 120:
+            activity = "最近有事件；未发现可匹配本机进程"
+            process_detail = ""
+        elif state.status == "RUNNING":
+            activity = "可能已失联：RUNNING 但无本机进程/近期事件"
+            process_detail = ""
+        elif state.status == "WAITING_HUMAN":
+            activity = "等待人工 Gate 输入"
+            process_detail = ""
+        elif state.status == "PAUSED":
+            activity = "已暂停，可用 resume 继续"
+            process_detail = ""
+        elif state.status == "COMPLETED":
+            activity = "已完成"
+            process_detail = ""
+        else:
+            activity = "失败，查看 last_error / trace"
+            process_detail = ""
+        gate = state.pending_gate.gate_id if state.pending_gate else "-"
+        last_history = state.history[-1] if state.history else None
+        detail = ""
+        if state.last_error:
+            detail = " ".join(state.last_error.split())[:160]
+        elif last_history and last_history.error:
+            detail = " ".join(last_history.error.split())[:160]
+        elif process_detail:
+            detail = process_detail
+        elif event_name:
+            detail = f"事件：{event_name}"
+        rows.append(
+            {
+                "workspace": workspace.name,
+                "project_id": state.project_id,
+                "task": state.current_task,
+                "state": state.status,
+                "activity": activity,
+                "last_event": _age_label(event_time, now=now),
+                "gate": gate,
+                "detail": detail or "-",
+            }
+        )
+    return rows
+
+
+def workspace_status_command(args: argparse.Namespace) -> int:
+    """Render a concise multi-workspace operational overview."""
+
+    workspace_root = Path(args.workspace_root).resolve()
+    rows = _collect_workspace_status(workspace_root)
+    if not rows:
+        print(f"未在 {workspace_root} 下找到含 state.yaml 的 workspace。")
+        return 0
+    no_color = bool(getattr(args, "_effective_no_color", getattr(args, "no_color", False)))
+    terminal_width = max(80, min(160, shutil.get_terminal_size(fallback=(120, 40)).columns))
+    compact = terminal_width < 118
+    table = Table(
+        title=f"ResearchOS · Workspace Status ({workspace_root})",
+        box=box.SIMPLE_HEAVY,
+        header_style="bold cyan",
+        expand=False,
+    )
+    show_detail = bool(getattr(args, "verbose", False)) and not compact
+    table.add_column("Workspace", max_width=20 if compact else 24, no_wrap=True, overflow="ellipsis")
+    table.add_column("Task", max_width=14 if compact else 17, no_wrap=True, overflow="ellipsis")
+    table.add_column("State", max_width=12 if compact else 14, no_wrap=True)
+    table.add_column("Activity", max_width=24 if compact else 32, overflow="fold")
+    if not compact:
+        table.add_column("Last event", max_width=11, no_wrap=True)
+        table.add_column("Gate", max_width=18, overflow="fold")
+    if show_detail:
+        table.add_column("Detail", max_width=42, overflow="fold")
+    state_styles = {
+        "RUNNING": "bright_green",
+        "WAITING_HUMAN": "yellow",
+        "PAUSED": "yellow",
+        "COMPLETED": "green",
+        "FAILED": "bright_red",
+        "INVALID": "bright_red",
+        "NO_STATE": "bright_red",
+    }
+    for row in rows:
+        values = [
+            row["workspace"],
+            row["task"],
+            f"[{state_styles.get(row['state'], 'white')}]{row['state']}[/]",
+            row["activity"],
+        ]
+        if not compact:
+            values.extend([row["last_event"], row["gate"]])
+        if show_detail:
+            values.append(row["detail"])
+        table.add_row(*values)
+    Console(
+        force_terminal=not no_color,
+        color_system=None if no_color else "truecolor",
+        no_color=no_color,
+        width=terminal_width,
+    ).print(table)
+    print(
+        "说明：进程匹配仅覆盖本机且命令行明确带 --workspace 的 ResearchOS 进程；"
+        "state.yaml 与 _runtime/events 才是可恢复事实源。使用 --verbose 显示最后错误/事件文件。"
+    )
     return 0
 
 
 def trace_command(args: argparse.Namespace) -> int:
     """打印指定 run_id 对应的 trace 文件。"""
 
-    runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
+    runtime_settings = load_runtime_settings(system_config_path("runtime.yaml"))
     trace_path = (runtime_settings.traces_dir(Path(args.workspace)) / f"{args.run_id}.jsonl").resolve()
     if not trace_path.exists():
         print(f"Trace not found: {trace_path}")
@@ -1926,8 +2975,8 @@ def list_skills_command(args: argparse.Namespace) -> int:
             "description": skill.description,
             "path": str(skill.skill_dir),
             "tools": skill.allowed_tools,
-            "model_tier": skill.metadata.get("model_tier") or skill.metadata.get("tier", "medium"),
-            "llm_profile": skill.metadata.get("llm_profile"),
+            "capability_profiles": list(skill.capability_profiles),
+            "llm_connection": "global",
             "max_steps": skill.metadata.get("max_steps"),
             "max_tokens_total": skill.metadata.get("max_tokens_total"),
             "interaction": {
@@ -1976,7 +3025,6 @@ def list_skills_command(args: argparse.Namespace) -> int:
             sort_keys=False,
         ))
     else:
-        print(f"Found {len(all_skills)} skill(s) / 发现 {len(all_skills)} 个可识别 Skill：\n")
         print(_render_skill_catalog_for_cli(args, skills=discovered.values(), workspace=workspace_dir))
 
     return 0
@@ -2099,6 +3147,8 @@ def browse_skills_command(args: argparse.Namespace) -> int:
                     description=skill.description,
                     interaction=parse_skill_interaction(skill.metadata),
                     workflow=parse_skill_workflow(skill.metadata),
+                    capability_profiles=skill.capability_profiles,
+                    tools=skill.allowed_tools,
                 )
             )
             print(f"启动：run {next(index for index, item in by_index.items() if item.name == skill.name)}")
@@ -2143,6 +3193,8 @@ def describe_skill_command(args: argparse.Namespace) -> int:
                 description=skill.description,
                 interaction=parse_skill_interaction(skill.metadata),
                 workflow=parse_skill_workflow(skill.metadata),
+                capability_profiles=skill.capability_profiles,
+                tools=skill.allowed_tools,
             )
         )
     except Exception as exc:
@@ -2199,8 +3251,9 @@ def _add_shared_cli_options(
         default=str(system_config_path("gates.yaml")) if use_defaults else default,
     )
     parser.add_argument(
-        "--model-routing",
-        default="config/model_routing.yaml" if use_defaults else default,
+        "--model-settings",
+        default="config/model_settings.yaml" if use_defaults else default,
+        help="LLM provider, URL, key, model, and retry settings",
     )
     parser.add_argument(
         "--mcp-config",
@@ -2257,7 +3310,7 @@ def _add_shared_cli_options(
 def build_parser() -> argparse.ArgumentParser:
     """构造 CLI 参数解析器。"""
 
-    runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
+    runtime_settings = load_runtime_settings(system_config_path("runtime.yaml"))
     parser = argparse.ArgumentParser(prog="researchos")
     _add_shared_cli_options(parser, runtime_settings, use_defaults=True)
 
@@ -2301,11 +3354,11 @@ def build_parser() -> argparse.ArgumentParser:
     smoke_parser.add_argument("--active-pool-max", type=int, default=20)
     smoke_parser.add_argument("--deep-read-target", type=int, default=3)
     smoke_parser.add_argument("--abstract-sweep", type=int, default=5)
-    smoke_parser.add_argument("--tier", default="medium", choices=["light", "medium", "heavy"])
+    smoke_parser.add_argument("--tier", default="standard", help=argparse.SUPPRESS)
     smoke_parser.add_argument(
         "--profile",
         default=None,
-        help="可选：覆盖 LLM profile；不填则只把所有节点 tier 降到 medium",
+        help=argparse.SUPPRESS,
     )
     smoke_parser.add_argument(
         "--manuscript-language",
@@ -2327,6 +3380,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     resume_parser = subparsers.add_parser("resume", help="恢复已暂停的 pipeline")
     _add_shared_cli_options(resume_parser, runtime_settings, use_defaults=False)
+    resume_parser.add_argument(
+        "--from-task",
+        default=None,
+        help="在当前 workspace 中受校验地从指定任务重入，例如 T4；会清除当前 pending gate 并记录重入原因",
+    )
     resume_parser.add_argument("--startup-selftest", action="store_true")
     resume_parser.add_argument("--skip-startup-selftest", action="store_true")
 
@@ -2342,7 +3400,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_task_parser.add_argument(
         "--profile",
         default=None,
-        help="覆盖 LLM profile，例如 cheap_fast / deep_reasoning / audit",
+        help=argparse.SUPPRESS,
     )
     run_task_parser.add_argument(
         "--allow-legacy",
@@ -2354,10 +3412,38 @@ def build_parser() -> argparse.ArgumentParser:
 
     status_parser = subparsers.add_parser("status", help="查看当前状态")
     _add_shared_cli_options(status_parser, runtime_settings, use_defaults=False)
+    status_parser.add_argument("--detail", action="store_true", help="输出完整原始 state.yaml（用于调试）")
+
+    workspace_status_parser = subparsers.add_parser("workspace-status", help="总览多个 workspace 的状态与本机活动")
+    _add_shared_cli_options(workspace_status_parser, runtime_settings, use_defaults=False)
+    workspace_status_parser.add_argument(
+        "--workspace-root",
+        default="./workspace",
+        help="包含多个 workspace 子目录的根目录，默认 ./workspace",
+    )
 
     selftest_parser = subparsers.add_parser("selftest", help="检查 LLM endpoint 连通性")
     _add_shared_cli_options(selftest_parser, runtime_settings, use_defaults=False)
-    selftest_parser.add_argument("--profile", action="append")
+    selftest_parser.add_argument("--profile", action="append", help=argparse.SUPPRESS)
+
+    configure_llm_parser = subparsers.add_parser(
+        "configure-llm",
+        help="配置并测试唯一的 LLM 连接",
+    )
+    _add_shared_cli_options(configure_llm_parser, runtime_settings, use_defaults=False)
+    configure_llm_parser.add_argument(
+        "--provider",
+        help="Provider preset; run configure-llm interactively to choose from the full list",
+    )
+    configure_llm_parser.add_argument(
+        "--api-base",
+        help="API URL override; required only for openai_compatible",
+    )
+    configure_llm_parser.add_argument("--api-key", help="API key; prefer interactive input to avoid shell history")
+    configure_llm_parser.add_argument("--model", help="Model name used for every stage")
+    configure_llm_parser.add_argument("--key-storage", choices=("config", "env"), help="Store the key in model settings or .env")
+    configure_llm_parser.add_argument("--skip-check", dest="check", action="store_false", help="保存后不做连通性检查")
+    configure_llm_parser.set_defaults(check=True)
 
     doctor_parser = subparsers.add_parser("doctor", help="检查 Native/Docker 运行环境")
     _add_shared_cli_options(doctor_parser, runtime_settings, use_defaults=False)
@@ -2376,24 +3462,33 @@ def build_parser() -> argparse.ArgumentParser:
     _add_shared_cli_options(validate_parser, runtime_settings, use_defaults=False)
     validate_parser.add_argument("--task")
 
+    survey_audit_parser = subparsers.add_parser("audit-survey", help="无模型重跑 T3.6 Survey 覆盖审计")
+    _add_shared_cli_options(survey_audit_parser, runtime_settings, use_defaults=False)
+
     validate_config_parser = subparsers.add_parser("validate-config", help="校验状态机与 runtime 配置")
     _add_shared_cli_options(validate_config_parser, runtime_settings, use_defaults=False)
 
     specialize_parser = subparsers.add_parser(
         "specialize-executor-skills",
-        help="调用 LLM 生成项目专属 external executor skill suite",
+        help="生成或校验项目专属 external executor skill suite",
     )
     _add_shared_cli_options(specialize_parser, runtime_settings, use_defaults=False)
-    specialize_parser.add_argument("--dry-run", action="store_true", help="只构建和校验，不发布产物")
-    specialize_parser.add_argument("--validate-only", action="store_true", help="只校验现有专属化产物")
-    specialize_parser.add_argument("--profile", help="覆盖本次 skill 专属化使用的 LLM profile")
-    specialize_parser.add_argument("--tier", default="medium", help="本次 skill 专属化使用的 LLM tier，默认 medium")
+    specialize_mode = specialize_parser.add_mutually_exclusive_group()
+    specialize_mode.add_argument("--dry-run", action="store_true", help="只构建和校验，不发布产物")
+    specialize_mode.add_argument("--validate-only", action="store_true", help="只校验现有专属化产物")
+    specialize_mode.add_argument(
+        "--deterministic",
+        action="store_true",
+        help="发布无需 LLM 的 schema-validated 项目 Skill suite；用于修复旧 T5 workspace 或离线环境",
+    )
+    specialize_parser.add_argument("--profile", help=argparse.SUPPRESS)
+    specialize_parser.add_argument("--tier", default="standard", help=argparse.SUPPRESS)
 
     run_skill_parser = subparsers.add_parser("run-skill", help="启动或恢复一个带输入检查的独立 Skill")
     _add_shared_cli_options(run_skill_parser, runtime_settings, use_defaults=False)
     run_skill_parser.add_argument("skill_name")
     run_skill_parser.add_argument("request", nargs="*")
-    run_skill_parser.add_argument("--profile")
+    run_skill_parser.add_argument("--profile", help=argparse.SUPPRESS)
     run_skill_parser.add_argument(
         "--session-id",
         help="可恢复会话标识；默认使用 Skill 名称。并行处理多个稿件时请显式指定。",
@@ -2444,7 +3539,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     _emit_environment_warnings()
-    runtime_settings = load_runtime_settings(Path("config/runtime.yaml"))
+    runtime_settings = load_runtime_settings(system_config_path("runtime.yaml"))
     runtime_settings = _runtime_settings_for_args(runtime_settings, args)
     # Show the common entry panel for every actual CLI command. Commands that
     # later prepare a workspace reuse the same helper for a richer summary,
@@ -2485,14 +3580,20 @@ def main(argv: list[str] | None = None) -> int:
         return skill_status_command(args)
     if args.command == "status":
         return status_command(args)
+    if args.command == "workspace-status":
+        return workspace_status_command(args)
     if args.command == "doctor":
         return doctor_command(args)
     if args.command == "selftest":
         return asyncio.run(selftest_command(args))
+    if args.command == "configure-llm":
+        return asyncio.run(configure_llm_command(args))
     if args.command == "trace":
         return trace_command(args)
     if args.command == "validate":
         return validate_command(args)
+    if args.command == "audit-survey":
+        return audit_survey_command(args)
     if args.command == "validate-config":
         return validate_config_command(args)
     if args.command == "specialize-executor-skills":

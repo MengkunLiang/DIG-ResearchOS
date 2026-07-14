@@ -172,13 +172,13 @@ states:
       seed_constraints: user_seeds/seed_constraints.md  # 可选：用户阅读/范围约束
       seed_external_resources: user_seeds/seed_external_resources.jsonl # 可选：法规/标准/外部资源线索
     outputs:
-      paper_notes_dir: literature/paper_notes           # 论文笔记目录
+      deep_read_notes_dir: literature/deep_read_notes           # 论文笔记目录
       comparison_table: literature/comparison_table.csv # 方法对比表
       related_work_bib: literature/related_work.bib     # 相关工作引用
     optional_outputs:
-      # paper_notes_abstract_dir 由 orchestrator hook 自动生成，不列入 required outputs
+      # shallow_read_notes_dir 由 orchestrator hook 自动生成，不列入 required outputs
       # metadata_triage_report 由 orchestrator hook 自动生成，仅作缺资源候选的补取/升级线索
-      paper_notes_abstract_dir: literature/paper_notes_abstract
+      shallow_read_notes_dir: literature/shallow_read_notes
       metadata_triage_report: literature/metadata_triage.md
     next_on_success: T3.5
     next_on_failure: failed
@@ -192,11 +192,12 @@ states:
     mode: synthesize
     inputs:
       project: project.yaml                             # 输入：项目配置
-      paper_notes_dir: literature/paper_notes           # 输入：论文笔记
+      deep_read_notes_dir: literature/deep_read_notes           # 输入：论文笔记
       comparison_table: literature/comparison_table.csv # 输入：对比表
       missing_areas: literature/missing_areas.md        # 输入：研究空白
       domain_map: literature/domain_map.json             # 输入：引用图领域地图
-      paper_notes_abstract_dir: literature/paper_notes_abstract # 输入：摘要级弱证据提示
+      bridge_notes_dir: literature/bridge_notes # 输入：跨领域全文/部分全文论文笔记
+      shallow_read_notes_dir: literature/shallow_read_notes # 输入：摘要级弱证据提示
       metadata_triage_report: literature/metadata_triage.md # 输入：metadata-only 候选补资源线索，不作 claim 证据
     outputs:
       synthesis: literature/synthesis.md                # 文献综述
@@ -252,7 +253,7 @@ states:
     next_on_failure: failed
 
   # T3.6-PLAN 状态：综述 taxonomy 与章节大纲规划
-  # 用途：LLM 基于 synthesis/workbench/domain_map/paper_notes 设计 taxonomy，而不是转写 synthesis.md。
+  # 用途：LLM 基于 synthesis/workbench/domain_map 与两类论文阅读笔记设计 taxonomy，而不是转写 synthesis.md。
   T3.6-PLAN:
     agent: survey_writer
     mode: survey_plan
@@ -262,8 +263,9 @@ states:
       synthesis_workbench: literature/synthesis_workbench.json
       domain_map: literature/domain_map.json
       comparison_table: literature/comparison_table.csv
-      paper_notes_dir: literature/paper_notes
-      paper_notes_abstract_dir: literature/paper_notes_abstract
+      deep_read_notes_dir: literature/deep_read_notes
+      bridge_notes_dir: literature/bridge_notes
+      shallow_read_notes_dir: literature/shallow_read_notes
       related_work_bib: literature/related_work.bib
       writing_template: drafts/survey/writing_template.json
       seed_outline_profile: user_seeds/seed_outline_profile.json
@@ -304,8 +306,8 @@ states:
     inputs:
       project: project.yaml
       survey_plan: drafts/survey/survey_plan.json
-      paper_notes_dir: literature/paper_notes
-      paper_notes_abstract_dir: literature/paper_notes_abstract
+      deep_read_notes_dir: literature/deep_read_notes
+      shallow_read_notes_dir: literature/shallow_read_notes
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
       seed_constraints: user_seeds/seed_constraints.md
@@ -369,8 +371,9 @@ states:
       project: project.yaml
       survey_plan: drafts/survey/survey_plan.json
       survey_state: drafts/survey/survey_state.json
-      paper_notes_dir: literature/paper_notes
-      paper_notes_bridge_dir: literature/paper_notes_bridge
+      deep_read_notes_dir: literature/deep_read_notes
+      shallow_read_notes_dir: literature/shallow_read_notes
+      bridge_notes_dir: literature/bridge_notes
     outputs:
       survey_visual_manifest: drafts/survey/figures/survey_visual_manifest.json
     next_on_success: T3.6-SEC-BACKGROUND
@@ -436,8 +439,8 @@ states:
       synthesis_workbench: literature/synthesis_workbench.json
       domain_map: literature/domain_map.json
       comparison_table: literature/comparison_table.csv
-      paper_notes_dir: literature/paper_notes
-      paper_notes_abstract_dir: literature/paper_notes_abstract
+      deep_read_notes_dir: literature/deep_read_notes
+      shallow_read_notes_dir: literature/shallow_read_notes
       related_work_bib: literature/related_work.bib
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
@@ -464,8 +467,8 @@ states:
       synthesis_workbench: literature/synthesis_workbench.json
       domain_map: literature/domain_map.json
       comparison_table: literature/comparison_table.csv
-      paper_notes_dir: literature/paper_notes
-      paper_notes_abstract_dir: literature/paper_notes_abstract
+      deep_read_notes_dir: literature/deep_read_notes
+      shallow_read_notes_dir: literature/shallow_read_notes
       related_work_bib: literature/related_work.bib
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
@@ -492,8 +495,8 @@ states:
       synthesis_workbench: literature/synthesis_workbench.json
       domain_map: literature/domain_map.json
       comparison_table: literature/comparison_table.csv
-      paper_notes_dir: literature/paper_notes
-      paper_notes_abstract_dir: literature/paper_notes_abstract
+      deep_read_notes_dir: literature/deep_read_notes
+      shallow_read_notes_dir: literature/shallow_read_notes
       related_work_bib: literature/related_work.bib
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
@@ -520,8 +523,8 @@ states:
       synthesis_workbench: literature/synthesis_workbench.json
       domain_map: literature/domain_map.json
       comparison_table: literature/comparison_table.csv
-      paper_notes_dir: literature/paper_notes
-      paper_notes_abstract_dir: literature/paper_notes_abstract
+      deep_read_notes_dir: literature/deep_read_notes
+      shallow_read_notes_dir: literature/shallow_read_notes
       related_work_bib: literature/related_work.bib
       seed_outline_profile: user_seeds/seed_outline_profile.json
       seed_ideas: user_seeds/seed_ideas.md
@@ -845,9 +848,9 @@ states:
       synthesis: literature/synthesis.md                # 输入：文献综述
       comparison_table: literature/comparison_table.csv # 输入：对比表
       idea_scorecard: ideation/idea_scorecard.yaml      # 输入：idea scorecard（含 mechanism 字段）
-      paper_notes_dir: literature/paper_notes           # 可选：section 级全文/部分全文证据卡
-      paper_notes_bridge_dir: literature/paper_notes_bridge # 可选：跨域证据卡
-      paper_notes_abstract_dir: literature/paper_notes_abstract # 可选：摘要线索卡，不能单独确认碰撞
+      deep_read_notes_dir: literature/deep_read_notes           # 可选：section 级全文/部分全文证据卡
+      bridge_notes_dir: literature/bridge_notes # 可选：跨域证据卡
+      shallow_read_notes_dir: literature/shallow_read_notes # 可选：摘要线索卡，不能单独确认碰撞
     outputs:
       novelty_audit: ideation/novelty_audit.md          # 新颖性审计报告
       mechanism_tuples_dir: ideation/_mechanism_tuples   # mechanism tuple 中间产物
@@ -884,8 +887,9 @@ states:
 
   # T5-REBOOST-GATE 状态：ResearchOS 直接调用 LLM API 对 Pre-T5 材料做 context re-boost
   # 用途：把研究目标、方法机制、baseline、claim/evidence 边界重排成外部执行器上下文，
-  # 并编译外部执行器 handoff、prompt、schema 和 allowed paths；skill suite 由
-  # `researchos specialize-executor-skills` 显式调用 LLM 生成。
+  # 并编译外部执行器 handoff、prompt、schema、allowed paths 和项目专属 skill suite。
+  # Skill suite 必须在本节点由确定性专项编译器生成并通过 schema/模板完整性校验；
+  # `researchos specialize-executor-skills` 仅用于可选 LLM 增强。
   T5-REBOOST-GATE:
     agent: experimenter
     mode: reboost
@@ -900,9 +904,9 @@ states:
       synthesis_workbench: literature/synthesis_workbench.json
       domain_map: literature/domain_map.json
       comparison_table: literature/comparison_table.csv
-      paper_notes_dir: literature/paper_notes
-      paper_notes_bridge_dir: literature/paper_notes_bridge
-      paper_notes_abstract_dir: literature/paper_notes_abstract
+      deep_read_notes_dir: literature/deep_read_notes
+      bridge_notes_dir: literature/bridge_notes
+      shallow_read_notes_dir: literature/shallow_read_notes
       notes_manifest: literature/notes_manifest.json
     outputs:
       handoff_pack: external_executor/handoff_pack.json
@@ -921,12 +925,16 @@ states:
       dir_guide: external_executor/_DIR_GUIDE.md
       job_state: external_executor/job_state.json
       expr_dir: external_executor/expr
-    next_on_success: T5-EXECUTOR-GATE
+      project_skill_context: external_executor/project_skill_context.yaml
+      project_skill_context_schema: external_executor/schemas/project_skill_context.schema.json
+      skills_dir: external_executor/skills
+      skill_specialization_report: external_executor/skill_specialization_report.json
+    next_on_success: T5-SKILL-CUSTOMIZATION-GATE
     next_on_failure: failed
 
   # T5-HANDOFF 状态：legacy 兼容入口，外部实验执行器协议编译
   # 用途：ResearchOS 编译实验契约、allowed paths 与 Codex/Claude/manual/mock 执行 prompt。
-  # 注意：推荐新路径为 T5-REBOOST -> specialize-executor-skills -> T5-EXECUTOR-GATE。
+  # 注意：推荐新路径为 T5-REBOOST -> T5-SKILL-CUSTOMIZATION-GATE -> T5-EXECUTOR-GATE。
   T5-HANDOFF:
     agent: experimenter
     mode: handoff
@@ -939,9 +947,9 @@ states:
       idea_scorecard: ideation/idea_scorecard.yaml
       synthesis: literature/synthesis.md
       comparison_table: literature/comparison_table.csv
-      paper_notes_dir: literature/paper_notes
-      paper_notes_bridge_dir: literature/paper_notes_bridge
-      paper_notes_abstract_dir: literature/paper_notes_abstract
+      deep_read_notes_dir: literature/deep_read_notes
+      bridge_notes_dir: literature/bridge_notes
+      shallow_read_notes_dir: literature/shallow_read_notes
       notes_manifest: literature/notes_manifest.json
     outputs:
       handoff_pack: external_executor/handoff_pack.json
@@ -967,7 +975,7 @@ states:
     next_on_failure: failed
 
   # T5-SKILL-CUSTOMIZATION-GATE 状态：Project Skill Specialization Review Gate
-  # 用途：检查 specialize-executor-skills 通过 LLM 生成的 project_skill_context、13 个项目专属 Skill 和 report。
+  # 用途：检查 T5 reboost 编译器生成的 project_skill_context、13 个项目专属 Skill 和 report。
   T5-SKILL-CUSTOMIZATION-GATE:
     agent: experimenter
     mode: skill_customization
@@ -1095,8 +1103,9 @@ states:
       run_records: experiments/run_records.jsonl
       exp_plan: ideation/exp_plan.yaml
       novelty_audit: ideation/novelty_audit.md
-      paper_notes_dir: literature/paper_notes
-      paper_notes_bridge_dir: literature/paper_notes_bridge
+      deep_read_notes_dir: literature/deep_read_notes
+      bridge_notes_dir: literature/bridge_notes
+      shallow_read_notes_dir: literature/shallow_read_notes
     outputs:
       integrity_audit: experiments/integrity_audit.json
       result_audit: experiments/result_audit.json
@@ -1140,8 +1149,9 @@ states:
       exp_plan: ideation/exp_plan.yaml
       hypotheses: ideation/hypotheses.md
       novelty_audit: ideation/novelty_audit.md
-      paper_notes_dir: literature/paper_notes
-      paper_notes_bridge_dir: literature/paper_notes_bridge
+      deep_read_notes_dir: literature/deep_read_notes
+      bridge_notes_dir: literature/bridge_notes
+      shallow_read_notes_dir: literature/shallow_read_notes
     outputs:
       experimental_claims: experiments/experimental_claims.json
       result_to_claim: drafts/result_to_claim.json
@@ -1297,9 +1307,9 @@ states:
       idea_scorecard: ideation/idea_scorecard.yaml
       comparison_table: literature/comparison_table.csv
       ablations: experiments/ablations.csv
-      paper_notes_dir: literature/paper_notes
-      paper_notes_bridge_dir: literature/paper_notes_bridge
-      paper_notes_abstract_dir: literature/paper_notes_abstract
+      deep_read_notes_dir: literature/deep_read_notes
+      bridge_notes_dir: literature/bridge_notes
+      shallow_read_notes_dir: literature/shallow_read_notes
     outputs:
       manuscript_resource_index: drafts/manuscript_resource_index.json
       section_plan: drafts/section_plan.json

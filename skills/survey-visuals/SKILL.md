@@ -6,7 +6,7 @@ tools:
   - read_file
   - finish_task
 strict_tools: true
-model_tier: medium
+model_tier: standard
 temperature: 0.0
 allowed_read_prefixes:
   - user_inputs/survey-visuals/

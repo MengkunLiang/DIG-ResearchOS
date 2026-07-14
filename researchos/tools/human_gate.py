@@ -10,8 +10,9 @@ import shutil
 import unicodedata
 from typing import Any, Awaitable, Callable
 
-from rich.console import Console
+from rich.console import Console, Group
 from rich.panel import Panel
+from rich.table import Table
 from rich.text import Text
 
 
@@ -165,10 +166,10 @@ User input:
 
 
 def _compact_text(value: Any, limit: int = 220) -> str:
-    text = " ".join(str(value or "").split())
-    if len(text) > limit:
-        return text[: limit - 3] + "..."
-    return text
+    """Normalize terminal text without discarding a decision-critical suffix."""
+
+    del limit
+    return " ".join(str(value or "").split())
 
 
 def _summarize_arguments(arguments: dict[str, Any]) -> str:
@@ -237,8 +238,6 @@ class CLIHumanInterface(HumanInterface):
     """最小命令行版本的人机接口实现。"""
 
     CLARIFICATION_EMPTY_RETRIES = 3
-    SEPARATOR_WIDTH = 80
-
     def __init__(
         self,
         *,
@@ -265,11 +264,11 @@ class CLIHumanInterface(HumanInterface):
         console.print(Panel(Text("\n".join(line for line in lines if line)), title=title, border_style=border_style, expand=True))
         rendered = buffer.getvalue().rstrip()
         if rendered:
-            print("\n" + rendered)
+            print(rendered)
 
     def _render_section(self, title: str) -> None:
         if self._no_color:
-            print(f"\n【{title}】")
+            print(f"【{title}】")
             return
         buffer = io.StringIO()
         console = Console(
@@ -284,11 +283,11 @@ class CLIHumanInterface(HumanInterface):
             },
         )
         console.print(Text(f"【{title}】", style="bold magenta"))
-        print("\n" + buffer.getvalue().rstrip())
+        print(buffer.getvalue().rstrip())
 
     async def ask_approval(self, *, tool_name: str, arguments: dict) -> bool:
         self._render_panel(
-            title=f"Approval Required · {tool_name}",
+            title=f"需要操作确认 · {tool_name}",
             border_style="bright_yellow",
             lines=[
                 "该工具可能执行高风险或外部副作用操作，需要用户显式确认。",
@@ -309,7 +308,7 @@ class CLIHumanInterface(HumanInterface):
             lines.append("参考选项 / 建议：")
             for idx, item in enumerate(suggestions, start=1):
                 lines.append(f"  [{idx}] {_compact_text(item, 180)}")
-        self._render_panel(title="Human Input Required", border_style="bright_yellow", lines=lines)
+        self._render_panel(title="需要你的输入", border_style="bright_yellow", lines=lines)
         for attempt in range(1, self.CLARIFICATION_EMPTY_RETRIES + 1):
             print("请输入回答（输入完成后，在最后输入单独一行 END，或按 Ctrl+D 提交）:")
 
@@ -326,7 +325,6 @@ class CLIHumanInterface(HumanInterface):
             answer = "\n".join(lines).strip()
             if answer:
                 print("已收到输入，继续处理...")
-                print("-" * self.SEPARATOR_WIDTH)
                 return answer
 
             if attempt < self.CLARIFICATION_EMPTY_RETRIES:
@@ -341,12 +339,12 @@ class CLIHumanInterface(HumanInterface):
         title = presentation.get("_title")
         description = presentation.get("_description")
         self._render_panel(
-            title=f"GATE · {gate_id}",
+            title="需要你确认",
             border_style="bright_yellow",
             lines=[
                 str(title or "人工决策"),
                 str(description or ""),
-                "请选择后继续；ResearchOS 会把选择写入 workspace，并按该选择推进。",
+                "请选择后继续；系统会保存你的选择，并按该选择继续。",
             ],
         )
         for key, value in presentation.items():
@@ -354,35 +352,38 @@ class CLIHumanInterface(HumanInterface):
                 continue
             if not self._should_render_presentation_field(gate_id, key):
                 continue
+            if gate_id == "t4_gate1_selection_gate" and key == "candidate_overview":
+                self._render_section(_humanize_presentation_key(key))
+                self._render_t4_candidate_overview(value)
+                continue
             rendered = self._format_presentation_value(key, value, gate_id=gate_id)
             if not rendered.strip():
                 continue
             self._render_section(_humanize_presentation_key(key))
             print(rendered)
+        for idx, option in enumerate(options, start=1):
+            default_marker = " [默认]" if option.get("is_default") else ""
+            print(f"[{idx}] {option['label']}{default_marker}")
+            if option.get("parameter_preview"):
+                preview = str(option["parameter_preview"])
+                if "\n" in preview:
+                    print("    参数:")
+                    for line in preview.splitlines():
+                        if line.strip():
+                            print(f"      - {line.strip()}")
+                else:
+                    print(f"    参数: {preview}")
+            if option.get("description"):
+                print(f"    作用: {option['description']}")
         if gate_id == "t4_gate1_selection_gate":
-            print("\n输入一行即可选择、合并、重构或提出新想法；无需先选择菜单项。")
-        else:
-            for idx, option in enumerate(options, start=1):
-                default_marker = " [默认]" if option.get("is_default") else ""
-                print(f"[{idx}] {option['label']}{default_marker}")
-                if option.get("parameter_preview"):
-                    preview = str(option["parameter_preview"])
-                    if "\n" in preview:
-                        print("    参数:")
-                        for line in preview.splitlines():
-                            if line.strip():
-                                print(f"      - {line.strip()}")
-                    else:
-                        print(f"    参数: {preview}")
-                if option.get("description"):
-                    print(f"    作用: {option['description']}")
+            print("也可以直接输入：选 D1 并说明保留的机制；合并 D1+D3；新想法：说明你的想法；重新分析：说明需要补足的依据。")
         selected = None
         while selected is None:
             try:
-                prompt = "选择或说明: " if gate_id == "t4_gate1_selection_gate" else "请选择: "
+                prompt = "请选择或直接说明: " if gate_id == "t4_gate1_selection_gate" else "请选择: "
                 raw_answer = _read_cli_line(prompt).strip()
             except EOFError:
-                raise HumanInputUnavailable(f"Gate {gate_id} 需要用户选择，但当前输入不可用。") from None
+                raise HumanInputUnavailable(f"确认步骤 {gate_id} 需要你的选择，但当前输入不可用。") from None
             if gate_id == "t2_literature_param_gate":
                 menu_answer = self._parse_option_index(raw_answer, options)
                 if menu_answer is not None:
@@ -410,7 +411,7 @@ class CLIHumanInterface(HumanInterface):
                         continue
                     break
                 if gate_id == "t4_gate1_selection_gate":
-                    print("未识别。示例：选 D1，强调上下文控制；合并 D1+D3；新想法：……；重新分析：……")
+                    print("未识别。示例：选 D1，并说明需要保留的机制；合并 D1+D3；新想法：……；重新分析：说明需要补足的证据。")
                 else:
                     print(f"无效选择: {raw_answer!r}。请输入 1-{len(options)}，或直接输入一句参数修改要求。")
                 continue
@@ -425,7 +426,7 @@ class CLIHumanInterface(HumanInterface):
                 try:
                     captured[field_name] = _read_cli_line(f"{prompt}: ").strip()
                 except EOFError as exc:
-                    raise HumanInputUnavailable(f"Gate {gate_id} 需要输入 {field_name}，但当前输入不可用。") from exc
+                    raise HumanInputUnavailable(f"确认步骤 {gate_id} 需要补充 {field_name}，但当前输入不可用。") from exc
         defaults = selected.get("captured_defaults")
         if isinstance(defaults, dict):
             for key, value in defaults.items():
@@ -448,6 +449,217 @@ class CLIHumanInterface(HumanInterface):
         result = {"option_id": option_id, "captured": captured}
         print(self._format_gate_selection_confirmation(gate_id, result, options))
         return result
+
+    def _render_t4_candidate_overview(self, value: Any) -> None:
+        """Render Gate1 as a complete Rich decision deck, never a wrapped dump.
+
+        The machine-readable candidate structure has already been localized by
+        the state machine. This renderer only lays it out for comparison and
+        does not synthesize fields or truncate research content.
+        """
+
+        if not isinstance(value, dict) or not isinstance(value.get("candidates"), list):
+            self._render_section("候选方向（中文决策面板）")
+            print("候选方向概览暂不可用；请检查 ideation/_candidate_directions.json。")
+            return
+        candidates = [item for item in value["candidates"] if isinstance(item, dict)]
+        width = max(100, min(160, shutil.get_terminal_size(fallback=(120, 40)).columns))
+        buffer = io.StringIO()
+        console = Console(
+            file=buffer,
+            force_terminal=not self._no_color,
+            color_system=None if self._no_color else "truecolor",
+            no_color=self._no_color,
+            width=width,
+            highlight=False,
+            _environ={"COLUMNS": str(width), "LINES": "48"},
+        )
+        guide = Text(
+            "比较各方向后，可直接选择、合并，或要求重新分析。",
+            overflow="fold",
+        )
+        console.print(Panel(guide, title="研究方向选择", border_style="bright_cyan", expand=True))
+
+        index = Table(expand=True, show_header=True, header_style="bold cyan", border_style="cyan")
+        index.add_column("ID", style="bold", width=6, no_wrap=True)
+        index.add_column("通道", width=10)
+        index.add_column("候选方向", ratio=3, overflow="fold")
+        index.add_column("创新类型", ratio=1, overflow="fold")
+        index.add_column("假设", width=8, justify="center")
+        index.add_column("证据", width=12, overflow="fold")
+        index.add_column("建议", ratio=1, overflow="fold")
+        for item in candidates:
+            innovation = item.get("innovation") if isinstance(item.get("innovation"), dict) else {}
+            hypotheses = item.get("candidate_hypotheses") if isinstance(item.get("candidate_hypotheses"), list) else []
+            index.add_row(
+                str(item.get("id") or "?"),
+                str(item.get("lane") or ""),
+                str(item.get("title") or item.get("full_title") or ""),
+                str(innovation.get("type") or ""),
+                f"{len(hypotheses)} 条",
+                str(item.get("evidence") or ""),
+                str(item.get("selection_recommendation") or ""),
+            )
+        console.print(index)
+
+        for item in candidates:
+            console.print(self._t4_rich_candidate_card(item))
+
+        hint = str(value.get("input_hint") or "")
+        if hint:
+            console.print(Panel(Text(hint, overflow="fold"), title="选择", border_style="bright_yellow", expand=True))
+        rendered = buffer.getvalue().rstrip()
+        if rendered:
+            print(rendered)
+
+    @staticmethod
+    def _t4_rich_candidate_card(item: dict[str, Any]) -> Panel:
+        """Render persisted, model-authored candidate fields without inventing claims."""
+
+        candidate_id = str(item.get("id") or "?")
+        lane = str(item.get("lane") or "候选方向")
+        title = str(item.get("title") or item.get("full_title") or "未命名候选")
+
+        def text(raw: Any) -> Text:
+            return Text(" ".join(str(raw or "").split()), overflow="fold")
+
+        overview = Table.grid(expand=True, padding=(0, 1))
+        overview.add_column(style="bold cyan", width=12, no_wrap=True)
+        overview.add_column(ratio=1, overflow="fold")
+        gate1_card = item.get("gate1_card") if isinstance(item.get("gate1_card"), dict) else {}
+        for label, value in (
+            ("为何入选", gate1_card.get("role_summary")),
+            ("研究问题", item.get("target_problem")),
+            ("核心命题", item.get("value")),
+            ("技术机制", item.get("mechanism")),
+            ("反事实", item.get("counterfactual")),
+            ("选择建议", gate1_card.get("selection_advice")),
+        ):
+            overview.add_row(label, text(value))
+
+        components: list[Any] = [overview]
+        innovation = item.get("innovation") if isinstance(item.get("innovation"), dict) else {}
+        innovation_table = Table.grid(expand=True, padding=(0, 1))
+        innovation_table.add_column(style="bold magenta", width=12, no_wrap=True)
+        innovation_table.add_column(ratio=1, overflow="fold")
+        for label, key in (
+            ("创新", "summary"),
+            ("类型", "type"),
+            ("相对变化", "delta"),
+            ("非增量理由", "non_incremental"),
+        ):
+            innovation_table.add_row(label, text(innovation.get(key)))
+        components.extend([Text("核心创新", style="bold magenta"), innovation_table])
+
+        hypotheses = item.get("candidate_hypotheses") if isinstance(item.get("candidate_hypotheses"), list) else []
+        components.append(Text("候选假设", style="bold green"))
+        if hypotheses:
+            hypothesis_table = Table(expand=True, show_header=True, header_style="bold green", border_style="green")
+            hypothesis_table.add_column("假设", width=9, no_wrap=True)
+            hypothesis_table.add_column("命题", ratio=2, overflow="fold")
+            hypothesis_table.add_column("机制", ratio=2, overflow="fold")
+            hypothesis_table.add_column("预测 / 判别测试", ratio=3, overflow="fold")
+            hypothesis_table.add_column("证据状态", width=14, overflow="fold")
+            for position, hypothesis in enumerate(hypotheses, start=1):
+                if not isinstance(hypothesis, dict):
+                    continue
+                prediction_test = "预测：" + " ".join(str(hypothesis.get("prediction") or "").split())
+                prediction_test += "\n测试：" + " ".join(str(hypothesis.get("test") or "").split())
+                hypothesis_table.add_row(
+                    str(hypothesis.get("id") or ""),
+                    text(hypothesis.get("statement")),
+                    text(hypothesis.get("mechanism")),
+                    Text(prediction_test, overflow="fold"),
+                    text(hypothesis.get("evidence_status")),
+                )
+            components.append(hypothesis_table)
+
+        evidence_chain = item.get("evidence_chain") if isinstance(item.get("evidence_chain"), list) else []
+        components.append(Text("证据链", style="bold red"))
+        if evidence_chain:
+            chain_table = Table(expand=True, show_header=True, header_style="bold red", border_style="red")
+            chain_table.add_column("来源", ratio=1, overflow="fold")
+            chain_table.add_column("论文/材料观察", ratio=2, overflow="fold")
+            chain_table.add_column("导向当前设计的含义", ratio=2, overflow="fold")
+            chain_table.add_column("等级", width=12, overflow="fold")
+            for link in evidence_chain:
+                if isinstance(link, dict):
+                    chain_table.add_row(
+                        str(link.get("ref") or ""),
+                        text(link.get("observation")),
+                        text(link.get("implication")),
+                        str(link.get("evidence_level") or ""),
+                    )
+            components.append(chain_table)
+
+        minimum = item.get("minimum_validation") if isinstance(item.get("minimum_validation"), dict) else {}
+        minimum_table = Table.grid(expand=True, padding=(0, 1))
+        minimum_table.add_column(style="bold yellow", width=12, no_wrap=True)
+        minimum_table.add_column(ratio=1, overflow="fold")
+        protocol_status = str(minimum.get("evidence_status") or "unknown").lower()
+        protocol_labels = {
+            "supported": "已由可追溯材料支持",
+            "user_provided": "由人工明确提供",
+            "proposed_not_verified": "待验证提议",
+            "unknown": "待核验",
+        }
+        refs = minimum.get("source_refs") if isinstance(minimum.get("source_refs"), list) else []
+        for label, key in (("数据/任务", "dataset"), ("基线", "baseline"), ("指标", "metric"), ("预期信号", "expected_signal")):
+            minimum_table.add_row(label, text(minimum.get(key)))
+        minimum_table.add_row("协议状态", text(protocol_labels.get(protocol_status, protocol_status)))
+        if refs:
+            minimum_table.add_row("协议来源", text("； ".join(str(ref) for ref in refs)))
+        components.extend([Text("最小验证", style="bold yellow"), minimum_table])
+
+        scores = item.get("scores") if isinstance(item.get("scores"), dict) else {}
+        rationales = item.get("score_rationale") if isinstance(item.get("score_rationale"), dict) else {}
+        if scores:
+            score_table = Table(expand=True, show_header=True, header_style="bold blue", border_style="blue")
+            score_table.add_column("维度", width=14)
+            score_table.add_column("评分", width=7, justify="center")
+            score_table.add_column("模型依据", ratio=1, overflow="fold")
+            for key, label in (
+                ("novelty", "新颖性"), ("feasibility", "可行性"), ("impact", "影响力"),
+                ("evaluability", "可评估性"), ("differentiation", "差异化"),
+                ("cost", "资源/实施成本"), ("contribution_strength", "贡献强度"),
+            ):
+                if scores.get(key) is not None:
+                    score_table.add_row(label, f"{scores[key]}/5", text(rationales.get(key)))
+            components.extend([Text("评分", style="bold blue"), score_table])
+
+        risk_table = Table.grid(expand=True, padding=(0, 1))
+        risk_table.add_column(style="bold red", width=12, no_wrap=True)
+        risk_table.add_column(ratio=1, overflow="fold")
+        for label, value in (
+            ("证据解读", gate1_card.get("evidence_interpretation")),
+            ("主要风险", gate1_card.get("risk_summary")),
+            ("可调整处", gate1_card.get("user_edit_hint")),
+            ("最近先例", item.get("nearest_prior_work")),
+            ("新颖性信号", item.get("novelty_signal")),
+        ):
+            risk_table.add_row(label, text(value))
+        components.extend([Text("证据与风险", style="bold red"), risk_table])
+
+        support = item.get("supporting_papers") if isinstance(item.get("supporting_papers"), list) else []
+        if support:
+            sources = Table(expand=True, show_header=True, header_style="bold cyan", border_style="cyan")
+            sources.add_column("论文与引用", ratio=2, overflow="fold")
+            sources.add_column("论文阅读笔记", ratio=2, overflow="fold")
+            sources.add_column("已用证据", ratio=3, overflow="fold")
+            for paper in support:
+                if isinstance(paper, dict):
+                    sources.add_row(
+                        f"{paper.get('title') or ''}\n{paper.get('citation') or ''}",
+                        str(paper.get("note_path") or paper.get("source_file") or ""),
+                        str(paper.get("claim_used") or paper.get("claim") or ""),
+                    )
+            components.extend([Text("参考论文与阅读笔记", style="bold cyan"), sources])
+        return Panel(
+            Group(*components),
+            title=f"[bold]{candidate_id} · {lane} · {title}[/bold]",
+            border_style="bright_cyan" if lane == "主方向" else "cyan",
+            expand=True,
+        )
 
     @staticmethod
     def _should_render_presentation_field(gate_id: str, key: str) -> bool:
@@ -608,28 +820,27 @@ class CLIHumanInterface(HumanInterface):
         option = next((item for item in options if str(item.get("id") or item.get("key") or "") == option_id), {})
         label = str(option.get("label") or option_id)
         captured = result.get("captured") if isinstance(result.get("captured"), dict) else {}
-        lines = ["-" * CLIHumanInterface.SEPARATOR_WIDTH, f"已确认选择: {label} ({option_id})"]
+        lines = [f"已确认选择：{label}（{option_id}）"]
         if captured:
             compact = "; ".join(f"{key}={value}" for key, value in captured.items() if value not in (None, ""))
             if compact:
-                lines.append(f"记录的补充输入: {compact}")
+                lines.append(f"记录的补充输入：{compact}")
         if gate_id == "t2_literature_param_gate":
-            lines.append("将写入: literature/literature_params.json；下一步: 参数最终确认 Gate")
+            lines.append("将写入：literature/literature_params.json；下一步：确认检索参数")
         elif gate_id == "t2_literature_param_confirm_gate":
             if option_id == "confirm_start_t2":
-                lines.append("将写入: literature/literature_params_confirmation.json；下一步: T2 文献检索")
+                lines.append("将写入：literature/literature_params_confirmation.json；下一步：开始文献检索")
             elif option_id == "revise_params":
-                lines.append("不会启动 T2；下一步: 返回 T2 参数选择 Gate")
+                lines.append("不会启动文献检索；下一步：返回参数选择")
             elif option_id == "stop_project":
                 lines.append("将结束当前项目，不启动 T2")
         elif gate_id == "t4_gate1_selection_gate":
-            lines.append("将写入: ideation/_gate1_user_selection.json 和 ideation/selected_idea_brief.md；下一步: T4 后半段")
+            lines.append("将写入：ideation/_gate1_user_selection.json 和 ideation/selected_idea_brief.md；下一步：展开选中方向")
         elif gate_id == "t36_post_survey_gate":
-            lines.append("将写入: drafts/survey/post_survey_decision.json")
+            lines.append("将写入：drafts/survey/post_survey_decision.json")
         elif gate_id in {"t36_template_gate", "t8_style_template_gate"}:
             target = "drafts/survey/writing_template.json" if gate_id == "t36_template_gate" else "drafts/writing_style.json"
-            lines.append(f"将写入: {target}")
-        lines.append("-" * CLIHumanInterface.SEPARATOR_WIDTH)
+            lines.append(f"将写入：{target}")
         return "\n".join(lines)
 
     @staticmethod
@@ -1118,20 +1329,10 @@ def _t4_wrap_terminal_prose(value: Any, *, indent: int = 0, width: int = 88) -> 
 
 
 def _t4_truncate_terminal_title(value: str, *, columns: int) -> str:
-    """Keep candidate headings scannable even when a legacy title is verbose."""
+    """Return the full candidate title; wrapping belongs to the renderer."""
 
-    normalized = re.sub(r"\s+", " ", str(value or "未命名候选")).strip()
-    if _t4_terminal_columns(normalized) <= columns:
-        return normalized
-    retained: list[str] = []
-    used = 0
-    for char in normalized:
-        char_columns = _t4_terminal_columns(char)
-        if used + char_columns > max(1, columns - 3):
-            break
-        retained.append(char)
-        used += char_columns
-    return "".join(retained).rstrip() + "..."
+    del columns
+    return re.sub(r"\s+", " ", str(value or "未命名候选")).strip()
 
 
 def _t4_wrap_terminal_field(label: str, value: Any, *, indent: int = 0, width: int = 88) -> list[str]:
@@ -1158,14 +1359,14 @@ def _t4_terminal_lane_guide() -> list[str]:
     return [
         "通道说明（候选角色，不是模型内部推理）：",
         "  D 主线：面向论文主贡献的候选路线；可被选择、合并或重构。",
-        "  Bridge：由已确认的跨领域机制导出；必须回查 bridge 文献笔记 section 后才能形成最终论断。",
+        "  跨域桥接：由已确认的跨领域机制导出；必须回看对应论文阅读笔记后才能形成最终论断。",
         "  证据不足：保留在面板中以便人工判断，但在补足明确证据前不应作为最终主张。",
         "  S 补充：用于证伪、失败分析或消融；默认不应单独承担一篇论文的主贡献。",
         "补充通道：",
-        "  S1 mechanism_challenge：挑战声称机制，检查替代解释或失效边界。",
-        "  S2 reverse_operation：移除、反转或关闭机制成分，形成消融/反事实检验。",
-        "  S3 subgroup_failure：定位子群、状态或数据条件下的失败模式。",
-        "  S4 missing_area_exploration：探索已确认空白；先补证据，再决定是否升级为主线。",
+        "  S1 机制挑战：检查替代解释或机制失效的边界。",
+        "  S2 反向操作：移除、反转或关闭机制成分，形成消融/反事实检验。",
+        "  S3 条件失效：定位子群、状态或数据条件下的失败模式。",
+        "  S4 空白探索：探索已确认的空白；先补证据，再决定是否升级为主线。",
     ]
 
 
@@ -1175,12 +1376,12 @@ def _t4_candidate_lane_description(item: dict[str, Any], candidate_id: str) -> s
     lane = str(item.get("lane") or item.get("constraint_status") or "").strip().lower()
     origin = str(item.get("origin") or item.get("idea_origin") or "").strip().lower()
     if "not_supported" in lane or "evidence" in lane and "not" in lane:
-        return "证据不足候选：可讨论，但必须补足对应笔记 section 的机制证据后才可选择为主方向。"
+        return "证据不足候选：可讨论，但必须补足论文阅读笔记中的机制依据后才可选择为主方向。"
     if "bridge" in lane or "bridge" in origin:
-        return "桥接候选：来自跨领域机制迁移；选择后必须核验 bridge domain 的对应笔记 section。"
+        return "跨域桥接候选：来自跨领域机制迁移；确定方向后必须核验源领域对应的论文阅读笔记。"
     if candidate_id.upper().startswith("S") or "supplement" in lane:
         return "补充候选：服务于机制挑战、反向操作、子群失败或缺口探索，默认作为主线的验证/反证模块。"
-    return "主线候选：面向论文主贡献的可选路线；仍须通过 Gate1 后半段的定向证据回查。"
+    return "主线候选：面向论文主贡献的可选路线；确定方向前仍须定向回查证据。"
 
 
 def _format_t4_candidate_overview(value: Any) -> str:
@@ -1191,14 +1392,18 @@ def _format_t4_candidate_overview(value: Any) -> str:
     candidates = value.get("candidates") if isinstance(value.get("candidates"), list) else []
     if not candidates:
         return "候选方向概览暂不可用；请检查 ideation/_candidate_directions.json。"
+    return _format_t4_candidate_overview_model_authored(value)
+
+    # Kept below temporarily as a source-compatibility reference for older
+    # integrations. The Gate1 path returns above so it can never render the
+    # historic template prose or fill missing research content.
     width = 88
     divider = "=" * width
     lines = [
         divider,
-        "T4 Gate1 完整候选方向卡片",
+        "T4 候选方向完整卡片",
         *_t4_wrap_terminal_prose("请比较创新、假设/机制、可证伪预测、最小验证、证据基础和风险。", width=width),
-        *_t4_wrap_terminal_prose("以下仅展示可审计候选、评分和文献锚点，不展示模型内部推理。选择后 T4 后半段必须重新打开列出的论文笔记 section。", width=width),
-        "",
+        *_t4_wrap_terminal_prose("以下仅展示可核验候选、评分和文献依据，不展示模型内部推理。确定方向后必须重新打开列出的论文阅读笔记。", width=width),
     ]
     for guide_line in _t4_terminal_lane_guide():
         indent = len(guide_line) - len(guide_line.lstrip())
@@ -1285,7 +1490,7 @@ def _format_t4_candidate_overview(value: Any) -> str:
             baseline = "未验证；需由最近工作和项目约束确定"
             metric = "未验证；需由可追溯协议确定"
             signal = "未验证；需在 T4 后半段形成可证伪预测"
-        evidence = str(item.get("evidence") or "需回查文献笔记")
+        evidence = str(item.get("evidence") or "需回看论文阅读笔记")
         count = item.get("support_count")
         scores = item.get("scores") if isinstance(item.get("scores"), dict) else {}
         warning = str(item.get("warning") or "选择后需回查证据。")
@@ -1315,9 +1520,9 @@ def _format_t4_candidate_overview(value: Any) -> str:
         lines.extend(_t4_wrap_terminal_field("创新类型", innovation.get("type"), indent=4, width=width))
         lines.extend(_t4_wrap_terminal_field("相对最近工作的变化", innovation.get("delta") or innovation.get("novelty_delta"), indent=4, width=width))
         lines.extend(_t4_wrap_terminal_field("为何非普通增量", innovation.get("non_incremental") or innovation.get("non_incremental_reason"), indent=4, width=width))
-        lines.append("  候选假设与机制（Gate1 草案，非最终 hypotheses.md）：")
+        lines.append("  候选假设链（仅供本轮选择，尚未写入最终假设文件）：")
         if hypotheses:
-            for hypothesis in hypotheses[:3]:
+            for hypothesis in hypotheses:
                 if not isinstance(hypothesis, dict):
                     continue
                 hypothesis_id = str(hypothesis.get("id") or candidate_id + "-H?")
@@ -1331,12 +1536,12 @@ def _format_t4_candidate_overview(value: Any) -> str:
                 lines.extend(_t4_wrap_terminal_field("可观测预测", hypothesis.get("prediction") or hypothesis.get("observable_prediction"), indent=6, width=width))
                 lines.extend(_t4_wrap_terminal_field("判别测试", hypothesis.get("test") or hypothesis.get("discriminating_test"), indent=6, width=width))
         else:
-            lines.append("    当前未提供候选 H1/H2/H3；不能在展示层补造，需重分析或定向回查。")
+            lines.append("    当前未提供模型生成的假设链；展示层不会补写 H1/H2/H3，请重新分析或定向回查。")
         if len(hypotheses) < 2:
-            lines.append("    注：目前少于两条已落盘假设；H2/H3 需以补充证据为前提。")
+            lines.append("    注：候选假设不足两条，当前不能确定方向；需要模型补全不同且可证伪的假设链。")
         lines.append("  可组合关系：")
         if merges:
-            for merge in merges[:4]:
+            for merge in merges:
                 if not isinstance(merge, dict):
                     continue
                 lines.extend(_t4_wrap_terminal_field(
@@ -1359,11 +1564,11 @@ def _format_t4_candidate_overview(value: Any) -> str:
             for key, label in score_labels:
                 if scores.get(key) is None:
                     continue
-                lines.extend(_t4_wrap_terminal_field(f"{label} {scores[key]}/5", score_rationale.get(key) or item.get("basis_summary") or "未提供单维依据；需复核接地材料。", indent=4, width=width))
+                lines.extend(_t4_wrap_terminal_field(f"{label} {scores[key]}/5", score_rationale.get(key) or "模型未提供独立评分依据；当前不能据此确定方向。", indent=4, width=width))
         else:
             lines.append("    当前未评分；不能据此自动排序。")
         lines.append("  证据与风险：")
-        evidence_text = evidence + (f"；关联文献笔记 {count} 篇" if count else "")
+        evidence_text = evidence + (f"；关联论文阅读笔记 {count} 篇" if count else "")
         lines.extend(_t4_wrap_terminal_field("证据基础", evidence_text, indent=4, width=width))
         lines.extend(_t4_wrap_terminal_field("接地摘要", item.get("basis_summary"), indent=4, width=width))
         lines.extend(_t4_wrap_terminal_field("选择建议", item.get("selection_recommendation"), indent=4, width=width))
@@ -1371,10 +1576,20 @@ def _format_t4_candidate_overview(value: Any) -> str:
         lines.extend(_t4_wrap_terminal_field("最近先例", item.get("nearest_prior_work"), indent=4, width=width))
         lines.extend(_t4_wrap_terminal_field("新颖性信号", item.get("novelty_signal"), indent=4, width=width))
         lines.extend(_t4_wrap_terminal_field("风险/Kill criteria", warning, indent=4, width=width))
+        evidence_chain = item.get("evidence_chain") if isinstance(item.get("evidence_chain"), list) else []
+        lines.append("  证据链（来源观察 -> 当前设计含义）：")
+        if not evidence_chain:
+            lines.append("    当前未提供模型证据链；不能把来源路径替代为研究论证。")
+        for link in evidence_chain:
+            if not isinstance(link, dict):
+                continue
+            lines.extend(_t4_wrap_terminal_field("来源", link.get("ref"), indent=4, width=width))
+            lines.extend(_t4_wrap_terminal_field("观察", link.get("observation"), indent=4, width=width))
+            lines.extend(_t4_wrap_terminal_field("含义", link.get("implication"), indent=4, width=width))
         if original:
             lines.extend(_t4_wrap_terminal_field("英文原题", original, indent=2, width=width))
         support = item.get("supporting_papers") if isinstance(item.get("supporting_papers"), list) else []
-        lines.append("  支撑文献与对应笔记 section：")
+        lines.append("  支撑文献与对应的论文阅读笔记：")
         if not support:
             lines.append("    当前候选未附带支撑论文；选择前需要补证据。")
         for index, paper in enumerate(support, start=1):
@@ -1405,6 +1620,92 @@ def _format_t4_candidate_overview(value: Any) -> str:
             if not isinstance(item, dict):
                 continue
             lines.extend(_t4_wrap_terminal_field(f"- {item.get('path')}", item.get("purpose"), width=width))
+    lines.append(divider)
+    return "\n".join(lines)
+
+
+def _format_t4_candidate_overview_model_authored(value: dict[str, Any]) -> str:
+    """Plain-terminal fallback that displays only LLM-authored candidate prose.
+
+    Rich is the normal UI. This fallback exists for redirected output and
+    no-color terminals, so it follows the same ownership rule: labels, IDs,
+    counts, and scores are runtime facts; every research-facing sentence comes
+    directly from a validated candidate field.
+    """
+
+    width = 96
+    divider = "=" * width
+    score_labels = (
+        ("novelty", "新颖性"),
+        ("feasibility", "可行性"),
+        ("impact", "影响力"),
+        ("evaluability", "可评估性"),
+        ("differentiation", "差异化"),
+        ("cost", "资源成本"),
+        ("contribution_strength", "贡献强度"),
+    )
+    candidates = [item for item in value.get("candidates", []) if isinstance(item, dict)]
+    lines = [divider, f"Gate1 · 研究方向比较（{len(candidates)} 项）"]
+    for item in candidates:
+        candidate_id = str(item.get("id") or "")
+        lane = str(item.get("lane") or "")
+        title = str(item.get("title") or "")
+        card = item.get("gate1_card") if isinstance(item.get("gate1_card"), dict) else {}
+        innovation = item.get("innovation") if isinstance(item.get("innovation"), dict) else {}
+        hypotheses = item.get("candidate_hypotheses") if isinstance(item.get("candidate_hypotheses"), list) else []
+        minimum = item.get("minimum_validation") if isinstance(item.get("minimum_validation"), dict) else {}
+        scores = item.get("scores") if isinstance(item.get("scores"), dict) else {}
+        rationales = item.get("score_rationale") if isinstance(item.get("score_rationale"), dict) else {}
+        lines.extend([divider, f"{candidate_id} · {lane} · {title}"])
+        for label, field in (
+            ("为何入选", "role_summary"),
+            ("研究问题", "target_problem"),
+            ("核心命题", "value"),
+            ("技术机制", "mechanism"),
+            ("可证伪预测", "prediction"),
+            ("反事实", "counterfactual"),
+            ("选择建议", "selection_advice"),
+            ("证据解读", "evidence_interpretation"),
+            ("主要风险", "risk_summary"),
+            ("可调整处", "user_edit_hint"),
+        ):
+            authored = card.get(field) if field in {"role_summary", "selection_advice", "evidence_interpretation", "risk_summary", "user_edit_hint"} else item.get(field)
+            lines.extend(_t4_wrap_terminal_field(label, authored, indent=2, width=width))
+        lines.append("  核心创新")
+        for label, field in (("创新", "summary"), ("类型", "type"), ("相对变化", "delta"), ("非增量理由", "non_incremental")):
+            lines.extend(_t4_wrap_terminal_field(label, innovation.get(field), indent=4, width=width))
+        lines.append("  候选假设")
+        for hypothesis in hypotheses:
+            if not isinstance(hypothesis, dict):
+                continue
+            lines.extend(_t4_wrap_terminal_field(str(hypothesis.get("id") or ""), hypothesis.get("statement"), indent=4, width=width))
+            lines.extend(_t4_wrap_terminal_field("机制", hypothesis.get("mechanism"), indent=6, width=width))
+            lines.extend(_t4_wrap_terminal_field("预测", hypothesis.get("prediction"), indent=6, width=width))
+            lines.extend(_t4_wrap_terminal_field("判别测试", hypothesis.get("test"), indent=6, width=width))
+        metric = minimum.get("metric")
+        metric_text = "、".join(str(entry) for entry in metric) if isinstance(metric, list) else metric
+        lines.extend(_t4_wrap_terminal_field(
+            "最小验证",
+            f"数据/任务：{minimum.get('dataset') or ''}；基线：{minimum.get('baseline') or ''}；指标：{metric_text or ''}；预期信号：{minimum.get('expected_signal') or ''}",
+            indent=2,
+            width=width,
+        ))
+        lines.append("  评分")
+        for key, label in score_labels:
+            if scores.get(key) is not None:
+                lines.extend(_t4_wrap_terminal_field(f"{label} {scores[key]}/5", rationales.get(key), indent=4, width=width))
+        evidence_chain = item.get("evidence_chain") if isinstance(item.get("evidence_chain"), list) else []
+        if evidence_chain:
+            lines.append("  论文阅读笔记")
+            for evidence in evidence_chain:
+                if not isinstance(evidence, dict):
+                    continue
+                lines.extend(_t4_wrap_terminal_field("来源", evidence.get("ref"), indent=4, width=width))
+                lines.extend(_t4_wrap_terminal_field("观察", evidence.get("observation"), indent=6, width=width))
+                lines.extend(_t4_wrap_terminal_field("设计含义", evidence.get("implication"), indent=6, width=width))
+    hint = str(value.get("input_hint") or "")
+    if hint:
+        lines.extend([divider, *_t4_wrap_terminal_prose(hint, width=width)])
     lines.append(divider)
     return "\n".join(lines)
 
@@ -1454,7 +1755,10 @@ def _format_t36_synthesis_preview(value: Any) -> str:
         lines.append("关键摘录:")
         for item in bullets:
             lines.append(f"- {_compact_text(item.lstrip('- ').strip(), 160)}")
-    lines.append("现在请判断：不写 Survey；使用当前语料进入 Survey 规划；或先定向补检再进入规划。选择“不写综述”会直接进入 T4，不会丢弃 synthesis。")
+    lines.append(
+        "现在请判断：是否额外撰写 taxonomy-driven survey；可选不写 Survey、使用当前语料进入 Survey 规划，"
+        "或先定向补检再进入规划。选择“不写综述”会直接进入 T4，不会丢弃 synthesis。"
+    )
     return "\n".join(lines)
 
 

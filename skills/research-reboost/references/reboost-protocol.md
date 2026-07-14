@@ -36,8 +36,8 @@ Required files:
 
 Optional backtracking sources:
 
-- `literature/paper_notes/`
-- `literature/paper_notes_abstract/`
+- `literature/deep_read_notes/`
+- `literature/shallow_read_notes/`
 - `resources/`
 - `user_seeds/seed_external_resources.jsonl`
 - `user_seeds/bridge_domains.yaml`

@@ -11,7 +11,7 @@ tools:
   - crossref_search
   - finish_task
 strict_tools: true
-model_tier: medium
+model_tier: standard
 temperature: 0.15
 allowed_read_prefixes:
   - user_inputs/literature-evidence-scout/
@@ -25,7 +25,7 @@ outputs_expected:
 interaction:
   mode: guided
   language: zh-CN
-  summary: 针对一个可界定问题搜集可核验的文献线索与证据，按论点和来源标识保存，供后续 section 级阅读使用。
+  summary: 针对一个可界定问题搜集可核验的文献线索与证据，按论点和来源标识保存，供后续定向阅读全文与核验使用。
   request_required: true
   request_prompt: 请说明研究问题、目标论文 section、时间范围、语言偏好，以及想要支持或质疑的具体主张。
   example_request: 为英文 Introduction 搜集 2023-2026 年关于 LLM agent memory carryover 的可核验机制证据，重点找因果或消融研究。

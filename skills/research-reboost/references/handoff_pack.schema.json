@@ -223,6 +223,7 @@
             "risks",
             "novelty_audit",
             "paper_note",
+            "bridge_paper_note",
             "abstract_note",
             "resource",
             "user_seed",

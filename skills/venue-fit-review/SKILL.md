@@ -9,7 +9,7 @@ tools:
   - write_file
   - finish_task
 strict_tools: true
-model_tier: heavy
+model_tier: standard
 temperature: 0.1
 allowed_read_prefixes:
   - user_inputs/venue-fit-review/

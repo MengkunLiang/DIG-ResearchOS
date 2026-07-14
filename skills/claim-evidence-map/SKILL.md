@@ -8,7 +8,7 @@ tools:
   - write_file
   - finish_task
 strict_tools: true
-model_tier: medium
+model_tier: standard
 temperature: 0.1
 allowed_read_prefixes:
   - user_inputs/claim-evidence-map/
@@ -25,7 +25,7 @@ outputs_expected:
 interaction:
   mode: guided
   language: zh-CN
-  summary: 批量将待写 claim 映射到精确笔记 section、实验/综合证据、允许措辞和需要补检的缺口。
+  summary: 批量将待写 claim 映射到论文阅读笔记中的具体位置、实验或综合证据、可采用措辞和需要补检的缺口。
   request_required: true
   request_prompt: 请说明这些 claim 将用于论文、综述、idea 还是审稿回复，以及是否有优先章节或禁止的措辞。
   example_request: 为 Introduction 和 Related Work 的 8 条 claim 建立证据映射；没有 FULL-TEXT 支持的条目只能建议背景措辞。

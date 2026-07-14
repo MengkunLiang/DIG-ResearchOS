@@ -180,8 +180,11 @@ class LatexCompileParams(BaseModel):
     )
     allow_docker_fallback: bool = Field(False, description="是否允许 Docker TeX fallback；可由 runtime.yaml 默认开启")
     auto_fit_wide_tables: bool = Field(
-        True,
-        description="Safely wrap structurally wide standard tabular blocks in resizebox when the active template permits it.",
+        False,
+        description=(
+            "Opt in to rewriting structurally wide standard tabular blocks with resizebox. "
+            "Disabled by default because compilation must not mutate a previously audited source artifact."
+        ),
     )
 
 
@@ -208,6 +211,10 @@ class LatexCompileTool(Tool):
         if not params.allow_docker_fallback and self.latex_settings.allow_docker_fallback:
             params = params.model_copy(update={"allow_docker_fallback": True})
         tex_abs = self.docker.policy.resolve_read(params.tex_path)
+        if params.auto_fit_wide_tables:
+            # The opt-in table transform writes the TeX source. Require an
+            # explicit write grant instead of bypassing the workspace policy.
+            self.docker.policy.resolve_write(params.tex_path)
         table_layout = _apply_table_layout_policy(tex_abs, enabled=params.auto_fit_wide_tables)
         started_at = _now_iso()
         report_base = _compile_report_base(

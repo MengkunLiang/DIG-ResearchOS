@@ -43,6 +43,9 @@ class EventStore:
         return self.events_dir / f"{safe_run_id}.jsonl"
 
     def append(self, event: ObservabilityEvent) -> Path:
+        # A workspace can be copied or cleaned after EventStore construction.
+        # Event persistence must recover instead of crashing the active agent.
+        self.events_dir.mkdir(parents=True, exist_ok=True)
         path = self.path_for(event.run_id)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event.to_dict(), ensure_ascii=False, default=str) + "\n")

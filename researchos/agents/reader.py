@@ -209,7 +209,7 @@ class ReaderAgent(Agent):
                 for entry in mapped_entries[:20]
             ]
             context_vars["citation_map_path"] = "literature/citation_map.json"
-            abstract_dir = ctx.workspace_dir / "literature" / "paper_notes_abstract"
+            abstract_dir = ctx.workspace_dir / "literature" / "shallow_read_notes"
             abstract_count = (
                 len([path for path in abstract_dir.glob("*.md") if is_paper_note_file(path)])
                 if abstract_dir.exists()
@@ -240,7 +240,7 @@ class ReaderAgent(Agent):
                 return prepend_resume_prefix(
                     ctx,
                     (
-                    "请继续T3深度阅读流程。先扫描literature/paper_notes/、comparison_table.csv和"
+                    "请继续T3深度阅读流程。先扫描literature/deep_read_notes/、comparison_table.csv和"
                     "related_work.bib中的现有进度，先补齐已有笔记缺失的表格/Bib条目，再只处理"
                     "尚未完成的论文。若存在 literature/deep_read_queue_pending.jsonl，"
                     "优先按这个剩余队列执行。用户提供的 seed papers 必须最高优先级；如果它们已在"
@@ -253,7 +253,7 @@ class ReaderAgent(Agent):
                 (
                 "请开始T3深度阅读流程。优先按 literature/deep_read_queue.jsonl 执行；如果该文件不存在，"
                 "先回退到 literature/papers_verified.jsonl，再回退到 literature/papers_dedup.jsonl。"
-                "为每篇产出paper_notes/{id}.md，同时累积comparison_table.csv和related_work.bib。"
+                "为每篇产出deep_read_notes/{id}.md，同时累积comparison_table.csv和related_work.bib。"
                 "用户提供的 seed papers 必须最高优先级。凡是能拿到PDF的论文，必须全文读到最后一页，"
                 "不能只读前几页；如果只读到部分页面，Status必须写PARTIAL-TEXT。"
                 ),
@@ -261,7 +261,8 @@ class ReaderAgent(Agent):
         return prepend_resume_prefix(
             ctx,
             (
-            "请开始T3.5综合流程。综合literature/paper_notes/目录下的所有笔记，"
+            "请开始T3.5综合流程。综合 literature/deep_read_notes/、bridge_notes/ 与 shallow_read_notes/ 中的论文阅读笔记；"
+            "摘要阅读笔记用于扩展 taxonomy、趋势、比较与问题发现，全文/部分全文和跨领域笔记用于核心机制与方法论断。"
             "先用你的LLM能力分析方法家族、共同假设、趋势和问题，再调用 build_synthesis_workbench "
             "生成结构化证据、outline和写作指导。工具产物不是最终结论；你必须审阅后亲自写出"
             "literature/synthesis.md，包含5个必需章节：方法家族分类、共同假设、"
@@ -285,10 +286,10 @@ class ReaderAgent(Agent):
     def _validate_read_outputs(self, ctx: ExecutionContext) -> tuple[bool, str | None]:
         """校验T3 read模式的输出。"""
         literature_dir = ctx.workspace_dir / "literature"
-        notes_dir = literature_dir / "paper_notes"
-        bridge_notes_dir = literature_dir / "paper_notes_bridge"
+        notes_dir = literature_dir / "deep_read_notes"
+        bridge_notes_dir = literature_dir / "bridge_notes"
         if not notes_dir.exists() and not bridge_notes_dir.exists():
-            return False, "缺少 literature/paper_notes 或 literature/paper_notes_bridge 目录"
+            return False, "缺少 literature/deep_read_notes 或 literature/bridge_notes 目录"
 
         note_files = _iter_paper_note_paths(literature_dir)
         valid_note_files: list[Path] = []
@@ -391,12 +392,12 @@ class ReaderAgent(Agent):
         if len(valid_note_files) < min_required:
             if queue_count:
                 return False, (
-                    f"paper_notes只有{len(valid_note_files)}篇结构合格笔记，至少需要{min_required}篇；"
+                    f"deep_read_notes只有{len(valid_note_files)}篇结构合格笔记，至少需要{min_required}篇；"
                     f"当前 deep_read_queue 有 {queue_count} 篇，目标阅读数为 {target_required}。"
                     + _invalid_note_summary(invalid_note_files)
                 )
             return False, (
-                f"paper_notes只有{len(valid_note_files)}篇结构合格笔记，至少需要{min_required}篇"
+                f"deep_read_notes只有{len(valid_note_files)}篇结构合格笔记，至少需要{min_required}篇"
                 f"（基于{expected_count if dedup_path.exists() else '默认'}篇输入论文）"
                 + _invalid_note_summary(invalid_note_files)
             )
@@ -433,7 +434,7 @@ class ReaderAgent(Agent):
             )
 
         # 校验 abstract sweep notes（可选目录）
-        abstract_dir = ctx.workspace_dir / "literature" / "paper_notes_abstract"
+        abstract_dir = ctx.workspace_dir / "literature" / "shallow_read_notes"
         if abstract_dir.exists():
             from ..runtime.abstract_sweep import repair_abstract_sweep_notes
 
@@ -513,7 +514,7 @@ class ReaderAgent(Agent):
         if note_ids and section_issues:
             return False, "synthesis.md章节级真实引用覆盖不足: " + "; ".join(section_issues[:6])
 
-        # 兼容没有 paper_notes 白名单的旧测试/workspace，仍接受规范论文ID样式。
+        # 兼容没有 deep_read_notes 白名单的旧测试/workspace，仍接受规范论文ID样式。
         if note_ids:
             return True, None
 
@@ -525,7 +526,7 @@ class ReaderAgent(Agent):
         )
         expected_citations_min = _safe_int(synth_params.get("expected_citations_min"), 5, minimum=0)
         if len(paper_refs) < expected_citations_min:
-            return False, f"synthesis.md中论文引用过少({len(paper_refs)}个)，至少需要{expected_citations_min}个paper_notes引用"
+            return False, f"synthesis.md中论文引用过少({len(paper_refs)}个)，至少需要{expected_citations_min}个deep_read_notes引用"
 
         return True, None
 
@@ -596,10 +597,10 @@ def _is_protected_queue_record(record: dict[str, object]) -> bool:
 
 def _iter_paper_note_paths(literature_dir: Path) -> list[Path]:
     paths: list[Path] = []
-    notes_dir = literature_dir / "paper_notes"
+    notes_dir = literature_dir / "deep_read_notes"
     if notes_dir.exists():
         paths.extend(path for path in notes_dir.glob("*.md") if is_paper_note_file(path))
-    bridge_dir = literature_dir / "paper_notes_bridge"
+    bridge_dir = literature_dir / "bridge_notes"
     if bridge_dir.exists():
         paths.extend(path for path in bridge_dir.glob("**/*.md") if is_paper_note_file(path))
     return sorted(paths)

@@ -198,7 +198,8 @@ class SurveyWriterAgent(Agent):
         elif phase == "survey_plan":
             message = (
                 "请执行 T3.6-PLAN：基于 literature/synthesis.md、synthesis_workbench.json、"
-                "domain_map.json、comparison_table.csv 和 paper_notes 规划 taxonomy-driven survey。"
+                "domain_map.json、comparison_table.csv、deep_read_notes 和 shallow_read_notes 规划 taxonomy-driven survey。"
+                "摘要阅读笔记可扩展 taxonomy、趋势、比较和范围；核心机制或方法论断仍须回查全文/部分全文笔记。"
                 "还必须读取 drafts/survey/decision.json 的 survey_retrieval_preference；若其为 "
                 "targeted_supplement_before_writing，在 plan 中明确薄弱 taxonomy 类与需要的补检类型，"
                 "但不要把检索线索写成正文证据。写 drafts/survey/survey_plan.json；不要写正文。"
@@ -241,20 +242,27 @@ class SurveyWriterAgent(Agent):
             )
         elif phase == "survey_assemble":
             message = (
-                "请执行 T3.6-ASSEMBLE：调用 assemble_survey 拼装 survey.tex，"
-                "再调用 audit_survey_coverage 生成 survey_audit.md/json。"
+                "请执行 T3.6-ASSEMBLE：先调用 assemble_survey 拼装 survey.tex，再调用 "
+                "audit_survey_coverage 生成 survey_audit.md/json。审计通过后立即 finish_task。"
+                "若审计失败，工具结果会给出失败检查；先读 survey_audit.md，只能修改该检查实际涉及的 "
+                "section/bib/plan/state 输入。未修改相关输入前严禁再次 assemble 或 audit。若失败原因无法从 "
+                "当前可读证据安全修复，写 drafts/survey/survey_assemble_repair_plan.md，说明失败检查、受影响文件、"
+                "所需证据和下一步，然后 finish_task；不要反复重写无关 section 或循环调用 assemble。"
             )
         elif phase == "survey_review":
             message = (
                 "请执行 T3.6-REVIEW：逐 section 审阅 survey.tex 的 taxonomy 合理性、覆盖、公允比较、"
                 "challenges/future 质量、scope 诚实性和写作 craft。需要修订时只改对应 section 文件，"
                 "重新 assemble/audit，并写 drafts/survey/survey_review.md 与 survey_review_actions.json。"
+                "survey.tex 是派生产物：禁止用 write_file 直接写它；若标题或模板信息需要修正，"
+                "通过 assemble_survey(title=...) 重新拼装，并在 review actions 中记录该来源和动作。"
             )
         elif phase == "survey_compile":
             message = (
                 "请执行 T3.6-COMPILE：根据 survey_state 写作语言调用 latex_compile 编译 survey PDF；"
                 "中文稿使用 engine=\"xelatex\"，英文稿使用 engine=\"pdflatex\"。latex_compile 会自动写 "
                 "drafts/survey/survey_compile_report.json；不要伪造或手抄 report。"
+                "必须传 auto_fit_wide_tables=false；T3.6 编译不得修改已经 assemble/audit 的 survey.tex。"
                 "若环境缺失或编译失败，按工具结果暂停/修复后 resume。"
             )
         elif phase == "survey_feed":
@@ -398,6 +406,7 @@ class SurveyWriterAgent(Agent):
                 "no_runtime_process_prose",
                 "bibliography_quality",
                 "survey_graphics_manifest_alignment",
+                "survey_graphics_layout",
             }
             present_checks = {
                 str(item.get("name") or "")
@@ -761,6 +770,18 @@ def _validate_survey_plan(path: Path) -> tuple[bool, str | None]:
     quality_plan = data.get("quality_plan") if isinstance(data.get("quality_plan"), dict) else {}
     if len(contribution) < 20 and not quality_plan.get("theoretical_lift"):
         return False, "survey_plan.json 必须说明 review_contribution 或 quality_plan.theoretical_lift"
+    title = " ".join(str(data.get("survey_title") or "").split())
+    if title and (len(title) > 120 or len(title.split()) > 18):
+        return False, "survey_plan.json survey_title 必须是简洁的发表标题（英文不超过 18 词，整体不超过 120 字符），不能复述 taxonomy 说明"
+    visual_plan = data.get("visual_plan")
+    if visual_plan is not None:
+        if not isinstance(visual_plan, dict):
+            return False, "survey_plan.json visual_plan 必须是对象"
+        decision = str(visual_plan.get("decision") or "").strip().lower()
+        if decision not in {"include", "omit"}:
+            return False, "survey_plan.json visual_plan.decision 必须是 include 或 omit"
+        if len(str(visual_plan.get("reader_value") or visual_plan.get("rationale") or "").strip()) < 20:
+            return False, "survey_plan.json visual_plan 必须说明图为何帮助读者，或为何应省略"
     taxonomy = data.get("taxonomy")
     if not isinstance(taxonomy, dict):
         return False, "survey_plan.json 缺少 taxonomy 对象"
@@ -932,7 +953,7 @@ def _sha256_file(path: Path) -> str:
 
 def _survey_weak_evidence_ids(ws: Path) -> set[str]:
     weak: set[str] = set()
-    abstract_dir = ws / "literature" / "paper_notes_abstract"
+    abstract_dir = ws / "literature" / "shallow_read_notes"
     if abstract_dir.exists():
         weak.update(path.stem for path in abstract_dir.glob("*.md") if is_paper_note_file(path))
     metadata_triage = ws / "literature" / "metadata_triage.md"
@@ -1362,8 +1383,8 @@ def _missing_survey_audit_fingerprints(audit: dict[str, Any]) -> list[str]:
         "survey_tex",
         "related_work_bib",
         "citation_map",
-        "paper_notes_dir",
-        "abstract_notes_dir",
+        "deep_read_notes_dir",
+        "shallow_read_notes_dir",
         "bridge_notes_dir",
         "survey_assembly_manifest",
     }

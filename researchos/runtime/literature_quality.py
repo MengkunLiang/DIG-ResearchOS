@@ -41,7 +41,7 @@ DEFAULT_CHINESE_AUTHORITY_KEYWORDS = (
 @dataclass(frozen=True)
 class LiteratureQualityPolicy:
     enabled: bool = True
-    manuscript_language: str = "auto"
+    manuscript_language: str = "en"
     include_chinese_literature: str = "auto"
     english_manuscript_policy: str = "exclude_non_seed_chinese"
     chinese_literature_policy: str = "review_flag_only"
@@ -71,17 +71,24 @@ def detect_record_language(record: dict[str, Any]) -> str:
 
 
 def infer_manuscript_language(workspace_dir: Path | str | None, configured: str = "auto") -> str:
-    configured = str(configured or "auto").strip().lower().replace("-", "_")
-    if configured in {"en", "english", "英文"}:
-        return "en"
-    if configured in {"zh", "chinese", "中文"}:
-        return "zh"
-    if configured in {"mixed", "bilingual", "zh_en", "中英", "双语"}:
-        return "mixed"
     if workspace_dir is None:
-        return "en"
+        return _normalize_manuscript_language(configured) or "en"
     workspace = Path(workspace_dir)
-    texts: list[str] = []
+
+    # The workspace-local T2 choice is the most specific declaration and must
+    # override a project-level default from an earlier setup.
+    params_path = workspace / "literature" / "literature_params.json"
+    if params_path.exists():
+        try:
+            params = json.loads(params_path.read_text(encoding="utf-8"))
+        except Exception:
+            params = {}
+        if isinstance(params, dict):
+            quality = params.get("literature_quality")
+            if isinstance(quality, dict):
+                explicit = _normalize_manuscript_language(quality.get("manuscript_language"))
+                if explicit:
+                    return explicit
     project_path = workspace / "project.yaml"
     if project_path.exists():
         try:
@@ -90,15 +97,9 @@ def infer_manuscript_language(workspace_dir: Path | str | None, configured: str 
             project = {}
         if isinstance(project, dict):
             for key in ("language", "manuscript_language", "writing_language", "target_language"):
-                value = str(project.get(key) or "").strip().lower()
-                if value in {"en", "english", "英文"}:
-                    return "en"
-                if value in {"zh", "chinese", "中文"}:
-                    return "zh"
-                if value in {"mixed", "bilingual", "zh-en", "zh_en", "双语"}:
-                    return "mixed"
-            texts.extend(str(project.get(key) or "") for key in ("title", "research_direction", "target_venue"))
-            texts.extend(str(item) for item in project.get("keywords") or [] if item is not None)
+                explicit = _normalize_manuscript_language(project.get(key))
+                if explicit:
+                    return explicit
     profile_path = workspace / "user_seeds" / "seed_outline_profile.json"
     if profile_path.exists():
         try:
@@ -106,21 +107,27 @@ def infer_manuscript_language(workspace_dir: Path | str | None, configured: str 
         except Exception:
             profile = {}
         if isinstance(profile, dict):
-            lang = str(profile.get("language") or "").strip().lower()
-            if lang in {"zh", "zh-en", "zh_en", "mixed", "bilingual"}:
-                return "mixed" if lang != "zh" else "zh"
-            if lang in {"en", "english"}:
-                return "en"
-            texts.append(str(profile.get("title") or ""))
-            query_profile = profile.get("query_profile")
-            if isinstance(query_profile, dict):
-                languages = {str(item).lower() for item in query_profile.get("search_languages") or []}
-                if "zh" in languages and "en" in languages:
-                    return "mixed"
-                if "zh" in languages:
-                    return "zh"
-    joined = " ".join(texts)
-    return "mixed" if _CJK_RE.search(joined) else "en"
+            explicit = _normalize_manuscript_language(profile.get("language"))
+            if explicit:
+                return explicit
+    configured_language = _normalize_manuscript_language(configured)
+    if configured_language:
+        return configured_language
+    # The UI language and a Chinese project description do not imply a Chinese
+    # or bilingual manuscript. ResearchOS defaults to an English manuscript
+    # unless the project or seed profile explicitly requests another language.
+    return "en"
+
+
+def _normalize_manuscript_language(value: Any) -> str | None:
+    normalized = str(value or "").strip().lower().replace("-", "_")
+    if normalized in {"en", "english", "英文"}:
+        return "en"
+    if normalized in {"zh", "chinese", "中文"}:
+        return "zh"
+    if normalized in {"mixed", "bilingual", "zh_en", "中英", "双语"}:
+        return "mixed"
+    return None
 
 
 def include_chinese_literature(

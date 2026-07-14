@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from datetime import datetime, timezone
+import hashlib
 import inspect
 import json
 from pathlib import Path
@@ -49,6 +50,7 @@ from .task_recovery import prepare_generic_resume_artifacts
 from .run_logger import RunLogger
 from ..agents.ideation import (
     T4_GATE1_ARTIFACTS,
+    ensure_t4_evidence_pool,
     prepare_t4_context_pack,
     refresh_t4_gate1_progress,
     validate_t4_gate1_ready,
@@ -293,11 +295,166 @@ class AgentRunner:
         )
         return cls._is_timeout_provider_error(exc) or any(marker in text for marker in transient_markers)
 
+    def _llm_provider_recovery_policy(self) -> tuple[int, float, float]:
+        """Return bounded, user-facing recovery settings for provider outages.
+
+        ``LLMClient.chat`` already tries the primary/fallback chain once.  A
+        recovery *batch* below deliberately starts that chain over after a
+        short cooldown, which is what lets a briefly overloaded provider
+        recover without forcing the researcher to resume the whole project.
+        The two legacy keys remain accepted so existing user settings do not
+        silently change behaviour.
+        """
+
+        raw_batches = self.retry_policy.get("llm_provider_retry_batches")
+        if raw_batches is None:
+            raw_batches = self.retry_policy.get("llm_timeout_pause_after_cooldowns")
+        try:
+            batches = int(raw_batches)
+        except (TypeError, ValueError):
+            batches = 10
+        # Historically ``0`` meant "do not auto-pause".  Bound it now rather
+        # than allowing an unattended infinite retry loop.
+        if batches <= 0:
+            batches = 10
+        batches = max(1, min(batches, 50))
+
+        raw_cooldown = self.retry_policy.get("llm_provider_initial_cooldown_seconds")
+        if raw_cooldown is None:
+            raw_cooldown = self.retry_policy.get("llm_timeout_cooldown_seconds")
+        try:
+            cooldown = float(raw_cooldown)
+        except (TypeError, ValueError):
+            cooldown = 10.0
+        # A legacy zero is useful in tests and explicit local development, but
+        # the checked-in user-facing default is ten seconds.
+        cooldown = max(0.0, min(cooldown, 300.0))
+
+        try:
+            long_cooldown = float(self.retry_policy.get("llm_provider_long_cooldown_seconds", 20))
+        except (TypeError, ValueError):
+            long_cooldown = 20.0
+        return batches, cooldown, max(0.0, min(long_cooldown, 900.0))
+
+    @staticmethod
+    def _public_provider_error_message(exc: LLMProviderError) -> str:
+        """Return a safe CLI message without endpoint, key, or SDK details."""
+
+        text = str(exc).casefold()
+        if any(marker in text for marker in ("authentication", "invalid_api_key", "unauthorized", "permissiondenied")):
+            return "模型服务配置未通过验证；请检查已选择服务的凭据和模型名称后 resume。"
+        if any(marker in text for marker in ("context_length", "context window", "badrequest", "bad request")):
+            return "模型请求未被接受；请检查模型上下文设置或项目输入后 resume。"
+        return "模型服务暂时不可用；已保留当前进度，可稍后 resume。"
+
+    async def _choose_llm_provider_recovery(
+        self,
+        *,
+        ctx: ExecutionContext,
+        budget: BudgetTracker,
+        failed_batches: int,
+        retry_batches: int,
+        cooldown_seconds: float,
+        long_cooldown_seconds: float,
+    ) -> tuple[str, float]:
+        """Choose a safe next action after a recoverable provider failure.
+
+        Returns ``("retry", seconds)`` or ``("pause", 0)``.  The human gate
+        is only opened after the bounded automatic retries are exhausted.
+        """
+
+        if failed_batches < retry_batches:
+            return "retry", cooldown_seconds
+
+        self.progress.stage_human_action_required(
+            task_id=ctx.task_id,
+            gate_id="runtime_llm_provider_recovery",
+            reason="模型服务连续不可用，需要确认是否继续等待。",
+        )
+        human_started = time.time()
+        try:
+            selection = await self.human.present_gate(
+                gate_id="runtime_llm_provider_recovery",
+                presentation={
+                    "_title": "模型服务暂时不可用",
+                    "_description": (
+                        f"系统已自动重试 {failed_batches} 次，但当前请求仍未完成。"
+                        "项目进度已经安全保留，请选择下一步。"
+                    ),
+                    "task_id": ctx.task_id,
+                    "retry_count": failed_batches,
+                },
+                options=[
+                    {"id": "retry_now", "label": "立即再试", "description": "重新从首选模型服务链开始请求。"},
+                    {
+                        "id": "wait_20_seconds",
+                        "label": "等待 20 秒后重试",
+                        "description": "适合服务刚刚超时或负载较高的情况。",
+                    },
+                    {"id": "pause", "label": "暂停项目", "description": "保留进度，稍后使用 resume 继续。"},
+                ],
+            )
+        except HumanInputUnavailable:
+            return "pause", 0.0
+        finally:
+            budget.exclude_wall_time(time.time() - human_started)
+
+        option_id = str((selection or {}).get("option_id") or "pause")
+        self.progress.stage_gate_resolved(
+            task_id=ctx.task_id,
+            gate_id="runtime_llm_provider_recovery",
+            decision=option_id,
+        )
+        if option_id == "retry_now":
+            return "retry", 0.0
+        if option_id == "wait_20_seconds":
+            return "retry", long_cooldown_seconds
+        return "pause", 0.0
+
+    async def _wait_before_llm_provider_retry(
+        self,
+        *,
+        ctx: ExecutionContext,
+        budget: BudgetTracker,
+        seconds: float,
+        attempt: int,
+        retry_batches: int,
+    ) -> None:
+        """Wait without consuming the active agent wall-clock budget."""
+
+        wait_seconds = max(0.0, seconds)
+        if wait_seconds:
+            self.progress.emit(
+                f"[Runtime] 模型服务暂时不可用，{wait_seconds:g} 秒后重试（{attempt}/{retry_batches}）。",
+                important=True,
+            )
+            self._record_skill_progress(
+                ctx,
+                step=budget.steps,
+                step_limit="unlimited" if budget.unlimited_budget else budget.max_steps,
+                phase="waiting_runtime",
+                detail=f"模型服务暂时不可用，等待 {wait_seconds:g} 秒后重新请求。",
+            )
+            started = time.time()
+            await asyncio.sleep(wait_seconds)
+            budget.exclude_wall_time(time.time() - started)
+        else:
+            self.progress.emit(
+                f"[Runtime] 模型服务暂时不可用，正在立即重试（{attempt}/{retry_batches}）。",
+                important=True,
+            )
+
     async def run(self, ctx: ExecutionContext) -> AgentResult:
         """执行一次完整 agent run。"""
         self.progress.configure_observability(workspace=ctx.workspace_dir)
         started = time.time()
         eff = resolve_effective_config(self.agent.spec, ctx)
+        dynamic_tool_names = self.tool_registry.dynamic_tool_names_for(self.agent.spec.name)
+        if dynamic_tool_names:
+            # MCP tools are configured by the workspace owner at startup. They
+            # augment, rather than replace, the capability contract declared by
+            # the Agent or Skill.
+            eff.tool_names = list(dict.fromkeys([*eff.tool_names, *dynamic_tool_names]))
         max_agent_runtime = int(self.global_timeout.get("max_agent_runtime") or 0)
         effective_wall_seconds = eff.max_wall_seconds
         if max_agent_runtime > 0:
@@ -406,13 +563,49 @@ class AgentRunner:
         stop_reason = AgentResult.STOP_ERROR
         error_msg: str | None = None
 
-        primary_binding = self.llm.resolve(
+        primary_binding, primary_endpoint = self.llm.resolve(
             profile=eff.llm_profile,
             tier=eff.llm_tier,
             model_override=eff.llm_model_override,
             endpoint_override=eff.llm_endpoint_override,
             max_context_override=eff.llm_max_context_override,
-        )[0][0]
+        )[0]
+        # ``max_context`` in routing is an auditable fallback rather than a
+        # claim about a provider's live deployment.  Discover once before
+        # building context-sensitive tools, then resolve again so read_file,
+        # history truncation, and the first model call agree on one capacity.
+        discover_context = getattr(self.llm, "discover_context_window", None)
+        if eff.llm_max_context_override is None and callable(discover_context):
+            discovery = discover_context(primary_binding, primary_endpoint)
+            if inspect.isawaitable(discovery):
+                await discovery
+            primary_binding, primary_endpoint = self.llm.resolve(
+                profile=eff.llm_profile,
+                tier=eff.llm_tier,
+                model_override=eff.llm_model_override,
+                endpoint_override=eff.llm_endpoint_override,
+                max_context_override=None,
+            )[0]
+
+        context_source: str | None = None
+        context_info_getter = getattr(self.llm, "get_context_window_info", None)
+        if callable(context_info_getter):
+            context_info = context_info_getter(
+                primary_binding,
+                primary_endpoint,
+                explicit_override=eff.llm_max_context_override is not None,
+            )
+            source_labels = {
+                "provider_metadata": "服务端元数据",
+                "configured_fallback": "配置回退",
+                "explicit_override": "显式上限",
+            }
+            context_source = str(context_info.source)
+            self.progress.emit(
+                f"[Runtime] 模型上下文：{context_info.max_context:,} tokens "
+                f"（{source_labels.get(context_info.source, context_info.source)}）",
+                verbose_only=True,
+            )
 
         policy = self.workspace_policy_factory(ctx, eff)
         if ctx.task_id == "T4":
@@ -426,11 +619,17 @@ class AgentRunner:
             llm_model=primary_binding.model,
             llm_tier=eff.llm_tier,
             llm_max_context=primary_binding.max_context,
+            llm_context_source=context_source,
             skill_session_id=str(ctx.extra.get("skill_session_id") or "") or None,
         )
         tool_map = self.tool_registry.build(eff.tool_names, build_ctx)
         tool_schemas = self.tool_registry.to_openai_schemas(tool_map)
 
+        # Agents that prepare large, source-grounded prompts can use the same
+        # discovered context capacity as the provider-bound tool layer.  This
+        # avoids a stale per-agent character cap while keeping a smaller model
+        # on a safe, explicit file-reading path.
+        ctx.extra["runtime_context_window"] = primary_binding.max_context
         sys_msg = Message.system(self.agent.system_prompt(ctx), step=0)
         user_msg = Message.user(self.agent.initial_user_message(ctx), step=0)
         messages: list[Message] = [sys_msg, user_msg]
@@ -654,48 +853,81 @@ class AgentRunner:
                 messages = self._maybe_truncate(messages, primary_binding)
                 messages = self._repair_openai_tool_message_sequence(messages)
 
-                try:
-                    run_logger.event(
-                        "LLM_CALL",
-                        task=ctx.task_id,
-                        step=budget.steps,
-                        tier=eff.llm_tier,
-                        profile=eff.llm_profile,
-                        tool_count=len(tool_schemas or []),
-                    )
-                    llm_resp = await self._await_llm_with_progress(
-                        ctx=ctx,
-                        step=budget.steps,
-                        progress_step_limit=step_limit,
-                        messages=[item.to_openai_dict() for item in messages],
-                        tools=tool_schemas or None,
-                        temperature=eff.llm_temperature,
-                        tier=eff.llm_tier,
-                        profile=eff.llm_profile,
-                        model_override=eff.llm_model_override,
-                        endpoint_override=eff.llm_endpoint_override,
-                        max_context_override=eff.llm_max_context_override,
-                        timeout=int(self.global_timeout.get("llm_call") or 120),
-                        max_retries_per_model=int(self.retry_policy.get("llm_retries") or 2),
-                        retry_base_delay=float(self.retry_policy.get("llm_retry_delay") or 2),
-                    )
-                except LLMProviderError as exc:
-                    run_logger.event(
-                        "ERROR",
-                        task=ctx.task_id,
-                        step=budget.steps,
-                        kind="llm_provider",
-                        message=str(exc)[:300],
-                    )
-                    if self._is_recoverable_provider_error(exc):
-                        llm_timeout_cooldowns_used += 1
-                        stop_reason = AgentResult.STOP_INTERRUPTED
-                        error_msg = (
-                            "LLM provider 连续超时或暂时不可用，已暂停为可 resume 状态；"
-                            f"最近错误: {exc}"
+                provider_retry_batches, provider_cooldown, provider_long_cooldown = self._llm_provider_recovery_policy()
+                provider_failures_this_request = 0
+                provider_pause_requested = False
+                while True:
+                    try:
+                        run_logger.event(
+                            "LLM_CALL",
+                            task=ctx.task_id,
+                            step=budget.steps,
+                            tier=eff.llm_tier,
+                            profile=eff.llm_profile,
+                            tool_count=len(tool_schemas or []),
+                            provider_recovery_attempt=provider_failures_this_request,
                         )
+                        llm_resp = await self._await_llm_with_progress(
+                            ctx=ctx,
+                            step=budget.steps,
+                            progress_step_limit=step_limit,
+                            messages=[item.to_openai_dict() for item in messages],
+                            tools=tool_schemas or None,
+                            temperature=eff.llm_temperature,
+                            tier=eff.llm_tier,
+                            profile=eff.llm_profile,
+                            model_override=eff.llm_model_override,
+                            endpoint_override=eff.llm_endpoint_override,
+                            max_context_override=eff.llm_max_context_override,
+                            timeout=int(self.global_timeout.get("llm_call") or 120),
+                            max_retries_per_model=int(self.retry_policy.get("llm_retries") or 2),
+                            retry_base_delay=float(self.retry_policy.get("llm_retry_delay") or 2),
+                        )
+                    except LLMProviderError as exc:
+                        # Keep complete provider diagnostics in the durable run
+                        # log.  The terminal must not expose endpoint URLs,
+                        # model chains, SDK internals, or credential hints.
+                        run_logger.event(
+                            "ERROR",
+                            task=ctx.task_id,
+                            step=budget.steps,
+                            kind="llm_provider",
+                            message=str(exc)[:300],
+                        )
+                        if not self._is_recoverable_provider_error(exc):
+                            stop_reason = AgentResult.STOP_ERROR
+                            error_msg = self._public_provider_error_message(exc)
+                            provider_pause_requested = True
+                            break
+
+                        llm_timeout_cooldowns_used += 1
+                        provider_failures_this_request += 1
+                        action, wait_seconds = await self._choose_llm_provider_recovery(
+                            ctx=ctx,
+                            budget=budget,
+                            failed_batches=provider_failures_this_request,
+                            retry_batches=provider_retry_batches,
+                            cooldown_seconds=provider_cooldown,
+                            long_cooldown_seconds=provider_long_cooldown,
+                        )
+                        if action == "retry":
+                            await self._wait_before_llm_provider_retry(
+                                ctx=ctx,
+                                budget=budget,
+                                seconds=wait_seconds,
+                                attempt=provider_failures_this_request,
+                                retry_batches=provider_retry_batches,
+                            )
+                            # A human-confirmed retry starts a fresh bounded
+                            # batch.  Automatic retries retain their count.
+                            if provider_failures_this_request >= provider_retry_batches:
+                                provider_failures_this_request = 0
+                            continue
+
+                        stop_reason = AgentResult.STOP_INTERRUPTED
+                        error_msg = "模型服务持续不可用；当前进度已保留，可在服务恢复后 resume。"
                         self.progress.emit(
-                            "[Runtime] LLM provider 暂时不可用，当前任务已暂停；稍后 resume 会从当前 task 继续",
+                            "[Runtime] 模型服务持续不可用，项目已暂停并保留当前进度。",
                             important=True,
                         )
                         self._record_skill_progress(
@@ -706,9 +938,12 @@ class AgentRunner:
                             detail=error_msg,
                         )
                         self._refresh_t4_gate1_progress(ctx, active_path=None, paused_reason=error_msg)
+                        provider_pause_requested = True
                         break
-                    stop_reason = AgentResult.STOP_ERROR
-                    error_msg = f"LLM failed: {exc}"
+                    else:
+                        break
+
+                if provider_pause_requested:
                     break
 
                 last_model_used = llm_resp.model_used
@@ -969,11 +1204,35 @@ class AgentRunner:
                         detail=("工具完成：" if tool_ok else "工具失败：") + tool_summary,
                     )
                     if ctx.task_id == "T4" and tool_call.name in {"write_file", "write_structured_file", "append_file"}:
-                        self._refresh_t4_gate1_progress(ctx, active_path=output_path if tool_ok else None)
+                        # The tool result itself already announces the durable
+                        # write. Refresh the on-disk checkpoint silently so a
+                        # second, misleading "0/6" line is never printed.
+                        self._refresh_t4_gate1_progress(
+                            ctx,
+                            active_path=output_path if tool_ok else None,
+                            announce=False,
+                        )
                         if tool_ok:
                             self._emit_t4_durable_candidate_recap(ctx, output_path)
                     if ctx.task_id == "T4" and tool_call.name == "log_t4_ideation_progress" and tool_ok:
-                        self._refresh_t4_gate1_progress(ctx, active_path=None)
+                        self._update_t4_public_activity_from_event(ctx, tool_data)
+                        # Candidate milestones and Gate1 artifact checkpoints
+                        # measure different things. The candidate card above is
+                        # sufficient here; retain only the durable state for
+                        # the next heartbeat.
+                        self._refresh_t4_gate1_progress(ctx, active_path=None, announce=False)
+                    if (
+                        ctx.task_id == "T2"
+                        and tool_ok
+                        and self._is_t2_raw_pool_read(tool_call, tool_data)
+                    ):
+                        checkpoint = self._t2_raw_pool_checkpoint_message(
+                            ctx=ctx,
+                            tool_data=tool_data,
+                            step=budget.steps,
+                        )
+                        if checkpoint is not None:
+                            post_tool_runtime_notes.append(checkpoint)
                     if tool_call.name == "finish_task" and not tool_msg.metadata.get("is_error"):
                         finish_requested = True
                     if self._is_recoverable_tool_pause(tool_call.name, tool_msg):
@@ -1011,6 +1270,10 @@ class AgentRunner:
                         stop_reason = AgentResult.STOP_FINISHED
                         break
                     validation_fails += 1
+                    repeated_validation_failures = self._record_validation_failure(
+                        ctx,
+                        str(err or "unknown validation error"),
+                    )
                     self.progress.validation_result(
                         task_id=ctx.task_id,
                         ok=False,
@@ -1040,6 +1303,11 @@ class AgentRunner:
                             used_extensions=validation_extensions_used,
                         )
                         if extended:
+                            # A user explicitly approved another repair window.
+                            # It is a new decision, so previous identical-error
+                            # counts must not suppress the newly granted attempt.
+                            ctx.extra.pop("last_validation_error", None)
+                            ctx.extra.pop("same_validation_error_count", None)
                             run_logger.event(
                                 "VALIDATION_RETRY",
                                 task=ctx.task_id,
@@ -1048,22 +1316,52 @@ class AgentRunner:
                                 new_limit=validation_retry_limit,
                             )
                             feedback = Message.user(
-                                "用户选择继续修复输出校验问题。请只针对最后一次校验错误做最小修复，"
-                                "优先调用确定性工具或读取现有 artifact，不要重写已合格的大文件。"
-                                f"最后一次错误：{err}",
+                                self._validation_repair_feedback(
+                                    ctx=ctx,
+                                    error=str(err or "unknown validation error"),
+                                    resumed_after_extension=True,
+                                ),
                                 step=budget.steps,
                             )
                             messages.append(feedback)
                             trace.write_message(feedback)
                             continue
+                        validation_circuit_limit = 3 if ctx.task_id == "T4" else 2
+                        stop_reason = AgentResult.STOP_INTERRUPTED
+                        if repeated_validation_failures >= validation_circuit_limit:
+                            error_msg = (
+                                f"同一输出校验问题连续出现 {validation_circuit_limit} 次，已停止重复修复并保留当前产物。"
+                                f"最后原因：{err}。请按该原因修复对应文件后再恢复运行。"
+                            )
+                            self.progress.emit(
+                                "[Validation] 同一问题再次出现，已暂停并保留当前结果；"
+                                "不会继续重复执行相同修复。",
+                                important=True,
+                            )
+                        else:
+                            error_msg = (
+                                f"Validation failed {validation_fails} times. "
+                                f"Paused for artifact repair/resume. Last reason: {err}"
+                            )
+                        break
+                    validation_circuit_limit = 3 if ctx.task_id == "T4" else 2
+                    if repeated_validation_failures >= validation_circuit_limit:
                         stop_reason = AgentResult.STOP_INTERRUPTED
                         error_msg = (
-                            f"Validation failed {validation_fails} times. "
-                            f"Paused for artifact repair/resume. Last reason: {err}"
+                            f"同一输出校验问题连续出现 {validation_circuit_limit} 次，已停止重复修复并保留当前产物。"
+                            f"最后原因：{err}。请按该原因修复对应文件后再恢复运行。"
+                        )
+                        self.progress.emit(
+                            "[Validation] 同一问题再次出现，已暂停并保留当前结果；"
+                            "不会继续重复执行相同修复。",
+                            important=True,
                         )
                         break
                     feedback = Message.user(
-                        f"你声称已完成，但输出校验失败：{err}。请修复后再次调用 finish_task。",
+                        self._validation_repair_feedback(
+                            ctx=ctx,
+                            error=str(err or "unknown validation error"),
+                        ),
                         step=budget.steps,
                     )
                     messages.append(feedback)
@@ -1195,14 +1493,13 @@ class AgentRunner:
         ]
         if len(ctx.outputs_expected) > 5:
             expected.append(f"...(+{len(ctx.outputs_expected) - 5})")
-        step_limit = "unlimited" if eff.unlimited_budget else str(eff.max_steps)
         separator = self._centered_separator(f"{ctx.task_id} | {self.agent.spec.name}", width=80)
         self._emit(
             f"\n{separator}\n"
             f"[{self.agent.spec.name} Agent] 初始化完成 | "
             f"任务: {ctx.task_id} | 阶段: {phase} | "
             f"目标: {description} | 输出: {', '.join(expected) if expected else '未声明'} | "
-            f"模型层级: {eff.llm_tier} | 最大步数: {step_limit}\n"
+            "LLM: 当前全局配置\n"
             f"{'=' * len(separator)}",
             verbose_only=True,
         )
@@ -1274,8 +1571,15 @@ class AgentRunner:
         *,
         active_path: str | Path | None,
         paused_reason: str | None = None,
+        announce: bool = True,
     ) -> None:
-        """Refresh the durable T4 status file from real artifact existence."""
+        """Refresh the durable T4 checkpoint without conflating it with candidates.
+
+        Gate1's ``n/6`` measures only required *persisted artifacts*. It is
+        intentionally independent from a model-authored D1/D2/... candidate
+        count. Store the exact checkpoint in ``ctx.extra`` for heartbeats and
+        print it only when a user needs a new artifact-level milestone.
+        """
 
         if ctx.task_id != "T4":
             return
@@ -1288,12 +1592,67 @@ class AgentRunner:
             current = str(refreshed.get("current_label") or "正在更新 Gate1 进度")
             completed = int(refreshed.get("completed_count") or 0)
             total = int(refreshed.get("total_count") or 0)
+            next_artifact = str(refreshed.get("next_artifact_label") or current)
+            ctx.extra["t4_artifact_progress"] = {"completed": completed, "total": total}
+            ctx.extra["t4_public_activity"] = current
+            ctx.extra["t4_next_artifact"] = next_artifact
+            if not announce:
+                return
+            signature = (completed, total, current, paused_reason or "")
+            if ctx.extra.get("t4_last_announced_artifact_progress") == signature:
+                return
+            ctx.extra["t4_last_announced_artifact_progress"] = signature
             self.progress.emit(
-                f"[T4 Gate1 {completed}/{total}] {current}",
+                f"[T4 Gate1 artifacts] {completed}/{total} · {current}",
                 important=True,
             )
         except Exception as exc:  # pragma: no cover - progress is observational
             self.log.warning("t4_progress_refresh_failed", error=str(exc))
+
+    @staticmethod
+    def _update_t4_public_activity_from_event(ctx: ExecutionContext, data: dict[str, object]) -> None:
+        """Keep the last public candidate milestone available to LLM heartbeats.
+
+        This accepts only the bounded event emitted by
+        ``log_t4_ideation_progress``. It never records model rationale or
+        unpersisted research content.
+        """
+
+        event = data.get("event") if isinstance(data.get("event"), dict) else {}
+        if not isinstance(event, dict):
+            return
+        phase = str(event.get("phase") or "T4").replace("_", " ")
+        status = str(event.get("status") or "updated").replace("_", " ")
+        subject_parts = [
+            str(event.get("candidate_id") or "").strip(),
+            str(event.get("candidate_title") or event.get("channel") or "").strip(),
+        ]
+        subject = " · ".join(part for part in subject_parts if part)
+        label = " · ".join(part for part in (phase, subject, status) if part)
+        if label:
+            ctx.extra["t4_candidate_activity"] = label
+
+    @staticmethod
+    def _t4_heartbeat_context(ctx: ExecutionContext) -> dict[str, object]:
+        """Return only public, durable T4 status for a provider heartbeat."""
+
+        if ctx.task_id != "T4":
+            return {}
+        progress = ctx.extra.get("t4_artifact_progress")
+        completed = progress.get("completed") if isinstance(progress, dict) else None
+        total = progress.get("total") if isinstance(progress, dict) else None
+        activity = str(
+            ctx.extra.get("t4_candidate_activity")
+            or ctx.extra.get("t4_public_activity")
+            or "正在准备下一项可执行动作"
+        )
+        next_artifact = str(ctx.extra.get("t4_next_artifact") or "等待下一项持久化产物")
+        return {
+            "activity": activity,
+            "next_artifact": next_artifact,
+            "artifact_completed": int(completed) if isinstance(completed, int) else None,
+            "artifact_total": int(total) if isinstance(total, int) else None,
+        }
 
     def _emit_t4_durable_candidate_recap(self, ctx: ExecutionContext, output_path: str | Path | None) -> None:
         """Backstop candidate-level CLI facts when the model omits progress events.
@@ -1403,8 +1762,9 @@ class AgentRunner:
             detail="已提交模型请求，正在等待下一组可执行动作。",
         )
         if ctx.task_id == "T4" and not self._t4_gate1_user_selection_exists(ctx):
-            self._refresh_t4_gate1_progress(ctx, active_path=None)
-        self.progress.llm_request_started(task_id=ctx.task_id, step=step)
+            self._refresh_t4_gate1_progress(ctx, active_path=None, announce=False)
+        heartbeat = self._t4_heartbeat_context(ctx)
+        self.progress.llm_request_started(task_id=ctx.task_id, step=step, **heartbeat)
         task = asyncio.create_task(self.llm.chat(**kwargs))
         started = time.monotonic()
         timeout = 12.0
@@ -1414,11 +1774,15 @@ class AgentRunner:
                 if done:
                     return task.result()
                 elapsed = int(time.monotonic() - started)
+                if ctx.task_id == "T4" and not self._t4_gate1_user_selection_exists(ctx):
+                    self._refresh_t4_gate1_progress(ctx, active_path=None, announce=False)
+                heartbeat = self._t4_heartbeat_context(ctx)
                 self.progress.llm_waiting(
                     task_id=ctx.task_id,
                     agent=self.agent.spec.name,
                     step=step,
                     elapsed_seconds=elapsed,
+                    **heartbeat,
                 )
                 self._record_skill_progress(
                     ctx,
@@ -1427,7 +1791,10 @@ class AgentRunner:
                     phase="awaiting_llm",
                     detail=f"模型调用仍在等待，已持续 {elapsed}s。",
                 )
-                timeout = 20.0
+                # T4 is intentionally visible but should not flood a long
+                # terminal. First heartbeat remains at 12s; later pulses are
+                # every 30s and only report public execution state.
+                timeout = 30.0 if ctx.task_id == "T4" else 20.0
         except BaseException:
             if not task.done():
                 task.cancel()
@@ -1871,6 +2238,27 @@ class AgentRunner:
         if ctx.task_id != "T2":
             return False
 
+        if bool(ctx.extra.get("t2_user_requested_expansion")):
+            # The user explicitly chose "expand / adjust query" at the T2
+            # coverage gate. Existing outputs are valuable evidence to retain,
+            # but they are not a substitute for the newly requested Scout
+            # round.  If that round already changed the persisted corpus before
+            # an interruption, resume must finalize those results rather than
+            # launch another full search loop.
+            if self._t2_expansion_has_persisted_progress(ctx):
+                return await self._finalize_t2_from_raw(
+                    ctx,
+                    mode="t2_expansion_resume_prefinalize",
+                    min_raw_count=self._t2_finish_finalize_min_raw(ctx),
+                    start_message="[T2] 检测到已保存的补检结果，正在整理本轮新增文献...",
+                    success_message="[T2] 补检结果已整理完成，跳过重复检索。",
+                )
+            self.progress.emit(
+                "[T2] 已按你的选择进入补检：保留现有论文池，并补充尚未覆盖的检索角度。",
+                important=True,
+            )
+            return False
+
         if ctx.outputs_expected and all(path.exists() for path in ctx.outputs_expected.values()):
             ok, _err = self.agent.validate_outputs(ctx)
             manifest_ok, manifest_err = validate_t2_finalize_manifest(ctx.workspace_dir)
@@ -1905,6 +2293,60 @@ class AgentRunner:
             success_message="[Scout Agent] T2 resume 确定性补齐成功，跳过 LLM 续跑",
         )
 
+    def _t2_expansion_has_persisted_progress(self, ctx: ExecutionContext) -> bool:
+        """Detect an interrupted T2 supplement without trusting volatile state.
+
+        ``coverage_decision.json`` records the corpus fingerprints presented to
+        the user before selecting "expand".  Any changed tracked artifact means
+        the requested round has already produced durable work and can safely be
+        finalized from ``papers_raw``.  Older decisions did not fingerprint the
+        raw file, so search-log and downstream-artifact changes remain valid
+        compatibility signals.
+        """
+
+        decision_path = ctx.workspace_dir / "literature" / "coverage_decision.json"
+        if not decision_path.is_file():
+            return False
+        try:
+            decision = json.loads(decision_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        if not isinstance(decision, dict) or decision.get("selected_option") != "rerun_t2_expand":
+            return False
+        fingerprints = decision.get("input_fingerprints")
+        if not isinstance(fingerprints, dict):
+            return False
+
+        tracked_labels = (
+            "papers_raw",
+            "search_log",
+            "missing_areas",
+            "papers_dedup",
+            "papers_verified",
+            "deep_read_queue",
+        )
+        for label in tracked_labels:
+            expected = fingerprints.get(label)
+            if not isinstance(expected, dict):
+                continue
+            rel_path = str(expected.get("path") or "").strip()
+            expected_hash = str(expected.get("sha256") or "").strip()
+            if not rel_path or not expected_hash:
+                continue
+            path = ctx.workspace_dir / rel_path
+            if not path.is_file():
+                continue
+            digest = hashlib.sha256()
+            try:
+                with path.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        digest.update(chunk)
+            except OSError:
+                continue
+            if digest.hexdigest() != expected_hash:
+                return True
+        return False
+
     def _raw_t2_cache_newer_than_inputs(self, ctx: ExecutionContext) -> bool:
         raw_path = ctx.workspace_dir / "literature" / "papers_raw.jsonl"
         if not raw_path.exists() or raw_path.stat().st_size <= 0:
@@ -1935,7 +2377,7 @@ class AgentRunner:
             return False
 
         expected_paths = [
-            ctx.workspace_dir / "literature" / "paper_notes",
+            ctx.workspace_dir / "literature" / "deep_read_notes",
             ctx.workspace_dir / "literature" / "comparison_table.csv",
             ctx.workspace_dir / "literature" / "related_work.bib",
         ]
@@ -1976,7 +2418,7 @@ class AgentRunner:
             "t3_resume_prefinalize",
             {
                 "outputs": [
-                    "literature/paper_notes",
+                    "literature/deep_read_notes",
                     "literature/comparison_table.csv",
                     "literature/related_work.bib",
                 ],
@@ -2112,6 +2554,14 @@ class AgentRunner:
         if not self._t4_gate1_user_selection_exists(ctx):
             gate1_ready, _gate1_err = validate_t4_gate1_ready(ctx.workspace_dir)
             if gate1_ready:
+                backfill = ensure_t4_evidence_pool(ctx.workspace_dir)
+                if backfill.get("changed"):
+                    self.progress.emit(
+                        "[T4 Evidence Pool] 已补齐历史 workspace 的可回查笔记索引："
+                        f"首轮 {backfill.get('selected_count', 0)} 张，延后可回查 {backfill.get('deferred_count', 0)} 张。",
+                        important=True,
+                    )
+                self._refresh_t4_gate1_progress(ctx, active_path=None, announce=False)
                 return False
         try:
             pack = prepare_t4_context_pack(ctx.workspace_dir)
@@ -2219,25 +2669,10 @@ class AgentRunner:
             return False
         if self._t4_gate1_user_selection_exists(ctx):
             return False
-        from ..agents.ideation import ensure_t4_gate1_candidate_cards
-
-        ensure_t4_gate1_candidate_cards(ctx.workspace_dir)
         ok, err = validate_t4_gate1_ready(ctx.workspace_dir)
-        if not ok and self._is_resume_run(ctx) and self._t4_last_error_allows_gate1_recovery(ctx):
-            from ..agents.ideation import recover_t4_gate1_candidate_pool
-
-            recovery = recover_t4_gate1_candidate_pool(
-                ctx.workspace_dir,
-                reason=f"resume_prefinalize_after_provider_failure:{err}",
-            )
-            if recovery.get("ok"):
-                self.log.info("t4_gate1_recovered_before_llm", recovery=recovery)
-                self.progress.emit(
-                    "[轨迹] T4 provider 暂不可用；已从已验证文献卡恢复 Gate1 候选池，正在校验候选与证据边界。",
-                    important=True,
-                )
-                ensure_t4_gate1_candidate_cards(ctx.workspace_dir)
-                ok, err = validate_t4_gate1_ready(ctx.workspace_dir)
+        # Candidate research content is model-authored. Do not silently turn a
+        # provider failure into a template-derived Gate1 deck: users need the
+        # model's actual mechanism, H1/H2/H3, and research judgement.
         if not ok:
             self.log.info("t4_gate1_prefinalize_skipped", reason=err)
             return False
@@ -2284,25 +2719,9 @@ class AgentRunner:
             return stop_reason, error_msg
         if ctx.extra.get("completion_mode") in {"t4_resume_prefinalize", "t4_gate1_ready"}:
             return stop_reason, error_msg
-        from ..agents.ideation import ensure_t4_gate1_candidate_cards
-
-        ensure_t4_gate1_candidate_cards(ctx.workspace_dir)
         ok, err = validate_t4_gate1_ready(ctx.workspace_dir)
-        if not ok and self._t4_stop_reason_allows_gate1_recovery(stop_reason, error_msg):
-            from ..agents.ideation import recover_t4_gate1_candidate_pool
-
-            recovery = recover_t4_gate1_candidate_pool(
-                ctx.workspace_dir,
-                reason=f"runner_exit_after_provider_failure:{err}",
-            )
-            if recovery.get("ok"):
-                self.log.info("t4_gate1_recovered_on_exit", recovery=recovery)
-                self.progress.emit(
-                    "[轨迹] T4 provider 暂不可用；已从已验证文献卡恢复 Gate1 候选池，正在校验候选与证据边界。",
-                    important=True,
-                )
-                ensure_t4_gate1_candidate_cards(ctx.workspace_dir)
-                ok, err = validate_t4_gate1_ready(ctx.workspace_dir)
+        # Keep provider failures resumable rather than manufacturing a
+        # deterministic candidate deck. See the matching preflight path above.
         if not ok:
             self.log.info("t4_gate1_finalize_skipped", reason=err)
             return stop_reason, error_msg
@@ -2355,9 +2774,6 @@ class AgentRunner:
 
         selection_path = ctx.workspace_dir / "ideation" / "_gate1_user_selection.json"
         if not selection_path.exists() or selection_path.stat().st_size <= 0:
-            from ..agents.ideation import ensure_t4_gate1_candidate_cards
-
-            ensure_t4_gate1_candidate_cards(ctx.workspace_dir)
             ok, _ = validate_t4_gate1_ready(ctx.workspace_dir)
             if ok:
                 self.log.info("t4_resume_prefinalize_skipped", reason="gate1_selection_missing")
@@ -2846,8 +3262,8 @@ class AgentRunner:
         mode_params = get_agent_mode_params("reader", "synthesize")
         if not bool(mode_params.get("prebuild_workbench_before_llm", False)):
             return False
-        notes_dir = ctx.workspace_dir / "literature" / "paper_notes"
-        bridge_notes_dir = ctx.workspace_dir / "literature" / "paper_notes_bridge"
+        notes_dir = ctx.workspace_dir / "literature" / "deep_read_notes"
+        bridge_notes_dir = ctx.workspace_dir / "literature" / "bridge_notes"
         note_files = [path for path in notes_dir.glob("*.md") if is_paper_note_file(path)] if notes_dir.exists() else []
         if bridge_notes_dir.exists():
             note_files.extend(path for path in bridge_notes_dir.glob("**/*.md") if is_paper_note_file(path))
@@ -2962,9 +3378,14 @@ class AgentRunner:
         )
         if not needs_finalize:
             ok, _err = self.agent.validate_outputs(ctx)
-            if ok:
+            manifest_ok, _manifest_err = validate_t2_finalize_manifest(ctx.workspace_dir)
+            if ok and manifest_ok:
                 self._record_runtime_completion(ctx, mode, {"raw_count": raw_count})
                 return True
+            # A raw-pool enrichment can occur after an interrupted finalize.
+            # Existing files are then structurally valid but describe a stale
+            # raw snapshot. Rebuild once so every downstream artifact and the
+            # manifest agree on the same durable candidate pool.
             needs_finalize = True
 
         if not needs_finalize:
@@ -3385,6 +3806,13 @@ class AgentRunner:
             tool_name=tc.name,
             tool_arguments=model_dump(parsed),
             result=result,
+        )
+        self._record_t2_search_ledger(
+            ctx=ctx,
+            tool_name=tc.name,
+            tool_arguments=model_dump(parsed),
+            result=result,
+            auto_persist_metadata=auto_persist_metadata,
         )
         try:
             task_io = get_task_io(ctx.task_id)
@@ -3951,6 +4379,203 @@ class AgentRunner:
         except Exception:
             return
 
+    @staticmethod
+    def _normalized_t2_query(value: object) -> str:
+        return " ".join(str(value or "").casefold().split())
+
+    def _record_t2_search_ledger(
+        self,
+        *,
+        ctx: ExecutionContext,
+        tool_name: str,
+        tool_arguments: dict[str, object],
+        result: ToolResult,
+        auto_persist_metadata: dict[str, object] | None,
+    ) -> None:
+        """Keep compact, factual T2 search state across history truncation.
+
+        The ledger is not a relevance judgment and never replaces
+        ``papers_raw.jsonl``. It only records already completed retrieval
+        operations so Scout does not restart its query plan after reading a
+        large raw page.
+        """
+
+        if ctx.task_id != "T2" or tool_name not in T2_AUTO_PERSIST_SEARCH_TOOLS:
+            return
+        query = str(
+            result.data.get("query")
+            or tool_arguments.get("query")
+            or tool_arguments.get("search_query")
+            or ""
+        ).strip()
+        if not query:
+            return
+        ledger = ctx.extra.setdefault("t2_search_ledger", [])
+        if not isinstance(ledger, list):
+            ledger = []
+            ctx.extra["t2_search_ledger"] = ledger
+        key = (tool_name, self._normalized_t2_query(query))
+        for item in ledger:
+            if not isinstance(item, dict):
+                continue
+            if (str(item.get("tool") or ""), str(item.get("query_key") or "")) == key:
+                return
+        papers = result.data.get("papers")
+        ledger.append(
+            {
+                "tool": tool_name,
+                "query": query,
+                "query_key": key[1],
+                "bucket": str(
+                    tool_arguments.get("query_bucket")
+                    or tool_arguments.get("search_bucket")
+                    or result.data.get("query_bucket")
+                    or ""
+                ).strip(),
+                "bridge_id": str(tool_arguments.get("bridge_id") or result.data.get("bridge_id") or "").strip(),
+                "returned": len(papers) if isinstance(papers, list) else 0,
+                "persisted": int((auto_persist_metadata or {}).get("retained_count") or 0),
+                "ok": bool(result.ok),
+            }
+        )
+
+    @staticmethod
+    def _is_t2_raw_pool_read(tool_call: ToolCall, tool_data: dict[str, object]) -> bool:
+        if tool_call.name != "read_file":
+            return False
+        path = str(tool_data.get("path") or tool_call.arguments.get("path") or "").replace("\\", "/")
+        return path.lstrip("./") == "literature/papers_raw.jsonl"
+
+    def _hydrate_t2_search_ledger_from_raw(self, ctx: ExecutionContext) -> None:
+        """Restore compact retrieval facts after a T2 resume.
+
+        The raw JSONL is the durable source of retrieval provenance. This reads
+        only structured provenance fields and never scores relevance, filters
+        papers, or creates scholarly content. It lets a resumed Scout retain
+        the completed query/source coverage after prior chat history has gone.
+        """
+
+        if ctx.task_id != "T2" or ctx.extra.get("t2_search_ledger_hydrated"):
+            return
+        ctx.extra["t2_search_ledger_hydrated"] = True
+        raw_path = ctx.workspace_dir / "literature" / "papers_raw.jsonl"
+        if not raw_path.exists():
+            return
+        ledger = ctx.extra.setdefault("t2_search_ledger", [])
+        if not isinstance(ledger, list):
+            ledger = []
+            ctx.extra["t2_search_ledger"] = ledger
+        known = {
+            (str(item.get("tool") or ""), str(item.get("query_key") or ""))
+            for item in ledger
+            if isinstance(item, dict)
+        }
+        try:
+            with raw_path.open(encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(record, dict):
+                        continue
+                    provenance = record.get("provenance") if isinstance(record.get("provenance"), dict) else {}
+                    queries = [record.get("source_query"), provenance.get("source_query")]
+                    if isinstance(record.get("source_queries"), list):
+                        queries.extend(record["source_queries"])
+                    tools = [record.get("source_tool"), provenance.get("source_tool")]
+                    if isinstance(record.get("source_tools"), list):
+                        tools.extend(record["source_tools"])
+                    normalized_queries = [
+                        str(query).strip()
+                        for query in queries
+                        if self._normalized_t2_query(query)
+                    ]
+                    normalized_tools = [str(tool).strip() for tool in tools if str(tool or "").strip()]
+                    if not normalized_queries or not normalized_tools:
+                        continue
+                    bucket = str(
+                        record.get("query_bucket")
+                        or record.get("search_bucket")
+                        or provenance.get("query_bucket")
+                        or provenance.get("search_bucket")
+                        or ""
+                    ).strip()
+                    bridge_id = str(record.get("bridge_id") or provenance.get("bridge_id") or "").strip()
+                    for tool in dict.fromkeys(normalized_tools):
+                        for query in dict.fromkeys(normalized_queries):
+                            key = (tool, self._normalized_t2_query(query))
+                            if key in known:
+                                continue
+                            known.add(key)
+                            ledger.append(
+                                {
+                                    "tool": tool,
+                                    "query": query,
+                                    "query_key": key[1],
+                                    "bucket": bucket,
+                                    "bridge_id": bridge_id,
+                                    "returned": 0,
+                                    "persisted": 0,
+                                    "ok": True,
+                                    "recovered_from_raw": True,
+                                }
+                            )
+        except OSError:
+            return
+
+    def _t2_raw_pool_checkpoint_message(
+        self,
+        *,
+        ctx: ExecutionContext,
+        tool_data: dict[str, object],
+        step: int,
+    ) -> Message | None:
+        """Return a durable, compact resume instruction after a raw-pool page."""
+
+        raw_path = ctx.workspace_dir / "literature" / "papers_raw.jsonl"
+        if not raw_path.exists():
+            return None
+        self._hydrate_t2_search_ledger_from_raw(ctx)
+        offset = int(tool_data.get("offset") or 0)
+        size = int(tool_data.get("size") or raw_path.stat().st_size)
+        next_offset = min(
+            size,
+            int(tool_data.get("next_offset") or offset + int(tool_data.get("max_chars") or 0)),
+        )
+        truncated = bool(tool_data.get("truncated"))
+        raw_count = self._count_jsonl_records(raw_path)
+        ledger = ctx.extra.get("t2_search_ledger")
+        entries = [entry for entry in ledger if isinstance(entry, dict)] if isinstance(ledger, list) else []
+        unique_queries = {
+            str(entry.get("query_key") or "")
+            for entry in entries
+            if str(entry.get("query_key") or "")
+        }
+        sources = sorted({str(entry.get("tool") or "") for entry in entries if entry.get("tool")})
+        buckets = sorted({str(entry.get("bucket") or "") for entry in entries if entry.get("bucket")})
+        ctx.extra["t2_last_raw_page"] = {
+            "offset": offset,
+            "next_offset": next_offset,
+            "size": size,
+            "raw_count": raw_count,
+        }
+        page_note = (
+            f"本页为 {offset}:{next_offset}/{size}；下一页 offset={next_offset}。"
+            if truncated
+            else "当前 raw 文件已完整展示。"
+        )
+        return Message.user(
+            "[Runtime T2 检索检查点] 已完成的检索必须保留，不要重新初始化、expand_queries 或重跑已完成的来源/query。"
+            f"当前 papers_raw={raw_count} 条；已完成 {len(unique_queries)} 条不同 query、"
+            f"{len(entries)} 次来源检索；来源={', '.join(sources) or '未记录'}；"
+            f"覆盖桶={', '.join(buckets) or '未记录'}。{page_note}"
+            "请基于刚读到的 title/abstract/source_query 继续 semantic_screen；需要更多记录时只读取下一页。"
+            "完成必要筛选后调用 finish_task，让 runtime 做去重、核验和队列收尾。"
+            "此检查点是运行事实，不是论文相关性或最终筛选结论。",
+            step=step,
+        )
+
     def _persist_t2_citation_edges_if_present(
         self,
         *,
@@ -4474,6 +5099,94 @@ class AgentRunner:
             new_limit=exc.limit + delta,
         )
         return True, used_extensions + 1
+
+    @staticmethod
+    def _record_validation_failure(ctx: ExecutionContext, error: str) -> int:
+        """Track the consecutive identical validator error for circuit breaking."""
+
+        normalized = " ".join(str(error or "unknown validation error").split()).casefold()
+        previous = str(ctx.extra.get("last_validation_error") or "").casefold()
+        count = int(ctx.extra.get("same_validation_error_count") or 0)
+        count = count + 1 if normalized == previous else 1
+        ctx.extra["last_validation_error"] = normalized
+        ctx.extra["same_validation_error_count"] = count
+        return count
+
+    @staticmethod
+    def _validation_repair_feedback(
+        *,
+        ctx: ExecutionContext,
+        error: str,
+        resumed_after_extension: bool = False,
+    ) -> str:
+        """Give the LLM an artifact-specific repair contract, not vague retry prose."""
+
+        prefix = (
+            "已获准继续校验修复。"
+            if resumed_after_extension
+            else "输出校验未通过。"
+        )
+        base = (
+            f"{prefix} 最后错误：{error}\n"
+            "只修复该错误涉及的最小 artifact，保留其它已合格字段；修复后再次调用 finish_task。"
+        )
+        if ctx.task_id != "T4":
+            return base
+
+        idea_match = re.search(r"idea\s+([A-Za-z][A-Za-z0-9_-]*)", error)
+        idea_id = idea_match.group(1) if idea_match else "对应 idea"
+        if "idea_scorecard.yaml" in error:
+            details = (
+                "读取 `ideation/idea_scorecard.yaml`，定位 `ideas[]` 中 "
+                f"`idea.id == \"{idea_id}\"` 的记录。"
+            )
+            if "design_rationale" in error:
+                details += (
+                    "在 `idea.cdr_tuple.design_rationale` 写出模型根据该候选问题、机制、"
+                    "跨论文观察所得的设计理由：解释 artifact 为什么必须采取当前结构，"
+                    "不是复述实现步骤。"
+                )
+            elif "contribution_type" in error or "contribution_character" in error or "contribution_strength" in error:
+                details += (
+                    "补全该选中 idea 的 `cdr_tuple.contribution_type`、"
+                    "`selection_rationale.contribution_character`（或 `idea.contribution_character`）"
+                    "及 `idea.contribution_strength`，并让三者与当前 mechanism 和 design_rationale 一致。"
+                )
+            else:
+                details += "按报错字段补全该 idea，同时保留完整 CDR、评分和 decision 记录。"
+            return (
+                base
+                + details
+                + "使用 `write_structured_file(path=\"ideation/idea_scorecard.yaml\", "
+                "schema_name=\"idea_scorecard\", format=\"yaml\", data=...)` 重写通过 schema 的完整对象。"
+                "研究性文字必须由你依据已落盘证据归纳；不要让确定性工具代写假设、机制、设计理由或评分依据。"
+            )
+        structured_targets = {
+            "idea_rationales.json": ("ideation/idea_rationales.json", "idea_rationales", "json"),
+            "exp_plan.yaml": ("ideation/exp_plan.yaml", "exp_plan", "yaml"),
+            "gate_decisions.json": ("ideation/gate_decisions.json", "gate_decisions", "json"),
+        }
+        for marker, (path, schema, fmt) in structured_targets.items():
+            if marker in error:
+                return (
+                    base
+                    + f"读取 `{path}`，只补报错指出的字段，然后使用 "
+                    f"`write_structured_file(path=\"{path}\", schema_name=\"{schema}\", format=\"{fmt}\", data=...)`。"
+                    "不要改写无关的已合格 artifact。"
+                )
+        if "_candidate_directions.json" in error:
+            return (
+                base
+                + "读取 `ideation/_candidate_directions.json` 并修复报错候选的模型归纳字段。"
+                "每个 Gate1 candidate 必须保留 2-3 条不同的可证伪假设、`basis_sources` 的 claim/implication、"
+                "CDR 设计理由和互不重复的七维评分理由；使用 `write_file` 写回完整 JSON 对象。"
+                "不要让 runtime 展示层补写研究内容。"
+            )
+        return (
+            base
+            + "T4 的研究字段必须由你根据已有候选、论文笔记和 scorecard 归纳修复；"
+            "先读取报错文件，确认 schema 和字段路径，再写回最小完整修复。"
+        )
 
     async def _maybe_offer_validation_retry_extension(
         self,

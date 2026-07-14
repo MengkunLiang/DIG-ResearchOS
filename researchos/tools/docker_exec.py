@@ -57,7 +57,7 @@ def _runtime_config_paths() -> list[Path]:
 def get_default_image() -> str:
     """获取默认 Docker 镜像。
 
-    优先从 config/runtime.yaml 读取，失败时使用内置默认值。
+    优先从 config/system_config/runtime.yaml 读取，失败时使用内置默认值。
     与 Dockerfile 构建的镜像名保持一致。
 
     Returns:

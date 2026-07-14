@@ -4,7 +4,7 @@ from __future__ import annotations
 
 目标：
 1. 兼容旧 workspace：即使没有 deep_read_queue / papers_verified，也能基于现有产物续跑；
-2. 把已完成的 `paper_notes/*.md` 从工作清单里裁掉，避免 T3 重复阅读；
+2. 把已完成的 `deep_read_notes/*.md` 从工作清单里裁掉，避免 T3 重复阅读；
 3. 为 Reader 额外生成一个“只包含未完成论文”的 pending queue。
 """
 
@@ -47,10 +47,10 @@ def _is_complete_note(note_path: Path) -> bool:
 
 def _note_paths(literature_dir: Path) -> list[Path]:
     paths: list[Path] = []
-    notes_dir = literature_dir / "paper_notes"
+    notes_dir = literature_dir / "deep_read_notes"
     if notes_dir.exists():
         paths.extend(path for path in notes_dir.glob("*.md") if is_paper_note_file(path))
-    bridge_dir = literature_dir / "paper_notes_bridge"
+    bridge_dir = literature_dir / "bridge_notes"
     if bridge_dir.exists():
         paths.extend(path for path in bridge_dir.glob("**/*.md") if is_paper_note_file(path))
     return sorted(paths)

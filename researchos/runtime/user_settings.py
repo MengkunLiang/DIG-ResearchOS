@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-"""User-facing configuration overlay.
+"""Compatibility adapter for the retired ``user_settings.yaml`` format.
 
-Everyday LLM, budget, timeout, retry, and escalation changes should go through
-`config/user_settings.yaml`. Other YAML files remain capability/topology/routing
-registries and should not duplicate daily parameters.
+New installations use only ``config/model_settings.yaml`` for the provider,
+API endpoint, key, model, and same-model retry policy. This module remains so
+an existing workspace with the former overlay can start once and be migrated
+with ``configure-llm``; normal runtime code must not present it as a second
+configuration surface.
 """
 
 from copy import deepcopy
@@ -16,6 +18,8 @@ import yaml
 
 
 DEFAULT_USER_SETTINGS_PATH = Path(__file__).parent.parent.parent / "config" / "user_settings.yaml"
+SIMPLE_LLM_FIELDS = {"api_base", "api_key", "model", "provider", "max_context_fallback"}
+DEFAULT_CONTEXT_WINDOW_FALLBACK = 131_072
 
 
 def should_apply_default_user_settings(config_path: Path, default_config_path: Path) -> bool:
@@ -50,10 +54,10 @@ def resolve_user_settings_path(default_path: Path | None = None) -> Path:
 
 
 def load_user_settings(path: Path | None = None) -> dict[str, Any]:
-    """Load user-facing settings.
+    """Load a legacy user-settings overlay for migration compatibility.
 
     The environment variable is useful for tests and temporary experiments:
-    - unset: use `config/user_settings.yaml` if it exists;
+    - unset: use the retired `config/user_settings.yaml` only if it exists;
     - empty/nonexistent path: no overlay.
     """
 
@@ -65,7 +69,7 @@ def load_user_settings(path: Path | None = None) -> dict[str, Any]:
 
 
 def apply_agent_param_overrides(config: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
-    """Apply user_settings.yaml overlays to agent_params.yaml data."""
+    """Apply a legacy overlay to Agent parameters during migration."""
 
     if not settings:
         return config
@@ -100,12 +104,18 @@ def apply_agent_param_overrides(config: dict[str, Any], settings: dict[str, Any]
 
 
 def apply_model_routing_overrides(config: dict[str, Any], settings: dict[str, Any]) -> dict[str, Any]:
-    """Apply user_settings.yaml overlays to model_routing.yaml data."""
+    """Apply a legacy overlay to a legacy routing file during migration."""
 
     if not settings:
         return config
     out = deepcopy(config)
     llm = _as_mapping(settings.get("llm"))
+    if _is_simple_llm_block(llm):
+        current = _as_mapping(out.get("llm"))
+        merged = deepcopy(current)
+        _deep_update(merged, {key: value for key, value in llm.items() if key in SIMPLE_LLM_FIELDS})
+        out["llm"] = merged
+        return out
     if llm.get("default_profile"):
         out["default_profile"] = llm["default_profile"]
     if isinstance(llm.get("endpoints"), dict):
@@ -117,6 +127,121 @@ def apply_model_routing_overrides(config: dict[str, Any], settings: dict[str, An
         if isinstance(profiles, dict):
             _deep_update(profiles, llm["profiles"])
     return out
+
+
+def normalize_model_routing_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Adapt the public one-model config to the legacy internal routing shape.
+
+    Existing custom ``endpoints``/``profiles`` files remain supported. The
+    checked-in configuration uses ``llm.api_base``, ``llm.api_key``, and
+    ``llm.model``; this adapter creates one internal ``standard`` binding so
+    the rest of the runtime need not expose profiles or quality tiers.
+    """
+
+    llm = _as_mapping(config.get("llm"))
+    if not _is_simple_llm_block(llm):
+        return config
+
+    api_base = str(llm.get("api_base") or "").strip()
+    api_key = str(llm.get("api_key") or "").strip()
+    model = str(llm.get("model") or "").strip()
+    provider = str(llm.get("provider") or "openai").strip() or "openai"
+    context_fallback = _positive_int(llm.get("max_context_fallback"), DEFAULT_CONTEXT_WINDOW_FALLBACK)
+    endpoint = {
+        "provider": provider,
+        "api_key": api_key or None,
+        "api_key_env": _simple_api_key_env(api_base),
+        "api_base": api_base or None,
+    }
+    return {
+        "_simple_llm_mode": True,
+        "_simple_llm": {
+            "api_base": api_base,
+            "model": model,
+            "provider": provider,
+        },
+        "default_profile": "default",
+        "endpoints": {"default": endpoint},
+        "profiles": {
+            "default": {
+                "standard": {
+                    "primary": {
+                        "model": model,
+                        "endpoint": "default",
+                        "max_context": context_fallback,
+                    }
+                }
+            }
+        },
+        "truncation": deepcopy(_as_mapping(config.get("truncation"))),
+    }
+
+
+def simple_llm_settings(path: Path | None = None) -> dict[str, str]:
+    """Return the public one-model settings without exposing legacy routing."""
+
+    llm = _as_mapping(load_user_settings(path).get("llm"))
+    return {
+        "api_base": str(llm.get("api_base") or "").strip(),
+        "api_key": str(llm.get("api_key") or "").strip(),
+        "model": str(llm.get("model") or "").strip(),
+    }
+
+
+def write_simple_llm_settings(
+    *,
+    api_base: str,
+    api_key: str,
+    model: str,
+    path: Path | None = None,
+) -> Path:
+    """Persist the only user-maintained LLM connection with private permissions."""
+
+    settings_path = resolve_user_settings_path(path)
+    if settings_path.name == "__researchos_user_settings_disabled__":
+        raise ValueError("RESEARCHOS_CONFIG/RESEARCHOS_USER_SETTINGS disables user settings")
+    payload = {
+        "llm": {
+            "api_base": str(api_base).strip(),
+            "api_key": str(api_key).strip(),
+            "model": str(model).strip(),
+        }
+    }
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(
+        yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    try:
+        settings_path.chmod(0o600)
+    except OSError:
+        pass
+    return settings_path
+
+
+def _is_simple_llm_block(llm: dict[str, Any]) -> bool:
+    return bool(SIMPLE_LLM_FIELDS & set(llm))
+
+
+def _positive_int(value: Any, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed >= 4096 else default
+
+
+def _simple_api_key_env(api_base: str) -> str:
+    host = api_base.casefold()
+    if "deepseek" in host:
+        return "DEEPSEEK_API_KEY"
+    if "siliconflow" in host:
+        return "SILICONFLOW_API_KEY"
+    if "openrouter" in host:
+        return "OPENROUTER_API_KEY"
+    if "api.openai.com" in host:
+        return "OPENAI_API_KEY"
+    return "RESEARCHOS_API_KEY"
 
 
 def _apply_runtime_overrides(config: dict[str, Any], settings: dict[str, Any]) -> None:
@@ -152,22 +277,9 @@ def active_user_settings_summary(path: Path | None = None) -> dict[str, Any]:
         overrides.append("defaults (legacy concise)")
     llm = _as_mapping(settings.get("llm"))
     if llm:
-        for key in ("default_profile", "endpoints", "profiles", "defaults"):
+        for key in ("api_base", "api_key", "model"):
             if llm.get(key):
                 overrides.append(f"llm.{key}")
-        llm_agents = _as_mapping(llm.get("agents"))
-        overrides.extend(f"llm.agents.{name}" for name in sorted(llm_agents))
-    budget = _as_mapping(settings.get("budget"))
-    if budget:
-        if budget.get("defaults"):
-            overrides.append("budget.defaults")
-        budget_agents = _as_mapping(budget.get("agents"))
-        overrides.extend(f"budget.agents.{name}" for name in sorted(budget_agents))
-    runtime = _as_mapping(settings.get("runtime"))
-    if runtime:
-        overrides.append("runtime")
-    agents = _as_mapping(settings.get("agents"))
-    overrides.extend(f"agents.{name} (legacy concise)" for name in sorted(agents))
     return {"enabled": True, "path": str(settings_path), "overrides": overrides}
 
 

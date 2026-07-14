@@ -104,9 +104,9 @@ def _paper_card_evidence_index(workspace: Path) -> dict[str, Any]:
     """Locate literature cards without elevating them into experimental evidence."""
 
     roots = (
-        ("full_or_partial", workspace / "literature" / "paper_notes"),
-        ("bridge", workspace / "literature" / "paper_notes_bridge"),
-        ("abstract_only", workspace / "literature" / "paper_notes_abstract"),
+        ("full_or_partial", workspace / "literature" / "deep_read_notes"),
+        ("bridge", workspace / "literature" / "bridge_notes"),
+        ("abstract_only", workspace / "literature" / "shallow_read_notes"),
     )
     cards: list[dict[str, Any]] = []
     for card_type, root in roots:
@@ -260,9 +260,9 @@ PRE_T5_SOURCE_FILES = [
     "resources/baseline_candidates.jsonl",
     "literature/baseline_map.json",
     "literature/notes_manifest.json",
-    "literature/paper_notes",
-    "literature/paper_notes_bridge",
-    "literature/paper_notes_abstract",
+    "literature/deep_read_notes",
+    "literature/bridge_notes",
+    "literature/shallow_read_notes",
     "user_seeds/seed_external_resources.jsonl",
     "user_seeds/bridge_domains.yaml",
 ]
@@ -3330,7 +3330,8 @@ class CompileResearchReboostHandoffTool(Tool):
     name = "compile_research_reboost_handoff"
     description = (
         "Apply skills/research-reboost to compile Pre-T5 artifacts into a schema-valid, "
-        "pretty-printed external_executor/handoff_pack.json plus T5 handoff control files."
+        "pretty-printed external_executor/handoff_pack.json, T5 handoff control files, "
+        "and the schema-validated project-specific external executor skill suite."
     )
     parameters_schema = CompileResearchReboostHandoffParams
     timeout_seconds = 30.0
@@ -3386,7 +3387,7 @@ class CompileResearchReboostHandoffTool(Tool):
             source_artifacts.append(_artifact_record(ws, paper_card_index_path, role="paper_card_evidence_index"))
             _write_json(self.policy.resolve_write(params.expected_schema_path), _build_expected_outputs_schema())
             _write_text(self.policy.resolve_write(params.allowed_paths_path), "\n".join(_allowed_path_rules_for_external_executor()) + "\n")
-            placeholder_next_state = "T5-EXECUTOR-GATE"
+            placeholder_next_state = "T5-SKILL-CUSTOMIZATION-GATE"
             executor_selection = {
                 "version": "1.0",
                 "semantics": "external_executor_selection",
@@ -3399,7 +3400,8 @@ class CompileResearchReboostHandoffTool(Tool):
                 "fallback_order": ["mock_dry_run", "claude_code_window", "manual"],
                 "notes": (
                     "Execution mode is intentionally UNSET until T5-EXECUTOR-GATE; "
-                    "run researchos specialize-executor-skills before selecting Codex or another executor."
+                    "the generated project skill suite is reviewed at "
+                    "T5-SKILL-CUSTOMIZATION-GATE before executor selection."
                 ),
             }
             _write_json(self.policy.resolve_write(params.executor_selection_path), executor_selection)
@@ -3422,6 +3424,34 @@ class CompileResearchReboostHandoffTool(Tool):
             _write_text(self.policy.resolve_write(params.codex_prompt_path), _render_executor_prompt(pack, executor="codex_cli"))
             _write_text(self.policy.resolve_write(params.claude_prompt_path), _render_executor_prompt(pack, executor="claude_code_window"))
             _write_text(self.policy.resolve_write(params.manual_instructions_path), _render_manual_instructions(guide_handoff))
+
+            # T5 must never advertise an executor Skill that has not been published.
+            # The compiler owns atomic rendering, schema checks, and template integrity.
+            specialization = specialize_project_skills(workspace=ws)
+            specialization_summary = {
+                "method": "deterministic_project_specialization",
+                "status": specialization.status,
+                "report": "external_executor/skill_specialization_report.json",
+                "project_context": "external_executor/project_skill_context.yaml",
+                "skills_dir": "external_executor/skills",
+                "skills_specialized": int((specialization.report or {}).get("skills_specialized") or 0),
+            }
+            report["skill_specialization"] = specialization_summary
+            _write_json(self.policy.resolve_write(params.report_path), report)
+            if specialization.status == "failed":
+                return ToolResult(
+                    ok=False,
+                    content=(
+                        "research-reboost handoff compiled, but project skill specialization failed; "
+                        "see external_executor/skill_specialization_report.json"
+                    ),
+                    error="project_skill_specialization_failed",
+                    data={
+                        "handoff_pack": params.output_path,
+                        "reboost_report": params.report_path,
+                        "skill_specialization_report": "external_executor/skill_specialization_report.json",
+                    },
+                )
         except ToolAccessDenied as exc:
             return ToolResult(ok=False, content=str(exc), error="access_denied")
         except Exception as exc:
@@ -3434,6 +3464,10 @@ class CompileResearchReboostHandoffTool(Tool):
                 "reboost_report": params.report_path,
                 "validation_report": params.validation_report_path,
                 "skill": "skills/research-reboost/SKILL.md",
+                "project_skill_context": "external_executor/project_skill_context.yaml",
+                "skills_dir": "external_executor/skills",
+                "skill_specialization_report": "external_executor/skill_specialization_report.json",
+                "skill_specialization_status": specialization.status,
             },
         )
 

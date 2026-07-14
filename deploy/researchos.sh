@@ -29,9 +29,10 @@ require_deploy_files() {
     echo "[WARN] .env not found; provider secrets will only come from the shell."
     echo "       Optional setup: cp .env.example .env"
   fi
-  if [ ! -f "$REPO_ROOT/config/user_settings.yaml" ]; then
-    echo "[ERROR] config/user_settings.yaml not found."
-    echo "        Docker Mode uses the same root config as Native Mode."
+  if [ ! -f "$REPO_ROOT/config/model_settings.yaml" ]; then
+    echo "[ERROR] config/model_settings.yaml not found."
+    echo "        Run on the host: python -m researchos.cli configure-llm"
+    echo "        Docker mounts config read-only, so setup must happen before this command."
     missing=1
   fi
   if [ "$missing" -ne 0 ]; then

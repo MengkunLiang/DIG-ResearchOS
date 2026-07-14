@@ -43,7 +43,7 @@ class SavePaperNoteTool(Tool):
     name = "save_paper_note"
     description = (
         "按 queue_rank 保存 T3 paper note。工具从 deep_read_queue/pending queue 解析论文，"
-        "自动生成 paper_notes 文件名、即时校验结构、刷新 literature/notes_manifest.json；"
+        "自动生成 deep_read_notes 文件名、即时校验结构、刷新 literature/notes_manifest.json；"
         "Reader 不需要手写 normalized_id 或十六进制 ID。"
     )
     parameters_schema = SavePaperNoteParams
@@ -187,8 +187,8 @@ def _note_rel_path(record: dict[str, Any], note_id: str) -> str:
     if bridge_id and target_bucket == "bridge_deep" and not core_passed:
         safe_bridge_id = "".join(ch if ch.isalnum() or ch in {"_", "-", "."} else "_" for ch in bridge_id).strip("._-")
         safe_bridge_id = safe_bridge_id or "unknown_bridge"
-        return f"literature/paper_notes_bridge/{safe_bridge_id}/{note_id}.md"
-    return f"literature/paper_notes/{note_id}.md"
+        return f"literature/bridge_notes/{safe_bridge_id}/{note_id}.md"
+    return f"literature/deep_read_notes/{note_id}.md"
 
 
 def _build_manifest_for_source_queue(workspace_dir: Path, source_queue: str) -> dict[str, Any]:

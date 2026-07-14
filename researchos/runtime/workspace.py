@@ -12,6 +12,7 @@ Runtime Spec 明确要求 workspace 是 artifact-first 的唯一事实来源。
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -30,8 +31,9 @@ STANDARD_WORKSPACE_DIRS = [
     "user_seeds/pdfs",
     "literature",
     "literature/pdfs",
-    "literature/paper_notes",
-    "literature/paper_notes_abstract",
+    "literature/deep_read_notes",
+    "literature/shallow_read_notes",
+    "literature/bridge_notes",
     "resources",
     "resources/repos",
     "resources/datasets",
@@ -67,12 +69,33 @@ STANDARD_WORKSPACE_DIRS = [
     "submission/bundle/figures",
 ]
 
+LEGACY_NOTE_DIRECTORY_MIGRATIONS = {
+    "literature/paper_notes_abstract": "literature/shallow_read_notes",
+    "literature/paper_notes_bridge": "literature/bridge_notes",
+    "literature/paper_notes": "literature/deep_read_notes",
+    "literature/abstract_notes": "literature/shallow_read_notes",
+    "literature/reading_notes": "literature/deep_read_notes",
+}
+LEGACY_NOTE_IDENTIFIER_MIGRATIONS = {
+    "paper_notes_abstract_dir": "shallow_read_notes_dir",
+    "paper_notes_bridge_dir": "bridge_notes_dir",
+    "paper_notes_dir": "deep_read_notes_dir",
+}
+LEGACY_NOTE_TEXT_MIGRATIONS = {
+    "paper_notes_abstract": "shallow_read_notes",
+    "paper_notes_bridge": "bridge_notes",
+    "paper_notes": "deep_read_notes",
+    "abstract_notes": "shallow_read_notes",
+    "reading_notes": "deep_read_notes",
+}
+_MIGRATABLE_TEXT_SUFFIXES = {".json", ".jsonl", ".md", ".tex", ".txt", ".yaml", ".yml", ".csv"}
+
 
 def build_standard_workspace_dirs(runtime_dir_name: str = "_runtime") -> list[str]:
     """返回标准 workspace 目录列表。
 
     `runtime_dir_name` 默认仍是 `_runtime`，这样对已有 workspace 和测试保持兼容；
-    但如果团队想统一改成 `.runtime` 一类名字，也只需要改 `config/runtime.yaml`。
+    但如果团队想统一改成 `.runtime` 一类名字，也只需要改 `config/system_config/runtime.yaml`。
     """
 
     return [
@@ -111,6 +134,7 @@ def initialize_workspace(
 
     workspace_dir = workspace_dir.resolve()
     workspace_dir.mkdir(parents=True, exist_ok=True)
+    migrate_workspace_note_directories(workspace_dir, runtime_dir_name=runtime_dir_name)
     created_dirs: list[str] = []
 
     for rel_dir in build_standard_workspace_dirs(runtime_dir_name):
@@ -138,6 +162,84 @@ def initialize_workspace(
         created_dirs=created_dirs,
         project_file=project_file,
     )
+
+
+def migrate_workspace_note_directories(
+    workspace_dir: Path,
+    *,
+    runtime_dir_name: str = "_runtime",
+) -> dict[str, Any]:
+    """Move legacy note directories and update active artifact references.
+
+    The old names describe implementation history rather than evidence level.
+    New workspaces use ``deep_read_notes``, ``shallow_read_notes``, and
+    ``bridge_notes``. Existing audit traces are deliberately left unchanged:
+    they record what happened at the time. Current artifacts, executor packs,
+    and resume inputs are rewritten so an old workspace remains resumable.
+    """
+
+    workspace_dir = workspace_dir.resolve()
+    moved: list[dict[str, str]] = []
+    conflicts: list[dict[str, str]] = []
+    for legacy_rel, canonical_rel in LEGACY_NOTE_DIRECTORY_MIGRATIONS.items():
+        legacy = workspace_dir / legacy_rel
+        canonical = workspace_dir / canonical_rel
+        if not legacy.exists():
+            continue
+        if canonical.exists():
+            conflicts.append({"legacy": legacy_rel, "canonical": canonical_rel})
+            continue
+        canonical.parent.mkdir(parents=True, exist_ok=True)
+        legacy.rename(canonical)
+        moved.append({"from": legacy_rel, "to": canonical_rel})
+
+    changed_files: list[str] = []
+    replacements = tuple(LEGACY_NOTE_DIRECTORY_MIGRATIONS.items())
+    identifier_replacements = tuple(LEGACY_NOTE_IDENTIFIER_MIGRATIONS.items())
+    text_replacements = tuple(LEGACY_NOTE_TEXT_MIGRATIONS.items())
+    for path in workspace_dir.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in _MIGRATABLE_TEXT_SUFFIXES:
+            continue
+        try:
+            relative = path.relative_to(workspace_dir)
+        except ValueError:
+            continue
+        if relative.parts and relative.parts[0] == runtime_dir_name:
+            # Resume snapshots are active inputs and must follow moved paths;
+            # events, traces, and logs are immutable historical audit records.
+            if len(relative.parts) > 1 and relative.parts[1] in {"events", "traces", "logs"}:
+                continue
+        try:
+            original = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        updated = original
+        for legacy_rel, canonical_rel in replacements:
+            updated = updated.replace(legacy_rel, canonical_rel)
+        for legacy_key, canonical_key in identifier_replacements:
+            updated = updated.replace(legacy_key, canonical_key)
+        for legacy_text, canonical_text in text_replacements:
+            updated = updated.replace(legacy_text, canonical_text)
+        if updated != original:
+            path.write_text(updated, encoding="utf-8")
+            changed_files.append(relative.as_posix())
+
+    if moved or conflicts or changed_files:
+        record_dir = workspace_dir / runtime_dir_name / "migrations"
+        record_dir.mkdir(parents=True, exist_ok=True)
+        record = {
+            "kind": "note_directory_migration",
+            "timestamp": _now_iso(),
+            "moved": moved,
+            "conflicts": conflicts,
+            "updated_artifacts": changed_files,
+            "legacy_trace_policy": "runtime traces, events, and logs are preserved unchanged",
+        }
+        (record_dir / "note_directory_migration.json").write_text(
+            json.dumps(record, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    return {"moved": moved, "conflicts": conflicts, "updated_artifacts": changed_files}
 
 
 def write_project_stub(
@@ -195,10 +297,10 @@ def create_directory_guides(workspace_dir: Path, *, runtime_dir_name: str = "_ru
             "validation": "Seed files should be valid JSONL/Markdown when present.",
         },
         "literature": {
-            "purpose": "论文检索、验证、精读笔记、综合和引用库。",
+            "purpose": "论文检索、验证、阅读笔记、综合和引用库。",
             "produced_by": "T2, T3, T3.5.",
             "consumed_by": "T3, T3.5, T4, T4.5, T5-HANDOFF, T8.",
-            "key_files": "papers_raw.jsonl, papers_verified.jsonl, paper_notes/, synthesis.md, related_work.bib, baseline_map.json.",
+            "key_files": "papers_raw.jsonl, papers_verified.jsonl, deep_read_notes/, shallow_read_notes/, bridge_notes/, synthesis.md, related_work.bib, baseline_map.json.",
             "human_editable": "Only for corrections with provenance.",
             "agent_editable": "Scout/Reader and synthesis tools.",
             "do_not_put": "External executor code, final paper bundle.",
@@ -398,7 +500,7 @@ def _guide_file_rows(key_files: str) -> list[str]:
     """Render key files as a compact table.
 
     The descriptions are intentionally mechanical. Stage-specific scientific
-    meaning remains in docs/agent_pipeline.md and the task validators.
+    meaning remains in docs/cn/agent_pipeline.md or docs/en/agent_pipeline.md and the task validators.
     """
 
     rows = ["| 文件/子目录 | 内容与用途 |", "|---|---|"]
@@ -426,8 +528,8 @@ def _describe_key_file(item: str) -> str:
         "submission": "T9 投稿 bundle、编译报告和最终 PDF。",
         "_runtime": "runtime 日志、trace、人机交互记录和 resume 快照。",
         "pdfs": "用户或文献阶段提供的 PDF 原始材料。",
-        "paper_notes": "T3 精读生成的逐篇结构化笔记。",
-        "paper_notes_abstract": "T3 abstract sweep 生成的轻量笔记，不等同全文证据。",
+        "deep_read_notes": "T3 精读生成的逐篇结构化笔记，可标记 FULL-TEXT 或 PARTIAL-TEXT。",
+        "shallow_read_notes": "T3 abstract sweep 生成的粗读笔记，只能提供摘要与 metadata 级线索。",
         "metadata_triage.md": "T3 abstract sweep 对 metadata-only 候选的批量 triage；只作补资源/升级阅读线索。",
         "synthesis.md": "T3.5 分阶段综合后的 idea fuel，不是直接投稿综述。",
         "related_work.bib": "T3/T8/T9 复用的 BibTeX 引用库。",
@@ -794,7 +896,7 @@ def _default_dir_guide(rel_dir: str, *, runtime_dir_name: str) -> dict[str, str]
         "purpose": purpose,
         "produced_by": "ResearchOS agents/tools or user-provided artifacts according to the pipeline stage.",
         "consumed_by": "Downstream ResearchOS stages declared in state_machine.yaml and task_io_contract.py.",
-        "key_files": "See docs/agent_pipeline.md and this directory's parent guide for stage-specific files.",
+        "key_files": "See docs/cn/agent_pipeline.md or docs/en/agent_pipeline.md and this directory's parent guide for stage-specific files.",
         "human_editable": "Only when adding explicit user corrections or external resources with provenance.",
         "agent_editable": "Only agents/tools with workspace policy permission for this prefix.",
         "do_not_put": "API keys, unrelated scratch files, or artifacts belonging to another standard directory.",
@@ -1011,8 +1113,8 @@ def render_workspace_tree(runtime_dir_name: str = "_runtime") -> str:
             "|   `-- pdfs/",
             "|-- literature/",
             "|   |-- pdfs/",
-            "|   |-- paper_notes/",
-            "|   |-- paper_notes_abstract/",
+            "|   |-- deep_read_notes/",
+            "|   |-- shallow_read_notes/",
             "|   `-- metadata_triage.md",
             "|-- resources/",
             "|   |-- baselines/",

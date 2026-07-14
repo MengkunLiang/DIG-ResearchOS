@@ -329,6 +329,11 @@ def _base_report(paths, *, status: str) -> dict[str, Any]:
     return {
         "schema_version": "skill_specialization_report.v1",
         "status": status,
+        "specialization_method": "deterministic_project_specialization",
+        "llm_specialization": {
+            "enabled": False,
+            "reason": "T5 normal path uses the schema-validated deterministic compiler; an explicit CLI pass may add LLM guidance.",
+        },
         "context_file": "external_executor/project_skill_context.yaml",
         "context_schema": "external_executor/schemas/project_skill_context.schema.json",
         "template_root": "skills/external_executor_skills",

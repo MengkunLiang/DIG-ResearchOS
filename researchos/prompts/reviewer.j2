@@ -26,7 +26,7 @@
    - `drafts/self_check.md`
    - `drafts/review_rounds/round_{{ round - 1 }}.md`（第2轮及以后）
    - `experiments/results_summary.json`
-3. 如果你怀疑某个 citation 或 claim 没有被 paper note 支撑，优先用 `grep_search` 在相关 note `source_file` 或 `literature/paper_notes*/` 中定位 `## A/B`、`## 13`、`## 14`、`## 18`、`## Raw Abstract` 等 section，再定向 `read_file`。不要要求作者仅凭 synthesis 概括或段末 blanket citations 通过。
+3. 如果你怀疑某个 citation 或 claim 没有被论文阅读笔记支撑，优先用 `grep_search` 在相关 note `source_file`、`literature/deep_read_notes*/`、`literature/bridge_notes*/` 或 `literature/shallow_read_notes*/` 中定位 `## A/B`、`## 13`、`## 14`、`## 18`、`## Raw Abstract` 等 section，再定向 `read_file`。摘要阅读笔记只能核对范围、趋势或背景；机制、因果和实现细节仍需全文/部分全文笔记。不要要求作者仅凭 synthesis 概括或段末 blanket citations 通过。
    - `literature/related_work.bib`
 3. 如果某个路径看起来像目录（例如 `experiments/`、workspace 根目录），先列目录，再读取具体文件
 

@@ -13,6 +13,7 @@ from rich import box
 from rich.align import Align
 from rich.console import Console, Group
 from rich.panel import Panel
+from rich.table import Table
 from rich.text import Text
 
 
@@ -184,34 +185,101 @@ def format_startup_summary(
     workspace_dir: Path | None,
     state_machine: Path | None = None,
     gates: Path | None = None,
+    model_settings: Path | None = None,
     model_routing: Path | None = None,
     skill_roots: list[Path] | None = None,
     skill_count: int | None = None,
     mcp_server_count: int = 0,
     mcp_tool_count: int = 0,
 ) -> str:
-    """Generate the machine-oriented startup summary that follows the brand panel."""
+    """Return a compact plain-text fallback for the startup card."""
 
+    missing = [item for item in skill_roots or [] if not item.exists()]
     lines: list[str] = []
     if workspace_dir is not None:
-        lines.append(f"[startup] workspace={workspace_dir}")
+        lines.append(f"项目目录：{workspace_dir}")
     if state_machine is not None:
-        lines.append(f"[startup] state_machine={state_machine}")
-    if gates is not None:
-        lines.append(f"[startup] gates={gates}")
-    if model_routing is not None:
-        lines.append(f"[startup] model_routing={model_routing}")
+        lines.append("研究流程：已加载")
+    if model_settings or model_routing:
+        lines.append("模型设置：已加载")
     if skill_roots:
-        existing = [item for item in skill_roots if item.exists()]
-        missing = [item for item in skill_roots if not item.exists()]
-        discovered = "unknown" if skill_count is None else str(skill_count)
-        lines.append(
-            "[startup] skills="
-            f"discovered={discovered} roots={len(skill_roots)} existing={len(existing)} missing={len(missing)}"
-        )
-        if existing:
-            lines.append("[startup] skill_roots_existing=" + ", ".join(str(item) for item in existing))
-        if missing:
-            lines.append("[startup] skill_roots_missing=" + ", ".join(str(item) for item in missing))
-    lines.append(f"[startup] mcp_servers={mcp_server_count} mcp_tools={mcp_tool_count}")
+        count = "已发现" if skill_count is None else f"{skill_count} 个可用"
+        suffix = "；当前项目没有额外 Skill" if missing else ""
+        lines.append(f"Skill：{count}{suffix}")
+    lines.append(
+        f"MCP：{mcp_server_count} 个服务，{mcp_tool_count} 个扩展 Tool"
+        if mcp_server_count
+        else "MCP：未启用额外服务"
+    )
     return "\n".join(lines)
+
+
+def render_startup_summary(
+    *,
+    workspace_dir: Path | None,
+    state_machine: Path | None = None,
+    gates: Path | None = None,
+    model_settings: Path | None = None,
+    model_routing: Path | None = None,
+    skill_roots: list[Path] | None = None,
+    skill_count: int | None = None,
+    mcp_server_count: int = 0,
+    mcp_tool_count: int = 0,
+    verbose: bool = False,
+    no_color: bool = False,
+) -> str:
+    """Render a researcher-facing Rich startup card, with paths only on request."""
+
+    width = max(88, min(144, shutil.get_terminal_size(fallback=(120, 40)).columns))
+    configured_model_path = model_settings or model_routing
+    existing = [item for item in skill_roots or [] if item.exists()]
+    missing = [item for item in skill_roots or [] if not item.exists()]
+    facts = Table(box=box.SIMPLE_HEAVY, show_header=False, expand=True)
+    facts.add_column(style="bold cyan", no_wrap=True)
+    facts.add_column(overflow="fold")
+    if workspace_dir is not None:
+        facts.add_row("项目目录", str(workspace_dir))
+    if state_machine is not None:
+        facts.add_row("研究流程", "已加载，Gate 已就绪")
+    if configured_model_path is not None:
+        facts.add_row("模型设置", "已加载")
+    if skill_roots:
+        count = "已发现" if skill_count is None else f"{skill_count} 个可用"
+        suffix = "；当前项目没有额外 Skill" if missing else ""
+        facts.add_row("Skill", count + suffix)
+    if mcp_server_count:
+        facts.add_row("MCP", f"{mcp_server_count} 个服务，{mcp_tool_count} 个扩展 Tool")
+    else:
+        facts.add_row("MCP", "未启用额外服务")
+
+    body: list[object] = [facts]
+    if verbose:
+        details = Table(title="配置位置", box=box.SIMPLE_HEAVY, show_header=False, expand=True)
+        details.add_column(style="dim", no_wrap=True)
+        details.add_column(overflow="fold")
+        if state_machine is not None:
+            details.add_row("State machine", str(state_machine))
+        if gates is not None:
+            details.add_row("Gate config", str(gates))
+        if configured_model_path is not None:
+            details.add_row("Model settings", str(configured_model_path))
+        if existing:
+            details.add_row("Skill source", ", ".join(str(item) for item in existing))
+        if missing:
+            details.add_row("Project Skill", "尚未生成：" + ", ".join(str(item) for item in missing))
+        body.append(details)
+    else:
+        body.append(Text("使用 --verbose 查看配置路径和项目专属 Skill 状态。", style="dim"))
+
+    buffer = io.StringIO()
+    console = Console(
+        file=buffer,
+        force_terminal=not no_color,
+        color_system=None if no_color else "truecolor",
+        no_color=no_color,
+        width=width,
+        highlight=False,
+        _environ={"COLUMNS": str(width), "LINES": "40"},
+    )
+    console.print(Panel(Group(*body), title="本次启动", border_style="cyan", expand=True))
+    return buffer.getvalue().rstrip()

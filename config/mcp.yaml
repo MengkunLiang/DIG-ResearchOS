@@ -1,40 +1,36 @@
-# ResearchOS MCP (Model Context Protocol) 配置文件
-# MCP 用于为 Agent 提供外部工具和数据源访问能力
+# Optional MCP (Model Context Protocol) servers / 可选 MCP 服务。
 #
-# 配置格式：
-# servers:
-#   - name: <server_name>      # MCP 服务器名称（唯一标识）
-#     command: <command>        # 启动命令（如 npx, python）
-#     args: [<arg1>, <arg2>]   # 命令参数
-#     env:                      # 环境变量（可选）
-#       <VAR_NAME>: "${VAR_NAME}"  # 从系统环境变量读取
+# 这是唯一的 MCP 配置文件。ResearchOS 会自动启动 enabled: true 的 stdio
+# server、发现其 Tool，并在整个 run 中保持连接；普通 stdio server 不需要
+# --mcp-connector。论文搜索、OpenAlex/Semantic Scholar 查询和 PDF 获取均为
+# 内置 Tool，不需要启用 MCP。下面的条目默认 disabled，避免首次运行下载或启动
+# 不需要的外部进程。启用前把 enabled 改为 true，并设置所需环境变量。
 #
-# 支持的 MCP 服务器：
-# 1. arxiv: arXiv 论文搜索和下载
-# 2. filesystem: 本地文件系统访问
-# 3. github: GitHub 仓库和代码搜索
-# 4. semantic_scholar: Semantic Scholar 学术搜索（需 API Key）
-#
-# 注意事项：
-# - 使用 npx 的服务器需要 Node.js 环境
-# - 使用 python 的服务器需要安装对应的 Python 包
-# - 环境变量需要在 .env 文件或系统环境中设置
+# Tool 默认会提供给所有 Agent 与 Skill。建议使用 allowed_agents 限定外部能力
+# 的范围，例如 ["scout", "reader", "ideation"]。credential 请写进 .env 或
+# shell，而不是本文件；${NAME} 在 server 启动前展开，缺失时会明确报错。
 
 servers:
-  # arXiv MCP 服务器
-  # 功能：搜索和下载 arXiv 论文
-  # 依赖：Node.js, npx
-  # 无需 API Key
-  - name: arxiv
-    command: "npx"
-    args: ["-y", "@modelcontextprotocol/server-arxiv"]
-
-  # Semantic Scholar MCP 服务器（已启用）
-  # 功能：学术论文搜索、引用分析、作者信息查询
-  # 依赖：Node.js, npx
-  # 需要 API Key：在 .env 中设置 S2_API_KEY（可选，无 key 时使用免费 API）
-  - name: semantic_scholar
-    command: "npx"
-    args: ["-y", "@modelcontextprotocol/server-semantic-scholar"]
+  # GitHub 官方 MCP：代码、Issue、PR 和仓库检索。
+  # 已通过 npm package / stdio discovery 验证；实际 API 调用需要 GitHub token。
+  - name: github
+    enabled: false
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-github"]
     env:
-      S2_API_KEY: "${S2_API_KEY}"
+      GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}"
+    allowed_agents: ["scout", "experimenter", "reviewer"]
+
+  # Filesystem MCP：仅在需要访问 ResearchOS workspace 之外的明确目录时启用。
+  # 先在 shell/.env 中设置 RESEARCHOS_MCP_FILESYSTEM_ROOT 为允许的绝对路径；
+  # 不要填 "/"，并只授予确有需要的 Agent。
+  - name: filesystem
+    enabled: false
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "${RESEARCHOS_MCP_FILESYSTEM_ROOT}"]
+    allowed_agents: ["experimenter"]
+
+# 当前内置 transport 是 stdio。HTTP/SSE 或企业自定义 transport 可使用
+# --mcp-connector 提供连接函数；不要把 API key 直接写入本文件。

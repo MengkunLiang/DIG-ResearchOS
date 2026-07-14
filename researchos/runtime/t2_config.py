@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Centralized T2/T3 literature-flow runtime parameters.
 
-These helpers keep mechanical thresholds in `config/agent_params.yaml` instead
+These helpers keep mechanical thresholds in `config/system_config/agent_params.yaml` instead
 of scattering them across validators, recovery paths, and prompts.
 """
 
@@ -235,7 +235,11 @@ def load_t2_finalize_config(workspace_dir: Path | str | None = None) -> T2Finali
         progress = {}
 
     return T2FinalizeConfig(
-        active_pool_max=_as_int(finalize.get("active_pool_max"), defaults.active_pool_max, minimum=10),
+        # A workspace-confirmed smoke/focused plan may intentionally retain
+        # fewer than the formal default.  Validation derives its minimum from
+        # this cap, so coercing it upward would make the displayed parameter
+        # disagree with the real output contract.
+        active_pool_max=_as_int(finalize.get("active_pool_max"), defaults.active_pool_max, minimum=1),
         bridge_active_pool_cap_per_bridge=_as_int(
             finalize.get("bridge_active_pool_cap_per_bridge"),
             defaults.bridge_active_pool_cap_per_bridge,
@@ -348,7 +352,7 @@ def load_literature_quality_policy(workspace_dir: Path | str | None = None) -> L
         authority_keywords = DEFAULT_CHINESE_AUTHORITY_KEYWORDS
     return LiteratureQualityPolicy(
         enabled=_as_bool(raw.get("enabled"), True),
-        manuscript_language=str(raw.get("manuscript_language") or "auto"),
+        manuscript_language=str(raw.get("manuscript_language") or "en"),
         include_chinese_literature=str(raw.get("include_chinese_literature") or "auto"),
         english_manuscript_policy=str(raw.get("english_manuscript_policy") or "exclude_non_seed_chinese"),
         chinese_literature_policy=str(raw.get("chinese_literature_policy") or "review_flag_only"),

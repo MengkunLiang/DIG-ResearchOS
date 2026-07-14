@@ -229,6 +229,13 @@ class ScoutAgent(Agent):
                 f"raw 达到 finish_finalize_min_raw={t2_config.finish_finalize_min_raw} 且覆盖 2-3 个关键角度后，"
                 "请尽快 semantic_screen 并 finish_task，不要按正式覆盖规模扩检索。"
             )
+        expansion_clause = ""
+        if bool(ctx.extra.get("t2_user_requested_expansion")):
+            expansion_clause = (
+                "这是用户确认的补检轮次。先读取 literature/coverage_decision.json、"
+                "literature/search_log.md 和 literature/missing_areas.md，保留现有 papers_raw.jsonl；"
+                "只补当前缺失的 query bucket、时间窗口或来源，不要重放已覆盖的相似检索。"
+            )
         return prepend_resume_prefix(
             ctx,
             (
@@ -240,8 +247,8 @@ class ScoutAgent(Agent):
             "你负责完成高质量多源检索并让 raw 结果落盘；"
             "raw 数量足够只是必要条件，你还要判断 query/source/bucket 覆盖是否足够；"
             "覆盖足够后调用 finish_task，runtime 才会完成去重、metadata verification 和 deep_read_queue.jsonl，"
-            "最终 papers_dedup 会按 config/agent_params.yaml 的 agents.scout.behavior.t2_finalize.active_pool_max 控制保留候选数。"
-            f"{smoke_clause}"
+            "最终 papers_dedup 会按 config/system_config/agent_params.yaml 的 agents.scout.behavior.t2_finalize.active_pool_max 控制保留候选数。"
+            f"{smoke_clause}{expansion_clause}"
             ),
         )
 
@@ -268,7 +275,11 @@ class ScoutAgent(Agent):
         except Exception:
             params = {}
         expected_outputs = params.get("expected_outputs") if isinstance(params.get("expected_outputs"), dict) else {}
-        dedup_min = _safe_int(expected_outputs.get("papers_dedup_min"), 10, minimum=0)
+        configured_dedup_min = _safe_int(expected_outputs.get("papers_dedup_min"), 10, minimum=0)
+        # The T2 parameter gate can intentionally choose a compact active pool
+        # for a focused reading plan.  A global default minimum must not make
+        # that confirmed workspace configuration impossible to validate.
+        dedup_min = min(configured_dedup_min, t2_config.active_pool_max)
         ok, err = validate_jsonl_schema(
             dedup_path,
             "papers_dedup",
@@ -472,6 +483,15 @@ def _seed_paper_key(paper: dict) -> str:
 
 
 def _is_semantic_screened_protected_candidate(record: dict[str, object]) -> bool:
+    """Return whether a record is a protected cross-domain queue candidate.
+
+    A paper can be retrieved through a bridge query yet still be a mainline
+    ``core`` paper.  The queue builder deliberately returns that kind of paper
+    to the mainline pool, so the validator must not later require it to occupy
+    a bridge target slot.  Only non-core, semantically admitted bridge/theory
+    candidates are protected by this rule.
+    """
+
     protected_relations = {
         "mechanism_bridge",
         "method_transfer",
@@ -481,11 +501,21 @@ def _is_semantic_screened_protected_candidate(record: dict[str, object]) -> bool
     screen = record.get("semantic_screen")
     if isinstance(screen, dict):
         relation = str(screen.get("relation_to_project") or "").strip()
+        role = str(screen.get("role") or "").strip()
+        is_core = bool(screen.get("can_enter_core")) and role == "core"
+        retrieval_intent = str(record.get("retrieval_intent") or "").strip()
+        explicit_bridge_id = str(screen.get("bridge_id") or record.get("bridge_id") or "").strip()
         has_bridge_identity = bool(_record_bridge_ids(record))
         return (
             bool(screen.get("can_enter_deep_read"))
             and relation in protected_relations
+            and not is_core
             and has_bridge_identity
+            and (
+                role == "theory_bridge"
+                or retrieval_intent == "cross_domain_bridge"
+                or bool(explicit_bridge_id)
+            )
         )
     return False
 

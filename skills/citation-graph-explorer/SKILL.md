@@ -9,7 +9,7 @@ tools:
   - build_domain_map
   - finish_task
 strict_tools: true
-model_tier: medium
+model_tier: standard
 temperature: 0.1
 allowed_read_prefixes:
   - user_inputs/citation-graph-explorer/
@@ -29,7 +29,7 @@ interaction:
   summary: 从 DOI 或 OpenAlex 论文标识出发抓取一跳参考文献和 related works，输出可追溯的扩展候选与图谱边界，不把图谱位置当成质量结论。
   request_required: true
   request_prompt: 请说明要探索的主题、希望发现的角色（基础方法、基线、数据集、桥接理论等）和每个种子允许的最大邻居数。
-  example_request: 从这些 DOI 扩展 agent uplift 的基础方法和竞争性 baseline；每个种子最多 30 条参考文献，单独标出只有元数据的候选。
+  example_request: 从这些 DOI 扩展当前研究主题的基础方法和竞争性 baseline；每个种子最多 30 条参考文献，单独标出只有元数据的候选。
   required_inputs:
     - id: seed_identifiers
       label: DOI 或 OpenAlex 种子清单

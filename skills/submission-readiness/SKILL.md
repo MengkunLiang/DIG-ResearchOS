@@ -8,7 +8,7 @@ tools:
   - audit_manuscript_claims
   - finish_task
 strict_tools: true
-model_tier: medium
+model_tier: standard
 temperature: 0.1
 allowed_read_prefixes:
   - user_inputs/submission-readiness/

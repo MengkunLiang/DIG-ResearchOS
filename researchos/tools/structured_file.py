@@ -12,7 +12,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, Field
 
-from ..schemas.validator import validate_record
+from ..schemas.validator import validate_record, validate_record_diagnostics
 from .base import Tool, ToolResult
 from .workspace_policy import ToolAccessDenied, WorkspaceAccessPolicy
 from ..runtime.errors import ToolRuntimeError
@@ -109,19 +109,36 @@ class WriteStructuredFileTool(Tool):
                 for i, item in enumerate(data):
                     ok, err = validate_record(item, schema_name)
                     if not ok:
+                        diagnostics = validate_record_diagnostics(item, schema_name)
                         return ToolResult(
                             ok=False,
-                            content=f"❌ Schema 验证失败 (schema: {schema_name}, 第 {i+1} 条记录):\n\n{err}\n\n"
-                            f"请检查数据是否符合 schema 定义。",
+                            content=_schema_failure_content(
+                                schema_name=schema_name,
+                                diagnostics=diagnostics,
+                                record_label=f"第 {i + 1} 条记录",
+                            ),
+                            data=_schema_failure_data(
+                                path=path,
+                                schema_name=schema_name,
+                                diagnostics=diagnostics,
+                            ),
                             error="schema_validation_failed",
                         )
             else:
                 ok, err = validate_record(data, schema_name)
                 if not ok:
+                    diagnostics = validate_record_diagnostics(data, schema_name)
                     return ToolResult(
                         ok=False,
-                        content=f"❌ Schema 验证失败 (schema: {schema_name}):\n\n{err}\n\n"
-                        f"请检查数据是否符合 schema 定义。",
+                        content=_schema_failure_content(
+                            schema_name=schema_name,
+                            diagnostics=diagnostics,
+                        ),
+                        data=_schema_failure_data(
+                            path=path,
+                            schema_name=schema_name,
+                            diagnostics=diagnostics,
+                        ),
                         error="schema_validation_failed",
                     )
 
@@ -178,3 +195,41 @@ class WriteStructuredFileTool(Tool):
                 content=f"写入失败: {exc}",
                 error="write_failed",
             )
+
+
+def _schema_failure_data(
+    *,
+    path: str,
+    schema_name: str,
+    diagnostics: list[dict[str, str]],
+) -> dict[str, Any]:
+    """Expose compact repair data to both the model and the CLI renderer."""
+
+    return {
+        "path": path,
+        "schema_name": schema_name,
+        "schema_errors": diagnostics,
+        "repair_hint": (
+            "逐项修复列出的字段后再调用 write_structured_file；"
+            "不要为了绕过 schema 删除候选或改写其他已通过字段。"
+        ),
+    }
+
+
+def _schema_failure_content(
+    *,
+    schema_name: str,
+    diagnostics: list[dict[str, str]],
+    record_label: str | None = None,
+) -> str:
+    label = f"，{record_label}" if record_label else ""
+    lines = [f"Schema 验证失败（schema: {schema_name}{label}）。"]
+    for item in diagnostics:
+        lines.append(f"- {item['path']} [{item['rule']}]: {item['message']}")
+    lines.extend(
+        [
+            "修复方式：逐项修复以上字段后再重试同一写入。",
+            "不要删除候选、降低证据等级语义或把数组字段改成单个字符串来规避校验。",
+        ]
+    )
+    return "\n".join(lines)

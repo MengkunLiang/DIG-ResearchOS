@@ -21,7 +21,7 @@ tools:
   - update_skill_workflow
   - finish_task
 strict_tools: true
-model_tier: heavy
+model_tier: standard
 temperature: 0.35
 allowed_read_prefixes:
   - project.yaml
@@ -33,7 +33,7 @@ allowed_read_prefixes:
   - _runtime/skill_sessions/
 allowed_write_prefixes:
   - user_inputs/cross-domain-idea-studio/
-  - literature/paper_notes_bridge/
+  - literature/bridge_notes/
   - ideation/
 outputs_expected:
   bridge_plan: ideation/cross_domain_bridge_plan.json
@@ -86,7 +86,7 @@ interaction:
     - id: candidate_pool
       label: 跨域候选池
       path: ideation/cross_domain_candidate_pool.json
-      description: 候选方向、来源、证据、H1/H2/H3 草案、评分边界和选择状态。
+      description: 候选方向、来源、证据、由模型写出的 2-3 条可证伪候选假设、评分边界和选择状态。
     - id: risk_register
       label: 迁移风险登记册
       path: ideation/cross_domain_risk_register.md

@@ -1526,9 +1526,9 @@ def build_resource_index(workspace: Path, *, include_previews: bool = True) -> d
             artifacts.append(_artifact_entry(workspace, path, include_preview=include_previews))
 
     note_patterns = [
-        "literature/paper_notes/*.md",
-        "literature/paper_notes_abstract/*.md",
-        "literature/paper_notes_bridge/**/*.md",
+        "literature/deep_read_notes/*.md",
+        "literature/shallow_read_notes/*.md",
+        "literature/bridge_notes/**/*.md",
     ]
     for pattern in note_patterns:
         for path in sorted(workspace.glob(pattern)):
@@ -1689,14 +1689,14 @@ def _extract_paper_note_cards(workspace: Path, *, limit: int = 80) -> list[dict[
 
     cards: list[dict[str, Any]] = []
     note_roots = [
-        workspace / "literature" / "paper_notes",
-        workspace / "literature" / "paper_notes_bridge",
-        workspace / "literature" / "paper_notes_abstract",
+        workspace / "literature" / "deep_read_notes",
+        workspace / "literature" / "bridge_notes",
+        workspace / "literature" / "shallow_read_notes",
     ]
     for root in note_roots:
         if not root.exists():
             continue
-        pattern = "**/*.md" if root.name == "paper_notes_bridge" else "*.md"
+        pattern = "**/*.md" if root.name == "bridge_notes" else "*.md"
         for path in sorted(root.glob(pattern)):
             if not is_paper_note_file(path):
                 continue
@@ -1923,7 +1923,9 @@ def build_section_plan(index: dict[str, Any], *, target_venue: str = "", paper_t
             "literature/synthesis_workbench.json",
             "literature/domain_map.json",
             "literature/comparison_table.csv",
-            "literature/paper_notes",
+            "literature/deep_read_notes",
+            "literature/shallow_read_notes",
+            "literature/bridge_notes",
             "literature/related_work.bib",
             "ideation/idea_scorecard.yaml",
         ],
@@ -2612,9 +2614,9 @@ def _note_card_retrieval_lines(section_id: str, note_cards: list[Any]) -> list[s
     cards = _section_note_cards(section_id, note_cards, limit=8)
     if not cards:
         if any(isinstance(card, dict) for card in note_cards):
-            lines.append("- Indexed note cards exist, but none meet the claim-usable threshold for this section; read `literature/paper_notes/` directly and use weak cards only as background or limitations.")
+            lines.append("- Indexed paper-reading notes exist, but none meet the claim-usable threshold for this section; read `literature/deep_read_notes/` or `literature/bridge_notes/` directly for claim evidence, and use `literature/shallow_read_notes/` for background, coverage, trends, or limitations.")
         else:
-            lines.append("- No structured note cards are indexed; read `literature/paper_notes/` and `literature/synthesis_workbench.json` directly if citations are needed.")
+            lines.append("- No structured paper-reading notes are indexed; read `literature/deep_read_notes/`, `literature/shallow_read_notes/`, and `literature/synthesis_workbench.json` directly if citations or coverage context are needed.")
         return [f"- {line}" if not line.lstrip().startswith("-") else line for line in lines]
     lines.append("- Relevant indexed note cards:")
     fields = _note_card_fields_for_section(section_id)
@@ -4694,9 +4696,9 @@ def craft_audit_input_fingerprints(
     sections_dir: str = "drafts/sections",
     related_work_bib_path: str = "literature/related_work.bib",
     citation_map_path: str = "literature/citation_map.json",
-    paper_notes_dir: str = "literature/paper_notes",
-    abstract_notes_dir: str = "literature/paper_notes_abstract",
-    bridge_notes_dir: str = "literature/paper_notes_bridge",
+    deep_read_notes_dir: str = "literature/deep_read_notes",
+    shallow_read_notes_dir: str = "literature/shallow_read_notes",
+    bridge_notes_dir: str = "literature/bridge_notes",
     paper_state_path: str = "drafts/paper_state.json",
     alignment_matrix_path: str = "drafts/alignment_matrix.json",
     cdr_claim_ledger_path: str = "drafts/cdr_claim_ledger.json",
@@ -4706,8 +4708,8 @@ def craft_audit_input_fingerprints(
         "sections_dir": sections_dir,
         "related_work_bib": related_work_bib_path,
         "citation_map": citation_map_path,
-        "paper_notes_dir": paper_notes_dir,
-        "abstract_notes_dir": abstract_notes_dir,
+        "deep_read_notes_dir": deep_read_notes_dir,
+        "shallow_read_notes_dir": shallow_read_notes_dir,
         "bridge_notes_dir": bridge_notes_dir,
         "paper_state": paper_state_path,
         "alignment_matrix": alignment_matrix_path,

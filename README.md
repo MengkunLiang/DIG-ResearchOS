@@ -2,10 +2,7 @@
 
 [English](README.md) | [中文](README.zh-CN.md)
 
-ResearchOS is an artifact-first research runtime for auditable literature work,
-evidence-bounded ideation, external-executor handoff, manuscript production,
-review, and submission packaging. A project lives in a workspace: durable files,
-not chat history, are the source of truth.
+ResearchOS is an artifact-first research runtime for auditable literature work, evidence-bounded ideation, external-executor handoff, manuscript production, review, and submission packaging. A project lives in a workspace: durable files, not chat history, are the source of truth.
 
 ```text
 T1 scope -> T2 discover -> T3 read -> T3.5 synthesize
@@ -16,12 +13,9 @@ T1 scope -> T2 discover -> T3 read -> T3.5 synthesize
 
 ## Before You Run
 
-- Use one writer per workspace. Do not run native and Docker commands against
-  the same project concurrently.
-- Put provider secrets only in `.env`. Do not commit `.env`, workspaces, PDFs,
-  runtime logs, or generated submissions.
-- Python packages belong in `requirements.txt` / `pyproject.toml`. TeX,
-  `latexmk`, and fonts are OS or Docker-image dependencies.
+- Use one writer per workspace. Do not run native and Docker commands against the same project concurrently.
+- Store provider secrets in local `.env` or the ignored `config/model_settings.yaml`; never commit either file, workspaces, PDFs, runtime logs, or generated submissions.
+- Python packages belong in `requirements.txt` / `pyproject.toml`. TeX, `latexmk`, and fonts are OS or Docker-image dependencies.
 
 ## Native Setup
 
@@ -31,8 +25,8 @@ cd DIG-ResearchOS
 
 conda env create -f environment.yml
 conda activate researchos
-cp .env.example .env
 pip install -e .
+python -m researchos.cli configure-llm
 ```
 
 Pip-only setup is also supported:
@@ -44,9 +38,7 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-T3.6 and T9 need a real TeX backend to produce and validate PDFs. On
-Ubuntu/Debian, install the host toolchain or use the Docker fallback described
-below:
+T3.6 and T9 need a real TeX backend to produce and validate PDFs. On Ubuntu/Debian, install the host toolchain or use the Docker fallback described below:
 
 ```bash
 sudo apt-get update
@@ -55,8 +47,7 @@ sudo apt-get install -y \
   texlive-fonts-recommended texlive-xetex texlive-lang-chinese
 ```
 
-Verify configuration, dependencies, the selected TeX backend, and provider
-connectivity before a long run:
+Verify configuration, dependencies, the selected TeX backend, and provider connectivity before a long run:
 
 ```bash
 python -m researchos.cli validate-config
@@ -72,13 +63,10 @@ PYTHONPATH="$PWD" python -m researchos.cli doctor --workspace ./workspace/projec
 
 ## Docker Compose Setup
 
-Docker uses the same CLI, validators, state machine, and workspace format. The
-host `workspace/` directory is mounted at `/app/workspace` in the container.
-The supplied image includes Python dependencies, matplotlib, TeX Live,
-`latexmk`, pdfLaTeX, XeLaTeX, BibTeX, and Chinese TeX support.
+Docker uses the same CLI, validators, state machine, and workspace format. The host `workspace/` directory is mounted at `/app/workspace` in the container. The supplied image includes Python dependencies, matplotlib, TeX Live, `latexmk`, pdfLaTeX, XeLaTeX, BibTeX, and Chinese TeX support.
 
 ```bash
-cp .env.example .env
+python -m researchos.cli configure-llm
 mkdir -p workspace
 docker compose -f deploy/compose.yaml build researchos
 docker compose -f deploy/compose.yaml run --rm researchos doctor
@@ -95,9 +83,7 @@ docker compose -f deploy/compose.yaml run --rm researchos \
   run --workspace /app/workspace/project-a
 ```
 
-Native `latex.default_backend: auto` uses local `latexmk`, then local
-`tectonic`, then the allowlisted Docker TeX image when enabled. Compose never
-uses Docker-in-Docker. See [docs/docker.md](docs/docker.md).
+Native `latex.default_backend: auto` uses local `latexmk`, then local `tectonic`, then the allowlisted Docker TeX image when enabled. Compose never uses Docker-in-Docker. See [Docker and TeX](docs/en/docker.md).
 
 ## Create And Run A Project
 
@@ -110,53 +96,89 @@ python -m researchos.cli init-workspace \
 python -m researchos.cli run --workspace ./workspace/project-a
 ```
 
-`run` stops at consequential human gates. T2 accepts one natural-language
-coverage request, including manuscript language and Chinese-literature policy:
+`run` stops at consequential human gates. T2 accepts one natural-language coverage request, including manuscript language and Chinese-literature policy:
 
 ```text
 候选 30 篇，精读 15 篇，摘要轻读 15 篇；英文稿，不搜索中文文献。
 ```
 
-English wording such as `candidate pool 30, deep read 15, abstract read 15,
-English manuscript, exclude Chinese literature` is equivalent. The confirmed
-values are saved in `literature/literature_params.json` before retrieval starts.
+English wording such as `candidate pool 30, deep read 15, abstract read 15, English manuscript, exclude Chinese literature` is equivalent. The confirmed values are saved in `literature/literature_params.json` before retrieval starts.
 
-T3 processes full-text papers individually because page coverage and section
-evidence are paper-specific. Its post-read abstract sweep is different: when
-the active provider reports a usable context window, ResearchOS packs multiple
-independent abstracts into a provider-context-sized call, then writes one
-separate `ABSTRACT-ONLY` note per paper. There is no fixed "papers per batch"
-limit. The provider binding and its tokenizer determine the packing plan;
-malformed batch output falls back only for the affected paper(s).
+T3 processes full-text papers individually because page coverage and section evidence are paper-specific. Its post-read abstract sweep is different: when the active provider reports a usable context window, ResearchOS packs multiple independent abstracts into a provider-context-sized call, then writes one separate `ABSTRACT-ONLY` note per paper. There is no fixed "papers per batch" limit. The provider binding and its tokenizer determine the packing plan; malformed batch output falls back only for the affected paper(s).
 
 ## Daily Commands
 
 | Goal | Command |
 | --- | --- |
 | Inspect current stage and pause reason | `python -m researchos.cli status --workspace ./workspace/project-a` |
+| Scan all local workspaces, active processes, gates, and stale states | `python -m researchos.cli workspace-status --workspace-root ./workspace` |
 | Continue a paused project | `python -m researchos.cli resume --workspace ./workspace/project-a` |
+| Re-enter this workspace at T4 after validating T4 prerequisites | `python -m researchos.cli resume --workspace ./workspace/project-a --from-task T4` |
+| Start a new full pipeline at T4 using validated upstream artifacts from another workspace | `python -m researchos.cli run --workspace ./workspace/project-b --from ./workspace/project-a --start-task T4` |
+| Debug only T4 in a fresh workspace copied from another project | `python -m researchos.cli run-task T4 --workspace ./workspace/t4-debug --from ./workspace/project-a` |
 | Run one task without advancing the full pipeline | `python -m researchos.cli run-task T3.6-SEC-INTRO --workspace ./workspace/project-a` |
 | Validate one task's artifacts | `python -m researchos.cli validate --task T3.6-SEC-INTRO --workspace ./workspace/project-a` |
+| Regenerate the deterministic Survey audit without an LLM | `python -m researchos.cli audit-survey --workspace ./workspace/project-a` |
 | Inspect a recorded run | `python -m researchos.cli trace <run-id> --workspace ./workspace/project-a` |
 | Check environment and TeX selection | `python -m researchos.cli doctor --workspace ./workspace/project-a` |
 | Check state-machine and runtime configuration | `python -m researchos.cli validate-config` |
 
-Use `run --from <source-workspace> --start-task <task>` only to initialize a
-new target workspace from another project's validated upstream artifacts. It is
-not a merge operation. The recovery guide is in
-[docs/QUICKSTART.md](docs/QUICKSTART.md).
+Use `run --from <source-workspace> --start-task <task>` only to initialize a new target workspace from another project's validated upstream artifacts. It is not a merge operation. The recovery guide is in [Quick Start](docs/en/QUICKSTART.md).
 
-For an interrupted survey section, validate before resuming. A valid
-`T3.6-SEC-*` output advances without rewriting the completed section; the
-section worker is restricted to that file and its matching survey state entry.
+`resume --from-task <task>` is the deliberate same-workspace recovery command. It validates the target task's prerequisites, clears the old pending gate, and records the re-entry in `state.yaml`. After an optional Survey has finished, `resume --from-task T4` is the supported way to proceed without revisiting its post-Survey gate; it still refuses to run if T4 inputs are incomplete.
+
+| Workspace situation | Use | Behaviour |
+| --- | --- | --- |
+| New directory, no `state.yaml` | `run` | Creates and starts a new pipeline. |
+| Paused after Ctrl+C, a provider outage, or a gate | `resume` | Continues the same workspace from durable artifacts. |
+| Existing workspace, restart a validated later stage | `resume --from-task T4` | Re-enters only after the selected task's prerequisites pass. |
+| Another project's upstream artifacts | `run --from <source> --start-task T4` | Creates a distinct target workspace and copies only declared prerequisites. |
+| Existing `state.yaml`, but `run` was entered again | Do not continue | The command refuses to overwrite or implicitly resume; use `resume`. |
+| No `state.yaml`, but `resume` was entered | Do not create | The command refuses to manufacture a project; use `run`. |
+| `COMPLETED` workspace | Start a new workspace | `resume` is refused so completed artifacts are not silently rewritten. |
+
+For an interrupted survey section, validate before resuming. A valid `T3.6-SEC-*` output advances without rewriting the completed section; the section worker is restricted to that file and its matching survey state entry.
+
+## Complete CLI Command Reference
+
+<!-- CLI_COMMAND_REFERENCE_START -->
+
+The table below is intentionally complete and is checked against the live CLI parser in unit tests. Shared flags such as `--workspace`, `--no-color`, `--verbose`, `--verbosity`, `--quiet`, and `--no-banner` are accepted by each operational command unless its help says otherwise.
+
+| Command | Purpose | First place to read |
+| --- | --- | --- |
+| `init-workspace` | Create a standard workspace and optional `project.yaml`. | This README, [Quick Start](docs/en/QUICKSTART.md) |
+| `run` | Run the complete state-machine pipeline; supports `--from` and `--start-task` for a new target workspace. | [Quick Start](docs/en/QUICKSTART.md) |
+| `run_smoke` | Run a reduced but real pipeline integration profile. | `researchos run_smoke --help` |
+| `resume` | Continue a paused workspace, or safely re-enter its `--from-task` after prerequisite validation. | [Quick Start](docs/en/QUICKSTART.md) |
+| `run-task` | Diagnose or execute one state-machine task without advancing the full pipeline. | [Quick Start](docs/en/QUICKSTART.md) |
+| `status` | Show a compact workspace state and next action; `--detail` prints raw state. | [Logging](docs/en/logging.md) |
+| `workspace-status` | Scan a workspace root; distinguish active, stopped, stale, paused, and orphan workspaces. Add `--verbose` for error detail. | [Quick Start](docs/en/QUICKSTART.md) |
+| `configure-llm` | Save and test the provider, URL, key, model, and same-model retry policy used by every stage. | [Configuration](docs/en/config.md) |
+| `selftest` | Check configured LLM endpoint connectivity. | This README |
+| `doctor` | Check Python, native/Docker, and TeX prerequisites. | [Docker and TeX](docs/en/docker.md) |
+| `trace` | Render one run trace; `--raw` prints JSONL. | [Logging](docs/en/logging.md) |
+| `validate` | Validate declared artifacts for one task or the current context. | [Quick Start](docs/en/QUICKSTART.md) |
+| `audit-survey` | Rebuild the deterministic T3.6 Survey audit without a model call. | [Logging](docs/en/logging.md) |
+| `validate-config` | Validate state machine, gates, runtime, and configuration contracts. | [Configuration](docs/en/config.md) |
+| `specialize-executor-skills` | Generate or validate the project-specific T5 external-executor Skill suite. | [Quick Start](docs/en/QUICKSTART.md) |
+| `run-skill` | Start or resume one guided Skill; supports `--session-id`, `--resume`, and non-interactive execution. | [Skills](docs/en/skills.md) |
+| `list-skills` | List all discoverable Skills and their declared capabilities. | [Skills](docs/en/skills.md) |
+| `browse-skills` | Browse and choose a Skill through terminal cards. | [Skills](docs/en/skills.md) |
+| `describe-skill` | Display one Skill's input/output/recovery/capability contract. | [Skills](docs/en/skills.md) |
+| `skill-status` | Show resumable guided Skill sessions and integrated workflow phases. | [Skills](docs/en/skills.md) |
+
+<!-- CLI_COMMAND_REFERENCE_END -->
+
+## Reading Files Without Losing Context
+
+`read_file` is context-aware, not a fixed 200/3,000-character reader. Before building context-sensitive tools, ResearchOS queries direct and collection model metadata on compatible base paths, including both `/v1` and non-`/v1` OpenAI-style deployments. It uses a matched `context_length`, `context_window`, `max_context`, `max_input_tokens`, or compatible nested capacity field when the provider exposes one. The result is cached for the active run and is shared by file reads, history truncation, and abstract batching. If a relay does not publish verifiable capacity metadata, the system fallback is 128k tokens; it is not a claim about the provider's public API limit. Per-task context overrides are ignored in the one-model configuration, so user-facing behavior follows the configured provider rather than an old Agent tier.
+
+The effective capacity reserves room for the system prompt/history/tool calls and allocates 70% of the remainder to a file result. It reads the whole file only when it fits the automatic full-read share, then uses a context-sized page. The public `read_file` schema deliberately exposes only `path` and `offset`; it does not accept a manual `max_chars` budget, so a model cannot issue `max_chars=200` and force repeated tiny reads. For a known local section, use `grep_search` to find the offset and call `read_file` again with that offset. Result metadata records the applied capacity source and page budget. For a large T2 `literature/papers_raw.jsonl`, reading remains available, but checkpoint-safe pages begin before the raw pool can consume the working retrieval plan, preserve JSONL record boundaries, and carry completed queries, source coverage, raw count, and the authoritative `next_offset`.
 
 ## Guided Skills
 
-ResearchOS exposes both atomic Skills and composed, resumable research
-workflows. Atomic Skills cover paper intake, DOI/title resolution, note cards,
-evidence matrices, ideation, writing, review, polishing, compilation, and
-submission checks. Integrated Skills add explicit subphases, evidence gates,
-artifact manifests, and durable recovery for multi-step work:
+ResearchOS exposes both atomic Skills and composed, resumable research workflows. Atomic Skills cover paper intake, DOI/title resolution, note cards, evidence matrices, ideation, writing, review, polishing, compilation, and submission checks. Integrated Skills add explicit subphases, evidence gates, artifact manifests, and durable recovery for multi-step work:
 
 | Need | Integrated Skill | What it does |
 | --- | --- | --- |
@@ -183,27 +205,13 @@ python -m researchos.cli run-skill literature-review-studio \
   --workspace ./workspace/project-a --session-id agent-memory-survey
 ```
 
-In a TTY, `run-skill` collects missing material through a restricted multi-turn
-intake, stages only human-supplied material under `user_inputs/<skill>/`,
-rechecks readiness, then asks for an explicit `执行` / `暂停` decision. It does
-not generate research, manuscript, experiment, or citation deliverables while
-required input is missing. The constrained intake Agent may use the provider to
-ask for one fact at a time and encode only human-provided material into the
-declared input files. Automation should use `--non-interactive`; missing inputs
-then create a resumable `WAITING_INPUT` session without constructing a provider
-client.
+In a TTY, `run-skill` collects missing material through a restricted multi-turn intake, stages only human-supplied material under `user_inputs/<skill>/`, rechecks readiness, then asks for an explicit `执行` / `暂停` decision. It does not generate research, manuscript, experiment, or citation deliverables while required input is missing. The constrained intake Agent may use the provider to ask for one fact at a time and encode only human-provided material into the declared input files. Automation should use `--non-interactive`; missing inputs then create a resumable `WAITING_INPUT` session without constructing a provider client.
 
-An integrated Skill records `pending`, `running`, `completed`, `waiting_input`,
-`waiting_evidence`, or `skipped` for each declared research phase in the same
-session file. It may use source-returning search tools to try to supplement
-missing literature after the researcher authorizes that scope. Search leads,
-metadata, and abstracts remain visibly weaker than section-level or full-text
-evidence; a workflow may not advance a strong scholarly claim merely because it
-successfully found more records.
+An integrated Skill records `pending`, `running`, `completed`, `waiting_input`, `waiting_evidence`, or `skipped` for each declared research phase in the same session file. It may use source-returning search tools to try to supplement missing literature after the researcher authorizes that scope. Search leads, metadata, and abstracts remain visibly weaker than section-level or full-text evidence; a workflow may not advance a strong scholarly claim merely because it successfully found more records.
 
-The catalog's input/output paths are checked against each Skill's workspace
-permissions at discovery time. A listed public Skill therefore cannot advertise
-a path which will later be rejected as `access_denied`.
+The catalog's input/output paths are checked against each Skill's workspace permissions at discovery time. A listed public Skill therefore cannot advertise a path which will later be rejected as `access_denied`.
+
+For `pdf-note-card`, `paper-comparison`, and `literature-comparison-studio`, guided intake can also use a DOI, arXiv/OpenAlex ID, direct PDF URL, exact title, or an explicitly scoped topic-plus-count request. It records the identifier/query and retrieval result under `user_inputs/<skill>/_source_resolution.md`, downloads only to that Skill's declared input area, and preserves metadata/search hits as weaker-than-PDF evidence. Entering menu option `2` or `暂停` at the missing-input control immediately persists the session as `WAITING_INPUT`; it does not start another intake round.
 
 ```bash
 python -m researchos.cli run-skill pdf-note-card \
@@ -212,48 +220,37 @@ python -m researchos.cli run-skill pdf-note-card \
   --resume
 ```
 
-See [docs/skills.md](docs/skills.md) for the capability map and input contract.
+See [Skills](docs/en/skills.md) for the capability map and input contract.
 
 ## Evidence Boundary
 
-ResearchOS does not ban a metric, dataset, baseline, or benchmark by name.
-AUUC, Qini, accuracy, F1, or any other concrete protocol detail is valid when a
-user-provided file, audited workspace artifact, or verified plan explicitly
-identifies it and provides a traceable source. The system must not infer that
-detail from a topic, method name, field convention, or an example. Missing
-details remain `unknown`, `proposed_not_verified`, or a human/evidence blocker.
+ResearchOS does not ban a metric, dataset, baseline, or benchmark by name. AUUC, Qini, accuracy, F1, or any other concrete protocol detail is valid when a user-provided file, audited workspace artifact, or verified plan explicitly identifies it and provides a traceable source. The system must not infer that detail from a topic, method name, field convention, or an example. Missing details remain `unknown`, `proposed_not_verified`, or a human/evidence blocker.
 
 ## CLI Display And Diagnostics
 
-Every actual CLI command displays the DIG · BUAA / ResearchOS startup panel
-once by default. In an interactive terminal it uses the progressive `D -> DI ->
-DIG` color animation; non-TTY output receives one portable static panel.
+Every actual CLI command displays the DIG · BUAA / ResearchOS startup panel once by default. In an interactive terminal it uses the progressive `D -> DI -> DIG` color animation; non-TTY output receives one portable static panel.
 
 - `--no-banner` suppresses it for scripts.
 - `--no-color` removes ANSI color while preserving the same information.
 - `--verbosity concise|normal|detailed` changes research-process detail.
-- `--quiet` restricts console output to essential state, errors, pauses, and
-  final outcomes.
-- `--json-events` mirrors bounded structured events to stdout; every run also
-  writes `<workspace>/_runtime/events/<run-id>.jsonl`.
+- `--quiet` restricts console output to essential state, errors, pauses, and final outcomes.
+- `--json-events` mirrors bounded structured events to stdout; every run also writes `<workspace>/_runtime/events/<run-id>.jsonl`.
 
-Console panels expose stage inputs, calculations, decisions, risks, and artifact
-manifests. They never expose private model reasoning or raw prompt payloads.
-Use [docs/logging.md](docs/logging.md) for log and trace triage.
+Console panels expose stage inputs, calculations, decisions, risks, and artifact manifests. They never expose private model reasoning or raw prompt payloads. Use [Logging and Troubleshooting](docs/en/logging.md) for log and trace triage.
 
 ## Documentation
 
 | Need | Document |
 | --- | --- |
-| First run and recovery | [docs/QUICKSTART.md](docs/QUICKSTART.md) |
-| Pipeline stages and artifacts | [docs/agent_pipeline.md](docs/agent_pipeline.md) |
-| Configuration | [docs/config.md](docs/config.md) |
-| Native/Docker/TeX | [docs/docker.md](docs/docker.md) |
-| Runtime, events, and extension points | [docs/runtime.md](docs/runtime.md) |
-| Skills | [docs/skills.md](docs/skills.md) |
-| Logs, traces, and debug procedure | [docs/logging.md](docs/logging.md) |
-| Repository and workspace layout | [docs/project_structure.md](docs/project_structure.md) |
-| Contributor workflow | [docs/dev.md](docs/dev.md) |
+| First run and recovery | [Quick Start](docs/en/QUICKSTART.md) |
+| Pipeline stages and artifacts | [Pipeline Overview](docs/en/agent_pipeline.md) |
+| Full pipeline and artifact contracts | [Pipeline Detail](docs/en/agent_pipeline_detail.md) |
+| Configuration | [Configuration](docs/en/config.md) |
+| Native/Docker/TeX | [Docker and TeX](docs/en/docker.md) |
+| Runtime, events, and extension points | [Runtime](docs/en/runtime.md) |
+| Skills | [Skills](docs/en/skills.md) |
+| Logs, traces, and debug procedure | [Logging and Troubleshooting](docs/en/logging.md) |
+| Repository and workspace layout | [Project Structure](docs/en/project_structure.md) |
+| Contributor workflow | [Development](docs/en/dev.md) |
 
-Additional operational references: [repository/workspace layout](./docs/project_structure.md),
-[Compose deployment](./deploy/README.md), and [maintained scripts](./scripts/README.md).
+Additional operational references: [repository/workspace layout](./docs/en/project_structure.md), [Compose deployment](./deploy/README.md), and [maintained scripts](./scripts/README.md).

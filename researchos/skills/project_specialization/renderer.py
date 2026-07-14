@@ -223,7 +223,7 @@ def _render_list(label: str, values: list[Any], *, max_items: int) -> list[str]:
     for value in shown:
         lines.append(f"  - {_format_compact(value)}")
     if len(values) > max_items:
-        lines.append(f"  - ... {len(values) - max_items} additional item(s); see Detailed project context.")
+        lines.append(f"  - 其余 {len(values) - max_items} 项已完整保留在“详细项目上下文”。")
     return lines
 
 
@@ -244,7 +244,7 @@ def _render_object_list(label: str, values: list[Any], fields: list[str], *, max
             parts.append(text)
         lines.append("  - " + (" - ".join(parts) if parts else _format_compact(value)))
     if len(values) > max_items:
-        lines.append(f"  - ... {len(values) - max_items} additional item(s); see Detailed project context.")
+        lines.append(f"  - 其余 {len(values) - max_items} 项已完整保留在“详细项目上下文”。")
     return lines
 
 

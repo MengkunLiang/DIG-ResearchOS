@@ -66,18 +66,108 @@ def validate_record(record: dict, schema_name: str) -> tuple[bool, str | None]:
         return False, f"Schema not found: {e}"
 
     try:
-        validator = Draft7Validator(schema)
-        errors = sorted(validator.iter_errors(record), key=lambda item: list(item.path))
-        if errors:
-            messages = [error.message for error in errors[:8]]
-            if len(errors) > 8:
-                messages.append(f"... and {len(errors) - 8} more")
-            return False, "Validation error: " + "; ".join(messages)
+        diagnostics = validate_record_diagnostics(record, schema_name, schema=schema)
+        if diagnostics:
+            return False, "Validation error: " + "; ".join(
+                _format_validation_diagnostic(item) for item in diagnostics
+            )
         return True, None
     except ValidationError as e:
         return False, f"Validation error: {e.message}"
     except Exception as e:
         return False, f"Unexpected error: {e}"
+
+
+def validate_record_diagnostics(
+    record: dict[str, Any],
+    schema_name: str,
+    *,
+    schema: dict[str, Any] | None = None,
+    max_errors: int = 12,
+) -> list[dict[str, str]]:
+    """Return bounded, field-addressable JSON Schema diagnostics.
+
+    ``validate_record`` predates the structured writer and intentionally keeps
+    its compact ``(ok, message)`` API.  Tools and the CLI need more than a
+    concatenated list of jsonschema messages, though: a model must be able to
+    see which candidate and which field failed without guessing from a long
+    flattened error string.  This helper keeps the underlying validator as the
+    source of truth while exposing a stable, serialisable diagnosis.
+    """
+
+    if not HAS_JSONSCHEMA:
+        return []
+    schema = schema if schema is not None else load_schema(schema_name)
+    validator = Draft7Validator(schema)
+    errors = sorted(validator.iter_errors(record), key=lambda item: (list(item.path), item.message))
+    diagnostics = [_validation_error_to_diagnostic(error) for error in errors[:max_errors]]
+    if len(errors) > max_errors:
+        diagnostics.append(
+            {
+                "path": "$",
+                "rule": "additional_errors",
+                "message": f"另有 {len(errors) - max_errors} 个 schema 问题；请先修复以上字段后重新校验。",
+            }
+        )
+    return diagnostics
+
+
+def _validation_error_to_diagnostic(error: Any) -> dict[str, str]:
+    """Convert a ``jsonschema.ValidationError`` into a concise repair item."""
+
+    path = _format_instance_path(error.path)
+    if error.validator == "required":
+        missing = str(error.message).split("'", 2)[1] if "'" in str(error.message) else "required field"
+        return {
+            "path": f"{path}.{missing}" if path != "$" else f"$.{missing}",
+            "rule": "required",
+            "message": f"缺少字段（必填）`{missing}`。",
+        }
+    if error.validator == "type":
+        expected = _compact_schema_value(error.validator_value)
+        actual = type(error.instance).__name__
+        return {
+            "path": path,
+            "rule": "type",
+            "message": f"类型不匹配：需要 {expected}，当前为 {actual}。",
+        }
+    if error.validator == "enum":
+        expected = _compact_schema_value(error.validator_value)
+        return {
+            "path": path,
+            "rule": "enum",
+            "message": f"值 `{_compact_schema_value(error.instance)}` 不在允许集合 {expected} 中。",
+        }
+    if error.validator in {"minItems", "minLength", "minimum", "maximum", "pattern"}:
+        return {
+            "path": path,
+            "rule": str(error.validator),
+            "message": str(error.message),
+        }
+    return {
+        "path": path,
+        "rule": str(error.validator or "schema"),
+        "message": str(error.message),
+    }
+
+
+def _format_instance_path(parts: Any) -> str:
+    value = "$"
+    for part in parts:
+        if isinstance(part, int):
+            value += f"[{part}]"
+        else:
+            value += f".{part}"
+    return value
+
+
+def _compact_schema_value(value: Any, *, limit: int = 180) -> str:
+    rendered = repr(value)
+    return rendered if len(rendered) <= limit else rendered[: limit - 3] + "..."
+
+
+def _format_validation_diagnostic(diagnostic: dict[str, str]) -> str:
+    return f"{diagnostic['path']}: {diagnostic['message']}"
 
 
 def validate_task_artifacts(
@@ -447,10 +537,10 @@ def register_builtin_task_checkers():
 
     def check_t3(workspace_dir: Path) -> tuple[bool, str | None]:
         """T3 note checker：复用 Reader 的单篇笔记结构和证据锚点规则。"""
-        notes_dir = workspace_dir / "literature" / "paper_notes"
-        bridge_notes_dir = workspace_dir / "literature" / "paper_notes_bridge"
+        notes_dir = workspace_dir / "literature" / "deep_read_notes"
+        bridge_notes_dir = workspace_dir / "literature" / "bridge_notes"
         if not notes_dir.exists() and not bridge_notes_dir.exists():
-            return False, "literature/paper_notes or literature/paper_notes_bridge not found"
+            return False, "literature/deep_read_notes or literature/bridge_notes not found"
 
         from ..literature_identity import is_paper_note_file
 
@@ -472,7 +562,7 @@ def register_builtin_task_checkers():
             run_id="artifact-check",
             mode="read",
             outputs_expected={
-                "paper_notes_dir": workspace_dir / "literature" / "paper_notes",
+                "deep_read_notes_dir": workspace_dir / "literature" / "deep_read_notes",
                 "comparison_table": workspace_dir / "literature" / "comparison_table.csv",
                 "related_work_bib": workspace_dir / "literature" / "related_work.bib",
             },

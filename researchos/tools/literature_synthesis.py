@@ -97,7 +97,7 @@ class LLMInsights(BaseModel):
 
 class BuildSynthesisWorkbenchParams(BaseModel):
     notes_dir: str = Field(
-        default="literature/paper_notes",
+        default="literature/deep_read_notes",
         description="Relative workspace path containing paper note markdown files.",
     )
     comparison_table: str = Field(
@@ -151,7 +151,7 @@ class BuildSynthesisWorkbenchParams(BaseModel):
 class BuildSynthesisWorkbenchTool(Tool):
     name = "build_synthesis_workbench"
     description = (
-        "Build staged T3.5 synthesis artifacts from paper_notes: structured evidence JSON, "
+        "Build staged T3.5 synthesis artifacts from deep_read_notes: structured evidence JSON, "
         "an outline, and optionally a baseline draft. Use before final LLM synthesis writing."
     )
     parameters_schema = BuildSynthesisWorkbenchParams
@@ -187,17 +187,18 @@ class BuildSynthesisWorkbenchTool(Tool):
         notes = [_parse_note(path, citation_map=citation_map, citation_lookup=citation_lookup) for path in note_paths[: params.max_notes]]
         notes = [note for note in notes if note.get("paper_id")]
 
-        # 读取 abstract-only notes（可选目录）
-        abstract_dir = notes_dir.parent / "paper_notes_abstract"
-        abstract_notes: list[dict] = []
+        # Read shallow notes as a distinct evidence layer. They expand corpus
+        # coverage and comparison context; they do not become full-text proof.
+        abstract_dir = notes_dir.parent / "shallow_read_notes"
+        shallow_read_notes: list[dict] = []
         if abstract_dir.exists() and abstract_dir.is_dir():
-            abstract_notes = [
+            shallow_read_notes = [
                 _parse_note(path, evidence_level="ABSTRACT_ONLY", citation_map=citation_map, citation_lookup=citation_lookup)
                 for path in sorted(path for path in abstract_dir.glob("*.md") if is_paper_note_file(path))
             ]
-            abstract_notes = [note for note in abstract_notes if note.get("paper_id")]
+            shallow_read_notes = [note for note in shallow_read_notes if note.get("paper_id")]
 
-        if not notes and not abstract_notes:
+        if not notes and not shallow_read_notes:
             return ToolResult(ok=False, content="No parseable paper notes found.", error="empty_notes")
 
         comparison_rows = _read_comparison_rows(comparison_path) if comparison_path.exists() else []
@@ -205,23 +206,23 @@ class BuildSynthesisWorkbenchTool(Tool):
         metadata_triage = metadata_triage_path.read_text(encoding="utf-8", errors="replace") if metadata_triage_path.exists() else ""
         domain_map = _read_json(domain_map_path) if domain_map_path.exists() else {}
         insights = params.llm_insights
-        families = _build_method_families(notes, abstract_notes, llm_insights=insights)
-        all_notes = notes + abstract_notes
-        weak_evidence = _build_weak_evidence_resource_upgrade(
-            abstract_notes,
+        families = _build_method_families(notes, shallow_read_notes, llm_insights=insights)
+        all_notes = notes + shallow_read_notes
+        shallow_context = _build_shallow_reading_context(
+            shallow_read_notes,
             metadata_triage,
         )
         citation_quality = _build_citation_quality_summary(all_notes)
         citation_coverage_plan = _build_citation_coverage_plan(all_notes)
         workbench = {
             "note_count": len(notes),
-            "abstract_note_count": len(abstract_notes),
+            "abstract_note_count": len(shallow_read_notes),
             "total_note_count": len(all_notes),
-            "weak_evidence_summary": {
-                "semantics": weak_evidence.get("semantics"),
-                "abstract_only_count": weak_evidence.get("abstract_only_count", 0),
-                "metadata_triage_available": weak_evidence.get("metadata_triage_available", False),
-                "allowed_use": "prompt_visible_guardrail_not_claim_evidence",
+            "shallow_reading_summary": {
+                "semantics": shallow_context.get("semantics"),
+                "abstract_note_count": shallow_context.get("abstract_only_count", 0),
+                "metadata_triage_available": shallow_context.get("metadata_triage_available", False),
+                "allowed_use": "coverage_taxonomy_trend_comparison_and_idea_discovery_with_claim_boundary",
             },
             "citation_quality_summary": citation_quality,
             "citation_coverage_plan": citation_coverage_plan,
@@ -240,18 +241,21 @@ class BuildSynthesisWorkbenchTool(Tool):
             "method_families": families,
             "shared_assumption_candidates": _build_shared_assumptions(notes, llm_insights=insights),
             "metric_landscape_hints": _build_metric_landscape_hints(notes, comparison_rows),
-            "contribution_space": _build_contribution_space(notes, abstract_notes),
+            "contribution_space": _build_contribution_space(notes, shallow_read_notes),
             "cross_paper_tensions": _build_cross_paper_tensions(notes, llm_insights=insights),
             "citation_graph_context": _build_citation_graph_context(domain_map),
             "domain_map_bucket_summary": _build_domain_map_bucket_summary(domain_map),
             "adjacent_transfers": _build_adjacent_transfers(domain_map, all_notes),
             "bridge_transfer_drafts": _build_bridge_transfer_drafts(domain_map, all_notes),
-            "trend_candidates": _build_trends(notes, llm_insights=insights),
-            "research_question_candidates": _build_questions(notes, missing_areas, llm_insights=insights),
+            "trend_candidates": _build_trends(all_notes, llm_insights=insights),
+            "research_question_candidates": _build_questions(all_notes, missing_areas, llm_insights=insights),
             "mechanism_claim_clusters": _build_mechanism_claim_clusters(all_notes),
-            "weak_evidence_and_resource_upgrade": weak_evidence,
+            "shallow_reading_context": shallow_context,
+            # Kept only for existing workspaces and plugins that still read the
+            # historical key. New prompts use shallow_reading_context.
+            "weak_evidence_and_resource_upgrade": shallow_context,
             "notes": notes,
-            "abstract_notes": abstract_notes,
+            "shallow_read_notes": shallow_read_notes,
             "all_note_cards": all_notes,
         }
         # Backward-compatible alias. Treat as mechanical mechanism-claim
@@ -279,7 +283,7 @@ class BuildSynthesisWorkbenchTool(Tool):
 
         data = {
             "note_count": len(notes),
-            "abstract_note_count": len(abstract_notes),
+            "abstract_note_count": len(shallow_read_notes),
             "citation_coverage_target": citation_coverage_plan.get("recommended_min_unique_refs"),
             "citable_ref_count": citation_coverage_plan.get("coverage_ref_count"),
             "family_count": len(families),
@@ -295,9 +299,9 @@ class BuildSynthesisWorkbenchTool(Tool):
             ok=True,
             content=(
                 "Built staged synthesis workbench from "
-                f"{len(notes)} deep notes and {len(abstract_notes)} abstract notes into {data['outputs']['workbench']}, "
+                f"{len(notes)} deep-reading notes and {len(shallow_read_notes)} shallow-reading notes into {data['outputs']['workbench']}, "
                 f"{data['outputs']['outline']}, {data['outputs']['draft']}. "
-                f"Citation coverage target: {data['citation_coverage_target']} unique deep-note refs. "
+                f"Main-claim citation target: {data['citation_coverage_target']} deep-reading refs. "
                 "Final synthesis remains the Reader LLM's responsibility."
             ),
             data=data,
@@ -439,7 +443,7 @@ def _build_citation_quality_summary(notes: list[dict[str, Any]]) -> dict[str, An
         "by_band": by_band,
         "core_or_supporting_ids": [str(item.get("paper_id") or "") for item in top_core[:30] if item.get("paper_id")],
         "low_or_do_not_cite": low_or_do_not_cite[:30],
-        "usage_rule": "Use score>=0.55 core_evidence/supporting_context for main claims; lower scores are background or upgrade leads.",
+        "usage_rule": "Use deep-reading score>=0.55 core_evidence/supporting_context for main claims; shallow-reading notes remain useful for transparent coverage, taxonomy, trend, and comparison context.",
     }
 
 
@@ -474,7 +478,7 @@ def _build_citation_coverage_plan(notes: list[dict[str, Any]]) -> dict[str, Any]
                 item["recommended_use"] = "background_boundary_or_trend_context"
             coverage_refs.append(item)
         elif use != "do_not_cite" and score >= 0.25:
-            item["recommended_use"] = "background_boundary_or_upgrade_context"
+            item["recommended_use"] = "abstract_level_coverage_taxonomy_trend_or_comparison_context"
             weak_refs.append(item)
         else:
             item["recommended_use"] = "do_not_use_as_claim_evidence"
@@ -490,9 +494,9 @@ def _build_citation_coverage_plan(notes: list[dict[str, Any]]) -> dict[str, Any]
         "weak_or_context_ref_count": len(weak_refs),
         "recommended_min_unique_refs": target,
         "coverage_rule": (
-            "Final synthesis.md should cite a broad set of real FULL/PARTIAL note refs across all six required sections, "
-            "not only a short representative-paper list. Use low/background refs only for background, boundaries, trends, "
-            "or coverage context; use abstract-only refs only as coverage or upgrade context."
+            "Final synthesis.md should cite a broad set of real FULL/PARTIAL note refs for claim-bearing sections, "
+            "not only a short representative-paper list. Abstract-level notes may supplement corpus coverage, taxonomy, "
+            "trends, and transparent comparison context, but cannot be the sole support for a mechanism or causal claim."
         ),
         "section_rule": "Each claim-bearing synthesis section should contain real note anchors or mapped \\cite{} keys.",
         "main_claim_refs": core_refs[:80],
@@ -651,7 +655,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def _iter_note_paths(notes_dir: Path) -> list[Path]:
     paths = [path for path in notes_dir.glob("*.md") if is_paper_note_file(path)]
-    bridge_dir = notes_dir.parent / "paper_notes_bridge"
+    bridge_dir = notes_dir.parent / "bridge_notes"
     if bridge_dir.exists() and bridge_dir.is_dir():
         paths.extend(path for path in bridge_dir.glob("**/*.md") if is_paper_note_file(path))
     return sorted(paths)
@@ -659,10 +663,10 @@ def _iter_note_paths(notes_dir: Path) -> list[Path]:
 
 def _build_method_families(
     notes: list[dict[str, Any]],
-    abstract_notes: list[dict[str, Any]] | None = None,
+    shallow_read_notes: list[dict[str, Any]] | None = None,
     llm_insights: LLMInsights | None = None,
 ) -> list[dict[str, Any]]:
-    all_notes = notes + (abstract_notes or [])
+    all_notes = notes + (shallow_read_notes or [])
     citation_map = _citation_map_from_notes(all_notes)
     # Build LLM classification lookup if available
     llm_classifications: dict[str, str] = {}
@@ -675,7 +679,7 @@ def _build_method_families(
         label = _classify_family(note, llm_override=llm_classifications.get(note["paper_id"]))
         buckets.setdefault(label, []).append(note)
 
-    abstract_ids = {n["paper_id"] for n in (abstract_notes or [])}
+    abstract_ids = {n["paper_id"] for n in (shallow_read_notes or [])}
     families = []
     for label, members in sorted(buckets.items(), key=lambda item: (-len(item[1]), item[0]))[:5]:
         full_members = [m for m in members if m["paper_id"] not in abstract_ids]
@@ -781,7 +785,7 @@ def _build_metric_landscape_hints(notes: list[dict[str, Any]], rows: list[dict[s
 
 def _build_contribution_space(
     notes: list[dict[str, Any]],
-    abstract_notes: list[dict[str, Any]] | None = None,
+    shallow_read_notes: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build CDR contribution-space hints from note sections.
 
@@ -789,7 +793,7 @@ def _build_contribution_space(
     final contribution-space interpretation.
     """
 
-    all_notes = notes + (abstract_notes or [])
+    all_notes = notes + (shallow_read_notes or [])
     by_contribution: dict[str, list[str]] = {}
     by_artifact: dict[str, list[str]] = {}
     rationale_snippets: list[dict[str, str]] = []
@@ -1193,11 +1197,11 @@ def _build_mechanism_claim_clusters(all_notes: list[dict[str, Any]]) -> list[dic
     return consensus[:10]
 
 
-def _build_weak_evidence_resource_upgrade(
-    abstract_notes: list[dict[str, Any]],
+def _build_shallow_reading_context(
+    shallow_read_notes: list[dict[str, Any]],
     metadata_triage: str,
 ) -> dict[str, Any]:
-    """Expose weak-evidence material as upgrade guidance, not claim evidence."""
+    """Describe how shallow reading contributes without overstating it."""
 
     abstract_items = [
         {
@@ -1207,23 +1211,37 @@ def _build_weak_evidence_resource_upgrade(
             "bridge_point": _shorten(note.get("bridge_point", ""), 220),
             "core_approach_view": _shorten(note.get("core_approach_view", ""), 220),
             "evidence_level": "ABSTRACT_ONLY",
-            "allowed_use": "coverage_hint_or_upgrade_candidate_not_mechanism_evidence",
+            "allowed_use": "abstract_level_coverage_taxonomy_trend_comparison_or_idea_discovery",
         }
-        for note in abstract_notes[:40]
+        for note in shallow_read_notes[:40]
     ]
     triage_text = str(metadata_triage or "").strip()
     return {
-        "semantics": "weak_evidence_and_resource_upgrade_not_claim_evidence",
-        "abstract_only_count": len(abstract_notes),
+        "semantics": "shallow_reading_context_with_claim_boundary",
+        "abstract_only_count": len(shallow_read_notes),
         "abstract_only_examples": abstract_items[:12],
         "metadata_triage_available": bool(triage_text),
         "metadata_triage_excerpt": _shorten(triage_text, 1800) if triage_text else "",
-        "use_rules": [
-            "paper_notes_abstract may inform coverage breadth, bridge hints, or upgrade priorities.",
-            "metadata_triage.md is metadata-only and must not support mechanisms, trends, or claims.",
-            "T4 may use these items only as idea fuel with explicit weak-evidence status or as resource-acquisition tasks.",
+        "allowed_uses": [
+            "Expand corpus coverage, taxonomy membership, trend mapping, and comparison context.",
+            "Surface recurring methods, gaps, bridge opportunities, and candidate research questions for LLM synthesis.",
+            "Support prose that is explicitly framed as an abstract-level description of the cited work.",
+        ],
+        "claim_boundary": [
+            "Do not treat an abstract-level description as confirmation of a mechanism, causal result, or detailed implementation claim.",
+            "A selected T4 hypothesis needs at least one deep-reading source for its core mechanism or design rationale.",
+            "metadata_triage.md remains metadata-only: it can guide acquisition but cannot support synthesis statements.",
         ],
     }
+
+
+def _build_weak_evidence_resource_upgrade(
+    shallow_read_notes: list[dict[str, Any]],
+    metadata_triage: str,
+) -> dict[str, Any]:
+    """Compatibility alias for historical workbench consumers."""
+
+    return _build_shallow_reading_context(shallow_read_notes, metadata_triage)
 
 
 def _build_domain_consensus(all_notes: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1358,15 +1376,15 @@ def _render_outline(workbench: dict[str, Any], missing_areas: str) -> str:
                 f"(evidence={item.get('evidence_level')}, use={item.get('citation_use')}, "
                 f"score={item.get('citation_quality_score')})"
             )
-    weak_evidence = workbench.get("weak_evidence_and_resource_upgrade") or {}
-    if weak_evidence:
-        lines.extend(["", "## Weak Evidence / Resource Upgrade"])
+    shallow_context = workbench.get("shallow_reading_context") or workbench.get("weak_evidence_and_resource_upgrade") or {}
+    if shallow_context:
+        lines.extend(["", "## Shallow-Reading Supplement"])
         lines.append(
-            "- abstract-only notes: "
-            f"{weak_evidence.get('abstract_only_count', 0)}; "
-            f"metadata triage available: {weak_evidence.get('metadata_triage_available', False)}"
+            "- abstract-level notes: "
+            f"{shallow_context.get('abstract_only_count', 0)}; "
+            f"metadata triage available: {shallow_context.get('metadata_triage_available', False)}"
         )
-        for item in (weak_evidence.get("abstract_only_examples") or [])[:5]:
+        for item in (shallow_context.get("abstract_only_examples") or [])[:5]:
             lines.append(f"- {_ref(str(item.get('paper_id') or ''), citation_map)} {item.get('title')} — {item.get('bridge_point')}")
     lines.extend(["", "## Research Questions"])
     for item in workbench["research_question_candidates"]:
@@ -1458,25 +1476,25 @@ def _render_draft_guidance(workbench: dict[str, Any], missing_areas: str = "") -
     if not workbench.get("adjacent_transfers"):
         lines.append("- No adjacent-transfer seed was detected; Reader LLM should explain coverage limits instead of inventing one.")
 
-    weak_evidence = workbench.get("weak_evidence_and_resource_upgrade") or {}
-    lines.extend(["", "## Weak Evidence And Resource Upgrade To Review", ""])
-    if weak_evidence:
+    shallow_context = workbench.get("shallow_reading_context") or workbench.get("weak_evidence_and_resource_upgrade") or {}
+    lines.extend(["", "## Shallow-Reading Material To Integrate", ""])
+    if shallow_context:
         lines.append(
-            "- Scope: abstract-only notes and metadata-only triage are upgrade/coverage hints, not claim evidence."
+            "- Scope: abstract-level notes enrich coverage, taxonomy, trends, comparison, and idea discovery; metadata-only triage remains acquisition guidance."
         )
         lines.append(
-            f"- abstract-only candidates: {weak_evidence.get('abstract_only_count', 0)}; "
-            f"metadata triage available: {weak_evidence.get('metadata_triage_available', False)}"
+            f"- abstract-level candidates: {shallow_context.get('abstract_only_count', 0)}; "
+            f"metadata triage available: {shallow_context.get('metadata_triage_available', False)}"
         )
-        for item in (weak_evidence.get("abstract_only_examples") or [])[:8]:
+        for item in (shallow_context.get("abstract_only_examples") or [])[:8]:
             lines.append(
                 f"- {_ref(str(item.get('paper_id') or ''), citation_map)} {item.get('title')} | "
                 f"allowed use: {item.get('allowed_use')}"
             )
-        if weak_evidence.get("metadata_triage_excerpt"):
-            lines.append("- metadata triage excerpt: " + _shorten(weak_evidence.get("metadata_triage_excerpt"), 600))
+        if shallow_context.get("metadata_triage_excerpt"):
+            lines.append("- metadata triage excerpt: " + _shorten(shallow_context.get("metadata_triage_excerpt"), 600))
     else:
-        lines.append("- No weak-evidence upgrade material was detected.")
+        lines.append("- No shallow-reading supplement was detected.")
 
     lines.extend(
         [

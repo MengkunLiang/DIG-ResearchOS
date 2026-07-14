@@ -16,6 +16,7 @@ from typing import Any, Callable
 from .run_logger import SEARCH_TOOL_NAMES
 from .observability import StageReporter
 from .observability.reporter import normalize_cli_markdown
+from .observability.stage_catalog import stage_display_name
 
 
 EmitFn = Callable[[str], None]
@@ -30,15 +31,67 @@ _BLOCK_PREFIXES = (
     "copied:",
 )
 
+_INTERNAL_STAGE_PREFIX_RE = re.compile(
+    r"\[(?P<task>T\d+(?:\.\d+)?(?:-[A-Z0-9]+)*)(?P<suffix>[^\]]*)\]"
+)
+
 
 _T4_GATE1_ARTIFACTS: dict[str, tuple[int, str]] = {
-    "ideation/_pass1_forward_candidates.json": (1, "Pass 1 原始候选池"),
-    "ideation/_pass2_grounding_review.json": (2, "Pass 2 接地复核"),
-    "ideation/_candidate_directions.json": (3, "Gate1 结构化候选池"),
+    "ideation/_pass1_forward_candidates.json": (1, "第一轮候选方向"),
+    "ideation/_pass2_grounding_review.json": (2, "第二轮依据核验"),
+    "ideation/_candidate_directions.json": (3, "候选方向清单"),
     "ideation/_family_distribution.md": (4, "候选谱系分布检查"),
-    "ideation/_gate1_candidate_cards.md": (5, "Gate1 完整候选卡片"),
-    "ideation/_gate1_selection_brief.md": (6, "Gate1 选择简报"),
+    "ideation/_gate1_candidate_cards.md": (5, "完整候选比较卡"),
+    "ideation/_gate1_selection_brief.md": (6, "选择建议与风险说明"),
 }
+
+
+# These tools legitimately return large bodies to the Agent (PDF text, web
+# pages, command stdout, generated source, or JSON records).  Their complete
+# result remains in the tool message, trace, and run log; this set governs
+# only the researcher-facing terminal narration.
+_HIGH_VOLUME_TOOL_NAMES = frozenset(
+    {
+        "extract_pdf_text",
+        "extract_paper_sections",
+        "fetch_paper_pdf",
+        "web_fetch",
+        "bash_run",
+        "docker_exec",
+        "latex_compile",
+        "clone_repo",
+        "append_papers_raw",
+        "save_papers_raw",
+        "save_papers_dedup",
+        "process_papers_raw",
+        "build_experiment_handoff_pack",
+        "compile_research_reboost_handoff",
+        "ingest_external_results",
+        "mock_external_dry_run",
+        "wait_for_external_executor_result",
+    }
+)
+
+# Calls that are implementation detail in normal mode.  A durable result is
+# still rendered when it carries information the researcher needs; T4's six
+# Gate1 checkpoints have their own explicit progress narration below.
+_QUIET_TOOL_CALLS = frozenset(
+    {
+        "read_file",
+        "list_files",
+        "glob_files",
+        "grep_search",
+        "write_file",
+        "write_structured_file",
+        "append_file",
+        "append_papers_raw",
+        "save_papers_raw",
+        "save_papers_dedup",
+        "process_papers_raw",
+        "log_scout_progress",
+        "log_t4_ideation_progress",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -99,6 +152,7 @@ class CliProgressEmitter:
         self.verbosity = "detailed" if verbose and verbosity == "normal" else verbosity
         self.no_color = bool(no_color)
         self.json_events = bool(json_events)
+        self._custom_emit_fn = emit_fn is not None
         self._emit_fn = emit_fn or (lambda message: print(message, flush=True))
         self._last_message_kind: str | None = None
         self._active_task_id: str | None = None
@@ -127,6 +181,7 @@ class CliProgressEmitter:
             no_color=self.no_color,
             json_events=self.json_events,
             emit_fn=self._emit_fn,
+            live_output=not self._custom_emit_fn,
         )
 
     def stage_started(
@@ -257,13 +312,15 @@ class CliProgressEmitter:
                 human_action_context=human_action_context,
             )
             return
-        self.emit(f"[Agent Output]\n{cleaned}", important=human_action_context)
+        self.emit(f"[Agent]\n{cleaned}", important=human_action_context)
 
     def emit(self, message: str, *, important: bool = False, verbose_only: bool = False) -> None:
         if verbose_only and not self.verbose:
             return
         if self.quiet and not important:
             return
+        if self._reporter is not None:
+            self._reporter.finish_live_status()
         formatted = format_cli_message(message, previous_kind=self._last_message_kind)
         if not formatted:
             return
@@ -289,14 +346,10 @@ class CliProgressEmitter:
         if task_id in self._structured_runs:
             return
         if self.quiet:
-            self.emit(f"[{agent}] 启动 {task_id}: {_compact_text(objective, 120)}", important=True)
+            self.emit(f"正在开始：{_compact_text(objective, 120)}", important=True)
             return
-        input_text = ", ".join(inputs[:6]) if inputs else "未声明"
-        if len(inputs) > 6:
-            input_text += f", ...(+{len(inputs) - 6})"
-        output_text = ", ".join(expected_outputs[:6]) if expected_outputs else "未声明"
-        if len(expected_outputs) > 6:
-            output_text += f", ...(+{len(expected_outputs) - 6})"
+        input_text = ", ".join(inputs) if inputs else "未声明"
+        output_text = ", ".join(expected_outputs) if expected_outputs else "未声明"
         if self.verbose:
             self.emit(
                 "\n"
@@ -305,21 +358,21 @@ class CliProgressEmitter:
                 f"任务：{task_id} | 阶段：{phase}\n"
                 f"目标：{objective}\n"
                 f"输入来源：{input_text}\n"
-                f"预计产物：{expected_artifacts}\n"
+            f"预计生成文件：{expected_artifacts}\n"
                 f"输出文件：{output_text}\n"
-                f"运行设置：模型层级 {llm_tier}，最大步数 {step_limit}"
+                "运行设置：使用当前全局 LLM 配置；执行进度会在关键节点更新"
             )
             return
         lines = [
             self.SEPARATOR,
-            f"[{agent}] {task_id} 启动",
+            f"{stage_display_name(task_id)} · 开始处理",
             f"目标：{_compact_text(objective, 150)}",
-            f"产物：{_compact_text(expected_artifacts, 150)}",
+            f"预计生成文件：{_compact_text(expected_artifacts, 150)}",
         ]
         if task_id == "T4":
             lines.extend(
                 [
-                    "执行轨迹：准备证据包 -> 生成候选 -> 接地复核 -> 写入 Gate1 卡片 -> 等待人工选择",
+                    "执行过程：整理论文阅读笔记和已有结论 -> 生成候选方向 -> 核验依据 -> 生成比较卡 -> 等待你选择",
                     "说明：轨迹来自工具调用和已落盘产物，不展示模型内部推理。",
                 ]
             )
@@ -335,12 +388,21 @@ class CliProgressEmitter:
         cost_usd: float,
     ) -> None:
         self.emit(
-            f"[{agent} Agent] 正在推进第 {step}/{step_limit} 步；"
+            f"[{agent}] 正在推进第 {step}/{step_limit} 步；"
             f"累计 token {tokens}，估算成本 ${cost_usd:.4f}",
             verbose_only=True,
         )
 
-    def llm_request_started(self, *, task_id: str, step: int) -> None:
+    def llm_request_started(
+        self,
+        *,
+        task_id: str,
+        step: int,
+        activity: str | None = None,
+        next_artifact: str | None = None,
+        artifact_completed: int | None = None,
+        artifact_total: int | None = None,
+    ) -> None:
         """Show that the provider request was actually submitted immediately.
 
         This is deliberately separate from the delayed heartbeat.  It tells a
@@ -348,12 +410,23 @@ class CliProgressEmitter:
         anything about hidden model reasoning.
         """
 
-        if task_id in self._structured_runs and not self.verbose and self.verbosity != "detailed":
+        run_id = self._structured_runs.get(task_id)
+        if self._reporter is not None and run_id:
+            self._reporter.render_runtime_heartbeat(
+                task_id=task_id,
+                run_id=run_id,
+                step=step,
+                elapsed_seconds=None,
+                activity=activity,
+                next_artifact=next_artifact,
+                artifact_completed=artifact_completed,
+                artifact_total=artifact_total,
+            )
             return
-        label = task_id.removeprefix("SKILL_") if task_id.startswith("SKILL_") else task_id
-        self.emit(
-            f"[运行中] {label} · step {step} | 模型请求已提交，正在等待下一组可执行动作。"
-        )
+        if task_id == "T4":
+            self.emit(f"{stage_display_name(task_id)}：模型请求已提交，正在{activity or '整理研究构思与依据'}。")
+            return
+        self.emit(f"[{stage_display_name(task_id)}] 模型请求已提交，正在处理当前工作。")
 
     def llm_waiting(
         self,
@@ -362,6 +435,10 @@ class CliProgressEmitter:
         agent: str,
         step: int,
         elapsed_seconds: int,
+        activity: str | None = None,
+        next_artifact: str | None = None,
+        artifact_completed: int | None = None,
+        artifact_total: int | None = None,
     ) -> None:
         """Show a heartbeat for an in-flight provider call.
 
@@ -370,18 +447,38 @@ class CliProgressEmitter:
         durable artifact can otherwise take a while to appear.
         """
 
-        if task_id in self._structured_runs and not self.verbose and self.verbosity != "detailed":
+        run_id = self._structured_runs.get(task_id)
+        if self._reporter is not None and run_id:
+            self._reporter.render_runtime_heartbeat(
+                task_id=task_id,
+                run_id=run_id,
+                step=step,
+                elapsed_seconds=elapsed_seconds,
+                activity=activity,
+                next_artifact=next_artifact,
+                artifact_completed=artifact_completed,
+                artifact_total=artifact_total,
+            )
             return
-        label = task_id.removeprefix("SKILL_") if task_id.startswith("SKILL_") else task_id
-        self.emit(
-            f"[运行中] {label} · step {step} | 正在等待模型返回下一组可执行动作；"
-            f"本次调用已持续 {elapsed_seconds}s。",
-        )
+        if task_id == "T4":
+            pulses = ("◐", "◓", "◑", "◒")
+            pulse = pulses[(elapsed_seconds // 12) % len(pulses)]
+            self.emit(f"{stage_display_name(task_id)}：{pulse} 已等待 {elapsed_seconds}s，正在{activity or '整理研究构思与依据'}。")
+            return
+        self.emit(f"[{stage_display_name(task_id)}] 正在等待模型返回；本次调用已持续 {elapsed_seconds}s。")
 
     def tool_call(self, *, agent: str, tool_name: str, narrative: ToolNarrative) -> None:
         if self.quiet:
             return
         active_task = self._active_task_id
+        is_t4_gate1_write = bool(
+            active_task == "T4" and _t4_gate1_artifact(narrative.output_path)
+        )
+        is_t4_input_trace = bool(
+            active_task == "T4" and tool_name in {"read_file", "list_files", "glob_files", "grep_search"}
+        )
+        if self.verbosity != "detailed" and tool_name in _QUIET_TOOL_CALLS and not (is_t4_gate1_write or is_t4_input_trace):
+            return
         structured_run = self._structured_runs.get(active_task or "")
         if self._reporter is not None and active_task and structured_run:
             # T4 often reads a large evidence pack.  In normal mode retain one
@@ -391,14 +488,14 @@ class CliProgressEmitter:
                 self._suppressed_t4_tool_results[tool_name] = self._suppressed_t4_tool_results.get(tool_name, 0) + 1
                 if not self._t4_input_trace_emitted:
                     self._t4_input_trace_emitted = True
-                    self.emit("[T4 Trace] 正在核验上游证据、桥接材料与论文笔记 section。")
+                    self.emit("正在查看已有结论、跨领域材料和论文阅读笔记。")
                 if self.verbosity != "detailed":
                     return
             purpose = narrative.purpose
             gate1_artifact = _t4_gate1_artifact(narrative.output_path) if active_task == "T4" else None
             if gate1_artifact:
                 index, label = gate1_artifact
-                purpose = f"Gate1 artifact {index}/6 · {label}"
+                purpose = f"候选方向选择文件 {index}/6 · {label}"
             self._reporter.render_tool_call(
                 task_id=active_task,
                 run_id=structured_run,
@@ -415,14 +512,14 @@ class CliProgressEmitter:
             self._suppressed_t4_tool_results[tool_name] = self._suppressed_t4_tool_results.get(tool_name, 0) + 1
             if not self._t4_input_trace_emitted:
                 self._t4_input_trace_emitted = True
-                self.emit("[轨迹] T4 正在核验上游证据和文献笔记 section。")
+                self.emit("正在查看已有结论和论文阅读笔记。")
             return
         if self._active_task_id == "T4" and tool_name in {"write_file", "write_structured_file", "append_file"}:
             gate1_artifact = _t4_gate1_artifact(narrative.output_path)
             if gate1_artifact:
                 index, label = gate1_artifact
                 self.emit(
-                    f"[T4 Gate1] {index}/6 写入中 · {label}\n"
+                    f"[T4 候选方向] {index}/6 正在生成 · {label}\n"
                     f"文件：{narrative.output_path}"
                 )
                 return
@@ -430,18 +527,15 @@ class CliProgressEmitter:
             if stage:
                 self.emit(f"[轨迹] T4 {stage}")
         if self._active_task_id == "T4" and tool_name == "finish_task":
-            self.emit("[轨迹] T4 正在校验 Gate1 候选产物，并准备转入人工选择。")
+            self.emit("正在检查候选方向所需文件，并准备让你选择。")
         if not self.verbose:
-            line = (
-                f"[Tool] {tool_name}: {_compact_text(narrative.purpose, 90)}；"
-                f"输入：{_compact_text(narrative.input_summary, 120)}"
-            )
+            line = f"正在{_compact_text(narrative.purpose, 90)}。"
             if narrative.output_path:
-                line += f"；写入：{narrative.output_path}"
+                line += f"完成后将更新：{narrative.output_path}。"
             self.emit(line)
             return
         lines = [
-            f"[Tool Decision] {agent} Agent 准备调用 {tool_name}",
+            f"[Tool Call] {agent} 准备调用 {tool_name}",
             f"目的：{narrative.purpose}",
             f"输入摘要：{narrative.input_summary}",
             f"预期结果：{narrative.expected_output}",
@@ -473,6 +567,8 @@ class CliProgressEmitter:
         important = outcome.important
         active_task = self._active_task_id
         structured_run = self._structured_runs.get(active_task or "")
+        if ok and self.verbosity != "detailed" and tool_name in {"read_file", "list_files", "glob_files", "grep_search"}:
+            return
         if self._reporter is not None and active_task and structured_run:
             semantic_key = (active_task, tool_name)
             semantic_count = self._structured_tool_result_rendered.get(semantic_key, 0)
@@ -486,7 +582,7 @@ class CliProgressEmitter:
             gate1_artifact = _t4_gate1_artifact(output_path) if active_task == "T4" else None
             if gate1_artifact:
                 index, label = gate1_artifact
-                prefix = f"Gate1 artifact {index}/6 · {label}"
+                prefix = f"候选方向选择文件 {index}/6 · {label}"
                 summary = f"{prefix}: {'已保存' if ok else '写入失败'}。{result_summary}"
             self._reporter.render_tool_result(
                 task_id=active_task,
@@ -514,21 +610,21 @@ class CliProgressEmitter:
                 index, label = gate1_artifact
                 if ok:
                     self.emit(
-                        f"[T4 Gate1] {index}/6 已保存 · {label}\n"
+                        f"[T4 候选方向] {index}/6 已生成 · {label}\n"
                         f"文件：{output_path}"
                     )
                 else:
                     self.emit(
-                        f"[T4 Gate1] {index}/6 写入失败 · {label}\n"
+                        f"[T4 候选方向] {index}/6 生成失败 · {label}\n"
                         f"文件：{output_path or '未确定'}\n"
                         f"原因：{_compact_text(result_summary, 220)}",
                         important=True,
                     )
                 return
         if ok and not self.verbose:
-            line = f"[Tool] {tool_name} {status}: {_compact_text(result_summary, 150)}"
+            line = f"{status}：{_compact_text(result_summary, 150)}"
             if output_path:
-                line += f" -> {output_path}"
+                line += f" 文件：{output_path}。"
             self.emit(line)
             return
         lines = [f"[Tool Result] {tool_name} {status}", f"结果摘要：{result_summary}"]
@@ -620,7 +716,7 @@ class CliProgressEmitter:
         self.emit("\n".join(lines), important=important)
 
     def validation_start(self, *, task_id: str) -> None:
-        self.emit(f"[Validation] {task_id}: 检查声明产物和 schema", important=True)
+        self.emit(f"[Validation] {task_id}: 检查结果文件和文件结构", important=True)
 
     def validation_result(
         self,
@@ -643,12 +739,12 @@ class CliProgressEmitter:
         )
 
     def runtime_pause(self, *, message: str) -> None:
-        self.emit(f"[Runtime] 暂停：{_compact_text(message, 260)}", important=True)
+        self.emit(f"[Runtime] 已暂停：{_compact_text(message, 260)}", important=True)
 
     def pipeline_start(self, *, project_id: str, task: str, resume: bool, status: str | None = None) -> None:
         if resume:
             suffix = f"，状态 {status}" if status else ""
-            self.emit(f"[Pipeline] Resume {project_id}: 当前任务 {task}{suffix}", important=True)
+            self.emit(f"[Pipeline] 恢复 {project_id}: 当前任务 {task}{suffix}", important=True)
         else:
             self.emit(f"[Pipeline] 启动 {project_id}: 首个任务 {task}", important=True)
 
@@ -659,10 +755,10 @@ class CliProgressEmitter:
             self.emit("[Pipeline] 已暂停", important=True)
 
     def gate_needed(self, *, gate_id: str, task: str) -> None:
-        self.emit(f"{self.SEPARATOR}\n[Gate] {task}: 等待用户选择 ({gate_id})", important=True)
+        self.emit(f"{self.SEPARATOR}\n[Gate] {task}: 等待你的选择", important=True)
 
     def gate_resolved(self, *, from_task: str, to_task: str, gate_id: str) -> None:
-        self.emit(f"{self.SEPARATOR}\n[Gate] 已确认 {gate_id}: {from_task} -> {to_task}", important=True)
+        self.emit(f"{self.SEPARATOR}\n[Gate] 已确认：{from_task} -> {to_task}", important=True)
 
     def runtime_validation_failed(
         self,
@@ -682,7 +778,7 @@ class CliProgressEmitter:
                 log_path=log_path,
             )
         lines = [
-            f"[Validation] {task_id}: runtime artifact 校验未通过",
+            f"[检查] {task_id}: 结果文件检查未通过",
             f"原因：{_compact_text(reason, 260)}",
         ]
         if log_path:
@@ -695,7 +791,7 @@ class CliProgressEmitter:
         from_task: str,
         to_task: str,
     ) -> None:
-        self.emit(f"{self.SEPARATOR}\n[State] {from_task} -> {to_task}", important=True)
+        self.emit(f"{self.SEPARATOR}\n[Pipeline] {from_task} -> {to_task}", important=True)
 
     def legacy_agent_done(
         self,
@@ -714,8 +810,8 @@ class CliProgressEmitter:
         important = True
         status = "阶段完成" if ok else "阶段停止"
         lines = [
-            f"[{agent} Agent] {status}",
-            f"任务：{task_id} | stop_reason={stop_reason}",
+            f"[{agent}] {status}",
+            f"任务：{task_id} | 停止原因={stop_reason}",
             f"完成内容：{summary}",
         ]
         if artifacts:
@@ -740,11 +836,11 @@ class CliProgressEmitter:
     ) -> None:
         if self.verbose:
             self.emit(
-                f"{self.SEPARATOR}\n[State] {from_task} 已结束，系统进入 {to_task}。原因：{_compact_text(reason, 160)}",
+                f"{self.SEPARATOR}\n[Pipeline] {from_task} 已结束，系统进入 {to_task}。原因：{_compact_text(reason, 160)}",
                 important=True,
             )
             return
-        self.emit(f"{self.SEPARATOR}\n[State] {from_task} -> {to_task}", important=True)
+        self.emit(f"{self.SEPARATOR}\n[Pipeline] {from_task} -> {to_task}", important=True)
 
     def error_context(
         self,
@@ -775,7 +871,7 @@ def format_cli_message(message: str, *, previous_kind: str | None = None) -> str
     blank line.
     """
 
-    text = _drop_generic_next_step_lines(str(message or "").strip())
+    text = _humanize_visible_stage_prefixes(_drop_generic_next_step_lines(str(message or "").strip()))
     if not text:
         return ""
     kind = classify_cli_message(text)
@@ -784,6 +880,17 @@ def format_cli_message(message: str, *, previous_kind: str | None = None) -> str
     if kind == "stream" and previous_kind not in {None, "stream"}:
         return "\n" + text
     return text
+
+
+def _humanize_visible_stage_prefixes(text: str) -> str:
+    """Keep task IDs in logs while removing them from public CLI prefixes."""
+
+    def replace(match: re.Match[str]) -> str:
+        task_id = match.group("task")
+        suffix = match.group("suffix")
+        return f"[{stage_display_name(task_id)}{suffix}]"
+
+    return _INTERNAL_STAGE_PREFIX_RE.sub(replace, text)
 
 
 def classify_cli_message(message: str) -> str:
@@ -864,18 +971,18 @@ def _format_t4_execution_event(event: dict[str, Any]) -> str:
 
     phase_labels = {
         "context_pack": "上下文包",
-        "pass1_mainline": "Pass1 主线",
-        "pass1_supplement": "Pass1 补充通道",
-        "pass2_grounding": "Pass2 接地复核",
+        "pass1_mainline": "第一轮主线方向",
+        "pass1_supplement": "第一轮补充方向",
+        "pass2_grounding": "第二轮依据核验",
         "scoring": "评分整理",
-        "gate_cards": "Gate1 卡片",
+        "gate_cards": "候选比较卡",
     }
     status_labels = {
         "started": "已开始",
-        "candidate_started": "候选开始",
-        "candidate_completed": "候选完成",
-        "channel_started": "通道开始",
-        "channel_completed": "通道完成",
+        "candidate_started": "开始整理",
+        "candidate_completed": "整理完成",
+        "channel_started": "开始处理",
+        "channel_completed": "处理完成",
         "completed": "已完成",
     }
     phase = phase_labels.get(str(event.get("phase") or ""), str(event.get("phase") or "T4"))
@@ -914,13 +1021,13 @@ def describe_output_artifact(path: str, *, task_id: str = "") -> str:
         "literature/synthesis.md": "T3.5 的文献综合，供 T4 idea 和论文写作引用。",
         "literature/missing_areas.md": "已覆盖内容、证据缺口与后续补检索建议。",
         "literature/domain_map.json": "领域、方法家族和桥接主题的结构化地图。",
-        "ideation/_pass1_forward_candidates.json": "T4 Pass 1 的原始发散候选池，供覆盖审计。",
-        "ideation/_pass2_grounding_review.json": "T4 Pass 2 对候选的接地复核、风险和上桌建议。",
-        "ideation/_candidate_directions.json": "完整的 Gate1 候选结构、评分、实验和支撑论文数据。",
+        "ideation/_pass1_forward_candidates.json": "第一轮生成的候选方向，保留不同思路以便后续核验。",
+        "ideation/_pass2_grounding_review.json": "第二轮对候选依据、风险和是否适合比较的核验结果。",
+        "ideation/_candidate_directions.json": "可供选择的完整候选方向、评分、验证方案和支撑论文信息。",
         "ideation/_family_distribution.md": "候选来源和机制谱系的集中度检查。",
-        "ideation/_gate1_candidate_cards.md": "供人工比较的完整 Gate1 候选卡片。",
+        "ideation/_gate1_candidate_cards.md": "供你比较的完整候选方向卡片。",
         "ideation/_gate1_selection_brief.md": "候选选择、合并与风险提示的决策简报。",
-        "ideation/selected_idea_brief.md": "用户 Gate1 选择和 T4 后半段收敛方向的可读记录。",
+        "ideation/selected_idea_brief.md": "你的选择，以及 T4 后续收敛方向的可读记录。",
         "ideation/hypotheses.md": "可证伪研究假设、边界条件与预期方向。",
         "ideation/experiment_plan.md": "实验设计、对照、指标、风险和停止条件。",
         "ideation/novelty_audit.md": "与相邻工作的差异、撞车风险和 claim 降级建议。",
@@ -934,9 +1041,9 @@ def describe_output_artifact(path: str, *, task_id: str = "") -> str:
     if normalized in exact:
         return exact[normalized]
     prefix_rules = (
-        ("literature/paper_notes/", "一篇结构化精读笔记，包含可引用 section、证据等级和边界。"),
-        ("literature/paper_notes_bridge/", "桥接领域论文的结构化笔记，用于核验跨域机制迁移。"),
-        ("literature/abstract_notes/", "摘要级轻读笔记，只能支撑背景或待核验线索。"),
+        ("literature/deep_read_notes/", "一篇论文阅读笔记，记录论文原文依据、证据强度和适用边界。"),
+        ("literature/bridge_notes/", "跨领域论文的阅读笔记，用于核验机制是否可以迁移。"),
+        ("literature/shallow_read_notes/", "摘要级轻读笔记，只能支撑背景或待核验线索。"),
         ("drafts/section_outlines/", "章节级证据补充或局部写作大纲，供对应论文段落回查。"),
         ("drafts/sections/", "单个论文章节的草稿与局部证据绑定结果。"),
         ("experiments/", "实验运行、结果或审计材料，供结果摄取和写作 evidence pack 使用。"),
@@ -955,19 +1062,19 @@ def next_step_after_completed_task(task_id: str) -> str | None:
     """Give a stable user-facing next action for common completed stages."""
 
     hints = {
-        "T1": "进入 T2 文献参数 Gate，确认覆盖规模、稿件语言和中文文献策略。",
-        "T2": "进入 T2 文献覆盖 Gate，确认候选池是否足够或是否需要补检索。",
-        "T3": "进入 T3.5 文献综合，形成可审计的 synthesis 和研究缺口。",
-        "T3.5": "进入综述分支/写作决策 Gate；无论是否写综述，synthesis 都会继续供 T4 使用。",
-        "T4": "进入 Gate1，由你选择、合并、重构或重新分析候选方向。",
-        "T4.5": "进入 T5 前的 context re-boost 与外部实验交接准备。",
-        "T5-HANDOFF": "进入项目专属 skill 和实验材料确认流程。",
-        "T7-INGEST": "进入实验完整性审计与 result-to-claim 映射。",
+        "T1": "进入 T2 的文献参数确认，确定覆盖规模、稿件语言和中文文献策略。",
+        "T2": "进入 T2 的文献覆盖确认，判断候选论文是否足够、是否需要补充检索。",
+        "T3": "进入 T3.5 文献综合，形成可核验的文献结论和研究空白。",
+        "T3.5": "进入综述分支与写作决策；无论是否写综述，文献综合都会继续供 T4 使用。",
+        "T4": "进入候选方向选择：你可以选择、合并、重构或要求重新分析候选方向。",
+        "T4.5": "进入 T5 前的研究意图整理与外部实验交接准备。",
+        "T5-HANDOFF": "进入项目专属 Skill 与实验材料确认流程。",
+        "T7-INGEST": "进入实验完整性审计，并把结果与可写入论文的主张对应起来。",
         "T7-CLAIMS": "进入写作放行评估，确认实验与证据是否足够支撑论文。",
         "T8-RESOURCE": "进入论文结构与章节级写作计划。",
         "T8-WRITE": "进入章节级写作与证据绑定。",
         "T8-DRAFT": "进入作者自查、双轮审稿和修订流程。",
-        "T9": "核对投稿包、PDF 编译结果与 submission checklist。",
+        "T9": "核对投稿包、PDF 编译结果与投稿前检查清单。",
     }
     if task_id.startswith("T8-SEC-"):
         return "继续完成剩余章节，并在整稿拼装时运行 claim 与 citation provenance 审计。"
@@ -988,9 +1095,9 @@ def describe_task_artifacts(task_id: str) -> str:
         "T3": "论文精读笔记、摘要级笔记、comparison table、BibTeX 和 notes manifest",
         "T3.5": "综述合成工作台、领域地图、缺口分析和 synthesis 文档",
         "T3.6-GATE-SURVEY": "综述阶段产物确认、写作/结束选择与后续路径决策",
-        "T4": "候选研究假设、idea 排序依据、实验计划、风险清单和 Gate1 展示材料",
-        "T4-GATE1": "面向用户选择的 idea 卡片、候选池摘要和最终选择记录",
-        "T4.5": "新颖性审计、撞车风险、机制 tuple 审计和 claim 降级建议",
+        "T4": "候选研究方向、排序依据、实验计划、风险清单和候选比较材料",
+        "T4-GATE1": "供你选择的候选方向卡片、候选摘要和最终选择记录",
+        "T4.5": "新颖性审计、相似工作风险、机制设计核验和主张收敛建议",
         "T5-REBOOST-GATE": "LLM 对 Pre-T5 材料做 context re-boost 并生成 handoff 上下文",
         "T5-HANDOFF": "外部实验 handoff pack、执行协议、项目专属 skills 和交接提示",
         "T5-SKILL-CUSTOMIZATION-GATE": "检查项目专属 skill suite 和 specialization report",
@@ -1177,6 +1284,23 @@ def summarize_tool_result(
             summary = summarize_reader_note_progress(data, progress=progress)
             detail = _compact_text(error or content or "工具返回失败", 180)
             return f"{summary}；问题：{detail}", _extract_output_path(tool_name, data)
+        if tool_name == "write_structured_file" and error == "schema_validation_failed":
+            schema_name = str(data.get("schema_name") or "unknown")
+            raw_diagnostics = data.get("schema_errors")
+            diagnostics = raw_diagnostics if isinstance(raw_diagnostics, list) else []
+            excerpts: list[str] = []
+            for item in diagnostics[:3]:
+                if not isinstance(item, dict):
+                    continue
+                path = str(item.get("path") or "$")
+                message = str(item.get("message") or "schema 不匹配")
+                excerpts.append(f"{path}: {message}")
+            detail = "；".join(excerpts) or _compact_text(content or "schema 不匹配", 240)
+            if len(diagnostics) > len(excerpts):
+                detail += f"；另有 {len(diagnostics) - len(excerpts)} 项"
+            return f"结构化文件未写入（{schema_name}）：{detail}", _extract_output_path(tool_name, data)
+        if tool_name in _HIGH_VOLUME_TOOL_NAMES:
+            return _summarize_high_volume_failure(tool_name, data=data, error=error), _extract_output_path(tool_name, data)
         return _compact_text(error or content or "工具返回失败", 280), _extract_output_path(tool_name, data)
 
     if tool_name in SEARCH_TOOL_NAMES:
@@ -1193,6 +1317,23 @@ def summarize_tool_result(
             return summary, "literature/papers_raw.jsonl"
         return f"返回 {reported} 条候选", None
 
+    if tool_name == "inspect_user_seeds":
+        path = str(data.get("path") or "user_seeds")
+        actual_count = int(data.get("actual_material_count") or 0)
+        placeholders = int(data.get("placeholder_count") or 0)
+        guides = int(data.get("guide_or_template_count") or 0)
+        actual_paths = data.get("actual_material_paths")
+        if actual_count:
+            summary = f"已检查 {path}：发现 {actual_count} 份真实研究材料"
+            if isinstance(actual_paths, list) and actual_paths:
+                summary += "（" + "、".join(str(item) for item in actual_paths) + "）"
+            return summary + "。", path
+        return (
+            f"已检查 {path}：尚未发现真实研究材料；"
+            f"{guides} 个说明/模板和 {placeholders} 个空白占位文件不会作为种子材料使用。",
+            path,
+        )
+
     if tool_name == "read_file":
         path = _extract_output_path(tool_name, data)
         size = data.get("size")
@@ -1202,24 +1343,99 @@ def summarize_tool_result(
         if isinstance(size, int) and isinstance(offset, int) and isinstance(max_chars, int):
             end = min(offset + max_chars, size)
             if truncated:
-                return f"已读取字符区间 {offset}:{end} / {size}；如需核验更多内容可继续按 offset 定向读取", path
+                if data.get("budget_policy") == "t2_raw_jsonl_checkpointed_paging":
+                    return f"正在读取原始检索结果（{offset}:{end} / {size} 字符）。", path
+                return f"正在读取文件（{offset}:{end} / {size} 字符）。", path
             return f"已读取完整文件，约 {size} 字符", path
         return _compact_text(content or "读取完成", 240 if verbose else 160), path
+
+    if tool_name == "extract_pdf_text":
+        path = _string_or_none(data.get("pdf")) or _extract_output_path(tool_name, data)
+        total_pages = _coerce_positive_int(data.get("total_pages"))
+        start_page = _coerce_positive_int(data.get("range_start_page") or data.get("start_page"))
+        end_page = _coerce_positive_int(data.get("end_page"))
+        extracted_range = str(data.get("extracted_page_range") or "").strip()
+        if not extracted_range and start_page and end_page:
+            extracted_range = f"{start_page}-{end_page}"
+        if not extracted_range:
+            extracted_range = "已请求范围"
+        total_text = f" / 共 {total_pages} 页" if total_pages else ""
+        if data.get("complete_pdf_read"):
+            return f"已提取论文文本：第 {extracted_range} 页{total_text}，可用于完整阅读。", path
+        next_page = _coerce_positive_int(data.get("next_start_page"))
+        if next_page:
+            return f"已提取论文文本：第 {extracted_range} 页{total_text}；后续可从第 {next_page} 页继续。", path
+        if data.get("truncated"):
+            return f"已提取论文文本：第 {extracted_range} 页{total_text}；本次内容较长，已保留可继续读取的位置。", path
+        return f"已提取论文文本：第 {extracted_range} 页{total_text}。", path
+
+    if tool_name == "extract_paper_sections":
+        path = _string_or_none(data.get("pdf")) or _extract_output_path(tool_name, data)
+        sections = data.get("sections")
+        section_names = list(sections) if isinstance(sections, dict) else []
+        if not section_names:
+            return "未识别到可用的论文部分；可改用全文阅读。", path
+        names = "、".join(_display_section_name(name) for name in section_names[:4])
+        suffix = f"；另有 {len(section_names) - 4} 个部分" if len(section_names) > 4 else ""
+        return f"已提取 {len(section_names)} 个论文部分：{names}{suffix}。", path
+
+    if tool_name == "fetch_paper_pdf":
+        path = _extract_output_path(tool_name, data)
+        size = _format_byte_size(_first_present(data, "size", "bytes", "written_bytes"))
+        return f"已获取 PDF{f'（{size}）' if size else ''}。", path
+
+    if tool_name == "web_fetch":
+        status = data.get("status_code")
+        content_type = _compact_text(data.get("content_type"), 48)
+        details = []
+        if status:
+            details.append(f"HTTP {status}")
+        if content_type:
+            details.append(content_type)
+        if data.get("truncated"):
+            details.append("内容较长，已保留可用范围")
+        return "已获取网页内容" + (f"（{'；'.join(details)}）" if details else "") + "。", None
+
+    if tool_name in {"bash_run", "docker_exec"}:
+        exit_code = _first_present(data, "exit_code", "returncode")
+        detail = f"（exit {exit_code}）" if exit_code is not None else ""
+        if data.get("truncated"):
+            detail += "；输出已写入运行日志"
+        label = "隔离命令" if tool_name == "docker_exec" else "命令"
+        return f"{label}已完成{detail}。", _extract_output_path(tool_name, data)
+
+    if tool_name == "latex_compile":
+        report = data.get("compile_report") if isinstance(data.get("compile_report"), dict) else {}
+        pdf_path = _string_or_none(data.get("pdf_path")) or _string_or_none(report.get("pdf_path"))
+        engine = _compact_text(report.get("engine") or report.get("selected_backend"), 32)
+        detail = f"（{engine}）" if engine else ""
+        return f"LaTeX 已编译{detail}。", pdf_path or _extract_output_path(tool_name, data)
+
+    if tool_name == "clone_repo":
+        target = _string_or_none(data.get("target_path")) or _extract_output_path(tool_name, data)
+        branch = _compact_text(data.get("branch"), 48)
+        return f"代码仓库已导入{f'（{branch}）' if branch else ''}。", target
 
     if tool_name in {"list_files", "glob_files", "grep_search"}:
         count = _first_present(data, "count", "matched_count", "file_count", "item_count")
         path = _extract_output_path(tool_name, data)
-        if count is not None:
-            return f"读取/匹配到 {count} 项", path
-        return _compact_text(content or "读取完成", 240 if verbose else 160), path
+        if tool_name == "grep_search":
+            return f"已找到 {count or 0} 处匹配", path
+        return f"已查看 {path or '目录'}（{count or 0} 项）", path
 
     if tool_name in {"write_file", "write_structured_file", "append_file"}:
         path = _extract_output_path(tool_name, data)
-        byte_count = _first_present(data, "bytes", "size", "written_bytes")
-        summary = "文件写入完成"
-        if byte_count is not None:
-            summary += f"，约 {byte_count} bytes"
+        byte_count = _format_byte_size(_first_present(data, "bytes", "size", "written_bytes"))
+        summary = "已保存文件"
+        if byte_count:
+            summary += f"（{byte_count}）"
         return summary, path
+
+    if tool_name in {"append_papers_raw", "save_papers_raw", "save_papers_dedup", "process_papers_raw"}:
+        path = _extract_output_path(tool_name, data) or "literature/papers_raw.jsonl"
+        count = _first_present(data, "count", "processed_count", "valid_input_count", "saved_count")
+        verb = "已更新文献池" if tool_name != "process_papers_raw" else "已处理原始检索记录"
+        return f"{verb}{f'：{count} 条' if count is not None else ''}。", path
 
     if tool_name == "log_scout_progress":
         if data.get("skipped"):
@@ -1241,7 +1457,7 @@ def summarize_tool_result(
         return summarize_reader_note_progress(data, progress=progress), _string_or_none(path)
 
     if tool_name == "finish_task":
-        return "agent 请求进入输出校验；runtime 正在检查声明产物和 schema", None
+        return "已请求检查输出；系统正在核对结果文件和文件结构。", None
 
     if tool_name == "ask_human":
         return "已获得用户输入", _extract_output_path(tool_name, data)
@@ -1250,7 +1466,9 @@ def summarize_tool_result(
     counts = _summarize_counts(data)
     if counts:
         return counts, path
-    return _compact_text(content or "工具执行完成", 240 if verbose else 180), path
+    if verbose:
+        return _compact_text(content or "工具执行完成", 240), path
+    return "操作已完成", path
 
 
 def summarize_progress_markdown(path: Path, *, max_items: int = 4) -> list[str]:
@@ -1390,7 +1608,7 @@ def _tool_expected_output(tool_name: str) -> str:
     if tool_name == "grep_search":
         return "匹配位置和片段，用于快速定位代码或文档中的关键信息"
     if tool_name in {"write_file", "write_structured_file", "append_file"}:
-        return "写入后的 artifact 路径和基本大小信息"
+        return "写入后的文件路径和基本大小信息"
     if tool_name == "log_scout_progress":
         return "新增 progress markdown 条目和简洁进度摘要"
     if tool_name == "log_t4_ideation_progress":
@@ -1400,7 +1618,7 @@ def _tool_expected_output(tool_name: str) -> str:
     if tool_name == "ask_human":
         return "用户选择/回答，并写入 runtime 上下文"
     if tool_name == "save_paper_note":
-        return "paper note 文件、notes manifest 更新和阅读进度"
+        return "论文阅读笔记、笔记清单更新和阅读进度"
     if tool_name == "latex_compile":
         return "LaTeX 编译状态、错误摘要和 PDF/日志路径"
     return "结构化工具结果"
@@ -1409,6 +1627,14 @@ def _tool_expected_output(tool_name: str) -> str:
 def _tool_output_path(tool_name: str, arguments: dict[str, Any], workspace_dir: Path | None) -> str | None:
     if tool_name in {"write_file", "write_structured_file", "append_file", "read_file"}:
         return safe_relative(arguments.get("path"), workspace_dir)
+    if tool_name in {"extract_pdf_text", "extract_paper_sections"}:
+        return safe_relative(arguments.get("pdf_path"), workspace_dir)
+    if tool_name == "fetch_paper_pdf":
+        return safe_relative(arguments.get("save_path"), workspace_dir)
+    if tool_name == "clone_repo":
+        return safe_relative(arguments.get("target_dir"), workspace_dir)
+    if tool_name == "latex_compile":
+        return safe_relative(arguments.get("tex_path"), workspace_dir)
     if tool_name in SEARCH_TOOL_NAMES:
         return "literature/papers_raw.jsonl"
     if tool_name == "log_scout_progress":
@@ -1416,7 +1642,7 @@ def _tool_output_path(tool_name: str, arguments: dict[str, Any], workspace_dir: 
     if tool_name == "log_t4_ideation_progress":
         return "ideation/t4_execution_events.jsonl"
     if tool_name == "save_paper_note":
-        return "literature/paper_notes/"
+        return "literature/deep_read_notes/"
     if tool_name == "generate_search_log":
         return "literature/search_log.md"
     return None
@@ -1431,10 +1657,94 @@ def _extract_output_path(tool_name: str, data: dict[str, Any]) -> str | None:
     if isinstance(paths, dict):
         short = [str(value) for value in paths.values() if isinstance(value, str) and value.strip()]
         if short:
-            return ", ".join(short[:3]) + (f", ...(+{len(short) - 3})" if len(short) > 3 else "")
+            return ", ".join(short)
     if tool_name in SEARCH_TOOL_NAMES:
         return "literature/papers_raw.jsonl"
     return None
+
+
+def _coerce_positive_int(value: Any) -> int | None:
+    """Return a positive integer from a tool's optional metadata field."""
+
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _format_byte_size(value: Any) -> str | None:
+    """Format an artifact size for people without exposing raw payloads."""
+
+    try:
+        size = int(value)
+    except (TypeError, ValueError):
+        return None
+    if size < 0:
+        return None
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size / (1024 * 1024):.1f} MB"
+
+
+def _display_section_name(value: Any) -> str:
+    """Make common PDF section identifiers readable in the CLI."""
+
+    normalized = str(value or "").strip().casefold()
+    labels = {
+        "abstract": "Abstract",
+        "introduction": "Introduction",
+        "related work": "Related Work",
+        "method": "Method",
+        "methods": "Method",
+        "results": "Results",
+        "discussion": "Discussion",
+        "conclusion": "Conclusion",
+        "limitations": "Limitations",
+    }
+    return labels.get(normalized, _compact_text(value, 42))
+
+
+def _summarize_high_volume_failure(tool_name: str, *, data: dict[str, Any], error: str | None) -> str:
+    """Give a short actionable failure for tools whose raw output is noisy.
+
+    Full stack traces, command output, HTML, endpoint details, and extracted
+    text remain in the trace and log.  The terminal should state only what
+    failed and where the user can continue troubleshooting.
+    """
+
+    code = str(error or data.get("error") or "unknown_error").strip()
+    labels = {
+        "extract_pdf_text": "论文文本提取失败",
+        "extract_paper_sections": "论文部分提取失败",
+        "fetch_paper_pdf": "PDF 获取失败",
+        "web_fetch": "网页获取失败",
+        "bash_run": "命令未成功",
+        "docker_exec": "隔离命令未成功",
+        "latex_compile": "LaTeX 编译未通过",
+        "clone_repo": "代码仓库导入失败",
+        "append_papers_raw": "文献池更新失败",
+        "save_papers_raw": "原始检索记录保存失败",
+        "save_papers_dedup": "去重文献保存失败",
+        "process_papers_raw": "原始检索记录处理失败",
+        "build_experiment_handoff_pack": "实验交接材料生成失败",
+        "compile_research_reboost_handoff": "实验交接核验失败",
+        "ingest_external_results": "实验结果导入失败",
+        "mock_external_dry_run": "外部执行器演练失败",
+        "wait_for_external_executor_result": "外部执行结果尚未就绪",
+    }
+    label = labels.get(tool_name, "操作未成功")
+    if code in {"not_found", "file_not_found"}:
+        return f"{label}：未找到所需文件。"
+    if code in {"dependency_missing", "waiting_environment_latexmk_missing", "waiting_environment_tectonic_missing"}:
+        return f"{label}：当前环境缺少所需依赖。"
+    if code in {"timeout", "download_failed", "request_failed", "network_unavailable"}:
+        return f"{label}：服务暂时不可用，可稍后重试。"
+    if code in {"nonzero_exit", "pdf_missing", "compile_failed"}:
+        return f"{label}：请查看对应日志中的简短错误定位后修复。"
+    return f"{label}（{_compact_text(code, 64)}）。"
 
 
 def _summarize_counts(data: dict[str, Any]) -> str:
@@ -1453,7 +1763,7 @@ def _summarize_counts(data: dict[str, Any]) -> str:
         "failed",
     ):
         if key in data and isinstance(data.get(key), (int, float, str)):
-            interesting.append(f"{key}={data.get(key)}")
+            interesting.append(f"{key}={_compact_text(data.get(key), 72)}")
     return "；".join(interesting[:8])
 
 
@@ -1484,16 +1794,20 @@ def _join_fields(fields: list[tuple[str, Any]], *, max_len: int) -> str:
 def _summarize_sequence(value: Any, max_items: int) -> str:
     if not isinstance(value, (list, tuple, set)):
         return _compact_text(value, 160)
-    items = [str(item) for item in list(value)[:max_items]]
-    suffix = f", ...(+{len(value) - max_items})" if len(value) > max_items else ""
-    return "[" + ", ".join(items) + suffix + "]"
+    del max_items
+    return "[" + ", ".join(str(item) for item in value) + "]"
 
 
 def _compact_text(value: Any, max_len: int = 200) -> str:
+    """Normalize display text and avoid character-level clipping in the CLI."""
+
     text = " ".join(str(value or "").split())
-    if len(text) > max_len:
-        return text[: max(0, max_len - 3)] + "..."
-    return text
+    if len(text) <= max_len:
+        return text
+    boundaries = [match.end() for match in re.finditer(r"[。！？；;](?:\s|$)|\.\s", text) if match.end() <= max_len]
+    if boundaries:
+        return text[: boundaries[-1]].strip()
+    return "信息较长；完整记录可通过 --verbose、trace 或运行日志查看。"
 
 
 def _format_note_status(value: Any) -> str:

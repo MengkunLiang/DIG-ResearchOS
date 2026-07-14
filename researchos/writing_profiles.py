@@ -25,6 +25,22 @@ def _normalized(value: object) -> str:
     return " ".join(str(value or "").casefold().replace("_", " ").replace("-", " ").split())
 
 
+def _venue_alias_matches(venue: str, alias: str) -> bool:
+    """Match short aliases as complete words to avoid accidental substrings.
+
+    For example, the generic ``ai`` alias must not turn ``AISeL`` into an AI
+    conference profile. Longer venue names remain substring-matchable so names
+    such as ``NeurIPS 2026`` and ``Information Systems Research`` work without
+    an exact-string registry.
+    """
+
+    if not alias or not venue:
+        return False
+    if len(alias) <= 3:
+        return alias in venue.split()
+    return alias in venue
+
+
 @lru_cache(maxsize=4)
 def _load_profile_catalog(path_value: str) -> dict[str, Any]:
     path = Path(path_value)
@@ -33,9 +49,11 @@ def _load_profile_catalog(path_value: str) -> dict[str, Any]:
     except (OSError, yaml.YAMLError):
         raw = {}
     profiles = raw.get("profiles") if isinstance(raw, dict) else {}
+    style_detection = raw.get("style_detection") if isinstance(raw, dict) else {}
     return {
         "default_profile": str(raw.get("default_profile") or DEFAULT_PROFILE_ID) if isinstance(raw, dict) else DEFAULT_PROFILE_ID,
         "profiles": profiles if isinstance(profiles, dict) else {},
+        "style_detection": style_detection if isinstance(style_detection, dict) else {},
     }
 
 
@@ -76,7 +94,7 @@ def _pick_profile_id(target_venue: object, writing_style: Mapping[str, Any]) -> 
         ranked: list[tuple[int, str]] = []
         for profile_id, profile in profiles.items():
             aliases = [_normalized(item) for item in profile.get("aliases", []) if str(item).strip()]
-            matched = [alias for alias in aliases if alias and alias in venue]
+            matched = [alias for alias in aliases if _venue_alias_matches(venue, alias)]
             if matched:
                 ranked.append((max(len(alias) for alias in matched), profile_id))
         if ranked:
@@ -118,6 +136,57 @@ def resolve_venue_writing_profile(
         "Internal drafting targets only; verify current official venue page limits, template, and submission rules separately."
     )
     return resolved
+
+
+def suggest_venue_style(target_venue: object = "") -> str:
+    """Suggest an internal writing style from the unified venue catalog.
+
+    This is deliberately a drafting hint. It does not assert a venue's current
+    template, review criteria, page limit, or submission requirements.
+    """
+
+    venue = _normalized(target_venue)
+    profile = resolve_venue_writing_profile(target_venue)
+    style = str(profile.get("venue_style") or "").strip()
+    if str(profile.get("resolved_from") or "") != "default" and style:
+        return style
+
+    detection = _catalog().get("style_detection", {})
+    is_aliases = detection.get("is_aliases", []) if isinstance(detection, Mapping) else []
+    if venue and any(
+        _venue_alias_matches(venue, _normalized(alias))
+        for alias in is_aliases
+        if _normalized(alias)
+    ):
+        return "is"
+    if style:
+        return style
+    default = detection.get("default_style") if isinstance(detection, Mapping) else ""
+    return str(default or "ccf_a")
+
+
+def suggest_template_selection(target_venue: object = "") -> dict[str, str]:
+    """Suggest a locally supported template from the same venue catalog.
+
+    Unknown venues stay on the neutral English template rather than silently
+    pretending that a NeurIPS template is appropriate. The user may still
+    select a specific template at the T8 template gate.
+    """
+
+    profile = resolve_venue_writing_profile(target_venue)
+    template_ids = profile.get("template_ids")
+    source = str(profile.get("resolved_from") or "")
+    if source == "target_venue" and isinstance(template_ids, list) and template_ids:
+        template_id = str(template_ids[0]).strip()
+        template_family = str(profile.get("template_family") or "basic_en").strip()
+        language = str(profile.get("writing_language") or "en").strip()
+        if template_id:
+            return {
+                "template_family": template_family or "basic_en",
+                "template_id": template_id,
+                "writing_language": language or "en",
+            }
+    return {"template_family": "basic_en", "template_id": "basic_en", "writing_language": "en"}
 
 
 def section_word_budget_ranges(profile: Mapping[str, Any]) -> dict[str, tuple[int, int]]:

@@ -34,9 +34,10 @@ function Require-DeployFiles {
     Write-Host "[WARN] .env not found; provider secrets will only come from the shell."
     Write-Host "       Optional setup: Copy-Item .env.example .env"
   }
-  if (-not (Test-Path (Join-Path $RepoRoot "config/user_settings.yaml"))) {
-    Write-Host "[ERROR] config/user_settings.yaml not found."
-    Write-Host "        Docker Mode uses the same root config as Native Mode."
+  if (-not (Test-Path (Join-Path $RepoRoot "config/model_settings.yaml"))) {
+    Write-Host "[ERROR] config/model_settings.yaml not found."
+    Write-Host "        Run on the host: python -m researchos.cli configure-llm"
+    Write-Host "        Docker mounts config read-only, so setup must happen before this command."
     $missing = $true
   }
   if ($missing) {

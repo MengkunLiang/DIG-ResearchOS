@@ -10,7 +10,7 @@ tools:
   - semantic_scholar_get_paper
   - finish_task
 strict_tools: true
-model_tier: medium
+model_tier: standard
 temperature: 0.05
 allowed_read_prefixes:
   - user_inputs/citation-library-curator/
@@ -66,8 +66,7 @@ interaction:
 
 # Citation Library Curation
 
-Read the entire supplied bibliography before proposing changes. Preserve every original
-entry in the audit record. Group possible duplicates by DOI first, then by normalized
+Read the entire supplied bibliography before proposing changes. Preserve every original entry in the audit record. Group possible duplicates by DOI first, then by normalized
 title/author/year only when the source evidence supports that grouping. Query provider
 metadata only to verify or repair explicit candidate fields; a provider failure or an
 ambiguous title match is a reported uncertainty, not permission to invent metadata.

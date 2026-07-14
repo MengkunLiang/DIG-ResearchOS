@@ -30,6 +30,7 @@ class ToolBuildContext:
     llm_model: str | None = None
     llm_tier: str | None = None
     llm_max_context: int | None = None
+    llm_context_source: str | None = None
     skill_session_id: str | None = None
 
 
@@ -44,6 +45,7 @@ class ToolRegistry:
 
     def __init__(self) -> None:
         self._factories: dict[str, ToolFactory] = {}
+        self._dynamic_tools_by_agent: dict[str, set[str]] = {}
 
     def register(self, name: str, factory: ToolFactory) -> None:
         if name in self._factories:
@@ -80,3 +82,25 @@ class ToolRegistry:
 
     def available_names(self) -> list[str]:
         return sorted(self._factories)
+
+    def grant_dynamic_tools(self, names: list[str], *, allowed_agents: list[str] | None = None) -> None:
+        """Make externally registered tools available to selected Agents.
+
+        MCP tools are discovered only at runtime, so they cannot be listed in
+        every static Agent declaration. The default ``["*"]`` intentionally
+        gives a user-configured research MCP to all Agents and Skills; a server
+        can narrow that surface with ``allowed_agents`` in ``config/mcp.yaml``.
+        """
+
+        agents = allowed_agents or ["*"]
+        for agent_name in agents:
+            key = str(agent_name).strip() or "*"
+            bucket = self._dynamic_tools_by_agent.setdefault(key, set())
+            bucket.update(str(name) for name in names if str(name) in self._factories)
+
+    def dynamic_tool_names_for(self, agent_name: str) -> list[str]:
+        """Return stable runtime-added tools visible to one Agent or Skill."""
+
+        names = set(self._dynamic_tools_by_agent.get("*", set()))
+        names.update(self._dynamic_tools_by_agent.get(str(agent_name), set()))
+        return sorted(names)

@@ -15,6 +15,7 @@ from pathlib import Path
 from ..runtime.agent import Agent, ExecutionContext
 from ..runtime.agent_params import build_agent_spec, get_agent_params
 from ..runtime.config import load_runtime_settings
+from ..runtime.system_config import system_config_path
 from ..runtime.prompts import render_prompt
 from ..tools.latex_compile import _compile_dependency_fingerprint, latex_backend_preflight
 from ..tools.manuscript import extract_bibliography_stems
@@ -87,7 +88,7 @@ def check_anonymization(ctx: ExecutionContext) -> tuple[bool, str | None]:
 def check_submission_compile_environment(ctx: ExecutionContext) -> tuple[bool, str | None]:
     """Pre-hook: prove T9 has a real native or configured Docker PDF backend."""
 
-    latex_settings = load_runtime_settings(Path("config/runtime.yaml")).latex
+    latex_settings = load_runtime_settings(system_config_path("runtime.yaml")).latex
     readiness = latex_backend_preflight(latex_settings)
     if readiness.get("ok"):
         ctx.extra["latex_backend_preflight"] = readiness

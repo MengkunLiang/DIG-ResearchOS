@@ -1,0 +1,39 @@
+# ResearchOS 模型连接 / model connection
+# 本 example 不会被 runtime 读取。运行 `python -m researchos.cli configure-llm`
+# 会自动创建本地 config/model_settings.yaml；也可以复制本文件后手动填写。
+# This example is not loaded by the runtime. Configure the real local file with
+# `python -m researchos.cli configure-llm`, or copy this file and edit it.
+# 这是普通用户唯一需要修改的模型配置文件。它被 Git 忽略，因为可包含 API key。
+# It is the only everyday model configuration file and is ignored by Git.
+# 当真实 model_settings.yaml 已完整配置时，首次 run/resume 会跳过配置向导；
+# 如果文件缺失或字段不完整，TTY 会显示 Rich 配置卡并逐项询问。
+# A complete real model_settings.yaml skips setup on run/resume. A missing or
+# incomplete file opens a Rich, step-by-step setup flow in an interactive TTY.
+
+# 常用 preset：openai、anthropic、openrouter、deepseek、siliconflow、google、
+# groq、together、fireworks、mistral、cohere、xai、perplexity、cerebras、
+# nvidia_nim、moonshot、zhipu、qwen、minimax、ollama、lm_studio、vllm。
+# 其他 OpenAI-compatible endpoint 使用 openai_compatible；完整列表见 docs/cn/config.md。
+provider: deepseek
+
+# 已知 provider 留空也会使用官方默认 URL；自建 relay 可在此覆盖。
+# openai_compatible 必须填写该字段。
+api_base: https://api.deepseek.com
+
+# 可直接填写 key，或引用 .env，例如 "${DEEPSEEK_API_KEY}"。
+# 留空时会检查该 provider 的惯例环境变量。
+# 交互输入会隐藏完整 key；系统只显示掩码、长度和末尾校验位以确认已保存。
+# Interactive entry never echoes the key; it confirms a masked value, length,
+# and final characters after the value has been saved.
+api_key: "${DEEPSEEK_API_KEY}"
+
+# 所有 Agent 和 Skill 使用同一个 model；没有 heavy/medium/light 或单 Agent 路由。
+model: ""
+
+# 同一 provider/model 临时故障时的重试策略，不会暗中切换到其他模型。
+# 认证或配置错误不会重试，CLI 会提示需要修正的内容。
+fallback:
+  max_attempts: 3
+  initial_wait_seconds: 3
+  max_wait_seconds: 20
+  retry_after_timeout: true

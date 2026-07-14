@@ -11,8 +11,8 @@
 - ResearchOS 不接受执行器自然语言总结作为事实，只接受 raw artifact、config、log、hash、ingest/audit/result-to-claim
 
 外部实验主链输出：
-- T5-REBOOST-GATE/T5-REBOOST: external_executor/handoff_pack.json、external_executor/reboost_report.json、AGENTS.md、CLAUDE.md、README.md、executor_prompt.md、codex_prompt.md、claude_code_prompt.md、expected_outputs_schema.json、allowed_paths.txt
-- specialize-executor-skills: 调用 LLM 专属化 root skill suite，输出 external_executor/project_skill_context.yaml、external_executor/skill_specialization_report.json、external_executor/skills/
+- T5-REBOOST-GATE/T5-REBOOST: external_executor/handoff_pack.json、external_executor/reboost_report.json、AGENTS.md、CLAUDE.md、README.md、executor_prompt.md、codex_prompt.md、claude_code_prompt.md、expected_outputs_schema.json、allowed_paths.txt、project_skill_context.yaml、skill_specialization_report.json、skills/
+- specialize-executor-skills: 可选的 LLM 增强专属化命令；正常 T5 已通过确定性编译器生成并校验项目 Skill suite
 - T5-HANDOFF: legacy 兼容入口，生成 handoff 并可同步生成 skill suite
 - T5-SKILL-CUSTOMIZATION-GATE: external_executor/skill_specialization_report.json
 - T5-EXECUTOR-GATE: external_executor/executor_selection.json
@@ -55,7 +55,7 @@ Legacy Full 模式（T7）输出：
 - experiments/code/run_exp.py: 可执行的实验代码
 - experiments/docker_digests.txt: Docker 镜像 digest
 
-契约详见 docs/agent_pipeline.md、docs/experiment_module_redesign.md 和 docs/external_executor_protocol.md。
+契约详见 docs/cn/agent_pipeline.md、docs/experiment_module_redesign.md 和 docs/external_executor_protocol.md。
 """
 
 from __future__ import annotations
@@ -646,7 +646,7 @@ def _validate_external_skill_customization(ws: Path) -> tuple[bool, str | None]:
     report, err = _read_json_artifact(ws, "external_executor/skill_specialization_report.json")
     if err:
         return False, err
-    ok, err = _validate_specialization_report(report, require_llm=True)
+    ok, err = _validate_specialization_report(report)
     if not ok:
         return False, err
     for rel in (
@@ -1207,11 +1207,12 @@ class ExperimenterAgent(Agent):
                     "`scripts/validate_handoff.py` 编译、校验并 pretty-print "
                     "`external_executor/handoff_pack.json`，同时写 `external_executor/reboost_report.json`、"
                     "`reboost_validation_report.json`、AGENTS/CLAUDE/README、prompt、expected schema、"
-                    "allowed paths、input manifest、job_state 和 expr scaffold。\n\n"
+                    "allowed paths、input manifest、job_state、expr scaffold，以及由模板和项目上下文确定性生成的 "
+                    "`external_executor/skills/`、`project_skill_context.yaml`、`skill_specialization_report.json`。\n\n"
                     "完成后读取 `external_executor/reboost_report.json`；如果 validation_ok=true，"
-                    "调用 finish_task。不要手写压缩成一行的 JSON；不要生成或改写 "
-                    "`external_executor/skills/`，下一步由用户显式运行 "
-                    "`researchos specialize-executor-skills`。"
+                    "调用 finish_task。`compile_research_reboost_handoff` 是 handoff pack 的唯一写入者；"
+                    "不要用 write_file 修改它，不要手写压缩成一行的 JSON；不要生成或改写 "
+                    "`external_executor/skills/`，后续由 T5-SKILL-CUSTOMIZATION-GATE 审阅已生成的 suite。"
                 ),
             )
         if mode == "handoff":
@@ -1233,7 +1234,7 @@ class ExperimenterAgent(Agent):
                     "请执行 T5 Project Skill Specialization Review Gate：读取 "
                     "external_executor/skill_specialization_report.json、"
                     "external_executor/project_skill_context.yaml 和 external_executor/skills/ 下的 13 个 "
-                    "SKILL.md，确认它们已经由 researchos specialize-executor-skills 调用 LLM 完成项目专属化。不要在 gate 中再次改写 skill，"
+                    "SKILL.md，确认它们已经由 T5 的 schema-validated project specialization compiler 生成。不要在 gate 中再次改写 skill，"
                     "不要运行实验，不要写 result_pack、executor_status 或 run_manifest。\n\n"
                     "报告 status 为 ready 或 incomplete 均表示专属化产物已生成；incomplete 只说明存在 "
                     "required uncertain 字段，后续由运行期 skill 做 context alignment。若报告为 failed "
@@ -1440,7 +1441,7 @@ class ExperimenterAgent(Agent):
                 return False, "external_executor/reboost_report.json semantics 不正确"
             if report.get("handoff_pack") != "external_executor/handoff_pack.json":
                 return False, "external_executor/reboost_report.json 必须指向 handoff_pack"
-            return _validate_external_handoff(ws, require_specialization=False)
+            return _validate_external_handoff(ws, require_specialization=True)
         if mode == "handoff":
             return _validate_external_handoff(ws)
         if mode == "skill_customization":

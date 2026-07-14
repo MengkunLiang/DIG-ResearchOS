@@ -1400,7 +1400,18 @@ class BuildVerifiedPapersTool(Tool):
 
 
 class BuildDeepReadQueueParams(BaseModel):
-    papers: list[dict[str, Any]] = Field(..., description="去重并增强后的论文列表")
+    papers: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="可选的去重并增强论文列表；省略时读取 workspace 中已核验的论文池。",
+    )
+    papers_path: str | None = Field(
+        default=None,
+        description="可选的 workspace 相对路径；省略时使用 literature/papers_verified.jsonl。",
+    )
+    papers_verified_path: str | None = Field(
+        default=None,
+        description="兼容参数：与 papers_path 等价，适合直接指定已核验论文池。",
+    )
     deep_read_min: int | None = Field(None, description="最低有效 deep-read 数；省略时读取 reader read mode config。")
     deep_read_target: int | None = Field(None, description="目标 deep-read 数；省略时读取 reader read mode config。")
     deep_read_max: int | None = Field(None, description="最大 deep-read/probe 队列数；省略时读取 reader read mode config。")
@@ -1446,8 +1457,19 @@ class BuildDeepReadQueueTool(Tool):
         queue_config = load_deep_read_queue_config(self.policy.workspace_dir)
 
         try:
+            papers = params.papers
+            if papers is None:
+                source_path = params.papers_path or params.papers_verified_path or "literature/papers_verified.jsonl"
+                resolved_path = self.policy.resolve_read(source_path)
+                if not resolved_path.is_file():
+                    return ToolResult(
+                        ok=False,
+                        content=f"未找到可用于生成阅读队列的论文池：{source_path}",
+                        error="papers_source_missing",
+                    )
+                papers = _load_jsonl_local(resolved_path)
             queue_records, metadata = build_deep_read_queue(
-                params.papers,
+                papers,
                 self.policy.workspace_dir,
                 deep_read_min=params.deep_read_min if params.deep_read_min is not None else queue_config.deep_read_min,
                 deep_read_target=params.deep_read_target if params.deep_read_target is not None else queue_config.deep_read_target,
