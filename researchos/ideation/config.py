@@ -70,6 +70,8 @@ class T4EvolutionSettings(_ConfigModel):
     opportunity_minimum: int = Field(default=3, ge=1, le=10)
     opportunity_maximum: int = Field(default=6, ge=1, le=12)
     maximum_rounds: int = Field(default=3, ge=1, le=5)
+    family_similarity_threshold: float = Field(default=0.45, ge=0, le=1)
+    complexity_growth_ratio_limit: float = Field(default=1.8, ge=1, le=5)
     one_repair_attempt_per_route: bool = True
     bridge_policy_default: str = "allow_abstract_with_upgrade"
     scoring_rubric_path: str = "config/system_config/idea_scoring_rubric.yaml"

@@ -53,6 +53,8 @@ offspring:
 opportunity_minimum: 3
 opportunity_maximum: 6
 maximum_rounds: 3
+family_similarity_threshold: 0.45
+complexity_growth_ratio_limit: 1.8
 one_repair_attempt_per_route: true
 bridge_policy_default: allow_abstract_with_upgrade
 scoring_rubric_path: config/system_config/idea_scoring_rubric.yaml

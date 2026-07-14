@@ -326,6 +326,23 @@ class IdeaSeed(_StrictModel):
     _id = field_validator("candidate_id")(_validate_identifier)
 
 
+class RouteGenerationResult(_StrictModel):
+    schema_version: str = SCHEMA_VERSION
+    route: str = Field(min_length=1)
+    status: Literal["supported", "unsupported", "partial"]
+    candidate_ids: list[str] = Field(default_factory=list)
+    unsupported_reason: str = ""
+    repaired_once: bool = False
+
+    @model_validator(mode="after")
+    def route_result_integrity(self) -> "RouteGenerationResult":
+        if self.status == "unsupported" and not self.unsupported_reason.strip():
+            raise ValueError("unsupported route requires unsupported_reason")
+        if self.status == "supported" and not self.candidate_ids:
+            raise ValueError("supported route requires candidate_ids")
+        return self
+
+
 class IdeaGenome(_StrictModel):
     schema_version: str = SCHEMA_VERSION
     candidate_id: str
