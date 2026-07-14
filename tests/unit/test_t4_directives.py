@@ -50,3 +50,13 @@ def test_component_composition_requires_component_level_references_and_persists_
     artifact = tmp_path / path
     assert artifact.exists()
     assert '"population_id": "P1"' in artifact.read_text(encoding="utf-8")
+
+
+def test_route_regeneration_directive_extracts_a_declared_route_without_project_defaults():
+    directive = parse_idea_directive(
+        "Regenerate the cross-domain bridge route",
+        candidate_ids={"I1", "I2"},
+    )
+
+    assert directive.action == "regenerate_route"
+    assert directive.requested_route == "cross_domain_bridge"

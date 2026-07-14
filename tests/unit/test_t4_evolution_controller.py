@@ -120,6 +120,23 @@ class FakeGenerator:
         return [_candidate(f"I{suffix}{index}", route, mechanism=f"{suffix} mechanism {index}") for index in range(1, quota + 1)]
 
 
+class RegeneratingFakeGenerator(FakeGenerator):
+    def __init__(self):
+        self.calls: dict[str, int] = {}
+
+    async def generate_route(self, *, route, opportunities, evidence_bundle, quota, repair):
+        self.calls[route] = self.calls.get(route, 0) + 1
+        if route == "evidence_routed_literature" and self.calls[route] > 1:
+            return [_candidate(f"RR{index}", route, mechanism=f"Regenerated mechanism {index}") for index in range(1, quota + 1)]
+        return await super().generate_route(
+            route=route,
+            opportunities=opportunities,
+            evidence_bundle=evidence_bundle,
+            quota=quota,
+            repair=repair,
+        )
+
+
 class FakeScorer:
     async def score_population(self, *, candidates, scoring_batch_id, blind):
         reports = []
@@ -456,3 +473,38 @@ async def test_human_composed_candidate_is_scored_as_a_new_child_without_replaci
     assert (tmp_path / "ideation" / "candidates" / "HC2-X.v1.json").exists()
     for candidate_id in source_ids:
         assert list((tmp_path / "ideation" / "candidates").glob(f"{candidate_id}.v*.json"))
+
+
+@pytest.mark.asyncio
+async def test_route_regeneration_preserves_prior_population_and_creates_a_new_snapshot(tmp_path):
+    _write_inputs(tmp_path)
+    controller = IdeaEvolutionController(
+        workspace_dir=tmp_path,
+        settings=_settings(),
+        generator=RegeneratingFakeGenerator(),
+        scorer=FakeScorer(),
+        evolver=FakeEvolver(),
+    )
+    config = T4RunConfig(
+        mode="standard",
+        rounds=1,
+        allow_crossover=False,
+        final_top_k=2,
+        max_initial_population=6,
+        active_population_size=3,
+        max_offspring_per_round=1,
+        max_crossover_children=0,
+        route_quotas={"evidence_routed_literature": 1, "informed_brainstorm": 1},
+    )
+    first = await controller.run(config)
+    regenerated = await controller.regenerate_route_from_active_population(
+        config,
+        route="evidence_routed_literature",
+    )
+
+    assert first.population.population_id == "P1"
+    assert regenerated.population.population_id == "P2"
+    assert (tmp_path / "ideation" / "populations" / "P1.json").exists()
+    route_artifact = tmp_path / "ideation" / "evolution" / "routes" / "regeneration_2_evidence_routed_literature.json"
+    assert route_artifact.exists()
+    assert "RR1" in route_artifact.read_text(encoding="utf-8")

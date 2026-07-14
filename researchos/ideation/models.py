@@ -820,6 +820,7 @@ class IdeaDirective(_StrictModel):
     component_refs: list[str] = Field(default_factory=list)
     preserve_genes: list[str] = Field(default_factory=list)
     donor_genes: dict[str, str] = Field(default_factory=dict)
+    requested_route: str = ""
     requested_rounds: int | None = Field(default=None, ge=0, le=3)
     constraints: list[str] = Field(default_factory=list)
     raw_user_input: str = Field(min_length=1)

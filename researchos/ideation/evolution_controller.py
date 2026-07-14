@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import json
+import re
 from typing import Any, Awaitable, Callable, Protocol
 
 from ..pydantic_compat import model_dump
@@ -211,7 +212,7 @@ class IdeaEvolutionController:
             dossiers=dossiers,
             route_results=self._load_route_results(),
             run_config=run_config,
-            round_number=population.generation + 1,
+            round_number=self._next_available_generation(),
         )
 
     async def focus_active_candidate(
@@ -241,7 +242,7 @@ class IdeaEvolutionController:
             dossiers=dossiers,
             route_results=self._load_route_results(),
             run_config=run_config,
-            round_number=population.generation + 1,
+            round_number=self._next_available_generation(),
             requested_parent_ids=[candidate_id],
             allow_crossover=False,
             operation_label="focus_evolution",
@@ -276,7 +277,7 @@ class IdeaEvolutionController:
             dossiers=dossiers,
             route_results=self._load_route_results(),
             run_config=run_config,
-            round_number=population.generation + 1,
+            round_number=self._next_available_generation(),
             requested_parent_ids=list(parent_ids),
             mutation_limit=0,
             requested_crossover_pairs=[(parent_ids[0], parent_ids[1])],
@@ -313,7 +314,7 @@ class IdeaEvolutionController:
             raise ValueError("Human-composed Candidate lineage does not match the Composition Plan")
         if composition.gene_donor_map is None:
             raise ValueError("Human composition requires a confirmed Gene Donor Map")
-        round_number = population.generation + 1
+        round_number = self._next_available_generation()
         plan = EvolutionPlan(
             plan_id=f"{composition.composition_id}-PLAN",
             plan_fingerprint=stable_fingerprint(
@@ -347,6 +348,71 @@ class IdeaEvolutionController:
             operation_label="human_composition",
             provided_plans=[plan],
             provided_children=[child],
+        )
+
+    async def regenerate_route_from_active_population(
+        self,
+        run_config: T4RunConfig,
+        *,
+        route: str,
+    ) -> EvolutionRunResult:
+        """Run one requested P0 Route again and integrate its new Seeds safely."""
+
+        route_specs = {item.route: item for item in self.settings.route_quotas}
+        spec = route_specs.get(route)
+        if spec is None:
+            raise ValueError(f"unknown T4 generation Route: {route}")
+        state = self.store.read_state()
+        valid, error = self.store.validate_state_inputs(state)
+        if not valid:
+            raise ValueError(error or "active T4 population is no longer current")
+        population = self.store.read_population(state.current_population_id)
+        evidence = build_idea_evidence_index(self.store.workspace_dir, store=self.store)
+        opportunities = await self.generator.plan_opportunities(
+            evidence_summary=evidence["summary"],
+            run_config=run_config,
+        )
+        self._validate_opportunities(opportunities)
+        quota = min(max(1, run_config.route_quotas.get(route, spec.minimum)), spec.maximum)
+        result, seeds = await self._generate_route(
+            route=route,
+            quota=quota,
+            opportunities=opportunities,
+            evidence_summary=evidence["summary"],
+            required=False,
+        )
+        round_number = self._next_available_generation()
+        self.store.write_json(
+            f"ideation/evolution/routes/regeneration_{round_number}_{route}.json",
+            {
+                "schema_version": "1.0.0",
+                "semantics": "t4_route_regeneration",
+                "input_population_id": population.population_id,
+                "route": route,
+                "result": model_dump(result, mode="json"),
+                "candidate_ids": [item.candidate_id for item in seeds],
+            },
+        )
+        if not seeds:
+            raise ValueError(f"Route '{route}' did not produce a supported Candidate; its explanation was saved for Gate1 review")
+        existing_ids = set(population.active_candidate_ids)
+        duplicate_ids = [item.candidate_id for item in seeds if item.candidate_id in existing_ids]
+        if duplicate_ids:
+            raise ValueError("Regenerated Route returned Candidate IDs already in the active Population: " + ", ".join(duplicate_ids))
+        prior_routes = [item for item in self._load_route_results() if item.route != route]
+        return await self._run_evolution_round(
+            population=population,
+            dossiers=self._load_dossiers(population.active_candidate_ids),
+            route_results=[*prior_routes, result],
+            run_config=run_config,
+            round_number=round_number,
+            requested_parent_ids=[],
+            mutation_limit=0,
+            allow_crossover=False,
+            operation_label="route_regeneration",
+            provided_plans=[],
+            provided_children=seeds,
+            allow_seed_children=True,
         )
 
     async def _ensure_p0(
@@ -506,6 +572,7 @@ class IdeaEvolutionController:
         operation_label: str = "evolution",
         provided_plans: list[EvolutionPlan] | None = None,
         provided_children: list[CandidateDossier] | None = None,
+        allow_seed_children: bool = False,
     ) -> EvolutionRunResult:
         if self.store.phase_is_complete(
             phase=EvolutionPhase.SURVIVAL,
@@ -638,7 +705,7 @@ class IdeaEvolutionController:
             {"round_number": round_number, "planned_offspring": len(plans)},
         )
         children = list(provided_children) if provided_children is not None else await self.evolver.generate_offspring(plans=plans, parents=_copies(dossiers))
-        self._validate_children(children, plans, parent_lookup)
+        self._validate_children(children, plans, parent_lookup, allow_seed_children=allow_seed_children)
         for child in children:
             self.store.write_candidate(child)
         union = [*dossiers, *children]
@@ -655,6 +722,8 @@ class IdeaEvolutionController:
         plan_by_parent = {tuple(plan.parent_ids): plan for plan in plans}
         for child in children:
             plan = plan_by_parent.get(tuple(child.lineage.parent_ids))
+            if plan is None and allow_seed_children and not child.lineage.parent_ids:
+                continue
             if plan is None:
                 raise ValueError(f"child {child.candidate_id} lacks a matching evolution plan")
             parents = [parent_lookup[parent_id] for parent_id in plan.parent_ids]
@@ -851,6 +920,16 @@ class IdeaEvolutionController:
             dossiers.append(self.store.read_model(matches[-1].relative_to(self.store.workspace_dir), CandidateDossier))
         return dossiers
 
+    def _next_available_generation(self) -> int:
+        """Allocate a new snapshot number without overwriting a rolled-back branch."""
+
+        generations = [0]
+        for path in self.store.path("ideation/populations").glob("P*.json"):
+            match = re.fullmatch(r"P(\d+)", path.stem)
+            if match:
+                generations.append(int(match.group(1)))
+        return max(generations) + 1
+
     def _load_route_results(self) -> list[RouteGenerationResult]:
         try:
             payload = self.store.read_model("ideation/evolution/routes/round_0.json", _LooseArtifact)
@@ -908,7 +987,13 @@ class IdeaEvolutionController:
                 raise ValueError(f"required route did not produce its configured seed quota: {route}")
 
     @staticmethod
-    def _validate_children(children: list[CandidateDossier], plans: list, parents: dict[str, CandidateDossier]) -> None:
+    def _validate_children(
+        children: list[CandidateDossier],
+        plans: list,
+        parents: dict[str, CandidateDossier],
+        *,
+        allow_seed_children: bool = False,
+    ) -> None:
         plan_parent_sets = {tuple(plan.parent_ids) for plan in plans}
         child_ids = [item.candidate_id for item in children]
         if len(set(child_ids)) != len(child_ids):
@@ -916,6 +1001,8 @@ class IdeaEvolutionController:
         for child in children:
             if child.candidate_id in parents:
                 raise ValueError("offspring must never overwrite a parent candidate")
+            if allow_seed_children and not child.lineage.parent_ids and child.lineage.created_by == "generator":
+                continue
             if tuple(child.lineage.parent_ids) not in plan_parent_sets:
                 raise ValueError(f"offspring {child.candidate_id} does not match an approved evolution plan")
 

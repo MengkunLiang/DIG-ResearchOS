@@ -40,6 +40,7 @@ _T4_LLM_DIRECTIVE_FIELDS = {
     "preserve_genes",
     "donor_genes",
     "requested_rounds",
+    "requested_route",
     "constraints",
 }
 
@@ -147,6 +148,9 @@ def _sanitize_t4_llm_directive(value: Any) -> dict[str, Any]:
     requested_rounds = value.get("requested_rounds")
     if isinstance(requested_rounds, int) and 0 <= requested_rounds <= 3:
         result["requested_rounds"] = requested_rounds
+    requested_route = value.get("requested_route") or value.get("route")
+    if isinstance(requested_route, str) and requested_route.strip():
+        result["requested_route"] = requested_route.strip()
     return result
 
 
@@ -215,7 +219,7 @@ def build_t4_directive_llm_interpreter(
     async def interpret(raw_answer: str) -> dict[str, Any]:
         prompt = """Parse one ResearchOS T4 Gate1 instruction. Return exactly one JSON object, no Markdown and no explanation.
 Allowed action values: select_candidate, keep_parallel, compose_from_components, continue_evolution, focus_candidate, merge_candidates, show_more, show_archive, inspect_score, inspect_evidence, inspect_lineage, inspect_hypotheses, inspect_contributions, inspect_genome, regenerate_route, rollback, pause, cancel.
-Allowed keys: action, target_candidate_ids, target_family_ids, component_refs, preserve_genes, donor_genes, requested_rounds, constraints.
+Allowed keys: action, target_candidate_ids, target_family_ids, component_refs, preserve_genes, donor_genes, requested_rounds, requested_route, constraints.
 Do not invent an ID, research claim, score, or mechanism. Use an empty list for an omitted list field rather than guessing.
 For multiple complete Candidates, use keep_parallel unless the instruction explicitly asks for a unified composition or crossover. For partial hypotheses/contributions/genes, use compose_from_components.
 User input:

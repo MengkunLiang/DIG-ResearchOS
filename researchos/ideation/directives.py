@@ -122,6 +122,7 @@ def parse_idea_directive(
         component_refs=components,
         preserve_genes=_string_list(proposed.get("preserve_genes")),
         donor_genes=_string_map(proposed.get("donor_genes")),
+        requested_route=str(proposed.get("requested_route") or proposed.get("route") or _route_from_raw(raw)).strip(),
         requested_rounds=_requested_rounds(proposed.get("requested_rounds"), raw),
         constraints=_string_list(proposed.get("constraints")),
         raw_user_input=raw,
@@ -211,6 +212,35 @@ def persist_idea_directive(
         ),
     }
     store.write_json(path, payload)
+    return path
+
+
+def persist_idea_directive_confirmation(
+    workspace_dir: Path,
+    *,
+    directive: IdeaDirective,
+    directive_path: str,
+    accepted: bool,
+    outcome: str,
+) -> str:
+    """Append the human confirmation outcome without mutating the request."""
+
+    store = T4ArtifactStore(workspace_dir)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    path = f"ideation/human_directives/{timestamp}_{directive.directive_id}_confirmation.json"
+    store.write_json(
+        path,
+        {
+            "schema_version": "1.0.0",
+            "semantics": "t4_human_directive_confirmation",
+            "directive_id": directive.directive_id,
+            "directive_path": directive_path,
+            "action": directive.action,
+            "accepted": accepted,
+            "outcome": outcome,
+            "confirmed_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
     return path
 
 
@@ -335,6 +365,36 @@ def _requested_rounds(value: object, raw: str) -> int | None:
         return value
     match = re.search(r"(?:rounds?|轮)\s*([0-3])", raw.casefold())
     return int(match.group(1)) if match else None
+
+
+def _route_from_raw(raw: str) -> str:
+    """Extract one declared Route alias without introducing project content."""
+
+    aliases = {
+        "literature": "evidence_routed_literature",
+        "evidence": "evidence_routed_literature",
+        "brainstorm": "informed_brainstorm",
+        "mechanism challenge": "mechanism_challenge",
+        "reverse operation": "reverse_operation",
+        "subgroup failure": "subgroup_failure",
+        "gap exploration": "gap_exploration",
+        "cross-domain": "cross_domain_bridge",
+        "cross domain": "cross_domain_bridge",
+        "bridge": "cross_domain_bridge",
+        "文献": "evidence_routed_literature",
+        "头脑风暴": "informed_brainstorm",
+        "机制挑战": "mechanism_challenge",
+        "逆向": "reverse_operation",
+        "子群": "subgroup_failure",
+        "缺口": "gap_exploration",
+        "跨域": "cross_domain_bridge",
+        "桥接": "cross_domain_bridge",
+    }
+    lowered = " ".join(str(raw or "").casefold().replace("_", " ").replace("-", " ").split())
+    for label, route in aliases.items():
+        if label in lowered:
+            return route
+    return ""
 
 
 def _string_list(value: object) -> list[str]:

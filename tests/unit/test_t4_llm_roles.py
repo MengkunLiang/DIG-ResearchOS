@@ -4,8 +4,9 @@ import json
 
 import pytest
 
-from researchos.ideation.llm_roles import LLMIdeaGenerator, LLMJsonRoleInvoker, _parse_json_object
+from researchos.ideation.llm_roles import LLMIdeaGenerator, LLMIdeaScorer, LLMJsonRoleInvoker, _parse_json_object
 from researchos.ideation.models import T4RunConfig
+from tests.unit.test_t4_evolution_controller import _candidate
 
 
 @pytest.mark.asyncio
@@ -59,3 +60,45 @@ def test_role_json_parser_rejects_markdown_prose_and_accepts_fenced_json():
     assert _parse_json_object("```json\n{\"ok\": true}\n```") == {"ok": True}
     with pytest.raises(ValueError, match="JSON object"):
         _parse_json_object("Here is the result: {\"ok\": true}")
+
+
+@pytest.mark.asyncio
+async def test_human_composition_review_requires_a_semantic_gene_donor_map_without_generating_a_child():
+    calls = []
+
+    async def fake_call(system: str, user: str) -> str:
+        calls.append((system, user))
+        return json.dumps(
+            {
+                "composition_id": "HC-1",
+                "source_candidate_ids": ["I1", "I2"],
+                "source_components": ["I1-H1", "I2-mechanism"],
+                "problem_compatibility": "high",
+                "assumption_conflict": "none",
+                "mechanism_compatibility": "high",
+                "joint_testability": "high",
+                "contribution_coherence": "high",
+                "evidence_compatibility": "high",
+                "complexity_risk": "low",
+                "composition_type": "complementary",
+                "recommended_action": "compose",
+                "explanation_for_user": "The selected pieces support one bounded thesis and one discriminating validation path.",
+                "required_repairs": [],
+                "gene_donor_map": {"donors": {"problem": "I1", "mechanism": "I2"}, "synthesized_genes": ["core_thesis"]},
+            }
+        )
+
+    scorer = LLMIdeaScorer(LLMJsonRoleInvoker(call=fake_call))
+    review = await scorer.review_human_composition(
+        composition_id="HC-1",
+        candidates=[_candidate("I1", "evidence_routed_literature"), _candidate("I2", "informed_brainstorm")],
+        component_refs=["I1-H1", "I2-mechanism"],
+        preserve_genes=[],
+        donor_genes={},
+        constraints=[],
+    )
+
+    assert review.recommended_action == "compose"
+    assert review.gene_donor_map is not None
+    assert "do not generate a candidate" in calls[0][0].casefold()
+    assert '"source_components"' in calls[0][1]

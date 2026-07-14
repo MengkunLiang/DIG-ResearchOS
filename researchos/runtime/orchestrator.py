@@ -2813,6 +2813,44 @@ class AgentRunner:
                     evolver=evolver,
                     operation=operation,
                 )
+            elif operation_action == "regenerate_route":
+                route = str(directive.get("requested_route") or "").strip()
+                if not route:
+                    self._write_t4_operation_outcome(
+                        ctx,
+                        operation=operation,
+                        status="route_not_specified",
+                        summary="No generation Route was specified. The active Population was not changed; choose Literature, Informed Brainstorm, a supplementary route, or Cross-domain / Bridge and try again.",
+                    )
+                    self._record_runtime_completion(
+                        ctx,
+                        "t4_gate1_ready",
+                        {"outputs": ["ideation/evolution/latest_operation_result.json"]},
+                        action_type="t4_route_regeneration_needs_choice",
+                    )
+                    return True
+                try:
+                    result = await controller.regenerate_route_from_active_population(run_config, route=route)
+                except ValueError as exc:
+                    if "did not produce a supported Candidate" not in str(exc) and "unknown T4 generation Route" not in str(exc):
+                        raise
+                    self._write_t4_operation_outcome(
+                        ctx,
+                        operation=operation,
+                        status="route_regeneration_no_candidate",
+                        summary=f"Route '{route}' completed without a supported new Candidate. Its route artifact was preserved; the active Population was not changed.",
+                        details={"route": route},
+                    )
+                    ready, error = validate_t4_gate1_ready(ctx.workspace_dir)
+                    if not ready:
+                        raise RecoverableRuntimePause(error or "T4 Gate1 artifacts are unavailable after route regeneration")
+                    self._record_runtime_completion(
+                        ctx,
+                        "t4_gate1_ready",
+                        {"outputs": ["ideation/evolution/latest_operation_result.json"]},
+                        action_type="t4_route_regeneration_no_candidate",
+                    )
+                    return True
             elif operation_action:
                 raise RecoverableRuntimePause(
                     "This T4 directive was recorded safely, but its model-backed operation is not available in this runtime build yet. "

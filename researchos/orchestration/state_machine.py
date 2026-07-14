@@ -57,6 +57,7 @@ from ..ideation.selected_compilation import (
 from ..ideation.directives import (
     current_population_context,
     parse_idea_directive,
+    persist_idea_directive_confirmation,
     persist_idea_directive,
 )
 from ..ideation.models import CandidateDossier, IdeaDirective, PopulationSnapshot, RouteGenerationResult, ScoreReport
@@ -2385,6 +2386,13 @@ class StateMachine:
                     raise ValueError("T4 confirmation is missing its persisted Directive")
                 directive = IdeaDirective.model_validate(raw)
                 state.task_context.pop("t4_pending_directive", None)
+                persist_idea_directive_confirmation(
+                    workspace_dir,
+                    directive=directive,
+                    directive_path=str(pending.get("directive_path") or ""),
+                    accepted=True,
+                    outcome="confirmed_for_execution",
+                )
                 return self._apply_native_t4_directive(
                     state,
                     directive=directive,
@@ -2392,6 +2400,15 @@ class StateMachine:
                     workspace_dir=workspace_dir,
                 )
             if option_id in {"cancel", "pause", "no"}:
+                raw = pending.get("directive") if isinstance(pending.get("directive"), dict) else {}
+                directive = IdeaDirective.model_validate(raw)
+                persist_idea_directive_confirmation(
+                    workspace_dir,
+                    directive=directive,
+                    directive_path=str(pending.get("directive_path") or ""),
+                    accepted=False,
+                    outcome="cancelled_before_execution",
+                )
                 state.task_context.pop("t4_pending_directive", None)
                 return self._reopen_native_t4_gate(
                     state,
