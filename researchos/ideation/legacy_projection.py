@@ -100,6 +100,9 @@ def _legacy_candidate(dossier: CandidateDossier, score: ScoreReport) -> dict[str
     }
     return {
         "id": dossier.candidate_id,
+        "version": dossier.version,
+        "maturity": dossier.maturity.value,
+        "candidate_status": dossier.status.value,
         "title": presentation.title,
         "display_title": presentation.display_title,
         "idea_origin": presentation.idea_origin,
@@ -119,6 +122,15 @@ def _legacy_candidate(dossier: CandidateDossier, score: ScoreReport) -> dict[str
         "cross_domain_relation": presentation.cross_domain_relation,
         "cdr_tuple": cdr,
         "contribution_character": dossier.contributions[0].what_changes_if_true if dossier.contributions else "",
+        "contributions": [
+            {
+                "id": item.contribution_id,
+                "statement": item.statement,
+                "type": str(item.contribution_type),
+                "what_changes_if_true": item.what_changes_if_true,
+            }
+            for item in dossier.contributions
+        ],
         "contribution_strength": score.compatibility_scores["contribution_strength"],
         "innovation": presentation.innovation,
         "candidate_hypotheses": [
@@ -128,6 +140,16 @@ def _legacy_candidate(dossier: CandidateDossier, score: ScoreReport) -> dict[str
         "minimum_experiment": minimum,
         "scores": score.compatibility_scores,
         "score_rationale": score.compatibility_rationales,
+        "evolution_score": {
+            "overall_readiness": score.overall_readiness,
+            "uncertainty": score.score_uncertainty,
+            "dimensions": model_dump(score.scores, mode="json"),
+            "rationales": score.rationales,
+            "dominant_strength": score.dominant_strength,
+            "dominant_bottleneck": score.dominant_bottleneck,
+        },
+        "evidence_composition": dossier.evidence_composition,
+        "artifact_paths": dossier.artifact_paths,
         "gate1_card": presentation.gate1_card,
         "pass2_screening": {"visible_to_gate": True, "screening_recommendation": "proceed", "selection_warning": ""},
     }
@@ -183,6 +205,17 @@ def _write_gate_cards(store: T4ArtifactStore, candidates: list[dict[str, Any]]) 
                 "### Score rationale",
             ]
         )
+        evolution_score = candidate["evolution_score"]
+        lines.extend(
+            [
+                f"**Overall readiness:** {evolution_score['overall_readiness']}/5 (uncertainty {evolution_score['uncertainty']})",
+                "",
+                "### Independent five-dimension assessment",
+            ]
+        )
+        for key, value in evolution_score["dimensions"].items():
+            lines.append(f"- **{key} ({value}/5):** {evolution_score['rationales'][key]}")
+        lines.extend(["", f"**Dominant strength:** {evolution_score['dominant_strength']}", f"**Primary bottleneck:** {evolution_score['dominant_bottleneck']}", ""])
         for key, value in candidate["scores"].items():
             lines.append(f"- **{key} ({value}/5):** {candidate['score_rationale'][key]}")
         lines.extend(["", "### Core paper dependencies"])

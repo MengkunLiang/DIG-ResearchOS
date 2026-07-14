@@ -49,6 +49,10 @@ from ..ideation.prerun import (
     inspect_t4_inputs,
     parse_t4_prerun_intent,
 )
+from ..ideation.selected_compilation import (
+    compile_pre_novelty_hypothesis_brief,
+    selected_candidate_id_from_gate_input,
+)
 from ..ideation.state import T4ArtifactStore, run_config_fingerprint
 
 
@@ -524,11 +528,31 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
     if not isinstance(raw_candidates, list):
         raw_candidates = []
 
+    portfolio_ids: list[str] = []
+    try:
+        portfolio = json.loads((workspace_dir / "ideation" / "portfolio.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        portfolio = {}
+    if isinstance(portfolio, dict):
+        portfolio_ids = [
+            str(candidate_id).strip()
+            for candidate_id in [
+                portfolio.get("lead_id"),
+                *(portfolio.get("alternative_ids") if isinstance(portfolio.get("alternative_ids"), list) else []),
+                *(portfolio.get("high_upside_ids") if isinstance(portfolio.get("high_upside_ids"), list) else []),
+            ]
+            if str(candidate_id or "").strip()
+        ]
+    portfolio_id_set = set(portfolio_ids)
+    all_candidate_count = len([item for item in raw_candidates if isinstance(item, dict)])
+
     for candidate in raw_candidates:
         if not isinstance(candidate, dict):
             continue
         candidate_id = str(candidate.get("id") or candidate.get("idea_id") or "").strip()
         if not candidate_id:
+            continue
+        if portfolio_id_set and candidate_id not in portfolio_id_set:
             continue
         source_title = str(candidate.get("title") or "").strip()
         full_title = str(candidate.get("title_zh") or source_title).strip()
@@ -550,6 +574,7 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
             if isinstance(candidate.get("score_rationale"), dict)
             else {}
         )
+        evolution_score = candidate.get("evolution_score") if isinstance(candidate.get("evolution_score"), dict) else {}
         support = candidate.get("supporting_papers") if isinstance(candidate.get("supporting_papers"), list) else []
         basis_sources = candidate.get("basis_sources") if isinstance(candidate.get("basis_sources"), list) else []
         evidence_levels = {
@@ -634,6 +659,17 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
                     )
                     if score.get(key) is not None
                 },
+                "evolution_score": {
+                    "overall_readiness": evolution_score.get("overall_readiness"),
+                    "uncertainty": evolution_score.get("uncertainty"),
+                    "dimensions": evolution_score.get("dimensions") if isinstance(evolution_score.get("dimensions"), dict) else {},
+                    "rationales": evolution_score.get("rationales") if isinstance(evolution_score.get("rationales"), dict) else {},
+                    "dominant_strength": str(evolution_score.get("dominant_strength") or "").strip(),
+                    "dominant_bottleneck": str(evolution_score.get("dominant_bottleneck") or "").strip(),
+                },
+                "maturity": str(candidate.get("maturity") or "").strip(),
+                "evidence_composition": candidate.get("evidence_composition") if isinstance(candidate.get("evidence_composition"), dict) else {},
+                "artifact_paths": [str(path).strip() for path in candidate.get("artifact_paths", []) if str(path).strip()] if isinstance(candidate.get("artifact_paths"), list) else [],
                 "selection_recommendation": str(pass2.get("screening_recommendation") or "").strip(),
                 "counterfactual_check": str(pass2.get("counterfactual_check") or "").strip(),
                 "nearest_prior_work": str(
@@ -661,7 +697,9 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
     return {
         "language": "zh",
         "candidates": candidates,
-        "input_hint": "选择：选 D1（说明保留的机制）；合并 D1+D3；新想法：写下研究想法；重新分析：说明要补足的材料。",
+        "active_candidate_count": all_candidate_count,
+        "remaining_candidate_count": max(0, all_candidate_count - len(candidates)),
+        "input_hint": "选择一个完整 Candidate 可进入 Pre-Novelty review；选择多个方向时请明确“并行保留”或“构建新 Candidate”。也可以输入“查看剩余 Population”“查看 I1 的评分/证据/谱系”“再进化一轮”或“回到上一代”。",
         "detail_path": "ideation/_gate1_candidate_cards.md",
         "file_navigation": [
             {"path": "ideation/_gate1_candidate_cards.md", "purpose": "人工阅读版完整候选卡片，适合逐项比较。"},
@@ -2490,6 +2528,15 @@ class StateMachine:
             }
             path = workspace_dir / "ideation" / "_gate1_user_selection.json"
             path.parent.mkdir(parents=True, exist_ok=True)
+            if option_id == "select_or_reframe":
+                selected_candidate_id = selected_candidate_id_from_gate_input(workspace_dir, captured)
+                if selected_candidate_id:
+                    payload["selected_candidate_id"] = selected_candidate_id
+                    payload["pre_novelty_artifacts"] = compile_pre_novelty_hypothesis_brief(
+                        workspace_dir,
+                        selection_fingerprint=payload["selection_fingerprint"],
+                        selected_candidate_id=selected_candidate_id,
+                    )
             path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             _write_t4_selected_idea_brief_stub(
                 workspace_dir,

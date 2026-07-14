@@ -509,10 +509,11 @@ class CLIHumanInterface(HumanInterface):
             highlight=False,
             _environ={"COLUMNS": str(width), "LINES": "48"},
         )
-        guide = Text(
-            "比较各方向后，可直接选择、合并，或要求重新分析。",
-            overflow="fold",
-        )
+        remaining_count = value.get("remaining_candidate_count")
+        guide_text = "先比较 Portfolio 中最成熟的 1-3 个 Candidate；完整 Active Population 和所有历史版本均已保留。"
+        if isinstance(remaining_count, int) and remaining_count:
+            guide_text += f" 还有 {remaining_count} 个 Active Candidate 未在首屏展开，可按需查看。"
+        guide = Text(guide_text, overflow="fold")
         console.print(Panel(guide, title="研究方向选择", border_style="bright_cyan", expand=True))
 
         index = Table(expand=True, show_header=True, header_style="bold cyan", border_style="cyan")
@@ -520,17 +521,20 @@ class CLIHumanInterface(HumanInterface):
         index.add_column("通道", width=10)
         index.add_column("候选方向", ratio=3, overflow="fold")
         index.add_column("创新类型", ratio=1, overflow="fold")
+        index.add_column("成熟度", width=9, justify="center")
         index.add_column("假设", width=8, justify="center")
         index.add_column("证据", width=12, overflow="fold")
         index.add_column("建议", ratio=1, overflow="fold")
         for item in candidates:
             innovation = item.get("innovation") if isinstance(item.get("innovation"), dict) else {}
+            evolution_score = item.get("evolution_score") if isinstance(item.get("evolution_score"), dict) else {}
             hypotheses = item.get("candidate_hypotheses") if isinstance(item.get("candidate_hypotheses"), list) else []
             index.add_row(
                 str(item.get("id") or "?"),
                 str(item.get("lane") or ""),
                 str(item.get("title") or item.get("full_title") or ""),
                 str(innovation.get("type") or ""),
+                f"{evolution_score.get('overall_readiness')}/5" if evolution_score.get("overall_readiness") is not None else "-",
                 f"{len(hypotheses)} 条",
                 str(item.get("evidence") or ""),
                 str(item.get("selection_recommendation") or ""),
@@ -573,6 +577,33 @@ class CLIHumanInterface(HumanInterface):
             overview.add_row(label, text(value))
 
         components: list[Any] = [overview]
+        evolution_score = item.get("evolution_score") if isinstance(item.get("evolution_score"), dict) else {}
+        dimensions = evolution_score.get("dimensions") if isinstance(evolution_score.get("dimensions"), dict) else {}
+        evolution_rationales = evolution_score.get("rationales") if isinstance(evolution_score.get("rationales"), dict) else {}
+        if dimensions:
+            readiness = evolution_score.get("overall_readiness")
+            uncertainty = evolution_score.get("uncertainty")
+            components.append(
+                Text(
+                    f"Maturity: {item.get('maturity') or 'evolved'} · Overall readiness: {readiness}/5 · Uncertainty: {uncertainty}",
+                    style="bold blue",
+                    overflow="fold",
+                )
+            )
+            evolution_table = Table(expand=True, show_header=True, header_style="bold blue", border_style="blue")
+            evolution_table.add_column("Independent dimension", width=30, overflow="fold")
+            evolution_table.add_column("Score", width=8, justify="center")
+            evolution_table.add_column("Rationale", ratio=2, overflow="fold")
+            for key, label in (
+                ("research_value", "Research Value"),
+                ("mechanism_integrity", "Mechanism Integrity"),
+                ("contribution_distinctiveness", "Contribution Distinctiveness"),
+                ("evidence_calibration", "Evidence Calibration"),
+                ("validation_tractability", "Validation Tractability"),
+            ):
+                if dimensions.get(key) is not None:
+                    evolution_table.add_row(label, f"{dimensions[key]}/5", text(evolution_rationales.get(key)))
+            components.extend([Text("Independent assessment", style="bold blue"), evolution_table])
         innovation = item.get("innovation") if isinstance(item.get("innovation"), dict) else {}
         innovation_table = Table.grid(expand=True, padding=(0, 1))
         innovation_table.add_column(style="bold magenta", width=12, no_wrap=True)
