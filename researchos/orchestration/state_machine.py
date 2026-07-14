@@ -14,6 +14,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import shutil
 import uuid
 from typing import Any
 
@@ -53,11 +54,175 @@ from ..ideation.selected_compilation import (
     compile_pre_novelty_hypothesis_brief,
     selected_candidate_id_from_gate_input,
 )
+from ..ideation.directives import (
+    current_population_context,
+    parse_idea_directive,
+    persist_idea_directive,
+)
+from ..ideation.models import CandidateDossier, IdeaDirective, PopulationSnapshot, RouteGenerationResult, ScoreReport
+from ..ideation.population import build_idea_families, select_portfolio
+from ..ideation.legacy_projection import project_gate1_population
 from ..ideation.state import T4ArtifactStore, run_config_fingerprint
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+class _NativeLooseArtifact:
+    """Typed-read adapter for small T4 envelope artifacts with flexible bodies."""
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self.payload = payload
+
+    @classmethod
+    def model_validate(cls, value: Any) -> "_NativeLooseArtifact":
+        if not isinstance(value, dict):
+            raise ValueError("T4 envelope artifact must be an object")
+        return cls(value)
+
+
+def _native_t4_action_description(directive: IdeaDirective) -> dict[str, str]:
+    """Explain confirmed Gate1 operations in researcher-facing language."""
+
+    action = directive.action
+    descriptions = {
+        "select_candidate": {
+            "title": "Proceed with Candidate",
+            "what_happens": "The selected complete Candidate is frozen as a Pre-Novelty brief. T4.5 will then check novelty and collisions before formal hypotheses or an experiment plan are compiled.",
+            "estimated_time": "Usually under one minute for local compilation; T4.5 runs separately.",
+            "version_policy": "The current Population, Parents, Children, and Archive are retained. You can return to this Gate later.",
+            "next_stage": "Pre-Novelty compilation, then T4.5.",
+        },
+        "continue_evolution": {
+            "title": "Run another Generation",
+            "what_happens": "ResearchOS uses the active Population as Parents, creates plan-bounded Mutation/Crossover Children, scores the union independently, and writes a new Population snapshot.",
+            "estimated_time": "A model-backed round; duration depends on the configured provider and Population size.",
+            "version_policy": "The active Population becomes a preserved prior version and remains available through Rollback.",
+            "next_stage": "Return to Gate1 with a new Portfolio; T4.5 is not entered.",
+        },
+        "focus_candidate": {
+            "title": "Focus Evolution",
+            "what_happens": "ResearchOS creates a plan-bounded Mutation Child for the selected Candidate and independently scores it against the active Population.",
+            "estimated_time": "A focused model-backed operation, typically shorter than a full Generation.",
+            "version_policy": "Other Candidates and all historical versions remain preserved.",
+            "next_stage": "Return to Gate1 with the updated Population; T4.5 is not entered.",
+        },
+        "merge_candidates": {
+            "title": "Create a Crossover",
+            "what_happens": "ResearchOS first performs a Compatibility Check. A Child is generated only when an approved Gene Donor Map supports one coherent thesis.",
+            "estimated_time": "A model-backed compatibility review and, only if approved, one child-generation and scoring pass.",
+            "version_policy": "Both Parent Candidates remain unchanged and recoverable.",
+            "next_stage": "Return to Gate1; T4.5 is not entered automatically.",
+        },
+        "compose_from_components": {
+            "title": "Compose selected components",
+            "what_happens": "ResearchOS checks whether the chosen hypotheses, contributions, or genes can form one coherent Candidate. It never concatenates them into a final hypothesis file.",
+            "estimated_time": "A model-backed Compatibility Check; a second confirmation is required before any new Candidate is generated.",
+            "version_policy": "Every source Candidate and its original components remain preserved.",
+            "next_stage": "Return to Gate1 with a Compatibility Report.",
+        },
+        "keep_parallel": {
+            "title": "Keep Ideas in parallel",
+            "what_happens": "The selected complete Candidates are recorded as separate directions. No mechanism, contribution, or hypothesis is merged.",
+            "estimated_time": "Local artifact update only; no model call.",
+            "version_policy": "All selected and unselected Candidates remain unchanged.",
+            "next_stage": "Return to Gate1; choose a direction when you are ready for a Pre-Novelty brief.",
+        },
+        "regenerate_route": {
+            "title": "Regenerate a Route",
+            "what_happens": "ResearchOS creates a new route run while preserving the prior route artifacts and Population history.",
+            "estimated_time": "A model-backed generation and independent scoring operation.",
+            "version_policy": "Existing route output and all Candidates remain recoverable.",
+            "next_stage": "Return to Gate1 with a new Population snapshot.",
+        },
+        "rollback": {
+            "title": "Rollback",
+            "what_happens": "The active Population pointer moves to the preceding Generation and the compatibility view is rebuilt from its persisted Candidate and score artifacts.",
+            "estimated_time": "Local artifact update only; no model call.",
+            "version_policy": "Later Generations are not deleted and can be revisited later.",
+            "next_stage": "Return to Gate1 at the restored Generation.",
+        },
+    }
+    return descriptions.get(
+        action,
+        {
+            "title": action.replace("_", " ").title(),
+            "what_happens": "ResearchOS will preserve the request and validate its artifact boundary before changing the active Population.",
+            "estimated_time": "Depends on the requested operation.",
+            "version_policy": "Existing Candidate and Population artifacts remain preserved.",
+            "next_stage": "Return to Gate1.",
+        },
+    )
+
+
+def _latest_native_t4_operation_result(workspace_dir: Path) -> dict[str, Any] | None:
+    """Load the compact public outcome of the most recent T4 Gate operation."""
+
+    path = Path(workspace_dir) / "ideation" / "evolution" / "latest_operation_result.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or payload.get("semantics") != "t4_native_operation_result":
+        return None
+    summary = " ".join(str(payload.get("summary") or "").split())
+    if not summary:
+        return None
+    result: dict[str, Any] = {
+        "title": "Latest T4 operation",
+        "summary": summary,
+        "kind": str(payload.get("status") or "completed"),
+        "artifact": "ideation/evolution/latest_operation_result.json",
+    }
+    details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
+    report_rel = str(details.get("compatibility_report") or "")
+    if report_rel:
+        try:
+            report = json.loads((Path(workspace_dir) / report_rel).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            report = {}
+        if isinstance(report, dict):
+            result["composition"] = {
+                "composition_id": str(details.get("composition_id") or report.get("composition_id") or ""),
+                "composition_type": str(report.get("composition_type") or ""),
+                "recommended_action": str(report.get("recommended_action") or ""),
+                "explanation": str(report.get("explanation_for_user") or ""),
+                "required_repairs": report.get("required_repairs") if isinstance(report.get("required_repairs"), list) else [],
+                "gene_donor_map": (report.get("gene_donor_map") or {}).get("donors") if isinstance(report.get("gene_donor_map"), dict) else {},
+                "report_path": report_rel,
+            }
+    return result
+
+
+def _pending_native_t4_composition(workspace_dir: Path) -> dict[str, str] | None:
+    """Find the newest composable plan that still awaits the second confirmation."""
+
+    root = Path(workspace_dir) / "ideation" / "human_compositions"
+    candidates: list[tuple[float, Path, dict[str, Any]]] = []
+    if not root.is_dir():
+        return None
+    for path in root.glob("*/composition_plan.json"):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict) or payload.get("semantics") != "t4_human_composition_plan":
+            continue
+        if payload.get("status") != "awaiting_human_confirmation":
+            continue
+        composition_id = str(payload.get("composition_id") or "").strip()
+        if composition_id:
+            candidates.append((path.stat().st_mtime, path, payload))
+    if not candidates:
+        return None
+    _mtime, path, payload = max(candidates, key=lambda item: item[0])
+    return {
+        "composition_id": str(payload.get("composition_id") or ""),
+        "composition_plan_path": path.relative_to(workspace_dir).as_posix(),
+        "compatibility_report": str(payload.get("compatibility_report") or ""),
+        "population_id": str(payload.get("population_id") or ""),
+    }
 
 
 def _stable_json_fingerprint(payload: dict[str, Any]) -> str:
@@ -1743,6 +1908,8 @@ class StateMachine:
         """Return true when the current node is a gate-only node that should not run an LLM."""
 
         if state.current_task == "T4" and "T4-GATE1" in self.nodes and workspace_dir is not None:
+            if isinstance(state.task_context.get("t4_operation_request"), dict):
+                return False
             if self._t4_gate1_ready_without_selection(workspace_dir):
                 return True
             return self._t4_prerun_confirmation_required(workspace_dir)
@@ -1779,6 +1946,19 @@ class StateMachine:
         if node.task_id == "T4-GATE1" and workspace_dir is not None:
             presentation["candidate_overview"] = _t4_gate1_candidate_overview(workspace_dir)
             presentation["candidate_pool_fingerprints"] = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
+            operation_result = _latest_native_t4_operation_result(workspace_dir)
+            if operation_result:
+                presentation["t4_directive_result"] = operation_result
+            pending_composition = _pending_native_t4_composition(workspace_dir)
+            if pending_composition:
+                options.insert(
+                    0,
+                    {
+                        "id": "confirm_composition",
+                        "label": "Confirm Human-composed Candidate",
+                        "description": "Generate one new Candidate from the reviewed Gene Donor Map and independently score it; source Candidates remain preserved.",
+                    },
+                )
         state.pending_gate = GateState(
             gate_id=gate_id,
             presented_at=_now_iso(),
@@ -1855,6 +2035,19 @@ class StateMachine:
         elif node.task_id == "T4-GATE1" and workspace_dir is not None:
             presentation["candidate_overview"] = _t4_gate1_candidate_overview(workspace_dir)
             presentation["candidate_pool_fingerprints"] = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
+            operation_result = _latest_native_t4_operation_result(workspace_dir)
+            if operation_result:
+                presentation["t4_directive_result"] = operation_result
+            pending_composition = _pending_native_t4_composition(workspace_dir)
+            if pending_composition:
+                options.insert(
+                    0,
+                    {
+                        "id": "confirm_composition",
+                        "label": "Confirm Human-composed Candidate",
+                        "description": "Generate one new Candidate from the reviewed Gene Donor Map and independently score it; source Candidates remain preserved.",
+                    },
+                )
         else:
             return state
         state.pending_gate.presentation = presentation
@@ -1983,6 +2176,7 @@ class StateMachine:
             and (result.metadata or {}).get("completion_mode") == "t4_gate1_ready"
             and "T4-GATE1" in self.nodes
         ):
+            state.task_context.pop("t4_operation_request", None)
             return self._transition_to_next(state, "T4-GATE1", workspace_dir=workspace_dir)
 
         human_directive = state.task_context.get("human_iteration_directive")
@@ -2014,6 +2208,9 @@ class StateMachine:
             if state.current_task == "T4-GATE1" and workspace_dir is not None:
                 presentation["candidate_overview"] = _t4_gate1_candidate_overview(workspace_dir)
                 presentation["candidate_pool_fingerprints"] = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
+                operation_result = _latest_native_t4_operation_result(workspace_dir)
+                if operation_result:
+                    presentation["t4_directive_result"] = operation_result
             state.pending_gate = GateState(
                 gate_id=gate_id,
                 presented_at=_now_iso(),
@@ -2048,6 +2245,8 @@ class StateMachine:
             state.pending_gate = None
             return self._transition_to_next(state, "T4", workspace_dir=workspace_dir)
         if node.task_id == "T4-GATE1" and workspace_dir is not None:
+            if isinstance(state.task_context.get("t4_pending_directive"), dict):
+                return self._resolve_native_t4_gate1(state, gate_result, workspace_dir)
             current_pool = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
             previous_pool = (state.pending_gate.presentation or {}).get("candidate_pool_fingerprints")
             changed = _gate1_pool_fingerprint_changed(previous_pool, current_pool)
@@ -2074,6 +2273,8 @@ class StateMachine:
                 state.paused_at = _now_iso()
                 state.last_error = presentation["stale_reason"]
                 return state
+            if self._has_native_t4_population(workspace_dir):
+                return self._resolve_native_t4_gate1(state, gate_result, workspace_dir)
         next_task = self._resolve_branch(node, gate_result, state, workspace_dir=workspace_dir)
         self._persist_immediate_gate_result(node, gate_result, next_task, workspace_dir)
         if node.task_id == "T5-EXPR-MATERIAL-GATE" and next_task == "T5-EXPR-MATERIAL-GATE":
@@ -2100,6 +2301,595 @@ class StateMachine:
                 return state
         state.pending_gate = None
         return self._transition_to_next(state, next_task, workspace_dir=workspace_dir)
+
+    @staticmethod
+    def _has_native_t4_population(workspace_dir: Path) -> bool:
+        """Return whether Gate1 is backed by the typed evolutionary population."""
+
+        try:
+            population, _dossiers = current_population_context(workspace_dir)
+        except (OSError, ValueError):
+            return False
+        return bool(population.active_candidate_ids)
+
+    def _resolve_native_t4_gate1(
+        self,
+        state: StateYaml,
+        gate_result: dict[str, Any],
+        workspace_dir: Path,
+    ) -> StateYaml:
+        """Resolve an Evolution-native Gate1 operation.
+
+        The retained legacy Gate1 files remain the compatibility surface.  This
+        method adds the native directive layer behind it: every meaningful
+        action gets an immutable fingerprint-bound record, confirmation is
+        explicit, and only a queued operation may re-enter T4.
+        """
+
+        pending = state.task_context.get("t4_pending_directive")
+        option_id = str(gate_result.get("option_id") or gate_result.get("key") or "").strip()
+        captured = gate_result.get("captured") if isinstance(gate_result.get("captured"), dict) else {}
+        if isinstance(pending, dict):
+            if option_id in {"confirm", "proceed", "yes"}:
+                raw = pending.get("directive")
+                if not isinstance(raw, dict):
+                    raise ValueError("T4 confirmation is missing its persisted Directive")
+                directive = IdeaDirective.model_validate(raw)
+                state.task_context.pop("t4_pending_directive", None)
+                return self._apply_native_t4_directive(
+                    state,
+                    directive=directive,
+                    directive_path=str(pending.get("directive_path") or ""),
+                    workspace_dir=workspace_dir,
+                )
+            if option_id in {"cancel", "pause", "no"}:
+                state.task_context.pop("t4_pending_directive", None)
+                return self._reopen_native_t4_gate(
+                    state,
+                    workspace_dir,
+                    result={
+                        "title": "Operation cancelled",
+                        "summary": "No Candidate, Population, or historical version was changed.",
+                        "kind": "cancelled",
+                    },
+                )
+            return self._native_t4_confirmation_gate(state, workspace_dir, pending)
+
+        pending_composition = _pending_native_t4_composition(workspace_dir)
+        inline_text = self._native_t4_directive_text(option_id=option_id, captured=captured).casefold()
+        if pending_composition and (
+            option_id == "confirm_composition"
+            or any(token in inline_text for token in ("confirm composition", "确认组合", "确认生成", "生成组合"))
+        ):
+            return self._queue_confirmed_native_t4_composition(
+                state,
+                workspace_dir,
+                pending_composition,
+            )
+
+        population, dossiers = current_population_context(workspace_dir)
+        raw = self._native_t4_directive_text(option_id=option_id, captured=captured)
+        try:
+            directive = parse_idea_directive(
+                raw,
+                candidate_ids=set(dossiers),
+                option_id=option_id,
+                llm_payload=captured.get("parsed_directive") if isinstance(captured.get("parsed_directive"), dict) else None,
+            )
+        except ValueError as exc:
+            return self._reopen_native_t4_gate(
+                state,
+                workspace_dir,
+                result={
+                    "title": "More detail is needed",
+                    "summary": str(exc),
+                    "kind": "needs_clarification",
+                },
+            )
+        directive_path = persist_idea_directive(workspace_dir, directive=directive, population=population)
+        if directive.confirmation_required:
+            pending_payload = {
+                "directive": model_dump(directive, mode="json"),
+                "directive_path": directive_path,
+                "population_id": population.population_id,
+                "population_generation": population.generation,
+            }
+            state.task_context["t4_pending_directive"] = pending_payload
+            return self._native_t4_confirmation_gate(state, workspace_dir, pending_payload)
+        return self._apply_native_t4_directive(
+            state,
+            directive=directive,
+            directive_path=directive_path,
+            workspace_dir=workspace_dir,
+        )
+
+    def _queue_confirmed_native_t4_composition(
+        self,
+        state: StateYaml,
+        workspace_dir: Path,
+        pending_composition: dict[str, str],
+    ) -> StateYaml:
+        """Queue the second-confirmed Human-composed Candidate generation."""
+
+        population, _dossiers = current_population_context(workspace_dir)
+        if pending_composition.get("population_id") != population.population_id:
+            return self._reopen_native_t4_gate(
+                state,
+                workspace_dir,
+                result={
+                    "title": "Composition plan is stale",
+                    "summary": "The active Population changed after the Compatibility Check. Re-run the component selection so ResearchOS can evaluate the current Candidate context.",
+                    "kind": "composition_stale",
+                },
+            )
+        composition_id = str(pending_composition.get("composition_id") or "")
+        operation = {
+            "schema_version": "1.0.0",
+            "semantics": "t4_native_operation_request",
+            "action": "execute_human_composition",
+            "composition_id": composition_id,
+            "composition_plan_path": str(pending_composition.get("composition_plan_path") or ""),
+            "requested_from_population": population.population_id,
+            "queued_at": _now_iso(),
+        }
+        operation_path = f"ideation/evolution/operations/{composition_id}_confirmed.json"
+        T4ArtifactStore(workspace_dir).write_json(operation_path, operation)
+        state.task_context["t4_operation_request"] = {**operation, "path": operation_path}
+        state.task_context["human_iteration_directive"] = {
+            "decision_id": composition_id,
+            "gate_id": "t4_gate1_selection_gate",
+            "source_task": "T4-GATE1",
+            "target_task": "T4",
+            "option_id": "execute_human_composition",
+        }
+        state.iteration_count["T4"] = state.iteration_count.get("T4", 0) + 1
+        state.pending_gate = None
+        state.current_task = "T4"
+        state.status = "RUNNING"
+        state.paused_at = None
+        state.last_error = None
+        return state
+
+    @staticmethod
+    def _native_t4_directive_text(*, option_id: str, captured: dict[str, Any]) -> str:
+        """Use the user's own wording as the semantic input to the parser."""
+
+        for key in ("directive", "selection", "merge_plan", "new_idea", "feedback", "route"):
+            value = captured.get(key)
+            if str(value or "").strip():
+                return str(value).strip()
+        return option_id or "show_population"
+
+    def _native_t4_confirmation_gate(
+        self,
+        state: StateYaml,
+        workspace_dir: Path,
+        pending: dict[str, Any],
+    ) -> StateYaml:
+        """Render the second, action-specific confirmation without raw JSON."""
+
+        raw = pending.get("directive") if isinstance(pending.get("directive"), dict) else {}
+        directive = IdeaDirective.model_validate(raw)
+        action = _native_t4_action_description(directive)
+        presentation = {
+            "_title": "Confirm T4 operation",
+            "_description": "Review the planned operation before ResearchOS changes the active Population or calls a model.",
+            "t4_directive_confirmation": {
+                "action": action["title"],
+                "what_happens": action["what_happens"],
+                "estimated_time": action["estimated_time"],
+                "version_policy": action["version_policy"],
+                "next_stage": action["next_stage"],
+                "candidate_ids": directive.target_candidate_ids,
+                "component_refs": directive.component_refs,
+                "directive_path": str(pending.get("directive_path") or ""),
+            },
+        }
+        state.pending_gate = GateState(
+            gate_id="t4_gate1_selection_gate",
+            presented_at=_now_iso(),
+            presentation=presentation,
+            options=[
+                {"id": "confirm", "label": "Confirm and continue", "description": "Apply the operation exactly as shown."},
+                {"id": "cancel", "label": "Cancel", "description": "Keep the current Population and return to the decision panel."},
+            ],
+        )
+        state.current_task = "T4-GATE1"
+        state.status = "WAITING_HUMAN"
+        state.paused_at = _now_iso()
+        return state
+
+    def _apply_native_t4_directive(
+        self,
+        state: StateYaml,
+        *,
+        directive: IdeaDirective,
+        directive_path: str,
+        workspace_dir: Path,
+    ) -> StateYaml:
+        """Apply a confirmed directive or queue its model-backed T4 operation."""
+
+        if directive.action in {
+            "show_more",
+            "show_archive",
+            "inspect_score",
+            "inspect_evidence",
+            "inspect_lineage",
+            "inspect_hypotheses",
+            "inspect_contributions",
+            "inspect_genome",
+        }:
+            return self._reopen_native_t4_gate(
+                state,
+                workspace_dir,
+                result=self._native_t4_readonly_result(workspace_dir, directive),
+            )
+        if directive.action == "pause":
+            state.pending_gate = None
+            state.current_task = "T4-GATE1"
+            state.status = "PAUSED"
+            state.paused_at = _now_iso()
+            state.last_error = "T4 is paused at the research-idea decision panel. Resume returns here without repeating a model call."
+            return state
+        if directive.action == "rollback":
+            return self._rollback_native_t4_population(state, workspace_dir, directive, directive_path)
+        if directive.action == "select_candidate":
+            return self._select_native_t4_candidate(state, workspace_dir, directive, directive_path)
+        if directive.action == "keep_parallel":
+            return self._stage_native_t4_parallel_selection(state, workspace_dir, directive, directive_path)
+        if directive.action in {"continue_evolution", "focus_candidate", "merge_candidates", "compose_from_components", "regenerate_route", "refine_candidate"}:
+            operation = {
+                "schema_version": "1.0.0",
+                "semantics": "t4_native_operation_request",
+                "action": directive.action,
+                "directive_path": directive_path,
+                "directive": model_dump(directive, mode="json"),
+                "requested_from_population": current_population_context(workspace_dir)[0].population_id,
+                "queued_at": _now_iso(),
+            }
+            store = T4ArtifactStore(workspace_dir)
+            operation_path = f"ideation/evolution/operations/{directive.directive_id}.json"
+            store.write_json(operation_path, operation)
+            state.task_context["t4_operation_request"] = {**operation, "path": operation_path}
+            state.task_context["human_iteration_directive"] = {
+                "decision_id": directive.directive_id,
+                "gate_id": "t4_gate1_selection_gate",
+                "source_task": "T4-GATE1",
+                "target_task": "T4",
+                "option_id": directive.action,
+            }
+            state.iteration_count["T4"] = state.iteration_count.get("T4", 0) + 1
+            state.pending_gate = None
+            state.current_task = "T4"
+            state.status = "RUNNING"
+            state.paused_at = None
+            state.last_error = None
+            return state
+        return self._reopen_native_t4_gate(
+            state,
+            workspace_dir,
+            result={"title": "Operation is not available", "summary": f"The requested action '{directive.action}' is not available for this Population.", "kind": "unsupported"},
+        )
+
+    def _select_native_t4_candidate(
+        self,
+        state: StateYaml,
+        workspace_dir: Path,
+        directive: IdeaDirective,
+        directive_path: str,
+    ) -> StateYaml:
+        """Create the formal Gate1 selection and its Pre-Novelty briefing files."""
+
+        population, _dossiers = current_population_context(workspace_dir)
+        selected_candidate_id = directive.target_candidate_ids[0]
+        pool_fingerprints = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
+        fingerprint_payload = {
+            "semantics": "t4_gate1_selection_fingerprint",
+            "gate_id": "t4_gate1_selection_gate",
+            "selected_option": "proceed_candidate",
+            "directive_path": directive_path,
+            "selected_candidate_id": selected_candidate_id,
+            "candidate_pool_fingerprints": pool_fingerprints,
+            "population_id": population.population_id,
+        }
+        selection_fingerprint = _stable_json_fingerprint(fingerprint_payload)
+        payload = {
+            "semantics": "t4_gate1_user_selection_for_candidate_pool",
+            "task_id": "T4-GATE1",
+            "gate_id": "t4_gate1_selection_gate",
+            "selected_option": "proceed_candidate",
+            "captured": {"directive": directive.raw_user_input},
+            "directive_path": directive_path,
+            "selected_candidate_id": selected_candidate_id,
+            "population_id": population.population_id,
+            "candidate_pool_fingerprints": pool_fingerprints,
+            "selection_fingerprint": selection_fingerprint,
+            "next_task": "T4",
+            "decided_at": _now_iso(),
+        }
+        payload["pre_novelty_artifacts"] = compile_pre_novelty_hypothesis_brief(
+            workspace_dir,
+            selection_fingerprint=selection_fingerprint,
+            selected_candidate_id=selected_candidate_id,
+        )
+        T4ArtifactStore(workspace_dir).write_json("ideation/_gate1_user_selection.json", payload)
+        _write_t4_selected_idea_brief_stub(
+            workspace_dir,
+            gate_id="t4_gate1_selection_gate",
+            option_id="proceed_candidate",
+            captured={"directive": directive.raw_user_input, "selected_candidate_id": selected_candidate_id},
+            selection_fingerprint=selection_fingerprint,
+            next_task="T4.5",
+        )
+        state.pending_gate = None
+        state.current_task = "T4"
+        state.status = "RUNNING"
+        state.paused_at = None
+        state.last_error = None
+        return state
+
+    def _stage_native_t4_parallel_selection(
+        self,
+        state: StateYaml,
+        workspace_dir: Path,
+        directive: IdeaDirective,
+        directive_path: str,
+    ) -> StateYaml:
+        """Preserve parallel full-Candidate intent without treating it as a merge."""
+
+        population, _dossiers = current_population_context(workspace_dir)
+        payload = {
+            "schema_version": "1.0.0",
+            "semantics": "t4_parallel_candidate_selection",
+            "candidate_ids": directive.target_candidate_ids,
+            "population_id": population.population_id,
+            "input_fingerprint": population.input_fingerprint,
+            "run_config_fingerprint": population.run_config_fingerprint,
+            "directive_path": directive_path,
+            "status": "staged_for_individual_pre_novelty_review",
+            "note": "The selected Candidates remain separate. No mechanism, hypothesis, or contribution has been merged.",
+            "created_at": _now_iso(),
+        }
+        T4ArtifactStore(workspace_dir).write_json("ideation/selected/parallel_selection.json", payload)
+        return self._reopen_native_t4_gate(
+            state,
+            workspace_dir,
+            result={
+                "title": "Parallel Ideas preserved",
+                "summary": "The requested complete Candidates are retained as separate directions. Their source versions remain unchanged; choose one when you are ready to create a Pre-Novelty brief, or request a Compatibility Check to build a new Candidate.",
+                "kind": "parallel_staged",
+                "candidate_ids": directive.target_candidate_ids,
+                "artifact": "ideation/selected/parallel_selection.json",
+            },
+        )
+
+    def _rollback_native_t4_population(
+        self,
+        state: StateYaml,
+        workspace_dir: Path,
+        directive: IdeaDirective,
+        directive_path: str,
+    ) -> StateYaml:
+        """Activate the prior Population without deleting later artifacts."""
+
+        store = T4ArtifactStore(workspace_dir)
+        internal = store.read_state()
+        current = store.read_population(internal.current_population_id)
+        target_generation = current.generation - 1
+        if target_generation < 0:
+            return self._reopen_native_t4_gate(
+                state,
+                workspace_dir,
+                result={"title": "Rollback is unavailable", "summary": "P0 is already the earliest preserved Population.", "kind": "rollback_unavailable"},
+            )
+        target_id = f"P{target_generation}"
+        target = store.read_population(target_id)
+        self._archive_gate1_projection(workspace_dir, suffix=f"before_rollback_{current.population_id}")
+        restored = store.activate_population(target_id)
+        scores = self._native_population_scores(store, target)
+        dossiers = self._native_population_dossiers(store, target)
+        families = build_idea_families(
+            [item.genome for item in dossiers],
+            generation=target.generation,
+            similarity_threshold=load_t4_evolution_settings().family_similarity_threshold,
+        )
+        portfolio = select_portfolio(target, scores, families, maximum=store.read_run_config().final_top_k)
+        store.write_json("ideation/portfolio.json", model_dump(portfolio, mode="json"))
+        route_results = self._native_route_results(store)
+        project_gate1_population(
+            workspace_dir,
+            population=target,
+            dossiers=dossiers,
+            scores=scores,
+            route_results=route_results,
+        )
+        store.write_json(
+            f"ideation/evolution/rollback_events/{directive.directive_id}.json",
+            {
+                "schema_version": "1.0.0",
+                "semantics": "t4_population_rollback",
+                "directive_path": directive_path,
+                "from_population": current.population_id,
+                "to_population": target.population_id,
+                "from_generation": current.generation,
+                "to_generation": target.generation,
+                "later_artifacts_preserved": True,
+                "performed_at": _now_iso(),
+                "state_path": "ideation/evolution/state.json",
+                "restored_state_generation": restored.generation,
+            },
+        )
+        return self._reopen_native_t4_gate(
+            state,
+            workspace_dir,
+            result={
+                "title": "Population rolled back",
+                "summary": f"The active Population moved from {current.population_id} to {target.population_id}. Later Population files and Candidate versions were preserved and can be reactivated later.",
+                "kind": "rollback_completed",
+                "candidate_ids": target.active_candidate_ids,
+                "artifact": f"ideation/evolution/rollback_events/{directive.directive_id}.json",
+            },
+        )
+
+    def _reopen_native_t4_gate(
+        self,
+        state: StateYaml,
+        workspace_dir: Path,
+        *,
+        result: dict[str, Any] | None = None,
+    ) -> StateYaml:
+        """Re-render the decision surface after a safe read-only local action."""
+
+        node = self.nodes["T4-GATE1"]
+        gate_spec = self._find_gate(self._gate_id_for_node(node))
+        presentation = {
+            "_title": str(gate_spec.get("title") or "Research idea decision"),
+            "_description": str(gate_spec.get("description") or "Choose how to continue with the current Candidate Population."),
+            "candidate_overview": _t4_gate1_candidate_overview(workspace_dir),
+            "candidate_pool_fingerprints": _t4_gate1_candidate_pool_fingerprints(workspace_dir),
+        }
+        if result:
+            presentation["t4_directive_result"] = result
+        options = list(gate_spec.get("options", []))
+        pending_composition = _pending_native_t4_composition(workspace_dir)
+        if pending_composition:
+            options.insert(
+                0,
+                {
+                    "id": "confirm_composition",
+                    "label": "Confirm Human-composed Candidate",
+                    "description": "Use the reviewed Gene Donor Map to generate one new Candidate and independently score it against its source Candidates. The sources remain preserved.",
+                },
+            )
+        state.current_task = "T4-GATE1"
+        state.pending_gate = GateState(
+            gate_id=self._gate_id_for_node(node),
+            presented_at=_now_iso(),
+            presentation=presentation,
+            options=options,
+        )
+        state.status = "WAITING_HUMAN"
+        state.paused_at = _now_iso()
+        state.last_error = None
+        return state
+
+    @staticmethod
+    def _native_population_dossiers(store: T4ArtifactStore, population: PopulationSnapshot) -> list[CandidateDossier]:
+        dossiers: list[CandidateDossier] = []
+        for candidate_id in population.active_candidate_ids:
+            matches = sorted(store.path("ideation/candidates").glob(f"{candidate_id}.v*.json"))
+            if not matches:
+                raise ValueError(f"rollback Population is missing Candidate Dossier {candidate_id}")
+            dossiers.append(store.read_model(matches[-1].relative_to(store.workspace_dir), CandidateDossier))
+        return dossiers
+
+    @staticmethod
+    def _native_population_scores(store: T4ArtifactStore, population: PopulationSnapshot) -> list[ScoreReport]:
+        score_population_id = "P0" if population.generation == 0 else f"U{population.generation}"
+        payload = store.read_model(f"ideation/scoring/{score_population_id}.json", _NativeLooseArtifact).payload
+        raw_scores = payload.get("scores") if isinstance(payload.get("scores"), list) else []
+        by_id = {
+            score.candidate_id: score
+            for item in raw_scores
+            if isinstance(item, dict)
+            for score in [ScoreReport.model_validate(item)]
+        }
+        missing = [candidate_id for candidate_id in population.active_candidate_ids if candidate_id not in by_id]
+        if missing:
+            raise ValueError("rollback Population is missing independent scores: " + ", ".join(missing))
+        return [by_id[candidate_id] for candidate_id in population.active_candidate_ids]
+
+    @staticmethod
+    def _native_route_results(store: T4ArtifactStore) -> list[RouteGenerationResult]:
+        try:
+            payload = store.read_model("ideation/evolution/routes/round_0.json", _NativeLooseArtifact).payload
+        except ValueError:
+            return []
+        raw = payload.get("routes") if isinstance(payload.get("routes"), list) else []
+        return [RouteGenerationResult.model_validate(item) for item in raw if isinstance(item, dict)]
+
+    @staticmethod
+    def _archive_gate1_projection(workspace_dir: Path, *, suffix: str) -> None:
+        """Snapshot compatibility projections before replacing their active view."""
+
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        archive = workspace_dir / "ideation" / "evolution" / "projection_archive" / f"{stamp}_{suffix}"
+        for rel in (
+            "ideation/_pass1_forward_candidates.json",
+            "ideation/_pass2_grounding_review.json",
+            "ideation/_candidate_directions.json",
+            "ideation/_family_distribution.md",
+            "ideation/_gate1_candidate_cards.md",
+            "ideation/_gate1_selection_brief.md",
+            "ideation/bridge_coverage_review.json",
+        ):
+            source = workspace_dir / rel
+            if source.is_file():
+                archive.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, archive / source.name)
+
+    def _native_t4_readonly_result(self, workspace_dir: Path, directive: IdeaDirective) -> dict[str, Any]:
+        """Build a compact read-only explanation from durable Candidate artifacts."""
+
+        population, dossiers = current_population_context(workspace_dir)
+        if directive.action == "show_more":
+            portfolio_path = workspace_dir / "ideation" / "portfolio.json"
+            try:
+                portfolio = json.loads(portfolio_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                portfolio = {}
+            displayed = {
+                str(value)
+                for value in [portfolio.get("lead_id"), *(portfolio.get("alternative_ids") or []), *(portfolio.get("high_upside_ids") or [])]
+                if str(value or "").strip()
+            }
+            remaining = [candidate_id for candidate_id in population.active_candidate_ids if candidate_id not in displayed]
+            return {
+                "title": "Remaining active Population",
+                "summary": "These Candidates remain active but are outside the current display Portfolio. Viewing them does not call a model or change any version.",
+                "kind": "remaining_population",
+                "candidates": [self._native_candidate_summary(dossiers[candidate_id]) for candidate_id in remaining],
+                "artifact": f"ideation/populations/{population.population_id}.json",
+            }
+        if directive.action == "show_archive":
+            return {
+                "title": "Archived Candidates",
+                "summary": "Archived Candidates are retained for audit and can be revisited through Rollback or a targeted Evolution request.",
+                "kind": "archive",
+                "candidate_ids": population.archived_candidate_ids,
+                "artifact": f"ideation/populations/{population.population_id}.json",
+            }
+        candidate_id = directive.target_candidate_ids[0]
+        candidate = dossiers[candidate_id]
+        detail_by_action = {
+            "inspect_score": {"label": "Score", "path": candidate.score_report_path or f"ideation/scoring/U{population.generation}.json"},
+            "inspect_evidence": {"label": "Evidence", "path": "ideation/evidence/evidence_index.jsonl"},
+            "inspect_lineage": {"label": "Lineage", "path": f"ideation/candidates/{candidate.candidate_id}.v{candidate.version}.json"},
+            "inspect_hypotheses": {"label": "Draft hypotheses", "items": [item.statement for item in candidate.hypotheses]},
+            "inspect_contributions": {"label": "Contributions", "items": [item.statement for item in candidate.contributions]},
+            "inspect_genome": {"label": "Idea Genome", "path": f"ideation/candidates/{candidate.candidate_id}.v{candidate.version}.json"},
+        }
+        detail = detail_by_action.get(directive.action, {})
+        return {
+            "title": f"{detail.get('label', 'Candidate')} · {candidate_id}",
+            "summary": "This is a read-only view based on the current Candidate artifacts. No model call, Population change, or merge is performed.",
+            "kind": directive.action,
+            "candidate": self._native_candidate_summary(candidate),
+            "detail": detail,
+            "artifact_paths": candidate.artifact_paths,
+        }
+
+    @staticmethod
+    def _native_candidate_summary(candidate: CandidateDossier) -> dict[str, Any]:
+        presentation = candidate.presentation
+        return {
+            "candidate_id": candidate.candidate_id,
+            "title": presentation.display_title if presentation else candidate.candidate_id,
+            "one_line_thesis": str(candidate.genome.core_thesis.value),
+            "family_hint": str(candidate.genome.problem.value),
+            "main_risk": str(candidate.genome.risks.value),
+            "maturity": candidate.maturity.value,
+        }
 
     def _resolve_t4_prerun_gate(
         self,
@@ -3256,6 +4046,13 @@ class StateMachine:
             params["t4_gate_phase"] = "post_gate1" if selection_fingerprint else "pre_gate1"
             if selection_fingerprint:
                 params["gate1_selection_fingerprint"] = selection_fingerprint
+            operation = state.task_context.get("t4_operation_request")
+            if isinstance(operation, dict):
+                params["t4_native_operation"] = {
+                    "action": str(operation.get("action") or ""),
+                    "directive_path": str(operation.get("directive_path") or ""),
+                    "requested_from_population": str(operation.get("requested_from_population") or ""),
+                }
 
         if node.task_id == "T2" and state is not None and bool(
             state.task_context.get("t2_user_requested_expansion")

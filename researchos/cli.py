@@ -114,6 +114,7 @@ from .tools.human_gate import (
     HumanInterface,
     HumanInputUnavailable,
     build_t2_parameter_llm_interpreter,
+    build_t4_directive_llm_interpreter,
 )
 from .tools.latex_compile import latex_backend_preflight
 from .tools.mcp_adapter import connect_stdio_mcp_server, load_mcp_server_configs, register_mcp_servers
@@ -412,8 +413,10 @@ def _build_human_interface(
     backend = runtime_settings.human_interface.backend.lower().strip()
     if backend in {"", "cli"}:
         interpreter = build_t2_parameter_llm_interpreter(llm_client) if llm_client is not None else None
+        t4_interpreter = build_t4_directive_llm_interpreter(llm_client) if llm_client is not None else None
         return CLIHumanInterface(
             t2_parameter_interpreter=interpreter,
+            t4_directive_interpreter=t4_interpreter,
             no_color=runtime_settings.ui.no_color,
         )
     raise SystemExit(f"Unsupported human_interface.backend: {runtime_settings.human_interface.backend}")

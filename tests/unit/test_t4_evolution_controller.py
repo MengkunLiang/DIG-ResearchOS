@@ -13,6 +13,8 @@ from researchos.ideation.models import (
     CandidateStatus,
     Contribution,
     EvolutionOperator,
+    GeneDonorMap,
+    HumanCompositionCompatibility,
     IdeaGene,
     IdeaGenome,
     OpportunityQuery,
@@ -324,3 +326,133 @@ async def test_deep_mode_completes_a_second_population_update(tmp_path):
     assert (tmp_path / "ideation" / "populations" / "P2.json").exists()
     assert (tmp_path / "ideation" / "evolution" / "round_2.json").exists()
     assert (tmp_path / "ideation" / "evolution" / "round_2_diagnostics.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_continue_from_active_population_adds_one_generation_without_invalidating_p1(tmp_path):
+    _write_inputs(tmp_path)
+    controller = IdeaEvolutionController(
+        workspace_dir=tmp_path,
+        settings=_settings(),
+        generator=FakeGenerator(),
+        scorer=FakeScorer(),
+        evolver=FakeEvolver(),
+    )
+    config = T4RunConfig(
+        mode="standard",
+        rounds=1,
+        allow_crossover=False,
+        final_top_k=2,
+        max_initial_population=6,
+        active_population_size=3,
+        max_offspring_per_round=1,
+        max_crossover_children=0,
+        route_quotas={"evidence_routed_literature": 1, "informed_brainstorm": 1},
+    )
+    first = await controller.run(config)
+    continued = await controller.continue_from_active_population(config)
+
+    assert first.population.population_id == "P1"
+    assert continued.population.population_id == "P2"
+    assert (tmp_path / "ideation" / "populations" / "P1.json").exists()
+    assert (tmp_path / "ideation" / "populations" / "P2.json").exists()
+    assert continued.state.completed_rounds == 2
+    assert continued.state.configured_rounds == 2
+
+
+@pytest.mark.asyncio
+async def test_focus_active_candidate_creates_a_new_generation_with_a_single_parent_plan(tmp_path):
+    _write_inputs(tmp_path)
+    controller = IdeaEvolutionController(
+        workspace_dir=tmp_path,
+        settings=_settings(),
+        generator=FakeGenerator(),
+        scorer=FakeScorer(),
+        evolver=FakeEvolver(),
+    )
+    config = T4RunConfig(
+        mode="standard",
+        rounds=1,
+        allow_crossover=False,
+        final_top_k=2,
+        max_initial_population=6,
+        active_population_size=3,
+        max_offspring_per_round=1,
+        max_crossover_children=0,
+        route_quotas={"evidence_routed_literature": 1, "informed_brainstorm": 1},
+    )
+    first = await controller.run(config)
+    focused_parent = first.population.active_candidate_ids[0]
+    focused = await controller.focus_active_candidate(config, candidate_id=focused_parent)
+    plan = json.loads((tmp_path / "ideation" / "evolution" / "plans" / "round_2.json").read_text(encoding="utf-8"))
+
+    assert focused.population.population_id == "P2"
+    assert plan["operation"] == "focus_evolution"
+    assert plan["parent_selection"]["ids"] == [focused_parent]
+    assert len(plan["plans"]) == 1
+    assert plan["plans"][0]["parent_ids"] == [focused_parent]
+
+
+@pytest.mark.asyncio
+async def test_human_composed_candidate_is_scored_as_a_new_child_without_replacing_sources(tmp_path):
+    _write_inputs(tmp_path)
+    controller = IdeaEvolutionController(
+        workspace_dir=tmp_path,
+        settings=_settings(),
+        generator=FakeGenerator(),
+        scorer=FakeScorer(),
+        evolver=FakeEvolver(),
+    )
+    config = T4RunConfig(
+        mode="standard",
+        rounds=1,
+        allow_crossover=False,
+        final_top_k=2,
+        max_initial_population=6,
+        active_population_size=3,
+        max_offspring_per_round=1,
+        max_crossover_children=0,
+        route_quotas={"evidence_routed_literature": 1, "informed_brainstorm": 1},
+    )
+    first = await controller.run(config)
+    source_ids = first.population.active_candidate_ids[:2]
+    composed = _candidate("HC2-X", "human_composition", parent_ids=source_ids, mechanism="A reconciled composed mechanism")
+    composed = composed.model_copy(
+        update={
+            "lineage": CandidateLineage(
+                candidate_id="HC2-X",
+                parent_ids=source_ids,
+                route="human_composition",
+                created_by="human_composition",
+            )
+        }
+    )
+    compatibility = HumanCompositionCompatibility(
+        composition_id="HC-X",
+        source_candidate_ids=source_ids,
+        source_components=[f"{source_ids[0]}-H1", f"{source_ids[1]}-mechanism"],
+        problem_compatibility="high",
+        assumption_conflict="none",
+        mechanism_compatibility="high",
+        joint_testability="high",
+        contribution_coherence="high",
+        evidence_compatibility="high",
+        complexity_risk="low",
+        composition_type="complementary",
+        recommended_action="compose",
+        explanation_for_user="The selected elements support one bounded thesis with a shared discriminating validation path.",
+        gene_donor_map=GeneDonorMap(
+            donors={"problem": source_ids[0], "mechanism": source_ids[1]},
+            synthesized_genes=["core_thesis", "validation_logic"],
+        ),
+    )
+
+    result = await controller.integrate_human_composed_candidate(config, composition=compatibility, child=composed)
+    plan = json.loads((tmp_path / "ideation" / "evolution" / "plans" / "round_2.json").read_text(encoding="utf-8"))
+
+    assert result.population.population_id == "P2"
+    assert plan["operation"] == "human_composition"
+    assert plan["plans"][0]["parent_ids"] == source_ids
+    assert (tmp_path / "ideation" / "candidates" / "HC2-X.v1.json").exists()
+    for candidate_id in source_ids:
+        assert list((tmp_path / "ideation" / "candidates").glob(f"{candidate_id}.v*.json"))

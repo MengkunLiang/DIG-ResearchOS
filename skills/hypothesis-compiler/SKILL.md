@@ -34,7 +34,8 @@ interaction:
       paths:
         - user_inputs/hypothesis-compiler/selection.md
         - ideation/selected_idea_brief.md
-      extensions: [.md]
+        - ideation/hypothesis_brief.yaml
+      extensions: [.md, .yaml]
       min_bytes: 80
       example: ideation/selected_idea_brief.md
   optional_inputs:
@@ -60,6 +61,8 @@ interaction:
 
 # Falsifiable Hypothesis Compilation
 
-Build a hypothesis table before prose. Each hypothesis must name the intervention/condition, predicted outcome, mechanism, alternative explanation, discriminating observation, boundary condition, measurement, baseline/control, and kill criterion. Distinguish assumptions from evidence. Re-open a cited note section when a mechanism or boundary is asserted; otherwise mark the statement as proposed.
+When `ideation/hypothesis_brief.yaml` exists, treat it as a Pre-Novelty draft bundle. It preserves the selected Candidate's draft hypotheses, source lineage, and evidence boundary; it is not proof that the hypotheses are novel or ready for execution. Read `ideation/selected/t45_search_targets.json` and `ideation/selected/hypothesis_lineage.json` when available, and preserve the recorded Candidate and paper-note paths.
+
+Build a hypothesis table before prose. Each hypothesis must name the intervention/condition, predicted outcome, mechanism, alternative explanation, discriminating observation, boundary condition, measurement, baseline/control, and kill criterion. Distinguish assumptions from evidence. Re-open a cited note section when a mechanism or boundary is asserted; otherwise mark the statement as proposed. When combining material from more than one Candidate, do not concatenate sentences: first record a Compatibility Check, a Gene Donor Map, the source Candidate IDs, and the reason that one coherent Core Thesis is possible.
 
 Do not create an experiment result, numerical effect, available dataset, or causal identification claim. The test plan is an execution guide only and must not invoke external executors.

@@ -57,10 +57,11 @@ from ..agents.ideation import (
     validate_t4_gate1_ready,
 )
 from ..ideation.config import load_t4_evolution_settings
+from ..ideation.directives import current_population_context
 from ..ideation.evolution_controller import IdeaEvolutionController
 from ..ideation.legacy_projection import project_gate1_population
 from ..ideation.llm_roles import LLMJsonRoleInvoker, LLMIdeaEvolver, LLMIdeaGenerator, LLMIdeaScorer, T4RoleCallConfig
-from ..ideation.models import EvolutionPhase
+from ..ideation.models import EvolutionPhase, HumanCompositionCompatibility
 from ..ideation.prerun import has_current_t4_prerun_confirmation
 from ..ideation.state import T4ArtifactStore
 from ..ui.idea_evolution_renderer import render_t4_evolution_phase
@@ -114,6 +115,19 @@ T2_CROSS_DOMAIN_QUERY_BUCKET_ALIASES = {
     "theory_bridge": "theory_bridge",
     "theoretical": "theory_bridge",
 }
+
+
+class _T4OperationEnvelope:
+    """Small typed-read adapter for a durable T4 operation envelope."""
+
+    def __init__(self, payload: dict[str, object]) -> None:
+        self.payload = payload
+
+    @classmethod
+    def model_validate(cls, value: object) -> "_T4OperationEnvelope":
+        if not isinstance(value, dict):
+            raise ValueError("T4 operation artifact must be a JSON object")
+        return cls(value)
 
 
 def _t4_recap_title(candidate: dict[str, object], *, limit: int = 72) -> str:
@@ -2708,17 +2722,86 @@ class AgentRunner:
             ),
             call=role_call,
         )
+        generator = LLMIdeaGenerator(invoker)
+        scorer = LLMIdeaScorer(invoker)
+        evolver = LLMIdeaEvolver(invoker)
         controller = IdeaEvolutionController(
             workspace_dir=ctx.workspace_dir,
             settings=load_t4_evolution_settings(),
-            generator=LLMIdeaGenerator(invoker),
-            scorer=LLMIdeaScorer(invoker),
-            evolver=LLMIdeaEvolver(invoker),
+            generator=generator,
+            scorer=scorer,
+            evolver=evolver,
             progress_callback=progress_callback,
         )
         ctx.extra["t4_evolution_active"] = True
         try:
-            result = await controller.run(run_config)
+            operation = ctx.extra.get("t4_operation_request")
+            operation_action = str(operation.get("action") or "") if isinstance(operation, dict) else ""
+            directive = operation.get("directive") if isinstance(operation, dict) and isinstance(operation.get("directive"), dict) else {}
+            if operation_action == "continue_evolution":
+                result = await controller.continue_from_active_population(run_config)
+            elif operation_action == "focus_candidate":
+                targets = directive.get("target_candidate_ids") if isinstance(directive.get("target_candidate_ids"), list) else []
+                if len(targets) != 1:
+                    raise ValueError("Focus Evolution requires exactly one selected Candidate")
+                result = await controller.focus_active_candidate(run_config, candidate_id=str(targets[0]))
+            elif operation_action == "merge_candidates":
+                targets = directive.get("target_candidate_ids") if isinstance(directive.get("target_candidate_ids"), list) else []
+                if len(targets) != 2:
+                    raise ValueError("Create a Crossover requires exactly two selected Candidates")
+                try:
+                    result = await controller.create_crossover_from_active_candidates(
+                        run_config,
+                        parent_ids=[str(targets[0]), str(targets[1])],
+                    )
+                except ValueError as exc:
+                    if "Compatibility Check" not in str(exc):
+                        raise
+                    self._write_t4_operation_outcome(
+                        ctx,
+                        operation=operation,
+                        status="compatibility_rejected",
+                        summary="The requested Crossover was not generated because the independent Compatibility Check did not approve one coherent Gene Donor Map.",
+                        details={"plan_artifact": f"ideation/evolution/plans/round_{T4ArtifactStore(ctx.workspace_dir).read_state().generation + 1}.json"},
+                    )
+                    ready, error = validate_t4_gate1_ready(ctx.workspace_dir)
+                    if not ready:
+                        raise RecoverableRuntimePause(error or "T4 Gate1 artifacts are unavailable after the Compatibility Check")
+                    self._record_runtime_completion(
+                        ctx,
+                        "t4_gate1_ready",
+                        {"outputs": ["ideation/evolution/latest_operation_result.json"]},
+                        action_type="t4_crossover_compatibility_rejected",
+                    )
+                    return True
+            elif operation_action == "compose_from_components":
+                await self._run_t4_human_composition_check(
+                    ctx=ctx,
+                    scorer=scorer,
+                    operation=operation,
+                )
+                self._record_runtime_completion(
+                    ctx,
+                    "t4_gate1_ready",
+                    {"outputs": ["ideation/evolution/latest_operation_result.json"]},
+                    action_type="t4_human_composition_checked",
+                )
+                return True
+            elif operation_action == "execute_human_composition":
+                result = await self._run_t4_human_composition_generation(
+                    ctx=ctx,
+                    run_config=run_config,
+                    controller=controller,
+                    evolver=evolver,
+                    operation=operation,
+                )
+            elif operation_action:
+                raise RecoverableRuntimePause(
+                    "This T4 directive was recorded safely, but its model-backed operation is not available in this runtime build yet. "
+                    "The current Population was not changed; return to Gate1 to choose another action."
+                )
+            else:
+                result = await controller.run(run_config)
             projection = project_gate1_population(
                 ctx.workspace_dir,
                 population=result.population,
@@ -2767,6 +2850,168 @@ class AgentRunner:
             action_type="t4_evolution_controller",
         )
         return True
+
+    @staticmethod
+    def _write_t4_operation_outcome(
+        ctx: ExecutionContext,
+        *,
+        operation: object,
+        status: str,
+        summary: str,
+        details: dict[str, object] | None = None,
+    ) -> None:
+        """Persist a compact, user-safe outcome for a requested Gate1 operation."""
+
+        payload = operation if isinstance(operation, dict) else {}
+        T4ArtifactStore(ctx.workspace_dir).write_json(
+            "ideation/evolution/latest_operation_result.json",
+            {
+                "schema_version": "1.0.0",
+                "semantics": "t4_native_operation_result",
+                "directive_path": str(payload.get("directive_path") or ""),
+                "action": str(payload.get("action") or ""),
+                "status": status,
+                "summary": summary,
+                "details": details or {},
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+    async def _run_t4_human_composition_check(
+        self,
+        *,
+        ctx: ExecutionContext,
+        scorer: LLMIdeaScorer,
+        operation: object,
+    ) -> None:
+        """Write a compatibility-gated composition plan without creating a Child."""
+
+        request = operation if isinstance(operation, dict) else {}
+        directive = request.get("directive") if isinstance(request.get("directive"), dict) else {}
+        component_refs = [str(item) for item in directive.get("component_refs", []) if str(item).strip()] if isinstance(directive.get("component_refs"), list) else []
+        source_ids = [str(item) for item in directive.get("target_candidate_ids", []) if str(item).strip()] if isinstance(directive.get("target_candidate_ids"), list) else []
+        if len(set(source_ids)) < 2 or len(component_refs) < 2:
+            raise ValueError("Human composition requires selected components from at least two Candidates")
+        population, dossiers = current_population_context(ctx.workspace_dir)
+        if not set(source_ids).issubset(dossiers):
+            raise ValueError("Human composition references a Candidate outside the active Population")
+        directive_id = str(directive.get("directive_id") or "")
+        if not directive_id:
+            raise ValueError("Human composition request is missing a stable Directive ID")
+        composition_id = f"HC-{directive_id.removeprefix('DIR-')}"
+        compatibility = await scorer.review_human_composition(
+            composition_id=composition_id,
+            candidates=[dossiers[candidate_id] for candidate_id in source_ids],
+            component_refs=component_refs,
+            preserve_genes=[str(item) for item in directive.get("preserve_genes", []) if str(item).strip()] if isinstance(directive.get("preserve_genes"), list) else [],
+            donor_genes={str(key): str(value) for key, value in (directive.get("donor_genes") or {}).items()} if isinstance(directive.get("donor_genes"), dict) else {},
+            constraints=[str(item) for item in directive.get("constraints", []) if str(item).strip()] if isinstance(directive.get("constraints"), list) else [],
+        )
+        if set(compatibility.source_candidate_ids) != set(source_ids):
+            raise ValueError("Composition reviewer changed the source Candidate set")
+        store = T4ArtifactStore(ctx.workspace_dir)
+        root = f"ideation/human_compositions/{composition_id}"
+        report_path = f"{root}/compatibility_report.json"
+        store.write_json(report_path, model_dump(compatibility, mode="json"))
+        composable = compatibility.recommended_action == "compose" and compatibility.gene_donor_map is not None
+        plan_path = f"{root}/composition_plan.json"
+        store.write_json(
+            plan_path,
+            {
+                "schema_version": "1.0.0",
+                "semantics": "t4_human_composition_plan",
+                "composition_id": composition_id,
+                "status": "awaiting_human_confirmation" if composable else "not_composable",
+                "directive_path": str(request.get("directive_path") or ""),
+                "population_id": population.population_id,
+                "population_generation": population.generation,
+                "input_fingerprint": population.input_fingerprint,
+                "run_config_fingerprint": population.run_config_fingerprint,
+                "compatibility_report": report_path,
+                "compatibility": model_dump(compatibility, mode="json"),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        if composable:
+            summary = (
+                f"Compatibility Check found a potentially coherent Human-composed Candidate from {', '.join(source_ids)}. "
+                f"Review the Gene Donor Map, then explicitly confirm composition {composition_id} to generate and independently score a new Candidate."
+            )
+            status = "awaiting_composition_confirmation"
+        else:
+            summary = (
+                f"Compatibility Check recommends {compatibility.recommended_action}. No new Candidate was created; "
+                "the source Candidates remain unchanged and can be kept in parallel or revised."
+            )
+            status = "not_composable"
+        self._write_t4_operation_outcome(
+            ctx,
+            operation=request,
+            status=status,
+            summary=summary,
+            details={"composition_id": composition_id, "compatibility_report": report_path, "composition_plan": plan_path},
+        )
+
+    async def _run_t4_human_composition_generation(
+        self,
+        *,
+        ctx: ExecutionContext,
+        run_config,
+        controller: IdeaEvolutionController,
+        evolver: LLMIdeaEvolver,
+        operation: object,
+    ):
+        """Generate, validate, independently score, and integrate a confirmed Child."""
+
+        request = operation if isinstance(operation, dict) else {}
+        plan_path = str(request.get("composition_plan_path") or "")
+        if not plan_path:
+            raise ValueError("Human composition generation is missing its confirmed Composition Plan")
+        store = T4ArtifactStore(ctx.workspace_dir)
+        payload = store.read_model(plan_path, _T4OperationEnvelope).payload
+        if payload.get("semantics") != "t4_human_composition_plan" or payload.get("status") != "awaiting_human_confirmation":
+            raise ValueError("Human composition plan is not awaiting a valid final confirmation")
+        population, dossiers = current_population_context(ctx.workspace_dir)
+        if payload.get("population_id") != population.population_id:
+            raise ValueError("Human composition plan is stale because the active Population changed")
+        if payload.get("input_fingerprint") != population.input_fingerprint or payload.get("run_config_fingerprint") != population.run_config_fingerprint:
+            raise ValueError("Human composition plan fingerprints are stale")
+        compatibility = HumanCompositionCompatibility.model_validate(payload.get("compatibility"))
+        source_ids = list(compatibility.source_candidate_ids)
+        if not set(source_ids).issubset(dossiers):
+            raise ValueError("Human composition source Candidate is no longer active")
+        target_candidate_id = f"HC{population.generation + 1}-{compatibility.composition_id.removeprefix('HC-')}"
+        child = await evolver.generate_human_composition(
+            composition_id=compatibility.composition_id,
+            target_candidate_id=target_candidate_id,
+            compatibility=compatibility,
+            parents=[dossiers[candidate_id] for candidate_id in source_ids],
+        )
+        result = await controller.integrate_human_composed_candidate(
+            run_config,
+            composition=compatibility,
+            child=child,
+        )
+        payload.update(
+            {
+                "status": "generated_and_independently_scored",
+                "generated_candidate_id": child.candidate_id,
+                "output_population_id": result.population.population_id,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        store.write_json(plan_path, payload)
+        self._write_t4_operation_outcome(
+            ctx,
+            operation=request,
+            status="composition_scored",
+            summary=(
+                f"Human-composed Candidate {child.candidate_id} was created from the confirmed Gene Donor Map and independently rescored with its source Candidates. "
+                "The source versions remain preserved; review the updated Portfolio before proceeding to T4.5."
+            ),
+            details={"composition_plan": plan_path, "candidate_id": child.candidate_id, "population_id": result.population.population_id},
+        )
+        return result
 
     async def _call_t4_evolution_role(
         self,

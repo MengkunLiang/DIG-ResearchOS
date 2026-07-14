@@ -18,7 +18,7 @@ from ..pydantic_compat import model_dump, model_validate
 from ..runtime.llm_client import LLMClient
 from ..runtime.prompts import get_prompt_env
 from .evolution_controller import IdeaEvolverPort, IdeaGeneratorPort, IdeaScoringPort, RouteGenerationPayload
-from .models import CandidateDossier, CrossoverCompatibilityDecision, EvolutionPlan, OpportunityQuery, RouteGenerationResult, ScoreReport, T4RunConfig
+from .models import CandidateDossier, CrossoverCompatibilityDecision, EvolutionPlan, HumanCompositionCompatibility, OpportunityQuery, RouteGenerationResult, ScoreReport, T4RunConfig
 
 
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
@@ -192,6 +192,40 @@ class LLMIdeaScorer(IdeaScoringPort):
         raw = data.get("decisions") if isinstance(data.get("decisions"), list) else []
         return [model_validate(CrossoverCompatibilityDecision, item) for item in raw if isinstance(item, dict)]
 
+    async def review_human_composition(
+        self,
+        *,
+        composition_id: str,
+        candidates: list[CandidateDossier],
+        component_refs: list[str],
+        preserve_genes: list[str],
+        donor_genes: dict[str, str],
+        constraints: list[str],
+    ) -> HumanCompositionCompatibility:
+        """Assess a partial cross-Candidate request before any Child is created."""
+
+        payload = {
+            "prompt_version": "1.0.0",
+            "composition_id": composition_id,
+            "source_components": component_refs,
+            "preserve_genes": preserve_genes,
+            "requested_donor_genes": donor_genes,
+            "constraints": constraints,
+            "candidates": [_evolver_parent(candidate) for candidate in candidates],
+        }
+        data = await self.invoker.invoke(
+            prompt_name="idea_composition_reviewer.j2",
+            system_contract=(
+                "You are IdeaScoringAgent in Human Composition compatibility-review mode. Return only one JSON object. "
+                "Do not generate a Candidate, score a Candidate, rewrite a hypothesis, or choose for the researcher. "
+                "Assess full Candidate context, not lexical similarity. A compose recommendation requires one coherent Core Thesis, "
+                "an explicit Gene Donor Map, compatible evidence permissions, and no hard assumption conflict. "
+                "For parallel or conflicting directions, recommend keep_parallel or reject_auto_merge."
+            ),
+            payload=payload,
+        )
+        return model_validate(HumanCompositionCompatibility, data)
+
 
 class LLMIdeaEvolver(IdeaEvolverPort):
     """Plan-bound Child generator. It has no score or selection method."""
@@ -225,6 +259,45 @@ class LLMIdeaEvolver(IdeaEvolverPort):
             if child.candidate_id in by_id:
                 raise ValueError("LLM Evolver attempted to overwrite a parent candidate")
         return children
+
+    async def generate_human_composition(
+        self,
+        *,
+        composition_id: str,
+        target_candidate_id: str,
+        compatibility: HumanCompositionCompatibility,
+        parents: list[CandidateDossier],
+    ) -> CandidateDossier:
+        """Create one confirmed Human-composed Candidate from its Gene Donor Map."""
+
+        payload = {
+            "prompt_version": "1.0.0",
+            "composition_id": composition_id,
+            "target_candidate_id": target_candidate_id,
+            "compatibility": model_dump(compatibility, mode="json"),
+            "parents": [_evolver_parent(candidate) for candidate in parents],
+        }
+        data = await self.invoker.invoke(
+            prompt_name="idea_human_composer.j2",
+            system_contract=(
+                "You are IdeaEvolverAgent in Human Composition mode. Return only JSON with a `candidate` object. "
+                "Create exactly one new Candidate from the confirmed Compatibility Report and Gene Donor Map. "
+                "Do not alter source Candidates, invent source evidence, elevate abstract-only evidence, score the new Candidate, "
+                "or concatenate source hypotheses. The output must have one coherent Core Thesis, a complete Idea Genome, 2-4 Contributions, "
+                "2-4 provisional hypotheses, CandidateLineage.created_by=human_composition, and a complete CandidatePresentation."
+            ),
+            payload=payload,
+        )
+        candidate = model_validate(CandidateDossier, data.get("candidate"))
+        _require_gate1_candidate_presentation(candidate)
+        source_ids = {item.candidate_id for item in parents}
+        if candidate.candidate_id != target_candidate_id:
+            raise ValueError("Human-composition Evolver returned a non-deterministic Candidate ID")
+        if set(candidate.lineage.parent_ids) != source_ids or set(candidate.genome.parents) != source_ids:
+            raise ValueError("Human-composition Candidate does not preserve complete source lineage")
+        if candidate.lineage.created_by != "human_composition":
+            raise ValueError("Human-composition Candidate must declare human_composition lineage")
+        return candidate
 
 
 def _blind_candidate(candidate: CandidateDossier) -> dict[str, Any]:

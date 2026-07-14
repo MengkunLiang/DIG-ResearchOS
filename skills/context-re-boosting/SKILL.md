@@ -65,6 +65,8 @@ Read these optional materials only when needed to resolve ambiguity:
 - `user_seeds/bridge_domains.yaml`
 - existing `external_executor/handoff_pack.json`, if present
 
+`ideation/hypothesis_brief.yaml` and `ideation/selected/t45_search_targets.json` may exist after Gate1. They are Pre-Novelty selection artifacts: use them only to trace the selected Candidate and search scope. They do not replace the post-T4.5 `hypotheses.md`, `exp_plan.yaml`, or `novelty_audit.md` as execution authority.
+
 ## Writes
 
 Write or update only:

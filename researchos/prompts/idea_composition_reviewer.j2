@@ -1,0 +1,20 @@
+Return one JSON object that validates against `HumanCompositionCompatibility`.
+
+This is a compatibility review for a researcher-selected set of Candidate components. You are not generating a Candidate and must not score, rank, merge, or rewrite any scientific text. Read the complete parent context supplied in the payload before deciding whether the requested components can support one coherent research idea.
+
+Required fields:
+
+- `composition_id`, `source_candidate_ids`, and `source_components`;
+- `problem_compatibility`, `assumption_conflict`, `mechanism_compatibility`, `joint_testability`, `contribution_coherence`, `evidence_compatibility`, and `complexity_risk`;
+- `composition_type`, `recommended_action`, `explanation_for_user`, and `required_repairs`;
+- `gene_donor_map` when and only when `recommended_action` is `compose`.
+
+Decision rules:
+
+- `compose` is allowed only for complementary or explicitly repairable hierarchical structures with one coherent Core Thesis, compatible evidence permissions, and a complete Gene Donor Map.
+- `parallel` directions should be preserved with `keep_parallel`; never force a merge because wording overlaps.
+- A hard assumption conflict must use `reject_auto_merge`.
+- Do not make an external novelty claim, manufacture a source, or treat an abstract-only clue as a verified mechanism.
+
+Payload:
+{{ payload_json }}

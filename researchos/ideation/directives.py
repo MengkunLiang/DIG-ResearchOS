@@ -43,6 +43,26 @@ _DIRECTIVE_ACTIONS = {
     "cancel",
 }
 
+_COMPONENT_KINDS = {
+    "problem",
+    "opportunity",
+    "challenged_assumption",
+    "core_thesis",
+    "mechanism",
+    "design",
+    "design_or_artifact",
+    "contribution",
+    "contribution_package",
+    "hypothesis",
+    "hypothesis_bundle",
+    "validation",
+    "validation_logic",
+    "boundary",
+    "boundary_conditions",
+    "risk",
+    "risks",
+}
+
 
 def parse_idea_directive(
     raw_user_input: str,
@@ -61,6 +81,20 @@ def parse_idea_directive(
     proposed_ids = proposed.get("target_candidate_ids")
     if isinstance(proposed_ids, list):
         detected_ids = list(dict.fromkeys([*detected_ids, *[str(item) for item in proposed_ids if str(item) in candidate_ids]]))
+    proposed_components = proposed.get("component_refs")
+    if isinstance(proposed_components, list):
+        components = list(
+            dict.fromkeys(
+                [
+                    *components,
+                    *[
+                        str(item).strip()
+                        for item in proposed_components
+                        if _component_candidate_id(str(item).strip(), candidate_ids)
+                    ],
+                ]
+            )
+        )
     action = _normalized_action(
         option_id=option_id,
         raw=raw,
@@ -84,6 +118,7 @@ def parse_idea_directive(
         directive_id=f"DIR-{uuid4().hex[:12]}",
         action=action,
         target_candidate_ids=detected_ids,
+        target_family_ids=_string_list(proposed.get("target_family_ids")),
         component_refs=components,
         preserve_genes=_string_list(proposed.get("preserve_genes")),
         donor_genes=_string_map(proposed.get("donor_genes")),
@@ -129,8 +164,8 @@ def validate_idea_directive(directive: IdeaDirective, *, candidate_ids: set[str]
     component_candidates = [
         candidate_id
         for item in directive.component_refs
-        for candidate_id in candidate_ids
-        if item == candidate_id or item.startswith(candidate_id + "-")
+        for candidate_id in [_component_candidate_id(item, candidate_ids)]
+        if candidate_id
     ]
     component_missing = [candidate_id for candidate_id in component_candidates if candidate_id not in candidate_ids]
     if component_missing:
@@ -198,8 +233,14 @@ def _extract_references(raw: str, candidate_ids: set[str]) -> tuple[list[str], l
     candidate_refs: list[str] = []
     components: list[str] = []
     matches: list[tuple[int, str, str]] = []
+    component_pattern = "|".join(
+        [r"(?:H|C)\d+", *[re.escape(item) for item in sorted(_COMPONENT_KINDS, key=len, reverse=True)]]
+    )
     for candidate_id in sorted(candidate_ids, key=len, reverse=True):
-        pattern = re.compile(rf"(?<![A-Za-z0-9._:-]){re.escape(candidate_id)}(?:-(H\d+|C\d+))?(?![A-Za-z0-9._:-])")
+        pattern = re.compile(
+            rf"(?<![A-Za-z0-9._:-]){re.escape(candidate_id)}(?:[-.]({component_pattern}))?(?![A-Za-z0-9._:-])",
+            flags=re.IGNORECASE,
+        )
         for match in pattern.finditer(raw):
             matches.append((match.start(), candidate_id, str(match.group(1) or "")))
     for _position, candidate_id, suffix in sorted(matches):
@@ -210,17 +251,44 @@ def _extract_references(raw: str, candidate_ids: set[str]) -> tuple[list[str], l
     return candidate_refs, list(dict.fromkeys(components))
 
 
+def _component_candidate_id(value: str, candidate_ids: set[str]) -> str | None:
+    """Resolve a public component reference without accepting arbitrary text."""
+
+    text = str(value or "").strip()
+    for candidate_id in sorted(candidate_ids, key=len, reverse=True):
+        if not text.startswith(candidate_id):
+            continue
+        suffix = text[len(candidate_id) :]
+        if not suffix.startswith(("-", ".")):
+            continue
+        component = suffix[1:]
+        if re.fullmatch(r"[HC]\d+", component, flags=re.IGNORECASE) or component.casefold() in _COMPONENT_KINDS:
+            return candidate_id
+    return None
+
+
 def _normalized_action(*, option_id: str, raw: str, proposed_action: str, target_count: int, component_count: int) -> str:
     proposed = proposed_action.strip()
     if proposed in _DIRECTIVE_ACTIONS:
         return proposed
     option_map = {
         "select_or_reframe": "select_candidate" if target_count == 1 else "refine_candidate",
+        "proceed": "select_candidate",
+        "proceed_candidate": "select_candidate",
         "merge": "compose_from_components" if component_count else "merge_candidates",
+        "create_crossover": "merge_candidates",
+        "crossover": "merge_candidates",
+        "compose": "compose_from_components",
         "new_idea": "refine_candidate",
         "reanalyze": "regenerate_route",
         "continue_evolution": "continue_evolution",
+        "another_generation": "continue_evolution",
+        "focus_evolution": "focus_candidate",
         "keep_parallel": "keep_parallel",
+        "show_population": "show_more",
+        "show_archive": "show_archive",
+        "inspect": "inspect_score",
+        "regenerate_route": "regenerate_route",
         "pause": "pause",
         "rollback": "rollback",
     }
@@ -233,7 +301,27 @@ def _normalized_action(*, option_id: str, raw: str, proposed_action: str, target
         return "rollback"
     if any(token in lowered for token in ("再进化", "下一代", "continue evolution", "another generation")):
         return "continue_evolution"
-    if any(token in lowered for token in ("查看", "inspect", "评分", "evidence", "lineage")):
+    if any(token in lowered for token in ("剩余候选", "剩余 population", "show population", "remaining population", "查看 population")):
+        return "show_more"
+    if any(token in lowered for token in ("archive", "归档候选", "查看归档")):
+        return "show_archive"
+    if any(token in lowered for token in ("focus", "只优化", "聚焦")):
+        return "focus_candidate"
+    if any(token in lowered for token in ("crossover", "交叉", "组合候选")) and target_count >= 2:
+        return "merge_candidates"
+    if any(token in lowered for token in ("重新生成", "regenerate", "重跑 route", "route")):
+        return "regenerate_route"
+    if any(token in lowered for token in ("查看证据", "evidence")):
+        return "inspect_evidence" if target_count else "show_more"
+    if any(token in lowered for token in ("查看谱系", "lineage")):
+        return "inspect_lineage" if target_count else "show_more"
+    if any(token in lowered for token in ("查看假设", "hypotheses")):
+        return "inspect_hypotheses" if target_count else "show_more"
+    if any(token in lowered for token in ("查看贡献", "contributions")):
+        return "inspect_contributions" if target_count else "show_more"
+    if any(token in lowered for token in ("查看基因", "genome")):
+        return "inspect_genome" if target_count else "show_more"
+    if any(token in lowered for token in ("查看", "inspect", "评分", "score")):
         return "inspect_score" if target_count else "show_more"
     if component_count >= 2:
         return "compose_from_components"

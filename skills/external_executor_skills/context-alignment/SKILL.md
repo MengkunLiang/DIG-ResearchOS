@@ -87,6 +87,8 @@ ideation/risks.md
 novelty/novelty_audit.md
 ```
 
+If `ideation/hypothesis_brief.yaml` or `ideation/selected/t45_search_targets.json` exists, treat it as lineage and search-scope context only. It is a Pre-Novelty draft and cannot authorize an experiment, replace `ideation/hypotheses.md`, or relax a novelty/claim boundary.
+
 Read `synthesis_workbench.json`, `domain_map.json`, `comparison_table.csv`, paper notes, resources, and user seeds only when a named field is missing, ambiguous, or contradicted. Do not re-run literature review or load entire directories without a targeted question.
 
 ## Classify mismatches by axis

@@ -285,6 +285,8 @@ class T4ArtifactStore:
             update={
                 "phase": phase,
                 "generation": population.generation,
+                "completed_rounds": population.generation,
+                "configured_rounds": max(state.configured_rounds, population.generation),
                 "current_population_id": population_id,
                 "generation_history": history,
                 "archived_population_ids": archived,

@@ -20,7 +20,11 @@ from .models import (
     CandidateDossier,
     CandidateStatus,
     CrossoverCompatibilityDecision,
+    EvolutionOperator,
+    EvolutionPlan,
     EvolutionPhase,
+    GeneDonorMap,
+    HumanCompositionCompatibility,
     IdeaFamily,
     OpportunityQuery,
     PopulationSnapshot,
@@ -42,7 +46,7 @@ from .population import (
     select_survivors,
     validate_idea_contract,
 )
-from .state import T4ArtifactStore, run_config_fingerprint, t4_input_fingerprint
+from .state import T4ArtifactStore, run_config_fingerprint, stable_fingerprint, t4_input_fingerprint
 
 
 class IdeaGeneratorPort(Protocol):
@@ -182,6 +186,168 @@ class IdeaEvolutionController:
         if result is None:  # Defensive: rounds=0 returned above.
             raise ValueError("T4 evolution requires a positive round count")
         return result
+
+    async def continue_from_active_population(self, run_config: T4RunConfig) -> EvolutionRunResult:
+        """Execute exactly one additional, fully audited Generation.
+
+        A researcher can ask for another Generation after the initial Standard
+        run.  ``rounds`` is intentionally not changed in ``t4_run_config``:
+        it is part of the fingerprint of the original run.  The extra round is
+        instead recorded in the durable state and a new ``P<n>`` snapshot.
+        This lets a resumed workspace reuse P0/P1 instead of invalidating it
+        merely because the researcher asked for more exploration.
+        """
+
+        state = self.store.read_state()
+        valid, error = self.store.validate_state_inputs(state)
+        if not valid:
+            raise ValueError(error or "active T4 population is no longer current")
+        population = self.store.read_population(state.current_population_id)
+        dossiers = self._load_dossiers(population.active_candidate_ids)
+        if not dossiers:
+            raise ValueError("the active T4 population has no Candidates to evolve")
+        return await self._run_evolution_round(
+            population=population,
+            dossiers=dossiers,
+            route_results=self._load_route_results(),
+            run_config=run_config,
+            round_number=population.generation + 1,
+        )
+
+    async def focus_active_candidate(
+        self,
+        run_config: T4RunConfig,
+        *,
+        candidate_id: str,
+    ) -> EvolutionRunResult:
+        """Evolve one active Candidate without silently changing the others.
+
+        Focus Evolution is a real P(r)->P(r+1) operation, not a prompt label.
+        It restricts parent selection to the requested Candidate and produces a
+        plan-bounded Mutation Child.  The full union is still independently
+        rescored and subject to contracts and family-level survival.
+        """
+
+        state = self.store.read_state()
+        valid, error = self.store.validate_state_inputs(state)
+        if not valid:
+            raise ValueError(error or "active T4 population is no longer current")
+        population = self.store.read_population(state.current_population_id)
+        if candidate_id not in population.active_candidate_ids:
+            raise ValueError(f"Focus Evolution requires an active Candidate: {candidate_id}")
+        dossiers = self._load_dossiers(population.active_candidate_ids)
+        return await self._run_evolution_round(
+            population=population,
+            dossiers=dossiers,
+            route_results=self._load_route_results(),
+            run_config=run_config,
+            round_number=population.generation + 1,
+            requested_parent_ids=[candidate_id],
+            allow_crossover=False,
+            operation_label="focus_evolution",
+        )
+
+    async def create_crossover_from_active_candidates(
+        self,
+        run_config: T4RunConfig,
+        *,
+        parent_ids: list[str],
+    ) -> EvolutionRunResult:
+        """Create a compatibility-gated Crossover Child from two active Parents.
+
+        The scorer first reviews the specified pair.  Only an approved
+        LLM-authored Gene Donor Map can reach the Evolver; rejected or
+        uncertain pairs write their review to the evolution plan artifact and
+        stop safely rather than producing a concatenated Candidate.
+        """
+
+        if len(parent_ids) != 2 or parent_ids[0] == parent_ids[1]:
+            raise ValueError("Crossover requires exactly two different active Candidates")
+        state = self.store.read_state()
+        valid, error = self.store.validate_state_inputs(state)
+        if not valid:
+            raise ValueError(error or "active T4 population is no longer current")
+        population = self.store.read_population(state.current_population_id)
+        if not set(parent_ids).issubset(population.active_candidate_ids):
+            raise ValueError("Crossover Parents must both be active Candidates")
+        dossiers = self._load_dossiers(population.active_candidate_ids)
+        return await self._run_evolution_round(
+            population=population,
+            dossiers=dossiers,
+            route_results=self._load_route_results(),
+            run_config=run_config,
+            round_number=population.generation + 1,
+            requested_parent_ids=list(parent_ids),
+            mutation_limit=0,
+            requested_crossover_pairs=[(parent_ids[0], parent_ids[1])],
+            allow_crossover=True,
+            operation_label="human_requested_crossover",
+        )
+
+    async def integrate_human_composed_candidate(
+        self,
+        run_config: T4RunConfig,
+        *,
+        composition: HumanCompositionCompatibility,
+        child: CandidateDossier,
+    ) -> EvolutionRunResult:
+        """Independently score and integrate a confirmed Human-composed Child.
+
+        The Evolver authors the child, but this controller owns its lineage,
+        union scoring, contract validation, complexity check, survival, and the
+        resulting Population snapshot.  It is therefore never an implicit text
+        merge or an automatic winner.
+        """
+
+        state = self.store.read_state()
+        valid, error = self.store.validate_state_inputs(state)
+        if not valid:
+            raise ValueError(error or "active T4 population is no longer current")
+        population = self.store.read_population(state.current_population_id)
+        source_ids = list(composition.source_candidate_ids)
+        if not set(source_ids).issubset(population.active_candidate_ids):
+            raise ValueError("Human composition sources must be active Candidates")
+        if child.candidate_id in population.active_candidate_ids:
+            raise ValueError("Human composition must create a new Candidate ID")
+        if set(child.lineage.parent_ids) != set(source_ids):
+            raise ValueError("Human-composed Candidate lineage does not match the Composition Plan")
+        if composition.gene_donor_map is None:
+            raise ValueError("Human composition requires a confirmed Gene Donor Map")
+        round_number = population.generation + 1
+        plan = EvolutionPlan(
+            plan_id=f"{composition.composition_id}-PLAN",
+            plan_fingerprint=stable_fingerprint(
+                {
+                    "composition_id": composition.composition_id,
+                    "parents": source_ids,
+                    "components": composition.source_components,
+                    "donors": composition.gene_donor_map.donors,
+                }
+            ),
+            round=round_number,
+            child_type="crossover",
+            parent_ids=source_ids,
+            operator=EvolutionOperator.CROSSOVER,
+            gene_donor_map=composition.gene_donor_map,
+            preserve_genes=[],
+            modify_genes=list(composition.gene_donor_map.synthesized_genes),
+            constraints=list(composition.required_repairs),
+            expected_improvements=[composition.explanation_for_user],
+            failure_conditions=["A failed Idea Contract, Evidence Permission violation, or inflated complexity rejects the composed Child."],
+        )
+        return await self._run_evolution_round(
+            population=population,
+            dossiers=self._load_dossiers(population.active_candidate_ids),
+            route_results=self._load_route_results(),
+            run_config=run_config,
+            round_number=round_number,
+            requested_parent_ids=source_ids,
+            mutation_limit=0,
+            allow_crossover=False,
+            operation_label="human_composition",
+            provided_plans=[plan],
+            provided_children=[child],
+        )
 
     async def _ensure_p0(
         self,
@@ -333,6 +499,13 @@ class IdeaEvolutionController:
         route_results: list[RouteGenerationResult],
         run_config: T4RunConfig,
         round_number: int,
+        requested_parent_ids: list[str] | None = None,
+        mutation_limit: int | None = None,
+        requested_crossover_pairs: list[tuple[str, str]] | None = None,
+        allow_crossover: bool | None = None,
+        operation_label: str = "evolution",
+        provided_plans: list[EvolutionPlan] | None = None,
+        provided_children: list[CandidateDossier] | None = None,
     ) -> EvolutionRunResult:
         if self.store.phase_is_complete(
             phase=EvolutionPhase.SURVIVAL,
@@ -388,31 +561,61 @@ class IdeaEvolutionController:
             "started",
             {"round_number": round_number, "population_id": population.population_id},
         )
-        parent_ids, parent_reasons = select_evolution_parents(
-            dossiers, scores_current, families_current, maximum=self.settings.offspring.mutation_maximum
-        )
-        mutation_plans = compile_mutation_plans(
-            parent_ids,
-            scores_current,
-            round_number=round_number,
-            limit=self.settings.offspring.mutation_maximum,
-        )
+        if requested_parent_ids is None:
+            parent_ids, parent_reasons = select_evolution_parents(
+                dossiers, scores_current, families_current, maximum=self.settings.offspring.mutation_maximum
+            )
+        else:
+            known_ids = {item.candidate_id for item in dossiers}
+            unknown = [candidate_id for candidate_id in requested_parent_ids if candidate_id not in known_ids]
+            if unknown:
+                raise ValueError("requested evolution Parent is not active: " + ", ".join(unknown))
+            parent_ids = list(dict.fromkeys(requested_parent_ids))
+            parent_reasons = {candidate_id: operation_label for candidate_id in parent_ids}
         crossover_decisions: list[CrossoverCompatibilityDecision] = []
-        if run_config.allow_crossover and self.settings.offspring.crossover_maximum:
-            pairs = _candidate_pairs(parent_ids)
-            if pairs:
-                crossover_decisions = await self.scorer.review_crossover_pairs(candidates=_copies(dossiers), pairs=pairs[:3])
-        crossover_plans = compile_crossover_plans(
-            crossover_decisions,
-            round_number=round_number,
-            limit=min(run_config.max_crossover_children, self.settings.offspring.crossover_maximum),
-        )
-        plans = mutation_plans + crossover_plans
+        if provided_plans is None:
+            effective_mutation_limit = self.settings.offspring.mutation_maximum if mutation_limit is None else max(0, mutation_limit)
+            mutation_plans = compile_mutation_plans(
+                parent_ids,
+                scores_current,
+                round_number=round_number,
+                limit=effective_mutation_limit,
+            )
+            crossover_allowed = run_config.allow_crossover if allow_crossover is None else allow_crossover
+            if crossover_allowed and self.settings.offspring.crossover_maximum:
+                pairs = requested_crossover_pairs if requested_crossover_pairs is not None else _candidate_pairs(parent_ids)
+                if pairs:
+                    crossover_decisions = await self.scorer.review_crossover_pairs(candidates=_copies(dossiers), pairs=pairs[:3])
+            crossover_plans = compile_crossover_plans(
+                crossover_decisions,
+                round_number=round_number,
+                limit=min(run_config.max_crossover_children, self.settings.offspring.crossover_maximum) if crossover_allowed else 0,
+            )
+            plans = mutation_plans + crossover_plans
+        else:
+            plans = list(provided_plans)
+            mutation_plans = [plan for plan in plans if plan.child_type == "mutation"]
+            crossover_plans = [plan for plan in plans if plan.child_type == "crossover"]
+        if requested_crossover_pairs is not None and not crossover_plans:
+            self.store.write_json(
+                f"ideation/evolution/plans/round_{round_number}.json",
+                {
+                    "schema_version": "1.0.0",
+                    "semantics": "t4_evolution_plan_batch",
+                    "operation": operation_label,
+                    "parent_selection": {"ids": parent_ids, "reasons": parent_reasons},
+                    "plans": [],
+                    "crossover_decisions": [model_dump(item, mode="json") for item in crossover_decisions],
+                    "status": "no_approved_crossover",
+                },
+            )
+            raise ValueError("The requested Crossover did not pass the independent Compatibility Check")
         self.store.write_json(
             f"ideation/evolution/plans/round_{round_number}.json",
             {
                 "schema_version": "1.0.0",
                 "semantics": "t4_evolution_plan_batch",
+                "operation": operation_label,
                 "parent_selection": {"ids": parent_ids, "reasons": parent_reasons},
                 "plans": [model_dump(item, mode="json") for item in plans],
                 "crossover_decisions": [model_dump(item, mode="json") for item in crossover_decisions],
@@ -434,7 +637,7 @@ class IdeaEvolutionController:
             "started",
             {"round_number": round_number, "planned_offspring": len(plans)},
         )
-        children = await self.evolver.generate_offspring(plans=plans, parents=_copies(dossiers))
+        children = list(provided_children) if provided_children is not None else await self.evolver.generate_offspring(plans=plans, parents=_copies(dossiers))
         self._validate_children(children, plans, parent_lookup)
         for child in children:
             self.store.write_candidate(child)
@@ -629,6 +832,7 @@ class IdeaEvolutionController:
                 "phase": EvolutionPhase.WAITING_HUMAN,
                 "generation": population.generation,
                 "completed_rounds": completed_rounds,
+                "configured_rounds": max(state.configured_rounds, completed_rounds),
                 "current_population_id": population.population_id,
                 "display_candidate_ids": display_ids,
                 "last_completed_artifact": f"ideation/populations/{population.population_id}.json",

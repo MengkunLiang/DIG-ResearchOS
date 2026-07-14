@@ -692,6 +692,38 @@ class CrossoverCompatibilityDecision(_StrictModel):
     complexity_risk: Literal["low", "medium", "high"] = "medium"
 
 
+class HumanCompositionCompatibility(_StrictModel):
+    """LLM-authored semantic assessment for a component-level human request."""
+
+    composition_id: str
+    source_candidate_ids: list[str] = Field(min_length=2)
+    source_components: list[str] = Field(min_length=2)
+    problem_compatibility: Literal["high", "medium", "low"]
+    assumption_conflict: Literal["none", "resolvable", "hard_conflict"]
+    mechanism_compatibility: Literal["high", "medium", "low"]
+    joint_testability: Literal["high", "medium", "low"]
+    contribution_coherence: Literal["high", "medium", "low"]
+    evidence_compatibility: Literal["high", "medium", "low"]
+    complexity_risk: Literal["low", "medium", "high"]
+    composition_type: Literal["complementary", "hierarchical", "parallel", "conflicting"]
+    recommended_action: Literal["compose", "keep_parallel", "request_user_choice", "reject_auto_merge"]
+    explanation_for_user: str = Field(min_length=18)
+    required_repairs: list[str] = Field(default_factory=list)
+    gene_donor_map: GeneDonorMap | None = None
+
+    _id = field_validator("composition_id")(_validate_identifier)
+
+    @model_validator(mode="after")
+    def composition_integrity(self) -> "HumanCompositionCompatibility":
+        if len(set(self.source_candidate_ids)) != len(self.source_candidate_ids):
+            raise ValueError("human composition source_candidate_ids must be unique")
+        if self.recommended_action == "compose" and self.gene_donor_map is None:
+            raise ValueError("composable human composition requires a Gene Donor Map")
+        if self.assumption_conflict == "hard_conflict" and self.recommended_action == "compose":
+            raise ValueError("hard assumption conflicts cannot be auto-composed")
+        return self
+
+
 class PortfolioSelection(_StrictModel):
     population_id: str
     lead_id: str | None = None

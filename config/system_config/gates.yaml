@@ -363,41 +363,76 @@ gates:
   # T4 候选方向选择：
   # 候选池已经写入结果文件，系统在这里暂停，让用户选择、合并、重构或要求重分析。
   t4_gate1_selection_gate:
-    title: "T4 研究方向选择"
-    description: "候选研究方向已准备好。面板会展示研究问题、机制、预测、反事实、最小验证、评分依据、论文阅读笔记和相关文件；你可以选择、合并、调整或要求重新分析。"
-    presentation:
-      gate1_candidate_cards:
-        from_file: ideation/_gate1_candidate_cards.md
-        mode: path_summary
-        summary_chars: 1800
-      gate1_selection_brief:
-        from_file: ideation/_gate1_selection_brief.md
-        mode: path_summary
-        summary_chars: 2400
-      how_to_answer:
-        literal: |
-          推荐输入方式：
-          - 直接输入 `D1`：选择某个候选并允许后半段按你的文字重构。
-          - 直接输入 `D1+D3` 或 `merge D1+D3`：合并多个候选。
-          - 可精确到候选假设，例如 `merge D1-H2 + D3-H1`，并说明保留的机制与验证方式。
-          - 输入 `new: <你的想法>`：补充一个新想法。
-          - 输入 `reanalyze: <需要补足的依据>`：要求重新生成候选池。
-          终端会完整展示短标题、创新、候选 H1/H2/H3、合并关系、评分和论文阅读笔记；详细卡片请打开 ideation/_gate1_candidate_cards.md；简报请打开 ideation/_gate1_selection_brief.md。
-      machine_readable_artifacts:
-        literal: |
-          机器可读附录路径（一般不需要直接阅读）：
-          - ideation/_candidate_directions.json：完整候选结构化数据
-          - ideation/_pass2_grounding_review.json：Pass2 文献接地、风险和推荐
-          - ideation/_pass1_forward_candidates.json：Pass1 原始发散候选
-          - ideation/bridge_coverage_review.json：如存在，记录 bridge 候选上桌/暂缓原因
+    title: "T4 · Research Idea Decision"
+    description: "ResearchOS 已保留完整 Candidate Population 和历史版本。先查看 1–3 个 Portfolio Candidates；再决定是进入 Pre-Novelty review、继续 Evolution、比较证据，还是回滚。"
     options:
+      - id: proceed_candidate
+        label: "Proceed with a Candidate"
+        description: "选择一个完整 Candidate，生成 Pre-Novelty brief；Population 保留，随后进入 T4.5 novelty/collision audit。"
+        next: T4
+        collect_input:
+          - directive
+      - id: another_generation
+        label: "Run another Generation"
+        description: "从当前 Population 生成并独立评分新一代；当前版本保留，可 Rollback；不会进入 T4.5。"
+        next: T4
+      - id: focus_evolution
+        label: "Focus Evolution"
+        description: "只优化一个 Candidate 的主要 bottleneck；其他 Candidate 保留不被覆盖。"
+        next: T4
+        collect_input:
+          - directive
+      - id: create_crossover
+        label: "Create a Crossover"
+        description: "从两个完整 Candidate 建立 Gene Donor Map。系统先做 Compatibility Check；不通过不会生成 Child。"
+        next: T4
+        collect_input:
+          - directive
+      - id: compose
+        label: "Compose selected components"
+        description: "从不同 Candidate 的 Hypothesis、Contribution 或 Gene 构建新方案。先 Compatibility Check，再由你二次确认；绝不直接拼接文本。"
+        next: T4
+        collect_input:
+          - directive
+      - id: keep_parallel
+        label: "Keep multiple Ideas in parallel"
+        description: "将多个完整 Candidate 保留为独立方向，不默认合并，也不覆盖当前 Population。"
+        next: T4
+        collect_input:
+          - directive
+      - id: show_population
+        label: "View remaining Population"
+        description: "查看未进入 display Portfolio 的 Active Candidates；只读，不调用模型。"
+        next: T4
+      - id: inspect
+        label: "Inspect Score / Evidence / Lineage"
+        description: "查看指定 Candidate 的评分、论文阅读笔记来源或 Parent–Child lineage；只读。"
+        next: T4
+        collect_input:
+          - directive
+      - id: regenerate_route
+        label: "Regenerate a Route"
+        description: "重新运行指定生成 Route；旧 route output 保留，并在新 Population snapshot 中重新评分。"
+        next: T4
+        collect_input:
+          - directive
+      - id: rollback
+        label: "Rollback to the previous Population"
+        description: "只切换 active Population pointer；后续 Generation 不删除，之后仍可重新前进。"
+        next: T4
+      - id: pause
+        label: "Pause"
+        description: "保存当前 Gate 状态。下次 resume 直接回到此处，不重复模型调用。"
+        next: T4
+      # Legacy aliases are retained so persisted selections and scripted callers
+      # from earlier ResearchOS workspaces still resolve correctly.
       - id: select_or_reframe
-        label: "按说明选择/重构"
+        label: "Legacy: select or reframe"
         next: T4
         collect_input:
           - selection
       - id: merge
-        label: "合并多个候选"
+        label: "Legacy: merge Candidates"
         next: T4
         collect_input:
           - merge_plan

@@ -32,6 +32,17 @@ _T2_LLM_CAPTURE_FIELDS = {
     "base_option",
 }
 
+_T4_LLM_DIRECTIVE_FIELDS = {
+    "action",
+    "target_candidate_ids",
+    "target_family_ids",
+    "component_refs",
+    "preserve_genes",
+    "donor_genes",
+    "requested_rounds",
+    "constraints",
+}
+
 
 def _strip_terminal_control_sequences(value: str) -> str:
     """Remove terminal replies/paste artifacts before parsing a human answer.
@@ -113,6 +124,32 @@ def _sanitize_t2_llm_capture(value: Any) -> dict[str, str]:
     return {key: item for key, item in captured.items() if item}
 
 
+def _sanitize_t4_llm_directive(value: Any) -> dict[str, Any]:
+    """Keep only the bounded proposal contract for a T4 Gate1 directive."""
+
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, Any] = {}
+    action = value.get("action")
+    if isinstance(action, str) and action.strip():
+        result["action"] = action.strip()
+    for key in ("target_candidate_ids", "target_family_ids", "component_refs", "preserve_genes", "constraints"):
+        raw = value.get(key)
+        if isinstance(raw, list):
+            result[key] = [str(item).strip() for item in raw if str(item).strip()]
+    raw_map = value.get("donor_genes")
+    if isinstance(raw_map, dict):
+        result["donor_genes"] = {
+            str(key).strip(): str(item).strip()
+            for key, item in raw_map.items()
+            if str(key).strip() and str(item).strip()
+        }
+    requested_rounds = value.get("requested_rounds")
+    if isinstance(requested_rounds, int) and 0 <= requested_rounds <= 3:
+        result["requested_rounds"] = requested_rounds
+    return result
+
+
 def build_t2_parameter_llm_interpreter(
     llm_client: Any,
 ) -> Callable[[str], Awaitable[dict[str, str]]]:
@@ -161,6 +198,43 @@ User input:
         choice = response.raw.choices[0].message
         parsed = _parse_json_object_from_llm_content(getattr(choice, "content", ""))
         return _sanitize_t2_llm_capture(parsed)
+
+    return interpret
+
+
+def build_t4_directive_llm_interpreter(
+    llm_client: Any,
+) -> Callable[[str], Awaitable[dict[str, Any]]]:
+    """Build a narrow semantic parser for natural-language T4 Gate1 input.
+
+    It proposes a directive only.  Candidate IDs, component references,
+    fingerprints, confirmation, and every state change remain subject to the
+    deterministic validation in ``researchos.ideation.directives``.
+    """
+
+    async def interpret(raw_answer: str) -> dict[str, Any]:
+        prompt = """Parse one ResearchOS T4 Gate1 instruction. Return exactly one JSON object, no Markdown and no explanation.
+Allowed action values: select_candidate, keep_parallel, compose_from_components, continue_evolution, focus_candidate, merge_candidates, show_more, show_archive, inspect_score, inspect_evidence, inspect_lineage, inspect_hypotheses, inspect_contributions, inspect_genome, regenerate_route, rollback, pause, cancel.
+Allowed keys: action, target_candidate_ids, target_family_ids, component_refs, preserve_genes, donor_genes, requested_rounds, constraints.
+Do not invent an ID, research claim, score, or mechanism. Use an empty list for an omitted list field rather than guessing.
+For multiple complete Candidates, use keep_parallel unless the instruction explicitly asks for a unified composition or crossover. For partial hypotheses/contributions/genes, use compose_from_components.
+User input:
+""" + _strip_terminal_control_sequences(raw_answer)
+        response = await llm_client.chat(
+            messages=[
+                {"role": "system", "content": "You are a strict JSON intent parser. Return only the requested object."},
+                {"role": "user", "content": prompt},
+            ],
+            tools=None,
+            temperature=0.0,
+            tier="light",
+            profile=None,
+            timeout=25,
+            max_retries_per_model=1,
+            retry_base_delay=0.0,
+        )
+        choice = response.raw.choices[0].message
+        return _sanitize_t4_llm_directive(_parse_json_object_from_llm_content(getattr(choice, "content", "")))
 
     return interpret
 
@@ -242,9 +316,11 @@ class CLIHumanInterface(HumanInterface):
         self,
         *,
         t2_parameter_interpreter: Callable[[str], Awaitable[dict[str, str]]] | None = None,
+        t4_directive_interpreter: Callable[[str], Awaitable[dict[str, Any]]] | None = None,
         no_color: bool = False,
     ) -> None:
         self._t2_parameter_interpreter = t2_parameter_interpreter
+        self._t4_directive_interpreter = t4_directive_interpreter
         self._no_color = bool(no_color)
 
     def _render_panel(self, *, title: str, lines: list[str], border_style: str) -> None:
@@ -356,6 +432,12 @@ class CLIHumanInterface(HumanInterface):
                 self._render_section(_humanize_presentation_key(key))
                 self._render_t4_candidate_overview(value)
                 continue
+            if gate_id == "t4_gate1_selection_gate" and key == "t4_directive_result":
+                self._render_t4_directive_result(value)
+                continue
+            if gate_id == "t4_gate1_selection_gate" and key == "t4_directive_confirmation":
+                self._render_t4_directive_confirmation(value)
+                continue
             if gate_id == "t4_prerun_gate" and key == "t4_prerun":
                 self._render_t4_prerun_overview(value)
                 continue
@@ -364,22 +446,25 @@ class CLIHumanInterface(HumanInterface):
                 continue
             self._render_section(_humanize_presentation_key(key))
             print(rendered)
-        for idx, option in enumerate(options, start=1):
-            default_marker = " [默认]" if option.get("is_default") else ""
-            print(f"[{idx}] {option['label']}{default_marker}")
-            if option.get("parameter_preview"):
-                preview = str(option["parameter_preview"])
-                if "\n" in preview:
-                    print("    参数:")
-                    for line in preview.splitlines():
-                        if line.strip():
-                            print(f"      - {line.strip()}")
-                else:
-                    print(f"    参数: {preview}")
-            if option.get("description"):
-                print(f"    作用: {option['description']}")
         if gate_id == "t4_gate1_selection_gate":
-            print("也可以直接输入：选 D1 并说明保留的机制；合并 D1+D3；新想法：说明你的想法；重新分析：说明需要补足的依据。")
+            self._render_t4_action_options(options)
+        else:
+            for idx, option in enumerate(options, start=1):
+                default_marker = " [默认]" if option.get("is_default") else ""
+                print(f"[{idx}] {option['label']}{default_marker}")
+                if option.get("parameter_preview"):
+                    preview = str(option["parameter_preview"])
+                    if "\n" in preview:
+                        print("    参数:")
+                        for line in preview.splitlines():
+                            if line.strip():
+                                print(f"      - {line.strip()}")
+                    else:
+                        print(f"    参数: {preview}")
+                if option.get("description"):
+                    print(f"    作用: {option['description']}")
+        if gate_id == "t4_gate1_selection_gate":
+            print("也可以直接描述下一步，例如：`用 I1 继续`、`再进化一轮`、`只优化 I2`、`组合 I1 与 I3`、`用 I1-H1 和 I2-H2 构建新方案`、`查看 I1 的证据`、`回到 P0`。")
         selected = None
         while selected is None:
             try:
@@ -414,7 +499,7 @@ class CLIHumanInterface(HumanInterface):
                         continue
                     break
                 if gate_id == "t4_gate1_selection_gate":
-                    print("未识别。示例：选 D1，并说明需要保留的机制；合并 D1+D3；新想法：……；重新分析：说明需要补足的证据。")
+                    print("未识别。请使用编号，或直接描述下一步，例如：`用 I1 继续`、`再进化一轮`、`查看 I1 的评分`、`回到 P0`。")
                 else:
                     print(f"无效选择: {raw_answer!r}。请输入 1-{len(options)}，或直接输入一句参数修改要求。")
                 continue
@@ -481,6 +566,152 @@ class CLIHumanInterface(HumanInterface):
             _environ={"COLUMNS": str(width), "LINES": "48"},
         )
         render_t4_prerun(inspection, config, console=console)
+        rendered = buffer.getvalue().rstrip()
+        if rendered:
+            print(rendered)
+
+    def _render_t4_action_options(self, options: list[dict]) -> None:
+        """Render Gate1 actions as a compact Rich decision guide."""
+
+        width = max(100, min(160, shutil.get_terminal_size(fallback=(120, 40)).columns))
+        buffer = io.StringIO()
+        console = Console(
+            file=buffer,
+            force_terminal=not self._no_color,
+            color_system=None if self._no_color else "truecolor",
+            no_color=self._no_color,
+            width=width,
+            highlight=False,
+            _environ={"COLUMNS": str(width), "LINES": "48"},
+        )
+        table = Table(expand=True, show_header=True, header_style="bold bright_yellow", border_style="bright_yellow")
+        table.add_column("#", width=4, justify="right")
+        table.add_column("Next action", width=31, overflow="fold")
+        table.add_column("What changes", ratio=3, overflow="fold")
+        for index, option in enumerate(options, start=1):
+            option_id = str(option.get("id") or option.get("key") or "")
+            if option_id in {"select_or_reframe", "merge", "new_idea", "reanalyze"}:
+                continue
+            label = str(option.get("label") or option_id)
+            description = " ".join(str(option.get("description") or "").split())
+            table.add_row(str(index), label, description)
+        console.print(Panel(table, title="What would you like to do next?", border_style="bright_yellow", expand=True))
+        rendered = buffer.getvalue().rstrip()
+        if rendered:
+            print(rendered)
+
+    def _render_t4_directive_confirmation(self, value: Any) -> None:
+        """Show a high-signal confirmation without exposing the directive JSON."""
+
+        if not isinstance(value, dict):
+            return
+        width = max(96, min(150, shutil.get_terminal_size(fallback=(120, 40)).columns))
+        buffer = io.StringIO()
+        console = Console(
+            file=buffer,
+            force_terminal=not self._no_color,
+            color_system=None if self._no_color else "truecolor",
+            no_color=self._no_color,
+            width=width,
+            highlight=False,
+            _environ={"COLUMNS": str(width), "LINES": "42"},
+        )
+        grid = Table.grid(expand=True, padding=(0, 1))
+        grid.add_column(style="bold bright_yellow", width=18, no_wrap=True)
+        grid.add_column(ratio=1, overflow="fold")
+        labels = (
+            ("Operation", "action"),
+            ("System will do", "what_happens"),
+            ("Estimated time", "estimated_time"),
+            ("Version policy", "version_policy"),
+            ("After this", "next_stage"),
+        )
+        for label, key in labels:
+            text = " ".join(str(value.get(key) or "").split())
+            if text:
+                grid.add_row(label, Text(text, overflow="fold"))
+        identifiers = [str(item) for item in value.get("candidate_ids", []) if str(item).strip()]
+        components = [str(item) for item in value.get("component_refs", []) if str(item).strip()]
+        if identifiers:
+            grid.add_row("Candidates", ", ".join(identifiers))
+        if components:
+            grid.add_row("Selected parts", ", ".join(components))
+        console.print(Panel(grid, title="Confirm this operation", border_style="bright_yellow", expand=True))
+        rendered = buffer.getvalue().rstrip()
+        if rendered:
+            print(rendered)
+
+    def _render_t4_directive_result(self, value: Any) -> None:
+        """Render a read-only Gate1 result in the same user-facing language."""
+
+        if not isinstance(value, dict):
+            return
+        width = max(96, min(150, shutil.get_terminal_size(fallback=(120, 40)).columns))
+        buffer = io.StringIO()
+        console = Console(
+            file=buffer,
+            force_terminal=not self._no_color,
+            color_system=None if self._no_color else "truecolor",
+            no_color=self._no_color,
+            width=width,
+            highlight=False,
+            _environ={"COLUMNS": str(width), "LINES": "42"},
+        )
+        items: list[Any] = [Text(" ".join(str(value.get("summary") or "").split()), overflow="fold")]
+        candidates = value.get("candidates") if isinstance(value.get("candidates"), list) else []
+        if candidates:
+            table = Table(expand=True, show_header=True, header_style="bold cyan", border_style="cyan")
+            table.add_column("Candidate", width=13)
+            table.add_column("One-line thesis", ratio=3, overflow="fold")
+            table.add_column("Main risk", ratio=2, overflow="fold")
+            for candidate in candidates:
+                if not isinstance(candidate, dict):
+                    continue
+                table.add_row(
+                    str(candidate.get("candidate_id") or ""),
+                    str(candidate.get("one_line_thesis") or ""),
+                    str(candidate.get("main_risk") or ""),
+                )
+            items.append(table)
+        candidate = value.get("candidate") if isinstance(value.get("candidate"), dict) else {}
+        if candidate:
+            grid = Table.grid(expand=True, padding=(0, 1))
+            grid.add_column(style="bold cyan", width=14, no_wrap=True)
+            grid.add_column(ratio=1, overflow="fold")
+            for label, key in (("Candidate", "candidate_id"), ("Core thesis", "one_line_thesis"), ("Main risk", "main_risk")):
+                text = " ".join(str(candidate.get(key) or "").split())
+                if text:
+                    grid.add_row(label, Text(text, overflow="fold"))
+            items.append(grid)
+        detail = value.get("detail") if isinstance(value.get("detail"), dict) else {}
+        detail_items = detail.get("items") if isinstance(detail.get("items"), list) else []
+        if detail_items:
+            items.append(Text("\n".join(f"• {' '.join(str(item).split())}" for item in detail_items), overflow="fold"))
+        composition = value.get("composition") if isinstance(value.get("composition"), dict) else {}
+        if composition:
+            composition_table = Table.grid(expand=True, padding=(0, 1))
+            composition_table.add_column(style="bold magenta", width=19, no_wrap=True)
+            composition_table.add_column(ratio=1, overflow="fold")
+            for label, key in (
+                ("Composition", "composition_id"),
+                ("Structure", "composition_type"),
+                ("Recommendation", "recommended_action"),
+                ("Compatibility", "explanation"),
+            ):
+                text = " ".join(str(composition.get(key) or "").split())
+                if text:
+                    composition_table.add_row(label, Text(text, overflow="fold"))
+            donors = composition.get("gene_donor_map") if isinstance(composition.get("gene_donor_map"), dict) else {}
+            if donors:
+                composition_table.add_row("Gene Donor Map", Text(", ".join(f"{key}: {item}" for key, item in donors.items()), overflow="fold"))
+            repairs = composition.get("required_repairs") if isinstance(composition.get("required_repairs"), list) else []
+            if repairs:
+                composition_table.add_row("Required repairs", Text("; ".join(str(item) for item in repairs), overflow="fold"))
+            items.extend([Text("Compatibility Check", style="bold magenta"), composition_table])
+        path = str(value.get("artifact") or "")
+        if path:
+            items.append(Text(f"Saved record: {path}", style="dim", overflow="fold"))
+        console.print(Panel(Group(*items), title=str(value.get("title") or "T4 update"), border_style="bright_cyan", expand=True))
         rendered = buffer.getvalue().rstrip()
         if rendered:
             print(rendered)
@@ -732,7 +963,7 @@ class CLIHumanInterface(HumanInterface):
         """Keep interactive gates focused on a single decision surface."""
 
         if gate_id == "t4_gate1_selection_gate":
-            return key == "candidate_overview"
+            return key in {"candidate_overview", "t4_directive_result", "t4_directive_confirmation"}
         if gate_id == "t2_literature_param_gate":
             return key == "current_parameter_preview"
         return True
@@ -935,6 +1166,11 @@ class CLIHumanInterface(HumanInterface):
     ) -> dict | None:
         """Async gate parser used by CLI so T2 can call its LLM interpreter."""
 
+        if gate_id == "t4_gate1_selection_gate":
+            parsed = self._parse_t4_gate1_text(raw_answer, options)
+            if parsed is None or str(parsed.get("option_id") or "") != "t4_directive":
+                return parsed
+            return await self._interpret_t4_gate1_text(raw_answer, parsed)
         if gate_id != "t2_literature_param_gate":
             return self._parse_inline_gate_customization(gate_id, raw_answer, options)
         captured = await self._interpret_t2_literature_param_text(raw_answer)
@@ -952,6 +1188,24 @@ class CLIHumanInterface(HumanInterface):
             captured.setdefault("base_option", str(default_id))
         return {"option_id": "custom", "captured": captured}
 
+    async def _interpret_t4_gate1_text(self, raw_answer: str, fallback: dict[str, Any]) -> dict[str, Any]:
+        """Use semantic parsing for Gate1 wording, then leave validation to T4."""
+
+        if self._t4_directive_interpreter is None:
+            return fallback
+        cleaned = _strip_terminal_control_sequences(raw_answer).strip()
+        if not cleaned:
+            return fallback
+        try:
+            proposal = await self._t4_directive_interpreter(cleaned)
+        except Exception:
+            return fallback
+        if not proposal:
+            return fallback
+        captured = dict(fallback.get("captured") or {})
+        captured["parsed_directive"] = proposal
+        return {"option_id": "t4_directive", "captured": captured}
+
     @staticmethod
     def _parse_t4_gate1_text(raw_answer: str, options: list[dict]) -> dict | None:
         text = str(raw_answer or "").strip()
@@ -959,7 +1213,33 @@ class CLIHumanInterface(HumanInterface):
             return None
         normalized = text.replace("，", ",").replace("＋", "+").strip()
         lowered = normalized.casefold()
+        if normalized.isdigit():
+            # Let the normal menu parser resolve numbered Rich options.
+            return None
         option_ids = {str(option.get("id") or option.get("key") or "") for option in options}
+        if lowered in {"confirm", "yes", "y", "确认", "继续"} and "confirm" in option_ids:
+            return {"option_id": "confirm", "captured": {}}
+        if lowered in {"cancel", "no", "n", "取消"} and "cancel" in option_ids:
+            return {"option_id": "cancel", "captured": {}}
+        # Native Evolution Gate1 uses an LLM-first semantic parser followed by
+        # deterministic validation in StateMachine.  Preserve the researcher's
+        # original wording instead of prematurely collapsing it into the old
+        # select/merge/reanalyze branches.
+        if "t4_directive" not in option_ids and any(
+            option_id in option_ids
+            for option_id in {
+                "proceed_candidate",
+                "another_generation",
+                "focus_evolution",
+                "create_crossover",
+                "compose",
+                "show_population",
+                "inspect",
+                "regenerate_route",
+                "rollback",
+            }
+        ):
+            return {"option_id": "t4_directive", "captured": {"directive": normalized}}
         # ``\b`` treats Chinese characters as word characters, so a normal
         # answer such as "选D1作为主线" used to miss the candidate code.
         candidate_pattern = r"(?<![A-Za-z0-9])[DS]\d+(?![A-Za-z0-9])"
