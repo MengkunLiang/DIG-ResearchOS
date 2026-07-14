@@ -7,11 +7,12 @@ Missing compatibility prose fails closed instead of being template-generated.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
 from ..pydantic_compat import model_dump
-from .models import CandidateDossier, PopulationSnapshot, ScoreReport
+from .models import BridgeCoverageEntry, CandidateDossier, PopulationSnapshot, ScoreReport
 from .state import T4ArtifactStore
 
 
@@ -24,6 +25,7 @@ def project_gate1_population(
     population: PopulationSnapshot,
     dossiers: list[CandidateDossier],
     scores: list[ScoreReport],
+    route_results: list[object] | None = None,
 ) -> dict[str, Any]:
     """Write Pass1/Pass2/Gate1 projections for an evolved active population."""
 
@@ -43,6 +45,7 @@ def project_gate1_population(
     _write_family_summary(store, candidates)
     _write_gate_cards(store, candidates)
     _write_gate_brief(store, candidates, population)
+    _write_bridge_coverage_review(store, candidates, route_results or [])
     return {"candidate_count": len(candidates), "candidate_ids": [item["id"] for item in candidates]}
 
 
@@ -112,6 +115,8 @@ def _legacy_candidate(dossier: CandidateDossier, score: ScoreReport) -> dict[str
         "basis_sources": presentation.basis_sources,
         "supporting_papers": supporting,
         "mechanism_family": presentation.mechanism_family,
+        "cross_domain_sources": presentation.cross_domain_sources,
+        "cross_domain_relation": presentation.cross_domain_relation,
         "cdr_tuple": cdr,
         "contribution_character": dossier.contributions[0].what_changes_if_true if dossier.contributions else "",
         "contribution_strength": score.compatibility_scores["contribution_strength"],
@@ -242,3 +247,84 @@ def _write_gate_brief(store: T4ArtifactStore, candidates: list[dict[str, Any]], 
         ]
     )
     store.path("ideation/_gate1_selection_brief.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _write_bridge_coverage_review(
+    store: T4ArtifactStore,
+    candidates: list[dict[str, Any]],
+    route_results: list[object],
+) -> None:
+    """Project LLM-authored Bridge decisions into the retained escape-hatch contract."""
+
+    plan_path = store.path("literature/bridge_domain_plan.json")
+    try:
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return
+    if not isinstance(plan, dict) or str(plan.get("source") or "").strip().casefold() == "none":
+        return
+    domains = plan.get("bridge_domains") if isinstance(plan.get("bridge_domains"), list) else []
+    domains = [item for item in domains if isinstance(item, dict) and str(item.get("bridge_id") or "").strip()]
+    if not domains:
+        return
+    reviews_by_id: dict[str, BridgeCoverageEntry] = {}
+    for route_result in route_results:
+        raw_reviews = getattr(route_result, "bridge_reviews", [])
+        for raw in raw_reviews if isinstance(raw_reviews, list) else []:
+            review = raw if isinstance(raw, BridgeCoverageEntry) else BridgeCoverageEntry.model_validate(raw)
+            if review.bridge_id in reviews_by_id:
+                raise ValueError(f"Bridge coverage was returned more than once for {review.bridge_id}")
+            reviews_by_id[review.bridge_id] = review
+    active_ids = {item["id"] for item in candidates}
+    candidate_bridge_ids = {
+        bridge_id: [
+            candidate["id"]
+            for candidate in candidates
+            if bridge_id in candidate.get("cross_domain_sources", [])
+        ]
+        for bridge_id in (str(item.get("bridge_id") or "").strip() for item in domains)
+    }
+    projected: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for domain in domains:
+        bridge_id = str(domain.get("bridge_id") or "").strip()
+        review = reviews_by_id.get(bridge_id)
+        if review is None:
+            raise ValueError(f"Cross-domain Route did not provide an LLM-authored Bridge review for {bridge_id}")
+        candidate_ids = [candidate_id for candidate_id in review.candidate_ids if candidate_id in active_ids]
+        candidate_ids = list(dict.fromkeys([*candidate_ids, *candidate_bridge_ids.get(bridge_id, [])]))
+        if candidate_ids and not review.visible_to_gate:
+            raise ValueError(f"Bridge {bridge_id} has active candidates but its LLM review hides them from Gate1")
+        if not candidate_ids:
+            if review.visible_to_gate or review.escape_status != "no_candidate_available":
+                raise ValueError(
+                    f"Bridge {bridge_id} has no active Candidate; the LLM review must use a visible=false no_candidate_available escape hatch"
+                )
+            warnings.append(f"{bridge_id}: no active bridge candidate; escape hatch is shown at Gate1.")
+        projected.append(
+            {
+                "bridge_id": bridge_id,
+                "priority": str(domain.get("priority") or "should_explore"),
+                "candidate_ids": candidate_ids,
+                "visible_to_gate": bool(candidate_ids),
+                "forced_surfaced": bool(domain.get("priority") == "must_explore" and candidate_ids),
+                "selected_into_hypotheses": False,
+                "decision_summary": review.decision_summary,
+                "escape_hatch": {
+                    "status": review.escape_status,
+                    "reason": review.escape_reason,
+                    "falsification_or_kill_criteria": review.falsification_or_kill_criteria,
+                    "can_revisit_if": review.can_revisit_if,
+                },
+            }
+        )
+    store.write_json(
+        "ideation/bridge_coverage_review.json",
+        {
+            "version": "1.0.0",
+            "semantics": "bridge_candidate_visibility_and_escape_hatch_review",
+            "source_bridge_plan": "literature/bridge_domain_plan.json",
+            "bridge_reviews": projected,
+            "warnings": warnings,
+        },
+    )

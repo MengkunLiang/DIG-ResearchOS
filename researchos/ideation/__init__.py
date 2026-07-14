@@ -7,6 +7,7 @@ resume internal evolutionary phases while preserving the existing T4 contract.
 
 from .config import T4EvolutionSettings, load_t4_evolution_settings
 from .models import (
+    BridgeCoverageEntry,
     CandidateDossier,
     CandidatePresentation,
     ComplexityReport,
@@ -34,6 +35,7 @@ from .models import (
 )
 
 __all__ = [
+    "BridgeCoverageEntry",
     "CandidateDossier",
     "CandidatePresentation",
     "ComplexityReport",

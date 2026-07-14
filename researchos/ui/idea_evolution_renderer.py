@@ -73,6 +73,8 @@ def render_t4_evolution_phase(
 
     output = console or Console(file=file, highlight=False)
     position, title, purpose = _PHASE_VIEW.get(phase, (0, phase.value.replace("_", " ").title(), "正在更新 T4 运行状态。"))
+    default_round = 0 if position <= 4 else 1
+    round_number = _safe_int(payload.get("round_number")) if payload.get("round_number") is not None else default_round
     status_text = {
         "started": "正在进行",
         "completed": "已完成",
@@ -82,7 +84,7 @@ def render_t4_evolution_phase(
     output.print(
         Panel(
             Text(purpose, overflow="fold"),
-            title=f"T4 · Round {0 if position <= 4 else 1} · Phase {position}/8 · {title} · {status_text}",
+            title=f"T4 · Round {round_number} · Phase {position}/8 · {title} · {status_text}",
             border_style="bright_cyan" if status != "completed" else "green",
             expand=True,
         )
@@ -142,9 +144,9 @@ def _metric_rows(phase: EvolutionPhase, payload: dict[str, Any]) -> list[tuple[s
     if phase == EvolutionPhase.SURVIVAL:
         return [
             ("Population", str(payload.get("population_id") or "P1")),
-            ("P0 candidates", _number(payload.get("p0_count"))),
+            ("Input Population candidates", _number(payload.get("input_count"))),
             ("Offspring", _number(payload.get("offspring_count"))),
-            ("P1 active candidates", _number(payload.get("active_count"))),
+            ("Active candidates", _number(payload.get("active_count"))),
             ("Archived candidates", _number(payload.get("archived_count"))),
             ("Visible Portfolio", _number(payload.get("portfolio_count"))),
         ]

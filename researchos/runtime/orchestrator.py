@@ -2682,12 +2682,6 @@ class AgentRunner:
             run_config = store.read_run_config()
         except ValueError:
             return False
-        if run_config.rounds > 1:
-            # The legacy path remains available for a pre-existing Deep
-            # workspace until the multi-round controller migration completes.
-            # Standard remains the product default and always uses P0 -> P1.
-            return False
-
         async def role_call(system_contract: str, user_prompt: str) -> str:
             return await self._call_t4_evolution_role(
                 ctx=ctx,
@@ -2730,6 +2724,7 @@ class AgentRunner:
                 population=result.population,
                 dossiers=result.active_dossiers,
                 scores=result.active_scores,
+                route_results=result.route_results,
             )
         except RecoverableRuntimePause:
             raise

@@ -37,10 +37,10 @@ def test_survival_rich_panel_explains_population_change_without_candidate_conten
     rendered = _render(
         EvolutionPhase.SURVIVAL,
         "completed",
-        {"population_id": "P1", "p0_count": 12, "offspring_count": 4, "active_count": 7, "archived_count": 9, "portfolio_count": 3},
+        {"population_id": "P1", "input_count": 12, "offspring_count": 4, "active_count": 7, "archived_count": 9, "portfolio_count": 3},
     )
 
     assert "Survival & Portfolio" in rendered
-    assert "P1 active candidates" in rendered
+    assert "Active candidates" in rendered
     assert "Visible Portfolio" in rendered
     assert "candidate title" not in rendered.casefold()

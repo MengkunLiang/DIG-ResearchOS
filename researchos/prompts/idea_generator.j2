@@ -1,10 +1,10 @@
 Return one JSON object and no Markdown.
 
 For a supported route use:
-{"candidates": [CandidateDossier, ...]}
+{"candidates": [CandidateDossier, ...], "bridge_reviews": [BridgeCoverageEntry, ...]}
 
 For a route that current evidence cannot support use:
-{"status": "unsupported", "unsupported_reason": "..."}
+{"status": "unsupported", "unsupported_reason": "...", "bridge_reviews": [BridgeCoverageEntry, ...]}
 
-Use only the assigned route and workspace-derived payload. Do not add a score or rank.
+Only `cross_domain_bridge` uses `bridge_reviews`. When the payload contains confirmed bridge IDs, return exactly one review for each ID, even when no Candidate can be supported. Do not add a score or rank.
 {{ payload_json }}

@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from ..pydantic_compat import model_dump, model_validate
 from ..runtime.llm_client import LLMClient
 from ..runtime.prompts import get_prompt_env
-from .evolution_controller import IdeaEvolverPort, IdeaGeneratorPort, IdeaScoringPort
+from .evolution_controller import IdeaEvolverPort, IdeaGeneratorPort, IdeaScoringPort, RouteGenerationPayload
 from .models import CandidateDossier, CrossoverCompatibilityDecision, EvolutionPlan, OpportunityQuery, RouteGenerationResult, ScoreReport, T4RunConfig
 
 
@@ -98,7 +98,7 @@ class LLMIdeaGenerator(IdeaGeneratorPort):
         evidence_bundle: dict[str, Any],
         quota: int,
         repair: bool,
-    ) -> list[CandidateDossier] | RouteGenerationResult:
+    ) -> list[CandidateDossier] | RouteGenerationResult | RouteGenerationPayload:
         payload = {
             "prompt_version": "1.0.0",
             "route": route,
@@ -115,6 +115,8 @@ class LLMIdeaGenerator(IdeaGeneratorPort):
                 "Abstract-only evidence may inspire a candidate or upgrade requirement, never an established mechanism or final claim. "
                 "Every CandidateDossier must include its presentation object: title, display_title, basis_summary, practical_implication, "
                 "counterfactual, complete gate1_card, basis_sources, idea_origin, constraint_status, and mechanism_family. "
+                "For cross_domain_bridge, return bridge_reviews for every supplied bridge ID, including candidate IDs or an explicit "
+                "LLM-authored escape-hatch decision, kill criteria, and revisit condition. "
                 "If the route cannot be supported, return status=unsupported with a concrete reason instead of fabricating a candidate."
             ),
             payload=payload,
@@ -125,7 +127,17 @@ class LLMIdeaGenerator(IdeaGeneratorPort):
         candidates = [model_validate(CandidateDossier, item) for item in raw if isinstance(item, dict)]
         for candidate in candidates:
             _require_gate1_candidate_presentation(candidate)
-        return candidates
+        route_result = model_validate(
+            RouteGenerationResult,
+            {
+                "route": route,
+                "status": str(data.get("status") or "supported").lower(),
+                "candidate_ids": [item.candidate_id for item in candidates],
+                "unsupported_reason": str(data.get("unsupported_reason") or ""),
+                "bridge_reviews": data.get("bridge_reviews") if isinstance(data.get("bridge_reviews"), list) else [],
+            },
+        )
+        return RouteGenerationPayload(result=route_result, candidates=candidates)
 
 
 class LLMIdeaScorer(IdeaScoringPort):

@@ -4,7 +4,7 @@ import pytest
 
 from researchos.agents.ideation import validate_t4_gate1_ready
 from researchos.ideation.legacy_projection import project_gate1_population
-from researchos.ideation.models import CandidatePresentation, PopulationSnapshot
+from researchos.ideation.models import BridgeCoverageEntry, CandidatePresentation, PopulationSnapshot, RouteGenerationResult
 from tests.unit.test_t4_evolution_controller import _candidate
 from tests.unit.test_t4_population_evolution import FINGERPRINT, _score
 
@@ -104,3 +104,66 @@ def test_projection_fails_closed_with_only_one_hypothesis(tmp_path):
 
     with pytest.raises(ValueError, match="requires 2-3 LLM-authored provisional hypotheses"):
         project_gate1_population(tmp_path, population=population, dossiers=dossiers, scores=scores)
+
+
+def test_projection_preserves_bridge_visibility_and_escape_hatch(tmp_path):
+    dossiers, scores, population = _ready_projection_inputs()
+    bridge_presentation = dossiers[2].presentation.model_copy(
+        update={
+            "idea_origin": "bridge_synthesis",
+            "constraint_status": "bridge",
+            "cross_domain_sources": ["B1"],
+            "cross_domain_relation": "mechanism_bridge",
+        }
+    )
+    dossiers[2] = dossiers[2].model_copy(update={"presentation": bridge_presentation})
+    (tmp_path / "literature").mkdir()
+    (tmp_path / "literature" / "bridge_domain_plan.json").write_text(
+        '{"source":"user_confirmed","bridge_domains":[{"bridge_id":"B1","priority":"must_explore"}]}\n',
+        encoding="utf-8",
+    )
+    route_results = [
+        RouteGenerationResult(
+            route="cross_domain_bridge",
+            status="supported",
+            candidate_ids=["I3"],
+            bridge_reviews=[
+                BridgeCoverageEntry(
+                    bridge_id="B1",
+                    candidate_ids=["I3"],
+                    visible_to_gate=True,
+                    decision_summary="The bridge candidate is visible because it supplies a bounded transferable mechanism with an explicit validation path.",
+                    escape_status="deferred",
+                    escape_reason="The bridge remains conditional on the stated evidence boundary and must not be upgraded to a final mechanism claim.",
+                    falsification_or_kill_criteria="Drop the bridge if the transfer control cannot distinguish the proposed mechanism from the source-domain artifact.",
+                    can_revisit_if="Revisit when an additional bridge reading note or a compatible validation resource becomes available.",
+                )
+            ],
+        )
+    ]
+
+    project_gate1_population(
+        tmp_path,
+        population=population,
+        dossiers=dossiers,
+        scores=scores,
+        route_results=route_results,
+    )
+
+    ok, error = validate_t4_gate1_ready(tmp_path)
+    assert ok, error
+    bridge_review = (tmp_path / "ideation" / "bridge_coverage_review.json").read_text(encoding="utf-8")
+    assert '"bridge_id": "B1"' in bridge_review
+    assert '"candidate_ids": [' in bridge_review
+
+
+def test_projection_fails_closed_when_confirmed_bridge_has_no_route_review(tmp_path):
+    dossiers, scores, population = _ready_projection_inputs()
+    (tmp_path / "literature").mkdir()
+    (tmp_path / "literature" / "bridge_domain_plan.json").write_text(
+        '{"source":"user_confirmed","bridge_domains":[{"bridge_id":"B1","priority":"must_explore"}]}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="did not provide an LLM-authored Bridge review for B1"):
+        project_gate1_population(tmp_path, population=population, dossiers=dossiers, scores=scores, route_results=[])

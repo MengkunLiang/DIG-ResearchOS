@@ -165,7 +165,7 @@ class FakeEvolver:
             parent = by_id[plan.parent_ids[0]]
             children.append(
                 _candidate(
-                    f"M{index}",
+                    f"M{plan.round}-{index}",
                     parent.genome.route,
                     parent_ids=plan.parent_ids,
                     mechanism=parent.genome.mechanism.value + " with a disabling control",
@@ -293,3 +293,34 @@ async def test_controller_reuses_completed_p1_without_another_evolution_round(tm
     assert second.active_dossiers
     assert {item.candidate_id for item in second.active_scores} == set(second.population.active_candidate_ids)
     assert any(status == "reused" for _phase, status, _payload in events)
+
+
+@pytest.mark.asyncio
+async def test_deep_mode_completes_a_second_population_update(tmp_path):
+    _write_inputs(tmp_path)
+    controller = IdeaEvolutionController(
+        workspace_dir=tmp_path,
+        settings=_settings(),
+        generator=FakeGenerator(),
+        scorer=FakeScorer(),
+        evolver=FakeEvolver(),
+    )
+    result = await controller.run(
+        T4RunConfig(
+            mode="deep",
+            rounds=2,
+            allow_crossover=False,
+            final_top_k=2,
+            max_initial_population=6,
+            active_population_size=3,
+            max_offspring_per_round=1,
+            max_crossover_children=0,
+            route_quotas={"evidence_routed_literature": 1, "informed_brainstorm": 1},
+        )
+    )
+
+    assert result.population.population_id == "P2"
+    assert result.state.completed_rounds == 2
+    assert (tmp_path / "ideation" / "populations" / "P2.json").exists()
+    assert (tmp_path / "ideation" / "evolution" / "round_2.json").exists()
+    assert (tmp_path / "ideation" / "evolution" / "round_2_diagnostics.json").exists()

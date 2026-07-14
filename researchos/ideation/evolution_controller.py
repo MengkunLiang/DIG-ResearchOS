@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+import json
 from typing import Any, Awaitable, Callable, Protocol
 
 from ..pydantic_compat import model_dump
@@ -62,7 +63,7 @@ class IdeaGeneratorPort(Protocol):
         evidence_bundle: dict[str, Any],
         quota: int,
         repair: bool,
-    ) -> list[CandidateDossier] | RouteGenerationResult: ...
+    ) -> list[CandidateDossier] | RouteGenerationResult | "RouteGenerationPayload": ...
 
 
 class IdeaScoringPort(Protocol):
@@ -108,6 +109,14 @@ class EvolutionRunResult:
     active_scores: list[ScoreReport]
 
 
+@dataclass(frozen=True)
+class RouteGenerationPayload:
+    """One route's typed candidates plus its durable routing diagnostics."""
+
+    result: RouteGenerationResult
+    candidates: list[CandidateDossier]
+
+
 class IdeaEvolutionController:
     """Run P0 formation and an optional full P0 -> P1 transition."""
 
@@ -138,6 +147,7 @@ class IdeaEvolutionController:
         if run_config.rounds == 0:
             await self._report(EvolutionPhase.SCORING, "started", {"population_id": p0.population_id, "candidate_count": len(p0_dossiers)})
             scores = await self._score(p0_dossiers, "SB-P0")
+            self._write_scores("P0", scores)
             families = self._load_or_build_families(p0_dossiers, generation=0)
             portfolio = select_portfolio(p0, scores, families, maximum=run_config.final_top_k)
             self.store.write_json("ideation/portfolio.json", model_dump(portfolio, mode="json"))
@@ -156,12 +166,22 @@ class IdeaEvolutionController:
                 active_dossiers=p0_dossiers,
                 active_scores=active_scores,
             )
-        return await self._run_one_evolution_round(
-            p0=p0,
-            p0_dossiers=p0_dossiers,
-            route_results=route_results,
-            run_config=run_config,
-        )
+        population = p0
+        dossiers = p0_dossiers
+        result: EvolutionRunResult | None = None
+        for round_number in range(1, run_config.rounds + 1):
+            result = await self._run_evolution_round(
+                population=population,
+                dossiers=dossiers,
+                route_results=route_results,
+                run_config=run_config,
+                round_number=round_number,
+            )
+            population = result.population
+            dossiers = result.active_dossiers
+        if result is None:  # Defensive: rounds=0 returned above.
+            raise ValueError("T4 evolution requires a positive round count")
+        return result
 
     async def _ensure_p0(
         self,
@@ -268,6 +288,7 @@ class IdeaEvolutionController:
             "route": route,
             "opportunity_ids": [item.opportunity_id for item in opportunities if route in item.compatible_routes],
             "evidence_summary": evidence_summary,
+            "bridge_plan": self._bridge_plan_context() if route == "cross_domain_bridge" else {"bridge_domains": []},
         }
         output = await self.generator.generate_route(
             route=route,
@@ -288,67 +309,107 @@ class IdeaEvolutionController:
             result, candidates = self._normalize_route_output(route, repaired, repaired_once=True)
         return result, candidates
 
-    async def _run_one_evolution_round(
+    def _bridge_plan_context(self) -> dict[str, Any]:
+        """Pass workspace-confirmed Bridge identifiers to the dedicated route."""
+
+        path = self.store.path("literature/bridge_domain_plan.json")
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {"bridge_domains": []}
+        if not isinstance(payload, dict) or str(payload.get("source") or "").strip().casefold() == "none":
+            return {"bridge_domains": []}
+        domains = payload.get("bridge_domains") if isinstance(payload.get("bridge_domains"), list) else []
+        return {
+            "source": str(payload.get("source") or ""),
+            "bridge_domains": [item for item in domains if isinstance(item, dict) and str(item.get("bridge_id") or "").strip()],
+        }
+
+    async def _run_evolution_round(
         self,
         *,
-        p0: PopulationSnapshot,
-        p0_dossiers: list[CandidateDossier],
+        population: PopulationSnapshot,
+        dossiers: list[CandidateDossier],
         route_results: list[RouteGenerationResult],
         run_config: T4RunConfig,
+        round_number: int,
     ) -> EvolutionRunResult:
         if self.store.phase_is_complete(
             phase=EvolutionPhase.SURVIVAL,
-            generation=1,
-            input_fingerprint=p0.input_fingerprint,
-            run_config_fingerprint=p0.run_config_fingerprint,
+            generation=round_number,
+            input_fingerprint=population.input_fingerprint,
+            run_config_fingerprint=population.run_config_fingerprint,
         ):
-            p1 = self.store.read_population("P1")
-            dossiers = self._load_dossiers(p1.active_candidate_ids)
-            scores = self._load_scores("U1", p1.active_candidate_ids)
+            output_population = self.store.read_population(f"P{round_number}")
+            output_dossiers = self._load_dossiers(output_population.active_candidate_ids)
+            scores = self._load_scores(f"U{round_number}", output_population.active_candidate_ids)
             portfolio = self._load_portfolio()
-            state = self._set_waiting_state(p1, run_config, display_ids=_portfolio_ids(portfolio), completed_rounds=1)
+            state = self._set_waiting_state(
+                output_population,
+                run_config,
+                display_ids=_portfolio_ids(portfolio),
+                completed_rounds=round_number,
+            )
             await self._report(
                 EvolutionPhase.SURVIVAL,
                 "reused",
-                {"population_id": p1.population_id, "active_count": len(dossiers), "portfolio_count": len(_portfolio_ids(portfolio))},
+                {
+                    "round_number": round_number,
+                    "population_id": output_population.population_id,
+                    "active_count": len(output_dossiers),
+                    "portfolio_count": len(_portfolio_ids(portfolio)),
+                },
             )
             return EvolutionRunResult(
-                population=p1,
+                population=output_population,
                 portfolio=portfolio,
                 state=state,
                 route_results=route_results,
-                active_dossiers=dossiers,
+                active_dossiers=output_dossiers,
                 active_scores=scores,
             )
 
-        await self._report(EvolutionPhase.SCORING, "started", {"population_id": p0.population_id, "candidate_count": len(p0_dossiers)})
-        scores_p0 = await self._score(p0_dossiers, "SB-P0")
-        self._write_scores("P0", scores_p0)
-        families_p0 = self._load_or_build_families(p0_dossiers, generation=0)
-        await self._report(EvolutionPhase.SCORING, "completed", {"population_id": p0.population_id, "candidate_count": len(scores_p0)})
-        await self._report(EvolutionPhase.EVOLUTION_PLANNING, "started", {"population_id": p0.population_id})
+        score_batch = f"SB-P{population.generation}"
+        await self._report(
+            EvolutionPhase.SCORING,
+            "started",
+            {"round_number": round_number, "population_id": population.population_id, "candidate_count": len(dossiers)},
+        )
+        scores_current = await self._score(dossiers, score_batch)
+        self._write_scores(population.population_id, scores_current)
+        families_current = self._load_or_build_families(dossiers, generation=population.generation)
+        await self._report(
+            EvolutionPhase.SCORING,
+            "completed",
+            {"round_number": round_number, "population_id": population.population_id, "candidate_count": len(scores_current)},
+        )
+        await self._report(
+            EvolutionPhase.EVOLUTION_PLANNING,
+            "started",
+            {"round_number": round_number, "population_id": population.population_id},
+        )
         parent_ids, parent_reasons = select_evolution_parents(
-            p0_dossiers, scores_p0, families_p0, maximum=self.settings.offspring.mutation_maximum
+            dossiers, scores_current, families_current, maximum=self.settings.offspring.mutation_maximum
         )
         mutation_plans = compile_mutation_plans(
             parent_ids,
-            scores_p0,
-            round_number=1,
+            scores_current,
+            round_number=round_number,
             limit=self.settings.offspring.mutation_maximum,
         )
         crossover_decisions: list[CrossoverCompatibilityDecision] = []
         if run_config.allow_crossover and self.settings.offspring.crossover_maximum:
             pairs = _candidate_pairs(parent_ids)
             if pairs:
-                crossover_decisions = await self.scorer.review_crossover_pairs(candidates=_copies(p0_dossiers), pairs=pairs[:3])
+                crossover_decisions = await self.scorer.review_crossover_pairs(candidates=_copies(dossiers), pairs=pairs[:3])
         crossover_plans = compile_crossover_plans(
             crossover_decisions,
-            round_number=1,
+            round_number=round_number,
             limit=min(run_config.max_crossover_children, self.settings.offspring.crossover_maximum),
         )
         plans = mutation_plans + crossover_plans
         self.store.write_json(
-            "ideation/evolution/plans/round_1.json",
+            f"ideation/evolution/plans/round_{round_number}.json",
             {
                 "schema_version": "1.0.0",
                 "semantics": "t4_evolution_plan_batch",
@@ -360,18 +421,31 @@ class IdeaEvolutionController:
         await self._report(
             EvolutionPhase.EVOLUTION_PLANNING,
             "completed",
-            {"parent_count": len(parent_ids), "mutation_count": len(mutation_plans), "crossover_count": len(crossover_plans)},
+            {
+                "round_number": round_number,
+                "parent_count": len(parent_ids),
+                "mutation_count": len(mutation_plans),
+                "crossover_count": len(crossover_plans),
+            },
         )
-        parent_lookup = {item.candidate_id: item for item in p0_dossiers}
-        await self._report(EvolutionPhase.OFFSPRING, "started", {"planned_offspring": len(plans)})
-        children = await self.evolver.generate_offspring(plans=plans, parents=_copies(p0_dossiers))
+        parent_lookup = {item.candidate_id: item for item in dossiers}
+        await self._report(
+            EvolutionPhase.OFFSPRING,
+            "started",
+            {"round_number": round_number, "planned_offspring": len(plans)},
+        )
+        children = await self.evolver.generate_offspring(plans=plans, parents=_copies(dossiers))
         self._validate_children(children, plans, parent_lookup)
         for child in children:
             self.store.write_candidate(child)
-        union = [*p0_dossiers, *children]
-        await self._report(EvolutionPhase.OFFSPRING, "rescoring", {"offspring_count": len(children), "union_count": len(union)})
-        union_scores = await self._score(union, "SB-U1")
-        self._write_scores("U1", union_scores)
+        union = [*dossiers, *children]
+        await self._report(
+            EvolutionPhase.OFFSPRING,
+            "rescoring",
+            {"round_number": round_number, "offspring_count": len(children), "union_count": len(union)},
+        )
+        union_scores = await self._score(union, f"SB-U{round_number}")
+        self._write_scores(f"U{round_number}", union_scores)
         contracts = [validate_idea_contract(item) for item in union]
         deltas = []
         complexity = []
@@ -389,46 +463,48 @@ class IdeaEvolutionController:
                     ratio_limit=self.settings.complexity_growth_ratio_limit,
                 )
             )
-        families_p1 = self._load_or_build_families(union, generation=1)
+        output_population_id = f"P{round_number}"
+        output_generation = round_number
+        output_families = self._load_or_build_families(union, generation=output_generation)
         survivor_ids, archived_ids, survival = select_survivors(
             union,
             union_scores,
             contracts,
             deltas,
             complexity,
-            families_p1,
+            output_families,
             target_size=run_config.active_population_size,
         )
-        p1 = PopulationSnapshot(
-            population_id="P1",
-            generation=1,
-            input_fingerprint=p0.input_fingerprint,
-            run_config_fingerprint=p0.run_config_fingerprint,
+        output_population = PopulationSnapshot(
+            population_id=output_population_id,
+            generation=output_generation,
+            input_fingerprint=population.input_fingerprint,
+            run_config_fingerprint=population.run_config_fingerprint,
             active_candidate_ids=survivor_ids,
-            family_ids=[item.family_id for item in families_p1],
+            family_ids=[item.family_id for item in output_families],
             elite_candidate_ids=survivor_ids[:1],
             archived_candidate_ids=archived_ids,
-            created_from_round=1,
+            created_from_round=round_number,
         )
-        self.store.write_population(p1)
+        self.store.write_population(output_population)
         self.store.write_round(
             RoundArtifact(
-                round=1,
-                input_population_id="P0",
-                output_population_id="P1",
-                input_fingerprint=p0.input_fingerprint,
-                run_config_fingerprint=p0.run_config_fingerprint,
+                round=round_number,
+                input_population_id=population.population_id,
+                output_population_id=output_population_id,
+                input_fingerprint=population.input_fingerprint,
+                run_config_fingerprint=population.run_config_fingerprint,
                 parent_ids=parent_ids,
                 offspring_ids=[item.candidate_id for item in children],
                 survivor_ids=survivor_ids,
                 archived_ids=archived_ids,
                 plan_ids=[item.plan_id for item in plans],
-                score_batch_ids=["SB-P0", "SB-U1"],
+                score_batch_ids=[score_batch, f"SB-U{round_number}"],
                 completion_status="completed",
             )
         )
         self.store.write_json(
-            "ideation/evolution/round_1_diagnostics.json",
+            f"ideation/evolution/round_{round_number}_diagnostics.json",
             {
                 "schema_version": "1.0.0",
                 "semantics": "t4_evolution_diagnostics",
@@ -438,29 +514,35 @@ class IdeaEvolutionController:
                 "survival": survival,
             },
         )
-        portfolio = select_portfolio(p1, union_scores, families_p1, maximum=run_config.final_top_k)
+        portfolio = select_portfolio(output_population, union_scores, output_families, maximum=run_config.final_top_k)
         self.store.write_json("ideation/portfolio.json", model_dump(portfolio, mode="json"))
-        state = self._set_waiting_state(p1, run_config, display_ids=_portfolio_ids(portfolio), completed_rounds=1)
+        state = self._set_waiting_state(
+            output_population,
+            run_config,
+            display_ids=_portfolio_ids(portfolio),
+            completed_rounds=round_number,
+        )
         self.store.write_phase_marker(
             phase=EvolutionPhase.SURVIVAL,
-            generation=1,
-            input_fingerprint=p1.input_fingerprint,
-            run_config_fingerprint=p1.run_config_fingerprint,
+            generation=round_number,
+            input_fingerprint=output_population.input_fingerprint,
+            run_config_fingerprint=output_population.run_config_fingerprint,
             artifact_paths=[
-                "ideation/populations/P1.json",
-                "ideation/evolution/round_1.json",
-                "ideation/evolution/round_1_diagnostics.json",
+                f"ideation/populations/{output_population_id}.json",
+                f"ideation/evolution/round_{round_number}.json",
+                f"ideation/evolution/round_{round_number}_diagnostics.json",
                 "ideation/portfolio.json",
             ],
         )
-        active_dossiers = [item for item in union if item.candidate_id in set(p1.active_candidate_ids)]
-        active_scores = _select_scores(union_scores, p1.active_candidate_ids)
+        active_dossiers = [item for item in union if item.candidate_id in set(output_population.active_candidate_ids)]
+        active_scores = _select_scores(union_scores, output_population.active_candidate_ids)
         await self._report(
             EvolutionPhase.SURVIVAL,
             "completed",
             {
-                "population_id": p1.population_id,
-                "p0_count": len(p0_dossiers),
+                "population_id": output_population.population_id,
+                "round_number": round_number,
+                "input_count": len(dossiers),
                 "offspring_count": len(children),
                 "active_count": len(active_dossiers),
                 "archived_count": len(archived_ids),
@@ -468,7 +550,7 @@ class IdeaEvolutionController:
             },
         )
         return EvolutionRunResult(
-            population=p1,
+            population=output_population,
             portfolio=portfolio,
             state=state,
             route_results=route_results,
@@ -576,10 +658,13 @@ class IdeaEvolutionController:
     @staticmethod
     def _normalize_route_output(
         route: str,
-        output: list[CandidateDossier] | RouteGenerationResult,
+        output: list[CandidateDossier] | RouteGenerationResult | RouteGenerationPayload,
         *,
         repaired_once: bool = False,
     ) -> tuple[RouteGenerationResult, list[CandidateDossier]]:
+        if isinstance(output, RouteGenerationPayload):
+            result = output.result.model_copy(update={"repaired_once": output.result.repaired_once or repaired_once})
+            return result, list(output.candidates)
         if isinstance(output, RouteGenerationResult):
             return output.model_copy(update={"repaired_once": output.repaired_once or repaired_once}), []
         candidates = list(output)

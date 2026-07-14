@@ -321,6 +321,8 @@ class CandidatePresentation(_StrictModel):
     idea_origin: str = Field(min_length=1)
     constraint_status: Literal["mainline", "supplement", "bridge", "not_supported_by_current_evidence"]
     mechanism_family: str = Field(min_length=3)
+    cross_domain_sources: list[str] = Field(default_factory=list)
+    cross_domain_relation: str = ""
 
     @model_validator(mode="after")
     def presentation_is_complete(self) -> "CandidatePresentation":
@@ -332,7 +334,32 @@ class CandidatePresentation(_StrictModel):
         for source in self.basis_sources:
             if not {"ref", "claim", "implication"}.issubset(source):
                 raise ValueError("each basis_source needs ref, claim, and implication")
+        if self.cross_domain_sources and not self.cross_domain_relation.strip():
+            raise ValueError("cross_domain_sources require cross_domain_relation")
         return self
+
+
+class BridgeCoverageEntry(_StrictModel):
+    """LLM-authored Bridge visibility or escape-hatch reasoning for one bridge."""
+
+    bridge_id: str
+    candidate_ids: list[str] = Field(default_factory=list)
+    visible_to_gate: bool
+    decision_summary: str = Field(min_length=18)
+    escape_status: Literal["not_needed_selected", "deferred", "rejected", "merged", "no_candidate_available"]
+    escape_reason: str = Field(min_length=18)
+    falsification_or_kill_criteria: str = Field(min_length=18)
+    can_revisit_if: str = Field(min_length=18)
+
+    _id = field_validator("bridge_id")(_validate_identifier)
+
+    @field_validator("candidate_ids")
+    @classmethod
+    def unique_candidate_ids(cls, value: list[str]) -> list[str]:
+        normalized = [_validate_identifier(item) for item in value]
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("bridge coverage candidate_ids must be unique")
+        return normalized
 
 
 class IdeaSeed(_StrictModel):
@@ -362,6 +389,7 @@ class RouteGenerationResult(_StrictModel):
     candidate_ids: list[str] = Field(default_factory=list)
     unsupported_reason: str = ""
     repaired_once: bool = False
+    bridge_reviews: list[BridgeCoverageEntry] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def route_result_integrity(self) -> "RouteGenerationResult":
