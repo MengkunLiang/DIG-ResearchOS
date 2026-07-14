@@ -6,6 +6,7 @@ import asyncio
 from contextlib import suppress
 from datetime import datetime, timezone
 import hashlib
+from io import StringIO
 import inspect
 import json
 from pathlib import Path
@@ -55,6 +56,14 @@ from ..agents.ideation import (
     refresh_t4_gate1_progress,
     validate_t4_gate1_ready,
 )
+from ..ideation.config import load_t4_evolution_settings
+from ..ideation.evolution_controller import IdeaEvolutionController
+from ..ideation.legacy_projection import project_gate1_population
+from ..ideation.llm_roles import LLMJsonRoleInvoker, LLMIdeaEvolver, LLMIdeaGenerator, LLMIdeaScorer, T4RoleCallConfig
+from ..ideation.models import EvolutionPhase
+from ..ideation.prerun import has_current_t4_prerun_confirmation
+from ..ideation.state import T4ArtifactStore
+from ..ui.idea_evolution_renderer import render_t4_evolution_phase
 from .trace import NullTraceWriter, TraceWriter
 from ..tools.base import Tool, ToolResult
 from ..tools.workspace_policy import WorkspaceAccessPolicy
@@ -66,6 +75,7 @@ from ..tools.registry import ToolBuildContext, ToolRegistry
 from .agent_params import get_agent_mode_params, get_budget_escalation_policy, get_global_timeout, get_retry_policy
 from ..literature_identity import is_paper_note_file
 from ..tools.scout_progress import ScoutProgressLogger
+from rich.console import Console
 
 if TYPE_CHECKING:
     from ..tools.workspace_policy import WorkspaceAccessPolicy
@@ -546,7 +556,11 @@ class AgentRunner:
             llm_tier=eff.llm_tier,
             step_limit="unlimited" if eff.unlimited_budget else str(eff.max_steps),
         )
-        if ctx.task_id == "T4" and not self._t4_gate1_user_selection_exists(ctx):
+        if (
+            ctx.task_id == "T4"
+            and not self._t4_gate1_user_selection_exists(ctx)
+            and not has_current_t4_prerun_confirmation(ctx.workspace_dir)
+        ):
             # Write and render the first durable checkpoint before provider work
             # begins. This lets the CLI distinguish "preparing evidence" from a
             # silent provider wait without exposing private reasoning.
@@ -712,6 +726,24 @@ class AgentRunner:
                 or t4_pre_finalized
             ):
                 t4_gate1_pre_finalized = await self._maybe_finalize_t4_gate1_before_llm(ctx)
+            t4_evolution_pre_finalized = False
+            if not (
+                deterministic_pre_finalized
+                or t2_pre_finalized
+                or t3_pre_finalized
+                or t36_section_pre_finalized
+                or t36_visuals_pre_finalized
+                or t36_compile_pre_finalized
+                or t4_pre_finalized
+                or t4_gate1_pre_finalized
+            ):
+                t4_evolution_pre_finalized = await self._maybe_run_t4_evolution_before_llm(
+                    ctx=ctx,
+                    eff=eff,
+                    budget=budget,
+                )
+            if t4_evolution_pre_finalized:
+                deterministic_pre_finalized = True
             t45_pre_finalized = False
             if not (
                 deterministic_pre_finalized
@@ -1638,6 +1670,13 @@ class AgentRunner:
 
         if ctx.task_id != "T4":
             return {}
+        if ctx.extra.get("t4_evolution_active"):
+            return {
+                "activity": str(ctx.extra.get("t4_evolution_activity") or "T4 Evolution"),
+                "next_artifact": str(ctx.extra.get("t4_evolution_next_artifact") or "T4 artifact"),
+                "artifact_completed": None,
+                "artifact_total": None,
+            }
         progress = ctx.extra.get("t4_artifact_progress")
         completed = progress.get("completed") if isinstance(progress, dict) else None
         total = progress.get("total") if isinstance(progress, dict) else None
@@ -1761,7 +1800,11 @@ class AgentRunner:
             phase="awaiting_llm",
             detail="已提交模型请求，正在等待下一组可执行动作。",
         )
-        if ctx.task_id == "T4" and not self._t4_gate1_user_selection_exists(ctx):
+        if (
+            ctx.task_id == "T4"
+            and not self._t4_gate1_user_selection_exists(ctx)
+            and not ctx.extra.get("t4_evolution_active")
+        ):
             self._refresh_t4_gate1_progress(ctx, active_path=None, announce=False)
         heartbeat = self._t4_heartbeat_context(ctx)
         self.progress.llm_request_started(task_id=ctx.task_id, step=step, **heartbeat)
@@ -1774,7 +1817,11 @@ class AgentRunner:
                 if done:
                     return task.result()
                 elapsed = int(time.monotonic() - started)
-                if ctx.task_id == "T4" and not self._t4_gate1_user_selection_exists(ctx):
+                if (
+                    ctx.task_id == "T4"
+                    and not self._t4_gate1_user_selection_exists(ctx)
+                    and not ctx.extra.get("t4_evolution_active")
+                ):
                     self._refresh_t4_gate1_progress(ctx, active_path=None, announce=False)
                 heartbeat = self._t4_heartbeat_context(ctx)
                 self.progress.llm_waiting(
@@ -2551,6 +2598,12 @@ class AgentRunner:
 
         if ctx.task_id != "T4":
             return False
+        if has_current_t4_prerun_confirmation(ctx.workspace_dir):
+            # The evolutionary controller builds its own Evidence Index and
+            # route-scoped bundles. Retaining the legacy compact pack here
+            # would duplicate work and produce an unrelated six-artifact
+            # progress counter before the new eight-phase run begins.
+            return False
         if not self._t4_gate1_user_selection_exists(ctx):
             gate1_ready, _gate1_err = validate_t4_gate1_ready(ctx.workspace_dir)
             if gate1_ready:
@@ -2604,6 +2657,240 @@ class AgentRunner:
             )
         ctx.extra["t4_context_pack_prepared"] = True
         return True
+
+    async def _maybe_run_t4_evolution_before_llm(
+        self,
+        *,
+        ctx: ExecutionContext,
+        eff: EffectiveConfig,
+        budget: BudgetTracker,
+    ) -> bool:
+        """Run the confirmed evolutionary T4 path before the legacy tool loop.
+
+        This is intentionally an internal T4 facade, not a new external state
+        machine node. A successful run writes the retained Gate1 artifacts and
+        returns the established ``t4_gate1_ready`` completion mode, preserving
+        the public ``T4 -> T4-GATE1 -> T4 -> T4.5`` transition.
+        """
+
+        if ctx.task_id != "T4" or self._t4_gate1_user_selection_exists(ctx):
+            return False
+        if not has_current_t4_prerun_confirmation(ctx.workspace_dir):
+            return False
+        store = T4ArtifactStore(ctx.workspace_dir)
+        try:
+            run_config = store.read_run_config()
+        except ValueError:
+            return False
+        if run_config.rounds > 1:
+            # The legacy path remains available for a pre-existing Deep
+            # workspace until the multi-round controller migration completes.
+            # Standard remains the product default and always uses P0 -> P1.
+            return False
+
+        async def role_call(system_contract: str, user_prompt: str) -> str:
+            return await self._call_t4_evolution_role(
+                ctx=ctx,
+                eff=eff,
+                budget=budget,
+                system_contract=system_contract,
+                user_prompt=user_prompt,
+            )
+
+        async def progress_callback(phase: EvolutionPhase, status: str, payload: dict[str, object]) -> None:
+            self._record_t4_evolution_activity(ctx, phase=phase, status=status)
+            self._render_t4_evolution_phase(phase=phase, status=status, payload=payload)
+
+        invoker = LLMJsonRoleInvoker(
+            config=T4RoleCallConfig(
+                tier=eff.llm_tier,
+                profile=eff.llm_profile,
+                model_override=eff.llm_model_override,
+                endpoint_override=eff.llm_endpoint_override,
+                max_context_override=eff.llm_max_context_override,
+                timeout=int(self.global_timeout.get("llm_call") or 120),
+                max_retries_per_model=int(self.retry_policy.get("llm_retries") or 2),
+                retry_base_delay=float(self.retry_policy.get("llm_retry_delay") or 2),
+            ),
+            call=role_call,
+        )
+        controller = IdeaEvolutionController(
+            workspace_dir=ctx.workspace_dir,
+            settings=load_t4_evolution_settings(),
+            generator=LLMIdeaGenerator(invoker),
+            scorer=LLMIdeaScorer(invoker),
+            evolver=LLMIdeaEvolver(invoker),
+            progress_callback=progress_callback,
+        )
+        ctx.extra["t4_evolution_active"] = True
+        try:
+            result = await controller.run(run_config)
+            projection = project_gate1_population(
+                ctx.workspace_dir,
+                population=result.population,
+                dossiers=result.active_dossiers,
+                scores=result.active_scores,
+            )
+        except RecoverableRuntimePause:
+            raise
+        except LLMProviderError:
+            raise
+        except Exception as exc:
+            raise RecoverableRuntimePause(
+                "T4 Evolution 结果没有通过结构与证据边界校验，当前 Population 已保留；"
+                f"resume 会从最后一个完整 artifact 继续。原因：{str(exc)[:500]}"
+            ) from exc
+        finally:
+            ctx.extra["t4_evolution_active"] = False
+
+        ready, error = validate_t4_gate1_ready(ctx.workspace_dir)
+        if not ready:
+            raise RecoverableRuntimePause(
+                "T4 Evolution 已完成，但 Gate1 兼容投影尚未通过校验；"
+                f"已保留 P0/P1 和评分结果，resume 可继续。原因：{error}"
+            )
+        self.progress.emit(
+            "T4 已完成一轮 Idea Evolution。P1、评分、谱系和完整 Archive 已保存；接下来请选择一个完整 Candidate，或保留多个并行推进。",
+            important=True,
+        )
+        self._record_runtime_completion(
+            ctx,
+            "t4_gate1_ready",
+            {
+                "outputs": [
+                    "ideation/populations/P0.json",
+                    f"ideation/populations/{result.population.population_id}.json",
+                    "ideation/portfolio.json",
+                    "ideation/_pass1_forward_candidates.json",
+                    "ideation/_pass2_grounding_review.json",
+                    "ideation/_candidate_directions.json",
+                    "ideation/_gate1_candidate_cards.md",
+                    "ideation/_gate1_selection_brief.md",
+                ],
+                "candidate_count": projection["candidate_count"],
+            },
+            action_type="t4_evolution_controller",
+        )
+        return True
+
+    async def _call_t4_evolution_role(
+        self,
+        *,
+        ctx: ExecutionContext,
+        eff: EffectiveConfig,
+        budget: BudgetTracker,
+        system_contract: str,
+        user_prompt: str,
+    ) -> str:
+        """Use the normal provider recovery policy for one typed T4 role call."""
+
+        retry_batches, cooldown, long_cooldown = self._llm_provider_recovery_policy()
+        failed_batches = 0
+        while True:
+            budget.tick_step()
+            budget.check()
+            try:
+                response = await self._await_llm_with_progress(
+                    ctx=ctx,
+                    step=budget.steps,
+                    progress_step_limit="unlimited" if budget.unlimited_budget else str(budget.max_steps),
+                    messages=[
+                        {"role": "system", "content": system_contract},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    tools=None,
+                    temperature=0.2,
+                    tier=eff.llm_tier,
+                    profile=eff.llm_profile,
+                    model_override=eff.llm_model_override,
+                    endpoint_override=eff.llm_endpoint_override,
+                    max_context_override=eff.llm_max_context_override,
+                    timeout=int(self.global_timeout.get("llm_call") or 120),
+                    max_retries_per_model=int(self.retry_policy.get("llm_retries") or 2),
+                    retry_base_delay=float(self.retry_policy.get("llm_retry_delay") or 2),
+                )
+            except LLMProviderError as exc:
+                if not self._is_recoverable_provider_error(exc):
+                    raise RecoverableRuntimePause(self._public_provider_error_message(exc)) from exc
+                failed_batches += 1
+                action, delay = await self._choose_llm_provider_recovery(
+                    ctx=ctx,
+                    budget=budget,
+                    failed_batches=failed_batches,
+                    retry_batches=retry_batches,
+                    cooldown_seconds=cooldown,
+                    long_cooldown_seconds=long_cooldown,
+                )
+                if action != "retry":
+                    raise RecoverableRuntimePause(self._public_provider_error_message(exc)) from exc
+                await self._wait_before_llm_provider_retry(
+                    ctx=ctx,
+                    budget=budget,
+                    seconds=delay,
+                    attempt=failed_batches,
+                    retry_batches=retry_batches,
+                )
+                continue
+            budget.add_tokens(response.tokens_in, response.tokens_out, response.cost_usd)
+            ctx.extra["t4_evolution_last_model"] = response.model_used
+            ctx.extra["t4_evolution_last_endpoint"] = response.endpoint_used
+            content = str(getattr(response.raw.choices[0].message, "content", "") or "")
+            if not content:
+                raise RecoverableRuntimePause("T4 role returned an empty response; progress is saved and resume can retry the role.")
+            return content
+
+    def _record_t4_evolution_activity(
+        self,
+        ctx: ExecutionContext,
+        *,
+        phase: EvolutionPhase,
+        status: str,
+    ) -> None:
+        labels = {
+            EvolutionPhase.EVIDENCE_ROUTING: "Evidence Routing",
+            EvolutionPhase.OPPORTUNITY_MAP: "Opportunity Map",
+            EvolutionPhase.FORMATION: "Multi-route Generation",
+            EvolutionPhase.GENOME_FAMILY: "Idea Genome & Family",
+            EvolutionPhase.SCORING: "Independent Scoring",
+            EvolutionPhase.EVOLUTION_PLANNING: "Evolution Planning",
+            EvolutionPhase.OFFSPRING: "Offspring & Rescoring",
+            EvolutionPhase.SURVIVAL: "Survival & Portfolio",
+        }
+        label = labels.get(phase, phase.value.replace("_", " ").title())
+        ctx.extra["t4_evolution_activity"] = f"{label} · {status.replace('_', ' ')}"
+        ctx.extra["t4_evolution_next_artifact"] = {
+            EvolutionPhase.EVIDENCE_ROUTING: "Evidence Index",
+            EvolutionPhase.OPPORTUNITY_MAP: "Opportunity Map",
+            EvolutionPhase.FORMATION: "Population P0",
+            EvolutionPhase.GENOME_FAMILY: "Idea Family map",
+            EvolutionPhase.SCORING: "Independent scores",
+            EvolutionPhase.EVOLUTION_PLANNING: "Evolution plans",
+            EvolutionPhase.OFFSPRING: "Union score batch",
+            EvolutionPhase.SURVIVAL: "Population P1 and Portfolio",
+        }.get(phase, "T4 artifact")
+
+    def _render_t4_evolution_phase(
+        self,
+        *,
+        phase: EvolutionPhase,
+        status: str,
+        payload: dict[str, object],
+    ) -> None:
+        """Render a compact Rich phase panel while preserving progress settings."""
+
+        buffer = StringIO()
+        console = Console(
+            file=buffer,
+            force_terminal=not self.runtime_settings.ui.no_color,
+            color_system=None if self.runtime_settings.ui.no_color else "truecolor",
+            no_color=self.runtime_settings.ui.no_color,
+            width=120,
+            highlight=False,
+        )
+        render_t4_evolution_phase(phase, status, payload, console=console)
+        rendered = buffer.getvalue().rstrip()
+        if rendered:
+            self.progress.emit(rendered, important=True)
 
     async def _maybe_finalize_t4_before_llm(self, ctx: ExecutionContext) -> bool:
         """T4 续跑时，已有三件套可通过校验则直接完成。
@@ -4940,6 +5227,10 @@ class AgentRunner:
     ) -> AgentResult:
         outputs = {name: path for name, path in ctx.outputs_expected.items() if path.exists()}
         ok = stop_reason == AgentResult.STOP_FINISHED
+        if last_model_used is None:
+            last_model_used = str(ctx.extra.get("t4_evolution_last_model") or "") or None
+        if last_endpoint_used is None:
+            last_endpoint_used = str(ctx.extra.get("t4_evolution_last_endpoint") or "") or None
         metadata: dict[str, object] = {}
         if ctx.extra.get("completion_mode"):
             metadata["completion_mode"] = ctx.extra.get("completion_mode")

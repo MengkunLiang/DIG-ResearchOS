@@ -43,7 +43,12 @@ from ..tools.external_experiment import (
     validate_external_executor_ready,
 )
 from ..ideation.config import load_t4_evolution_settings
-from ..ideation.prerun import default_run_config, inspect_t4_inputs, parse_t4_prerun_intent
+from ..ideation.prerun import (
+    default_run_config,
+    has_current_t4_prerun_confirmation,
+    inspect_t4_inputs,
+    parse_t4_prerun_intent,
+)
 from ..ideation.state import T4ArtifactStore, run_config_fingerprint
 
 
@@ -1839,23 +1844,7 @@ class StateMachine:
         never deletes prior populations or candidate artifacts.
         """
 
-        workspace_dir = Path(workspace_dir)
-        inspection = inspect_t4_inputs(workspace_dir)
-        if inspection.status == "blocked":
-            return True
-        store = T4ArtifactStore(workspace_dir)
-        receipt_path = workspace_dir / "ideation" / "evolution" / "pre_run_confirmation.json"
-        try:
-            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-            config = store.read_run_config()
-        except (OSError, ValueError, json.JSONDecodeError):
-            return True
-        return not (
-            isinstance(receipt, dict)
-            and receipt.get("semantics") == "t4_pre_run_confirmation"
-            and receipt.get("input_fingerprint") == inspection.input_fingerprint
-            and receipt.get("run_config_fingerprint") == run_config_fingerprint(config)
-        )
+        return not has_current_t4_prerun_confirmation(Path(workspace_dir))
 
     def start_task(self, state: StateYaml, run_id: str, *, workspace_dir: Path | None = None) -> StateYaml:
         """task 开始执行前，先写入一条 RUNNING history。"""

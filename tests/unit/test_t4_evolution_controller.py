@@ -257,3 +257,39 @@ async def test_controller_reuses_completed_p0_without_regenerating_routes(tmp_pa
     second = await controller.run(config)
     assert first.population.population_id == second.population.population_id == "P0"
     assert second.state.completed_rounds == 0
+
+
+@pytest.mark.asyncio
+async def test_controller_reuses_completed_p1_without_another_evolution_round(tmp_path):
+    _write_inputs(tmp_path)
+    events = []
+
+    async def progress(phase, status, payload):
+        events.append((phase.value, status, payload))
+
+    controller = IdeaEvolutionController(
+        workspace_dir=tmp_path,
+        settings=_settings(),
+        generator=FakeGenerator(),
+        scorer=FakeScorer(),
+        evolver=FakeEvolver(),
+        progress_callback=progress,
+    )
+    config = T4RunConfig(
+        mode="standard",
+        rounds=1,
+        allow_crossover=False,
+        final_top_k=2,
+        max_initial_population=6,
+        active_population_size=3,
+        max_offspring_per_round=1,
+        max_crossover_children=0,
+        route_quotas={"evidence_routed_literature": 1, "informed_brainstorm": 1},
+    )
+    first = await controller.run(config)
+    second = await controller.run(config)
+
+    assert first.population.population_id == second.population.population_id == "P1"
+    assert second.active_dossiers
+    assert {item.candidate_id for item in second.active_scores} == set(second.population.active_candidate_ids)
+    assert any(status == "reused" for _phase, status, _payload in events)

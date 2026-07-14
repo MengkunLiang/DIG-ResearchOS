@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import re
 from typing import Any, Literal
@@ -10,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .config import T4EvolutionSettings
 from .models import T4RunConfig
-from .state import t4_input_fingerprint
+from .state import T4ArtifactStore, run_config_fingerprint, t4_input_fingerprint
 
 
 class _Model(BaseModel):
@@ -129,6 +130,28 @@ def default_run_config(settings: T4EvolutionSettings, directive: T4PreRunDirecti
         bridge_policy=settings.bridge_policy_default,
         route_quotas={item.route: item.maximum for item in settings.route_quotas},
         raw_user_input=directive.raw_user_input,
+    )
+
+
+def has_current_t4_prerun_confirmation(workspace_dir: Path) -> bool:
+    """Return whether a user-confirmed config still matches current T4 inputs."""
+
+    workspace = Path(workspace_dir)
+    inspection = inspect_t4_inputs(workspace)
+    if inspection.status == "blocked":
+        return False
+    store = T4ArtifactStore(workspace)
+    receipt_path = workspace / "ideation" / "evolution" / "pre_run_confirmation.json"
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        config = store.read_run_config()
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    return bool(
+        isinstance(receipt, dict)
+        and receipt.get("semantics") == "t4_pre_run_confirmation"
+        and receipt.get("input_fingerprint") == inspection.input_fingerprint
+        and receipt.get("run_config_fingerprint") == run_config_fingerprint(config)
     )
 
 

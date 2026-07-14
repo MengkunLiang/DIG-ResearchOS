@@ -122,7 +122,10 @@ class LLMIdeaGenerator(IdeaGeneratorPort):
         if str(data.get("status") or "").lower() == "unsupported":
             return model_validate(RouteGenerationResult, {"route": route, **data})
         raw = data.get("candidates") if isinstance(data.get("candidates"), list) else []
-        return [model_validate(CandidateDossier, item) for item in raw if isinstance(item, dict)]
+        candidates = [model_validate(CandidateDossier, item) for item in raw if isinstance(item, dict)]
+        for candidate in candidates:
+            _require_gate1_candidate_presentation(candidate)
+        return candidates
 
 
 class LLMIdeaScorer(IdeaScoringPort):
@@ -151,7 +154,10 @@ class LLMIdeaScorer(IdeaScoringPort):
             payload=payload,
         )
         raw = data.get("scores") if isinstance(data.get("scores"), list) else []
-        return [model_validate(ScoreReport, item) for item in raw if isinstance(item, dict)]
+        scores = [model_validate(ScoreReport, item) for item in raw if isinstance(item, dict)]
+        for score in scores:
+            _require_gate1_compatibility_scores(score)
+        return scores
 
     async def review_crossover_pairs(self, *, candidates: list[CandidateDossier], pairs: list[tuple[str, str]]) -> list[CrossoverCompatibilityDecision]:
         by_id = {candidate.candidate_id: candidate for candidate in candidates}
@@ -201,6 +207,7 @@ class LLMIdeaEvolver(IdeaEvolverPort):
         children = [model_validate(CandidateDossier, item) for item in raw if isinstance(item, dict)]
         approved_parent_sets = {tuple(plan.parent_ids) for plan in plans}
         for child in children:
+            _require_gate1_candidate_presentation(child)
             if tuple(child.lineage.parent_ids) not in approved_parent_sets:
                 raise ValueError(f"LLM Evolver returned child {child.candidate_id} without an approved parent set")
             if child.candidate_id in by_id:
@@ -229,6 +236,60 @@ def _evolver_parent(candidate: CandidateDossier) -> dict[str, Any]:
         "hypotheses": [model_dump(item, mode="json") for item in candidate.hypotheses],
         "lineage": model_dump(candidate.lineage, mode="json"),
     }
+
+
+_GATE1_COMPATIBILITY_KEYS = (
+    "novelty",
+    "feasibility",
+    "impact",
+    "evaluability",
+    "differentiation",
+    "cost",
+    "contribution_strength",
+)
+
+
+def _require_gate1_candidate_presentation(candidate: CandidateDossier) -> None:
+    presentation = candidate.presentation
+    if presentation is None:
+        raise ValueError(f"T4 Generator returned candidate {candidate.candidate_id} without the required Gate1 presentation")
+    if not 2 <= len(candidate.hypotheses) <= 3:
+        raise ValueError(f"T4 Generator returned candidate {candidate.candidate_id} without 2-3 provisional hypotheses")
+    minimum_sources = 2 if presentation.constraint_status in {"mainline", "bridge"} else 1
+    if len(presentation.basis_sources) < minimum_sources:
+        raise ValueError(
+            f"T4 Generator returned candidate {candidate.candidate_id} without enough LLM-authored basis sources"
+        )
+
+
+def _require_gate1_compatibility_scores(score: ScoreReport) -> None:
+    missing = [
+        key
+        for key in _GATE1_COMPATIBILITY_KEYS
+        if key not in score.compatibility_scores or key not in score.compatibility_rationales
+    ]
+    if missing:
+        raise ValueError(
+            f"T4 Scoring Agent returned score {score.candidate_id} without Gate1 compatibility fields: {', '.join(missing)}"
+        )
+    invalid = [
+        key
+        for key in _GATE1_COMPATIBILITY_KEYS
+        if not isinstance(score.compatibility_scores[key], int) or not 1 <= score.compatibility_scores[key] <= 5
+    ]
+    if invalid:
+        raise ValueError(
+            f"T4 Scoring Agent returned invalid Gate1 compatibility scores for {score.candidate_id}: {', '.join(invalid)}"
+        )
+    weak = [
+        key
+        for key in _GATE1_COMPATIBILITY_KEYS
+        if len(" ".join(str(score.compatibility_rationales[key]).split())) < 18
+    ]
+    if weak:
+        raise ValueError(
+            f"T4 Scoring Agent returned incomplete Gate1 compatibility rationales for {score.candidate_id}: {', '.join(weak)}"
+        )
 
 
 def _parse_json_object(content: str) -> dict[str, Any]:
