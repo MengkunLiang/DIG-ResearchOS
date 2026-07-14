@@ -610,6 +610,7 @@ class T4InternalState(_StrictModel):
     display_candidate_ids: list[str] = Field(default_factory=list)
     pending_directive_id: str | None = None
     input_fingerprint: str = Field(min_length=16)
+    input_fingerprints: dict[str, dict[str, Any]] = Field(default_factory=dict)
     run_config_fingerprint: str = Field(min_length=16)
     last_completed_artifact: str = ""
     generation_history: list[str] = Field(default_factory=list)

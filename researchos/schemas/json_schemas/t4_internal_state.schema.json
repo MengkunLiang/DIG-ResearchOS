@@ -1,0 +1,19 @@
+{
+  "$id": "https://researchos.dev/schemas/t4_internal_state.schema.json",
+  "type": "object",
+  "properties": {
+    "schema_version": {"type": "string"},
+    "semantics": {"const": "t4_internal_state"},
+    "phase": {"type": "string"},
+    "generation": {"type": "integer", "minimum": 0},
+    "configured_rounds": {"type": "integer", "minimum": 0},
+    "completed_rounds": {"type": "integer", "minimum": 0},
+    "current_population_id": {"type": "string"},
+    "input_fingerprint": {"type": "string", "minLength": 16},
+    "input_fingerprints": {"type": "object"},
+    "run_config_fingerprint": {"type": "string", "minLength": 16},
+    "generation_history": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["semantics", "phase", "generation", "configured_rounds", "completed_rounds", "input_fingerprint", "run_config_fingerprint"],
+  "additionalProperties": true
+}
