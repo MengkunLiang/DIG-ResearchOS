@@ -25,6 +25,12 @@ from ..runtime.workspace import initialize_workspace
 from ..schemas.state import StateYaml, TaskHistoryEntry
 from ..schemas.validator import register_builtin_task_checkers, validate_prerequisites, validate_task_artifacts
 from ..skills.agent import SkillAgent
+from ..skills.project_specialization.task_adapter import (
+    SKILL_NAME as PROJECT_SKILL_SPECIALIZATION_SKILL_NAME,
+    TASK_ID as PROJECT_SKILL_SPECIALIZATION_TASK_ID,
+    build_project_skill_specialization_agent,
+    repository_root as project_specialization_repo_root,
+)
 from ..skills.loader import resolve_skill
 from ..tools.human_gate import CLIHumanInterface, HumanInputUnavailable, HumanInterface
 from ..tools.latex_compile import latex_backend_preflight
@@ -111,6 +117,9 @@ class SingleTaskRunner:
             "T3.6-SURVEY": "T3.6-GATE-SURVEY",
             "SURVEY": "T3.6-GATE-SURVEY",
             "T5-REBOOST": "T5-REBOOST-GATE",
+            "T5-specialize-executor-skills": PROJECT_SKILL_SPECIALIZATION_TASK_ID,
+            "T5-SPECIALIZE": PROJECT_SKILL_SPECIALIZATION_TASK_ID,
+            "T5-SPECIALIZE-EXECUTOR-SKILLS": PROJECT_SKILL_SPECIALIZATION_TASK_ID,
             "T8": "T8-STYLE-GATE",
             "T8-WRITE": "T8-STYLE-GATE",
             "T8-SECTIONS": "T8-SECTION-PLAN",
@@ -158,6 +167,13 @@ class SingleTaskRunner:
         # 单任务模式没有独立的 resume 子命令；当用户在同一 workspace
         # 中重跑失败/中断过的任务时，自动把“恢复运行”语义透传给 Agent。
         extra = self._build_task_extra(task_node)
+        if task_node is not None and task_node.skill is not None:
+            extra["skill_name"] = task_node.skill
+            if task_node.skill == PROJECT_SKILL_SPECIALIZATION_SKILL_NAME:
+                extra["skill_dir"] = str(project_specialization_repo_root() / "skills" / task_node.skill)
+                extra["project_skill_specialization_repo_root"] = str(project_specialization_repo_root())
+            else:
+                extra["skill_dir"] = str(self.workspace / "skills" / task_node.skill)
         self._inject_resume_extra(extra, state)
         if self.task_id == "T1":
             project_path = self.workspace / "project.yaml"
@@ -426,6 +442,12 @@ class SingleTaskRunner:
             return get_agent_by_id(task_node.agent, mode=task_node.mode)
         if task_node is not None and task_node.skill is not None:
             skill = resolve_skill(task_node.skill, self.skill_roots)
+            if task_node.skill == PROJECT_SKILL_SPECIALIZATION_SKILL_NAME:
+                return build_project_skill_specialization_agent(
+                    skill=skill,
+                    available_tools=set(self.tools.available_names()),
+                    llm_profile=None,
+                )
             return SkillAgent(
                 skill=skill,
                 available_tools=set(self.tools.available_names()),
@@ -575,6 +597,24 @@ class SingleTaskRunner:
         return state
 
     def _print_result(self, result) -> None:
+        specialization = (result.metadata or {}).get("project_skill_specialization")
+        if isinstance(specialization, dict):
+            skills = int(specialization.get("skills") or 0)
+            lines = [
+                f"Task: {specialization.get('task') or PROJECT_SKILL_SPECIALIZATION_TASK_ID}",
+                f"Skill: {specialization.get('skill') or PROJECT_SKILL_SPECIALIZATION_SKILL_NAME}",
+                f"Status: {specialization.get('status') or ('ready' if result.ok else 'failed')}",
+                f"Skills: {skills}/13",
+                f"Context: {specialization.get('context') or 'external_executor/project_skill_context.yaml'}",
+                f"Report: {specialization.get('report') or 'external_executor/skill_specialization_report.json'}",
+                f"Execution: {specialization.get('execution') or 'external_executor/skill_specialization_execution.json'}",
+                f"Required uncertain fields: {int(specialization.get('required_uncertain_count') or 0)}",
+                f"Trace: {specialization.get('trace') or '-'}",
+            ]
+            if result.error:
+                lines.append(f"Error: {result.error}")
+            self.progress.emit("\n".join(lines), important=True)
+            return
         lines = [
             "=" * 60,
             "[SingleTask] 运行指标（产物说明见上方阶段总结）",

@@ -9,7 +9,8 @@ The canonical topology is [config/system_config/state_machine.yaml](../../config
 ```text
 T1 -> T2 -> T3 -> T3.5
   -> T3.6 survey gate (optional) -> T4 -> T4.5
-  -> T5 external handoff -> T7 evidence/claims -> T7.5 decision
+  -> T5 reboost -> T5 specialize executor Skills -> T5 executor gate
+  -> T7 evidence/claims -> T7.5 decision
   -> T8 manuscript/review -> T9 submission bundle
 ```
 
@@ -26,7 +27,7 @@ T1 -> T2 -> T3 -> T3.5
 | T3.6 | Is a taxonomy-driven survey warranted and sufficiently evidenced? | survey plan/state/sections/audit/real PDF | Survey, outline, corpus, compile recovery gates |
 | T4 | Which evidence-grounded research idea should be evolved or selected? | P0/P1/P2 Population, Evidence Index, scores, lineage, Portfolio, Pre-Novelty brief | Pre-run confirmation; Gate1 directives, composition, rollback |
 | T4.5 | Does the selected Pre-Novelty idea remain differentiated after targeted novelty/collision review? | novelty/collision audit; on pass only, formal hypotheses, maps, kill criteria, experiment plan | Novelty human review |
-| T5 | What can an external executor implement without inventing protocol? | handoff pack, executor selection, project-specific skills | Executor gate |
+| T5 | What can an external executor implement without inventing protocol? | handoff pack, project-specific Skill suite, specialization execution record, executor selection | Executor gate |
 | T7 | What did real runs produce, and what claims survive audit? | ingest, integrity audit, result-to-claim, evidence pack | Evidence sufficiency decision |
 | T7.5 | Is evidence sufficient to write, re-experiment, reframe, or stop? | PI decision record | Human admission decision |
 | T8 | How are sources/results transformed into an evidence-aligned paper? | style, storyline, sections, reviews, revisions, claim audit | Style/template gate |
@@ -72,7 +73,7 @@ Choosing one complete Candidate creates `ideation/hypothesis_brief.yaml`, lineag
 
 ## T5-T7 External Evidence Path
 
-ResearchOS prepares an executor handoff but does not represent mock or external natural-language summaries as empirical fact. External execution returns declared raw artifacts, configs, logs, hashes, and result packs. T7 ingests, audits integrity/fairness/provenance, maps observed evidence to claims, and creates must-not-claim boundaries. A mock dry run verifies the protocol chain only and contains no fabricated metric values.
+ResearchOS prepares an executor handoff, then runs `T5-SPECIALIZE-EXECUTOR-SKILLS`: an LLM consumes the repository `project-skill-specialization` Skill, calls the deterministic wrapper, and ResearchOS independently validates the published context/report/13-Skill suite before executor selection. It does not represent mock or external natural-language summaries as empirical fact. External execution returns declared raw artifacts, configs, logs, hashes, and result packs. T7 ingests, audits integrity/fairness/provenance, maps observed evidence to claims, and creates must-not-claim boundaries. A mock dry run verifies the protocol chain only and contains no fabricated metric values.
 
 ## T8-T9 Writing And Submission
 

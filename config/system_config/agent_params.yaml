@@ -560,31 +560,6 @@ agents:
         behavior:
           docker_required: false
           gpu_required: false
-      skill_customization:
-        tools:
-          tool_names:
-          - read_file
-          - write_file
-          - list_files
-          - finish_task
-          allowed_read_prefixes:
-          - ''
-          - external_executor/
-          - ideation/
-          - literature/
-          - novelty/
-          - resources/
-          - user_seeds/
-          allowed_write_prefixes:
-          - external_executor/skills/
-        budget:
-          max_steps: 40
-          max_tokens_total: 260000
-          max_wall_seconds: 2400
-        description: 自动调用 LLM API，将外部执行器 skill 模板改写为项目专属 suite
-        behavior:
-          docker_required: false
-          gpu_required: false
       executor_gate:
         description: 选择外部执行器并 patch handoff prompt
         behavior:

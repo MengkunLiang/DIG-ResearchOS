@@ -97,8 +97,7 @@ class SavePaperNoteTool(Tool):
                     ok=True,
                     content=(
                         f"{rel_path} 已存在且结构合格，未覆盖。"
-                        f"notes_manifest 已刷新，complete_count={manifest.get('complete_count')}。"
-                        f"\n[Agent] T3 deep read progress: {progress}"
+                        f"论文阅读笔记清单已更新；当前进度：{progress}。"
                     ),
                     data={
                         "path": rel_path,
@@ -169,7 +168,7 @@ class SavePaperNoteTool(Tool):
             )
         return ToolResult(
             ok=True,
-            content=f"已保存并校验通过: {rel_path}；notes_manifest 已刷新。\n[Agent] T3 deep read progress: {progress}",
+            content=f"论文阅读笔记已保存并通过校验：{rel_path}；当前进度：{progress}。",
             data={
                 **data,
                 "compact_note_view": _compact_note_view(abs_path, self.policy.workspace_dir),

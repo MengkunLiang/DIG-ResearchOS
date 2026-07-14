@@ -667,17 +667,32 @@ class AgentRunner:
         tool_map = self.tool_registry.build(eff.tool_names, build_ctx)
         tool_schemas = self.tool_registry.to_openai_schemas(tool_map)
 
+        deterministic_pre_finalized = False
+        try:
+            from ..skills.project_specialization.task_adapter import (
+                can_reuse_existing_project_skill_specialization,
+            )
+
+            deterministic_pre_finalized = can_reuse_existing_project_skill_specialization(ctx)
+        except Exception:
+            deterministic_pre_finalized = False
+        if deterministic_pre_finalized:
+            stop_reason = AgentResult.STOP_FINISHED
+            error_msg = None
+
         # Agents that prepare large, source-grounded prompts can use the same
         # discovered context capacity as the provider-bound tool layer.  This
         # avoids a stale per-agent character cap while keeping a smaller model
         # on a safe, explicit file-reading path.
         ctx.extra["runtime_context_window"] = primary_binding.max_context
         self._prepare_t4_execution_mode_before_prompt(ctx)
-        sys_msg = Message.system(self.agent.system_prompt(ctx), step=0)
-        user_msg = Message.user(self.agent.initial_user_message(ctx), step=0)
-        messages: list[Message] = [sys_msg, user_msg]
-        trace.write_message(sys_msg)
-        trace.write_message(user_msg)
+        messages: list[Message] = []
+        if not deterministic_pre_finalized:
+            sys_msg = Message.system(self.agent.system_prompt(ctx), step=0)
+            user_msg = Message.user(self.agent.initial_user_message(ctx), step=0)
+            messages = [sys_msg, user_msg]
+            trace.write_message(sys_msg)
+            trace.write_message(user_msg)
 
         empty_count = 0
         nudge_count = 0
@@ -692,7 +707,7 @@ class AgentRunner:
             await self._maybe_run_t1_startup_gate(ctx, tool_map, messages, trace)
 
             t9_pre_finalized = await self._maybe_finalize_t9_submission_before_hooks(ctx)
-            if t9_pre_finalized:
+            if t9_pre_finalized or deterministic_pre_finalized:
                 deterministic_pre_finalized = True
                 stop_reason = AgentResult.STOP_FINISHED
                 error_msg = None
@@ -1932,8 +1947,8 @@ class AgentRunner:
             "T4": "生成候选研究假设、实验计划和风险分析",
             "T4.5": "做新颖性预审和 mechanism tuple 审计",
             "T5-REBOOST-GATE": "调用 LLM API 对 Pre-T5 材料做 context re-boost",
-            "T5-HANDOFF": "编译外部实验协议、生成项目专属 skills 和 handoff prompt",
-            "T5-SKILL-CUSTOMIZATION-GATE": "检查 external_executor skill specialization report",
+            "T5-HANDOFF": "编译外部实验协议和 handoff prompt",
+            "T5-SPECIALIZE-EXECUTOR-SKILLS": "生成并校验项目专属 executor Skill Suite",
             "T5-EXPR-MATERIAL-GATE": "等待用户放置外部实验材料并确认继续",
             "T5-EXECUTOR-GATE": "由用户选择 mock、Claude Code、Codex CLI 或人工外部执行器",
             "T5-EXTERNAL-WAIT": "等待外部执行器写回 result_pack 并在 resume 时校验",
@@ -4935,6 +4950,20 @@ class AgentRunner:
                 ctx.extra["latex_compile_success_count"] = int(ctx.extra.get("latex_compile_success_count", 0) or 0) + 1
             return
 
+        if tool_name == "bash_run":
+            try:
+                from ..skills.project_specialization.task_adapter import mark_project_skill_specialization_bash_call
+
+                mark_project_skill_specialization_bash_call(
+                    ctx,
+                    command=str(arguments.get("command") or ""),
+                    cwd=str(arguments.get("cwd") or "") or None,
+                    ok=result.ok,
+                )
+            except Exception:
+                pass
+            return
+
         if tool_name not in {"write_file", "write_structured_file"} or not result.ok:
             return
 
@@ -5830,6 +5859,8 @@ class AgentRunner:
             message = "Agent 成功完成（T8 section-plan 确定性修复/收尾）"
         elif ok and metadata.get("completion_mode") == "t9_submission_prefinalize":
             message = "Agent 成功完成（T9 已有投稿包确定性收尾）"
+        elif ok and metadata.get("completion_mode") == "project_skill_specialization_reused":
+            message = "Agent 成功完成（项目专属 Skill Suite 指纹未变化，复用已验证产物）"
         return AgentResult(
             ok=ok,
             message=message,

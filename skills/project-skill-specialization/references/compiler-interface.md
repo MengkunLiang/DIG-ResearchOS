@@ -50,13 +50,25 @@ incomplete
 failed
 ```
 
-## CLI API
+## Task and CLI API
 
-The repository-level CLI should expose one command:
+The canonical LLM-backed entrypoint is the ResearchOS task:
+
+```bash
+python -m researchos.cli run-task T5-SPECIALIZE-EXECUTOR-SKILLS \
+  --workspace <workspace>
+```
+
+That task loads this repository Skill, asks the LLM to run the bundled wrappers,
+then performs an independent validate-only pass before writing
+`external_executor/skill_specialization_execution.json`.
+
+The repository-level deterministic CLI remains available for offline preview,
+repair, and validation:
 
 ```bash
 python -m researchos.cli specialize-executor-skills \
-  --workspace <workspace>
+  --workspace <workspace> --deterministic
 ```
 
 Supported modes:
@@ -64,9 +76,12 @@ Supported modes:
 ```bash
 --dry-run
 --validate-only
+--deterministic
 ```
 
-The bundled Skill wrapper imports the Python service directly so that the Skill, CLI, T5 task, and tests share one implementation. It must not reimplement the compiler or invoke a chain of internal scripts.
+The bundled Skill wrapper imports the Python service directly so that the Skill,
+offline CLI, T5 task, and tests share one implementation. It must not reimplement
+the compiler or invoke a chain of internal scripts.
 
 ## Wrapper behavior
 

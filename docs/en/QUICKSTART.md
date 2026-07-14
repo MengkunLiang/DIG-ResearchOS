@@ -87,7 +87,8 @@ python -m researchos.cli workspace-status --workspace-root ./workspace
 | `trace` / `validate` | Inspect a bounded run summary or validate stored task results | `trace <run-id> --workspace <dir>`; `validate --task T4 --workspace <dir>` |
 | `audit-survey` | Rebuild the deterministic Survey coverage audit | `audit-survey --workspace <dir>` |
 | `validate-config` | Check state-machine, gate, routing, and runtime configuration | `validate-config` |
-| `specialize-executor-skills` | Generate or validate the project-specific T5 executor Skill suite | `specialize-executor-skills --workspace <dir> --deterministic` |
+| `run-task T5-SPECIALIZE-EXECUTOR-SKILLS` | Run only the LLM-backed repository Skill that publishes and validates the project-specific T5 executor Skill suite | `run-task T5-SPECIALIZE-EXECUTOR-SKILLS --workspace <dir>` |
+| `specialize-executor-skills` | Offline deterministic preview, repair, or validation of the same suite | `specialize-executor-skills --workspace <dir> --deterministic` |
 | `list-skills` / `browse-skills` / `describe-skill` | Discover Skills and inspect their contracts | `describe-skill <skill> --workspace <dir>` |
 | `run-skill` / `skill-status` | Start/resume an independent Skill session or inspect sessions | `run-skill <skill> --workspace <dir> --session-id <id> --resume` |
 
@@ -109,6 +110,7 @@ Typical pause handling:
 ```bash
 python -m researchos.cli run-task T3 --workspace ./workspace/project-a
 python -m researchos.cli run-task T3.6-SEC-INTRO --workspace ./workspace/project-a
+python -m researchos.cli run-task T5-SPECIALIZE-EXECUTOR-SKILLS --workspace ./workspace/project-a
 python -m researchos.cli run-task T9 --workspace ./workspace/project-a
 ```
 
@@ -118,7 +120,22 @@ For T4, the model authors Candidate framing, mechanisms, 2–4 Draft Hypotheses,
 
 ## 7. T5 Executor Skills And Recovery
 
-T5 now executes `skills/research-reboost` through the configured LLM API, then publishes the project-specific executor suite as part of the same reboost transaction. A valid reboost writes the handoff, the expected output contract, `external_executor/project_skill_context.yaml`, `external_executor/skill_specialization_report.json`, and all 13 `external_executor/skills/*/SKILL.md` files before it can reach executor selection. The report records the LLM skill execution, deterministic validation, and project skill-suite publication; later LLM specialization of the executor suite remains an optional refinement, not a hidden prerequisite.
+T5 now separates semantic handoff compilation from executor Skill publication:
+
+```text
+T5-REBOOST-GATE -> T5-SPECIALIZE-EXECUTOR-SKILLS -> T5-EXECUTOR-GATE
+```
+
+`T5-SPECIALIZE-EXECUTOR-SKILLS` is the formal LLM-backed task:
+
+```text
+ResearchOS Task
+-> LLM consumes skills/project-skill-specialization
+-> Skill calls the deterministic Project Skill Specializer wrapper
+-> ResearchOS independently validates the durable artifacts
+```
+
+A valid specialization writes `external_executor/project_skill_context.yaml`, the copied schema, `external_executor/skill_specialization_report.json`, all 13 `external_executor/skills/*/SKILL.md` files, and `external_executor/skill_specialization_execution.json` before executor selection. `ready` and `incomplete` both allow the executor gate; `failed` stops.
 
 To run only the T5 reboost module without advancing the full pipeline:
 
@@ -126,7 +143,14 @@ To run only the T5 reboost module without advancing the full pipeline:
 python -m researchos.cli run-task T5-REBOOST --workspace ./workspace/project-a
 ```
 
-For a workspace created by an older release that is already paused in `T5-EXTERNAL-WAIT` without `external_executor/skills/`, publish the same auditable suite without calling a model, then validate the executor gate:
+To run only the project Skill specialization task without advancing the full pipeline:
+
+```bash
+python -m researchos.cli run-task T5-SPECIALIZE-EXECUTOR-SKILLS \
+  --workspace ./workspace/project-a
+```
+
+For a workspace created by an older release that is already paused in `T5-EXTERNAL-WAIT` without `external_executor/skills/`, the offline deterministic command can repair or validate the suite without calling a model:
 
 ```bash
 python -m researchos.cli specialize-executor-skills \

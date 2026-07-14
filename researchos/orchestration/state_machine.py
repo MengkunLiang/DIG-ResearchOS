@@ -1881,7 +1881,10 @@ class StateMachine:
         if node.skill:
             extra["skill_name"] = node.skill
             # 设置实际skill_dir路径供bash_run等工具使用
-            skill_dir = workspace_dir / "skills" / node.skill
+            if node.skill == "project-skill-specialization":
+                skill_dir = Path(__file__).resolve().parents[2] / "skills" / node.skill
+            else:
+                skill_dir = workspace_dir / "skills" / node.skill
             extra["skill_dir"] = str(skill_dir)
 
         iteration = state.iteration_count.get(state.current_task, 0)

@@ -411,7 +411,7 @@ def create_directory_guides(workspace_dir: Path, *, runtime_dir_name: str = "_ru
         },
         "external_executor": {
             "purpose": "ResearchOS 与 Codex/Claude/manual 外部实验执行器的边界目录。",
-            "produced_by": "T5-REBOOST-GATE, T5-HANDOFF, T5-SKILL-CUSTOMIZATION-GATE, T5-EXPR-MATERIAL-GATE, T5-EXECUTOR-GATE, external executor, T5-DRY-RUN.",
+            "produced_by": "T5-REBOOST-GATE, T5-HANDOFF, T5-SPECIALIZE-EXECUTOR-SKILLS, T5-EXPR-MATERIAL-GATE, T5-EXECUTOR-GATE, external executor, T5-DRY-RUN.",
             "consumed_by": "T5-EXTERNAL-WAIT, T7-INGEST, T7-AUDIT, T7-POST-NOVELTY, T7-CLAIMS.",
             "key_files": "AGENTS.md, CLAUDE.md, handoff_pack.json, expected_outputs_schema.json, allowed_paths.txt, skills/, expr/, result_pack.json, executor_status.json, run_manifest.json.",
             "human_editable": "Place experiment materials under expr/ and manual executor outputs only; skills/ is generated and customized by ResearchOS before execution.",

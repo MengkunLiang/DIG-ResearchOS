@@ -477,8 +477,12 @@ def _resolve_skill_roots(args: argparse.Namespace, workspace_dir: Path) -> list[
     """
 
     raw_roots = list(args.skills_root or ["skills"])
+    repo_skills_root = Path(__file__).resolve().parents[1] / "skills"
     candidates: list[Path] = []
     seen: set[Path] = set()
+    if repo_skills_root.exists():
+        candidates.append(repo_skills_root.resolve())
+        seen.add(repo_skills_root.resolve())
     for raw_root in raw_roots:
         original = Path(raw_root)
         expanded: list[Path] = []
@@ -2609,9 +2613,9 @@ def validate_config_command(args: argparse.Namespace) -> int:
 
 
 async def specialize_executor_skills_command(args: argparse.Namespace) -> int:
-    """Compile the project-specific external executor skill suite."""
+    """Compile or validate the project-specific external executor skill suite."""
 
-    from .skills.project_specialization import specialize_project_skills, specialize_project_skills_with_llm
+    from .skills.project_specialization import specialize_project_skills
 
     workspace = Path(args.workspace).resolve()
     dry_run = bool(getattr(args, "dry_run", False))
@@ -2629,16 +2633,14 @@ async def specialize_executor_skills_command(args: argparse.Namespace) -> int:
             validate_only=True,
         )
     else:
-        llm_client = LLMClient(Path(args.model_settings).resolve())
-        try:
-            result = await specialize_project_skills_with_llm(
-                workspace=workspace,
-                llm_client=llm_client,
-                profile=getattr(args, "profile", None),
-                tier=getattr(args, "tier", "medium"),
-            )
-        finally:
-            await llm_client.aclose()
+        print(
+            "The LLM-backed project Skill specialization path is now the ResearchOS task:\n"
+            "python -m researchos.cli run-task T5-SPECIALIZE-EXECUTOR-SKILLS "
+            f"--workspace {workspace}\n\n"
+            "Use --deterministic, --dry-run, or --validate-only here only for offline repair "
+            "or deterministic validation."
+        )
+        return 2
     report = result.report or {}
     print(f"Project Skill Specialization: {result.status}")
     method = report.get("specialization_method") or ("dry_run" if dry_run else "deterministic_validation")

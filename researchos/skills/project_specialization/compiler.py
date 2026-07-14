@@ -371,7 +371,7 @@ def _base_report(paths, *, status: str) -> dict[str, Any]:
         "specialization_method": "deterministic_project_specialization",
         "llm_specialization": {
             "enabled": False,
-            "reason": "T5 normal path uses the schema-validated deterministic compiler; an explicit CLI pass may add LLM guidance.",
+            "reason": "T5-SPECIALIZE-EXECUTOR-SKILLS uses an LLM to execute the repository Skill; the published Suite itself is rendered by the deterministic compiler.",
         },
         "context_file": "external_executor/project_skill_context.yaml",
         "context_schema": "external_executor/schemas/project_skill_context.schema.json",

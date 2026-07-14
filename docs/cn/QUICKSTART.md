@@ -87,7 +87,8 @@ python -m researchos.cli workspace-status --workspace-root ./workspace
 | `trace` / `validate` | 检查有边界的运行摘要或验证已存储的任务结果 | `trace <run-id> --workspace <dir>`; `validate --task T4 --workspace <dir>` |
 | `audit-survey` | 重建确定性的综述覆盖率审计 | `audit-survey --workspace <dir>` |
 | `validate-config` | 检查状态机、门控、路由和运行时配置 | `validate-config` |
-| `specialize-executor-skills` | 生成或验证项目特定的 T5 executor Skill 套件 | `specialize-executor-skills --workspace <dir> --deterministic` |
+| `run-task T5-SPECIALIZE-EXECUTOR-SKILLS` | 只运行通过仓库级 Skill 发布并校验项目专属 T5 executor Skill suite 的 LLM-backed 任务 | `run-task T5-SPECIALIZE-EXECUTOR-SKILLS --workspace <dir>` |
+| `specialize-executor-skills` | 同一 suite 的离线确定性预览、修复或校验 | `specialize-executor-skills --workspace <dir> --deterministic` |
 | `list-skills` / `browse-skills` / `describe-skill` | 发现 Skill 并检查其契约 | `describe-skill <skill> --workspace <dir>` |
 | `run-skill` / `skill-status` | 启动/继续一个独立的 Skill 会话或检查会话状态 | `run-skill <skill> --workspace <dir> --session-id <id> --resume` |
 
@@ -109,6 +110,7 @@ python -m researchos.cli workspace-status --workspace-root ./workspace
 ```bash
 python -m researchos.cli run-task T3 --workspace ./workspace/project-a
 python -m researchos.cli run-task T3.6-SEC-INTRO --workspace ./workspace/project-a
+python -m researchos.cli run-task T5-SPECIALIZE-EXECUTOR-SKILLS --workspace ./workspace/project-a
 python -m researchos.cli run-task T9 --workspace ./workspace/project-a
 ```
 
@@ -118,7 +120,22 @@ python -m researchos.cli run-task T9 --workspace ./workspace/project-a
 
 ## 7. T5 Executor 技能与恢复
 
-T5 现在通过已配置的 LLM API 执行 `skills/research-reboost`，并在同一个 reboost 事务中发布项目特定的 executor 技能套件。有效的 reboost 在进入 executor 选择前，会写入交接文件、预期的输出契约、`external_executor/project_skill_context.yaml`、`external_executor/skill_specialization_report.json` 以及全部 13 个 `external_executor/skills/*/SKILL.md` 文件。报告记录 LLM Skill 执行、确定性校验和项目 Skill suite 发布；后续对 executor suite 做 LLM 特化仍只是可选优化，而非隐藏前提条件。
+T5 现在把语义 handoff 编译和 executor Skill 发布拆成两个可恢复步骤：
+
+```text
+T5-REBOOST-GATE -> T5-SPECIALIZE-EXECUTOR-SKILLS -> T5-EXECUTOR-GATE
+```
+
+`T5-SPECIALIZE-EXECUTOR-SKILLS` 是正式的 LLM-backed 任务：
+
+```text
+ResearchOS Task
+-> LLM 消费 skills/project-skill-specialization
+-> Skill 调用确定性 Project Skill Specializer wrapper
+-> ResearchOS 独立校验持久化 Artifact
+```
+
+一次有效 specialization 会在进入 executor 选择前写出 `external_executor/project_skill_context.yaml`、复制到 workspace 的 schema、`external_executor/skill_specialization_report.json`、全部 13 个 `external_executor/skills/*/SKILL.md`，以及 `external_executor/skill_specialization_execution.json`。`ready` 和 `incomplete` 都可进入 executor gate；`failed` 会停止。
 
 只运行 T5 reboost 模块而不推进完整流水线时，使用：
 
@@ -126,7 +143,14 @@ T5 现在通过已配置的 LLM API 执行 `skills/research-reboost`，并在同
 python -m researchos.cli run-task T5-REBOOST --workspace ./workspace/project-a
 ```
 
-对于由旧版本创建、且已在 `T5-EXTERNAL-WAIT` 状态下暂停但没有 `external_executor/skills/` 的工作区，可在不调用模型的情况下发布相同的可审计套件，然后验证 executor 门控：
+只运行项目 Skill 专属化任务而不推进完整流水线时，使用：
+
+```bash
+python -m researchos.cli run-task T5-SPECIALIZE-EXECUTOR-SKILLS \
+  --workspace ./workspace/project-a
+```
+
+对于由旧版本创建、且已在 `T5-EXTERNAL-WAIT` 状态下暂停但没有 `external_executor/skills/` 的工作区，可用离线确定性命令在不调用模型的情况下修复或校验同一套件：
 
 ```bash
 python -m researchos.cli specialize-executor-skills \

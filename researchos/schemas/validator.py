@@ -632,6 +632,60 @@ def register_builtin_task_checkers():
         )
         return ExperimenterAgent(mode=mode).validate_outputs(ctx)
 
+    def check_project_skill_specialization_phase(workspace_dir: Path) -> tuple[bool, str | None]:
+        from ..skills.project_specialization.task_adapter import (
+            EXECUTION_REL_PATH,
+            EXPECTED_SKILL_COUNT,
+            SKILL_NAME,
+            TASK_ID,
+            repository_root,
+            validate_project_skill_specialization_outputs,
+        )
+
+        validation = validate_project_skill_specialization_outputs(
+            workspace=workspace_dir,
+            repo_root=repository_root(),
+        )
+        if not validation.ok:
+            detail = "; ".join(
+                str(item.get("code") or item.get("message") or item)
+                for item in validation.errors[:5]
+                if isinstance(item, dict)
+            )
+            return False, detail or "project Skill specialization outputs failed deterministic validation"
+
+        execution_path = workspace_dir / EXECUTION_REL_PATH
+        try:
+            execution = json.loads(execution_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return False, f"{EXECUTION_REL_PATH} is not readable JSON: {exc}"
+        if not isinstance(execution, dict):
+            return False, f"{EXECUTION_REL_PATH} must be a JSON object"
+        if execution.get("schema_version") != "project_skill_specialization_execution.v1":
+            return False, "skill_specialization_execution.schema_version is invalid"
+        if execution.get("task_id") != TASK_ID:
+            return False, "skill_specialization_execution.task_id is invalid"
+        if execution.get("skill_name") != SKILL_NAME:
+            return False, "skill_specialization_execution.skill_name is invalid"
+        if execution.get("status") != validation.report_status:
+            return False, "skill_specialization_execution.status does not match report status"
+        if execution.get("status") not in {"ready", "incomplete"}:
+            return False, "skill_specialization_execution.status must be ready or incomplete"
+        if not execution.get("input_fingerprint"):
+            return False, "skill_specialization_execution.input_fingerprint is missing"
+        if int(execution.get("skills_specialized") or 0) != EXPECTED_SKILL_COUNT:
+            return False, "skill_specialization_execution.skills_specialized must be 13"
+        run = execution.get("llm_run")
+        if not isinstance(run, dict) or not run.get("trace_id"):
+            return False, "skill_specialization_execution.llm_run.trace_id is missing"
+        outputs = execution.get("outputs")
+        if not isinstance(outputs, dict) or outputs.get("report") != "external_executor/skill_specialization_report.json":
+            return False, "skill_specialization_execution.outputs.report is invalid"
+        record_validation = execution.get("validation")
+        if not isinstance(record_validation, dict) or record_validation.get("status") != "pass":
+            return False, "skill_specialization_execution.validation.status must be pass"
+        return True, None
+
     def check_ideation_phase(workspace_dir: Path) -> tuple[bool, str | None]:
         """T4 checker：复用 IdeationAgent 的 schema、anchor、Gate 和 bridge 条件校验。"""
         from ..agents.ideation import IdeationAgent
@@ -755,6 +809,7 @@ def register_builtin_task_checkers():
         "T5-REBOOST-GATE",
         lambda workspace_dir: check_experimenter_phase(workspace_dir, "T5-REBOOST-GATE"),
     )
+    register_task_checker("T5-SPECIALIZE-EXECUTOR-SKILLS", check_project_skill_specialization_phase)
     register_task_checker("T5", lambda workspace_dir: check_experimenter_phase(workspace_dir, "T5"))
     register_task_checker("T7", lambda workspace_dir: check_experimenter_phase(workspace_dir, "T7"))
     register_task_checker("T8-REVIEW-1", lambda workspace_dir: check_reviewer_phase(workspace_dir, "T8-REVIEW-1"))

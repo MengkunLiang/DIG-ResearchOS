@@ -900,9 +900,8 @@ states:
 
   # T5-REBOOST-GATE 状态：ResearchOS 直接调用 LLM API 执行 skills/research-reboost
   # 用途：把研究目标、方法机制、baseline、claim/evidence 边界重排成外部执行器上下文，
-  # 并编译外部执行器 handoff、prompt、schema、allowed paths 和项目专属 skill suite。
-  # Skill suite 必须在本节点由确定性专项编译器生成并通过 schema/模板完整性校验；
-  # `researchos specialize-executor-skills` 仅用于可选 LLM 增强。
+  # 并编译外部执行器 handoff、prompt、schema 和 allowed paths。
+  # 项目专属 Skill Suite 在下一节点独立生成，以便编译、发布和审阅各自可恢复。
   T5-REBOOST-GATE:
     skill: research-reboost
     mode: reboost
@@ -947,16 +946,12 @@ states:
       dir_guide: external_executor/_DIR_GUIDE.md
       job_state: external_executor/job_state.json
       expr_dir: external_executor/expr
-      project_skill_context: external_executor/project_skill_context.yaml
-      project_skill_context_schema: external_executor/schemas/project_skill_context.schema.json
-      skills_dir: external_executor/skills
-      skill_specialization_report: external_executor/skill_specialization_report.json
-    next_on_success: T5-SKILL-CUSTOMIZATION-GATE
+    next_on_success: T5-SPECIALIZE-EXECUTOR-SKILLS
     next_on_failure: failed
 
   # T5-HANDOFF 状态：legacy 兼容入口，外部实验执行器协议编译
   # 用途：ResearchOS 编译实验契约、allowed paths 与 Codex/Claude/manual/mock 执行 prompt。
-  # 注意：推荐新路径为 T5-REBOOST -> T5-SKILL-CUSTOMIZATION-GATE -> T5-EXECUTOR-GATE。
+  # 注意：推荐新路径为 T5-REBOOST -> T5-SPECIALIZE-EXECUTOR-SKILLS -> T5-EXECUTOR-GATE。
   T5-HANDOFF:
     agent: experimenter
     mode: handoff
@@ -989,29 +984,51 @@ states:
       dir_guide: external_executor/_DIR_GUIDE.md
       job_state: external_executor/job_state.json
       expr_dir: external_executor/expr
-      project_skill_context: external_executor/project_skill_context.yaml
-      project_skill_context_schema: external_executor/schemas/project_skill_context.schema.json
-      skills_dir: external_executor/skills
-      skill_specialization_report: external_executor/skill_specialization_report.json
-    next_on_success: T5-SKILL-CUSTOMIZATION-GATE
+    next_on_success: T5-SPECIALIZE-EXECUTOR-SKILLS
     next_on_failure: failed
 
-  # T5-SKILL-CUSTOMIZATION-GATE 状态：Project Skill Specialization Review Gate
-  # 用途：检查 T5 reboost 编译器生成的 project_skill_context、13 个项目专属 Skill 和 report。
-  T5-SKILL-CUSTOMIZATION-GATE:
-    agent: experimenter
-    mode: skill_customization
+  # T5-SPECIALIZE-EXECUTOR-SKILLS 状态：通过仓库级 Skill 发布项目专属 Skill Suite。
+  # 用途：ResearchOS 调用 LLM 执行 skills/project-skill-specialization/SKILL.md；
+  # Skill 调用确定性 wrapper 生成 Suite，ResearchOS 再做独立 validate-only 校验。
+  T5-SPECIALIZE-EXECUTOR-SKILLS:
+    skill: project-skill-specialization
+    mode: build
+    tools:
+      allowed_read_prefixes:
+        - ""
+        - project.yaml
+        - external_executor/
+        - ideation/
+        - literature/
+        - novelty/
+        - user_seeds/
+      allowed_write_prefixes:
+        - external_executor/
+    extra:
+      user_request: |
+        Execute the repository skill `project-skill-specialization` for the current
+        ResearchOS workspace in build mode.
+
+        Workspace: <resolved by runtime>
+        Repository root: <resolved by runtime>
+
+        Use the Skill's bundled preflight, specialization, and report-summary scripts.
+        Do not manually create or edit project_skill_context.yaml.
+        Do not directly rewrite Project-Specific Guidance.
+        Do not modify content outside reserved markers.
+        Finish only after reading the durable specialization report.
     inputs:
+      project: project.yaml
       handoff_pack: external_executor/handoff_pack.json
       expected_outputs_schema: external_executor/expected_outputs_schema.json
       allowed_paths: external_executor/allowed_paths.txt
-      skills_dir: external_executor/skills
-      project_skill_context: external_executor/project_skill_context.yaml
-      project_skill_context_schema: external_executor/schemas/project_skill_context.schema.json
-      skill_specialization_report: external_executor/skill_specialization_report.json
       agents_md: external_executor/AGENTS.md
     outputs:
+      project_skill_context: external_executor/project_skill_context.yaml
+      project_skill_context_schema: external_executor/schemas/project_skill_context.schema.json
+      skills_dir: external_executor/skills
       skill_specialization_report: external_executor/skill_specialization_report.json
+      skill_specialization_execution: external_executor/skill_specialization_execution.json
     next_on_success: T5-EXECUTOR-GATE
     next_on_failure: failed
 
@@ -1052,6 +1069,7 @@ states:
       project_skill_context_schema: external_executor/schemas/project_skill_context.schema.json
       skills_dir: external_executor/skills
       skill_specialization_report: external_executor/skill_specialization_report.json
+      skill_specialization_execution: external_executor/skill_specialization_execution.json
     outputs:
       executor_selection: external_executor/executor_selection.json
     gate:

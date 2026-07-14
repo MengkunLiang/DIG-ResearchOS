@@ -24,6 +24,10 @@ from ..schemas.state import StateYaml
 from ..schemas.validator import register_builtin_task_checkers, validate_task_artifacts
 from ..skills.agent import SkillAgent
 from ..skills.loader import resolve_skill
+from ..skills.project_specialization.task_adapter import (
+    SKILL_NAME as PROJECT_SKILL_SPECIALIZATION_SKILL_NAME,
+    build_project_skill_specialization_agent,
+)
 from ..tools.human_gate import CLIHumanInterface, HumanInputUnavailable, HumanInterface
 from ..tools.latex_compile import latex_backend_preflight
 from ..tools.registry import ToolRegistry
@@ -612,11 +616,18 @@ class CompletePipelineRunner:
         elif node.skill is not None:
             skill = resolve_skill(node.skill, self.skill_roots)
             ctx.extra["skill_dir"] = str(skill.skill_dir)
-            agent = SkillAgent(
-                skill=skill,
-                available_tools=set(self.tools.available_names()),
-                llm_profile=ctx.llm_override.profile,
-            )
+            if node.skill == PROJECT_SKILL_SPECIALIZATION_SKILL_NAME:
+                agent = build_project_skill_specialization_agent(
+                    skill=skill,
+                    available_tools=set(self.tools.available_names()),
+                    llm_profile=ctx.llm_override.profile,
+                )
+            else:
+                agent = SkillAgent(
+                    skill=skill,
+                    available_tools=set(self.tools.available_names()),
+                    llm_profile=ctx.llm_override.profile,
+                )
         else:
             raise ValueError(f"Task {node.task_id} has neither agent nor skill configured")
         return AgentRunner(

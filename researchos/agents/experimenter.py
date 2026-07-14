@@ -1,7 +1,7 @@
 """Experimenter Agent — 外部实验协议主链与 legacy 内部实验兼容模式
 
 业务需求：
-- 主链模式：reboost / handoff / skill_customization / executor_gate / external_wait / dry_run / result_ingest / integrity_audit / post_novelty / result_to_claim
+- 主链模式：reboost / handoff / executor_gate / external_wait / dry_run / result_ingest / integrity_audit / post_novelty / result_to_claim
 - 主链语义：ResearchOS 编译协议、选择外部执行器、摄取和审计结果，再生成 result-to-claim
 - 兼容模式：pilot（T5）和 full（T7）仍可显式 run-task 调用
 - Pilot 兼容模式：小规模验证实验，强制 smoke test，产出 motivation_validation.md
@@ -11,10 +11,10 @@
 - ResearchOS 不接受执行器自然语言总结作为事实，只接受 raw artifact、config、log、hash、ingest/audit/result-to-claim
 
 外部实验主链输出：
-- T5-REBOOST-GATE/T5-REBOOST: external_executor/handoff_pack.json、external_executor/reboost_report.json、AGENTS.md、CLAUDE.md、README.md、executor_prompt.md、codex_prompt.md、claude_code_prompt.md、expected_outputs_schema.json、allowed_paths.txt、project_skill_context.yaml、skill_specialization_report.json、skills/
-- specialize-executor-skills: 可选的 LLM 增强专属化命令；正常 T5 已通过确定性编译器生成并校验项目 Skill suite
-- T5-HANDOFF: legacy 兼容入口，生成 handoff 并可同步生成 skill suite
-- T5-SKILL-CUSTOMIZATION-GATE: external_executor/skill_specialization_report.json
+- T5-REBOOST-GATE/T5-REBOOST: external_executor/handoff_pack.json、external_executor/reboost_report.json、AGENTS.md、CLAUDE.md、README.md、executor_prompt.md、codex_prompt.md、claude_code_prompt.md、expected_outputs_schema.json、allowed_paths.txt
+- T5-SPECIALIZE-EXECUTOR-SKILLS: schema-validated project_skill_context.yaml、skill_specialization_report.json、skills/
+- specialize-executor-skills: 同一确定性编译器的显式 CLI 入口；可选的 LLM 增强只可在 suite 已发布后运行
+- T5-HANDOFF: legacy 兼容入口，生成 handoff；其项目 Skill suite 也由专门的 specialization 节点发布
 - T5-EXECUTOR-GATE: external_executor/executor_selection.json
 - T5-EXTERNAL-WAIT: external_executor/wait_acceptance_report.json
 - T5-DRY-RUN: external_executor/result_pack.json、executor_status.json、run_manifest.json、heartbeat.json、raw_results/configs/logs
@@ -391,7 +391,6 @@ def check_failure_modes(results: dict, log_content: str) -> list[dict]:
 EXTERNAL_EXPERIMENT_MODES = {
     "reboost",
     "handoff",
-    "skill_customization",
     "executor_gate",
     "external_wait",
     "dry_run",
@@ -435,7 +434,7 @@ def _require_external_files(ws: Path, rel_paths: list[str]) -> tuple[bool, str |
     return True, None
 
 
-def _validate_external_handoff(ws: Path, *, require_specialization: bool = True) -> tuple[bool, str | None]:
+def _validate_external_handoff(ws: Path, *, require_specialization: bool = False) -> tuple[bool, str | None]:
     required = [
         "external_executor/handoff_pack.json",
         "external_executor/executor_prompt.md",
@@ -613,7 +612,7 @@ def _validate_specialized_skill_file(ws: Path, skill_name: str) -> tuple[bool, s
     return True, None
 
 
-def _validate_specialization_report(report: dict[str, Any], *, require_llm: bool = False) -> tuple[bool, str | None]:
+def _validate_specialization_report(report: dict[str, Any]) -> tuple[bool, str | None]:
     if report.get("schema_version") != "skill_specialization_report.v1":
         return False, "external_executor/skill_specialization_report.json schema_version 不正确"
     if report.get("status") not in {"ready", "incomplete"}:
@@ -633,37 +632,6 @@ def _validate_specialization_report(report: dict[str, Any], *, require_llm: bool
     missing = [name for name in SKILL_SUITE if name not in reported]
     if missing:
         return False, "skill_specialization_report 缺少 skill（未覆盖 skill）: " + ", ".join(missing)
-    if require_llm:
-        llm = report.get("llm_specialization")
-        if not isinstance(llm, dict) or llm.get("enabled") is not True:
-            return False, "skill_specialization_report 缺少 LLM 专属化记录"
-        if int(llm.get("skills_specialized") or 0) != len(SKILL_SUITE):
-            return False, "skill_specialization_report.llm_specialization.skills_specialized 必须为 13"
-    return True, None
-
-
-def _validate_external_skill_customization(ws: Path) -> tuple[bool, str | None]:
-    report, err = _read_json_artifact(ws, "external_executor/skill_specialization_report.json")
-    if err:
-        return False, err
-    ok, err = _validate_specialization_report(report)
-    if not ok:
-        return False, err
-    for rel in (
-        "external_executor/handoff_pack.json",
-        "external_executor/expected_outputs_schema.json",
-        "external_executor/allowed_paths.txt",
-        "external_executor/AGENTS.md",
-        "external_executor/project_skill_context.yaml",
-        "external_executor/schemas/project_skill_context.schema.json",
-    ):
-        if not (ws / rel).exists():
-            return False, f"{rel} 缺失"
-
-    for skill_name in SKILL_SUITE:
-        ok, err = _validate_specialized_skill_file(ws, skill_name)
-        if not ok:
-            return False, err
     return True, None
 
 
@@ -1064,6 +1032,8 @@ class ExperimenterAgent(Agent):
                         "list_files",
                         "append_file",
                         "build_experiment_handoff_pack",
+                        "compile_research_reboost_handoff",
+                        "specialize_executor_skills",
                         "select_external_executor",
                         "wait_for_external_executor_result",
                         "mock_external_dry_run",
@@ -1209,12 +1179,12 @@ class ExperimenterAgent(Agent):
                     "`references/handoff_pack.schema.json` 和 `scripts/validate_handoff.py` 校验并 pretty-print "
                     "`external_executor/handoff_pack.json`，同时写 `external_executor/reboost_report.json`、"
                     "`reboost_validation_report.json`、AGENTS/CLAUDE/README、prompt、expected schema、"
-                    "allowed paths、input manifest、job_state、expr scaffold，以及由模板和项目上下文确定性生成的 "
-                    "`external_executor/skills/`、`project_skill_context.yaml`、`skill_specialization_report.json`。\n\n"
+                    "allowed paths、input manifest、job_state 和 expr scaffold。项目专属 executor Skills 会在下一步 "
+                    "`T5-SPECIALIZE-EXECUTOR-SKILLS` 中由确定性编译器单独发布。\n\n"
                     "完成后读取 `external_executor/reboost_report.json`；如果 validation_ok=true，"
                     "调用 finish_task。`compile_research_reboost_handoff` 是 handoff pack 的唯一写入者；"
                     "不要用 write_file 修改它，不要手写压缩成一行的 JSON；不要生成或改写 "
-                    "`external_executor/skills/`，后续由 T5-SKILL-CUSTOMIZATION-GATE 审阅已生成的 suite。"
+                    "`external_executor/skills/`。"
                 ),
             )
         if mode == "handoff":
@@ -1227,20 +1197,6 @@ class ExperimenterAgent(Agent):
                     "expected_outputs_schema.json、allowed_paths.txt、AGENTS.md、CLAUDE.md、README.md、"
                     "job_state.json 和 Codex/Claude/manual prompt。不要运行真实实验；执行器选择由 "
                     "T5-EXECUTOR-GATE 完成。"
-                ),
-            )
-        if mode == "skill_customization":
-            return prepend_resume_prefix(
-                ctx,
-                (
-                    "请执行 T5 Project Skill Specialization Review Gate：读取 "
-                    "external_executor/skill_specialization_report.json、"
-                    "external_executor/project_skill_context.yaml 和 external_executor/skills/ 下的 13 个 "
-                    "SKILL.md，确认它们已经由 T5 的 schema-validated project specialization compiler 生成。不要在 gate 中再次改写 skill，"
-                    "不要运行实验，不要写 result_pack、executor_status 或 run_manifest。\n\n"
-                    "报告 status 为 ready 或 incomplete 均表示专属化产物已生成；incomplete 只说明存在 "
-                    "required uncertain 字段，后续由运行期 skill 做 context alignment。若报告为 failed "
-                    "或产物缺失，应停止并说明缺失项。最后调用 finish_task。"
                 ),
             )
         if mode == "executor_gate":
@@ -1443,11 +1399,9 @@ class ExperimenterAgent(Agent):
                 return False, "external_executor/reboost_report.json semantics 不正确"
             if report.get("handoff_pack") != "external_executor/handoff_pack.json":
                 return False, "external_executor/reboost_report.json 必须指向 handoff_pack"
-            return _validate_external_handoff(ws, require_specialization=True)
+            return _validate_external_handoff(ws, require_specialization=False)
         if mode == "handoff":
             return _validate_external_handoff(ws)
-        if mode == "skill_customization":
-            return _validate_external_skill_customization(ws)
         if mode == "executor_gate":
             return _validate_external_executor_selection(ws)
         if mode == "external_wait":

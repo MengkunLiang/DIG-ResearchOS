@@ -309,8 +309,20 @@ def _t45_insights(workspace: Path) -> list[dict[str, Any]]:
 def _t5_insights(workspace: Path, *, task_id: str) -> list[dict[str, Any]]:
     handoff = _load_json(workspace / "external_executor" / "handoff_pack.json")
     report = _load_json(workspace / "external_executor" / "skill_specialization_report.json")
+    execution = _load_json(workspace / "external_executor" / "skill_specialization_execution.json")
     status = _load_json(workspace / "external_executor" / "executor_status.json")
     rows = [("当前节点", task_id)]
+    if task_id == "T5-SPECIALIZE-EXECUTOR-SKILLS":
+        if isinstance(report, dict):
+            rows.append(("Specialization status", str(report.get("status") or "unknown")))
+            rows.append(("Skills", f"{int(report.get('skills_specialized') or 0)}/{int(report.get('skills_total') or 13)}"))
+            rows.append(("Required uncertain fields", str(len(report.get("required_uncertain_fields") or []))))
+        if isinstance(execution, dict):
+            run = execution.get("llm_run") if isinstance(execution.get("llm_run"), dict) else {}
+            rows.append(("Execution record", "available"))
+            if run.get("reused_existing_artifacts"):
+                rows.append(("Resume", "reused validated suite"))
+        return [_insight("Project Skill Specialization", "仓库级 Skill 已发布并校验 executor Skill Suite；不展示研究 handoff 正文。", rows)]
     if isinstance(handoff, dict):
         context = handoff.get("context_reboost") if isinstance(handoff.get("context_reboost"), dict) else handoff
         rows.append(("Central hypothesis", _short(_first_text(context, "central_hypothesis", "project_goal") or "未记录", 110)))

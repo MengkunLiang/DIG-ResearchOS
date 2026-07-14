@@ -1,6 +1,23 @@
 ---
 name: project-skill-specialization
 description: 从 T5 reboost 或 legacy handoff 及其权威来源构建、预览或校验项目专属 external-executor Skill Suite。适用于 Suite 缺失、过期、恢复前核验或发布失败诊断；不会补造项目事实、执行实验或替换运行中的 Suite。
+tools:
+  - read_file
+  - list_files
+  - glob_files
+  - grep_search
+  - bash_run
+  - finish_task
+allowed_read_prefixes:
+  - ""
+  - project.yaml
+  - external_executor/
+  - ideation/
+  - literature/
+  - novelty/
+  - user_seeds/
+allowed_write_prefixes:
+  - external_executor/
 ---
 
 # Project Skill Specialization
@@ -53,7 +70,7 @@ Never duplicate those responsibilities in prose edits, ad hoc Python, or direct 
 
 Use exactly one mode:
 
-- **Build**: generate and atomically publish the project Context and all 13 specialized Skills. This is the default after T5-HANDOFF.
+- **Build**: generate and atomically publish the project Context and all 13 specialized Skills. This is the default after T5-REBOOST or legacy T5-HANDOFF.
 - **Dry run**: execute the complete build and validation path in staging without publishing. Use when the user asks to preview, debug, or test specialization.
 - **Validate only**: validate an existing specialized Suite without rebuilding it. Use when the output already exists and only integrity or readiness must be checked.
 
@@ -139,7 +156,7 @@ Confirm that:
 - template integrity passed;
 - the published Suite path is present.
 
-Return control to the T5 specialization gate or caller.
+Return control to the `T5-SPECIALIZE-EXECUTOR-SKILLS` task or caller.
 
 ### `incomplete`
 

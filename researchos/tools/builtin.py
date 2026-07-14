@@ -26,6 +26,7 @@ from .external_experiment import (
     MapResultsToClaimsTool,
     MockExternalDryRunTool,
     SelectExternalExecutorTool,
+    SpecializeExecutorSkillsTool,
     WaitForExternalExecutorResultTool,
 )
 from .filesystem import InspectUserSeedsTool, ListFilesTool, ReadFileTool, WriteFileTool
@@ -186,6 +187,7 @@ def register_builtin_tools(
     registry.register("build_manuscript_revision_patches", lambda ctx: BuildManuscriptRevisionPatchesTool(ctx.policy))
     registry.register("build_experiment_handoff_pack", lambda ctx: BuildExperimentHandoffPackTool(ctx.policy))
     registry.register("compile_research_reboost_handoff", lambda ctx: CompileResearchReboostHandoffTool(ctx.policy))
+    registry.register("specialize_executor_skills", lambda ctx: SpecializeExecutorSkillsTool(ctx.policy))
     registry.register("select_external_executor", lambda ctx: SelectExternalExecutorTool(ctx.policy))
     registry.register("wait_for_external_executor_result", lambda ctx: WaitForExternalExecutorResultTool(ctx.policy))
     registry.register("mock_external_dry_run", lambda ctx: MockExternalDryRunTool(ctx.policy))
