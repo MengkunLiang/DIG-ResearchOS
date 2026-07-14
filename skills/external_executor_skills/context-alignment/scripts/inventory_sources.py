@@ -28,6 +28,8 @@ DEFAULT_SOURCES = [
     "ideation/idea_scorecard.yaml",
     "ideation/risks.md",
     "novelty/novelty_audit.md",
+    "ideation/hypothesis_brief.yaml",
+    "ideation/selected/t45_search_targets.json",
     "user_seeds/seed_external_resources.jsonl",
     "user_seeds/bridge_domains.yaml",
 ]
@@ -42,6 +44,8 @@ def role_for(path: str) -> str:
         return "protocol"
     if path.endswith("novelty_audit.md"):
         return "novelty"
+    if path.endswith("hypothesis_brief.yaml") or path.endswith("t45_search_targets.json"):
+        return "pre_novelty_context"
     if path.startswith("literature/"):
         return "literature"
     if path.endswith("risks.md"):

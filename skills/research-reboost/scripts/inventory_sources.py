@@ -44,6 +44,8 @@ OPTIONAL_PATHS = (
     ("resources", "resource", "Existing local resources"),
     ("user_seeds/seed_external_resources.jsonl", "user_seed", "User-provided external resource hints"),
     ("user_seeds/bridge_domains.yaml", "user_seed", "User-provided bridge-domain hints"),
+    ("ideation/hypothesis_brief.yaml", "pre_novelty_context", "Selected Candidate lineage and T4.5 search scope; not execution authority"),
+    ("ideation/selected/t45_search_targets.json", "pre_novelty_context", "Targeted novelty-search context; not execution authority"),
 )
 
 

@@ -7,8 +7,8 @@
 - 补充必须的基线方法
 
 输入：
-- ideation/hypotheses.md: T4 产出的研究假设
-- ideation/exp_plan.yaml: T4 产出的实验计划
+- ideation/hypotheses.md: T4.5 formalization 通过后生成的研究假设
+- ideation/exp_plan.yaml: T4.5 formalization 通过后生成的实验计划
 - pilot/pilot_results.json: T5 Pilot 实验结果
 - pilot/motivation_validation.md: T5 Pilot 动机验证
 - literature/comparison_table.csv: 已有方法对比表

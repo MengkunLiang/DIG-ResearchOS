@@ -29,10 +29,10 @@ T1 Project initialization
  -> T3 deep reading and structured paper notes
  -> T3.5 literature synthesis
  -> T3.6 optional survey-paper branch (runtime gate: write a survey or not)
- -> T4 candidate-pool generation (Markdown candidate cards + machine JSON)
- -> T4-GATE1 human selection, merge, or reconsideration of candidate directions
- -> T4 final hypotheses and experiment-plan generation
- -> T4.5 novelty pre-audit (a non-pass verdict enters a human decision gate)
+ -> T4 Evidence Routing, Candidate Population formation, and Evolution
+ -> T4-GATE1 researcher decision, composition, parallel-track, or rollback gate
+ -> T4 selected Candidate Pre-Novelty brief
+ -> T4.5 novelty/collision audit and post-audit formalization on pass
  -> T5-HANDOFF external experiment-protocol compilation
  -> T5-EXECUTOR-GATE external executor selection
     -> mock_dry_run: T5-DRY-RUN external-executor protocol dry run
@@ -81,8 +81,8 @@ T1
             -> T3.6-SEC-INTRO -> T3.6-SEC-CONCLUSION -> T3.6-SEC-ABSTRACT
             -> T3.6-ASSEMBLE -> T3.6-REVIEW -> T3.6-COMPILE -> T3.6-FEED -> T4
  -> T4
-    -> candidate pool ready: T4-GATE1 -> user reads candidate cards and chooses/selects/merges/reanalyzes -> T4
-    -> final hypotheses ready: T4.5
+    -> Population/Portfolio ready: T4-GATE1 -> user selects, continues Evolution, composes, keeps parallel, inspects, regenerates, rolls back, or pauses -> T4
+    -> complete Candidate selection: Pre-Novelty brief -> T4.5
     -> pass*: T5-HANDOFF
     -> reframe/drop/reject/collision: T4.5-HUMAN-REVIEW -> user chooses T5-HANDOFF/T4/done
  -> T5-HANDOFF
@@ -122,7 +122,7 @@ A few points that are easiest to misremember:
 - `HELLO` is an explicitly run smoke task, not the main chain starting point; the main chain’s `initial_state` is `T1`
 - The current main chain only automatically transitions to `T5-HANDOFF` when the `Final Gate Verdict` at `T4.5` is explicitly one of the pass enumerations, such as `pass_to_experiment` / `pass_with_required_baselines`; `return_to_T4_reframe`, `drop_due_to_collision`, `reject`, `collision`, `fail`, missing verdict, or unrecognized verdict all lead to `T4.5-HUMAN-REVIEW`, where the user chooses to continue the external experiment chain, reframe back to T4, or end the project. The system no longer auto-rejects, auto-backtracks, or auto-approves, avoiding T4.5–T4 dead loops and preventing the model from making value judgments on the user’s behalf when novelty is uncertain. The old internal experiment stages are preserved as legacy compatibility entry points, but the main chain and ordinary `run-task T7` no longer enter the old internal full experiment.
 - `T8` is not a single node, but a multi-node chain composed of style confirmation, resource indexing, alignment matrix, outline, per-section writing, assembly, self-check, review, and revision; any `next_task: T8` / `next_task: T8-WRITE` from old reports or gates will be safely mapped by the state machine to `T8-STYLE-GATE`, and will only directly enter `T8-RESOURCE` if a valid `drafts/writing_style.json` already exists.
-- The main file presented to the user at `T4-GATE1` is `ideation/_gate1_candidate_cards.md`; each idea must display the technical mechanism, real-world/managerial/business implications, scoring rationale, core paper dependencies, risks, and recommended action. `_candidate_directions.json` and the Pass1/Pass2 JSONs are machine-readable appendices only. After the user selects, the system first writes `_gate1_user_selection.json` and `selected_idea_brief.md`, and the second half of T4 then finalizes the hypotheses, experiment plan, scorecard, reject/defer records, and the final `selected_idea_brief.md`.
+- Gate1 presents a Rich Portfolio backed by `_gate1_candidate_cards.md`, `_gate1_selection_brief.md`, and the native Population snapshots. Candidate cards explain the mechanism, practical implication, score rationale, paper-reading-note dependencies, risks, and recommended action; `_candidate_directions.json` and Pass1/Pass2 JSON remain compatibility projections. After a complete selection, T4 writes `_gate1_user_selection.json`, `hypothesis_brief.yaml`, lineage, and T4.5 search targets. T4.5 audits novelty/collisions before any formal hypotheses or experiment plan are created; a passing T4.5 formalization then updates the formal bundle and T5 authority.
 - `T8-REVIEW` is not the current real state name; the current real state names are:
   - `T8-REVIEW-1`
   - `T8-REVIEW-2`
@@ -313,9 +313,9 @@ Therefore, the resume semantics of ResearchOS are essentially:
 | `T3.5` | `ReaderAgent` | `synthesize` | Using citation graph as skeleton and overlaying LLM survey judgments, generate domain synthesis and adjacency transfer materials | `synthesis_workbench.json`, `synthesis_outline.md`, `synthesis_draft.md`, `synthesis.md` |
 | `T3.6-GATE-SURVEY` | runtime gate | `survey_gate` | State-machine-level immediate gate; ask whether to write a taxonomy-driven survey; if no, go directly to T4 without launching the LLM | `drafts/survey/decision.json` |
 | `T3.6-PLAN` to `T3.6-FEED` | `SurveyWriterAgent` | survey series | Optional survey paper branch: taxonomy planning, human confirmation, per-section writing, assembly, survey-mode review, compilation, export T4 idea fuel | `drafts/survey/survey_plan.json`, `survey_state.json`, `sections/*.tex`, `survey.tex`, `survey_review.md`, `survey.pdf`, `ideation/survey_insights.json` |
-| `T4` | `IdeationAgent` | - | First generate Pass1/Pass2/Gate1 candidate pool and halt at T4-GATE1; after user selection, generate final hypotheses, experiment plan, decision chain, and risk assessment; can consume `survey_insights.json` | `_pass1_forward_candidates.json`, `_pass2_grounding_review.json`, `_candidate_directions.json`, `_gate1_selection_brief.md`, `hypotheses.md`, `exp_plan.yaml`, `idea_scorecard.yaml`, `rejected_ideas.md`, `gate_decisions.json`, `idea_rationales.json`, `risks.md`, `_family_distribution.md` |
-| `T4-GATE1` | runtime gate | - | State-machine-level immediate gate; display full candidate pool, Pass2 risks, bridge coverage, and merge suggestions; user selects/merges/adds/requests re-analysis | `ideation/_gate1_user_selection.json` |
-| `T4.5` | `NoveltyAuditorAgent` | - | Pre-screen hypotheses for novelty (including mechanism tuple collision detection); non-pass verdicts lead to the human decision gate | `novelty_audit.md`, `_mechanism_tuples/`; when collision exists, also write `collision_cases.md` |
+| `T4` | `IdeationAgent` + internal evolution controller | - | Pre-run confirmation, Evidence Routing, asymmetric P0, role-separated scoring, P0->P1 evolution, and Gate1-compatible projection; after a complete selection, compile Pre-Novelty material only | `evidence/`, `populations/P0.json`, `populations/P1.json`, `genomes/`, `families/`, `scoring/`, `evolution/`, `candidates/`, `archive/`, retained Pass1/Pass2/Gate1 projections, `hypothesis_brief.yaml`, `selected/t45_search_targets.json` |
+| `T4-GATE1` | runtime gate | - | State-machine-level decision panel for Portfolio selection, parallel tracks, continued Evolution, focus, Crossover, component composition, inspection, Route regeneration, rollback, and pause; source versions remain preserved | `ideation/human_directives/`, `human_compositions/`, `_gate1_user_selection.json` |
+| `T4.5` | `NoveltyAuditorAgent` | - | Audit the selected Pre-Novelty idea for novelty/collisions; a non-pass verdict goes to the human gate, while a pass compiles the formal hypothesis and execution bundle | `novelty_audit.md`, collision records, `hypotheses.md`, `exp_plan.yaml`, Contribution-Hypothesis Mapping, Validation Map, Kill Criteria, formalization manifest |
 | `T5-HANDOFF` | `ExperimenterAgent` | `handoff` | Compile external experiment execution protocol, allowed paths, Codex/Claude/manual prompts, AGENTS/CLAUDE guidelines, and required baselines; does not run real experiments | `external_executor/handoff_pack.json`, `AGENTS.md`, `CLAUDE.md`, `README.md`, `executor_prompt.md`, `codex_prompt.md`, `claude_code_prompt.md`, `expected_outputs_schema.json`, `allowed_paths.txt`, `job_state.json` |
 | `T5-EXECUTOR-GATE` | `ExperimenterAgent` | `executor_gate` | State-machine-level immediate gate; user selects mock/Claude Code/Codex CLI/manual, and deterministically patches the executor instruction file | `external_executor/executor_selection.json` |
 | `T5-EXTERNAL-WAIT` | `ExperimenterAgent` | `external_wait` | No-LLM wait/resume boundary; checks if the external executor has written back a result pack/status, if missing then PAUSED, continues after resume | `external_executor/wait_acceptance_report.json` |
@@ -1175,7 +1175,7 @@ The bridge domain is a reinforcement chain independent of the mainline literatur
 7. **T3 bridge note path**: `save_paper_note` writes `bridge_deep` papers that did not pass the core screen into `literature/bridge_notes/{bridge_id}/{id}.md`; papers that passed the core screen are still written into `literature/deep_read_notes/{id}.md`, avoiding duplicate reading of the same paper in mainline and bridge directories. T3 manifest, T3 recovery, T3.5 workbench, and T8 resource index all scan both `deep_read_notes/` and `bridge_notes/` and uniformly filter out `_DIR_GUIDE.md`, README, templates, examples, and empty placeholder files.
 8. **T4 table and escape hatch**: When there is a confirmed bridge and `source!=none`, T4 must inspect `bridge_notes/{bridge_id}/`, `contributed_bridges` in mainline notes, and `synthesis_workbench.bridge_transfer_drafts`. With sufficient evidence, generate candidates with `idea_origin=bridge_synthesis`, `constraint_status=bridge`, `cross_domain_sources=[...]`, and place them in the Gate1 visible pool; without sufficient evidence, do not fabricate ideas, and must write `ideation/bridge_coverage_review.json` with `escape_hatch.status=no_candidate_available`, evidence gaps, and re-evaluation conditions.
 9. **Conditional output semantics**: `bridge_coverage_review.json` is a conditional artifact under T4 `optional_outputs`, not an ordinary unconditional output. Runtime basic artifact validation will not demand it when `source=none` or no confirmed bridge exists; `IdeationAgent.validate_outputs()` and the T4 runtime checker will upgrade it to a mandatory audit file when there is a confirmed bridge.
-10. **Gate1 semantics**: Being on the table does not mean entering `hypotheses.md`. `bridge_synthesis` candidates and candidates not recommended by Pass 2 must both be visible in `_candidate_directions.json` and `_gate1_selection_brief.md`; the user can select, merge, restructure, defer, or reject. Only the direction selected by the user after Gate1/Gate2 proceeds to hypothesis/experiment plan.
+10. **Gate1 semantics**: Being on the table does not mean entering `hypotheses.md`. `bridge_synthesis` candidates and candidates not recommended by Pass 2 must both be visible in `_candidate_directions.json` and `_gate1_selection_brief.md`; the researcher can select, keep parallel, compose, restructure, defer, or reject. A complete selection creates only the Pre-Novelty brief. A passing T4.5 novelty/collision audit is required before the formal hypothesis and experiment bundle exists.
 
 ### T2 How to perform access audit
 
@@ -2267,11 +2267,12 @@ The full pipeline does not need to run these nodes manually; if the user selects
 
 | Output key | File | Meaning |
 | --- | --- | --- |
-| `hypotheses` | `ideation/hypotheses.md` | 3–6 hypotheses and their anchors |
-| `exp_plan` | `ideation/exp_plan.yaml` | Experiment plan; later `T5-HANDOFF` compiles it into an external execution contract; direct execution only during explicit debugging of legacy T5/T7 |
+| `pre_novelty_brief` | `ideation/hypothesis_brief.yaml` and `ideation/selected/` | Selected Candidate, Draft Hypotheses, lineage, evidence boundary, and T4.5 search scope; not an executable protocol |
+| `formal_hypotheses` | `ideation/hypotheses.md` | Formal post-T4.5 hypothesis bundle, created or updated only after a passing novelty/collision audit |
+| `exp_plan` | `ideation/exp_plan.yaml` | Formal post-T4.5 experiment plan; T5 compiles it into an external execution contract |
 | `idea_scorecard` | `ideation/idea_scorecard.yaml` | For all candidate ideas: origin, core content, scores, baseline, decision, risks, and minimum experiment |
 | `rejected_ideas` | `ideation/rejected_ideas.md` | Human-readable reasons for eliminated / deferred / merged ideas |
-| `gate_decisions` | `ideation/gate_decisions.json` | User feedback, selection/elimination, and decision rationale for Gate1/Gate2 |
+| `gate_decisions` | `ideation/gate_decisions.json` | User feedback, selection/elimination, and decision rationale retained for Gate1 and legacy migration history |
 | `idea_rationales` | `ideation/idea_rationales.json` | Generation basis and source tracking for each idea / hypothesis |
 | `risks` | `ideation/risks.md` | Risk assessment |
 | `family_distribution` | `ideation/_family_distribution.md` | Mechanism family distribution statistics |
@@ -2282,12 +2283,12 @@ The full pipeline does not need to run these nodes manually; if the user selects
 | - | `ideation/bridge_coverage_review.json` | Conditional output; required only when T1 confirmed a non‑empty bridge domain plan; records bridge candidate presence, decisions, and escape hatch |
 | - | `ideation/_premortem.md` | Pre-mortem challenge results |
 
-### T4’s flow is not “generate once”
+### Legacy Pass1/Pass2 compatibility projection reference
 
-The current prompt explicitly designs it as multi-stage reasoning:
+The following detailed field reference is retained for legacy artifact readers and migration diagnosis. Native T4 execution is the Population workflow described in section 11.2: it builds an Evidence Index and Opportunity Map, creates P0 through asymmetric routes, uses role-separated scoring, completes P0->P1 in Standard mode, and then projects compatibility files. These legacy-shaped files do not authorize a formal experiment before T4.5.
 
 1. Read `synthesis.md`
-2. Generate 3–5 mainline candidate directions: synthesis gestalt / problem reframing / design-rationale derivation / cross-domain analogy / free reasoning / seed refinement / evidence-driven
+2. Project the native asymmetric Route results into legacy mainline direction fields. Historical `3–5` counts are descriptive only; native T4 uses its configured Route quotas and Population sizes.
 3. Then use four supplementary channels for coverage supplement; generate candidates only where evidence exists, otherwise record as unsupported
 4. Write `ideation/_pass1_forward_candidates.json` to preserve the raw divergent results, including disrecommended, high-risk, routine-risk, or evidence-insufficient candidates
 5. Perform Pass 2 literature grounding, marking each candidate as `proceed` / `revise_before_selection` / `defer_recommended` / `reject_recommended`, and write `ideation/_pass2_grounding_review.json`
@@ -2297,19 +2298,19 @@ The current prompt explicitly designs it as multi-stage reasoning:
 9. When the user selects, restructures, merges multiple candidates, or adds new ideas, results are written to `ideation/_gate1_user_selection.json`; the CLI can directly input `D1`, `D1+D3`, `merge D1+D3`, `new: ...`, or `reanalyze: ...`. The selection binds the candidate pool fingerprint; if the pool changes, Gate1 is shown again. If the user chooses “reanalyze”, the runtime writes only `ideation/_gate1_reanalysis_request.json` and archives the old pool, without writing a selection file, to prevent T4 from mistakenly entering the second half.
 10. T4 resume reads `_gate1_user_selection.json`, then performs a pre‑mortem on the selected directions
 11. Write `_family_distribution.md` to tally mechanism family distribution
-12. Final outputs:
-   - `hypotheses.md`
-   - `exp_plan.yaml`
+12. Selection outputs:
+   - `hypothesis_brief.yaml` and the selected Candidate lineage for T4.5
+   - formal `hypotheses.md` and `exp_plan.yaml` only after a passing T4.5 audit
    - `idea_scorecard.yaml`
    - `rejected_ideas.md`
    - `gate_decisions.json`
    - `idea_rationales.json`
    - `risks.md`
-   - Conditional artifact: if T1 confirmed a non‑empty bridge domain plan, also write `bridge_coverage_review.json` recording whether bridge candidates were tabled, whether they entered hypotheses, and the escape hatch when materials are lacking; if the user chose “no crossover / skip all”, this file may be absent.
+   - Conditional artifact: if T1 confirmed a non-empty bridge domain plan, also write `bridge_coverage_review.json` recording whether Bridge candidates were considered, the escape-hatch decision, and any reading upgrade required before a selected Candidate can make a strong claim.
 
-### Actual execution process
+### Historical compatibility process
 
-`IdeationAgent` execution is split into two phases (Gate1 + Gate2), with a pre‑mortem check in between.
+This section describes the field-level behavior of the historical Pass1/Pass2 projection. It does not describe a second native T4 gate or authorize formal execution artifacts. The current workflow is the Population lifecycle in section 11.2, with an optional pre-mortem recorded as a bounded T4 review.
 
 #### Phase A: Divergent candidate directions + Gate1
 
@@ -2320,9 +2321,9 @@ The current prompt explicitly designs it as multi-stage reasoning:
 3. **Read workbench and domain map**: Use `read_file` to read `literature/synthesis_workbench.json`, obtaining `method_families`, `mechanism_claim_clusters`, `contribution_space`, `cross_paper_tensions`, `adjacent_transfers`, and `bridge_transfer_drafts` (older artifacts may be called `domain_consensus`). Then read `literature/domain_map.json`, using citation‑graph neighbors and `theory_bridge` as a source of novelty/transfer soft signals. These are all tool hints; T4 must double‑check them and not treat them directly as domain consensus, research gaps, or established ideas.
 
 4. **Generate candidate directions**:
-   - Mainline candidates: first generate 3–5, sourced from LLM direct synthesis reasoning, revisions/challenges of user seed ideas, and evidence‑driven observations from comparison table / missing coverage / paper notes
+   - Mainline candidates: derive an evidence-routed Literature allocation and a separate Brainstorm allocation from workspace material. The native Route quota, not a fixed historical number, controls how many Seeds are attempted.
    - Supplementary candidates: then check each of the four channels [mechanism challenge, reverse operation, subgroup failure, gap exploration] category by category; generate supplementary candidates where evidence exists, otherwise write `constraint_status: not_supported_by_current_evidence` and replace with new evidence‑driven candidates
-   - Recommended final candidate pool size 7–9, and mainline candidates must not be overwritten by the four supplementary categories
+   - The native controller retains the full Archive, keeps a configured Active Population, and displays a 1–3 Candidate Portfolio. Mainline candidates must not be overwritten by the four supplementary categories.
 
    Each direction must contain:
    - `id`, `title`, `pitch` (one sentence)
@@ -2350,11 +2351,11 @@ The current prompt explicitly designs it as multi-stage reasoning:
 
 9. **Write `ideation/_gate1_selection_brief.md`**: List all candidates, human‑readable risks, Pass 2 recommendations, refactorable items, and merge suggestions—e.g., `merge D1+D3`. Simultaneously call `analyze_idea_concentration`, and write the concentration hints, Origin distribution, and the Novelty‑Utility spectrum layout into the brief. This file is used for resume and human review, so even if the `ask_human` output scrolls past, it can be reviewed later.
 
-10. **Gate1 pause**: T4 does not continue writing the final hypotheses within the same LLM run. After the runtime validates `_pass1_forward_candidates.json`, `_pass2_grounding_review.json`, `_candidate_directions.json`, `_gate1_selection_brief.md`, and the conditional `bridge_coverage_review.json`, it returns `completion_mode=t4_gate1_ready` and transitions to `T4-GATE1`.
+10. **Gate1 pause**: T4 does not write formal hypotheses or an execution plan in the same run. After the runtime validates the native Population artifacts and their Pass1/Pass2 compatibility projections, it returns `completion_mode=t4_gate1_ready` and transitions to `T4-GATE1`.
 
 11. **T4-GATE1 user adjudication**: The state machine displays candidate card summaries and file paths; full candidate directions, mechanism/counterfactual, Pass 2 disrecommendation reasons, bridge coverage/escape hatches, and merge suggestions are in `ideation/_gate1_candidate_cards.md` and `_gate1_selection_brief.md`. The user may select, select and restructure, merge, supplement, or request re‑analysis; the CLI simply inputs `D1`, `D1+D3`, `merge D1+D3`, `new: ...`, or `reanalyze: ...`. Selection/merge/supplement results are written to `ideation/_gate1_user_selection.json` with the candidate pool fingerprint, then return to `T4`; “reanalyze” writes only `ideation/_gate1_reanalysis_request.json` and archives the old pool, returning to T4 to regenerate Pass1/Pass2. If a valid selection file already exists but `state.yaml` still contains a stale pending gate, resume clears the old gate and proceeds directly to the second half of T4.
 
-12. **Update decision chain**: T4 resume reads `_gate1_user_selection.json`, updates `idea_scorecard.yaml`, `rejected_ideas.md`, `gate_decisions.json`, and continues generating the final hypotheses/exp plan.
+12. **Update decision chain**: T4 resume reads `_gate1_user_selection.json`, updates the selected Candidate, score/decision history, and Pre-Novelty brief, then moves the chosen Candidate to T4.5. A passing T4.5 audit is the sole path that compiles formal hypotheses and the experiment plan.
 
 ### Pass 1 / Pass 2 visibility and selection semantics
 
@@ -2380,7 +2381,7 @@ When merging, do not overwrite the original candidates. The correct approach is 
 - `D1.decision.status=merged`, `D1.decision.merged_into="M1"`
 - `D3.decision.status=merged`, `D3.decision.merged_into="M1"`
 
-If the user insists on selecting a routine‑risk or `reject_recommended` candidate, T4 cannot let a routine idea directly enter `hypotheses.md`. It must first restructure the CDR tuple, mechanism, prediction, counterfactual, and contribution character; the original risks are still written into `risks.md`, `gate_decisions.json`, and `rejected_ideas.md`.
+If the user selects a routine-risk or `reject_recommended` candidate, T4 cannot send it directly to T4.5 as though it were mature. It must first restructure the CDR tuple, mechanism, prediction, counterfactual, and contribution character, independently rescore it, and present it again at Gate1. The original risks remain in the Archive and decision history.
 
 #### Phase A.5: Pre‑mortem check
 
@@ -2392,27 +2393,29 @@ After the user selects directions, question from four dimensions:
 
 Results are written to `ideation/_premortem.md`. If there is a High risk with no mitigation, prompt the user with `ask_human`.
 
-#### Phase B: Unfold hypotheses and plan + Gate2
+#### Historical post-selection fields (superseded by T4.5 formalization)
 
-1. **Unfold selected directions**: generate detailed research hypotheses and experiment plan
+1. **Native behavior**: compile the selected Candidate into a Pre-Novelty brief with 2–4 Draft Hypotheses and T4.5 search targets.
 
-2. **Produce 7 files**:
-   - `ideation/hypotheses.md`: research hypotheses (`## H1`, `## H2` anchors)
-   - `ideation/exp_plan.yaml`: experiment plan (schema‑checked)
+2. **Legacy field list**: historical workspaces may contain the following files, but native T4 creates formal versions only after T4.5:
+   - `ideation/hypotheses.md`: formal research hypotheses (`## H1`, `## H2` anchors)
+   - `ideation/exp_plan.yaml`: formal experiment plan (schema-checked)
    - `ideation/idea_scorecard.yaml`: complete record of all candidate ideas
    - `ideation/rejected_ideas.md`: readable reasons for eliminated ideas
-   - `ideation/gate_decisions.json`: decision log for both Gate rounds
-   - `ideation/idea_rationales.json`: machine‑readable basis for each idea
+   - `ideation/gate_decisions.json`: Gate1 decision log and migratable historical decisions
+   - `ideation/idea_rationales.json`: legacy machine-readable rationale projection
    - `ideation/risks.md`: top 3 risks
 
-3. **Gate2**: Use `ask_human` to let the user confirm the plan, allowing hypothesis/plan/risk amendments
+3. **Current confirmation**: Gate1 confirms Candidate selection or a human-composed Candidate. T4.5 then handles novelty/collision outcomes and controls whether formalization may proceed.
 
-4. **Completion**: After user confirmation, call `finish_task`
+4. **Completion**: T4 ends with a fingerprint-bound handoff to T4.5; formal artifacts remain unchanged until the audit passes.
 
-### Validator checks
+### Historical compatibility validation checks
 
-- `hypotheses.md` must not be too short and must contain `H1/H2/...` anchors
-- `exp_plan.yaml` must pass schema; `hypothesis_ref` must point to existing anchors
+The checks below explain retained Pass1/Pass2 projection files and migration diagnosis. Native T4 validates Evidence Permission, Candidate Contract, Genome/lineage, Round fingerprint, Population update, and Portfolio selection; it does not use the historical file count or a second Gate as a substitute for those checks.
+
+- A Pre-Novelty brief must have 2–4 non-template Draft Hypotheses and valid evidence permissions. Formal `hypotheses.md` must contain `H1/H2/...` anchors only after a passing T4.5 audit.
+- Formal `exp_plan.yaml` must pass schema and reference an existing formal hypothesis anchor only after a passing T4.5 audit.
 - `idea_scorecard.yaml` must pass schema, recording selected and eliminated/deferred/merged candidate ideas; each idea must contain non‑empty `mechanism`, `prediction`, `counterfactual`, `mechanism_family` fields
 - `_pass1_forward_candidates.json` must exist and contain at least 4 raw candidates; each must have a stable ID and `idea_origin`
 - `_pass2_grounding_review.json` must cover all Pass 1 candidates; each review must have `visible_to_gate=true` and provide `screening_recommendation`
@@ -2427,9 +2430,9 @@ Results are written to `ideation/_premortem.md`. If there is a High risk with no
 - For ideas with `decision.status=selected` or with `hypothesis_refs`, `mechanism`, `prediction`, and `counterfactual` must not be placeholders such as `see core_claim`, `qualitative: outperforms baseline`, or `no clear counterfactual`; for eliminated/deferred candidates with unformed mechanisms, the `rejection_reason` must explain it
 - `_family_distribution.md` must exist and be >100 characters
 - `rejected_ideas.md` must explain why non‑selected ideas were eliminated
-- `gate_decisions.json` must pass schema and record two rounds of gating
-- `idea_rationales.json` must pass schema and cover all hypothesis anchors
-- Every experiment must correctly reference `hypothesis_ref`
+- `gate_decisions.json` preserves Gate1 decisions and any migratable historical decision records; native T4 does not require a second Gate2.
+- `idea_rationales.json` is a legacy projection. Native T4 stores Candidate evidence and lineage under its Population artifacts; formal hypothesis anchors are checked during T4.5 formalization.
+- Every formal experiment must correctly reference a formal `hypothesis_ref` after T4.5.
 - `risks.md` must have at least 3 risks
 - Rough budget must not exceed 85% of the project budget (`ideation.py` line 381: a single experiment with `exp_cost > max_budget * 0.85` is rejected; total cost also checked to not exceed 100%)
 - `_candidate_directions.json` must have at least 4 candidates (`ideation.py` line 413)
@@ -2505,30 +2508,30 @@ They are not meant to make the output fancier, nor to let the four types of cand
 - Physical/mathematical untenability (mechanism challenge type requires a clear causal chain)
 - Mere baseline stitching (reverse operation and subgroup failure types require deep understanding of the mechanism)
 
-### Why does `hypotheses.md` need `H1/H2/...`
+### Why formal `hypotheses.md` needs `H1/H2/...`
 
-Because:
+This is a post-T4.5 requirement, because:
 
 - `hypothesis_ref` in `exp_plan.yaml` references them
 - `hypothesis_refs` in `idea_rationales.json` covers them, recording which literature observations, gaps, seed ideas, or four-type source constraints each idea comes from
-- Subsequent T4.5 / T6 / T7 will continue to track hypotheses along these anchors
+- downstream execution and writing stages track formal hypotheses along these anchors
 
 ### How T4 Records the Basis of Ideas
 
-`T4` now splits the basis into four layers, forming a complete evidence chain:
+Native T4 stores the evidence chain in four layers. The older `idea_scorecard.yaml`, `rejected_ideas.md`, and `idea_rationales.json` listed below remain readable compatibility projections; they do not replace the fingerprint-bound Population artifacts.
 
-#### Layer 1: `hypotheses.md` — Human-readable generation basis
+#### Layer 1: Pre-Novelty brief — Selected Candidate basis
 
-Each `H1/H2/...` contains:
+Each Draft Hypothesis in `hypothesis_brief.yaml` contains:
 - **Background**: Why this hypothesis is important
 - **Generation Basis**: Specific observations from synthesis section, missing area, seed idea, or comparison table
 - **Core Hypothesis**: Verifiable hypothesis statement
 - **Expected Result**: What would be observed if the hypothesis holds
 - **Risk**: What would happen if the hypothesis does not hold
 
-#### Layer 2: `idea_scorecard.yaml` — Complete candidate record
+#### Layer 2: Candidate dossier and Population snapshot — Complete candidate record
 
-Records all candidate ideas (not just selected ones), each containing:
+The native Candidate dossier and its versioned Population snapshot record all Candidates, not just selected ones. `idea_scorecard.yaml` mirrors applicable legacy fields, each containing:
 - `idea`: Core content (id, title, pitch, core_claim, target_problem, mechanism, prediction, counterfactual, mechanism_family)
 - `source`: Source traceability
   - `from_synthesis_section`: Which Q paragraph in synthesis.md
@@ -2548,29 +2551,29 @@ Records all candidate ideas (not just selected ones), each containing:
 - `risks`: Risks and kill criteria
 - `minimum_experiment`: Minimum viable experiment
 
-#### Layer 3: `rejected_ideas.md` — Reasons for rejection
+#### Layer 3: Archive — Reasons for non-survival or deferral
 
-Explain in human-readable form:
+The Archive and optional `rejected_ideas.md` compatibility projection explain in human-readable form:
 - Why other directions were passed over
 - Under what conditions they can be revisited
 - What is the closest existing work
 
-#### Layer 4: `gate_decisions.json` + `idea_rationales.json` — Machine-readable basis
+#### Layer 4: Round artifacts and legacy decision projections — Machine-readable basis
 
-- `gate_decisions.json`: Records user feedback for `T4-DECIDE-1` / `T4-DECIDE-2`, selected/rejected idea ids, and decision rationale
-- `idea_rationales.json`: Writes machine-readable basis indices for final hypotheses, containing `source_questions`, `literature_observations`, `missing_area_links`, `comparison_table_signals`, `seed_idea_links`, `reasoning`, and `confidence`
+- `ideation/evidence/`, `ideation/evolution/`, `ideation/scoring/`, and selected lineage preserve Evidence Permission, Gene Delta, scoring, survival, and selected-source provenance.
+- `gate_decisions.json` and `idea_rationales.json` retain compatible decision/rationale fields for legacy readers; a formal hypothesis mapping is finalized only after T4.5.
 
-These four layers of evidence chain ensure that T4.5 novelty audit, T5 experiment plan, and T8 paper writing can all look back at "why this idea exists" and also know why other directions were eliminated.
+Together, these layers let T4.5, T5, and T8 recover why a Candidate exists, what evidence may support it, and why other Candidates were deferred or archived.
 
 ### T4 Success Criteria
 
 See the "Validator Check Items" section above. Core requirements:
 
-- All 7 output files must exist and pass schema validation
-- At least 1 selected idea, at least 1 rejected/deferred/merged idea
-- Two rounds of Gate must have user interaction records
-- Each idea's `mechanism`/`prediction`/`counterfactual`/`mechanism_family` must be non-empty; ideas entering the final hypothesis must not use placeholders to replace mechanism judgment
-- Budget must not exceed 85% of project budget
+- Evidence Index and Evidence Permission must be complete and fingerprint-bound.
+- Standard mode must complete the full P0 -> P1 transition with independent scoring, valid Evolution Plan, union rescoring, Contract validation, Survival Selection, and Population update.
+- The Portfolio presents 1–3 Candidates while the configured Active Population and Archive remain recoverable.
+- Each Gate1 Candidate has a non-template mechanism/prediction/counterfactual/family and a 2–4 Draft Hypothesis bundle; a formal hypothesis and experiment plan require a passing T4.5 audit.
+- Resource checks and executable-plan budget checks run when T4.5 formalizes the plan.
 
 ### T4 Ideation Coverage Analysis
 
@@ -2623,16 +2626,18 @@ researchos run-task T4 --workspace ./workspace/local-test2
 | Input key | File | Required | Meaning |
 | --- | --- | --- | --- |
 | `project` | `project.yaml` | Yes | Research direction and keywords |
-| `hypotheses` | `ideation/hypotheses.md` | Yes | T4 output hypotheses |
+| `hypothesis_brief` | `ideation/hypothesis_brief.yaml` | Yes | Selected Candidate, Draft Hypotheses, evidence boundary, and T4.5 search scope produced after Gate1 |
+| `selected_candidate` | `ideation/selected/selected_candidate.json` | Yes | Fingerprint-bound Candidate selected at Gate1 |
+| `hypotheses` | `ideation/hypotheses.md` | No; created on pass | Formal hypotheses created only by a passing T4.5 formalization |
 | `synthesis` | `literature/synthesis.md` | Yes | Literature synthesis |
 | `comparison_table` | `literature/comparison_table.csv` | No | Comparison table of existing methods |
-| `idea_scorecard` | `ideation/idea_scorecard.yaml` | Not required but recommended | T4 idea scorecard, containing mechanism/prediction/counterfactual/mechanism_family fields |
+| `idea_scorecard` | `ideation/idea_scorecard.yaml` | Optional compatibility input | Legacy Candidate projection; native T4.5 reads the selected Candidate and its lineage first |
 
 ### Output Files
 
 | Output key | File | Meaning |
 | --- | --- | --- |
-| `novelty_audit` | `ideation/novelty_audit.md` | Novelty pre-audit for each hypothesis |
+| `novelty_audit` | `ideation/novelty_audit.md` | Novelty/collision audit for the selected Candidate and its Draft Hypotheses |
 | `mechanism_tuples_dir` | `ideation/_mechanism_tuples/` | Mechanism tuple JSON file per hypothesis |
 | `design_rationale_tuples_dir` | `ideation/_design_rationale_tuples/` | CDR design-rationale tuple JSON file per hypothesis |
 | - | `ideation/collision_cases.md` | Optional archive; must be generated when High/Medium Overlap exists, recording potential collision cases |
@@ -3690,11 +3695,19 @@ researchos validate --task T3.6-ASSEMBLE --workspace ./workspace/project-a
 
 Citation diversity simultaneously checks the number of available BibTeX entries and the proportion of a single paper's occurrence among total citation occurrences. Small corpora retain minimum repetition protection; the threshold for long surveys is scaled by the total number of citation occurrences. Therefore, `13/104` (12.5%) will no longer be mistakenly judged as concentrated due to the fixed `>10` rule. A real `bibliography_quality` failure will still block, for example, writing journal papers from `Information Systems Research`, `Management Science`, or `MIS Quarterly` as `@inproceedings`; the abstract sweep now preferentially recognizes explicit `journal` metadata and common journal names, generating `@article`/`journal` fields.
 
-### 11.2 T4 Gate1: Rich decision panel and candidate hypothesis status
+### 11.2 T4: Evolutionary Idea Formation, Rich Gate1, and hypothesis status
 
-The T4 Gate1 CLI no longer uses a monospaced, manually truncated long-text dump. It first renders a Rich index table for comparing candidate ID, channel, direction, innovation type, number of hypotheses, evidence level, and Pass2 suggestion; then it renders a complete Rich card for each candidate. The card contains the full direction, research question, innovation, technical mechanism, H1/H2/H3, observable predictions, discriminative tests, minimum verification, scoring rationale, risks, supporting literature, and note path. Chinese-English mixed text in Rich table cells wraps by word and display width, no longer splitting English words by character, and does not use presentation-layer `...` as a substitute for the body text.
+T4 is an artifact-first evolutionary workflow behind the unchanged public path `T4 -> T4-GATE1 -> T4 -> T4.5`. The first entry is a Rich pre-run confirmation: it reports the available full/partial and abstract-level paper-reading notes, non-blocking Bridge warnings, the selected mode, estimated work, and whether existing Population snapshots can be rolled back. Standard mode is one complete `P0 -> P1` transition: Evidence Routing -> Opportunity Map -> asymmetric Multi-route Generation -> Idea Genome and Idea Family -> Independent Scoring -> Parent Selection -> Mutation/Crossover plans -> Offspring and union rescoring -> Idea Contract -> Family-level Survival Selection -> Population Update -> Portfolio Selection. This is not a single prompt rewrite, and it does not add a public state-machine node.
 
-Each Gate1 displayable candidate must have the model write 2–3 mutually different candidate hypotheses; each includes proposition, mechanism, observable predictions, discriminative tests, and `evidence_status`. `proposed_not_verified` means the proposition is a clearly stated, to-be-verified proposal, not placeholder text filled in by the presentation layer; `supported`, `proposed_not_verified`, and `unknown` must faithfully reflect the evidence status. Any candidate that can only write one H1, lacks a mechanism chain, or can only fill H2/H3 via templates must return to T4 for re-analysis and cannot enter Gate1.
+Evidence Routing recalls both mainline and Bridge notes from every allowed reading level. Evidence Permission determines what a recalled note can do: full/partial reading can anchor a bounded mechanism or design rationale; abstract-only material can broaden recall, provide a taxonomy or Bridge lead, suggest a candidate mechanism, and request a reading upgrade, but cannot validate an established mechanism, a strong boundary claim, an executable experiment, or external novelty. The controller stores the Evidence Index, Opportunity Map, Route-specific Evidence Bundles, permission warnings, source paths, reading levels, and fingerprints under `ideation/evidence/`. A Route without enough defensible material is retained as `unsupported`; Cross-domain/Bridge work also writes its escape-hatch decision instead of fabricating a transfer.
+
+Generator, Scorer, and Evolver have separate authority. Generator produces route-scoped Seeds and Candidate prose, never a score or selection. Scorer receives blinded Candidates, returns the five readiness dimensions and diagnosis, but never creates or rewrites an Idea. Evolver receives an explicit Evolution Plan and may create only a Mutation Child or a Compatibility-gated Crossover Child; Parent artifacts remain immutable. All Parent and Child Candidates are union-rescored before Idea Contract validation, Complexity Inflation checks, Family-level Survival Selection, and quality-diversity Population update. P0, every Round artifact, the active P1/P2/... snapshot, and the Archive remain recoverable and fingerprint-bound.
+
+Gate1 starts with a Rich comparison of the 1–3 Candidate Portfolio while keeping 6–8 Active Candidates and the complete Archive available for inspection. The lead card and compact alternatives use LLM-authored, workspace-derived scientific text; the renderer only lays out validated fields. A mature Candidate contains a one-line thesis, Overall Readiness and five explanations, Problem, Core Innovation, Mechanism Chain, 2–4 Contributions, 2–4 Draft Hypotheses, validation snapshot, Evidence Composition, risks, recommendation rationale, lineage, and paths that explain what each file contains. `proposed_not_verified` means a hypothesis is a clear proposal rather than verified evidence. A Candidate with fewer than two or more than four hypotheses, an incomplete mechanism chain, invalid Evidence Permission, or template-filled scientific fields cannot enter Gate1.
+
+Gate1 actions are explicit and reversible where possible. The researcher can proceed with one Candidate, run another Generation, focus one Candidate or Family, request a Crossover, compose selected Hypotheses/Contributions/Genes, keep complete Candidates in parallel, inspect Score/Evidence/Lineage, regenerate one Route, rollback, or pause. Natural language is parsed by an optional LLM interpreter and then deterministically validated against Candidate IDs, components, Population fingerprints, and confirmation rules. Multiple complete Candidates mean `keep_parallel` unless the researcher explicitly requests composition. A component request first produces a Compatibility Check and Gene Donor Map, then requires a second confirmation before a Human-composed Candidate is generated, independently scored, and compared. No user-selected strings are concatenated directly into a hypothesis file.
+
+Selecting one complete Candidate creates `hypothesis_brief.yaml`, selected lineage, T4.5 search targets, and a readable Pre-Novelty brief. These artifacts pin the selected Candidate and guide targeted novelty/collision review; they are not T5 execution authority. T4.5 performs the audit first. Only a passing T4.5 formalization may create or update `hypotheses.md`, `exp_plan.yaml`, Contribution-Hypothesis Mapping, Validation Map, Kill Criteria, and the formalization manifest consumed by T5. Legacy Gate1 files remain available as compatibility projections, and legacy workspaces can migrate to a clearly marked partial P0 without rerunning T2/T3.
 
 ### 11.3 Splash page, logs, and ultimate factual source
 

@@ -22,7 +22,7 @@ This is a maintained English documentation set, not a pointer-only reference. Th
 1. Exactly one writer owns a workspace at a time. `run`, `resume`, `run-task`, Skills, tools, and gates write the same artifact/event model.
 2. A named metric, baseline, dataset, command, or result needs current-project, traceable support. AUUC/Qini are allowed when sourced; topic-based protocol guessing is not.
 3. `run-task` isolates one node, `validate` checks stored artifacts, and `audit-survey` re-runs the deterministic Survey audit after a real repair.
-4. T4 normally relies on model-authored candidate framing, mechanisms, H1/H2/H3, and recommendations. Runtime code validates evidence/schema/order and renders public progress; it does not replace research ideas with templates.
+4. T4 uses model-authored Candidate framing, mechanisms, 2–4 Draft Hypotheses, contributions, and recommendations inside an Evidence-Routed `P0 -> P1` workflow. Runtime code enforces Evidence Permission, schemas, lineage, scoring separation, and public Rich progress; it does not replace research ideas with templates.
 5. T3.6/T9 acceptance requires a real TeX compile. Repair the named environment issue and resume instead of increasing prose retries.
 6. `workspace-status` is an operational overview. `state.yaml` and `_runtime/events` are the recovery authority; an existing but stopped process is not active execution.
 

@@ -6,6 +6,7 @@ import pytest
 
 from researchos.ideation.config import OffspringDefaults, PopulationDefaults, RouteQuota, T4EvolutionSettings
 from researchos.ideation.evolution_controller import IdeaEvolutionController
+from researchos.ideation.state import T4ArtifactStore
 from researchos.ideation.models import (
     CandidateDossier,
     CandidateLineage,
@@ -129,6 +130,36 @@ class RegeneratingFakeGenerator(FakeGenerator):
         if route == "evidence_routed_literature" and self.calls[route] > 1:
             return [_candidate(f"RR{index}", route, mechanism=f"Regenerated mechanism {index}") for index in range(1, quota + 1)]
         return await super().generate_route(
+            route=route,
+            opportunities=opportunities,
+            evidence_bundle=evidence_bundle,
+            quota=quota,
+            repair=repair,
+        )
+
+
+class UnsupportedRegenerationFakeGenerator(RegeneratingFakeGenerator):
+    async def generate_route(self, *, route, opportunities, evidence_bundle, quota, repair):
+        self.calls[route] = self.calls.get(route, 0) + 1
+        if route == "evidence_routed_literature" and self.calls[route] > 1:
+            return []
+        return await FakeGenerator.generate_route(
+            self,
+            route=route,
+            opportunities=opportunities,
+            evidence_bundle=evidence_bundle,
+            quota=quota,
+            repair=repair,
+        )
+
+
+class DuplicateRegenerationFakeGenerator(RegeneratingFakeGenerator):
+    async def generate_route(self, *, route, opportunities, evidence_bundle, quota, repair):
+        self.calls[route] = self.calls.get(route, 0) + 1
+        if route == "evidence_routed_literature" and self.calls[route] > 1:
+            return [_candidate("IL1", route, mechanism="Duplicate regenerated mechanism")]
+        return await FakeGenerator.generate_route(
+            self,
             route=route,
             opportunities=opportunities,
             evidence_bundle=evidence_bundle,
@@ -508,3 +539,128 @@ async def test_route_regeneration_preserves_prior_population_and_creates_a_new_s
     route_artifact = tmp_path / "ideation" / "evolution" / "routes" / "regeneration_2_evidence_routed_literature.json"
     assert route_artifact.exists()
     assert "RR1" in route_artifact.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_route_regeneration_rejects_unknown_route_without_changing_active_population(tmp_path):
+    _write_inputs(tmp_path)
+    controller = IdeaEvolutionController(
+        workspace_dir=tmp_path,
+        settings=_settings(),
+        generator=FakeGenerator(),
+        scorer=FakeScorer(),
+        evolver=FakeEvolver(),
+    )
+    config = T4RunConfig(
+        mode="standard",
+        rounds=1,
+        allow_crossover=False,
+        final_top_k=2,
+        max_initial_population=6,
+        active_population_size=3,
+        max_offspring_per_round=1,
+        max_crossover_children=0,
+        route_quotas={"evidence_routed_literature": 1, "informed_brainstorm": 1},
+    )
+    await controller.run(config)
+
+    with pytest.raises(ValueError, match="unknown T4 generation Route"):
+        await controller.regenerate_route_from_active_population(config, route="not_a_route")
+
+    assert T4ArtifactStore(tmp_path).read_state().current_population_id == "P1"
+    assert not (tmp_path / "ideation" / "populations" / "P2.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_route_regeneration_preserves_unsupported_route_artifact_without_changing_population(tmp_path):
+    _write_inputs(tmp_path)
+    controller = IdeaEvolutionController(
+        workspace_dir=tmp_path,
+        settings=_settings(),
+        generator=UnsupportedRegenerationFakeGenerator(),
+        scorer=FakeScorer(),
+        evolver=FakeEvolver(),
+    )
+    config = T4RunConfig(
+        mode="standard",
+        rounds=1,
+        allow_crossover=False,
+        final_top_k=2,
+        max_initial_population=6,
+        active_population_size=3,
+        max_offspring_per_round=1,
+        max_crossover_children=0,
+        route_quotas={"evidence_routed_literature": 1, "informed_brainstorm": 1},
+    )
+    await controller.run(config)
+
+    with pytest.raises(ValueError, match="did not produce a supported Candidate"):
+        await controller.regenerate_route_from_active_population(config, route="evidence_routed_literature")
+
+    artifact = tmp_path / "ideation" / "evolution" / "routes" / "regeneration_2_evidence_routed_literature.json"
+    assert artifact.exists()
+    assert T4ArtifactStore(tmp_path).read_state().current_population_id == "P1"
+    assert not (tmp_path / "ideation" / "populations" / "P2.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_route_regeneration_rejects_duplicate_candidate_ids_without_overwriting_population(tmp_path):
+    _write_inputs(tmp_path)
+    controller = IdeaEvolutionController(
+        workspace_dir=tmp_path,
+        settings=_settings(),
+        generator=DuplicateRegenerationFakeGenerator(),
+        scorer=FakeScorer(),
+        evolver=FakeEvolver(),
+    )
+    config = T4RunConfig(
+        mode="standard",
+        rounds=1,
+        allow_crossover=False,
+        final_top_k=2,
+        max_initial_population=6,
+        active_population_size=3,
+        max_offspring_per_round=1,
+        max_crossover_children=0,
+        route_quotas={"evidence_routed_literature": 1, "informed_brainstorm": 1},
+    )
+    await controller.run(config)
+
+    with pytest.raises(ValueError, match="already in the active Population"):
+        await controller.regenerate_route_from_active_population(config, route="evidence_routed_literature")
+
+    assert T4ArtifactStore(tmp_path).read_state().current_population_id == "P1"
+    assert not (tmp_path / "ideation" / "populations" / "P2.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_route_regeneration_after_rollback_allocates_a_new_population_snapshot(tmp_path):
+    _write_inputs(tmp_path)
+    controller = IdeaEvolutionController(
+        workspace_dir=tmp_path,
+        settings=_settings(),
+        generator=RegeneratingFakeGenerator(),
+        scorer=FakeScorer(),
+        evolver=FakeEvolver(),
+    )
+    config = T4RunConfig(
+        mode="standard",
+        rounds=1,
+        allow_crossover=False,
+        final_top_k=2,
+        max_initial_population=6,
+        active_population_size=3,
+        max_offspring_per_round=1,
+        max_crossover_children=0,
+        route_quotas={"evidence_routed_literature": 1, "informed_brainstorm": 1},
+    )
+    await controller.run(config)
+    await controller.continue_from_active_population(config)
+    store = T4ArtifactStore(tmp_path)
+    store.activate_population("P1")
+
+    regenerated = await controller.regenerate_route_from_active_population(config, route="evidence_routed_literature")
+
+    assert (tmp_path / "ideation" / "populations" / "P2.json").exists()
+    assert regenerated.population.population_id == "P3"
+    assert T4ArtifactStore(tmp_path).read_state().current_population_id == "P3"

@@ -779,9 +779,9 @@ states:
     next_on_success: __parse_from_output__
     next_on_failure: failed
 
-  # T4 状态：假设生成（Hypothesis Generation）
-  # 用途：基于文献综述生成研究假设和实验计划
-  # Agent：ideation（创意生成器）
+  # T4 状态：Research Idea Formation & Evolution
+  # 用途：确认运行方式后建立 Evidence Index，形成并进化 Candidate Population，最后停在 Gate1。
+  # Agent：ideation（由内部 evolution controller 协调 Generator / Scorer / Evolver）
   T4:
     agent: ideation
     inputs:
@@ -796,15 +796,10 @@ states:
       seed_ideas: user_seeds/seed_ideas.md            # 种子想法（可选）
       seed_constraints: user_seeds/seed_constraints.md # 种子约束（可选）
     outputs:
-      hypotheses: ideation/hypotheses.md                # 研究假设
-      exp_plan: ideation/exp_plan.yaml                 # 实验计划
-      risks: ideation/risks.md                        # 风险评估
-      idea_rationales: ideation/idea_rationales.json  # 每个 idea/假设的生成依据
-      idea_scorecard: ideation/idea_scorecard.yaml    # 所有候选 idea 的证据链和评分
-      rejected_ideas: ideation/rejected_ideas.md      # 被淘汰/暂缓 idea 的人类可读记录
-      selected_idea_brief: ideation/selected_idea_brief.md # Gate1 后最终方向的人类可读确认
-      gate_decisions: ideation/gate_decisions.json    # Gate 选择、反馈和决策链
-      family_distribution: ideation/_family_distribution.md  # mechanism family 分布
+      evidence_index: ideation/evidence/evidence_index.jsonl # Evidence Index 与 Permission
+      evolution_state: ideation/evolution/state.json   # 当前 Population 指针与 fingerprint
+      portfolio: ideation/portfolio.json                # Gate1 展示的 1-3 个 Candidate
+      family_distribution: ideation/_family_distribution.md  # Idea Family compatibility view
       pass1_forward_candidates: ideation/_pass1_forward_candidates.json # Pass1 原始发散候选池
       pass2_grounding_review: ideation/_pass2_grounding_review.json # Pass2 文献接地/风险审阅
       candidate_directions: ideation/_candidate_directions.json # 主线与补充候选方向池
@@ -812,12 +807,22 @@ states:
       gate1_selection_brief: ideation/_gate1_selection_brief.md # Gate1 全量候选选择简报
     optional_outputs:
       bridge_coverage_review: ideation/bridge_coverage_review.json # 已确认 bridge 候选的上桌/裁决/逃生舱记录
+      hypothesis_brief: ideation/hypothesis_brief.yaml # 完整选择后生成的 Pre-Novelty brief
+      selected_candidate: ideation/selected/selected_candidate.json
+      t45_search_targets: ideation/selected/t45_search_targets.json
+      pre_novelty_brief: ideation/selected/pre_novelty_brief.md
+      risks: ideation/risks.md                          # legacy compatibility projection
+      idea_rationales: ideation/idea_rationales.json    # legacy compatibility projection
+      idea_scorecard: ideation/idea_scorecard.yaml      # legacy compatibility projection
+      rejected_ideas: ideation/rejected_ideas.md        # legacy compatibility projection
+      selected_idea_brief: ideation/selected_idea_brief.md # legacy compatibility projection
+      gate_decisions: ideation/gate_decisions.json      # legacy compatibility projection
     next_on_success: T4.5
     next_on_failure: failed  # T4 内部已有 validation retry；候选池失败时保留真实错误，避免同参数死锁
 
-  # T4-GATE1 状态：候选 idea 池人工选择
-  # 用途：T4 一旦生成 Pass1/Pass2/_candidate_directions/_gate1_selection_brief，
-  # runtime 会先暂停到这里，让用户选择、合并、重构或要求重分析。
+  # T4-GATE1 状态：Candidate Portfolio 人工决策
+  # 用途：T4 的 native Population 与保留的 Pass1/Pass2 projection 已就绪后，
+  # runtime 在这里支持选择、并行推进、Evolution、Crossover、组合、回滚或暂停。
   T4-GATE1:
     agent: ideation
     extra:

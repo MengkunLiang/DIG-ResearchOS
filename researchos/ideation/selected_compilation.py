@@ -128,7 +128,16 @@ def ensure_t45_pre_novelty_brief(workspace_dir: Path) -> dict[str, str]:
     workspace = Path(workspace_dir)
     brief_path = workspace / "ideation" / "hypothesis_brief.yaml"
     if brief_path.exists() and brief_path.stat().st_size > 0:
-        return {"hypothesis_brief": "ideation/hypothesis_brief.yaml", "mode": "native_or_existing"}
+        try:
+            existing = yaml.safe_load(brief_path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError):
+            existing = None
+        mode = (
+            "legacy_migrated"
+            if isinstance(existing, dict) and existing.get("status") == "legacy_migrated_for_novelty_review"
+            else "native_or_existing"
+        )
+        return {"hypothesis_brief": "ideation/hypothesis_brief.yaml", "mode": mode}
     hypotheses_path = workspace / "ideation" / "hypotheses.md"
     if not hypotheses_path.exists() or hypotheses_path.stat().st_size <= 0:
         raise ValueError("T4.5 requires ideation/hypothesis_brief.yaml; no legacy hypotheses.md is available for migration")
@@ -181,6 +190,26 @@ def ensure_t45_pre_novelty_brief(workspace_dir: Path) -> dict[str, str]:
             },
         )
     return {"hypothesis_brief": "ideation/hypothesis_brief.yaml", "mode": "legacy_migrated"}
+
+
+def validate_legacy_t45_brief_source(workspace_dir: Path) -> tuple[bool, str | None]:
+    """Confirm that a migrated brief still represents its formal legacy source."""
+
+    workspace = Path(workspace_dir)
+    brief_path = workspace / "ideation" / "hypothesis_brief.yaml"
+    hypotheses_path = workspace / "ideation" / "hypotheses.md"
+    try:
+        brief = yaml.safe_load(brief_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        return False, f"cannot read legacy-migrated hypothesis brief: {exc}"
+    if not isinstance(brief, dict) or brief.get("status") != "legacy_migrated_for_novelty_review":
+        return True, None
+    if not hypotheses_path.is_file() or hypotheses_path.stat().st_size <= 0:
+        return False, "legacy-migrated T4.5 brief no longer has ideation/hypotheses.md as its source"
+    current = stable_fingerprint({"hypotheses": hypotheses_path.read_text(encoding="utf-8", errors="replace")})
+    if str(brief.get("selection_fingerprint") or "") != current:
+        return False, "legacy hypotheses.md changed after the Pre-Novelty migration; rerun the novelty audit"
+    return True, None
 
 
 def _load_candidate(workspace_dir: Path, candidate_id: str) -> dict[str, Any]:

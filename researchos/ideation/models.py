@@ -598,6 +598,14 @@ class CandidateDossier(_StrictModel):
             raise ValueError("contribution IDs must be unique")
         if len({item.hypothesis_id for item in self.hypotheses}) != len(self.hypotheses):
             raise ValueError("hypothesis IDs must be unique")
+        # Mature native Candidates are decision-ready only when their scientific
+        # package is neither under-specified nor mechanically over-expanded.
+        # Legacy migrations remain readable as explicitly partial records.
+        if self.maturity == CandidateMaturity.EVOLVED:
+            if not 2 <= len(self.contributions) <= 4:
+                raise ValueError("an evolved candidate requires 2-4 contributions")
+            if not 2 <= len(self.hypotheses) <= 4:
+                raise ValueError("an evolved candidate requires 2-4 provisional hypotheses")
         return self
 
 

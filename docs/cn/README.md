@@ -22,7 +22,7 @@
 1. 同一时间仅一个写入者拥有一个工作空间。`run`、`resume`、`run-task`、技能、工具和门控均写入相同的产物/事件模型。
 2. 命名的指标、基线、数据集、命令或结果需要当前项目中有可追溯的支持。AUUC/Qini 在有来源时允许使用；基于主题的协议猜测不允许。
 3. `run-task` 隔离一个节点，`validate` 检查存储的产物，而 `audit-survey` 在实际修复后重新运行确定性的调查审计。
-4. T4 通常依赖模型编写的候选框架、机制、H1/H2/H3 和建议。运行时代码验证证据/模式/顺序并呈现公开进度；它并不会用模板替代研究思路。
+4. T4 在 Evidence-Routed `P0 -> P1` 工作流中使用模型编写的 Candidate 框架、机制、2–4 条 Draft Hypotheses、Contribution 和建议。运行时代码强制 Evidence Permission、schema、lineage、评分职责分离并呈现 Rich 公开进度；它不会用模板替代研究思路。
 5. T3.6/T9 验收需要实际进行 TeX 编译。修复指定的环境问题并恢复，而非增加散文重试次数。
 6. `workspace-status` 是运行概览。`state.yaml` 和 `_runtime/events` 是恢复权威来源；一个存在但已停止的进程并非活跃执行。
 

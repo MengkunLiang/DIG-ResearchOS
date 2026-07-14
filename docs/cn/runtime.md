@@ -158,7 +158,7 @@ $.ideas[0].basis.literature_observations[0].strength [enum]: supporting is not a
 
 文件不会被部分写入。更正列出的字段，然后重试相同的 `write_structured_file` 调用。不要仅仅为了减少模式错误而删除候选记录：T4 需要完整的 Gate1 池，包括延迟、合并和拒绝的候选记录。终端错误代码保持为 `schema_validation_failed` 以供自动化使用；字段级诊断是可操作的原因。
 
-T4 通常创建 7-9 个 Gate1 想法卡片：3-5 个主要方向加上最多四个补充。必须可见的已确认桥接覆盖可能会使总数超过九个；系统不得仅仅为了达到数量而重复机制。标题、机制、H1/H2/H3、证据解释、选择建议、风险和评分理由由 LLM 根据论文阅读笔记撰写。运行时仅验证模式，并在 Rich 中展示事实性元数据。在 `resume` 时，遗留或不完整的卡片将返回给 T4 进行 LLM 重新分析，而不是用模板重写。
+T4 不会机械地产生固定数量的想法卡片，而是先构建 Evidence Index 和非对称 P0。Standard mode 完成 `P0 -> P1`：以不同的 Evidence Permission 召回全文/部分全文与摘要层论文阅读笔记，形成 Opportunity Map，按 Route 生成 Candidate，执行 Independent Scoring，生成受计划约束的 Mutation Child 和满足 Compatibility Check 的 Crossover Child，随后进行 union rescoring 与 Survival Selection。Gate1 通常先展示 1–3 个成熟 Candidate 的 Portfolio，同时保留 6–8 个 Active Candidates 和完整 Archive。每张成熟卡由 LLM 基于 Workspace 证据撰写，包含 2–4 项 Contribution、2–4 条 Draft Hypotheses、机制、验证路径、风险、Evidence Composition、评分解释、谱系和论文阅读笔记路径。运行时负责验证结构、来源、权限和生命周期，不会补写科研性文字。`resume` 会从最后一个有效 Phase 修复不完整的 native artifact；legacy artifact 只会迁移，不会被静默覆盖。
 
 ## 扩展点
 

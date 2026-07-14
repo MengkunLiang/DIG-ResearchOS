@@ -1,12 +1,9 @@
-"""T4 Ideation Agent — 假设生成与实验计划
+"""T4 recovery-facing Ideation Agent.
 
-基于文献综述生成研究假设和实验计划，通过两轮Gate确认。
-输入: synthesis.md, missing_areas.md, seed_ideas.md
-输出: hypotheses.md, exp_plan.yaml, risks.md, idea_rationales.json,
-      idea_scorecard.yaml, rejected_ideas.md, gate_decisions.json,
-      _pass1_forward_candidates.json, _pass2_grounding_review.json,
-      _gate1_selection_brief.md, _gate1_candidate_cards.md,
-      selected_idea_brief.md
+Native T4 is an artifact-first evolutionary workflow coordinated by the
+runtime controller. This agent owns the compatibility/recovery prompt only;
+formal hypotheses and an experiment plan are compiled by T4.5 after a passing
+novelty/collision audit.
 """
 
 from __future__ import annotations
@@ -1147,7 +1144,7 @@ def refresh_t4_gate1_progress(
 
 
 class IdeationAgent(Agent):
-    """假设生成Agent。深度推理+两轮Gate确认。"""
+    """Recovery-facing T4 agent; native evolution is controller-owned."""
 
     def __init__(self):
         super().__init__(
@@ -1182,13 +1179,7 @@ class IdeationAgent(Agent):
                     ],
                     "allowed_write_prefixes": ["ideation/"],
                     "prompt_template": "ideation.j2",
-                    "structured_outputs": {
-                        "ideation/exp_plan.yaml": "exp_plan",
-                        "ideation/idea_rationales.json": "idea_rationales",
-                        "ideation/idea_scorecard.yaml": "idea_scorecard",
-                        "ideation/gate_decisions.json": "gate_decisions",
-                        "ideation/bridge_coverage_review.json": "bridge_coverage_review",
-                    },
+                    "structured_outputs": {},
                 },
             )
         )
@@ -1261,38 +1252,32 @@ class IdeationAgent(Agent):
         )
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
-        """初始用户消息。"""
+        """Keep the rare legacy fallback inside the native T4 lifecycle."""
+
         from ..orchestration.state_machine import validate_t4_gate1_selection_file
 
-        gate1_selection_ok, gate1_selection_error = validate_t4_gate1_selection_file(ctx.workspace_dir)
-        if not gate1_selection_ok:
+        selection_ok, selection_error = validate_t4_gate1_selection_file(ctx.workspace_dir)
+        if not selection_ok:
             return prepend_resume_prefix(
                 ctx,
                 (
-                "请执行 T4 Gate1 前半段。当前尚无合法 ideation/_gate1_user_selection.json"
-                f"（{gate1_selection_error}），所以本轮只生成并写入 Gate1 候选池中间产物："
-                "先读取 ideation/t4_context_pack.md 或 ideation/t4_context_pack.json，"
-                "并立刻更新 ideation/t4_progress.md 说明正在从 compact pack 生成候选；"
-                "ideation/_pass1_forward_candidates.json、ideation/_pass2_grounding_review.json、"
-                "ideation/_candidate_directions.json、ideation/_family_distribution.md、"
-                "ideation/_gate1_candidate_cards.md、ideation/_gate1_selection_brief.md，"
-                "以及必要时的 bridge_coverage_review.json。"
-                "候选池必须在四类补充通道之外包含至少一个领域交叉候选："
-                "idea_origin=cross_domain_analogy 或 bridge_synthesis。"
-                "写完这些文件后立即调用 finish_task；不要在本轮调用 ask_human，也不要写"
-                "hypotheses.md、exp_plan.yaml、risks.md 或 gate_decisions.json。runtime 会自动进入 T4-GATE1。"
+                    "请执行 T4 Gate1 前半段的恢复检查。当前尚无合法 "
+                    f"`ideation/_gate1_user_selection.json`（{selection_error}）。先检查 "
+                    "`ideation/t4_context_pack.md`、`ideation/t4_progress.md`、native Evolution Artifact 与 "
+                    "`_pass1_forward_candidates.json`、`_pass2_grounding_review.json`、"
+                    "`_candidate_directions.json`、`_family_distribution.md`、"
+                    "`_gate1_candidate_cards.md`、`_gate1_selection_brief.md`。"
+                    "不要在本轮调用 ask_human，不要写hypotheses.md 或 exp_plan.yaml；Rich Gate 会处理研究者选择。"
                 ),
             )
         return prepend_resume_prefix(
             ctx,
             (
-            "请执行 T4 Gate1 后半段。必须先读取 ideation/_gate1_user_selection.json，"
-            "再参考 ideation/t4_context_pack.md 或 ideation/t4_context_pack.json 做定向证据核对；"
-            "并根据用户已确认/合并/重构的候选方向产出 hypotheses.md + exp_plan.yaml + "
-            "risks.md + idea_rationales.json + idea_scorecard.yaml + "
-            "rejected_ideas.md + selected_idea_brief.md + gate_decisions.json。"
-            "最终输出必须绑定 Gate1 selection_fingerprint，并在 hypotheses.md 中为每个 H 写出"
-            "技术机制、现实/管理/商业含义、评分依据和核心论文依赖。"
+                "请执行 T4 Gate1 后半段的恢复交接：读取 `_gate1_user_selection.json` 与 selection_fingerprint，"
+                "检查 native Evolution Artifact、已选 Candidate、Pre-Novelty brief 和 T4.5 search targets。"
+                "不要生成或覆盖 Candidate，不要调用 ask_human，不要写正式 hypotheses.md 或 exp_plan.yaml；"
+                "它们只会在 T4.5 audit 通过后 formalize。若状态可恢复，调用 finish_task，说明保留了什么、"
+                "下一步进入哪个 Rich Gate 或 T4.5，以及是否可 rollback。"
             ),
         )
 
@@ -1645,7 +1630,7 @@ class IdeationAgent(Agent):
         required_gates = {"T4-DECIDE-1", "T4-DECIDE-2"}
         missing_gates = sorted(required_gates - gate_ids)
         if missing_gates:
-            return False, f"gate_decisions.json 必须记录两轮Gate决策，缺少: {missing_gates}"
+            return False, f"legacy gate_decisions.json 缺少历史 Gate 记录: {missing_gates}"
         gate_selected_ids: set[str] = set()
         gate_rejected_ids: set[str] = set()
         merged_sources_in_gate: set[str] = set()
@@ -1964,10 +1949,10 @@ def _validate_t4_candidate_authored_content(
             return False, f"_candidate_directions.json 候选 {idea_id} 缺少可展示的模型字段: {field}"
 
     hypotheses = candidate.get("candidate_hypotheses")
-    if not isinstance(hypotheses, list) or not 2 <= len(hypotheses) <= 3:
+    if not isinstance(hypotheses, list) or not 2 <= len(hypotheses) <= 4:
         return False, (
-            f"_candidate_directions.json 候选 {idea_id} 必须由 LLM 提供2-3条候选假设；"
-            "展示层不会再自动补写 H1/H2/H3"
+            f"_candidate_directions.json 候选 {idea_id} 必须由 LLM 提供2-4条候选假设；"
+            "展示层不会再自动补写假设内容"
         )
     seen_hypotheses: set[str] = set()
     for position, hypothesis in enumerate(hypotheses, start=1):
@@ -2696,7 +2681,7 @@ def _render_fallback_family_distribution(candidates: list[dict[str, object]]) ->
             "",
             "## 恢复边界",
             "- 候选池保留主线、跨域/桥接和补充通道，供 Gate1 选择、合并、重构或要求重新分析。",
-            "- 写最终假设、评分卡或实验计划前，T4 后半段必须重新打开相应 paper note 的具体 section。",
+            "- 恢复的 Candidate 在进入 T4.5 前必须定向复核相应 paper note section；正式 hypotheses 与 experiment plan 只在 audit 通过后生成。",
         ]
     )
     return "\n".join(lines) + "\n"

@@ -122,6 +122,12 @@ python -m researchos.cli run-skill pdf-note-card \
 
 配置文件是加性且可见的，但它们并非环境权限。它们不授予 `bash_run` 或 `docker_exec`；文件访问仍受单个技能约定的约束；来源获取需要明确的 DOI/arXiv/OpenAlex ID、URL、精确标题或主题加数量请求，以及一个可写的声明目标位置。这为阅读或审阅技能提供了足够解析和检查证据的工具，而不允许无关的工作区更改或任意的主机执行。
 
+## T4 与下游 Skill
+
+T4 在公开状态路径 `T4 -> T4-GATE1 -> T4 -> T4.5` 背后使用职责分离的 Generator、Scorer 和 Evolver。Generator 形成 Evidence-Routed Candidate；Scorer 独立评估已脱敏的 Candidate，绝不生成 Idea；Evolver 只能创建受 plan 约束的 Mutation Child 或通过 Compatibility Check 的 Crossover Child。若 Workspace 中没有可辩护的结构性迁移关系，Bridge Route 可以返回带 escape-hatch record 的 `unsupported`。
+
+在 Gate1 选择完整 Candidate 后，系统会生成 Pre-Novelty brief 与 T4.5 search scope。`hypothesis-compiler`、`paper-outline` 及其它非执行型 Skill 可以用它们追溯已选方向或准备明确标为 provisional 的材料，但不能将其视为已验证的新颖性或可执行 protocol。组件级请求会先通过 Compatibility Check、Gene Donor Map、Independent Scoring 与第二次确认，形成 Human-composed Candidate；来源 Candidate 会完整保留。T5 与所有 executor Skill 在计划或运行实验之前，必须读取 T4.5 后的正式 hypotheses、experiment plan 和已接受的 novelty audit。
+
 ## 集成式研究工作流
 
 以下公共技能是组合式工作流，而非单个 LLM 提示的别名。它们都始于引导式约定，写入产物清单，将阶段状态持久化到 `_runtime/skill_sessions/<id>.json`，并在范围扩展、开销高昂的阅读、候选选择或综述交接前使用显式的人类门控。

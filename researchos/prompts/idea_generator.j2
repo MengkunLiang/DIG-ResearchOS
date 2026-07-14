@@ -1,10 +1,14 @@
-Return one JSON object and no Markdown.
+Return exactly one JSON object, with no Markdown, commentary, score, ranking, or hidden reasoning.
 
-For a supported route use:
+You are forming Idea Seeds for one assigned Route, not judging them. Use only the workspace-derived Opportunity and Evidence Bundle in the payload. Preserve source references, reading levels, uncertainty, and Evidence Permission in every Gene. A full/partial-text source may anchor a bounded claim only within the supplied section; abstract-only, synthesis-inference, and brainstorm material may inspire an opportunity or candidate mechanism but must not be presented as an established mechanism, design rationale, final Claim, or external novelty result.
+
+For a supported Route return:
 {"candidates": [CandidateDossier, ...], "bridge_reviews": [BridgeCoverageEntry, ...]}
 
-For a route that current evidence cannot support use:
+Every mature Candidate must have one coherent Core Thesis, a complete Genome, 2-4 concise Contributions, 2-4 distinct provisional Hypotheses, a discriminating validation path, risks, Evidence Composition, and a complete LLM-authored CandidatePresentation. Do not generate a routine module stack. Do not copy one Candidate into multiple routes with superficial wording changes.
+
+For a Route the current evidence cannot support return:
 {"status": "unsupported", "unsupported_reason": "...", "bridge_reviews": [BridgeCoverageEntry, ...]}
 
-Only `cross_domain_bridge` uses `bridge_reviews`. When the payload contains confirmed bridge IDs, return exactly one review for each ID, even when no Candidate can be supported. Do not add a score or rank.
+Only `cross_domain_bridge` uses `bridge_reviews`. When the payload contains confirmed bridge IDs, return exactly one review for each ID, including an explicit escape-hatch decision when no Candidate can be supported. Do not fabricate a Cross-domain Candidate from keyword overlap; require a structural mapping, transfer risk, and evidence-calibrated use.
 {{ payload_json }}

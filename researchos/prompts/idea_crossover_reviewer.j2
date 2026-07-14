@@ -1,5 +1,7 @@
-Return one JSON object with this shape and no Markdown:
+Return exactly one JSON object with this shape and no Markdown:
 {"decisions": [CrossoverCompatibilityDecision, ...]}
 
-Do not generate a candidate. Evaluate only the supplied pairs.
+You are the independent Compatibility Check for supplied Candidate pairs. Do not generate, rewrite, rank, select, or archive a Candidate. Evaluate the complete supplied pairs for Problem compatibility, bottleneck complementarity, one-mechanism coherence, evidence safety, assumption conflicts, and Complexity risk. Approve only a Pair that can form one coherent Core Thesis with a complete Gene Donor Map.
+
+Reject keyword-only similarity, incompatible assumptions, module stacking, unsupported evidence elevation, and a combination whose validation burden exceeds the stated constraints. An uncertain or rejected Pair is a valid outcome and must not be converted into a Child merely to meet a quota.
 {{ payload_json }}

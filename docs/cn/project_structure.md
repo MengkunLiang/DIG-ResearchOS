@@ -54,4 +54,10 @@ workspace/<project>/
 | `experiments/` | 结果摄取和审计工具 | 观察到的结果，而非模型猜测 |
 | `_runtime/` | 仅运行时 | 操作状态；请勿编辑以更改研究结论 |
 
+### T4 Ideation Artifact
+
+`ideation/` 是带版本的决策记录，而不是临时目录。选择之前，它包含 `evidence/`（Evidence Index、Opportunity Map 和按 Route 划分的 Bundle）、`populations/`（`P0`、`P1` 及后续快照）、`genomes/`、`families/`、`scoring/`、`evolution/`（plan、offspring、contract、diagnostic、state 和操作结果）、`candidates/`、`archive/` 与 `human_directives/`。保留的 `_pass1_forward_candidates.json`、`_pass2_grounding_review.json`、`_candidate_directions.json`、`_gate1_candidate_cards.md` 和 `_gate1_selection_brief.md` 是供 Gate1 consumer 使用的兼容投影，不能替代 Population snapshot。
+
+当用户选择完整 Candidate 后，`hypothesis_brief.yaml`、`selected/hypothesis_lineage.json`、`selected/t45_search_targets.json` 和 `selected/pre_novelty_brief.md` 描述的是 Pre-Novelty 研究方案。它们保存谱系并限定 T4.5 的定向审计范围，但不授权 T5 执行。只有 T4.5 audit 明确通过后，系统才会创建或更新正式的 `hypotheses.md`、`exp_plan.yaml`、`contribution_hypothesis_map.yaml`、`validation_map.yaml`、`kill_criteria.yaml` 与 `post_novelty_formalization.json`。
+
 在提示、构件和 Skill 契约中使用相对于工作区的路径。在未记录其来源并在目标项目约束下验证之前，请勿在不同项目间复制构件。

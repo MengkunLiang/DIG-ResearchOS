@@ -63,7 +63,7 @@ from ..ideation.legacy_projection import project_gate1_population
 from ..ideation.llm_roles import LLMJsonRoleInvoker, LLMIdeaEvolver, LLMIdeaGenerator, LLMIdeaScorer, T4RoleCallConfig
 from ..ideation.models import EvolutionPhase, HumanCompositionCompatibility
 from ..ideation.prerun import has_current_t4_prerun_confirmation
-from ..ideation.selected_compilation import ensure_t45_pre_novelty_brief
+from ..ideation.selected_compilation import ensure_t45_pre_novelty_brief, validate_legacy_t45_brief_source
 from ..ideation.state import T4ArtifactStore
 from ..ui.idea_evolution_renderer import render_t4_evolution_phase
 from .trace import NullTraceWriter, TraceWriter
@@ -786,7 +786,9 @@ class AgentRunner:
                 or t4_gate1_pre_finalized
             ):
                 if ctx.task_id == "T4.5":
-                    ensure_t45_pre_novelty_brief(ctx.workspace_dir)
+                    t45_brief = ensure_t45_pre_novelty_brief(ctx.workspace_dir)
+                    legacy_migration = t45_brief.get("mode") == "legacy_migrated"
+                    ctx.extra["t45_legacy_migrated_brief"] = legacy_migration
                 t45_pre_finalized = await self._maybe_finalize_t45_before_llm(ctx)
             external_wait_pre_finalized = False
             if not (
@@ -3189,14 +3191,20 @@ class AgentRunner:
             self.progress.emit(rendered, important=True)
 
     async def _maybe_finalize_t4_before_llm(self, ctx: ExecutionContext) -> bool:
-        """T4 续跑时，已有三件套可通过校验则直接完成。
+        """Reuse only a pre-evolution legacy formal bundle.
 
-        T4 的核心产物都是 workspace artifact。若它们已经存在并满足
-        IdeationAgent.validate_outputs 的 schema、anchor、风险和预算约束，
-        runtime 不再把“是否复用旧产物”交给 LLM 判断。
+        Native T4 must never jump from Gate1 to formal hypotheses or an
+        experiment plan. The narrow path below exists solely for an older
+        workspace that predates `ideation/evolution/state.json` and already
+        contains an audited-style legacy formal bundle. It preserves that
+        bundle without rewriting it; native workspaces always use the
+        Pre-Novelty handoff and T4.5 formalization.
         """
 
         if ctx.task_id != "T4":
+            return False
+
+        if (ctx.workspace_dir / "ideation" / "evolution" / "state.json").is_file():
             return False
 
         # A complete Gate1 selection now advances through the Pre-Novelty
@@ -3517,7 +3525,7 @@ class AgentRunner:
         return paths
 
     def _t45_upstream_input_paths(self, ctx: ExecutionContext) -> list[Path]:
-        return [
+        paths = [
             ctx.workspace_dir / "ideation" / "hypothesis_brief.yaml",
             ctx.workspace_dir / "ideation" / "selected" / "selected_candidate.json",
             ctx.workspace_dir / "ideation" / "selected" / "t45_search_targets.json",
@@ -3528,6 +3536,19 @@ class AgentRunner:
             ctx.workspace_dir / "literature" / "synthesis_workbench.json",
             ctx.workspace_dir / "literature" / "comparison_table.csv",
         ]
+        if ctx.extra.get("t45_legacy_migrated_brief"):
+            # The generated legacy brief/lineage/search files have a newer
+            # filesystem timestamp than a valid historical audit by design.
+            # Their semantic source is hypotheses.md, which remains the input
+            # that invalidates reuse when it changes.
+            generated_paths = {
+                ctx.workspace_dir / "ideation" / "hypothesis_brief.yaml",
+                ctx.workspace_dir / "ideation" / "selected" / "selected_candidate.json",
+                ctx.workspace_dir / "ideation" / "selected" / "t45_search_targets.json",
+            }
+            paths = [path for path in paths if path not in generated_paths]
+            paths.insert(0, ctx.workspace_dir / "ideation" / "hypotheses.md")
+        return paths
 
     def _outputs_newer_than_inputs(
         self,
@@ -3587,6 +3608,11 @@ class AgentRunner:
             reason="novelty_outputs_older_than_t45_inputs",
         ):
             return False
+        if ctx.extra.get("t45_legacy_migrated_brief"):
+            legacy_ok, legacy_error = validate_legacy_t45_brief_source(ctx.workspace_dir)
+            if not legacy_ok:
+                self.log.info("t45_resume_prefinalize_skipped", reason=legacy_error)
+                return False
         ok, err = validate_t45_fingerprint_report(ctx.workspace_dir)
         if not ok:
             self.log.info("t45_resume_prefinalize_skipped", reason=err)
@@ -5820,7 +5846,7 @@ class AgentRunner:
             return (
                 base
                 + "读取 `ideation/_candidate_directions.json` 并修复报错候选的模型归纳字段。"
-                "每个 Gate1 candidate 必须保留 2-3 条不同的可证伪假设、`basis_sources` 的 claim/implication、"
+                "每个 Gate1 candidate 必须保留 2-4 条不同的可证伪假设、`basis_sources` 的 claim/implication、"
                 "CDR 设计理由和互不重复的七维评分理由；使用 `write_file` 写回完整 JSON 对象。"
                 "不要让 runtime 展示层补写研究内容。"
             )

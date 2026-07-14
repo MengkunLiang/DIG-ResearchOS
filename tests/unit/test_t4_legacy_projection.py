@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from researchos.agents.ideation import validate_t4_gate1_ready
@@ -102,7 +104,53 @@ def test_projection_fails_closed_with_only_one_hypothesis(tmp_path):
     dossiers, scores, population = _ready_projection_inputs()
     dossiers[0] = dossiers[0].model_copy(update={"hypotheses": dossiers[0].hypotheses[:1]})
 
-    with pytest.raises(ValueError, match="requires 2-3 LLM-authored provisional hypotheses"):
+    with pytest.raises(ValueError, match="requires 2-4 LLM-authored provisional hypotheses"):
+        project_gate1_population(tmp_path, population=population, dossiers=dossiers, scores=scores)
+
+
+def test_projection_preserves_up_to_four_distinct_provisional_hypotheses(tmp_path):
+    dossiers, scores, population = _ready_projection_inputs()
+    base = dossiers[0].hypotheses[0]
+    additions = [
+        base.model_copy(
+            update={
+                "hypothesis_id": f"{dossiers[0].candidate_id}-H{index}",
+                "statement": f"The proposed mechanism fails under separately specified boundary condition {index}.",
+                "mechanism": f"The mechanism depends on documented boundary {index} rather than a general correlation.",
+                "observable_prediction": f"The target effect weakens after boundary condition {index} is introduced.",
+                "discriminating_test": f"Hold the primary condition fixed while varying documented boundary {index}.",
+            }
+        )
+        for index in (3, 4)
+    ]
+    dossiers[0] = dossiers[0].model_copy(update={"hypotheses": [*dossiers[0].hypotheses, *additions]})
+
+    projected = project_gate1_population(tmp_path, population=population, dossiers=dossiers, scores=scores)
+
+    assert projected["candidate_count"] == len(population.active_candidate_ids)
+    directions = json.loads((tmp_path / "ideation" / "_candidate_directions.json").read_text(encoding="utf-8"))
+    candidate = next(item for item in directions["candidates"] if item["id"] == dossiers[0].candidate_id)
+    assert len(candidate["candidate_hypotheses"]) == 4
+
+
+def test_projection_rejects_more_than_four_provisional_hypotheses(tmp_path):
+    dossiers, scores, population = _ready_projection_inputs()
+    base = dossiers[0].hypotheses[0]
+    extra = [
+        base.model_copy(
+            update={
+                "hypothesis_id": f"{dossiers[0].candidate_id}-H{index}",
+                "statement": f"Distinct bounded prediction {index} remains falsifiable under its named condition.",
+                "mechanism": f"Distinct mechanism boundary {index} controls the predicted outcome.",
+                "observable_prediction": f"Observable result {index} changes under the named boundary.",
+                "discriminating_test": f"Discriminating test {index} holds competing explanations constant.",
+            }
+        )
+        for index in range(3, 6)
+    ]
+    dossiers[0] = dossiers[0].model_copy(update={"hypotheses": [*dossiers[0].hypotheses, *extra]})
+
+    with pytest.raises(ValueError, match="requires 2-4 LLM-authored provisional hypotheses"):
         project_gate1_population(tmp_path, population=population, dossiers=dossiers, scores=scores)
 
 

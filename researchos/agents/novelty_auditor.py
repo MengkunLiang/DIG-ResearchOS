@@ -1,19 +1,20 @@
 """T4.5 Novelty Auditor Agent — 新颖性审计员
 
 业务需求：
-- 基于T4产出的hypotheses.md和T3.5产出的synthesis.md
-- 对每个假设进行新颖性审计
+- 基于 Gate1 后的 Pre-Novelty Candidate、Draft Hypotheses 和 T3.5 产出的 synthesis.md
+- 对已选 Candidate 的 hypothesis bundle 进行 novelty/collision audit
 - 检查是否与已有工作重复
 - 使用search_papers搜索近期相关工作
 - 产出novelty_audit.md报告
 
 输入：
-- ideation/hypotheses.md: T4产出的研究假设
+- ideation/hypothesis_brief.yaml: T4 Gate1 选择后的 Pre-Novelty hypothesis bundle
+- ideation/selected/selected_candidate.json: 已选 Candidate 与 lineage
 - literature/synthesis.md: T3.5产出的文献综述
 - literature/comparison_table.csv: 已有方法对比表
 
 输出：
-- ideation/novelty_audit.md: 新颖性审计报告
+- ideation/novelty_audit.md: 新颖性审计报告；通过后才会 formalize hypotheses.md / exp_plan.yaml
 - ideation/collision_cases.md: 潜在撞车案例（如果有）
 """
 

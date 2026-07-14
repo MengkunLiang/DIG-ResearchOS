@@ -122,6 +122,12 @@ Every public Skill now receives the `workspace_navigation` profile: `list_files`
 
 Profiles are additive and visible, but they are not ambient authority. They do not grant `bash_run` or `docker_exec`; file access remains constrained by the individual Skill contract; source acquisition requires an explicit DOI/arXiv/OpenAlex ID, URL, exact title, or topic-plus-count request and a writable declared destination. This gives a reading or review Skill enough tools to resolve and inspect evidence without allowing unrelated workspace mutation or arbitrary host execution.
 
+## T4 And Downstream Skills
+
+T4 uses role-separated Generator, Scorer, and Evolver capabilities behind the public state path `T4 -> T4-GATE1 -> T4 -> T4.5`. Generator forms Evidence-Routed Candidates; Scorer independently evaluates blinded Candidates and never creates an Idea; Evolver creates only plan-bounded Mutation Children or Compatibility-gated Crossover Children. A Bridge route may return `unsupported` with an escape-hatch record when the workspace does not contain a defensible structural transfer.
+
+At Gate1, selecting one complete Candidate creates a Pre-Novelty brief and a T4.5 search scope. `hypothesis-compiler`, `paper-outline`, and other non-execution Skills may use that brief to trace the selected direction or prepare explicitly provisional material, but they must not treat it as proof of novelty or an executable protocol. Component-level requests first create a Human-composed Candidate through a Compatibility Check, Gene Donor Map, Independent Scoring, and a second confirmation; source Candidates remain preserved. T5 and all executor Skills require the post-T4.5 formal hypotheses, experiment plan, and accepted novelty audit before they can plan or run experiments.
+
 ## Integrated Research Workflows
 
 The following public Skills are composed workflows, not aliases for a single LLM prompt. They all begin with a guided contract, write an artifact manifest, persist phase status in `_runtime/skill_sessions/<id>.json`, and use explicit human gates before scope expansion, costly reading, candidate selection, or Survey handoff.

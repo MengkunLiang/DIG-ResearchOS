@@ -54,4 +54,10 @@ workspace/<project>/
 | `experiments/` | Result ingestion and audit tools | Observed results, not model guesses |
 | `_runtime/` | Runtime only | Operational state; do not edit to change research conclusions |
 
+### T4 Ideation Artifacts
+
+`ideation/` is a versioned decision record, not a scratch directory. Before selection it contains `evidence/` (Evidence Index, Opportunity Map, and Route-specific bundles), `populations/` (`P0`, `P1`, and later snapshots), `genomes/`, `families/`, `scoring/`, `evolution/` (plans, offspring, contracts, diagnostics, state, and operation outcomes), `candidates/`, `archive/`, and `human_directives/`. The retained `_pass1_forward_candidates.json`, `_pass2_grounding_review.json`, `_candidate_directions.json`, `_gate1_candidate_cards.md`, and `_gate1_selection_brief.md` are compatibility projections for Gate1 consumers; they do not replace the Population snapshots.
+
+After a complete Candidate is selected, `hypothesis_brief.yaml`, `selected/hypothesis_lineage.json`, `selected/t45_search_targets.json`, and `selected/pre_novelty_brief.md` describe a Pre-Novelty research direction. They preserve lineage and define a targeted T4.5 audit scope, but do not authorize T5. Only a passing T4.5 audit may create or update formal `hypotheses.md`, `exp_plan.yaml`, `contribution_hypothesis_map.yaml`, `validation_map.yaml`, `kill_criteria.yaml`, and `post_novelty_formalization.json`.
+
 Use workspace-relative paths in prompts, artifacts, and Skill contracts. Do not copy an artifact between projects without recording its source and validating it under the target project's constraints.

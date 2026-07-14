@@ -6,11 +6,19 @@ from pathlib import Path
 import pytest
 
 from researchos.ideation.evolution_controller import IdeaEvolutionController
-from researchos.ideation.models import T4RunConfig
+from researchos.ideation.config import OffspringDefaults, PopulationDefaults, RouteQuota
+from researchos.ideation.legacy_projection import project_gate1_population
+from researchos.ideation.models import CandidateLineage, GeneDonorMap, HumanCompositionCompatibility, T4RunConfig
 from researchos.ideation.state import T4ArtifactStore
 from researchos.orchestration.state_machine import StateMachine, _t4_gate1_candidate_pool_fingerprints
+from researchos.runtime.agent import AgentResult, ExecutionContext
+from researchos.runtime.orchestrator import AgentRunner
 from researchos.schemas.state import GateState
-from tests.unit.test_t4_evolution_controller import FakeEvolver, FakeGenerator, FakeScorer, _settings, _write_inputs
+from researchos.testing.mocks import MockHumanInterface, MockLLMClient
+from researchos.tools.registry import ToolRegistry
+from researchos.agents.ideation import IdeationAgent
+from tests.unit.test_t4_evolution_controller import FakeEvolver, FakeGenerator, FakeScorer, _candidate, _settings, _write_inputs
+from tests.unit.test_t4_legacy_projection import _presentation
 
 
 def _config() -> T4RunConfig:
@@ -158,3 +166,219 @@ async def test_component_composition_requires_a_second_confirmed_gate_before_gen
     assert queued.current_task == "T4"
     assert queued.task_context["t4_operation_request"]["action"] == "execute_human_composition"
     assert not list((tmp_path / "ideation" / "candidates").glob("HC*.json"))
+
+
+class _CompositionReviewScorer:
+    async def review_human_composition(
+        self,
+        *,
+        composition_id,
+        candidates,
+        component_refs,
+        preserve_genes,
+        donor_genes,
+        constraints,
+    ):
+        return HumanCompositionCompatibility(
+            composition_id=composition_id,
+            source_candidate_ids=[candidate.candidate_id for candidate in candidates],
+            source_components=component_refs,
+            problem_compatibility="high",
+            assumption_conflict="none",
+            mechanism_compatibility="high",
+            joint_testability="high",
+            contribution_coherence="high",
+            evidence_compatibility="high",
+            complexity_risk="low",
+            composition_type="complementary",
+            recommended_action="compose",
+            explanation_for_user="The selected components can be reconciled into one bounded thesis with a shared discriminating test.",
+            required_repairs=[],
+            gene_donor_map=GeneDonorMap(
+                donors={"problem": candidates[0].candidate_id, "mechanism": candidates[1].candidate_id},
+                synthesized_genes=["core_thesis", "validation_logic"],
+            ),
+        )
+
+
+class _CompositionEvolver:
+    async def generate_human_composition(self, *, composition_id, target_candidate_id, compatibility, parents):
+        candidate = _candidate(
+            target_candidate_id,
+            "human_composition",
+            parent_ids=list(compatibility.source_candidate_ids),
+            mechanism="A reconciled bounded mechanism with one discriminating validation path.",
+        )
+        return candidate.model_copy(
+            update={
+                "lineage": CandidateLineage(
+                    candidate_id=target_candidate_id,
+                    parent_ids=list(compatibility.source_candidate_ids),
+                    route="human_composition",
+                    created_by="human_composition",
+                ),
+                "presentation": _presentation(99, "human_composition"),
+            }
+        )
+
+
+class _ProjectionScorer(FakeScorer):
+    async def score_population(self, *, candidates, scoring_batch_id, blind):
+        scores = await super().score_population(
+            candidates=candidates,
+            scoring_batch_id=scoring_batch_id,
+            blind=blind,
+        )
+        keys = ("novelty", "feasibility", "impact", "evaluability", "differentiation", "cost", "contribution_strength")
+        return [
+            score.model_copy(
+                update={
+                    "compatibility_scores": {key: 4 for key in keys},
+                    "compatibility_rationales": {
+                        key: f"The {key} comparison follows the candidate's documented mechanism, evidence boundary, and validation design."
+                        for key in keys
+                    },
+                }
+            )
+            for score in scores
+        ]
+
+
+def _t4_gate_completion() -> AgentResult:
+    return AgentResult(
+        ok=True,
+        message="T4 operation completed",
+        outputs_produced={},
+        steps_used=0,
+        tokens_in=0,
+        tokens_out=0,
+        cost_usd=0.0,
+        duration_seconds=0.0,
+        stop_reason=AgentResult.STOP_FINISHED,
+        metadata={"completion_mode": "t4_gate1_ready"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_component_composition_runtime_runs_check_confirmation_scoring_and_gate_reentry(tmp_path):
+    _write_inputs(tmp_path)
+    settings = _settings().model_copy(
+        update={
+            "route_quotas": [
+            RouteQuota(route="evidence_routed_literature", minimum=1, maximum=2, required=True),
+            RouteQuota(route="informed_brainstorm", minimum=1, maximum=2, required=True),
+            ],
+            "population": PopulationDefaults(
+            max_initial_population=8,
+            active_population_target=4,
+            active_population_minimum=4,
+            active_population_maximum=4,
+            ),
+            "offspring": OffspringDefaults(
+            mutation_minimum=1,
+            mutation_maximum=1,
+            crossover_minimum=0,
+            crossover_maximum=0,
+            max_total=1,
+            ),
+        }
+    )
+    initial_controller = IdeaEvolutionController(
+        workspace_dir=tmp_path,
+        settings=settings,
+        generator=FakeGenerator(),
+        scorer=_ProjectionScorer(),
+        evolver=FakeEvolver(),
+    )
+    initial = await initial_controller.run(
+        T4RunConfig(
+            mode="standard",
+            rounds=1,
+            allow_crossover=False,
+            final_top_k=2,
+            max_initial_population=8,
+            active_population_size=4,
+            max_offspring_per_round=1,
+            max_crossover_children=0,
+            route_quotas={"evidence_routed_literature": 2, "informed_brainstorm": 2},
+        )
+    )
+    store = T4ArtifactStore(tmp_path)
+    for index, candidate_id in enumerate(initial.population.active_candidate_ids, start=1):
+        dossier = store.read_model(f"ideation/candidates/{candidate_id}.v1.json", type(initial.active_dossiers[0]))
+        store.write_candidate(dossier.model_copy(update={"presentation": _presentation(index, "fixture")}))
+
+    machine = _machine()
+    selection_gate = _waiting_gate(machine, tmp_path)
+    source_ids = initial.population.active_candidate_ids[:2]
+    requested = machine.resolve_pending_gate(
+        selection_gate,
+        {
+            "option_id": "compose",
+            "captured": {"directive": f"Compose {source_ids[0]}-H1 and {source_ids[1]}-H1 as a new candidate"},
+        },
+        workspace_dir=tmp_path,
+    )
+    assert requested.status == "WAITING_HUMAN"
+    queued_check = machine.resolve_pending_gate(
+        requested,
+        {"option_id": "confirm", "captured": {}},
+        workspace_dir=tmp_path,
+    )
+    assert queued_check.current_task == "T4"
+    assert queued_check.task_context["t4_operation_request"]["action"] == "compose_from_components"
+    queued_check = machine.start_task(queued_check, "composition-check", workspace_dir=tmp_path)
+
+    runner = AgentRunner(IdeationAgent(), ToolRegistry(), MockLLMClient([]), MockHumanInterface())
+    ctx = ExecutionContext(workspace_dir=tmp_path, project_id="directive-runtime", task_id="T4", run_id="composition-check")
+    await runner._run_t4_human_composition_check(
+        ctx=ctx,
+        scorer=_CompositionReviewScorer(),
+        operation=queued_check.task_context["t4_operation_request"],
+    )
+    check_result = json.loads((tmp_path / "ideation" / "evolution" / "latest_operation_result.json").read_text(encoding="utf-8"))
+    assert check_result["status"] == "awaiting_composition_confirmation"
+
+    gate_after_check = machine.advance(queued_check, _t4_gate_completion(), workspace_dir=tmp_path)
+    gate_after_check = machine.pause_for_immediate_gate(gate_after_check, workspace_dir=tmp_path)
+    queued_generation = machine.resolve_pending_gate(
+        gate_after_check,
+        {"option_id": "confirm_composition", "captured": {}},
+        workspace_dir=tmp_path,
+    )
+    assert queued_generation.current_task == "T4"
+    assert queued_generation.task_context["t4_operation_request"]["action"] == "execute_human_composition"
+    queued_generation = machine.start_task(queued_generation, "composition-generate", workspace_dir=tmp_path)
+
+    controller = IdeaEvolutionController(
+        workspace_dir=tmp_path,
+        settings=settings,
+        generator=FakeGenerator(),
+        scorer=_ProjectionScorer(),
+        evolver=FakeEvolver(),
+    )
+    result = await runner._run_t4_human_composition_generation(
+        ctx=ExecutionContext(workspace_dir=tmp_path, project_id="directive-runtime", task_id="T4", run_id="composition-generate"),
+        run_config=store.read_run_config(),
+        controller=controller,
+        evolver=_CompositionEvolver(),
+        operation=queued_generation.task_context["t4_operation_request"],
+    )
+    project_gate1_population(
+        tmp_path,
+        population=result.population,
+        dossiers=result.active_dossiers,
+        scores=result.active_scores,
+        route_results=result.route_results,
+    )
+    final_gate = machine.advance(queued_generation, _t4_gate_completion(), workspace_dir=tmp_path)
+    final_gate = machine.pause_for_immediate_gate(final_gate, workspace_dir=tmp_path)
+
+    assert result.population.population_id == "P2"
+    assert final_gate.current_task == "T4-GATE1"
+    assert final_gate.status == "WAITING_HUMAN"
+    composition_plan = next((tmp_path / "ideation" / "human_compositions").rglob("composition_plan.json"))
+    plan = json.loads(composition_plan.read_text(encoding="utf-8"))
+    assert plan["status"] == "generated_and_independently_scored"
+    assert set(plan["compatibility"]["source_candidate_ids"]) == set(source_ids)
+    assert any(path.name.startswith("HC2-") for path in (tmp_path / "ideation" / "candidates").glob("*.json"))

@@ -34,6 +34,7 @@ Read only for a targeted gap:
 - `resources/`: an already supplied resource changes capability or baseline interpretation;
 - `user_seeds/seed_external_resources.jsonl`: resource hint provenance;
 - `user_seeds/bridge_domains.yaml`: bridge-domain search prior only.
+- `ideation/hypothesis_brief.yaml` and `ideation/selected/t45_search_targets.json`: Pre-Novelty lineage and search-scope context only. They may explain how the selected Candidate reached T4.5, but they cannot replace formal hypotheses, the experiment plan, or the novelty audit.
 
 ## Reading rules
 

@@ -53,9 +53,9 @@ def _legacy_candidate(dossier: CandidateDossier, score: ScoreReport) -> dict[str
     presentation = dossier.presentation
     if presentation is None:
         raise ValueError(f"Candidate {dossier.candidate_id} lacks LLM-authored Gate1 presentation")
-    if not 2 <= len(dossier.hypotheses) <= 3:
+    if not 2 <= len(dossier.hypotheses) <= 4:
         raise ValueError(
-            f"Candidate {dossier.candidate_id} requires 2-3 LLM-authored provisional hypotheses for Gate1 projection"
+            f"Candidate {dossier.candidate_id} requires 2-4 LLM-authored provisional hypotheses for Gate1 projection"
         )
     minimum_sources = 2 if presentation.constraint_status in {"mainline", "bridge"} else 1
     if len(presentation.basis_sources) < minimum_sources:
@@ -135,7 +135,7 @@ def _legacy_candidate(dossier: CandidateDossier, score: ScoreReport) -> dict[str
         "innovation": presentation.innovation,
         "candidate_hypotheses": [
             {"id": item.hypothesis_id, "statement": item.statement, "mechanism": item.mechanism, "observable_prediction": item.observable_prediction, "discriminating_test": item.discriminating_test, "evidence_status": item.evidence_status}
-            for item in dossier.hypotheses[:3]
+            for item in dossier.hypotheses[:4]
         ],
         "minimum_experiment": minimum,
         "scores": score.compatibility_scores,

@@ -338,8 +338,8 @@ def _require_gate1_candidate_presentation(candidate: CandidateDossier) -> None:
     presentation = candidate.presentation
     if presentation is None:
         raise ValueError(f"T4 Generator returned candidate {candidate.candidate_id} without the required Gate1 presentation")
-    if not 2 <= len(candidate.hypotheses) <= 3:
-        raise ValueError(f"T4 Generator returned candidate {candidate.candidate_id} without 2-3 provisional hypotheses")
+    if not 2 <= len(candidate.hypotheses) <= 4:
+        raise ValueError(f"T4 Generator returned candidate {candidate.candidate_id} without 2-4 provisional hypotheses")
     minimum_sources = 2 if presentation.constraint_status in {"mainline", "bridge"} else 1
     if len(presentation.basis_sources) < minimum_sources:
         raise ValueError(

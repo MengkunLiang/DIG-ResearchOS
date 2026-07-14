@@ -114,7 +114,7 @@ python -m researchos.cli run-task T9 --workspace ./workspace/project-a
 
 修复产物后使用 `validate`。使用 `trace <run-id>` 查看先前运行的有限人工渲染摘要，并检查 `_runtime/logs/researchos.log` 以获取详细的操作时间线。
 
-对于 T4，模型创作仍然是候选框架、机制和 H1/H2/H3 的正常路径。在提供方调用进行中时，终端会在 12 秒后显示低频的 Live Runtime 面板，此后每 30 秒显示一次。它只显示公开的候选/通道活动、持久化的 Gate1 产物进度以及下一个可见的里程碑；绝不会显示模型推理或隐藏草稿。
+对于 T4，模型会基于 Workspace 证据撰写 Candidate 框架、机制、2–4 条 Draft Hypotheses、Contribution、评分解释和面向研究者的 Portfolio 文案。Standard mode 完成完整的 `P0 -> P1` Evolution Round，而不是只改写一次文本。Rich 面板会展示 Evidence Routing、Opportunity Map、Multi-route Generation、Independent Scoring、Evolution Planning、Offspring & Rescoring 和 Survival & Portfolio，不显示原始 JSON 或隐藏推理。provider 调用进行中时，终端会在 12 秒后显示低频 Live Runtime 面板，此后每 30 秒刷新一次。
 
 ## 7. T5 Executor 技能与恢复
 
@@ -187,4 +187,4 @@ python -m researchos.cli run \
 
 T2 的选择并非删除。身份已验证的记录仍保留在 `papers_verified.jsonl`、`papers_backlog.jsonl` 和 `deep_read_queue.jsonl` 中；`triaged_out` 仅意味着某条记录不消耗当前的深度阅读目标。T3 优先处理待处理队列，并可能在摘要扫描中使用可读的积压材料，而不会将其升级为全文证据。
 
-T4 应用单独的紧凑上下文优化。它首先注入一组多样且高质量的笔记卡片，然后将其他所有可用卡片写入 `ideation/t4_evidence_pool.json`。当某个想法需要不同的机制、桥梁、边界或反例时，这些卡片仍可用于定向的 `grep_search` 和 `read_file`。对于尚未有笔记的已验证/积压记录，T4 可以按 ID 或标题调用 `lookup_paper_record`，并仅将返回的元数据/摘要用作弱想法启发或资源获取线索。在没有经过支持的笔记/来源的情况下，它不得将该记录提升为核心机制或新颖性证据。
+T4 会先索引已有的主线和 Bridge 论文阅读笔记，再形成 Opportunity Map。全文/部分全文笔记可以在已读范围内锚定机制或设计理由；摘要层笔记也会参与召回、taxonomy、Bridge 发现、候选机制和升级阅读请求，但不能确认机制或强 Claim。Controller 会为不同 Route 构建不同的 Evidence Bundle，而不是向每个 Route 输入同一份冗长上下文。来源路径、阅读等级、不确定性和升级阅读要求会保存在 `ideation/evidence/`；未被当前 Candidate 使用的笔记不会被删除。尚未形成阅读笔记的已核验/积压记录，在完成适当深度的阅读前仍只是 metadata/abstract 层线索。

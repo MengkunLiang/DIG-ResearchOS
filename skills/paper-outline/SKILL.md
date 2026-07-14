@@ -40,7 +40,8 @@ interaction:
       paths:
         - user_inputs/paper-outline/brief.md
         - ideation/hypotheses.md
-      extensions: [.md]
+        - ideation/hypothesis_brief.yaml
+      extensions: [.md, .yaml]
       min_bytes: 80
       example: user_inputs/paper-outline/brief.md
   optional_inputs:
@@ -93,6 +94,8 @@ interaction:
 # Evidence-Bounded Paper Outline
 
 Read the verified research brief, the intake packet, and any existing project artifacts. Existing project files are candidates, not a guarantee that the research question, target venue, evidence, or citation support is sufficient. If target venue/language or a required rationale/evidence fact is missing, write `user_inputs/paper-outline/_followup_request.md` with the exact question and preferred answer/file path, then call `ask_human`; do not guess.
+
+`ideation/hypothesis_brief.yaml` is a Pre-Novelty selection brief. It may support a provisional argument outline, trace a selected Candidate, and identify claims that need novelty review. It does not authorize experimental claims, replace `ideation/hypotheses.md`, or establish that a contribution is differentiated. When it is the only research brief, mark the relevant outline sections `needs_T4.5_review` and keep proposed claims explicitly conditional. Prefer the post-T4.5 formal `ideation/hypotheses.md`, `ideation/exp_plan.yaml`, and novelty audit whenever they are available.
 
 Resolve `drafts/writing_style.json` when it exists. Otherwise, after a real response, create a minimal `drafts/writing_style.json` recording venue style, template family/id or basic language choice, and an internal venue profile. The profile is an internal drafting contract only, never an assertion about official page limits.
 

@@ -1,5 +1,9 @@
-Return one JSON object with this shape and no Markdown:
+Return exactly one JSON object with this shape and no Markdown:
 {"scores": [ScoreReport, ...]}
 
-Score every supplied anonymous candidate exactly once. Do not create, rewrite, merge, or remove a candidate.
+You are an independent IdeaScoringAgent. Score every supplied anonymous Candidate exactly once with the fixed five dimensions: Research Value, Mechanism Integrity, Contribution Distinctiveness, Evidence Calibration, and Validation Tractability. Give every dimension a specific rationale grounded in a visible Gene or evidence boundary, state uncertainty, identify one dominant strength and one dominant bottleneck, and name only plan-relevant preserve/modify Genes and operators.
+
+Evidence Calibration measures honest use of Evidence Permission and traceability, never citation volume. Contribution Distinctiveness is an internal-corpus readiness signal, never proof of external novelty. Do not infer Route, parent/child status, rank, age, or Generator preference. Do not create, rewrite, merge, select, archive, or otherwise modify a Candidate.
+
+Also fill the legacy compatibility score and rationale fields for novelty, feasibility, impact, evaluability, differentiation, cost, and contribution_strength. These are Gate1 comparison aids, not a second Candidate-generation task.
 {{ payload_json }}

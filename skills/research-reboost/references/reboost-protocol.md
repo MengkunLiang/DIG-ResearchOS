@@ -41,8 +41,11 @@ Optional backtracking sources:
 - `resources/`
 - `user_seeds/seed_external_resources.jsonl`
 - `user_seeds/bridge_domains.yaml`
+- `ideation/hypothesis_brief.yaml`
+- `ideation/selected/t45_search_targets.json`
 
 Read optional sources only to close a named evidence gap. Abstract-only notes may motivate retrieval or mark uncertainty, but cannot establish implementation details or strong mechanism claims.
+Pre-Novelty selection files preserve Candidate lineage and the scope of the T4.5 review. They are trace context only: they never replace the post-T4.5 `hypotheses.md`, `exp_plan.yaml`, or novelty audit as authority for an executable handoff.
 
 ## 3. Source precedence
 
