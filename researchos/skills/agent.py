@@ -81,6 +81,39 @@ class SkillAgent(Agent):
         self.translation_warnings = warnings
         self.workflow = workflow
 
+    def _bundled_reference_block(self) -> str:
+        """Expose repo-bundled Skill references without granting workspace file access."""
+
+        references_dir = self.skill.skill_dir / "references"
+        if not references_dir.is_dir():
+            return ""
+        try:
+            max_chars = int(self.skill.metadata.get("reference_prompt_max_chars", 60000))
+        except (TypeError, ValueError):
+            max_chars = 60000
+        if max_chars <= 0:
+            return ""
+        allowed_suffixes = {".md", ".txt", ".json", ".yaml", ".yml"}
+        parts: list[str] = []
+        remaining = max_chars
+        for path in sorted(item for item in references_dir.rglob("*") if item.is_file()):
+            if path.suffix.lower() not in allowed_suffixes:
+                continue
+            rel_path = path.relative_to(self.skill.skill_dir).as_posix()
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if len(text) > remaining:
+                text = text[:remaining] + "\n\n[truncated by runtime reference_prompt_max_chars]\n"
+            parts.append(f"## {rel_path}\n\n{text}")
+            remaining -= len(text)
+            if remaining <= 0:
+                break
+        if not parts:
+            return ""
+        return "# Bundled Skill References\n" + "\n\n".join(parts) + "\n\n"
+
     def system_prompt(self, ctx: ExecutionContext) -> str:
         body = self.skill.body
         if self.use_jinja:
@@ -114,6 +147,10 @@ class SkillAgent(Agent):
             f"- Write only these declared workspace areas: {writable}\n"
             f"- Enabled capability profiles: {', '.join(self.skill.capability_profiles) or 'workspace_navigation'}\n"
             f"- Available tools for this session: {', '.join(self.spec.tool_names)}\n"
+            "- The Skill body and bundled reference files are already loaded into this prompt. "
+            "The `read_file` tool is workspace-scoped; do not call it on `skill_dir`, repository `skills/...`, "
+            "`references/...`, or `scripts/...` paths unless those paths are explicit workspace inputs. "
+            "Use the embedded Skill/reference text instead.\n"
             "- Start with the verified inputs listed below. Do not probe unrelated workspace paths just because they are conventional names. "
             "When a needed material is absent, request it through the guided follow-up protocol instead of attempting an unauthorized read.\n\n"
         )
@@ -164,7 +201,8 @@ class SkillAgent(Agent):
             "- For candidate comparisons, use concise tables or labeled sections with complete values. Preserve source paths, uncertainty, and next actions; do not hide material text behind ellipses.\n\n"
         )
         workflow_block = workflow_prompt_block(self.workflow) if self.workflow else ""
-        return header + workflow_block + warning_block + body
+        reference_block = self._bundled_reference_block()
+        return header + workflow_block + warning_block + reference_block + body
 
     def initial_user_message(self, ctx: ExecutionContext) -> str:
         # CLI run-skill 时，用户请求会放在 ctx.extra["user_request"]。

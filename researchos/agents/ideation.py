@@ -1186,6 +1186,12 @@ class IdeationAgent(Agent):
 
     def system_prompt(self, ctx: ExecutionContext) -> str:
         """渲染system prompt，传入项目信息和文献综述。"""
+        if ctx.task_id == "T4" and ctx.extra.get("t4_execution_mode") != "legacy_fallback":
+            return (
+                "T4 uses the controller-owned Evidence-Routed Evolutionary Pipeline. "
+                "This compatibility agent must not render or execute the legacy ideation prompt. "
+                "The runtime will either complete the native controller flow or pause for its required pre-run gate."
+            )
         project = load_project(ctx)
         ws = ctx.workspace_dir
         synthesis = read_text_file(ws / "literature" / "synthesis.md", default="")

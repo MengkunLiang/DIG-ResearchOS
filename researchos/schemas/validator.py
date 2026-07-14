@@ -618,7 +618,10 @@ def register_builtin_task_checkers():
         from ..agents.experimenter import ExperimenterAgent
         from ..runtime.agent import ExecutionContext
 
-        mode = "pilot" if task_id == "T5" else "full"
+        if task_id == "T5-REBOOST-GATE":
+            mode = "reboost"
+        else:
+            mode = "pilot" if task_id == "T5" else "full"
         ctx = ExecutionContext(
             workspace_dir=workspace_dir,
             project_id="validator",
@@ -748,6 +751,10 @@ def register_builtin_task_checkers():
     register_task_checker("T3", check_t3)
     register_task_checker("T4", check_ideation_phase)
     register_task_checker("T4-GATE1", check_t4_gate1_phase)
+    register_task_checker(
+        "T5-REBOOST-GATE",
+        lambda workspace_dir: check_experimenter_phase(workspace_dir, "T5-REBOOST-GATE"),
+    )
     register_task_checker("T5", lambda workspace_dir: check_experimenter_phase(workspace_dir, "T5"))
     register_task_checker("T7", lambda workspace_dir: check_experimenter_phase(workspace_dir, "T7"))
     register_task_checker("T8-REVIEW-1", lambda workspace_dir: check_reviewer_phase(workspace_dir, "T8-REVIEW-1"))

@@ -73,3 +73,16 @@ When literature synthesis or paper cards are absent, the only permitted result i
 For each evidence-supported candidate, report: the problem it changes, causal or mechanistic rationale, exact source artifact and note/section anchor, falsifiable hypothesis, smallest viable test, expected failure mode, overlap risk, and 1–5 scores for evidence grounding, novelty plausibility, testability, impact, and risk. Call `compute_idea_novelty_signal` only when `literature/domain_map.json` is available. Call `analyze_idea_concentration` after building the candidate set and explain any origin/family imbalance. For evidence-insufficient concepts, replace the scorecard with an explicit missing-evidence ledger rather than fabricating scores.
 
 Write both declared outputs. The Markdown report must be complete enough for a human to choose, merge, request reanalysis, or reject a direction without opening a hidden prompt. Finish with the output paths and a short recommended next action.
+
+## Native T4 boundary
+
+This Skill is an exploratory input to T4, not a replacement for the native
+Evolutionary Pipeline. Its outputs may be supplied to Evidence Routing as
+researcher-provided Seeds, but it must not create, modify, or claim to select
+`ideation/evidence/`, `ideation/populations/`, `ideation/evolution/`,
+`ideation/portfolio.json`, or `ideation/final_cards/`. Native T4 alone forms
+multi-route P0, creates Mutation/Crossover Children O0, independently scores
+the union, updates P1, and presents the MMR Portfolio. If a researcher wants
+to combine pieces from different native Candidates, direct them to Gate1: the
+runtime first requires a Compatibility Check and Gene Donor Map, then a second
+confirmation before a Human-composed Candidate can be scored.

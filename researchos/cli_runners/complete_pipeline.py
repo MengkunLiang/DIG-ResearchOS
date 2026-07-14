@@ -611,7 +611,7 @@ class CompletePipelineRunner:
             agent = get_agent_by_id(node.agent, mode=node.mode)
         elif node.skill is not None:
             skill = resolve_skill(node.skill, self.skill_roots)
-            ctx.extra.setdefault("skill_dir", str(skill.skill_dir))
+            ctx.extra["skill_dir"] = str(skill.skill_dir)
             agent = SkillAgent(
                 skill=skill,
                 available_tools=set(self.tools.available_names()),

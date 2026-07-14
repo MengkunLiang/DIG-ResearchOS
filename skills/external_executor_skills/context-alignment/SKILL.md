@@ -89,6 +89,14 @@ novelty/novelty_audit.md
 
 If `ideation/hypothesis_brief.yaml` or `ideation/selected/t45_search_targets.json` exists, treat it as lineage and search-scope context only. It is a Pre-Novelty draft and cannot authorize an experiment, replace `ideation/hypotheses.md`, or relax a novelty/claim boundary.
 
+Native T4 artifacts such as `ideation/selected/selected_candidate.json`,
+`ideation/portfolio.json`, `ideation/final_cards/portfolio_cards.json`, and
+`ideation/evolution/` may be read only to trace the selected Candidate, Evidence
+Permission, Family, Mutation/Crossover lineage, and human decision. They are not an
+execution authority and must not be rewritten by an external executor. `idea_scorecard.yaml`
+is a compatibility projection when present; the post-T4.5 `hypotheses.md`, `exp_plan.yaml`,
+novelty audit, and handoff contract remain the authoritative inputs for external execution.
+
 Read `synthesis_workbench.json`, `domain_map.json`, `comparison_table.csv`, paper notes, resources, and user seeds only when a named field is missing, ambiguous, or contradicted. Do not re-run literature review or load entire directories without a targeted question.
 
 ## Classify mismatches by axis

@@ -72,3 +72,14 @@ coverage, or an explicit reading-upgrade request only. Do not resurrect or scan 
 Build a hypothesis table before prose. Each hypothesis must name the intervention/condition, predicted outcome, mechanism, alternative explanation, discriminating observation, boundary condition, measurement, baseline/control, and kill criterion. Distinguish assumptions from evidence. Re-open a cited note section when a mechanism or boundary is asserted; otherwise mark the statement as proposed. When combining material from more than one Candidate, do not concatenate sentences: first record a Compatibility Check, a Gene Donor Map, the source Candidate IDs, and the reason that one coherent Core Thesis is possible.
 
 Do not create an experiment result, numerical effect, available dataset, or causal identification claim. The test plan is an execution guide only and must not invoke external executors.
+
+## Native T4 compatibility
+
+When the source is a native T4 Candidate, use `ideation/selected/selected_candidate.json`,
+`ideation/hypothesis_brief.yaml`, its lineage, and the referenced canonical Paper Notes as
+read-only inputs. Do not rewrite `ideation/evidence/`, `ideation/populations/`,
+`ideation/evolution/`, `ideation/portfolio.json`, or `ideation/final_cards/`; those preserve
+P0/P1, Family, Mutation, Crossover, and Portfolio history. This Skill can prepare a
+researcher-facing hypothesis draft, but it cannot upgrade a Pre-Novelty brief into formal
+`ideation/hypotheses.md` or `ideation/exp_plan.yaml`. That authority belongs to a passing
+T4.5 novelty/collision audit.

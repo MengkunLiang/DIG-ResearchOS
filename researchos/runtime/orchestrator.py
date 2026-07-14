@@ -199,6 +199,19 @@ class AgentRunner:
         )
         self._t4_durable_recap_keys: set[str] = set()
 
+    def _is_t4_ideation_agent(self, ctx: ExecutionContext) -> bool:
+        """Return whether native T4 controls apply to this runner.
+
+        ``task_id`` is intentionally available to test and extension agents so
+        they can exercise generic runtime features under a T4-shaped context.
+        Those agents must not inherit T4's controller, artifact ordering, or
+        legacy-isolation behavior merely because they use the same task label.
+        The production T4 state-machine node always uses the registered
+        ``ideation`` agent; scope controller-only behavior to that agent.
+        """
+
+        return ctx.task_id == "T4" and self.agent.spec.name == "ideation"
+
     @staticmethod
     def _default_policy_factory(
         ctx: ExecutionContext, eff: EffectiveConfig
@@ -572,7 +585,7 @@ class AgentRunner:
             step_limit="unlimited" if eff.unlimited_budget else str(eff.max_steps),
         )
         if (
-            ctx.task_id == "T4"
+            self._is_t4_ideation_agent(ctx)
             and not self._t4_gate1_user_selection_exists(ctx)
             and not has_current_t4_prerun_confirmation(ctx.workspace_dir)
         ):
@@ -637,7 +650,7 @@ class AgentRunner:
             )
 
         policy = self.workspace_policy_factory(ctx, eff)
-        if ctx.task_id == "T4":
+        if self._is_t4_ideation_agent(ctx):
             self._maybe_prepare_t4_context_pack_before_prompt(ctx)
         build_ctx = ToolBuildContext(
             policy=policy,
@@ -659,6 +672,7 @@ class AgentRunner:
         # avoids a stale per-agent character cap while keeping a smaller model
         # on a safe, explicit file-reading path.
         ctx.extra["runtime_context_window"] = primary_binding.max_context
+        self._prepare_t4_execution_mode_before_prompt(ctx)
         sys_msg = Message.system(self.agent.system_prompt(ctx), step=0)
         user_msg = Message.user(self.agent.initial_user_message(ctx), step=0)
         messages: list[Message] = [sys_msg, user_msg]
@@ -770,6 +784,13 @@ class AgentRunner:
                     eff=eff,
                     budget=budget,
                 )
+            if not (
+                t4_pre_finalized
+                or t4_pre_novelty_selected
+                or t4_gate1_pre_finalized
+                or t4_evolution_pre_finalized
+            ):
+                self._enforce_t4_execution_mode_before_legacy_loop(ctx)
             if t4_evolution_pre_finalized:
                 deterministic_pre_finalized = True
             if t4_pre_novelty_selected:
@@ -1269,7 +1290,7 @@ class AgentRunner:
                         tool_name=tool_call.name,
                         detail=("工具完成：" if tool_ok else "工具失败：") + tool_summary,
                     )
-                    if ctx.task_id == "T4" and tool_call.name in {"write_file", "write_structured_file", "append_file"}:
+                    if self._is_t4_ideation_agent(ctx) and tool_call.name in {"write_file", "write_structured_file", "append_file"}:
                         # The tool result itself already announces the durable
                         # write. Refresh the on-disk checkpoint silently so a
                         # second, misleading "0/6" line is never printed.
@@ -1280,7 +1301,7 @@ class AgentRunner:
                         )
                         if tool_ok:
                             self._emit_t4_durable_candidate_recap(ctx, output_path)
-                    if ctx.task_id == "T4" and tool_call.name == "log_t4_ideation_progress" and tool_ok:
+                    if self._is_t4_ideation_agent(ctx) and tool_call.name == "log_t4_ideation_progress" and tool_ok:
                         self._update_t4_public_activity_from_event(ctx, tool_data)
                         # Candidate milestones and Gate1 artifact checkpoints
                         # measure different things. The candidate card above is
@@ -1647,7 +1668,7 @@ class AgentRunner:
         print it only when a user needs a new artifact-level milestone.
         """
 
-        if ctx.task_id != "T4":
+        if not self._is_t4_ideation_agent(ctx):
             return
         try:
             refreshed = refresh_t4_gate1_progress(
@@ -1735,7 +1756,7 @@ class AgentRunner:
         never intermediate reasoning.
         """
 
-        if ctx.task_id != "T4" or not output_path:
+        if not self._is_t4_ideation_agent(ctx) or not output_path:
             return
         relative = safe_relative(output_path, ctx.workspace_dir) or str(output_path)
         if relative not in {
@@ -1835,7 +1856,7 @@ class AgentRunner:
             detail="已提交模型请求，正在等待下一组可执行动作。",
         )
         if (
-            ctx.task_id == "T4"
+            self._is_t4_ideation_agent(ctx)
             and not self._t4_gate1_user_selection_exists(ctx)
             and not ctx.extra.get("t4_evolution_active")
         ):
@@ -1852,7 +1873,7 @@ class AgentRunner:
                     return task.result()
                 elapsed = int(time.monotonic() - started)
                 if (
-                    ctx.task_id == "T4"
+                    self._is_t4_ideation_agent(ctx)
                     and not self._t4_gate1_user_selection_exists(ctx)
                     and not ctx.extra.get("t4_evolution_active")
                 ):
@@ -1875,7 +1896,7 @@ class AgentRunner:
                 # T4 is intentionally visible but should not flood a long
                 # terminal. First heartbeat remains at 12s; later pulses are
                 # every 30s and only report public execution state.
-                timeout = 30.0 if ctx.task_id == "T4" else 20.0
+                timeout = 30.0 if self._is_t4_ideation_agent(ctx) else 20.0
         except BaseException:
             if not task.done():
                 task.cancel()
@@ -2630,7 +2651,7 @@ class AgentRunner:
     def _maybe_prepare_t4_context_pack_before_prompt(self, ctx: ExecutionContext) -> bool:
         """Prepare compact T4 inputs before rendering the ideation prompt."""
 
-        if ctx.task_id != "T4":
+        if not self._is_t4_ideation_agent(ctx):
             return False
         if has_current_t4_prerun_confirmation(ctx.workspace_dir):
             # The evolutionary controller builds its own Evidence Index and
@@ -2707,10 +2728,15 @@ class AgentRunner:
         the public ``T4 -> T4-GATE1 -> T4 -> T4.5`` transition.
         """
 
-        if ctx.task_id != "T4" or self._t4_gate1_user_selection_exists(ctx):
+        if not self._is_t4_ideation_agent(ctx) or self._t4_gate1_user_selection_exists(ctx):
             return False
         if not has_current_t4_prerun_confirmation(ctx.workspace_dir):
             return False
+        self._record_t4_execution_mode(
+            ctx,
+            mode="evolutionary",
+            reason="current_pre_run_confirmation",
+        )
         store = T4ArtifactStore(ctx.workspace_dir)
         try:
             run_config = store.read_run_config()
@@ -2937,6 +2963,123 @@ class AgentRunner:
             action_type="t4_evolution_controller",
         )
         return True
+
+    def _prepare_t4_execution_mode_before_prompt(self, ctx: ExecutionContext) -> None:
+        """Choose a safe prompt family before any T4 prompt is rendered.
+
+        ``IdeationAgent.system_prompt`` runs before the controller preflight.
+        Without this guard, a direct ``run-task T4`` could render the retired
+        ``ideation.j2`` prompt even though the native controller later pauses
+        for its pre-run gate.  Only an explicit migration setting can select
+        the legacy prompt, and native artifacts always win that decision.
+        """
+
+        if not self._is_t4_ideation_agent(ctx):
+            return
+        if self._t4_has_native_artifacts(ctx.workspace_dir):
+            ctx.extra["t4_execution_mode"] = "evolutionary"
+            ctx.extra["t4_execution_mode_reason"] = "native_artifacts_present"
+            return
+        if has_current_t4_prerun_confirmation(ctx.workspace_dir):
+            ctx.extra["t4_execution_mode"] = "evolutionary"
+            ctx.extra["t4_execution_mode_reason"] = "current_pre_run_confirmation"
+            return
+        if self.runtime_settings.agent_behavior.allow_legacy_t4_fallback:
+            ctx.extra["t4_execution_mode"] = "legacy_fallback"
+            ctx.extra["t4_execution_mode_reason"] = (
+                "explicit_runtime_setting_without_current_evolution_confirmation"
+            )
+            self._record_t4_execution_mode(
+                ctx,
+                mode="legacy_fallback",
+                reason=str(ctx.extra["t4_execution_mode_reason"]),
+            )
+            return
+        ctx.extra["t4_execution_mode"] = "evolutionary"
+        ctx.extra["t4_execution_mode_reason"] = "pre_run_confirmation_required"
+
+    def _enforce_t4_execution_mode_before_legacy_loop(self, ctx: ExecutionContext) -> None:
+        """Fail closed rather than falling from native T4 into ``ideation.j2``.
+
+        The state machine normally collects the pre-run choice before it starts
+        T4.  This guard protects direct task invocation, stale resume contexts,
+        and future callers that bypass that gate.  A native failure raises from
+        the controller and never reaches this method, so it cannot silently
+        degrade into a different scientific workflow.
+        """
+
+        if not self._is_t4_ideation_agent(ctx) or self._t4_gate1_user_selection_exists(ctx):
+            return
+        mode = str(ctx.extra.get("t4_execution_mode") or "evolutionary")
+        if mode == "legacy_fallback":
+            if self._t4_has_native_artifacts(ctx.workspace_dir):
+                raise RecoverableRuntimePause(
+                    "T4 detected native Evolution artifacts. Legacy fallback is blocked to protect the existing Population; resume through the native T4 decision flow."
+                )
+            self._record_t4_execution_mode(
+                ctx,
+                mode="legacy_fallback",
+                reason=str(
+                    ctx.extra.get("t4_execution_mode_reason")
+                    or "explicit_runtime_setting_without_current_evolution_confirmation"
+                ),
+            )
+            return
+
+        if self._t4_has_native_artifacts(ctx.workspace_dir):
+            raise RecoverableRuntimePause(
+                "T4 has native Evolution artifacts but no resumable native pre-run confirmation. The Population was preserved; resume through the T4 decision flow instead of running a legacy prompt."
+            )
+        raise RecoverableRuntimePause(
+            "T4 is waiting for its Publication Orientation and Evolution pre-run confirmation. No legacy ideation prompt was started; return through the T4 gate, choose a profile and run mode, then resume."
+        )
+
+    @staticmethod
+    def _t4_has_native_artifacts(workspace_dir: Path) -> bool:
+        """Return whether a workspace contains artifacts legacy must not touch."""
+
+        workspace = Path(workspace_dir)
+        protected = (
+            "ideation/evolution/state.json",
+            "ideation/populations/P0.json",
+            "ideation/populations/P1.json",
+            "ideation/portfolio.json",
+            "ideation/final_cards/portfolio_cards.json",
+        )
+        return any((workspace / path).is_file() for path in protected)
+
+    def _record_t4_execution_mode(
+        self,
+        ctx: ExecutionContext,
+        *,
+        mode: str,
+        reason: str,
+    ) -> None:
+        """Persist a compact, non-secret receipt for native/legacy T4 routing."""
+
+        if not self._is_t4_ideation_agent(ctx):
+            return
+        store = T4ArtifactStore(ctx.workspace_dir)
+        protected = self._t4_has_native_artifacts(ctx.workspace_dir)
+        if mode == "legacy_fallback" and protected:
+            raise RecoverableRuntimePause(
+                "Legacy fallback was refused because native Evolution artifacts already exist. The existing Population was not modified."
+            )
+        store.write_json(
+            "ideation/evolution/execution_mode.json",
+            {
+                "schema_version": "1.0.0",
+                "semantics": "t4_execution_mode_receipt",
+                "mode": mode,
+                "reason": reason,
+                "run_id": ctx.run_id,
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+                "native_artifacts_present": protected,
+                "artifact_protection": (
+                    "legacy_fallback is refused whenever native Evolution artifacts exist"
+                ),
+            },
+        )
 
     @staticmethod
     def _write_t4_operation_outcome(
@@ -3230,8 +3373,23 @@ class AgentRunner:
         Pre-Novelty handoff and T4.5 formalization.
         """
 
-        if ctx.task_id != "T4":
+        if not self._is_t4_ideation_agent(ctx):
             return False
+
+        if not self.runtime_settings.agent_behavior.allow_legacy_t4_fallback:
+            return False
+
+        if has_current_t4_prerun_confirmation(ctx.workspace_dir):
+            return False
+
+        if self._t4_has_native_artifacts(ctx.workspace_dir):
+            return False
+
+        self._record_t4_execution_mode(
+            ctx,
+            mode="legacy_fallback",
+            reason="explicit_runtime_setting_reuse_of_valid_legacy_bundle",
+        )
 
         if (ctx.workspace_dir / "ideation" / "evolution" / "state.json").is_file():
             return False
@@ -3301,7 +3459,7 @@ class AgentRunner:
         hypotheses before novelty/collision review.
         """
 
-        if ctx.task_id != "T4" or not self._t4_gate1_user_selection_exists(ctx):
+        if not self._is_t4_ideation_agent(ctx) or not self._t4_gate1_user_selection_exists(ctx):
             return False
         required = [
             ctx.workspace_dir / "ideation" / "hypothesis_brief.yaml",
@@ -3326,7 +3484,7 @@ class AgentRunner:
     async def _maybe_finalize_t4_gate1_before_llm(self, ctx: ExecutionContext) -> bool:
         """T4 resume: if Gate1 artifacts are ready, stop before another long LLM run."""
 
-        if ctx.task_id != "T4":
+        if not self._is_t4_ideation_agent(ctx):
             return False
         if self._t4_gate1_user_selection_exists(ctx):
             return False
@@ -3376,7 +3534,7 @@ class AgentRunner:
     ) -> tuple[str, str | None]:
         """Convert a partial/failed T4 run into a Gate1-ready success when possible."""
 
-        if ctx.task_id != "T4" or self._t4_gate1_user_selection_exists(ctx):
+        if not self._is_t4_ideation_agent(ctx) or self._t4_gate1_user_selection_exists(ctx):
             return stop_reason, error_msg
         if ctx.extra.get("completion_mode") in {"t4_resume_prefinalize", "t4_gate1_ready"}:
             return stop_reason, error_msg

@@ -45,7 +45,6 @@ _CATEGORY_SUMMARIES = {
 # expose a guided interaction summary.  Keep their catalog label useful to a
 # researcher instead of showing their implementation-facing package metadata.
 _LEGACY_SKILL_SUMMARIES = {
-    "context-re-boosting": "补齐已有研究材料的上下文，整理后续实验或写作所需的依据。",
     "research-reboost": "将已确认的研究计划整理为外部实验执行所需的交接材料。",
 }
 
@@ -123,8 +122,8 @@ _PROFILES: dict[str, SkillCatalogProfile] = {
     "submission-readiness": SkillCatalogProfile("交付与投稿", "提交检查", "审查匿名化、引用、PDF 与提交材料"),
     "reference-project-miner": SkillCatalogProfile("工程研究", "参考项目", "从本地项目提取可迁移机制"),
     "method-builder": SkillCatalogProfile("外部执行器", "兼容指导", "外部执行器的历史兼容入口"),
-    "context-re-boosting": SkillCatalogProfile("外部执行器", "交接重整", "外部实验前的历史兼容交接入口"),
     "research-reboost": SkillCatalogProfile("外部执行器", "交接重整", "外部实验 handoff 的兼容 Skill"),
+    "project-skill-specialization": SkillCatalogProfile("外部执行器", "Skill 专项编译", "从 T5 handoff 生成并校验项目专属执行器 Skill Suite"),
     "domain-synthesis-studio": SkillCatalogProfile("文献与知识", "领域综合", "从范围、补检到证据约束的领域综合与后续路径选择"),
     "literature-comparison-studio": SkillCatalogProfile("文献与知识", "集成文献对比", "从 DOI/PDF/卡片开始建立可追溯比较与决策"),
     "cross-domain-idea-studio": SkillCatalogProfile("Idea 与假设", "跨域候选治理", "用桥接证据、迁移风险和人工选择构建跨域 Idea"),

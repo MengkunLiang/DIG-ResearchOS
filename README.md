@@ -116,6 +116,7 @@ T3 processes full-text papers individually because page coverage and section evi
 | Re-enter this workspace at T4 after validating T4 prerequisites | `python -m researchos.cli resume --workspace ./workspace/project-a --from-task T4` |
 | Start a new full pipeline at T4 using validated upstream artifacts from another workspace | `python -m researchos.cli run --workspace ./workspace/project-b --from ./workspace/project-a --start-task T4` |
 | Debug only T4 in a fresh workspace copied from another project | `python -m researchos.cli run-task T4 --workspace ./workspace/t4-debug --from ./workspace/project-a` |
+| Run T5 research reboost only | `python -m researchos.cli run-task T5-REBOOST --workspace ./workspace/project-a` |
 | Run one task without advancing the full pipeline | `python -m researchos.cli run-task T3.6-SEC-INTRO --workspace ./workspace/project-a` |
 | Validate one task's artifacts | `python -m researchos.cli validate --task T3.6-SEC-INTRO --workspace ./workspace/project-a` |
 | Regenerate the deterministic Survey audit without an LLM | `python -m researchos.cli audit-survey --workspace ./workspace/project-a` |

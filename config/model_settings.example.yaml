@@ -28,7 +28,7 @@ api_base: https://api.deepseek.com
 api_key: "${DEEPSEEK_API_KEY}"
 
 # 所有 Agent 和 Skill 使用同一个 model；没有 heavy/medium/light 或单 Agent 路由。
-model: ""
+model: deepseek-v4-pro
 
 # 同一 provider/model 临时故障时的重试策略，不会暗中切换到其他模型。
 # 认证或配置错误不会重试，CLI 会提示需要修正的内容。

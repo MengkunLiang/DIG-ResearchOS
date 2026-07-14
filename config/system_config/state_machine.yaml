@@ -898,14 +898,23 @@ states:
     next_on_success: __parse_from_output__
     next_on_failure: failed
 
-  # T5-REBOOST-GATE 状态：ResearchOS 直接调用 LLM API 对 Pre-T5 材料做 context re-boost
+  # T5-REBOOST-GATE 状态：ResearchOS 直接调用 LLM API 执行 skills/research-reboost
   # 用途：把研究目标、方法机制、baseline、claim/evidence 边界重排成外部执行器上下文，
   # 并编译外部执行器 handoff、prompt、schema、allowed paths 和项目专属 skill suite。
   # Skill suite 必须在本节点由确定性专项编译器生成并通过 schema/模板完整性校验；
   # `researchos specialize-executor-skills` 仅用于可选 LLM 增强。
   T5-REBOOST-GATE:
-    agent: experimenter
+    skill: research-reboost
     mode: reboost
+    extra:
+      user_request: |
+        请执行 T5-REBOOST：调用当前 LLM API，按系统 prompt 中已加载的
+        ./skills/research-reboost/SKILL.md、references/reboost-protocol.md 和
+        references/handoff_pack.schema.json 对 Pre-T5 材料做语义重编译。read_file
+        只用于当前 workspace 内的材料，不要读取仓库级 skills/...、references/... 或 scripts/...。
+        先读取必要的 workspace 源文件并自行编译完整 handoff_pack 对象，然后调用
+        compile_research_reboost_handoff(handoff_pack=...) 发布、校验并生成 executor 控制文件。
+        不要执行实验、实现代码、选择执行器或写 result_pack。
     inputs:
       project: project.yaml
       hypotheses: ideation/hypotheses.md

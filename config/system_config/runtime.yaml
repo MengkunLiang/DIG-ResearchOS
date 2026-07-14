@@ -44,6 +44,11 @@ agent_behavior:
   # Agent 输出不符合预期格式时的重试上限
   max_validation_retries: 3
 
+  # 仅用于迁移极早期 T4 workspace 的显式兼容开关。默认 false：T4 只运行
+  # Evolutionary Pipeline。即使设为 true，只要 workspace 已有 native T4
+  # Population、state 或 final-card artifact，runtime 也会拒绝 legacy，避免覆盖。
+  allow_legacy_t4_fallback: false
+
 # 调试配置
 debug:
   # 是否启用详细的执行追踪

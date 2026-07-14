@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
+from uuid import uuid4
 
 import yaml
 
-from .compiler import _atomic_write_json, specialize_project_skills
+from .compiler import _atomic_write_json, _record_failure, specialize_project_skills
 from .paths import build_specialization_paths
 from .types import SpecializationResult
 from .validation import make_error
@@ -65,7 +67,6 @@ async def specialize_project_skills_with_llm(
         if len(addenda) != len(skill_names):
             missing = sorted(set(skill_names) - set(addenda))
             raise ValueError("LLM response missing skill specializations: " + ", ".join(missing))
-        _apply_llm_addenda(paths.output_skills_path, addenda)
         report = dict(base.report or {})
         report["specialization_method"] = "llm_assisted_project_specialization"
         report["llm_specialization"] = {
@@ -84,7 +85,15 @@ async def specialize_project_skills_with_llm(
         for item in report.get("skills", []) or []:
             if isinstance(item, dict) and str(item.get("skill_name")) in addenda:
                 item["llm_specialization_status"] = "ready"
-        _atomic_write_json(paths.output_report_path, report)
+        staging_root = paths.external_executor_root / f".llm_skill_specialization_staging-{uuid4().hex}"
+        staged_skills = staging_root / "skills"
+        try:
+            shutil.copytree(paths.output_skills_path, staged_skills)
+            _apply_llm_addenda(staged_skills, addenda)
+            _publish_llm_specialization(paths, staged_skills, report)
+        finally:
+            if staging_root.exists():
+                shutil.rmtree(staging_root, ignore_errors=True)
         return SpecializationResult(
             status=report.get("status", base.status),
             report_path=paths.output_report_path,
@@ -110,12 +119,14 @@ async def specialize_project_skills_with_llm(
         }
         report.setdefault("render_errors", []).extend(errors)
         try:
-            _atomic_write_json(paths.output_report_path, report)
+            failure_report_path = _record_failure(paths, report, dry_run=False)
         except Exception:
-            pass
+            failure_report_path = paths.output_report_path.with_name(
+                "skill_specialization_failure_report.json"
+            )
         return SpecializationResult(
             status="failed",
-            report_path=paths.output_report_path,
+            report_path=failure_report_path,
             context_path=paths.output_context_path,
             skills_path=paths.output_skills_path,
             errors=errors,
@@ -256,6 +267,26 @@ def _apply_llm_addenda(skills_path: Path, addenda: Mapping[str, Mapping[str, Any
         addendum = _render_addendum(skill_name, data)
         updated = text.replace(marker, addendum + "\n" + marker, 1)
         skill_path.write_text(updated, encoding="utf-8")
+
+
+def _publish_llm_specialization(paths, staged_skills: Path, report: Mapping[str, Any]) -> None:
+    """Publish complete LLM guidance or keep the deterministic Suite intact."""
+
+    live_skills = paths.output_skills_path
+    backup = live_skills.with_name(
+        f"skills.llm-backup-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:8]}"
+    )
+    live_skills.rename(backup)
+    try:
+        staged_skills.rename(live_skills)
+        _atomic_write_json(paths.output_report_path, dict(report))
+    except Exception:
+        if live_skills.exists():
+            shutil.rmtree(live_skills, ignore_errors=True)
+        backup.rename(live_skills)
+        raise
+    else:
+        shutil.rmtree(backup, ignore_errors=True)
 
 
 def _render_addendum(skill_name: str, data: Mapping[str, Any]) -> str:

@@ -114,7 +114,6 @@ DEFAULT_PUBLIC_SKILL_PROFILES: dict[str, tuple[str, ...]] = {
     "citation-library-curator": ("literature_discovery", "paper_acquisition"),
     "citation-provenance-audit": ("claim_review",),
     "claim-evidence-map": ("structured_artifacts", "claim_review"),
-    "context-re-boosting": ("structured_artifacts", "claim_review", "external_handoff"),
     "cross-domain-idea-studio": (
         "structured_artifacts", "literature_discovery", "paper_acquisition", "paper_curation",
         "literature_processing", "idea_analysis",

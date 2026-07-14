@@ -1,6 +1,21 @@
 ---
 name: research-reboost
 description: Compile ResearchOS Pre-T5 research artifacts into a source-traceable, schema-valid external_executor/handoff_pack.json. Use when T5-HANDOFF must re-boost project, literature, hypothesis, novelty, risk, and experiment-plan artifacts into executable context; when Method Intent Drafting must be performed inside reboost; or when an existing handoff pack must be reconciled, repaired, or validated before project-specific skill compilation or external execution. Do not run experiments, implement the method, compile the executor skill suite, or produce the final realized method.
+tools:
+  - read_file
+  - list_files
+  - compile_research_reboost_handoff
+allowed_read_prefixes:
+  - ""
+  - project.yaml
+  - literature/
+  - ideation/
+  - novelty/
+  - resources/
+  - user_seeds/
+  - external_executor/
+allowed_write_prefixes:
+  - external_executor/
 ---
 
 # Research Reboost
@@ -19,7 +34,7 @@ The pack is an execution-time source of truth for T5 external work, but `method_
 
 Find the project root and the required Pre-T5 files listed in `references/reboost-protocol.md`. Use project-relative paths in the pack. Do not copy whole source documents into the handoff.
 
-Run the deterministic inventory first:
+In standalone Codex-style environments, run the deterministic inventory first:
 
 ```bash
 python3 scripts/inventory_sources.py \
@@ -28,6 +43,8 @@ python3 scripts/inventory_sources.py \
 ```
 
 Treat the inventory as discovery evidence, not semantic interpretation. If a required source is missing, continue only far enough to produce a blocked diagnosis; do not invent its content.
+
+When this Skill is executed inside the ResearchOS T5 state machine, use the registered `compile_research_reboost_handoff` tool instead of shelling out. First read the required sources and compile the full `handoff_pack` object yourself under this Skill contract; then pass that object as the tool's `handoff_pack` argument. The tool is only the publication and validation boundary: it writes the pretty-printed JSON, runs the bundled validator, and publishes the T5 executor control files. If the argument is omitted, the tool may fall back to its deterministic repair compiler for legacy or offline recovery, but the normal T5 path should provide the LLM-compiled pack.
 
 ### 2. Read sources by decision relevance
 
@@ -60,7 +77,7 @@ Compile `context_reboost` from the ledger:
 
 Use the conflict rules in `references/reboost-protocol.md`. Novelty constraints control required baselines and must-not-claim boundaries; the experiment plan controls protocol details only where it does not weaken those constraints. Preserve every material mismatch even after applying precedence.
 
-### 5. Draft method intent inside reboost
+### 5. Draft method intent
 
 Derive `method_intent` from the reconciled context, not directly from one source file. Keep both required constants:
 

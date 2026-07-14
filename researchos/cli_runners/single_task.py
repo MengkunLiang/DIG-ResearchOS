@@ -24,6 +24,8 @@ from ..runtime.task_recovery import prepare_task_resume_artifacts
 from ..runtime.workspace import initialize_workspace
 from ..schemas.state import StateYaml, TaskHistoryEntry
 from ..schemas.validator import register_builtin_task_checkers, validate_prerequisites, validate_task_artifacts
+from ..skills.agent import SkillAgent
+from ..skills.loader import resolve_skill
 from ..tools.human_gate import CLIHumanInterface, HumanInputUnavailable, HumanInterface
 from ..tools.latex_compile import latex_backend_preflight
 from ..tools.registry import ToolRegistry
@@ -49,6 +51,7 @@ class SingleTaskRunner:
         task_id: str,
         llm_client: LLMClient,
         tool_registry: ToolRegistry,
+        skill_roots: list[Path] | None = None,
         from_workspace: Path | None = None,
         override_profile: str | None = None,
         human_interface: HumanInterface | None = None,
@@ -59,6 +62,7 @@ class SingleTaskRunner:
         self.task_id = self._normalize_task_id(task_id, allow_legacy=allow_legacy)
         self.llm = llm_client
         self.tools = tool_registry
+        self.skill_roots = skill_roots or []
         self.from_workspace = from_workspace
         self.override_profile = override_profile
         self.runtime_settings = runtime_settings or RuntimeSettings()
@@ -420,6 +424,12 @@ class SingleTaskRunner:
     def _build_agent(self, task_node):
         if task_node is not None and task_node.agent is not None:
             return get_agent_by_id(task_node.agent, mode=task_node.mode)
+        if task_node is not None and task_node.skill is not None:
+            skill = resolve_skill(task_node.skill, self.skill_roots)
+            return SkillAgent(
+                skill=skill,
+                available_tools=set(self.tools.available_names()),
+            )
 
         agent_cls = TASK_TO_AGENT_MAP.get(self.task_id)
         if agent_cls is None:

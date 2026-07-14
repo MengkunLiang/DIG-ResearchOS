@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from researchos.agents.reader import _validate_current_note_extensions
 from researchos.paper_notes import compact_paper_note_view
+from researchos.runtime.progress import summarize_reader_note_progress
 
 
 def test_compact_paper_note_view_keeps_only_researcher_facing_fields(tmp_path):
@@ -28,3 +29,27 @@ def test_current_note_extension_requires_provenance_and_all_implication_statuses
 
     assert valid is False
     assert "Scientific implication" in str(error)
+
+
+def test_reader_progress_uses_the_compact_note_view_without_dumping_the_note():
+    summary = summarize_reader_note_progress(
+        {
+            "paper_title": "A Bounded Paper",
+            "note_status": "FULL-TEXT",
+            "status": "complete",
+            "progress": "1/2 target notes complete",
+            "compact_note_view": {
+                "problem": "A detailed problem that belongs in the saved note.",
+                "mechanism": "A bounded mechanism is tested with an active and disabling comparison.",
+                "finding": "A detailed finding that is not needed when the mechanism is available.",
+                "scientific_implication": "The result would sharpen the scientific explanation of the target condition.",
+                "engineering_implication": "not applicable",
+                "practical_implication": "not applicable",
+            },
+        }
+    )
+
+    assert "机制：A bounded mechanism" in summary
+    assert "含义：The result would sharpen" in summary
+    assert "detailed problem" not in summary
+    assert "detailed finding" not in summary

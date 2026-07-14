@@ -12,12 +12,33 @@ from researchos.ideation.prerun import default_run_config, inspect_t4_inputs
 from researchos.ideation.state import T4ArtifactStore, run_config_fingerprint
 from researchos.ideation.models import TargetProfile
 from researchos.orchestration.state_machine import StateMachine
-from researchos.runtime.agent import ExecutionContext
+from researchos.runtime.agent import Agent, AgentSpec, ExecutionContext
+from researchos.runtime.config import AgentBehaviorSettings, RuntimeSettings
+from researchos.runtime.errors import RecoverableRuntimePause
 from researchos.runtime.orchestrator import AgentRunner
 from researchos.testing.mocks import MockHumanInterface, MockLLMClient
 from researchos.tools.builtin import register_builtin_tools
 from researchos.tools.registry import ToolRegistry
 from tests.unit.test_t4_legacy_projection import _ready_projection_inputs
+
+
+class _GenericT4ProbeAgent(Agent):
+    """A non-production Agent that reuses the T4 label for runtime testing."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            AgentSpec(
+                name="generic-t4-probe",
+                model_tier="standard",
+                tool_names=[],
+            )
+        )
+
+    def system_prompt(self, ctx: ExecutionContext) -> str:
+        return "generic runtime probe"
+
+    def initial_user_message(self, ctx: ExecutionContext) -> str:
+        return "exercise generic runtime behavior"
 
 
 def _write_workspace(workspace):
@@ -160,6 +181,31 @@ def _payload_from_prompt(prompt: str) -> dict:
     return json.loads(prompt[start:])
 
 
+def test_t4_controller_controls_are_scoped_to_the_registered_ideation_agent(tmp_workspace):
+    """Generic AgentRunner uses must not trigger native T4 artifact work."""
+
+    registry = ToolRegistry()
+    register_builtin_tools(registry)
+    runner = AgentRunner(
+        _GenericT4ProbeAgent(),
+        registry,
+        MockLLMClient([]),
+        MockHumanInterface(),
+    )
+    ctx = ExecutionContext(
+        workspace_dir=tmp_workspace,
+        project_id="runtime-test",
+        task_id="T4",
+        run_id="generic-t4-probe",
+    )
+
+    runner._prepare_t4_execution_mode_before_prompt(ctx)
+
+    assert "t4_execution_mode" not in ctx.extra
+    assert runner._maybe_prepare_t4_context_pack_before_prompt(ctx) is False
+    assert not (tmp_workspace / "ideation" / "t4_context_pack.json").exists()
+
+
 @pytest.mark.asyncio
 async def test_confirmed_standard_t4_runs_p0_to_p1_and_preserves_gate1_transition(tmp_workspace, capsys, monkeypatch):
     _write_workspace(tmp_workspace)
@@ -237,6 +283,12 @@ async def test_confirmed_standard_t4_runs_p0_to_p1_and_preserves_gate1_transitio
     assert (tmp_workspace / "ideation/populations/P1.json").exists()
     assert (tmp_workspace / "ideation/portfolio.json").exists()
     assert (tmp_workspace / "ideation/final_cards/portfolio_cards.json").exists()
+    execution_mode = json.loads(
+        (tmp_workspace / "ideation/evolution/execution_mode.json").read_text(encoding="utf-8")
+    )
+    assert execution_mode["mode"] == "evolutionary"
+    assert execution_mode["reason"] == "current_pre_run_confirmation"
+    assert runner.llm.call_count == 0
     assert validate_t4_gate1_ready(tmp_workspace)[0]
     rendered = capsys.readouterr().out
     assert "Evidence Routing" in rendered
@@ -287,3 +339,82 @@ async def test_selected_candidate_advances_to_t45_from_pre_novelty_artifacts_wit
     state = machine.start_task(state, "selected-t4", workspace_dir=tmp_workspace)
     advanced = machine.advance(state, result, workspace_dir=tmp_workspace)
     assert advanced.current_task == "T4.5"
+
+
+@pytest.mark.asyncio
+async def test_t4_without_confirmation_fails_closed_before_legacy_prompt_or_llm(tmp_workspace):
+    """Direct invocation must not silently use the historical prompt path."""
+
+    _write_workspace(tmp_workspace)
+    (tmp_workspace / "ideation/evolution/pre_run_confirmation.json").unlink()
+    registry = ToolRegistry()
+    register_builtin_tools(registry)
+    llm = MockLLMClient([])
+    runner = AgentRunner(IdeationAgent(), registry, llm, MockHumanInterface())
+    ctx = ExecutionContext(workspace_dir=tmp_workspace, project_id="runtime-test", task_id="T4", run_id="native-required")
+
+    result = await runner.run(ctx)
+
+    assert not result.ok
+    assert result.stop_reason == "interrupted"
+    assert "pre-run confirmation" in str(result.error)
+    assert llm.call_count == 0
+    assert not (tmp_workspace / "ideation/evolution/execution_mode.json").exists()
+    assert "T4 Ideation Agent recovery assistant" not in runner.agent.system_prompt(ctx)
+
+
+def test_explicit_legacy_setting_is_the_only_path_that_renders_legacy_prompt_and_records_reason(tmp_workspace):
+    """A migration operator can opt in, and the receipt remains auditable."""
+
+    _write_workspace(tmp_workspace)
+    (tmp_workspace / "ideation/evolution/pre_run_confirmation.json").unlink()
+    registry = ToolRegistry()
+    register_builtin_tools(registry)
+    settings = RuntimeSettings(
+        agent_behavior=AgentBehaviorSettings(allow_legacy_t4_fallback=True)
+    )
+    runner = AgentRunner(
+        IdeationAgent(), registry, MockLLMClient([]), MockHumanInterface(), runtime_settings=settings
+    )
+    ctx = ExecutionContext(workspace_dir=tmp_workspace, project_id="runtime-test", task_id="T4", run_id="legacy-opt-in")
+
+    runner._prepare_t4_execution_mode_before_prompt(ctx)
+
+    assert ctx.extra["t4_execution_mode"] == "legacy_fallback"
+    assert "T4 Ideation Agent recovery assistant" in runner.agent.system_prompt(ctx)
+    receipt = json.loads(
+        (tmp_workspace / "ideation/evolution/execution_mode.json").read_text(encoding="utf-8")
+    )
+    assert receipt["mode"] == "legacy_fallback"
+    assert receipt["reason"] == "explicit_runtime_setting_without_current_evolution_confirmation"
+
+
+def test_legacy_fallback_cannot_select_or_overwrite_native_t4_artifacts(tmp_workspace):
+    """Native work remains authoritative even when a migration switch is on."""
+
+    _write_workspace(tmp_workspace)
+    (tmp_workspace / "ideation/evolution/pre_run_confirmation.json").unlink()
+    protected = tmp_workspace / "ideation/populations/P0.json"
+    protected.parent.mkdir(parents=True, exist_ok=True)
+    protected.write_text('{"native": true}\n', encoding="utf-8")
+    settings = RuntimeSettings(
+        agent_behavior=AgentBehaviorSettings(allow_legacy_t4_fallback=True)
+    )
+    registry = ToolRegistry()
+    register_builtin_tools(registry)
+    runner = AgentRunner(
+        IdeationAgent(), registry, MockLLMClient([]), MockHumanInterface(), runtime_settings=settings
+    )
+    ctx = ExecutionContext(workspace_dir=tmp_workspace, project_id="runtime-test", task_id="T4", run_id="protected-native")
+
+    runner._prepare_t4_execution_mode_before_prompt(ctx)
+
+    assert ctx.extra["t4_execution_mode"] == "evolutionary"
+    assert "T4 Ideation Agent recovery assistant" not in runner.agent.system_prompt(ctx)
+    with pytest.raises(RecoverableRuntimePause, match="native Evolution artifacts"):
+        runner._record_t4_execution_mode(
+            ctx,
+            mode="legacy_fallback",
+            reason="test_attempt_after_native_artifact",
+        )
+    assert protected.read_text(encoding="utf-8") == '{"native": true}\n'

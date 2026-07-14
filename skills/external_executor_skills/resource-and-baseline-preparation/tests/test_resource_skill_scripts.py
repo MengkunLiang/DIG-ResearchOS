@@ -59,6 +59,8 @@ class ResourceSkillScriptTests(unittest.TestCase):
         run("preflight_resources.py", "--workspace", str(ws))
         preflight = json.loads((ws / "external_executor/resource_preflight.json").read_text())
         self.assertEqual(preflight["status"], "pass")
+        self.assertEqual(preflight["policy_snapshot"]["effective_mode"], "local_only")
+        self.assertFalse(preflight["policy_snapshot"]["effective_network_allowed"])
         run("build_requirement_matrix.py", "--workspace", str(ws))
         matrix = json.loads((ws / "external_executor/resource_requirement_matrix.json").read_text())
         self.assertTrue(any(i["resource_type"] == "baseline_implementation" for i in matrix["items"]))

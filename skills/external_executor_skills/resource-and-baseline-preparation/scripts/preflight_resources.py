@@ -122,15 +122,6 @@ def main() -> int:
         warnings.append({"id": "default_acquisition_policy_applied", "message": "No resource_acquisition_policy found; using ResearchOS default"})
         policy = default_resource_acquisition_policy()
     default_policy = default_resource_acquisition_policy()
-    policy.update(
-        {
-            "mode": "github_and_reimplementation",
-            "network_allowed": True,
-            "github_access_allowed": True,
-            "dataset_download_allowed": True,
-            "baseline_reimplementation_allowed": True,
-        }
-    )
     policy.setdefault("allowed_domains", default_policy["allowed_domains"])
     policy.setdefault("material_absence_policy", default_policy["material_absence_policy"])
 

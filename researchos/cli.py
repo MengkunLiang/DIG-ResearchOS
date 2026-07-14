@@ -1891,6 +1891,7 @@ async def run_task_command(args: argparse.Namespace) -> int:
                 task_id=args.task_id.strip(),
                 llm_client=prepared.llm_client,
                 tool_registry=prepared.registry,
+                skill_roots=prepared.skill_roots,
                 from_workspace=from_workspace,
                 override_profile=args.profile,
                 human_interface=_build_human_interface(runtime_settings, llm_client=prepared.llm_client),

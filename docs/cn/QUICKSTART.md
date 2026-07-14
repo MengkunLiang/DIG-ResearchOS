@@ -118,7 +118,13 @@ python -m researchos.cli run-task T9 --workspace ./workspace/project-a
 
 ## 7. T5 Executor 技能与恢复
 
-T5 现在将项目特定的 executor 技能套件作为其正常 reboost 编译器事务的一部分发布。有效的 reboost 在进入 executor 选择前，会写入交接文件、预期的输出契约、`external_executor/project_skill_context.yaml`、`external_executor/skill_specialization_report.json` 以及全部 13 个 `external_executor/skills/*/SKILL.md` 文件。报告记录了确定性编译器及其验证；LLM 特化是可选的优化，而非隐藏的前提条件。
+T5 现在通过已配置的 LLM API 执行 `skills/research-reboost`，并在同一个 reboost 事务中发布项目特定的 executor 技能套件。有效的 reboost 在进入 executor 选择前，会写入交接文件、预期的输出契约、`external_executor/project_skill_context.yaml`、`external_executor/skill_specialization_report.json` 以及全部 13 个 `external_executor/skills/*/SKILL.md` 文件。报告记录 LLM Skill 执行、确定性校验和项目 Skill suite 发布；后续对 executor suite 做 LLM 特化仍只是可选优化，而非隐藏前提条件。
+
+只运行 T5 reboost 模块而不推进完整流水线时，使用：
+
+```bash
+python -m researchos.cli run-task T5-REBOOST --workspace ./workspace/project-a
+```
 
 对于由旧版本创建、且已在 `T5-EXTERNAL-WAIT` 状态下暂停但没有 `external_executor/skills/` 的工作区，可在不调用模型的情况下发布相同的可审计套件，然后验证 executor 门控：
 

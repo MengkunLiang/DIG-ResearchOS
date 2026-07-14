@@ -146,3 +146,14 @@ are allowed only when allowed artifacts explicitly source them.
 The final selection file must preserve the human decision. Do not claim that a selected
 candidate has entered hypothesis compilation unless the decision says so; recommend the
 separate `hypothesis-compiler` Skill as the next explicit action.
+
+## Native T4 handoff boundary
+
+The files produced here are Bridge evidence and optional Candidate Seeds. They are not
+native T4 Population artifacts: do not write `ideation/evidence/`, `ideation/populations/`,
+`ideation/evolution/`, `ideation/portfolio.json`, or `ideation/final_cards/`. When the
+researcher wants these Seeds considered with other routes, hand them to the T4 Evidence
+Routing flow. It preserves the Bridge escape hatch, decides whether the evidence permits a
+Candidate, independently scores any resulting Candidate, and keeps unsupported transfers
+visible rather than forcing a merge. A selected native Candidate produces a Pre-Novelty
+brief first; formal hypotheses and an experiment plan remain a T4.5-only outcome.

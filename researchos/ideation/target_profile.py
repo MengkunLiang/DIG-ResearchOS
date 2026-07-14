@@ -14,17 +14,18 @@ from typing import Any, Mapping
 
 import yaml
 
+from ..runtime.system_config import system_config_path
 from ..writing_profiles import resolve_venue_writing_profile
 from .models import TargetProfile
-
-
-_PROFILE_CONFIG = Path(__file__).resolve().parents[2] / "config" / "system_config" / "t4_target_profiles.yaml"
 
 
 def load_target_profile_catalog(path: Path | None = None) -> dict[str, dict[str, Any]]:
     """Load system-maintained, non-project-specific profile defaults."""
 
-    source = path or _PROFILE_CONFIG
+    # Use the shared deployment-aware resolver. In a source checkout this is
+    # the repository config; in Docker the package lives in site-packages while
+    # the mounted/application config remains under `/app/config`.
+    source = path or system_config_path("t4_target_profiles.yaml")
     try:
         payload = yaml.safe_load(source.read_text(encoding="utf-8")) or {}
     except (OSError, yaml.YAMLError) as exc:

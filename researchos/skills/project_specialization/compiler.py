@@ -41,15 +41,23 @@ def specialize_project_skills(
     if validate_only:
         return _validate_existing(paths, schema, mapping)
 
-    preflight_errors = _preflight(paths, schema, mapping)
+    # A dry run only builds and validates an isolated staging suite.  It does
+    # not publish or replace the executor's live Skills, so it remains safe
+    # while an external executor is active.  A real build must still refuse
+    # to replace that live suite.
+    preflight_errors = _preflight(
+        paths,
+        schema,
+        mapping,
+        prohibit_active_executor=not dry_run,
+    )
     if preflight_errors:
         report = _base_report(paths, status="failed")
         _extend_errors(report, preflight_errors)
-        if not dry_run:
-            _atomic_write_json(paths.output_report_path, report)
+        failure_report_path = _record_failure(paths, report, dry_run=dry_run)
         return SpecializationResult(
             status="failed",
-            report_path=paths.output_report_path,
+            report_path=failure_report_path,
             context_path=paths.output_context_path,
             skills_path=paths.output_skills_path,
             errors=preflight_errors,
@@ -66,11 +74,10 @@ def specialize_project_skills(
         if context_errors:
             report = _base_report(paths, status="failed")
             _extend_errors(report, context_errors)
-            if not dry_run:
-                _atomic_write_json(paths.output_report_path, report)
+            failure_report_path = _record_failure(paths, report, dry_run=dry_run)
             return SpecializationResult(
                 status="failed",
-                report_path=paths.output_report_path,
+                report_path=failure_report_path,
                 context_path=paths.output_context_path,
                 skills_path=paths.output_skills_path,
                 errors=context_errors,
@@ -86,11 +93,10 @@ def specialize_project_skills(
         if context_errors:
             report = _base_report(paths, status="failed")
             _extend_errors(report, context_errors)
-            if not dry_run:
-                _atomic_write_json(paths.output_report_path, report)
+            failure_report_path = _record_failure(paths, report, dry_run=dry_run)
             return SpecializationResult(
                 status="failed",
-                report_path=paths.output_report_path,
+                report_path=failure_report_path,
                 context_path=paths.output_context_path,
                 skills_path=paths.output_skills_path,
                 errors=context_errors,
@@ -101,11 +107,10 @@ def specialize_project_skills(
         if copy_errors:
             report = _base_report(paths, status="failed")
             _extend_errors(report, copy_errors)
-            if not dry_run:
-                _atomic_write_json(paths.output_report_path, report)
+            failure_report_path = _record_failure(paths, report, dry_run=dry_run)
             return SpecializationResult(
                 status="failed",
-                report_path=paths.output_report_path,
+                report_path=failure_report_path,
                 context_path=paths.output_context_path,
                 skills_path=paths.output_skills_path,
                 errors=copy_errors,
@@ -123,11 +128,10 @@ def specialize_project_skills(
         if render_errors:
             report["status"] = "failed"
             _extend_errors(report, render_errors)
-            if not dry_run:
-                _atomic_write_json(paths.output_report_path, report)
+            failure_report_path = _record_failure(paths, report, dry_run=dry_run)
             return SpecializationResult(
                 status="failed",
-                report_path=paths.output_report_path,
+                report_path=failure_report_path,
                 context_path=paths.output_context_path,
                 skills_path=paths.output_skills_path,
                 errors=render_errors,
@@ -152,14 +156,13 @@ def specialize_project_skills(
         errors = [make_error("specialization_failed", str(exc))]
         report = _base_report(paths, status="failed")
         _extend_errors(report, errors)
-        if not dry_run:
-            try:
-                _atomic_write_json(paths.output_report_path, report)
-            except Exception:
-                pass
+        try:
+            failure_report_path = _record_failure(paths, report, dry_run=dry_run)
+        except Exception:
+            failure_report_path = _failure_report_path(paths)
         return SpecializationResult(
             status="failed",
-            report_path=paths.output_report_path,
+            report_path=failure_report_path,
             context_path=paths.output_context_path,
             skills_path=paths.output_skills_path,
             errors=errors,
@@ -170,7 +173,13 @@ def specialize_project_skills(
             shutil.rmtree(staging, ignore_errors=True)
 
 
-def _preflight(paths, schema: Mapping[str, Any], mapping: Mapping[str, Any]) -> list[dict[str, Any]]:
+def _preflight(
+    paths,
+    schema: Mapping[str, Any],
+    mapping: Mapping[str, Any],
+    *,
+    prohibit_active_executor: bool,
+) -> list[dict[str, Any]]:
     errors: list[dict[str, Any]] = []
     if not paths.workspace.is_dir():
         errors.append(make_error("workspace_not_found", "workspace directory does not exist", path=str(paths.workspace)))
@@ -186,7 +195,8 @@ def _preflight(paths, schema: Mapping[str, Any], mapping: Mapping[str, Any]) -> 
         errors.append(make_error("handoff_missing", "external_executor/handoff_pack.json is required", path="external_executor/handoff_pack.json"))
     errors.extend(validate_json_schema(schema))
     errors.extend(validate_mapping(schema=schema, mapping=mapping, template_root=paths.template_root))
-    errors.extend(_active_executor_errors(paths))
+    if prohibit_active_executor:
+        errors.extend(_active_executor_errors(paths))
     return errors
 
 
@@ -210,6 +220,35 @@ def _active_executor_errors(paths) -> list[dict[str, Any]]:
             )
         ]
     return []
+
+
+def _failure_report_path(paths) -> Path:
+    return paths.output_report_path.with_name("skill_specialization_failure_report.json")
+
+
+def _published_report_is_usable(paths) -> bool:
+    """A failed rebuild must not invalidate an already published Suite."""
+
+    if not paths.output_report_path.is_file():
+        return False
+    try:
+        report = json.loads(paths.output_report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(report, Mapping) and report.get("status") in {"ready", "incomplete"}
+
+
+def _record_failure(paths, report: dict[str, Any], *, dry_run: bool) -> Path:
+    """Persist diagnostics without replacing a usable published report."""
+
+    target = paths.output_report_path
+    if _published_report_is_usable(paths):
+        target = _failure_report_path(paths)
+        report["previous_suite_preserved"] = True
+        report["published_suite_report"] = "external_executor/skill_specialization_report.json"
+    if not dry_run:
+        _atomic_write_json(target, report)
+    return target
 
 
 def _copy_template_skills(template_root: Path, mapping: Mapping[str, Any], destination: Path) -> list[dict[str, Any]]:

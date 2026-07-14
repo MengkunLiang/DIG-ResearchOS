@@ -1548,7 +1548,33 @@ def summarize_reader_note_progress(data: dict[str, Any], *, progress: str | None
     progress_label = _format_t3_progress(progress or str(data.get("progress") or ""))
     if progress_label:
         pieces.append(progress_label)
+    compact_view = data.get("compact_note_view") if isinstance(data.get("compact_note_view"), dict) else {}
+    if compact_view:
+        mechanism = _compact_text(str(compact_view.get("mechanism") or ""), 96)
+        finding = _compact_text(str(compact_view.get("finding") or ""), 96)
+        implication = _compact_note_implication(compact_view)
+        if mechanism:
+            pieces.append(f"机制：{mechanism}")
+        elif finding:
+            pieces.append(f"发现：{finding}")
+        if implication:
+            pieces.append(f"含义：{implication}")
     return "；".join(pieces)
+
+
+def _compact_note_implication(view: dict[str, Any]) -> str:
+    """Select one applicable compact implication for the T3 CLI line.
+
+    Detailed implication fields remain in the Paper Note. This helper chooses
+    the first applicable, provenance-preserving summary rather than forcing a
+    practical or commercial interpretation for every paper.
+    """
+
+    for key in ("scientific_implication", "engineering_implication", "practical_implication"):
+        value = _compact_text(str(view.get(key) or ""), 96)
+        if value and value.casefold() not in {"not applicable", "n/a", "none"}:
+            return value
+    return ""
 
 
 def safe_relative(path: Path | str | None, workspace_dir: Path | None) -> str | None:

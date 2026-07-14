@@ -13,6 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from ..paper_notes import compact_paper_note_view
 from ..runtime.errors import ToolAccessDenied, ToolRuntimeError
 from ..literature_citations import refresh_literature_citation_maps
 from ..runtime.t3_notes_manifest import (
@@ -119,6 +120,7 @@ class SavePaperNoteTool(Tool):
                         "paper_note_index_path": "literature/paper_note_index.json",
                         "citation_map_path": "literature/citation_map.json",
                         "mapped_bib_count": (citation_maps.get("citation_map") or {}).get("mapped_bib_count", 0),
+                        "compact_note_view": _compact_note_view(abs_path, self.policy.workspace_dir),
                     },
                 )
 
@@ -168,7 +170,10 @@ class SavePaperNoteTool(Tool):
         return ToolResult(
             ok=True,
             content=f"已保存并校验通过: {rel_path}；notes_manifest 已刷新。\n[Agent] T3 deep read progress: {progress}",
-            data=data,
+            data={
+                **data,
+                "compact_note_view": _compact_note_view(abs_path, self.policy.workspace_dir),
+            },
         )
 
 
@@ -179,6 +184,20 @@ def _validate_note(path: Path, *, require_current_schema: bool = False) -> tuple
         return _validate_note_structure(path, require_current_schema=require_current_schema)
     except Exception as exc:  # pragma: no cover - defensive fallback
         return False, f"{path.name} note validation crashed: {exc}"
+
+
+def _compact_note_view(path: Path, workspace_dir: Path) -> dict[str, Any]:
+    """Return a bounded researcher-facing note view without affecting validation.
+
+    The detailed Markdown note remains the durable evidence record. A compact
+    extraction failure must never turn a successfully validated note save into
+    a failed tool call, so this helper degrades to an empty view.
+    """
+
+    try:
+        return compact_paper_note_view(path, workspace_dir=workspace_dir).model_dump(mode="json")
+    except (OSError, ValueError):
+        return {}
 
 
 def _note_rel_path(record: dict[str, Any], note_id: str) -> str:
