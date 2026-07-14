@@ -113,6 +113,8 @@ class LLMIdeaGenerator(IdeaGeneratorPort):
                 "You are IdeaGeneratorAgent. Generate candidates only for the assigned Route and return only JSON. "
                 "You do not score, rank, select, or delete candidates. Preserve evidence provenance and permissions. "
                 "Abstract-only evidence may inspire a candidate or upgrade requirement, never an established mechanism or final claim. "
+                "Every CandidateDossier must include its presentation object: title, display_title, basis_summary, practical_implication, "
+                "counterfactual, complete gate1_card, basis_sources, idea_origin, constraint_status, and mechanism_family. "
                 "If the route cannot be supported, return status=unsupported with a concrete reason instead of fabricating a candidate."
             ),
             payload=payload,
@@ -143,7 +145,8 @@ class LLMIdeaScorer(IdeaScoringPort):
                 "You are IdeaScoringAgent. Return only JSON with a `scores` array. You do not generate, rewrite, rank, "
                 "or delete candidates. Route, parent/child identity, creation time, and generator self-assessment are hidden. "
                 "Use the fixed five-dimension rubric. Contribution distinctiveness is internal readiness, not proof of external novelty. "
-                "Evidence calibration measures honest permission use, not evidence volume."
+                "Evidence calibration measures honest permission use, not evidence volume. Also provide compatibility_scores and "
+                "compatibility_rationales for novelty, feasibility, impact, evaluability, differentiation, cost, and contribution_strength."
             ),
             payload=payload,
         )

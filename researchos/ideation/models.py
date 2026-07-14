@@ -306,6 +306,35 @@ class Contribution(_StrictModel):
     _id = field_validator("contribution_id")(_validate_identifier)
 
 
+class CandidatePresentation(_StrictModel):
+    """LLM-authored scientific prose required by the legacy Gate1 projection."""
+
+    title: str = Field(min_length=12)
+    display_title: str = Field(min_length=4)
+    basis_summary: str = Field(min_length=60)
+    practical_implication: str = Field(min_length=18)
+    counterfactual: str = Field(min_length=18)
+    gate1_card: dict[str, str]
+    basis_sources: list[dict[str, str]] = Field(min_length=1)
+    innovation: dict[str, str]
+    minimum_validation: dict[str, object]
+    idea_origin: str = Field(min_length=1)
+    constraint_status: Literal["mainline", "supplement", "bridge", "not_supported_by_current_evidence"]
+    mechanism_family: str = Field(min_length=3)
+
+    @model_validator(mode="after")
+    def presentation_is_complete(self) -> "CandidatePresentation":
+        required_card_fields = {"role_summary", "evidence_interpretation", "selection_advice", "risk_summary", "user_edit_hint"}
+        if not required_card_fields.issubset(self.gate1_card):
+            raise ValueError("gate1_card is missing required user-facing fields")
+        if not {"summary", "type", "novelty_delta", "non_incremental_reason"}.issubset(self.innovation):
+            raise ValueError("innovation is missing required Gate1 fields")
+        for source in self.basis_sources:
+            if not {"ref", "claim", "implication"}.issubset(source):
+                raise ValueError("each basis_source needs ref, claim, and implication")
+        return self
+
+
 class IdeaSeed(_StrictModel):
     schema_version: str = SCHEMA_VERSION
     candidate_id: str
@@ -436,6 +465,8 @@ class ScoreReport(_StrictModel):
     recommended_operators: list[EvolutionOperator] = Field(default_factory=list)
     high_upside: bool = False
     uncertain: bool = False
+    compatibility_scores: dict[str, int] = Field(default_factory=dict)
+    compatibility_rationales: dict[str, str] = Field(default_factory=dict)
 
     _id = field_validator("candidate_id", "scoring_batch_id")(_validate_identifier)
 
@@ -527,6 +558,7 @@ class CandidateDossier(_StrictModel):
     lineage: CandidateLineage
     artifact_paths: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    presentation: CandidatePresentation | None = None
 
     _id = field_validator("candidate_id")(_validate_identifier)
 
