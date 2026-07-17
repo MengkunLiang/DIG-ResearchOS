@@ -325,6 +325,7 @@ TASK_IO_CONTRACTS: dict[str, dict[str, object]] = {
             "survey_expansion": "drafts/survey/survey_expansion.json",
             "survey_supplement_search_log": "literature/survey_supplement/search_log.jsonl",
             "survey_supplement_papers": "literature/survey_supplement/papers_retrieved.jsonl",
+            "survey_supplement_checkpoint": "literature/survey_supplement/expansion_checkpoint.json",
         },
         "required_inputs": ["project", "survey_plan", "corpus_decision"],
         "schemas": {},

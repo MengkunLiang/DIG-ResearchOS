@@ -1622,6 +1622,7 @@ class ExpandSurveyCorpusParams(BaseModel):
     target_record_count: int = Field(default=18, ge=1)
     corpus_decision_path: str = Field(default="drafts/survey/corpus_decision.json")
     supplement_dir: str = Field(default="literature/survey_supplement")
+    checkpoint_path: str = Field(default="literature/survey_supplement/expansion_checkpoint.json")
 
 
 class BuildSurveyStateTool(Tool):
@@ -2578,6 +2579,11 @@ class ExpandSurveyCorpusTool(Tool):
         "It persists real search records and section-targeted evidence leads without turning them into verified claims."
     )
     parameters_schema = ExpandSurveyCorpusParams
+    # This tool performs multiple network searches, PDF acquisition and
+    # canonical note materialization.  The generic 60-second Tool default can
+    # expire before a single MultiSourceSearchTool call has exhausted its own
+    # provider attempts, so it is not a valid operation budget here.
+    timeout_seconds = 1800.0
 
     def __init__(self, policy: WorkspaceAccessPolicy):
         self.policy = policy
@@ -2622,10 +2628,69 @@ class ExpandSurveyCorpusTool(Tool):
         )
         supplement_dir = self.policy.resolve_write(params.supplement_dir)
         supplement_dir.mkdir(parents=True, exist_ok=True)
+        checkpoint_path = self.policy.resolve_write(params.checkpoint_path)
+        search_plan_path = supplement_dir / "search_plan.json"
+        search_log_path = supplement_dir / "search_log.jsonl"
+        partial_records_path = supplement_dir / "papers_retrieved.partial.jsonl"
+        query_plan_fingerprint = _survey_expansion_query_plan_fingerprint(query_plan)
+        checkpoint = _read_workspace_json_optional(checkpoint_path)
+
+        if (
+            checkpoint.get("status") == "completed"
+            and checkpoint.get("query_plan_fingerprint") == query_plan_fingerprint
+            and output.is_file()
+        ):
+            try:
+                completed_payload = _read_json(output)
+            except (OSError, ValueError, json.JSONDecodeError):
+                completed_payload = {}
+            if completed_payload:
+                return ToolResult(
+                    ok=True,
+                    content="Reused completed targeted survey supplement retrieval from its checkpoint.",
+                    data=completed_payload,
+                )
+
+        resume_search = checkpoint.get("query_plan_fingerprint") == query_plan_fingerprint
+        if resume_search:
+            retrieved = _read_jsonl_path_optional(partial_records_path)
+            search_log = _read_jsonl_path_optional(search_log_path)
+            completed_query_keys = {
+                str(value).strip()
+                for value in (checkpoint.get("completed_query_keys") or [])
+                if str(value).strip()
+            }
+        else:
+            retrieved = []
+            search_log = []
+            completed_query_keys: set[str] = set()
+
+        search_plan_path.write_text(
+            json.dumps(
+                {
+                    "semantics": "survey_targeted_supplement_search_plan",
+                    "query_plan_fingerprint": query_plan_fingerprint,
+                    "queries": query_plan,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        _write_survey_expansion_checkpoint(
+            checkpoint_path,
+            query_plan_fingerprint=query_plan_fingerprint,
+            query_plan=query_plan,
+            completed_query_keys=completed_query_keys,
+            status="searching",
+            phase="targeted_retrieval",
+        )
         search_tool = MultiSourceSearchTool()
-        retrieved: list[dict[str, Any]] = []
-        search_log: list[dict[str, Any]] = []
-        for item in query_plan:
+        for index, item in enumerate(query_plan, start=1):
+            query_key = _survey_expansion_query_key(item)
+            if query_key in completed_query_keys:
+                continue
             result = await search_tool.execute(
                 query=str(item["query"]),
                 max_results=params.max_results_per_query,
@@ -2634,6 +2699,8 @@ class ExpandSurveyCorpusTool(Tool):
                 try_all_sources=False,
             )
             log_entry = {
+                "query_key": query_key,
+                "query_index": index,
                 "query": item["query"],
                 "purpose": item["purpose"],
                 "section_ids": item["section_ids"],
@@ -2643,26 +2710,47 @@ class ExpandSurveyCorpusTool(Tool):
                 "source_stats": (result.data or {}).get("source_stats") or {},
             }
             search_log.append(log_entry)
-            if not result.ok:
-                continue
-            for paper in (result.data or {}).get("papers") or []:
-                if not isinstance(paper, dict):
-                    continue
-                retrieved.append(
-                    {
-                        **paper,
-                        "survey_supplement": {
-                            "query": item["query"],
-                            "purpose": item["purpose"],
-                            "section_ids": item["section_ids"],
-                            "evidence_boundary": (
-                                "retrieved_metadata_or_abstract_only; use for discovery, historical/frontier coverage, "
-                                "or an explicitly abstract-level description until a paper note verifies a specific claim"
-                            ),
-                        },
-                    }
-                )
+            if result.ok:
+                for paper in (result.data or {}).get("papers") or []:
+                    if not isinstance(paper, dict):
+                        continue
+                    retrieved.append(
+                        {
+                            **paper,
+                            "survey_supplement": {
+                                "query": item["query"],
+                                "purpose": item["purpose"],
+                                "section_ids": item["section_ids"],
+                                "evidence_boundary": (
+                                    "retrieved_metadata_or_abstract_only; use for discovery, historical/frontier coverage, "
+                                    "or an explicitly abstract-level description until a paper note verifies a specific claim"
+                                ),
+                            },
+                        }
+                    )
+            completed_query_keys.add(query_key)
+            # Persist after every completed provider action.  If the outer
+            # runtime times out or the process is interrupted, resume retries
+            # only the incomplete query instead of repeating the full search.
+            _write_jsonl(search_log_path, search_log)
+            _write_jsonl(partial_records_path, retrieved)
+            _write_survey_expansion_checkpoint(
+                checkpoint_path,
+                query_plan_fingerprint=query_plan_fingerprint,
+                query_plan=query_plan,
+                completed_query_keys=completed_query_keys,
+                status="searching",
+                phase="targeted_retrieval",
+            )
         deduplicated = _deduplicate_survey_supplement_records(retrieved)[:target_record_count]
+        _write_survey_expansion_checkpoint(
+            checkpoint_path,
+            query_plan_fingerprint=query_plan_fingerprint,
+            query_plan=query_plan,
+            completed_query_keys=completed_query_keys,
+            status="materializing",
+            phase="pdf_acquisition_and_note_materialization",
+        )
         # Supplement candidates belong to the same availability contract as
         # retained T2 candidates.  Try their open PDFs now, but keep their
         # generated notes ABSTRACT_ONLY until a Reader records page coverage.
@@ -2681,12 +2769,8 @@ class ExpandSurveyCorpusTool(Tool):
             deduplicated,
             note_paths=reading_note_summary["note_paths_by_paper_id"],
         )
-        _write_jsonl(supplement_dir / "search_log.jsonl", search_log)
+        _write_jsonl(search_log_path, search_log)
         _write_jsonl(supplement_dir / "papers_retrieved.jsonl", deduplicated)
-        (supplement_dir / "search_plan.json").write_text(
-            json.dumps({"semantics": "survey_targeted_supplement_search_plan", "queries": query_plan}, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
         (supplement_dir / "section_evidence_map.json").write_text(
             json.dumps(section_map, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
@@ -2739,6 +2823,7 @@ class ExpandSurveyCorpusTool(Tool):
             "supplement_artifacts": {
                 "search_plan": f"{params.supplement_dir}/search_plan.json",
                 "search_log": f"{params.supplement_dir}/search_log.jsonl",
+                "checkpoint": params.checkpoint_path,
                 "papers": f"{params.supplement_dir}/papers_retrieved.jsonl",
                 "section_evidence_map": f"{params.supplement_dir}/section_evidence_map.json",
             },
@@ -2748,6 +2833,15 @@ class ExpandSurveyCorpusTool(Tool):
             ),
         }
         output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        _write_survey_expansion_checkpoint(
+            checkpoint_path,
+            query_plan_fingerprint=query_plan_fingerprint,
+            query_plan=query_plan,
+            completed_query_keys=completed_query_keys,
+            status="completed",
+            phase="completed",
+            output_path=params.output_path,
+        )
         return ToolResult(ok=True, content=payload["summary"], data=payload)
 
 
@@ -2984,6 +3078,66 @@ def _survey_supplement_section_map(
 def _write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n" for item in records), encoding="utf-8")
+
+
+def _read_jsonl_path_optional(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    records: list[dict[str, Any]] = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            records.append(value)
+    return records
+
+
+def _survey_expansion_query_key(item: dict[str, Any]) -> str:
+    payload = {
+        "query": str(item.get("query") or "").strip(),
+        "purpose": str(item.get("purpose") or "").strip(),
+        "section_ids": [str(value) for value in (item.get("section_ids") or [])],
+    }
+    return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _survey_expansion_query_plan_fingerprint(query_plan: list[dict[str, Any]]) -> str:
+    keys = [_survey_expansion_query_key(item) for item in query_plan if isinstance(item, dict)]
+    return hashlib.sha256(json.dumps(keys, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def _write_survey_expansion_checkpoint(
+    path: Path,
+    *,
+    query_plan_fingerprint: str,
+    query_plan: list[dict[str, Any]],
+    completed_query_keys: set[str],
+    status: str,
+    phase: str,
+    output_path: str = "",
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "semantics": "survey_targeted_supplement_retrieval_checkpoint",
+        "status": status,
+        "phase": phase,
+        "query_plan_fingerprint": query_plan_fingerprint,
+        "query_count": len(query_plan),
+        "completed_query_count": len(completed_query_keys),
+        "completed_query_keys": sorted(completed_query_keys),
+        "output_path": output_path,
+    }
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(path)
 
 
 def _positive_int(value: object) -> int | None:

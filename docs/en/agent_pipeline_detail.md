@@ -2073,6 +2073,8 @@ The Agent calls `expand_corpus_for_survey`. This tool reads `survey_plan.json`, 
 
 This step is not a T4 → T2 loop; it does not automatically claim “domain gaps”. It merely organizes a one-time supplementary search plan: which taxonomy classes need more literature, suggested search keywords, and which neighbors can only serve as adjacent hints. The LLM may add an `llm_review` after the tool output but must not loop the search.
 
+This tool has its own long-operation window and does not inherit the ordinary 60-second Tool default. After every completed query it updates `literature/survey_supplement/expansion_checkpoint.json`, partial retrieval records, and the search log. A network timeout, process interruption, or resume skips completed queries and continues from the incomplete work. The checkpoint only recovers the same query plan; it does not turn the one-time supplement into an unbounded search loop.
+
 #### `T3.6-STATE`
 
 The Agent calls `build_survey_state`. The tool mechanically transforms `survey_plan.json` into:
