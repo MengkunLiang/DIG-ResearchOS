@@ -29,9 +29,10 @@ Required files:
 | domain map | `literature/domain_map.json` | domain and bridge relationships |
 | comparison table | `literature/comparison_table.csv` | comparable methods, modules, datasets, metrics |
 | hypotheses | `ideation/hypotheses.md` | central hypothesis and mechanism candidates |
+| research dossier | `ideation/research_dossier.json` | post-novelty research problem, contribution intent, conditional practical or commercial implications, stakeholders, and evidence status; optional for legacy workspaces |
 | experiment plan | `ideation/exp_plan.yaml` | planned datasets, metrics, protocols, ablations |
-| idea scorecard | `ideation/idea_scorecard.yaml` | idea quality, feasibility, weaknesses |
-| risks | `ideation/risks.md` | scientific and execution risks |
+| candidate dossier | `ideation/selected/selected_candidate.json` | selected direction, rationale, feasibility, and weaknesses; legacy fallback: `ideation/idea_scorecard.yaml` |
+| stop and risk criteria | `ideation/kill_criteria.yaml` | scientific, execution, and stopping risks; legacy fallback: `ideation/risks.md` |
 | novelty audit | `ideation/novelty_audit.md` | nearest work, required baselines, novelty and claim boundaries |
 
 Optional backtracking sources:
@@ -45,10 +46,13 @@ Optional backtracking sources:
 - `user_seeds/bridge_domains.yaml`
 - `ideation/hypothesis_brief.yaml`
 - `ideation/selected/t45_search_targets.json`
+- `ideation/validation_map.yaml`
+- `ideation/contribution_hypothesis_map.yaml`
 
 Read optional sources only to close a named evidence gap. Abstract-only notes may motivate retrieval or mark uncertainty, but cannot establish implementation details or strong mechanism claims.
 Cross-domain catalogs are retrieval context rather than paper-reading evidence: they may guide baseline discovery, mechanism contrasts, external-validity risks, and follow-up reading, but cannot establish a mechanism, baseline equivalence, implementation detail, or experimental result.
 Pre-Novelty selection files preserve Candidate lineage and the scope of the T4.5 review. They are trace context only: they never replace the post-T4.5 `hypotheses.md`, `exp_plan.yaml`, or novelty audit as authority for an executable handoff.
+The post-novelty research dossier is stronger contextual evidence than the Pre-Novelty files because it is compiled after the audit. It must be used, when available, to preserve T4 research motivation, contribution intent, conditional practical or commercial implications, stakeholders, and evidence status in `context_reboost.research_context`. It cannot establish an experimental result, baseline equivalence, implementation detail, or final paper claim. The validation and contribution maps refine test and contribution traceability; they do not supersede the novelty audit or experiment plan.
 Record these two files as `pre_novelty_context` entries in `source_manifest`, with `used=false` unless a named lineage or search-scope question required reading them.
 
 ## 3. Source precedence
@@ -58,7 +62,7 @@ Precedence is decision-specific, not a universal trust ranking:
 1. Explicit current user constraints and `project.yaml` control project scope and authorization.
 2. `novelty_audit.md` controls required baselines, nearest-work distinctions, novelty ceilings, and must-not-claim boundaries.
 3. `exp_plan.yaml` controls protocol details, datasets, metrics, seeds, and planned tests where consistent with higher constraints.
-4. `hypotheses.md` controls the initial central hypothesis and intended mechanism; `idea_scorecard.yaml` and `risks.md` qualify feasibility and risks.
+4. `hypotheses.md` controls the initial central hypothesis and intended mechanism. The post-novelty research dossier preserves research motivation, contribution intent, stakeholders, and conditional implications. The selected Candidate dossier and kill criteria qualify feasibility, risks, and stopping conditions. In legacy workspaces, `idea_scorecard.yaml` and `risks.md` provide those two roles.
 5. Literature synthesis artifacts control field background, prior mechanisms, and comparison evidence.
 6. Optional notes and seeds provide supporting detail or retrieval hints, not automatic authority.
 
@@ -86,7 +90,7 @@ Hash available sources with SHA-256. Hashes establish which source version was c
 Perform these passes in order:
 
 1. Scope pass: determine task, setting, target outputs, constraints, and exclusions.
-2. Hypothesis pass: isolate the central hypothesis, assumptions, rationale, and falsification conditions.
+2. Hypothesis and context pass: isolate the central hypothesis, assumptions, rationale, falsification conditions, and the post-novelty research context. Keep practical and commercial implications conditional until empirical evidence exists.
 3. Novelty pass: extract nearest work, required baselines, distinguishing mechanism, claim ceiling, and prohibited claims.
 4. Protocol pass: extract datasets, metrics, comparisons, seeds, ablations, robustness, efficiency, and failure tests.
 5. Risk pass: identify infeasibility, data leakage, fairness, compute, resource, and contribution-drift risks.

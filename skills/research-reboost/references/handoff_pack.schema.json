@@ -222,6 +222,9 @@
             "idea_scorecard",
             "risks",
             "novelty_audit",
+            "research_dossier",
+            "validation_map",
+            "contribution_hypothesis_map",
             "paper_note",
             "bridge_paper_note",
             "cross_domain_catalog",
@@ -531,6 +534,7 @@
         "project_goal",
         "research_question",
         "central_hypothesis",
+        "research_context",
         "study_scope",
         "method_mechanism",
         "novelty_audit_resolution",
@@ -547,6 +551,9 @@
         },
         "central_hypothesis": {
           "$ref": "#/$defs/central_hypothesis"
+        },
+        "research_context": {
+          "$ref": "#/$defs/research_context"
         },
         "study_scope": {
           "$ref": "#/$defs/study_scope"
@@ -592,6 +599,46 @@
           "items": {
             "$ref": "#/$defs/context_mismatch"
           }
+        }
+      }
+    },
+    "research_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "research_problem",
+        "scholarly_stakes",
+        "practical_implications",
+        "commercial_implications",
+        "stakeholders_or_processes",
+        "contribution_intent",
+        "evidence_status",
+        "source_refs"
+      ],
+      "properties": {
+        "research_problem": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "scholarly_stakes": {
+          "$ref": "#/$defs/non_empty_string_list"
+        },
+        "practical_implications": {
+          "$ref": "#/$defs/string_list"
+        },
+        "commercial_implications": {
+          "$ref": "#/$defs/string_list"
+        },
+        "stakeholders_or_processes": {
+          "$ref": "#/$defs/string_list"
+        },
+        "contribution_intent": {
+          "$ref": "#/$defs/non_empty_string_list"
+        },
+        "evidence_status": {
+          "enum": ["source_supported", "proposed_not_verified", "unknown"]
+        },
+        "source_refs": {
+          "$ref": "#/$defs/source_refs"
         }
       }
     },
@@ -1342,7 +1389,7 @@
           "type": "array",
           "minItems": 1,
           "items": {
-            "enum": ["method_intent", "initial_framework_figure_sketch", "unaudited_raw_results", "diagnostic_hint", "unsupported_claim"]
+            "enum": ["method_intent", "research_context", "initial_framework_figure_sketch", "unaudited_raw_results", "diagnostic_hint", "unsupported_claim"]
           },
           "uniqueItems": true
         }

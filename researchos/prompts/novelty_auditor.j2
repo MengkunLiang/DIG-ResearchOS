@@ -66,6 +66,7 @@
 ### Step 1: 读取完整输入
 用 `read_file` 读取具体文件；目录必须先用 `list_files` 或 `grep_search` 枚举，绝不能把目录路径直接传给 `read_file`：
 - `ideation/hypothesis_brief.yaml` - 选中 Candidate 的 Draft Hypotheses、证据边界与来源谱系
+- `ideation/selected/selected_candidate.json` - T4 已选 Candidate 的问题表述、贡献、利益相关者、现实含义、风险、成熟度与谱系。它是保留 T4 决策信息的首要来源，不得只读取 brief 而丢失其中独有的内容。
 - `ideation/selected/t45_search_targets.json` - 本轮 novelty/collision 检索目标
 - `literature/synthesis.md` - 完整的文献综述
 - `literature/comparison_table.csv` - 已有方法对比表（如果存在）
@@ -449,9 +450,10 @@ search_papers(
 
 先完成并落盘 `ideation/novelty_audit.md`，并在其中写出明确的 `Final Gate Verdict`。只有 verdict 为 `pass`、`pass_to_experiment`、`pass_with_required_baselines`、`continue_to_t5` 或 `continue_to_experiment` 时，才执行本步骤。
 
-通过时，基于 `hypothesis_brief.yaml` 中已选 Candidate 的 Draft Hypotheses、T4.5 检索结果和审计限制，依次写入：
+通过时，基于 `hypothesis_brief.yaml`、`selected_candidate.json` 中的 T4 决策信息、T4.5 检索结果和审计限制，依次写入：
 
-- `ideation/hypotheses.md`：正式 H1–Hk；仅重构已审计的 Draft Hypotheses，不得凭空增加研究主张；
+- `ideation/hypotheses.md`：这不是只列出 H1–Hk 的短页，而是正式的研究档案。它应保留 T4 中所有与研究者决策有关、且没有被 T4.5 推翻的信息，并把它们与审计结论整合成可直接阅读的学术说明。仅重构已审计的 Draft Hypotheses，不得凭空增加研究主张；
+- `ideation/research_dossier.json`：与 `hypotheses.md` 一一对应的结构化研究档案，供 T5 保存研究动机、贡献意图、利益相关者、实际或商业含义、证据边界和风险，而不是让下游从短文本猜测这些信息；
 - `ideation/contribution_hypothesis_map.yaml`：每条 Contribution 对应哪些 H；
 - `ideation/validation_map.yaml`：每条 H 的判别测试、对照、证据边界与 Required Baselines；
 - `ideation/kill_criteria.yaml`：每条 H 的失败信号和停止条件；
@@ -464,6 +466,7 @@ search_papers(
   "status": "formalized_after_novelty_pass",
   "artifacts": {
     "hypotheses": "ideation/hypotheses.md",
+    "research_dossier": "ideation/research_dossier.json",
     "exp_plan": "ideation/exp_plan.yaml",
     "contribution_hypothesis_map": "ideation/contribution_hypothesis_map.yaml",
     "validation_map": "ideation/validation_map.yaml",
@@ -472,9 +475,54 @@ search_papers(
 }
 ```
 
+#### `hypotheses.md` 的研究者阅读结构
+
+以自然、连贯的学术中文写作，不把它写成零散的 prompt 回答。可以使用下列七个到八个一级部分，但不要为每一个短句另设小节，也不要为了篇幅重复同一观点。
+
+1. `摘要`：交代研究问题、中心论点、审计 verdict，以及结论仍处于何种证据状态。
+2. `研究意义与问题背景`：说明已有方法的隐含假定为何在本研究场景中可能失效，学术上为何值得解决，并在来源允许时解释受影响的真实流程、组织或决策者。这里的现实、管理或商业后果必须用条件式表述，例如“若 H1 得到支持，可能影响……”，不得声称已经带来收益、市场效果或行为改变。
+3. `研究范围与核心机制`：定义必要术语，说明因果路径、研究对象与排除范围，并自然衔接到正式假设。
+4. `正式假设`：每个 H 使用同一紧凑结构，包含正式陈述、机制、可观测预测、边界条件、竞争解释、可证伪或停止条件、当前证据状态。保留 T4 已有的独特机制信息，不得把 proposal 写成已验证事实。
+5. `研究贡献与预期改变`：逐条说明贡献的类型、它与相近工作的差异、若获得支持会改变什么，以及该贡献现在是 source-supported、proposed_not_verified 还是 unknown。贡献不是宣传语，也不能把实验尚未验证的效果写成贡献事实。
+6. `现实、管理与商业含义`：只写来自 Candidate、项目约束或审计语境的条件性含义，说明可能受影响的决策、流程和利益相关者。缺少来源时明确写 `unknown`，不要编造市场规模、收入、成本节约或部署成效。
+7. `证据边界、新颖性约束与风险`：合并说明 T4 证据边界、T4.5 required baselines、不得主张的内容、竞争机制、科学风险、执行风险和 kill criteria。解释每种失败信号会如何改变解释或下一步。
+8. `研究谱系与可追溯性`：列出 Candidate ID、选择指纹、T4 与 T4.5 的关键来源路径和 audit verdict。只给研究者可用的追溯信息，不要倾倒 runtime 日志或内部调试文本。
+
+语言要求：采用顶尖学术期刊的干净行文。段落之间必须有自然的因果或问题递进，不使用破折号、口号式短句、空泛套话或连续并列碎句。术语首次出现时给出简短定义，并在确有帮助时用 `such as` 引出贴近研究情境的例子。除非引用已在可核验材料中明确出现，否则不新增论文引用、作者、年份或事实断言。
+
+#### `research_dossier.json` 的最小结构
+
+用 `write_file(path='ideation/research_dossier.json', content=<JSON object>)` 写入合法 JSON。这个文件不是实验结果，也不是最终论文证据。顶层必须包含：
+
+```json
+{
+  "semantics": "t45_research_dossier",
+  "status": "formalized_after_novelty_pass",
+  "candidate_id": "<selected Candidate ID>",
+  "selection_fingerprint": "<selected Candidate fingerprint>",
+  "novelty_audit_verdict": "<Final Gate Verdict>",
+  "central_thesis": {"statement": "...", "evidence_status": "source_supported|proposed_not_verified|unknown", "source_paths": ["..."]},
+  "research_problem": {"statement": "...", "evidence_status": "...", "source_paths": ["..."]},
+  "why_it_matters": {
+    "scholarly": [{"statement": "...", "evidence_status": "...", "source_paths": ["..."]}],
+    "practical": [{"statement": "...", "evidence_status": "...", "source_paths": ["..."]}],
+    "commercial": [{"statement": "...", "evidence_status": "...", "source_paths": ["..."]}],
+    "stakeholders_or_processes": [{"statement": "...", "evidence_status": "...", "source_paths": ["..."]}]
+  },
+  "contributions": [{"id": "...", "statement": "...", "type": "...", "evidence_status": "...", "what_changes_if_supported": "...", "source_paths": ["..."]}],
+  "hypotheses": [{"id": "H1", "statement": "...", "mechanism": "...", "evidence_status": "...", "source_paths": ["..."]}],
+  "evidence_boundary": {"statement": "...", "evidence_status": "...", "source_paths": ["..."]},
+  "novelty_boundary": {"statement": "...", "required_baselines": ["..."], "source_paths": ["ideation/novelty_audit.md"]},
+  "risks_and_kill_criteria": [{"statement": "...", "impact_on_interpretation": "...", "source_paths": ["..."]}],
+  "traceability": {"source_artifacts": ["ideation/selected/selected_candidate.json", "ideation/hypothesis_brief.yaml", "ideation/novelty_audit.md", "ideation/validation_map.yaml", "ideation/kill_criteria.yaml"]}
+}
+```
+
+所有空缺必须保留为空数组、`unknown` 或 `proposed_not_verified`，不能以看似常识的文本补齐。`source_paths` 必须指向本次工作区中的实际文件。
+
 #### 文件写入工具契约
 
-- 只对 Markdown 报告调用 `write_file`，例如 `ideation/novelty_audit.md` 与 `ideation/collision_cases.md`。
+- 对 Markdown 报告调用 `write_file`，例如 `ideation/novelty_audit.md`、`ideation/collision_cases.md` 与 `ideation/hypotheses.md`；`research_dossier.json` 也可用 `write_file` 写入 JSON 对象。
 - `ideation/exp_plan.yaml` 是唯一的正式实验计划路径，必须且只能调用 `write_structured_file(path='ideation/exp_plan.yaml', schema_name='exp_plan', format='yaml', data=...)`。`exp_plan.yml` 不是兼容路径，不能创建、不能作为替代输出，也不能用于规避校验。
 - 若结构化写入返回 schema 诊断，应逐项修复 `data` 后重新调用同一个 `write_structured_file`。不得改用 `write_file`、换扩展名、删减已审计字段，或把失败当作普通噪声重复调用。
 - 在调用 `finish_task` 前，重新检查正式 `ideation/exp_plan.yaml` 是否存在且与审计 verdict 一致。它缺失时必须如实报告未完成，不得以任何旁路文件替代。

@@ -977,7 +977,6 @@ states:
       synthesis: literature/synthesis.md                # 输入：文献综述
       literature_manifest: literature/literature_manifest.json # 跨任务统一文献清单
       comparison_table: literature/comparison_table.csv # 输入：对比表
-      idea_scorecard: ideation/idea_scorecard.yaml      # 输入：idea scorecard（含 mechanism 字段）
       deep_read_notes_dir: literature/deep_read_notes           # 可选：section 级全文/部分全文证据卡
       bridge_notes_dir: literature/bridge_notes # 可选：跨域证据卡
       bridge_domain_plan: literature/bridge_domain_plan.json # Cross-domain 检索/裁决计划
@@ -991,6 +990,7 @@ states:
     optional_outputs:
       collision_cases: ideation/collision_cases.md       # 条件输出：High/Medium Overlap 时必须存在
       hypotheses: ideation/hypotheses.md                 # 仅 Final Gate Verdict 通过后由 T4.5 正式编译
+      research_dossier: ideation/research_dossier.json   # 假设、贡献、意义和风险的结构化档案
       exp_plan: ideation/exp_plan.yaml
       contribution_hypothesis_map: ideation/contribution_hypothesis_map.yaml
       validation_map: ideation/validation_map.yaml
@@ -1013,7 +1013,7 @@ states:
       project: project.yaml
       hypothesis_brief: ideation/hypothesis_brief.yaml
       novelty_audit: ideation/novelty_audit.md
-      idea_scorecard: ideation/idea_scorecard.yaml
+      selected_candidate: ideation/selected/selected_candidate.json
       selected_idea_brief: ideation/selected_idea_brief.md
       gate1_selection_brief: ideation/_gate1_selection_brief.md
       rejected_ideas: ideation/rejected_ideas.md
@@ -1047,10 +1047,13 @@ states:
     inputs:
       project: project.yaml
       hypotheses: ideation/hypotheses.md
+      research_dossier: ideation/research_dossier.json
       exp_plan: ideation/exp_plan.yaml
-      risks: ideation/risks.md
+      selected_candidate: ideation/selected/selected_candidate.json
+      kill_criteria: ideation/kill_criteria.yaml
+      validation_map: ideation/validation_map.yaml
+      contribution_hypothesis_map: ideation/contribution_hypothesis_map.yaml
       novelty_audit: ideation/novelty_audit.md
-      idea_scorecard: ideation/idea_scorecard.yaml
       synthesis: literature/synthesis.md
       synthesis_workbench: literature/synthesis_workbench.json
       domain_map: literature/domain_map.json
@@ -1161,7 +1164,7 @@ states:
       skills_dir: external_executor/skills
       skill_specialization_report: external_executor/report/skill_specialization_report.json
       skill_specialization_execution: external_executor/report/skill_specialization_execution.json
-    next_on_success: T5-EXECUTOR-GATE
+    next_on_success: T5-EXPR-MATERIAL-GATE
     next_on_failure: failed
 
   # T5-EXPR-MATERIAL-GATE 状态：实验材料放置确认

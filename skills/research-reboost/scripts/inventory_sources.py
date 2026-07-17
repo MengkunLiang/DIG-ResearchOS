@@ -8,7 +8,7 @@ import hashlib
 import json
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
@@ -22,6 +22,7 @@ class SourceSpec:
     requirement: str
     purpose: str
     precedence: int
+    fallback_paths: tuple[str, ...] = ()
 
 
 REQUIRED_SOURCES = (
@@ -32,9 +33,55 @@ REQUIRED_SOURCES = (
     SourceSpec("SRC_COMPARISON_TABLE", "literature/comparison_table.csv", "comparison_table", "required", "Comparable methods, modules, datasets, and metrics", 5),
     SourceSpec("SRC_HYPOTHESES", "ideation/hypotheses.md", "hypotheses", "required", "Central hypothesis and mechanism candidates", 3),
     SourceSpec("SRC_EXP_PLAN", "ideation/exp_plan.yaml", "experiment_plan", "required", "Planned datasets, metrics, protocols, and ablations", 2),
-    SourceSpec("SRC_IDEA_SCORECARD", "ideation/idea_scorecard.yaml", "idea_scorecard", "required", "Idea quality, feasibility, and weaknesses", 3),
-    SourceSpec("SRC_RISKS", "ideation/risks.md", "risks", "required", "Scientific and execution risks", 3),
+    SourceSpec(
+        "SRC_IDEA_SCORECARD",
+        "ideation/selected/selected_candidate.json",
+        "idea_scorecard",
+        "required",
+        "Selected Candidate dossier: research rationale, feasibility, and weaknesses",
+        3,
+        ("ideation/idea_scorecard.yaml",),
+    ),
+    SourceSpec(
+        "SRC_RISKS",
+        "ideation/kill_criteria.yaml",
+        "risks",
+        "required",
+        "Scientific, execution, and stopping risks",
+        3,
+        ("ideation/risks.md",),
+    ),
     SourceSpec("SRC_NOVELTY", "ideation/novelty_audit.md", "novelty_audit", "required", "Nearest work, required baselines, novelty and claim boundaries", 2),
+)
+
+# Current T4.5 writes these files after the audit passes.  They enrich the
+# execution contract but remain optional here so older resumable workspaces do
+# not become blocked solely because they predate the dossier format.
+CONTEXT_SOURCES = (
+    SourceSpec(
+        "SRC_RESEARCH_DOSSIER",
+        "ideation/research_dossier.json",
+        "research_dossier",
+        "optional_backtrack",
+        "Post-novelty research problem, contribution intent, conditional implications, and evidence status",
+        3,
+    ),
+    SourceSpec(
+        "SRC_VALIDATION_MAP",
+        "ideation/validation_map.yaml",
+        "validation_map",
+        "optional_backtrack",
+        "Hypothesis tests, controls, prerequisites, and evidence boundaries",
+        3,
+    ),
+    SourceSpec(
+        "SRC_CONTRIBUTION_MAP",
+        "ideation/contribution_hypothesis_map.yaml",
+        "contribution_hypothesis_map",
+        "optional_backtrack",
+        "Contribution-to-hypothesis traceability and interpretation limits",
+        3,
+    ),
 )
 
 OPTIONAL_PATHS = (
@@ -89,6 +136,15 @@ def source_record(root: Path, spec: SourceSpec) -> dict:
     return result
 
 
+def resolve_required_source(root: Path, spec: SourceSpec) -> SourceSpec:
+    """Prefer current T4.5 artifacts while keeping legacy workspaces resumable."""
+
+    for candidate in (spec.path, *spec.fallback_paths):
+        if (root / candidate).exists():
+            return replace(spec, path=candidate)
+    return spec
+
+
 def iter_optional_files(root: Path) -> Iterable[tuple[Path, str, str]]:
     for relative, category, purpose in OPTIONAL_PATHS:
         target = root / relative
@@ -117,14 +173,15 @@ def optional_record(root: Path, path: Path, index: int, category: str, purpose: 
 
 
 def build_inventory(root: Path, include_optional: bool) -> dict:
-    sources = [source_record(root, spec) for spec in REQUIRED_SOURCES]
+    sources = [source_record(root, resolve_required_source(root, spec)) for spec in REQUIRED_SOURCES]
+    sources.extend(source_record(root, spec) for spec in CONTEXT_SOURCES)
     if include_optional:
         for index, (path, category, purpose) in enumerate(iter_optional_files(root), start=1):
             sources.append(optional_record(root, path, index, category, purpose))
     required = [entry for entry in sources if entry["requirement"] == "required"]
     available = sum(entry["availability"] == "available" for entry in required)
     return {
-        "inventory_version": "researchos_pre_t5_inventory.v1",
+        "inventory_version": "researchos_pre_t5_inventory.v2",
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "project_root": str(root),
         "required_source_coverage": available / len(required),

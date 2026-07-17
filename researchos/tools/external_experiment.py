@@ -331,7 +331,12 @@ PRE_T5_SOURCE_FILES = [
     "literature/cross_domain_catalogs/index.json",
     "literature/comparison_table.csv",
     "ideation/hypotheses.md",
+    "ideation/research_dossier.json",
     "ideation/exp_plan.yaml",
+    "ideation/selected/selected_candidate.json",
+    "ideation/kill_criteria.yaml",
+    "ideation/validation_map.yaml",
+    "ideation/contribution_hypothesis_map.yaml",
     "ideation/idea_scorecard.yaml",
     "ideation/risks.md",
     "ideation/novelty_audit.md",
@@ -391,17 +396,22 @@ SKILL_SUITE = [
 ]
 
 
+RESEARCH_REBOOST_REQUIRED_SOURCE_GROUPS = (
+    ("project.yaml",),
+    ("literature/synthesis.md",),
+    ("literature/synthesis_workbench.json",),
+    ("literature/domain_map.json",),
+    ("literature/comparison_table.csv",),
+    ("ideation/hypotheses.md",),
+    ("ideation/exp_plan.yaml",),
+    # T4.5 formalization now owns these two roles.  Legacy artifacts remain
+    # supported only as fallbacks for existing workspaces.
+    ("ideation/selected/selected_candidate.json", "ideation/idea_scorecard.yaml"),
+    ("ideation/kill_criteria.yaml", "ideation/risks.md"),
+    ("ideation/novelty_audit.md",),
+)
 RESEARCH_REBOOST_REQUIRED_SOURCE_PATHS = {
-    "project.yaml",
-    "literature/synthesis.md",
-    "literature/synthesis_workbench.json",
-    "literature/domain_map.json",
-    "literature/comparison_table.csv",
-    "ideation/hypotheses.md",
-    "ideation/exp_plan.yaml",
-    "ideation/idea_scorecard.yaml",
-    "ideation/risks.md",
-    "ideation/novelty_audit.md",
+    path for group in RESEARCH_REBOOST_REQUIRED_SOURCE_GROUPS for path in group
 }
 
 RESEARCH_REBOOST_GATE_STAGES = [
@@ -482,6 +492,9 @@ def _research_reboost_inventory(workspace: Path) -> dict[str, Any]:
         "experiment_plan": ["experiment_protocol", "baseline_selection", "writer_contract"],
         "idea_scorecard": ["risk_analysis", "method_mechanism"],
         "risks": ["risk_analysis", "claim_boundary"],
+        "research_dossier": ["research_goal", "method_mechanism", "claim_boundary", "risk_analysis"],
+        "validation_map": ["experiment_protocol", "baseline_selection", "claim_boundary"],
+        "contribution_hypothesis_map": ["method_mechanism", "claim_boundary", "writer_contract"],
         "novelty_audit": ["novelty_boundary", "baseline_selection", "claim_boundary"],
     }
     for entry in inventory.get("sources", []) or []:
@@ -489,7 +502,12 @@ def _research_reboost_inventory(workspace: Path) -> dict[str, Any]:
             continue
         is_required = entry.get("requirement") == "required"
         is_available = entry.get("availability") == "available"
-        entry["used"] = bool(is_required and is_available)
+        is_current_t45_context = str(entry.get("category") or "") in {
+            "research_dossier",
+            "validation_map",
+            "contribution_hypothesis_map",
+        }
+        entry["used"] = bool(is_available and (is_required or is_current_t45_context))
         if entry["used"]:
             entry["used_for"] = used_for_by_category.get(str(entry.get("category")), [])
         elif is_required:
@@ -1322,6 +1340,130 @@ def _source_ref(source_id: str, locator: str, note: str, support_type: str = "di
     }
 
 
+def _dossier_statement(dossier: dict[str, Any], key: str) -> str:
+    value = dossier.get(key)
+    if isinstance(value, dict):
+        return _compact_text(str(value.get("statement") or ""), limit=800)
+    return _compact_text(str(value or ""), limit=800)
+
+
+def _dossier_statements(dossier: dict[str, Any], group: str) -> list[str]:
+    why_it_matters = dossier.get("why_it_matters") if isinstance(dossier.get("why_it_matters"), dict) else {}
+    values = why_it_matters.get(group) if isinstance(why_it_matters, dict) else []
+    if not isinstance(values, list):
+        return []
+    statements: list[str] = []
+    for value in values:
+        if isinstance(value, dict):
+            text = _compact_text(str(value.get("statement") or ""), limit=500)
+        else:
+            text = _compact_text(str(value or ""), limit=500)
+        if text:
+            statements.append(text)
+    return list(dict.fromkeys(statements))
+
+
+def _dossier_contributions(dossier: dict[str, Any]) -> list[str]:
+    values = dossier.get("contributions") if isinstance(dossier.get("contributions"), list) else []
+    statements: list[str] = []
+    for value in values:
+        if isinstance(value, dict):
+            text = _compact_text(str(value.get("statement") or value.get("what_changes_if_supported") or ""), limit=500)
+        else:
+            text = _compact_text(str(value or ""), limit=500)
+        if text:
+            statements.append(text)
+    return list(dict.fromkeys(statements))
+
+
+def _candidate_dossier_value(selected_candidate: dict[str, Any], *keys: str) -> str:
+    candidate = selected_candidate.get("candidate") if isinstance(selected_candidate.get("candidate"), dict) else selected_candidate
+    if not isinstance(candidate, dict):
+        return ""
+    for key in keys:
+        value = candidate.get(key)
+        if isinstance(value, str) and value.strip():
+            return _compact_text(value, limit=800)
+    return ""
+
+
+def _research_context_source_refs(dossier: dict[str, Any]) -> list[dict[str, str]]:
+    refs = [
+        _source_ref("SRC_IDEA_SCORECARD", "selected Candidate dossier", "T4 selected direction preserves the research problem and decision context"),
+        _source_ref("SRC_HYPOTHESES", "formal research dossier", "Formal hypotheses define the testable mechanism and scope", "reconciled"),
+        _source_ref("SRC_NOVELTY", "Final Gate Verdict", "Novelty audit bounds the interpretation and claim ceiling", "reconciled"),
+    ]
+    if dossier:
+        refs.insert(
+            1,
+            _source_ref(
+                "SRC_RESEARCH_DOSSIER",
+                "research context and conditional implications",
+                "Post-novelty dossier preserves T4 significance, stakeholders, contributions, and evidence status",
+            ),
+        )
+    return refs
+
+
+def _build_t45_research_context(
+    *,
+    dossier: dict[str, Any],
+    selected_candidate: dict[str, Any],
+    hypotheses: str,
+    contribution_map: dict[str, Any],
+) -> dict[str, Any]:
+    """Retain T4 decision context without promoting it to empirical evidence."""
+
+    thesis = _dossier_statement(dossier, "central_thesis")
+    problem = _dossier_statement(dossier, "research_problem") or _candidate_dossier_value(
+        selected_candidate,
+        "target_problem",
+        "problem",
+        "pitch",
+    ) or thesis or _first_non_heading_line(hypotheses)
+    scholarly = _dossier_statements(dossier, "scholarly")
+    if not scholarly:
+        scholarly = [
+            _candidate_dossier_value(selected_candidate, "practical_implication", "summary", "pitch")
+            or problem
+        ]
+    practical = _dossier_statements(dossier, "practical")
+    commercial = _dossier_statements(dossier, "commercial")
+    stakeholders = _dossier_statements(dossier, "stakeholders_or_processes")
+    if not stakeholders:
+        raw_stakeholders = _candidate_dossier_value(selected_candidate, "affected_stakeholders_or_processes")
+        if raw_stakeholders:
+            stakeholders = [raw_stakeholders]
+    contributions = _dossier_contributions(dossier)
+    if not contributions:
+        mapped = contribution_map.get("contributions") if isinstance(contribution_map.get("contributions"), list) else []
+        contributions = [
+            _compact_text(str(item.get("statement") or item.get("what_changes_if_true") or ""), limit=500)
+            for item in mapped
+            if isinstance(item, dict) and str(item.get("statement") or item.get("what_changes_if_true") or "").strip()
+        ]
+    if not contributions:
+        contributions = [thesis or problem]
+    evidence_status = "unknown"
+    central = dossier.get("central_thesis") if isinstance(dossier.get("central_thesis"), dict) else {}
+    if isinstance(central, dict):
+        candidate_status = str(central.get("evidence_status") or "").strip()
+        if candidate_status in {"source_supported", "proposed_not_verified", "unknown"}:
+            evidence_status = candidate_status
+    if evidence_status == "unknown" and "proposed_not_verified" in hypotheses:
+        evidence_status = "proposed_not_verified"
+    return {
+        "research_problem": problem or "Research problem remains to be recovered from the selected Candidate dossier.",
+        "scholarly_stakes": scholarly,
+        "practical_implications": practical,
+        "commercial_implications": commercial,
+        "stakeholders_or_processes": stakeholders,
+        "contribution_intent": contributions,
+        "evidence_status": evidence_status,
+        "source_refs": _research_context_source_refs(dossier),
+    }
+
+
 def _source_available(source_manifest: list[dict[str, Any]], path: str) -> bool:
     return any(
         item.get("path") == path and item.get("availability") == "available" and item.get("used") is True
@@ -1330,16 +1472,30 @@ def _source_available(source_manifest: list[dict[str, Any]], path: str) -> bool:
     )
 
 
-def _required_source_coverage(source_manifest: list[dict[str, Any]]) -> float:
-    required = [
-        item
-        for item in source_manifest
-        if isinstance(item, dict) and item.get("path") in RESEARCH_REBOOST_REQUIRED_SOURCE_PATHS
+def _source_group_available(source_manifest: list[dict[str, Any]], group: tuple[str, ...]) -> bool:
+    return any(_source_available(source_manifest, path) for path in group)
+
+
+def _source_group_label(group: tuple[str, ...]) -> str:
+    return " 或 ".join(group)
+
+
+def _missing_reboost_source_groups(source_manifest: list[dict[str, Any]]) -> list[str]:
+    return [
+        _source_group_label(group)
+        for group in RESEARCH_REBOOST_REQUIRED_SOURCE_GROUPS
+        if not _source_group_available(source_manifest, group)
     ]
-    if not required:
+
+
+def _required_source_coverage(source_manifest: list[dict[str, Any]]) -> float:
+    if not RESEARCH_REBOOST_REQUIRED_SOURCE_GROUPS:
         return 0.0
-    ready = sum(item.get("availability") == "available" and item.get("used") is True for item in required)
-    return ready / len(RESEARCH_REBOOST_REQUIRED_SOURCE_PATHS)
+    ready = sum(
+        _source_group_available(source_manifest, group)
+        for group in RESEARCH_REBOOST_REQUIRED_SOURCE_GROUPS
+    )
+    return ready / len(RESEARCH_REBOOST_REQUIRED_SOURCE_GROUPS)
 
 
 def _used_source_count(source_manifest: list[dict[str, Any]]) -> int:
@@ -1386,6 +1542,14 @@ def _extract_datasets(exp_plan: dict[str, Any]) -> list[str]:
         for key in ("dataset", "benchmark"):
             if exp.get(key):
                 names.append(str(exp.get(key)).strip())
+        # T4.5 plans may intentionally specify an auditable simulated setting
+        # before the concrete dataset or environment package is selected.  The
+        # handoff schema accepts datasets *or settings*, so retain that explicit
+        # setting rather than falsely treating the protocol as empty.
+        for key in ("evaluation", "evaluation_setting", "setting"):
+            value = exp.get(key)
+            if isinstance(value, str) and value.strip() and value.strip().casefold() not in {"unknown", "tbd"}:
+                names.append(value.strip())
     return list(dict.fromkeys(item for item in names if item))
 
 
@@ -1414,7 +1578,14 @@ def _exp_baseline_records(exp_plan: dict[str, Any], workspace: Path) -> list[dic
                 }
             )
     for exp in _experiments_from_plan(exp_plan):
-        for item in exp.get("baselines", []) or []:
+        baseline_items: list[Any] = []
+        for key in ("required_baselines", "baselines", "baseline_methods"):
+            value = exp.get(key)
+            if isinstance(value, list):
+                baseline_items.extend(value)
+            elif value:
+                baseline_items.append(value)
+        for item in baseline_items:
             if isinstance(item, dict):
                 name = str(item.get("name") or item.get("baseline_name") or "").strip()
                 source = str(item.get("source") or "ideation/exp_plan.yaml")
@@ -1569,6 +1740,7 @@ def _build_reboost_writer_contract() -> dict[str, Any]:
         ],
         "must_not_use_as_final_fact_source": [
             "method_intent",
+            "research_context",
             "initial_framework_figure_sketch",
             "unaudited_raw_results",
             "diagnostic_hint",
@@ -1602,11 +1774,26 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
     project = _read_yaml(workspace / "project.yaml")
     exp_plan = _read_yaml(workspace / "ideation" / "exp_plan.yaml")
     hypotheses = _read_text(workspace / "ideation" / "hypotheses.md", max_chars=20000)
+    dossier = _read_json(workspace / "ideation" / "research_dossier.json")
+    if dossier.get("semantics") != "t45_research_dossier" or dossier.get("status") != "formalized_after_novelty_pass":
+        dossier = {}
+    selected_candidate = _read_json(workspace / "ideation" / "selected" / "selected_candidate.json")
+    contribution_map = _read_yaml(workspace / "ideation" / "contribution_hypothesis_map.yaml")
     synthesis = _read_text(workspace / "literature" / "synthesis.md", max_chars=16000)
     novelty = _read_text(workspace / "ideation" / "novelty_audit.md", max_chars=16000)
-    risks = _read_text(workspace / "ideation" / "risks.md", max_chars=8000)
+    risks, risk_source = _first_existing_text(
+        workspace,
+        ["ideation/kill_criteria.yaml", "ideation/risks.md", "ideation/validation_map.yaml"],
+        max_chars=8000,
+    )
     goal = _extract_project_goal(project, exp_plan, hypotheses)
     research_question = _extract_research_question(project, goal)
+    research_context = _build_t45_research_context(
+        dossier=dossier,
+        selected_candidate=selected_candidate,
+        hypotheses=hypotheses,
+        contribution_map=contribution_map,
+    )
     metrics = _extract_exp_plan_metrics(exp_plan)
     datasets = _extract_datasets(exp_plan)
     experiments = _experiments_from_plan(exp_plan)
@@ -1655,9 +1842,7 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
 
     status = "completed"
     unresolved_items: list[dict[str, Any]] = []
-    missing_required = [
-        path for path in sorted(RESEARCH_REBOOST_REQUIRED_SOURCE_PATHS) if not _source_available(source_manifest, path)
-    ]
+    missing_required = _missing_reboost_source_groups(source_manifest)
     if missing_required:
         status = "blocked"
         for idx, missing in enumerate(missing_required, start=1):
@@ -1670,7 +1855,7 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
                     "affected_fields": ["source_manifest", "context_reboost", "validation_summary"],
                     "blocking": True,
                     "owner": "human",
-                    "required_action": f"Restore or regenerate {missing}, then rerun T5-REBOOST.",
+                    "required_action": f"Restore or regenerate one current source for {missing}, then rerun T5-REBOOST.",
                     "source_refs": [_source_ref("SRC_PROJECT", "project root", "Missing source was detected by deterministic inventory")],
                 }
             )
@@ -1774,8 +1959,8 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
                 "source_refs": [_source_ref("SRC_PROJECT", "research_question/research_direction", "Project file defines the research scope")],
             },
             "research_question": {
-                "statement": research_question,
-                "source_refs": [_source_ref("SRC_PROJECT", "research_question", "Project file states the research question")],
+                "statement": _compact_text(research_context["research_problem"] or research_question, limit=500),
+                "source_refs": research_context["source_refs"],
             },
             "central_hypothesis": {
                 "hypothesis_id": "H1",
@@ -1790,8 +1975,10 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
                 "source_refs": [
                     _source_ref("SRC_HYPOTHESES", "selected hypothesis / mechanism sections", "Hypotheses define the central claim"),
                     _source_ref("SRC_EXP_PLAN", "goal and experiments", "Experiment plan operationalizes the hypothesis", "reconciled"),
+                    *([_source_ref("SRC_RESEARCH_DOSSIER", "central_thesis", "Dossier preserves the formalized thesis and its evidence status", "reconciled")] if dossier else []),
                 ],
             },
+            "research_context": research_context,
             "study_scope": {
                 "target_setting": _compact_text(research_question, limit=500),
                 "tasks": [
@@ -1813,7 +2000,11 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
             },
             "method_mechanism": {
                 "core_mechanism": mechanism,
-                "contribution_intent": "Test the selected architecture as a bounded, auditable research contribution under novelty-audit claim ceilings.",
+                "contribution_intent": _compact_text(
+                    "; ".join(research_context["contribution_intent"])
+                    or "Test the selected architecture as a bounded, auditable research contribution under novelty-audit claim ceilings.",
+                    limit=700,
+                ),
                 "mechanism_invariants": [
                     {
                         "invariant_id": "I1",
@@ -1827,7 +2018,11 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
                 ],
                 "must_preserve_module_ids": [module_id],
                 "candidate_module_ids": [],
-                "source_refs": [_source_ref("SRC_HYPOTHESES", "technical mechanism", "Hypotheses define the method mechanism")],
+                "source_refs": [
+                    _source_ref("SRC_HYPOTHESES", "technical mechanism", "Hypotheses define the method mechanism"),
+                    *([_source_ref("SRC_CONTRIBUTION_MAP", "contribution-to-hypothesis links", "Contribution map constrains the intended contribution", "reconciled")] if contribution_map else []),
+                    *([_source_ref("SRC_RESEARCH_DOSSIER", "contributions", "Dossier retains the selected contribution intent", "reconciled")] if dossier else []),
+                ],
             },
             "novelty_audit_resolution": {
                 "status": "mismatch" if mismatch_records else "aligned",
@@ -1840,12 +2035,18 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
             "execution_priorities": [
                 {
                     "priority": 1,
+                    "objective": "Preserve the formalized research problem, conditional implications, and contribution intent while testing rather than asserting them.",
+                    "rationale": "T4 decision context guides implementation scope and interpretation but remains pre-experiment context, not empirical evidence.",
+                    "source_refs": research_context["source_refs"],
+                },
+                {
+                    "priority": 2,
                     "objective": "Align executor scope with the Pre-T5 hypothesis, novelty constraints, and experiment plan.",
                     "rationale": "Context alignment prevents implementation drift before resource or code work begins.",
                     "source_refs": [_source_ref("SRC_EXP_PLAN", "experiments", "Experiment plan defines the execution order")],
                 },
                 {
-                    "priority": 2,
+                    "priority": 3,
                     "objective": "Reproduce or audit required baselines before strong comparative claims.",
                     "rationale": "Missing baselines directly lower claim strength and novelty confidence.",
                     "source_refs": [_source_ref("SRC_NOVELTY", "baseline and claim boundary discussion", "Novelty audit controls baseline requirements")],
@@ -1859,7 +2060,7 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
                     "likelihood": "medium",
                     "impact": "high",
                     "mitigation": "Require baseline reproduction, ablation diagnostics, and conservative claim narrowing in result_pack.",
-                    "source_refs": [_source_ref("SRC_RISKS", "Top risks", "Risk artifact defines execution and scientific risks")],
+                    "source_refs": [_source_ref("SRC_RISKS", "Top risks", f"{risk_source or 'Risk artifact'} defines execution and scientific risks")],
                 }
             ],
             "known_context_mismatches": mismatch_records,
@@ -2010,7 +2211,7 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
             },
             "method_vs_engineering_boundary": {
                 "statement": "Implementation repairs are engineering details unless the audited realized method supports them as research contributions.",
-                "source_refs": [_source_ref("SRC_RISKS", "execution risks", "Risks warn against contribution drift", "reconciled")],
+                "source_refs": [_source_ref("SRC_RISKS", "execution risks", "Risk and stop-condition artifact warns against contribution drift", "reconciled")],
             },
             "conditional_claims": [
                 {
@@ -2095,6 +2296,10 @@ def _build_reboost_pack(workspace: Path) -> tuple[dict[str, Any], dict[str, Any]
                 "project.yaml",
                 "ideation/novelty_audit.md",
                 "ideation/exp_plan.yaml",
+                "ideation/research_dossier.json",
+                "ideation/selected/selected_candidate.json",
+                "ideation/contribution_hypothesis_map.yaml",
+                "ideation/validation_map.yaml",
                 "ideation/hypotheses.md",
                 "literature/synthesis.md",
             ],
@@ -3469,11 +3674,7 @@ class CompileResearchReboostHandoffTool(Tool):
                         "generation_status": str(pack.get("generation_status") or "unknown"),
                         "generation_source": "llm_api_skill_execution",
                         "source_files_used": [item.get("path") for item in source_manifest if item.get("used")],
-                        "missing_required_sources": [
-                            path
-                            for path in sorted(RESEARCH_REBOOST_REQUIRED_SOURCE_PATHS)
-                            if not _source_available(source_manifest, path)
-                        ],
+                        "missing_required_sources": _missing_reboost_source_groups(source_manifest),
                         "missing_optional_sources": [
                             item.get("path")
                             for item in source_manifest

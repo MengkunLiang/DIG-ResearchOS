@@ -1218,8 +1218,10 @@ class ExperimenterAgent(Agent):
                     "expected schema、allowed paths、AGENTS/CLAUDE。executor_selection 由后续 "
                     "T5-EXECUTOR-GATE 按所选执行器生成；不会生成 Codex/Claude/manual prompt 文件。项目专属 executor Skills 会在下一步 "
                     "`T5-SPECIALIZE-EXECUTOR-SKILLS` 中由确定性编译器单独发布。\n\n"
-                    "完成后读取 `external_executor/report/reboost_report.json`；如果 validation_ok=true，"
-                    "调用 finish_task。`compile_research_reboost_handoff` 是 handoff pack 的唯一写入者；"
+                    "完成后读取 `external_executor/report/reboost_report.json` 与 handoff_pack；只有 validation_ok=true 且 "
+                    "generation_status=completed 时才能调用 finish_task。若 status 不是 completed，必须重新调用 "
+                    "compile_research_reboost_handoff 处理当前权威 T4.5 产物，不得把可恢复的 blocked/needs_review 手册伪装成成功。"
+                    "`compile_research_reboost_handoff` 是 handoff pack 的唯一写入者；"
                     "不要用 write_file 修改它，不要手写压缩成一行的 JSON；不要生成或改写 "
                     "`external_executor/skills/`。"
                 ),

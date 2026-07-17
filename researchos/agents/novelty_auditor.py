@@ -126,8 +126,8 @@ class NoveltyAuditorAgent(Agent):
             "外部检索出现超时、网络不可用、限流或本轮停止检索提示时，不得改写关键词重试，必须在审计中记录外部覆盖边界。"
             "先产出 ideation/novelty_audit.md；如果发现 High/Medium Overlap，"
             "还必须产出 ideation/collision_cases.md 归档潜在撞车案例。"
-            "只有在 audit 明确给出可通过的 Final Gate Verdict 后，才能基于 Pre-Novelty brief 编译正式 "
-            "ideation/hypotheses.md、exp_plan.yaml、contribution_hypothesis_map.yaml、validation_map.yaml、kill_criteria.yaml "
+            "只有在 audit 明确给出可通过的 Final Gate Verdict 后，才能基于 Pre-Novelty brief 和 selected_candidate.json 编译正式 "
+            "ideation/hypotheses.md、research_dossier.json、exp_plan.yaml、contribution_hypothesis_map.yaml、validation_map.yaml、kill_criteria.yaml "
             "和 post_novelty_formalization.json。若 verdict 要求 reframe/drop/review，不得生成或更新这些正式执行产物。"
             ),
         )
@@ -350,6 +350,7 @@ def _validate_post_novelty_formalization(workspace: Path, audit_path: Path) -> t
     manifest_path = workspace / "ideation" / "post_novelty_formalization.json"
     required = {
         "hypotheses": workspace / "ideation" / "hypotheses.md",
+        "research_dossier": workspace / "ideation" / "research_dossier.json",
         "exp_plan": workspace / "ideation" / "exp_plan.yaml",
         "contribution_hypothesis_map": workspace / "ideation" / "contribution_hypothesis_map.yaml",
         "validation_map": workspace / "ideation" / "validation_map.yaml",
@@ -372,6 +373,68 @@ def _validate_post_novelty_formalization(workspace: Path, audit_path: Path) -> t
     for name, path in required.items():
         if artifacts.get(name) != path.relative_to(workspace).as_posix():
             return False, f"post_novelty_formalization.json must list {name}"
+    hypotheses_text = read_text_file(workspace / "ideation" / "hypotheses.md", default="")
+    dossier_ok, dossier_error = _validate_t45_research_dossier(workspace, hypotheses_text)
+    if not dossier_ok:
+        return False, dossier_error
+    return True, None
+
+
+def _validate_t45_research_dossier(workspace: Path, hypotheses_text: str) -> tuple[bool, str | None]:
+    """Keep the post-novelty dossier substantive without prescribing its prose."""
+
+    if len(hypotheses_text.strip()) < 3_000:
+        return False, "hypotheses.md 过短，正式研究档案至少需要3000字符的实质性说明"
+    required_markers = {
+        "摘要": r"(?im)^#{1,3}\s*(摘要|executive summary)\b",
+        "研究意义": r"(?im)^#{1,3}\s*(研究意义|why this matters|问题背景)",
+        "研究贡献": r"(?im)^#{1,3}\s*(研究贡献|contributions?)\b",
+        "现实或商业含义": r"(?im)^#{1,3}\s*(现实.*含义|实践.*含义|管理.*含义|商业.*含义|practical.*implications?|commercial.*implications?)",
+        "证据与新颖性边界": r"(?im)^#{1,3}\s*(证据边界|新颖性约束|evidence boundary|novelty boundary)",
+        "风险与停止条件": r"(?im)^#{1,3}\s*(风险.*停止|风险.*证伪|risks?.*(kill|falsification)|kill criteria)",
+        "研究谱系": r"(?im)^#{1,3}\s*(研究谱系|可追溯性|lineage|traceability)",
+    }
+    missing_markers = [label for label, pattern in required_markers.items() if not re.search(pattern, hypotheses_text)]
+    if missing_markers:
+        return False, "hypotheses.md 缺少正式研究档案章节: " + ", ".join(missing_markers)
+    if not re.search(r"(?im)^#{1,4}\s*H1\b", hypotheses_text):
+        return False, "hypotheses.md 必须包含正式 H1 标题"
+
+    path = workspace / "ideation" / "research_dossier.json"
+    try:
+        dossier = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return False, f"research_dossier.json 无法读取为 JSON: {exc}"
+    if not isinstance(dossier, dict) or dossier.get("semantics") != "t45_research_dossier":
+        return False, "research_dossier.json semantics 必须是 t45_research_dossier"
+    if dossier.get("status") != "formalized_after_novelty_pass":
+        return False, "research_dossier.json 必须标记 formalized_after_novelty_pass"
+    required = (
+        "candidate_id",
+        "selection_fingerprint",
+        "novelty_audit_verdict",
+        "central_thesis",
+        "research_problem",
+        "why_it_matters",
+        "contributions",
+        "hypotheses",
+        "evidence_boundary",
+        "novelty_boundary",
+        "risks_and_kill_criteria",
+        "traceability",
+    )
+    missing = [key for key in required if key not in dossier]
+    if missing:
+        return False, "research_dossier.json 缺少字段: " + ", ".join(missing)
+    why_it_matters = dossier.get("why_it_matters")
+    if not isinstance(why_it_matters, dict) or any(
+        key not in why_it_matters
+        for key in ("scholarly", "practical", "commercial", "stakeholders_or_processes")
+    ):
+        return False, "research_dossier.json.why_it_matters 必须覆盖 scholarly、practical、commercial 和 stakeholders_or_processes"
+    traceability = dossier.get("traceability")
+    if not isinstance(traceability, dict) or not isinstance(traceability.get("source_artifacts"), list):
+        return False, "research_dossier.json.traceability.source_artifacts 必须是列表"
     return True, None
 
 

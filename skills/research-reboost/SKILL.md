@@ -44,7 +44,7 @@ python3 scripts/inventory_sources.py \
   --output <temporary-source-inventory.json>
 ```
 
-Treat the inventory as discovery evidence, not semantic interpretation. If a required source is missing, continue only far enough to produce a blocked diagnosis; do not invent its content.
+Treat the inventory as discovery evidence, not semantic interpretation. The current T4.5 flow supplies the selected Candidate dossier and `kill_criteria.yaml`; `idea_scorecard.yaml` and `risks.md` are legacy fallbacks, not extra files a current workspace must recreate. When present, `research_dossier.json`, `validation_map.yaml`, and `contribution_hypothesis_map.yaml` preserve the post-novelty research meaning that a short hypothesis page cannot safely carry. They are contextual sources, not empirical evidence and not substitutes for the experiment plan. If neither member of a required source role is available, continue only far enough to produce a blocked diagnosis; do not invent its content.
 
 When this Skill is executed inside the ResearchOS T5 state machine, use the registered `compile_research_reboost_handoff` tool instead of shelling out. First read the required sources and compile the full `handoff_pack` object yourself under this Skill contract; then pass that object as the tool's `handoff_pack` argument. The tool is only the publication and validation boundary: it writes the pretty-printed JSON, runs the bundled validator, publishes the T5 executor control files, and stores reboost diagnostics under `external_executor/report/`. It does not create or populate `external_executor/expr/`; workspace initialization owns that directory. If the argument is omitted, the tool may fall back to its deterministic repair compiler for legacy or offline recovery, but the normal T5 path should provide the LLM-compiled pack.
 
@@ -72,6 +72,7 @@ Never present inference as source fact. Put material unresolved decisions in `un
 Compile `context_reboost` from the ledger:
 
 - project goal, research question, central hypothesis, and falsification conditions;
+- `research_context`: research problem, scholarly stakes, conditional practical and commercial implications, affected stakeholders or processes, contribution intent, evidence status, and source references. Preserve `unknown` or `proposed_not_verified`; never translate this context into observed business or scientific results;
 - target setting and explicit exclusions;
 - core mechanism, mechanism invariants, and contribution intent;
 - novelty-audit resolution and required-baseline consequences;

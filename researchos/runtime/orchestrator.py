@@ -5200,6 +5200,7 @@ class AgentRunner:
         ) == "formalized_after_novelty_pass":
             for rel in (
                 "ideation/hypotheses.md",
+                "ideation/research_dossier.json",
                 "ideation/exp_plan.yaml",
                 "ideation/contribution_hypothesis_map.yaml",
                 "ideation/validation_map.yaml",

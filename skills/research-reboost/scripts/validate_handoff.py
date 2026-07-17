@@ -177,18 +177,32 @@ class SchemaValidator:
             self.error(path, "schema.maximum", f"value must be <= {schema['maximum']}")
 
 
-REQUIRED_SOURCE_PATHS = {
-    "project.yaml",
-    "literature/synthesis.md",
-    "literature/synthesis_workbench.json",
-    "literature/domain_map.json",
-    "literature/comparison_table.csv",
-    "ideation/hypotheses.md",
-    "ideation/exp_plan.yaml",
-    "ideation/idea_scorecard.yaml",
-    "ideation/risks.md",
-    "ideation/novelty_audit.md",
-}
+REQUIRED_SOURCE_GROUPS = (
+    ("project.yaml",),
+    ("literature/synthesis.md",),
+    ("literature/synthesis_workbench.json",),
+    ("literature/domain_map.json",),
+    ("literature/comparison_table.csv",),
+    ("ideation/hypotheses.md",),
+    ("ideation/exp_plan.yaml",),
+    ("ideation/selected/selected_candidate.json", "ideation/idea_scorecard.yaml"),
+    ("ideation/kill_criteria.yaml", "ideation/risks.md"),
+    ("ideation/novelty_audit.md",),
+)
+REQUIRED_SOURCE_PATHS = {path for group in REQUIRED_SOURCE_GROUPS for path in group}
+
+
+def _source_group_label(group: tuple[str, ...]) -> str:
+    return " or ".join(group)
+
+
+def _source_group_is_ready(entries_by_path: dict[str, dict], group: tuple[str, ...]) -> bool:
+    return any(
+        entry is not None
+        and entry.get("availability") == "available"
+        and entry.get("used") is True
+        for entry in (entries_by_path.get(path) for path in group)
+    )
 
 REQUIRED_STOP_CONDITIONS = {
     "budget_exhausted",
@@ -277,11 +291,16 @@ class SemanticValidator:
     def _validate_sources(self) -> None:
         entries = self.pack["source_manifest"]
         by_path = {entry["path"]: entry for entry in entries}
-        missing_declarations = sorted(REQUIRED_SOURCE_PATHS - by_path.keys())
-        for path in missing_declarations:
-            self.error("source.required_not_declared", "/source_manifest", f"required source path is not declared: {path}")
-        required_entries = [entry for entry in entries if entry["path"] in REQUIRED_SOURCE_PATHS]
-        actual_coverage = sum(entry["availability"] == "available" and entry["used"] for entry in required_entries) / len(REQUIRED_SOURCE_PATHS)
+        missing_declarations = [
+            _source_group_label(group)
+            for group in REQUIRED_SOURCE_GROUPS
+            if not any(path in by_path for path in group)
+        ]
+        for label in missing_declarations:
+            self.error("source.required_not_declared", "/source_manifest", f"required source group is not declared: {label}")
+        actual_coverage = sum(
+            _source_group_is_ready(by_path, group) for group in REQUIRED_SOURCE_GROUPS
+        ) / len(REQUIRED_SOURCE_GROUPS)
         declared_coverage = self.pack["validation_summary"]["required_source_coverage"]
         if abs(actual_coverage - declared_coverage) > 1e-9:
             self.error("source.coverage_mismatch", "/validation_summary/required_source_coverage", f"declared {declared_coverage}, computed {actual_coverage}")
@@ -462,6 +481,8 @@ class SemanticValidator:
         final_fact_bans = set(self.pack["writer_handoff_contract"]["must_not_use_as_final_fact_source"])
         if "method_intent" not in final_fact_bans:
             self.error("writer.method_intent_not_banned", "/writer_handoff_contract/must_not_use_as_final_fact_source", "method_intent must be forbidden as a final fact source")
+        if "research_context" not in final_fact_bans:
+            self.error("writer.research_context_not_banned", "/writer_handoff_contract/must_not_use_as_final_fact_source", "research_context must be forbidden as a final fact source")
 
     def _validate_status(self) -> None:
         status = self.pack["generation_status"]
@@ -471,11 +492,11 @@ class SemanticValidator:
         has_blocker = any(item["blocking"] for item in unresolved) or any(item["severity"] == "blocking" for item in mismatches)
         needs_review = any(item["requires_human_review"] for item in mismatches) or any(item["severity"] == "material" for item in unresolved)
         validation_checks = self.pack["validation_summary"]["checks"]
+        entries_by_path = {entry["path"]: entry for entry in self.pack["source_manifest"]}
         required_sources_ready = all(
-            entry["availability"] == "available" and entry["used"]
-            for entry in self.pack["source_manifest"]
-            if entry["path"] in REQUIRED_SOURCE_PATHS
-        ) and {entry["path"] for entry in self.pack["source_manifest"] if entry["path"] in REQUIRED_SOURCE_PATHS} == REQUIRED_SOURCE_PATHS
+            _source_group_is_ready(entries_by_path, group)
+            for group in REQUIRED_SOURCE_GROUPS
+        )
 
         if status == "completed":
             if not required_sources_ready:
