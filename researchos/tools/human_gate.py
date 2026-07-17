@@ -774,6 +774,9 @@ class CLIHumanInterface(HumanInterface):
                 self._render_section(_humanize_presentation_key(key))
                 self._render_t4_candidate_overview(value)
                 continue
+            if gate_id == "t4_gate1_selection_gate" and key == "t4_artifact_guide":
+                self._render_t4_artifact_guide(value)
+                continue
             if gate_id == "t4_gate1_selection_gate" and key == "t4_directive_result":
                 self._render_t4_directive_result(value)
                 continue
@@ -962,6 +965,50 @@ class CLIHumanInterface(HumanInterface):
             description = " ".join(str(option.get("description") or "").split())
             table.add_row(str(index), label, description)
         console.print(Panel(table, title="推荐操作", border_style="bright_yellow", expand=True))
+        rendered = buffer.getvalue().rstrip()
+        if rendered:
+            print(rendered)
+
+    def _render_t4_artifact_guide(self, value: Any) -> None:
+        """Render the durable T4 materials as a researcher-facing file guide."""
+
+        entries = [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+        if not entries:
+            return
+        width = max(80, min(160, shutil.get_terminal_size(fallback=(120, 40)).columns))
+        buffer = io.StringIO()
+        console = Console(
+            file=buffer,
+            force_terminal=not self._no_color,
+            color_system=None if self._no_color else "truecolor",
+            no_color=self._no_color,
+            width=width,
+            highlight=False,
+            _environ={"COLUMNS": str(width), "LINES": "48"},
+        )
+        table = Table(
+            expand=True,
+            show_header=True,
+            show_lines=True,
+            box=box.SQUARE,
+            header_style="bold bright_cyan",
+            border_style="bright_cyan",
+        )
+        table.add_column("用途", width=16, no_wrap=True, overflow="fold")
+        table.add_column("保存位置", ratio=2, overflow="fold")
+        table.add_column("包含什么 / 何时打开", ratio=3, overflow="fold")
+        for entry in entries:
+            label = " ".join(str(entry.get("label") or "研究材料").split())
+            path = " ".join(str(entry.get("path") or "").split())
+            purpose = " ".join(str(entry.get("purpose") or "").split())
+            when_to_open = " ".join(str(entry.get("when_to_open") or "").split())
+            detail = "\n".join(part for part in (purpose, when_to_open) if part)
+            if path:
+                table.add_row(label, Text(path, style="cyan", overflow="fold"), Text(detail, overflow="fold"))
+        if not table.row_count:
+            return
+        note = Text("所有位置均相对当前 workspace 根目录；这些文件已保存，可在暂停或 resume 后继续查看。", style="dim", overflow="fold")
+        console.print(Panel(Group(table, note), title="本轮已保存的研究材料", border_style="bright_cyan", expand=True))
         rendered = buffer.getvalue().rstrip()
         if rendered:
             print(rendered)
@@ -1817,7 +1864,7 @@ class CLIHumanInterface(HumanInterface):
         """Keep interactive gates focused on a single decision surface."""
 
         if gate_id == "t4_gate1_selection_gate":
-            return key in {"candidate_overview", "t4_directive_result", "t4_directive_confirmation"}
+            return key in {"candidate_overview", "t4_artifact_guide", "t4_directive_result", "t4_directive_confirmation"}
         if gate_id == "t2_literature_param_gate":
             return key == "current_parameter_preview"
         return True

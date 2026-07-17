@@ -858,6 +858,66 @@ def _t4_merge_opportunities(candidate: dict[str, Any]) -> list[dict[str, str]]:
     return result
 
 
+def _t4_gate1_file_navigation(workspace_dir: Path) -> list[dict[str, str]]:
+    """Describe the durable, researcher-facing T4 materials that exist now.
+
+    These paths are deliberately relative to the workspace and exclude runtime
+    traces, fingerprints, checkpoints, and raw Population internals. The goal
+    is to help a researcher revisit the decision evidence without learning
+    the controller's implementation vocabulary.
+    """
+
+    entries = (
+        (
+            "完整候选卡",
+            "ideation/_gate1_candidate_cards.md",
+            "逐个阅读候选的完整命题、贡献、假设、评分、证据和风险。",
+            "决定前细看某个方向，或需要离线比较时打开。",
+        ),
+        (
+            "选择简报",
+            "ideation/_gate1_selection_brief.md",
+            "汇总候选池、建议选择顺序、并行保留提示与主要风险。",
+            "先快速比较多个方向时打开。",
+        ),
+        (
+            "候选结构与评分",
+            "ideation/_candidate_directions.json",
+            "保存机器可读的候选结构、评分、验证设想和支撑论文索引。",
+            "需要导出、复核字段或交给后续工具时打开。",
+        ),
+        (
+            "文献接地复核",
+            "ideation/_pass2_grounding_review.json",
+            "记录每个候选的文献支撑、证据边界、主要风险和上桌判断。",
+            "想追问某个方向为何被推荐或证据不足时打开。",
+        ),
+        (
+            "第一轮探索记录",
+            "ideation/_pass1_forward_candidates.json",
+            "保留第一轮形成的候选范围，便于回看未进入首屏的探索方向。",
+            "需要检查本轮覆盖范围或回顾早期方向时打开。",
+        ),
+        (
+            "当前候选组合",
+            "ideation/portfolio.json",
+            "记录当前推荐组合、备选方向与高上行方向。",
+            "需要确认本轮可选择的方向集合时打开。",
+        ),
+        (
+            "跨域覆盖审计",
+            "ideation/bridge_coverage_review.json",
+            "说明跨域材料如何支持、限制或暂缓当前候选。",
+            "想核验跨域论文的使用边界时打开。",
+        ),
+    )
+    return [
+        {"label": label, "path": path, "purpose": purpose, "when_to_open": when_to_open}
+        for label, path, purpose, when_to_open in entries
+        if (workspace_dir / path).is_file()
+    ]
+
+
 def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
     """Build a complete, Chinese-first, auditable Gate1 candidate deck.
 
@@ -1146,14 +1206,7 @@ def _t4_gate1_candidate_overview(workspace_dir: Path) -> dict[str, Any]:
         "remaining_candidate_count": max(0, all_candidate_count - len(candidates)),
         "input_hint": "选择一个完整 Candidate 可进入 Pre-Novelty review；选择多个方向时请明确“并行保留”或“构建新 Candidate”。也可以输入“查看剩余 Population”“查看 D1 的评分/证据/谱系/全部假设”“重新演化”“只优化 D2”或“回到上一代”。",
         "detail_path": "ideation/_gate1_candidate_cards.md",
-        "file_navigation": [
-            {"path": "ideation/_gate1_candidate_cards.md", "purpose": "人工阅读版完整候选卡片，适合逐项比较。"},
-            {"path": "ideation/_gate1_selection_brief.md", "purpose": "候选池、合并建议、风险提示和选择顺序的简报。"},
-            {"path": "ideation/_candidate_directions.json", "purpose": "机器可读的完整候选结构、评分、实验和支撑论文数据。"},
-            {"path": "ideation/_pass1_forward_candidates.json", "purpose": "Pass 1 发散产生的原始候选池，用于检查覆盖范围。"},
-            {"path": "ideation/_pass2_grounding_review.json", "purpose": "Pass 2 对每个候选的文献接地、风险和上桌建议。"},
-            {"path": "ideation/bridge_coverage_review.json", "purpose": "桥接领域候选为何展示、暂缓或需要补证据的审计记录。"},
-        ],
+        "file_navigation": _t4_gate1_file_navigation(workspace_dir),
     }
 
 
@@ -2489,6 +2542,7 @@ class StateMachine:
         if node.task_id == "T4-GATE1" and workspace_dir is not None:
             presentation["candidate_overview"] = _t4_gate1_candidate_overview(workspace_dir)
             presentation["candidate_pool_fingerprints"] = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
+            presentation["t4_artifact_guide"] = _t4_gate1_file_navigation(workspace_dir)
             operation_result = _latest_native_t4_operation_result(workspace_dir)
             if operation_result:
                 presentation["t4_directive_result"] = operation_result
@@ -3545,6 +3599,7 @@ class StateMachine:
                 return redirected
             presentation["candidate_overview"] = _t4_gate1_candidate_overview(workspace_dir)
             presentation["candidate_pool_fingerprints"] = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
+            presentation["t4_artifact_guide"] = _t4_gate1_file_navigation(workspace_dir)
             operation_result = _latest_native_t4_operation_result(workspace_dir)
             if operation_result:
                 presentation["t4_directive_result"] = operation_result
@@ -3917,6 +3972,7 @@ class StateMachine:
             if state.current_task == "T4-GATE1" and workspace_dir is not None:
                 presentation["candidate_overview"] = _t4_gate1_candidate_overview(workspace_dir)
                 presentation["candidate_pool_fingerprints"] = _t4_gate1_candidate_pool_fingerprints(workspace_dir)
+                presentation["t4_artifact_guide"] = _t4_gate1_file_navigation(workspace_dir)
                 operation_result = _latest_native_t4_operation_result(workspace_dir)
                 if operation_result:
                     presentation["t4_directive_result"] = operation_result
@@ -4109,6 +4165,7 @@ class StateMachine:
                 )
                 presentation["candidate_overview"] = _t4_gate1_candidate_overview(workspace_dir)
                 presentation["candidate_pool_fingerprints"] = current_pool
+                presentation["t4_artifact_guide"] = _t4_gate1_file_navigation(workspace_dir)
                 presentation["stale_reason"] = (
                     "T4-GATE1 candidate pool changed while waiting for human selection: "
                     + ", ".join(changed[:8])
@@ -4996,6 +5053,7 @@ class StateMachine:
             "_description": str(gate_spec.get("description") or "请选择如何继续当前 Candidate Population。"),
             "candidate_overview": _t4_gate1_candidate_overview(workspace_dir),
             "candidate_pool_fingerprints": _t4_gate1_candidate_pool_fingerprints(workspace_dir),
+            "t4_artifact_guide": _t4_gate1_file_navigation(workspace_dir),
         }
         if result:
             presentation["t4_directive_result"] = result
