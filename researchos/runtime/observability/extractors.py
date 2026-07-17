@@ -449,7 +449,16 @@ def _t5_insights(workspace: Path, *, task_id: str) -> list[dict[str, Any]]:
                 rows.append((label, str(len(context[key]))))
         baseline_matrix = context.get("baseline_matrix") or handoff.get("baseline_matrix")
         if isinstance(baseline_matrix, list):
-            required = sum(1 for item in baseline_matrix if isinstance(item, dict) and bool(item.get("required")))
+            required = sum(
+                1
+                for item in baseline_matrix
+                if isinstance(item, dict)
+                and (
+                    item.get("required") is True
+                    or str(item.get("requirement") or "").strip().casefold() in {"required", "must_run"}
+                    or str(item.get("priority") or "").strip().casefold() in {"required", "must_run"}
+                )
+            )
             rows.append(("Baseline matrix", f"{len(baseline_matrix)} entries; required={required}"))
         claim_matrix = context.get("claim_evidence_matrix") or handoff.get("claim_evidence_matrix")
         if isinstance(claim_matrix, list):
