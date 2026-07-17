@@ -74,7 +74,10 @@ from ..ideation.final_card_diagnostics import (
     classify_final_card_exception,
     classify_final_card_readiness_error,
 )
-from ..ideation.final_card_readiness import validate_t4_portfolio_final_cards
+from ..ideation.final_card_readiness import (
+    archive_final_card_profile_mismatch,
+    validate_t4_portfolio_final_cards,
+)
 from ..ideation.legacy_projection import project_gate1_population
 from ..ideation.llm_roles import (
     LLMCandidateEnricher,
@@ -3852,6 +3855,10 @@ class AgentRunner:
             cards_ready, _card_error = validate_t4_portfolio_final_cards(ctx.workspace_dir)
             if not cards_ready:
                 readiness_diagnostic = classify_final_card_readiness_error(_card_error)
+                profile_refresh = archive_final_card_profile_mismatch(
+                    ctx.workspace_dir,
+                    current_profile_type=run_config.target_profile.profile_type,
+                )
                 store.write_json(
                     "ideation/evolution/diagnostics/final_card_readiness.json",
                     {
@@ -3859,8 +3866,14 @@ class AgentRunner:
                         "semantics": "t4_final_idea_card_readiness_diagnostic",
                         "status": "repair_required" if readiness_diagnostic.repair_scheduled else "repair_prerequisite_required",
                         "failure": readiness_diagnostic.as_dict(),
+                        "profile_refresh": profile_refresh,
                     },
                 )
+                if profile_refresh is not None:
+                    self.progress.emit(
+                        "T4 · 检测到论文取向已变化；已保留旧版 Candidate Card，正在只为当前取向重编译研究者可读说明。",
+                        important=True,
+                    )
             card_only_recovery = repair_checkpoint is not None
             if card_only_recovery:
                 try:
@@ -4081,20 +4094,26 @@ class AgentRunner:
             card_errors: list[dict[str, object]] = []
             if not cards_ready:
                 try:
-                    max_card_attempts = int(self.retry_policy.get("t4_final_card_compiler_attempts", 4))
+                    max_card_attempts = int(self.retry_policy.get("t4_final_card_compiler_attempts", 12))
                 except (TypeError, ValueError):
-                    max_card_attempts = 4
+                    max_card_attempts = 12
                 # A Card compiler repair is bounded separately from Candidate
-                # Evolution. The default gives complex card decks six typed
-                # repair attempts. Twelve remains an explicit safety ceiling
-                # so a malformed response cannot become an invisible retry
-                # loop. This quota never re-runs evolution.
+                # Evolution. The default gives complex card decks twelve typed
+                # replacement attempts. This quota never re-runs evolution.
                 max_card_attempts = max(1, min(max_card_attempts, 12))
                 for attempt in range(1, max_card_attempts + 1):
                     try:
+                        repair_context: dict[str, object] = {}
+                        if profile_refresh is not None:
+                            repair_context["profile_refresh"] = profile_refresh
+                        if card_errors:
+                            prior_failure = card_errors[-1].get("failure")
+                            if isinstance(prior_failure, dict):
+                                repair_context["previous_failure"] = prior_failure
                         final_cards = await final_card_compiler.compile(
                             candidates=portfolio_dossiers,
                             target_profile=run_config.target_profile,
+                            repair_context=repair_context or None,
                         )
                         break
                     except BudgetExceeded:

@@ -31,6 +31,7 @@ class FinalCardFailureKind(str, Enum):
     SCHEMA_MISMATCH = "llm_card_schema_mismatch"
     COVERAGE_MISMATCH = "llm_card_coverage_mismatch"
     IMMUTABLE_FIELD_MISMATCH = "llm_card_immutable_field_mismatch"
+    PROFILE_MISMATCH = "llm_card_profile_mismatch"
     SOURCE_DATA_MISSING = "source_data_missing"
     STALE_POPULATION_OR_CARD = "stale_population_or_card"
     UNEXPECTED = "unexpected_final_card_failure"
@@ -184,6 +185,16 @@ def classify_final_card_exception(
             error=error,
             message="The LLM card set did not cover exactly the active Portfolio Candidates.",
             recovery_action="retry_final_card_compiler_with_exact_portfolio",
+            prior_failure=prior_failure,
+        )
+    if _looks_like_profile_mismatch(lower):
+        return _diagnostic(
+            kind=FinalCardFailureKind.PROFILE_MISMATCH,
+            stage=stage,
+            candidate_ids=candidate_ids,
+            error=error,
+            message="The saved Final Card deck was written for a different publication orientation and must be recompiled for the current profile.",
+            recovery_action="preserve_prior_profile_deck_then_recompile_final_cards_for_current_profile",
             prior_failure=prior_failure,
         )
     if _looks_like_immutable_mismatch(lower):
@@ -354,8 +365,18 @@ def _looks_like_immutable_mismatch(text: str) -> bool:
             "changed the core thesis",
             "changed contribution membership",
             "changed hypothesis membership",
+        )
+    )
+
+
+def _looks_like_profile_mismatch(text: str) -> bool:
+    return any(
+        marker in text
+        for marker in (
+            "deck profile does not match",
+            "card profile does not match",
             "profile mismatch",
-            "profile does not match",
+            "profile does not match the current run config",
         )
     )
 

@@ -12,6 +12,7 @@ and then a Human Recovery Gate.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,8 @@ PORTFOLIO_PATH = "ideation/portfolio.json"
 PORTFOLIO_CARDS_PATH = "ideation/final_cards/portfolio_cards.json"
 PORTFOLIO_CARDS_SEMANTICS = "t4_final_idea_card_translations"
 FINAL_CARD_COMPATIBILITY_RECEIPT_PATH = "ideation/final_cards/final_card_compatibility_migration.json"
+FINAL_CARD_PROFILE_ARCHIVE_DIR = "ideation/final_cards/profile_history"
+FINAL_CARD_PROFILE_REFRESH_RECEIPT_PATH = "ideation/final_cards/profile_refresh_receipt.json"
 
 
 def portfolio_candidate_ids(portfolio: PortfolioSelection) -> list[str]:
@@ -141,11 +144,24 @@ def validate_t4_portfolio_final_cards(workspace_dir: Path) -> tuple[bool, str | 
     if dossier_error:
         return False, dossier_error
 
+    expected_profile_type = str(run_config.target_profile.profile_type or "").strip()
+    saved_profile_type = _profile_type_from_payload(cards_payload.get("target_profile"))
+    if saved_profile_type and saved_profile_type != expected_profile_type:
+        return False, (
+            "T4 Final Idea Card deck profile does not match the current run config "
+            f"(saved={saved_profile_type}; current={expected_profile_type}); "
+            "the researcher-facing cards must be recompiled for the current publication orientation"
+        )
+
     for candidate_id in expected_ids:
         card = cards_by_id[candidate_id]
         dossier = dossier_by_id[candidate_id]
-        if card.profile_type != run_config.target_profile.profile_type:
-            return False, f"T4 Final Idea Card profile does not match the current run config for {candidate_id}"
+        if card.profile_type != expected_profile_type:
+            return False, (
+                "T4 Final Idea Card profile does not match the current run config "
+                f"for {candidate_id} (saved={card.profile_type}; current={expected_profile_type}); "
+                "the researcher-facing card must be recompiled"
+            )
         if card.core_thesis != str(dossier.genome.core_thesis.value):
             return False, f"T4 Final Idea Card changed the active Candidate core thesis for {candidate_id}"
         contribution_ids = [item.contribution_id for item in dossier.contributions]
@@ -160,6 +176,73 @@ def validate_t4_portfolio_final_cards(workspace_dir: Path) -> tuple[bool, str | 
         return False, directions_error
 
     return True, None
+
+
+def archive_final_card_profile_mismatch(
+    workspace_dir: Path,
+    *,
+    current_profile_type: str,
+) -> dict[str, Any] | None:
+    """Preserve a completed card deck before it is recompiled for a new profile.
+
+    Changing a publication orientation does not change a Candidate's science,
+    but it does change the audience-specific explanation in its Final Card.
+    Keep the old LLM-authored deck in a content-addressed archive so the
+    compiler can replace the active deck without erasing the historical view.
+    The operation is idempotent and never alters the active source file.
+    """
+
+    workspace = Path(workspace_dir)
+    cards_path = workspace / PORTFOLIO_CARDS_PATH
+    payload, error = _read_json_object(cards_path, "Final Idea Card")
+    if error or payload is None:
+        return None
+    expected = str(current_profile_type or "").strip()
+    if not expected:
+        return None
+    raw_cards = payload.get("cards")
+    card_profiles = {
+        str(card.get("profile_type") or "").strip()
+        for card in raw_cards
+        if isinstance(card, dict) and str(card.get("profile_type") or "").strip()
+    } if isinstance(raw_cards, list) else set()
+    deck_profile = _profile_type_from_payload(payload.get("target_profile"))
+    saved_profiles = sorted({*card_profiles, *({deck_profile} if deck_profile else set())})
+    if not saved_profiles or saved_profiles == [expected]:
+        return None
+
+    try:
+        source_bytes = cards_path.read_bytes()
+    except OSError:
+        return None
+    digest = hashlib.sha256(source_bytes).hexdigest()
+    archive_relative = f"{FINAL_CARD_PROFILE_ARCHIVE_DIR}/{digest}.json"
+    archive_path = workspace / archive_relative
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    archived_now = False
+    if not archive_path.exists():
+        archive_path.write_bytes(source_bytes)
+        archived_now = True
+    receipt = {
+        "schema_version": "1.0.0",
+        "semantics": "t4_final_card_profile_refresh",
+        "active_cards_path": PORTFOLIO_CARDS_PATH,
+        "archived_cards_path": archive_relative,
+        "archived_content_sha256": digest,
+        "saved_profile_types": saved_profiles,
+        "current_profile_type": expected,
+        "action": "preserved_prior_profile_deck_before_llm_recompile",
+        "archived_now": archived_now,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _atomic_write_json(workspace / FINAL_CARD_PROFILE_REFRESH_RECEIPT_PATH, receipt)
+    return receipt
+
+
+def _profile_type_from_payload(value: Any) -> str:
+    if not isinstance(value, dict):
+        return ""
+    return str(value.get("profile_type") or "").strip()
 
 
 def migrate_legacy_final_card_schema(workspace_dir: Path) -> dict[str, Any]:
@@ -347,6 +430,9 @@ __all__ = [
     "PORTFOLIO_CARDS_SEMANTICS",
     "PORTFOLIO_PATH",
     "FINAL_CARD_COMPATIBILITY_RECEIPT_PATH",
+    "FINAL_CARD_PROFILE_ARCHIVE_DIR",
+    "FINAL_CARD_PROFILE_REFRESH_RECEIPT_PATH",
+    "archive_final_card_profile_mismatch",
     "migrate_legacy_final_card_schema",
     "portfolio_candidate_ids",
     "validate_t4_portfolio_final_cards",

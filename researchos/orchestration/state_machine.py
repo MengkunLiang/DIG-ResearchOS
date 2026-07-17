@@ -266,6 +266,8 @@ _T4_IMPLEMENTATION_PATHS = (
     "researchos/ideation/llm_roles.py",
     "researchos/ideation/models.py",
     "researchos/ideation/evidence.py",
+    "researchos/ideation/final_card_readiness.py",
+    "researchos/ideation/final_card_diagnostics.py",
     "researchos/ideation/legacy_projection.py",
     "researchos/runtime/orchestrator.py",
     "researchos/ui/idea_evolution_renderer.py",

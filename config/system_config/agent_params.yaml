@@ -32,7 +32,7 @@ budget_escalation:
 # a durable retry window instead of waiting on an in-memory prompt. Card
 # retries never re-run Candidate/Population evolution.
 retry_policy:
-  t4_final_card_compiler_attempts: 6
+  t4_final_card_compiler_attempts: 12
   t4_provider_retry_batches: 3
 
 agents:

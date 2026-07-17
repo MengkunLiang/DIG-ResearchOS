@@ -1039,6 +1039,7 @@ class LLMFinalIdeaCardCompiler:
         *,
         candidates: list[CandidateDossier],
         target_profile: TargetProfile,
+        repair_context: dict[str, Any] | None = None,
     ) -> list[FinalIdeaCardTranslation]:
         candidate_ids = [candidate.candidate_id for candidate in candidates]
         if not candidates:
@@ -1059,6 +1060,12 @@ class LLMFinalIdeaCardCompiler:
             "prompt_version": "1.2.0",
             "candidates": [model_dump(candidate, mode="json") for candidate in candidates],
         }
+        if isinstance(repair_context, dict) and repair_context:
+            # A second outer attempt must be a targeted replacement, not a
+            # blind replay of the first compiler prompt. This context contains
+            # only prior contract failures and profile-refresh facts, never
+            # new scientific evidence or candidate mutations.
+            payload["repair_context"] = repair_context
         by_id = {candidate.candidate_id: candidate for candidate in candidates}
         try:
             data = await self.invoker.invoke(
@@ -1069,7 +1076,8 @@ class LLMFinalIdeaCardCompiler:
                     "Preserve scientific content exactly and label implications by their actual Evidence Status. Write the card in clear Chinese for the researcher, "
                     "retaining standard academic terms in English where they are more precise. Treat innovation wording as a proposal-relative delta, not an "
                     "externally verified novelty conclusion: without direct verified novelty evidence, do not use priority claims such as 'first', '首次', "
-                    "'no existing method', or equivalents."
+                    "'no existing method', or equivalents. When repair_context is supplied, address its exact previous contract failure and return a complete "
+                    "replacement deck for the stated current profile; do not repeat the failed field shape or revive a prior publication orientation."
                 ),
                 payload=payload,
             )
