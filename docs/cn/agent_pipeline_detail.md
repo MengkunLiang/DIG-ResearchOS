@@ -1095,7 +1095,7 @@ Bridge cap 是候选级硬边界：同一 confirmed bridge 的候选即使同时
 | `bridge_pool_cap` | `15` | 每个 bridge 在 queue 中默认保留的候选总上限；超额不删除，标为 deferred 并保留覆盖账本 |
 | `citation_hub_slots` | `3` | citation graph 枢纽保护槽 |
 
-`active_pool_max` 在 gate 中称为“保留候选数”：T2 从检索结果里保留多少篇进入后续阅读处置。它不是精读篇数，也不是最终引用篇数；超出部分仍写入 `papers_backlog.jsonl`，可追溯和回捞。`deep_read_target` 是正常精读目标，`deep_read_max` 是保护位和高优先级 seed/bridge/citation hub 合并后的精读上限；保护项会占用精读名额，而不是无限额外追加。`deep_read_queue.jsonl` 同时是保留候选的阅读处置账本：deep-read 记录由 T3 精读，shallow 记录由 abstract sweep 生成 abstract-only 轻量笔记；超过 `bridge_pool_cap` 的 bridge 记录标为 `read_disposition=deferred` 与 `triaged_reason=bridge_pool_cap_exceeded`，默认不进入轻读证据，但保留覆盖账本和人工回捞路径。缺摘要的 metadata-only 候选进入 `metadata_triage.md` 批量报告；它们不算 abstract note 证据，并应尽量由 backlog 中有摘要/PDF 的候选补足可读覆盖。无 `deep_read_queue` 的旧 workspace fallback 仍使用 `expected_notes_ratio=1.0`，默认要求输入池 100% 覆盖。
+`active_pool_max` 在 gate 中称为“保留候选数”，它也是本轮不同论文的阅读覆盖上限。T2 从检索结果中保留这些论文进入后续阅读处置，并在其中分配 deep-read 与 abstract-only 轻读，因此这两个数量应相加为保留候选数，而不是在候选数之外再次叠加。它不是最终引用篇数；超出部分仍写入 `papers_backlog.jsonl`，可追溯和回捞。`deep_read_target` 是正常精读目标，`deep_read_max` 是保护位和高优先级 seed/bridge/citation hub 合并后的精读上限；保护项会占用精读名额，而不是无限额外追加。`deep_read_queue.jsonl` 同时是保留候选的阅读处置账本：deep-read 记录由 T3 精读，shallow 记录由 abstract sweep 生成 abstract-only 轻量笔记；超过 `bridge_pool_cap` 的 bridge 记录标为 `read_disposition=deferred` 与 `triaged_reason=bridge_pool_cap_exceeded`，默认不进入轻读证据，但保留覆盖账本和人工回捞路径。缺摘要的 metadata-only 候选进入 `metadata_triage.md` 批量报告；它们不算 abstract note 证据，并会尽量由 backlog 中有摘要/PDF 的候选替换，以完成已经确认的阅读覆盖。无 `deep_read_queue` 的旧 workspace fallback 仍使用 `expected_notes_ratio=1.0`，默认要求输入池 100% 覆盖。
 
 当前排序和处置的核心思想是：
 
@@ -1564,7 +1564,7 @@ T8/T9 会直接消费它，而不是重新从 note 手工抽引用。
 
 ### T3 的 Abstract Sweep（轻量补读）
 
-Deep read 完成后，orchestrator 自动运行 abstract sweep，补读尚未被 `deep_read_notes/` 或 `shallow_read_notes/` 覆盖的候选。它读取 title/abstract/metadata 而不是全文。含 abstract 的论文写入 `literature/shallow_read_notes/`，并会实际扩展 T3.5 的 coverage、taxonomy、trend、comparison、bridge discovery 和 research-question discovery；但写作时必须明确是 abstract-level 描述，不能单独确认机制、因果结果或实现细节。只有 title/year/venue/DOI 等 metadata 的候选不再逐篇伪装成 note，而是批量写入 `literature/metadata_triage.md`，作为资源补取线索。`T2-PARAM-GATE` 的综述均衡默认 `abstract_sweep.lite_paper_num=120`，强覆盖默认 `180`；`papers_backlog.jsonl` 只在数值预算仍有剩余时回捞有 abstract/PDF 的候选补足可读覆盖。
+Deep read 完成后，orchestrator 自动运行 abstract sweep，补读尚未被 `deep_read_notes/` 或 `shallow_read_notes/` 覆盖的保留候选。它读取 title/abstract/metadata 而不是全文。含 abstract 的论文写入 `literature/shallow_read_notes/`，并会实际扩展 T3.5 的 coverage、taxonomy、trend、comparison、bridge discovery 和 research-question discovery；但写作时必须明确是 abstract-level 描述，不能单独确认机制、因果结果或实现细节。只有 title/year/venue/DOI 等 metadata 的候选不再逐篇伪装成 note，而是批量写入 `literature/metadata_triage.md`，作为资源补取线索。三档 `T2-PARAM-GATE` 分别把阅读覆盖分配为标准研究 `35+85=120`、综述均衡 `60+120=180` 和综述强覆盖 `80+160=240`；`papers_backlog.jsonl` 只用于替换不可读候选或后续显式补检，不会暗中扩大确认后的阅读覆盖。
 
 配置在 `config/system_config/agent_params.yaml` 的 `reader.modes.read.behavior.abstract_sweep`：
 
@@ -1575,7 +1575,7 @@ reader:
       behavior:
         abstract_sweep:
           enabled: true
-          lite_paper_num: 120     # 研究论文和综述均衡默认轻读上限；综述强覆盖默认 180；可显式设 all_readable
+          lite_paper_num: 85      # 标准研究默认 35 篇精读 + 85 篇轻读 = 120 篇阅读覆盖；综述档位按各自候选总数分配；可显式设 all_readable
           min_relevance: 0.0      # 默认不按 metadata hint 丢弃
           sources: [papers_verified, papers_dedup]
           exclude_already_read: true

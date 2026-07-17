@@ -104,7 +104,7 @@ gates:
       how_to_choose:
         literal: |
           如何选择：
-          - 如果你在写研究论文：通常选“标准研究论文覆盖”，精读 35 篇，轻读最多 120 篇。
+          - 如果你在写研究论文：通常选“标准研究论文覆盖”，共覆盖 120 篇候选，其中精读 35 篇、摘要轻读 85 篇。
           - 如果你在写综述：通常选“综述均衡覆盖”，保留 180 篇候选，精读目标 60 篇，摘要轻读最多 120 篇。
           - 如果这是最终展示型综述或你特别在意覆盖面：选“综述强覆盖”，但运行更久、LLM 成本更高。
           - 如果你只想改数字：选“自定义关键数字”。自定义只影响覆盖目标，不影响系统尽可能补摘要/PDF/DOI 的策略。
@@ -112,11 +112,11 @@ gates:
       parameter_meaning:
         literal: |
           参数含义：
-          - 保留候选数 active_pool_max：T2 从检索结果里保留多少篇进入后续阅读处置。它不是精读篇数，也不是最终引用篇数；超出部分仍保存在 papers_backlog.jsonl，可追溯和回捞。
+          - 保留候选数 active_pool_max：T2 从检索结果里保留多少篇进入本轮阅读处置。它等于本轮不同论文的阅读覆盖上限，由精读和摘要轻读分配；超出部分仍保存在 papers_backlog.jsonl，可追溯和回捞。
           - 精读目标 deep_read_target：正常完成 T3 前应完成多少篇结构化深读笔记。综述建议读满目标后再进入 T3.5。
           - 最低精读 deep_read_min：预算或资源异常时的最低可接受线。默认不把它当正常停止线，除非你选快速/自定义并允许达到最低线就继续。
           - 是否必须读满目标 require_deep_read_target：true 表示未读满精读目标不放行到 T3.5；false 表示达到最低精读即可放行。
-          - 摘要轻读 abstract_sweep_target：T3 后对 active/retained 中未精读但有摘要的论文做多少篇 LLM 摘要级轻读；all_readable 表示在保留候选内不设上限，不会全读 papers_backlog。
+          - 摘要轻读 abstract_sweep_target：T3 后对保留候选中未精读但有摘要的论文做多少篇 LLM 摘要级轻读。它与精读目标共同构成阅读覆盖；all_readable 表示覆盖全部剩余可读候选，不会全读 papers_backlog。
           - metadata-only 处理：只有标题/年份/venue 而没有摘要/全文的论文会被 LLM 批量 triage，但不能当作证据；系统会尽量用 backlog 中有摘要/PDF 的候选补足可读覆盖。
           - 资源补全：对保留候选尽可能补摘要、DOI、OpenAlex/Crossref/Semantic Scholar/arXiv/可访问 PDF hints；内部 safety cap 只防异常失控，不需要用户设置。
       project_summary:
@@ -131,17 +131,17 @@ gates:
     options:
       - id: standard_research
         label: "标准研究论文覆盖"
-        description: "写 research article 时的默认强度：保留 120 篇候选，T3 精读目标 35 篇，摘要轻读最多 120 篇。"
+        description: "写 research article 时的默认强度：共覆盖 120 篇候选，其中 T3 精读目标 35 篇、摘要轻读 85 篇。"
         aliases: ["standard", "research", "默认", "研究"]
         next: T2-PARAM-CONFIRM-GATE
       - id: survey_balanced
         label: "综述均衡覆盖（推荐综述）"
-        description: "一般综述建议：保留 180 篇候选，T3 精读目标 60 篇，摘要轻读最多 120 篇。"
+        description: "一般综述建议：共覆盖 180 篇候选，其中 T3 精读目标 60 篇、摘要轻读 120 篇。"
         aliases: ["survey", "review", "综述", "均衡"]
         next: T2-PARAM-CONFIRM-GATE
       - id: survey_exhaustive
         label: "综述强覆盖"
-        description: "更重的综述覆盖：保留 240 篇候选，T3 精读目标 80 篇，摘要轻读最多 180 篇，适合最终展示型综述。"
+        description: "更重的综述覆盖：共覆盖 240 篇候选，其中 T3 精读目标 80 篇、摘要轻读 160 篇，适合最终展示型综述。"
         aliases: ["exhaustive", "full", "全量", "强覆盖"]
         next: T2-PARAM-CONFIRM-GATE
       - id: custom

@@ -452,7 +452,10 @@ _LITERATURE_PARAM_PRESETS: dict[str, dict[str, Any]] = {
             "deep_read_max": 45,
             "require_deep_read_target": True,
             "abstract_sweep": {
-                "lite_paper_num": 120,
+                # The retained pool is the total distinct-paper reading
+                # budget.  Deep and shallow reading are complementary, not
+                # two independent pools that silently add up past it.
+                "lite_paper_num": 85,
                 "sources": ["papers_verified", "papers_dedup"],
                 "include_metadata_only": True,
                 "metadata_replacement_policy": "replace_metadata_only_with_readable_backlog_when_available",
@@ -484,7 +487,7 @@ _LITERATURE_PARAM_PRESETS: dict[str, dict[str, Any]] = {
             "deep_read_max": 95,
             "require_deep_read_target": True,
             "abstract_sweep": {
-                "lite_paper_num": 180,
+                "lite_paper_num": 160,
                 "sources": ["papers_verified", "papers_dedup", "papers_backlog"],
                 "include_metadata_only": True,
                 "metadata_replacement_policy": "replace_metadata_only_with_readable_backlog_when_available",
@@ -552,6 +555,11 @@ def _literature_param_summary_from_payload(payload: dict[str, Any]) -> dict[str,
 
 def _summary_total_read_target(summary: dict[str, Any]) -> int | str | None:
     active = summary.get("active_pool_max")
+    try:
+        if active not in (None, ""):
+            return max(0, int(active))
+    except (TypeError, ValueError):
+        pass
     deep = summary.get("deep_read_target")
     abstract_target = summary.get("abstract_sweep_target")
     if str(abstract_target).strip().casefold() in {"all", "all_readable", "unlimited", "全部"}:
@@ -581,7 +589,7 @@ def _literature_param_compact_preview(summary: dict[str, Any]) -> str:
     sweep = summary.get("abstract_sweep_target")
     pool = summary.get("active_pool_max")
     require = "读满目标" if summary.get("require_deep_read_target") else "达到最低线可继续"
-    return f"候选 {pool} | 精读 {target} | 摘要轻读 {sweep} | 总覆盖约 {total} | {require}"
+    return f"阅读候选 {pool} 篇 = 精读 {target} + 摘要轻读 {sweep} | {require}"
 
 
 def _literature_param_explained_preview_lines(summary: dict[str, Any]) -> list[str]:
@@ -591,12 +599,27 @@ def _literature_param_explained_preview_lines(summary: dict[str, Any]) -> list[s
     require = summary.get("require_deep_read_target")
     require_text = "未达目标不进入 T3.5" if require else "达到最低线即可继续"
     total_target = _summary_total_read_target(summary)
+    pool = summary.get("active_pool_max")
+    try:
+        split_total = int(deep_target or 0) + int(summary.get("abstract_sweep_target") or 0)
+    except (TypeError, ValueError):
+        split_total = None
+    split_note = (
+        f"阅读分配：{pool} 篇不同论文 = {deep_target} 篇精读 + {summary.get('abstract_sweep_target')} 篇摘要轻读。"
+        if split_total is not None and str(pool) == str(split_total)
+        else (
+            "阅读分配：当前精读与摘要轻读目标和候选数不一致；请返回重选参数。"
+            if split_total is not None and pool not in (None, "")
+            else "阅读分配：摘要轻读使用 all_readable，覆盖范围由保留候选数决定。"
+        )
+    )
     return [
-        f"总阅读覆盖：约 {total_target} 篇（total=deep_read_target+abstract_sweep；可自定义，如 total=30）",
-        f"保留候选：{summary.get('active_pool_max')} 篇（active_pool_max={summary.get('active_pool_max')}；可选：120/180/240 或自定义）",
-        f"深入阅读：目标 {deep_target} 篇（deep_read={deep_min}/{deep_target}/{deep_max}；格式：min/target/max）",
+        f"本轮阅读覆盖：最多 {total_target} 篇不同论文。候选数不是额外的阅读数量。",
+        f"保留候选：{pool} 篇。T2 从检索结果中保留这些论文进入本轮阅读；其余保留在后备清单，可追溯但不会默认额外阅读。",
+        split_note,
+        f"深入阅读：目标 {deep_target} 篇（最低 {deep_min}，最多 {deep_max}）。",
         f"读满目标门槛：{require_text}（require_target={require}；可选：true/false）",
-        f"摘要轻读：{summary.get('abstract_sweep_target')} 篇（abstract_sweep={summary.get('abstract_sweep_target')}；别名：粗读/略读/rough；可选：数字或 all_readable）",
+        f"摘要轻读：目标 {summary.get('abstract_sweep_target')} 篇。仅记录题目、摘要和元数据层面的证据，不能单独支持强结论。",
         f"稿件语言：{summary.get('manuscript_language')}（language={summary.get('manuscript_language')}；可选：auto/en/zh/mixed）",
         f"中文文献：{summary.get('include_chinese_literature')}（include_zh={summary.get('include_chinese_literature')}；可选：auto/true/false）",
     ]
@@ -639,8 +662,8 @@ def build_literature_param_gate_preview(workspace_dir: Path | None = None) -> di
         "parameter_meanings_short": _LITERATURE_PARAM_SHORT_MEANINGS,
         "options": options,
         "custom_input_examples": {
-            "coverage_total": "例如 total=30 或 总共30；表示本轮阅读覆盖约 30 篇，通常等于精读 + 摘要轻读",
-            "active_pool_max": "例如 180；表示 T2 保留 180 篇进入阅读处置，超额进 papers_backlog.jsonl",
+            "coverage_total": "例如 total=30 或 总共30；表示本轮阅读的不同论文总数，系统会按精读目标自动补足摘要轻读数量",
+            "active_pool_max": "例如 180；表示本轮需要覆盖的不同论文总数。系统会在其中分配精读和摘要轻读，超额论文进入后备清单",
             "deep_read_target": "例如 60；表示 T3 正常应完成 60 篇结构化精读笔记；也可输入 deep_read=35/35/45 一次指定 min/target/max",
             "deep_read_min": "可选；例如 35。留空则沿用所选基础档位并不超过 target",
             "deep_read_max": "可选；例如 45。留空则按所选基础档位或 target 自动设置",
@@ -1351,6 +1374,9 @@ def build_literature_param_payload(
             base_option = "survey_balanced"
         base_payload = _clone_literature_param_preset(base_option)
         base_summary = _literature_param_summary_from_payload(base_payload)
+        explicit_active_pool = captured.get("active_pool_max") not in (None, "")
+        explicit_deep_target = captured.get("deep_read_target") not in (None, "")
+        explicit_abstract_target = captured.get("abstract_sweep_target") not in (None, "")
         deep_target = _safe_int(
             captured.get("deep_read_target"),
             default=int(base_summary.get("deep_read_target") or 60),
@@ -1378,13 +1404,21 @@ def build_literature_param_payload(
             default=active_default,
             minimum=1,
         )
-        if captured.get("active_pool_max") in (None, ""):
-            if isinstance(abstract_target, int):
-                active_pool = max(active_pool, deep_target + abstract_target)
-            elif coverage_total is not None:
-                active_pool = max(active_pool, coverage_total)
-        if coverage_total is not None and captured.get("abstract_sweep_target") in (None, ""):
+        active_pool = max(active_pool, deep_target)
+        if coverage_total is not None:
+            active_pool = max(active_pool, coverage_total)
+        if coverage_total is not None and not explicit_abstract_target:
             abstract_target = max(0, coverage_total - deep_target)
+        elif not explicit_abstract_target and (explicit_active_pool or explicit_deep_target):
+            # A request such as "候选 20，精读 5" means a compact, complete
+            # reading plan: the remaining 15 candidates receive abstract-level
+            # notes.  Do not inherit an unrelated 120-paper sweep target.
+            abstract_target = max(0, active_pool - deep_target)
+        if isinstance(abstract_target, int):
+            # Explicitly asking for more shallow notes enlarges the distinct
+            # reading pool.  This keeps the persisted plan internally
+            # consistent instead of creating an impossible T3 coverage gate.
+            active_pool = max(active_pool, deep_target + abstract_target)
         if captured.get("deep_read_min") not in (None, ""):
             deep_min = _safe_int(captured.get("deep_read_min"), default=max(1, int(round(deep_target * 0.8))), minimum=1)
             deep_min = min(deep_min, deep_target)
@@ -1448,10 +1482,10 @@ def build_literature_param_payload(
                 ),
             },
             "parameter_meanings": {
-                "active_pool_max": "保留候选数：T2 从检索结果里保留多少篇进入后续阅读处置；不是精读篇数，也不是最终引用篇数。",
+                "active_pool_max": "保留候选数：本轮需要形成阅读记录的不同论文总数。系统会在其中分配精读和摘要轻读；它不是最终引用数。",
                 "deep_read_target": "精读目标：正常完成 T3 前应完成多少篇结构化深读笔记。",
                 "deep_read_min": "最低精读：预算或资源异常时的最低可接受线；正常运行由 require_deep_read_target 决定是否必须读满 target。",
-                "abstract_sweep.lite_paper_num": "摘要轻读数量：T3 后对 active/retained 中未精读但有摘要的论文做 LLM 摘要级轻读；all_readable 表示保留候选内不设上限，backlog 只作数值预算不足时的可读补位。",
+                "abstract_sweep.lite_paper_num": "摘要轻读数量：T3 后对保留候选中未精读但有摘要的论文做 LLM 摘要级轻读。它与精读目标共同构成阅读覆盖；all_readable 表示覆盖全部剩余可读候选。",
                 "metadata_replacement_policy": "metadata-only 只做批量 triage，并尽量用 backlog 中有摘要/PDF 的候选补足可读覆盖。",
                 "literature_quality.manuscript_language": "写作语言：auto/en/zh/mixed；英文稿默认不搜索、不主动引用中文非 seed 论文。",
                 "literature_quality.include_chinese_literature": "是否允许中文论文进入候选池：auto/false/true；允许时不再因缺少权威标签硬过滤，但会标记 authority_review_needed。",

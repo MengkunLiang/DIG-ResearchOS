@@ -300,7 +300,10 @@ agents:
             enabled: true
             # 研究者要求的实际摘要级阅读覆盖数。只有结构合格的 ABSTRACT-ONLY
             # 笔记计入该数；metadata-only triage 是资源线索，永不占用该配额。
-            lite_paper_num: 120
+            # The active pool is the full distinct-paper reading budget.  With
+            # the default 120 retained candidates and 35 deep reads, the
+            # remaining 85 receive abstract-level notes.
+            lite_paper_num: 85
             # 最低 relevance_score hint；0.0 表示不靠该 hint 丢弃候选。
             min_relevance: 0.0
             # 候选来源优先级；verified/dedup 是保留候选集。papers_backlog 是审计/人工回捞池，
@@ -365,7 +368,9 @@ agents:
             citation_hub_slots: 5
             abstract_sweep:
               # 综述版轻读覆盖更宽，方便 T3.6 taxonomy plan 看到边界材料。
-              lite_paper_num: 180
+              # Survey profile retains 180 candidates; 55 are deep-read and
+              # the remaining 125 receive abstract-level notes.
+              lite_paper_num: 125
               sources:
               - papers_verified
               - papers_dedup

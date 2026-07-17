@@ -3739,8 +3739,8 @@ def _format_t2_compact_summary(summary: dict[str, Any]) -> str:
     total_target = _t2_summary_total_read_target(summary)
     require = "读满目标" if summary.get("require_deep_read_target") is True else "达到最低线可继续"
     return (
-        f"候选 {summary.get('active_pool_max')} | 精读 {summary.get('deep_read_target')} | "
-        f"摘要轻读 {summary.get('abstract_sweep_target')} | 总覆盖约 {total_target} | {require}"
+        f"阅读候选 {total_target} 篇 = 精读 {summary.get('deep_read_target')} + "
+        f"摘要轻读 {summary.get('abstract_sweep_target')} | {require}"
     )
 
 
@@ -3754,12 +3754,28 @@ def _format_t2_explained_summary_lines(summary: dict[str, Any]) -> list[str]:
     manuscript_language = str(summary.get("manuscript_language", "auto"))
     include_chinese = str(summary.get("include_chinese_literature", "auto"))
     effective_action = str(summary.get("effective_non_seed_chinese_action") or "")
+    pool = summary.get("active_pool_max")
+    shallow_target = summary.get("abstract_sweep_target")
+    try:
+        split_total = int(deep_target or 0) + int(shallow_target or 0)
+    except (TypeError, ValueError):
+        split_total = None
+    split_note = (
+        f"阅读分配：{pool} 篇不同论文 = {deep_target} 篇精读 + {shallow_target} 篇摘要轻读。"
+        if split_total is not None and str(pool) == str(split_total)
+        else (
+            "阅读分配：当前精读与摘要轻读目标和候选数不一致；请返回重选参数。"
+            if split_total is not None and pool not in (None, "")
+            else "阅读分配：摘要轻读使用 all_readable，覆盖范围由保留候选数决定。"
+        )
+    )
     lines = [
-        f"总阅读覆盖：约 {total_target} 篇（total=deep_read_target+abstract_sweep；可选：total=30 或 总共30）",
-        f"保留候选：{summary.get('active_pool_max')} 篇（active_pool_max={summary.get('active_pool_max')}；可选：120/180/240 或自定义）",
-        f"深入阅读：目标 {deep_target} 篇（deep_read={deep_min}/{deep_target}/{deep_max}；格式：min/target/max）",
+        f"本轮阅读覆盖：最多 {total_target} 篇不同论文。候选数不是额外的阅读数量。",
+        f"保留候选：{pool} 篇。T2 从检索结果中保留这些论文进入本轮阅读；其余保留在后备清单，可追溯但不会默认额外阅读。",
+        split_note,
+        f"深入阅读：目标 {deep_target} 篇（最低 {deep_min}，最多 {deep_max}）。",
         f"读满目标门槛：{require_text}（require_target={require}；可选：true/false）",
-        f"摘要轻读：{summary.get('abstract_sweep_target')} 篇（abstract_sweep={summary.get('abstract_sweep_target')}；别名：粗读/略读/rough；可选：数字或 all_readable）",
+        f"摘要轻读：目标 {shallow_target} 篇。仅记录题目、摘要和元数据层面的证据，不能单独支持强结论。",
         f"稿件语言：{manuscript_language}（manuscript_language={manuscript_language}；可选：auto/en/zh/mixed）",
         f"中文文献：{include_chinese}（include_zh={include_chinese}；可选：auto/true/false；策略={summary.get('chinese_literature_policy', 'review_flag_only')}）",
     ]
@@ -3775,6 +3791,12 @@ def _format_t2_explained_summary_lines(summary: dict[str, Any]) -> list[str]:
 
 
 def _t2_summary_total_read_target(summary: dict[str, Any]) -> int | str | None:
+    active = summary.get("active_pool_max")
+    try:
+        if active not in (None, ""):
+            return max(0, int(active))
+    except (TypeError, ValueError):
+        pass
     abstract_target = summary.get("abstract_sweep_target")
     if str(abstract_target).strip().casefold() in {"all", "all_readable", "unlimited", "全部"}:
         return summary.get("active_pool_max")
